@@ -30,30 +30,6 @@ pub struct PyCfg {
     pub(crate) arch_name: &'static str,
     /// `machine_addr -> joined p-code text`.
     pcode_map: OnceLock<HashMap<u64, String>>,
-    region_index: OnceLock<RegionIndex>,
-}
-
-/// Region starts in address order, plus the longest span any region covers:
-/// a region containing `addr` starts no lower than `addr - max_span`, which
-/// bounds `region_at`'s reverse walk. `Region::contains_addr` stays the only
-/// authority on containment.
-struct RegionIndex {
-    starts: Vec<(strider_cfg::PcodeInsnAddr, strider_cfg::RegionId)>,
-    max_span: u64,
-}
-
-/// Over-estimating costs probes, never a missed owner.
-fn span_upper_bound(region: &strider_cfg::Region) -> u64 {
-    let start = region.start_addr.machine_addr.addr;
-    match region.insns.last() {
-        Some(last) => last
-            .addr
-            .machine_addr
-            .addr
-            .saturating_add(u64::from(last.len)),
-        None => start.saturating_add(u64::from(region.empty_span_len)),
-    }
-    .saturating_sub(start)
 }
 
 /// `incomplete` at machine-address granularity, sorted and deduplicated: what
@@ -79,33 +55,7 @@ impl PyCfg {
             lifter,
             arch_name,
             pcode_map: OnceLock::new(),
-            region_index: OnceLock::new(),
         }
-    }
-
-    /// Sound to cache: `inner` is moved in here and never mutated, the same
-    /// reason `pcode_map` caches.
-    fn region_index(&self) -> &RegionIndex {
-        self.region_index.get_or_init(|| {
-            let g = self.inner.region_graph();
-            let regions = || {
-                g.node_indices().map(|id| {
-                    let region = g
-                        .node_weight(id)
-                        .expect("node_indices() only yields present nodes");
-                    (id, region)
-                })
-            };
-            let mut starts: Vec<_> = regions().map(|(id, r)| (r.start_addr, id)).collect();
-            starts.sort_unstable_by_key(|&(addr, id)| (addr, id.index()));
-            RegionIndex {
-                starts,
-                max_span: regions()
-                    .map(|(_, r)| span_upper_bound(r))
-                    .max()
-                    .unwrap_or(0),
-            }
-        })
     }
 
     fn with_sleigh<R>(
@@ -396,30 +346,12 @@ impl PyCfg {
         })
     }
 
-    /// The region index whose instruction range contains `addr`, if any.
-    /// Lowest index when regions overlap, as a full scan reports.
+    /// The index of the region owning `addr`; where regions overlap, the one
+    /// with the greatest start.
     fn region_at(&self, addr: u64) -> Option<u32> {
-        let target = strider_cfg::PcodeInsnAddr::at_machine_start(addr);
-        let index = self.region_index();
-        let below = &index.starts[..index.starts.partition_point(|&(s, _)| s <= target)];
-        let (greatest, _) = *below.last()?;
-        // The greatest start below `addr` is always probed: it can own `addr`
-        // however short every span is.
-        let floor = addr
-            .saturating_sub(index.max_span)
-            .min(greatest.machine_addr.addr);
-        let g = self.inner.region_graph();
-        below
-            .iter()
-            .rev()
-            .take_while(|(s, _)| s.machine_addr.addr >= floor)
-            .filter(|(_, id)| {
-                g.node_weight(*id)
-                    .expect("node_indices() only yields present nodes")
-                    .contains_addr(target)
-            })
-            .map(|(_, id)| id.index() as u32)
-            .min()
+        self.inner
+            .region_containing(strider_cfg::PcodeInsnAddr::at_machine_start(addr))
+            .map(|id| id.index() as u32)
     }
 }
 

@@ -207,8 +207,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         if prev.is_some()
             && self
                 .builder
-                .start_addr_to_region_id
-                .contains_key(&PcodeInsnAddr::at_machine_start(addr))
+                .index
+                .get(PcodeInsnAddr::at_machine_start(addr))
+                .is_some()
         {
             return Ok(());
         }
@@ -900,7 +901,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
-        if let Some(&existing_region_id) = self.builder.start_addr_to_region_id.get(&addr) {
+        if let Some(existing_region_id) = self.builder.index.get(addr) {
             // A pcode index inside the current machine instruction already
             // starting a region is exactly where two ISA decodes of one address
             // produce different pcode sequences.
@@ -986,9 +987,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // lands on.  A start interior to one of the instructions decoded
                 // here is stepped over, and those bytes become a second region
                 // overlapping the first; region ownership is then not a
-                // partition, which `Builder::find_region_containing_addr`
-                // resolves by walking down past the greatest start.
-                if let Some(&existing) = self.builder.start_addr_to_region_id.get(&cur_addr) {
+                // partition, which `RegionIndex::containing` resolves by
+                // walking down past the greatest start.
+                if let Some(existing) = self.builder.index.get(cur_addr) {
                     self.note_isa_mode_clash(cur_addr, existing);
                     let region = self.finish_current_region(RegionTerminator::Unconditional)?;
                     self.builder.region_graph.add_edge(region, existing, ());
@@ -1052,18 +1053,18 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
         let stepped_over: Vec<PcodeInsnAddr> = self
             .builder
-            .start_addr_to_region_id
-            .range(PcodeInsnAddr::at_machine_start(lo)..PcodeInsnAddr::at_machine_start(hi))
-            .filter(|(_, region)| {
+            .index
+            .starts_in(PcodeInsnAddr::at_machine_start(lo)..PcodeInsnAddr::at_machine_start(hi))
+            .filter(|&(_, region)| {
                 self.builder
                     .region_graph
-                    .node_weight(**region)
+                    .node_weight(region)
                     .is_some_and(|r| {
                         !(r.insns.is_empty()
                             && matches!(r.terminator, RegionTerminator::TailCall { .. }))
                     })
             })
-            .map(|(start, _)| *start)
+            .map(|(start, _)| start)
             .collect();
         for start in stepped_over {
             self.builder

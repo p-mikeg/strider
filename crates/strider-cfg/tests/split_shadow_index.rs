@@ -1,7 +1,7 @@
 //! A split must carry the shadow index to the half that keeps the shadower.
 //!
-//! `find_region_containing_addr` falls back to `shadowed_starts`, which
-//! `add_region` keys on the SHADOWED region's start. `split_region` gives the
+//! The region lookup falls back to the shadowed starts, which the index
+//! keys on the SHADOWED region's start. `split_region` gives the
 //! second half a new start, so without re-indexing the lookup answers `None`
 //! for bytes that half owns and a fresh region is decoded INSIDE an
 //! instruction, with nothing reported.

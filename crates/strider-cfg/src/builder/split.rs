@@ -82,17 +82,8 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
 
         // Re-index the now-second region under its new start address.  The
         // first half re-takes `first_region_start_addr` via `add_region` below.
-        self.start_addr_to_region_id.insert(addr, region_id);
-        // A shadowed region keeps its shadower in whichever half now covers it,
-        // and the halves are only known to `find_region_containing_addr`
-        // through `shadowed_starts`.  The split moved the second half's start,
-        // so record the new one: missing it makes the lookup answer `None` for
-        // bytes that half really owns, which decodes a fresh region INSIDE an
-        // instruction.  The old start stays: an extra probe costs nothing,
-        // a missing one corrupts the graph.
-        if self.shadowed_starts.contains(&first_region_start_addr) {
-            self.shadowed_starts.insert(addr);
-        }
+        self.index
+            .rekey_split(first_region_start_addr, addr, region_id);
 
         // The first half always falls through into the second, which keeps
         // `region_id` and therefore the original terminator.

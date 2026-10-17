@@ -48,9 +48,14 @@ pub(crate) fn make_cfg(
     region_graph: crate::types::RegionGraph,
     entry: petgraph::graph::NodeIndex,
 ) -> crate::Cfg {
+    let mut index = crate::region_index::RegionIndex::default();
+    for id in region_graph.node_indices() {
+        index.insert(&region_graph, id);
+    }
     crate::Cfg {
         region_graph,
         entry,
+        index,
         undecodable_seeded: Vec::new(),
         incomplete: crate::Incompleteness::default(),
         link_register_seated: Vec::new(),
