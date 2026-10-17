@@ -66,3 +66,59 @@ fn load_elf_reads_no_further_than_the_stat_size() {
         "got: {err}"
     );
 }
+
+/// An image is the region sets its mode names, from one parse, and its
+/// writable set is the walk's.
+#[test]
+#[cfg_attr(
+    debug_assertions,
+    ignore = "release only: loads every fixture six ways"
+)]
+fn an_image_is_the_region_sets_its_mode_names() {
+    use strider_reader::elf::{LoadFilter as F, RegionSource, RelocationMode as M};
+    let files = common::fixture_images();
+    assert!(!files.is_empty(), "no fixtures; run `make -C fixtures`");
+    for path in files {
+        let elf = strider_reader::load_elf(&path).expect("load");
+        for source in [RegionSource::Auto, RegionSource::Sections] {
+            for (mode, fetch, rom, relocate) in [
+                (M::Unapplied, F::CodeAndReadOnly, F::ImmutableOnly, false),
+                (
+                    M::Applied { got_is_rom: false },
+                    F::AllAllocatable,
+                    F::ImmutableOnly,
+                    true,
+                ),
+                (
+                    M::Applied { got_is_rom: true },
+                    F::AllAllocatable,
+                    F::ImmutableAndRelocatedGot,
+                    true,
+                ),
+            ] {
+                let image = elf.image(source, mode).expect("image");
+                let regions = |filter| {
+                    format!(
+                        "{:?}",
+                        elf.regions(source, filter, relocate).expect("regions")
+                    )
+                };
+                assert_eq!(
+                    format!("{:?}", image.fetch),
+                    regions(fetch),
+                    "{path:?} {mode:?}"
+                );
+                assert_eq!(
+                    format!("{:?}", image.rom),
+                    regions(rom),
+                    "{path:?} {mode:?}"
+                );
+                assert_eq!(
+                    image.writable.as_slice(),
+                    elf.writable_ranges(source).expect("writable"),
+                    "{path:?} {mode:?}"
+                );
+            }
+        }
+    }
+}

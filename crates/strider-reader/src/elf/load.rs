@@ -3,7 +3,7 @@ use anyhow::Context as _;
 use crate::{FileBytes, MemRegion, Result};
 
 use super::relocations::apply_elf_relocations_with;
-use super::sections::{ElfSectionLayout, LoadFilter, RegionSource};
+use super::sections::{AddressSet, ElfSectionLayout, LoadFilter, RegionSource};
 
 /// Maps the file: it must not change on disk while the returned `OwnedElf`,
 /// or any region or reader built from it, lives. [`OwnedElf::check_unchanged`]
@@ -42,6 +42,24 @@ pub enum RelocationMode {
     /// Nothing: each field serves its file-initial bytes, an addend or `ld`'s
     /// link-time value rather than its target.
     Unapplied,
+    /// Applied by this loader, which then also maps every writable section for
+    /// fetch. `got_is_rom` serves `.got` and `.data.rel.ro` as ROM too, an
+    /// unchecked claim about the runtime; see
+    /// [`LoadFilter::ImmutableAndRelocatedGot`].
+    Applied { got_is_rom: bool },
+}
+
+/// One image's views, from one parse and one layout.
+#[derive(Debug)]
+pub struct ElfImage {
+    /// Instruction fetch: code and read-only mappings, plus every writable one
+    /// once relocated.
+    pub fetch: Vec<MemRegion>,
+    /// The runtime-immutable mappings, plus `.got` and `.data.rel.ro` under
+    /// `got_is_rom`.
+    pub rom: Vec<MemRegion>,
+    /// Every address the image maps writable, loaded or not.
+    pub writable: AddressSet,
 }
 
 /// First line of a Git LFS pointer file.
@@ -171,6 +189,43 @@ impl OwnedElf {
         Ok(self
             .regions_with(&obj, &ElfSectionLayout::new(&obj), source, filter, relocate)?
             .regions)
+    }
+
+    /// The fetch and ROM region sets `mode` picks, and the writable addresses,
+    /// from one parse: fetch is `CodeAndReadOnly` unrelocated and
+    /// `AllAllocatable` relocated; ROM is `ImmutableOnly`, or
+    /// `ImmutableAndRelocatedGot` under `got_is_rom`.
+    ///
+    /// # Errors
+    ///
+    /// Anything [`regions`](Self::regions) reports.
+    pub fn image(&self, source: RegionSource, mode: RelocationMode) -> Result<ElfImage> {
+        let obj = self.checked_file()?;
+        let layout = ElfSectionLayout::new(&obj);
+        let (fetch, rom, relocate) = match mode {
+            RelocationMode::Unapplied => (
+                LoadFilter::CodeAndReadOnly,
+                LoadFilter::ImmutableOnly,
+                false,
+            ),
+            RelocationMode::Applied { got_is_rom } => (
+                LoadFilter::AllAllocatable,
+                if got_is_rom {
+                    LoadFilter::ImmutableAndRelocatedGot
+                } else {
+                    LoadFilter::ImmutableOnly
+                },
+                true,
+            ),
+        };
+        let fetch = self.regions_with(&obj, &layout, source, fetch, relocate)?;
+        Ok(ElfImage {
+            rom: self
+                .regions_with(&obj, &layout, source, rom, relocate)?
+                .regions,
+            fetch: fetch.regions,
+            writable: fetch.writable,
+        })
     }
 
     /// `[start, end)` of every address a mapping `source` walks declares
