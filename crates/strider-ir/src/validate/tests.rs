@@ -1803,6 +1803,48 @@ fn local_typing_unsupported_width_detected() {
     });
 }
 
+/// A float width off the list is caught too, and so is one on an output past
+/// the node signature's last slot.
+#[test]
+fn local_typing_unsupported_width_detected_on_floats_and_surplus_outputs() {
+    let mut s = spine();
+    let float = s.f.graph_mut().create_node(
+        NodeKind::FloatConst(1),
+        [],
+        [ValueKind::Typed(ValueType::Float(12))],
+    );
+    let [float_value] = s.f.node_outputs_exact::<1>(float).unwrap();
+    let id = s.f.intern_int_const(5, ValueType::int(32));
+    let surplus = s.f.graph_mut().create_node(
+        NodeKind::IntConst(id),
+        [],
+        [
+            ValueKind::Typed(ValueType::int(32)),
+            ValueKind::Typed(ValueType::Int(12)),
+        ],
+    );
+    let [int_value, _] = s.f.node_outputs_exact::<2>(surplus).unwrap();
+    let _ret = s.f.graph_mut().create_node(
+        NodeKind::Return,
+        [s.entry_ctrl, s.mem_value, float_value, int_value],
+        [],
+    );
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::UnsupportedValueType { node, output_idx: 0, ty: ValueType::Float(12) }
+                if *node == float
+        )
+    });
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::UnsupportedValueType { node, output_idx: 1, ty: ValueType::Int(12) }
+                if *node == surplus
+        )
+    });
+}
+
 /// Every supported width passes the same check, floats included.
 #[test]
 fn local_typing_supported_widths_pass() {

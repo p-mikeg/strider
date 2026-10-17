@@ -529,4 +529,20 @@ mod tests {
         assert!(from_add.len() < all_set.len());
         assert!(from_add.is_subset(&all_set));
     }
+
+    /// A `Load` short of its address is no access, not a panic: whole-graph
+    /// sweeps reach malformed nodes.
+    #[test]
+    fn access_address_of_a_short_load_is_none() {
+        use crate::node::{NodeKind, ValueKind};
+        let mut f = crate::function::test_function();
+        let mem = crate::function::test_initial_memory(&f);
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        let load = f.graph_mut().create_node(
+            NodeKind::Load(rsleigh::VnSpace::RAM),
+            [mem_value],
+            [ValueKind::Typed(ValueType::int(64))],
+        );
+        assert_eq!(f.access_address(load), None);
+    }
 }

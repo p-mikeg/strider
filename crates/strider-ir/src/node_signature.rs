@@ -786,10 +786,17 @@ mod tests {
     /// The width each slot owes, one row per rule.
     #[test]
     fn operand_width_rows() {
-        use crate::node::{Conversion, ExtendOp, IntBinaryOp, IntCmpOp, OperandWidth as W};
+        use crate::node::{
+            Conversion, ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp,
+            IntUnaryOp, OperandWidth as W,
+        };
         let space = rsleigh::VnSpace::RAM;
         let rows = [
             (NodeKind::IntBinaryOp(IntBinaryOp::Add), 1, W::OfOutput),
+            (NodeKind::IntUnaryOp(IntUnaryOp::Neg), 0, W::OfOutput),
+            (NodeKind::FloatBinaryOp(FloatBinaryOp::Mul), 1, W::OfOutput),
+            (NodeKind::FloatUnaryOp(FloatUnaryOp::Sqrt), 0, W::OfOutput),
+            (NodeKind::FloatCmpOp(FloatCmpOp::Less), 1, W::OfFirstOperand),
             (
                 NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
                 0,
@@ -822,6 +829,36 @@ mod tests {
             Some(ExpectedValueKind::AnyInt)
         );
         assert_eq!(NodeKind::Store(space).expected_input_kind(3), None);
+    }
+
+    /// `operand_width` is a second per-kind table beside the signature: a slot
+    /// it ties to a width is a value slot there, and so is the output it reads.
+    #[test]
+    fn operand_widths_name_value_slots_of_the_signature() {
+        use crate::node::{IntBinaryOp, OperandWidth as W};
+        use ExpectedValueKind as E;
+        let is_value =
+            |k: Option<E>| matches!(k, Some(E::Bool | E::AnyInt | E::AnyFloat | E::AnyValue));
+        let kinds = every_node_kind()
+            .into_iter()
+            .chain(IntBinaryOp::ALL.map(NodeKind::IntBinaryOp));
+        for k in kinds {
+            let inputs = expected_signature(&k).inputs;
+            for slot in 0..inputs.max_len.min(inputs.head.len() + 1) {
+                let rule = k.operand_width(slot);
+                if rule == W::Free {
+                    continue;
+                }
+                let input = k.expected_input_kind(slot);
+                assert!(is_value(input), "{k:?} slot {slot}: {rule:?} on {input:?}");
+                let output = k.expected_output_kind(0);
+                match rule {
+                    W::OfFirstOperand => assert_eq!(output, Some(E::Bool), "{k:?}"),
+                    W::OfOutput | W::Conversion(_) => assert!(is_value(output), "{k:?}"),
+                    W::Free => unreachable!(),
+                }
+            }
+        }
     }
 
     /// Each named input slot sits where the signature names it.

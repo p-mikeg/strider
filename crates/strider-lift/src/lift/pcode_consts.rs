@@ -373,16 +373,21 @@ mod tests {
 
     /// A 32-byte temporary has no `u128` ring: `2^127 + 2^127` is `2^128`
     /// there, which the carrier wraps to 0. Unknown, not a wrong constant.
+    /// The operand arrives by a COPY, which folds at any size, so only the add
+    /// can decline.
     #[test]
     fn a_sum_past_the_u128_carrier_is_unknown() {
+        let narrow = vn(VnSpace::UNIQUE, 2000, 16);
         let t0 = vn(VnSpace::UNIQUE, 1000, 32);
         let t1 = vn(VnSpace::UNIQUE, 1032, 32);
         let mut c = PcodeConsts::default();
         c.observe(
             at(0x10, 0),
-            &op(Opcode::IntLeft, Some(t0), &[konst(1), konst(127)]),
+            &op(Opcode::IntLeft, Some(narrow), &[konst(1), konst(127)]),
         );
-        c.observe(at(0x10, 1), &op(Opcode::IntAdd, Some(t1), &[t0, t0]));
+        c.observe(at(0x10, 1), &op(Opcode::Copy, Some(t0), &[narrow]));
+        assert_eq!(c.value_of(&t0), Some(1 << 127));
+        c.observe(at(0x10, 2), &op(Opcode::IntAdd, Some(t1), &[t0, t0]));
         assert_eq!(c.value_of(&t1), None);
     }
 
