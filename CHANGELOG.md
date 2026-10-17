@@ -252,6 +252,9 @@
   `strider-target` and the lifter's p-code folder now share.
 - `strider_target::ArchFamily` and `ArchPreset::family`: the family a preset
   belongs to, which every decode fact but the register byte order is per.
+- `strider_cfg::DecodeEngine`: the Sleigh and the decode context it carries
+  across functions; `DecodeEngine::new(arch, sleigh)?.build_cfg(entry, &opts)`
+  builds a CFG as `Lifter::build_cfg` does.
 
 ## 0.2.0
 
