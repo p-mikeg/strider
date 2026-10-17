@@ -474,6 +474,50 @@ fn dead_switch_non_const_address_no_change() -> Result<()> {
     Ok(())
 }
 
+/// A `Switch` whose constant no arm lists keeps every arm: the fold declines,
+/// and the escape set counts none of its outputs dead, so the constant `If`
+/// above it is answered without a whole-CFG walk.
+#[test]
+fn a_switch_constant_no_arm_lists_has_no_dead_arm() -> Result<()> {
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let entry = b.create_region_all()?;
+    let dispatch = b.create_region_all()?;
+    let a0 = b.create_region_all()?;
+    let a1 = b.create_region_all()?;
+    let skipped = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    b.set_region(entry);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, dispatch, skipped)?;
+    b.set_region(dispatch);
+    let addr = b.build_int_const(0x5000u64, ValueType::I64)?;
+    b.build_switch(addr, &[(a0, 0x1000), (a1, 0x1020)])?;
+    for region in [a0, a1, skipped] {
+        b.set_region(region);
+        b.build_return(None, &[])?;
+    }
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    super::FULL_WALKS.with(|c| c.set(0));
+    let result =
+        crate::pipeline::run_one(&DeadBranchElimination, &mut fg, &mut OptCtx::at_floor(None))?;
+    assert!(result.changed(), "the constant If must fold");
+    assert_eq!(fg.walk_kind(|k| matches!(k, NodeKind::If)).count(), 0);
+    assert_eq!(
+        fg.walk_kind(|k| matches!(k, NodeKind::Switch(_))).count(),
+        1,
+        "no arm lists 0x5000, so the Switch stays"
+    );
+    assert_eq!(
+        super::FULL_WALKS.with(std::cell::Cell::get),
+        0,
+        "the escape set must count both Switch arms live"
+    );
+    Ok(())
+}
+
 /// The dead arm is the loop's ONLY exit, reaching its `Return` through a plain
 /// `Region`.  Folding makes the cycle exit-free with no `Unreachable` anywhere,
 /// and the optimizer's own validation then rejects the graph it produced.
