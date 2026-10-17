@@ -90,6 +90,9 @@
   `remove_region_predecessors` return nothing: none of the three could fail.
 - `ValueType::{int_for_byte_size, float_for_byte_size}` are renamed
   `int_from_bytes` / `float_from_bytes`.
+- `ValueType::ALL` is renamed `SUPPORTED`, and `ValueType::as_str` is gone:
+  `Display` spells the same `i32` / `f64`, and `ValueType` now parses that
+  spelling (`FromStr`).
 
 ### Changed, Python
 
@@ -113,6 +116,9 @@
   `float_binary` lists the accepted names in its error.
 - A pass added from Python carries its own type name in Rust panics and debug
   output.
+- An unknown type name passed to `value_ty()` / `of_type()` raises
+  `unknown value type "<name>": expected one of i1, ...`, the name lowercased;
+  it read `unknown output type`.
 
 ### Added, Python
 

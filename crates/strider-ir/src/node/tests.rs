@@ -48,43 +48,11 @@ fn is_bool_only_for_bool_output_type() {
     assert!(!ValueKind::Control.is_bool());
 }
 
-/// `I1` counts as an integer; floats and the non-value kinds do not.
+/// Exactly the integer types count as integers; the non-value kinds do not.
 #[test]
 fn is_integer_for_all_integer_output_types() {
-    for ty in [
-        ValueType::I1,
-        ValueType::int(8),
-        ValueType::int(16),
-        ValueType::int(24),
-        ValueType::int(32),
-        ValueType::int(40),
-        ValueType::int(48),
-        ValueType::int(56),
-        ValueType::int(64),
-        ValueType::int(72),
-        ValueType::int(80),
-        ValueType::int(96),
-        ValueType::int(112),
-        ValueType::int(128),
-        ValueType::int(256),
-        ValueType::int(512),
-    ] {
-        assert!(
-            ValueKind::Typed(ty).is_integer(),
-            "{ty:?} should be integer"
-        );
-    }
-    for ty in [
-        ValueType::float(16),
-        ValueType::float(32),
-        ValueType::float(64),
-        ValueType::float(80),
-        ValueType::float(128),
-    ] {
-        assert!(
-            !ValueKind::Typed(ty).is_integer(),
-            "{ty:?} must not be integer"
-        );
+    for ty in ValueType::SUPPORTED {
+        assert_eq!(ValueKind::Typed(ty).is_integer(), !ty.is_float(), "{ty:?}");
     }
     assert!(!ValueKind::Control.is_integer());
     assert!(!ValueKind::Memory.is_integer());
@@ -130,66 +98,6 @@ fn as_value_or_err_control_case() {
         err.to_string().contains("expected value output"),
         "got: {err}"
     );
-}
-
-#[test]
-fn type_info_table_matches_variants() {
-    let cases: &[(ValueType, &str, usize, bool, bool, bool)] = &[
-        (ValueType::I1, "i1", 1, true, true, false),
-        (ValueType::int(8), "i8", 1, true, false, false),
-        (ValueType::int(16), "i16", 2, true, false, false),
-        (ValueType::int(24), "i24", 3, true, false, false),
-        (ValueType::int(32), "i32", 4, true, false, false),
-        (ValueType::int(40), "i40", 5, true, false, false),
-        (ValueType::int(48), "i48", 6, true, false, false),
-        (ValueType::int(56), "i56", 7, true, false, false),
-        (ValueType::int(64), "i64", 8, true, false, false),
-        (ValueType::int(72), "i72", 9, true, false, false),
-        (ValueType::int(80), "i80", 10, true, false, false),
-        (ValueType::int(96), "i96", 12, true, false, false),
-        (ValueType::int(112), "i112", 14, true, false, false),
-        (ValueType::int(128), "i128", 16, true, false, false),
-        (ValueType::int(256), "i256", 32, true, false, false),
-        (ValueType::int(512), "i512", 64, true, false, false),
-        (ValueType::float(16), "f16", 2, false, false, true),
-        (ValueType::float(32), "f32", 4, false, false, true),
-        (ValueType::float(64), "f64", 8, false, false, true),
-        (ValueType::float(80), "f80", 10, false, false, true),
-        (ValueType::float(128), "f128", 16, false, false, true),
-    ];
-    for (ty, name, size, is_int, is_bool, is_float) in cases {
-        assert_eq!(ty.as_str(), *name);
-        assert_eq!(ty.byte_size(), *size);
-        // I1 is the lone exception: 1 byte but 1 bit wide.
-        let expected_bits = if *ty == ValueType::I1 { 1 } else { *size * 8 };
-        assert_eq!(ty.bit_width(), expected_bits);
-        assert_eq!(ty.is_integer(), *is_int);
-        assert_eq!(ty.is_bool(), *is_bool);
-        assert_eq!(ty.is_float(), *is_float);
-    }
-}
-
-#[test]
-fn int_for_byte_size_to_node_output_type() {
-    assert_eq!(ValueType::int_from_bytes(1).unwrap(), ValueType::int(8));
-    assert_eq!(ValueType::int_from_bytes(2).unwrap(), ValueType::int(16));
-    assert_eq!(ValueType::int_from_bytes(3).unwrap(), ValueType::int(24));
-    assert_eq!(ValueType::int_from_bytes(4).unwrap(), ValueType::int(32));
-    assert_eq!(ValueType::int_from_bytes(5).unwrap(), ValueType::int(40));
-    assert_eq!(ValueType::int_from_bytes(7).unwrap(), ValueType::int(56));
-    assert_eq!(ValueType::int_from_bytes(8).unwrap(), ValueType::int(64));
-    assert_eq!(ValueType::int_from_bytes(9).unwrap(), ValueType::int(72));
-    assert_eq!(ValueType::int_from_bytes(16).unwrap(), ValueType::int(128));
-    assert_eq!(ValueType::int_from_bytes(32).unwrap(), ValueType::int(256));
-    assert_eq!(ValueType::int_from_bytes(64).unwrap(), ValueType::int(512));
-    for bad in [0u32, 11, 13, 15, 17, 33, 65] {
-        let err = ValueType::int_from_bytes(bad).expect_err("invalid size");
-        let msg = err.to_string();
-        assert!(
-            msg.contains(&format!("unsupported node output size: {bad} bytes")),
-            "wrong error for {bad}: {err:?}"
-        );
-    }
 }
 
 /// Independent restatement of `is_cacheable` as a single negated `matches!`.

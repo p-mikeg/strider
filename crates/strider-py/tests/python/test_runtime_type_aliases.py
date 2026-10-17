@@ -38,9 +38,9 @@ def test_value_type_strings_are_valuety_members():
 
 def test_valuety_is_exactly_the_rust_value_type_set():
     """`ValueTy` is hand-written in two `.py`/`.pyi` files against Rust's
-    `ValueType::ALL`. Nothing links them, so a width added to the enum would be
-    silently unusable from Python. `parse_value_ty` builds its rejection message
-    from `ValueType::ALL`, so the message is the list.
+    `ValueType::SUPPORTED`. Nothing links them, so a width added to the list
+    would be silently unusable from Python. `ValueType`'s `FromStr` builds its
+    rejection message from `ValueType::SUPPORTED`, so the message is the list.
     """
     try:
         p.anything().value_ty("not-a-width")  # pyright: ignore[reportArgumentType]
