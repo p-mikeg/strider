@@ -134,7 +134,7 @@ pub fn smallest_enclosing(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> Option<rslei
 /// O(1) `vn -> container` lookup for the register-aliasing reads, built once
 /// per function over the tracked set, which it keeps: a miss falls back to a
 /// linear scan of it.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ContainerMap {
     tracked: Box<[rsleigh::Vn]>,
     map: FxHashMap<rsleigh::Vn, rsleigh::Vn>,
