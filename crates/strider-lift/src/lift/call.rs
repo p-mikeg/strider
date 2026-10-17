@@ -4,7 +4,13 @@ use anyhow::{Result, anyhow};
 use super::FunctionLifter;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
-    pub(super) fn handle_call_other(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+    /// Lifts a user-op. `terminate` is the CFG's verdict that it ends control
+    /// ([`Self::ends_no_return_region`]).
+    pub(super) fn handle_call_other(
+        &mut self,
+        insn: &rsleigh::Insn,
+        terminate: bool,
+    ) -> Result<()> {
         let (user_op_id, name) = decode_user_op(insn, self.lifter.user_op_names())?;
         let class = strider_target::call_other_abi::classify_with(
             self.call_other_overrides,
@@ -23,37 +29,38 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
         // `None` is the NoOp class: no IR node, control and memory unchanged,
         // and the pcode-explicit output dropped.  Otherwise the ABI carries the
-        // footprint and whether control returns, so one path serves
-        // side-effecting and terminating ops alike.  A `BUG_ON`-class trap is
-        // the empty-footprint `no_return` case.
+        // footprint, so one path serves side-effecting and terminating ops
+        // alike.
         let Some(abi) = class.built(&self.lifter.sleigh_regs)? else {
+            anyhow::ensure!(
+                !terminate,
+                "CallOther {name:?} ends its region, but its class builds no node to end it"
+            );
             return Ok(());
         };
 
         // Slot 0 is the user-op id, not an argument.
         let explicit_args = self.read_vns(insn.inputs.get(1..).unwrap_or(&[]))?;
         let output_vn: Option<rsleigh::Vn> = insn.output.as_ref().copied();
-
-        // A PowerPC trap whose TO mask names every relation fires
-        // unconditionally, so the fall-through is dead. The mask is the op's
-        // first explicit operand, read off the CONST varnode rather than the
-        // lifted value: `RegionBuilder` decides the same thing the same way,
-        // and an operand that merely FOLDS to a constant would terminate a
-        // region the cfg kept open. A caller override for the name states what
-        // this binary's build of the op does, so it answers instead, as it does
-        // for the region terminator.
-        let to_mask = insn
-            .inputs
-            .get(1)
-            .filter(|vn| vn.addr_space == rsleigh::VnSpace::CONST)
-            .map(|vn| u128::from(vn.addr_off));
-        let overridden = self.call_other_overrides.get(name).is_some();
-        let terminate = abi.no_return
-            || (!overridden
-                && strider_target::call_other_abi::trap_is_unconditional(name, to_mask));
-
         self.build_abi_call_other(user_op_id, name, &explicit_args, &abi, output_vn, terminate)?;
         Ok(())
+    }
+
+    /// Whether the CFG ended `region` at the op at `addr` as `NoReturn`: the
+    /// shape it leaves a `CallOther` it decided does not return, every other
+    /// `NoReturn` region ending on a `Call` or `CallIndirect`.
+    pub(super) fn ends_no_return_region(
+        &self,
+        region: strider_cfg::RegionId,
+        addr: strider_cfg::PcodeInsnAddr,
+    ) -> bool {
+        self.cfg
+            .region_graph()
+            .node_weight(region)
+            .is_some_and(|r| {
+                matches!(r.terminator, strider_cfg::RegionTerminator::NoReturn)
+                    && r.insns.last().is_some_and(|last| last.addr == addr)
+            })
     }
 
     /// Implicit-read registers come FIRST in the arg list, before the explicit
@@ -170,18 +177,17 @@ pub(super) fn decode_user_op<'a>(
     insn: &rsleigh::Insn,
     user_op_names: &'a [String],
 ) -> Result<(u64, &'a str)> {
+    if let Some((id, name)) = strider_cfg::user_op_of(insn, user_op_names) {
+        return Ok((u64::from(id), name));
+    }
+    // Why it names none.
     let id_vn = crate::lift::pcode_util::nth_input_or_err(insn, 0)?;
     crate::lift::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
-    let user_op_id = id_vn.addr_off;
-    let user_op_id_u32 = u32::try_from(user_op_id)
-        .map_err(|_| anyhow!("CallOther user-op id {user_op_id:#x} exceeds u32"))?;
-    let name = user_op_names
-        .get(user_op_id_u32 as usize)
-        .map(String::as_str)
-        .ok_or_else(|| {
-            anyhow!("CallOther user-op id {user_op_id_u32} not in Sleigh's user_op table")
-        })?;
-    Ok((user_op_id, name))
+    let id = u32::try_from(id_vn.addr_off)
+        .map_err(|_| anyhow!("CallOther user-op id {:#x} exceeds u32", id_vn.addr_off))?;
+    Err(anyhow!(
+        "CallOther user-op id {id} not in Sleigh's user_op table"
+    ))
 }
 
 #[cfg(test)]
@@ -366,6 +372,142 @@ mod tests {
             unreachable_count(&opts),
             0,
             "a returning override for `trapWord` must keep control flowing"
+        );
+    }
+
+    /// The lift sinks a `CallOther` into `Unreachable` exactly where the CFG
+    /// ended its region `NoReturn`: over all 32 `twi` TO masks, and under an
+    /// override that keeps the unconditional one returning.
+    #[test]
+    fn a_call_other_ends_the_ir_exactly_where_the_cfg_ends_its_region() {
+        const LI_R3_1: u32 = 0x3860_0001;
+        const LI_R3_2: u32 = 0x3860_0002;
+        const BLR: u32 = 0x4e80_0020;
+        let twi = |to: u32| 0x0c00_0000 | (to << 21) | (3 << 16);
+        // Program k, 16 bytes at 0x1000 + 0x10 * k: `li r3,1 ; twi k,r3,0 ;
+        // li r3,2 ; blr`, the 33rd repeating TO=31 under the override.
+        let words: Vec<u32> = (0..32)
+            .chain([31])
+            .flat_map(|to| [LI_R3_1, twi(to), LI_R3_2, BLR])
+            .collect();
+        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_be_bytes()).collect();
+        let arch = strider_target::SleighArch::ppc32be();
+        let reader = rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+        let mut lifter = crate::lift::Lifter::new(arch, sleigh).expect("lifter");
+        let cc = strider_target::CallingConvention::powerpc_sysv32()
+            .build(lifter.sleigh_regs())
+            .expect("cc");
+        let plain = strider_cfg::CfgOptions::default();
+        let keep_returning = strider_cfg::CfgOptions {
+            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+                "trapWord".to_owned(),
+                CallOtherClass::MEM_CLOBBER.into(),
+            )])
+            .expect("unique override names"),
+            ..Default::default()
+        };
+        let no_ccs = rustc_hash::FxHashMap::default();
+        let mut ended = 0;
+        for k in 0..33u64 {
+            let opts = if k < 32 { &plain } else { &keep_returning };
+            let cfg = lifter
+                .build_cfg((0x1000 + 0x10 * k).into(), opts)
+                .expect("cfg");
+            let cfg_ends = cfg.regions().any(|r| {
+                matches!(r.terminator, strider_cfg::RegionTerminator::NoReturn)
+                    && r.insns
+                        .last()
+                        .is_some_and(|w| w.insn.opcode == rsleigh::Opcode::CallOther)
+            });
+            let f = lifter
+                .build_ir_with(&cfg, cc.clone(), opts, &no_ccs)
+                .expect("lift")
+                .function;
+            let sinks = f
+                .graph()
+                .all_node_ids()
+                .filter(|n| matches!(f.node_kind(*n), strider_ir::node::NodeKind::Unreachable))
+                .count();
+            assert_eq!(sinks, usize::from(cfg_ends), "program {k}");
+            ended += usize::from(cfg_ends);
+        }
+        assert_eq!(
+            ended, 7,
+            "the seven masks naming a trichotomy end it, none under the override"
+        );
+    }
+
+    /// A `Cfg` lifts as it was built, whatever options `build_ir_with` is
+    /// handed: one built with `trapWord` kept returning has no sink under
+    /// plain options, and one built plain sinks under that override.
+    #[test]
+    fn a_call_other_lifts_as_its_cfg_was_built() {
+        // 1000: 38 60 00 01    li r3,1
+        // 1004: 0f e3 00 00    twi 31,r3,0
+        // 1008: 38 60 00 02    li r3,2
+        // 100c: 4e 80 00 20    blr
+        let bytes = vec![
+            0x38, 0x60, 0x00, 0x01, 0x0f, 0xe3, 0x00, 0x00, 0x38, 0x60, 0x00, 0x02, 0x4e, 0x80,
+            0x00, 0x20,
+        ];
+        let arch = strider_target::SleighArch::ppc32be();
+        let reader = rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000);
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+        let mut lifter = crate::lift::Lifter::new(arch, sleigh).expect("lifter");
+        let cc = strider_target::CallingConvention::powerpc_sysv32()
+            .build(lifter.sleigh_regs())
+            .expect("cc");
+        let plain = strider_cfg::CfgOptions::default();
+        let keep_returning = strider_cfg::CfgOptions {
+            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+                "trapWord".to_owned(),
+                CallOtherClass::MEM_CLOBBER.into(),
+            )])
+            .expect("unique override names"),
+            ..Default::default()
+        };
+        let no_ccs = rustc_hash::FxHashMap::default();
+        let mut sinks = |built: &strider_cfg::CfgOptions, lifted: &strider_cfg::CfgOptions| {
+            let cfg = lifter.build_cfg(0x1000u64.into(), built).expect("cfg");
+            let f = lifter
+                .build_ir_with(&cfg, cc.clone(), lifted, &no_ccs)
+                .expect("a CallOther lifts as its cfg was built")
+                .function;
+            f.graph()
+                .all_node_ids()
+                .filter(|n| matches!(f.node_kind(*n), strider_ir::node::NodeKind::Unreachable))
+                .count()
+        };
+        assert_eq!(
+            sinks(&keep_returning, &plain),
+            0,
+            "the cfg kept the trap returning, so the lift does too"
+        );
+        assert_eq!(
+            sinks(&plain, &keep_returning),
+            1,
+            "the cfg ended the region at the trap, so the lift sinks there"
+        );
+
+        let overriding = |class: CallOtherClass| strider_cfg::CfgOptions {
+            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+                "trapWord".to_owned(),
+                class.into(),
+            )])
+            .expect("unique override names"),
+            ..Default::default()
+        };
+        let cfg = lifter
+            .build_cfg(0x1000u64.into(), &overriding(CallOtherClass::NO_RETURN))
+            .expect("cfg");
+        let Err(err) = lifter.build_ir_with(&cfg, cc, &overriding(CallOtherClass::NoOp), &no_ccs)
+        else {
+            panic!("a CallOther the cfg ended must not lift as a NoOp");
+        };
+        assert!(
+            format!("{err:?}").contains("ends its region, but its class builds no node"),
+            "got {err:?}"
         );
     }
 

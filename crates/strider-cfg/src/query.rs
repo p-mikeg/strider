@@ -26,6 +26,19 @@ pub(crate) fn is_addr_tail_call(target: u64, start_addr: u64, bound: FunctionBou
     }
 }
 
+/// The user-op a `CallOther` names: its CONST input 0, as an index into
+/// `names`. `None` for any other operand shape.
+#[must_use]
+pub fn user_op_of<'n>(insn: &rsleigh::Insn, names: &'n [String]) -> Option<(u32, &'n str)> {
+    let id = insn
+        .inputs
+        .first()
+        .filter(|vn| vn.addr_space == rsleigh::VnSpace::CONST)?
+        .addr_off;
+    let id = u32::try_from(id).ok()?;
+    names.get(id as usize).map(|name| (id, name.as_str()))
+}
+
 pub struct IfRegionSuccessors {
     pub if_true_region: Option<NodeIndex>,
     /// The fall-through side.
@@ -340,5 +353,37 @@ mod tests {
             "no successor starts at 0x2000's pcode index 0, so the site has no arm"
         );
         let _ = mid_pcode;
+    }
+
+    /// A `CallOther`'s user-op is its CONST input 0 as a table index; any other
+    /// shape names none.
+    #[test]
+    fn user_op_of_reads_a_const_index_into_the_table() {
+        let names = ["LOCK".to_owned(), "UNLOCK".to_owned()];
+        let call_other = |input: Option<rsleigh::Vn>| rsleigh::Insn {
+            opcode: rsleigh::Opcode::CallOther,
+            output: None,
+            inputs: input.into_iter().collect(),
+        };
+        let at = |addr_space, addr_off| rsleigh::Vn {
+            addr_space,
+            addr_off,
+            size: 4,
+        };
+        let of = |insn| user_op_of(&insn, &names);
+        assert_eq!(
+            of(call_other(Some(at(rsleigh::VnSpace::CONST, 1)))),
+            Some((1, "UNLOCK"))
+        );
+        assert_eq!(of(call_other(Some(at(rsleigh::VnSpace::CONST, 2)))), None);
+        assert_eq!(
+            of(call_other(Some(at(rsleigh::VnSpace::REGISTER, 1)))),
+            None
+        );
+        assert_eq!(
+            of(call_other(Some(at(rsleigh::VnSpace::CONST, 1 << 32)))),
+            None
+        );
+        assert_eq!(of(call_other(None)), None);
     }
 }
