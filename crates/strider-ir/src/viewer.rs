@@ -215,16 +215,16 @@ pub trait IRViewer {
     // Each panics on an arity the validator guarantees for a well-formed node
     // of that kind.
     semantic_slot_accessors! {
-        /// `If` input slot 1 of `[control, cond]`.
+        /// `If` input [`NodeKind::IF_COND_SLOT`] of `[control, cond]`.
         if_cond => 2[NodeKind::IF_COND_SLOT] "If node has [control, cond] inputs";
 
-        /// `Store` input slot 1 of `[memory, addr, data]`.
+        /// `Store` input [`NodeKind::ACCESS_ADDR_SLOT`] of `[memory, addr, data]`.
         store_addr => 3[NodeKind::ACCESS_ADDR_SLOT] "Store node has [memory, addr, data] inputs";
 
-        /// `Store` input slot 2 of `[memory, addr, data]`.
+        /// `Store` input [`NodeKind::STORE_DATA_SLOT`] of `[memory, addr, data]`.
         store_data => 3[NodeKind::STORE_DATA_SLOT] "Store node has [memory, addr, data] inputs";
 
-        /// `Load` input slot 1 of `[memory, addr]`.
+        /// `Load` input [`NodeKind::ACCESS_ADDR_SLOT`] of `[memory, addr]`.
         load_addr => 2[NodeKind::ACCESS_ADDR_SLOT] "Load node has [memory, addr] inputs";
     }
 

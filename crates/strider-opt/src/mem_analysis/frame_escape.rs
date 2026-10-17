@@ -102,9 +102,9 @@ fn frame_address_escapes(function: &Function, noalias_allocators: &FxHashSet<u64
     false
 }
 
-/// A member of `U` is benign here only at the address operand (its address slot) of
-/// a `Load`/`Store`, or as an input to an `Add`/`And` whose own output is again
-/// in `U` (a chain extension).
+/// A member of `U` is benign here only as the address operand
+/// (`NodeKind::ACCESS_ADDR_SLOT`) of a `Load`/`Store`, or as an input to an
+/// `Add`/`And` whose own output is again in `U` (a chain extension).
 ///
 /// The `Load`/`Store` test is by slot index, not value equality: a self-store
 /// `Store(V, V)` puts the same `ValueId` in both the address and data slots, so

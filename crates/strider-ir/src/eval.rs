@@ -120,8 +120,8 @@ pub fn int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) -> Option<u1
     Some(raw & mask)
 }
 
-/// `None` past the `u128` carrier, where the overflow arms would detect at 128
-/// bits rather than at `ty`'s declared width.
+/// `None` for a float, or past the `u128` carrier, where the overflow arms
+/// would detect at 128 bits rather than at `ty`'s declared width.
 #[inline]
 pub fn int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Option<bool> {
     // Unsigned arms compare raw u128s, so a narrow IntConst carrying high bits
@@ -149,8 +149,7 @@ pub fn int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Option<bool> {
     })
 }
 
-/// The unary, extend and count helpers below decline past 128 bits through
-/// `get_unsigned_int` / `get_signed_int`, which have no wider carrier.
+/// `op` applied to `v` at `ty`'s width; `None` for a float or past 128 bits.
 #[inline]
 pub fn int_unary(op: IntUnaryOp, v: u128, ty: ValueType) -> Option<u128> {
     let raw = match op {
@@ -159,12 +158,16 @@ pub fn int_unary(op: IntUnaryOp, v: u128, ty: ValueType) -> Option<u128> {
     ty.get_unsigned_int(raw)
 }
 
+/// `v`, read signed at `in_ty`, at `out_ty`; `None` when either is a float or
+/// past 128 bits.
 #[inline]
 pub fn sign_extend(v: u128, in_ty: ValueType, out_ty: ValueType) -> Option<u128> {
     let signed = in_ty.get_signed_int(v)? as u128;
     out_ty.get_unsigned_int(signed)
 }
 
+/// The set bits of `v` within `in_ty`'s width; `None` for a float or past 128
+/// bits.
 #[inline]
 pub fn popcount(v: u128, in_ty: ValueType) -> Option<u128> {
     let masked = in_ty.get_unsigned_int(v)?;

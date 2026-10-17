@@ -21,8 +21,8 @@ pub(crate) fn same_width(f: &Function, b: &Bindings, caps: &[Capture]) -> Option
         .then_some(width)
 }
 
-/// Whether `cap` binds a count `1 << count` is buildable from at `ty`: `ty`
-/// has a `u128` modulus and the count is below its width.
+/// Whether `cap` binds a shift count `1 << count` can be built from at `ty`:
+/// `ty` has a `u128` modulus and the count is below its width.
 ///
 /// A count is an ordinary constant, so an `I64` shift can name 200, and
 /// `1u128 << 200` panics. The modulus matters as for every coefficient: the
