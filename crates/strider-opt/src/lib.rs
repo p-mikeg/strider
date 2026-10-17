@@ -69,7 +69,7 @@ pub fn default_pipeline() -> OptimizerPipeline {
     p.add(RegionCollapse);
     p.add(DeadBranchElimination);
     p.add(CfgDetach);
-    p.add(LoadForward::default());
+    p.add(LoadForward);
     p.add_post_pass(CallStackArgCollect);
     p.add_post_pass(FunctionArgDetect);
     p

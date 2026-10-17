@@ -21,8 +21,6 @@
 //! forwards.  A stack address decomposes only once `PhiCollapse` has folded the
 //! region phis over SP.
 
-use std::cell::RefCell;
-
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 use strider_ir::{IRBuilderExt, IRViewer};
 use strider_target::Endianness;
@@ -31,57 +29,43 @@ use crate::error::Result;
 use crate::mem_analysis::{AliasVerdict, MemAnalyzer, MemOptions, MemPurpose};
 use crate::pipeline::OptimizationResult;
 
-#[derive(Default)]
-pub struct LoadForward {
-    /// Shared by every root in one sweep, for their memory index, answers and
-    /// outgoing-argument-window memo.
-    ///
-    /// The pass only rewires `Load` memory edges and redirects `Load` outputs,
-    /// so every memory def keeps its inputs and the index stands.  A store
-    /// address a forward can still change was an `Anchor`, which the index
-    /// offers every location, and a forward that reaches an address drops the
-    /// answers.  A forwarded value only makes an address the window scan could
-    /// not place placeable, which ends a prefix sooner than the memo says.
-    analyzers: RefCell<Option<Analyzers>>,
-}
+#[derive(Clone, Copy, Default)]
+pub struct LoadForward;
 
+/// One sweep's analyzers, shared by every root for their memory index,
+/// answers and outgoing-argument-window memo.
+///
+/// The pass only rewires `Load` memory edges and redirects `Load` outputs, so
+/// every memory def keeps its inputs and the index stands.  A store address a
+/// forward can still change was an `Anchor`, which the index offers every
+/// location, and a forward that reaches an address drops the answers.  A
+/// forwarded value only makes an address the window scan could not place
+/// placeable, which ends a prefix sooner than the memo says.
+///
 /// `alias` carries the run's claims and decides whether to forward; `narrow`
 /// carries none, and is the only one a permanent rewire may name.
-struct Analyzers {
+pub(crate) struct Analyzers {
     alias: MemAnalyzer,
     narrow: MemAnalyzer,
 }
 
-impl Clone for LoadForward {
-    /// The memo belongs to one sweep of one graph, so a clone starts empty.
-    fn clone(&self) -> Self {
-        Self::default()
-    }
-}
-
+// Not `PROPAGATE`: a fresh forward reaches a consumer only through an address
+// edge, which the next pipeline iteration picks up; re-enqueueing every
+// consumer to catch it costs more than the deferral.
 impl crate::peephole::PeepholePass for LoadForward {
+    type Sweep = Option<Analyzers>;
+
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::Load(_))
     }
 
-    fn start_sweep(&self) {
-        *self.analyzers.borrow_mut() = None;
-    }
-
-    // A fresh forward reaches a consumer only through an address edge, which
-    // the next pipeline iteration picks up; re-enqueueing every consumer to
-    // catch it costs more than the deferral.
-    fn propagate_to_consumers(&self) -> bool {
-        false
-    }
-
     fn try_rewrite(
         &self,
+        analyzers: &mut Option<Analyzers>,
         edit: &mut crate::EditFunction<'_>,
         opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<crate::peephole::PeepholeRewrite> {
-        let mut analyzers = self.analyzers.borrow_mut();
         let cfgs = analyzers.get_or_insert_with(|| {
             let assumptions = &opt_ctx.options.assumptions;
             Analyzers {
