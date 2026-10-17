@@ -322,8 +322,8 @@ when both IR slots hold the same value.
 - Register aliasing (x86 rax/eax/ax, AArch64 q/d/s, x87 ST*, ...) is handled in
   the lifter's `read_vn` / `write_vn`: reads and writes go through the largest
   containing register with shift/mask for sub-register slices.
-  `FunctionBuilder::new` dedups tracked varnodes into their largest containers;
-  `Function::new` sorts them, which is what fixes `InitialVnId` numbering.
+  `Function::new` dedups tracked varnodes into their largest containers and
+  sorts them, which is what fixes `InitialVnId` numbering.
 - Indirect-branch resolution is a re-lift fixed-point loop in `Strider::analyze`
   that converges on the induced edge set; unresolvable branches are reported
   (`Reason::UnresolvedBranch`), and `analyze` refuses an incomplete result

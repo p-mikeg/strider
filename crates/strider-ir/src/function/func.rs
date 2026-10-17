@@ -55,6 +55,9 @@ pub struct Function {
 
 impl Function {
     /// Builds the `Entry` node.  `InitialMemory` is the `FunctionBuilder`'s job.
+    ///
+    /// `tracked_vns` keeps only the largest of nested varnodes
+    /// ([`vn_container::dedup_overlapping_largest`]), sorted.
     pub fn new(
         default_cc: strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,
@@ -66,9 +69,9 @@ impl Function {
             [],
             [crate::node::ValueKind::Control],
         );
-        // `tracked_vns` arrives in arbitrary order; sort so `InitialVnId`
-        // assignment is reproducible.
-        let mut tracked_vns = tracked_vns;
+        // Arbitrary order in, so sort: `InitialVnId` assignment is
+        // reproducible.
+        let mut tracked_vns = vn_container::dedup_overlapping_largest(&tracked_vns);
         tracked_vns.sort_by_key(vn_sort_key);
         let mut vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn> =
             entity_utils::EntityInterner::default();
@@ -208,18 +211,6 @@ impl Function {
     /// In allocation order.
     pub fn vn_ids(&self) -> impl Iterator<Item = crate::node::InitialVnId> + '_ {
         self.vn_interner.keys()
-    }
-
-    /// Rebuilds the tracked-varnode interner so `InitialVnId(i)` resolves to
-    /// `vns[i]`.
-    #[cfg(any(test, feature = "test-util"))]
-    pub fn set_all_vns(&mut self, vns: Vec<rsleigh::Vn>) {
-        let mut interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn> =
-            entity_utils::EntityInterner::default();
-        for vn in vns {
-            interner.intern(vn);
-        }
-        self.vn_interner = interner;
     }
 
     /// Integer then float, in ABI order, at each register's declared width with
@@ -528,7 +519,7 @@ impl crate::IRBuilder for Function {
 #[cfg(test)]
 mod function_skeleton_tests {
     use crate::IRViewer;
-    use crate::function::test_function;
+    use crate::function::{test_function, test_function_tracking};
     use crate::node::{NodeKind, ValueKind};
 
     #[test]
@@ -592,17 +583,16 @@ mod function_skeleton_tests {
     fn get_vn_for_value_round_trips_via_value_key() {
         use crate::node::ValueType;
 
-        let mut f = test_function();
-        let phi =
-            f.graph_mut()
-                .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::int(64))]);
-        let phi_value = f.node_outputs(phi)[0];
         let vn = rsleigh::Vn {
             size: 8,
             addr_off: 0x20,
             addr_space: rsleigh::VnSpace::REGISTER,
         };
-        f.set_all_vns(vec![vn]); // only a tracked vn can be tagged
+        let mut f = test_function_tracking(vec![vn]);
+        let phi =
+            f.graph_mut()
+                .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::int(64))]);
+        let phi_value = f.node_outputs(phi)[0];
         assert_eq!(f.get_vn_for_value(phi_value), None);
         f.set_vn_for_value(phi_value, vn);
         assert_eq!(f.get_vn_for_value(phi_value), Some(vn));
@@ -624,6 +614,31 @@ mod function_skeleton_tests {
         assert_eq!(f.side_tables().arg_index_to_values(0), &[value]);
         assert_eq!(f.graph().producer(value), carrier);
     }
+
+    fn reg(addr_off: u64, size: u32) -> rsleigh::Vn {
+        rsleigh::Vn {
+            addr_space: rsleigh::VnSpace::REGISTER,
+            addr_off,
+            size,
+        }
+    }
+
+    /// `Function::new` keeps the largest of nested varnodes, whoever builds
+    /// it: an `InitialVnId` for `eax` beside `rax` would split one register
+    /// into two SSA variables.
+    #[test]
+    fn new_tracks_only_the_largest_of_nested_varnodes() {
+        let f = test_function_tracking(vec![reg(0, 4), reg(8, 8), reg(0, 8)]);
+        assert_eq!(f.all_vns(), [reg(0, 8), reg(8, 8)]);
+    }
+
+    /// Only containment collapses: two partially overlapping varnodes are two
+    /// variables, and a varnode listed twice is tracked once.
+    #[test]
+    fn new_keeps_partial_overlaps_and_one_copy_of_a_duplicate() {
+        let f = test_function_tracking(vec![reg(4, 8), reg(0, 8), reg(4, 8)]);
+        assert_eq!(f.all_vns(), [reg(0, 8), reg(4, 8)]);
+    }
 }
 
 #[cfg(test)]
@@ -631,7 +646,7 @@ mod compact_tests {
 
     use super::Function;
     use crate::IRViewer;
-    use crate::function::{test_function, test_initial_memory};
+    use crate::function::{test_function, test_function_tracking, test_initial_memory};
     use crate::node::{NodeId, NodeKind, ValueKind, ValueType};
 
     fn int_const_node(f: &mut Function, v: u128, ty: ValueType) -> NodeId {
@@ -888,7 +903,12 @@ mod compact_tests {
     fn retain_reachable_drops_side_table_entry_for_dropped_node() {
         use crate::node::ValueType;
 
-        let mut f = test_function();
+        let dead_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x88,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let mut f = test_function_tracking(vec![dead_vn]);
         let entry = f.entry();
         let mem = test_initial_memory(&f);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -901,13 +921,7 @@ mod compact_tests {
         let zombie_phi =
             f.graph_mut()
                 .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::int(64))]);
-        let dead_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x88,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
         let zombie_phi_value = f.node_outputs(zombie_phi)[0];
-        f.set_all_vns(vec![dead_vn]); // only a tracked vn can be tagged
         f.set_vn_for_value(zombie_phi_value, dead_vn);
         assert_eq!(
             f.get_vn_for_value(zombie_phi_value),
@@ -1014,7 +1028,17 @@ mod compact_tests {
     fn compact_keeps_reachable_phi_tag_drops_unreachable() {
         use crate::node::ValueType;
 
-        let mut f = test_function();
+        let live_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x10,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let dead_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x88,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let mut f = test_function_tracking(vec![live_vn, dead_vn]);
         let entry = f.entry();
         let mem = test_initial_memory(&f);
         // Kept live by Return.
@@ -1035,18 +1059,7 @@ mod compact_tests {
             f.graph_mut()
                 .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::int(64))]);
 
-        let live_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x10,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
-        let dead_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x88,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
         let dead_phi_value = f.node_outputs(dead_phi)[0];
-        f.set_all_vns(vec![live_vn, dead_vn]); // only tracked vns can be tagged
         f.set_vn_for_value(live_phi_value, live_vn);
         f.set_vn_for_value(dead_phi_value, dead_vn);
 
@@ -1127,7 +1140,12 @@ mod compact_tests {
     fn clobber_output_value_maps_to_vn_via_value_vn() {
         use crate::node::ValueType;
 
-        let mut f = test_function();
+        let vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x40,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let mut f = test_function_tracking(vec![vn]);
         // Outputs are [Control, Memory, clobber].
         let call = f.graph_mut().create_node(
             NodeKind::Call { cc: None },
@@ -1139,12 +1157,6 @@ mod compact_tests {
             ],
         );
         let clobber_value = f.node_outputs(call)[2];
-        let vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x40,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
-        f.set_all_vns(vec![vn]); // only a tracked vn can be tagged
         assert_eq!(f.get_vn_for_value(clobber_value), None);
         f.set_vn_for_value(clobber_value, vn);
         assert_eq!(f.get_vn_for_value(clobber_value), Some(vn));
@@ -1165,7 +1177,12 @@ mod compact_tests {
             .build(&regs)
             .unwrap();
 
-        let mut f = test_function();
+        let clob_vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x40,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let mut f = test_function_tracking(vec![clob_vn]);
         let entry = f.entry();
         let mem = test_initial_memory(&f);
         // Created before the Call so compaction reassigns ids.
@@ -1189,12 +1206,6 @@ mod compact_tests {
             ],
         );
         let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();
-        let clob_vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x40,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
-        f.set_all_vns(vec![clob_vn]); // only a tracked vn can be tagged
         f.set_vn_for_value(clob, clob_vn);
         f.set_call_cc(call, cc.clone());
         let _ret = f
