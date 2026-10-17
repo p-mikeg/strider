@@ -184,7 +184,7 @@ fn analyze_returns_populated_map_no_merge_error() -> Result<()> {
         let Some(ty) = fg.value_type_opt(out) else {
             return false;
         };
-        let Some(mask) = super::type_mask_u128(ty) else {
+        let Some(mask) = ty.int_mask_u128() else {
             return false;
         };
         kb.all_known(mask) && kb.ones == 4

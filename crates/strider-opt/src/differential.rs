@@ -36,7 +36,8 @@ pub(crate) const TYPES: &[(u32, ValueType)] = &[
 ];
 
 fn mask(ty: ValueType) -> u128 {
-    ty.bit_mask_u128()
+    ty.int_mask_u128()
+        .expect("the differential draws integers of at most 128 bits")
 }
 
 pub(crate) struct Gen<'r> {
@@ -1282,7 +1283,7 @@ fn a_range_contains_every_runtime_value() {
                 }
                 let iv = ranges.range_of(v, at);
                 checks += 1;
-                let m = f.value_type_opt(v).unwrap().bit_mask_u128();
+                let m = f.value_type_opt(v).unwrap().int_mask_u128().expect("at most 128 bits");
                 if !iv.is_top(m) {
                     nontop += 1;
                 }

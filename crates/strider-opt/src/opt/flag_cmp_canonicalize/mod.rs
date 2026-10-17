@@ -114,7 +114,7 @@ fn rewrite_at(edit: &mut crate::EditFunction<'_>, root: NodeId) -> Result<Peepho
 /// The width `width_src` binds, or `None` for a float and past the `u128` the
 /// const arithmetic here computes in.
 fn carrier_mask(binds: &Bindings, func: &strider_ir::Function, width_src: Capture) -> Option<u128> {
-    crate::opt::known_bits::type_mask_u128(binds.get_type(width_src, func)?)
+    binds.get_type(width_src, func)?.int_mask_u128()
 }
 
 /// Whether every listed capture carries one bit width.

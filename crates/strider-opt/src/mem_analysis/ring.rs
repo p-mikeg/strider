@@ -78,10 +78,7 @@ pub(crate) fn ring_overlap(
     b: i128,
     b_len: i128,
 ) -> bool {
-    let Some(mask) = ty
-        .filter(|ty| ty.is_integer() && ty.bit_width() <= 128)
-        .map(ValueType::bit_mask_u128)
-    else {
+    let Some(mask) = ty.and_then(ValueType::int_mask_u128) else {
         return true;
     };
     let ahead = |from: i128, to: i128| (to.wrapping_sub(from) as u128) & mask;

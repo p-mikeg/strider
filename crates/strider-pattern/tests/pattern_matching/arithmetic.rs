@@ -127,9 +127,9 @@ fn nested_any_partial_matches() {
     assert!(m.value(inner).is_some());
 }
 
-/// `bit_mask_u128` saturates at 128 bits, so at I256 an `IntConst(2^128-1)`
-/// is NOT the complement's all-ones; matching it would report a rewrite LHS
-/// that does not hold.
+/// At I256 the `u128` constant `2^128-1` is NOT the complement's all-ones, so
+/// `int_const(u128::MAX)` matching it would report a rewrite LHS that does not
+/// hold.
 #[test]
 fn bit_not_rejects_a_saturated_mask_past_the_carrier() {
     let mut t = Tb::empty();

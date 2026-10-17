@@ -99,6 +99,10 @@
   `const`, on a width outside `SUPPORTED`; `is_supported` tests one) and
   match `Int(w)` / `Float(w)`. `Debug` and `Display` print `I32` / `i32` as
   before; `float_from_bytes`' error no longer lists the valid sizes.
+- `ValueType::bit_mask_u128` is gone: it saturated to `u128::MAX` past 128
+  bits. `wrap_u128(v)` reduces a value to the width, exactly at every width
+  (a float gives 0); `int_mask_u128()` is the all-ones value, `None` for a
+  float or past 128 bits.
 
 ### Changed, Python
 
@@ -172,6 +176,9 @@
   names it.
 - Return-target verification on a 128-bit stack offset at the edge of the
   `i128` carrier reports the return unverified; it panicked.
+- At `I256` / `I512`, `And(x, 2^128 - 2)` is no longer read as the
+  interworking `& ~1` when recognising a return target: at those widths it
+  also clears bits 128 and up.
 
 ### Added, Rust
 

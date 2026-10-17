@@ -13,19 +13,15 @@ fn signed_min(ty: ValueType) -> i128 {
 }
 
 /// Result masked to `ty`, or `None` when the operation is undefined (division
-/// by zero, `INT_MIN / -1`) or `ty` is past the `u128` carrier: every arm below
-/// wraps, masks and shifts at 128 bits, which is the wrong modulus for a wider
-/// declared width.
+/// by zero, `INT_MIN / -1`) or `ty` has no `u128` modulus (a float, or past
+/// 128 bits): every arm below wraps, masks and shifts at 128 bits.
 ///
 /// Both operands are masked to `ty` at entry, the shift amount only after its
 /// out-of-range test. Div, Rem and ShiftRight are not safe under
 /// masking-commutativity, so they need the inputs already narrowed to give the
 /// right answer on a caller that passed raw bits.
 pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) -> Option<u128> {
-    if ty.bit_width() > 128 {
-        return None;
-    }
-    let mask = ty.bit_mask_u128();
+    let mask = ty.int_mask_u128()?;
     let bits = ty.bit_width() as u32;
     // Sleigh (opbehavior.cc:411) returns 0 when the shift amount reaches the
     // output width for IntLeft/IntRight, and `signbit ? calc_mask : 0` for
@@ -121,13 +117,10 @@ pub(crate) fn eval_int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) 
 /// `None` past the `u128` carrier, where the overflow arms would detect at 128
 /// bits rather than at `ty`'s declared width.
 pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Option<bool> {
-    if ty.bit_width() > 128 {
-        return None;
-    }
     // Unsigned arms compare raw u128s, so a narrow IntConst carrying high bits
     // beyond the type width would compare wrong without this mask. The signed
     // arms re-mask via get_signed_int, so the double-mask is idempotent there.
-    let mask = ty.bit_mask_u128();
+    let mask = ty.int_mask_u128()?;
     let l = l & mask;
     let r = r & mask;
 
@@ -151,7 +144,7 @@ pub(crate) fn eval_int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Opt
 
 /// The unary/extend/count helpers below are width-safe only because
 /// `get_unsigned_int` / `get_signed_int` return `None` past 128 bits; masking
-/// with `bit_mask_u128` instead would silently truncate an I256/I512.
+/// to the carrier instead would silently truncate an I256/I512.
 pub(crate) fn eval_int_unary(op: IntUnaryOp, v: u128, ty: ValueType) -> Option<u128> {
     let raw = match op {
         IntUnaryOp::Neg => v.wrapping_neg(),

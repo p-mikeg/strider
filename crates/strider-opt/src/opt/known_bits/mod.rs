@@ -14,15 +14,6 @@ mod tests;
 /// "no info").
 pub type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
 
-/// The all-ones mask for `ty`, or `None` for floats and for integers wider
-/// than the `u128` lattice (`I256` / `I512`).
-pub(crate) fn type_mask_u128(ty: ValueType) -> Option<u128> {
-    if !ty.is_integer() || ty.bit_width() > 128 {
-        return None;
-    }
-    Some(ty.bit_mask_u128())
-}
-
 /// Known-bit lattice for one output.  `ones` and `zeros` are masked to the
 /// output type's width and must never overlap: `ones & zeros == 0`, and a bit
 /// in neither set is unknown.
@@ -35,7 +26,7 @@ pub struct KnownBitsFacts {
 impl KnownBitsFacts {
     /// `None` for untracked types, meaning fully unknown, not a known zero.
     fn from_const(val: u128, ty: ValueType) -> Option<Self> {
-        let type_mask = type_mask_u128(ty)?;
+        let type_mask = ty.int_mask_u128()?;
         let masked = ty.get_unsigned_int(val)?;
         Some(KnownBitsFacts {
             ones: masked,
@@ -91,12 +82,12 @@ fn shift_known_bits(
     ty: ValueType,
     dir: ShiftDir,
 ) -> Option<KnownBitsFacts> {
-    // Callers already gated on `type_mask_u128(ty)`; this re-derivation never
+    // Callers already gated on `ty.int_mask_u128()`; this re-derivation never
     // fails.
-    let type_mask = type_mask_u128(ty)?;
+    let type_mask = ty.int_mask_u128()?;
     let rhs_mask = function
         .value_type_opt(rhs)
-        .and_then(type_mask_u128)
+        .and_then(ValueType::int_mask_u128)
         .unwrap_or(u128::MAX);
     match classify_const_shift(rhs_kb, rhs_mask, ty.bit_width() as u64) {
         ConstShift::Unknown => None,
@@ -147,7 +138,7 @@ fn node_known_bits(
     };
     let out_kind = function.value_kind(out);
     let ty = out_kind.as_value_or_err()?;
-    let Some(type_mask) = type_mask_u128(ty) else {
+    let Some(type_mask) = ty.int_mask_u128() else {
         return Ok(None);
     };
 
@@ -216,7 +207,7 @@ fn node_known_bits(
             let input_ty = input_kind.as_value_or_err()?;
             // An untracked input width must bail, not default `input_mask` to
             // 0: that would mark every bit known-zero.
-            let Some(input_mask) = type_mask_u128(input_ty) else {
+            let Some(input_mask) = input_ty.int_mask_u128() else {
                 return Ok(None);
             };
             let kb = known[value];
@@ -235,7 +226,7 @@ fn node_known_bits(
                 .expect("Extend has 1 input per node signature");
             let input_kind = function.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
-            let Some(input_mask) = type_mask_u128(input_ty) else {
+            let Some(input_mask) = input_ty.int_mask_u128() else {
                 return Ok(None);
             };
             let kb = known[value];
@@ -373,7 +364,7 @@ impl Optimizer for KnownBits {
                 if !ty.is_integer() {
                     return None;
                 }
-                let type_mask = type_mask_u128(ty)?;
+                let type_mask = ty.int_mask_u128()?;
                 if !kb.all_known(type_mask) {
                     return None;
                 }

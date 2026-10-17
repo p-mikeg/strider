@@ -44,11 +44,10 @@ fn all_same_width(
 
 /// Whether a coefficient computed in `u128` carries `ty`'s modulus.
 ///
-/// `bit_mask_u128` saturates at 128 bits, so `get_uint` still answers `Some` at
-/// I256/I512 and the coefficient arithmetic would run in the `u128` modulus
-/// rather than the type's: an I256 `C = 2^128 - 1` would give `C + 1 == 0`
-/// instead of `2^128`. The shift forms get the same bound from
-/// [`shift_in_range`].
+/// `get_uint` answers at I256/I512 for any value that fits a `u128`, so the
+/// coefficient arithmetic would run in the `u128` modulus rather than the
+/// type's: an I256 `C = 2^128 - 1` would give `C + 1 == 0` instead of `2^128`.
+/// The shift forms get the same bound from [`shift_in_range`].
 fn coefficient_fits_carrier(ty: strider_ir::node::ValueType) -> bool {
     ty.bit_width() <= 128
 }
@@ -456,7 +455,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             let Some(c_val) = bnd.get_uint(c, edit.function()) else {
                 return false;
             };
-            let Some(low_mask) = crate::opt::known_bits::type_mask_u128(ty) else {
+            let Some(low_mask) = ty.int_mask_u128() else {
                 return false;
             };
             c_val & low_mask == 0
@@ -477,7 +476,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             let Some(c_val) = bnd.get_uint(c, edit.function()) else {
                 return false;
             };
-            let Some(low_mask) = crate::opt::known_bits::type_mask_u128(ty) else {
+            let Some(low_mask) = ty.int_mask_u128() else {
                 return false;
             };
             // The mask must cover at least the low W bits; anything beyond that

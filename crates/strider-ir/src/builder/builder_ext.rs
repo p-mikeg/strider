@@ -66,10 +66,9 @@ pub trait IRBuilderExt: IRBuilder {
 
         // Past the `u128` carrier the fold would have to widen through a type
         // it cannot represent: `signed_val as u128` carries only 128 sign bits,
-        // and `build_int_const` masks with `bit_mask_u128`, which is
-        // `u128::MAX` for `I256` / `I512`, so a negative constant would land
-        // with a ZERO upper half. Emit a real `Extend` there instead;
-        // `strider-opt`'s `eval_sign_extend` declines the same fold.
+        // so a negative constant would land with a ZERO upper half. Emit a real
+        // `Extend` there instead; `strider-opt`'s `eval_sign_extend` declines
+        // the same fold.
         if output_type.bit_width() <= 128
             && let Some(unsigned_val) = self.int_const_u128(value_id)
             && let Some(signed_val) = self.int_const_i128(value_id)

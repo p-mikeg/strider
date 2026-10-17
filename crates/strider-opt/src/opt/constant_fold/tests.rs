@@ -2606,8 +2606,8 @@ fn factor_coefficients_are_exact_at_every_carrier_width() -> Result<()> {
     Ok(())
 }
 
-/// Past the `u128` carrier `get_uint` still answers `Some` (`bit_mask_u128`
-/// saturates), so without a width bound of their own the four non-shift forms
+/// Past the `u128` carrier `get_uint` still answers `Some` for a value that
+/// fits it, so without a width bound of their own the four non-shift forms
 /// would compute the coefficient in the wrong modulus. They must decline.
 #[test]
 fn factor_declines_past_the_u128_carrier() -> Result<()> {

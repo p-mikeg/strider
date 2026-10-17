@@ -122,7 +122,7 @@ impl Function {
         value: u128,
         ty: crate::node::ValueType,
     ) -> crate::node::const_value::ConstId {
-        let masked = value & ty.bit_mask_u128();
+        let masked = ty.wrap_u128(value);
         self.const_interner
             .intern(crate::node::const_value::ConstValue::Bits(masked))
     }

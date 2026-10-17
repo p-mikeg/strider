@@ -140,7 +140,7 @@ pub trait IRViewer {
             return None;
         };
         let v = self.function().const_value(id).fits_u128()?;
-        Some(v & ty.bit_mask_u128())
+        Some(ty.wrap_u128(v))
     }
 
     /// [`Self::int_const_u128`] sign-extended from its declared width.
