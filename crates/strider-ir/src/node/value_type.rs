@@ -58,6 +58,46 @@ value_types! {
 }
 
 impl ValueType {
+    /// The integer type `bits` wide. Panics on an unsupported width, which in
+    /// a `const` is a compile error.
+    #[inline]
+    pub const fn int(bits: u16) -> Self {
+        match bits {
+            1 => Self::I1,
+            8 => Self::I8,
+            16 => Self::I16,
+            24 => Self::I24,
+            32 => Self::I32,
+            40 => Self::I40,
+            48 => Self::I48,
+            56 => Self::I56,
+            64 => Self::I64,
+            72 => Self::I72,
+            80 => Self::I80,
+            96 => Self::I96,
+            112 => Self::I112,
+            128 => Self::I128,
+            256 => Self::I256,
+            512 => Self::I512,
+            _ => panic!("unsupported integer width"),
+        }
+    }
+
+    /// The float type `bits` wide; panics as [`Self::int`] does.
+    #[inline]
+    pub const fn float(bits: u16) -> Self {
+        match bits {
+            16 => Self::F16,
+            32 => Self::F32,
+            64 => Self::F64,
+            80 => Self::F80,
+            128 => Self::F128,
+            _ => panic!("unsupported float width"),
+        }
+    }
+}
+
+impl ValueType {
     #[inline]
     pub fn as_str(self) -> &'static str {
         match self {
@@ -285,6 +325,34 @@ impl VnTypeExt for rsleigh::Vn {
 #[cfg(test)]
 mod tests {
     use super::ValueType;
+
+    /// `int` / `float` name every type by its bit width, in a `const` too.
+    #[test]
+    fn int_and_float_name_every_type_by_its_bit_width() {
+        for ty in ValueType::ALL {
+            let bits = u16::try_from(ty.bit_width()).unwrap();
+            let named = if ty.is_float() {
+                ValueType::float(bits)
+            } else {
+                ValueType::int(bits)
+            };
+            assert_eq!(named, ty);
+        }
+        const WORD: ValueType = ValueType::int(32);
+        assert_eq!(WORD.bit_width(), 32);
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported integer width")]
+    fn int_refuses_an_unsupported_width() {
+        let _ = ValueType::int(12);
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported float width")]
+    fn float_refuses_an_unsupported_width() {
+        let _ = ValueType::float(8);
+    }
 
     /// Every byte size the vendored x86/ARM/AARCH64/MIPS/PowerPC specs can put
     /// on a p-code varnode.
