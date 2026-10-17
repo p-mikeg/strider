@@ -1735,6 +1735,46 @@ fn graph_invariants_float_const_wider_than_its_payload_detected() {
     }
 }
 
+/// Only the raw `Int` / `Float` variants can write a width off the list;
+/// validate names the output that carries it.
+#[test]
+fn local_typing_unsupported_width_detected() {
+    let mut s = spine();
+    let (bad, bad_value) = int_const(&mut s.f, 5, ValueType::Int(12));
+    let _ret =
+        s.f.graph_mut()
+            .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, bad_value], []);
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::UnsupportedValueType { node, output_idx: 0, ty: ValueType::Int(12) }
+                if *node == bad
+        )
+    });
+}
+
+/// Every supported width passes the same check, floats included.
+#[test]
+fn local_typing_supported_widths_pass() {
+    for ty in ValueType::SUPPORTED {
+        let mut s = spine();
+        let v = if ty.is_integer() {
+            int_const(&mut s.f, 1, ty).1
+        } else {
+            let n =
+                s.f.graph_mut()
+                    .create_node(NodeKind::FloatConst(1), [], [ValueKind::Typed(ty)]);
+            s.f.node_outputs_exact::<1>(n).unwrap()[0]
+        };
+        let _ret =
+            s.f.graph_mut()
+                .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, v], []);
+        assert_no_validation_err(&s.f, |e| {
+            matches!(e, ValidationError::UnsupportedValueType { .. })
+        });
+    }
+}
+
 /// A non-phi node reachable from its own output. The walk terminates on it, so
 /// nothing else notices, and reverse post-order then yields the node before its
 /// own producer.

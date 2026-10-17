@@ -3,8 +3,9 @@ use anyhow::anyhow;
 /// A value's type: an integer or an IEEE float, by its width in bits.
 ///
 /// Only [`Self::SUPPORTED`] widths are valid: [`Self::int`], [`Self::float`],
-/// the `*_from_bytes` constructors and `FromStr` refuse any other. Integers
-/// order before floats, each by width.
+/// the `*_from_bytes` constructors and `FromStr` refuse any other, and
+/// `validate` rejects a value carrying one. Integers order before floats,
+/// each by width.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ValueType {
     Int(u16),
