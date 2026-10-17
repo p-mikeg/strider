@@ -173,6 +173,10 @@
   still builds one.
 - `IRBuilderExt::build_int_const_limbs` takes any integer type (it refused
   one of 64 bits or fewer).
+- `Lifter::build_ir_with` ends a `CallOther` exactly where the `Cfg` ended
+  its region instead of re-deciding under the `cfg_opts` it is handed, so a
+  CFG built under other `call_other_overrides` lifts as it was built (the
+  op's footprint still comes from `cfg_opts`).
 
 ### Fixed
 
@@ -264,6 +268,8 @@
   builds a CFG as `Lifter::build_cfg` does.
 - `Cfg::region_containing`: the region owning an address, of those containing
   it the one with the greatest start.
+- `strider_cfg::user_op_of`: the user-op a `CallOther` names, the one decode
+  the CFG and the lift read.
 
 ## 0.2.0
 
