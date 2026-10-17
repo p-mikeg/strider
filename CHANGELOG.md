@@ -185,6 +185,8 @@
 - `EditFunction::absorb_node_fingerprint` (the node-keyed
   `absorb_fingerprint`) and `EditFunction::clear_arg_values_from`, so no pass
   needs `function_mut()` for an overlay write.
+- `ValueType::int(bits)` / `ValueType::float(bits)`, `const fn`; an unsupported
+  width panics (a compile error in a `const`).
 
 ## 0.2.0
 
