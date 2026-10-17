@@ -82,24 +82,6 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     }
 }
 
-fn kind_matches(expected: ExpectedValueKind, actual: ValueKind) -> bool {
-    match expected {
-        ExpectedValueKind::Control => matches!(actual, ValueKind::Control),
-        ExpectedValueKind::Memory => matches!(actual, ValueKind::Memory),
-        ExpectedValueKind::PhiToken => matches!(actual, ValueKind::PhiToken),
-        ExpectedValueKind::Bool => {
-            matches!(actual, ValueKind::Typed(ValueType::I1))
-        }
-        ExpectedValueKind::AnyInt => {
-            matches!(actual, ValueKind::Typed(t) if t.is_integer())
-        }
-        ExpectedValueKind::AnyFloat => {
-            matches!(actual, ValueKind::Typed(t) if t.is_float())
-        }
-        ExpectedValueKind::AnyValue => matches!(actual, ValueKind::Typed(_)),
-    }
-}
-
 pub struct ValidationErrors(pub Vec<ValidationError>);
 
 #[derive(Debug, thiserror::Error)]
