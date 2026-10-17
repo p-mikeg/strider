@@ -263,7 +263,7 @@ pub fn low_bits_mask_u128(bits: usize) -> u128 {
 
 impl ValueType {
     /// Byte size 1 maps to `I8`, never `I1`.
-    pub fn int_for_byte_size(n: u32) -> crate::error::Result<Self> {
+    pub fn int_from_bytes(n: u32) -> crate::error::Result<Self> {
         match n {
             1 => Ok(Self::I8),
             2 => Ok(Self::I16),
@@ -284,7 +284,7 @@ impl ValueType {
         }
     }
 
-    pub fn float_for_byte_size(n: u32) -> crate::error::Result<Self> {
+    pub fn float_from_bytes(n: u32) -> crate::error::Result<Self> {
         match n {
             2 => Ok(Self::F16),
             4 => Ok(Self::F32),
@@ -314,12 +314,12 @@ pub trait VnTypeExt {
 impl VnTypeExt for rsleigh::Vn {
     #[inline]
     fn int_type(&self) -> crate::error::Result<ValueType> {
-        ValueType::int_for_byte_size(self.size)
+        ValueType::int_from_bytes(self.size)
     }
 
     #[inline]
     fn float_type(&self) -> crate::error::Result<ValueType> {
-        ValueType::float_for_byte_size(self.size)
+        ValueType::float_from_bytes(self.size)
     }
 }
 #[cfg(test)]
@@ -359,16 +359,16 @@ mod tests {
     #[test]
     fn sleigh_varnode_widths_round_trip() {
         for n in [1u32, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 32, 64] {
-            let ty = ValueType::int_for_byte_size(n)
-                .unwrap_or_else(|e| panic!("int_for_byte_size({n}): {e}"));
+            let ty =
+                ValueType::int_from_bytes(n).unwrap_or_else(|e| panic!("int_from_bytes({n}): {e}"));
             assert_eq!(ty.byte_size(), n as usize);
             assert!(ty.is_integer());
         }
-        assert_eq!(ValueType::int_for_byte_size(1).unwrap(), ValueType::int(8));
+        assert_eq!(ValueType::int_from_bytes(1).unwrap(), ValueType::int(8));
 
         for n in [2u32, 4, 8, 10, 16] {
-            let ty = ValueType::float_for_byte_size(n)
-                .unwrap_or_else(|e| panic!("float_for_byte_size({n}): {e}"));
+            let ty = ValueType::float_from_bytes(n)
+                .unwrap_or_else(|e| panic!("float_from_bytes({n}): {e}"));
             assert_eq!(ty.byte_size(), n as usize);
             assert!(ty.is_float());
         }
@@ -466,19 +466,19 @@ mod tests {
     }
 
     #[test]
-    fn int_for_byte_size_10_is_i80() {
-        let ty = ValueType::int_for_byte_size(10).expect("10 must convert to I80");
+    fn int_from_bytes_10_is_i80() {
+        let ty = ValueType::int_from_bytes(10).expect("10 must convert to I80");
         assert_eq!(ty, ValueType::int(80));
     }
 
     #[test]
-    fn int_for_byte_size_maps_widths() {
+    fn int_from_bytes_maps_widths() {
         use super::ValueType as T;
-        assert_eq!(T::int_for_byte_size(1).unwrap(), T::int(8));
-        assert_eq!(T::int_for_byte_size(6).unwrap(), T::int(48));
-        assert_eq!(T::int_for_byte_size(8).unwrap(), T::int(64));
-        assert_eq!(T::int_for_byte_size(64).unwrap(), T::int(512));
-        assert_eq!(T::int_for_byte_size(3).unwrap(), T::int(24));
+        assert_eq!(T::int_from_bytes(1).unwrap(), T::int(8));
+        assert_eq!(T::int_from_bytes(6).unwrap(), T::int(48));
+        assert_eq!(T::int_from_bytes(8).unwrap(), T::int(64));
+        assert_eq!(T::int_from_bytes(64).unwrap(), T::int(512));
+        assert_eq!(T::int_from_bytes(3).unwrap(), T::int(24));
 
         // I48 fits u64, so it is not wide.
         assert_eq!(T::int(48).byte_size(), 6);
