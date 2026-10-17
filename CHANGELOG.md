@@ -187,6 +187,9 @@
 - `ConstantFold`'s shift-factor rules (`x + (x << c)` -> `x * (2^c + 1)` and
   kin) read a constant shift count unsigned, as p-code does: a boolean count
   of 1, or a count typed wider than 128 bits, now folds.
+- The lifter's p-code constant folder treats a temporary of 11, 13 or 15
+  bytes, or past 16 bytes, as unknown; it used to wrap it at 128 bits or with
+  a mask no value type has.
 
 ### Added, Rust
 

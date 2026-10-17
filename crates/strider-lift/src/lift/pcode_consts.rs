@@ -22,6 +22,8 @@ use rustc_hash::FxHashMap;
 
 use strider_cfg::MachineInsnAddr;
 use strider_cfg::PcodeInsnAddr;
+use strider_ir::IntBinaryOp;
+use strider_ir::node::ValueType;
 
 /// Keyed by the varnode's full identity: two temporaries can share an offset
 /// at different widths.
@@ -91,52 +93,25 @@ impl PcodeConsts {
         use rsleigh::Opcode;
         let a = || self.value_of(insn.inputs.first()?);
         let b = || self.value_of(insn.inputs.get(1)?);
-        let out_size = insn.output.as_ref()?.size;
-        match insn.opcode {
-            Opcode::Copy => a(),
-            Opcode::IntAdd => Some(a()?.wrapping_add(b()?)),
-            Opcode::IntSub => Some(a()?.wrapping_sub(b()?)),
-            Opcode::IntMul => Some(a()?.wrapping_mul(b()?)),
-            Opcode::IntLeft => Some(shift_left(a()?, b()?, out_size)),
-            Opcode::IntRight => Some(shift_right(a()?, b()?, out_size)),
-            Opcode::IntOr => Some(a()? | b()?),
-            Opcode::IntAnd => Some(a()? & b()?),
-            Opcode::IntXor => Some(a()? ^ b()?),
+        let (op, l, r) = match insn.opcode {
+            Opcode::Copy => return a(),
+            Opcode::IntAdd => (IntBinaryOp::Add, a()?, b()?),
+            // `a - b` is `a + (-b)` in the output's ring.
+            Opcode::IntSub => (IntBinaryOp::Add, a()?, b()?.wrapping_neg()),
+            Opcode::IntMul => (IntBinaryOp::Mul, a()?, b()?),
+            Opcode::IntLeft => (IntBinaryOp::ShiftLeft, a()?, b()?),
+            Opcode::IntRight => (IntBinaryOp::ShiftRight, a()?, b()?),
+            Opcode::IntOr => (IntBinaryOp::Or, a()?, b()?),
+            Opcode::IntAnd => (IntBinaryOp::And, a()?, b()?),
+            Opcode::IntXor => (IntBinaryOp::Xor, a()?, b()?),
             // Deliberately narrow: an unmodelled op is not an error here, only
             // an unknown, and the caller that needs a register address fails
             // closed on it.
-            _ => None,
-        }
+            _ => return None,
+        };
+        let ty = ValueType::int_from_bytes(insn.output.as_ref()?.size).ok()?;
+        strider_ir::eval::int_binary(op, l, r, ty)
     }
-}
-
-/// `opbehavior.cc:411` `OpBehaviorIntLeft`: a count at or past `8 * sizeout`
-/// gives 0, not a shift by a clamped count. Past 128 the trailing [`mask_to`]
-/// would not cover the difference.
-fn shift_left(v: u128, count: u128, out_size: u32) -> u128 {
-    shifted(count, out_size, || {
-        u32::try_from(count).ok().and_then(|c| v.checked_shl(c))
-    })
-}
-
-/// `opbehavior.cc:432` `OpBehaviorIntRight`, which masks the input to the
-/// output width BEFORE shifting: masking only the result keeps bits that were
-/// never in the output.
-fn shift_right(v: u128, count: u128, out_size: u32) -> u128 {
-    shifted(count, out_size, || {
-        u32::try_from(count)
-            .ok()
-            .and_then(|c| mask_to(v, out_size).checked_shr(c))
-    })
-}
-
-/// A count `8 * out_size` or more is zero; so is one past `u128`'s width,
-/// where every kept bit has left the representable range.
-fn shifted(count: u128, out_size: u32, f: impl FnOnce() -> Option<u128>) -> u128 {
-    if count >= u128::from(out_size) * 8 {
-        return 0;
-    }
-    f().unwrap_or(0)
 }
 
 fn mask_to(v: u128, size_bytes: u32) -> u128 {
@@ -379,6 +354,34 @@ mod tests {
             ),
         );
         assert_eq!(c.value_of(&out), Some(0));
+    }
+
+    /// A 32-byte temporary has no `u128` ring: `2^127 + 2^127` is `2^128`
+    /// there, which the carrier wraps to 0. Unknown, not a wrong constant.
+    #[test]
+    fn a_sum_past_the_u128_carrier_is_unknown() {
+        let t0 = vn(VnSpace::UNIQUE, 1000, 32);
+        let t1 = vn(VnSpace::UNIQUE, 1032, 32);
+        let mut c = PcodeConsts::default();
+        c.observe(
+            at(0x10, 0),
+            &op(Opcode::IntLeft, Some(t0), &[konst(1), konst(127)]),
+        );
+        c.observe(at(0x10, 1), &op(Opcode::IntAdd, Some(t1), &[t0, t0]));
+        assert_eq!(c.value_of(&t1), None);
+    }
+
+    /// An 11-byte temporary has no value type, so its sum is unknown rather
+    /// than computed in a width the IR cannot carry.
+    #[test]
+    fn a_temporary_of_an_unlisted_width_is_unknown() {
+        let t = vn(VnSpace::UNIQUE, 1000, 11);
+        let mut c = PcodeConsts::default();
+        c.observe(
+            at(0x10, 0),
+            &op(Opcode::IntAdd, Some(t), &[konst_of(2, 11), konst_of(3, 11)]),
+        );
+        assert_eq!(c.value_of(&t), None);
     }
 
     #[test]
