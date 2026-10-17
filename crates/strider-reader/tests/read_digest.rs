@@ -101,9 +101,7 @@ fn probe(
 /// an error, so this reads its message.
 fn rom_refusal(e: &anyhow::Error) -> u8 {
     let msg = e.to_string();
-    if msg.contains("writable mapping") {
-        1
-    } else if msg.contains("relocation of type") {
+    if msg.contains("relocation of type") {
         2
     } else if msg.contains("not mapped") || msg.contains("spans past mapped memory") {
         3

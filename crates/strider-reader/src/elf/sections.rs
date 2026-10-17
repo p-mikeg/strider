@@ -956,9 +956,9 @@ fn collect_loadable_segments<'d>(
         // sizes the mapping from `p_filesz`, glibc rejects the segment). The
         // mapped extent is taken as `p_memsz` because `writable` /
         // `executable` are tracked on it, so serving the tail would let the
-        // ROM view (fetch regions minus `writable`) answer for the tail of a
-        // WRITABLE segment, and would answer a straddling fetch from the wrong
-        // one. Clamping under-approximates rather than over-serves: an
+        // ROM view (read-only regions cut by `writable`) answer for the tail
+        // of a WRITABLE segment, and would answer a straddling fetch from the
+        // wrong one. Clamping under-approximates rather than over-serves: an
         // address in the tail reads as unmapped.
         // Saturating on a 32-bit host, where `p_memsz` can exceed
         // `usize::MAX`: the `min` then yields `data.len()`, which is right,
