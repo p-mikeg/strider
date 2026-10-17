@@ -384,3 +384,70 @@ fn a64_immediates_match_the_assembler() {
         );
     }
 }
+
+/// The proptest pinning `field`'s round trip, by name. Exhaustive, so a new
+/// `Field` does not compile until it names one.
+fn round_trip_of(field: Field) -> &'static str {
+    match field {
+        Field::Data { .. } => "data_round_trips",
+        Field::ArmBranch24 { .. } => "arm_branch_round_trips",
+        Field::ArmPrel31 => "arm_prel31_round_trips",
+        Field::ArmMovw { .. } | Field::ThumbMovw { .. } => "movw_round_trips",
+        Field::ThumbBranch { .. } => "thumb_branch_round_trips",
+        Field::MipsHalf16(_) => "mips_halves_rebuild_the_value",
+        Field::MipsPc16 => "mips_branch_round_trips",
+        Field::Mips26 => "mips_jump_round_trips",
+        Field::PpcHalf16(_) => "ppc_halves_rebuild_the_value",
+        Field::A64Branch26
+        | Field::A64Imm19
+        | Field::A64Imm14
+        | Field::A64Adr { .. }
+        | Field::A64Lo12 { .. }
+        | Field::A64Movw { .. }
+        | Field::PpcBranch24
+        | Field::PpcBranch14
+        | Field::PpcHalf16Ds(_) => "rela_only_fields_touch_only_their_bits",
+    }
+}
+
+/// Every field names a round trip this file defines.
+#[test]
+fn every_field_names_a_round_trip_defined_here() {
+    let source = include_str!("encodings_tests.rs");
+    for field in [
+        Field::Data {
+            bytes: 4,
+            signed: false,
+        },
+        Field::A64Branch26,
+        Field::A64Imm19,
+        Field::A64Imm14,
+        Field::A64Adr {
+            page: true,
+            check: true,
+        },
+        Field::A64Lo12 { shift: 0 },
+        Field::A64Movw {
+            group: 0,
+            check: true,
+        },
+        Field::ArmBranch24 { call: true },
+        Field::ArmPrel31,
+        Field::ArmMovw { top: false },
+        Field::ThumbBranch { call: true },
+        Field::ThumbMovw { top: false },
+        Field::PpcBranch24,
+        Field::PpcBranch14,
+        Field::PpcHalf16(Half::Lo),
+        Field::PpcHalf16Ds(Half::Lo),
+        Field::Mips26,
+        Field::MipsHalf16(Half::Lo),
+        Field::MipsPc16,
+    ] {
+        let name = round_trip_of(field);
+        assert!(
+            source.contains(&format!("fn {name}(")),
+            "{field:?} names {name}, which this file does not define"
+        );
+    }
+}
