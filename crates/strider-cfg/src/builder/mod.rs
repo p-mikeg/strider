@@ -1863,7 +1863,7 @@ mod tests {
     }
 
     #[test]
-    fn add_region_inserts_into_graph_and_map() {
+    fn add_region_inserts_into_graph_and_index() {
         let mut engine = make_engine();
         let mut b = make_builder(0x1000, &mut engine);
         let r = make_region(&[(0x1000, 0), (0x1004, 0)]);
