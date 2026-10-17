@@ -119,7 +119,9 @@ where
     /// Returns `Err` from [`Lifter::new`]: `Sleigh::regs()` or
     /// `Sleigh::user_op_names()` failing, the arch declaring no address space
     /// with shortcut `'r'` or naming that space something other than `"ram"`,
-    /// and `FlowVars::discover` failing.
+    /// and `DecodeEngine::new` failing. An arch and sla that disagree on the
+    /// ISA mode (a mode var the sla does not flow, an unpaired
+    /// `ISAModeSwitch`) fail too.
     pub fn new(
         arch: strider_target::SleighArch,
         sleigh: rsleigh::Sleigh<R>,

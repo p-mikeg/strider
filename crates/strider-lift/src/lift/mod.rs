@@ -64,48 +64,29 @@ pub type ReturnSite = (
 /// rebuild iteration.  The calling convention is per-function, hence a per-call
 /// argument.
 pub struct Lifter<R: rsleigh::MemReader> {
-    arch: strider_target::SleighArch,
-    /// Borrowed `&mut` to build the CFG, then `&` to lift it.
-    sleigh: rsleigh::Sleigh<R>,
+    /// The Sleigh and the decode context it carries across functions: `&mut`
+    /// to build a CFG, `&` to lift one.
+    engine: strider_cfg::DecodeEngine<R>,
     /// Cached at construction: `Sleigh::regs()` is expensive.
     sleigh_regs: rsleigh::SleighRegs,
     /// The declared register file as a slice, for the per-op containment
     /// queries in [`pcode_consts`]. `SleighRegs` only hands out an iterator.
     declared_reg_vns: Vec<rsleigh::Vn>,
-    user_op_names: Vec<String>,
     /// This engine's address spaces, for [`Self::check_cfg_space_ids`].
     space_ids: rsleigh::SpaceIds,
     /// This engine's addresses, in bytes: the width a convention's stack
     /// geometry has to match.
     ram_addr_size: u32,
-    /// Flowing context vars, discovered once (constant per sla) and lent to
-    /// every `build_cfg` so decode mode propagates along CFG edges.
-    flow_vars: strider_cfg::FlowVars,
-    /// The flow context of a cold entry on a fresh engine (the pspec defaults),
-    /// captured before any decode.  Each function's entry is reset to this to
-    /// undo a prior function's leaked commit on the reused engine.
-    entry_defaults: strider_cfg::FlowContext,
-    /// The same, for the `noflow` vars that still change the decode
-    /// ([`SleighArch::transient_decode_vars`]).  They are outside `flow_vars`
-    /// by construction, so the builder resets them at each decode instead.
-    transient_defaults: Vec<(&'static str, u32)>,
-    /// Each [`SleighArch::flow_commit_vars`] var with its flow class and pspec
-    /// default, read once per engine. A default is committed globally, so any
-    /// address reads the same value.
-    flow_commit_defaults: Vec<(&'static str, strider_cfg::FlowCommit, u32)>,
-    /// The entry context each ISA mode last pinned, keyed by the mode value
-    /// ([`SleighArch::entry_mode_context`]), `None` for an arch without one.
-    entry_contexts: rustc_hash::FxHashMap<Option<u32>, strider_cfg::FlowContext>,
+    /// The register a branch commits its target's ISA mode to (ARM's
+    /// `setISAMode` reads it, MIPS's `JXWritePC` writes it), `None` exactly
+    /// where the arch has no ISA-mode var.
+    isa_mode_switch_vn: Option<rsleigh::Vn>,
 }
 
 impl<R: rsleigh::MemReader> Lifter<R> {
     pub fn new(arch: strider_target::SleighArch, sleigh: rsleigh::Sleigh<R>) -> Result<Self> {
         let sleigh_regs = sleigh.regs()?;
         let declared_reg_vns = sleigh_regs.vns().collect();
-        // Not `unwrap_or_default`: an empty table lifts every CALLOTHER into
-        // "user-op id N not in Sleigh's user_op table" and drops every
-        // `CallOther` ABI footprint.
-        let user_op_names = sleigh.user_op_names()?;
         // `VnSpace::RAM` is the shortcut byte `b'r'`, which Sleigh derives from
         // the first character of a space's name, bumping on collision.  A
         // second processor space named with an `r` would take a bumped
@@ -132,59 +113,47 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         }
         let ram_addr_size = ram.addr_size();
         let space_ids = sleigh.space_ids();
-        let flow_vars = strider_cfg::FlowVars::discover(&sleigh)?;
-        // Read on the still-fresh engine, so this is the pspec default, not a
-        // leak.  The address is immaterial: a flowing var's default is committed
-        // globally, so any address reads the same value.
-        let entry_defaults = flow_vars.snapshot(&sleigh, 0);
-        // A hard error, unlike `transient_defaults` below: a named var the sla
-        // does not declare means this preset's list is wrong, and silently
-        // dropping it would leave the leak it exists to close.
-        let flow_commit_defaults: Vec<(&'static str, strider_cfg::FlowCommit, u32)> = arch
-            .flow_commit_vars()
-            .iter()
-            .map(|&name| {
-                let class = flow_vars.commit_class(name);
-                Ok((name, class, sleigh.get_context_at(0, name)?))
-            })
-            .collect::<Result<_>>()?;
-        let transient_defaults = arch
-            .transient_decode_vars()
-            .iter()
-            .filter_map(|name| Some((*name, sleigh.get_context_at(0, name).ok()?)))
-            .collect();
+        // Capture and carry are paired BOTH ways: `name_to_vn` answers `None`
+        // for a misspelling rather than erroring, so a one-directional check
+        // would pass vacuously while the mode bit is never captured.
+        let isa_mode_switch_vn = sleigh_regs.name_to_vn("ISAModeSwitch");
+        if isa_mode_switch_vn.is_some() != arch.isa_mode_var().is_some() {
+            return Err(anyhow!(
+                "{arch:?}: ISAModeSwitch resolved={}, isa_mode_var={:?}",
+                isa_mode_switch_vn.is_some(),
+                arch.isa_mode_var(),
+            ));
+        }
         Ok(Self {
-            arch,
-            sleigh,
+            engine: strider_cfg::DecodeEngine::new(arch, sleigh)?,
             sleigh_regs,
             declared_reg_vns,
-            user_op_names,
             space_ids,
             ram_addr_size,
-            flow_vars,
-            entry_defaults,
-            transient_defaults,
-            flow_commit_defaults,
-            entry_contexts: rustc_hash::FxHashMap::default(),
+            isa_mode_switch_vn,
         })
     }
 
     /// Indexed by `user_op_id`.
     #[must_use]
     pub fn user_op_names(&self) -> &[String] {
-        &self.user_op_names
+        self.engine.user_op_names()
     }
 
     /// [`strider_target::BuiltCallingConvention::check_addr_size`] against this
     /// engine's `ram`.
     pub(crate) fn check_cc(&self, cc: &strider_target::BuiltCallingConvention) -> Result<()> {
         cc.check_addr_size(self.ram_addr_size)
-            .map_err(|e| anyhow!("{:?}: {e}", self.arch.preset()))
+            .map_err(|e| anyhow!("{:?}: {e}", self.arch().preset()))
     }
 
     #[must_use]
     pub fn sleigh(&self) -> &rsleigh::Sleigh<R> {
-        &self.sleigh
+        self.engine.sleigh()
+    }
+
+    pub(crate) fn arch(&self) -> strider_target::SleighArch {
+        self.engine.arch()
     }
 
     #[must_use]
@@ -199,53 +168,15 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         &self.declared_reg_vns
     }
 
-    /// The CFG of the function at `entry`. Never errs on incompleteness:
-    /// [`strider_cfg::Cfg::incomplete`] names what it cannot vouch for, so
-    /// the resolve loop can call it every round.
+    /// The CFG of the function at `entry`; see
+    /// [`strider_cfg::DecodeEngine::build_cfg`]. The resolve loop calls it
+    /// every round.
     pub fn build_cfg(
         &mut self,
         entry: strider_cfg::MachineInsnAddr,
         cfg_opts: &strider_cfg::CfgOptions,
     ) -> Result<strider_cfg::Cfg> {
-        // A prior function's `globalset` holds forward until the next change
-        // point and leaks into this cold entry on a reused engine: pin the
-        // entry back to the pspec defaults captured on the fresh engine.
-        let entry_mode = self.arch.entry_mode_context(entry.addr);
-        let decode_addr = if entry_mode.is_some() {
-            entry.addr & !1
-        } else {
-            entry.addr
-        };
-        // The pin target is the context this mode last produced, not the bare
-        // defaults: several sla vars view the ISA-mode bit (ARM `TMode`, `T`,
-        // `LowBitCodeMode`, `ISA_MODE`), so defaults-then-mode-bit ends on a
-        // context the defaults do not describe, and re-pinning the defaults
-        // rewrites every view of the bit on every call.  A `set_context_at` is
-        // logged for `Sleigh::clone` to replay and the log is bounded, so
-        // re-analysing one entry must cost no commit.
-        let mode_key = entry_mode.map(|(_, value)| value);
-        let want = self
-            .entry_contexts
-            .get(&mode_key)
-            .unwrap_or(&self.entry_defaults);
-        self.flow_vars.pin_at(&mut self.sleigh, decode_addr, want)?;
-        // The pin misses a mode var a sla does not declare flowing, and its
-        // diff can write an alias of the mode bit last, flipping it back.
-        if let Some((var, value)) = entry_mode
-            && self.sleigh.get_context_at(decode_addr, var)? != value
-        {
-            self.sleigh.set_context_at(decode_addr, var, value)?;
-        }
-        // The function's now-committed ISA mode, the base context the builder
-        // decodes a strider-resolved target in.
-        let function_mode = self.flow_vars.snapshot(&self.sleigh, decode_addr);
-        self.entry_contexts.insert(mode_key, function_mode.clone());
-        strider_cfg::Builder::for_arch(&self.arch, &mut self.sleigh, decode_addr, cfg_opts)
-            .with_flow_context(&self.flow_vars, function_mode)
-            .with_transient_defaults(&self.transient_defaults)
-            .with_flow_commit_defaults(&self.flow_commit_defaults)
-            .with_user_op_names(&self.user_op_names)
-            .build()
+        self.engine.build_cfg(entry, cfg_opts)
     }
 
     /// Returns the unique set only; ordering is applied by
@@ -337,7 +268,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             let Ok((_, name)) = call::decode_user_op(insn, self.user_op_names()) else {
                 continue;
             };
-            match classify_with(overrides, self.arch.preset(), name) {
+            match classify_with(overrides, self.arch().preset(), name) {
                 None | Some(CallOtherLookup::Class(CallOtherClass::NoOp)) => {}
                 Some(CallOtherLookup::Class(CallOtherClass::Call(abi))) => found.extend(
                     abi.implicit_reads
@@ -1261,5 +1192,19 @@ mod tests {
                 "{preset:?}: an empty user-op table makes every CALLOTHER fail"
             );
         }
+    }
+
+    /// x86-64 paired with the ARM sla: the sla declares `ISAModeSwitch`, so a
+    /// branch's mode commit would be captured for an arch with no mode to
+    /// carry it into.
+    #[test]
+    fn an_unpaired_isa_mode_switch_is_an_error() {
+        let arm = strider_target::SleighArch::arm();
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x10], 0x1000);
+        let sleigh = rsleigh::Sleigh::new(arm.sla_spec(), arm.pspec(), reader).expect("sleigh");
+        let err = super::Lifter::new(strider_target::SleighArch::x86_64(), sleigh)
+            .err()
+            .expect("an x86-64 lifter over the ARM sla");
+        assert!(err.to_string().contains("ISAModeSwitch"), "{err}");
     }
 }

@@ -8,7 +8,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let (user_op_id, name) = decode_user_op(insn, self.lifter.user_op_names())?;
         let class = strider_target::call_other_abi::classify_with(
             self.call_other_overrides,
-            self.lifter.arch.preset(),
+            self.lifter.arch().preset(),
             name,
         )
         .ok_or_else(|| {
@@ -97,7 +97,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // files that differ.
         let result_vn = match output.map(|vn| {
             let container = self.container_of(&vn);
-            if self.lifter.arch.callother_output_is_exact_in(&container) {
+            if self.lifter.arch().callother_output_is_exact_in(&container) {
                 vn
             } else {
                 container
