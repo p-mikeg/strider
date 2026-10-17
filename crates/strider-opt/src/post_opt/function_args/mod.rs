@@ -32,9 +32,7 @@ impl PostOptimizer for FunctionArgDetect {
         };
         // A second run over the same `Function` re-detects from scratch; the
         // register carriers the lifter recorded sit below `first_stack_arg`.
-        edit.function_mut()
-            .side_tables_mut()
-            .clear_arg_values_from(first_stack_arg as u32);
+        edit.clear_arg_values_from(first_stack_arg as u32);
         let alias_cfg = MemAnalyzer::new(MemOptions::for_purpose(
             MemPurpose::IncomingArgs,
             &opt_ctx.options.assumptions,

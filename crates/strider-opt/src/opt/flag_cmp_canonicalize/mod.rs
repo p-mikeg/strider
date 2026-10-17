@@ -491,9 +491,7 @@ fn absorb_cr_pack_fingerprints(
     }
     for n in interior {
         if n != into {
-            edit.function_mut()
-                .side_tables_mut()
-                .extend_asm_fingerprint_from(into, n);
+            edit.absorb_node_fingerprint(into, n);
         }
     }
 }

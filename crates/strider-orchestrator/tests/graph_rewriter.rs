@@ -66,9 +66,7 @@ fn replace_switch_address_with_const_collapses_switch_after_reoptimize() -> anyh
         let mut ctx = EditFunction::new(&mut g);
         let k0 = ctx.build_int_const(targets[0], ValueType::I64)?;
         let k0_node = ctx.function().producer(k0);
-        ctx.function_mut()
-            .side_tables_mut()
-            .extend_asm_fingerprint_from(k0_node, switch_id);
+        ctx.absorb_node_fingerprint(k0_node, switch_id);
         ctx.redirect_input(addr_use, k0);
         ctx.clean();
     }

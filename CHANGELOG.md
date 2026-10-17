@@ -180,6 +180,9 @@
   analysis.
 - `strider_opt::refresh_memory_classes`: re-derives what `stack_only()` /
   `heap_only()` read after an edit made outside a pipeline.
+- `EditFunction::absorb_node_fingerprint` (the node-keyed
+  `absorb_fingerprint`) and `EditFunction::clear_arg_values_from`, so no pass
+  needs `function_mut()` for an overlay write.
 
 ## 0.2.0
 

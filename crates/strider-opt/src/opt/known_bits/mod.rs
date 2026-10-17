@@ -428,9 +428,7 @@ impl Optimizer for KnownBits {
                     continue;
                 }
                 bump_cone_steps();
-                edit.function_mut()
-                    .side_tables_mut()
-                    .extend_asm_fingerprint_from(old_producer, n);
+                edit.absorb_node_fingerprint(old_producer, n);
                 if absorbed.contains(n) || !propagates_known_bits(edit.node_kind(n)) {
                     continue;
                 }

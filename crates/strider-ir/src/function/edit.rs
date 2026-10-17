@@ -547,24 +547,33 @@ impl<'g> EditFunction<'g> {
             .register_arg_value(index, value);
     }
 
-    /// Union `from_value`'s producer asm-fingerprint into `into_value`'s.
-    pub fn absorb_fingerprint(&mut self, into_value: ValueId, from_value: ValueId) {
-        let into = self.function().producer(into_value);
-        let from = self.function().producer(from_value);
-        self.function_mut()
+    /// Drops the integer-class argument carriers at `first_index` and above.
+    pub fn clear_arg_values_from(&mut self, first_index: u32) {
+        self.function
+            .side_tables_mut()
+            .clear_arg_values_from(first_index);
+    }
+
+    /// Union `from`'s asm-fingerprint into `into`'s (superset-only).
+    pub fn absorb_node_fingerprint(&mut self, into: NodeId, from: NodeId) {
+        self.function
             .side_tables_mut()
             .extend_asm_fingerprint_from(into, from);
+    }
+
+    /// [`Self::absorb_node_fingerprint`] over the two values' producers.
+    pub fn absorb_fingerprint(&mut self, into_value: ValueId, from_value: ValueId) {
+        let into = self.function.producer(into_value);
+        let from = self.function.producer(from_value);
+        self.absorb_node_fingerprint(into, from);
     }
 
     /// Redirect every use of `old` to `new`, first absorbing `old`'s producer
     /// asm-fingerprint into `new`'s (superset-only union).  Returns `true` iff
     /// a use moved.
     pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> bool {
-        let into = self.function.producer(new);
         let from = self.function.producer(old);
-        self.function
-            .side_tables_mut()
-            .extend_asm_fingerprint_from(into, from);
+        self.absorb_fingerprint(new, old);
         let changed = self.replace_all_uses(old, new);
         // `replace_all_uses` bypasses `update_input`'s per-edge hook, so the
         // orphaned producer is enqueued here (side-effect-guarded inside).
@@ -583,11 +592,7 @@ impl<'g> EditFunction<'g> {
         let only_use = self.value_has_one_use(old_value);
         self.update_input(input_id, new);
         if only_use {
-            let into = self.function.producer(new);
-            let from = self.function.producer(old_value);
-            self.function
-                .side_tables_mut()
-                .extend_asm_fingerprint_from(into, from);
+            self.absorb_fingerprint(new, old_value);
         }
     }
 
