@@ -570,13 +570,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         ops.iter()
             .filter(|op| {
                 op.opcode != rsleigh::Opcode::CallOther
-                    || !op
-                        .inputs
-                        .first()
-                        .filter(|vn| vn.addr_space == rsleigh::VnSpace::CONST)
-                        .and_then(|vn| usize::try_from(vn.addr_off).ok())
-                        .and_then(|id| self.user_op_names.get(id))
-                        .is_some_and(|name| name == "LOCK" || name == "UNLOCK")
+                    || !crate::user_op_of(op, self.user_op_names)
+                        .is_some_and(|(_, name)| name == "LOCK" || name == "UNLOCK")
             })
             .cloned()
             .collect()
