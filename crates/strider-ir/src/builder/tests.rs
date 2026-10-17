@@ -1872,16 +1872,70 @@ fn build_int_const_accepts_u256_and_u512() -> Result<()> {
     Ok(())
 }
 
+/// A narrow type takes limbs too, interning what the `u128` path interns; a
+/// float type is refused.
 #[test]
-fn build_int_const_limbs_rejects_non_wide_output_type() -> Result<()> {
+fn build_int_const_limbs_accepts_any_int_type() -> Result<()> {
     let mut b = builder_with_region()?;
+    let limbs = b.build_int_const_limbs(&[0x1_0000_0005, 7], ValueType::int(32))?;
+    let scalar = b.build_int_const(0x1_0000_0005u64, ValueType::int(32))?;
+    assert_eq!(b.function().int_const_u128(limbs), Some(5));
+    assert_eq!(b.function().int_const_u128(scalar), Some(5));
     let err = b
-        .build_int_const_limbs(&[0; 4], ValueType::int(64))
-        .expect_err("I64 must be rejected by build_int_const_limbs");
-    assert!(
-        err.to_string().contains("non-wide output type"),
-        "got: {err}"
+        .build_int_const_limbs(&[1], ValueType::float(64))
+        .expect_err("a float type has no limbs");
+    assert!(err.to_string().contains("non-integer type"), "got: {err}");
+    Ok(())
+}
+
+/// Missing high limbs read as zero: a slice shorter than the type's limb
+/// count is the same constant, and the same node, as the zero-padded one.
+#[test]
+fn build_int_const_limbs_zero_fills_missing_limbs() -> Result<()> {
+    use crate::node::const_value::ConstValue;
+    let mut b = builder_with_region()?;
+    let short = b.build_int_const_limbs(&[5], ValueType::int(256))?;
+    let padded = b.build_int_const_limbs(&[5, 0, 0, 0], ValueType::int(256))?;
+    assert_eq!(short, padded, "one constant, one node");
+    assert_eq!(b.function().int_const_u128(short), Some(5));
+    let low = b.build_int_const_limbs(&[u64::MAX], ValueType::int(512))?;
+    assert_eq!(b.function().int_const_u128(low), Some(u128::from(u64::MAX)));
+    let empty = b.build_int_const_limbs(&[], ValueType::int(512))?;
+    assert_eq!(b.function().int_const_u128(empty), Some(0));
+    let three = b.build_int_const_limbs(&[u64::MAX; 3], ValueType::int(256))?;
+    let NodeKind::IntConst(id) = *b.function().node_kind(b.function().producer(three)) else {
+        panic!("expected an IntConst");
+    };
+    assert_eq!(
+        b.function().const_value(id),
+        &ConstValue::Wide(vec![u64::MAX, u64::MAX, u64::MAX, 0].into_boxed_slice())
     );
+    Ok(())
+}
+
+/// Every bit of the type and none above it, at every integer width.
+#[test]
+fn build_all_ones_sets_every_bit_at_every_int_width() -> Result<()> {
+    use crate::node::const_value::ConstValue;
+    let mut b = builder_with_region()?;
+    for ty in ValueType::SUPPORTED.into_iter().filter(|t| t.is_integer()) {
+        let ones = b.build_all_ones(ty)?;
+        assert_eq!(b.function().value_type(ones)?, ty);
+        let NodeKind::IntConst(id) = *b.function().node_kind(b.function().producer(ones)) else {
+            panic!("expected an IntConst at {ty:?}");
+        };
+        let set: u32 = match b.function().const_value(id) {
+            ConstValue::Bits(v) => v.count_ones(),
+            ConstValue::Wide(limbs) => limbs.iter().map(|l| l.count_ones()).sum(),
+        };
+        assert_eq!(set as usize, ty.bit_width(), "{ty:?}");
+        assert_eq!(
+            b.function().int_const_u128(ones),
+            ty.int_mask_u128(),
+            "{ty:?}"
+        );
+    }
+    assert!(b.build_all_ones(ValueType::float(64)).is_err());
     Ok(())
 }
 
