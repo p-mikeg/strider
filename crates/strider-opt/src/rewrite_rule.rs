@@ -130,9 +130,7 @@ fn rewrite_rule_impl(
         // interior nodes' addresses onto the survivor.
         let new_producer = edit.producer(new_value);
         for &matched in &matched_nodes {
-            edit.function_mut()
-                .side_tables_mut()
-                .extend_asm_fingerprint_from(new_producer, matched);
+            edit.absorb_node_fingerprint(new_producer, matched);
         }
 
         // `replace_value` absorbs the old root's fingerprint, redirects every

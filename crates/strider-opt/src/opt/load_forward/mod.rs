@@ -218,9 +218,7 @@ fn narrow(
             // `build_int_const` carries no contributor stamp, so attribute the
             // const by hand; every reachable node needs a fingerprint.
             let shift_const_node = edit.producer(shift_const);
-            edit.function_mut()
-                .side_tables_mut()
-                .extend_asm_fingerprint_from(shift_const_node, load);
+            edit.absorb_node_fingerprint(shift_const_node, load);
             let shr = edit.create_node_attributed(
                 NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::ShiftRight),
                 [store_data, shift_const],
