@@ -7,9 +7,9 @@ pub mod sections;
 #[cfg(test)]
 mod encodings_tests;
 
-pub use load::{OwnedElf, load_elf};
+pub use load::{OwnedElf, RelocationMode, load_elf};
 pub use reader::ElfFileMemReader;
 pub use sections::{
-    ElfSectionLayout, LoadFilter, OpdTable, RegionSource, elf_get_loadable_regions,
-    mapping_symbol_data_ranges, without_ranges,
+    ElfSectionLayout, LoadFilter, OpdTable, RegionSource, mapping_symbol_data_ranges,
+    without_ranges,
 };

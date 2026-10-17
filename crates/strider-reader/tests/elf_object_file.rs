@@ -10,7 +10,7 @@
 use object::Object;
 use std::path::PathBuf;
 
-use strider_reader::elf::ElfSectionLayout;
+use strider_reader::elf::{ElfSectionLayout, RelocationMode};
 use strider_reader::{ElfFileMemReader, ReadOnlyMemory};
 
 fn object_path(arch: &str, case: &str) -> PathBuf {
@@ -32,15 +32,16 @@ fn et_rel_object_file_loads_text_at_tzcount_symbol_address() {
         path.display()
     );
 
-    let obj = strider_reader::load_elf(&path).expect("load_elf on .o");
-    let obj = obj.checked_file().expect("the mapped file is unchanged");
+    let elf = strider_reader::load_elf(&path).expect("load_elf on .o");
+    let obj = elf.checked_file().expect("the mapped file is unchanged");
     assert_eq!(
         obj.kind(),
         object::ObjectKind::Relocatable,
         "tzcount.o must parse as ET_REL"
     );
 
-    let reader = ElfFileMemReader::from_object(&obj).expect("ElfFileMemReader::from_object");
+    let reader =
+        ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect("ElfFileMemReader::new");
 
     // An ET_REL symbol's `st_value` is an offset into its section, so the
     // address only means anything once rebased through the layout.

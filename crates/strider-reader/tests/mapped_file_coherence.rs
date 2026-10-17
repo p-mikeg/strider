@@ -252,3 +252,22 @@ fn a_table_over_two_mappings_checks_both_of_them() {
         );
     }
 }
+
+/// The reader windows the mapping, so it outlives the `OwnedElf` it came
+/// from and answers for a file rebuilt under it.
+#[test]
+fn a_reader_over_a_changed_file_is_an_error() {
+    if mapping_disabled() {
+        return;
+    }
+    let f = elf_tempfile();
+    let reader = {
+        let elf = strider_reader::load_elf(f.path()).unwrap();
+        strider_reader::ElfFileMemReader::new(&elf, strider_reader::elf::RelocationMode::Unapplied)
+            .unwrap()
+    };
+    reader.check_unchanged().expect("the mapping is untouched");
+    append_junk(&f);
+    let err = reader.check_unchanged().unwrap_err().to_string();
+    assert!(err.contains("changed on disk"), "got: {err}");
+}

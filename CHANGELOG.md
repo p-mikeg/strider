@@ -133,6 +133,11 @@
   (test-util) is gone.
 - `ContainerMap` keeps the tracked set it was built over, so `container_of`
   loses its slice argument, and it no longer implements `Default`.
+- `ElfFileMemReader::from_object` and `elf::elf_get_loadable_regions` are
+  gone, reversing 0.2.0's copying constructor, which cost 312 MB of RSS and
+  94 ms on a 124 MB `.so`. `ElfFileMemReader::new(&elf,
+  RelocationMode::Unapplied)` windows an `OwnedElf`'s bytes; a caller holding
+  only an `object::File` or a byte slice builds one with `OwnedElf::parse`.
 
 ### Changed, Python
 
@@ -207,6 +212,10 @@
 - A MIPS64 RELA `R_MIPS_REL32` against STN_UNDEF with no `R_MIPS_64`
   composed is a hole when its addend fits neither 32-bit signedness, rather
   than truncated.
+- `ElfFileMemReader` holds the file's mapping: a file truncated under a live
+  reader is a SIGBUS, as under any `OwnedElf`; `STRIDER_NO_MMAP=1` reads the
+  file instead. A load no longer fails with "distinct file bytes": nothing is
+  copied.
 
 ### Fixed
 
@@ -315,6 +324,8 @@
   `DomIntervals::{span, preorder}`: the dominator tree's one numbering, and its
   preorder with siblings ascending by vertex.
 - `FunctionBuilder::record_register_arg_carriers` outside `test-util`.
+- `ElfFileMemReader::new(&OwnedElf, elf::RelocationMode)` and
+  `ElfFileMemReader::check_unchanged`.
 
 ## 0.2.0
 

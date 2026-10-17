@@ -79,9 +79,12 @@ const CFG_OPTS: fn() -> strider_cfg::CfgOptions<'static> = || strider_cfg::CfgOp
 
 fn analyze_case(c: Case) -> strider_ir::Function {
     let fixture = Fixture::open(fixture_arch(c.arch_name), c.case);
-    let obj = fixture.file();
     let sleigh_arch = (fixture.arch.sleigh)();
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let mem = strider_reader::ElfFileMemReader::new(
+        fixture.elf(),
+        strider_reader::elf::RelocationMode::Unapplied,
+    )
+    .expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
         .expect("real sleigh");
     let mut ana = strider_orchestrator::Lifter::new(sleigh_arch, sleigh).expect("Lifter::new");
@@ -93,8 +96,11 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         .build_cfg(strider_cfg::MachineInsnAddr::from(addr), &CFG_OPTS())
         .expect("Cfg build");
     let mut function = ana.build_ir(&cfg, cc).expect("build_ir").function;
-    let rom_for_opt =
-        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
+    let rom_for_opt = strider_reader::ElfFileMemReader::new(
+        fixture.elf(),
+        strider_reader::elf::RelocationMode::Unapplied,
+    )
+    .expect("rom reader (opt)");
     let p = strider_orchestrator::opt::default_pipeline();
     p.run(
         &mut function,

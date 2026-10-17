@@ -1,20 +1,19 @@
 use crate::{MemRegionsLookupTable, Result};
 
-use super::sections::{AddressRanges, ElfSectionLayout, LoadFilter, RegionSource, collect_regions};
+use super::load::{OwnedElf, RelocationMode};
+use super::sections::{AddressRanges, ElfSectionLayout, LoadFilter, RegionSource};
 
 /// An [`rsleigh::MemReader`] over an ELF's fetch image, and a
 /// [`crate::ReadOnlyMemory`] over that image minus its writable (RWX) mappings.
 /// Instruction fetch may reference a mapping that constant-load folding must
 /// not, so the two views differ.
 ///
-/// Built from a parsed `object::File`, whose mappings it copies, borrowing
-/// neither the file nor its buffer. A zero-copy view of a mapped ELF is a
-/// [`super::OwnedElf::regions`] load behind a [`MemRegionsLookupTable`].
-///
-/// The bytes are file-initial: an unlinked or not-yet-`ld.so`'d image serves
-/// each relocation site's unrelocated field, an addend or a link-time value
-/// rather than the target. A relocated image is a region set from
-/// [`super::OwnedElf::regions`], which this reader does not wrap.
+/// Its regions are windows into the [`OwnedElf`]'s bytes, so it holds the
+/// mapping: [`check_unchanged`](Self::check_unchanged) catches a file rebuilt
+/// between two operations, and a file truncated under a live reader is a
+/// SIGBUS (`STRIDER_NO_MMAP=1` reads the file instead). Once the reader is
+/// handed to `Sleigh` or a `Strider`, check through the [`OwnedElf`] that
+/// shares its mapping.
 #[derive(Debug)]
 pub struct ElfFileMemReader {
     lookup: MemRegionsLookupTable,
@@ -26,33 +25,37 @@ pub struct ElfFileMemReader {
 }
 
 impl ElfFileMemReader {
-    /// Loads every code + read-only mapping, kind-dispatched: PT_LOAD program
-    /// headers for ET_EXEC / ET_DYN, allocatable sections at their
-    /// [`ElfSectionLayout`] bases for ET_REL. See
-    /// [`super::elf_get_loadable_regions`].
+    /// Every code + read-only mapping of `elf`, as `mode` leaves them,
+    /// kind-dispatched: PT_LOAD program headers for ET_EXEC / ET_DYN,
+    /// allocatable sections at their [`ElfSectionLayout`] bases for ET_REL.
     ///
     /// # Errors
     ///
-    /// Unreadable segment / section data, a mapping whose `address + length`
-    /// exceeds `u64::MAX`, or copies exceeding the loader's amplification
-    /// ceiling over the distinct file bytes behind them; this constructor
-    /// copies every mapping.
-    pub fn from_object(obj: &object::File<'_>) -> Result<Self> {
-        let layout = ElfSectionLayout::new(obj);
-        Ok(Self::over(collect_regions(
-            obj,
-            None,
+    /// Anything [`OwnedElf::regions`] reports.
+    pub fn new(elf: &OwnedElf, mode: RelocationMode) -> Result<Self> {
+        let RelocationMode::Unapplied = mode;
+        let obj = elf.checked_file()?;
+        let image = elf.regions_with(
+            &obj,
+            &ElfSectionLayout::new(&obj),
             RegionSource::Auto,
             LoadFilter::CodeAndReadOnly,
-            &layout,
-        )?))
-    }
-
-    fn over(image: super::sections::LoadedImage) -> Self {
-        Self {
+            false,
+        )?;
+        Ok(Self {
             lookup: MemRegionsLookupTable::new(image.regions),
             writable: image.writable,
-        }
+        })
+    }
+
+    /// One `stat` of the file the regions window, as
+    /// [`OwnedElf::check_unchanged`].
+    ///
+    /// # Errors
+    ///
+    /// When the file changed on disk since it was mapped.
+    pub fn check_unchanged(&self) -> Result<()> {
+        self.lookup.check_unchanged()
     }
 }
 
@@ -112,8 +115,8 @@ mod tests {
 
     #[test]
     fn an_rwx_mapping_is_fetchable_but_is_not_read_only_memory() {
-        let bytes = rwx_elf();
-        let obj = object::File::parse(&bytes[..]).expect("parse");
+        let elf = OwnedElf::parse(rwx_elf()).expect("parse");
+        let obj = elf.checked_file().expect("parse");
         let sec_addr = {
             use object::{Object as _, ObjectSection as _};
             let sec = obj
@@ -122,7 +125,7 @@ mod tests {
                 .expect(".text");
             ElfSectionLayout::new(&obj).section_base(&sec)
         };
-        let reader = ElfFileMemReader::from_object(&obj).expect("from_object");
+        let reader = ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect("reader");
 
         let mut buf = [0u8; 4];
         let n = rsleigh::MemReader::read(

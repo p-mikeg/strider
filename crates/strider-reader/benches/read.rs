@@ -11,7 +11,7 @@ use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
 use object::{Object as _, ObjectSection as _, SectionFlags};
-use strider_reader::elf::{LoadFilter, RegionSource};
+use strider_reader::elf::{LoadFilter, RegionSource, RelocationMode};
 use strider_reader::{ElfFileMemReader, MemRegionsLookupTable, OwnedElf};
 
 /// At most this many reads of each kind per iteration.
@@ -75,7 +75,9 @@ fn read_benches(c: &mut Criterion) {
     });
     // The code and read-only image an `ElfFileMemReader` serves.
     group.bench_function("file_reader", |b| {
-        b.iter(|| black_box(ElfFileMemReader::from_object(&obj).expect("file reader")));
+        b.iter(|| {
+            black_box(ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect("file reader"))
+        });
     });
     group.finish();
 }
