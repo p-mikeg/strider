@@ -5,7 +5,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::{Builder, Cfg, CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTargets};
+use strider_cfg::{
+    Cfg, CfgOptions, DecodeEngine, PcodeInsnAddr, RegionTerminator, ResolvedTargets,
+};
 use strider_target::SleighArch;
 
 type TestReader = BufMemReader<Vec<u8>>;
@@ -18,17 +20,19 @@ fn make_sleigh_x86_64(bytes: Vec<u8>, base: u64) -> Sleigh<TestReader> {
 
 fn build_from_bytes(bytes: Vec<u8>, start: u64) -> Cfg {
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, start);
-    Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-        .build()
+    let sleigh = make_sleigh_x86_64(bytes, start);
+    DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(start.into(), &CfgOptions::default())
         .expect("Builder::build on synthetic bytes")
 }
 
 fn build_from_bytes_opts(bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> Cfg {
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, start);
-    Builder::for_arch(&arch, &mut sleigh, start, opts)
-        .build()
+    let sleigh = make_sleigh_x86_64(bytes, start);
+    DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(start.into(), opts)
         .expect("Builder::build on synthetic bytes")
 }
 
@@ -197,15 +201,16 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
 
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, 0x0ff0);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::Open {
             code_before_start: true,
         },
         ..CfgOptions::default()
     };
-    let cfg = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-        .build()
+    let cfg = DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(0x1000u64.into(), &opts)
         .unwrap();
 
     assert_ne!(
@@ -382,9 +387,10 @@ fn fall_through_past_size_bound_is_function_boundary_error() {
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
-    let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-        .build()
+    let sleigh = make_sleigh_x86_64(bytes, 0x1000);
+    let err = DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(0x1000u64.into(), &opts)
         .expect_err(
             "sequential fall-through past the size bound must error, not classify as tail call",
         );
@@ -412,9 +418,10 @@ fn fall_through_single_insn_past_size_bound_is_function_boundary_error() {
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
-    let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-        .build()
+    let sleigh = make_sleigh_x86_64(bytes, 0x1000);
+    let err = DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(0x1000u64.into(), &opts)
         .expect_err("single-insn fall-through past the size bound must error");
     let msg = format!("{err:#}");
     assert!(
@@ -457,9 +464,10 @@ fn zero_pcode_prefix_crossing_size_bound_is_function_boundary_error() {
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, 0x1000);
-    let err = Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-        .build()
+    let sleigh = make_sleigh_x86_64(bytes, 0x1000);
+    let err = DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(0x1000u64.into(), &opts)
         .expect_err(
             "zero-pcode prefix crossing the size bound must error, not absorb the next function",
         );
@@ -554,10 +562,10 @@ fn build_ppc32be(words: &[u32], start: u64, opts: &CfgOptions) -> Cfg {
     let arch = SleighArch::ppc32be();
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_be_bytes()).collect();
     let reader = BufMemReader::new(bytes, start);
-    let mut sleigh =
-        Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh ppc32be");
-    Builder::for_arch(&arch, &mut sleigh, start, opts)
-        .build()
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh ppc32be");
+    DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(start.into(), opts)
         .expect("Builder::build on synthetic ppc words")
 }
 
@@ -621,25 +629,21 @@ fn a_call_other_override_outranks_the_unconditional_ppc_trap_rule() {
     assert_eq!(decoded, vec![0x1000, 0x1004, 0x1008, 0x100c]);
 }
 
-fn build_one(mut sleigh: Sleigh<TestReader>, start: u64) -> (Cfg, Sleigh<TestReader>) {
-    let arch = SleighArch::x86_64();
-    let cfg = Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-        .build()
-        .expect("Builder::build");
-    (cfg, sleigh)
+fn build_one(engine: &mut DecodeEngine<TestReader>, start: u64) -> Cfg {
+    engine
+        .build_cfg(start.into(), &CfgOptions::default())
+        .expect("build_cfg")
 }
 
-/// The Cfg never owns the Sleigh, so a rebuild reuses it without re-loading
+/// The Cfg never owns the engine, so a rebuild reuses it without re-loading
 /// the SLA spec.
 #[test]
-fn sleigh_can_be_used_for_multiple_cfg_builds() {
-    let bytes_a = vec![0xc3u8];
-    let sleigh = make_sleigh_x86_64(bytes_a, 0x1000);
-    let (cfg1, sleigh) = build_one(sleigh, 0x1000);
-    let count1 = cfg1.region_graph().node_count();
-    let (cfg2, sleigh) = build_one(sleigh, 0x1000);
-    let count2 = cfg2.region_graph().node_count();
-    let (cfg3, _final_sleigh) = build_one(sleigh, 0x1000);
+fn an_engine_can_be_used_for_multiple_cfg_builds() {
+    let sleigh = make_sleigh_x86_64(vec![0xc3u8], 0x1000);
+    let mut engine = DecodeEngine::new(SleighArch::x86_64(), sleigh).expect("decode engine");
+    let count1 = build_one(&mut engine, 0x1000).region_graph().node_count();
+    let count2 = build_one(&mut engine, 0x1000).region_graph().node_count();
+    let cfg3 = build_one(&mut engine, 0x1000);
     assert!(count1 >= 1);
     assert!(count2 >= 1);
     assert!(cfg3.region_graph().node_count() >= 1);
@@ -836,9 +840,10 @@ fn a_switch_arm_interior_to_a_sibling_arm_is_dropped() {
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, base);
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
+    let sleigh = make_sleigh_x86_64(bytes, base);
+    let cfg = DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(base.into(), &opts)
         .expect("build with an over-read switch arm");
 
     let starts: Vec<u64> = cfg
@@ -896,9 +901,10 @@ fn a_switch_arm_shadowed_by_an_overlapping_region_is_dropped() {
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, base);
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
+    let sleigh = make_sleigh_x86_64(bytes, base);
+    let cfg = DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(base.into(), &opts)
         .expect("build with an over-read switch arm shadowed by an overlapping region");
 
     let starts: Vec<u64> = cfg
@@ -943,9 +949,10 @@ fn a_switch_arm_inside_a_zero_pcode_op_instruction_is_dropped() {
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
-    let mut sleigh = make_sleigh_x86_64(bytes, base);
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .build()
+    let sleigh = make_sleigh_x86_64(bytes, base);
+    let cfg = DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(base.into(), &opts)
         .expect("build with an over-read switch arm inside a zero-pcode-op instruction");
 
     let starts: Vec<u64> = cfg
@@ -977,34 +984,25 @@ fn a_switch_arm_inside_a_zero_pcode_op_instruction_is_dropped() {
 
 /// A Thumb `IT` commits every `condit` bit at `inst_next`, so a later round
 /// seating a target there re-imposes a context whose diff touches several of
-/// them. The build must carry on rather than reject the context.
+/// them. The seated target must still decode rather than have its context
+/// rejected.
 ///
 /// `bx r0 ; itte eq ; movs r0,#0 x3 ; bx lr`, seating 0x1002 in round one and
 /// 0x1004 in round two, which is the orchestrator's re-lift shape.
 #[test]
 fn re_imposing_a_context_over_an_it_block_builds() {
-    use strider_cfg::{FlowContext, FlowVars};
-
     let arch = SleighArch::arm_thumb();
     let mut bytes = vec![0u8; 0x40];
     bytes[0x00..0x0c].copy_from_slice(&[
         0x00, 0x47, 0x06, 0xbf, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x70, 0x47,
     ]);
     let reader = BufMemReader::new(bytes, 0x1000);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-    let flow = FlowVars::discover(&sleigh).expect("discover flow vars");
-    let defaults = flow.snapshot(&sleigh, 0x1000);
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+    let mut engine = DecodeEngine::new(arch, sleigh).expect("decode engine");
 
-    let mut round = |target: u64| -> usize {
-        flow.pin_at(&mut sleigh, 0x1000, &defaults)
-            .expect("reset entry context");
-        let (var, value) = arch
-            .entry_mode_context(0x1001)
-            .expect("ARM declares an ISA-mode var");
-        sleigh
-            .set_context_at(0x1000, var, value)
-            .expect("pin the entry mode");
-        let function_mode: FlowContext = flow.snapshot(&sleigh, 0x1000);
+    // Entered with the Thumb bit, as production enters a Thumb function; the
+    // engine pins the entry context each round.
+    let mut round = |target: u64| {
         let mut known = FxHashMap::default();
         known.insert(
             PcodeInsnAddr::at_machine_start(0x1000),
@@ -1014,16 +1012,20 @@ fn re_imposing_a_context_over_an_it_block_builds() {
             known_targets: &known,
             ..CfgOptions::default()
         };
-        Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-            .with_flow_context(&flow, function_mode)
-            .build()
-            .expect("re-imposing a context over an IT block must build")
-            .regions()
-            .count()
+        let cfg = engine
+            .build_cfg(0x1001u64.into(), &opts)
+            .expect("re-imposing a context over an IT block must build");
+        // A rejected pin does not fail the build: it reports the arm.
+        assert_eq!(cfg.undecodable_seeded_targets(), [], "seating {target:#x}");
+        assert!(
+            cfg.regions()
+                .any(|r| r.start_addr.machine_addr.addr == target),
+            "a region starts at the seated {target:#x}",
+        );
     };
 
-    assert!(round(0x1002) > 0);
-    assert!(round(0x1004) > 0);
+    round(0x1002);
+    round(0x1004);
 }
 
 /// Thumb-2 coprocessor encodings that once wrote past the parse state.

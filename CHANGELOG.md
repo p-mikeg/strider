@@ -118,6 +118,11 @@
 - `strider_target::FlowCommit` and `SleighArch::commits_flow_context` are
   gone, and `SleighArch::flow_commit_vars` lists names alone: each var's flow
   class is the sla's own `noflow` declaration, read off by the decoder.
+- `strider_cfg::{Builder, FlowVars, FlowContext}` are private, and with them
+  `Builder::for_arch` and its `with_*` setters. Build a CFG with
+  `DecodeEngine::new(arch, sleigh)?.build_cfg(entry, &opts)`, which pins the
+  entry's ISA mode and carries the decode context across builds; a bare
+  `Builder` decoded ARM with ISA-mode handling off.
 
 ### Changed, Python
 

@@ -7,8 +7,8 @@ register modelled as an SSA variable.
 
 ## What's here
 
-- `Lifter<R>`, the engine: built once per architecture over an
-  `rsleigh::Sleigh<R>` and reused across functions and rebuild rounds, since
+- `Lifter<R>`, the engine: built once per architecture over a
+  `strider_cfg::DecodeEngine<R>` and reused across functions and rebuild rounds, since
   `Sleigh::regs()` is expensive and the register table never changes.
   `build_cfg(entry, cfg_opts)` decodes; `build_ir(cfg, cc)` /
   `build_ir_with(cfg, cc, cfg_opts, per_address_ccs)` lift, given the
