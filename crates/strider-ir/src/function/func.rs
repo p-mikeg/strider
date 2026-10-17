@@ -334,14 +334,7 @@ impl Function {
     /// is not a Store/Load, or its address is not SP-rooted, or it has not been
     /// decomposed yet.  Offsets compare only when their bases match.
     pub fn stack_offset(&self, node: NodeId) -> Option<(ValueId, i128)> {
-        // Address is input slot 1 of both Store (`[mem, addr, data]`) and Load
-        // (`[mem, addr]`).  Read it via `.get`, not the arity-panicking
-        // `store_addr`/`load_addr`: whole-graph sweeps reach malformed and dead
-        // nodes.
-        if !matches!(self.node_kind(node), NodeKind::Store(_) | NodeKind::Load(_)) {
-            return None;
-        }
-        let addr = self.node_inputs(node).get(1).copied()?;
+        let addr = self.access_address(node)?;
         // Stack only: a heap address resolves through the same interner but is a
         // different region, so it is not an SP offset.
         match self.side_tables().memory_decomp(addr) {

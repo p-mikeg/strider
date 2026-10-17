@@ -37,8 +37,7 @@ pub(crate) fn stamp_all(edit: &mut crate::EditFunction<'_>) {
     let function = edit.function();
     let allocators = function.side_tables().memory_allocators();
     for node in candidates {
-        // Slot 1 on both Store and Load; skip a malformed node.
-        if let Some(addr) = function.node_inputs(node).get(1).copied() {
+        if let Some(addr) = function.access_address(node) {
             decompose(function, addr, allocators);
         }
     }

@@ -10,7 +10,7 @@
 use super::delegate_node_pat;
 use crate::node_builders::delegate_with_output;
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::node::{NodeId, NodeKind};
 
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
@@ -43,7 +43,7 @@ impl RegionFilter {
 
     fn check(&self, function: &strider_ir::Function, node: NodeId) -> bool {
         use strider_ir::MemDecomp;
-        let Some(addr) = access_address(function, node) else {
+        let Some(addr) = function.access_address(node) else {
             return matches!(self, RegionFilter::Any);
         };
         let (class, slot) = function.side_tables().memory_decomp(addr);
@@ -127,17 +127,6 @@ macro_rules! delegate_region_filter {
             }
         }
     };
-}
-
-/// The address of a `Load` / `Store`, per the slot conventions above.
-fn access_address(function: &strider_ir::Function, node: NodeId) -> Option<ValueId> {
-    if !matches!(
-        function.node_kind(node),
-        NodeKind::Load(_) | NodeKind::Store(_)
-    ) {
-        return None;
-    }
-    function.node_inputs(node).get(1).copied()
 }
 
 /// Variant-agnostic without a space constraint; with one, pins the exact
