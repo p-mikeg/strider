@@ -229,7 +229,7 @@ impl Region {
         // then report the byte AT `u64::MAX` unowned, which sends the builder
         // to decode a second region inside that instruction. Overflow means
         // the region owns everything at or above its start, which is what
-        // `Builder::add_region` already does with `Bound::Unbounded`.
+        // `RegionIndex::insert` already does with `Bound::Unbounded`.
         match last.addr.machine_addr.addr.checked_add(u64::from(last.len)) {
             Some(end) => addr.machine_addr.addr < end,
             None => true,
