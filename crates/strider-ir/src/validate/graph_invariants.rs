@@ -6,7 +6,7 @@ use crate::DominatorTree;
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use crate::node::{Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType};
 use crate::schedule::{ScheduleContext, schedule_early};
 use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
 
@@ -157,12 +157,11 @@ pub(super) fn check_function_invariants_control_single_use(
     }
 }
 
-/// An arithmetic node is evaluated at ONE width, so every value operand must
-/// carry it: for `IntBinaryOp` / `IntUnaryOp` / `FloatBinaryOp` /
-/// `FloatUnaryOp` that width is the output's, and for the comparisons (whose
-/// output is `I1`) it is the first operand's. A shift's count (operand 1) may
-/// be any width, as in p-code. `Extend` / `Truncate` are how a width change is
-/// spelled.
+/// An arithmetic node is evaluated at ONE width, which every operand
+/// [`NodeKind::operand_width`] ties to it must carry: the output's, or a
+/// comparison's first operand's (its output is `I1`). A shift's count is
+/// free, as in p-code. A bitcast keeps its byte size. `Extend` / `Truncate`
+/// are checked by [`check_function_invariants_extend_truncate`].
 pub(super) fn check_function_invariants_arith_widths(
     function: &Function,
     reachable: &NodeIdSet,
@@ -170,53 +169,38 @@ pub(super) fn check_function_invariants_arith_widths(
 ) {
     let graph = function.graph();
     for (node, kind) in function.reachable_kind_iter(reachable) {
-        // A shift's COUNT is unconstrained in p-code (`INT_LEFT` pins only
-        // input0 to the output size), so only operand 0 carries the width.
-        let checked = if matches!(kind, NodeKind::IntBinaryOp(op) if op.is_shift()) {
-            1
-        } else {
-            usize::MAX
-        };
-        // A bitcast reinterprets the SAME bits, so the two types must be the
-        // same SIZE. Bytes rather than bits only because that is what every
-        // float type is measured in; the two agree for every admissible
-        // (int, float) pair here, no float having a one-byte size for `I1` to
-        // collide with.
-        if matches!(kind, NodeKind::IntBitsToFloat | NodeKind::FloatBitsToInt) {
-            let inp = graph
-                .node_inputs(node)
-                .into_iter()
-                .next()
-                .and_then(|v| function.value_type_opt(v));
-            let outp = graph
-                .node_outputs(node)
-                .first()
-                .and_then(|&o| function.value_type_opt(o));
-            if let (Some(i), Some(o)) = (inp, outp)
-                && i.byte_size() != o.byte_size()
-            {
-                errs.push(ValidationError::ArithmeticWidthMismatch {
-                    node,
-                    kind: *kind,
-                    operand_idx: 0,
-                    operand_width: i.bit_width(),
-                    expected_width: o.bit_width(),
-                });
+        let width_from_output = match kind.operand_width(0) {
+            OperandWidth::Conversion(Conversion::SameSize) => {
+                let inp = graph
+                    .node_inputs(node)
+                    .into_iter()
+                    .next()
+                    .and_then(|v| function.value_type_opt(v));
+                let outp = graph
+                    .node_outputs(node)
+                    .first()
+                    .and_then(|&o| function.value_type_opt(o));
+                if let (Some(i), Some(o)) = (inp, outp)
+                    && !Conversion::SameSize.admits(i, o)
+                {
+                    errs.push(ValidationError::ArithmeticWidthMismatch {
+                        node,
+                        kind: *kind,
+                        operand_idx: 0,
+                        operand_width: i.bit_width(),
+                        expected_width: o.bit_width(),
+                    });
+                }
+                continue;
             }
-            continue;
-        }
-        let width_from_output = match kind {
-            NodeKind::IntBinaryOp(_)
-            | NodeKind::IntUnaryOp(_)
-            | NodeKind::FloatBinaryOp(_)
-            | NodeKind::FloatUnaryOp(_) => true,
-            NodeKind::IntCmpOp(_) | NodeKind::FloatCmpOp(_) => false,
-            _ => continue,
+            OperandWidth::OfOutput => true,
+            OperandWidth::OfFirstOperand => false,
+            OperandWidth::Conversion(Conversion::Widen | Conversion::Narrow)
+            | OperandWidth::Free => continue,
         };
         // Carries the real input slot, not a position in the filtered list: a
         // node with an untyped input would otherwise report an index that
-        // names a different operand, and `checked` below would count from the
-        // wrong one.
+        // names a different operand, and read the wrong slot's width rule.
         let operands: Vec<(usize, usize)> = graph
             .node_inputs(node)
             .into_iter()
@@ -238,7 +222,12 @@ pub(super) fn check_function_invariants_arith_widths(
                 None => continue,
             }
         };
-        for &(slot, w) in operands.iter().filter(|&&(slot, _)| slot < checked) {
+        for &(slot, w) in operands.iter().filter(|&&(slot, _)| {
+            matches!(
+                kind.operand_width(slot),
+                OperandWidth::OfOutput | OperandWidth::OfFirstOperand
+            )
+        }) {
             if w != expected {
                 errs.push(ValidationError::ArithmeticWidthMismatch {
                     node,
@@ -253,7 +242,6 @@ pub(super) fn check_function_invariants_arith_widths(
 }
 
 /// `Extend` must strictly widen its input; `Truncate` must strictly narrow it.
-/// Non-integer input/output is skipped.
 pub(super) fn check_function_invariants_extend_truncate(
     function: &Function,
     reachable: &NodeIdSet,
@@ -261,10 +249,12 @@ pub(super) fn check_function_invariants_extend_truncate(
 ) {
     let graph = function.graph();
     for (node, kind) in function.reachable_kind_iter(reachable) {
-        let widening = match kind {
-            NodeKind::Extend(_) => true,
-            NodeKind::Truncate => false,
-            _ => continue,
+        let conversion = match kind.operand_width(0) {
+            OperandWidth::Conversion(c @ (Conversion::Widen | Conversion::Narrow)) => c,
+            OperandWidth::Conversion(Conversion::SameSize)
+            | OperandWidth::OfOutput
+            | OperandWidth::OfFirstOperand
+            | OperandWidth::Free => continue,
         };
         let (Some(in_value), Some(&out_value)) = (
             graph.node_inputs(node).into_iter().next(),
@@ -279,12 +269,7 @@ pub(super) fn check_function_invariants_extend_truncate(
             continue;
         };
         let (in_width, out_width) = (in_ty.bit_width(), out_ty.bit_width());
-        let ok = if widening {
-            out_width > in_width
-        } else {
-            out_width < in_width
-        };
-        if !ok {
+        if !conversion.admits(in_ty, out_ty) {
             errs.push(ValidationError::ExtendTruncateWidthDirection {
                 node,
                 kind: *kind,
