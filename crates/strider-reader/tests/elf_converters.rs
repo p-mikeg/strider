@@ -418,6 +418,38 @@ fn equal_vaddr_pt_loads_collapse_to_the_widest() {
     assert_eq!(got, std::array::from_fn::<u8, 0x20, _>(|i| i as u8));
 }
 
+/// Two read-only PT_LOADs that one writable mapping cuts both leave a piece
+/// at its end. The image keeps the later piece, as a lookup table does, so
+/// every region a relocation can patch is one a read can reach.
+#[test]
+fn pieces_a_cut_leaves_at_one_start_collapse_to_the_last() {
+    use object::elf::{PF_R, PF_W};
+    let bytes = common::elf_fixture::build_loads_elf(&[
+        (PF_R, 0x1000, 0x40, 0xaa),
+        (PF_R, 0x1010, 0x40, 0xbb),
+        (PF_R | PF_W, 0x1000, 0x20, 0xcc),
+    ]);
+    for relocate in [false, true] {
+        let regions = strider_reader::OwnedElf::parse(bytes.clone())
+            .expect("parse")
+            .regions(
+                strider_reader::elf::RegionSource::Auto,
+                LoadFilter::ImmutableOnly,
+                relocate,
+            )
+            .expect("regions");
+        assert_eq!(
+            regions
+                .iter()
+                .map(|r| (r.start_addr(), r.end_addr()))
+                .collect::<Vec<_>>(),
+            vec![(0x1020, 0x1050)],
+            "relocate={relocate}"
+        );
+        assert_eq!(common::region_bytes(&regions[0]), vec![0xbb; 0x30]);
+    }
+}
+
 /// A mapping ending exactly at 2^64 cannot map its last byte, whose exclusive
 /// end no `u64` holds. It loses that byte; the rest of the image still loads.
 #[test]

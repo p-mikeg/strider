@@ -580,15 +580,27 @@ impl MaxEnd {
     }
 }
 
+/// `regions` with each run of equal starts collapsed to its last region,
+/// order otherwise kept: which of two same-start regions a read reaches.
+pub(crate) fn collapse_equal_starts(regions: Vec<MemRegion>) -> Vec<MemRegion> {
+    let last: BTreeMap<u64, usize> = regions
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (r.start_addr, i))
+        .collect();
+    regions
+        .into_iter()
+        .enumerate()
+        .filter(|(i, r)| last[&r.start_addr] == *i)
+        .map(|(_, r)| r)
+        .collect()
+}
+
 impl MemRegionsLookupTable {
     /// Two regions sharing a start address collapse to the later one.
     pub fn new<I: IntoIterator<Item = MemRegion>>(regions: I) -> Self {
-        let regions: Vec<MemRegion> = regions
-            .into_iter()
-            .map(|r| (r.start_addr(), r))
-            .collect::<BTreeMap<u64, MemRegion>>()
-            .into_values()
-            .collect();
+        let mut regions = collapse_equal_starts(regions.into_iter().collect());
+        regions.sort_unstable_by_key(MemRegion::start_addr);
         let index = RegionIndex::new(&regions);
         let mut seen: BTreeSet<usize> = BTreeSet::new();
         let mappings = regions

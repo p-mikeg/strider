@@ -176,6 +176,7 @@ pub fn elf_get_loadable_regions(obj: &object::File<'_>) -> Result<Vec<MemRegion>
 /// The mappings one walk accepted, and which addresses are writable.
 #[derive(Default)]
 pub(crate) struct LoadedImage {
+    /// One per start, as a lookup table over them keeps.
     pub(crate) regions: Vec<MemRegion>,
     /// Every writable mapping the walk SAW, whether or not it survived the
     /// filter and the dedup: a writable PT_LOAD overlapping an accepted
@@ -212,7 +213,8 @@ impl LoadedImage {
     /// [`crate::ReadOnlyMemory`] answers from these regions alone.
     fn without_writable_except(mut self, served: &AddressRanges) -> Self {
         self.writable = AddressRanges::merged_without(std::mem::take(&mut self.writable.0), served);
-        self.regions = cut(self.regions, &self.writable);
+        // Mappings the cut ends inside all leave a piece at its end.
+        self.regions = crate::collapse_equal_starts(cut(self.regions, &self.writable));
         self
     }
 }

@@ -931,6 +931,17 @@ pub(crate) fn build_equal_vaddr_loads_elf(filesz: &[u64]) -> Vec<u8> {
 /// and a writable one over a read-only one is the shape that asks whether the
 /// `ReadOnlyMemory` view knows about a mapping it did not load.
 pub(crate) fn build_overlapping_loads_elf(loads: &[(u32, u64, u8)]) -> Vec<u8> {
+    let at_base: Vec<(u32, u64, u64, u8)> = loads
+        .iter()
+        .map(|&(p_flags, len, fill)| (p_flags, EQUAL_VADDR_LOAD_BASE, len, fill))
+        .collect();
+    build_loads_elf(&at_base)
+}
+
+/// An x86-64 ET_EXEC with one PT_LOAD per `(p_flags, p_vaddr, len, fill)`
+/// entry, each over its own file extent of `len` bytes of `fill`. `.text` and
+/// `e_entry` are the first entry's.
+pub(crate) fn build_loads_elf(loads: &[(u32, u64, u64, u8)]) -> Vec<u8> {
     let mut buf = Vec::new();
     {
         let mut w = Writer::new(Endianness::Little, true, &mut buf);
@@ -943,49 +954,49 @@ pub(crate) fn build_overlapping_loads_elf(loads: &[(u32, u64, u8)]) -> Vec<u8> {
         w.reserve_program_headers(loads.len() as u32);
         let offsets: Vec<u64> = loads
             .iter()
-            .map(|&(_, len, _)| w.reserve(len as usize, 1) as u64)
+            .map(|&(_, _, len, _)| w.reserve(len as usize, 1) as u64)
             .collect();
         w.reserve_shstrtab();
         w.reserve_section_headers();
 
+        let (_, first_vaddr, first_len, _) = loads[0];
         w.write_file_header(&FileHeader {
             os_abi: elf::ELFOSABI_SYSV,
             abi_version: 0,
             e_type: elf::ET_EXEC,
             e_machine: elf::EM_X86_64,
-            e_entry: EQUAL_VADDR_LOAD_BASE,
+            e_entry: first_vaddr,
             e_flags: 0,
         })
         .expect("write file header");
 
         w.write_align_program_headers();
-        for (&(p_flags, len, _), &p_offset) in loads.iter().zip(&offsets) {
+        for (&(p_flags, p_vaddr, len, _), &p_offset) in loads.iter().zip(&offsets) {
             w.write_program_header(&ProgramHeader {
                 p_type: elf::PT_LOAD,
                 p_flags,
                 p_offset,
-                p_vaddr: EQUAL_VADDR_LOAD_BASE,
-                p_paddr: EQUAL_VADDR_LOAD_BASE,
+                p_vaddr,
+                p_paddr: p_vaddr,
                 p_filesz: len,
                 p_memsz: len,
                 p_align: 1,
             });
         }
 
-        for &(_, len, fill) in loads {
+        for &(_, _, len, fill) in loads {
             w.write(&vec![fill; len as usize]);
         }
         w.write_shstrtab();
 
         w.write_null_section_header();
-        let (_, len, _) = loads[0];
         w.write_section_header(&SectionHeader {
             name: Some(text_name),
             sh_type: elf::SHT_PROGBITS,
             sh_flags: u64::from(elf::SHF_ALLOC | elf::SHF_EXECINSTR),
-            sh_addr: EQUAL_VADDR_LOAD_BASE,
+            sh_addr: first_vaddr,
             sh_offset: offsets[0],
-            sh_size: len,
+            sh_size: first_len,
             sh_link: 0,
             sh_info: 0,
             sh_addralign: 1,
