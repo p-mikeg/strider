@@ -131,6 +131,8 @@
 - `Function::new` keeps only the largest of nested varnodes, as
   `FunctionBuilder::new` did; it only sorted. `Function::set_all_vns`
   (test-util) is gone.
+- `ContainerMap` keeps the tracked set it was built over, so `container_of`
+  loses its slice argument.
 
 ### Changed, Python
 
@@ -285,6 +287,7 @@
 - `Dominators::intervals` / `Dominators::tree_preorder` and
   `DomIntervals::{span, preorder}`: the dominator tree's one numbering, and its
   preorder with siblings ascending by vertex.
+- `FunctionBuilder::record_register_arg_carriers` outside `test-util`.
 
 ## 0.2.0
 

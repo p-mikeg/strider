@@ -5,13 +5,12 @@
 use super::FunctionLifter;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
-    /// O(1) via the precomputed `container_map`, falling back to an `all_vns`
-    /// containment scan for ad-hoc varnodes not in it.  Returns `vn` unchanged
-    /// when nothing tracked contains it, or when `vn` is not in an aliasable
+    /// O(1) via the precomputed `container_map`, falling back to a scan of the
+    /// tracked set for ad-hoc varnodes not in it.  Returns `vn` unchanged when
+    /// nothing tracked contains it, or when `vn` is not in an aliasable
     /// (REGISTER / UNIQUE) space.
     pub(crate) fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
-        self.container_map
-            .container_of(self.builder.function().all_vns(), vn)
+        self.container_map.container_of(vn)
     }
 
     /// The `Call` output split for one call site: the cached default-CC scan,
