@@ -1456,6 +1456,34 @@ fn unsigned_div_rem_with_wider_lhs_does_not_silently_truncate() {
     }
 }
 
+/// The divisor is held to the same guard as the dividend: a wider one would be
+/// truncated just as silently.
+#[test]
+fn div_rem_with_wider_rhs_does_not_silently_truncate() {
+    for opcode in [
+        Opcode::IntDiv,
+        Opcode::IntRem,
+        Opcode::IntSdiv,
+        Opcode::IntSrem,
+    ] {
+        let wide_rhs = Vn {
+            size: 8,
+            addr_off: 0x200,
+            addr_space: VnSpace::REGISTER,
+        };
+        with_test_lifter_tracking(vec![wide_rhs, reg(0), reg(4)], |d, rid| {
+            let insn = Insn {
+                opcode,
+                output: Some(reg(0)),
+                inputs: vec![reg(4), wide_rhs].into(),
+            };
+            let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
+            let msg = format!("{:#}", res.expect_err("a wider divisor must error"));
+            assert!(msg.contains("width mismatch"), "{opcode:?}: {msg}");
+        });
+    }
+}
+
 /// `OpBehaviorCopy::evaluateUnary` returns `in1` unchanged, so Sleigh contracts
 /// equal input and output sizes.  Unguarded, `write_vn` truncates a wider
 /// operand and zero-extends a narrower one, which is wrong for a signed

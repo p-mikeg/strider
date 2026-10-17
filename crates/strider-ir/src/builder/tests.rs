@@ -1925,6 +1925,7 @@ fn build_int_const_limbs_accepts_any_int_type() -> Result<()> {
     let scalar = b.build_int_const(0x1_0000_0005u64, ValueType::int(32))?;
     assert_eq!(b.function().int_const_u128(limbs), Some(5));
     assert_eq!(b.function().int_const_u128(scalar), Some(5));
+    assert_eq!(limbs, scalar, "one node for one narrow constant");
     let err = b
         .build_int_const_limbs(&[1], ValueType::float(64))
         .expect_err("a float type has no limbs");
