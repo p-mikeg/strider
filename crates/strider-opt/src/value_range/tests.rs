@@ -328,7 +328,7 @@ fn guard_extraction_bounds_each_edge() {
             Any,
         ),
     ];
-    let mask = ValueType::int(32).bit_mask_u128();
+    let mask = ValueType::int(32).int_mask_u128().unwrap();
     for &(name, cond, on_true, on_false) in rows {
         let g = guarded(ValueType::int(32), cond, |_, idx| idx);
         for (edge, node, want) in [
@@ -526,7 +526,7 @@ fn guard_does_not_survive_a_merge_with_an_unbounded_arm() {
     let (f, v, merge) = build_two_arm_merge(8, 6, false);
     let iv = range_at(&f, v, merge);
     assert!(
-        iv.is_top(ValueType::int(32).bit_mask_u128()),
+        iv.is_top(ValueType::int(32).int_mask_u128().unwrap()),
         "v must stay unbounded: one merge arm does not bound it, got [{},{}]",
         iv.lo,
         iv.hi,
@@ -814,7 +814,7 @@ fn unguarded_predecessor_makes_range_top() {
     let dispatch_node = f.graph().producer(dispatch_ctrl);
 
     let iv = range_at(&f, phi_idx, dispatch_node);
-    let type_mask = ValueType::int(32).bit_mask_u128();
+    let type_mask = ValueType::int(32).int_mask_u128().unwrap();
     assert!(
         iv.is_top(type_mask),
         "phi with one unguarded predecessor must produce top, got [{}, {}]",
@@ -874,7 +874,7 @@ fn no_constraint_is_top() {
     let entry_node = f.entry();
 
     let iv = range_at(&f, idx, entry_node);
-    let type_mask = ValueType::int(32).bit_mask_u128();
+    let type_mask = ValueType::int(32).int_mask_u128().unwrap();
     assert!(
         iv.is_top(type_mask),
         "unconstrained load must produce top, got [{}, {}]",
@@ -967,7 +967,7 @@ fn sibling_region_not_dominated_is_top() {
     );
 
     let iv_right = ranges.range_of(raw_idx, right_node);
-    let type_mask = ValueType::int(32).bit_mask_u128();
+    let type_mask = ValueType::int(32).int_mask_u128().unwrap();
     assert!(
         iv_right.is_top(type_mask),
         "sibling region must be top, got [{}, {}]",
@@ -1025,7 +1025,7 @@ fn cyclic_phi_is_top() {
     let header_node = f.graph().producer(header_ctrl);
 
     let iv = range_at(&f, idx_phi, header_node);
-    let type_mask = ValueType::int(32).bit_mask_u128();
+    let type_mask = ValueType::int(32).int_mask_u128().unwrap();
     assert!(
         iv.is_top(type_mask),
         "cyclic phi must yield top, got [{}, {}]",
@@ -1154,7 +1154,7 @@ fn phi_of_phi_cycle_terminates_top() {
     let header_node = f.graph().producer(header_ctrl);
 
     let iv = range_at(&f, phi_a, header_node);
-    let type_mask = ValueType::int(32).bit_mask_u128();
+    let type_mask = ValueType::int(32).int_mask_u128().unwrap();
     assert!(
         iv.is_top(type_mask),
         "phi-of-phi cycle must yield top, got [{}, {}]",
@@ -1244,7 +1244,7 @@ fn nested_guards_intersect_at_inner_region() {
         iv.hi
     );
     assert_eq!(
-        upper_exclusive(iv, ValueType::int(32).bit_mask_u128()),
+        upper_exclusive(iv, ValueType::int(32).int_mask_u128().unwrap()),
         Some(8),
         "upper_exclusive must be Some(8)"
     );
@@ -1477,7 +1477,7 @@ fn multi_input_phi_unions_two_distinct_finite_arms() {
          it must NOT tighten to [0,7] nor widen to top"
     );
     assert!(
-        !iv.is_top(ValueType::int(32).bit_mask_u128()),
+        !iv.is_top(ValueType::int(32).int_mask_u128().unwrap()),
         "the union of two finite arms must stay finite, not be top"
     );
 }
@@ -1655,7 +1655,7 @@ fn join_fails_closed_when_one_predecessor_unguarded() {
     let dispatch_node = f.graph().producer(dispatch_ctrl);
 
     let iv = range_at(&f, phi_idx, dispatch_node);
-    let type_mask = ValueType::int(32).bit_mask_u128();
+    let type_mask = ValueType::int(32).int_mask_u128().unwrap();
     assert!(
         iv.is_top(type_mask),
         "join with one unguarded predecessor must be top (fail-closed), \
@@ -1711,7 +1711,7 @@ fn guard_into_control_merge_is_not_applied() {
     let merge_node = f.graph().producer(merge_ctrl);
 
     let iv = range_at(&f, idx, merge_node);
-    let type_mask = ValueType::int(32).bit_mask_u128();
+    let type_mask = ValueType::int(32).int_mask_u128().unwrap();
     assert!(
         iv.is_top(type_mask),
         "guard whose edge feeds a control merge must not be applied (soundness gate), \
@@ -1766,7 +1766,7 @@ fn guard_on_edge_into_merge_is_top_below_merge() {
     let merge_node = f.graph().producer(merge_ctrl);
 
     let iv = range_at(&f, idx, merge_node);
-    let type_mask = ValueType::int(32).bit_mask_u128();
+    let type_mask = ValueType::int(32).int_mask_u128().unwrap();
     assert!(
         iv.is_top(type_mask),
         "guard on an If edge feeding a control merge directly must be top at \

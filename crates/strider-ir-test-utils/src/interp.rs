@@ -326,7 +326,9 @@ impl<'a, 'e> Machine<'a, 'e> {
         let f = self.f;
         let node = f.producer(v);
         let ty = int_type(f, v)?;
-        let m = ty.bit_mask_u128();
+        let m = ty
+            .int_mask_u128()
+            .expect("int_type admits at most 128 bits");
         let ins: Vec<ValueId> = f.node_inputs(node).into_iter().collect();
         let r = match *f.node_kind(node) {
             NodeKind::IntConst(_) => match f.int_const_u128(v) {
@@ -440,7 +442,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             bytes.reverse();
         }
         bytes.resize(16, 0);
-        u128::from_le_bytes(bytes.try_into().expect("16 bytes")) & ty.bit_mask_u128()
+        ty.wrap_u128(u128::from_le_bytes(bytes.try_into().expect("16 bytes")))
     }
 
     fn byte(&self, mem: &Mem, addr: u64) -> u8 {
@@ -528,7 +530,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 let value = int_type(f, out).map(|ty| {
                     let high = u128::from(noise(seed, k, key));
                     let low = u128::from(noise(seed, k ^ (target as u64), key));
-                    Some(((high << 64) | low) & ty.bit_mask_u128())
+                    Some(ty.wrap_u128((high << 64) | low))
                 });
                 (out, value)
             })
@@ -590,7 +592,7 @@ fn signed(v: u128, ty: ValueType) -> i128 {
 }
 
 fn binary(op: IntBinaryOp, a: u128, b: u128, ty: ValueType) -> Option<u128> {
-    let m = ty.bit_mask_u128();
+    let m = ty.int_mask_u128()?;
     let w = ty.bit_width() as u32;
     Some(match op {
         IntBinaryOp::Add => a.wrapping_add(b) & m,
@@ -656,7 +658,7 @@ fn compare(op: IntCmpOp, a: u128, b: u128, ty: ValueType) -> bool {
         IntCmpOp::Equal => a == b,
         IntCmpOp::Less => a < b,
         IntCmpOp::Sless => sa < sb,
-        IntCmpOp::Carry => a.checked_add(b).is_none_or(|s| s > ty.bit_mask_u128()),
+        IntCmpOp::Carry => a.checked_add(b).is_none_or(|s| ty.wrap_u128(s) != s),
         IntCmpOp::Scarry => sa.checked_add(sb).is_none_or(|s| s < min || s > max),
         IntCmpOp::Sborrow => sa.checked_sub(sb).is_none_or(|s| s < min || s > max),
     }

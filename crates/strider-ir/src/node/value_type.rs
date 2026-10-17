@@ -116,15 +116,25 @@ impl ValueType {
         matches!(self, Self::Int(w) if w > 64)
     }
 
-    /// All-ones mask for this integer type. `I256` / `I512` return `u128::MAX`,
-    /// every bit the carrier holds rather than their real mask, so a consumer
-    /// that must not truncate has to special-case those two. Floats return 0,
-    /// so masking a float value yields 0.
-    pub fn bit_mask_u128(self) -> u128 {
-        if !self.is_integer() {
-            return 0;
+    /// `v` reduced to this type's width, `v mod 2^width`: exact at every
+    /// integer width, since past 128 bits a `u128` is already below `2^width`.
+    /// A float has no integer bits: 0.
+    #[inline]
+    pub const fn wrap_u128(self, v: u128) -> u128 {
+        match self {
+            Self::Int(w) => v & low_bits_mask_u128(w as usize),
+            Self::Float(_) => 0,
         }
-        low_bits_mask_u128(self.bit_width())
+    }
+
+    /// This integer type's all-ones value, the modulus less one. `None` for a
+    /// float, and past the `u128` carrier, where no `u128` is that value.
+    #[inline]
+    pub const fn int_mask_u128(self) -> Option<u128> {
+        match self {
+            Self::Int(w) if w <= 128 => Some(low_bits_mask_u128(w as usize)),
+            Self::Int(_) | Self::Float(_) => None,
+        }
     }
 
     /// Masks a raw IEEE 754 pattern to this float type's width. Widths at or
@@ -139,33 +149,24 @@ impl ValueType {
     /// Masks `val` to this type's width, or `None` for floats and for widths
     /// past the `u128` carrier.
     pub fn get_unsigned_int(self, val: u128) -> Option<u128> {
-        if !self.is_integer() {
-            return None;
-        }
-        if self.bit_width() > 128 {
-            return None;
-        }
-        Some(val & self.bit_mask_u128())
+        Some(val & self.int_mask_u128()?)
     }
 
     /// Sign-extends `val`, read as this type's narrow representation, to a
     /// full `i128`. `None` for floats and for widths past the carrier.
     pub fn get_signed_int(self, val: u128) -> Option<i128> {
-        if !self.is_integer() {
-            return None;
-        }
+        let mask = self.int_mask_u128()?;
         let bits = self.bit_width();
-        if bits == 0 || bits > 128 {
+        if bits == 0 {
             return None;
         }
-        let masked = val & self.bit_mask_u128();
+        let masked = val & mask;
         if bits == 128 {
             return Some(masked as i128);
         }
         let sign_bit = 1u128 << (bits - 1);
         if (masked & sign_bit) != 0 {
-            let high_extension = !low_bits_mask_u128(bits);
-            Some((masked | high_extension) as i128)
+            Some((masked | !mask) as i128)
         } else {
             Some(masked as i128)
         }
@@ -187,10 +188,11 @@ impl ValueType {
     }
 }
 
-/// Mask of the low `bits` bits. `bits >= 128` saturates to `u128::MAX`, the
-/// whole carrier, rather than the mask that width really names.
+/// The low `bits` bits of the `u128` carrier, saturating to `u128::MAX` at
+/// 128 and past: a raw bit helper. A type's own mask is
+/// [`ValueType::int_mask_u128`].
 #[inline]
-pub fn low_bits_mask_u128(bits: usize) -> u128 {
+pub const fn low_bits_mask_u128(bits: usize) -> u128 {
     if bits >= 128 {
         u128::MAX
     } else {
@@ -371,18 +373,6 @@ mod tests {
     }
 
     #[test]
-    fn bit_mask_u128_widths() {
-        assert_eq!(ValueType::I1.bit_mask_u128(), 0x1u128);
-        assert_eq!(ValueType::int(8).bit_mask_u128(), 0xffu128);
-        assert_eq!(ValueType::int(16).bit_mask_u128(), 0xffffu128);
-        assert_eq!(ValueType::int(32).bit_mask_u128(), 0xffff_ffffu128);
-        assert_eq!(ValueType::int(64).bit_mask_u128(), u64::MAX as u128);
-        assert_eq!(ValueType::int(128).bit_mask_u128(), u128::MAX);
-        assert_eq!(ValueType::float(32).bit_mask_u128(), 0);
-        assert_eq!(ValueType::float(64).bit_mask_u128(), 0);
-    }
-
-    #[test]
     fn get_unsigned_int_masks_to_width() {
         assert_eq!(
             ValueType::int(16).get_unsigned_int(0x12345678u128),
@@ -435,13 +425,6 @@ mod tests {
     }
 
     #[test]
-    fn bit_mask_u128_for_u80() {
-        let expected: u128 = (1u128 << 80) - 1;
-        assert_eq!(ValueType::int(80).bit_mask_u128(), expected);
-        assert_eq!(ValueType::float(80).bit_mask_u128(), 0);
-    }
-
-    #[test]
     fn get_unsigned_int_for_u80_masks_to_80_bits() {
         let raw: u128 = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFFu128;
         let mask: u128 = (1u128 << 80) - 1;
@@ -480,15 +463,37 @@ mod tests {
         assert_eq!(T::int(48).byte_size(), 6);
         assert_eq!(T::int(48).bit_width(), 48);
         assert!(!T::int(48).is_wide_int());
-        assert_eq!(T::int(48).bit_mask_u128(), (1u128 << 48) - 1);
+        assert_eq!(T::int(48).int_mask_u128(), Some((1u128 << 48) - 1));
         assert_eq!(T::int(48).get_signed_int((1u128 << 48) - 1), Some(-1i128));
     }
 
-    /// Pins the `bits >= 128` guard: past the carrier, the mask approximates.
+    /// Exact at every width: past the carrier a `u128` is already below
+    /// `2^width`. A float has no integer bits.
     #[test]
-    fn bit_mask_u128_for_u256_and_u512_is_u128_max() {
-        assert_eq!(ValueType::int(256).bit_mask_u128(), u128::MAX);
-        assert_eq!(ValueType::int(512).bit_mask_u128(), u128::MAX);
+    fn wrap_u128_reduces_to_the_width() {
+        assert_eq!(ValueType::I1.wrap_u128(0b11), 1);
+        assert_eq!(ValueType::int(24).wrap_u128(u128::MAX), 0xFF_FFFF);
+        assert_eq!(ValueType::int(80).wrap_u128(u128::MAX), (1u128 << 80) - 1);
+        assert_eq!(ValueType::int(128).wrap_u128(u128::MAX), u128::MAX);
+        assert_eq!(ValueType::int(256).wrap_u128(u128::MAX), u128::MAX);
+        assert_eq!(ValueType::float(32).wrap_u128(0x3F80_0000), 0);
+    }
+
+    /// The all-ones value up to the carrier, and nothing for a float or a
+    /// wider integer, never the saturated `u128::MAX`.
+    #[test]
+    fn int_mask_u128_is_all_ones_up_to_the_carrier() {
+        for ty in ValueType::SUPPORTED {
+            let want = if ty.is_integer() && ty.bit_width() <= 128 {
+                Some(u128::MAX >> (128 - ty.bit_width()))
+            } else {
+                None
+            };
+            assert_eq!(ty.int_mask_u128(), want, "{ty:?}");
+            if let Some(mask) = want {
+                assert_eq!(ty.wrap_u128(u128::MAX), mask, "{ty:?}");
+            }
+        }
     }
 
     /// A > 128-bit query must fail loudly rather than return the low 128 bits

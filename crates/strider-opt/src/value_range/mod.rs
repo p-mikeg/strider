@@ -391,7 +391,7 @@ impl<'f> RangeMap<'f> {
         if self
             .function
             .value_type_opt(value)
-            .and_then(crate::opt::known_bits::type_mask_u128)
+            .and_then(ValueType::int_mask_u128)
             .is_none()
         {
             return Interval::top(u128::MAX);
@@ -715,7 +715,7 @@ impl<'f> RangeMap<'f> {
             // Truncation is the identity only below the narrower type's mask.
             NodeKind::Truncate => {
                 let [x] = f.producer_inputs_exact::<1>(value).ok()?;
-                let mask = crate::opt::known_bits::type_mask_u128(f.value_type_opt(value)?)?;
+                let mask = f.value_type_opt(value)?.int_mask_u128()?;
                 Some((x, Hop::SameValueBelow(mask)))
             }
             // Masking only clears bits, so `x & c <= x` carries the upper bound
@@ -813,14 +813,11 @@ thread_local! {
 }
 
 /// `u128::MAX` (unconstrained top) when the value carries no typed edge, for a
-/// non-integer type, and for a width past the `u128` carrier, where
-/// `bit_mask_u128` saturates and the mask stops being a bound the value is
-/// inside.  Every consumer that needs a real bound gates on
-/// [`crate::opt::known_bits::type_mask_u128`], which answers `None` in all three
-/// cases.
+/// non-integer type, and for a width past the `u128` carrier, where no `u128`
+/// is a bound the value is inside. Every consumer that needs a real bound gates
+/// on [`ValueType::int_mask_u128`], which answers `None` in all three cases.
 fn type_mask_or_top(ty: Option<ValueType>) -> u128 {
-    ty.and_then(crate::opt::known_bits::type_mask_u128)
-        .unwrap_or(u128::MAX)
+    ty.and_then(ValueType::int_mask_u128).unwrap_or(u128::MAX)
 }
 
 /// For `value = Add(X, IntConst(c))`, the bound `X` inherits from a guard on
@@ -839,11 +836,10 @@ fn add_operand_shifted_interval(
         return None;
     }
     let (operand, c) = crate::const_eval::var_and_const(function, function.producer(value))?;
-    // `bit_mask_u128` saturates to `u128::MAX` past 128 bits, so the shift
-    // would wrap mod 2^128 instead of the type's modulus and the `lo <= hi`
-    // test would accept a TIGHTER-than-real interval, the one thing this
-    // module must never return.
-    let mask = crate::opt::known_bits::type_mask_u128(function.value_type_opt(operand)?)?;
+    // Past 128 bits there is no `u128` modulus, so the shift would wrap mod
+    // 2^128 instead of the type's and the `lo <= hi` test would accept a
+    // TIGHTER-than-real interval, the one thing this module must never return.
+    let mask = function.value_type_opt(operand)?.int_mask_u128()?;
     let lo = interval.lo.wrapping_sub(c) & mask;
     let hi = interval.hi.wrapping_sub(c) & mask;
     (lo <= hi).then_some((operand, Interval::dense(lo, hi)))
@@ -858,7 +854,7 @@ fn is_sign_bit_known_zero(
     let Some(ty) = function.value_type_opt(value) else {
         return false;
     };
-    let Some(type_mask) = crate::opt::known_bits::type_mask_u128(ty) else {
+    let Some(type_mask) = ty.int_mask_u128() else {
         return false;
     };
     let sign_bit = (type_mask >> 1) + 1;
@@ -979,7 +975,7 @@ fn build<'f>(
             let Some(ty) = function.value_type_opt(value_id) else {
                 continue;
             };
-            let Some(type_mask) = crate::opt::known_bits::type_mask_u128(ty) else {
+            let Some(type_mask) = ty.int_mask_u128() else {
                 continue;
             };
             let max_val = kb.max_value(type_mask);
@@ -1116,7 +1112,7 @@ fn identity_mask(
         return None;
     };
     let (operand, mask) = crate::const_eval::var_and_const(function, node)?;
-    let type_mask = crate::opt::known_bits::type_mask_u128(function.value_type_opt(value)?)?;
+    let type_mask = function.value_type_opt(value)?.int_mask_u128()?;
     let cleared = !mask & type_mask;
     (cleared & !known[operand].zeros == 0).then_some((value, operand))
 }
@@ -1179,9 +1175,8 @@ fn guard_from_compare(
     if op == IntCmpOp::Sless && !is_sign_bit_known_zero(function, guarded, known) {
         return None;
     }
-    // The module's gate, not `bit_mask_u128`, which saturates past 128 bits and
-    // stops being a bound the value is inside.
-    let type_mask = crate::opt::known_bits::type_mask_u128(ty)?;
+    // `None` past 128 bits, where no `u128` is a bound the value is inside.
+    let type_mask = ty.int_mask_u128()?;
     // `n` is raw bits, read below as an unsigned endpoint. A NEGATIVE `Sless`
     // constant against a known-non-negative value carries no bound at all: the
     // compare is decided, and reading its two's-complement bits unsigned would

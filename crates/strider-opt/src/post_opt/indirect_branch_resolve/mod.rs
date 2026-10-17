@@ -114,7 +114,9 @@ fn strip_isa_mode_mask(function: &strider_ir::Function, value: ValueId) -> Value
     let Some(ty) = function.value_type_opt(value) else {
         return value;
     };
-    let want = ty.bit_mask_u128() ^ 1;
+    let Some(want) = ty.int_mask_u128().map(|m| m ^ 1) else {
+        return value;
+    };
     for (operand, other) in [(a, b), (b, a)] {
         if function.int_const_u128(other) == Some(want) {
             return operand;
@@ -751,5 +753,19 @@ mod tests {
             !verified(i128::MAX, &[1, -1], None),
             "the slot is in range, but the inner sum and its claim are not"
         );
+    }
+
+    /// At I256 the `u128` constant `2^128 - 2` also clears bits 128..256, so
+    /// it is arithmetic on the target, not the low-bit ISA-mode mask.
+    #[test]
+    fn a_mask_past_the_u128_carrier_is_not_the_isa_mode_mask() {
+        let wide = ValueType::int(256);
+        let (function, masked) = empty_graph_returning(|fb| {
+            let target = fb.build_int_const_limbs(&[1, 2, 3, 4], wide).unwrap();
+            let low_bit_clear = fb.build_int_const(u128::MAX ^ 1, wide).unwrap();
+            fb.build_int_binary_operation(target, low_bit_clear, IntBinaryOp::And, wide)
+                .unwrap()
+        });
+        assert_eq!(strip_isa_mode_mask(&function, masked), masked);
     }
 }
