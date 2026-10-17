@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use anyhow::anyhow;
 use rustc_hash::FxHashMap;
 use strider_graph::ValueId as TmplValueId;
-use strider_ir::node::{ExpectedValueKind, NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use strider_ir::node::{Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType};
 use strider_ir::{Function, IRBuilder, IRViewer};
 
 use crate::bindings::Bindings;
@@ -203,6 +203,7 @@ pub fn instantiate<B: IRBuilder>(
                      its node signature admits"
                 )
             })?;
+            // A `Store` with no explicit output vertex gets a value output here.
             if !want.admits(*got) {
                 anyhow::bail!(
                     "template node {kind:?} declares {got:?} at output slot {slot}, \
@@ -256,41 +257,6 @@ impl ValueTys {
     /// root's type stands in for it.
     fn of(&self, vtx: TmplValueId) -> ValueType {
         self.by_vertex.get(&vtx).copied().unwrap_or(self.root_ty)
-    }
-}
-
-/// How input `slot` of `kind` relates to the widths around it, mirroring the
-/// arithmetic-width agreement `strider_ir::validate` enforces.
-#[derive(Clone, Copy)]
-enum WidthRelation {
-    /// Evaluated at the node's own output width.
-    OfOutput,
-    /// Evaluated at input slot 0's width, the output being the `I1` verdict.
-    OfFirstOperand,
-    /// A width the node pins apart from its output, so neither the output nor
-    /// a sibling operand carries it.
-    Foreign,
-    /// Tied to no other slot.
-    Free,
-}
-
-fn input_width_relation(kind: &NodeKind, slot: usize) -> WidthRelation {
-    match kind {
-        // p-code leaves a shift COUNT any width; only the shifted operand
-        // carries the output's.
-        NodeKind::IntBinaryOp(op) if op.is_shift() && slot > 0 => WidthRelation::Free,
-        NodeKind::IntBinaryOp(_)
-        | NodeKind::IntUnaryOp(_)
-        | NodeKind::FloatBinaryOp(_)
-        | NodeKind::FloatUnaryOp(_) => WidthRelation::OfOutput,
-        NodeKind::IntCmpOp(_) | NodeKind::FloatCmpOp(_) => WidthRelation::OfFirstOperand,
-        // `Extend` / `Truncate` must strictly widen / narrow, and a bitcast
-        // reinterprets the same bits as the other kind of value.
-        NodeKind::Extend(_)
-        | NodeKind::Truncate
-        | NodeKind::IntBitsToFloat
-        | NodeKind::FloatBitsToInt => WidthRelation::Foreign,
-        _ => WidthRelation::Free,
     }
 }
 
@@ -392,14 +358,15 @@ fn resolve_value_tys(
         let inputs = consumed_inputs(&template.graph, node_vtx);
         let first_operand = inputs.iter().find(|&&(slot, _)| slot == 0).map(|&(_, v)| v);
         for &(slot, producer) in &inputs {
-            let head = match input_width_relation(&kind, slot) {
-                WidthRelation::OfOutput => first_value_output_vtx(template, node_vtx),
-                WidthRelation::OfFirstOperand => first_operand,
-                WidthRelation::Foreign => {
+            let head = match kind.operand_width(slot) {
+                OperandWidth::OfOutput => first_value_output_vtx(template, node_vtx),
+                OperandWidth::OfFirstOperand => first_operand,
+                // A conversion pins its input apart from its output.
+                OperandWidth::Conversion(_) => {
                     tied_by.entry(producer).or_insert((kind, slot));
                     continue;
                 }
-                WidthRelation::Free => continue,
+                OperandWidth::Free => continue,
             };
             let Some(head) = head.filter(|&h| h != producer) else {
                 continue;
@@ -596,74 +563,48 @@ fn node_value_ty(template: &Template, node_vtx: NodeId, value_tys: &ValueTys) ->
         .unwrap_or(value_tys.root_ty)
 }
 
-/// The value class an arithmetic or conversion kind's operands carry: a
-/// hand-written copy of the operand slots of `strider_ir`'s node signature,
-/// not read from it. `None` for a kind whose operands it leaves open, which
-/// also covers every kind [`input_width_relation`] relates nothing for.
-fn operand_class(kind: &NodeKind) -> Option<ExpectedValueKind> {
-    match kind {
-        NodeKind::IntUnaryOp(_)
-        | NodeKind::IntBinaryOp(_)
-        | NodeKind::IntCmpOp(_)
-        | NodeKind::Truncate
-        | NodeKind::Extend(_)
-        | NodeKind::Popcount
-        | NodeKind::Lzcount
-        | NodeKind::IntToFloat
-        | NodeKind::IntBitsToFloat => Some(ExpectedValueKind::AnyInt),
-        NodeKind::FloatUnaryOp(_)
-        | NodeKind::FloatBinaryOp(_)
-        | NodeKind::FloatCmpOp(_)
-        | NodeKind::FloatToFloat
-        | NodeKind::FloatToInt
-        | NodeKind::FloatBitsToInt => Some(ExpectedValueKind::AnyFloat),
-        _ => None,
-    }
-}
-
-/// The operand-side counterpart of [`ExpectedValueKind::admits`]: the class
-/// each input owes its node, and the width relation it stands in to the output
-/// or to the operand the node is evaluated at, as `strider_ir::validate`
-/// enforces both. A kind naming no operand class is the author's to get right.
+/// Checks `inputs` against `kind`'s node signature: the input count, each
+/// slot's value kind, and the width an operand owes the output or operand 0,
+/// as `strider_ir::validate` enforces them.
 fn check_operand_types(
     kind: &NodeKind,
     inputs: &[ValueId],
     outputs: &[ValueKind],
     function: &Function,
 ) -> anyhow::Result<()> {
-    let Some(class) = operand_class(kind) else {
-        return Ok(());
-    };
-    let out_ty = match outputs.first() {
-        Some(ValueKind::Typed(t)) => Some(*t),
-        _ => None,
-    };
+    anyhow::ensure!(
+        kind.input_arity().contains(&inputs.len()),
+        "template node {kind:?} has {} inputs, which its node signature does not admit",
+        inputs.len()
+    );
+    let out_ty = outputs.first().and_then(|k| k.as_value());
     let mut first_ty = None;
     for (slot, &value) in inputs.iter().enumerate() {
         let got = function.value_kind(value);
-        let ValueKind::Typed(got) = got else {
-            anyhow::bail!(
-                "template node {kind:?} takes {got:?} at input slot {slot}, \
-                 where its node signature expects {class:?}"
-            );
+        let class = kind
+            .expected_input_kind(slot)
+            .expect("a slot within the arity checked above");
+        anyhow::ensure!(
+            class.admits(got),
+            "template node {kind:?} takes {got:?} at input slot {slot}, \
+             where its node signature expects {class:?}"
+        );
+        let Some(got) = got.as_value() else {
+            continue;
         };
         if slot == 0 {
             first_ty = Some(got);
         }
-        if !class.admits(ValueKind::Typed(got)) {
-            anyhow::bail!(
-                "template node {kind:?} takes {got} at input slot {slot}, \
-                 where its node signature expects {class:?}"
-            );
-        }
-        let want = match input_width_relation(kind, slot) {
-            WidthRelation::OfOutput => out_ty,
-            WidthRelation::OfFirstOperand => first_ty,
-            WidthRelation::Foreign => {
-                check_conversion_width(kind, got, out_ty)?;
+        let want = match kind.operand_width(slot) {
+            OperandWidth::OfOutput => out_ty,
+            OperandWidth::OfFirstOperand => first_ty,
+            OperandWidth::Conversion(c) => {
+                if let Some(out) = out_ty {
+                    check_conversion(kind, c, got, out)?;
+                }
                 continue;
             }
-            WidthRelation::Free => continue,
+            OperandWidth::Free => continue,
         };
         if let Some(want) = want
             && want.bit_width() != got.bit_width()
@@ -677,31 +618,23 @@ fn check_operand_types(
     Ok(())
 }
 
-/// The width a conversion pins apart from its output: `Extend` strictly
-/// widens, `Truncate` strictly narrows, and a bitcast reinterprets the same
-/// bytes.
-fn check_conversion_width(
+fn check_conversion(
     kind: &NodeKind,
-    in_ty: ValueType,
-    out_ty: Option<ValueType>,
+    c: Conversion,
+    input: ValueType,
+    output: ValueType,
 ) -> anyhow::Result<()> {
-    let Some(out_ty) = out_ty else {
-        return Ok(());
-    };
-    match kind {
-        NodeKind::Extend(_) | NodeKind::Truncate => anyhow::ensure!(
-            match kind {
-                NodeKind::Extend(_) => out_ty.bit_width() > in_ty.bit_width(),
-                _ => out_ty.bit_width() < in_ty.bit_width(),
-            },
+    match c {
+        Conversion::Widen | Conversion::Narrow => anyhow::ensure!(
+            c.admits(input, output),
             "template node {kind:?} has input width {} and output width {}; \
              `Extend` must strictly widen and `Truncate` must strictly narrow",
-            in_ty.bit_width(),
-            out_ty.bit_width()
+            input.bit_width(),
+            output.bit_width()
         ),
-        _ => anyhow::ensure!(
-            in_ty.byte_size() == out_ty.byte_size(),
-            "template node {kind:?} reinterprets {in_ty} as {out_ty}, \
+        Conversion::SameSize => anyhow::ensure!(
+            c.admits(input, output),
+            "template node {kind:?} reinterprets {input} as {output}, \
              which is a different size"
         ),
     }
