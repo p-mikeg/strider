@@ -16,6 +16,16 @@ pub enum ValueKind {
 // At most four bytes, the slot the 16-byte value record leaves for it.
 const _: () = assert!(size_of::<ValueKind>() <= 4);
 
+/// A typed value prints as its type (`f64`), the others by name.
+impl std::fmt::Display for ValueKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Typed(ty) => write!(f, "{ty}"),
+            Self::Control | Self::PhiToken | Self::Memory => write!(f, "{self:?}"),
+        }
+    }
+}
+
 impl ValueKind {
     #[inline]
     pub fn is_value(self) -> bool {
