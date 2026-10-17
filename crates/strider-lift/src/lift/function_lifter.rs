@@ -40,9 +40,9 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// Caller classifications for user-op names, from
     /// [`strider_cfg::CfgOptions`]; consulted before the built-in tables.
     pub(crate) call_other_overrides: &'a strider_target::call_other_abi::CallOtherOverrides,
-    /// O(1) varnode-to-largest-container map, built over the raw varnode set
-    /// plus every CC register.  Varnodes absent from it fall through to the
-    /// scan in `container_of`.
+    /// O(1) varnode-to-largest-container map, built over the tracked set;
+    /// queried with the raw varnodes and every CC register.  Varnodes absent
+    /// from it fall through to the scan in `container_of`.
     pub(crate) container_map: vn_container::ContainerMap,
     /// Constant values of the current machine instruction's temporaries, fed
     /// every op in `region.insns` order. `collect_def_sites` runs an identical
@@ -165,12 +165,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let default_ret_clobber_vns = {
             let f = builder.function();
             f.default_cc()
-                .ret_and_clobber_vns(f.all_vns(), |v| container_map.container_of(f.all_vns(), v))
+                .ret_and_clobber_vns(f.all_vns(), |v| container_map.container_of(v))
         };
         let default_float_arg_vns = {
             let f = builder.function();
             super::cc_projection::float_arg_prefix(f.default_cc(), f.all_vns(), |v| {
-                container_map.container_of(f.all_vns(), v)
+                container_map.container_of(v)
             })
         };
         Ok(Self {
