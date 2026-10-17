@@ -116,7 +116,7 @@ fn int_binary_fold_skips_width_mismatched_operands() -> Result<()> {
 }
 
 /// `validate` rejects a mixed-width comparison outright, which is what keeps
-/// `eval_int_cmp` (which masks both operands to the LHS width, and so would
+/// `eval::int_cmp` (which masks both operands to the LHS width, and so would
 /// silently narrow a wider RHS) from ever seeing one.  Its own width guard
 /// stays as defence against a rewrite minting one mid-pipeline, where no
 /// `validate` runs.
@@ -1550,7 +1550,7 @@ fn build_unary_with_wide_const_input(
     Ok(fg)
 }
 
-/// `eval_popcount` / `eval_lzcount` mask through `get_unsigned_int`, which gives
+/// `eval::popcount` / `eval::lzcount` mask through `get_unsigned_int`, which gives
 /// up past 128 bits.  That must be a clean skip, not an error propagated out of
 /// the pass.
 #[test]
@@ -1943,7 +1943,7 @@ fn fold_chain_of_ten_subs_reassociates() -> Result<()> {
 /// `expected == None` means the fold must skip.
 #[test]
 fn eval_int_binary_masking_and_overflow_cases() {
-    use crate::opt::constant_fold::eval_int::eval_int_binary;
+    use strider_ir::eval::int_binary;
 
     struct Case {
         case: &'static str,
@@ -1972,12 +1972,7 @@ fn eval_int_binary_masking_and_overflow_cases() {
         Case { case: "eval_int_binary_unsigned_shr_unmasked_u8", op: IntBinaryOp::ShiftRight, l: 0x1FF, r: 1, ty: ValueType::int(8), expected: Some(0x7F) },
     ];
     for c in &cases {
-        assert_eq!(
-            eval_int_binary(c.op, c.l, c.r, c.ty),
-            c.expected,
-            "{}",
-            c.case,
-        );
+        assert_eq!(int_binary(c.op, c.l, c.r, c.ty), c.expected, "{}", c.case,);
     }
 }
 
@@ -1987,25 +1982,22 @@ fn eval_int_binary_masking_and_overflow_cases() {
 /// by the lifter; the rows pin what the guard's comment names as its exception.
 #[test]
 fn eval_int_shift_guard_at_i1_diverges_from_sleigh() {
-    use crate::opt::constant_fold::eval_int::{eval_int_binary, eval_int_cmp};
+    use strider_ir::eval::{int_binary, int_cmp};
 
     // Sleigh: `1 < 8` and `signbit_negative(1, 1 byte) == false`, so `1 >> 1`
     // is 0; strider takes the `r >= bits` branch over a negative `l`.
     assert_eq!(
-        eval_int_binary(IntBinaryOp::SShiftRight, 1, 1, ValueType::I1),
+        int_binary(IntBinaryOp::SShiftRight, 1, 1, ValueType::I1),
         Some(1),
     );
     // Sleigh reads both bytes as 1 and 0; strider reads the 1-bit `l` as -1.
-    assert_eq!(
-        eval_int_cmp(IntCmpOp::Sless, 1, 0, ValueType::I1),
-        Some(true),
-    );
+    assert_eq!(int_cmp(IntCmpOp::Sless, 1, 0, ValueType::I1), Some(true),);
 }
 
 /// Input-masking guards, all at I8.
 #[test]
 fn eval_int_cmp_masking_cases() {
-    use crate::opt::constant_fold::eval_int::eval_int_cmp;
+    use strider_ir::eval::int_cmp;
 
     struct Case {
         case: &'static str,
@@ -2025,7 +2017,7 @@ fn eval_int_cmp_masking_cases() {
     ];
     for c in &cases {
         assert_eq!(
-            eval_int_cmp(c.op, c.l, c.r, ValueType::int(8)).unwrap(),
+            int_cmp(c.op, c.l, c.r, ValueType::int(8)).unwrap(),
             c.expected,
             "{}: {}",
             c.case,
@@ -2038,7 +2030,7 @@ fn eval_int_cmp_masking_cases() {
 /// rather than the narrow range check.
 #[test]
 fn eval_int_cmp_i128_overflow_arms_cases() {
-    use crate::opt::constant_fold::eval_int::eval_int_cmp;
+    use strider_ir::eval::int_cmp;
 
     struct Case {
         case: &'static str,
@@ -2060,7 +2052,7 @@ fn eval_int_cmp_i128_overflow_arms_cases() {
     ];
     for c in &cases {
         assert_eq!(
-            eval_int_cmp(c.op, c.l, c.r, ValueType::int(128)).unwrap(),
+            int_cmp(c.op, c.l, c.r, ValueType::int(128)).unwrap(),
             c.expected,
             "{}: {}",
             c.case,
@@ -2072,7 +2064,7 @@ fn eval_int_cmp_i128_overflow_arms_cases() {
 /// The value-producing signed arms.
 #[test]
 fn eval_int_binary_signed_value_folds_cases() {
-    use crate::opt::constant_fold::eval_int::eval_int_binary;
+    use strider_ir::eval::int_binary;
 
     struct Case {
         case: &'static str,
@@ -2092,12 +2084,7 @@ fn eval_int_binary_signed_value_folds_cases() {
         Case { case: "sshr_neg_one_i8", op: IntBinaryOp::SShiftRight, l: 0x80, r: 1, ty: ValueType::int(8), expected: Some(0xC0) },
     ];
     for c in &cases {
-        assert_eq!(
-            eval_int_binary(c.op, c.l, c.r, c.ty),
-            c.expected,
-            "{}",
-            c.case,
-        );
+        assert_eq!(int_binary(c.op, c.l, c.r, c.ty), c.expected, "{}", c.case,);
     }
 }
 
@@ -2158,7 +2145,7 @@ fn fold_int_unary_not_zero_is_zero() -> Result<()> {
 /// rule the row pins.
 #[test]
 fn eval_int_binary_out_of_range_shift_cases() {
-    use crate::opt::constant_fold::eval_int::eval_int_binary;
+    use strider_ir::eval::int_binary;
 
     struct Case {
         case: &'static str,
@@ -2186,7 +2173,7 @@ fn eval_int_binary_out_of_range_shift_cases() {
     ];
     for c in &cases {
         assert_eq!(
-            eval_int_binary(c.op, c.l, c.r, c.ty),
+            int_binary(c.op, c.l, c.r, c.ty),
             c.expected,
             "{}: {}",
             c.case,
@@ -2263,7 +2250,7 @@ fn all_ones_rules_skip_past_128_bits() -> Result<()> {
 }
 
 /// The REASSOCIATION rules combine the two constants themselves rather than
-/// through `eval_int_binary`, so its width guard does not cover them. At `I256`
+/// through `eval::int_binary`, so its width guard does not cover them. At `I256`
 /// both `2^127` operands fit in `u128` and `int_const_u128` hands them over, but
 /// `wrapping_add` carries out at 128 bits: `2^127 + 2^127` becomes `0` instead
 /// of `2^128`, and `(x + 2^127) + 2^127` folds to `x + 0`, i.e. to `x`.
