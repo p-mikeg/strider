@@ -978,10 +978,7 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
                 IntBinaryOp::ShiftRight,
                 IntBinaryOp::SShiftRight,
             ][rng.below(8)];
-            let shifting = matches!(
-                op,
-                IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight
-            );
+            let shifting = op.is_shift();
             let rhs = if shifting {
                 // 0..=w+1: at and past the width, where the saturating count
                 // and the lifter's `|W` guard matter.

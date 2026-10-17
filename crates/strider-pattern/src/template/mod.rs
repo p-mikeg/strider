@@ -23,7 +23,7 @@ use anyhow::anyhow;
 use rustc_hash::FxHashMap;
 use strider_graph::ValueId as TmplValueId;
 use strider_ir::node::{ExpectedValueKind, NodeId, NodeKind, ValueId, ValueKind, ValueType};
-use strider_ir::{Function, IRBuilder, IRViewer, IntBinaryOp};
+use strider_ir::{Function, IRBuilder, IRViewer};
 
 use crate::bindings::Bindings;
 use crate::graph_ext::{consumed_inputs, reachable_topo};
@@ -278,9 +278,7 @@ fn input_width_relation(kind: &NodeKind, slot: usize) -> WidthRelation {
     match kind {
         // p-code leaves a shift COUNT any width; only the shifted operand
         // carries the output's.
-        NodeKind::IntBinaryOp(
-            IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight,
-        ) if slot > 0 => WidthRelation::Free,
+        NodeKind::IntBinaryOp(op) if op.is_shift() && slot > 0 => WidthRelation::Free,
         NodeKind::IntBinaryOp(_)
         | NodeKind::IntUnaryOp(_)
         | NodeKind::FloatBinaryOp(_)
