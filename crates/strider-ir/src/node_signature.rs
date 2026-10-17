@@ -324,8 +324,8 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
 
 /// One representative per [`NodeKind`] variant, in declaration order. Its
 /// ids are dangling: it is for slot-shape tables, not for a graph.
-#[cfg(any(test, feature = "test-util"))]
-pub fn every_node_kind() -> Vec<NodeKind> {
+#[cfg(test)]
+pub(crate) fn every_node_kind() -> Vec<NodeKind> {
     use crate::node::{
         ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
     };

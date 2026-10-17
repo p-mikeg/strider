@@ -61,9 +61,9 @@ impl Drop for BranchPattern {
 pub struct CallPat(NodePat);
 
 impl CallPat {
-    /// `inputs[2]`.
+    /// The target, input [`NodeKind::CALL_TARGET_SLOT`].
     pub fn target<P: MatchPat + 'static>(self, p: P) -> Self {
-        Self(self.0.input(2, p))
+        Self(self.0.input(NodeKind::CALL_TARGET_SLOT, p))
     }
 
     /// [`int_const`]`(addr)` on the target, so `addr` is truncated to the
@@ -494,7 +494,7 @@ enum IfOutput {
 }
 
 impl IfPat {
-    /// `inputs[1]`; `inputs[0]` is the ctrl predecessor.
+    /// Input [`NodeKind::IF_COND_SLOT`]; `inputs[0]` is the ctrl predecessor.
     pub fn cond<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.cond = Some(crate::node_builders::SubCompiler::new(move |b| {
             p.compile(b)
@@ -664,7 +664,7 @@ impl IfPat {
 
         if let Some(cond) = cond {
             let c = cond.call(&mut *b);
-            b.input(node, 1, c);
+            b.input(node, NodeKind::IF_COND_SLOT, c);
         }
         if let Some(ctrl) = ctrl {
             let c = ctrl.call(&mut *b);
