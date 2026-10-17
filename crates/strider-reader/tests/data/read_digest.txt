@@ -7397,12 +7397,12 @@ x86_kernel/tzcount.elf sections.writable 6d79d31961fbea94
 x86_kernel/tzcount.elf file_reader.fetch c6ba9a96b9d6c4be
 x86_kernel/tzcount.elf file_reader.rom 332aa93f4760cf68
 crafted/overlapping_loads_rela auto.code_ro.raw 07f6c98727793c90
-crafted/overlapping_loads_rela auto.code_ro.reloc Err relocation site 0x2000 lands in more overlapping regions than the 4x patch budget over 1 sites allows
+crafted/overlapping_loads_rela auto.code_ro.reloc 0612704781222190
 crafted/overlapping_loads_rela auto.immutable.raw 07f6c98727793c90
-crafted/overlapping_loads_rela auto.immutable.reloc Err relocation site 0x2000 lands in more overlapping regions than the 4x patch budget over 1 sites allows
-crafted/overlapping_loads_rela auto.immutable_got.reloc Err relocation site 0x2000 lands in more overlapping regions than the 4x patch budget over 1 sites allows
+crafted/overlapping_loads_rela auto.immutable.reloc 0612704781222190
+crafted/overlapping_loads_rela auto.immutable_got.reloc 0612704781222190
 crafted/overlapping_loads_rela auto.all.raw 07f6c98727793c90
-crafted/overlapping_loads_rela auto.all.reloc Err relocation site 0x2000 lands in more overlapping regions than the 4x patch budget over 1 sites allows
+crafted/overlapping_loads_rela auto.all.reloc 0612704781222190
 crafted/overlapping_loads_rela auto.writable cbf29ce484222325
 crafted/overlapping_loads_rela sections.code_ro.raw 8d77f72f2bda50ee
 crafted/overlapping_loads_rela sections.code_ro.reloc 8e475a8d3a6539ce
