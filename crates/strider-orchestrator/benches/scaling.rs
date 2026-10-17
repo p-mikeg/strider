@@ -187,22 +187,22 @@ mod synthetic {
         let mut load_addrs: Vec<strider_ir::Value> = Vec::with_capacity(n);
         for i in 0..n {
             let off = -((i as i64 + 1) * 8) as u64;
-            let off_const = b.build_int_const(off, ValueType::I64).unwrap();
+            let off_const = b.build_int_const(off, ValueType::int(64)).unwrap();
             let addr = b
-                .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I64)
+                .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::int(64))
                 .unwrap();
-            let v = b.build_int_const(i as u64, ValueType::I64).unwrap();
+            let v = b.build_int_const(i as u64, ValueType::int(64)).unwrap();
             b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
             load_addrs.push(addr);
         }
         // Left-fold the loads through Add so every one reaches the return.
-        let mut acc = b.build_int_const(0u64, ValueType::I64).unwrap();
+        let mut acc = b.build_int_const(0u64, ValueType::int(64)).unwrap();
         for addr in load_addrs {
             let loaded = b
-                .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+                .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
                 .unwrap();
             acc = b
-                .build_int_binary_operation(acc, loaded, IntBinaryOp::Add, ValueType::I64)
+                .build_int_binary_operation(acc, loaded, IntBinaryOp::Add, ValueType::int(64))
                 .unwrap();
         }
         b.build_return(Some(acc), &[]).unwrap();
@@ -245,17 +245,17 @@ mod synthetic {
             // collapse the merge.
             b.set_region(true_arm);
             let sp_t = b.read_variable(&sp).unwrap();
-            let off_t = b.build_int_const(0xa_au64, ValueType::I64).unwrap();
+            let off_t = b.build_int_const(0xa_au64, ValueType::int(64)).unwrap();
             let _ = b
-                .build_int_binary_operation(sp_t, off_t, IntBinaryOp::Add, ValueType::I64)
+                .build_int_binary_operation(sp_t, off_t, IntBinaryOp::Add, ValueType::int(64))
                 .unwrap();
             b.build_branch(merge).unwrap();
 
             b.set_region(false_arm);
             let sp_f = b.read_variable(&sp).unwrap();
-            let off_f = b.build_int_const(0xb_bu64, ValueType::I64).unwrap();
+            let off_f = b.build_int_const(0xb_bu64, ValueType::int(64)).unwrap();
             let _ = b
-                .build_int_binary_operation(sp_f, off_f, IntBinaryOp::Add, ValueType::I64)
+                .build_int_binary_operation(sp_f, off_f, IntBinaryOp::Add, ValueType::int(64))
                 .unwrap();
             b.build_branch(merge).unwrap();
 
@@ -303,12 +303,12 @@ mod synthetic {
 
         for i in 0..n {
             let off = -((i as i64 + 1) * 8) as u64;
-            let off_const = b.build_int_const(off, ValueType::I64).unwrap();
+            let off_const = b.build_int_const(off, ValueType::int(64)).unwrap();
             let addr = b
-                .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I64)
+                .build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::int(64))
                 .unwrap();
             let target = b
-                .build_int_const(0x4000 + i as u64, ValueType::I64)
+                .build_int_const(0x4000 + i as u64, ValueType::int(64))
                 .unwrap();
             b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
         }
@@ -318,34 +318,39 @@ mod synthetic {
         let arg_u32 = b.create_node_attributed(
             strider_ir::node::NodeKind::Truncate,
             [arg_val],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
             &[],
         );
         let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
-        let mask_c = b.build_int_const(mask, ValueType::I32).unwrap();
+        let mask_c = b.build_int_const(mask, ValueType::int(32)).unwrap();
         let masked = b
-            .build_int_binary_operation(arg_u32_value, mask_c, IntBinaryOp::And, ValueType::I32)
+            .build_int_binary_operation(arg_u32_value, mask_c, IntBinaryOp::And, ValueType::int(32))
             .unwrap();
         let idx_u64 = b.create_node_attributed(
             strider_ir::node::NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend),
             [masked],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
             &[],
         );
         let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
-        let stride = b.build_int_const(8u64, ValueType::I64).unwrap();
+        let stride = b.build_int_const(8u64, ValueType::int(64)).unwrap();
         let idx_scaled = b
-            .build_int_binary_operation(idx_u64_value, stride, IntBinaryOp::Mul, ValueType::I64)
+            .build_int_binary_operation(idx_u64_value, stride, IntBinaryOp::Mul, ValueType::int(64))
             .unwrap();
-        let base = b.build_int_const(0u64, ValueType::I64).unwrap();
+        let base = b.build_int_const(0u64, ValueType::int(64)).unwrap();
         let sp_plus_base = b
-            .build_int_binary_operation(sp_val, base, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(sp_val, base, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         let load_addr = b
-            .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(
+                sp_plus_base,
+                idx_scaled,
+                IntBinaryOp::Add,
+                ValueType::int(64),
+            )
             .unwrap();
         let loaded = b
-            .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)
+            .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(64))
             .unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
         let mut fg = b.build().unwrap();
@@ -365,11 +370,11 @@ mod synthetic {
         b.set_region(region);
         // Each IntConst(i) is a distinct dedup-cache key, so this yields
         // N distinct root nodes for the matcher to walk.
-        let mut acc = b.build_int_const(0u64, ValueType::I64).unwrap();
+        let mut acc = b.build_int_const(0u64, ValueType::int(64)).unwrap();
         for i in 1..=n {
-            let c = b.build_int_const(i as u64, ValueType::I64).unwrap();
+            let c = b.build_int_const(i as u64, ValueType::int(64)).unwrap();
             acc = b
-                .build_int_binary_operation(acc, c, IntBinaryOp::Add, ValueType::I64)
+                .build_int_binary_operation(acc, c, IntBinaryOp::Add, ValueType::int(64))
                 .unwrap();
         }
         b.build_return(Some(acc), &[]).unwrap();

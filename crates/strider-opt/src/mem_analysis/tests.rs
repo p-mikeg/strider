@@ -88,7 +88,7 @@ mod decompose_tests {
         let sp = sp();
         let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let addr = sub_off(&mut b, sp_val, 4, ValueType::I32)?;
+        let addr = sub_off(&mut b, sp_val, 4, ValueType::int(32))?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -107,9 +107,11 @@ mod decompose_tests {
         let sp = sp();
         let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let big = b.build_int_const(0x7FFF_FFFFu64, ValueType::I32)?;
-        let once = b.build_int_binary_operation(sp_val, big, IntBinaryOp::Add, ValueType::I32)?;
-        let twice = b.build_int_binary_operation(once, big, IntBinaryOp::Add, ValueType::I32)?;
+        let big = b.build_int_const(0x7FFF_FFFFu64, ValueType::int(32))?;
+        let once =
+            b.build_int_binary_operation(sp_val, big, IntBinaryOp::Add, ValueType::int(32))?;
+        let twice =
+            b.build_int_binary_operation(once, big, IntBinaryOp::Add, ValueType::int(32))?;
         b.build_return(Some(twice), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -128,7 +130,7 @@ mod decompose_tests {
         let sp = sp();
         let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let addr = sub_off(&mut b, sp_val, 4, ValueType::I32)?;
+        let addr = sub_off(&mut b, sp_val, 4, ValueType::int(32))?;
         b.build_return(Some(addr), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -160,7 +162,7 @@ mod decompose_tests {
         b.set_entry_region_all(region)?;
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let c = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let c = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_return(Some(c), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -174,9 +176,9 @@ mod decompose_tests {
         let sp = sp();
         let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let s1 = sub_off(&mut b, sp_val, 4, ValueType::I32)?;
-        let s2 = sub_off(&mut b, s1, 8, ValueType::I32)?;
-        let s3 = sub_off(&mut b, s2, 12, ValueType::I32)?;
+        let s1 = sub_off(&mut b, sp_val, 4, ValueType::int(32))?;
+        let s2 = sub_off(&mut b, s1, 8, ValueType::int(32))?;
+        let s3 = sub_off(&mut b, s2, 12, ValueType::int(32))?;
         b.build_return(Some(s3), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -208,14 +210,14 @@ mod decompose_tests {
         // loop-carried decrement, so branching back closes a data cycle.
         b.set_region(loop_hdr);
         let sp_phi = b.read_variable(&sp)?;
-        let sp_dec = sub_off(&mut b, sp_phi, 4, ValueType::I32)?;
+        let sp_dec = sub_off(&mut b, sp_phi, 4, ValueType::int(32))?;
         b.write_variable(&sp, sp_dec)?;
         let keep_looping = b.build_boolean_const(true);
         b.build_if(keep_looping, loop_hdr, exit)?;
 
         // A genuinely non-SP address in the same cone.
         b.set_region(exit);
-        let global = b.build_int_const(0x4000u64, ValueType::I32)?;
+        let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
         b.build_return(Some(global), &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -279,13 +281,13 @@ mod decompose_tests {
 
         b.set_region(a);
         let sp_a = b.read_variable(&sp)?;
-        let sp_minus_4 = sub_off(&mut b, sp_a, 4, ValueType::I32)?;
+        let sp_minus_4 = sub_off(&mut b, sp_a, 4, ValueType::int(32))?;
         b.write_variable(&sp, sp_minus_4)?;
         b.build_branch(c)?;
 
         // bb: a literal pretending to be a new SP, not SP-rooted.
         b.set_region(bb);
-        let bogus = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
+        let bogus = b.build_int_const(0xDEAD_BEEFu64, ValueType::int(32))?;
         b.write_variable(&sp, bogus)?;
         b.build_branch(c)?;
 
@@ -312,9 +314,9 @@ mod decompose_tests {
         let sp = sp();
         let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
         let aligned =
-            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
+            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(32))?;
         b.build_return(Some(aligned), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -346,10 +348,10 @@ mod decompose_tests {
         let sp = sp();
         let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
         let aligned =
-            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
-        let post_sub = sub_off(&mut b, aligned, 0x1D0, ValueType::I32)?;
+            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(32))?;
+        let post_sub = sub_off(&mut b, aligned, 0x1D0, ValueType::int(32))?;
         b.build_return(Some(post_sub), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -384,11 +386,11 @@ mod decompose_tests {
         let sp = sp();
         let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let mut current = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
         const N: usize = 6000;
         for _ in 0..N {
             current =
-                b.build_int_binary_operation(current, mask, IntBinaryOp::And, ValueType::I32)?;
+                b.build_int_binary_operation(current, mask, IntBinaryOp::And, ValueType::int(32))?;
         }
         b.build_return(Some(current), &[])?;
         b.set_lift_addr(None);
@@ -406,9 +408,9 @@ mod decompose_tests {
         let mut current = b.read_variable(&sp)?;
         const N: usize = 5000;
         for _ in 0..N {
-            let one = b.build_int_const(1u64, ValueType::I32)?;
+            let one = b.build_int_const(1u64, ValueType::int(32))?;
             current =
-                b.build_int_binary_operation(current, one, IntBinaryOp::Add, ValueType::I32)?;
+                b.build_int_binary_operation(current, one, IntBinaryOp::Add, ValueType::int(32))?;
         }
         b.build_return(Some(current), &[])?;
         b.set_lift_addr(None);
@@ -491,17 +493,17 @@ mod alias_tests {
     fn store_at_base_plus_eight(sp: rsleigh::Vn, align: bool) -> Function {
         let mut f = make_sp_fn(sp, |b, sp_val| {
             let base = if align {
-                let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
-                b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?
+                let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
+                b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(32))?
             } else {
                 sp_val
             };
-            let eight = b.build_int_const(8u64, ValueType::I32)?;
+            let eight = b.build_int_const(8u64, ValueType::int(32))?;
             let store_addr =
-                b.build_int_binary_operation(base, eight, IntBinaryOp::Add, ValueType::I32)?;
-            let data = b.build_int_const(0xAAu64, ValueType::I32)?;
+                b.build_int_binary_operation(base, eight, IntBinaryOp::Add, ValueType::int(32))?;
+            let data = b.build_int_const(0xAAu64, ValueType::int(32))?;
             b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
-            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
             b.build_return(Some(loaded), &[])?;
             Ok(())
         })
@@ -644,18 +646,18 @@ mod cfg_tests {
     fn verdict_uses_stack_offset_ssot_for_nondecomposable_store() {
         let sp = stack_vn_x86();
         let mut f = make_sp_fn(sp, |b, sp_val| {
-            let k = b.build_int_const(8u64, ValueType::I32)?;
+            let k = b.build_int_const(8u64, ValueType::int(32))?;
             // `xor(sp, 8)` is not a recognised SP base, so it classifies as
             // `Anchor`, standing in for an address a rewrite folded into a
             // non-decomposable shape.
             let opaque =
-                b.build_int_binary_operation(sp_val, k, IntBinaryOp::Xor, ValueType::I32)?;
-            let data = b.build_int_const(0x11u64, ValueType::I32)?;
+                b.build_int_binary_operation(sp_val, k, IntBinaryOp::Xor, ValueType::int(32))?;
+            let data = b.build_int_const(0x11u64, ValueType::int(32))?;
             b.build_store(opaque, data, rsleigh::VnSpace::RAM)?;
             // The real `sp + 8`, decomposing to StackRooted(8).
             let load_addr =
-                b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::I32)?;
-            let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+                b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::int(32))?;
+            let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
             b.build_return(Some(loaded), &[])?;
             Ok(())
         })
@@ -754,15 +756,15 @@ mod heap_tests {
     /// A prologue: drops SP by `bytes`, so a slot at `entry_sp - k` for
     /// `k < bytes` sits in THIS frame and above the SP a callee receives.
     fn lower_sp(b: &mut FunctionBuilder, entry_sp: ValueId, bytes: i64) -> crate::Result<()> {
-        let frame = b.build_int_const((-bytes) as u64, ValueType::I64)?;
+        let frame = b.build_int_const((-bytes) as u64, ValueType::int(64))?;
         let call_sp =
-            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I64)?;
+            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::int(64))?;
         b.write_variable(&sp(), call_sp)?;
         Ok(())
     }
 
     fn alloc_call(b: &mut FunctionBuilder, target_addr: u64) -> crate::Result<ValueId> {
-        let target = b.build_int_const(target_addr, ValueType::I64)?;
+        let target = b.build_int_const(target_addr, ValueType::int(64))?;
         let (_call, rets) = b.build_call(target, &[], &[ret_reg()], 0)?;
         Ok(rets[0])
     }
@@ -771,8 +773,8 @@ mod heap_tests {
     fn decompose_heap_base_from_allocator_call() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let eight = b.build_int_const(8u64, ValueType::I64)?;
-        let addr = b.build_int_binary_operation(p, eight, IntBinaryOp::Add, ValueType::I64)?;
+        let eight = b.build_int_const(8u64, ValueType::int(64))?;
+        let addr = b.build_int_binary_operation(p, eight, IntBinaryOp::Add, ValueType::int(64))?;
         b.build_return(Some(addr), &[])?;
         let (fg, na) = built(b, &[MALLOC])?;
         let r = decompose(&fg, addr, &na);
@@ -792,9 +794,9 @@ mod heap_tests {
         const UNLISTED: u64 = 0x2000;
         let mut b = builder()?;
         let p = alloc_call(&mut b, UNLISTED)?;
-        let eight = b.build_int_const(8u64, ValueType::I64)?;
-        let addr = b.build_int_binary_operation(p, eight, IntBinaryOp::Add, ValueType::I64)?;
-        let data = b.build_int_const(0x2au64, ValueType::I64)?;
+        let eight = b.build_int_const(8u64, ValueType::int(64))?;
+        let addr = b.build_int_binary_operation(p, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let data = b.build_int_const(0x2au64, ValueType::int(64))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.build_return(None, &[])?;
         let (fg, na) = built(b, &[MALLOC])?;
@@ -826,11 +828,12 @@ mod heap_tests {
     fn decompose_aligned_heap_pointer_is_opaque() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let fifteen = b.build_int_const(15u64, ValueType::I64)?;
-        let bumped = b.build_int_binary_operation(p, fifteen, IntBinaryOp::Add, ValueType::I64)?;
-        let mask = b.build_int_const(0xFFFF_FFFF_FFFF_FFF0u64, ValueType::I64)?;
+        let fifteen = b.build_int_const(15u64, ValueType::int(64))?;
+        let bumped =
+            b.build_int_binary_operation(p, fifteen, IntBinaryOp::Add, ValueType::int(64))?;
+        let mask = b.build_int_const(0xFFFF_FFFF_FFFF_FFF0u64, ValueType::int(64))?;
         let aligned =
-            b.build_int_binary_operation(bumped, mask, IntBinaryOp::And, ValueType::I64)?;
+            b.build_int_binary_operation(bumped, mask, IntBinaryOp::And, ValueType::int(64))?;
         b.build_return(Some(aligned), &[])?;
         let (fg, na) = built(b, &[MALLOC])?;
         assert!(
@@ -847,11 +850,12 @@ mod heap_tests {
     fn decompose_aligned_heap_pointer_is_opaque_when_base_memoized() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let fifteen = b.build_int_const(15u64, ValueType::I64)?;
-        let bumped = b.build_int_binary_operation(p, fifteen, IntBinaryOp::Add, ValueType::I64)?;
-        let mask = b.build_int_const(0xFFFF_FFFF_FFFF_FFF0u64, ValueType::I64)?;
+        let fifteen = b.build_int_const(15u64, ValueType::int(64))?;
+        let bumped =
+            b.build_int_binary_operation(p, fifteen, IntBinaryOp::Add, ValueType::int(64))?;
+        let mask = b.build_int_const(0xFFFF_FFFF_FFFF_FFF0u64, ValueType::int(64))?;
         let aligned =
-            b.build_int_binary_operation(bumped, mask, IntBinaryOp::And, ValueType::I64)?;
+            b.build_int_binary_operation(bumped, mask, IntBinaryOp::And, ValueType::int(64))?;
         b.build_return(Some(aligned), &[])?;
         let (fg, na) = built(b, &[MALLOC])?;
         // Warm the memo: commit the raw base as a heap slot.
@@ -884,7 +888,7 @@ mod heap_tests {
     #[test]
     fn clobbered_output_is_not_a_heap_base() -> crate::Result<()> {
         let mut b = builder()?;
-        let target = b.build_int_const(MALLOC, ValueType::I64)?;
+        let target = b.build_int_const(MALLOC, ValueType::int(64))?;
         let (_call, rets) = b.build_call(target, &[], &[ret_reg(), clobber_reg()], 0)?;
         let clobber = rets[1];
         b.build_return(Some(clobber), &[])?;
@@ -928,10 +932,11 @@ mod heap_tests {
     fn nested_add_accumulates_heap_offset() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let four = b.build_int_const(4u64, ValueType::I64)?;
-        let inner = b.build_int_binary_operation(p, four, IntBinaryOp::Add, ValueType::I64)?;
-        let four2 = b.build_int_const(4u64, ValueType::I64)?;
-        let outer = b.build_int_binary_operation(inner, four2, IntBinaryOp::Add, ValueType::I64)?;
+        let four = b.build_int_const(4u64, ValueType::int(64))?;
+        let inner = b.build_int_binary_operation(p, four, IntBinaryOp::Add, ValueType::int(64))?;
+        let four2 = b.build_int_const(4u64, ValueType::int(64))?;
+        let outer =
+            b.build_int_binary_operation(inner, four2, IntBinaryOp::Add, ValueType::int(64))?;
         b.build_return(Some(outer), &[])?;
         let (fg, na) = built(b, &[MALLOC])?;
         let r = decompose(&fg, outer, &na);
@@ -956,10 +961,10 @@ mod heap_tests {
     fn two_heap_objects_are_disjoint() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let x = b.build_int_const(0x11u64, ValueType::I64)?;
+        let x = b.build_int_const(0x11u64, ValueType::int(64))?;
         b.build_store(p, x, rsleigh::VnSpace::RAM)?;
         let q = alloc_call(&mut b, MALLOC)?;
-        let loaded = b.build_load(q, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let loaded = b.build_load(q, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         let (fg, na) = built(b, &[MALLOC])?;
 
@@ -982,16 +987,16 @@ mod heap_tests {
     fn heap_and_stack_are_disjoint() -> crate::Result<()> {
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
-        let eight = b.build_int_const(8u64, ValueType::I64)?;
+        let eight = b.build_int_const(8u64, ValueType::int(64))?;
         let stack_addr =
-            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I64)?;
-        let x = b.build_int_const(0x11u64, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let x = b.build_int_const(0x11u64, ValueType::int(64))?;
         b.build_store(stack_addr, x, rsleigh::VnSpace::RAM)?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let eight2 = b.build_int_const(8u64, ValueType::I64)?;
+        let eight2 = b.build_int_const(8u64, ValueType::int(64))?;
         let heap_addr =
-            b.build_int_binary_operation(p, eight2, IntBinaryOp::Add, ValueType::I64)?;
-        let loaded = b.build_load(heap_addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
+            b.build_int_binary_operation(p, eight2, IntBinaryOp::Add, ValueType::int(64))?;
+        let loaded = b.build_load(heap_addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         // Collapse the trivial sp Phi so the stack address decomposes.
         let (fg, na) = built_collapsed(b, &[MALLOC])?;
@@ -1017,13 +1022,14 @@ mod heap_tests {
     fn same_heap_object_uses_offset_ranges() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let zero = b.build_int_const(0u64, ValueType::I64)?;
-        let at0 = b.build_int_binary_operation(p, zero, IntBinaryOp::Add, ValueType::I64)?;
-        let x = b.build_int_const(0x11u64, ValueType::I64)?;
+        let zero = b.build_int_const(0u64, ValueType::int(64))?;
+        let at0 = b.build_int_binary_operation(p, zero, IntBinaryOp::Add, ValueType::int(64))?;
+        let x = b.build_int_const(0x11u64, ValueType::int(64))?;
         b.build_store(at0, x, rsleigh::VnSpace::RAM)?; // [p+0..8)
-        let sixteen = b.build_int_const(16u64, ValueType::I64)?;
-        let at16 = b.build_int_binary_operation(p, sixteen, IntBinaryOp::Add, ValueType::I64)?;
-        let loaded = b.build_load(at16, rsleigh::VnSpace::RAM, ValueType::I64)?; // [p+16..24)
+        let sixteen = b.build_int_const(16u64, ValueType::int(64))?;
+        let at16 =
+            b.build_int_binary_operation(p, sixteen, IntBinaryOp::Add, ValueType::int(64))?;
+        let loaded = b.build_load(at16, rsleigh::VnSpace::RAM, ValueType::int(64))?; // [p+16..24)
         b.build_return(Some(loaded), &[])?;
         let (fg, na) = built(b, &[MALLOC])?;
 
@@ -1044,12 +1050,12 @@ mod heap_tests {
     fn heap_vs_opaque_may_alias() -> crate::Result<()> {
         let mut b = builder()?;
         // An opaque store address: a pointer loaded from a global.
-        let global = b.build_int_const(0x4000u64, ValueType::I64)?;
-        let opaque = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        let x = b.build_int_const(0x11u64, ValueType::I64)?;
+        let global = b.build_int_const(0x4000u64, ValueType::int(64))?;
+        let opaque = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        let x = b.build_int_const(0x11u64, ValueType::int(64))?;
         b.build_store(opaque, x, rsleigh::VnSpace::RAM)?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         let (fg, na) = built(b, &[MALLOC])?;
 
@@ -1072,16 +1078,16 @@ mod heap_tests {
     fn allocator_call_is_transparent_to_a_stack_slot() -> crate::Result<()> {
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
-        let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
+        let slot_off = b.build_int_const((-8i64) as u64, ValueType::int(64))?;
         let store_addr =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
-        let x = b.build_int_const(0x11u64, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::int(64))?;
+        let x = b.build_int_const(0x11u64, ValueType::int(64))?;
         b.build_store(store_addr, x, rsleigh::VnSpace::RAM)?;
         lower_sp(&mut b, sp_val, 64)?;
         let _p = alloc_call(&mut b, MALLOC)?;
         let load_addr =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
-        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::int(64))?;
+        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         let (fg, na) = built_collapsed(b, &[MALLOC])?;
 
@@ -1108,16 +1114,16 @@ mod heap_tests {
     fn allocator_call_is_opaque_to_the_table_walk() -> crate::Result<()> {
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
-        let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
+        let slot_off = b.build_int_const((-8i64) as u64, ValueType::int(64))?;
         let store_addr =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
-        let x = b.build_int_const(0x11u64, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::int(64))?;
+        let x = b.build_int_const(0x11u64, ValueType::int(64))?;
         b.build_store(store_addr, x, rsleigh::VnSpace::RAM)?;
         lower_sp(&mut b, sp_val, 64)?;
         let _p = alloc_call(&mut b, MALLOC)?;
         let load_addr =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
-        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::int(64))?;
+        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         let (fg, na) = built_collapsed(b, &[MALLOC])?;
 
@@ -1148,7 +1154,7 @@ mod heap_tests {
     fn allocator_call_clobbers_its_own_allocation() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         let (fg, na) = built(b, &[MALLOC])?;
 
@@ -1174,16 +1180,16 @@ mod heap_tests {
     fn stack_spill_forwards_across_allocator_end_to_end() -> crate::Result<()> {
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
-        let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
+        let slot_off = b.build_int_const((-8i64) as u64, ValueType::int(64))?;
         let addr =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
-        let secret = b.build_int_const(0x99u64, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::int(64))?;
+        let secret = b.build_int_const(0x99u64, ValueType::int(64))?;
         b.build_store(addr, secret, rsleigh::VnSpace::RAM)?;
         lower_sp(&mut b, sp_val, 64)?;
         let _p = alloc_call(&mut b, MALLOC)?;
         let addr2 =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
-        let reload = b.build_load(addr2, rsleigh::VnSpace::RAM, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::int(64))?;
+        let reload = b.build_load(addr2, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(reload), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -1209,22 +1215,22 @@ mod heap_tests {
     fn escaped_frame_does_not_forward_across_an_allocator() -> crate::Result<()> {
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
-        let slot_off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
+        let slot_off = b.build_int_const((-8i64) as u64, ValueType::int(64))?;
         let addr =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
-        let secret = b.build_int_const(0x99u64, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::int(64))?;
+        let secret = b.build_int_const(0x99u64, ValueType::int(64))?;
         b.build_store(addr, secret, rsleigh::VnSpace::RAM)?;
         // The escape: the slot's own address enters memory, at a disjoint slot
         // the walk steps through either way.
-        let leak_off = b.build_int_const((-32i64) as u64, ValueType::I64)?;
+        let leak_off = b.build_int_const((-32i64) as u64, ValueType::int(64))?;
         let leak_slot =
-            b.build_int_binary_operation(sp_val, leak_off, IntBinaryOp::Add, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, leak_off, IntBinaryOp::Add, ValueType::int(64))?;
         b.build_store(leak_slot, addr, rsleigh::VnSpace::RAM)?;
         lower_sp(&mut b, sp_val, 64)?;
         let _p = alloc_call(&mut b, MALLOC)?;
         let addr2 =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::I64)?;
-        let reload = b.build_load(addr2, rsleigh::VnSpace::RAM, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::int(64))?;
+        let reload = b.build_load(addr2, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(reload), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -1256,7 +1262,7 @@ mod heap_tests {
             .arg(sp)
             .stack_vn(sp)
             .build_fn_single_region()?;
-        let target = b.build_int_const(MALLOC, ValueType::I64)?;
+        let target = b.build_int_const(MALLOC, ValueType::int(64))?;
         // The call emits only the clobber, so `outputs[2]` is that clobber.
         let (call, outs) = b.build_call(target, &[], &[clobber_reg()], 0)?;
         let clobber = outs[0];
@@ -1295,12 +1301,13 @@ mod heap_tests {
             .stack_args(stack_args_at(0, 8))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let zero = b.build_int_const(0u64, ValueType::I64)?;
-        let slot0 = b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::I64)?;
-        let size_arg = b.build_int_const(16u64, ValueType::I64)?;
+        let zero = b.build_int_const(0u64, ValueType::int(64))?;
+        let slot0 =
+            b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::int(64))?;
+        let size_arg = b.build_int_const(16u64, ValueType::int(64))?;
         b.build_store(slot0, size_arg, rsleigh::VnSpace::RAM)?;
         let _p = alloc_call(&mut b, MALLOC)?;
-        let reload = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let reload = b.build_load(slot0, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(reload), &[])?;
         let (fg, na) = built_collapsed(b, &[MALLOC])?;
 
@@ -1341,8 +1348,8 @@ mod heap_tests {
     fn empty_allocator_set_leaves_heap_opaque() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let eight = b.build_int_const(8u64, ValueType::I64)?;
-        let addr = b.build_int_binary_operation(p, eight, IntBinaryOp::Add, ValueType::I64)?;
+        let eight = b.build_int_const(8u64, ValueType::int(64))?;
+        let addr = b.build_int_binary_operation(p, eight, IntBinaryOp::Add, ValueType::int(64))?;
         b.build_return(Some(addr), &[])?;
         let (fg, na) = built(b, &[])?;
         assert!(
@@ -1358,12 +1365,12 @@ mod heap_tests {
     fn preserves_memory_call_does_not_clobber() -> crate::Result<()> {
         let load_across_call = |preserves_memory: bool| -> crate::Result<bool> {
             let mut b = builder()?;
-            let global = b.build_int_const(0x3000u64, ValueType::I64)?;
-            let stored = b.build_int_const(7u64, ValueType::I64)?;
+            let global = b.build_int_const(0x3000u64, ValueType::int(64))?;
+            let stored = b.build_int_const(7u64, ValueType::int(64))?;
             b.build_store(global, stored, rsleigh::VnSpace::RAM)?;
-            let target = b.build_int_const(0x2000u64, ValueType::I64)?;
+            let target = b.build_int_const(0x2000u64, ValueType::int(64))?;
             let (call, _rets) = b.build_call(target, &[], &[ret_reg()], 0)?;
-            let loaded = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I64)?;
+            let loaded = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::int(64))?;
             b.build_return(Some(loaded), &[])?;
             let (mut fg, na) = built(b, &[])?;
 
@@ -1425,11 +1432,11 @@ mod heap_tests {
             b.set_entry_region_all(region)?;
             b.set_region(region);
 
-            let global = b.build_int_const(0x3000u64, ValueType::I64)?;
-            let stored = b.build_int_const(7u64, ValueType::I64)?;
+            let global = b.build_int_const(0x3000u64, ValueType::int(64))?;
+            let stored = b.build_int_const(7u64, ValueType::int(64))?;
             b.build_store(global, stored, rsleigh::VnSpace::RAM)?;
             b.build_call_other(0, &[], &[], true, false)?;
-            let loaded = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I64)?;
+            let loaded = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::int(64))?;
             b.build_return(Some(loaded), &[])?;
             let (fg, na) = built(b, &[])?;
 
@@ -1469,13 +1476,14 @@ mod heap_tests {
         let sp = b.read_variable(&sp_vn)?;
         // +16: the second incoming stack argument, above the entry SP, so in
         // the caller's frame.
-        let off = b.build_int_const(16u64, ValueType::I64)?;
-        let arg_slot = b.build_int_binary_operation(sp, off, IntBinaryOp::Add, ValueType::I64)?;
-        let seed = b.build_int_const(7u64, ValueType::I64)?;
+        let off = b.build_int_const(16u64, ValueType::int(64))?;
+        let arg_slot =
+            b.build_int_binary_operation(sp, off, IntBinaryOp::Add, ValueType::int(64))?;
+        let seed = b.build_int_const(7u64, ValueType::int(64))?;
         b.build_store(arg_slot, seed, rsleigh::VnSpace::RAM)?;
-        let target = b.build_int_const(0x2000u64, ValueType::I64)?;
+        let target = b.build_int_const(0x2000u64, ValueType::int(64))?;
         b.build_call(target, &[], &[ret_reg()], 0)?;
-        let loaded = b.build_load(arg_slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let loaded = b.build_load(arg_slot, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         let (fg, na) = built_collapsed(b, &[])?;
 
@@ -1521,15 +1529,19 @@ mod heap_tests {
 
         b.set_region(entry);
         let sp_val = b.read_variable(&sp)?;
-        let zero = b.build_int_const(0u64, ValueType::I64)?;
-        let cond =
-            b.build_int_cmp_operation(sp_val, zero, strider_ir::IntCmpOp::Equal, ValueType::I64)?;
+        let zero = b.build_int_const(0u64, ValueType::int(64))?;
+        let cond = b.build_int_cmp_operation(
+            sp_val,
+            zero,
+            strider_ir::IntCmpOp::Equal,
+            ValueType::int(64),
+        )?;
         b.build_if(cond, a, c)?;
 
         b.set_region(a);
         let pa = alloc_call(&mut b, MALLOC)?;
         if let Some(v) = store_a {
-            let x = b.build_int_const(v, ValueType::I64)?;
+            let x = b.build_int_const(v, ValueType::int(64))?;
             b.build_store(pa, x, rsleigh::VnSpace::RAM)?;
         }
         b.write_variable(&ret_reg(), pa)?;
@@ -1551,12 +1563,13 @@ mod heap_tests {
     #[test]
     fn phi_of_two_allocations_is_disjoint_from_the_stack() -> crate::Result<()> {
         let (mut b, phi, _pa, _pc) = alloc_phi_diamond(None)?;
-        let x = b.build_int_const(0x11u64, ValueType::I64)?;
+        let x = b.build_int_const(0x11u64, ValueType::int(64))?;
         b.build_store(phi, x, rsleigh::VnSpace::RAM)?;
         let sp_val = b.read_variable(&sp())?;
-        let eight = b.build_int_const(8u64, ValueType::I64)?;
-        let slot = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I64)?;
-        let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let eight = b.build_int_const(8u64, ValueType::int(64))?;
+        let slot =
+            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         let (fg, na) = built_collapsed(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
 
@@ -1581,7 +1594,7 @@ mod heap_tests {
     #[test]
     fn phi_of_allocations_may_alias_its_own_arm() -> crate::Result<()> {
         let (mut b, phi, _pa, _pc) = alloc_phi_diamond(Some(0x11))?;
-        let loaded = b.build_load(phi, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let loaded = b.build_load(phi, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         let (fg, na) = built_collapsed(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
 
@@ -1617,9 +1630,13 @@ mod heap_tests {
 
         b.set_region(entry);
         let sp_val = b.read_variable(&sp)?;
-        let zero = b.build_int_const(0u64, ValueType::I64)?;
-        let cond =
-            b.build_int_cmp_operation(sp_val, zero, strider_ir::IntCmpOp::Equal, ValueType::I64)?;
+        let zero = b.build_int_const(0u64, ValueType::int(64))?;
+        let cond = b.build_int_cmp_operation(
+            sp_val,
+            zero,
+            strider_ir::IntCmpOp::Equal,
+            ValueType::int(64),
+        )?;
         b.build_if(cond, a, c)?;
 
         b.set_region(a);
@@ -1629,8 +1646,9 @@ mod heap_tests {
 
         b.set_region(c);
         let sp_c = b.read_variable(&sp)?;
-        let eight = b.build_int_const(8u64, ValueType::I64)?;
-        let slot = b.build_int_binary_operation(sp_c, eight, IntBinaryOp::Add, ValueType::I64)?;
+        let eight = b.build_int_const(8u64, ValueType::int(64))?;
+        let slot =
+            b.build_int_binary_operation(sp_c, eight, IntBinaryOp::Add, ValueType::int(64))?;
         b.write_variable(&ret_reg(), slot)?;
         b.build_branch(join)?;
 
@@ -1671,14 +1689,15 @@ mod heap_tests {
 
         b.set_region(header);
         let phi = b.read_variable(&ret_reg())?;
-        let zero = b.build_int_const(0u64, ValueType::I64)?;
+        let zero = b.build_int_const(0u64, ValueType::int(64))?;
         let cond =
-            b.build_int_cmp_operation(phi, zero, strider_ir::IntCmpOp::Equal, ValueType::I64)?;
+            b.build_int_cmp_operation(phi, zero, strider_ir::IntCmpOp::Equal, ValueType::int(64))?;
         b.build_if(cond, body, exit)?;
 
         b.set_region(body);
-        let eight = b.build_int_const(8u64, ValueType::I64)?;
-        let next = b.build_int_binary_operation(phi, eight, IntBinaryOp::Add, ValueType::I64)?;
+        let eight = b.build_int_const(8u64, ValueType::int(64))?;
+        let next =
+            b.build_int_binary_operation(phi, eight, IntBinaryOp::Add, ValueType::int(64))?;
         b.write_variable(&ret_reg(), next)?;
         b.build_branch(header)?;
 
@@ -1730,9 +1749,9 @@ mod heap_tests {
         b.set_region(entry);
         let p0 = alloc_call(&mut b, MALLOC)?;
         b.write_variable(&ret_reg(), p0)?;
-        let zero = b.build_int_const(0u64, ValueType::I64)?;
+        let zero = b.build_int_const(0u64, ValueType::int(64))?;
         let cond =
-            b.build_int_cmp_operation(p0, zero, strider_ir::IntCmpOp::Equal, ValueType::I64)?;
+            b.build_int_cmp_operation(p0, zero, strider_ir::IntCmpOp::Equal, ValueType::int(64))?;
         b.build_if(cond, alts[0], joins[0])?;
 
         for level in 0..levels {
@@ -1750,7 +1769,7 @@ mod heap_tests {
                     phi,
                     zero,
                     strider_ir::IntCmpOp::Equal,
-                    ValueType::I64,
+                    ValueType::int(64),
                 )?;
                 b.build_if(c, alts[level + 1], joins[level + 1])?;
             }
@@ -1811,10 +1830,10 @@ mod heap_tests {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
         let q = alloc_call(&mut b, KMEM_CACHE_ALLOC)?;
-        let two = b.build_int_const(2u64, ValueType::I64)?;
+        let two = b.build_int_const(2u64, ValueType::int(64))?;
         b.build_store(q, two, rsleigh::VnSpace::RAM)?;
         // No store to `p`'s object, so the load survives to be inspected.
-        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         let fg = run_load_forward(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
 
@@ -1840,11 +1859,11 @@ mod heap_tests {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
         let q = alloc_call(&mut b, KMEM_CACHE_ALLOC)?;
-        let one = b.build_int_const(1u64, ValueType::I64)?;
+        let one = b.build_int_const(1u64, ValueType::int(64))?;
         b.build_store(p, one, rsleigh::VnSpace::RAM)?;
-        let two = b.build_int_const(2u64, ValueType::I64)?;
+        let two = b.build_int_const(2u64, ValueType::int(64))?;
         b.build_store(q, two, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         let fg = run_load_forward(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
 
@@ -1865,9 +1884,9 @@ mod heap_tests {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
         let q = alloc_call(&mut b, KMEM_CACHE_ALLOC)?;
-        let two = b.build_int_const(2u64, ValueType::I64)?;
+        let two = b.build_int_const(2u64, ValueType::int(64))?;
         b.build_store(q, two, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         let (fg, na) = built(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
         let load = fg.producer(loaded);
@@ -1932,7 +1951,7 @@ mod heap_tests {
     fn one_heap_store() -> crate::Result<Function> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let one = b.build_int_const(1u64, ValueType::I64)?;
+        let one = b.build_int_const(1u64, ValueType::int(64))?;
         b.build_store(p, one, rsleigh::VnSpace::RAM)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
@@ -2006,40 +2025,40 @@ mod heap_tests {
         use crate::AssumptionOptions;
         use MemPurpose::*;
         let sp_slot = |b: &mut FunctionBuilder, sp_val, off: i64| -> crate::Result<ValueId> {
-            let off = b.build_int_const(off as u64, ValueType::I64)?;
-            b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I64)
+            let off = b.build_int_const(off as u64, ValueType::int(64))?;
+            b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(64))
         };
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
         let slot = sp_slot(&mut b, sp_val, -8)?;
-        let seven = b.build_int_const(7u64, ValueType::I64)?;
+        let seven = b.build_int_const(7u64, ValueType::int(64))?;
         b.build_store(slot, seven, rsleigh::VnSpace::RAM)?;
         lower_sp(&mut b, sp_val, 64)?;
-        let unlisted = b.build_int_const(0x2000u64, ValueType::I64)?;
+        let unlisted = b.build_int_const(0x2000u64, ValueType::int(64))?;
         b.build_call(unlisted, &[], &[ret_reg()], 0)?;
-        let reload = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let reload = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         let local = sp_slot(&mut b, sp_val, -16)?;
-        let nine = b.build_int_const(9u64, ValueType::I64)?;
+        let nine = b.build_int_const(9u64, ValueType::int(64))?;
         b.build_store(local, nine, rsleigh::VnSpace::RAM)?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let local_reload = b.build_load(local, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let local_reload = b.build_load(local, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         let q = alloc_call(&mut b, MALLOC)?;
-        let two = b.build_int_const(2u64, ValueType::I64)?;
+        let two = b.build_int_const(2u64, ValueType::int(64))?;
         b.build_store(q, two, rsleigh::VnSpace::RAM)?;
-        let from_p = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        let global = b.build_int_const(0x9000u64, ValueType::I64)?;
-        let from_global = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        let mask = b.build_int_const((-16i64) as u64, ValueType::I64)?;
+        let from_p = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        let global = b.build_int_const(0x9000u64, ValueType::int(64))?;
+        let from_global = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        let mask = b.build_int_const((-16i64) as u64, ValueType::int(64))?;
         let aligned =
-            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I64)?;
+            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(64))?;
         let aligned_slot = sp_slot(&mut b, aligned, 8)?;
-        let five = b.build_int_const(5u64, ValueType::I64)?;
+        let five = b.build_int_const(5u64, ValueType::int(64))?;
         b.build_store(aligned_slot, five, rsleigh::VnSpace::RAM)?;
         let incoming = sp_slot(&mut b, sp_val, 8)?;
-        let from_incoming = b.build_load(incoming, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let from_incoming = b.build_load(incoming, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         let mut sum = reload;
         for v in [local_reload, from_p, from_global, from_incoming] {
-            sum = b.build_int_binary_operation(sum, v, IntBinaryOp::Add, ValueType::I64)?;
+            sum = b.build_int_binary_operation(sum, v, IntBinaryOp::Add, ValueType::int(64))?;
         }
         b.build_return(Some(sum), &[])?;
         let (mut fg, _) = built_collapsed(b, &[])?;
@@ -2058,10 +2077,10 @@ mod heap_tests {
         lower_sp(&mut b, sp_val, 64)?;
         // Slot 0 of the allocator's stack arguments.
         let arg_slot = sp_slot(&mut b, sp_val, -64)?;
-        let eleven = b.build_int_const(11u64, ValueType::I64)?;
+        let eleven = b.build_int_const(11u64, ValueType::int(64))?;
         b.build_store(arg_slot, eleven, rsleigh::VnSpace::RAM)?;
         alloc_call(&mut b, MALLOC)?;
-        let arg_reload = b.build_load(arg_slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let arg_reload = b.build_load(arg_slot, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(arg_reload), &[])?;
         let (mut fa, _) = built_collapsed(b, &[])?;
 
@@ -2203,11 +2222,11 @@ mod arg_window_bounds {
         let sp_val = b.read_variable(&sp)?;
         // A call SP ABOVE the entry SP, so the declared base offset is added to
         // a positive displacement.
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
+        let eight = b.build_int_const(8u64, ValueType::int(32))?;
         let call_sp =
-            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(32))?;
         b.write_variable(&sp, call_sp)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
@@ -2260,7 +2279,7 @@ mod arg_window_bounds {
             .stack_args(saturating_args())
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let one = b.build_int_const(1u64, ValueType::I32)?;
+        let one = b.build_int_const(1u64, ValueType::int(32))?;
         b.build_store(sp_val, one, rsleigh::VnSpace::RAM)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
@@ -2305,19 +2324,19 @@ mod arg_window_complexity {
             .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let k = b.build_int_const((-8i64) as u64, ValueType::I32)?;
-        let slot = b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::I32)?;
-        let v = b.build_int_const(0x42u64, ValueType::I32)?;
+        let k = b.build_int_const((-8i64) as u64, ValueType::int(32))?;
+        let slot = b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::int(32))?;
+        let v = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(slot, v, rsleigh::VnSpace::RAM)?;
-        let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
+        let frame = b.build_int_const((-64i64) as u64, ValueType::int(32))?;
         let call_sp =
-            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::int(32))?;
         b.write_variable(&sp, call_sp)?;
         for i in 0..calls {
-            let target = b.build_int_const(0x1000 + i as u64 * 0x10, ValueType::I32)?;
+            let target = b.build_int_const(0x1000 + i as u64 * 0x10, ValueType::int(32))?;
             b.build_call(target, &[], &[], 0)?;
         }
-        let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -2365,25 +2384,25 @@ mod arg_window_complexity {
         // The frame is one slot deeper than the arguments need, so the spill at
         // `sp - 4` is the window's last slot rather than the caller's memory.
         let frame_bytes = 4 * (slots as i64 + 1);
-        let spill_off = b.build_int_const((-4i64) as u64, ValueType::I32)?;
+        let spill_off = b.build_int_const((-4i64) as u64, ValueType::int(32))?;
         let spill_slot =
-            b.build_int_binary_operation(sp_val, spill_off, IntBinaryOp::Add, ValueType::I32)?;
-        let spilled = b.build_int_const(0x42u64, ValueType::I32)?;
+            b.build_int_binary_operation(sp_val, spill_off, IntBinaryOp::Add, ValueType::int(32))?;
+        let spilled = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(spill_slot, spilled, rsleigh::VnSpace::RAM)?;
         for i in 0..slots {
-            let off = b.build_int_const((4 * i as i64 - frame_bytes) as u64, ValueType::I32)?;
+            let off = b.build_int_const((4 * i as i64 - frame_bytes) as u64, ValueType::int(32))?;
             let slot =
-                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I32)?;
-            let arg = b.build_int_const(0x100 + i as u64, ValueType::I32)?;
+                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(32))?;
+            let arg = b.build_int_const(0x100 + i as u64, ValueType::int(32))?;
             b.build_store(slot, arg, rsleigh::VnSpace::RAM)?;
         }
-        let frame = b.build_int_const((-frame_bytes) as u64, ValueType::I32)?;
+        let frame = b.build_int_const((-frame_bytes) as u64, ValueType::int(32))?;
         let call_sp =
-            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::int(32))?;
         b.write_variable(&sp, call_sp)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
-        let loaded = b.build_load(spill_slot, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(spill_slot, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -2431,33 +2450,33 @@ mod arg_window_complexity {
         let sp_val = b.read_variable(&sp)?;
         // Blinds the prefix at the first slot with no store, so the window
         // reaches every reload instead of ending below them.
-        let blinder = b.build_int_const(0x2000u64, ValueType::I32)?;
+        let blinder = b.build_int_const(0x2000u64, ValueType::int(32))?;
         b.build_call(blinder, &[], &[], 0)?;
         // The reloads occupy the `loads` slots just above the arguments.
         let frame_bytes = 4 * (slots + loads + 1) as i64;
         for j in 0..slots {
-            let off = b.build_int_const((4 * j as i64 - frame_bytes) as u64, ValueType::I32)?;
+            let off = b.build_int_const((4 * j as i64 - frame_bytes) as u64, ValueType::int(32))?;
             let slot =
-                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I32)?;
-            let arg = b.build_int_const(0x100 + j as u64, ValueType::I32)?;
+                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(32))?;
+            let arg = b.build_int_const(0x100 + j as u64, ValueType::int(32))?;
             b.build_store(slot, arg, rsleigh::VnSpace::RAM)?;
         }
-        let frame = b.build_int_const((-frame_bytes) as u64, ValueType::I32)?;
+        let frame = b.build_int_const((-frame_bytes) as u64, ValueType::int(32))?;
         let call_sp =
-            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::int(32))?;
         b.write_variable(&sp, call_sp)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
         let mut sum = None;
         for i in 0..loads {
-            let off = b.build_int_const((-4 * (i as i64 + 1)) as u64, ValueType::I32)?;
+            let off = b.build_int_const((-4 * (i as i64 + 1)) as u64, ValueType::int(32))?;
             let addr =
-                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I32)?;
-            let v = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(32))?;
+            let v = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
             sum = Some(match sum {
                 None => v,
                 Some(acc) => {
-                    b.build_int_binary_operation(acc, v, IntBinaryOp::Add, ValueType::I32)?
+                    b.build_int_binary_operation(acc, v, IntBinaryOp::Add, ValueType::int(32))?
                 }
             });
         }
@@ -2495,28 +2514,28 @@ mod arg_window_complexity {
         let frame_bytes = 4 * slots as i64;
         let mut slot_addrs = Vec::with_capacity(slots);
         for i in 0..slots {
-            let off = b.build_int_const((4 * i as i64 - frame_bytes) as u64, ValueType::I32)?;
+            let off = b.build_int_const((4 * i as i64 - frame_bytes) as u64, ValueType::int(32))?;
             let slot =
-                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I32)?;
-            let arg = b.build_int_const(0x100 + i as u64, ValueType::I32)?;
+                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(32))?;
+            let arg = b.build_int_const(0x100 + i as u64, ValueType::int(32))?;
             b.build_store(slot, arg, rsleigh::VnSpace::RAM)?;
             slot_addrs.push(slot);
         }
-        let frame = b.build_int_const((-frame_bytes) as u64, ValueType::I32)?;
+        let frame = b.build_int_const((-frame_bytes) as u64, ValueType::int(32))?;
         let call_sp =
-            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::int(32))?;
         b.write_variable(&sp, call_sp)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
         let mut reloads = Vec::with_capacity(slots);
         let mut sum = None;
         for &addr in &slot_addrs {
-            let v = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            let v = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
             reloads.push(v);
             sum = Some(match sum {
                 None => v,
                 Some(acc) => {
-                    b.build_int_binary_operation(acc, v, IntBinaryOp::Add, ValueType::I32)?
+                    b.build_int_binary_operation(acc, v, IntBinaryOp::Add, ValueType::int(32))?
                 }
             });
         }
@@ -2589,9 +2608,13 @@ mod spine_memo {
         let mut cur = b.read_variable(&sp)?;
         let mut chain = Vec::with_capacity(len);
         for _ in 0..len {
-            let minus_four = b.build_int_const(0xFFFF_FFFCu64, ValueType::I32)?;
-            cur =
-                b.build_int_binary_operation(cur, minus_four, IntBinaryOp::Add, ValueType::I32)?;
+            let minus_four = b.build_int_const(0xFFFF_FFFCu64, ValueType::int(32))?;
+            cur = b.build_int_binary_operation(
+                cur,
+                minus_four,
+                IntBinaryOp::Add,
+                ValueType::int(32),
+            )?;
             chain.push(cur);
         }
         b.build_return(Some(cur), &[])?;
@@ -2659,22 +2682,24 @@ mod arg_window_visibility {
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
 
-        let zero = b.build_int_const(0u64, ValueType::I32)?;
-        let slot0 = b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::I32)?;
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let slot4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
+        let zero = b.build_int_const(0u64, ValueType::int(32))?;
+        let slot0 =
+            b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::int(32))?;
+        let four = b.build_int_const(4u64, ValueType::int(32))?;
+        let slot4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
 
-        let p = b.build_int_const(0x11u64, ValueType::I32)?;
+        let p = b.build_int_const(0x11u64, ValueType::int(32))?;
         b.build_store(slot0, p, rsleigh::VnSpace::RAM)?;
-        let f = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let f = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(f, &[], &[], 0)?;
 
-        let q = b.build_int_const(0x22u64, ValueType::I32)?;
+        let q = b.build_int_const(0x22u64, ValueType::int(32))?;
         b.build_store(slot4, q, rsleigh::VnSpace::RAM)?;
-        let g = b.build_int_const(0x2000u64, ValueType::I32)?;
+        let g = b.build_int_const(0x2000u64, ValueType::int(32))?;
         b.build_call(g, &[], &[], 0)?;
 
-        let loaded = b.build_load(slot4, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(slot4, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -2717,26 +2742,26 @@ mod arg_window_visibility {
         let sp_val = b.read_variable(&sp)?;
         let mut addrs = Vec::new();
         for off in [-12i64, -16, -14] {
-            let k = b.build_int_const(off as u64, ValueType::I32)?;
+            let k = b.build_int_const(off as u64, ValueType::int(32))?;
             addrs.push(b.build_int_binary_operation(
                 sp_val,
                 k,
                 IntBinaryOp::Add,
-                ValueType::I32,
+                ValueType::int(32),
             )?);
         }
         for (i, addr) in addrs.iter().enumerate() {
-            let data = b.build_int_const(0x11 * (i as u64 + 1), ValueType::I32)?;
+            let data = b.build_int_const(0x11 * (i as u64 + 1), ValueType::int(32))?;
             b.build_store(*addr, data, rsleigh::VnSpace::RAM)?;
         }
         let slot4 = addrs[0];
-        let frame = b.build_int_const((-16i64) as u64, ValueType::I32)?;
+        let frame = b.build_int_const((-16i64) as u64, ValueType::int(32))?;
         let call_sp =
-            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::int(32))?;
         b.write_variable(&sp, call_sp)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
-        let loaded = b.build_load(slot4, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(slot4, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -2776,28 +2801,29 @@ mod arg_window_visibility {
             .stack_args(stack_args_at(4, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
-        let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
+        let frame = b.build_int_const((-64i64) as u64, ValueType::int(32))?;
         let call_sp =
-            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::int(32))?;
         b.write_variable(&sp, call_sp)?;
 
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let arg0 = b.build_int_binary_operation(call_sp, four, IntBinaryOp::Add, ValueType::I32)?;
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::int(32))?;
+        let arg0 =
+            b.build_int_binary_operation(call_sp, four, IntBinaryOp::Add, ValueType::int(32))?;
+        let eight = b.build_int_const(8u64, ValueType::int(32))?;
         let arg1 =
-            b.build_int_binary_operation(call_sp, eight, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(call_sp, eight, IntBinaryOp::Add, ValueType::int(32))?;
 
-        let p = b.build_int_const(0x11u64, ValueType::I32)?;
+        let p = b.build_int_const(0x11u64, ValueType::int(32))?;
         b.build_store(arg0, p, rsleigh::VnSpace::RAM)?;
-        let f = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let f = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(f, &[], &[], 0)?;
 
-        let q = b.build_int_const(0x22u64, ValueType::I32)?;
+        let q = b.build_int_const(0x22u64, ValueType::int(32))?;
         b.build_store(arg1, q, rsleigh::VnSpace::RAM)?;
-        let g = b.build_int_const(0x2000u64, ValueType::I32)?;
+        let g = b.build_int_const(0x2000u64, ValueType::int(32))?;
         b.build_call(g, &[], &[], 0)?;
 
-        let loaded = b.build_load(arg1, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(arg1, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -2861,20 +2887,24 @@ mod arg_window_visibility {
             .stack_args(stack_args_at(4, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
-        let minus_eight = b.build_int_const((-8i64) as u64, ValueType::I32)?;
-        let local =
-            b.build_int_binary_operation(entry_sp, minus_eight, IntBinaryOp::Add, ValueType::I32)?;
-        let spilled = b.build_int_const(0x42u64, ValueType::I32)?;
+        let minus_eight = b.build_int_const((-8i64) as u64, ValueType::int(32))?;
+        let local = b.build_int_binary_operation(
+            entry_sp,
+            minus_eight,
+            IntBinaryOp::Add,
+            ValueType::int(32),
+        )?;
+        let spilled = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(local, spilled, rsleigh::VnSpace::RAM)?;
 
-        let frame = b.build_int_const((-64i64) as u64, ValueType::I32)?;
+        let frame = b.build_int_const((-64i64) as u64, ValueType::int(32))?;
         let call_sp =
-            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::int(32))?;
         b.write_variable(&sp, call_sp)?;
-        let f = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let f = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(f, &[], &[], 0)?;
 
-        let loaded = b.build_load(local, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(local, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -2920,32 +2950,32 @@ mod arg_window_visibility {
 
         let mut slots = Vec::new();
         for off in [-16i64, -12, -8] {
-            let k = b.build_int_const(off as u64, ValueType::I32)?;
+            let k = b.build_int_const(off as u64, ValueType::int(32))?;
             slots.push(b.build_int_binary_operation(
                 entry_sp,
                 k,
                 IntBinaryOp::Add,
-                ValueType::I32,
+                ValueType::int(32),
             )?);
         }
         for (i, slot) in slots.iter().enumerate() {
-            let arg = b.build_int_const(0x10 * (i as u64 + 1), ValueType::I32)?;
+            let arg = b.build_int_const(0x10 * (i as u64 + 1), ValueType::int(32))?;
             b.build_store(*slot, arg, rsleigh::VnSpace::RAM)?;
         }
 
-        let global = b.build_int_const(0x4000u64, ValueType::I32)?;
-        let opaque = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::I32)?;
-        let junk = b.build_int_const(0x99u64, ValueType::I32)?;
+        let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
+        let opaque = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+        let junk = b.build_int_const(0x99u64, ValueType::int(32))?;
         b.build_store(opaque, junk, rsleigh::VnSpace::RAM)?;
 
-        let frame = b.build_int_const((-16i64) as u64, ValueType::I32)?;
+        let frame = b.build_int_const((-16i64) as u64, ValueType::int(32))?;
         let call_sp =
-            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::int(32))?;
         b.write_variable(&sp, call_sp)?;
-        let f = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let f = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(f, &[], &[], 0)?;
 
-        let loaded = b.build_load(slots[2], rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(slots[2], rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -2985,24 +3015,24 @@ mod arg_window_visibility {
             .stack_args(stack_args_at(8, 8))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
-        let frame = b.build_int_const((-32i64) as u64, ValueType::I64)?;
+        let frame = b.build_int_const((-32i64) as u64, ValueType::int(64))?;
         let call_sp =
-            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I64)?;
+            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::int(64))?;
         b.write_variable(&sp, call_sp)?;
 
-        let eight = b.build_int_const(8u64, ValueType::I64)?;
+        let eight = b.build_int_const(8u64, ValueType::int(64))?;
         let slot0 =
-            b.build_int_binary_operation(call_sp, eight, IntBinaryOp::Add, ValueType::I64)?;
-        let arg = b.build_int_const(0x42u64, ValueType::I32)?;
+            b.build_int_binary_operation(call_sp, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let arg = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(slot0, arg, rsleigh::VnSpace::RAM)?;
 
-        let f = b.build_int_const(0x1000u64, ValueType::I64)?;
+        let f = b.build_int_const(0x1000u64, ValueType::int(64))?;
         b.build_call(f, &[], &[], 0)?;
 
-        let twelve = b.build_int_const(12u64, ValueType::I64)?;
+        let twelve = b.build_int_const(12u64, ValueType::int(64))?;
         let tail =
-            b.build_int_binary_operation(call_sp, twelve, IntBinaryOp::Add, ValueType::I64)?;
-        let loaded = b.build_load(tail, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            b.build_int_binary_operation(call_sp, twelve, IntBinaryOp::Add, ValueType::int(64))?;
+        let loaded = b.build_load(tail, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -3041,12 +3071,12 @@ mod own_frame_tests {
             .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
-        let align = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
+        let align = b.build_int_const(0xFFFF_FFF0u64, ValueType::int(32))?;
         let aligned =
-            b.build_int_binary_operation(entry_sp, align, IntBinaryOp::And, ValueType::I32)?;
-        let low_bits = b.build_int_const(0xFu64, ValueType::I32)?;
+            b.build_int_binary_operation(entry_sp, align, IntBinaryOp::And, ValueType::int(32))?;
+        let low_bits = b.build_int_const(0xFu64, ValueType::int(32))?;
         let extracted =
-            b.build_int_binary_operation(entry_sp, low_bits, IntBinaryOp::And, ValueType::I32)?;
+            b.build_int_binary_operation(entry_sp, low_bits, IntBinaryOp::And, ValueType::int(32))?;
         b.build_store(aligned, extracted, rsleigh::VnSpace::RAM)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
@@ -3073,9 +3103,9 @@ mod own_frame_tests {
             .stack_args(stack_args_at(4, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
-        let align = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
+        let align = b.build_int_const(0xFFFF_FFF0u64, ValueType::int(32))?;
         let entry_sp =
-            b.build_int_binary_operation(entry_sp, align, IntBinaryOp::And, ValueType::I32)?;
+            b.build_int_binary_operation(entry_sp, align, IntBinaryOp::And, ValueType::int(32))?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
         let fg = b.build()?;
@@ -3115,9 +3145,9 @@ mod own_frame_tests {
             .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
+        let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::int(32))?;
         let anchor =
-            b.build_int_binary_operation(entry_sp, mask, IntBinaryOp::And, ValueType::I32)?;
+            b.build_int_binary_operation(entry_sp, mask, IntBinaryOp::And, ValueType::int(32))?;
         b.build_store(anchor, mask, rsleigh::VnSpace::RAM)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
@@ -3136,7 +3166,7 @@ mod own_frame_tests {
                     &mut fg,
                     NodeKind::FloatConst(bits),
                     [],
-                    [ValueKind::Typed(ValueType::F32)],
+                    [ValueKind::Typed(ValueType::float(32))],
                 );
                 fg.node_outputs(n)[0]
             })
@@ -3145,7 +3175,7 @@ mod own_frame_tests {
             &mut fg,
             NodeKind::Phi,
             [token, arms[0], arms[1]],
-            [ValueKind::Typed(ValueType::F32)],
+            [ValueKind::Typed(ValueType::float(32))],
         );
         let phi_value = fg.node_outputs(phi)[0];
         let masked = fg.node_input_id_at(fg.producer(anchor), 0)?;
@@ -3172,19 +3202,19 @@ mod own_frame_tests {
             .stack_args(stack_args_at(4, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
+        let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::int(32))?;
 
-        let below = b.build_int_const((-0x20i64) as u64, ValueType::I32)?;
+        let below = b.build_int_const((-0x20i64) as u64, ValueType::int(32))?;
         let sp_below =
-            b.build_int_binary_operation(entry_sp, below, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(entry_sp, below, IntBinaryOp::Add, ValueType::int(32))?;
         let anchor_below =
-            b.build_int_binary_operation(sp_below, mask, IntBinaryOp::And, ValueType::I32)?;
+            b.build_int_binary_operation(sp_below, mask, IntBinaryOp::And, ValueType::int(32))?;
 
-        let above = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let above = b.build_int_const(0x1000u64, ValueType::int(32))?;
         let sp_above =
-            b.build_int_binary_operation(entry_sp, above, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(entry_sp, above, IntBinaryOp::Add, ValueType::int(32))?;
         let anchor_above =
-            b.build_int_binary_operation(sp_above, mask, IntBinaryOp::And, ValueType::I32)?;
+            b.build_int_binary_operation(sp_above, mask, IntBinaryOp::And, ValueType::int(32))?;
 
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
@@ -3281,13 +3311,13 @@ mod modular_offset_tests {
         let sp = sp();
         let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let k_a = b.build_int_const(0x7FFF_FFFEu64, ValueType::I32)?;
-        let a = b.build_int_binary_operation(sp_val, k_a, IntBinaryOp::Add, ValueType::I32)?;
-        let k_b = b.build_int_const(0x8000_0000u64, ValueType::I32)?;
-        let bb = b.build_int_binary_operation(sp_val, k_b, IntBinaryOp::Add, ValueType::I32)?;
-        let data = b.build_int_const(0x42u64, ValueType::I32)?;
+        let k_a = b.build_int_const(0x7FFF_FFFEu64, ValueType::int(32))?;
+        let a = b.build_int_binary_operation(sp_val, k_a, IntBinaryOp::Add, ValueType::int(32))?;
+        let k_b = b.build_int_const(0x8000_0000u64, ValueType::int(32))?;
+        let bb = b.build_int_binary_operation(sp_val, k_b, IntBinaryOp::Add, ValueType::int(32))?;
+        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(bb, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(a, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(a, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -3362,7 +3392,7 @@ mod store_index {
     }
 
     fn alloc(b: &mut FunctionBuilder) -> crate::Result<ValueId> {
-        let target = b.build_int_const(ALLOC, ValueType::I32)?;
+        let target = b.build_int_const(ALLOC, ValueType::int(32))?;
         let (_call, rets) = b.build_call(target, &[], &[ret_reg()], 0)?;
         Ok(rets[0])
     }
@@ -3390,8 +3420,9 @@ mod store_index {
 
         b.set_region(entry);
         let entry_sp = b.read_variable(&sp)?;
-        let zero = b.build_int_const(0u64, ValueType::I32)?;
-        let cond = b.build_int_cmp_operation(entry_sp, zero, IntCmpOp::Equal, ValueType::I32)?;
+        let zero = b.build_int_const(0u64, ValueType::int(32))?;
+        let cond =
+            b.build_int_cmp_operation(entry_sp, zero, IntCmpOp::Equal, ValueType::int(32))?;
         b.build_if(cond, left, right)?;
         for arm in [left, right] {
             b.set_region(arm);
@@ -3402,37 +3433,39 @@ mod store_index {
 
         b.set_region(join);
         let merged = b.read_variable(&ret_reg())?;
-        let first = b.build_int_const(1u64, ValueType::I32)?;
+        let first = b.build_int_const(1u64, ValueType::int(32))?;
         b.build_store(merged, first, rsleigh::VnSpace::RAM)?;
         let mut heaps = vec![merged];
         let sp_value = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32)?;
+        let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::int(32))?;
         let aligned =
-            b.build_int_binary_operation(sp_value, mask, IntBinaryOp::And, ValueType::I32)?;
-        let near_top = b.build_int_const(0x7FFF_FFFCu64, ValueType::I32)?;
+            b.build_int_binary_operation(sp_value, mask, IntBinaryOp::And, ValueType::int(32))?;
+        let near_top = b.build_int_const(0x7FFF_FFFCu64, ValueType::int(32))?;
         let sp_top =
-            b.build_int_binary_operation(sp_value, near_top, IntBinaryOp::Add, ValueType::I32)?;
-        let cell = b.build_int_const(0x9000u64, ValueType::I32)?;
-        let opaque = b.build_load(cell, rsleigh::VnSpace::RAM, ValueType::I32)?;
+            b.build_int_binary_operation(sp_value, near_top, IntBinaryOp::Add, ValueType::int(32))?;
+        let cell = b.build_int_const(0x9000u64, ValueType::int(32))?;
+        let opaque = b.build_load(cell, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         let mut addresses = vec![opaque, merged];
         for _ in 0..40 {
             let k = rng.below(24) as i64 - 12;
             let addr = match rng.below(11) {
                 0 | 1 => {
-                    let k = b.build_int_const(k as u64, ValueType::I32)?;
-                    b.build_int_binary_operation(sp_value, k, IntBinaryOp::Add, ValueType::I32)?
+                    let k = b.build_int_const(k as u64, ValueType::int(32))?;
+                    b.build_int_binary_operation(sp_value, k, IntBinaryOp::Add, ValueType::int(32))?
                 }
                 2 => {
-                    let k = b.build_int_const(k as u64, ValueType::I32)?;
-                    b.build_int_binary_operation(aligned, k, IntBinaryOp::Add, ValueType::I32)?
+                    let k = b.build_int_const(k as u64, ValueType::int(32))?;
+                    b.build_int_binary_operation(aligned, k, IntBinaryOp::Add, ValueType::int(32))?
                 }
-                3 => b.build_int_const((0x1000 + k) as u64, ValueType::I32)?,
-                4 => b.build_int_const((0xFFFF_F000u64).wrapping_add(k as u64), ValueType::I32)?,
+                3 => b.build_int_const((0x1000 + k) as u64, ValueType::int(32))?,
+                4 => {
+                    b.build_int_const((0xFFFF_F000u64).wrapping_add(k as u64), ValueType::int(32))?
+                }
                 5 => opaque,
                 6 => {
                     let base = heaps[rng.below(heaps.len())];
-                    let k = b.build_int_const(k as u64, ValueType::I32)?;
-                    b.build_int_binary_operation(base, k, IntBinaryOp::Add, ValueType::I32)?
+                    let k = b.build_int_const(k as u64, ValueType::int(32))?;
+                    b.build_int_binary_operation(base, k, IntBinaryOp::Add, ValueType::int(32))?
                 }
                 7 => {
                     let p = alloc(&mut b)?;
@@ -3441,8 +3474,8 @@ mod store_index {
                     continue;
                 }
                 8 => {
-                    let k = b.build_int_const(k as u64, ValueType::I32)?;
-                    b.build_int_binary_operation(sp_top, k, IntBinaryOp::Add, ValueType::I32)?
+                    let k = b.build_int_const(k as u64, ValueType::int(32))?;
+                    b.build_int_binary_operation(sp_top, k, IntBinaryOp::Add, ValueType::int(32))?
                 }
                 9 => {
                     let base = heaps[rng.below(heaps.len())];
@@ -3450,14 +3483,14 @@ mod store_index {
                         base,
                         near_top,
                         IntBinaryOp::Add,
-                        ValueType::I32,
+                        ValueType::int(32),
                     )?;
-                    let k = b.build_int_const(k as u64, ValueType::I32)?;
-                    b.build_int_binary_operation(top, k, IntBinaryOp::Add, ValueType::I32)?
+                    let k = b.build_int_const(k as u64, ValueType::int(32))?;
+                    b.build_int_binary_operation(top, k, IntBinaryOp::Add, ValueType::int(32))?
                 }
                 _ => {
                     if rng.below(2) == 0 {
-                        let target = b.build_int_const(0x2000u64, ValueType::I32)?;
+                        let target = b.build_int_const(0x2000u64, ValueType::int(32))?;
                         b.build_call(target, &[], &[], 0)?;
                     } else {
                         b.build_call_other(0, &[], &[], true, false)?;
@@ -3467,10 +3500,10 @@ mod store_index {
             };
             addresses.push(addr);
             let ty = [
-                ValueType::I8,
-                ValueType::I16,
-                ValueType::I32,
-                ValueType::I64,
+                ValueType::int(8),
+                ValueType::int(16),
+                ValueType::int(32),
+                ValueType::int(64),
             ][rng.below(4)];
             let data = b.build_int_const(rng.next_u64() % 100, ty)?;
             let space = if rng.below(6) == 0 {
@@ -3610,16 +3643,17 @@ mod refresh_tests {
             .stack_vn(sp)
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let target = b.build_int_const(MALLOC, ValueType::I64)?;
+        let target = b.build_int_const(MALLOC, ValueType::int(64))?;
         let (_call, rets) = b.build_call(target, &[], &[ret], 0)?;
-        let one = b.build_int_const(1u64, ValueType::I64)?;
+        let one = b.build_int_const(1u64, ValueType::int(64))?;
         b.build_store(rets[0], one, rsleigh::VnSpace::RAM)?;
-        let off = b.build_int_const((-8i64) as u64, ValueType::I64)?;
-        let slot = b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I64)?;
-        let two = b.build_int_const(2u64, ValueType::I64)?;
+        let off = b.build_int_const((-8i64) as u64, ValueType::int(64))?;
+        let slot =
+            b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(64))?;
+        let two = b.build_int_const(2u64, ValueType::int(64))?;
         b.build_store(slot, two, rsleigh::VnSpace::RAM)?;
-        let reload = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        let global = b.build_int_const(0x9000u64, ValueType::I64)?;
+        let reload = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        let global = b.build_int_const(0x9000u64, ValueType::int(64))?;
         b.build_store(global, reload, rsleigh::VnSpace::RAM)?;
         b.build_return(Some(reload), &[])?;
         b.set_lift_addr(None);
@@ -3670,10 +3704,10 @@ mod refresh_tests {
     fn refresh_rederives_an_edited_address() -> crate::Result<()> {
         let sp = stack_vn_x86_64();
         let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-            let off = b.build_int_const((-16i64) as u64, ValueType::I64)?;
+            let off = b.build_int_const((-16i64) as u64, ValueType::int(64))?;
             let addr =
-                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I64)?;
-            let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
+                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(64))?;
+            let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
             b.build_return(Some(loaded), &[])?;
             Ok(())
         })?;
@@ -3691,7 +3725,7 @@ mod refresh_tests {
         let offset = |fg: &Function| fg.stack_offset(load).map(|(_, k)| k);
         assert_eq!(offset(&fg), Some(-16));
         let mut edit = crate::EditFunction::new(&mut fg);
-        let minus_8 = edit.build_int_const((-8i64) as u64, ValueType::I64)?;
+        let minus_8 = edit.build_int_const((-8i64) as u64, ValueType::int(64))?;
         edit.replace_value(minus_16, minus_8);
         assert_eq!(
             offset(edit.function()),

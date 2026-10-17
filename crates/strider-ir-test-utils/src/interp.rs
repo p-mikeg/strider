@@ -698,13 +698,13 @@ mod tests {
     #[test]
     fn a_shift_count_wider_than_its_output_is_not_truncated() {
         let f = make_empty_fn(|b| {
-            let one = b.build_int_const(1u8, ValueType::I8)?;
-            let count = b.build_int_const(0x100u16, ValueType::I16)?;
+            let one = b.build_int_const(1u8, ValueType::int(8))?;
+            let count = b.build_int_const(0x100u16, ValueType::int(16))?;
             // `build_int_binary_operation` pins both operands to the output width.
             let node = b.create_node(
                 NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
                 [one, count],
-                [ValueKind::Typed(ValueType::I8)],
+                [ValueKind::Typed(ValueType::int(8))],
             );
             Ok(b.function().node_outputs(node)[0])
         })
@@ -721,19 +721,19 @@ mod tests {
         let exit = b.create_region_all().unwrap();
         b.set_entry_region_all(entry).unwrap();
         b.set_region(entry);
-        let first = b.build_int_const(start, ValueType::I32).unwrap();
+        let first = b.build_int_const(start, ValueType::int(32)).unwrap();
         b.write_variable(&i, first).unwrap();
         b.build_branch(head).unwrap();
         b.set_region(head);
         let cur = b.read_variable(&i).unwrap();
-        let step = b.build_int_const(step, ValueType::I32).unwrap();
+        let step = b.build_int_const(step, ValueType::int(32)).unwrap();
         let next = b
-            .build_int_binary_operation(cur, step, IntBinaryOp::Add, ValueType::I32)
+            .build_int_binary_operation(cur, step, IntBinaryOp::Add, ValueType::int(32))
             .unwrap();
         b.write_variable(&i, next).unwrap();
-        let stop = b.build_int_const(stop, ValueType::I32).unwrap();
+        let stop = b.build_int_const(stop, ValueType::int(32)).unwrap();
         let done = b
-            .build_int_cmp_operation(next, stop, IntCmpOp::Equal, ValueType::I32)
+            .build_int_cmp_operation(next, stop, IntCmpOp::Equal, ValueType::int(32))
             .unwrap();
         b.build_if(done, exit, head).unwrap();
         b.set_region(exit);
@@ -763,10 +763,10 @@ mod tests {
     fn memory_follows_the_function_endianness() {
         for (endianness, first) in [(Endianness::Little, 0x44), (Endianness::Big, 0x11)] {
             let f = make_empty_fn_endian(endianness, |b| {
-                let at = b.build_int_const(0x5000u64, ValueType::I64)?;
-                let word = b.build_int_const(0x1122_3344u32, ValueType::I32)?;
+                let at = b.build_int_const(0x5000u64, ValueType::int(64))?;
+                let word = b.build_int_const(0x1122_3344u32, ValueType::int(32))?;
                 b.build_store(at, word, rsleigh::VnSpace::RAM)?;
-                b.build_load(at, rsleigh::VnSpace::RAM, ValueType::I8)
+                b.build_load(at, rsleigh::VnSpace::RAM, ValueType::int(8))
             })
             .unwrap();
             assert_eq!(
@@ -781,8 +781,8 @@ mod tests {
     fn an_unwritten_byte_reads_the_rom() {
         let rom = MockRom::raw_bytes(0x1000, vec![1, 2, 3, 4]);
         let f = make_empty_fn(|b| {
-            let at = b.build_int_const(0x1000u64, ValueType::I64)?;
-            b.build_load(at, rsleigh::VnSpace::RAM, ValueType::I32)
+            let at = b.build_int_const(0x1000u64, ValueType::int(64))?;
+            b.build_load(at, rsleigh::VnSpace::RAM, ValueType::int(32))
         })
         .unwrap();
         assert_eq!(
@@ -797,17 +797,17 @@ mod tests {
     fn a_call_clobbers_memory_but_not_the_rom() {
         let rom = MockRom::raw_bytes(0x1000, vec![0x5a]);
         let mut b = RegisterSet::new().build_fn_single_region().unwrap();
-        let heap = b.build_int_const(0x5000u64, ValueType::I64).unwrap();
-        let byte = b.build_int_const(0xabu8, ValueType::I8).unwrap();
+        let heap = b.build_int_const(0x5000u64, ValueType::int(64)).unwrap();
+        let byte = b.build_int_const(0xabu8, ValueType::int(8)).unwrap();
         b.build_store(heap, byte, rsleigh::VnSpace::RAM).unwrap();
-        let target = b.build_int_const(0x9000u64, ValueType::I64).unwrap();
+        let target = b.build_int_const(0x9000u64, ValueType::int(64)).unwrap();
         b.build_call_cc(target, None).unwrap();
-        let rom_at = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+        let rom_at = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
         let kept = b
-            .build_load(rom_at, rsleigh::VnSpace::RAM, ValueType::I8)
+            .build_load(rom_at, rsleigh::VnSpace::RAM, ValueType::int(8))
             .unwrap();
         let lost = b
-            .build_load(heap, rsleigh::VnSpace::RAM, ValueType::I8)
+            .build_load(heap, rsleigh::VnSpace::RAM, ValueType::int(8))
             .unwrap();
         b.build_return(None, &[kept, lost]).unwrap();
         let f = b.build().unwrap();
@@ -841,7 +841,7 @@ mod tests {
             .unwrap();
         for (region, value) in [(low, 1u64), (high, 2)] {
             b.set_region(region);
-            let v = b.build_int_const(value, ValueType::I64).unwrap();
+            let v = b.build_int_const(value, ValueType::int(64)).unwrap();
             b.build_return(None, &[v]).unwrap();
         }
         b.build().unwrap()
@@ -875,11 +875,11 @@ mod tests {
             .build_fn_single_region()
             .unwrap();
         let v = b.read_variable(&x).unwrap();
-        let zero = b.build_int_const(0u32, ValueType::I32).unwrap();
+        let zero = b.build_int_const(0u32, ValueType::int(32)).unwrap();
         let undefined = b
-            .build_int_binary_operation(v, zero, IntBinaryOp::Div, ValueType::I32)
+            .build_int_binary_operation(v, zero, IntBinaryOp::Div, ValueType::int(32))
             .unwrap();
-        let float = b.build_float_const(0, ValueType::F32);
+        let float = b.build_float_const(0, ValueType::float(32));
         b.build_return(None, &[undefined, float]).unwrap();
         let values = returned(&b.build().unwrap(), &env(&|_| 5, None));
         assert_eq!(values[0], Slot::Undefined);
@@ -890,11 +890,11 @@ mod tests {
     fn private_bytes_are_left_out_of_the_writes() {
         let f = make_empty_fn(|b| {
             for at in [0x5000u64, 0x7000] {
-                let at = b.build_int_const(at, ValueType::I64)?;
-                let byte = b.build_int_const(0xabu8, ValueType::I8)?;
+                let at = b.build_int_const(at, ValueType::int(64))?;
+                let byte = b.build_int_const(0xabu8, ValueType::int(8))?;
                 b.build_store(at, byte, rsleigh::VnSpace::RAM)?;
             }
-            b.build_int_const(0u8, ValueType::I8)
+            b.build_int_const(0u8, ValueType::int(8))
         })
         .unwrap();
         let env = Env {
@@ -912,17 +912,17 @@ mod tests {
     #[test]
     fn a_memory_preserving_call_keeps_memory() {
         let mut b = RegisterSet::new().build_fn_single_region().unwrap();
-        let heap = b.build_int_const(0x5000u64, ValueType::I64).unwrap();
-        let byte = b.build_int_const(0xabu8, ValueType::I8).unwrap();
+        let heap = b.build_int_const(0x5000u64, ValueType::int(64)).unwrap();
+        let byte = b.build_int_const(0xabu8, ValueType::int(8)).unwrap();
         b.build_store(heap, byte, rsleigh::VnSpace::RAM).unwrap();
         let cc = strider_target::BuiltCallingConvention {
             preserves_memory: true,
             ..b.function().default_cc().clone()
         };
-        let target = b.build_int_const(0x9000u64, ValueType::I64).unwrap();
+        let target = b.build_int_const(0x9000u64, ValueType::int(64)).unwrap();
         b.build_call_cc(target, Some(&cc)).unwrap();
         let kept = b
-            .build_load(heap, rsleigh::VnSpace::RAM, ValueType::I8)
+            .build_load(heap, rsleigh::VnSpace::RAM, ValueType::int(8))
             .unwrap();
         b.build_return(None, &[kept]).unwrap();
         let f = b.build().unwrap();
@@ -958,7 +958,7 @@ mod tests {
         b.set_entry_region_all(entry).unwrap();
         b.set_region(entry);
         for (vn, value) in [(a, 1u32), (b_vn, 2), (i, 0)] {
-            let c = b.build_int_const(value, ValueType::I32).unwrap();
+            let c = b.build_int_const(value, ValueType::int(32)).unwrap();
             b.write_variable(&vn, c).unwrap();
         }
         b.build_branch(head).unwrap();
@@ -970,14 +970,14 @@ mod tests {
         b.write_variable(&a, cur_b).unwrap();
         b.write_variable(&b_vn, cur_a).unwrap();
         let cur_i = b.read_variable(&i).unwrap();
-        let one = b.build_int_const(1u32, ValueType::I32).unwrap();
+        let one = b.build_int_const(1u32, ValueType::int(32)).unwrap();
         let next = b
-            .build_int_binary_operation(cur_i, one, IntBinaryOp::Add, ValueType::I32)
+            .build_int_binary_operation(cur_i, one, IntBinaryOp::Add, ValueType::int(32))
             .unwrap();
         b.write_variable(&i, next).unwrap();
-        let three = b.build_int_const(3u32, ValueType::I32).unwrap();
+        let three = b.build_int_const(3u32, ValueType::int(32)).unwrap();
         let done = b
-            .build_int_cmp_operation(next, three, IntCmpOp::Equal, ValueType::I32)
+            .build_int_cmp_operation(next, three, IntCmpOp::Equal, ValueType::int(32))
             .unwrap();
         b.build_if(done, exit, head).unwrap();
         b.set_region(exit);
@@ -995,10 +995,10 @@ mod tests {
     #[test]
     fn a_trap_reports_its_writes_and_calls() {
         let mut b = RegisterSet::new().build_fn_single_region().unwrap();
-        let heap = b.build_int_const(0x5000u64, ValueType::I64).unwrap();
-        let byte = b.build_int_const(0xabu8, ValueType::I8).unwrap();
+        let heap = b.build_int_const(0x5000u64, ValueType::int(64)).unwrap();
+        let byte = b.build_int_const(0xabu8, ValueType::int(8)).unwrap();
         b.build_store(heap, byte, rsleigh::VnSpace::RAM).unwrap();
-        let target = b.build_int_const(0x9000u64, ValueType::I64).unwrap();
+        let target = b.build_int_const(0x9000u64, ValueType::int(64)).unwrap();
         b.build_call_cc(target, None).unwrap();
         b.build_unreachable().unwrap();
         let mut f = b.build().unwrap();
@@ -1008,8 +1008,8 @@ mod tests {
         // The builder's trap takes no memory; give it a store after the call.
         let mut edit = strider_ir::EditFunction::new(&mut f);
         let after_call = edit.function().node_outputs(call)[1];
-        let at = edit.build_int_const(0x5001u64, ValueType::I64).unwrap();
-        let byte = edit.build_int_const(0xcdu8, ValueType::I8).unwrap();
+        let at = edit.build_int_const(0x5001u64, ValueType::int(64)).unwrap();
+        let byte = edit.build_int_const(0xcdu8, ValueType::int(8)).unwrap();
         let store = edit.create_node(
             NodeKind::Store(rsleigh::VnSpace::RAM),
             [after_call, at, byte],
@@ -1041,15 +1041,15 @@ mod tests {
         b.set_entry_region_all(entry).unwrap();
         b.set_region(entry);
         let v = b.read_variable(&x).unwrap();
-        let ten = b.build_int_const(10u32, ValueType::I32).unwrap();
+        let ten = b.build_int_const(10u32, ValueType::int(32)).unwrap();
         let cond = b
-            .build_int_cmp_operation(v, ten, IntCmpOp::Less, ValueType::I32)
+            .build_int_cmp_operation(v, ten, IntCmpOp::Less, ValueType::int(32))
             .unwrap();
         b.build_if(cond, then, other).unwrap();
         b.set_region(then);
         b.build_return(None, &[v]).unwrap();
         b.set_region(other);
-        let zero = b.build_int_const(0u32, ValueType::I32).unwrap();
+        let zero = b.build_int_const(0u32, ValueType::int(32)).unwrap();
         b.build_return(None, &[zero]).unwrap();
         let f = b.build().unwrap();
         let mut seen = Vec::new();
@@ -1071,12 +1071,12 @@ mod tests {
         b.set_entry_region_all(entry).unwrap();
         b.set_region(entry);
         let v = b.read_variable(&x).unwrap();
-        let zero = b.build_int_const(0u32, ValueType::I32).unwrap();
+        let zero = b.build_int_const(0u32, ValueType::int(32)).unwrap();
         let undefined = b
-            .build_int_binary_operation(v, zero, IntBinaryOp::Div, ValueType::I32)
+            .build_int_binary_operation(v, zero, IntBinaryOp::Div, ValueType::int(32))
             .unwrap();
         let cond = b
-            .build_int_cmp_operation(undefined, zero, IntCmpOp::Equal, ValueType::I32)
+            .build_int_cmp_operation(undefined, zero, IntCmpOp::Equal, ValueType::int(32))
             .unwrap();
         b.build_if(cond, then, other).unwrap();
         for region in [then, other] {

@@ -61,7 +61,7 @@ fn build_diamond_chain(n: u64) -> strider_ir::Function {
         for (arm, off) in [(t_arm, 0x10), (f_arm, 0x20)] {
             b.set_region(arm);
             b.set_lift_addr(Some(base + off));
-            let target = b.build_int_const(base + off, ValueType::I64).unwrap();
+            let target = b.build_int_const(base + off, ValueType::int(64)).unwrap();
             b.build_call_cc(target, None).unwrap();
             b.build_branch(merge).unwrap();
             b.set_lift_addr(None);
@@ -202,7 +202,7 @@ fn build_phi_diamond_chain(n: u64) -> strider_ir::Function {
         for (arm, k) in [(t_arm, 1u64), (f_arm, 2u64)] {
             b.set_region(arm);
             b.set_lift_addr(Some(base + k * 0x10));
-            let v = b.build_int_const(k, ValueType::I64).unwrap();
+            let v = b.build_int_const(k, ValueType::int(64)).unwrap();
             b.write_variable(&reg, v).unwrap();
             b.build_branch(merge).unwrap();
             b.set_lift_addr(None);

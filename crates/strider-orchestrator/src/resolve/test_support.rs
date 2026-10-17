@@ -71,7 +71,7 @@ pub(crate) fn fn_with_live_indirect_branch() -> (strider_ir::Function, NodeId) {
     b.set_region(region);
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let target = b
-        .build_int_const(0u128, strider_ir::ValueType::I64)
+        .build_int_const(0u128, strider_ir::ValueType::int(64))
         .expect("const");
     let placeholder = b.build_indirect_branch(target).expect("indirect");
     b.set_lift_addr(None);
