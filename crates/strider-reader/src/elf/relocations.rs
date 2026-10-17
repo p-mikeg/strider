@@ -47,7 +47,7 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 /// The field is read file-initial, unpatched: no linker emits two relocations
 /// against one field.
 fn reloc_addend(
-    reloc: &object::Relocation,
+    r: &RelocInfo,
     holder: Option<&MemRegion>,
     field_addr: u64,
     size_bytes: usize,
@@ -57,8 +57,8 @@ fn reloc_addend(
         (1..=8).contains(&size_bytes),
         "field width {size_bytes} is outside the sign-extend shift's range",
     );
-    if !reloc.has_implicit_addend() {
-        return reloc.addend();
+    if let Some(addend) = r.rela_addend {
+        return addend;
     }
     // Sign-extended from the field width: a PC-relative site holds a negative A
     // (-4 for an x86 `call rel32`).
@@ -155,14 +155,14 @@ pub(crate) fn apply_elf_relocations_with(
         got: BTreeMap::new(),
         patches: Vec::new(),
     };
-    for_each_reloc_site(obj, &owners, layout, |site_addr, avail, reloc, pair| {
+    for_each_reloc_site(obj, &owners, layout, |site_addr, avail, r, pair| {
         apply_one_relocation(
             &mut ctx,
             RelocSite {
                 addr: site_addr,
                 avail,
             },
-            reloc,
+            r,
             pair,
         );
     });
@@ -260,19 +260,7 @@ impl<'a> Ctx<'a, '_> {
     /// an RWX mapping on purpose (firmware, `ld -N`), so those bytes reach the
     /// decoder, and serving them unrelocated hands it a plausible wrong
     /// instruction with nothing said about it.
-    fn unmodelled(
-        &mut self,
-        holder: Option<&MemRegion>,
-        addr: u64,
-        width: usize,
-        reloc: &object::Relocation,
-    ) {
-        let RelocationFlags::Elf { r_type } = reloc.flags() else {
-            unreachable!("an ELF relocation carries ELF flags");
-        };
-        // mips64el `SHT_REL` reports the real `r_sym` in `r_type`.
-        let r_type =
-            mips_type_word(reloc, self.obj.architecture(), self.endian_le).unwrap_or(r_type);
+    fn unmodelled(&mut self, holder: Option<&MemRegion>, addr: u64, width: usize, r_type: u32) {
         if holder.is_some()
             && (!self.writable.touches(addr, width) || self.executable.touches(addr, width))
         {
@@ -287,6 +275,92 @@ impl<'a> Ctx<'a, '_> {
 struct RelocSite {
     addr: u64,
     avail: u64,
+}
+
+/// One relocation, decoded once.
+///
+/// `object` reads a mips64el `Elf64_Rel` `r_info` as one little-endian `u64`,
+/// which swaps `r_sym` with the type word (`r_ssym | r_type3 | r_type2 |
+/// r_type`); that is undone here and nowhere else.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RelocInfo {
+    pub(crate) r_type: u32,
+    /// MIPS64's composite second and third types; `R_MIPS_NONE` elsewhere.
+    pub(crate) r_type2: u32,
+    pub(crate) r_type3: u32,
+    /// `None` is STN_UNDEF.
+    pub(crate) sym: Option<object::SymbolIndex>,
+    /// `r_addend`; `None` under `SHT_REL`, A then being in the field.
+    pub(crate) rela_addend: Option<i64>,
+    /// What `object` derived from the type; `None` for a mips64el
+    /// implicit-addend entry, which it may have read off the wrong field.
+    pub(crate) generic: Option<Generic>,
+}
+
+/// `object`'s own reading of a relocation type.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Generic {
+    kind: RelocationKind,
+    /// In bits; 0 for a type it does not size.
+    size_bits: u8,
+    encoding: object::RelocationEncoding,
+}
+
+impl RelocInfo {
+    /// `crel`: the image holds an `SHT_CREL` table, whose entries `object`
+    /// reads as written although it reports them implicit-addend too.
+    fn decode(reloc: &object::Relocation, arch: A, endian_le: bool, crel: bool) -> Self {
+        let RelocationFlags::Elf { r_type } = reloc.flags() else {
+            unreachable!("an ELF relocation carries ELF flags");
+        };
+        let reported = match reloc.target() {
+            RelocationTarget::Symbol(idx) => Some(idx),
+            _ => None,
+        };
+        let rela_addend = (!reloc.has_implicit_addend()).then(|| reloc.addend());
+        let mips64el_rel = arch == A::Mips64 && endian_le && rela_addend.is_none();
+        let (sym, word) = if mips64el_rel && !crel {
+            let word = reported.map_or(0, |idx| (idx.0 as u32).swap_bytes());
+            let sym = (r_type != 0).then_some(object::SymbolIndex(r_type as usize));
+            (sym, word)
+        } else {
+            (reported, r_type)
+        };
+        let (r_type, r_type2, r_type3) = if arch == A::Mips64 {
+            (word & 0xff, (word >> 8) & 0xff, (word >> 16) & 0xff)
+        } else {
+            (word, object::elf::R_MIPS_NONE, object::elf::R_MIPS_NONE)
+        };
+        Self {
+            r_type,
+            r_type2,
+            r_type3,
+            sym,
+            rela_addend,
+            generic: (!mips64el_rel).then(|| Generic {
+                kind: reloc.kind(),
+                size_bits: reloc.size(),
+                encoding: reloc.encoding(),
+            }),
+        }
+    }
+
+    /// `r_type3 << 16 | r_type2 << 8 | r_type`, the type a hole names.
+    pub(crate) fn type_word(self) -> u32 {
+        (self.r_type3 << 16) | (self.r_type2 << 8) | self.r_type
+    }
+}
+
+/// Whether `obj` holds an `SHT_CREL` table. MIPS64 is always ELF64.
+fn has_crel(obj: &object::File<'_>) -> bool {
+    use object::read::elf::SectionHeader as _;
+    match obj {
+        object::File::Elf64(f) => f
+            .elf_section_table()
+            .iter()
+            .any(|s| s.sh_type(f.endian()) == object::elf::SHT_CREL),
+        _ => false,
+    }
 }
 
 /// Invokes `f(site_addr, avail, reloc, pair)` per relocation site, `site_addr`
@@ -318,27 +392,33 @@ fn for_each_reloc_site<F>(
     layout: &super::sections::ElfSectionLayout,
     mut f: F,
 ) where
-    F: FnMut(u64, u64, &object::Relocation, Option<u64>),
+    F: FnMut(u64, u64, &RelocInfo, Option<u64>),
 {
+    let arch = obj.architecture();
+    let endian_le = matches!(obj.endianness(), object::Endianness::Little);
+    let crel = arch == A::Mips64 && has_crel(obj);
     match obj.kind() {
         object::ObjectKind::Relocatable => {
-            let arch = obj.architecture();
-            let endian_le = matches!(obj.endianness(), object::Endianness::Little);
             for sec in obj.sections() {
                 if !owners.contains(&sec.index().0) {
                     continue;
                 }
                 let sec_base = layout.section_base(&sec);
                 let sec_size = sec.size();
-                let relocs: Vec<(u64, object::Relocation)> = sec.relocations().collect();
-                let pairs = mips_hi16_pairs(&relocs, arch, endian_le);
-                for (i, (offset, reloc)) in relocs.iter().enumerate() {
+                let relocs: Vec<(u64, RelocInfo)> = sec
+                    .relocations()
+                    .map(|(offset, reloc)| {
+                        (offset, RelocInfo::decode(&reloc, arch, endian_le, crel))
+                    })
+                    .collect();
+                let pairs = mips_hi16_pairs(&relocs, arch);
+                for (i, (offset, r)) in relocs.iter().enumerate() {
                     // The gABI puts `r_offset` inside the section `sh_info`
                     // names.  A malformed object can point it past the end,
                     // where the site still lands in SOME loaded region and
                     // would silently patch an unrelated section's bytes.
-                    // `reloc.size()` is 0 for every type dispatched on the raw
-                    // `r_type`, so the budget travels to where the width is
+                    // The reported size is 0 for every type dispatched on the
+                    // raw `r_type`, so the budget travels to where the width is
                     // actually chosen instead of being checked here.
                     let avail = sec_size.saturating_sub(*offset);
                     let pair = pairs
@@ -346,7 +426,7 @@ fn for_each_reloc_site<F>(
                         .copied()
                         .flatten()
                         .map(|lo| sec_base.wrapping_add(lo));
-                    f(sec_base.wrapping_add(*offset), avail, reloc, pair);
+                    f(sec_base.wrapping_add(*offset), avail, r, pair);
                 }
             }
         }
@@ -355,7 +435,12 @@ fn for_each_reloc_site<F>(
                 return;
             };
             for (site_addr, reloc) in dyn_relocs {
-                f(site_addr, u64::MAX, &reloc, None);
+                f(
+                    site_addr,
+                    u64::MAX,
+                    &RelocInfo::decode(&reloc, arch, endian_le, crel),
+                    None,
+                );
             }
         }
     }
@@ -363,27 +448,21 @@ fn for_each_reloc_site<F>(
 
 /// For each `SHT_REL` `R_MIPS_HI16` in `relocs`, the offset of the next
 /// `R_MIPS_LO16` against the same symbol; empty unless there are any.
-fn mips_hi16_pairs(
-    relocs: &[(u64, object::Relocation)],
-    arch: object::Architecture,
-    endian_le: bool,
-) -> Vec<Option<u64>> {
+fn mips_hi16_pairs(relocs: &[(u64, RelocInfo)], arch: A) -> Vec<Option<u64>> {
     if !matches!(arch, A::Mips | A::Mips64) {
         return Vec::new();
     }
     let mut pairs = vec![None; relocs.len()];
-    let mut next_lo: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
-    for (i, (offset, reloc)) in relocs.iter().enumerate().rev() {
-        if !reloc.has_implicit_addend() {
+    let mut next_lo: std::collections::HashMap<Option<object::SymbolIndex>, u64> =
+        std::collections::HashMap::new();
+    for (i, (offset, r)) in relocs.iter().enumerate().rev() {
+        if r.rela_addend.is_some() {
             continue;
         }
-        let Some((r_sym, r_type, _)) = mips_reloc_parts(reloc, arch, endian_le) else {
-            continue;
-        };
-        if r_type == object::elf::R_MIPS_LO16 {
-            next_lo.insert(r_sym, *offset);
-        } else if r_type == object::elf::R_MIPS_HI16 {
-            pairs[i] = next_lo.get(&r_sym).copied();
+        if r.r_type == object::elf::R_MIPS_LO16 {
+            next_lo.insert(r.sym, *offset);
+        } else if r.r_type == object::elf::R_MIPS_HI16 {
+            pairs[i] = next_lo.get(&r.sym).copied();
         }
     }
     pairs
@@ -426,12 +505,7 @@ fn got_regions(got: &BTreeMap<u64, (u64, usize)>, endian_le: bool) -> Result<Vec
 ///
 /// Sites with no backing region are skipped; a relocation whose value is not
 /// computed becomes a hole, see [`apply_elf_relocations_with`].
-fn apply_one_relocation(
-    ctx: &mut Ctx<'_, '_>,
-    site: RelocSite,
-    reloc: &object::Relocation,
-    pair: Option<u64>,
-) {
+fn apply_one_relocation(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo, pair: Option<u64>) {
     let obj = ctx.obj;
     let site_addr = site.addr;
     let endian_le = ctx.endian_le;
@@ -445,11 +519,11 @@ fn apply_one_relocation(
     // its unrelocated file bytes wherever the slot IS mapped; under the
     // read-only filters those slots sit in the RW `PT_LOAD` and are not mapped
     // at all, since `PT_GNU_RELRO` is not modelled.
-    if let Some((value, size_bytes)) = image_relative_reloc(reloc, arch, endian_le) {
+    if let Some((value, size_bytes)) = image_relative_reloc(r, arch) {
         // An `SHT_REL` site keeps A in its field, which with the base modelled
         // as 0 is already the whole value: nothing to patch, and nothing to
         // hole either.
-        if reloc.has_implicit_addend() {
+        if r.rela_addend.is_none() {
             return;
         }
         let holder = ctx.holder(site, site_addr, size_bytes);
@@ -458,36 +532,38 @@ fn apply_one_relocation(
     }
 
     // Symbol-targeted families `object` reports as `Unknown` with `size = 0`,
-    // which the general `match reloc.kind()` below would mis-bucket as
-    // unsupported. Each yields `(size_bytes, pc_relative,
-    // read_implicit_addend)`; first match wins.
-    let word_sized = got_or_plt_slot_reloc_size(reloc, arch, endian_le)
+    // which the plain fallback below would mis-bucket as unsupported. Each
+    // yields `(size_bytes, pc_relative, read_implicit_addend)`; first match
+    // wins.
+    let word_sized = got_or_plt_slot_reloc_size(r, arch)
         // GOT/PLT slot, `S`. Its own field is the PLT push offset, not an
-        // addend, so it is never read back; `reloc.addend()` is the RELA one,
-        // zero under REL.
+        // addend, so it is never read back; the RELA addend is added, none
+        // under REL.
         .map(|size_bytes| (size_bytes, false, false))
         // Defined-symbol `R_MIPS_REL32`, `S + A`.
         .or_else(|| {
-            mips_rel32_symbol_reloc_size(reloc, arch, endian_le)
-                .map(|size_bytes| (size_bytes, false, true))
+            mips_rel32_symbol_reloc_size(r, arch).map(|size_bytes| (size_bytes, false, true))
         })
         // `R_PPC_REL32` / `R_ARM_REL32` / `R_PPC64_REL64`, `S + A - P`.
-        .or_else(|| pc_relative_word_reloc(reloc, arch).map(|size_bytes| (size_bytes, true, true)));
+        .or_else(|| pc_relative_word_reloc(r, arch).map(|size_bytes| (size_bytes, true, true)));
     if let Some((size_bytes, pc_relative, read_implicit_addend)) = word_sized {
         let holder = ctx.holder(site, site_addr, size_bytes);
-        let Some(target) = resolve_symbol_target(obj, ctx.layout, reloc, endian_le) else {
-            ctx.unmodelled(holder, site_addr, size_bytes, reloc);
+        let Some(target) = r
+            .sym
+            .and_then(|idx| resolve_symbol_target(obj, ctx.layout, idx))
+        else {
+            ctx.unmodelled(holder, site_addr, size_bytes, r.type_word());
             return;
         };
         // A plain word holds the address itself, see `Target::weak_undefined`.
         if target.weak_undefined {
-            ctx.unmodelled(holder, site_addr, size_bytes, reloc);
+            ctx.unmodelled(holder, site_addr, size_bytes, r.type_word());
             return;
         }
         let addend = if read_implicit_addend {
-            reloc_addend(reloc, holder, site_addr, size_bytes, endian_le)
+            reloc_addend(r, holder, site_addr, size_bytes, endian_le)
         } else {
-            reloc.addend()
+            r.rela_addend.unwrap_or(0)
         };
         let value = apply_addend(target.addr, addend);
         let value = if pc_relative {
@@ -501,32 +577,29 @@ fn apply_one_relocation(
         };
         match fit(obj, field, value) {
             Some(value) => ctx.record(holder, site_addr, value, size_bytes, endian_le),
-            None => ctx.unmodelled(holder, site_addr, size_bytes, reloc),
+            None => ctx.unmodelled(holder, site_addr, size_bytes, r.type_word()),
         }
         return;
     }
 
-    // mips64el `SHT_REL`: `object` reads `r_info` as one little-endian `u64`, so
-    // the `kind` and `size` consulted below come from the real `r_sym`, matched
-    // against `R_MIPS_16` / `R_MIPS_32` / `R_MIPS_64` (symbol index 1, 2, 18).
-    // Every MIPS relocation handled here dispatches on the raw `r_type` above.
-    if matches!(arch, A::Mips64) && endian_le && reloc.has_implicit_addend() {
+    if let Some(kind) = classified(r, arch) {
+        apply_classified(ctx, site, r, pair, kind);
+        return;
+    }
+
+    // `object` read a mips64el `Elf64_Rel`'s kind and size off its symbol
+    // index, so they describe nothing.
+    let Some(generic) = r.generic else {
         let holder = ctx.holder(site, site_addr, UNKNOWN_FIELD_BYTES);
-        ctx.unmodelled(holder, site_addr, UNKNOWN_FIELD_BYTES, reloc);
+        ctx.unmodelled(holder, site_addr, UNKNOWN_FIELD_BYTES, r.type_word());
         return;
-    }
-
-    if let Some(kind) = classified(reloc, arch, endian_le) {
-        apply_classified(ctx, site, reloc, pair, kind);
-        return;
-    }
-
+    };
     // `size` is in bits, and 0 nominally means "the kind's default". Absolute /
     // Relative / PltRelative all set it explicitly on every arch of interest,
     // so 0 here signals an arch-specific encoding that isn't modelled. The
     // width is needed before the value: an `SHT_REL` addend is read back out
     // of the field.
-    let size_bits = reloc.size();
+    let size_bits = generic.size_bits;
     let plain = size_bits != 0
         && size_bits.is_multiple_of(8)
         && size_bits <= 64
@@ -537,11 +610,11 @@ fn apply_one_relocation(
         // encoding that IS plain: it only names the sign extension
         // `R_X86_64_32S` applies at runtime.
         && matches!(
-            reloc.encoding(),
+            generic.encoding,
             object::RelocationEncoding::Generic | object::RelocationEncoding::X86Signed
         );
     // `PltRelative`'s L collapses to S here since no PLT is materialised.
-    let pc_relative = match reloc.kind() {
+    let pc_relative = match generic.kind {
         RelocationKind::Absolute => Some(false),
         RelocationKind::Relative | RelocationKind::PltRelative => Some(true),
         _ => None,
@@ -553,7 +626,7 @@ fn apply_one_relocation(
             UNKNOWN_FIELD_BYTES
         };
         let holder = ctx.holder(site, site_addr, width);
-        ctx.unmodelled(holder, site_addr, width, reloc);
+        ctx.unmodelled(holder, site_addr, width, r.type_word());
         return;
     };
     let size_bytes = (size_bits / 8) as usize;
@@ -561,30 +634,27 @@ fn apply_one_relocation(
     // `r_offset` addresses the storage unit, inside which the field can be
     // offset. A `r_offset` at the very top of the address space is malformed;
     // the skew would carry the field out of it.
-    let Some(field_addr) = site_addr.checked_add(mips_half_field_skew(reloc, arch, endian_le))
-    else {
+    let Some(field_addr) = site_addr.checked_add(mips_half_field_skew(r, arch, endian_le)) else {
         return;
     };
 
     let holder = ctx.holder(site, field_addr, size_bytes);
-    // `object`'s ELF `parse_relocation` yields only `Symbol` or `Absolute`;
-    // the latter (an immediate with no symbol) has no target to add.
-    let target = match reloc.target() {
-        RelocationTarget::Symbol(_) => resolve_symbol_target(obj, ctx.layout, reloc, endian_le),
-        _ => None,
-    };
-    let Some(target) = target else {
-        ctx.unmodelled(holder, field_addr, size_bytes, reloc);
+    // An `Absolute` target, an immediate with no symbol, has no `S` to add.
+    let Some(target) = r
+        .sym
+        .and_then(|idx| resolve_symbol_target(obj, ctx.layout, idx))
+    else {
+        ctx.unmodelled(holder, field_addr, size_bytes, r.type_word());
         return;
     };
     // `PltRelative` is a call or jump, whose displacement hides the address it
     // was built from; every other plain field holds that address, see
     // `Target::weak_undefined`.
-    if target.weak_undefined && !matches!(reloc.kind(), RelocationKind::PltRelative) {
-        ctx.unmodelled(holder, field_addr, size_bytes, reloc);
+    if target.weak_undefined && !matches!(generic.kind, RelocationKind::PltRelative) {
+        ctx.unmodelled(holder, field_addr, size_bytes, r.type_word());
         return;
     }
-    let addend = reloc_addend(reloc, holder, field_addr, size_bytes, endian_le);
+    let addend = reloc_addend(r, holder, field_addr, size_bytes, endian_le);
     // S, A, P follow the System V ABI generic relocation formula:
     // S = target_addr, A = addend, P = site_addr. P is the storage unit, not
     // the field inside it.
@@ -596,11 +666,11 @@ fn apply_one_relocation(
     };
     let field = Field::Data {
         bytes: size_bytes as u8,
-        signed: pc_relative || matches!(reloc.encoding(), object::RelocationEncoding::X86Signed),
+        signed: pc_relative || matches!(generic.encoding, object::RelocationEncoding::X86Signed),
     };
     match fit(obj, field, value) {
         Some(value) => ctx.record(holder, field_addr, value, size_bytes, endian_le),
-        None => ctx.unmodelled(holder, field_addr, size_bytes, reloc),
+        None => ctx.unmodelled(holder, field_addr, size_bytes, r.type_word()),
     }
 }
 
@@ -622,30 +692,20 @@ fn fit(obj: &object::File<'_>, field: Field, value: u64) -> Option<u64> {
     encode(field, 0, value, Isa::Same, 0)
 }
 
-/// The [`classify`] answer for `reloc`, `None` for a type it does not list or
-/// a MIPS composite of more than one type.
-fn classified(
-    reloc: &object::Relocation,
-    arch: object::Architecture,
-    endian_le: bool,
-) -> Option<Kind> {
-    let RelocationFlags::Elf { r_type } = reloc.flags() else {
+/// The [`classify`] answer for `r`, `None` for a type it does not list or a
+/// MIPS composite of more than one type.
+fn classified(r: &RelocInfo, arch: A) -> Option<Kind> {
+    if r.r_type2 != object::elf::R_MIPS_NONE || r.r_type3 != object::elf::R_MIPS_NONE {
         return None;
-    };
-    match mips_reloc_parts(reloc, arch, endian_le) {
-        Some((_, first, _)) => {
-            (mips_type_word(reloc, arch, endian_le)? >> 8 == 0).then_some(())?;
-            classify(arch, first)
-        }
-        None => classify(arch, r_type),
     }
+    classify(arch, r.r_type)
 }
 
 /// A [`classify`]-listed relocation, see [`super::encodings`].
 fn apply_classified(
     ctx: &mut Ctx<'_, '_>,
     site: RelocSite,
-    reloc: &object::Relocation,
+    r: &RelocInfo,
     pair: Option<u64>,
     kind: Kind,
 ) {
@@ -658,9 +718,9 @@ fn apply_classified(
     let width = field.width();
     let holder = ctx.holder(site, p, width);
     let field_le = ctx.field_le(field);
-    match compute_classified(ctx, reloc, pair, kind, value_kind, field, p, holder) {
+    match compute_classified(ctx, r, pair, kind, value_kind, field, p, holder) {
         Some(word) => ctx.record(holder, p, word, width, field_le),
-        None => ctx.unmodelled(holder, p, width, reloc),
+        None => ctx.unmodelled(holder, p, width, r.type_word()),
     }
 }
 
@@ -669,7 +729,7 @@ fn apply_classified(
 #[allow(clippy::too_many_arguments)]
 fn compute_classified(
     ctx: &mut Ctx<'_, '_>,
-    reloc: &object::Relocation,
+    r: &RelocInfo,
     pair: Option<u64>,
     kind: Kind,
     value_kind: Value,
@@ -677,14 +737,14 @@ fn compute_classified(
     p: u64,
     holder: Option<&MemRegion>,
 ) -> Option<u64> {
-    let (obj, layout, endian_le) = (ctx.obj, ctx.layout, ctx.endian_le);
+    let (obj, layout) = (ctx.obj, ctx.layout);
     let field_le = ctx.field_le(field);
     let thumb_le = field_le && matches!(field, Field::ThumbBranch { .. } | Field::ThumbMovw { .. });
     let raw = read_field(holder?, p, field.width(), field_le);
     let raw = if thumb_le { swap_halfwords(raw) } else { raw };
-    let target = match reloc.target() {
-        RelocationTarget::Symbol(_) => Some(resolve_symbol_target(obj, layout, reloc, endian_le)?),
-        _ => None,
+    let target = match r.sym {
+        Some(idx) => Some(resolve_symbol_target(obj, layout, idx)?),
+        None => None,
     };
     // Only a branch displacement and a GOT slot reference hide the address
     // they were built from, see `Target::weak_undefined`.
@@ -696,19 +756,18 @@ fn compute_classified(
     }
     let s = target.map_or(0, |t| t.addr);
 
-    let mut a = if reloc.has_implicit_addend() {
-        implicit_addend(field, raw)?
-    } else {
-        reloc.addend()
+    let mut a = match r.rela_addend {
+        Some(a) => a,
+        None => implicit_addend(field, raw)?,
     };
     match field {
         // The low half of an `SHT_REL` HI16's addend is its LO16's field.
-        Field::MipsHalf16(Half::Ha) if reloc.has_implicit_addend() => {
+        Field::MipsHalf16(Half::Ha) if r.rela_addend.is_none() => {
             let pair = pair?;
             let lo = read_field(ctx.holding(pair, 4)?, pair, 4, ctx.endian_le);
             a = (a << 16) + sext(lo & 0xffff, 16);
         }
-        Field::Mips26 if reloc.has_implicit_addend() && !target.is_some_and(|t| t.local) => {
+        Field::Mips26 if r.rela_addend.is_none() && !target.is_some_and(|t| t.local) => {
             a = sext(a as u64, 28);
         }
         _ => {}
@@ -810,20 +869,6 @@ fn swap_halfwords(word: u64) -> u64 {
     ((word & 0xffff) << 16) | ((word >> 16) & 0xffff)
 }
 
-/// The real symbol index of a MIPS64 relocation whose `r_info` `object`
-/// transposed, or `None` when the reported index is already right.
-fn mips_corrected_symbol(
-    reloc: &object::Relocation,
-    arch: object::Architecture,
-    endian_le: bool,
-) -> Option<object::read::SymbolIndex> {
-    if !matches!(arch, A::Mips64) || !endian_le || !reloc.has_implicit_addend() {
-        return None;
-    }
-    let (r_sym, _, _) = mips_reloc_parts(reloc, arch, endian_le)?;
-    (r_sym != 0).then_some(object::read::SymbolIndex(r_sym as usize))
-}
-
 /// A relocation's resolved symbol.
 #[derive(Clone, Copy)]
 struct Target {
@@ -848,7 +893,7 @@ struct Target {
     ppc64_local_entry: u64,
 }
 
-/// `reloc`'s `RelocationTarget::Symbol`.
+/// Symbol `idx`, resolved.
 ///
 /// Dispatches through `obj.dynamic_symbol_table()` first and falls back to the
 /// static `.symtab` only when there is none. Indices in the dynamic table
@@ -863,20 +908,14 @@ struct Target {
 ///
 /// `None` when the index doesn't resolve (malformed ELF), when its `st_shndx`
 /// names no section header, when a linked image's symbol is undefined with a
-/// zero value or `SHN_COMMON`, or when the target isn't a `Symbol`.
+/// zero value or `SHN_COMMON`.
 ///
 /// [`ElfSectionLayout::extern_address`]: super::sections::ElfSectionLayout::extern_address
 fn resolve_symbol_target(
     obj: &object::File<'_>,
     layout: &super::sections::ElfSectionLayout,
-    reloc: &object::Relocation,
-    endian_le: bool,
+    idx: object::SymbolIndex,
 ) -> Option<Target> {
-    let RelocationTarget::Symbol(idx) = mips_corrected_symbol(reloc, obj.architecture(), endian_le)
-        .map_or_else(|| reloc.target(), RelocationTarget::Symbol)
-    else {
-        return None;
-    };
     // An ET_REL's per-section `SHT_REL`/`SHT_RELA` indexes the `.symtab` its
     // `sh_link` names, never the dynamic table. `object`'s
     // `dynamic_symbol_table` is simply the first `SHT_DYNSYM` section in the
@@ -969,30 +1008,18 @@ fn ppc64_local_entry_offset(st_other: u8) -> u64 {
 /// the dynamic linker would call to compute the slot's runtime value. Writing
 /// the resolver's address is the soundest static approximation, so it is
 /// treated exactly like RELATIVE.
-fn image_relative_reloc(
-    reloc: &object::Relocation,
-    arch: object::Architecture,
-    endian_le: bool,
-) -> Option<(u64, usize)> {
-    // These arrive with an `Absolute` target and an `Unknown` kind (`object`
-    // doesn't enumerate them), so the raw type code is all there is to go on.
-    let RelocationFlags::Elf { r_type } = reloc.flags() else {
-        return None;
-    };
+fn image_relative_reloc(r: &RelocInfo, arch: A) -> Option<(u64, usize)> {
+    let value = apply_addend(0, r.rela_addend.unwrap_or(0));
     // `R_MIPS_REL32` is MIPS's closest analogue to RELATIVE and writes `S + A`.
     // For an undefined / index-0 (STN_UNDEF) symbol `S` is 0, reducing it to
-    // addend-only, which is the case handled here; the `Symbol`-target gate
-    // bails out to the defined-symbol path in the main loop. MIPS defines no
-    // separate IRELATIVE.
-    if let Some((r_sym, mips_type, mips_type2)) = mips_reloc_parts(reloc, arch, endian_le)
-        && mips_type == object::elf::R_MIPS_REL32
-        && r_sym == 0
-    {
-        return Some((
-            apply_addend(0, reloc.addend()),
-            mips_rel32_field_bytes(mips_type2),
-        ));
+    // addend-only, which is the case handled here; a defined symbol takes the
+    // defined-symbol path in the main loop. MIPS defines no separate
+    // IRELATIVE.
+    if matches!(arch, A::Mips | A::Mips64) {
+        return (r.r_type == object::elf::R_MIPS_REL32 && r.sym.is_none())
+            .then(|| (value, mips_rel32_field_bytes(r.r_type2)));
     }
+    let r_type = r.r_type;
     let size_bytes = match arch {
         A::X86_64
             if r_type == object::elf::R_X86_64_RELATIVE
@@ -1032,7 +1059,7 @@ fn image_relative_reloc(
         }
         _ => return None,
     };
-    Some((apply_addend(0, reloc.addend()), size_bytes))
+    Some((value, size_bytes))
 }
 
 /// Matches `R_*_GLOB_DAT` (GOT data slot) and `R_*_JUMP_SLOT` (PLT lazy-bind
@@ -1042,20 +1069,14 @@ fn image_relative_reloc(
 /// `object` reports both as `Unknown` with `size = 0`, so the size comes from
 /// the arch instead: 8 bytes on 64-bit, 4 on 32-bit. The caller computes the
 /// value (`target_addr + addend`).
-fn got_or_plt_slot_reloc_size(
-    reloc: &object::Relocation,
-    arch: object::Architecture,
-    endian_le: bool,
-) -> Option<usize> {
-    let RelocationFlags::Elf { r_type } = reloc.flags() else {
-        return None;
-    };
-    if let Some((_, mips_type, _)) = mips_reloc_parts(reloc, arch, endian_le) {
+fn got_or_plt_slot_reloc_size(r: &RelocInfo, arch: A) -> Option<usize> {
+    if matches!(arch, A::Mips | A::Mips64) {
         // A GOT slot is one target word wide regardless of the composite.
-        return (mips_type == object::elf::R_MIPS_GLOB_DAT
-            || mips_type == object::elf::R_MIPS_JUMP_SLOT)
-            .then_some(if matches!(arch, A::Mips64) { 8 } else { 4 });
+        return (r.r_type == object::elf::R_MIPS_GLOB_DAT
+            || r.r_type == object::elf::R_MIPS_JUMP_SLOT)
+            .then_some(if arch == A::Mips64 { 8 } else { 4 });
     }
+    let r_type = r.r_type;
     match arch {
         A::X86_64
             if r_type == object::elf::R_X86_64_GLOB_DAT
@@ -1102,76 +1123,14 @@ fn got_or_plt_slot_reloc_size(
 /// `Unknown` and would fall through as unsupported. A `.rodata` switch table is
 /// built out of exactly these on PowerPC, and leaving it unpatched costs the
 /// whole table.
-fn pc_relative_word_reloc(reloc: &object::Relocation, arch: object::Architecture) -> Option<usize> {
-    let RelocationFlags::Elf { r_type } = reloc.flags() else {
-        return None;
-    };
+fn pc_relative_word_reloc(r: &RelocInfo, arch: A) -> Option<usize> {
+    let r_type = r.r_type;
     match arch {
         // `R_PPC64_REL32` shares the value 26 with `R_PPC_REL32`, and a 64-bit
         // object builds its switch tables out of it the same way.
         A::PowerPc | A::PowerPc64 if r_type == object::elf::R_PPC_REL32 => Some(4),
         A::PowerPc64 if r_type == object::elf::R_PPC64_REL64 => Some(8),
         A::Arm if r_type == object::elf::R_ARM_REL32 => Some(4),
-        _ => None,
-    }
-}
-
-/// The real `(r_sym, r_type, r_type2)` of a MIPS relocation.
-///
-/// MIPS64 packs `r_info` as `r_sym:32 | r_ssym:8 | r_type3:8 | r_type2:8 |
-/// r_type:8`, a composite of up to three relocations applied in sequence.
-/// `object` un-transposes that for `Elf64_Rela` but reads a little-endian
-/// `Elf64_Rel` as one little-endian `u64`, which swaps the halves: the reported
-/// type is the real `r_sym`, and the reported symbol index is the type word
-/// with its bytes reversed. mips64el's `.rel.dyn` is exactly that case.
-///
-/// MIPS32 has the single 8-bit type, reported as `r_type2 = R_MIPS_NONE`.
-/// `r_sym == 0` is STN_UNDEF, i.e. the addend-only half of `R_MIPS_REL32`.
-fn mips_reloc_parts(
-    reloc: &object::Relocation,
-    arch: object::Architecture,
-    endian_le: bool,
-) -> Option<(u32, u32, u32)> {
-    let RelocationFlags::Elf { r_type } = reloc.flags() else {
-        return None;
-    };
-    let reported_sym = match reloc.target() {
-        RelocationTarget::Symbol(idx) => u32::try_from(idx.0).ok()?,
-        _ => 0,
-    };
-    match arch {
-        A::Mips => Some((reported_sym, r_type, object::elf::R_MIPS_NONE)),
-        A::Mips64 => {
-            let (r_sym, word) = if endian_le && reloc.has_implicit_addend() {
-                (r_type, reported_sym.swap_bytes())
-            } else {
-                (reported_sym, r_type)
-            };
-            Some((r_sym, word & 0xff, (word >> 8) & 0xff))
-        }
-        _ => None,
-    }
-}
-
-/// The MIPS64 `r_type3 << 16 | r_type2 << 8 | r_type` word, MIPS32's single
-/// type.
-fn mips_type_word(
-    reloc: &object::Relocation,
-    arch: object::Architecture,
-    endian_le: bool,
-) -> Option<u32> {
-    let RelocationFlags::Elf { r_type } = reloc.flags() else {
-        return None;
-    };
-    match arch {
-        A::Mips => Some(r_type),
-        A::Mips64 if endian_le && reloc.has_implicit_addend() => match reloc.target() {
-            RelocationTarget::Symbol(idx) => {
-                Some(u32::try_from(idx.0).ok()?.swap_bytes() & 0x00ff_ffff)
-            }
-            _ => Some(0),
-        },
-        A::Mips64 => Some(r_type & 0x00ff_ffff),
         _ => None,
     }
 }
@@ -1194,30 +1153,22 @@ fn mips_rel32_field_bytes(r_type2: u32) -> usize {
 /// and the implicit addend to read back, start two bytes in. `R_MIPS_32` and
 /// `R_MIPS_64`, the only other MIPS types `object` gives a width, fill their
 /// storage unit exactly.
-fn mips_half_field_skew(
-    reloc: &object::Relocation,
-    arch: object::Architecture,
-    endian_le: bool,
-) -> u64 {
-    if endian_le {
-        return 0;
-    }
-    match mips_reloc_parts(reloc, arch, endian_le) {
-        Some((_, r_type, _)) if r_type == object::elf::R_MIPS_16 => 2,
-        _ => 0,
+fn mips_half_field_skew(r: &RelocInfo, arch: A, endian_le: bool) -> u64 {
+    if !endian_le && matches!(arch, A::Mips | A::Mips64) && r.r_type == object::elf::R_MIPS_16 {
+        2
+    } else {
+        0
     }
 }
 
 /// Matches the defined-symbol half of `R_MIPS_REL32`, which `object` surfaces
 /// as a `Symbol` target and which needs the symbol's address. The undefined
 /// half (`S = 0`, addend-only) goes through [`image_relative_reloc`].
-fn mips_rel32_symbol_reloc_size(
-    reloc: &object::Relocation,
-    arch: object::Architecture,
-    endian_le: bool,
-) -> Option<usize> {
-    let (r_sym, r_type, r_type2) = mips_reloc_parts(reloc, arch, endian_le)?;
-    (r_type == object::elf::R_MIPS_REL32 && r_sym != 0).then(|| mips_rel32_field_bytes(r_type2))
+fn mips_rel32_symbol_reloc_size(r: &RelocInfo, arch: A) -> Option<usize> {
+    (matches!(arch, A::Mips | A::Mips64)
+        && r.r_type == object::elf::R_MIPS_REL32
+        && r.sym.is_some())
+    .then(|| mips_rel32_field_bytes(r.r_type2))
 }
 
 #[cfg(test)]
