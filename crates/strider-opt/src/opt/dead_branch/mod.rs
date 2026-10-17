@@ -121,12 +121,12 @@ fn constant_selection(edit: &crate::EditFunction<'_>, node: NodeId) -> Option<Se
     let live = match edit.node_kind(node) {
         NodeKind::If => {
             // Outputs are [true, false].
-            let cond = edit.bool_const_val(edit.node_inputs(node)[1])?;
+            let cond = edit.bool_const_val(edit.if_cond(node))?;
             usize::from(!cond)
         }
         NodeKind::Switch(_) => {
             // Output i is cases[i].
-            let k = edit.int_const_u128(edit.node_inputs(node)[1])?;
+            let k = edit.int_const_u128(edit.switch_selector(node))?;
             edit.function()
                 .switch_targets(node)
                 .iter()

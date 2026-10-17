@@ -186,7 +186,7 @@ pub fn run_observed(
                 ctrl = f.node_outputs(node)[0];
             }
             NodeKind::If => {
-                let cond = f.node_inputs(node)[1];
+                let cond = f.if_cond(node);
                 let test = f.producer(cond);
                 if matches!(f.node_kind(test), NodeKind::IntCmpOp(_)) {
                     for operand in f.node_inputs(test) {
@@ -375,7 +375,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                     return unsupported(format!("a load from {space:?}"));
                 }
                 let mem = self.mem(ins[0])?;
-                let Some(at) = self.int(ins[1])? else {
+                let Some(at) = self.int(ins[NodeKind::ACCESS_ADDR_SLOT])? else {
                     return unsupported("a load from an undefined address");
                 };
                 Some(self.load(&mem, at as u64, ty))
@@ -404,13 +404,14 @@ impl<'a, 'e> Machine<'a, 'e> {
                 }
                 let ins: Vec<ValueId> = f.node_inputs(node).into_iter().collect();
                 let prev = self.mem(ins[0])?;
-                let Some(at) = self.int(ins[1])? else {
+                let Some(at) = self.int(ins[NodeKind::ACCESS_ADDR_SLOT])? else {
                     return unsupported("a store to an undefined address");
                 };
-                let Some(data) = self.int(ins[2])? else {
+                let data_in = ins[NodeKind::STORE_DATA_SLOT];
+                let Some(data) = self.int(data_in)? else {
                     return unsupported("a store of an undefined value");
                 };
-                let size = int_type(f, ins[2])?.bit_width().div_ceil(8);
+                let size = int_type(f, data_in)?.bit_width().div_ceil(8);
                 // A state only this store reads leaves the cache and is
                 // updated in place; one with other readers is copied.
                 if f.value_has_one_use(ins[0]) && self.mem_now[ins[0]].is_none() {
@@ -491,7 +492,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         let f = self.f;
         // Inputs are [ctrl, mem, target, sp, args..].
         let ins: Vec<ValueId> = f.node_inputs(node).into_iter().collect();
-        let Some(target) = self.int(ins[2])? else {
+        let Some(target) = self.int(ins[NodeKind::CALL_TARGET_SLOT])? else {
             return unsupported("a call to an undefined target");
         };
         // The callee reads none of them, so an unsupported one does not stop

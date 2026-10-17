@@ -78,7 +78,7 @@ impl ValueType {
             .ok_or_else(|| anyhow!("unsupported float varnode size: {n} bytes"))
     }
 
-    fn from_bytes(n: u32, of_bits: fn(u16) -> Self) -> Option<Self> {
+    fn from_bytes(n: u32, of_bits: impl Fn(u16) -> Self) -> Option<Self> {
         let ty = of_bits(u16::try_from(n.checked_mul(8)?).ok()?);
         ty.is_supported().then_some(ty)
     }

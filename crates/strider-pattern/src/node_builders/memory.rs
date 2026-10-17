@@ -165,9 +165,9 @@ impl LoadPat {
         self
     }
 
-    /// `inputs[1]`.
+    /// The address, input [`NodeKind::ACCESS_ADDR_SLOT`].
     pub fn addr<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inner = self.inner.input(1, p);
+        self.inner = self.inner.input(NodeKind::ACCESS_ADDR_SLOT, p);
         self
     }
 
@@ -241,15 +241,15 @@ impl StorePat {
         self
     }
 
-    /// `inputs[1]`.
+    /// The address, input [`NodeKind::ACCESS_ADDR_SLOT`].
     pub fn addr<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inner = self.inner.input(1, p);
+        self.inner = self.inner.input(NodeKind::ACCESS_ADDR_SLOT, p);
         self
     }
 
-    /// The stored value, `inputs[2]`.
+    /// The stored value, input [`NodeKind::STORE_DATA_SLOT`].
     pub fn data<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inner = self.inner.input(2, p);
+        self.inner = self.inner.input(NodeKind::STORE_DATA_SLOT, p);
         self.has_data = true;
         self
     }
@@ -260,7 +260,7 @@ impl StorePat {
         self
     }
 
-    /// Pins the width of the data input, `inputs[2]`.
+    /// Pins the width of the data input, [`NodeKind::STORE_DATA_SLOT`].
     pub fn bit_width(mut self, n: u32) -> Self {
         self.bit_width = Some(n);
         self
@@ -275,11 +275,14 @@ impl StorePat {
         } = self;
         if let Some(w) = bit_width {
             if !has_data {
-                inner = inner.input(2, crate::typed::wildcards::anything());
+                inner = inner.input(
+                    NodeKind::STORE_DATA_SLOT,
+                    crate::typed::wildcards::anything(),
+                );
             }
             // The stored value is an input, not an output, so the width pins
             // on that input's producer output.
-            inner = inner.with_input_width(2, w);
+            inner = inner.with_input_width(NodeKind::STORE_DATA_SLOT, w);
         }
         region.apply(inner)
     }
