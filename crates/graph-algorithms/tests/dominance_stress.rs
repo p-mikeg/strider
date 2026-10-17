@@ -657,6 +657,7 @@ fn check_dominance(c: &Case) {
 /// oracle stays cheap, past that discovery order, one successor query per
 /// vertex and idoms against petgraph.
 fn check_large(c: &Case) {
+    check_numbering_against_the_walk(c);
     if c.n <= 200 {
         check_dominance(c);
         return;
@@ -681,6 +682,52 @@ fn check_large(c: &Case) {
             .immediate_dominator(NodeIndex::new(v as usize))
             .map(|d| d.index() as u32);
         assert_eq!(doms.immediate_dominator(v), theirs, "idom({v}), n {n}");
+    }
+    check_tree_numbering(&doms, n);
+}
+
+/// The tree numberings against the idoms, in one pass each: `tree_preorder`
+/// is a preorder of the tree with siblings ascending, and every span nests in
+/// its idom's.
+fn check_tree_numbering(doms: &Dominators<u32>, n: u32) {
+    let order = doms.tree_preorder();
+    assert_eq!(order.len(), doms.vertices().len(), "preorder length, n {n}");
+    assert_eq!(order[0], 0, "preorder starts at the root, n {n}");
+    let mut path = vec![0u32];
+    let mut last_child = vec![None::<u32>; n as usize];
+    for &v in &order[1..] {
+        let idom = doms.immediate_dominator(v).expect("reachable");
+        while path.last() != Some(&idom) {
+            assert!(
+                path.pop().is_some(),
+                "{v} visited off its idom's path, n {n}"
+            );
+        }
+        if let Some(prev) = last_child[idom as usize] {
+            assert!(prev < v, "siblings {prev} then {v} under {idom}, n {n}");
+        }
+        last_child[idom as usize] = Some(v);
+        path.push(v);
+    }
+
+    let iv = doms.intervals();
+    let mut at = vec![u32::MAX; n as usize];
+    for (i, &v) in doms.vertices().iter().enumerate() {
+        at[v as usize] = i as u32;
+    }
+    assert_eq!(
+        iv.preorder().len(),
+        doms.vertices().len(),
+        "intervals, n {n}"
+    );
+    for &v in &doms.vertices()[1..] {
+        let idom = doms.immediate_dominator(v).expect("reachable");
+        let (ve, vx) = iv.span(at[v as usize]);
+        let (de, dx) = iv.span(at[idom as usize]);
+        assert!(
+            de < ve && vx < dx,
+            "span of {v} ({ve}, {vx}) outside its idom {idom}'s ({de}, {dx}), n {n}"
+        );
     }
 }
 
@@ -829,4 +876,48 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
         );
     }
     HASH_BUDGET.with(|c| c.set(u64::MAX));
+}
+
+/// The interval numbering against the walk it replaces: the same spans one
+/// higher, the same discovery preorder, and the ascending preorder.
+fn check_numbering_against_the_walk(c: &Case) {
+    let succs = c.succs();
+    let preds = oracle::preds_of(&succs);
+    let doms = dominators(0u32, |v| succs[v as usize].clone());
+    let walk = dominator_tree_walk(&doms, 0);
+    let iv = doms.intervals();
+    for (at, &v) in doms.vertices().iter().enumerate() {
+        let (enter, exit) = iv.span(at as u32);
+        assert_eq!(walk.span[&v], (enter + 1, exit + 1), "span of {v}, {c:?}");
+    }
+    let discovery: Vec<u32> = iv
+        .preorder()
+        .iter()
+        .map(|&at| doms.vertices()[at as usize])
+        .collect();
+    assert_eq!(discovery, walk.preorder, "discovery preorder, {c:?}");
+    assert_eq!(
+        doms.tree_preorder(),
+        preorder_ascending(&doms, &preds),
+        "ascending preorder, {c:?}"
+    );
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(CASES))]
+
+    #[test]
+    fn intervals_number_the_tree_as_the_walk_did(c in cases::arb_case(10)) {
+        check_numbering_against_the_walk(&c);
+    }
+}
+
+#[test]
+fn intervals_number_the_named_shapes_as_the_walk_did() {
+    for (name, c) in cases::shapes() {
+        if c.n > 0 {
+            println!("shape {name}");
+            check_numbering_against_the_walk(&c);
+        }
+    }
 }

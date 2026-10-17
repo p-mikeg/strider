@@ -250,6 +250,35 @@ impl<N: Copy + Eq + Hash> Dominators<N> {
         let &at = self.number.get(&n)?;
         (at != 0).then(|| self.vertices[self.idom[at as usize] as usize])
     }
+
+    /// The interval numbering of this tree, over positions in
+    /// [`Self::vertices`], so siblings come in depth-first discovery order.
+    #[must_use]
+    pub fn intervals(&self) -> DomIntervals {
+        DomIntervals::new(&self.idom)
+    }
+
+    /// The tree in preorder, siblings ascending by `N`: a function of the idom
+    /// relation alone, not of the walk that found it.
+    #[must_use]
+    pub fn tree_preorder(&self) -> Vec<N>
+    where
+        N: Ord,
+    {
+        let mut children: Vec<Vec<u32>> = vec![Vec::new(); self.vertices.len()];
+        for (v, &d) in self.idom.iter().enumerate().skip(1) {
+            children[d as usize].push(v as u32);
+        }
+        let mut order = Vec::with_capacity(self.vertices.len());
+        let mut stack = vec![0u32];
+        while let Some(v) = stack.pop() {
+            order.push(self.vertices[v as usize]);
+            let siblings = &mut children[v as usize];
+            siblings.sort_unstable_by_key(|&c| self.vertices[c as usize]);
+            stack.extend(siblings.iter().rev());
+        }
+        order
+    }
 }
 
 const UNLINKED: u32 = u32::MAX;
@@ -348,6 +377,7 @@ where
 pub struct DomIntervals {
     enter: Vec<u32>,
     exit: Vec<u32>,
+    preorder: Vec<u32>,
 }
 
 impl DomIntervals {
@@ -362,14 +392,17 @@ impl DomIntervals {
         let mut enter = vec![0u32; n];
         let mut exit = vec![0u32; n];
         let mut clock = 0u32;
+        let mut preorder = Vec::with_capacity(n);
         let mut stack: Vec<(u32, usize)> = vec![(0, 0)];
         enter[0] = clock;
+        preorder.push(0);
         clock += 1;
         while let Some(top) = stack.last_mut() {
             let (v, next) = *top;
             if let Some(&c) = children[v as usize].get(next) {
                 top.1 += 1;
                 enter[c as usize] = clock;
+                preorder.push(c);
                 clock += 1;
                 stack.push((c, 0));
             } else {
@@ -378,7 +411,11 @@ impl DomIntervals {
                 stack.pop();
             }
         }
-        Self { enter, exit }
+        Self {
+            enter,
+            exit,
+            preorder,
+        }
     }
 
     /// Reflexive: every vertex dominates itself.
@@ -386,6 +423,19 @@ impl DomIntervals {
     pub fn dominates(&self, a: u32, b: u32) -> bool {
         self.enter[a as usize] <= self.enter[b as usize]
             && self.exit[b as usize] <= self.exit[a as usize]
+    }
+
+    /// `v`'s `(enter, exit)` clock, from 0: `a` dominates `b` iff `a`'s
+    /// interval encloses `b`'s.
+    #[must_use]
+    pub fn span(&self, v: u32) -> (u32, u32) {
+        (self.enter[v as usize], self.exit[v as usize])
+    }
+
+    /// Every vertex in tree preorder, siblings ascending by index.
+    #[must_use]
+    pub fn preorder(&self) -> &[u32] {
+        &self.preorder
     }
 }
 
@@ -746,6 +796,24 @@ mod tests {
         assert_eq!(place[&3].len(), 2);
         assert!(place[&3].contains(&'a') && place[&3].contains(&'b'));
         assert_eq!(place.len(), 1, "both φs land only at the join");
+    }
+
+    /// `0 -> 2, 0 -> 1`: the DFS discovers 2 first. `tree_preorder` visits the
+    /// siblings by vertex, `intervals().preorder()` by discovery.
+    #[test]
+    fn tree_preorder_orders_siblings_by_vertex_not_discovery() {
+        let doms = dominators(0u32, |v| match v {
+            0 => vec![2, 1],
+            _ => Vec::new(),
+        });
+        assert_eq!(doms.tree_preorder(), [0, 1, 2]);
+        let by_discovery: Vec<u32> = doms
+            .intervals()
+            .preorder()
+            .iter()
+            .map(|&at| doms.vertices()[at as usize])
+            .collect();
+        assert_eq!(by_discovery, [0, 2, 1]);
     }
 }
 
