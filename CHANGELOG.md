@@ -103,6 +103,9 @@
   bits. `wrap_u128(v)` reduces a value to the width, exactly at every width
   (a float gives 0); `int_mask_u128()` is the all-ones value, `None` for a
   float or past 128 bits.
+- `ValidationError::UnsupportedValueType` is new: `validate` rejects a value
+  typed with a width outside `ValueType::SUPPORTED`, which only the `Int` /
+  `Float` variants can write.
 
 ### Changed, Python
 

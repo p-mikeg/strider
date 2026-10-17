@@ -134,6 +134,13 @@ pub enum ValidationError {
         actual: ValueKind,
     },
 
+    #[error("node {node:?} output[{output_idx}] is {ty:?}, a width outside ValueType::SUPPORTED")]
+    UnsupportedValueType {
+        node: NodeId,
+        output_idx: usize,
+        ty: ValueType,
+    },
+
     #[error("multiple Entry nodes: {first:?} and {second:?}")]
     MultipleEntryNodes { first: NodeId, second: NodeId },
 
@@ -467,6 +474,7 @@ impl ValidationError {
             | E::NodeInputKindMismatch { node, .. }
             | E::NodeOutputCountMismatch { node, .. }
             | E::NodeOutputKindMismatch { node, .. }
+            | E::UnsupportedValueType { node, .. }
             | E::UnusedControlOutput { node, .. }
             | E::ReusedControlOutput { node, .. }
             | E::NoTerminatorReachable { node, .. }

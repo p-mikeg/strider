@@ -53,6 +53,15 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
     }
 
     for (idx, &actual) in actual_outputs.iter().enumerate() {
+        if let ValueKind::Typed(ty) = actual
+            && !ty.is_supported()
+        {
+            errs.push(ValidationError::UnsupportedValueType {
+                node,
+                output_idx: idx,
+                ty,
+            });
+        }
         let Some(slot) = sig.outputs.at(idx) else {
             break;
         };
