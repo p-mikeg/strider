@@ -224,7 +224,7 @@ mod tests {
         crate::DecodeEngine::new(arch, sleigh)
             .expect("decode engine")
             .build_cfg(entry_addr.into(), &CfgOptions::default())
-            .unwrap_or_else(|e| panic!("Builder::build for {fn_name:?}: {e:?}"))
+            .unwrap_or_else(|e| panic!("build_cfg for {fn_name:?}: {e:?}"))
     }
 
     #[test]

@@ -77,7 +77,7 @@ mod tests {
         crate::DecodeEngine::new(arch, sleigh)
             .expect("decode engine")
             .build_cfg(start.into(), &CfgOptions::default())
-            .expect("Builder::build on synthetic bytes")
+            .expect("build_cfg on synthetic bytes")
     }
 
     #[test]
