@@ -42,13 +42,11 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs
 ///
 /// # What the node signature leaves open is author-owned
 ///
-/// [`instantiate`] checks each template node's declared outputs against its
-/// `NodeKind`'s `expected_signature`, errors on a gapped or duplicate input
-/// slot, and checks operand classes and widths for the kinds that name an
-/// operand class, the arithmetic and conversion ones. A kind naming none, a
-/// `Store` / `Load` / `Call` / `Region` / phi among them, has its slot wiring
-/// left to the RHS author, as does anything the signature does not pin, such
-/// as which value a `Call` takes at an argument slot.
+/// [`instantiate`] checks every template node against its `NodeKind`'s
+/// `expected_signature`: the declared outputs, the input count, each input
+/// slot's value kind and the operand widths. It also errors on a gapped or
+/// duplicate input slot. What the signature does not pin is left to the RHS
+/// author, such as which address a `Load` reads.
 ///
 /// # Errors
 ///
