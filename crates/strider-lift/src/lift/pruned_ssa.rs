@@ -21,7 +21,6 @@ use rsleigh::Opcode;
 use strider_ir::node::InitialVnId;
 use strider_target::call_other_abi::classify_with;
 
-use super::call::decode_user_op;
 use super::function_lifter::FunctionLifter;
 
 /// Variables needing a value `Phi` at each region.
@@ -186,11 +185,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 // Resolved through the same `built` call the lift uses, so an
                 // unresolvable ABI register name fails here exactly as it does
                 // there instead of silently placing no phi.
-                let class = decode_user_op(insn, self.lifter.user_op_names())
-                    .ok()
-                    .and_then(|(_, name)| {
+                let class = strider_cfg::user_op_of(insn, self.lifter.user_op_names()).and_then(
+                    |(_, name)| {
                         classify_with(self.call_other_overrides, self.lifter.arch().preset(), name)
-                    });
+                    },
+                );
                 let abi = match class {
                     Some(class) => class.built(self.lifter.sleigh_regs())?,
                     None => None,

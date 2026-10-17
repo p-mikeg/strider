@@ -664,20 +664,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// answers, plus the PowerPC traps whose TO mask covers every relation.  An
     /// unexpected input shape falls through to `Continue` rather than erroring.
     fn process_call_other(&mut self, insn: &rsleigh::Insn) -> Result<InsnOutcome> {
-        let Some(id_vn) = insn.inputs.first() else {
-            return Ok(InsnOutcome::Continue);
-        };
-        if id_vn.addr_space != rsleigh::VnSpace::CONST {
-            return Ok(InsnOutcome::Continue);
-        }
-        let Ok(id_u32) = u32::try_from(id_vn.addr_off) else {
-            return Ok(InsnOutcome::Continue);
-        };
-        let name = self
-            .builder
-            .user_op_names
-            .get(id_u32 as usize)
-            .map(String::as_str);
+        let name = crate::user_op_of(insn, self.builder.user_op_names).map(|(_, name)| name);
         let overridden = name.and_then(|n| self.builder.options.call_other_overrides.get(n));
         let terminates = match overridden {
             // A caller override states what this binary's build of the op does,
