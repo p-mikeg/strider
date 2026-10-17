@@ -99,7 +99,9 @@ Generic:
 
 Strider:
 
-- `strider-ir`: the sea-of-nodes IR.
+- `strider-ir`: the sea-of-nodes IR. `strider_ir::eval` is the one integer
+  evaluator, `ExpectedValueKind::admits` the one slot-kind check and
+  `NodeKind::operand_width` the one operand-width rule.
 - `strider-target`: pure target descriptions (`SleighArch`,
   `CallingConvention` / `BuiltCallingConvention`, the `CallOther` ABI table).
 - `strider-reader`: ELF loader and `ReadOnlyMemory` backend.
