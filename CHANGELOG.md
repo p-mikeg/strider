@@ -201,6 +201,12 @@
   region shares one patch list, so a site any number of overlapping
   mappings cover is patched in all of them at no extra cost. Python
   `load_elf` / `add_elf` stop raising on such an image too.
+- A GOT-base- or TOC-relative relocation (`R_*_GOTPC*`, `R_PPC64_TOC`),
+  whose value does not read the symbol, no longer needs the symbol to
+  resolve.
+- A MIPS64 RELA `R_MIPS_REL32` against STN_UNDEF with no `R_MIPS_64`
+  composed is a hole when its addend fits neither 32-bit signedness, rather
+  than truncated.
 
 ### Fixed
 
@@ -247,6 +253,9 @@
   symbol. A mips64el `SHT_CREL` entry, which was read as a transposed
   `SHT_REL` one, is applied as written; in an image that also holds an
   `SHT_CREL` table a mips64el `SHT_REL` entry is read as written too.
+- A relocation whose value reads the symbol is a hole against STN_UNDEF
+  (`r_sym` 0): an instruction relocation such as `R_AARCH64_CALL26` was
+  computed with the symbol taken as 0.
 
 ### Added, Rust
 

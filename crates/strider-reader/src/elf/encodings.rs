@@ -56,6 +56,16 @@ pub(crate) enum Value {
     Ppc64Call { notoc: bool },
 }
 
+impl Value {
+    /// Whether the value needs `S`, which only a symbol target has.
+    pub(crate) fn reads_symbol(self) -> bool {
+        !matches!(
+            self,
+            Value::ImageRelative | Value::GotBasePcrel | Value::Toc
+        )
+    }
+}
+
 /// Which bits of a 16-bit PowerPC or MIPS immediate a value lands in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Half {
