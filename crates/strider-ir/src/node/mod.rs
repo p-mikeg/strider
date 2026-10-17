@@ -7,7 +7,9 @@ mod value_type;
 #[cfg(test)]
 mod tests;
 
-pub use crate::node_signature::ExpectedValueKind;
+#[cfg(any(test, feature = "test-util"))]
+pub use crate::node_signature::every_node_kind;
+pub use crate::node_signature::{Conversion, ExpectedValueKind, OperandWidth};
 pub use kind::{CcId, FunctionArgSource, InitialVnId, NodeKind, SwitchTableId};
 pub use ops::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,

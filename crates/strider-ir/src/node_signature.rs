@@ -1,7 +1,7 @@
 //! Single source of truth for every node's slot shape: kind (validation),
 //! name (dot labels), and role (dot colors).
 
-use crate::node::{NodeKind, ValueKind};
+use crate::node::{NodeKind, ValueKind, ValueType};
 
 /// A slot's admissible value kinds, coarser than the concrete
 /// [`ValueKind`](crate::node::ValueKind) stored on real outputs.
@@ -39,6 +39,42 @@ impl ExpectedValueKind {
                 Self::Bool | Self::AnyInt | Self::AnyFloat | Self::AnyValue,
                 ValueKind::Control | ValueKind::Memory | ValueKind::PhiToken,
             ) => false,
+        }
+    }
+}
+
+/// The width an input slot owes its node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperandWidth {
+    /// The node's output width.
+    OfOutput,
+    /// Input slot 0's width; the output is the `I1` verdict.
+    OfFirstOperand,
+    /// A width the conversion relates to the output's.
+    Conversion(Conversion),
+    /// Tied to no other slot.
+    Free,
+}
+
+/// How a conversion's input width relates to its output's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Conversion {
+    /// `Extend`: strictly wider.
+    Widen,
+    /// `Truncate`: strictly narrower.
+    Narrow,
+    /// A bitcast: the same size.
+    SameSize,
+}
+
+impl Conversion {
+    /// Whether `input` converts to `output` under this rule. A bitcast
+    /// compares bytes: every float width is whole bytes.
+    pub fn admits(self, input: ValueType, output: ValueType) -> bool {
+        match self {
+            Self::Widen => output.bit_width() > input.bit_width(),
+            Self::Narrow => output.bit_width() < input.bit_width(),
+            Self::SameSize => input.byte_size() == output.byte_size(),
         }
     }
 }
@@ -119,6 +155,11 @@ impl SlotList {
     /// Fixed slots before any tail; the index the variadic tail starts at.
     pub(crate) fn head_len(&self) -> usize {
         self.head.len()
+    }
+
+    /// Inclusive arity bound; `usize::MAX` for a repeating tail.
+    pub(crate) fn max_len(&self) -> usize {
+        self.max_len
     }
 
     /// Past the head: the tail slot while within `max_len`, else `None`.
@@ -281,9 +322,10 @@ pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
     }
 }
 
-/// One representative per [`NodeKind`] variant, in declaration order.
-#[cfg(test)]
-pub(crate) fn every_node_kind() -> Vec<NodeKind> {
+/// One representative per [`NodeKind`] variant, in declaration order. Its
+/// ids are dangling: it is for slot-shape tables, not for a graph.
+#[cfg(any(test, feature = "test-util"))]
+pub fn every_node_kind() -> Vec<NodeKind> {
     use crate::node::{
         ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
     };
@@ -739,5 +781,46 @@ mod tests {
                 assert_eq!(want.admits(got), admitted, "{want:?} admits {got:?}");
             }
         }
+    }
+
+    /// The width each slot owes, one row per rule.
+    #[test]
+    fn operand_width_rows() {
+        use crate::node::{Conversion, ExtendOp, IntBinaryOp, IntCmpOp, OperandWidth as W};
+        let space = rsleigh::VnSpace::RAM;
+        let rows = [
+            (NodeKind::IntBinaryOp(IntBinaryOp::Add), 1, W::OfOutput),
+            (
+                NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
+                0,
+                W::OfOutput,
+            ),
+            (NodeKind::IntBinaryOp(IntBinaryOp::SShiftRight), 1, W::Free),
+            (NodeKind::IntCmpOp(IntCmpOp::Sless), 1, W::OfFirstOperand),
+            (
+                NodeKind::Extend(ExtendOp::SignExtend),
+                0,
+                W::Conversion(Conversion::Widen),
+            ),
+            (NodeKind::Truncate, 0, W::Conversion(Conversion::Narrow)),
+            (
+                NodeKind::FloatBitsToInt,
+                0,
+                W::Conversion(Conversion::SameSize),
+            ),
+            (NodeKind::Load(space), 1, W::Free),
+            (NodeKind::Popcount, 0, W::Free),
+        ];
+        for (kind, slot, want) in rows {
+            assert_eq!(kind.operand_width(slot), want, "{kind:?} slot {slot}");
+        }
+        assert_eq!(NodeKind::Store(space).input_arity(), 3..=3);
+        assert_eq!(NodeKind::Unreachable.input_arity(), 1..=2);
+        assert_eq!(NodeKind::Region.input_arity(), 0..=usize::MAX);
+        assert_eq!(
+            NodeKind::Store(space).expected_input_kind(2),
+            Some(ExpectedValueKind::AnyInt)
+        );
+        assert_eq!(NodeKind::Store(space).expected_input_kind(3), None);
     }
 }
