@@ -77,3 +77,51 @@ fn an_override_this_function_never_calls_seeds_nothing() {
         f.all_vns()
     );
 }
+
+/// A tail call selects its target's override as a direct call does, so the
+/// override's argument registers are tracked: `handle_tail_call` reads them
+/// through `read_variable`, which hard-fails on an untracked varnode.
+#[test]
+fn a_tail_calls_override_argument_registers_are_seeded() {
+    // jmp g ; ret ; g: ret, under a 2-byte bound, so the `jmp` is a tail call.
+    let bytes = vec![0xeb, 0x01, 0xc3, 0xc3];
+    let arch = strider_target::SleighArch::x86();
+    let sleigh = rsleigh::Sleigh::new(
+        arch.sla_spec(),
+        arch.pspec(),
+        rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
+    )
+    .expect("sleigh");
+    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    let cc = strider_target::CallingConvention::x86_cdecl()
+        .build(lifter.sleigh_regs())
+        .expect("cdecl");
+    let edi = lifter.sleigh_regs().name_to_vn("EDI").expect("EDI");
+    let mut override_cc = cc.clone();
+    override_cc.arg_passing_regs = vec![edi];
+    let mut per_address_ccs = rustc_hash::FxHashMap::default();
+    per_address_ccs.insert(0x1003u64, override_cc);
+    let opts = strider_cfg::CfgOptions {
+        bound: strider_cfg::FunctionBound::size(2),
+        ..strider_cfg::CfgOptions::default()
+    };
+    let cfg = lifter.build_cfg(0x1000u64.into(), &opts).expect("cfg");
+    assert!(
+        cfg.regions().any(|r| matches!(
+            r.terminator,
+            strider_cfg::RegionTerminator::TailCall { target } if target.addr == 0x1003
+        )),
+        "premise: the jmp is a tail call to the overridden address"
+    );
+    let f = lifter
+        .build_ir_with(&cfg, cc, &opts, &per_address_ccs)
+        .expect("a tail call's override argument register must be tracked")
+        .function;
+    assert!(
+        f.all_vns()
+            .iter()
+            .any(|v| vn_container::vn_contains(v, &edi)),
+        "EDI must be tracked, got {:?}",
+        f.all_vns()
+    );
+}

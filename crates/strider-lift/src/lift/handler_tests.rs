@@ -77,7 +77,14 @@ pub(super) fn with_test_lifter_tracking_arch(
     all_vns: Vec<Vn>,
     f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
 ) {
-    with_test_lifter_arch_cc(arch, term_bytes, empty_cc(), all_vns, f);
+    with_test_lifter_arch_cc(
+        arch,
+        term_bytes,
+        empty_cc(),
+        all_vns,
+        &rustc_hash::FxHashMap::default(),
+        f,
+    );
 }
 
 /// Caller-provided CC instead of `empty_cc()`.  The projection tests need this:
@@ -94,6 +101,7 @@ pub(super) fn with_test_lifter_cc(
         vec![0xc3],
         cc,
         all_vns,
+        &rustc_hash::FxHashMap::default(),
         f,
     );
 }
@@ -103,6 +111,7 @@ fn with_test_lifter_arch_cc(
     term_bytes: Vec<u8>,
     cc: strider_target::BuiltCallingConvention,
     all_vns: Vec<Vn>,
+    per_address_ccs: &rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
 ) {
     let sleigh = rsleigh::Sleigh::new(
@@ -117,14 +126,13 @@ fn with_test_lifter_arch_cc(
         .expect("throwaway cfg");
     // Value opcodes never consult the region id or map, so any valid id works.
     let region_id = cfg.entry();
-    let no_overrides = rustc_hash::FxHashMap::default();
     let no_call_other_overrides = strider_target::call_other_abi::CallOtherOverrides::default();
     let mut driver = FunctionLifter::new(
         &lifter,
         cc,
         &cfg,
         all_vns,
-        &no_overrides,
+        per_address_ccs,
         &no_call_other_overrides,
     )
     .expect("driver");
@@ -1802,4 +1810,39 @@ fn a_shift_count_narrower_than_the_output_is_left_alone() {
     for k in &producers {
         assert_eq!(*k, NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend));
     }
+}
+
+/// A `per_address_ccs` entry is keyed by a direct call's target ADDRESS, so a
+/// `CALL` whose operand names a register offset selects none, as the CFG's
+/// no-return rule already held. `call_override` serves the lifted call and the
+/// def-site mirror alike.
+#[test]
+fn a_call_operand_outside_the_code_space_selects_no_override() {
+    let ccs: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention> =
+        [(0x10, empty_cc())].into_iter().collect();
+    with_test_lifter_arch_cc(
+        strider_target::SleighArch::x86(),
+        vec![0xc3],
+        empty_cc(),
+        vec![reg(0)],
+        &ccs,
+        |d, _| {
+            let call_to = |addr_space| Insn {
+                opcode: Opcode::Call,
+                output: None,
+                inputs: vec![Vn {
+                    size: 4,
+                    addr_off: 0x10,
+                    addr_space,
+                }]
+                .into(),
+            };
+            let code_space = d.lifter.sleigh().default_code_space();
+            assert!(
+                d.call_override(&call_to(code_space)).is_some(),
+                "premise: a code-space target selects its entry"
+            );
+            assert!(d.call_override(&call_to(VnSpace::REGISTER)).is_none());
+        },
+    );
 }
