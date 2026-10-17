@@ -29,12 +29,10 @@ fn collect_stack_args(
     stack_args: strider_target::StackArgs,
     alias_cfg: &MemAnalyzer,
 ) -> Vec<ValueId> {
-    // Call inputs are [control, memory, target, sp, ...args].
-    let inputs = function.node_inputs(call_id);
     let mem_value = function
         .memory_input_of(call_id)
         .expect("Call carries a memory input (slot 1)");
-    let sp_value = inputs[3];
+    let sp_value = function.node_inputs(call_id)[NodeKind::CALL_SP_SLOT];
 
     // A slot's entry-relative probe offset is `call_sp_off + offset_of(slot)`.
     // The probes below are stack-rooted, so a base in any other region is not

@@ -162,6 +162,17 @@ pub enum NodeKind {
 }
 
 impl NodeKind {
+    /// Input slot of a `Load` / `Store` address.
+    pub const ACCESS_ADDR_SLOT: usize = 1;
+    /// Input slot of a `Store`'s data.
+    pub const STORE_DATA_SLOT: usize = 2;
+    /// Input slot of a `Call`'s target.
+    pub const CALL_TARGET_SLOT: usize = 2;
+    /// Input slot of a `Call`'s stack-pointer anchor.
+    pub const CALL_SP_SLOT: usize = 3;
+    /// Input slot of an `If`'s condition.
+    pub const IF_COND_SLOT: usize = 1;
+
     #[inline]
     pub fn is_const(self) -> bool {
         matches!(self, Self::IntConst(..) | Self::FloatConst(..))

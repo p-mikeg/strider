@@ -242,6 +242,7 @@
   width, the template all three, the builders the kind.
 - `IRViewer::{require_slot, require_output_type}`: a value or output type
   checked against a node's signature.
+- `IRViewer::access_address` and the `NodeKind::*_SLOT` input-slot constants.
 
 ## 0.2.0
 
