@@ -106,6 +106,9 @@
 - `ValidationError::UnsupportedValueType` is new: `validate` rejects a value
   typed with a width outside `ValueType::SUPPORTED`, which only the `Int` /
   `Float` variants can write.
+- `template::instantiate` checks every node's input count and input kinds
+  against its node signature; a raw `Load`, `Store` or `Call` template was
+  not checked at all and could build IR `validate` rejects.
 
 ### Changed, Python
 
@@ -230,8 +233,9 @@
 - `ExpectedValueKind::admits`, the slot-kind check `validate` and the
   template both read.
 - `NodeKind::{expected_input_kind, input_arity, operand_width}`,
-  `OperandWidth` and `Conversion`: each input slot's kind, arity and width,
-  the one source `validate`, the template and the builders read.
+  `OperandWidth` and `Conversion`: each input slot's kind, arity and width
+  from the node signature. The template reads all three, `validate` the
+  width.
 
 ## 0.2.0
 
