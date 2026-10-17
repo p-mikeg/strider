@@ -107,8 +107,9 @@
   typed with a width outside `ValueType::SUPPORTED`, which only the `Int` /
   `Float` variants can write.
 - `template::instantiate` checks every node's input count and input kinds
-  against its node signature; a raw `Load`, `Store` or `Call` template was
-  not checked at all and could build IR `validate` rejects.
+  against its node signature. Before, no node's input count was checked, nor
+  any input of a raw `Load`, `Store`, `Phi`, `MemPhi`, `New` or `CPoolRef`,
+  so a template could build IR `validate` rejects.
 
 ### Changed, Python
 
