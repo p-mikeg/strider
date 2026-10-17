@@ -1405,6 +1405,7 @@ dependencies = [
  "rsleigh",
  "rustc-hash 2.1.2",
  "strider-target",
+ "vn-container",
 ]
 
 [[package]]

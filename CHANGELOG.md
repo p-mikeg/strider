@@ -243,6 +243,8 @@
 - `IRViewer::{require_slot, require_output_type}`: a value or output type
   checked against a node's signature.
 - `IRViewer::access_address` and the `NodeKind::*_SLOT` input-slot constants.
+- `vn_container::{vn_end, vn_overlaps}`, the exact varnode end and overlap
+  `strider-target` now reads.
 
 ## 0.2.0
 
