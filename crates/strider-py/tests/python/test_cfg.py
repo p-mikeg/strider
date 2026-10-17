@@ -207,3 +207,32 @@ def test_cfg_style_reaches_both_renderers(x86_memory_elf):
         with pytest.raises(strider.StriderError):
             # Deliberate: an unknown theme name is a runtime error.
             render(style="not_a_theme")  # type: ignore[arg-type]
+
+
+def _stub_inside_a_crossing_jmp():
+    """x86-64 under a size bound of 8. The `jmp` at 0x1006 crosses the bound,
+    and the `je` at 0x1002, decoded after it, targets 0x1009, past the bound:
+    a tail-call stub starting inside the `jmp`.
+
+        0x1000  eb 02           jmp 0x1004
+        0x1002  74 05           je 0x1009
+        0x1004  74 fc           je 0x1002
+        0x1006  e9 00 00 00 00  jmp 0x100b
+    """
+    code = bytes.fromhex("eb02740574fce900000000c3")
+    mem = strider.reader.BufferReader(0x1000, code + bytes(16))
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    return lift.build_cfg(0x1000, strider.cfg.CfgOptions(function_max_size=8))
+
+
+def test_region_at_answers_the_greatest_start_where_regions_overlap():
+    """0x1009 is a byte of the `jmp` and the stub's own start, so two regions
+    contain it; the owner is the one starting last, the rule the build routes
+    edges by."""
+    cfg = _stub_inside_a_crossing_jmp()
+    jmp = cfg.region_at(0x1008)
+    stub = cfg.region_at(0x1009)
+    assert jmp is not None and stub is not None
+    assert cfg._region_texts()[jmp] != ""
+    assert stub != jmp
+    assert cfg._region_texts()[stub] == ""

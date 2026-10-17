@@ -7,6 +7,7 @@ mod neighborhood;
 mod options;
 mod pcode_text;
 mod query;
+mod region_index;
 #[cfg(test)]
 mod test_support;
 mod types;
@@ -55,6 +56,7 @@ use petgraph::graph::NodeIndex;
 pub struct Cfg {
     pub(crate) region_graph: RegionGraph,
     pub(crate) entry: NodeIndex,
+    pub(crate) index: region_index::RegionIndex,
     pub(crate) undecodable_seeded: Vec<UndecodableTarget>,
     pub(crate) incomplete: Incompleteness,
     pub(crate) link_register_seated: Vec<types::PcodeInsnAddr>,
@@ -77,6 +79,15 @@ impl Cfg {
     /// STORE in it carries; see [`insn_text`].
     pub fn space_ids(&self) -> &rsleigh::SpaceIds {
         &self.space_ids
+    }
+
+    /// The region owning `addr`: of the regions containing it, the one with
+    /// the greatest start, the rule the build routes every edge by.
+    #[must_use]
+    pub fn region_containing(&self, addr: PcodeInsnAddr) -> Option<RegionId> {
+        self.index
+            .containing(&self.region_graph, addr)
+            .map(|(id, _)| id)
     }
 
     /// Caller-seeded or classifier-derived targets that failed to decode, or

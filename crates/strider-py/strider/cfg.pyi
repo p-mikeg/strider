@@ -129,7 +129,7 @@ class Cfg:
         ...
     def region_at(self, addr: int) -> Optional[int]:
         """The index of the region whose instruction range contains `addr`,
-        else `None`. The lowest index where regions overlap."""
+        else `None`. Where regions overlap, the one with the greatest start."""
         ...
     def _region_texts(self) -> dict:
         """Disassembly text for every region, keyed by region index. The

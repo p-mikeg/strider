@@ -5,8 +5,7 @@ mod split;
 pub(crate) use flow::{FlowCommit, FlowContext, FlowVars};
 use region_builder::{RegionBuilder, is_unmapped_start, not_code_addr, not_code_at};
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::ops::Bound;
+use std::collections::BTreeMap;
 
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::EdgeIndex;
@@ -15,17 +14,11 @@ use petgraph::visit::EdgeRef;
 use crate::Cfg;
 use crate::DecodeEngine;
 use crate::options::CfgOptions;
+use crate::region_index::RegionIndex;
 use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph};
 use anyhow::{anyhow, bail};
 
 use crate::Result;
-
-#[cfg(test)]
-thread_local! {
-    /// Regions [`Builder::find_region_containing_addr`] tested for containment
-    /// since a test last cleared it.
-    pub(crate) static REGION_PROBES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
 
 /// A pending region to explore off a successor edge.
 pub(super) struct WorkItem {
@@ -73,21 +66,8 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) options: &'a CfgOptions<'a>,
     pub(super) arch: strider_target::SleighArch,
     pub(super) region_graph: RegionGraph,
-    /// One region per start address.
-    pub(super) start_addr_to_region_id: BTreeMap<PcodeInsnAddr, NodeIndex>,
-    /// Longest span of a region another region starts INSIDE of, which bounds
-    /// [`Self::find_region_containing_addr`]'s reverse walk.  Monotone: a split
-    /// only shortens both halves.
-    ///
-    /// Non-zero without overlapping instruction streams too: splitting at a
-    /// pcode index INSIDE one machine instruction leaves the first half's last
-    /// entry carrying the whole machine-instruction length, so its span reaches
-    /// past the second half's start.  That shadow is bounded by one instruction
-    /// length.
-    pub(super) max_shadowed_span: u64,
-    /// Starts of the regions another region begins inside of: the only ones a
-    /// lookup miss has to re-probe.
-    pub(super) shadowed_starts: BTreeSet<PcodeInsnAddr>,
+    /// Which region owns an address.
+    pub(super) index: RegionIndex,
     /// LIFO for depth-first exploration, direct edges only.
     pub(super) work_queue: Vec<WorkItem>,
     /// LIFO for seeded arms, drained only once no direct edge is left; see
@@ -187,9 +167,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             options,
             arch: *arch,
             region_graph: RegionGraph::new(),
-            start_addr_to_region_id: BTreeMap::new(),
-            max_shadowed_span: 0,
-            shadowed_starts: BTreeSet::new(),
+            index: RegionIndex::default(),
             work_queue: Vec::new(),
             seeded_queue: Vec::new(),
             clashing_seeded: Vec::new(),
@@ -359,36 +337,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             region.insns.first().map(|i| i.addr),
         );
 
-        let start_addr = region.start_addr;
-        let span = region.span_len();
-        // Record both directions of an overlap: a region this one starts inside
-        // of, and one already starting inside this one.
-        let shadowed = self
-            .find_region_containing_addr(start_addr)
-            .map(|(_, shadowed)| (shadowed.start_addr, shadowed.span_len()));
-        if let Some((shadowed_start, shadowed_span)) = shadowed {
-            self.max_shadowed_span = self.max_shadowed_span.max(shadowed_span);
-            self.shadowed_starts.insert(shadowed_start);
-        }
-        // Saturating here would make `end` compare equal to (or below) `start_addr`
-        // for a region at the top of the address space, and `range` panics on an
-        // empty exclusive pair. Overflow means "to the end of memory", so the
-        // shadow check still runs rather than being skipped.
-        let end = match start_addr.machine_addr.addr.checked_add(span) {
-            Some(end) => Bound::Excluded(PcodeInsnAddr::at_machine_start(end)),
-            None => Bound::Unbounded,
-        };
-        if self
-            .start_addr_to_region_id
-            .range((Bound::Excluded(start_addr), end))
-            .next()
-            .is_some()
-        {
-            self.max_shadowed_span = self.max_shadowed_span.max(span);
-            self.shadowed_starts.insert(start_addr);
-        }
         let region_id = self.region_graph.add_node(region);
-        self.start_addr_to_region_id.insert(start_addr, region_id);
+        self.index.insert(&self.region_graph, region_id);
         Ok(region_id)
     }
 
@@ -435,10 +385,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// a regular successor but never enqueued, so no address outside the
     /// function's bound and no address holding no instruction is decoded.
     ///
-    /// Keyed through `start_addr_to_region_id` like any region, so two edges
-    /// to the same address share one stub.
+    /// Keyed through the index like any region, so two edges to the same
+    /// address share one stub.
     pub(super) fn tail_call_stub(&mut self, addr: PcodeInsnAddr) -> Result<NodeIndex> {
-        if let Some(&existing) = self.start_addr_to_region_id.get(&addr) {
+        if let Some(existing) = self.index.get(addr) {
             return Ok(existing);
         }
         self.add_region(Region {
@@ -451,49 +401,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         })
     }
 
-    /// The region containing `addr`.
-    ///
-    /// The greatest start at or below `addr` need not be its owner: regions are
-    /// disjoint only while every target lands on an instruction boundary, and
-    /// one starting inside another region's last instruction shadows that
-    /// region over the rest of those bytes.  Only such a shadowed region can own
-    /// `addr` once the greatest start does not, and it reaches at most
-    /// `max_shadowed_span` bytes below `addr`, which bounds how far back to
-    /// look. The walk visits only `shadowed_starts`: bounding by a single
-    /// global span alone would make one overlapping address anywhere in the
-    /// function re-probe every region within that span, on every miss.
+    /// The region owning `addr`; see [`RegionIndex::containing`].
     pub(super) fn find_region_containing_addr(
         &self,
         addr: PcodeInsnAddr,
     ) -> Option<(NodeIndex, &Region)> {
-        let (&greatest, &greatest_id) = self.start_addr_to_region_id.range(..=addr).next_back()?;
-        if let Some(owner) = self.region_owning(greatest_id, addr) {
-            return Some(owner);
-        }
-        let floor = PcodeInsnAddr::at_machine_start(
-            addr.machine_addr
-                .addr
-                .saturating_sub(self.max_shadowed_span),
-        );
-        if floor >= greatest {
-            return None;
-        }
-        self.shadowed_starts
-            .range(floor..greatest)
-            .rev()
-            .filter_map(|start| self.start_addr_to_region_id.get(start))
-            .find_map(|&region_id| self.region_owning(region_id, addr))
-    }
-
-    fn region_owning(
-        &self,
-        region_id: NodeIndex,
-        addr: PcodeInsnAddr,
-    ) -> Option<(NodeIndex, &Region)> {
-        #[cfg(test)]
-        REGION_PROBES.with(|n| n.set(n.get() + 1));
-        let region = self.region_graph.node_weight(region_id)?;
-        region.contains_addr(addr).then_some((region_id, region))
+        self.index.containing(&self.region_graph, addr)
     }
 
     /// A target landing INSIDE an already-decoded region but not on one of its
@@ -871,7 +784,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// would carry an outgoing edge its contract forbids, and a `Switch` that
     /// kept its other arms would keep a successor it no longer names.
     fn remove_arm_edge(&mut self, site: NodeIndex, target: PcodeInsnAddr) {
-        let Some(&arm) = self.start_addr_to_region_id.get(&target) else {
+        let Some(arm) = self.index.get(target) else {
             return;
         };
         let edges: Vec<EdgeIndex> = self
@@ -894,6 +807,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         while dfs.next(&self.region_graph).is_some() {}
         self.region_graph
             .retain_nodes(|_, region| dfs.discovered.contains(region.index()));
+        self.index.retain_live(&self.region_graph);
     }
 
     pub(crate) fn build(mut self) -> Result<Cfg> {
@@ -1045,6 +959,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         Ok(Cfg {
             region_graph: self.region_graph,
             entry: starting_region,
+            index: self.index,
             undecodable_seeded: self
                 .undecodable_seeded
                 .iter()
@@ -1960,7 +1875,7 @@ mod tests {
         let id = b.add_region(r).unwrap();
 
         assert!(b.region_graph.node_weight(id).is_some());
-        assert_eq!(b.start_addr_to_region_id.get(&addr(0x1000, 0)), Some(&id));
+        assert_eq!(b.index.get(addr(0x1000, 0)), Some(id));
     }
 
     #[test]
@@ -2026,8 +1941,8 @@ mod tests {
 
         assert_ne!(id1, id2);
         assert_eq!(b.region_graph.node_count(), 2);
-        assert_eq!(b.start_addr_to_region_id[&addr(0x1000, 0)], id1);
-        assert_eq!(b.start_addr_to_region_id[&addr(0x1010, 0)], id2);
+        assert_eq!(b.index.get(addr(0x1000, 0)).expect("indexed"), id1);
+        assert_eq!(b.index.get(addr(0x1010, 0)).expect("indexed"), id2);
     }
 
     #[test]
@@ -2089,9 +2004,12 @@ mod tests {
             b.add_region(make_region(&[(0x2000 + i, 0)])).unwrap();
         }
 
-        super::REGION_PROBES.with(|n| n.set(0));
+        crate::region_index::REGION_PROBES.with(|n| n.set(0));
         assert!(b.find_region_containing_addr(addr(0x2100, 0)).is_none());
-        assert_eq!(super::REGION_PROBES.with(std::cell::Cell::get), 1);
+        assert_eq!(
+            crate::region_index::REGION_PROBES.with(std::cell::Cell::get),
+            1
+        );
     }
 
     /// The other overlap direction: sequential decoding steps OVER an existing
@@ -2295,13 +2213,13 @@ mod tests {
             .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
             .unwrap();
         let edges_before = b.region_graph.edge_references().count();
-        let map_len_before = b.start_addr_to_region_id.len();
+        let index_before = b.index.clone();
 
         let result = b.split_region(id, addr(0x1000, 0)).unwrap();
         assert_eq!(result, id);
         assert_eq!(b.region_graph.node_count(), 1);
         assert_eq!(b.region_graph.edge_references().count(), edges_before);
-        assert_eq!(b.start_addr_to_region_id.len(), map_len_before);
+        assert_eq!(b.index, index_before);
     }
 
     #[test]
@@ -2364,7 +2282,7 @@ mod tests {
         assert_eq!(b.region_graph[original].start_addr, addr(0x1008, 0));
         assert_eq!(b.region_graph[original].insns.len(), 2);
 
-        let first_id = b.start_addr_to_region_id[&addr(0x1000, 0)];
+        let first_id = b.index.get(addr(0x1000, 0)).expect("indexed");
         assert_eq!(b.region_graph[first_id].start_addr, addr(0x1000, 0));
         assert_eq!(b.region_graph[first_id].insns.len(), 2);
     }
@@ -2395,7 +2313,7 @@ mod tests {
 
         b.split_region(b_id, addr(0x1004, 0)).unwrap();
 
-        let first = b.start_addr_to_region_id[&addr(0x1000, 0)];
+        let first = b.index.get(addr(0x1000, 0)).expect("indexed");
         let incoming: Vec<_> = b
             .region_graph
             .edges_directed(first, petgraph::Incoming)
