@@ -14,6 +14,7 @@ pub use control_flow_view::{
     CtrlKey, DominatorTree, control_dominator_tree, control_edge_dominator_tree,
 };
 pub mod error;
+pub mod eval;
 mod function;
 #[cfg(any(test, feature = "test-util"))]
 pub use function::cc_ret_and_clobber_vns;

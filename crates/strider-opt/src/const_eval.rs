@@ -2,9 +2,7 @@ use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
 
-use crate::opt::constant_fold::eval_int::{
-    eval_int_binary, eval_int_cmp, eval_int_unary, eval_lzcount, eval_popcount, eval_sign_extend,
-};
+use strider_ir::eval;
 
 /// Decodes `ty` bytes at `addr` into an integer masked to `ty`. `None` for
 /// widths > 16 bytes, an unmapped read, or a non-integer `ty`.
@@ -85,7 +83,7 @@ pub(crate) fn eval_node_const(
             let ty = out_ty?;
             let (l, r) = (ins.get(0).copied()?, ins.get(1).copied()?);
             operands_carry(function, &[l, r], ty)?;
-            eval_int_binary(op, resolve(l)?, resolve(r)?, ty)
+            eval::int_binary(op, resolve(l)?, resolve(r)?, ty)
         }
         NodeKind::IntUnaryOp(op) => {
             let ty = out_ty?;
@@ -94,28 +92,28 @@ pub(crate) fn eval_node_const(
             // the output width, and `validate` rejects a node that does not,
             // but this folds mid-pipeline where nothing has validated yet.
             operands_carry(function, &[v], ty)?;
-            eval_int_unary(op, resolve(v)?, ty)
+            eval::int_unary(op, resolve(v)?, ty)
         }
         NodeKind::Truncate | NodeKind::Extend(ExtendOp::ZeroExtend) => {
             out_ty?.get_unsigned_int(resolve(ins.get(0).copied()?)?)
         }
         NodeKind::Extend(ExtendOp::SignExtend) => {
             let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
-            eval_sign_extend(resolve(ins[0])?, in_ty, out_ty?)
+            eval::sign_extend(resolve(ins[0])?, in_ty, out_ty?)
         }
         NodeKind::Popcount => {
             let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
-            eval_popcount(resolve(ins[0])?, in_ty)
+            eval::popcount(resolve(ins[0])?, in_ty)
         }
         NodeKind::Lzcount => {
             let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
-            eval_lzcount(resolve(ins[0])?, in_ty)
+            eval::lzcount(resolve(ins[0])?, in_ty)
         }
         NodeKind::IntCmpOp(op) => {
             let (l, r) = (ins.get(0).copied()?, ins.get(1).copied()?);
             let in_ty = function.value_type_opt(l)?;
             operands_carry(function, &[l, r], in_ty)?;
-            Some(u128::from(eval_int_cmp(
+            Some(u128::from(eval::int_cmp(
                 op,
                 resolve(l)?,
                 resolve(r)?,
