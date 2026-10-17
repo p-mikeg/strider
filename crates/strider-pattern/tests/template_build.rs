@@ -611,7 +611,7 @@ fn instantiate_refuses_an_ill_typed_operand() {
         (
             template::float_bits_to_int(var(x)).into_template(),
             "FloatBitsToInt",
-            "input slot 0",
+            "takes i64 at input slot 0",
         ),
     ] {
         let mut fx = make_empty_fn(build).unwrap();
@@ -664,11 +664,29 @@ fn load_with_memory_as_address() -> Template {
     b.finish()
 }
 
-/// A raw memory node is held to its node signature like every other kind: a
-/// memory token where data or an address goes, or a missing operand, is
-/// refused before it reaches the graph.
+/// A `Phi` with no inputs, not even its region's phi token.
+fn phi_without_inputs() -> Template {
+    let mut b = TemplateBuilder::new();
+    let phi = b.node(KindSpec::Exact(NodeKind::Phi));
+    let value = b.value_output(phi, 0);
+    b.set_value_ty(value, T::int(64));
+    b.finish()
+}
+
+/// A `Call` declaring its memory output at slot 0. No template verb declares
+/// a control output, so no `Call` template gets past its outputs.
+fn call_without_control_output() -> Template {
+    let mut b = TemplateBuilder::new();
+    let call = b.node(KindSpec::Exact(NodeKind::Call { cc: None }));
+    let _mem = b.memory_output(call, 0);
+    b.finish()
+}
+
+/// A raw node is held to its node signature like every other kind: a memory
+/// token where data or an address goes, a missing operand, or a missing
+/// control output is refused before it reaches the graph.
 #[test]
-fn a_raw_memory_node_off_its_signature_is_refused() {
+fn a_raw_node_off_its_signature_is_refused() {
     let memory_as_data = store_then_load(|b, store, [mem, addr]| {
         b.input(store, 0, mem);
         b.input(store, 1, addr);
@@ -680,7 +698,24 @@ fn a_raw_memory_node_off_its_signature_is_refused() {
     });
     for (label, tpl, kind, detail) in [
         ("memory as data", memory_as_data, "Store", "input slot 2"),
-        ("two inputs", two_inputs, "Store", "2 inputs"),
+        (
+            "two inputs",
+            two_inputs,
+            "Store",
+            "has 2 inputs, where its node signature admits 3",
+        ),
+        (
+            "no inputs",
+            phi_without_inputs(),
+            "Phi",
+            "has 0 inputs, where its node signature admits at least 1",
+        ),
+        (
+            "no control output",
+            call_without_control_output(),
+            "Call",
+            "output slot 0",
+        ),
         (
             "memory as address",
             load_with_memory_as_address(),
