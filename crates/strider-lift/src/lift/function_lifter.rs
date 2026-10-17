@@ -54,9 +54,6 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// see `vn_io::write_vn`. The region's terminating `IndirectBranch` takes it as
     /// its mode input iff they share that address.
     pub(crate) pending_isa_mode: Option<(strider_ir::node::ValueId, u64)>,
-    /// The `ISAModeSwitch` register vn (the ISA-mode commit target on ARM/MIPS),
-    /// resolved once; `None` on arches without one.
-    pub(crate) isa_mode_switch_vn: Option<rsleigh::Vn>,
     /// Each `Region` node's last machine address: the branch leaving it.
     pub(crate) region_last_addrs: rustc_hash::FxHashMap<strider_ir::node::NodeId, u64>,
     /// `ret_and_clobber_vns` under the function-default CC.  The tracked set
@@ -137,10 +134,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .copied()
             .collect();
         let mut builder =
-            strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch.endianness())?;
+            strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch().endianness())?;
         builder.set_internal_registers(
             lifter
-                .arch
+                .arch()
                 .internal_registers()
                 .iter()
                 .filter_map(|name| lifter.sleigh_regs().name_to_vn(name))
@@ -171,18 +168,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 container_map.container_of(f.all_vns(), v)
             })
         };
-        let isa_mode_switch_vn = lifter.sleigh_regs().name_to_vn("ISAModeSwitch");
-        // Capture and carry are paired BOTH ways: `name_to_vn` answers `None`
-        // for a misspelling rather than erroring, so a one-directional check
-        // would pass vacuously while the mode bit is never captured.
-        debug_assert_eq!(
-            isa_mode_switch_vn.is_some(),
-            lifter.arch.isa_mode_var().is_some(),
-            "arch {:?}: ISAModeSwitch resolved={}, isa_mode_var={:?}",
-            lifter.arch.preset(),
-            isa_mode_switch_vn.is_some(),
-            lifter.arch.isa_mode_var(),
-        );
         Ok(Self {
             lifter,
             builder,
@@ -195,7 +180,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             container_map,
             pcode_consts: super::pcode_consts::PcodeConsts::default(),
             pending_isa_mode: None,
-            isa_mode_switch_vn,
             region_last_addrs: rustc_hash::FxHashMap::default(),
             default_ret_clobber_vns,
             default_float_arg_vns,
