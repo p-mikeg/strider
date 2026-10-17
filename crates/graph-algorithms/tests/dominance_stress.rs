@@ -648,27 +648,41 @@ fn check_tree_numbering(doms: &Dominators<u32>, n: u32) {
         );
     }
 
-    // Each span either nests in the innermost still-open one or starts after
-    // it closes, so siblings never overlap.
-    let mut open: Vec<(u32, u32)> = Vec::new();
-    for &at in iv.preorder() {
-        let (e, x) = iv.span(at);
-        assert!(e < x, "span of position {at} is ({e}, {x}), n {n}");
-        if let Some(&(prev, _)) = open.last() {
-            assert!(prev < e, "preorder enters {at} at {e} after {prev}, n {n}");
+    // Walked in `preorder()` with a stack of still-open spans: enters strictly
+    // increase, and once the spans closed before an entry are popped, the top
+    // of the stack is its idom and strictly encloses it. So every earlier
+    // sibling has closed before a later one enters: sibling spans are
+    // disjoint, and the numbering is a DFS interval numbering of the tree.
+    let mut open: Vec<(u32, u32, u32)> = Vec::new();
+    for &pos in iv.preorder() {
+        let (e, x) = iv.span(pos);
+        assert!(e < x, "span of position {pos} is ({e}, {x}), n {n}");
+        if let Some(&(_, prev, _)) = open.last() {
+            assert!(prev < e, "preorder enters {pos} at {e} after {prev}, n {n}");
         }
-        while let Some(&(_, top_x)) = open.last()
+        while let Some(&(_, _, top_x)) = open.last()
             && top_x < e
         {
             open.pop();
         }
-        if let Some(&(top_e, top_x)) = open.last() {
-            assert!(
-                top_e < e && x < top_x,
-                "span ({e}, {x}) of position {at} overlaps open ({top_e}, {top_x}), n {n}"
-            );
+        let v = doms.vertices()[pos as usize];
+        match doms.immediate_dominator(v) {
+            None => assert!(open.is_empty(), "root {v} entered inside a span, n {n}"),
+            Some(idom) => {
+                let &(top, top_e, top_x) = open
+                    .last()
+                    .unwrap_or_else(|| panic!("{v} entered outside every span, n {n}"));
+                assert_eq!(
+                    top, at[idom as usize],
+                    "{v} enters inside position {top}, not its idom {idom}'s, n {n}"
+                );
+                assert!(
+                    top_e < e && x < top_x,
+                    "span ({e}, {x}) of {v} overlaps its idom's ({top_e}, {top_x}), n {n}"
+                );
+            }
         }
-        open.push((e, x));
+        open.push((pos, e, x));
     }
 }
 
