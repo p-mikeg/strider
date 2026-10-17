@@ -235,3 +235,27 @@ fn a_rom_read_over_cut_overlapping_loads_serves_the_later_piece() {
     assert_mem_reader_reads(&r, 0x1020, &[0xbb; 4]);
     assert_eq!(read_raw(&r, 0x1020, 4), [0xaa; 4]);
 }
+
+/// An image the section walk serves at its sections' own addresses (ET_CORE,
+/// an unknown `e_type`) can seat a read-only section where an earlier
+/// writable one starts. Fetch keeps the earlier section; the ROM view keeps
+/// the read-only one, past the writable one's end.
+#[test]
+fn a_rom_read_serves_a_read_only_section_past_a_writable_one_at_its_start() {
+    use common::elf_fixture::{SectionSpec, build_elf_with_sections};
+    for e_type in [object::elf::ET_CORE, 0xfe00] {
+        let mut bytes = build_elf_with_sections(&[
+            SectionSpec::rwx(0x1000, vec![0xcc; 0x10]),
+            SectionSpec::rodata(0x1000, vec![0xbb; 0x40]),
+        ]);
+        bytes[16..18].copy_from_slice(&e_type.to_le_bytes());
+        let r = reader(&bytes);
+        assert_mem_reader_reads(&r, 0x1000, &[0xcc; 4]);
+        assert_mem_reader_unmapped_is_not_mapped_error(&r, 0x1020);
+        assert!(
+            ReadOnlyMemory::read(&r, 0x1000, &mut [0u8; 4]).is_err(),
+            "{e_type:#x}: 0x1000 is writable"
+        );
+        assert_eq!(read_raw(&r, 0x1020, 4), [0xbb; 4], "{e_type:#x}");
+    }
+}
