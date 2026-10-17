@@ -11,3 +11,4 @@ pub(crate) mod load_forward;
 pub(crate) mod load_readonly;
 pub(crate) mod phi_collapse;
 pub(crate) mod region_collapse;
+pub(crate) mod width_guards;

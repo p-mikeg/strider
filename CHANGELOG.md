@@ -184,6 +184,9 @@
 - At `I256` / `I512`, `And(x, 2^128 - 2)` is no longer read as the
   interworking `& ~1` when recognising a return target: at those widths it
   also clears bits 128 and up.
+- `ConstantFold`'s shift-factor rules (`x + (x << c)` -> `x * (2^c + 1)` and
+  kin) read a constant shift count unsigned, as p-code does: a boolean count
+  of 1, or a count typed wider than 128 bits, now folds.
 
 ### Added, Rust
 
