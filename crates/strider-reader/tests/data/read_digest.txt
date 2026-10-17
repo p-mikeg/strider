@@ -177,7 +177,7 @@ aarch64/elf_relocs.o sections.all.raw 237deafffe6e57d0
 aarch64/elf_relocs.o sections.all.reloc 6f3bdb018628c841
 aarch64/elf_relocs.o sections.writable 160022437bc34d25
 aarch64/elf_relocs.o file_reader.fetch c36716422b1c04cb
-aarch64/elf_relocs.o file_reader.rom 7832b2fb159855e2
+aarch64/elf_relocs.o file_reader.rom d7191e2669bedca0
 aarch64/floats.elf auto.code_ro.raw 86dbb769a67a4e8b
 aarch64/floats.elf auto.code_ro.reloc 86dbb769a67a4e8b
 aarch64/floats.elf auto.immutable.raw 86dbb769a67a4e8b
@@ -1095,7 +1095,7 @@ arm/elf_relocs.o sections.all.raw 5969af7d2bb74e41
 arm/elf_relocs.o sections.all.reloc b21cfcf116e9cf2d
 arm/elf_relocs.o sections.writable 0adf936945693955
 arm/elf_relocs.o file_reader.fetch 321e0ab7583bab18
-arm/elf_relocs.o file_reader.rom e255327d673767b6
+arm/elf_relocs.o file_reader.rom c7cea6384d043040
 arm/floats.elf auto.code_ro.raw 342c6db1ceba6294
 arm/floats.elf auto.code_ro.reloc 342c6db1ceba6294
 arm/floats.elf auto.immutable.raw 342c6db1ceba6294
@@ -4029,7 +4029,7 @@ mips64le/elf_relocs.o sections.all.raw 40e8425a03d3de75
 mips64le/elf_relocs.o sections.all.reloc 41d36792fa09ecaf
 mips64le/elf_relocs.o sections.writable 8fabb461c09d1d85
 mips64le/elf_relocs.o file_reader.fetch 908ee89bbf4097b4
-mips64le/elf_relocs.o file_reader.rom 3a38da3d1b705a72
+mips64le/elf_relocs.o file_reader.rom 9d1cbeb81ed10990
 mips64le/floats.elf auto.code_ro.raw 6fff0c0c6328c4e8
 mips64le/floats.elf auto.code_ro.reloc 6fff0c0c6328c4e8
 mips64le/floats.elf auto.immutable.raw 6fff0c0c6328c4e8
@@ -5091,7 +5091,7 @@ ppc32le/switch_masked_loop.o sections.all.raw 682f8f91afd74d2e
 ppc32le/switch_masked_loop.o sections.all.reloc c56bd259969f580d
 ppc32le/switch_masked_loop.o sections.writable 462ce1ef4b286bf9
 ppc32le/switch_masked_loop.o file_reader.fetch 9f94ad6d2bf9e1ad
-ppc32le/switch_masked_loop.o file_reader.rom 960cdb4037ad06f6
+ppc32le/switch_masked_loop.o file_reader.rom 1dc1db164769bd78
 ppc32le/switch_sparse.elf auto.code_ro.raw 0cbd07f832976543
 ppc32le/switch_sparse.elf auto.code_ro.reloc 0cbd07f832976543
 ppc32le/switch_sparse.elf auto.immutable.raw 0cbd07f832976543
@@ -5505,7 +5505,7 @@ ppc64be/switch_masked_loop.o sections.all.raw 20305cc3b7277a45
 ppc64be/switch_masked_loop.o sections.all.reloc 7724a2861c7fdbd8
 ppc64be/switch_masked_loop.o sections.writable 02704c47fb28cfbd
 ppc64be/switch_masked_loop.o file_reader.fetch 5c8158e4cd19ce8c
-ppc64be/switch_masked_loop.o file_reader.rom ade404917c9fb6f0
+ppc64be/switch_masked_loop.o file_reader.rom c5eabb60d8c4fe4a
 ppc64be/switch_sparse.elf auto.code_ro.raw 64d563fdd9d20bfb
 ppc64be/switch_sparse.elf auto.code_ro.reloc 64d563fdd9d20bfb
 ppc64be/switch_sparse.elf auto.immutable.raw 64d563fdd9d20bfb
@@ -5739,7 +5739,7 @@ ppc64le/elf_relocs.o sections.all.raw 2ffd24eadb68b4bd
 ppc64le/elf_relocs.o sections.all.reloc 38a7def308f7c133
 ppc64le/elf_relocs.o sections.writable de51e7095ca22424
 ppc64le/elf_relocs.o file_reader.fetch b2bbac0473888be0
-ppc64le/elf_relocs.o file_reader.rom 85110dd9b6b430a0
+ppc64le/elf_relocs.o file_reader.rom 1b7ed69bf6a60b7a
 ppc64le/floats.elf auto.code_ro.raw 505758e332109b33
 ppc64le/floats.elf auto.code_ro.reloc 505758e332109b33
 ppc64le/floats.elf auto.immutable.raw 505758e332109b33
@@ -5793,7 +5793,7 @@ ppc64le/globals.o sections.all.raw 217216708dd0e10f
 ppc64le/globals.o sections.all.reloc 188f1471c1aa3386
 ppc64le/globals.o sections.writable dfbf90c263ffca3d
 ppc64le/globals.o file_reader.fetch 60dd527090f10c22
-ppc64le/globals.o file_reader.rom 30ee024d9ea36d3f
+ppc64le/globals.o file_reader.rom 57da408f959da421
 ppc64le/indirect_branch.elf auto.code_ro.raw 5ad78e76f4824d89
 ppc64le/indirect_branch.elf auto.code_ro.reloc 5ad78e76f4824d89
 ppc64le/indirect_branch.elf auto.immutable.raw 5ad78e76f4824d89
@@ -5937,7 +5937,7 @@ ppc64le/switch.o sections.all.raw 7212b75a689851df
 ppc64le/switch.o sections.all.reloc 5ee312c9a490dd51
 ppc64le/switch.o sections.writable 02067466f66f0bbd
 ppc64le/switch.o file_reader.fetch 5ffd9e9f3d5f9048
-ppc64le/switch.o file_reader.rom 5c920e9f55634356
+ppc64le/switch.o file_reader.rom 6b0b7b788568dbcc
 ppc64le/switch_masked_loop.elf auto.code_ro.raw d21bff9641c91f79
 ppc64le/switch_masked_loop.elf auto.code_ro.reloc d21bff9641c91f79
 ppc64le/switch_masked_loop.elf auto.immutable.raw d21bff9641c91f79
@@ -6693,7 +6693,7 @@ x86/elf_relocs.o sections.all.raw 0ca06ea7e16dddfd
 x86/elf_relocs.o sections.all.reloc dfe66f8d7bf95994
 x86/elf_relocs.o sections.writable 90774c6322e15eb5
 x86/elf_relocs.o file_reader.fetch 9d94ecf25fa51cce
-x86/elf_relocs.o file_reader.rom 57ad5aa2d31e9b1d
+x86/elf_relocs.o file_reader.rom 0560177d732fc85f
 x86/floats.elf auto.code_ro.raw bb1eda557f3ba9ff
 x86/floats.elf auto.code_ro.reloc bb1eda557f3ba9ff
 x86/floats.elf auto.immutable.raw bb1eda557f3ba9ff
@@ -7431,7 +7431,7 @@ crafted/overlapping_loads_rx_rw sections.all.raw 36e2ddff24885ad8
 crafted/overlapping_loads_rx_rw sections.all.reloc 36e2ddff24885ad8
 crafted/overlapping_loads_rx_rw sections.writable cbf29ce484222325
 crafted/overlapping_loads_rx_rw file_reader.fetch 36e2ddff24885ad8
-crafted/overlapping_loads_rx_rw file_reader.rom eb94e888693a9015
+crafted/overlapping_loads_rx_rw file_reader.rom 2aa0f0e50dc74a15
 crafted/equal_vaddr_loads auto.code_ro.raw 6caaf604b0a9dd96
 crafted/equal_vaddr_loads auto.code_ro.reloc 6caaf604b0a9dd96
 crafted/equal_vaddr_loads auto.immutable.raw 6caaf604b0a9dd96
@@ -7611,7 +7611,7 @@ crafted/i386_32.rx_outer sections.all.raw 12bffaf938c020c2
 crafted/i386_32.rx_outer sections.all.reloc 41320c650f0651b2
 crafted/i386_32.rx_outer sections.writable f32bba85668c1ea1
 crafted/i386_32.rx_outer file_reader.fetch 048f044388c0e587
-crafted/i386_32.rx_outer file_reader.rom 9d3ab9db856a24e7
+crafted/i386_32.rx_outer file_reader.rom b61873869275d787
 crafted/i386_32_crel.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/i386_32_crel.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/i386_32_crel.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -7683,7 +7683,7 @@ crafted/i386_32_crel.rx_outer sections.all.raw 12bffaf938c020c2
 crafted/i386_32_crel.rx_outer sections.all.reloc 41320c650f0651b2
 crafted/i386_32_crel.rx_outer sections.writable f32bba85668c1ea1
 crafted/i386_32_crel.rx_outer file_reader.fetch 048f044388c0e587
-crafted/i386_32_crel.rx_outer file_reader.rom 9d3ab9db856a24e7
+crafted/i386_32_crel.rx_outer file_reader.rom b61873869275d787
 crafted/i386_32_stn_undef.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/i386_32_stn_undef.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/i386_32_stn_undef.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -7755,7 +7755,7 @@ crafted/i386_32_stn_undef.rx_outer sections.all.raw 12bffaf938c020c2
 crafted/i386_32_stn_undef.rx_outer sections.all.reloc 12bffaf938c020c2
 crafted/i386_32_stn_undef.rx_outer sections.writable f32bba85668c1ea1
 crafted/i386_32_stn_undef.rx_outer file_reader.fetch 048f044388c0e587
-crafted/i386_32_stn_undef.rx_outer file_reader.rom 9d3ab9db856a24e7
+crafted/i386_32_stn_undef.rx_outer file_reader.rom b61873869275d787
 crafted/i386_gotoff_stn_undef.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/i386_gotoff_stn_undef.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/i386_gotoff_stn_undef.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -7827,7 +7827,7 @@ crafted/i386_gotoff_stn_undef.rx_outer sections.all.raw 12bffaf938c020c2
 crafted/i386_gotoff_stn_undef.rx_outer sections.all.reloc 12bffaf938c020c2
 crafted/i386_gotoff_stn_undef.rx_outer sections.writable f32bba85668c1ea1
 crafted/i386_gotoff_stn_undef.rx_outer file_reader.fetch 048f044388c0e587
-crafted/i386_gotoff_stn_undef.rx_outer file_reader.rom 9d3ab9db856a24e7
+crafted/i386_gotoff_stn_undef.rx_outer file_reader.rom b61873869275d787
 crafted/i386_relative.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/i386_relative.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/i386_relative.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -7899,7 +7899,7 @@ crafted/i386_relative.rx_outer sections.all.raw 0d27771a7bf80aa5
 crafted/i386_relative.rx_outer sections.all.reloc 0d27771a7bf80aa5
 crafted/i386_relative.rx_outer sections.writable f32bba85668c1ea1
 crafted/i386_relative.rx_outer file_reader.fetch 832dfa6aab70fc6c
-crafted/i386_relative.rx_outer file_reader.rom 9d3ab9db856a24e7
+crafted/i386_relative.rx_outer file_reader.rom b61873869275d787
 crafted/x86_64_glob_dat.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/x86_64_glob_dat.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/x86_64_glob_dat.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -7971,7 +7971,7 @@ crafted/x86_64_glob_dat.rx_outer sections.all.raw 773863b3efcf3a2e
 crafted/x86_64_glob_dat.rx_outer sections.all.reloc dba9b8550e3a933e
 crafted/x86_64_glob_dat.rx_outer sections.writable 124e2c5d74cee16d
 crafted/x86_64_glob_dat.rx_outer file_reader.fetch f7b80e963f3d3357
-crafted/x86_64_glob_dat.rx_outer file_reader.rom 6d391666eb70e963
+crafted/x86_64_glob_dat.rx_outer file_reader.rom 297b55e50b4a1ca3
 crafted/x86_64_64_crel_addend.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/x86_64_64_crel_addend.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/x86_64_64_crel_addend.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -8043,7 +8043,7 @@ crafted/x86_64_64_crel_addend.rx_outer sections.all.raw 9a9198d8192386fe
 crafted/x86_64_64_crel_addend.rx_outer sections.all.reloc 188448aac8242549
 crafted/x86_64_64_crel_addend.rx_outer sections.writable 124e2c5d74cee16d
 crafted/x86_64_64_crel_addend.rx_outer file_reader.fetch 7a75f92bace07f4f
-crafted/x86_64_64_crel_addend.rx_outer file_reader.rom 6d391666eb70e963
+crafted/x86_64_64_crel_addend.rx_outer file_reader.rom 297b55e50b4a1ca3
 crafted/mips32be_rel32.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/mips32be_rel32.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/mips32be_rel32.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -8115,7 +8115,7 @@ crafted/mips32be_rel32.rx_outer sections.all.raw fb561102de12358a
 crafted/mips32be_rel32.rx_outer sections.all.reloc 61f01759db5c4b1a
 crafted/mips32be_rel32.rx_outer sections.writable f32bba85668c1ea1
 crafted/mips32be_rel32.rx_outer file_reader.fetch e91b5b3e6c6faf8f
-crafted/mips32be_rel32.rx_outer file_reader.rom 9d3ab9db856a24e7
+crafted/mips32be_rel32.rx_outer file_reader.rom b61873869275d787
 crafted/mips32be_rel32_stn_undef.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/mips32be_rel32_stn_undef.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/mips32be_rel32_stn_undef.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -8187,7 +8187,7 @@ crafted/mips32be_rel32_stn_undef.rx_outer sections.all.raw fb561102de12358a
 crafted/mips32be_rel32_stn_undef.rx_outer sections.all.reloc fb561102de12358a
 crafted/mips32be_rel32_stn_undef.rx_outer sections.writable f32bba85668c1ea1
 crafted/mips32be_rel32_stn_undef.rx_outer file_reader.fetch e91b5b3e6c6faf8f
-crafted/mips32be_rel32_stn_undef.rx_outer file_reader.rom 9d3ab9db856a24e7
+crafted/mips32be_rel32_stn_undef.rx_outer file_reader.rom b61873869275d787
 crafted/mips64be_rel32_kseg.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/mips64be_rel32_kseg.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/mips64be_rel32_kseg.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -8259,7 +8259,7 @@ crafted/mips64be_rel32_kseg.rx_outer sections.all.raw f787df98aab747c2
 crafted/mips64be_rel32_kseg.rx_outer sections.all.reloc 88e292a8c3726492
 crafted/mips64be_rel32_kseg.rx_outer sections.writable f32bba85668c1ea1
 crafted/mips64be_rel32_kseg.rx_outer file_reader.fetch 03358d3cf9e1488f
-crafted/mips64be_rel32_kseg.rx_outer file_reader.rom 9d3ab9db856a24e7
+crafted/mips64be_rel32_kseg.rx_outer file_reader.rom b61873869275d787
 crafted/mips64be_copy_ssym.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/mips64be_copy_ssym.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/mips64be_copy_ssym.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -8331,7 +8331,7 @@ crafted/mips64be_copy_ssym.rx_outer sections.all.raw 57523e50df45e446
 crafted/mips64be_copy_ssym.rx_outer sections.all.reloc 57523e50df45e446
 crafted/mips64be_copy_ssym.rx_outer sections.writable 124e2c5d74cee16d
 crafted/mips64be_copy_ssym.rx_outer file_reader.fetch f7b80e963f3d3357
-crafted/mips64be_copy_ssym.rx_outer file_reader.rom 6d391666eb70e963
+crafted/mips64be_copy_ssym.rx_outer file_reader.rom 297b55e50b4a1ca3
 crafted/mips64el_copy.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/mips64el_copy.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/mips64el_copy.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -8403,7 +8403,7 @@ crafted/mips64el_copy.rx_outer sections.all.raw 773863b3efcf3a2e
 crafted/mips64el_copy.rx_outer sections.all.reloc 773863b3efcf3a2e
 crafted/mips64el_copy.rx_outer sections.writable 124e2c5d74cee16d
 crafted/mips64el_copy.rx_outer file_reader.fetch f7b80e963f3d3357
-crafted/mips64el_copy.rx_outer file_reader.rom 6d391666eb70e963
+crafted/mips64el_copy.rx_outer file_reader.rom 297b55e50b4a1ca3
 crafted/mips64el_26.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/mips64el_26.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/mips64el_26.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -8475,7 +8475,7 @@ crafted/mips64el_26.rx_outer sections.all.raw 5870e296c23a5dfa
 crafted/mips64el_26.rx_outer sections.all.reloc 15171c02aa41da96
 crafted/mips64el_26.rx_outer sections.writable f32bba85668c1ea1
 crafted/mips64el_26.rx_outer file_reader.fetch e91b5b3e6c6faf8f
-crafted/mips64el_26.rx_outer file_reader.rom 9d3ab9db856a24e7
+crafted/mips64el_26.rx_outer file_reader.rom b61873869275d787
 crafted/ppc64_rel32.rw auto.code_ro.raw 1c02dcb089b1a5de
 crafted/ppc64_rel32.rw auto.code_ro.reloc 1c02dcb089b1a5de
 crafted/ppc64_rel32.rw auto.immutable.raw 1c02dcb089b1a5de
@@ -8547,4 +8547,4 @@ crafted/ppc64_rel32.rx_outer sections.all.raw d8d596869e8176c2
 crafted/ppc64_rel32.rx_outer sections.all.reloc adbb6449bec23ca1
 crafted/ppc64_rel32.rx_outer sections.writable f32bba85668c1ea1
 crafted/ppc64_rel32.rx_outer file_reader.fetch e91b5b3e6c6faf8f
-crafted/ppc64_rel32.rx_outer file_reader.rom 9d3ab9db856a24e7
+crafted/ppc64_rel32.rx_outer file_reader.rom b61873869275d787
