@@ -307,7 +307,7 @@ when both IR slots hold the same value.
   outright. A FLOWING commit is `setContextChangePoint`, painting forward
   because it is MEANT to persist, so the default would destroy it: ARM
   `TEEMode` is erased to the value in force at the PREDECESSOR, reproducing
-  the flow, and the re-lift re-applies `enterx`'s own commit. Both classes
+  the flow, and the re-lift re-applies `enterx`'s own commit. Both vars
   must be listed. `pin_at` cannot substitute for a flowing var, because a
   forward paint stops at the next CHANGE POINT of that var, which is exactly
   where an earlier build's commit sits; leaving `TEEMode` out let a stale

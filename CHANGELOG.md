@@ -124,15 +124,15 @@
   entry's ISA mode and carries the decode context across builds; a bare
   `Builder` decoded ARM with ISA-mode handling off.
 - `graph_algorithms::dominance::{DomRelation, DomTree, DomTreeWalk,
-  dominator_tree_walk, dominator_tree_preorder}` are gone. `Dominators::intervals`
-  and `Dominators::tree_preorder` (siblings ascending by vertex) number the
-  tree, and `dominance_frontiers(&doms, preds)` takes the predecessor edges as
-  a closure.
+  dominator_tree_walk, dominator_tree_preorder}` are gone.
+  `Dominators::intervals` and `Dominators::tree_preorder` (siblings ascending
+  by vertex) number the tree, and `dominance_frontiers(&doms, preds)` takes
+  the predecessor edges as a closure.
 - `Function::new` keeps only the largest of nested varnodes, as
   `FunctionBuilder::new` did; it only sorted. `Function::set_all_vns`
   (test-util) is gone.
 - `ContainerMap` keeps the tracked set it was built over, so `container_of`
-  loses its slice argument.
+  loses its slice argument, and it no longer implements `Default`.
 
 ### Changed, Python
 
@@ -189,6 +189,10 @@
   op's footprint still comes from `cfg_opts`).
 - A `CALL` whose target operand is not in the code space selects no
   `per_address_ccs` override; the CFG's no-return rule already ignored it.
+- `Lifter::new`, `Strider::new` and `DecodeEngine::new` return `Err` when the
+  arch and sla disagree on the ISA mode: a mode var the sla does not flow, or
+  (not `DecodeEngine::new`) an unpaired `ISAModeSwitch`. Before, only a debug
+  build asserted it.
 
 ### Fixed
 
