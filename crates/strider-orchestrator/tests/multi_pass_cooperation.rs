@@ -154,7 +154,7 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward::default());
+    pipeline.add(LoadForward);
     pipeline.run(
         &mut fg,
         &mut strider_orchestrator::opt::OptCtx::at_floor(None),

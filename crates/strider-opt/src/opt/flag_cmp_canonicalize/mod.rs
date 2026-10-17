@@ -59,7 +59,11 @@ impl Default for FlagCmpCanonicalize {
     }
 }
 
+// Not `PROPAGATE`: a collapsed `IntCmpOp` cannot expose a fresh flag-tree
+// shape to its consumers.
 impl PeepholePass for FlagCmpCanonicalize {
+    type Sweep = ();
+
     /// Every rule roots at a comparison, at the `And`/`Or`/`Xor` of a boolean
     /// tree, or at the `Truncate` / `Xor` a CR-bit test reaches here as.
     fn matches_kind(&self, kind: &NodeKind) -> bool {
@@ -79,6 +83,7 @@ impl PeepholePass for FlagCmpCanonicalize {
 
     fn try_rewrite(
         &self,
+        _sweep: &mut (),
         edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
@@ -92,12 +97,6 @@ impl PeepholePass for FlagCmpCanonicalize {
             edit.clean();
         }
         Ok(rewrite)
-    }
-
-    /// A collapsed `IntCmpOp` cannot expose a fresh flag-tree shape to its
-    /// consumers, so skip the re-enqueue.
-    fn propagate_to_consumers(&self) -> bool {
-        false
     }
 }
 

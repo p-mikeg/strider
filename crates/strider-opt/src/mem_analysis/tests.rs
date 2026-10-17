@@ -1797,7 +1797,7 @@ mod heap_tests {
         let mut pipeline = crate::OptimizerPipeline::new();
         pipeline.add(crate::PhiCollapse);
         pipeline.add(crate::RegionCollapse);
-        pipeline.add(crate::LoadForward::default());
+        pipeline.add(crate::LoadForward);
         pipeline.run(&mut fg, &mut ctx)?;
         Ok(fg)
     }
@@ -2472,7 +2472,7 @@ mod arg_window_complexity {
         let mut octx = crate::OptCtx::at_floor(None);
         octx.options.assumptions.escape_analysis = true;
         WALK_STEPS.with(|c| c.set(0));
-        let result = crate::pipeline::run_one(&crate::LoadForward::default(), &mut fg, &mut octx)?;
+        let result = crate::pipeline::run_one(&crate::LoadForward, &mut fg, &mut octx)?;
         assert_eq!(
             result,
             crate::OptimizationResult::NoChange,

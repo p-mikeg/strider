@@ -36,12 +36,15 @@ impl Default for IfCondInversion {
 }
 
 impl crate::peephole::PeepholePass for IfCondInversion {
+    type Sweep = ();
+
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::If)
     }
 
     fn try_rewrite(
         &self,
+        _sweep: &mut (),
         edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
@@ -54,10 +57,6 @@ impl crate::peephole::PeepholePass for IfCondInversion {
         // `invert` builds no fresh node, hence `new_node: None`.
         invert(edit, root, inner_value)?;
         Ok(PeepholeRewrite::Changed { new_node: None })
-    }
-
-    fn propagate_to_consumers(&self) -> bool {
-        false
     }
 }
 
