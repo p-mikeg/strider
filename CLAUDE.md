@@ -94,8 +94,8 @@ Generic:
   the ELF reader.
 - `vn-container`: varnode container geometry (`vn_contains`,
   `largest_container_in`, ...) over `rsleigh` and `rustc-hash`, with no
-  workspace dependency, so ir / lift / opt / pattern share one "which tracked
-  varnode contains this one".
+  workspace dependency, so target / ir / lift / opt / pattern share one "which
+  tracked varnode contains this one".
 
 Strider:
 
@@ -136,6 +136,7 @@ Strider:
 
 ```
 graph-algorithms   -> entity-utils
+strider-target     -> vn-container
 strider-cfg        -> strider-target, dot
 strider-ir         -> strider-graph, strider-target, read-only-memory, dot,
                       entity-utils, graph-algorithms, vn-container
@@ -157,13 +158,13 @@ strider-ir-test-utils -> strider-ir, strider-target, graph-algorithms
 (the std-only `oracle` module), which a workspace-wide build likewise unifies.
 
 Workspace production dependencies only. Leaves (no workspace deps): `dot`,
-`entity-utils`, `read-only-memory`, `strider-graph`, `strider-target`,
-`vn-container`. Notably `strider-cfg` is IR-free, `strider-reader` depends only
-on `read-only-memory`, and the orchestrator reaches `strider-pattern` and `dot`
-only from its tests and examples. External `petgraph` is a production
-dependency of `strider-cfg`, `strider-graph`, `strider-lift` and
-`strider-pattern`, and a dev-dependency of `graph-algorithms` and `strider-ir`,
-whose dominance tests check against `simple_fast`.
+`entity-utils`, `read-only-memory`, `strider-graph`, `vn-container`. Notably
+`strider-cfg` is IR-free, `strider-reader` depends only on `read-only-memory`,
+and the orchestrator reaches `strider-pattern` and `dot` only from its tests
+and examples. External `petgraph` is a production dependency of `strider-cfg`,
+`strider-graph`, `strider-lift` and `strider-pattern`, and a dev-dependency of
+`graph-algorithms` and `strider-ir`, whose dominance tests check against
+`simple_fast`.
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
