@@ -6,7 +6,7 @@
 //! state, register-list iteration, x86 operand/address size) Sleigh flows
 //! along straight-line code. Only some are ever `globalset`, and a committed
 //! value is a per-address fact this build must re-derive rather than read:
-//! `SleighArch::flow_commit_vars` names them, with the flow class that decides
+//! `SleighArch::flow_commit_vars` names them, the sla's flow class decides
 //! what each is erased to, and `RegionBuilder::rederive_flow` does the
 //! deriving. A pin cannot stand in for that on a FLOWING var: a forward paint
 //! stops at the next change point of that var, which is where an earlier
@@ -103,6 +103,16 @@ impl FlowVars {
         self.vars.iter().any(|n| n == name)
     }
 
+    /// `name`'s class: flowing exactly when the sla declares it so.
+    #[must_use]
+    pub fn commit_class(&self, name: &str) -> FlowCommit {
+        if self.contains(name) {
+            FlowCommit::Flowing
+        } else {
+            FlowCommit::NoFlow
+        }
+    }
+
     /// Commit `want` at `addr`, overwriting whatever flowed or forward-held
     /// there.
     ///
@@ -188,6 +198,16 @@ impl FlowVars {
 /// [`FlowVars`] that produced it.
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub struct FlowContext(Vec<u32>);
+
+/// Whether the sla declares a committed context var flowing, which decides
+/// what `RegionBuilder::rederive_flow` erases it to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FlowCommit {
+    /// Confined to one address, so the pspec default is the erase target.
+    NoFlow,
+    /// Painted forward to persist, so the predecessor's value is.
+    Flowing,
+}
 
 #[cfg(test)]
 mod tests {
@@ -374,6 +394,43 @@ mod tests {
             flow.value_of(&carried, "TMode"),
             Some(0),
             "the carried context still names the ARM mode the repair re-imposes",
+        );
+    }
+
+    /// What a re-derive erases a committed var to is the sla's own `noflow`
+    /// declaration: ARM's IT-block `condit` is `noflow` and ThumbEE's `TEEMode`
+    /// flows, on the big-endian sla as on the little-endian one.
+    #[test]
+    fn commit_class_is_the_slas_flow_declaration() {
+        let want = [
+            ("condit", FlowCommit::NoFlow),
+            ("TEEMode", FlowCommit::Flowing),
+        ];
+        let mut checked = 0;
+        for &preset in strider_target::ArchPreset::ALL {
+            let arch = preset.arch();
+            if arch.flow_commit_vars().is_empty() {
+                continue;
+            }
+            let sleigh = rsleigh::Sleigh::new(
+                arch.sla_spec(),
+                arch.pspec(),
+                rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0),
+            )
+            .expect("create Sleigh");
+            let flow = FlowVars::discover(&sleigh).expect("flow vars");
+            for &name in arch.flow_commit_vars() {
+                let (_, class) = want
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .unwrap_or_else(|| panic!("{preset:?}: no expected class for `{name}`"));
+                assert_eq!(flow.commit_class(name), *class, "{preset:?}: `{name}`");
+                checked += 1;
+            }
+        }
+        assert_eq!(
+            checked, 8,
+            "the four ARM32 presets re-derive condit and TEEMode"
         );
     }
 }
