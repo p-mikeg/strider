@@ -529,7 +529,7 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
 ];
 
 fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
-    if !PPC_ALL.contains(&preset) {
+    if preset.family() != crate::ArchFamily::Ppc {
         return None;
     }
 
@@ -565,18 +565,35 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
 /// otherwise.
 fn classify_arch_specific(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
     ARCH_SPECIFIC_TABLE.iter().find_map(|row| {
-        (row.preset_arches.contains(&preset) && row.op_names.contains(&name)).then_some(row.class)
+        (row.scope.contains(preset) && row.op_names.contains(&name)).then_some(row.class)
     })
 }
 
 struct CallOtherRow {
-    /// A slice so one row covers a family: `[Aarch64, Aarch64Be]` for the
-    /// LE/BE pair, `[X86, X86_64]` for both x86 widths.
-    preset_arches: &'static [crate::ArchPreset],
+    /// A whole family, or the presets of a width split within one.
+    scope: Scope,
     /// A slice so one row covers related ops: `mwait` + `mwaitx`, or the
     /// SMCCC pair `CallHyperVisor` + `CallSecureMonitor`.
     op_names: &'static [&'static str],
     class: CallOtherClass,
+}
+
+/// The presets a [`CallOtherRow`] names.
+#[derive(Clone, Copy)]
+enum Scope {
+    /// Every preset of the family.
+    Family(crate::ArchFamily),
+    /// Some presets of one family: a width the others lack.
+    Presets(&'static [crate::ArchPreset]),
+}
+
+impl Scope {
+    fn contains(self, preset: crate::ArchPreset) -> bool {
+        match self {
+            Self::Family(family) => preset.family() == family,
+            Self::Presets(presets) => presets.contains(&preset),
+        }
+    }
 }
 
 static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
@@ -586,7 +603,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // naming `software_interrupt`. All four 32-bit ARM presets share it;
     // split the row if Thumb ever diverges.
     CallOtherRow {
-        preset_arches: ARM32_ALL,
+        scope: Scope::Family(crate::ArchFamily::Arm32),
         op_names: &["software_interrupt"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["r7", "r0", "r1", "r2", "r3", "r4", "r5", "r6"],
@@ -613,7 +630,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // and x86-64 `syscall` list theirs and are covered; only
     // `assumptions.escape_analysis` reads that verdict.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["swi"],
         class: MEM_CLOBBER,
     },
@@ -622,7 +639,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // (RCX = return rip, R11 = rflags).  Arch-specific because these names
     // only resolve on x86_64's Sleigh register table.
     CallOtherRow {
-        preset_arches: &[crate::ArchPreset::X86_64],
+        scope: Scope::Presets(&[crate::ArchPreset::X86_64]),
         op_names: &["syscall"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["RAX", "RDI", "RSI", "RDX", "R10", "R8", "R9"],
@@ -640,7 +657,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // so the register ABI is entirely implicit here.  Unlike x86-64 SYSCALL,
     // the SVC instruction itself clobbers no register.
     CallOtherRow {
-        preset_arches: AARCH64_BOTH,
+        scope: Scope::Family(crate::ArchFamily::Aarch64),
         op_names: &["CallSupervisor"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["x8", "x0", "x1", "x2", "x3", "x4", "x5"],
@@ -655,7 +672,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // in, x0..x3 out, shared by LE and BE aarch64.  Arch-specific because
     // `x0..x7` only resolve on aarch64's register table; arm-32 has `r0..r12`.
     CallOtherRow {
-        preset_arches: AARCH64_BOTH,
+        scope: Scope::Family(crate::ArchFamily::Aarch64),
         op_names: &["CallHyperVisor", "CallSecureMonitor"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
@@ -683,7 +700,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // unpredictable (1.1+ preserves them), so clobber through r12 and leave
     // `sp` / `lr` alone, matching the aarch64 row's x0..x17.
     CallOtherRow {
-        preset_arches: ARM32_ALL,
+        scope: Scope::Family(crate::ArchFamily::Arm32),
         op_names: &["software_hvc", "software_smc"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7"],
@@ -699,7 +716,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // it, but listing it is a latent double-clobber trap).
     // Arch-specific because ECX/EAX/EDX are x86 register names.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["rdpkru_u32"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["ECX"],
@@ -713,7 +730,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // and re-declaring them here would over-clobber the call site.  A TSC read
     // does not observe RAM.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["rdtsc"],
         class: PURE,
     },
@@ -722,7 +739,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // Without that clobber, a pattern reading post-RDTSCP ECX would see the
     // pre-call value.  A TSC read does not observe RAM.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["rdtscp"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &[],
@@ -736,7 +753,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // separate downstream ops.  Nothing implicit, and an MSR read does not
     // observe RAM.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["rdmsr"],
         class: PURE,
     },
@@ -746,7 +763,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // can change TSC, FSBASE and the like, which subsequent loads must
     // observe; the user-mode stack frame is unaffected.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["wrmsr"],
         class: MEM_CLOBBER,
     },
@@ -754,7 +771,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // emits `r32 = readfsbase()` / `r64 = readfsbase()` with the destination
     // as the explicit pcode output and no inputs, so nothing is implicit.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["readfsbase", "readgsbase"],
         class: PURE,
     },
@@ -763,7 +780,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // pcode arg.  Clobbers memory because subsequent FS:/GS:-based loads
     // depend on the new base; the stack frame is SP-relative and unaffected.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["writefsbase", "writegsbase"],
         class: MEM_CLOBBER,
     },
@@ -776,7 +793,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // with a later MWAIT, though it does not mutate stack-frame contents.  AMD
     // MONITORX (0F 01 FA) shares the ABI per AMD64 Vol. 3.
     CallOtherRow {
-        preset_arches: &[crate::ArchPreset::X86_64],
+        scope: Scope::Presets(&[crate::ArchPreset::X86_64]),
         op_names: &["monitor", "monitorx"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["RAX", "ECX", "EDX"],
@@ -787,7 +804,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     },
     // 32-bit MONITOR / MONITORX take the address in EAX.
     CallOtherRow {
-        preset_arches: &[crate::ArchPreset::X86],
+        scope: Scope::Presets(&[crate::ArchPreset::X86]),
         op_names: &["monitor", "monitorx"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["EAX", "ECX", "EDX"],
@@ -802,7 +819,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // memory because it serialises with the prior MONITOR's cache-line arming
     // and is a memory-order point; stack frames are unaffected.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["mwait", "mwaitx"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["EAX", "ECX"],
@@ -817,7 +834,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // terminates the function: kernel-context control does not return to its
     // kernel-context caller.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["sysret", "sysexit"],
         class: CallOtherClass::NO_RETURN,
     },
@@ -828,7 +845,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // across it.  Arch-specific so a non-x86 user-op named `swapgs` cannot
     // inherit the classification.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["swapgs"],
         class: MEM_CLOBBER,
     },
@@ -852,7 +869,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // models ONE element of a 16-element gather).  Those must never inherit
     // `PURE`, so these stay individual rows.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &[
             // AES-NI (`ia.sinc:10364-10416`), the whole block:
             // `XmmReg1 = <op>(XmmReg1, XmmReg2_m128)`.
@@ -927,7 +944,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // neither access spelled in p-code.  ECX/ESI/EDI are listed operands, so
     // the register channel stays empty.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["movdir64b", "xsha256"],
         class: MEM_CLOBBER,
     },
@@ -937,7 +954,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // The name is aarch64's alone, so it is scoped rather than sharing the
     // `NEON_` family below.
     CallOtherRow {
-        preset_arches: AARCH64_BOTH,
+        scope: Scope::Family(crate::ArchFamily::Aarch64),
         op_names: &["a64_TBL"],
         class: PURE,
     },
@@ -953,7 +970,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // an unlisted name fails the lift rather than forwarding across a hidden
     // access.
     CallOtherRow {
-        preset_arches: AARCH64_BOTH,
+        scope: Scope::Family(crate::ArchFamily::Aarch64),
         op_names: &["SVE_ldr", "SVE_str"],
         class: MEM_CLOBBER,
     },
@@ -964,7 +981,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // register-to-register with listed operands.  Arch-scoped because `vrev`
     // and `SatQ` are generic enough for another spec to reuse the spelling.
     CallOtherRow {
-        preset_arches: ARM32_ALL,
+        scope: Scope::Family(crate::ArchFamily::Arm32),
         op_names: &[
             "SHA256ScheduleUpdate0",
             "SHA256ScheduleUpdate1",
@@ -979,7 +996,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // in.  Arch-specific because `r8`..`lr` are ARM-32 register names, and
     // `ARM.sinc` is the only vendored spec declaring these pcodeops.
     CallOtherRow {
-        preset_arches: ARM32_ALL,
+        scope: Scope::Family(crate::ArchFamily::Arm32),
         op_names: &[
             "setAbortMode",
             "setFIQMode",
@@ -994,7 +1011,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     },
     // Declared by `ARMTHUMBinstructions.sinc` alone, so also ARM-32 only.
     CallOtherRow {
-        preset_arches: ARM32_ALL,
+        scope: Scope::Family(crate::ArchFamily::Arm32),
         op_names: &["setStackMode"],
         class: ARM_STACK_SWITCH,
     },
@@ -1010,7 +1027,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // through it: no `__bug_table` accompanies these traps, and `__warn` /
     // `warn_slowpath_fmt` are called, so nothing that resumes reaches `trap`.
     CallOtherRow {
-        preset_arches: MIPS_ALL,
+        scope: Scope::Family(crate::ArchFamily::Mips),
         op_names: &["trap"],
         class: CallOtherClass::NO_RETURN,
     },
@@ -1021,7 +1038,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // implicit here.  The caller-saved temporaries are listed as written
     // because the ABI does not preserve them across the kernel entry.
     CallOtherRow {
-        preset_arches: MIPS32_BOTH,
+        scope: Scope::Presets(MIPS32_BOTH),
         op_names: &["syscall"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["v0", "a0", "a1", "a2", "a3"],
@@ -1038,7 +1055,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // MIPS spec has no `a4`..`a7` names: those are `t0`..`t3` in `mips.sinc`'s
     // one register list, so the extra four arguments are read from there.
     CallOtherRow {
-        preset_arches: MIPS64_BOTH,
+        scope: Scope::Presets(MIPS64_BOTH),
         op_names: &["syscall"],
         class: CallOtherClass::Call(CallOtherAbi {
             implicit_reads: &["v0", "a0", "a1", "a2", "a3", "t0", "t1", "t2", "t3"],
@@ -1061,7 +1078,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // offsets and the lifter folds into their largest container.  The AVX
     // halves are `YMMn_H` (`ia.sinc:155`), `XMMn` being the low overlay.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &[
             "_fxrstor",
             "_fxrstor64",
@@ -1083,7 +1100,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // The save direction: the same state read rather than written, so no pass
     // can take one of these registers dead across it.
     CallOtherRow {
-        preset_arches: X86_BOTH,
+        scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &[
             "_fxsave",
             "_fxsave64",
@@ -1109,16 +1126,10 @@ const MIPS32_BOTH: &[crate::ArchPreset] =
     &[crate::ArchPreset::MipsBe32, crate::ArchPreset::MipsLe32];
 const MIPS64_BOTH: &[crate::ArchPreset] =
     &[crate::ArchPreset::MipsBe64, crate::ArchPreset::MipsLe64];
-const MIPS_ALL: &[crate::ArchPreset] = &[
-    crate::ArchPreset::MipsBe32,
-    crate::ArchPreset::MipsLe32,
-    crate::ArchPreset::MipsBe64,
-    crate::ArchPreset::MipsLe64,
-];
 
 /// The x87 / SSE / AVX register state the FXSAVE and XSAVE families move.
 /// The sla declares all of it for both x86 widths in one block
-/// (`ia.sinc:93`, `:140`, `:155`), so one list serves `X86_BOTH`.
+/// (`ia.sinc:93`, `:140`, `:155`), so one list serves both widths.
 const X86_EXTENDED_STATE: &[&str] = &[
     "ST0",
     "ST1",
@@ -1226,22 +1237,6 @@ const X86_EXTENDED_STATE: &[&str] = &[
     "FPUInstructionPointer",
     "FPUPointerSelector",
     "FPUDataSelector",
-];
-
-const X86_BOTH: &[crate::ArchPreset] = &[crate::ArchPreset::X86, crate::ArchPreset::X86_64];
-const ARM32_ALL: &[crate::ArchPreset] = &[
-    crate::ArchPreset::Arm,
-    crate::ArchPreset::ArmBe,
-    crate::ArchPreset::ArmBeKernel,
-    crate::ArchPreset::ArmThumb,
-];
-const AARCH64_BOTH: &[crate::ArchPreset] =
-    &[crate::ArchPreset::Aarch64, crate::ArchPreset::Aarch64Be];
-const PPC_ALL: &[crate::ArchPreset] = &[
-    crate::ArchPreset::Ppc32Be,
-    crate::ArchPreset::Ppc32Le,
-    crate::ArchPreset::Ppc64Be,
-    crate::ArchPreset::Ppc64Le,
 ];
 
 /// Names meaning the same on every arch that emits them.
@@ -1584,9 +1579,8 @@ fn classify_arch_independent(name: &str) -> Option<CallOtherClass> {
 ///   the generic `moveto` / `load` / `store` / `function` ops target an
 ///   unknown coprocessor and may touch RAM.
 fn classify_prefix_family(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass> {
-    use crate::ArchPreset::*;
-    let is_arm32 = matches!(preset, Arm | ArmBe | ArmBeKernel | ArmThumb);
-    let is_aarch64 = matches!(preset, Aarch64 | Aarch64Be);
+    let is_arm32 = preset.family() == crate::ArchFamily::Arm32;
+    let is_aarch64 = preset.family() == crate::ArchFamily::Aarch64;
 
     if is_arm32 && (name.starts_with("Vector") || name.starts_with("Float")) {
         return Some(PURE);
@@ -1670,7 +1664,10 @@ mod tests {
     fn set_isa_mode_is_noop_on_every_arch() {
         // `setISAMode` is NoOp on every arch (incl. ARM32); the mode is carried
         // on the `IndirectBranch`, not this op (see the TABLE comment above).
-        for arm in ARM32_ALL {
+        for arm in crate::ArchPreset::ALL
+            .iter()
+            .filter(|p| p.family() == crate::ArchFamily::Arm32)
+        {
             assert_eq!(
                 classify(*arm, "setISAMode"),
                 Some(CallOtherClass::NoOp),
@@ -2300,11 +2297,11 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{preset:?}: probe_regs: {e}"));
             let arch_specific = ARCH_SPECIFIC_TABLE
                 .iter()
-                .filter(|row| row.preset_arches.contains(preset))
+                .filter(|row| row.scope.contains(*preset))
                 .map(|row| (row.op_names[0], row.class));
             let ppc = PPC_TABLE
                 .iter()
-                .filter(|_| PPC_ALL.contains(preset))
+                .filter(|_| preset.family() == crate::ArchFamily::Ppc)
                 .map(|(name, class)| (*name, *class));
             for (name, class) in arch_specific.chain(ppc) {
                 let CallOtherClass::Call(abi) = class else {
@@ -2313,20 +2310,6 @@ mod tests {
                 abi.build(&regs)
                     .unwrap_or_else(|e| panic!("{preset:?}/{name}: {e}"));
             }
-        }
-    }
-
-    /// The family groups partition the presets, so a new one joins a group
-    /// rather than silently missing every arch-scoped row.
-    #[test]
-    fn family_groups_cover_every_preset() {
-        for preset in crate::ArchPreset::ALL {
-            assert!(
-                [MIPS_ALL, X86_BOTH, ARM32_ALL, AARCH64_BOTH, PPC_ALL]
-                    .iter()
-                    .any(|family| family.contains(preset)),
-                "{preset:?} joins no CallOther family group"
-            );
         }
     }
 
