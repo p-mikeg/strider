@@ -109,9 +109,10 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     {
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::int(32))?;
+        let addr =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
     }
     b.set_lift_addr(None);
@@ -147,11 +148,12 @@ fn aligned_sp_load_is_not_a_stack_arg() -> Result<()> {
         .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
-    let aligned = b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let addr = b.build_int_binary_operation(aligned, four, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
+    let aligned =
+        b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(32))?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr = b.build_int_binary_operation(aligned, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -174,9 +176,10 @@ fn build_sp_load(
     offset: u32,
 ) -> Result<strider_ir::node::ValueId> {
     let sp_val = b.read_variable(sp)?;
-    let off_const = b.build_int_const(offset as u64, ValueType::I32)?;
-    let addr = b.build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let off_const = b.build_int_const(offset as u64, ValueType::int(32))?;
+    let addr =
+        b.build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::int(32))?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     Ok(loaded)
 }
 
@@ -196,7 +199,7 @@ fn detects_ten_contiguous_stack_args() -> Result<()> {
         acc = Some(match acc {
             None => loaded,
             Some(prev) => {
-                b.build_int_binary_operation(prev, loaded, IntBinaryOp::Add, ValueType::I32)?
+                b.build_int_binary_operation(prev, loaded, IntBinaryOp::Add, ValueType::int(32))?
             }
         });
     }
@@ -230,7 +233,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
     let a = build_sp_load(&mut b, &sp, 4)?;
     let c = build_sp_load(&mut b, &sp, 12)?;
     // Combined so neither load is dead.
-    let sum = b.build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::I32)?;
+    let sum = b.build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::int(32))?;
     b.build_return(Some(sum), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -273,14 +276,14 @@ fn stack_arg_load_chain_is_narrowed_without_changing_detection() -> Result<()> {
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     for off in [8u64, 12u64] {
-        let o = b.build_int_const(off, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, o, IntBinaryOp::Add, ValueType::I32)?;
-        let v = b.build_int_const(off, ValueType::I32)?;
+        let o = b.build_int_const(off, ValueType::int(32))?;
+        let addr = b.build_int_binary_operation(sp_val, o, IntBinaryOp::Add, ValueType::int(32))?;
+        let v = b.build_int_const(off, ValueType::int(32))?;
         b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
     }
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -324,9 +327,10 @@ fn memphi_shadow_disqualifies() -> Result<()> {
 
     b.set_region(true_br);
     let sp_t = b.read_variable(&sp)?;
-    let four_t = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_t = b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, ValueType::I32)?;
-    let data = b.build_int_const(0x22u64, ValueType::I32)?;
+    let four_t = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr_t =
+        b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, ValueType::int(32))?;
+    let data = b.build_int_const(0x22u64, ValueType::int(32))?;
     b.build_store(addr_t, data, rsleigh::VnSpace::RAM)?;
     b.build_branch(join)?;
 
@@ -335,9 +339,10 @@ fn memphi_shadow_disqualifies() -> Result<()> {
 
     b.set_region(join);
     let sp_j = b.read_variable(&sp)?;
-    let four_j = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_j = b.build_int_binary_operation(sp_j, four_j, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr_j, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let four_j = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr_j =
+        b.build_int_binary_operation(sp_j, four_j, IntBinaryOp::Add, ValueType::int(32))?;
+    let loaded = b.build_load(addr_j, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -364,11 +369,12 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // Combined so neither load is dead.
-    let narrow = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    let wide = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I64)?;
+    let narrow = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    let wide = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::int(64))?;
     let narrow_ext =
-        b.extend_if_needed(narrow, ValueType::I64, strider_ir::ExtendOp::ZeroExtend)?;
-    let sum = b.build_int_binary_operation(narrow_ext, wide, IntBinaryOp::Add, ValueType::I64)?;
+        b.extend_if_needed(narrow, ValueType::int(64), strider_ir::ExtendOp::ZeroExtend)?;
+    let sum =
+        b.build_int_binary_operation(narrow_ext, wide, IntBinaryOp::Add, ValueType::int(64))?;
     b.build_return(Some(sum), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -408,15 +414,17 @@ fn wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // The 8-byte `double`, spanning slots 0 and 1.
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_a = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-    let a = b.build_load(addr_a, rsleigh::VnSpace::RAM, ValueType::I64)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr_a =
+        b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let a = b.build_load(addr_a, rsleigh::VnSpace::RAM, ValueType::int(64))?;
     // The `int`, at slot 2.
-    let twelve = b.build_int_const(12u64, ValueType::I32)?;
-    let addr_b = b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Add, ValueType::I32)?;
-    let bv = b.build_load(addr_b, rsleigh::VnSpace::RAM, ValueType::I32)?;
-    let b_ext = b.extend_if_needed(bv, ValueType::I64, strider_ir::ExtendOp::ZeroExtend)?;
-    let sum = b.build_int_binary_operation(a, b_ext, IntBinaryOp::Add, ValueType::I64)?;
+    let twelve = b.build_int_const(12u64, ValueType::int(32))?;
+    let addr_b =
+        b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Add, ValueType::int(32))?;
+    let bv = b.build_load(addr_b, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    let b_ext = b.extend_if_needed(bv, ValueType::int(64), strider_ir::ExtendOp::ZeroExtend)?;
+    let sum = b.build_int_binary_operation(a, b_ext, IntBinaryOp::Add, ValueType::int(64))?;
     b.build_return(Some(sum), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -457,22 +465,23 @@ fn span_four_wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // 16 bytes, spanning slots 0..3.
-    let a = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I128)?;
+    let a = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::int(128))?;
     // Slot 4.
-    let sixteen = b.build_int_const(16u64, ValueType::I32)?;
-    let addr_b = b.build_int_binary_operation(sp_val, sixteen, IntBinaryOp::Add, ValueType::I32)?;
-    let bv = b.build_load(addr_b, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let sixteen = b.build_int_const(16u64, ValueType::int(32))?;
+    let addr_b =
+        b.build_int_binary_operation(sp_val, sixteen, IntBinaryOp::Add, ValueType::int(32))?;
+    let bv = b.build_load(addr_b, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     // Truncate the I128 to I32 so the sum is well-typed and neither load dies.
     let a_trunc = {
         let trunc = strider_ir_test_utils::sentinel_node(
             b.function_mut(),
             NodeKind::Truncate,
             [a],
-            [strider_ir::node::ValueKind::Typed(ValueType::I32)],
+            [strider_ir::node::ValueKind::Typed(ValueType::int(32))],
         );
         b.function().node_outputs_exact::<1>(trunc).unwrap()[0]
     };
-    let sum = b.build_int_binary_operation(a_trunc, bv, IntBinaryOp::Add, ValueType::I32)?;
+    let sum = b.build_int_binary_operation(a_trunc, bv, IntBinaryOp::Add, ValueType::int(32))?;
     b.build_return(Some(sum), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -521,7 +530,7 @@ fn unused_register_arg_dropped_by_compact() -> Result<()> {
         .build_fn_single_region()?;
 
     // Returning a constant leaves rdi unread.
-    let c = b.build_int_const(0u64, ValueType::I64)?;
+    let c = b.build_int_const(0u64, ValueType::int(64))?;
     b.build_return(Some(c), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -561,7 +570,7 @@ fn second_and_third_register_args_recorded_at_their_indices() -> Result<()> {
         .build_fn_single_region()?;
     let a = b.read_variable(&r1)?;
     let c = b.read_variable(&r2)?;
-    let sum = b.build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::I64)?;
+    let sum = b.build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::int(64))?;
     b.build_return(Some(sum), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -609,11 +618,11 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     let a = b.read_variable(&rdi)?;
     let bb = b.read_variable(&rsi)?;
     let sp_val = b.read_variable(&sp)?;
-    let eight = b.build_int_const(8u64, ValueType::I64)?;
-    let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I64)?;
-    let c = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
-    let ab = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::I64)?;
-    let abc = b.build_int_binary_operation(ab, c, IntBinaryOp::Add, ValueType::I64)?;
+    let eight = b.build_int_const(8u64, ValueType::int(64))?;
+    let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(64))?;
+    let c = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+    let ab = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::int(64))?;
+    let abc = b.build_int_binary_operation(ab, c, IntBinaryOp::Add, ValueType::int(64))?;
     b.build_return(Some(abc), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -654,12 +663,12 @@ fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
         .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, ValueType::I64)?;
+    let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, ValueType::int(64))?;
     b.build_store(sp_val, wide_data, rsleigh::VnSpace::RAM)?;
 
-    let four = b.build_int_const(4u64, ValueType::I64)?;
-    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I64)?;
-    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I64)?;
+    let four = b.build_int_const(4u64, ValueType::int(64))?;
+    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(64))?;
+    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::int(64))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -686,13 +695,13 @@ fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // Covers [0,4).
-    let a = b.build_int_const(0x11u64, ValueType::I32)?;
+    let a = b.build_int_const(0x11u64, ValueType::int(32))?;
     b.build_store(sp_val, a, rsleigh::VnSpace::RAM)?;
 
     // Covers [4,8), disjoint from the store.
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -733,27 +742,29 @@ fn memphi_partial_overlap_shadows() -> Result<()> {
     // Covers [2,6).
     b.set_region(then_r);
     let sp_t = b.read_variable(&sp)?;
-    let two_t = b.build_int_const(2u64, ValueType::I32)?;
-    let addr_t = b.build_int_binary_operation(sp_t, two_t, IntBinaryOp::Add, ValueType::I32)?;
-    let data_t = b.build_int_const(0x11u64, ValueType::I32)?;
+    let two_t = b.build_int_const(2u64, ValueType::int(32))?;
+    let addr_t = b.build_int_binary_operation(sp_t, two_t, IntBinaryOp::Add, ValueType::int(32))?;
+    let data_t = b.build_int_const(0x11u64, ValueType::int(32))?;
     b.build_store(addr_t, data_t, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
     // Covers [8,12).
     b.set_region(else_r);
     let sp_e = b.read_variable(&sp)?;
-    let eight_e = b.build_int_const(8u64, ValueType::I32)?;
-    let addr_e = b.build_int_binary_operation(sp_e, eight_e, IntBinaryOp::Add, ValueType::I32)?;
-    let data_e = b.build_int_const(0x22u64, ValueType::I32)?;
+    let eight_e = b.build_int_const(8u64, ValueType::int(32))?;
+    let addr_e =
+        b.build_int_binary_operation(sp_e, eight_e, IntBinaryOp::Add, ValueType::int(32))?;
+    let data_e = b.build_int_const(0x22u64, ValueType::int(32))?;
     b.build_store(addr_e, data_e, rsleigh::VnSpace::RAM)?;
     b.build_branch(merge)?;
 
     // Covers [4,8).
     b.set_region(merge);
     let sp_m = b.read_variable(&sp)?;
-    let four_m = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_m = b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let four_m = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr_m =
+        b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, ValueType::int(32))?;
+    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -809,9 +820,9 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // -4 read as signed i64.
-    let neg_four = b.build_int_const(0xFFFF_FFFF_FFFF_FFFCu64, ValueType::I64)?;
-    let addr = b.build_sub_as_add_neg(sp_val, neg_four, ValueType::I64)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
+    let neg_four = b.build_int_const(0xFFFF_FFFF_FFFF_FFFCu64, ValueType::int(64))?;
+    let addr = b.build_sub_as_add_neg(sp_val, neg_four, ValueType::int(64))?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -846,13 +857,13 @@ fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // Covers [4,8).
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-    let data = b.build_int_const(0x11u64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let data = b.build_int_const(0x11u64, ValueType::int(32))?;
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
 
     // Same range, so it must shadow.
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -881,14 +892,14 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // A global write to a fixed `.data` address.
-    let global_addr = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
-    let global_data = b.build_int_const(0x1234u64, ValueType::I32)?;
+    let global_addr = b.build_int_const(0xDEAD_BEEFu64, ValueType::int(32))?;
+    let global_data = b.build_int_const(0x1234u64, ValueType::int(32))?;
     b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
 
     // The load's memory predecessor IS the global store above.
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -931,15 +942,15 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
 
     b.set_region(then_r);
     let sp_t = b.read_variable(&sp)?;
-    let four_t = b.build_int_const(4u64, ValueType::I32)?;
-    let sp_t_new = b.build_sub_as_add_neg(sp_t, four_t, ValueType::I32)?;
+    let four_t = b.build_int_const(4u64, ValueType::int(32))?;
+    let sp_t_new = b.build_sub_as_add_neg(sp_t, four_t, ValueType::int(32))?;
     b.write_variable(&sp, sp_t_new)?;
     b.build_branch(join)?;
 
     b.set_region(else_r);
     let sp_e = b.read_variable(&sp)?;
-    let eight_e = b.build_int_const(8u64, ValueType::I32)?;
-    let sp_e_new = b.build_sub_as_add_neg(sp_e, eight_e, ValueType::I32)?;
+    let eight_e = b.build_int_const(8u64, ValueType::int(32))?;
+    let sp_e_new = b.build_sub_as_add_neg(sp_e, eight_e, ValueType::int(32))?;
     b.write_variable(&sp, sp_e_new)?;
     b.build_branch(join)?;
 
@@ -947,12 +958,13 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     // the stack-arg slot off the original SP.
     b.set_region(join);
     let phi_sp = b.read_variable(&sp)?;
-    let trash = b.build_int_const(0xAAu64, ValueType::I32)?;
+    let trash = b.build_int_const(0xAAu64, ValueType::int(32))?;
     b.build_store(phi_sp, trash, rsleigh::VnSpace::RAM)?;
 
-    let four_j = b.build_int_const(4u64, ValueType::I32)?;
-    let addr_j = b.build_int_binary_operation(sp_orig, four_j, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr_j, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let four_j = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr_j =
+        b.build_int_binary_operation(sp_orig, four_j, IntBinaryOp::Add, ValueType::int(32))?;
+    let loaded = b.build_load(addr_j, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -980,15 +992,16 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     let sp_val = b.read_variable(&sp)?;
     // Disjoint stack stores at offsets 16, 20, 24, ...
     for i in 0..CHAIN_LEN {
-        let off = b.build_int_const(((i * 4) as u64) + 16, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::I32)?;
-        let val = b.build_int_const(i as u64, ValueType::I32)?;
+        let off = b.build_int_const(((i * 4) as u64) + 16, ValueType::int(32))?;
+        let addr =
+            b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(32))?;
+        let val = b.build_int_const(i as u64, ValueType::int(32))?;
         b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
     }
     // Disjoint from every store above, so the walker passes through all of them.
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -1027,7 +1040,7 @@ fn call_other_on_the_chain_blocks_under_either_survival_setting() -> Result<()> 
         )?;
         let call_mem_value = b.function().memory_output_of(call_node)?;
         b.advance_cur_region_memory(call_mem_value)?;
-        let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         Ok(())
@@ -1086,11 +1099,12 @@ fn incoming_args_survive_calls_toggle_gates_arg_across_call() -> Result<()> {
     // The Call's only value input is its constant target, which is not
     // SP-rooted, so the toggle alone governs the verdict.
     let build = |b: &mut FunctionBuilder, sp_val: ValueId| -> Result<()> {
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call_cc(target, None)?;
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::int(32))?;
+        let addr4 =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         Ok(())
     };
@@ -1156,13 +1170,13 @@ fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
         .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-    let data = b.build_int_const(0x42u64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let data = b.build_int_const(0x42u64, ValueType::int(32))?;
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -1211,7 +1225,7 @@ fn memory_clobbering_call_other_blocks_under_the_survival_claim() -> Result<()> 
     )?;
     let call_mem_value = b.function().memory_output_of(call_node)?;
     b.advance_cur_region_memory(call_mem_value)?;
-    let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::I32)?;
+    let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -1245,9 +1259,10 @@ fn rerunning_the_default_pipeline_keeps_one_carrier_per_stack_arg() -> Result<()
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     {
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::I32)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::int(32))?;
+        let addr =
+            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
     }
     b.set_lift_addr(None);
@@ -1281,12 +1296,12 @@ fn narrowing_does_not_bake_in_stack_global_disjoint() -> Result<()> {
         .stack_args(stack_args_at(8, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    let eight = b.build_int_const(8u64, ValueType::I64)?;
-    let slot = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::I64)?;
-    let global = b.build_int_const(0x4000u64, ValueType::I64)?;
-    let val = b.build_int_const(7u64, ValueType::I64)?;
+    let eight = b.build_int_const(8u64, ValueType::int(64))?;
+    let slot = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(64))?;
+    let global = b.build_int_const(0x4000u64, ValueType::int(64))?;
+    let val = b.build_int_const(7u64, ValueType::int(64))?;
     b.build_store(global, val, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::I64)?;
+    let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(64))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;

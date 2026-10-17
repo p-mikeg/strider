@@ -12,10 +12,10 @@ fn store_load_call_load() -> strider_ir::Function {
     let val = t.u64(42);
     t.store_ram(addr1, val);
     let addr2 = t.u64(0x200);
-    let after_store = t.load_ram(addr2, ValueType::I64);
+    let after_store = t.load_ram(addr2, ValueType::int(64));
     t.call_at(0x1234);
     let addr3 = t.u64(0x300);
-    let after_call = t.load_ram(addr3, ValueType::I64);
+    let after_call = t.load_ram(addr3, ValueType::int(64));
     let sum = t.add(after_store, after_call);
     t.ret_val(sum)
 }

@@ -62,7 +62,7 @@ pub(crate) fn lower(terms: &[Term]) -> Option<FunctionBuilder> {
                 b.build_if(cond, at(*t), at(*f)).ok()?;
             }
             Term::Switch(targets) => {
-                let address = b.build_int_const(0u64, ValueType::I64).ok()?;
+                let address = b.build_int_const(0u64, ValueType::int(64)).ok()?;
                 let arms: Vec<_> = (0u64..).zip(targets).map(|(k, &t)| (at(t), k)).collect();
                 b.build_switch(address, &arms).ok()?;
             }
@@ -100,7 +100,7 @@ pub(crate) fn wide_join(k: usize) -> crate::error::Result<Function> {
     b.set_entry_region_all(entry)?;
     b.set_lift_addr(Some(0x8000));
     b.set_region(entry);
-    let address = b.build_int_const(0u64, ValueType::I64)?;
+    let address = b.build_int_const(0u64, ValueType::int(64))?;
     let table: Vec<_> = (0u64..).zip(&arms).map(|(i, &r)| (r, i)).collect();
     b.build_switch(address, &table)?;
     for &arm in &arms {

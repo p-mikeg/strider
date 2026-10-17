@@ -11,8 +11,8 @@ const CTRL: ValueKind = ValueKind::Control;
 const MEM: ValueKind = ValueKind::Memory;
 const TOKEN: ValueKind = ValueKind::PhiToken;
 const I1: ValueKind = ValueKind::Typed(ValueType::I1);
-const I32: ValueKind = ValueKind::Typed(ValueType::I32);
-const I64: ValueKind = ValueKind::Typed(ValueType::I64);
+const I32: ValueKind = ValueKind::Typed(ValueType::int(32));
+const I64: ValueKind = ValueKind::Typed(ValueType::int(64));
 
 fn reg(offset: u64) -> rsleigh::Vn {
     rsleigh::Vn {
@@ -122,7 +122,7 @@ impl Net {
         );
         if reverse {
             // Zombies ahead of the live nodes shift every arena id.
-            let id = f.intern_int_const(0xdead, ValueType::I64);
+            let id = f.intern_int_const(0xdead, ValueType::int(64));
             let zombie = f.graph_mut().create_node(NodeKind::IntConst(id), [], [I64]);
             let [z] = f.node_outputs_exact::<1>(zombie).unwrap();
             f.graph_mut()
@@ -229,7 +229,7 @@ fn check(net: &Net, expected: Expect) {
 fn diamond_with_phi() {
     let mut net = Net::new(vec![reg(0), reg(0x38)]);
     let x = net.initial_var(reg(0x38));
-    let zero = net.int(0, ValueType::I64, 0x1000);
+    let zero = net.int(0, ValueType::int(64), 0x1000);
     let cond = net.plain(
         NodeKind::IntCmpOp(IntCmpOp::Equal),
         &[(x, 0), (zero, 0)],
@@ -239,8 +239,8 @@ fn diamond_with_phi() {
     let branch = net.plain(NodeKind::If, &[(0, 0), (cond, 0)], &[CTRL, CTRL], &[0x1004]);
     let then_ = net.plain(NodeKind::Region, &[(branch, 0)], &[CTRL, TOKEN], &[]);
     let else_ = net.plain(NodeKind::Region, &[(branch, 1)], &[CTRL, TOKEN], &[]);
-    let one = net.int(1, ValueType::I64, 0x1008);
-    let two = net.int(2, ValueType::I64, 0x100c);
+    let one = net.int(1, ValueType::int(64), 0x1008);
+    let two = net.int(2, ValueType::int(64), 0x100c);
     let merge = net.plain(
         NodeKind::Region,
         &[(then_, 0), (else_, 0)],
@@ -292,10 +292,10 @@ fn diamond_with_phi() {
 fn loop_with_phi_and_mem_phi() {
     let mut net = Net::new(Vec::new());
     let head = net.plain(NodeKind::Region, &[], &[CTRL, TOKEN], &[]);
-    let zero = net.int(0, ValueType::I64, 0x2000);
+    let zero = net.int(0, ValueType::int(64), 0x2000);
     let i = net.plain(NodeKind::Phi, &[], &[I64], &[]);
     let m = net.plain(NodeKind::MemPhi, &[], &[MEM], &[]);
-    let ten = net.int(10, ValueType::I64, 0x2004);
+    let ten = net.int(10, ValueType::int(64), 0x2004);
     let lt = net.plain(
         NodeKind::IntCmpOp(IntCmpOp::Less),
         &[(i, 0), (ten, 0)],
@@ -309,14 +309,14 @@ fn loop_with_phi_and_mem_phi() {
         &[0x2008],
     );
     let body = net.plain(NodeKind::Region, &[(branch, 0)], &[CTRL, TOKEN], &[]);
-    let addr = net.int(0x9000, ValueType::I64, 0x200c);
+    let addr = net.int(0x9000, ValueType::int(64), 0x200c);
     let store = net.plain(
         NodeKind::Store(RAM),
         &[(m, 0), (addr, 0), (i, 0)],
         &[MEM],
         &[0x200c],
     );
-    let one = net.int(1, ValueType::I64, 0x2010);
+    let one = net.int(1, ValueType::int(64), 0x2010);
     let next = net.plain(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         &[(i, 0), (one, 0)],
@@ -368,7 +368,7 @@ fn loop_with_phi_and_mem_phi() {
 fn load_store_and_call_with_an_override_convention() {
     let mut net = Net::new(vec![reg(0), reg(0x20)]);
     let sp = net.initial_var(reg(0x20));
-    let target = net.int(0x40_1000, ValueType::I64, 0x3000);
+    let target = net.int(0x40_1000, ValueType::int(64), 0x3000);
     let call = net.plain(
         NodeKind::Call { cc: None },
         &[(0, 0), (1, 0), (target, 0), (sp, 0)],
@@ -383,7 +383,7 @@ fn load_store_and_call_with_an_override_convention() {
             ..Default::default()
         },
     ));
-    let addr = net.int(0x2000, ValueType::I64, 0x3004);
+    let addr = net.int(0x2000, ValueType::int(64), 0x3004);
     let load = net.plain(
         NodeKind::Load(RAM),
         &[(call, 1), (addr, 0)],
@@ -471,17 +471,17 @@ fn wide_and_float_constants() {
         |f| {
             NodeKind::IntConst(f.intern_int_const_limbs(
                 &[0x1122_3344_5566_7788, 0, 0, 0x8000_0000_0000_0000],
-                ValueType::I256,
+                ValueType::int(256),
             ))
         },
         &[],
-        &[ValueKind::Typed(ValueType::I256)],
+        &[ValueKind::Typed(ValueType::int(256))],
         &[0x5000],
     );
     let float = net.plain(
         NodeKind::FloatConst(0x3ff0_0000_0000_0000),
         &[],
-        &[ValueKind::Typed(ValueType::F64)],
+        &[ValueKind::Typed(ValueType::float(64))],
         &[0x5004],
     );
     net.plain(
@@ -581,7 +581,7 @@ fn named_text_respells_each_register_varnode_and_nothing_else() {
     let mut net = Net::new(vec![reg(0), reg(0x38)]);
     net.default_cc.link_register_vn = Some(reg(0x38));
     let x = net.initial_var(reg(0x38));
-    let target = net.int(0x40_1000, ValueType::I64, 0x1000);
+    let target = net.int(0x40_1000, ValueType::int(64), 0x1000);
     let call = net.plain(
         NodeKind::Call { cc: None },
         &[(0, 0), (1, 0), (target, 0), (x, 0)],

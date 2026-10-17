@@ -74,7 +74,7 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     let sp_v = t.read_var(&sp);
     let four = t.u64(4);
     let addr = t.add(sp_v, four);
-    let v = t.load_ram(addr, ValueType::I64);
+    let v = t.load_ram(addr, ValueType::int(64));
     let mut function = t.ret_val(v);
 
     // Collapse the single-predecessor `read_var(sp)` phi so the stack-arg

@@ -12,14 +12,14 @@ use super::support::{Tb, assertions as a, reg_vn};
 fn non_const_u32(t: &mut Tb, a_v: u64, b_v: u64) -> strider_ir::node::ValueId {
     let a_ = t.u32(a_v);
     let b_ = t.u32(b_v);
-    t.int_bin_at(a_, b_, strider_ir::IntBinaryOp::Add, ValueType::I32)
+    t.int_bin_at(a_, b_, strider_ir::IntBinaryOp::Add, ValueType::int(32))
 }
 
 #[test]
 fn extend_op_variant_matches_zero_and_sign() {
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let x = t.zext_to(s, ValueType::I64);
+    let x = t.zext_to(s, ValueType::int(64));
     let function = t.ret_val(x);
     a::matches(
         &function,
@@ -33,7 +33,7 @@ fn extend_op_variant_matches_zero_and_sign() {
 
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let x = t.sext_to(s, ValueType::I64);
+    let x = t.sext_to(s, ValueType::int(64));
     let function = t.ret_val(x);
     a::matches(
         &function,
@@ -49,8 +49,8 @@ fn extend_op_variant_matches_zero_and_sign() {
 fn extend_then_truncate_chain_matches() {
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let ext = t.zext_to(s, ValueType::I64);
-    let tr = t.trunc_to(ext, ValueType::I8);
+    let ext = t.zext_to(s, ValueType::int(64));
+    let tr = t.trunc_to(ext, ValueType::int(8));
     let function = t.ret_val(tr);
 
     a::matches(&function, int_truncate(anything()).into_pattern(), 1);
@@ -65,8 +65,8 @@ fn extend_then_truncate_chain_matches() {
 fn int_to_float_matches() {
     let mut t = Tb::empty();
     let v = t.u64(42);
-    let f = t.int_to_float(v, ValueType::F64);
-    let as_int = t.float_to_int(f, ValueType::I64);
+    let f = t.int_to_float(v, ValueType::float(64));
+    let as_int = t.float_to_int(f, ValueType::int(64));
     let function = t.ret_val(as_int);
     a::matches(&function, int_to_float(anything()).into_pattern(), 1);
 }
@@ -74,9 +74,9 @@ fn int_to_float_matches() {
 fn float_to_float_matches() {
     let mut t = Tb::empty();
     let v = t.f64(1.0);
-    let f = t.float_to_float(v, ValueType::F32);
-    let ff = t.float_to_float(f, ValueType::F64);
-    let as_int = t.float_to_int(ff, ValueType::I64);
+    let f = t.float_to_float(v, ValueType::float(32));
+    let ff = t.float_to_float(f, ValueType::float(64));
+    let as_int = t.float_to_int(ff, ValueType::int(64));
     let function = t.ret_val(as_int);
     // Two FloatToFloat nodes in the graph.
     a::matches(&function, float_to_float(anything()).into_pattern(), 2);
@@ -85,7 +85,7 @@ fn float_to_float_matches() {
 fn cast_patterns_are_kind_sensitive() {
     let mut t = Tb::empty();
     let v = t.u32(1);
-    let x = t.zext_to(v, ValueType::I64);
+    let x = t.zext_to(v, ValueType::int(64));
     let function = t.ret_val(x);
 
     a::none(&function, int_truncate(anything()).into_pattern());
@@ -99,7 +99,7 @@ fn add_with_zext_reg_operand() -> strider_ir::Function {
     let vn = reg_vn(0x40, 4); // 4-byte register varnode, so I32
     let mut t = Tb::with_vars(&[vn]);
     let x32 = t.read_var(&vn);
-    let zx = t.zext_to(x32, ValueType::I64);
+    let zx = t.zext_to(x32, ValueType::int(64));
     let five = t.u64(5);
     let sum = t.add(five, zx);
     t.ret_val(sum)
@@ -158,8 +158,8 @@ fn deep_alternating_cast_chain_walked_through() {
         let mut v = t.mul(two, three);
         // 16 x (Truncate I64 to I32, ZeroExtend back) = 32 cast nodes.
         for _ in 0..16 {
-            v = t.trunc_to(v, ValueType::I32);
-            v = t.zext_to(v, ValueType::I64);
+            v = t.trunc_to(v, ValueType::int(32));
+            v = t.zext_to(v, ValueType::int(64));
         }
         let four = t.u64(4);
         let total = t.add(v, four);
@@ -195,10 +195,10 @@ fn deep_alternating_cast_chain_walked_through() {
 fn a_masked_chain_still_matches_a_cast_the_pattern_names() {
     let mut t = Tb::empty();
     let s = non_const_u32(&mut t, 1, 2);
-    let tr = t.trunc_to(s, ValueType::I8);
-    let ext = t.zext_to(tr, ValueType::I64);
+    let tr = t.trunc_to(s, ValueType::int(8));
+    let ext = t.zext_to(tr, ValueType::int(64));
     let k = t.u64(7);
-    let sum = t.int_bin_at(ext, k, strider_ir::IntBinaryOp::Add, ValueType::I64);
+    let sum = t.int_bin_at(ext, k, strider_ir::IntBinaryOp::Add, ValueType::int(64));
     let function = t.ret_val(sum);
 
     let unmasked = int_add(int_truncate(anything()), anything()).into_pattern();
@@ -220,18 +220,18 @@ fn a_masked_chain_reports_the_outermost_match_only() {
     let with_extra_cast = |extra: bool| {
         let mut t = Tb::empty();
         let base = non_const_u32(&mut t, 1, 2);
-        let z1 = t.zext_to(base, ValueType::I64);
-        let z2 = t.zext_to(z1, ValueType::I64);
+        let z1 = t.zext_to(base, ValueType::int(64));
+        let z2 = t.zext_to(z1, ValueType::int(64));
         let operand = if extra {
-            t.trunc_to(z2, ValueType::I32)
+            t.trunc_to(z2, ValueType::int(32))
         } else {
             z2
         };
         let k = if extra { t.u32(7) } else { t.u64(7) };
         let ty = if extra {
-            ValueType::I32
+            ValueType::int(32)
         } else {
-            ValueType::I64
+            ValueType::int(64)
         };
         let sum = t.int_bin_at(operand, k, strider_ir::IntBinaryOp::Add, ty);
         let function = t.ret_val(sum);

@@ -56,7 +56,7 @@ fn arg_constrains_pcode_explicit_value_argument() {
     let mut b: FunctionBuilder = RegisterSet::new()
         .build_fn_single_region()
         .expect("build_fn_single_region");
-    let a0 = b.build_int_const(0x11u64, ValueType::I64).expect("a0");
+    let a0 = b.build_int_const(0x11u64, ValueType::int(64)).expect("a0");
     // Inputs are [ctrl(0), mem(1), arg0(2)].
     Tb::named_call_other(&mut b, 9, "rdmsr", &[a0], &[], false, false).expect("rdmsr");
     b.build_return(None, &[]).expect("return");

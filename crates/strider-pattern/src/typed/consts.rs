@@ -593,11 +593,15 @@ mod any_width_tests {
     fn a_constant_at_a_non_power_of_two_width_matches_exactly() {
         // I40, top bit set, not all-ones: reachable through no narrower probe.
         let stored: u128 = 0x80_0000_0001;
-        assert!(value_at_some_width(stored, ValueType::I40, stored));
-        assert!(value_at_some_width(0x80_0001, ValueType::I24, 0x80_0001));
+        assert!(value_at_some_width(stored, ValueType::int(40), stored));
+        assert!(value_at_some_width(
+            0x80_0001,
+            ValueType::int(24),
+            0x80_0001
+        ));
         assert!(value_at_some_width(
             0x80_0000_0000_0001,
-            ValueType::I56,
+            ValueType::int(56),
             0x80_0000_0000_0001
         ));
     }
@@ -606,12 +610,16 @@ mod any_width_tests {
     #[test]
     fn widened_forms_still_match_and_others_do_not() {
         // -1 held at I8 and sign-extended into I40.
-        assert!(value_at_some_width(0xFF_FFFF_FFFF, ValueType::I40, 0xFF));
+        assert!(value_at_some_width(
+            0xFF_FFFF_FFFF,
+            ValueType::int(40),
+            0xFF
+        ));
         // 0x80 held at I8 and zero-extended into I40.
-        assert!(value_at_some_width(0x80, ValueType::I40, 0x80));
+        assert!(value_at_some_width(0x80, ValueType::int(40), 0x80));
         assert!(!value_at_some_width(
             0x80_0000_0002,
-            ValueType::I40,
+            ValueType::int(40),
             0x80_0000_0001
         ));
     }
@@ -624,16 +632,16 @@ mod any_width_tests {
         // 0 is not 256, 0x1_0000 or 0x1_0000_0000 at any width.
         for q in [256u128, 0x1_0000, 0x1_0000_0000] {
             assert!(
-                !value_at_some_width(0, ValueType::I64, q),
+                !value_at_some_width(0, ValueType::int(64), q),
                 "0 matched {q:#x}"
             );
         }
         // The realistic shape: hunting a magic number, hitting its low byte.
-        assert!(!value_at_some_width(0x34, ValueType::I64, 0x1234));
-        assert!(!value_at_some_width(0x2A, ValueType::I32, 0x122A));
+        assert!(!value_at_some_width(0x34, ValueType::int(64), 0x1234));
+        assert!(!value_at_some_width(0x2A, ValueType::int(32), 0x122A));
         // Same hole on the sign-extended arm: -128 is not 384.
         let minus_128 = (-128i128) as u128;
-        assert!(!value_at_some_width(minus_128, ValueType::I64, 384));
+        assert!(!value_at_some_width(minus_128, ValueType::int(64), 384));
     }
 
     /// The negative queries the doc promises still reach their stored form.
@@ -643,14 +651,14 @@ mod any_width_tests {
         let minus_50 = (-50i128) as u128;
         assert!(value_at_some_width(
             0x0000_0000_FFFF_FFCE,
-            ValueType::I64,
+            ValueType::int(64),
             minus_50
         ));
         // -1 held at I8 and sign-extended into I64.
         let minus_1 = (-1i128) as u128;
         assert!(value_at_some_width(
             u128::from(u64::MAX),
-            ValueType::I64,
+            ValueType::int(64),
             minus_1
         ));
     }

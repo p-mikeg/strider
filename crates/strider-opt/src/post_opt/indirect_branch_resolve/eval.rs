@@ -537,13 +537,13 @@ mod tests {
             .build_fn_single_region()
             .expect("build_fn_single_region");
         let idx_raw = b.read_variable(&vn).expect("idx_raw");
-        let c5 = b.build_int_const(5u64, ValueType::I64).expect("c5");
+        let c5 = b.build_int_const(5u64, ValueType::int(64)).expect("c5");
         let idx = b
-            .build_int_binary_operation(idx_raw, c5, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(idx_raw, c5, IntBinaryOp::Add, ValueType::int(64))
             .expect("idx");
-        let c100 = b.build_int_const(100u64, ValueType::I64).expect("c100");
+        let c100 = b.build_int_const(100u64, ValueType::int(64)).expect("c100");
         let dispatch = b
-            .build_int_binary_operation(idx, c100, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(idx, c100, IntBinaryOp::Add, ValueType::int(64))
             .expect("dispatch");
         b.build_return(Some(dispatch), &[]).expect("build_return");
         b.set_lift_addr(None);
@@ -585,10 +585,10 @@ mod tests {
             .expect("build_fn_single_region");
         let idx = b.read_variable(&vn).expect("read_variable");
         let c100 = b
-            .build_int_const(100u64, ValueType::I64)
+            .build_int_const(100u64, ValueType::int(64))
             .expect("build_int_const");
         let sum = b
-            .build_int_binary_operation(idx, c100, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(idx, c100, IntBinaryOp::Add, ValueType::int(64))
             .expect("build_int_binary_operation");
         b.build_return(Some(sum), &[]).expect("build_return");
         b.set_lift_addr(None);

@@ -85,7 +85,7 @@ fn f80_add_operands(f: &Function, v: ValueId) -> Vec<u128> {
     );
     assert_eq!(
         f.value_type(add).expect("typed"),
-        ValueType::F80,
+        ValueType::float(80),
         "x87 adds at extended precision"
     );
     let mut bits: Vec<u128> = inputs_of(f, add)
@@ -96,7 +96,7 @@ fn f80_add_operands(f: &Function, v: ValueId) -> Vec<u128> {
                 NodeKind::IntBitsToFloat
             ));
             let payload = inputs_of(f, operand)[0];
-            assert_eq!(f.value_type(payload).expect("typed"), ValueType::I80);
+            assert_eq!(f.value_type(payload).expect("typed"), ValueType::int(80));
             f.int_const_u128(payload).expect("a folded F80 constant")
         })
         .collect();
@@ -110,7 +110,7 @@ fn f80_add_operands(f: &Function, v: ValueId) -> Vec<u128> {
 fn an_eighty_bit_constant_survives_as_a_ten_byte_integer() {
     let (f, _) = analyze(LD_ROM);
     let v = st0(&f);
-    assert_eq!(f.value_type(v).expect("typed"), ValueType::I80);
+    assert_eq!(f.value_type(v).expect("typed"), ValueType::int(80));
     assert!(
         matches!(producer_kind(&f, v), NodeKind::IntConst(_)),
         "ST0 holds {:?}",
@@ -138,7 +138,7 @@ fn an_eighty_bit_stack_argument_loads_all_ten_bytes() {
     let v = st0(&f);
     assert!(matches!(producer_kind(&f, v), NodeKind::FloatBitsToInt));
     let add = inputs_of(&f, v)[0];
-    assert_eq!(f.value_type(add).expect("typed"), ValueType::F80);
+    assert_eq!(f.value_type(add).expect("typed"), ValueType::float(80));
     for operand in inputs_of(&f, add) {
         assert!(matches!(
             producer_kind(&f, operand),
@@ -150,7 +150,7 @@ fn an_eighty_bit_stack_argument_loads_all_ten_bytes() {
             "operand is {:?}",
             producer_kind(&f, load)
         );
-        assert_eq!(f.value_type(load).expect("typed"), ValueType::I80);
+        assert_eq!(f.value_type(load).expect("typed"), ValueType::int(80));
     }
 }
 
@@ -162,13 +162,13 @@ fn a_double_operand_is_widened_before_the_x87_add() {
     let v = st0(&f);
     assert!(matches!(producer_kind(&f, v), NodeKind::FloatBitsToInt));
     let add = inputs_of(&f, v)[0];
-    assert_eq!(f.value_type(add).expect("typed"), ValueType::F80);
+    assert_eq!(f.value_type(add).expect("typed"), ValueType::float(80));
     let mut bits: Vec<u128> = inputs_of(&f, add)
         .into_iter()
         .map(|operand| {
             assert_eq!(*producer_kind(&f, operand), NodeKind::FloatToFloat);
             let narrow = inputs_of(&f, operand)[0];
-            assert_eq!(f.value_type(narrow).expect("typed"), ValueType::F64);
+            assert_eq!(f.value_type(narrow).expect("typed"), ValueType::float(64));
             let payload = inputs_of(&f, narrow)[0];
             f.int_const_u128(payload).expect("a folded F64 constant")
         })

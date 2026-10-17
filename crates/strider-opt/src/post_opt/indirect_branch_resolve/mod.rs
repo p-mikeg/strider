@@ -299,8 +299,10 @@ mod tests {
         builder.set_entry_region_all(region).expect("set_entry");
         builder.set_region(region);
         builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let mode = builder.build_int_const(1u64, ValueType::I64).unwrap();
-        let target = builder.build_int_const(0x8000u64, ValueType::I64).unwrap();
+        let mode = builder.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let target = builder
+            .build_int_const(0x8000u64, ValueType::int(64))
+            .unwrap();
         let branch = builder
             .build_indirect_branch_with_mode(target, Some(mode))
             .expect("build_branch");
@@ -318,7 +320,9 @@ mod tests {
         builder.set_entry_region_all(region).expect("set_entry");
         builder.set_region(region);
         builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let target = builder.build_int_const(0x8000u64, ValueType::I64).unwrap();
+        let target = builder
+            .build_int_const(0x8000u64, ValueType::int(64))
+            .unwrap();
         let branch = builder.build_indirect_branch(target).expect("build_branch");
         builder.set_lift_addr(None);
         let function = builder.build().expect("build");
@@ -337,11 +341,13 @@ mod tests {
         builder.set_entry_region_all(region).expect("set_entry");
         builder.set_region(region);
         builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let target = builder.build_int_const(0x8000u64, ValueType::I64).unwrap();
+        let target = builder
+            .build_int_const(0x8000u64, ValueType::int(64))
+            .unwrap();
         // A symbolic (non-IntConst) mode, as a runtime `entry & 1` would be.
-        let one = builder.build_int_const(1u64, ValueType::I64).unwrap();
+        let one = builder.build_int_const(1u64, ValueType::int(64)).unwrap();
         let mode = builder
-            .build_int_binary_operation(target, one, IntBinaryOp::And, ValueType::I64)
+            .build_int_binary_operation(target, one, IntBinaryOp::And, ValueType::int(64))
             .unwrap();
         builder
             .build_indirect_branch_with_mode(target, Some(mode))
@@ -356,7 +362,7 @@ mod tests {
     fn classify_int_const_returns_single() {
         let (function, target) = empty_graph_returning(|fb| {
             // I64 because BranchIndirect targets are pointer-sized.
-            fb.build_int_const(0x1234u64, ValueType::I64).unwrap()
+            fb.build_int_const(0x1234u64, ValueType::int(64)).unwrap()
         });
         let result = classify_target_bare(&function, target);
         assert_eq!(result, Some(ResolvedTargets::Single(0x1234.into())));
@@ -438,7 +444,7 @@ mod tests {
     #[test]
     fn classify_sites_lists_nothing_on_a_site_free_function() {
         let (function, _target) =
-            empty_graph_returning(|fb| fb.build_int_const(0x1234u64, ValueType::I64).unwrap());
+            empty_graph_returning(|fb| fb.build_int_const(0x1234u64, ValueType::int(64)).unwrap());
         for resolve_indirect_branches in [false, true] {
             let options = crate::OptOptions {
                 resolve_indirect_branches,
@@ -483,7 +489,7 @@ mod tests {
         b.set_entry_region_all(region).expect("set_entry");
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let target = b.build_int_const(0x8000u64, ValueType::I64).unwrap();
+        let target = b.build_int_const(0x8000u64, ValueType::int(64)).unwrap();
         let branch = b.build_indirect_branch(target).expect("build_branch");
         b.set_lift_addr(None);
         let function = b.build().expect("build");
@@ -509,10 +515,15 @@ mod tests {
     #[test]
     fn classify_unrelated_node_kind_returns_none() {
         let (function, target) = empty_graph_returning(|fb| {
-            let lhs = fb.build_int_const(1u64, ValueType::I64).unwrap();
-            let rhs = fb.build_int_const(2u64, ValueType::I64).unwrap();
-            fb.build_int_binary_operation(lhs, rhs, strider_ir::IntBinaryOp::Add, ValueType::I64)
-                .expect("build_int_binary_operation")
+            let lhs = fb.build_int_const(1u64, ValueType::int(64)).unwrap();
+            let rhs = fb.build_int_const(2u64, ValueType::int(64)).unwrap();
+            fb.build_int_binary_operation(
+                lhs,
+                rhs,
+                strider_ir::IntBinaryOp::Add,
+                ValueType::int(64),
+            )
+            .expect("build_int_binary_operation")
         });
         // ConstantFold would turn 1+2 into IntConst(3), but the optimiser does
         // not run here, so the producer stays an IntBinaryOp.
@@ -541,26 +552,30 @@ mod tests {
         let sp_val = b.read_variable(&sp).unwrap();
         let lr_val = b.read_variable(&lr).unwrap();
         let frame = if aligned {
-            let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::I32).unwrap();
-            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I32)
+            let mask = b
+                .build_int_const(0xFFFF_FFF0u64, ValueType::int(32))
+                .unwrap();
+            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(32))
                 .unwrap()
         } else {
             sp_val
         };
         let at = |b: &mut FunctionBuilder, base: ValueId, off: u64| {
-            let c = b.build_int_const(off, ValueType::I32).unwrap();
-            b.build_int_binary_operation(base, c, IntBinaryOp::Add, ValueType::I32)
+            let c = b.build_int_const(off, ValueType::int(32)).unwrap();
+            b.build_int_binary_operation(base, c, IntBinaryOp::Add, ValueType::int(32))
                 .unwrap()
         };
         let slot = at(&mut b, frame, 0x8000_0000);
         b.build_store(slot, lr_val, rsleigh::VnSpace::RAM).unwrap();
         if let Some(off) = store {
             let near = at(&mut b, sp_val, off);
-            let junk = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32).unwrap();
+            let junk = b
+                .build_int_const(0xDEAD_BEEFu64, ValueType::int(32))
+                .unwrap();
             b.build_store(near, junk, rsleigh::VnSpace::RAM).unwrap();
         }
         let target = b
-            .build_load(slot, rsleigh::VnSpace::RAM, ValueType::I32)
+            .build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(32))
             .unwrap();
         let branch = b.build_indirect_branch(target).unwrap();
         b.set_lift_addr(None);
@@ -608,21 +623,25 @@ mod tests {
             .expect("build_fn_single_region");
         let sp_val = b.read_variable(&sp).unwrap();
         let lr_val = b.read_variable(&lr).unwrap();
-        let mask = b.build_int_const(!0xFu128, ValueType::I128).unwrap();
+        let mask = b.build_int_const(!0xFu128, ValueType::int(128)).unwrap();
         let frame = b
-            .build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::I128)
+            .build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(128))
             .unwrap();
-        let bottom = b.build_int_const(1u128 << 127, ValueType::I128).unwrap();
+        let bottom = b
+            .build_int_const(1u128 << 127, ValueType::int(128))
+            .unwrap();
         let slot = b
-            .build_int_binary_operation(frame, bottom, IntBinaryOp::Add, ValueType::I128)
+            .build_int_binary_operation(frame, bottom, IntBinaryOp::Add, ValueType::int(128))
             .unwrap();
         b.build_store(slot, lr_val, rsleigh::VnSpace::RAM).unwrap();
         if junk {
-            let junk = b.build_int_const(0xDEAD_BEEFu64, ValueType::I128).unwrap();
+            let junk = b
+                .build_int_const(0xDEAD_BEEFu64, ValueType::int(128))
+                .unwrap();
             b.build_store(sp_val, junk, rsleigh::VnSpace::RAM).unwrap();
         }
         let target = b
-            .build_load(slot, rsleigh::VnSpace::RAM, ValueType::I128)
+            .build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(128))
             .unwrap();
         let branch = b.build_indirect_branch(target).unwrap();
         b.set_lift_addr(None);
@@ -668,25 +687,27 @@ mod tests {
         let sp_val = b.read_variable(&sp).unwrap();
         let lr_val = b.read_variable(&lr).unwrap();
         let add = |b: &mut FunctionBuilder, base: ValueId, off: i128| {
-            let c = b.build_int_const(off as u128, ValueType::I128).unwrap();
-            b.build_int_binary_operation(base, c, IntBinaryOp::Add, ValueType::I128)
+            let c = b.build_int_const(off as u128, ValueType::int(128)).unwrap();
+            b.build_int_binary_operation(base, c, IntBinaryOp::Add, ValueType::int(128))
                 .unwrap()
         };
         let save = add(&mut b, sp_val, 0x40);
         let saved = add(&mut b, sp_val, saved);
         b.build_store(save, saved, rsleigh::VnSpace::RAM).unwrap();
         let fp = b
-            .build_load(save, rsleigh::VnSpace::RAM, ValueType::I128)
+            .build_load(save, rsleigh::VnSpace::RAM, ValueType::int(128))
             .unwrap();
         let slot = addends.iter().fold(fp, |at, &off| add(&mut b, at, off));
         b.build_store(slot, lr_val, rsleigh::VnSpace::RAM).unwrap();
         if let Some(off) = junk {
             let near = add(&mut b, fp, off);
-            let junk = b.build_int_const(0xDEAD_BEEFu64, ValueType::I128).unwrap();
+            let junk = b
+                .build_int_const(0xDEAD_BEEFu64, ValueType::int(128))
+                .unwrap();
             b.build_store(near, junk, rsleigh::VnSpace::RAM).unwrap();
         }
         let target = b
-            .build_load(slot, rsleigh::VnSpace::RAM, ValueType::I128)
+            .build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(128))
             .unwrap();
         let branch = b.build_indirect_branch(target).unwrap();
         b.set_lift_addr(None);

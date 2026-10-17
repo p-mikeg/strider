@@ -81,7 +81,7 @@ mod tests {
             &mut b,
             NodeKind::IntConst(const_id),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         assert!(matches!(
             IRViewer::function(&b).node_kind(n),

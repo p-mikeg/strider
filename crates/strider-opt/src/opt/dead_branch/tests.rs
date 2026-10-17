@@ -50,10 +50,10 @@ fn dead_branch_absorbs_condition_fingerprint() -> Result<()> {
     b.build_if(cond, true_region, false_region)?;
 
     b.set_region(true_region);
-    let tv = b.build_int_const(1u64, ValueType::I64)?;
+    let tv = b.build_int_const(1u64, ValueType::int(64))?;
     b.build_return(Some(tv), &[])?;
     b.set_region(false_region);
-    let fv = b.build_int_const(2u64, ValueType::I64)?;
+    let fv = b.build_int_const(2u64, ValueType::int(64))?;
     b.build_return(Some(fv), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
@@ -220,7 +220,7 @@ fn nested_if_true_eliminated() -> Result<()> {
     b.set_region(outer_f);
     b.build_return(None, &[])?;
     b.set_region(inner_t);
-    let v = b.build_int_const(1u64, strider_ir::ValueType::I64)?;
+    let v = b.build_int_const(1u64, strider_ir::ValueType::int(64))?;
     b.build_return(Some(v), &[])?;
     b.set_region(inner_f);
     b.build_return(None, &[])?;
@@ -360,12 +360,12 @@ fn var_phi_loses_dead_slot() -> Result<()> {
     b.build_if(cond, true_r, false_r)?;
 
     b.set_region(true_r);
-    let v_t = b.build_int_const(1u64, ValueType::I64)?;
+    let v_t = b.build_int_const(1u64, ValueType::int(64))?;
     b.write_variable(&var, v_t)?;
     b.build_branch(join)?;
 
     b.set_region(false_r);
-    let v_f = b.build_int_const(2u64, ValueType::I64)?;
+    let v_f = b.build_int_const(2u64, ValueType::int(64))?;
     b.write_variable(&var, v_f)?;
     b.build_branch(join)?;
 
@@ -416,7 +416,7 @@ fn dead_switch_const_address_keeps_matching_arm() -> Result<()> {
     b.set_entry_region_all(entry)?;
     b.set_region(entry);
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let addr = b.build_int_const(0x1020u64, strider_ir::ValueType::I64)?; // == arm 1's case
+    let addr = b.build_int_const(0x1020u64, strider_ir::ValueType::int(64))?; // == arm 1's case
     b.build_switch(addr, &[(a0, 0x1000), (a1, 0x1020)])?;
     b.set_region(a0);
     b.build_return(None, &[])?;
@@ -491,7 +491,7 @@ fn a_switch_constant_no_arm_lists_has_no_dead_arm() -> Result<()> {
     let cond = b.build_boolean_const(true);
     b.build_if(cond, dispatch, skipped)?;
     b.set_region(dispatch);
-    let addr = b.build_int_const(0x5000u64, ValueType::I64)?;
+    let addr = b.build_int_const(0x5000u64, ValueType::int(64))?;
     b.build_switch(addr, &[(a0, 0x1000), (a1, 0x1020)])?;
     for region in [a0, a1, skipped] {
         b.set_region(region);
@@ -752,7 +752,7 @@ fn constant_diamond_chain_never_walks_the_whole_cfg() -> Result<()> {
         b.build_branch(merges[i + 1])?;
     }
     b.set_region(merges[N]);
-    let v = b.build_int_const(7u64, ValueType::I64)?;
+    let v = b.build_int_const(7u64, ValueType::int(64))?;
     b.build_return(Some(v), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;

@@ -182,7 +182,7 @@ fn guarded(
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    let addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0xDEAD_u64, ValueType::int(64)).unwrap();
     let idx = b.build_load(addr, rsleigh::VnSpace::RAM, ty).unwrap();
     let c = cond(&mut b, idx);
     b.build_if(c, then_arm, else_arm).unwrap();
@@ -208,21 +208,22 @@ fn guarded(
 
 /// `x <op> c` at `I32`.
 fn cmp_c(b: &mut FunctionBuilder, x: ValueId, op: IntCmpOp, c: u64) -> ValueId {
-    let c = b.build_int_const(c, ValueType::I32).unwrap();
-    b.build_int_cmp_operation(x, c, op, ValueType::I32).unwrap()
+    let c = b.build_int_const(c, ValueType::int(32)).unwrap();
+    b.build_int_cmp_operation(x, c, op, ValueType::int(32))
+        .unwrap()
 }
 
 /// `c < x` at `I32`.
 fn c_less(b: &mut FunctionBuilder, c: u64, x: ValueId) -> ValueId {
-    let c = b.build_int_const(c, ValueType::I32).unwrap();
-    b.build_int_cmp_operation(c, x, IntCmpOp::Less, ValueType::I32)
+    let c = b.build_int_const(c, ValueType::int(32)).unwrap();
+    b.build_int_cmp_operation(c, x, IntCmpOp::Less, ValueType::int(32))
         .unwrap()
 }
 
 /// `x + c` at `I32`.
 fn add_c(b: &mut FunctionBuilder, x: ValueId, c: u128) -> ValueId {
-    let c = b.build_int_const(c, ValueType::I32).unwrap();
-    b.build_int_binary_operation(x, c, IntBinaryOp::Add, ValueType::I32)
+    let c = b.build_int_const(c, ValueType::int(32)).unwrap();
+    b.build_int_binary_operation(x, c, IntBinaryOp::Add, ValueType::int(32))
         .unwrap()
 }
 
@@ -327,9 +328,9 @@ fn guard_extraction_bounds_each_edge() {
             Any,
         ),
     ];
-    let mask = ValueType::I32.bit_mask_u128();
+    let mask = ValueType::int(32).bit_mask_u128();
     for &(name, cond, on_true, on_false) in rows {
-        let g = guarded(ValueType::I32, cond, |_, idx| idx);
+        let g = guarded(ValueType::int(32), cond, |_, idx| idx);
         for (edge, node, want) in [
             ("true", g.true_node, on_true),
             ("false", g.false_node, on_false),
@@ -350,7 +351,7 @@ fn guard_extraction_bounds_each_edge() {
 /// [`guarded`] on `idx < bound` at `I32` whose `then` arm returns `idx <op> c`,
 /// the scaled value a table index feeds into its address arithmetic.
 fn guarded_scaled(bound: u64, op: IntBinaryOp, c: u64) -> Guarded {
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     guarded(
         ty,
         |b, idx| cmp_c(b, idx, IntCmpOp::Less, bound),
@@ -382,7 +383,7 @@ fn guard_propagates_through_shift_left() {
 #[test]
 fn guard_propagates_through_a_mask_of_known_zero_bits() {
     let range = |mask: u64| {
-        let ty = ValueType::I32;
+        let ty = ValueType::int(32);
         let g = guarded(
             ty,
             |b, idx| cmp_c(b, idx, IntCmpOp::Less, 4),
@@ -456,14 +457,14 @@ fn build_two_arm_merge(
     let exit = b.create_region_all().unwrap();
     b.set_entry_region_all(entry).unwrap();
 
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     b.set_region(entry);
-    let va = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let va = b.build_int_const(0xDEAD_u64, ValueType::int(64)).unwrap();
     let v = b.build_load(va, rsleigh::VnSpace::RAM, ty).unwrap();
     let other = if second_arm_bounds_v {
         v
     } else {
-        let wa = b.build_int_const(0xBEEF_u64, ValueType::I64).unwrap();
+        let wa = b.build_int_const(0xBEEF_u64, ValueType::int(64)).unwrap();
         b.build_load(wa, rsleigh::VnSpace::RAM, ty).unwrap()
     };
     let ca = b.build_int_const(hi_a, ty).unwrap();
@@ -525,7 +526,7 @@ fn guard_does_not_survive_a_merge_with_an_unbounded_arm() {
     let (f, v, merge) = build_two_arm_merge(8, 6, false);
     let iv = range_at(&f, v, merge);
     assert!(
-        iv.is_top(ValueType::I32.bit_mask_u128()),
+        iv.is_top(ValueType::int(32).bit_mask_u128()),
         "v must stay unbounded: one merge arm does not bound it, got [{},{}]",
         iv.lo,
         iv.hi,
@@ -645,12 +646,14 @@ fn trivial_phi_of_guarded_index_is_bounded() {
 
     b.set_region(entry);
     // A load, so idx carries no KnownBits facts.
-    let dummy = b.build_int_const(0xCAFEu64, ValueType::I64).unwrap();
-    let raw_idx = b.build_load(dummy, VnSpace::RAM, ValueType::I32).unwrap();
+    let dummy = b.build_int_const(0xCAFEu64, ValueType::int(64)).unwrap();
+    let raw_idx = b
+        .build_load(dummy, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
     b.write_variable(&idx_vn, raw_idx).unwrap();
-    let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let bound_c = b.build_int_const(8u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(raw_idx, bound_c, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(raw_idx, bound_c, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, dispatch, exit).unwrap();
 
@@ -686,13 +689,13 @@ fn known_bits_mask_bounds_index_everywhere() {
     b.set_region(entry);
 
     // arg = unconstrained value (load from arbitrary address).
-    let dummy = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    let dummy = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
     let arg = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::int(32))
         .unwrap();
-    let mask = b.build_int_const(7u64, ValueType::I32).unwrap();
+    let mask = b.build_int_const(7u64, ValueType::int(32)).unwrap();
     let idx = b
-        .build_int_binary_operation(arg, mask, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(arg, mask, IntBinaryOp::And, ValueType::int(32))
         .unwrap();
 
     // A trivial branch to `other`, so the range there is checkable too.
@@ -732,18 +735,18 @@ fn known_bits_scaled_index_carries_stride() {
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
 
-    let dummy = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
+    let dummy = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
     let arg = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::int(32))
         .unwrap();
-    let mask = b.build_int_const(7u64, ValueType::I32).unwrap();
+    let mask = b.build_int_const(7u64, ValueType::int(32)).unwrap();
     let idx = b
-        .build_int_binary_operation(arg, mask, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(arg, mask, IntBinaryOp::And, ValueType::int(32))
         .unwrap();
-    let three = b.build_int_const(3u64, ValueType::I32).unwrap();
+    let three = b.build_int_const(3u64, ValueType::int(32)).unwrap();
     // scaled = idx * 8  =>  values {0, 8, 16, ... 56}, low 3 bits known-zero.
     let scaled = b
-        .build_int_binary_operation(idx, three, IntBinaryOp::ShiftLeft, ValueType::I32)
+        .build_int_binary_operation(idx, three, IntBinaryOp::ShiftLeft, ValueType::int(32))
         .unwrap();
 
     b.build_return(Some(scaled), &[]).unwrap();
@@ -780,12 +783,14 @@ fn unguarded_predecessor_makes_range_top() {
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    let dummy = b.build_int_const(0xBEEFu64, ValueType::I64).unwrap();
-    let raw_idx = b.build_load(dummy, VnSpace::RAM, ValueType::I32).unwrap();
+    let dummy = b.build_int_const(0xBEEFu64, ValueType::int(64)).unwrap();
+    let raw_idx = b
+        .build_load(dummy, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
     b.write_variable(&idx_vn, raw_idx).unwrap();
-    let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let bound_c = b.build_int_const(8u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(raw_idx, bound_c, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(raw_idx, bound_c, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, guarded, unguarded).unwrap();
 
@@ -809,7 +814,7 @@ fn unguarded_predecessor_makes_range_top() {
     let dispatch_node = f.graph().producer(dispatch_ctrl);
 
     let iv = range_at(&f, phi_idx, dispatch_node);
-    let type_mask = ValueType::I32.bit_mask_u128();
+    let type_mask = ValueType::int(32).bit_mask_u128();
     assert!(
         iv.is_top(type_mask),
         "phi with one unguarded predecessor must produce top, got [{}, {}]",
@@ -828,12 +833,12 @@ fn unguarded_predecessor_makes_range_top() {
 #[test]
 fn sless_guard_with_known_zero_sign_bit_bounds_index() {
     fn low_byte(b: &mut FunctionBuilder, idx: ValueId) -> ValueId {
-        let mask = b.build_int_const(0xFFu64, ValueType::I32).unwrap();
-        b.build_int_binary_operation(idx, mask, IntBinaryOp::And, ValueType::I32)
+        let mask = b.build_int_const(0xFFu64, ValueType::int(32)).unwrap();
+        b.build_int_binary_operation(idx, mask, IntBinaryOp::And, ValueType::int(32))
             .unwrap()
     }
     let g = guarded(
-        ValueType::I32,
+        ValueType::int(32),
         |b, idx| {
             let v = low_byte(b, idx);
             cmp_c(b, v, IntCmpOp::Sless, 8)
@@ -858,9 +863,9 @@ fn no_constraint_is_top() {
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
 
-    let dummy = b.build_int_const(0x4242u64, ValueType::I64).unwrap();
+    let dummy = b.build_int_const(0x4242u64, ValueType::int(64)).unwrap();
     let idx = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::int(32))
         .unwrap();
     b.build_return(Some(idx), &[]).unwrap();
 
@@ -869,7 +874,7 @@ fn no_constraint_is_top() {
     let entry_node = f.entry();
 
     let iv = range_at(&f, idx, entry_node);
-    let type_mask = ValueType::I32.bit_mask_u128();
+    let type_mask = ValueType::int(32).bit_mask_u128();
     assert!(
         iv.is_top(type_mask),
         "unconstrained load must produce top, got [{}, {}]",
@@ -902,16 +907,18 @@ fn sibling_region_not_dominated_is_top() {
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    let dummy = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
-    let raw_idx = b.build_load(dummy, VnSpace::RAM, ValueType::I32).unwrap();
+    let dummy = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
+    let raw_idx = b
+        .build_load(dummy, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
     b.write_variable(&idx_vn, raw_idx).unwrap();
     let flag = b.build_boolean_const(true);
     b.build_if(flag, left, right).unwrap();
 
     b.set_region(left);
-    let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let bound_c = b.build_int_const(8u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(raw_idx, bound_c, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(raw_idx, bound_c, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, dispatch, guarded_exit).unwrap();
 
@@ -960,7 +967,7 @@ fn sibling_region_not_dominated_is_top() {
     );
 
     let iv_right = ranges.range_of(raw_idx, right_node);
-    let type_mask = ValueType::I32.bit_mask_u128();
+    let type_mask = ValueType::int(32).bit_mask_u128();
     assert!(
         iv_right.is_top(type_mask),
         "sibling region must be top, got [{}, {}]",
@@ -988,7 +995,7 @@ fn cyclic_phi_is_top() {
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    let zero = b.build_int_const(0u64, ValueType::int(32)).unwrap();
     b.write_variable(&idx_vn, zero).unwrap();
     b.build_branch(header).unwrap();
 
@@ -996,16 +1003,16 @@ fn cyclic_phi_is_top() {
     b.set_region(header);
     let header_ctrl = b.region_cur_ctrl(header);
     let idx_phi = b.read_variable(&idx_vn).unwrap();
-    let bound = b.build_int_const(16u64, ValueType::I32).unwrap();
+    let bound = b.build_int_const(16u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(idx_phi, bound, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx_phi, bound, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, body, loop_exit).unwrap();
 
     b.set_region(body);
-    let one = b.build_int_const(1u64, ValueType::I32).unwrap();
+    let one = b.build_int_const(1u64, ValueType::int(32)).unwrap();
     let idx_next = b
-        .build_int_binary_operation(idx_phi, one, IntBinaryOp::Add, ValueType::I32)
+        .build_int_binary_operation(idx_phi, one, IntBinaryOp::Add, ValueType::int(32))
         .unwrap();
     b.write_variable(&idx_vn, idx_next).unwrap();
     b.build_branch(header).unwrap();
@@ -1018,7 +1025,7 @@ fn cyclic_phi_is_top() {
     let header_node = f.graph().producer(header_ctrl);
 
     let iv = range_at(&f, idx_phi, header_node);
-    let type_mask = ValueType::I32.bit_mask_u128();
+    let type_mask = ValueType::int(32).bit_mask_u128();
     assert!(
         iv.is_top(type_mask),
         "cyclic phi must yield top, got [{}, {}]",
@@ -1048,7 +1055,7 @@ fn back_edge_guard_bounds_a_masked_loop_index() {
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    let zero = b.build_int_const(0u64, ValueType::int(32)).unwrap();
     b.write_variable(&idx_vn, zero).unwrap();
     b.build_branch(header).unwrap();
 
@@ -1058,16 +1065,18 @@ fn back_edge_guard_bounds_a_masked_loop_index() {
     b.build_branch(body).unwrap();
 
     b.set_region(body);
-    let addr = b.build_int_const(0xDEADu64, ValueType::I64).unwrap();
-    let raw = b.build_load(addr, VnSpace::RAM, ValueType::I32).unwrap();
-    let seven = b.build_int_const(7u64, ValueType::I32).unwrap();
+    let addr = b.build_int_const(0xDEADu64, ValueType::int(64)).unwrap();
+    let raw = b
+        .build_load(addr, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
+    let seven = b.build_int_const(7u64, ValueType::int(32)).unwrap();
     let masked = b
-        .build_int_binary_operation(raw, seven, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(raw, seven, IntBinaryOp::And, ValueType::int(32))
         .unwrap();
     b.write_variable(&idx_vn, masked).unwrap();
-    let six = b.build_int_const(6u64, ValueType::I32).unwrap();
+    let six = b.build_int_const(6u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(masked, six, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(masked, six, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, header, loop_exit).unwrap();
 
@@ -1112,8 +1121,8 @@ fn phi_of_phi_cycle_terminates_top() {
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
-    let one_seed = b.build_int_const(1u64, ValueType::I32).unwrap();
+    let zero = b.build_int_const(0u64, ValueType::int(32)).unwrap();
+    let one_seed = b.build_int_const(1u64, ValueType::int(32)).unwrap();
     b.write_variable(&a_vn, zero).unwrap();
     b.write_variable(&b_vn, one_seed).unwrap();
     b.build_branch(header).unwrap();
@@ -1122,9 +1131,9 @@ fn phi_of_phi_cycle_terminates_top() {
     b.set_region(header);
     let header_ctrl = b.region_cur_ctrl(header);
     let phi_a = b.read_variable(&a_vn).unwrap();
-    let bound = b.build_int_const(16u64, ValueType::I32).unwrap();
+    let bound = b.build_int_const(16u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(phi_a, bound, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(phi_a, bound, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, body, loop_exit).unwrap();
 
@@ -1145,7 +1154,7 @@ fn phi_of_phi_cycle_terminates_top() {
     let header_node = f.graph().producer(header_ctrl);
 
     let iv = range_at(&f, phi_a, header_node);
-    let type_mask = ValueType::I32.bit_mask_u128();
+    let type_mask = ValueType::int(32).bit_mask_u128();
     assert!(
         iv.is_top(type_mask),
         "phi-of-phi cycle must yield top, got [{}, {}]",
@@ -1170,20 +1179,20 @@ fn nested_guards_intersect_at_inner_region() {
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
+    let dummy = b.build_int_const(0xF00Du64, ValueType::int(64)).unwrap();
     let idx = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::int(32))
         .unwrap();
-    let bound16 = b.build_int_const(16u64, ValueType::I32).unwrap();
+    let bound16 = b.build_int_const(16u64, ValueType::int(32)).unwrap();
     let cond16 = b
-        .build_int_cmp_operation(idx, bound16, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx, bound16, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond16, outer_guard, exit).unwrap();
 
     b.set_region(outer_guard);
-    let bound8 = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let bound8 = b.build_int_const(8u64, ValueType::int(32)).unwrap();
     let cond8 = b
-        .build_int_cmp_operation(idx, bound8, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx, bound8, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond8, dispatch, mid_exit).unwrap();
 
@@ -1235,7 +1244,7 @@ fn nested_guards_intersect_at_inner_region() {
         iv.hi
     );
     assert_eq!(
-        upper_exclusive(iv, ValueType::I32.bit_mask_u128()),
+        upper_exclusive(iv, ValueType::int(32).bit_mask_u128()),
         Some(8),
         "upper_exclusive must be Some(8)"
     );
@@ -1259,17 +1268,17 @@ fn two_sibling_guard_regions_give_independent_bounds() {
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    let dummy = b.build_int_const(0xCAFEu64, ValueType::I64).unwrap();
+    let dummy = b.build_int_const(0xCAFEu64, ValueType::int(64)).unwrap();
     let idx = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::int(32))
         .unwrap();
     let flag = b.build_boolean_const(true);
     b.build_if(flag, branch_a, branch_b).unwrap();
 
     b.set_region(branch_a);
-    let bound8 = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let bound8 = b.build_int_const(8u64, ValueType::int(32)).unwrap();
     let cond8 = b
-        .build_int_cmp_operation(idx, bound8, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx, bound8, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond8, dispatch_a, sink_a).unwrap();
 
@@ -1280,9 +1289,9 @@ fn two_sibling_guard_regions_give_independent_bounds() {
     b.build_return(Some(idx), &[]).unwrap();
 
     b.set_region(branch_b);
-    let bound16 = b.build_int_const(16u64, ValueType::I32).unwrap();
+    let bound16 = b.build_int_const(16u64, ValueType::int(32)).unwrap();
     let cond16 = b
-        .build_int_cmp_operation(idx, bound16, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx, bound16, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond16, dispatch_b, sink_b).unwrap();
 
@@ -1364,7 +1373,9 @@ fn multi_input_phi_of_constants_keeps_the_arm_spacing() {
     }
     for (i, &arm) in arms.iter().enumerate() {
         b.set_region(arm);
-        let k = b.build_int_const(3 + 5 * i as u64, ValueType::I32).unwrap();
+        let k = b
+            .build_int_const(3 + 5 * i as u64, ValueType::int(32))
+            .unwrap();
         b.write_variable(&idx_vn, k).unwrap();
         b.build_branch(join).unwrap();
     }
@@ -1416,11 +1427,13 @@ fn multi_input_phi_unions_two_distinct_finite_arms() {
     b.build_if(flag, path_a, path_b).unwrap();
 
     b.set_region(path_a);
-    let dummy_a = b.build_int_const(0xAAAAu64, ValueType::I64).unwrap();
-    let load_a = b.build_load(dummy_a, VnSpace::RAM, ValueType::I32).unwrap();
-    let mask7 = b.build_int_const(7u64, ValueType::I32).unwrap();
+    let dummy_a = b.build_int_const(0xAAAAu64, ValueType::int(64)).unwrap();
+    let load_a = b
+        .build_load(dummy_a, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
+    let mask7 = b.build_int_const(7u64, ValueType::int(32)).unwrap();
     let idx_a = b
-        .build_int_binary_operation(load_a, mask7, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(load_a, mask7, IntBinaryOp::And, ValueType::int(32))
         .unwrap();
     b.write_variable(&idx_vn, idx_a).unwrap();
     b.build_branch(join).unwrap();
@@ -1428,11 +1441,13 @@ fn multi_input_phi_unions_two_distinct_finite_arms() {
     // A DISTINCT load, so the join phi is genuinely multi-input and survives
     // PhiCollapse.
     b.set_region(path_b);
-    let dummy_b = b.build_int_const(0xBBBBu64, ValueType::I64).unwrap();
-    let load_b = b.build_load(dummy_b, VnSpace::RAM, ValueType::I32).unwrap();
-    let mask15 = b.build_int_const(15u64, ValueType::I32).unwrap();
+    let dummy_b = b.build_int_const(0xBBBBu64, ValueType::int(64)).unwrap();
+    let load_b = b
+        .build_load(dummy_b, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
+    let mask15 = b.build_int_const(15u64, ValueType::int(32)).unwrap();
     let idx_b = b
-        .build_int_binary_operation(load_b, mask15, IntBinaryOp::And, ValueType::I32)
+        .build_int_binary_operation(load_b, mask15, IntBinaryOp::And, ValueType::int(32))
         .unwrap();
     b.write_variable(&idx_vn, idx_b).unwrap();
     b.build_branch(join).unwrap();
@@ -1462,7 +1477,7 @@ fn multi_input_phi_unions_two_distinct_finite_arms() {
          it must NOT tighten to [0,7] nor widen to top"
     );
     assert!(
-        !iv.is_top(ValueType::I32.bit_mask_u128()),
+        !iv.is_top(ValueType::int(32).bit_mask_u128()),
         "the union of two finite arms must stay finite, not be top"
     );
 }
@@ -1486,8 +1501,10 @@ fn multi_input_phi_output_guard_bounds_index() {
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    let dummy = b.build_int_const(0xDEADu64, ValueType::I64).unwrap();
-    let raw_idx = b.build_load(dummy, VnSpace::RAM, ValueType::I32).unwrap();
+    let dummy = b.build_int_const(0xDEADu64, ValueType::int(64)).unwrap();
+    let raw_idx = b
+        .build_load(dummy, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
     b.write_variable(&idx_vn, raw_idx).unwrap();
     let flag = b.build_boolean_const(true);
     b.build_if(flag, path_a, path_b).unwrap();
@@ -1495,23 +1512,27 @@ fn multi_input_phi_output_guard_bounds_index() {
     // The two arms must carry different SSA values, or the join phi is trivial
     // and `PhiCollapse` removes it, defeating the test.
     b.set_region(path_a);
-    let dummy_a = b.build_int_const(0xAAAAu64, ValueType::I64).unwrap();
-    let idx_a = b.build_load(dummy_a, VnSpace::RAM, ValueType::I32).unwrap();
+    let dummy_a = b.build_int_const(0xAAAAu64, ValueType::int(64)).unwrap();
+    let idx_a = b
+        .build_load(dummy_a, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
     b.write_variable(&idx_vn, idx_a).unwrap();
     b.build_branch(join).unwrap();
 
     // A DISTINCT load, giving the join phi two distinct data inputs.
     b.set_region(path_b);
-    let dummy_b = b.build_int_const(0xBBBBu64, ValueType::I64).unwrap();
-    let idx_b = b.build_load(dummy_b, VnSpace::RAM, ValueType::I32).unwrap();
+    let dummy_b = b.build_int_const(0xBBBBu64, ValueType::int(64)).unwrap();
+    let idx_b = b
+        .build_load(dummy_b, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
     b.write_variable(&idx_vn, idx_b).unwrap();
     b.build_branch(join).unwrap();
 
     b.set_region(join);
     let phi_idx = b.read_variable(&idx_vn).unwrap();
-    let bound_c = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let bound_c = b.build_int_const(8u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(phi_idx, bound_c, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(phi_idx, bound_c, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, dispatch, exit).unwrap();
 
@@ -1598,21 +1619,23 @@ fn join_fails_closed_when_one_predecessor_unguarded() {
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    let dummy = b.build_int_const(0xDEADu64, ValueType::I64).unwrap();
-    let raw_idx = b.build_load(dummy, VnSpace::RAM, ValueType::I32).unwrap();
+    let dummy = b.build_int_const(0xDEADu64, ValueType::int(64)).unwrap();
+    let raw_idx = b
+        .build_load(dummy, VnSpace::RAM, ValueType::int(32))
+        .unwrap();
     b.write_variable(&idx_vn, raw_idx).unwrap();
     // A throwaway comparison, only here to split control.
-    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    let zero = b.build_int_const(0u64, ValueType::int(32)).unwrap();
     let flag = b
-        .build_int_cmp_operation(raw_idx, zero, IntCmpOp::Equal, ValueType::I32)
+        .build_int_cmp_operation(raw_idx, zero, IntCmpOp::Equal, ValueType::int(32))
         .unwrap();
     b.build_if(flag, path_a, path_b).unwrap();
 
     b.set_region(path_a);
     let idx_a = b.read_variable(&idx_vn).unwrap();
-    let four = b.build_int_const(4u64, ValueType::I32).unwrap();
+    let four = b.build_int_const(4u64, ValueType::int(32)).unwrap();
     let cond_a = b
-        .build_int_cmp_operation(idx_a, four, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx_a, four, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond_a, dispatch, exit_a).unwrap();
 
@@ -1632,7 +1655,7 @@ fn join_fails_closed_when_one_predecessor_unguarded() {
     let dispatch_node = f.graph().producer(dispatch_ctrl);
 
     let iv = range_at(&f, phi_idx, dispatch_node);
-    let type_mask = ValueType::I32.bit_mask_u128();
+    let type_mask = ValueType::int(32).bit_mask_u128();
     assert!(
         iv.is_top(type_mask),
         "join with one unguarded predecessor must be top (fail-closed), \
@@ -1661,13 +1684,13 @@ fn guard_into_control_merge_is_not_applied() {
 
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
+    let dummy = b.build_int_const(0xF00Du64, ValueType::int(64)).unwrap();
     let idx = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::int(32))
         .unwrap();
-    let n8 = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let n8 = b.build_int_const(8u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(idx, n8, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx, n8, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     // True edge: guarded (idx < 8 holds); false edge: other (unconstrained).
     b.build_if(cond, guarded, other).unwrap();
@@ -1688,7 +1711,7 @@ fn guard_into_control_merge_is_not_applied() {
     let merge_node = f.graph().producer(merge_ctrl);
 
     let iv = range_at(&f, idx, merge_node);
-    let type_mask = ValueType::I32.bit_mask_u128();
+    let type_mask = ValueType::int(32).bit_mask_u128();
     assert!(
         iv.is_top(type_mask),
         "guard whose edge feeds a control merge must not be applied (soundness gate), \
@@ -1720,13 +1743,13 @@ fn guard_on_edge_into_merge_is_top_below_merge() {
 
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
+    let dummy = b.build_int_const(0xF00Du64, ValueType::int(64)).unwrap();
     let idx = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::int(32))
         .unwrap();
-    let n8 = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let n8 = b.build_int_const(8u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(idx, n8, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx, n8, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     // True edge feeds `merge` DIRECTLY, with no intervening region.
     b.build_if(cond, merge, other).unwrap();
@@ -1743,7 +1766,7 @@ fn guard_on_edge_into_merge_is_top_below_merge() {
     let merge_node = f.graph().producer(merge_ctrl);
 
     let iv = range_at(&f, idx, merge_node);
-    let type_mask = ValueType::I32.bit_mask_u128();
+    let type_mask = ValueType::int(32).bit_mask_u128();
     assert!(
         iv.is_top(type_mask),
         "guard on an If edge feeding a control merge directly must be top at \
@@ -1769,13 +1792,13 @@ fn guard_survives_region_collapse_at_nonregion_consumer() {
 
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64).unwrap();
+    let dummy = b.build_int_const(0xF00Du64, ValueType::int(64)).unwrap();
     let idx = b
-        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(dummy, rsleigh::VnSpace::RAM, ValueType::int(32))
         .unwrap();
-    let n8 = b.build_int_const(8u64, ValueType::I32).unwrap();
+    let n8 = b.build_int_const(8u64, ValueType::int(32)).unwrap();
     let cond = b
-        .build_int_cmp_operation(idx, n8, IntCmpOp::Less, ValueType::I32)
+        .build_int_cmp_operation(idx, n8, IntCmpOp::Less, ValueType::int(32))
         .unwrap();
     b.build_if(cond, dispatch, exit).unwrap();
 
@@ -2055,12 +2078,14 @@ fn range_of_non_integer_value_is_top() {
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    let addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0xDEAD_u64, ValueType::int(64)).unwrap();
     let raw = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
-    let fv = b.build_int_bits_to_float(raw, ValueType::F64).unwrap();
-    let bits = b.build_float_bits_to_int(fv, ValueType::I64).unwrap();
+    let fv = b
+        .build_int_bits_to_float(raw, ValueType::float(64))
+        .unwrap();
+    let bits = b.build_float_bits_to_int(fv, ValueType::int(64)).unwrap();
     b.build_return(Some(bits), &[]).unwrap();
 
     b.set_lift_addr(None);
@@ -2084,18 +2109,18 @@ fn build_guard_fan(k: usize) -> (strider_ir::Function, ValueId, NodeId) {
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+    let dummy_addr = b.build_int_const(0xDEAD_u64, ValueType::int(64)).unwrap();
     let idx = b
-        .build_load(dummy_addr, rsleigh::VnSpace::RAM, ValueType::I32)
+        .build_load(dummy_addr, rsleigh::VnSpace::RAM, ValueType::int(32))
         .unwrap();
     let mut cur = entry;
     for i in 0..k {
         b.set_region(cur);
         let bound = b
-            .build_int_const(1000u64 - i as u64, ValueType::I32)
+            .build_int_const(1000u64 - i as u64, ValueType::int(32))
             .unwrap();
         let cond = b
-            .build_int_cmp_operation(idx, bound, IntCmpOp::Less, ValueType::I32)
+            .build_int_cmp_operation(idx, bound, IntCmpOp::Less, ValueType::int(32))
             .unwrap();
         b.build_if(cond, leaves[i], rest[i]).unwrap();
         b.set_region(leaves[i]);
@@ -2164,14 +2189,14 @@ fn build_guard_sequence(n: usize) -> (strider_ir::Function, Vec<(ValueId, NodeId
     for i in 0..n {
         b.set_region(sites[i]);
         let addr = b
-            .build_int_const(0x1000 + i as u64, ValueType::I64)
+            .build_int_const(0x1000 + i as u64, ValueType::int(64))
             .unwrap();
         let idx = b
-            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
+            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))
             .unwrap();
-        let bound = b.build_int_const(8u64, ValueType::I32).unwrap();
+        let bound = b.build_int_const(8u64, ValueType::int(32)).unwrap();
         let cond = b
-            .build_int_cmp_operation(idx, bound, IntCmpOp::Less, ValueType::I32)
+            .build_int_cmp_operation(idx, bound, IntCmpOp::Less, ValueType::int(32))
             .unwrap();
         b.build_if(cond, sites[i + 1], exits[i]).unwrap();
         b.set_region(exits[i]);
@@ -2179,7 +2204,7 @@ fn build_guard_sequence(n: usize) -> (strider_ir::Function, Vec<(ValueId, NodeId
         values.push(idx);
     }
     b.set_region(sites[n]);
-    let zero = b.build_int_const(0u64, ValueType::I32).unwrap();
+    let zero = b.build_int_const(0u64, ValueType::int(32)).unwrap();
     b.build_return(Some(zero), &[]).unwrap();
     b.set_lift_addr(None);
     let mut f = b.build().unwrap();
@@ -2231,36 +2256,36 @@ fn guard_lookups_over_sequential_sites_cost_linear_total() {
 fn cast_ladder_range(bound: u64, and_mask: Option<u64>) -> Interval {
     // `al`, the value the compare names; built in both arms, it hash-conses.
     fn al_of(b: &mut FunctionBuilder, wide: ValueId) -> ValueId {
-        b.truncate_if_needed(wide, ValueType::I8).unwrap()
+        b.truncate_if_needed(wide, ValueType::int(8)).unwrap()
     }
     let g = guarded(
-        ValueType::I64,
+        ValueType::int(64),
         |b, wide| {
             let al = al_of(b, wide);
-            let bound_c = b.build_int_const(bound, ValueType::I8).unwrap();
-            b.build_int_cmp_operation(al, bound_c, IntCmpOp::Less, ValueType::I8)
+            let bound_c = b.build_int_const(bound, ValueType::int(8)).unwrap();
+            b.build_int_cmp_operation(al, bound_c, IntCmpOp::Less, ValueType::int(8))
                 .unwrap()
         },
         |b, wide| {
             // zext -> trunc -> zext, then optionally a mask, then the address scale.
             let al = al_of(b, wide);
             let z1 = b
-                .extend_if_needed(al, ValueType::I64, ExtendOp::ZeroExtend)
+                .extend_if_needed(al, ValueType::int(64), ExtendOp::ZeroExtend)
                 .unwrap();
-            let t1 = b.truncate_if_needed(z1, ValueType::I32).unwrap();
+            let t1 = b.truncate_if_needed(z1, ValueType::int(32)).unwrap();
             let z2 = b
-                .extend_if_needed(t1, ValueType::I64, ExtendOp::ZeroExtend)
+                .extend_if_needed(t1, ValueType::int(64), ExtendOp::ZeroExtend)
                 .unwrap();
             let idx = match and_mask {
                 None => z2,
                 Some(m) => {
-                    let mc = b.build_int_const(m, ValueType::I64).unwrap();
-                    b.build_int_binary_operation(z2, mc, IntBinaryOp::And, ValueType::I64)
+                    let mc = b.build_int_const(m, ValueType::int(64)).unwrap();
+                    b.build_int_binary_operation(z2, mc, IntBinaryOp::And, ValueType::int(64))
                         .unwrap()
                 }
             };
-            let four = b.build_int_const(4_u64, ValueType::I64).unwrap();
-            b.build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::I64)
+            let four = b.build_int_const(4_u64, ValueType::int(64)).unwrap();
+            b.build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::int(64))
                 .unwrap()
         },
     );
@@ -2302,19 +2327,21 @@ fn deep_phi_chain_range(n: usize) -> Interval {
     let entry = b.create_region_all().unwrap();
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
-    let zero = b.build_int_const(0_u64, ValueType::I32).unwrap();
+    let zero = b.build_int_const(0_u64, ValueType::int(32)).unwrap();
     b.write_variable(&var, zero).unwrap();
     for i in 0..n {
         let assign = b.create_region_all().unwrap();
         let merge = b.create_region_all().unwrap();
         let c = b.read_variable(&cvar).unwrap();
-        let k = b.build_int_const(i as u64 + 1, ValueType::I32).unwrap();
+        let k = b.build_int_const(i as u64 + 1, ValueType::int(32)).unwrap();
         let cond = b
-            .build_int_cmp_operation(c, k, IntCmpOp::Less, ValueType::I32)
+            .build_int_cmp_operation(c, k, IntCmpOp::Less, ValueType::int(32))
             .unwrap();
         b.build_if(cond, assign, merge).unwrap();
         b.set_region(assign);
-        let kv = b.build_int_const((i % 7) as u64, ValueType::I32).unwrap();
+        let kv = b
+            .build_int_const((i % 7) as u64, ValueType::int(32))
+            .unwrap();
         b.write_variable(&var, kv).unwrap();
         b.build_branch(merge).unwrap();
         b.set_region(merge);

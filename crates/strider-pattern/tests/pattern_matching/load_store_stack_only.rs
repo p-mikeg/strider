@@ -13,8 +13,8 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let mut t = Tb::empty();
     let addr_stack = t.u64(0x1000);
     let addr_heap = t.u64(0x2000);
-    let v_stack = t.load_ram(addr_stack, ValueType::I64);
-    let v_heap = t.load_ram(addr_heap, ValueType::I64);
+    let v_stack = t.load_ram(addr_stack, ValueType::int(64));
+    let v_heap = t.load_ram(addr_heap, ValueType::int(64));
     let sum = t.add(v_stack, v_heap);
     let mut function = t.ret_val(sum);
 
@@ -61,7 +61,7 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let data = t.u64(0xAB);
     t.store_ram(addr_stack, data);
     t.store_ram(addr_heap, data);
-    let v = t.load_ram(addr_stack, ValueType::I64);
+    let v = t.load_ram(addr_stack, ValueType::int(64));
     let mut function = t.ret_val(v);
 
     let stores: Vec<NodeId> = function
@@ -104,9 +104,9 @@ fn loads_stack_heap_plain() -> (strider_ir::Function, NodeId, NodeId, NodeId) {
     let a_stack = t.u64(0x1000);
     let a_heap = t.u64(0x2000);
     let a_plain = t.u64(0x3000);
-    let v0 = t.load_ram(a_stack, ValueType::I64);
-    let v1 = t.load_ram(a_heap, ValueType::I64);
-    let v2 = t.load_ram(a_plain, ValueType::I64);
+    let v0 = t.load_ram(a_stack, ValueType::int(64));
+    let v1 = t.load_ram(a_heap, ValueType::int(64));
+    let v2 = t.load_ram(a_plain, ValueType::int(64));
     let s0 = t.add(v0, v1);
     let sum = t.add(s0, v2);
     let mut function = t.ret_val(sum);
@@ -280,7 +280,7 @@ fn filter_composes_with_stack_only_rather_than_replacing_it() {
 fn non_stack_rejects_an_undecomposed_access() {
     let mut t = Tb::empty();
     let addr = t.u64(0x1000);
-    let v = t.load_ram(addr, ValueType::I64);
+    let v = t.load_ram(addr, ValueType::int(64));
     let function = t.ret_val(v);
     let matcher = Matcher::new(&function);
     assert!(

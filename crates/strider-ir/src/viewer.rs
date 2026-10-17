@@ -464,10 +464,10 @@ mod tests {
         b.set_entry_region_all(region).expect("set_entry_region");
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let one = b.build_int_const(1u64, ValueType::I64).unwrap();
-        let two = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let two = b.build_int_const(2u64, ValueType::int(64)).unwrap();
         let add = b
-            .build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         let add_node = b.producer(add);
         b.build_return(Some(add), &[]).unwrap();

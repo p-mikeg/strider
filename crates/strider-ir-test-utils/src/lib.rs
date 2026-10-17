@@ -231,11 +231,11 @@ impl RegisterSet {
         b.build_if(cond, t, f)?;
 
         b.set_region(t);
-        let one = b.build_int_const(1u64, ValueType::I64)?;
+        let one = b.build_int_const(1u64, ValueType::int(64))?;
         b.build_return(Some(one), &[])?;
 
         b.set_region(f);
-        let two = b.build_int_const(2u64, ValueType::I64)?;
+        let two = b.build_int_const(2u64, ValueType::int(64))?;
         b.build_return(Some(two), &[])?;
         b.set_lift_addr(None);
 
@@ -637,16 +637,16 @@ pub fn mem_phi_with_two_stores() -> Function {
 
     for (region, val) in [(region_t, 1u64), (region_f, 2u64)] {
         b.set_region(region);
-        let addr = b.build_int_const(0x40u64, ValueType::I64).unwrap();
-        let data = b.build_int_const(val, ValueType::I64).unwrap();
+        let addr = b.build_int_const(0x40u64, ValueType::int(64)).unwrap();
+        let data = b.build_int_const(val, ValueType::int(64)).unwrap();
         b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
         b.build_branch(join).unwrap();
     }
 
     b.set_region(join);
-    let addr = b.build_int_const(0x48u64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x48u64, ValueType::int(64)).unwrap();
     let loaded = b
-        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
         .unwrap();
     b.build_return(Some(loaded), &[]).unwrap();
     b.set_lift_addr(None);

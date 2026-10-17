@@ -31,11 +31,11 @@ fn run(function: &mut Function) {
 /// Builds `store [sp-4] = 0x42; load [sp-4]; return loaded`.
 fn stack_store_load_return(sp: rsleigh::Vn) -> Function {
     make_sp_fn(sp, |b, sp_v| {
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr = b.build_sub_as_add_neg(sp_v, four, ValueType::I32)?;
-        let data = b.build_int_const(0x42u64, ValueType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::int(32))?;
+        let addr = b.build_sub_as_add_neg(sp_v, four, ValueType::int(32))?;
+        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         b.build_return(Some(loaded), &[])?;
         Ok(())
@@ -71,11 +71,11 @@ fn sp_relative_store_and_load_get_offset_stamped() {
 fn non_sp_relative_store_leaves_side_table_untouched() {
     let sp = stack_vn_x86();
     let mut f = make_sp_fn(sp, |b, _sp_v| {
-        let addr = b.build_int_const(0x1000u64, ValueType::I32)?;
-        let data = b.build_int_const(0x42u64, ValueType::I32)?;
+        let addr = b.build_int_const(0x1000u64, ValueType::int(32))?;
+        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let zero = b.build_int_const(0u64, ValueType::I32)?;
+        let zero = b.build_int_const(0u64, ValueType::int(32))?;
         b.build_return(Some(zero), &[])?;
         Ok(())
     })
@@ -92,12 +92,13 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
     let sp = stack_vn_x86();
     let mut f = make_sp_fn(sp, |b, sp_v| {
         // `and $0xfffffff8, %esp`, then a store at that aligned base.
-        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::I32)?;
-        let aligned = b.build_int_binary_operation(sp_v, mask, IntBinaryOp::And, ValueType::I32)?;
-        let data = b.build_int_const(0x42u64, ValueType::I32)?;
+        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
+        let aligned =
+            b.build_int_binary_operation(sp_v, mask, IntBinaryOp::And, ValueType::int(32))?;
+        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(aligned, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let zero = b.build_int_const(0u64, ValueType::I32)?;
+        let zero = b.build_int_const(0u64, ValueType::int(32))?;
         b.build_return(Some(zero), &[])?;
         Ok(())
     })
@@ -129,16 +130,16 @@ fn alignment_masked_base_store_is_stamped_with_aligned_base() {
 fn nested_add_chain_stamps_summed_offset() {
     let sp = stack_vn_x86();
     let mut f = make_sp_fn(sp, |b, sp_v| {
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
-        let sixteen = b.build_int_const(16u64, ValueType::I32)?;
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let a1 = b.build_int_binary_operation(sp_v, eight, IntBinaryOp::Add, ValueType::I32)?;
-        let a2 = b.build_int_binary_operation(a1, sixteen, IntBinaryOp::Add, ValueType::I32)?;
-        let addr = b.build_sub_as_add_neg(a2, four, ValueType::I32)?;
-        let data = b.build_int_const(0x42u64, ValueType::I32)?;
+        let eight = b.build_int_const(8u64, ValueType::int(32))?;
+        let sixteen = b.build_int_const(16u64, ValueType::int(32))?;
+        let four = b.build_int_const(4u64, ValueType::int(32))?;
+        let a1 = b.build_int_binary_operation(sp_v, eight, IntBinaryOp::Add, ValueType::int(32))?;
+        let a2 = b.build_int_binary_operation(a1, sixteen, IntBinaryOp::Add, ValueType::int(32))?;
+        let addr = b.build_sub_as_add_neg(a2, four, ValueType::int(32))?;
+        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let zero = b.build_int_const(0u64, ValueType::I32)?;
+        let zero = b.build_int_const(0u64, ValueType::int(32))?;
         b.build_return(Some(zero), &[])?;
         Ok(())
     })
@@ -159,14 +160,14 @@ fn nested_add_chain_stamps_summed_offset() {
 fn nested_chain_with_negative_net_offset_stamps_negative() {
     let sp = stack_vn_x86();
     let mut f = make_sp_fn(sp, |b, sp_v| {
-        let eight = b.build_int_const(8u64, ValueType::I32)?;
-        let twelve = b.build_int_const(12u64, ValueType::I32)?;
-        let a1 = b.build_int_binary_operation(sp_v, eight, IntBinaryOp::Add, ValueType::I32)?;
-        let addr = b.build_sub_as_add_neg(a1, twelve, ValueType::I32)?;
-        let data = b.build_int_const(0x42u64, ValueType::I32)?;
+        let eight = b.build_int_const(8u64, ValueType::int(32))?;
+        let twelve = b.build_int_const(12u64, ValueType::int(32))?;
+        let a1 = b.build_int_binary_operation(sp_v, eight, IntBinaryOp::Add, ValueType::int(32))?;
+        let addr = b.build_sub_as_add_neg(a1, twelve, ValueType::int(32))?;
+        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let zero = b.build_int_const(0u64, ValueType::I32)?;
+        let zero = b.build_int_const(0u64, ValueType::int(32))?;
         b.build_return(Some(zero), &[])?;
         Ok(())
     })

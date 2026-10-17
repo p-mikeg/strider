@@ -304,9 +304,9 @@ mod tests {
     /// `fn() -> u64 { return Add(11, 13); }`.
     fn add_two_consts() -> strider_ir::Function {
         make_empty_fn(|b| {
-            let a = b.build_int_const(11u64, ValueType::I64)?;
-            let bb = b.build_int_const(13u64, ValueType::I64)?;
-            b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::I64)
+            let a = b.build_int_const(11u64, ValueType::int(64))?;
+            let bb = b.build_int_const(13u64, ValueType::int(64))?;
+            b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::int(64))
         })
         .unwrap()
     }
@@ -353,11 +353,12 @@ mod tests {
         // `Add(Add(1,2), 3)`: the outer consumes the inner. With
         // propagate=false each Add is visited once, at seed time.
         let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(1u64, ValueType::I64)?;
-            let bb = b.build_int_const(2u64, ValueType::I64)?;
-            let c = b.build_int_const(3u64, ValueType::I64)?;
-            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::I64)?;
-            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::I64)
+            let a = b.build_int_const(1u64, ValueType::int(64))?;
+            let bb = b.build_int_const(2u64, ValueType::int(64))?;
+            let c = b.build_int_const(3u64, ValueType::int(64))?;
+            let inner =
+                b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::int(64))?;
+            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::int(64))
         })
         .unwrap();
         let pass = ScriptedPass::<false>::new(match_add, true);
@@ -371,11 +372,12 @@ mod tests {
     #[test]
     fn run_peephole_with_propagate_true_reenqueues_consumers() {
         let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(1u64, ValueType::I64)?;
-            let bb = b.build_int_const(2u64, ValueType::I64)?;
-            let c = b.build_int_const(3u64, ValueType::I64)?;
-            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::I64)?;
-            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::I64)
+            let a = b.build_int_const(1u64, ValueType::int(64))?;
+            let bb = b.build_int_const(2u64, ValueType::int(64))?;
+            let c = b.build_int_const(3u64, ValueType::int(64))?;
+            let inner =
+                b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::int(64))?;
+            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::int(64))
         })
         .unwrap();
         let pass = ScriptedPass::<true>::new(match_add, true);
@@ -422,11 +424,12 @@ mod tests {
     fn run_peephole_skips_a_seed_killed_earlier_in_the_sweep() {
         use cranelift_entity::EntityRef;
         let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(1u64, ValueType::I64)?;
-            let bb = b.build_int_const(2u64, ValueType::I64)?;
-            let c = b.build_int_const(3u64, ValueType::I64)?;
-            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::I64)?;
-            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::I64)
+            let a = b.build_int_const(1u64, ValueType::int(64))?;
+            let bb = b.build_int_const(2u64, ValueType::int(64))?;
+            let c = b.build_int_const(3u64, ValueType::int(64))?;
+            let inner =
+                b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::int(64))?;
+            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::int(64))
         })
         .unwrap();
         let outer = fg.producer(crate::test_support::return_value(fg.graph()).unwrap());

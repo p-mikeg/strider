@@ -196,10 +196,16 @@ mod eval_helper_tests {
     /// `get_signed_int`, not in the helpers themselves.
     #[test]
     fn width_past_the_u128_carrier_does_not_fold() {
-        assert_eq!(eval_lzcount(1, ValueType::I256), None);
-        assert_eq!(eval_popcount(1, ValueType::I256), None);
-        assert_eq!(eval_int_unary(IntUnaryOp::Neg, 1, ValueType::I512), None);
-        assert_eq!(eval_sign_extend(1, ValueType::I256, ValueType::I512), None);
+        assert_eq!(eval_lzcount(1, ValueType::int(256)), None);
+        assert_eq!(eval_popcount(1, ValueType::int(256)), None);
+        assert_eq!(
+            eval_int_unary(IntUnaryOp::Neg, 1, ValueType::int(512)),
+            None
+        );
+        assert_eq!(
+            eval_sign_extend(1, ValueType::int(256), ValueType::int(512)),
+            None
+        );
     }
 
     /// Sleigh's `OpBehaviorIntLeft` returns 0 once the amount reaches the
@@ -207,7 +213,7 @@ mod eval_helper_tests {
     #[test]
     fn an_out_of_range_shift_amount_saturates_rather_than_wrapping() {
         assert_eq!(
-            eval_int_binary(IntBinaryOp::ShiftLeft, 1, 0x100, ValueType::I8),
+            eval_int_binary(IntBinaryOp::ShiftLeft, 1, 0x100, ValueType::int(8)),
             Some(0)
         );
     }
@@ -215,7 +221,7 @@ mod eval_helper_tests {
     #[test]
     fn unary_neg_masks_to_width() {
         assert_eq!(
-            eval_int_unary(IntUnaryOp::Neg, 1, ValueType::I8),
+            eval_int_unary(IntUnaryOp::Neg, 1, ValueType::int(8)),
             Some(0xFF)
         );
     }
@@ -223,19 +229,19 @@ mod eval_helper_tests {
     #[test]
     fn sign_extend_i8_to_i32() {
         assert_eq!(
-            eval_sign_extend(0x80, ValueType::I8, ValueType::I32),
+            eval_sign_extend(0x80, ValueType::int(8), ValueType::int(32)),
             Some(0xFFFF_FF80)
         );
     }
 
     #[test]
     fn popcount_masks_input_width() {
-        assert_eq!(eval_popcount(0x1FF, ValueType::I8), Some(8));
+        assert_eq!(eval_popcount(0x1FF, ValueType::int(8)), Some(8));
     }
 
     #[test]
     fn lzcount_zero_is_width_and_msb_is_zero() {
-        assert_eq!(eval_lzcount(0, ValueType::I8), Some(8));
-        assert_eq!(eval_lzcount(0x80, ValueType::I8), Some(0));
+        assert_eq!(eval_lzcount(0, ValueType::int(8)), Some(8));
+        assert_eq!(eval_lzcount(0x80, ValueType::int(8)), Some(0));
     }
 }

@@ -18,12 +18,12 @@ fn replace_value_absorbs_fingerprint_and_redirects_uses() {
         .expect("build_fn_single_region");
 
     b.set_lift_addr(Some(0xAA));
-    let old_value = b.build_int_const(10u64, ValueType::I64).unwrap();
+    let old_value = b.build_int_const(10u64, ValueType::int(64)).unwrap();
     b.set_lift_addr(Some(0xBB));
-    let new_value = b.build_int_const(20u64, ValueType::I64).unwrap();
+    let new_value = b.build_int_const(20u64, ValueType::int(64)).unwrap();
     // Add(old, old): two uses of old_value.
     let sink = b
-        .build_int_binary_operation(old_value, old_value, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(old_value, old_value, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(sink), &[]).unwrap();
     b.set_lift_addr(None);
@@ -70,9 +70,9 @@ fn replace_value_no_uses_returns_false() {
 
     // old is wired to nothing; only new_value is used, by the Return.
     b.set_lift_addr(Some(0xAA));
-    let old_value = b.build_int_const(1u64, ValueType::I64).unwrap();
+    let old_value = b.build_int_const(1u64, ValueType::int(64)).unwrap();
     b.set_lift_addr(Some(0xBB));
-    let new_value = b.build_int_const(2u64, ValueType::I64).unwrap();
+    let new_value = b.build_int_const(2u64, ValueType::int(64)).unwrap();
     b.build_return(Some(new_value), &[]).unwrap();
     b.set_lift_addr(None);
     let mut function = b.build().unwrap();
@@ -114,12 +114,12 @@ fn remove_region_predecessors_strips_ctrl_and_phi_slot() {
     b.build_if(cond, true_r, false_r).unwrap();
 
     b.set_region(true_r);
-    let v_t = b.build_int_const(1u64, ValueType::I64).unwrap();
+    let v_t = b.build_int_const(1u64, ValueType::int(64)).unwrap();
     b.write_variable(&var, v_t).unwrap();
     b.build_branch(join).unwrap();
 
     b.set_region(false_r);
-    let v_f = b.build_int_const(2u64, ValueType::I64).unwrap();
+    let v_f = b.build_int_const(2u64, ValueType::int(64)).unwrap();
     b.write_variable(&var, v_f).unwrap();
     b.build_branch(join).unwrap();
 
@@ -178,17 +178,17 @@ use strider_ir::IntUnaryOp;
 fn clean_recursively_culls_orphaned_operands() {
     let mut b = RegisterSet::new().build_fn_single_region().unwrap();
     b.set_lift_addr(Some(0x10));
-    let k = b.build_int_const(5u64, ValueType::I64).unwrap();
-    let k2 = b.build_int_const(6u64, ValueType::I64).unwrap();
+    let k = b.build_int_const(5u64, ValueType::int(64)).unwrap();
+    let k2 = b.build_int_const(6u64, ValueType::int(64)).unwrap();
     let neg = b
-        .build_int_unary_operation(k, IntUnaryOp::Neg, ValueType::I64)
+        .build_int_unary_operation(k, IntUnaryOp::Neg, ValueType::int(64))
         .unwrap();
     let add = b
-        .build_int_binary_operation(neg, k2, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(neg, k2, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     // Return a different live value so the cone above is orphaned once
     // `add` is killed.
-    let ret_val = b.build_int_const(99u64, ValueType::I64).unwrap();
+    let ret_val = b.build_int_const(99u64, ValueType::int(64)).unwrap();
     b.build_return(Some(ret_val), &[]).unwrap();
     b.set_lift_addr(None);
     let mut function = b.build().unwrap();
@@ -218,9 +218,9 @@ fn kill_node_culls_repeated_operand() {
     b.set_lift_addr(Some(0x10));
     // One `k` fed into BOTH operands, so the add holds the same
     // `ValueId` twice.
-    let k = b.build_int_const(5u64, ValueType::I64).unwrap();
+    let k = b.build_int_const(5u64, ValueType::int(64)).unwrap();
     let add = b
-        .build_int_binary_operation(k, k, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(k, k, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     // Returning the add keeps `k` entry-reachable, so `cull_dead` leaves
     // it alone and the test exercises the manual `kill_node` path.
@@ -249,13 +249,13 @@ fn kill_node_culls_repeated_operand() {
 fn clean_keeps_shared_operand_with_another_live_use() {
     let mut b = RegisterSet::new().build_fn_single_region().unwrap();
     b.set_lift_addr(Some(0x10));
-    let k = b.build_int_const(7u64, ValueType::I64).unwrap();
-    let other = b.build_int_const(8u64, ValueType::I64).unwrap();
+    let k = b.build_int_const(7u64, ValueType::int(64)).unwrap();
+    let other = b.build_int_const(8u64, ValueType::int(64)).unwrap();
     let add1 = b
-        .build_int_binary_operation(k, other, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(k, other, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     let add2 = b
-        .build_int_binary_operation(k, other, IntBinaryOp::Mul, ValueType::I64)
+        .build_int_binary_operation(k, other, IntBinaryOp::Mul, ValueType::int(64))
         .unwrap();
     // The Return keeps add2, k and other live. add1 shares k/other but
     // feeds nothing reachable.
@@ -303,16 +303,16 @@ fn create_node_marks_live_and_tracks_root() {
     edit.cull_dead();
 
     use strider_ir::IRBuilderExt;
-    let kv = edit.build_int_const(5u64, ValueType::I64).unwrap();
+    let kv = edit.build_int_const(5u64, ValueType::int(64)).unwrap();
     let k = edit.producer(kv);
     assert!(edit.is_live(k), "fresh const is live");
     assert!(edit.is_root(k), "input-less const is a root");
 
-    let k2v = edit.build_int_const(6u64, ValueType::I64).unwrap();
+    let k2v = edit.build_int_const(6u64, ValueType::int(64)).unwrap();
     let add = edit.create_node(
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         [kv, k2v],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     assert!(edit.is_live(add), "fresh Add is live");
     assert!(!edit.is_root(add), "Add has inputs -> not a root");
@@ -350,11 +350,11 @@ fn replace_value_enqueues_old_producer_and_clean_culls_it() {
     let mut b = RegisterSet::new().build_fn_single_region().unwrap();
     b.set_lift_addr(Some(0x10));
     // A non-side-effecting Neg whose value the Return consumes.
-    let k = b.build_int_const(5u64, ValueType::I64).unwrap();
+    let k = b.build_int_const(5u64, ValueType::int(64)).unwrap();
     let old = b
-        .build_int_unary_operation(k, IntUnaryOp::Neg, ValueType::I64)
+        .build_int_unary_operation(k, IntUnaryOp::Neg, ValueType::int(64))
         .unwrap();
-    let new = b.build_int_const(9u64, ValueType::I64).unwrap();
+    let new = b.build_int_const(9u64, ValueType::int(64)).unwrap();
     b.build_return(Some(old), &[]).unwrap();
     b.set_lift_addr(None);
     let mut function = b.build().unwrap();
@@ -372,7 +372,7 @@ fn replace_value_enqueues_old_producer_and_clean_culls_it() {
     );
     // Re-creating it dedups back to the same node, which re-enters the
     // live set.
-    let new_v: ValueId = edit.build_int_const(9u64, ValueType::I64).unwrap();
+    let new_v: ValueId = edit.build_int_const(9u64, ValueType::int(64)).unwrap();
     let new_node = edit.producer(new_v);
     assert!(edit.is_live(new_node), "re-made new const is live");
 
@@ -391,10 +391,10 @@ fn replace_value_enqueues_old_producer_and_clean_culls_it() {
 fn live_of_kind_filters_without_walking() {
     let mut b = RegisterSet::new().build_fn_single_region().unwrap();
     b.set_lift_addr(Some(0x10));
-    let k1 = b.build_int_const(11u64, ValueType::I64).unwrap();
-    let k2 = b.build_int_const(22u64, ValueType::I64).unwrap();
+    let k1 = b.build_int_const(11u64, ValueType::int(64)).unwrap();
+    let k2 = b.build_int_const(22u64, ValueType::int(64)).unwrap();
     let add = b
-        .build_int_binary_operation(k1, k2, IntBinaryOp::Add, ValueType::I64)
+        .build_int_binary_operation(k1, k2, IntBinaryOp::Add, ValueType::int(64))
         .unwrap();
     b.build_return(Some(add), &[]).unwrap();
     b.set_lift_addr(None);

@@ -27,9 +27,9 @@ fn load_fold_absorbs_address_fingerprint() -> Result<()> {
         // the sentinel, so ADDR_ADDR on the folded IntConst can only have
         // come from the address cone.
         b.set_lift_addr(Some(ADDR_ADDR));
-        let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+        let addr = b.build_int_const(0x1000u64, ValueType::int(64))?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
     })?;
 
     let rom = test_rom();
@@ -54,8 +54,8 @@ fn load_fold_absorbs_address_fingerprint() -> Result<()> {
 #[test]
 fn load_non_rom_addr_no_change() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0xDEADu64, ValueType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        let addr = b.build_int_const(0xDEADu64, ValueType::int(64))?;
+        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
     })?;
     let rom = test_rom();
     assert!(
@@ -74,11 +74,15 @@ fn load_non_rom_addr_no_change() -> Result<()> {
 fn load_non_const_addr_no_change() -> Result<()> {
     let mut fg = make_fn(|b| {
         // `LoadReadOnly` runs alone below, so `0x1000 + 0` stays an Add.
-        let base = b.build_int_const(0x1000u64, ValueType::I64)?;
-        let off = b.build_int_const(0u64, ValueType::I64)?;
-        let addr =
-            b.build_int_binary_operation(base, off, strider_ir::IntBinaryOp::Add, ValueType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        let base = b.build_int_const(0x1000u64, ValueType::int(64))?;
+        let off = b.build_int_const(0u64, ValueType::int(64))?;
+        let addr = b.build_int_binary_operation(
+            base,
+            off,
+            strider_ir::IntBinaryOp::Add,
+            ValueType::int(64),
+        )?;
+        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
     })?;
     let rom = test_rom();
     assert!(
@@ -97,8 +101,8 @@ fn const_load_decodes_per_context_endianness() -> Result<()> {
 
     let build = |endian| {
         make_empty_fn_endian(endian, |b| {
-            let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-            b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)
+            let addr = b.build_int_const(0x1000u64, ValueType::int(64))?;
+            b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))
         })
     };
 
@@ -132,8 +136,8 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
 
     let build = |endian| {
         make_empty_fn_endian(endian, |b| {
-            let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-            b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I128)
+            let addr = b.build_int_const(0x1000u64, ValueType::int(64))?;
+            b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(128))
         })
     };
 
@@ -186,9 +190,9 @@ fn const_load_wider_than_16_bytes_does_not_fold() -> Result<()> {
 
     let rom = MockRom::raw_bytes(0x1000, (0..64u8).collect());
 
-    for ty in [ValueType::I256, ValueType::I512] {
+    for ty in [ValueType::int(256), ValueType::int(512)] {
         let mut fg = make_fn(|b| {
-            let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
+            let addr = b.build_int_const(0x1000u64, ValueType::int(64))?;
             b.build_load(addr, rsleigh::VnSpace::RAM, ty)
         })?;
         assert!(
@@ -210,8 +214,8 @@ fn load_oversize_read_no_change() -> Result<()> {
     // The ROM answers only 1-byte reads at 0x1000; the load asks for 8.
     let rom = MockRom::limited(0x1000, 1, 42);
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I64)
+        let addr = b.build_int_const(0x1000u64, ValueType::int(64))?;
+        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
     })?;
     assert!(
         !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::at_floor(Some(&rom)))?
@@ -226,8 +230,8 @@ fn load_oversize_read_no_change() -> Result<()> {
 fn load_other_space_no_change() -> Result<()> {
     let rom = MockRom::always_answer(0xdeadbeef);
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::REGISTER, ValueType::I64)
+        let addr = b.build_int_const(0x1000u64, ValueType::int(64))?;
+        b.build_load(addr, rsleigh::VnSpace::REGISTER, ValueType::int(64))
     })?;
     assert!(
         !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::at_floor(Some(&rom)))?
@@ -239,8 +243,8 @@ fn load_other_space_no_change() -> Result<()> {
 #[test]
 fn load_u8_masks_to_byte() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let addr = b.build_int_const(0x2000u64, ValueType::I64)?;
-        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I8)
+        let addr = b.build_int_const(0x2000u64, ValueType::int(64))?;
+        b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(8))
     })?;
     let rom = test_rom();
     assert!(
@@ -254,11 +258,11 @@ fn load_u8_masks_to_byte() -> Result<()> {
 #[test]
 fn multiple_loads_fold_in_one_pass() -> Result<()> {
     let mut fg = make_fn(|b| {
-        let a1 = b.build_int_const(0x1000u64, ValueType::I64)?;
-        let a2 = b.build_int_const(0x2000u64, ValueType::I64)?;
-        let l1 = b.build_load(a1, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        let l2 = b.build_load(a2, rsleigh::VnSpace::RAM, ValueType::I64)?;
-        b.build_int_binary_operation(l1, l2, strider_ir::IntBinaryOp::Add, ValueType::I64)
+        let a1 = b.build_int_const(0x1000u64, ValueType::int(64))?;
+        let a2 = b.build_int_const(0x2000u64, ValueType::int(64))?;
+        let l1 = b.build_load(a1, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        let l2 = b.build_load(a2, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        b.build_int_binary_operation(l1, l2, strider_ir::IntBinaryOp::Add, ValueType::int(64))
     })?;
     let rom = test_rom();
     assert!(
@@ -282,17 +286,17 @@ fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
 
     // stack-store (SP-4), call 0xCAFE, load 0x1000, return loaded.
     let mut fg = make_sp_fn(sp, |b, sp_v| {
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let stack_addr = b.build_sub_as_add_neg(sp_v, four, ValueType::I32)?;
-        let data = b.build_int_const(0x55u64, ValueType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::int(32))?;
+        let stack_addr = b.build_sub_as_add_neg(sp_v, four, ValueType::int(32))?;
+        let data = b.build_int_const(0x55u64, ValueType::int(32))?;
         b.build_store(stack_addr, data, rsleigh::VnSpace::RAM)?;
 
-        let call_tgt = b.build_int_const(0xCAFEu64, ValueType::I32)?;
+        let call_tgt = b.build_int_const(0xCAFEu64, ValueType::int(32))?;
         b.build_call_cc(call_tgt, None)?;
 
         // Non-SP-rooted, so no side-table entry gets stamped.
-        let rom_addr = b.build_int_const(0x1000u64, ValueType::I64)?;
-        let loaded = b.build_load(rom_addr, rsleigh::VnSpace::RAM, ValueType::I64)?;
+        let rom_addr = b.build_int_const(0x1000u64, ValueType::int(64))?;
+        let loaded = b.build_load(rom_addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         b.build_return(Some(loaded), &[])?;
         Ok(())

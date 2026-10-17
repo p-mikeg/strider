@@ -25,14 +25,14 @@ use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 use crate::test_support::Rng;
 
 pub(crate) const TYPES: &[(u32, ValueType)] = &[
-    (1, ValueType::I8),
-    (2, ValueType::I16),
-    (3, ValueType::I24),
-    (4, ValueType::I32),
-    (5, ValueType::I40),
-    (8, ValueType::I64),
-    (9, ValueType::I72),
-    (16, ValueType::I128),
+    (1, ValueType::int(8)),
+    (2, ValueType::int(16)),
+    (3, ValueType::int(24)),
+    (4, ValueType::int(32)),
+    (5, ValueType::int(40)),
+    (8, ValueType::int(64)),
+    (9, ValueType::int(72)),
+    (16, ValueType::int(128)),
 ];
 
 fn mask(ty: ValueType) -> u128 {
@@ -262,7 +262,7 @@ impl Gen<'_> {
         let v = self.cmp(b, a, bb, IntCmpOp::Sborrow, ty);
         let eqab = self.cmp(b, a, bb, IntCmpOp::Equal, ty);
         let slt = self.cmp(b, a, bb, IntCmpOp::Sless, ty);
-        let zty = [ValueType::I8, ValueType::I32][self.rng.below(2)];
+        let zty = [ValueType::int(8), ValueType::int(32)][self.rng.below(2)];
         let zn = b.build_single_output_pure(NodeKind::Extend(ExtendOp::ZeroExtend), [n], zty);
         let zv = b.build_single_output_pure(NodeKind::Extend(ExtendOp::ZeroExtend), [v], zty);
         let (zn, zv) = if self.rng.chance(50) {
@@ -418,7 +418,7 @@ impl Gen<'_> {
     }
 
     fn cr_pack(&mut self, b: &mut FunctionBuilder) {
-        let ty = [ValueType::I8, ValueType::I32, ValueType::I64][self.rng.below(3)];
+        let ty = [ValueType::int(8), ValueType::int(32), ValueType::int(64)][self.rng.below(3)];
         let w = ty.bit_width();
         let nterms = 1 + self.rng.below(4);
         let mut pack: Option<ValueId> = None;
@@ -721,7 +721,7 @@ pub(crate) fn check_seed(
     let specials: Vec<Vec<u128>> = (0..ntrials)
         .map(|_| {
             (0..8)
-                .map(|_| input_value(&mut rng2, ValueType::I128))
+                .map(|_| input_value(&mut rng2, ValueType::int(128)))
                 .collect()
         })
         .collect();
@@ -935,7 +935,7 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
     let mut rs = RegisterSet::new();
     let mut vns = Vec::new();
     for i in 0..nvars {
-        let (sz, _) = [(1, ValueType::I8), (4, ValueType::I32)][rng.below(2)];
+        let (sz, _) = [(1, ValueType::int(8)), (4, ValueType::int(32))][rng.below(2)];
         let vn = reg_vn(0x1000 * (i as u64 + 1), sz);
         rs = rs.tracked(vn).arg(vn);
         vns.push(vn);
@@ -991,10 +991,11 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
             };
             let nv = if rng.chance(20) {
                 b.build_int_const(u128::from(rng.next_u64() % 3), ty).ok()?
-            } else if rng.chance(15) && ty == ValueType::I32 {
+            } else if rng.chance(15) && ty == ValueType::int(32) {
                 // A truncate / extend round trip: the cast ladder `Hop` walks,
                 // and the only shape here that changes width.
-                let narrow = b.build_single_output_pure(NodeKind::Truncate, [vj], ValueType::I8);
+                let narrow =
+                    b.build_single_output_pure(NodeKind::Truncate, [vj], ValueType::int(8));
                 let ext = if rng.chance(50) {
                     ExtendOp::ZeroExtend
                 } else {
@@ -1209,10 +1210,10 @@ fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
             .build_fn_single_region()
             .unwrap();
         b.set_lift_addr(Some(0xA0));
-        let c1 = b.build_int_const_limbs(&w1, ValueType::I256).unwrap();
-        let c2 = b.build_int_const_limbs(&w2, ValueType::I256).unwrap();
+        let c1 = b.build_int_const_limbs(&w1, ValueType::int(256)).unwrap();
+        let c2 = b.build_int_const_limbs(&w2, ValueType::int(256)).unwrap();
         let v = b
-            .build_int_binary_operation(c1, c2, op, ValueType::I256)
+            .build_int_binary_operation(c1, c2, op, ValueType::int(256))
             .unwrap();
         b.build_return(None, &[v]).unwrap();
         b.set_lift_addr(None);

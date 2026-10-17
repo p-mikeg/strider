@@ -321,7 +321,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
             // The Store anchors `second_neg` against the initial dead-node cull.
             // Unanchored it is a dead cone, and culling it would leave the first
             // Xor single-use, which is the opposite of what this test needs.
-            let store_addr = b.build_int_const(0x5000u64, strider_ir::node::ValueType::I64)?;
+            let store_addr = b.build_int_const(0x5000u64, strider_ir::node::ValueType::int(64))?;
             b.build_store(store_addr, second_neg, rsleigh::VnSpace::RAM)?;
             b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
             Ok((neg_cond, second_neg_node))

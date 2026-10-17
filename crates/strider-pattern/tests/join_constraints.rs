@@ -26,21 +26,21 @@ fn diamond_with_calls() -> (strider_ir::Function, NodeId) {
 
     b.set_region(region_b); // true arm
     b.set_lift_addr(Some(0x1010));
-    let t1 = b.build_int_const(0xAAAAu64, ValueType::I64).unwrap();
+    let t1 = b.build_int_const(0xAAAAu64, ValueType::int(64)).unwrap();
     b.build_call_cc(t1, None).unwrap();
     b.build_branch(region_d).unwrap();
     b.set_lift_addr(None);
 
     b.set_region(region_c); // false arm
     b.set_lift_addr(Some(0x1020));
-    let t2 = b.build_int_const(0xBBBBu64, ValueType::I64).unwrap();
+    let t2 = b.build_int_const(0xBBBBu64, ValueType::int(64)).unwrap();
     b.build_call_cc(t2, None).unwrap();
     b.build_branch(region_d).unwrap();
     b.set_lift_addr(None);
 
     b.set_region(region_d); // merge
     b.set_lift_addr(Some(0x1030));
-    let t3 = b.build_int_const(0xCCCCu64, ValueType::I64).unwrap();
+    let t3 = b.build_int_const(0xCCCCu64, ValueType::int(64)).unwrap();
     b.build_call_cc(t3, None).unwrap();
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
@@ -75,14 +75,14 @@ fn empty_true_arm_with_calls() -> strider_ir::Function {
 
     b.set_region(region_c); // false arm
     b.set_lift_addr(Some(0x1020));
-    let t2 = b.build_int_const(0xBBBBu64, ValueType::I64).unwrap();
+    let t2 = b.build_int_const(0xBBBBu64, ValueType::int(64)).unwrap();
     b.build_call_cc(t2, None).unwrap();
     b.build_branch(region_d).unwrap();
     b.set_lift_addr(None);
 
     b.set_region(region_d); // merge, reachable through BOTH arms
     b.set_lift_addr(Some(0x1030));
-    let t3 = b.build_int_const(0xCCCCu64, ValueType::I64).unwrap();
+    let t3 = b.build_int_const(0xCCCCu64, ValueType::int(64)).unwrap();
     b.build_call_cc(t3, None).unwrap();
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
@@ -676,8 +676,8 @@ fn diamond_with_a_store_in_the_true_arm() -> strider_ir::Function {
 
     b.set_region(region_b); // true arm
     b.set_lift_addr(Some(0x1010));
-    let addr = b.build_int_const(0x2000u64, ValueType::I64).unwrap();
-    let data = b.build_int_const(0xAAu64, ValueType::I64).unwrap();
+    let addr = b.build_int_const(0x2000u64, ValueType::int(64)).unwrap();
+    let data = b.build_int_const(0xAAu64, ValueType::int(64)).unwrap();
     b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
     b.build_branch(region_d).unwrap();
     b.set_lift_addr(None);
@@ -756,7 +756,7 @@ fn diamond_with_a_phi() -> strider_ir::Function {
     for (arm, k) in [(t_arm, 10u64), (f_arm, 20u64)] {
         b.set_region(arm);
         b.set_lift_addr(Some(0x1010 + k));
-        let v = b.build_int_const(k, ValueType::I64).unwrap();
+        let v = b.build_int_const(k, ValueType::int(64)).unwrap();
         b.write_variable(&reg, v).unwrap();
         b.build_branch(merge).unwrap();
         b.set_lift_addr(None);

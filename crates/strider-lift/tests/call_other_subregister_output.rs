@@ -75,7 +75,7 @@ fn an_x86_sub_register_intrinsic_output_preserves_the_rest() {
     let (ty, preserved) = result_type_and_preserved(&f);
     assert_eq!(
         ty,
-        strider_ir::ValueType::I16,
+        strider_ir::ValueType::int(16),
         "the result slot is the explicit output's width",
     );
     assert!(
@@ -102,7 +102,7 @@ fn an_aarch64_sub_register_intrinsic_output_stays_the_container() {
         .expect("a CallOther node");
     assert_eq!(
         f.value_kind(f.node_outputs(node)[2]),
-        strider_ir::node::ValueKind::Typed(strider_ir::ValueType::I128),
+        strider_ir::node::ValueKind::Typed(strider_ir::ValueType::int(128)),
         "the result slot is q0's width, not d0's",
     );
 }
@@ -126,7 +126,7 @@ fn an_x86_mmx_intrinsic_output_stays_the_x87_container() {
     let result = f.node_outputs(node)[2];
     assert_eq!(
         f.value_kind(result),
-        strider_ir::node::ValueKind::Typed(strider_ir::ValueType::I80),
+        strider_ir::node::ValueKind::Typed(strider_ir::ValueType::int(80)),
         "the result slot is ST0's width, not MM0's",
     );
     let ret = f

@@ -600,9 +600,9 @@ mod function_skeleton_tests {
         use crate::node::ValueType;
 
         let mut f = test_function();
-        let phi = f
-            .graph_mut()
-            .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
+        let phi =
+            f.graph_mut()
+                .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::int(64))]);
         let phi_value = f.node_outputs(phi)[0];
         let vn = rsleigh::Vn {
             size: 8,
@@ -623,7 +623,7 @@ mod function_skeleton_tests {
         let carrier = f.graph_mut().create_node(
             NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let value = f.node_outputs(carrier)[0];
         f.side_tables_mut().register_arg_value(0, value);
@@ -650,7 +650,7 @@ mod compact_tests {
     #[test]
     fn compact_remaps_entry_and_drops_zombies() {
         let mut f = test_function();
-        let _zombie = int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::I64);
+        let _zombie = int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::int(64));
         let pre_count = f.graph().all_node_ids().count();
 
         let _remap = f.compact().expect("compact succeeds on a valid function");
@@ -679,16 +679,16 @@ mod compact_tests {
         let mem = f.node_outputs(mem_node)[0];
         // Allocated FIRST, so dropping them shifts every surviving `ValueId`.
         for v in 0..4u128 {
-            let _zombie = int_const_node(&mut f, 0xdead_0000 + v, ValueType::I64);
+            let _zombie = int_const_node(&mut f, 0xdead_0000 + v, ValueType::int(64));
         }
-        let a_node = int_const_node(&mut f, 7, ValueType::I64);
-        let b_node = int_const_node(&mut f, 9, ValueType::I64);
+        let a_node = int_const_node(&mut f, 7, ValueType::int(64));
+        let b_node = int_const_node(&mut f, 9, ValueType::int(64));
         let a = f.node_outputs(a_node)[0];
         let b = f.node_outputs(b_node)[0];
         let sum = f.graph_mut().create_node(
             NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
             [a, b],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let sum_value = f.node_outputs(sum)[0];
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -704,7 +704,7 @@ mod compact_tests {
         let again = f.graph_mut().create_node(
             NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
             [a, b],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         assert_eq!(
             again, sum,
@@ -731,22 +731,22 @@ mod compact_tests {
         let entry = f.entry();
         let mem = test_initial_memory(&f);
         // Interned first, so dropping it shifts the surviving const's id.
-        let dropped_id = f.intern_int_const_limbs(&[0xAAAA_BBBB, 0, 0, 1], ValueType::I256);
+        let dropped_id = f.intern_int_const_limbs(&[0xAAAA_BBBB, 0, 0, 1], ValueType::int(256));
         let _zombie = f.graph_mut().create_node(
             NodeKind::IntConst(dropped_id),
             [],
-            [ValueKind::Typed(ValueType::I256)],
+            [ValueKind::Typed(ValueType::int(256))],
         );
 
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
 
         // The live wide const, referenced by a reachable Return.
-        let live_id = f.intern_int_const_limbs(&LIVE_LIMBS, ValueType::I256);
+        let live_id = f.intern_int_const_limbs(&LIVE_LIMBS, ValueType::int(256));
         let wide_node = f.graph_mut().create_node(
             NodeKind::IntConst(live_id),
             [],
-            [ValueKind::Typed(ValueType::I256)],
+            [ValueKind::Typed(ValueType::int(256))],
         );
         let [wide_value] = f.node_outputs_exact::<1>(wide_node).unwrap();
         f.graph_mut()
@@ -775,12 +775,12 @@ mod compact_tests {
         let mut f = test_function();
         let entry = f.entry();
         let mem = test_initial_memory(&f);
-        let zombie = int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::I64);
+        let zombie = int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::int(64));
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-        let base = int_const_node(&mut f, 0x7000_u128, crate::node::ValueType::I64);
+        let base = int_const_node(&mut f, 0x7000_u128, crate::node::ValueType::int(64));
         let [base_value] = f.node_outputs_exact::<1>(base).unwrap();
-        let key = int_const_node(&mut f, 0x8000_u128, crate::node::ValueType::I64);
+        let key = int_const_node(&mut f, 0x8000_u128, crate::node::ValueType::int(64));
         let [key_value] = f.node_outputs_exact::<1>(key).unwrap();
         // Feed both into the Return so the walk keeps them.
         let _ret = f.graph_mut().create_node(
@@ -823,7 +823,11 @@ mod compact_tests {
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         // Kept live by its Return-input consumer.
-        let surviving = int_const_node(&mut f, (0xCAFE_u64) as u128, crate::node::ValueType::I64);
+        let surviving = int_const_node(
+            &mut f,
+            (0xCAFE_u64) as u128,
+            crate::node::ValueType::int(64),
+        );
         let [surv_value] = f.node_outputs_exact::<1>(surviving).unwrap();
         let _ret =
             f.graph_mut()
@@ -860,7 +864,11 @@ mod compact_tests {
             .create_node(NodeKind::Return, [entry_ctrl, mem_value], []);
 
         // A cacheable IntConst wired to nothing reachable.
-        let zombie = int_const_node(&mut f, (0xC0FFEE_u64) as u128, crate::node::ValueType::I64);
+        let zombie = int_const_node(
+            &mut f,
+            (0xC0FFEE_u64) as u128,
+            crate::node::ValueType::int(64),
+        );
 
         let pre_ids: Vec<_> = f.graph().all_node_ids().collect();
         assert!(
@@ -899,7 +907,7 @@ mod compact_tests {
         // A zombie Phi carrying a value_vn entry.
         let zombie_phi =
             f.graph_mut()
-                .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
+                .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::int(64))]);
         let dead_vn = rsleigh::Vn {
             size: 8,
             addr_off: 0x88,
@@ -915,8 +923,11 @@ mod compact_tests {
         );
 
         // A zombie IntConst carrying a memory_offsets entry, keyed by its value.
-        let zombie_stack =
-            int_const_node(&mut f, (0xBEEF_u64) as u128, crate::node::ValueType::I64);
+        let zombie_stack = int_const_node(
+            &mut f,
+            (0xBEEF_u64) as u128,
+            crate::node::ValueType::int(64),
+        );
         let zombie_value = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
         f.side_tables_mut()
             .set_stack_slot(zombie_value, zombie_value, -8);
@@ -968,12 +979,16 @@ mod compact_tests {
         let mem = test_initial_memory(&f);
         // Created BEFORE the arg carrier so compaction reassigns the carrier's
         // NodeId.
-        let _zombie = int_const_node(&mut f, (0xDEAD_u64) as u128, crate::node::ValueType::I64);
+        let _zombie = int_const_node(
+            &mut f,
+            (0xDEAD_u64) as u128,
+            crate::node::ValueType::int(64),
+        );
         // A register-arg-style InitialVar kept live by Return.
         let arg_node = f.graph_mut().create_node(
             NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
@@ -1012,7 +1027,7 @@ mod compact_tests {
         // Kept live by Return.
         let live_phi =
             f.graph_mut()
-                .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
+                .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::int(64))]);
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
         let [live_phi_value] = f.node_outputs_exact::<1>(live_phi).unwrap();
@@ -1025,7 +1040,7 @@ mod compact_tests {
         // Wired to nothing reachable.
         let dead_phi =
             f.graph_mut()
-                .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::I64)]);
+                .create_node(NodeKind::Phi, [], [ValueKind::Typed(ValueType::int(64))]);
 
         let live_vn = rsleigh::Vn {
             size: 8,
@@ -1081,7 +1096,7 @@ mod compact_tests {
         let live_carrier = f.graph_mut().create_node(
             NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
@@ -1094,7 +1109,7 @@ mod compact_tests {
         let dead_carrier = f.graph_mut().create_node(
             NodeKind::InitialVar(crate::node::InitialVnId::from_index(1)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [dead_value] = f.node_outputs_exact::<1>(dead_carrier).unwrap();
 
@@ -1127,7 +1142,7 @@ mod compact_tests {
             [
                 ValueKind::Control,
                 ValueKind::Memory,
-                ValueKind::Typed(ValueType::I64),
+                ValueKind::Typed(ValueType::int(64)),
             ],
         );
         let clobber_value = f.node_outputs(call)[2];
@@ -1161,10 +1176,14 @@ mod compact_tests {
         let entry = f.entry();
         let mem = test_initial_memory(&f);
         // Created before the Call so compaction reassigns ids.
-        let _zombie = int_const_node(&mut f, (0xDEAD_u64) as u128, crate::node::ValueType::I64);
+        let _zombie = int_const_node(
+            &mut f,
+            (0xDEAD_u64) as u128,
+            crate::node::ValueType::int(64),
+        );
         let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
-        let target = int_const_node(&mut f, 0x1000_u128, crate::node::ValueType::I64);
+        let target = int_const_node(&mut f, 0x1000_u128, crate::node::ValueType::int(64));
         let [target_value] = f.node_outputs_exact::<1>(target).unwrap();
         // One clobber output; kept live by the Return consuming its ctrl/mem.
         let call = f.graph_mut().create_node(
@@ -1173,7 +1192,7 @@ mod compact_tests {
             [
                 ValueKind::Control,
                 ValueKind::Memory,
-                ValueKind::Typed(ValueType::I64),
+                ValueKind::Typed(ValueType::int(64)),
             ],
         );
         let [call_ctrl, call_mem, clob] = f.node_outputs_exact::<3>(call).unwrap();

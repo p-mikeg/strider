@@ -52,7 +52,7 @@ fn opaque_register_store_gives_colliding_registers_distinct_slots() {
                 && f.int_const_u128(f.load_addr(id)) == Some(u128::from(off))
                 && f.value_type(f.node_outputs(id)[0])
                     .expect("load output type")
-                    == strider_ir::ValueType::I8
+                    == strider_ir::ValueType::int(8)
         })
     };
     let cr0_load = slot_of(cr0.addr_off).expect("cr0 re-read at its full offset");

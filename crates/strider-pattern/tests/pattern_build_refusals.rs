@@ -229,10 +229,10 @@ fn if_chain(n: usize) -> strider_ir::Function {
     b.set_entry_region_all(regions[0]).unwrap();
     for (i, pair) in regions.windows(2).enumerate() {
         b.set_region(pair[0]);
-        let c = b.build_int_const(i as u64, ValueType::I8).unwrap();
-        let z = b.build_int_const(0u64, ValueType::I8).unwrap();
+        let c = b.build_int_const(i as u64, ValueType::int(8)).unwrap();
+        let z = b.build_int_const(0u64, ValueType::int(8)).unwrap();
         let cond = b
-            .build_int_cmp_operation(c, z, IntCmpOp::Equal, ValueType::I8)
+            .build_int_cmp_operation(c, z, IntCmpOp::Equal, ValueType::int(8))
             .unwrap();
         b.build_if(cond, pair[1], exit).unwrap();
     }

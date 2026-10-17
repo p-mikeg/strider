@@ -19,7 +19,7 @@ fn build_if_over_load<T>(
     let exit = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
     b.set_region(entry);
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let dummy = b.build_int_const(0xF00Du64, ValueType::int(64))?;
     let x = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
     let (cond, extra) = make_cond(&mut b, x)?;
     b.build_if(cond, dispatch, exit)?;
@@ -36,7 +36,7 @@ fn build_if_over_load<T>(
 #[test]
 fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
     use strider_ir::node::ExtendOp;
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     let (mut fg, idx, eight) = build_if_over_load(ty, |b, idx| {
         let eight = b.build_int_const(8u64, ty)?;
         let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
@@ -82,7 +82,7 @@ fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
 #[test]
 fn ppc_cr_bit_test_canonicalizes_through_a_ne_zero_branch() -> Result<()> {
     use strider_ir::node::ExtendOp;
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     let (mut fg, idx, eight) = build_if_over_load(ty, |b, idx| {
         let eight = b.build_int_const(8u64, ty)?;
         let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
@@ -138,7 +138,7 @@ fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
     const ADDR_CMP: u64 = 0x1111;
     const ADDR_PACK: u64 = 0x2222;
     const ADDR_TRUNC: u64 = 0x3333;
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     let mut b = RegisterSet::new().build_fn()?;
     let entry = b.create_region_all()?;
     let dispatch = b.create_region_all()?;
@@ -147,7 +147,7 @@ fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
     b.set_region(entry);
 
     b.set_lift_addr(Some(ADDR_CMP));
-    let dummy = b.build_int_const(0xF00Du64, ValueType::I64)?;
+    let dummy = b.build_int_const(0xF00Du64, ValueType::int(64))?;
     let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
     let eight = b.build_int_const(8u64, ty)?;
     let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
@@ -210,7 +210,7 @@ fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
 #[test]
 fn ppc_cr_bit_test_selects_middle_eq_bit() -> Result<()> {
     use strider_ir::node::ExtendOp;
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     let (mut fg, idx, eight) = build_if_over_load(ty, |b, idx| {
         let eight = b.build_int_const(8u64, ty)?;
         let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
@@ -270,18 +270,18 @@ fn build_cmp_flags(
     a: ValueId,
     b: ValueId,
 ) -> Result<(ValueId, ValueId, ValueId, ValueId)> {
-    let neg_b = fb.build_int_unary_operation(b, IntUnaryOp::Neg, ValueType::I32)?;
-    let diff = fb.build_int_binary_operation(a, neg_b, IntBinaryOp::Add, ValueType::I32)?;
-    let zero = fb.build_int_const(0u64, ValueType::I32)?;
+    let neg_b = fb.build_int_unary_operation(b, IntUnaryOp::Neg, ValueType::int(32))?;
+    let diff = fb.build_int_binary_operation(a, neg_b, IntBinaryOp::Add, ValueType::int(32))?;
+    let zero = fb.build_int_const(0u64, ValueType::int(32))?;
 
-    let zr = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, ValueType::I32)?;
-    let ng = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Sless, ValueType::I32)?;
+    let zr = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, ValueType::int(32))?;
+    let ng = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Sless, ValueType::int(32))?;
     // CY = Xor(IntLess(a, b), IntConst(1)):I1, the lift-time canonicalisation
     // of IntLessEqual(b, a).
-    let alt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::I32)?;
+    let alt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::int(32))?;
     let one_i1 = fb.build_int_const(u128::MAX, ValueType::I1)?;
     let cy = fb.build_int_binary_operation(alt, one_i1, IntBinaryOp::Xor, ValueType::I1)?;
-    let ov = fb.build_int_cmp_operation(a, b, IntCmpOp::Sborrow, ValueType::I32)?;
+    let ov = fb.build_int_cmp_operation(a, b, IntCmpOp::Sborrow, ValueType::int(32))?;
 
     Ok((zr, ng, cy, ov))
 }
@@ -514,9 +514,9 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
     // the real lift, which passes the flag varnode's 1-byte size as the
     // comparison's operand width.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, _zr, ng, _cy, ov| {
-        let ng = fb.convert_to_int_if_needed(ng, ValueType::I8)?;
-        let ov = fb.convert_to_int_if_needed(ov, ValueType::I8)?;
-        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::I8)?;
+        let ng = fb.convert_to_int_if_needed(ng, ValueType::int(8))?;
+        let ov = fb.convert_to_int_if_needed(ov, ValueType::int(8))?;
+        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::int(8))?;
         build_i1_xor_with_one(fb, eq)
     })?;
 
@@ -535,9 +535,9 @@ fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
 fn flag_cmp_ge_rewrites_to_neg_int_sless() -> Result<()> {
     // AArch64 `b.ge` cond is `Equal(NG, OV)`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, _zr, ng, _cy, ov| {
-        let ng = fb.convert_to_int_if_needed(ng, ValueType::I8)?;
-        let ov = fb.convert_to_int_if_needed(ov, ValueType::I8)?;
-        fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::I8)
+        let ng = fb.convert_to_int_if_needed(ng, ValueType::int(8))?;
+        let ov = fb.convert_to_int_if_needed(ov, ValueType::int(8))?;
+        fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::int(8))
     })?;
 
     let r = crate::pipeline::run_one(
@@ -556,9 +556,9 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
     // AArch64 `b.gt` cond is `And(Xor(ZR, 1), Equal(NG, OV)):I1`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
         let neg_zr = build_i1_xor_with_one(fb, zr)?;
-        let ng = fb.convert_to_int_if_needed(ng, ValueType::I8)?;
-        let ov = fb.convert_to_int_if_needed(ov, ValueType::I8)?;
-        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::I8)?;
+        let ng = fb.convert_to_int_if_needed(ng, ValueType::int(8))?;
+        let ov = fb.convert_to_int_if_needed(ov, ValueType::int(8))?;
+        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::int(8))?;
         fb.build_int_binary_operation(neg_zr, eq, IntBinaryOp::And, ValueType::I1)
     })?;
 
@@ -577,9 +577,9 @@ fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
 fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
     // AArch64 `b.le` cond is `Or(ZR, Xor(Equal(NG, OV), 1)):I1`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
-        let ng = fb.convert_to_int_if_needed(ng, ValueType::I8)?;
-        let ov = fb.convert_to_int_if_needed(ov, ValueType::I8)?;
-        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::I8)?;
+        let ng = fb.convert_to_int_if_needed(ng, ValueType::int(8))?;
+        let ov = fb.convert_to_int_if_needed(ov, ValueType::int(8))?;
+        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::int(8))?;
         let neg_eq = build_i1_xor_with_one(fb, eq)?;
         fb.build_int_binary_operation(zr, neg_eq, IntBinaryOp::Or, ValueType::I1)
     })?;
@@ -646,9 +646,9 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
     // ARM Thumb `B.EQ` lifts as `IntNotEqual(ZR, 0:1)`, canonicalised to
     // `Xor(IntEqual(ZeroExtend(ZR):I8, 0:I8), 1)`.
     let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, _cy, _ov| {
-        let zero = fb.build_int_const(0u64, ValueType::I8)?;
-        let zr = fb.convert_to_int_if_needed(zr, ValueType::I8)?;
-        let eq = fb.build_int_cmp_operation(zr, zero, IntCmpOp::Equal, ValueType::I8)?;
+        let zero = fb.build_int_const(0u64, ValueType::int(8))?;
+        let zr = fb.convert_to_int_if_needed(zr, ValueType::int(8))?;
+        let eq = fb.build_int_cmp_operation(zr, zero, IntCmpOp::Equal, ValueType::int(8))?;
         build_i1_xor_with_one(fb, eq)
     })?;
 
@@ -717,9 +717,9 @@ where
 fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
     // (a != b) && !(a < b)  ==  a > b  ==  b < a  ->  Sless(b, a)
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
-        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
+        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::int(32))?;
         let neq = build_i1_xor_with_one(fb, eq)?;
-        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, ValueType::I32)?;
+        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, ValueType::int(32))?;
         let nlt = build_i1_xor_with_one(fb, lt)?;
         fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, ValueType::I1)
     })?;
@@ -749,9 +749,9 @@ fn flag_cmp_incomplete_tree_foreign_leaf_left_alone() -> Result<()> {
             let a = fb.read_variable(&a_vn)?;
             let b = fb.read_variable(&b_vn)?;
             let c = fb.read_variable(&c_vn)?;
-            let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
+            let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::int(32))?;
             let neq = build_i1_xor_with_one(fb, eq)?;
-            let lt = fb.build_int_cmp_operation(a, c, IntCmpOp::Sless, ValueType::I32)?;
+            let lt = fb.build_int_cmp_operation(a, c, IntCmpOp::Sless, ValueType::int(32))?;
             let nlt = build_i1_xor_with_one(fb, lt)?;
             let cond = fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, ValueType::I1)?;
             Ok((cond, ()))
@@ -784,8 +784,8 @@ fn flag_cmp_incomplete_tree_foreign_leaf_left_alone() -> Result<()> {
 fn flag_cmp_decomposed_le_rewrites_to_neg_sless_swapped() -> Result<()> {
     // (a == b) || (a < b)  ==  a <= b  ==  !(b < a)  ->  Xor(Sless(b, a), 1)
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
-        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
-        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, ValueType::I32)?;
+        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::int(32))?;
+        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, ValueType::int(32))?;
         fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, ValueType::I1)
     })?;
     let r = crate::pipeline::run_one(
@@ -802,9 +802,9 @@ fn flag_cmp_decomposed_le_rewrites_to_neg_sless_swapped() -> Result<()> {
 fn flag_cmp_decomposed_hi_rewrites_to_less_swapped() -> Result<()> {
     // unsigned: (a != b) && !(a < b)  ->  Less(b, a)
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
-        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
+        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::int(32))?;
         let neq = build_i1_xor_with_one(fb, eq)?;
-        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::I32)?;
+        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::int(32))?;
         let nlt = build_i1_xor_with_one(fb, lt)?;
         fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, ValueType::I1)
     })?;
@@ -822,8 +822,8 @@ fn flag_cmp_decomposed_hi_rewrites_to_less_swapped() -> Result<()> {
 fn flag_cmp_decomposed_ls_rewrites_to_neg_less_swapped() -> Result<()> {
     // unsigned: (a == b) || (a < b)  ->  Xor(Less(b, a), 1)
     let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
-        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::I32)?;
-        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::I32)?;
+        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::int(32))?;
+        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::int(32))?;
         fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, ValueType::I1)
     })?;
     let r = crate::pipeline::run_one(
@@ -881,20 +881,20 @@ fn check_folded_ls_tree(ty: ValueType, n: u64) -> Result<()> {
 
 #[test]
 fn flag_cmp_constant_folded_ls_tree_i32() -> Result<()> {
-    check_folded_ls_tree(ValueType::I32, 8)
+    check_folded_ls_tree(ValueType::int(32), 8)
 }
 
 #[test]
 fn flag_cmp_constant_folded_ls_tree_i64() -> Result<()> {
-    check_folded_ls_tree(ValueType::I64, 3)
+    check_folded_ls_tree(ValueType::int(64), 3)
 }
 
 #[test]
 fn flag_cmp_constant_folded_ls_tree_wrapping_neg() -> Result<()> {
     // N = 1 makes -N all-ones at the width; the guard compares mod width, so
     // it must still match.
-    check_folded_ls_tree(ValueType::I32, 1)?;
-    check_folded_ls_tree(ValueType::I64, 1)
+    check_folded_ls_tree(ValueType::int(32), 1)?;
+    check_folded_ls_tree(ValueType::int(64), 1)
 }
 
 // A switch whose cases start at a nonzero base `K`: gcc emits
@@ -946,12 +946,12 @@ fn check_offset_folded_ls_tree(ty: ValueType, c1: u128, n: u64) -> Result<()> {
 #[test]
 fn flag_cmp_offset_folded_ls_tree_i32() -> Result<()> {
     // Cases 10..=17: index `X = b - 10`, range bound `N = 7`.
-    check_offset_folded_ls_tree(ValueType::I32, (0u128).wrapping_sub(10), 7)
+    check_offset_folded_ls_tree(ValueType::int(32), (0u128).wrapping_sub(10), 7)
 }
 
 #[test]
 fn flag_cmp_offset_folded_ls_tree_i64() -> Result<()> {
-    check_offset_folded_ls_tree(ValueType::I64, (0u128).wrapping_sub(100), 5)
+    check_offset_folded_ls_tree(ValueType::int(64), (0u128).wrapping_sub(100), 5)
 }
 
 // The De-Morgan dual of the constant-folded LS case: Thumb
@@ -1005,12 +1005,12 @@ fn check_folded_hi_tree(ty: ValueType, n: u64) -> Result<()> {
 
 #[test]
 fn flag_cmp_constant_folded_hi_tree_i32() -> Result<()> {
-    check_folded_hi_tree(ValueType::I32, 7)
+    check_folded_hi_tree(ValueType::int(32), 7)
 }
 
 #[test]
 fn flag_cmp_constant_folded_hi_tree_i64() -> Result<()> {
-    check_folded_hi_tree(ValueType::I64, 3)
+    check_folded_hi_tree(ValueType::int(64), 3)
 }
 
 // The offset-base HI case: a masked / offset switch, e.g. Thumb
@@ -1063,19 +1063,19 @@ fn check_offset_folded_hi_tree(ty: ValueType, c1: u128, n: u64) -> Result<()> {
 #[test]
 fn flag_cmp_offset_folded_hi_tree_i32() -> Result<()> {
     // Index `X = (kind & 7) - 1`, range bound `N = 6`.
-    check_offset_folded_hi_tree(ValueType::I32, (0u128).wrapping_sub(1), 6)
+    check_offset_folded_hi_tree(ValueType::int(32), (0u128).wrapping_sub(1), 6)
 }
 
 #[test]
 fn flag_cmp_offset_folded_hi_tree_i64() -> Result<()> {
-    check_offset_folded_hi_tree(ValueType::I64, (0u128).wrapping_sub(20), 5)
+    check_offset_folded_hi_tree(ValueType::int(64), (0u128).wrapping_sub(20), 5)
 }
 
 #[test]
 fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
     // With C2 != C1 - N the Equal does not test `X == N`, so the guard must
     // reject.
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     let b_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
     let c1 = (0u128).wrapping_sub(10);
     let n = 7u64;
@@ -1127,7 +1127,7 @@ fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
 /// root's `I1` output width.
 #[test]
 fn eq_add_const_solves_for_x() -> Result<()> {
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
         let c3 = b.build_int_const(3u64, ty)?;
         let c4 = b.build_int_const(4u64, ty)?;
@@ -1158,7 +1158,7 @@ fn eq_add_const_solves_for_x() -> Result<()> {
     let const_is_one_i32 = |o: ValueId| {
         matches!(fg.kind_of_value(o), NodeKind::IntConst(_))
             && fg.int_const_u128(o) == Some(1)
-            && fg.value_type_opt(o) == Some(ValueType::I32)
+            && fg.value_type_opt(o) == Some(ValueType::int(32))
     };
     let ok = (l == x && const_is_one_i32(r)) || (r == x && const_is_one_i32(l));
     assert!(
@@ -1174,7 +1174,7 @@ fn eq_add_const_solves_for_x() -> Result<()> {
 /// `Equal(Xor(x, C1), C2) -> Equal(x, C1 ^ C2)`: `xor(x,3) == 5` gives `x == 6`.
 #[test]
 fn eq_xor_const_solves_for_x() -> Result<()> {
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
         let c3 = b.build_int_const(3u64, ty)?;
         let c5 = b.build_int_const(5u64, ty)?;
@@ -1211,7 +1211,7 @@ fn eq_xor_const_solves_for_x() -> Result<()> {
 /// `Equal(Neg(x), C) -> Equal(x, -C)`: `-x == 5` gives `x == -5`, masked to I32.
 #[test]
 fn eq_neg_solves_for_x() -> Result<()> {
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
         let c5 = b.build_int_const(5u64, ty)?;
         let negated = b.build_int_unary_operation(x, IntUnaryOp::Neg, ty)?;
@@ -1246,7 +1246,7 @@ fn eq_neg_solves_for_x() -> Result<()> {
 /// Here W=32, C=3, so mask = 1<<28 = 0x1000_0000.
 #[test]
 fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
         let c3 = b.build_int_const(3u64, ty)?;
         let shl = b.build_int_binary_operation(x, c3, IntBinaryOp::ShiftLeft, ty)?;
@@ -1311,7 +1311,7 @@ fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
 /// a different rewrite; the sign-bit canonicalization must stay out of it.
 #[test]
 fn sless_of_oversized_left_shift_is_not_a_sign_bit_test() -> Result<()> {
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     let (mut fg, _, ()) = build_if_over_load(ty, |b, x| {
         let c40 = b.build_int_const(40u64, ty)?;
         let shl = b.build_int_binary_operation(x, c40, IntBinaryOp::ShiftLeft, ty)?;
@@ -1344,25 +1344,25 @@ fn sless_of_oversized_left_shift_is_not_a_sign_bit_test() -> Result<()> {
 /// decline.
 #[test]
 fn wide_const_rewrites_skip_past_128_bits() -> Result<()> {
-    let ty = ValueType::I256;
+    let ty = ValueType::int(256);
     let shapes: [fn(&mut FunctionBuilder, ValueId) -> Result<ValueId>; 3] = [
         |b, x| {
-            let c1 = b.build_int_const(1u64, ValueType::I256)?;
-            let add = b.build_int_binary_operation(x, c1, IntBinaryOp::Add, ValueType::I256)?;
-            let c2 = b.build_int_const(0u64, ValueType::I256)?;
-            b.build_int_cmp_operation(add, c2, IntCmpOp::Equal, ValueType::I256)
+            let c1 = b.build_int_const(1u64, ValueType::int(256))?;
+            let add = b.build_int_binary_operation(x, c1, IntBinaryOp::Add, ValueType::int(256))?;
+            let c2 = b.build_int_const(0u64, ValueType::int(256))?;
+            b.build_int_cmp_operation(add, c2, IntCmpOp::Equal, ValueType::int(256))
         },
         |b, x| {
-            let neg = b.build_int_unary_operation(x, IntUnaryOp::Neg, ValueType::I256)?;
-            let c = b.build_int_const(1u64, ValueType::I256)?;
-            b.build_int_cmp_operation(neg, c, IntCmpOp::Equal, ValueType::I256)
+            let neg = b.build_int_unary_operation(x, IntUnaryOp::Neg, ValueType::int(256))?;
+            let c = b.build_int_const(1u64, ValueType::int(256))?;
+            b.build_int_cmp_operation(neg, c, IntCmpOp::Equal, ValueType::int(256))
         },
         |b, x| {
-            let c = b.build_int_const(1u64, ValueType::I256)?;
+            let c = b.build_int_const(1u64, ValueType::int(256))?;
             let shl =
-                b.build_int_binary_operation(x, c, IntBinaryOp::ShiftLeft, ValueType::I256)?;
-            let zero = b.build_int_const(0u64, ValueType::I256)?;
-            b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ValueType::I256)
+                b.build_int_binary_operation(x, c, IntBinaryOp::ShiftLeft, ValueType::int(256))?;
+            let zero = b.build_int_const(0u64, ValueType::int(256))?;
+            b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ValueType::int(256))
         },
     ];
 
@@ -1441,7 +1441,7 @@ fn seed_filter_admits_rule_roots_only() {
 #[test]
 fn cr_bit_test_declines_a_shift_past_the_width() -> Result<()> {
     use strider_ir::node::ExtendOp;
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     let (mut fg, _, ()) = build_if_over_load(ty, |b, idx| {
         let eight = b.build_int_const(8u64, ty)?;
         let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
@@ -1478,7 +1478,7 @@ fn cr_bit_test_declines_a_shift_past_the_width() -> Result<()> {
 #[test]
 fn cr_bit_test_declines_a_ne_zero_pack_carrying_a_higher_term() -> Result<()> {
     use strider_ir::node::ExtendOp;
-    let ty = ValueType::I32;
+    let ty = ValueType::int(32);
     let (mut fg, _, ()) = build_if_over_load(ty, |b, idx| {
         let eight = b.build_int_const(8u64, ty)?;
         let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
@@ -1526,10 +1526,10 @@ fn flag_test_chain(n: usize) -> Result<strider_ir::Function> {
         .build_fn_single_region()?;
     let mut acc = b.read_variable(&r)?;
     for _ in 0..n {
-        let zero = b.build_int_const(0u64, ValueType::I64)?;
-        let eq = b.build_int_cmp_operation(acc, zero, IntCmpOp::Equal, ValueType::I64)?;
+        let zero = b.build_int_const(0u64, ValueType::int(64))?;
+        let eq = b.build_int_cmp_operation(acc, zero, IntCmpOp::Equal, ValueType::int(64))?;
         let not = build_i1_xor_with_one(&mut b, eq)?;
-        acc = b.extend_if_needed(not, ValueType::I64, ExtendOp::ZeroExtend)?;
+        acc = b.extend_if_needed(not, ValueType::int(64), ExtendOp::ZeroExtend)?;
     }
     b.build_return(Some(acc), &[])?;
     b.set_lift_addr(None);

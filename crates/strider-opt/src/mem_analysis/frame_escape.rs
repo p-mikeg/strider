@@ -142,8 +142,8 @@ mod tests {
         sp_v: ValueId,
         off: i64,
     ) -> crate::Result<ValueId> {
-        let k = b.build_int_const(off as u64, ValueType::I32)?;
-        b.build_int_binary_operation(sp_v, k, IntBinaryOp::Add, ValueType::I32)
+        let k = b.build_int_const(off as u64, ValueType::int(32))?;
+        b.build_int_binary_operation(sp_v, k, IntBinaryOp::Add, ValueType::int(32))
     }
 
     fn new_builder() -> crate::Result<strider_ir::FunctionBuilder> {
@@ -156,9 +156,9 @@ mod tests {
         let mut b = new_builder()?;
         let sp_v = b.read_variable(&sp())?;
         let addr = frame_off(&mut b, sp_v, -4)?;
-        let data = b.build_int_const(0x42u64, ValueType::I32)?;
+        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -177,11 +177,11 @@ mod tests {
         let mut b = new_builder()?;
         let sp_v = b.read_variable(&sp())?;
         let addr = frame_off(&mut b, sp_v, -4)?;
-        let data = b.build_int_const(0x42u64, ValueType::I32)?;
+        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -199,7 +199,7 @@ mod tests {
         let mut b = new_builder()?;
         let sp_v = b.read_variable(&sp())?;
         let frame_addr = frame_off(&mut b, sp_v, -4)?;
-        let global = b.build_int_const(0x4000u64, ValueType::I32)?;
+        let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
         b.build_store(global, frame_addr, rsleigh::VnSpace::RAM)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
@@ -217,7 +217,7 @@ mod tests {
         let mut b = new_builder()?;
         let sp_v = b.read_variable(&sp())?;
         let frame_addr = frame_off(&mut b, sp_v, -4)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[frame_addr], &[], 0)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
@@ -245,7 +245,7 @@ mod tests {
         let sp_v = b.read_variable(&sp)?;
         let frame_addr = frame_off(&mut b, sp_v, -4)?;
         b.write_variable(&eax, frame_addr)?;
-        let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[eax], 0)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
@@ -297,9 +297,9 @@ mod tests {
         let mut b = new_builder()?;
         let sp_v = b.read_variable(&sp())?;
         let addr = frame_off(&mut b, sp_v, -4)?;
-        let data = b.build_int_const(0x42u64, ValueType::I32)?;
+        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
@@ -354,10 +354,10 @@ mod tests {
         let mut b = new_builder()?;
         let sp_v = b.read_variable(&sp())?;
         let frame_addr = frame_off(&mut b, sp_v, -4)?;
-        let mask = b.build_int_const(0xFFu64, ValueType::I32)?;
+        let mask = b.build_int_const(0xFFu64, ValueType::int(32))?;
         let laundered =
-            b.build_int_binary_operation(frame_addr, mask, IntBinaryOp::Xor, ValueType::I32)?;
-        let global = b.build_int_const(0x4000u64, ValueType::I32)?;
+            b.build_int_binary_operation(frame_addr, mask, IntBinaryOp::Xor, ValueType::int(32))?;
+        let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
         b.build_store(global, laundered, rsleigh::VnSpace::RAM)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);

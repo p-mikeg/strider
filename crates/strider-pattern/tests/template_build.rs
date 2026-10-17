@@ -46,9 +46,9 @@ fn instantiate_add_const_builds_fresh_node() {
     let x = Capture::new();
 
     let mut fx = make_empty_fn(|b| {
-        let a = b.build_int_const(5u64, T::I64)?;
-        let k = b.build_int_const(1u64, T::I64)?;
-        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+        let a = b.build_int_const(5u64, T::int(64))?;
+        let k = b.build_int_const(1u64, T::int(64))?;
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
     })
     .unwrap();
 
@@ -91,11 +91,11 @@ fn instantiate_attributes_full_proof_set_to_every_new_node() {
     let x = Capture::new();
     let mut fx = make_empty_fn(|b| {
         b.set_lift_addr(Some(PROOF_A));
-        let a = b.build_int_const(5u64, T::I64)?; // proof node A
+        let a = b.build_int_const(5u64, T::int(64))?; // proof node A
         b.set_lift_addr(Some(PROOF_B));
-        let k = b.build_int_const(1u64, T::I64)?; // proof node B
+        let k = b.build_int_const(1u64, T::int(64))?; // proof node B
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
     })
     .unwrap();
 
@@ -161,9 +161,9 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     let c = Capture::new();
 
     let mut fx = make_empty_fn(|b| {
-        let five = b.build_int_const(5u64, T::I64)?;
-        let seven = b.build_int_const(7u64, T::I64)?;
-        b.build_int_binary_operation(five, seven, IntBinaryOp::Add, T::I64)
+        let five = b.build_int_const(5u64, T::int(64))?;
+        let seven = b.build_int_const(7u64, T::int(64))?;
+        b.build_int_binary_operation(five, seven, IntBinaryOp::Add, T::int(64))
     })
     .unwrap();
 
@@ -202,13 +202,13 @@ fn template_wires_multi_output_interior_memory_node() {
         addr,
         template::TemplateKind::FnIntConst(Box::new(|_| Ok(0x100u128))),
     );
-    b.set_value_ty(addr, T::I64);
+    b.set_value_ty(addr, T::int(64));
     let data = b.leaf(KindSpec::Any);
     b.set_template_kind(
         data,
         template::TemplateKind::FnIntConst(Box::new(|_| Ok(42u128))),
     );
-    b.set_value_ty(data, T::I64);
+    b.set_value_ty(data, T::int(64));
 
     // Store inputs are [mem, addr, data]; its lone output is the memory token.
     let store = b.node(KindSpec::Exact(NodeKind::Store(space)));
@@ -227,13 +227,13 @@ fn template_wires_multi_output_interior_memory_node() {
     let tpl = b.finish();
 
     // The template is pure-`Exact`, so bindings / lhs_root are unused.
-    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::I64)).unwrap();
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
 
     let root_value = {
         let mut ef = EditFunction::new(&mut fx);
-        instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64).unwrap()
+        instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::int(64)).unwrap()
     };
 
     let load_node = fx.producer(root_value);
@@ -276,11 +276,11 @@ fn template_wires_multi_output_interior_memory_node() {
 fn int_const_template_rhs_preserves_the_full_i128_value() {
     // High 64 bits non-zero in both, so a truncation to u64 is visible.
     for value in [1u128 << 100, u128::MAX] {
-        let mut fx = make_empty_fn(|b| b.build_int_const(value, T::I128)).unwrap();
+        let mut fx = make_empty_fn(|b| b.build_int_const(value, T::int(128))).unwrap();
 
         let lhs = int_const(value).into_pattern();
         let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
-        assert_eq!(root_ty, T::I128);
+        assert_eq!(root_ty, T::int(128));
 
         let rhs = int_const(value).into_template();
         let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
@@ -303,11 +303,11 @@ fn int_const_any_width_negative_i128_template_rhs() {
     let v: i64 = -50;
     let expected: u128 = i128::from(v) as u128;
 
-    let mut fx = make_empty_fn(|b| b.build_int_const(expected, T::I128)).unwrap();
+    let mut fx = make_empty_fn(|b| b.build_int_const(expected, T::int(128))).unwrap();
 
     let lhs = int_const(expected).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
-    assert_eq!(root_ty, T::I128);
+    assert_eq!(root_ty, T::int(128));
 
     let rhs = int_const_any_width(v).into_template();
     let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
@@ -334,12 +334,12 @@ fn instantiate_add_with_rhs_slot_err(r_slot: usize) -> String {
     let _out = b.value_output(add_node, 0);
     let tpl = b.finish();
 
-    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::I64)).unwrap();
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
 
     let mut ef = EditFunction::new(&mut fx);
-    instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64)
+    instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::int(64))
         .expect_err("a malformed slot layout must error")
         .to_string()
 }
@@ -372,7 +372,7 @@ fn instantiate_duplicate_raw_template_slot_errors() {
 /// capture contract.
 #[test]
 fn instantiate_with_unbound_template_capture_errors() {
-    let mut fx = make_empty_fn(|b| b.build_int_const(5u64, T::I64)).unwrap();
+    let mut fx = make_empty_fn(|b| b.build_int_const(5u64, T::int(64))).unwrap();
 
     // LHS binds nothing.
     let lhs = int_const(5u128).into_pattern();
@@ -433,10 +433,10 @@ fn float_const_template_masks_bits_above_the_resolved_width() {
     let masked = u64::from(f32::to_bits(1.5));
     let unmasked = 0xDEAD_BEEF_0000_0000u64 | masked;
 
-    let mut fx = make_empty_fn(|b| Ok(b.build_float_const(masked, T::F32))).unwrap();
+    let mut fx = make_empty_fn(|b| Ok(b.build_float_const(masked, T::float(32)))).unwrap();
     let lhs = strider_pattern::float_const(masked).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
-    assert_eq!(root_ty, T::F32);
+    assert_eq!(root_ty, T::float(32));
 
     let rhs = strider_pattern::float_const(unmasked).into_template();
     let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
@@ -456,7 +456,7 @@ fn float_const_with_fn_masks_bits_above_the_resolved_width() {
     let masked = u64::from(f32::to_bits(1.5));
     let unmasked = 0xDEAD_BEEF_0000_0000u64 | masked;
 
-    let mut fx = make_empty_fn(|b| Ok(b.build_float_const(masked, T::F32))).unwrap();
+    let mut fx = make_empty_fn(|b| Ok(b.build_float_const(masked, T::float(32)))).unwrap();
     let lhs = strider_pattern::float_const(masked).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
 
@@ -481,7 +481,7 @@ fn float_const_template_result_is_valid_ir_once_spliced_in() {
     let unmasked = 0xDEAD_BEEF_0000_0000u64 | masked;
 
     let mut t = strider_ir_test_utils::Tb::empty();
-    let c = t.float_bits(masked, T::F32);
+    let c = t.float_bits(masked, T::float(32));
     let mut fx = t.ret_val(c);
 
     let lhs = strider_pattern::float_const(masked).into_pattern();
@@ -507,9 +507,9 @@ fn instantiate_rejects_an_output_kind_the_node_signature_forbids() {
     let x = Capture::new();
 
     let mut fx = make_empty_fn(|b| {
-        let a = b.build_int_const(5u64, T::I64)?;
-        let k = b.build_int_const(1u64, T::I64)?;
-        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+        let a = b.build_int_const(5u64, T::int(64))?;
+        let k = b.build_int_const(1u64, T::int(64))?;
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
     })
     .unwrap();
 
@@ -540,12 +540,12 @@ fn instantiate_rejects_an_output_kind_the_node_signature_forbids() {
 fn int_const_template_rhs_on_a_float_root_skips() {
     let rhs = int_const_any_width(1).into_template();
 
-    let mut fx = make_empty_fn(|b| b.build_int_const(0u64, T::I64)).unwrap();
+    let mut fx = make_empty_fn(|b| b.build_int_const(0u64, T::int(64))).unwrap();
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
     let mut ef = EditFunction::new(&mut fx);
 
-    for float_ty in [T::F32, T::F64] {
+    for float_ty in [T::float(32), T::float(64)] {
         let err = instantiate(&rhs, &mut ef, &bindings, lhs_root, &[lhs_root], float_ty)
             .expect_err("an integer literal on a float root must not be interned");
         assert!(is_skip(&err), "must decline the rewrite, got: {err}");
@@ -563,11 +563,11 @@ fn a_gapped_template_output_slot_is_refused() {
     let _slot_1_only = b.memory_output(mem, 1);
     let tpl = b.finish();
 
-    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::I64)).unwrap();
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
     let lhs_root = fx.walk().next().unwrap();
     let bindings = Bindings::default();
     let mut ef = EditFunction::new(&mut fx);
-    let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::I64)
+    let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::int(64))
         .expect_err("a gapped output slot must be refused");
     assert!(
         err.to_string().contains("non-contiguous output slots"),
@@ -596,9 +596,9 @@ fn leaf_capture_is_the_binding_it_names() {
 fn instantiate_refuses_an_ill_typed_operand() {
     let x = Capture::new();
     let build = |b: &mut strider_ir::FunctionBuilder| {
-        let a = b.build_int_const(5u64, T::I64)?;
-        let k = b.build_int_const(1u64, T::I64)?;
-        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::I64)
+        let a = b.build_int_const(5u64, T::int(64))?;
+        let k = b.build_int_const(1u64, T::int(64))?;
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
     };
     let lhs = int_add(var(x), int_const(1u128)).into_pattern();
 

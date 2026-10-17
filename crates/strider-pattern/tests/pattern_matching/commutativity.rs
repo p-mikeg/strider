@@ -410,15 +410,15 @@ fn float_sub_and_div_do_not_commute() {
         let neg_b = t.fun(
             b,
             strider_ir::FloatUnaryOp::Neg,
-            strider_ir::node::ValueType::F64,
+            strider_ir::node::ValueType::float(64),
         );
         let lowered = t.fbin(
             a,
             neg_b,
             FloatBinaryOp::Add,
-            strider_ir::node::ValueType::F64,
+            strider_ir::node::ValueType::float(64),
         );
-        let as_int = t.float_to_int(lowered, strider_ir::node::ValueType::I64);
+        let as_int = t.float_to_int(lowered, strider_ir::node::ValueType::int(64));
         t.ret_val(as_int)
     };
     a::none(
@@ -597,7 +597,7 @@ fn unary_parent_guard_redrives_commutative_child() {
         let two = t.u64(2);
         let three = t.u64(3);
         let sum = t.add(two, three);
-        let z = t.zext_to(sum, ValueType::I128);
+        let z = t.zext_to(sum, ValueType::int(128));
         t.ret_val(z)
     };
     let x = Capture::new();
@@ -620,7 +620,7 @@ fn graph_float_cmp(l: f64, r: f64, op: FloatCmpOp) -> strider_ir::Function {
     let a = t.f64(l);
     let b = t.f64(r);
     let v = t.fcmp(a, b, op);
-    let as_int = t.as_int(v, strider_ir::node::ValueType::I64);
+    let as_int = t.as_int(v, strider_ir::node::ValueType::int(64));
     t.ret_val(as_int)
 }
 
@@ -654,7 +654,7 @@ fn float_ne_commutes() {
         let b = t.f64(2.0);
         let eq = t.fcmp(a, b, FloatCmpOp::Equal);
         let ne = t.bool_not(eq);
-        let as_int = t.as_int(ne, strider_ir::node::ValueType::I64);
+        let as_int = t.as_int(ne, strider_ir::node::ValueType::int(64));
         t.ret_val(as_int)
     };
     a::matches_both_orders(
@@ -770,8 +770,8 @@ fn add_of_two_loads() -> strider_ir::Function {
     let mut t = Tb::empty();
     let a = t.u64(0x1000);
     let b = t.u64(0x2000);
-    let la = t.load_ram(a, ValueType::I64);
-    let lb = t.load_ram(b, ValueType::I64);
+    let la = t.load_ram(a, ValueType::int(64));
+    let lb = t.load_ram(b, ValueType::int(64));
     let s = t.add(la, lb);
     t.ret_val(s)
 }
