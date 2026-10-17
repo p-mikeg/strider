@@ -60,7 +60,7 @@ impl FunctionBuilder {
         let mut initial_variables = SecondaryMap::new();
         for vn_id in vn_ids {
             let var = self.function().initial_vn(vn_id);
-            let output_type = crate::node::ValueType::int_for_byte_size(var.size)?;
+            let output_type = crate::node::ValueType::int_from_bytes(var.size)?;
             let value = self.build_single_output_pure(NodeKind::InitialVar(vn_id), [], output_type);
             initial_variables[vn_id] = value;
             let node_id = self.function().producer(value);
