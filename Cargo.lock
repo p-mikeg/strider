@@ -1388,6 +1388,7 @@ name = "strider-reader"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "criterion",
  "memmap2",
  "object 0.38.1",
  "proptest",
