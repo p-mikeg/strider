@@ -166,11 +166,10 @@ pub struct BitNot<I> {
 
 impl<I: MatchPat> MatchPat for BitNot<I> {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        // `int_const`'s match masks to the output width, and that mask
-        // saturates at 128 bits, so past the carrier `u128::MAX` would accept
-        // any constant whose low 128 bits are set. Reject those widths: a
-        // true I256 / I512 all-ones is unreadable through `int_const_u128`
-        // anyway.
+        // `u128::MAX` at I256 / I512 is `2^128 - 1`, not all-ones, so past
+        // the carrier it would match a constant that is not the complement's.
+        // Reject those widths: a true I256 / I512 all-ones is unreadable
+        // through `int_const_u128` anyway.
         let all_ones = int_const(u128::MAX).when_match(|_m, ty, _b| ty.bit_width() <= 128);
         int_xor(self.inner, all_ones).compile(b)
     }
@@ -179,7 +178,8 @@ impl<I: MatchPat> MatchPat for BitNot<I> {
 impl<I: TemplatePat> TemplatePat for BitNot<I> {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         let i = self.inner.compile(b);
-        let ones_out = int_const_with_fn(|ctx| Ok(ctx.root_ty.bit_mask_u128())).compile(b);
+        let ones_out =
+            int_const_with_fn(|ctx| ctx.root_ty.int_mask_u128().ok_or_else(crate::skip)).compile(b);
         b.binary(IntBinaryOp::Xor, i, ones_out)
     }
 }

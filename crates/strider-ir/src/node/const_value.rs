@@ -86,12 +86,8 @@ mod tests {
         );
         match f.const_value(limbed) {
             ConstValue::Bits(v) => {
-                assert_eq!(*v, value & ValueType::int(80).bit_mask_u128());
-                assert_eq!(
-                    *v & !ValueType::int(80).bit_mask_u128(),
-                    0,
-                    "no bits above width"
-                );
+                assert_eq!(*v, ValueType::int(80).wrap_u128(value));
+                assert_eq!(ValueType::int(80).wrap_u128(*v), *v, "no bits above width");
             }
             other => panic!("expected Bits, got {other:?}"),
         }
