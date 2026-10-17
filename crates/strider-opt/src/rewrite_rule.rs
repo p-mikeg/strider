@@ -270,16 +270,16 @@ mod tests {
         b.set_lift_addr(Some(0x10));
         // Register-derived, so the cast survives instead of const-folding away.
         let wide_in = b.read_variable(&vn).unwrap();
-        let n = b.truncate_if_needed(wide_in, ValueType::I32).unwrap();
+        let n = b.truncate_if_needed(wide_in, ValueType::int(32)).unwrap();
         let prod = b
-            .build_int_binary_operation(n, n, IntBinaryOp::Mul, ValueType::I32)
+            .build_int_binary_operation(n, n, IntBinaryOp::Mul, ValueType::int(32))
             .unwrap();
         let widened = b
-            .extend_if_needed(prod, ValueType::I64, ExtendOp::ZeroExtend)
+            .extend_if_needed(prod, ValueType::int(64), ExtendOp::ZeroExtend)
             .unwrap();
-        let zero = b.build_int_const(0u64, ValueType::I64).unwrap();
+        let zero = b.build_int_const(0u64, ValueType::int(64)).unwrap();
         let sum = b
-            .build_int_binary_operation(widened, zero, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(widened, zero, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(sum), &[]).unwrap();
         b.set_lift_addr(None);
@@ -323,10 +323,10 @@ mod tests {
 
         let mut b = RegisterSet::new().build_fn_single_region().unwrap();
         b.set_lift_addr(Some(0x10));
-        let a = b.build_int_const(3u64, ValueType::I64).unwrap();
-        let k = b.build_int_const(4u64, ValueType::I64).unwrap();
+        let a = b.build_int_const(3u64, ValueType::int(64)).unwrap();
+        let k = b.build_int_const(4u64, ValueType::int(64)).unwrap();
         let sum = b
-            .build_int_binary_operation(a, k, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(a, k, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(sum), &[]).unwrap();
         b.set_lift_addr(None);
@@ -399,13 +399,13 @@ mod tests {
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();
-        let k1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let k1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
         let inner = b
-            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
-        let k2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let k2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
         let outer = b
-            .build_int_binary_operation(inner, k2, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(inner, k2, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(outer), &[]).unwrap();
         b.set_lift_addr(None);
@@ -468,20 +468,20 @@ mod tests {
         let bv = b.read_variable(&bb).unwrap();
         // C1 & C3 == 0 collapses a disjunct, which is what makes the rule
         // fire.
-        let k1 = b.build_int_const(0xF0u64, ValueType::I64).unwrap();
-        let k2 = b.build_int_const(0x0Cu64, ValueType::I64).unwrap();
-        let k3 = b.build_int_const(0x0Fu64, ValueType::I64).unwrap();
+        let k1 = b.build_int_const(0xF0u64, ValueType::int(64)).unwrap();
+        let k2 = b.build_int_const(0x0Cu64, ValueType::int(64)).unwrap();
+        let k3 = b.build_int_const(0x0Fu64, ValueType::int(64)).unwrap();
         let a_and = b
-            .build_int_binary_operation(av, k1, IntBinaryOp::And, ValueType::I64)
+            .build_int_binary_operation(av, k1, IntBinaryOp::And, ValueType::int(64))
             .unwrap();
         let b_and = b
-            .build_int_binary_operation(bv, k2, IntBinaryOp::And, ValueType::I64)
+            .build_int_binary_operation(bv, k2, IntBinaryOp::And, ValueType::int(64))
             .unwrap();
         let or = b
-            .build_int_binary_operation(a_and, b_and, IntBinaryOp::Or, ValueType::I64)
+            .build_int_binary_operation(a_and, b_and, IntBinaryOp::Or, ValueType::int(64))
             .unwrap();
         let outer = b
-            .build_int_binary_operation(or, k3, IntBinaryOp::And, ValueType::I64)
+            .build_int_binary_operation(or, k3, IntBinaryOp::And, ValueType::int(64))
             .unwrap();
         b.build_return(Some(outer), &[]).unwrap();
         b.set_lift_addr(None);
@@ -549,9 +549,9 @@ mod tests {
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();
-        let zero = b.build_int_const(0u64, ValueType::I64).unwrap();
+        let zero = b.build_int_const(0u64, ValueType::int(64)).unwrap();
         let add_node_val = b
-            .build_int_binary_operation(xv, zero, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(xv, zero, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(add_node_val), &[]).unwrap();
         b.set_lift_addr(None);
@@ -598,10 +598,10 @@ mod tests {
         // replace_value absorbs either way).
         let xv = b.read_variable(&vn).unwrap();
         b.set_lift_addr(Some(0xCC));
-        let zero = b.build_int_const(0u64, ValueType::I64).unwrap();
+        let zero = b.build_int_const(0u64, ValueType::int(64)).unwrap();
         b.set_lift_addr(Some(0xDD));
         let add_val = b
-            .build_int_binary_operation(xv, zero, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(xv, zero, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.set_lift_addr(Some(0xEE));
         b.build_return(Some(add_val), &[]).unwrap();
@@ -647,18 +647,18 @@ mod tests {
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();
-        let k1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let k1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
         let inner = b
-            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
-        let k2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let k2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
         let outer = b
-            .build_int_binary_operation(inner, k2, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(inner, k2, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         // Kept live by a side-effecting Store so it survives independently
         // of the fold.
-        let three = b.build_int_const(3u64, ValueType::I64).unwrap();
-        let store_addr = b.build_int_const(0x4000u64, ValueType::I64).unwrap();
+        let three = b.build_int_const(3u64, ValueType::int(64)).unwrap();
+        let store_addr = b.build_int_const(0x4000u64, ValueType::int(64)).unwrap();
         b.build_store(store_addr, three, rsleigh::VnSpace::RAM)
             .unwrap();
         b.build_return(Some(outer), &[]).unwrap();
@@ -719,9 +719,9 @@ mod tests {
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();
-        let k1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let k1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
         let sum = b
-            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(sum), &[]).unwrap();
         b.set_lift_addr(None);
@@ -766,17 +766,17 @@ mod tests {
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();
-        let k1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let k1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
         let a1 = b
-            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
-        let k2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let k2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
         let a2 = b
-            .build_int_binary_operation(a1, k2, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(a1, k2, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
-        let k4 = b.build_int_const(4u64, ValueType::I64).unwrap();
+        let k4 = b.build_int_const(4u64, ValueType::int(64)).unwrap();
         let a3 = b
-            .build_int_binary_operation(a2, k4, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(a2, k4, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(a3), &[]).unwrap();
         b.set_lift_addr(None);
@@ -827,8 +827,10 @@ mod tests {
         // `Load(Store(InitialMemory, addr, 7), addr)`.
         let mut b = RegisterSet::new().build_fn_single_region().unwrap();
         b.set_lift_addr(Some(0x10));
-        let addr = b.build_int_const(0x2000u64, VT::I64).unwrap();
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, VT::I64).unwrap();
+        let addr = b.build_int_const(0x2000u64, VT::int(64)).unwrap();
+        let loaded = b
+            .build_load(addr, rsleigh::VnSpace::RAM, VT::int(64))
+            .unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
@@ -847,7 +849,7 @@ mod tests {
             let a = tb.capture(addr_cap);
             let data = tb.leaf(KindSpec::Any);
             tb.set_template_kind(data, TemplateKind::FnIntConst(Box::new(|_| Ok(7u128))));
-            tb.set_value_ty(data, VT::I64);
+            tb.set_value_ty(data, VT::int(64));
             // The store needs an incoming memory token; this leaf is
             // input-less, so it becomes a root.
             let init_mem_node = tb.node(KindSpec::Exact(NodeKind::InitialMemory));
@@ -864,7 +866,7 @@ mod tests {
             tb.input(load_n, 0, store_mem);
             tb.input(load_n, 1, a2);
             let out = tb.value_output(load_n, 0);
-            tb.set_value_ty(out, VT::I64);
+            tb.set_value_ty(out, VT::int(64));
             tb.finish()
         };
 
@@ -958,17 +960,17 @@ mod tests {
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();
-        let k1 = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let k1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
         let inner = b
-            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
-        let k2 = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let k2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
         let outer = b
-            .build_int_binary_operation(inner, k2, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(inner, k2, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         // Wired into nothing, so it starts unreachable and the initial cull
         // removes it. The fold's RHS const (1 + 2) dedups back onto it.
-        let dangling_three = b.build_int_const(3u64, ValueType::I64).unwrap();
+        let dangling_three = b.build_int_const(3u64, ValueType::int(64)).unwrap();
         b.build_return(Some(outer), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();

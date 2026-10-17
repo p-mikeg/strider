@@ -26,7 +26,7 @@ fn wrong_op_rejects() {
 fn int_bit_not_5() -> strider_ir::Function {
     let mut t = Tb::empty();
     let v = t.u64(5);
-    let nv = t.bit_not_at(v, strider_ir::node::ValueType::I64);
+    let nv = t.bit_not_at(v, strider_ir::node::ValueType::int(64));
     t.ret_val(nv)
 }
 /// The canonical bit-not shape is a binary Xor, so a unary neg pattern
@@ -133,10 +133,10 @@ fn nested_any_partial_matches() {
 #[test]
 fn bit_not_rejects_a_saturated_mask_past_the_carrier() {
     let mut t = Tb::empty();
-    let v = t.int_of(5, strider_ir::node::ValueType::I256);
+    let v = t.int_of(5, strider_ir::node::ValueType::int(256));
     // `build_int_const` masks to the declared width, so this is 2^128-1.
-    let nv = t.bit_not_at(v, strider_ir::node::ValueType::I256);
-    let narrowed = t.trunc_to(nv, strider_ir::node::ValueType::I64);
+    let nv = t.bit_not_at(v, strider_ir::node::ValueType::int(256));
+    let narrowed = t.trunc_to(nv, strider_ir::node::ValueType::int(64));
     let function = t.ret_val(narrowed);
     a::none(&function, int_not(anything()).into_pattern());
 }

@@ -66,7 +66,7 @@ fn a_doubleword_variable_shift_masks_its_count_to_six_bits() {
             );
             assert_eq!(
                 f.value_type(v0).expect("typed"),
-                ValueType::I64,
+                ValueType::int(64),
                 "{where_}: a d-form shift is 64-bit"
             );
 

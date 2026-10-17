@@ -66,7 +66,7 @@ mod tests {
     fn intern_int_const_on_a_float_type_does_not_panic() {
         use crate::node::ValueType;
         let mut f = test_function();
-        let id = f.intern_int_const(0, ValueType::F64);
+        let id = f.intern_int_const(0, ValueType::float(64));
         assert_eq!(*f.const_value(id), ConstValue::Bits(0));
     }
 
@@ -78,17 +78,17 @@ mod tests {
         // Bit 69 is inside I80's width, bit 84 is above it; only 69 survives.
         let hi: u64 = (1 << 5) | (1 << 20);
         let value = u128::from(hi) << 64;
-        let limbed = f.intern_int_const_limbs(&[0, hi], ValueType::I80);
-        let scalar = f.intern_int_const(value, ValueType::I80);
+        let limbed = f.intern_int_const_limbs(&[0, hi], ValueType::int(80));
+        let scalar = f.intern_int_const(value, ValueType::int(80));
         assert_eq!(
             limbed, scalar,
             "limb path must mask to width like the scalar path"
         );
         match f.const_value(limbed) {
             ConstValue::Bits(v) => {
-                assert_eq!(*v, value & ValueType::I80.bit_mask_u128());
+                assert_eq!(*v, value & ValueType::int(80).bit_mask_u128());
                 assert_eq!(
-                    *v & !ValueType::I80.bit_mask_u128(),
+                    *v & !ValueType::int(80).bit_mask_u128(),
                     0,
                     "no bits above width"
                 );

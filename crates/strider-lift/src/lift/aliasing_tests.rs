@@ -81,7 +81,7 @@ fn read_subregister_routes_through_container_map() {
         let v = d.read_reg_vn(&eax).unwrap();
         assert_eq!(
             d.builder.function().value_type(v).unwrap(),
-            ValueType::I32,
+            ValueType::int(32),
             "eax read yields I32 sliced from the rax container",
         );
     });
@@ -97,7 +97,7 @@ fn read_reg_vn_truncates_subregister_of_tracked_container() {
         let read = d.read_reg_vn(&al).unwrap();
         assert_eq!(
             d.builder.function().value_kind(read),
-            ValueKind::Typed(ValueType::I8),
+            ValueKind::Typed(ValueType::int(8)),
             "AL read must be I8-typed"
         );
         let read_node = d.builder.function().producer(read);
@@ -119,13 +119,16 @@ fn write_subregister_merge_preserves_container_high_bytes() {
     let al = reg_vn(0x100, 1); // low byte -> LE shift 0
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![rax], |d, _| {
         let initial_rax = d.builder.read_variable(&rax).unwrap();
-        let byte_val = d.builder.build_int_const(0xABu64, ValueType::I8).unwrap();
+        let byte_val = d
+            .builder
+            .build_int_const(0xABu64, ValueType::int(8))
+            .unwrap();
         d.write_reg_vn(&al, byte_val).unwrap();
 
         let merged = d.read_reg_vn(&rax).unwrap();
         assert_eq!(
             d.builder.function().value_type(merged).unwrap(),
-            ValueType::I64
+            ValueType::int(64)
         );
         assert_eq!(pk(d, merged), NodeKind::IntBinaryOp(IntBinaryOp::Or));
         let [lhs, rhs] = d
@@ -157,14 +160,14 @@ fn write_subregister_into_x87_80bit_container_preserves_high_bits() {
         let initial = d.builder.read_variable(&st).unwrap();
         let val = d
             .builder
-            .build_int_const(0xDEAD_BEEFu64, ValueType::I32)
+            .build_int_const(0xDEAD_BEEFu64, ValueType::int(32))
             .unwrap();
         d.write_reg_vn(&lo4, val).unwrap();
 
         let merged = d.read_reg_vn(&st).unwrap();
         assert_eq!(
             d.builder.function().value_type(merged).unwrap(),
-            ValueType::I80,
+            ValueType::int(80),
             "the 10-byte container reads back as I80",
         );
         assert_eq!(pk(d, merged), NodeKind::IntBinaryOp(IntBinaryOp::Or));
@@ -197,13 +200,16 @@ fn write_high_byte_subregister_positions_mask_and_shift() {
     let ah = reg_vn(0x101, 1); // offset 1 byte -> LE shift 8
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![rax], |d, _| {
         let initial_rax = d.builder.read_variable(&rax).unwrap();
-        let byte_val = d.builder.build_int_const(0xABu64, ValueType::I8).unwrap();
+        let byte_val = d
+            .builder
+            .build_int_const(0xABu64, ValueType::int(8))
+            .unwrap();
         d.write_reg_vn(&ah, byte_val).unwrap();
 
         let merged = d.read_reg_vn(&rax).unwrap();
         assert_eq!(
             d.builder.function().value_type(merged).unwrap(),
-            ValueType::I64
+            ValueType::int(64)
         );
         assert_eq!(pk(d, merged), NodeKind::IntBinaryOp(IntBinaryOp::Or));
         let [lhs, rhs] = d
@@ -251,13 +257,16 @@ fn write_high_byte_subregister_big_endian_positions_mask_and_shift() {
     let sub = reg_vn(0x100, 1); // BE: offset-0 byte is the HIGH byte -> shift 24
     with_test_lifter_tracking_arch(ppc32be(), ppc32be_term(), vec![container], |d, _| {
         let initial = d.builder.read_variable(&container).unwrap();
-        let byte_val = d.builder.build_int_const(0xABu64, ValueType::I8).unwrap();
+        let byte_val = d
+            .builder
+            .build_int_const(0xABu64, ValueType::int(8))
+            .unwrap();
         d.write_reg_vn(&sub, byte_val).unwrap();
 
         let merged = d.read_reg_vn(&container).unwrap();
         assert_eq!(
             d.builder.function().value_type(merged).unwrap(),
-            ValueType::I32
+            ValueType::int(32)
         );
         assert_eq!(pk(d, merged), NodeKind::IntBinaryOp(IntBinaryOp::Or));
         let [lhs, rhs] = d
@@ -301,7 +310,7 @@ fn read_high_byte_subregister_big_endian_shifts_then_truncates() {
         let read = d.read_reg_vn(&sub).unwrap();
         assert_eq!(
             d.builder.function().value_type(read).unwrap(),
-            ValueType::I8
+            ValueType::int(8)
         );
         assert_eq!(pk(d, read), NodeKind::Truncate);
         let [shifted] = d
@@ -332,11 +341,11 @@ fn read_high_byte_subregister_big_endian_shifts_then_truncates() {
 fn write_i1_into_register_zero_extends_to_container_width() {
     let reg = reg_vn(0x200, 8); // tracked 8-byte register -> I64
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![reg], |d, _| {
-        let lhs = d.builder.build_int_const(1u64, ValueType::I32).unwrap();
-        let rhs = d.builder.build_int_const(2u64, ValueType::I32).unwrap();
+        let lhs = d.builder.build_int_const(1u64, ValueType::int(32)).unwrap();
+        let rhs = d.builder.build_int_const(2u64, ValueType::int(32)).unwrap();
         let i1_cmp = d
             .builder
-            .build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, ValueType::I32)
+            .build_int_cmp_operation(lhs, rhs, IntCmpOp::Equal, ValueType::int(32))
             .unwrap();
         assert_eq!(
             d.builder.function().value_type(i1_cmp).unwrap(),
@@ -349,7 +358,7 @@ fn write_i1_into_register_zero_extends_to_container_width() {
         let stored = d.read_reg_vn(&reg).unwrap();
         assert_eq!(
             d.builder.function().value_type(stored).unwrap(),
-            ValueType::I64,
+            ValueType::int(64),
             "an I1 written into an 8-byte register must be stored at I64 width"
         );
         assert_eq!(
@@ -378,7 +387,7 @@ fn read_unique_subslice_of_tracked_unique_container() {
         let read = d.read_reg_vn(&sub).unwrap();
         assert_eq!(
             d.builder.function().value_type(read).unwrap(),
-            ValueType::I32
+            ValueType::int(32)
         );
         assert_eq!(pk(d, read), NodeKind::Truncate);
         let [shifted] = d
@@ -406,7 +415,7 @@ fn wide_container_subregister_read_slices_and_write_masks_at_container_width() {
             .expect("read of a ymm sub-slice must slice the wide container");
         assert_eq!(
             d.builder.function().value_type(read).unwrap(),
-            ValueType::I64
+            ValueType::int(64)
         );
         assert_eq!(pk(d, read), NodeKind::Truncate);
         let [shifted] = d
@@ -421,14 +430,14 @@ fn wide_container_subregister_read_slices_and_write_masks_at_container_width() {
         );
 
         let initial_ymm = d.builder.read_variable(&ymm).unwrap();
-        let val = d.builder.build_int_const(1u64, ValueType::I64).unwrap();
+        let val = d.builder.build_int_const(1u64, ValueType::int(64)).unwrap();
         d.write_reg_vn(&mid8, val)
             .expect("write of a ymm sub-slice masks at I256");
 
         let merged = d.read_reg_vn(&ymm).unwrap();
         assert_eq!(
             d.builder.function().value_type(merged).unwrap(),
-            ValueType::I256
+            ValueType::int(256)
         );
         assert_eq!(pk(d, merged), NodeKind::IntBinaryOp(IntBinaryOp::Or));
         let [lhs, rhs] = d
@@ -492,7 +501,7 @@ fn aarch64_wide_container_subregister_write_masks_at_container_width() {
             let initial_z = d_lifter.builder.read_variable(&z).unwrap();
             let val = d_lifter
                 .builder
-                .build_int_const(0xABu64, ValueType::I64)
+                .build_int_const(0xABu64, ValueType::int(64))
                 .unwrap();
             d_lifter
                 .write_reg_vn(&d, val)
@@ -501,7 +510,7 @@ fn aarch64_wide_container_subregister_write_masks_at_container_width() {
             let merged = d_lifter.read_reg_vn(&z).unwrap();
             assert_eq!(
                 d_lifter.builder.function().value_type(merged).unwrap(),
-                ValueType::I256
+                ValueType::int(256)
             );
             assert_eq!(pk(d_lifter, merged), NodeKind::IntBinaryOp(IntBinaryOp::Or));
             let [lhs, rhs] = d_lifter
@@ -533,7 +542,7 @@ fn write_reg_vn_subregister_accepts_i1_like_direct_arm() {
         let read_back = d.read_reg_vn(&container).unwrap();
         assert_eq!(
             d.builder.function().value_type(read_back).unwrap(),
-            ValueType::I64,
+            ValueType::int(64),
             "container reads back at its natural width after the I1 sub-register write"
         );
     });
@@ -548,7 +557,7 @@ fn write_reg_vn_subregister_float_errors_like_direct_arm() {
     with_test_lifter_tracking_arch(x86(), x86_term(), vec![container], |d, _| {
         let f = d
             .builder
-            .build_float_const(0x4000_0000_0000_0000u64, ValueType::F64);
+            .build_float_const(0x4000_0000_0000_0000u64, ValueType::float(64));
         let sub_err = d.write_reg_vn(&sub, f).unwrap_err().to_string();
         assert!(
             sub_err.contains("bitcast is required first"),
@@ -557,7 +566,7 @@ fn write_reg_vn_subregister_float_errors_like_direct_arm() {
 
         let f2 = d
             .builder
-            .build_float_const(0x4000_0000_0000_0000u64, ValueType::F64);
+            .build_float_const(0x4000_0000_0000_0000u64, ValueType::float(64));
         let direct_err = d.write_reg_vn(&container, f2).unwrap_err().to_string();
         assert!(
             direct_err.contains("bitcast is required first"),
