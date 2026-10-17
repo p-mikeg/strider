@@ -150,10 +150,7 @@ impl<N: Copy + Eq + Hash> Dominators<N> {
     where
         N: Ord,
     {
-        let mut children: Vec<Vec<u32>> = vec![Vec::new(); self.vertices.len()];
-        for (v, &d) in self.idom.iter().enumerate().skip(1) {
-            children[d as usize].push(v as u32);
-        }
+        let mut children = children(&self.idom);
         let mut order = Vec::with_capacity(self.vertices.len());
         let mut stack = vec![0u32];
         while let Some(v) = stack.pop() {
@@ -167,6 +164,15 @@ impl<N: Copy + Eq + Hash> Dominators<N> {
 }
 
 const UNLINKED: u32 = u32::MAX;
+
+/// Each vertex's dominator-tree children, ascending by index.
+fn children(idom: &[u32]) -> Vec<Vec<u32>> {
+    let mut children = vec![Vec::new(); idom.len()];
+    for (v, &d) in idom.iter().enumerate().skip(1) {
+        children[d as usize].push(v as u32);
+    }
+    children
+}
 
 /// Lengauer-Tarjan with path compression, O(m log n) over the `m` edges
 /// `successors` yields from the vertices `root` reaches.
@@ -270,10 +276,7 @@ impl DomIntervals {
     #[must_use]
     pub fn new(idom: &[u32]) -> Self {
         let n = idom.len();
-        let mut children: Vec<Vec<u32>> = vec![Vec::new(); n];
-        for (v, &d) in idom.iter().enumerate().skip(1) {
-            children[d as usize].push(v as u32);
-        }
+        let children = children(idom);
         let mut enter = vec![0u32; n];
         let mut exit = vec![0u32; n];
         let mut clock = 0u32;
