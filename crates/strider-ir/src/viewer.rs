@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 
 use crate::function::Function;
-use crate::node::{NodeId, NodeKind, ValueId, ValueType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 
 /// Each generated method errors unless `value_id`'s kind satisfies the named
 /// predicate.
@@ -346,6 +346,34 @@ pub trait IRViewer {
     fn validate_value_inputs(&self, inputs: &[ValueId]) -> crate::Result<()> {
         for &v in inputs {
             self.require_value_kind(v)?;
+        }
+        Ok(())
+    }
+
+    /// Errors unless `value` may fill input `slot` of a `kind` node.
+    fn require_slot(&self, kind: &NodeKind, slot: usize, value: ValueId) -> crate::Result<()> {
+        let actual = self.function().graph().value_kind(value);
+        let want = kind
+            .expected_input_kind(slot)
+            .ok_or_else(|| anyhow!("{kind:?} has no input slot {slot}"))?;
+        if !want.admits(actual) {
+            return Err(anyhow!(
+                "operand {value:?} at {kind:?} input slot {slot} is {actual:?}, \
+                 where its node signature expects {want:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Errors unless a `kind` node may output `ty` at slot 0.
+    fn require_output_type(kind: &NodeKind, ty: ValueType) -> crate::Result<()> {
+        let want = kind
+            .expected_output_kind(0)
+            .ok_or_else(|| anyhow!("{kind:?} has no output slot 0"))?;
+        if !want.admits(ValueKind::Typed(ty)) {
+            return Err(anyhow!(
+                "a {kind:?} cannot output {ty}: its node signature expects {want:?}"
+            ));
         }
         Ok(())
     }
