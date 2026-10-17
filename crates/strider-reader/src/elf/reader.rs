@@ -1,7 +1,7 @@
 use crate::{MemRegionsLookupTable, Result};
 
 use super::load::{OwnedElf, RelocationMode};
-use super::sections::{AddressRanges, ElfSectionLayout, LoadFilter, RegionSource};
+use super::sections::{AddressSet, ElfSectionLayout, LoadFilter, RegionSource};
 
 /// An [`rsleigh::MemReader`] over an ELF's fetch image, and a
 /// [`crate::ReadOnlyMemory`] over that image minus its writable (RWX) mappings.
@@ -21,7 +21,7 @@ pub struct ElfFileMemReader {
     /// the ones the fetch filter dropped alike. The `ReadOnlyMemory` view is
     /// the fetch image minus these, expressed as ranges rather than a second
     /// table so the bytes are stored once.
-    writable: AddressRanges,
+    writable: AddressSet,
 }
 
 impl ElfFileMemReader {
