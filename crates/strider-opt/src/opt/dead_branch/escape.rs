@@ -5,8 +5,10 @@ use cranelift_entity::SecondaryMap;
 use entity_utils::DenseEntitySet;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::node::{NodeId, ValueId};
 use strider_ir::{IRViewer, IRWalker};
+
+use super::constant_selection;
 
 #[cfg(test)]
 thread_local! {
@@ -268,8 +270,10 @@ fn escaping_nodes(edit: &crate::EditFunction<'_>) -> EscapeSet {
     let mut dead_arms: DenseEntitySet<ValueId> = DenseEntitySet::new();
     let nodes: Vec<NodeId> = edit.walk().collect();
     for &node in &nodes {
-        for arm in dead_arm_values(edit, node) {
-            dead_arms.insert(arm);
+        if let Some(selection) = constant_selection(edit, node) {
+            for arm in selection.dead {
+                dead_arms.insert(arm);
+            }
         }
     }
 
@@ -298,45 +302,4 @@ fn escaping_nodes(edit: &crate::EditFunction<'_>) -> EscapeSet {
         None,
     );
     EscapeSet { escapes, dead_arms }
-}
-
-/// The control outputs a constant-selector branch never takes; empty for every
-/// other node.
-fn dead_arm_values(edit: &crate::EditFunction<'_>, node: NodeId) -> Vec<ValueId> {
-    let outputs = edit.node_outputs(node);
-    match edit.node_kind(node) {
-        NodeKind::If => {
-            let [_, cond_value] = edit
-                .node_inputs_exact::<2>(node)
-                .expect("If has 2 inputs per node signature");
-            let [ctrl_true, ctrl_false] = edit
-                .node_outputs_exact::<2>(node)
-                .expect("If has 2 outputs per node signature");
-            let Some(cond) = edit.bool_const_val(cond_value) else {
-                return Vec::new();
-            };
-            vec![if cond { ctrl_false } else { ctrl_true }]
-        }
-        NodeKind::Switch(_) => {
-            let addr_value = edit.node_inputs(node)[1];
-            let Some(k) = edit.int_const_u128(addr_value) else {
-                return Vec::new();
-            };
-            let Some(live) = edit
-                .function()
-                .switch_targets(node)
-                .iter()
-                .position(|&t| u128::from(t) == k)
-            else {
-                return Vec::new();
-            };
-            outputs
-                .iter()
-                .enumerate()
-                .filter(|&(i, _)| i != live)
-                .map(|(_, &out)| out)
-                .collect()
-        }
-        _ => Vec::new(),
-    }
 }

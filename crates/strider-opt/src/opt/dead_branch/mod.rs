@@ -15,8 +15,9 @@
 //!
 //! Dead predecessor slots of the joins are stripped in the same pass.
 
+use smallvec::SmallVec;
 use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::error::Result;
 use crate::opt::cfg_detach::strip_dead_predecessors;
@@ -69,96 +70,78 @@ impl PeepholePass for DbeFold {
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        match edit.node_kind(root) {
-            NodeKind::If => {
-                // Inputs are [ctrl_in, condition].  A detached If is never handed
-                // back here (no consumer re-enqueue, no reported `new_node`), so
-                // `root` always still carries both.
-                let [ctrl_value, cond_value] = edit
-                    .graph_ref()
-                    .node_inputs_exact::<2>(root)
-                    .expect("If has 2 inputs per node signature");
-
-                let Some(cond_val) = edit.function().bool_const_val(cond_value) else {
-                    return Ok(PeepholeRewrite::NoChange);
-                };
-
-                let [ctrl_true, ctrl_false] = edit
-                    .node_outputs_exact::<2>(root)
-                    .expect("If has 2 outputs per node signature");
-                let live_ctrl = if cond_val { ctrl_true } else { ctrl_false };
-                let dead_ctrl = if cond_val { ctrl_false } else { ctrl_true };
-
-                // An `Unreachable` on the dead arm anchors the memory of an
-                // exit-free control cycle the fold would orphan.  Coarser than
-                // `live_side_escapes` below: a dead arm that is a bare
-                // `Unreachable` declines too, though folding it is sound.  The
-                // asymmetry is the point: declining costs one unfolded branch,
-                // folding wrongly costs a store.  `if (const) .. else abort();`
-                // still folds, its dead arm reaching the `Unreachable` through
-                // the `Call`.
-                let dead_consumers: Vec<NodeId> = edit
-                    .graph_ref()
-                    .value_uses(dead_ctrl)
-                    .map(|(node, _)| node)
-                    .collect();
-                if dead_consumers
-                    .iter()
-                    .any(|&node| matches!(edit.node_kind(node), NodeKind::Unreachable))
-                {
-                    return Ok(PeepholeRewrite::NoChange);
-                }
-
-                if !escapes.live_side_escapes(edit, root, live_ctrl) {
-                    return Ok(PeepholeRewrite::NoChange);
-                }
-
-                // The condition is the proof for taking this arm, so its
-                // fingerprint must survive `kill_node` cascade-culling the
-                // condition cone.  Absorb it into the surviving control source.
-                edit.absorb_fingerprint(ctrl_value, cond_value);
-
-                edit.replace_value(live_ctrl, ctrl_value);
-                edit.kill_node(root);
-                Ok(PeepholeRewrite::Changed { new_node: None })
-            }
-            NodeKind::Switch(_) => {
-                let inputs = edit.graph_ref().node_inputs(root);
-                let (ctrl_value, addr_value) = (inputs[0], inputs[1]);
-
-                let Some(k) = edit.function().int_const_u128(addr_value) else {
-                    return Ok(PeepholeRewrite::NoChange);
-                };
-
-                // Output i corresponds to cases[i].  Computing the index inside
-                // this expression ends the immutable borrow of `edit.function()`
-                // before the mutable calls below, without cloning the slice.
-                let Some(i) = edit
-                    .function()
-                    .switch_targets(root)
-                    .iter()
-                    .position(|&t| u128::from(t) == k)
-                else {
-                    // Reachable: a `Switch`'s arms "need not cover every
-                    // dispatch value" (`node_signature.rs`), a site the
-                    // resolver seated early holding one arm and widening in a
-                    // later round.
-                    return Ok(PeepholeRewrite::NoChange);
-                };
-                let live_ctrl = edit.node_outputs(root)[i];
-
-                if !escapes.live_side_escapes(edit, root, live_ctrl) {
-                    return Ok(PeepholeRewrite::NoChange);
-                }
-
-                // Same proof-completeness rationale as the `If` arm, with the
-                // constant dispatch address in place of the condition.
-                edit.absorb_fingerprint(ctrl_value, addr_value);
-                edit.replace_value(live_ctrl, ctrl_value);
-                edit.kill_node(root);
-                Ok(PeepholeRewrite::Changed { new_node: None })
-            }
-            _ => Ok(PeepholeRewrite::NoChange),
+        let Some(selection) = constant_selection(edit, root) else {
+            return Ok(PeepholeRewrite::NoChange);
+        };
+        // An `Unreachable` on the dead arm anchors the memory of an exit-free
+        // control cycle the fold would orphan.  Coarser than
+        // `live_side_escapes` below: a dead arm that is a bare `Unreachable`
+        // declines too, though folding it is sound.  The asymmetry is the
+        // point: declining costs one unfolded branch, folding wrongly costs a
+        // store.  `if (const) .. else abort();` still folds, its dead arm
+        // reaching the `Unreachable` through the `Call`.
+        if matches!(edit.node_kind(root), NodeKind::If)
+            && selection.dead.iter().any(|&dead| {
+                edit.value_uses(dead)
+                    .any(|(node, _)| matches!(edit.node_kind(node), NodeKind::Unreachable))
+            })
+        {
+            return Ok(PeepholeRewrite::NoChange);
         }
+        if !escapes.live_side_escapes(edit, root, selection.live) {
+            return Ok(PeepholeRewrite::NoChange);
+        }
+        // Both kinds read `[ctrl_in, selector, ..]`.  The constant selector is
+        // the proof for taking this arm, so its fingerprint must survive
+        // `kill_node` cascade-culling its cone.
+        let (ctrl_value, selector) = {
+            let inputs = edit.node_inputs(root);
+            (inputs[0], inputs[1])
+        };
+        edit.absorb_fingerprint(ctrl_value, selector);
+        edit.replace_value(selection.live, ctrl_value);
+        edit.kill_node(root);
+        Ok(PeepholeRewrite::Changed { new_node: None })
     }
+}
+
+/// The control output a constant-selector branch takes, and the ones it
+/// never takes.
+struct Selection {
+    live: ValueId,
+    dead: SmallVec<[ValueId; 2]>,
+}
+
+/// `None` for anything but an `If` or `Switch` with a constant selector, and
+/// for a `Switch` whose constant no arm lists: its arms need not cover every
+/// dispatch value (`node_signature.rs`), as at a site the resolver seated
+/// early holding one arm.  The fold and [`EscapeOracle`] both read this, so
+/// they agree on which arms are dead.
+fn constant_selection(edit: &crate::EditFunction<'_>, node: NodeId) -> Option<Selection> {
+    let live = match edit.node_kind(node) {
+        NodeKind::If => {
+            // Outputs are [true, false].
+            let cond = edit.bool_const_val(edit.node_inputs(node)[1])?;
+            usize::from(!cond)
+        }
+        NodeKind::Switch(_) => {
+            // Output i is cases[i].
+            let k = edit.int_const_u128(edit.node_inputs(node)[1])?;
+            edit.function()
+                .switch_targets(node)
+                .iter()
+                .position(|&t| u128::from(t) == k)?
+        }
+        _ => return None,
+    };
+    let outputs = edit.node_outputs(node);
+    Some(Selection {
+        live: outputs[live],
+        dead: outputs
+            .iter()
+            .enumerate()
+            .filter(|&(i, _)| i != live)
+            .map(|(_, &out)| out)
+            .collect(),
+    })
 }
