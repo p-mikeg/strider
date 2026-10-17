@@ -66,12 +66,14 @@ impl PcodeConsts {
         // (offset, size). Sleigh reuses a unique offset at different widths,
         // and a stale wider value read back after a narrower write would fold
         // to the wrong number, which here means naming the wrong register.
-        let (lo, hi) = (
-            out.addr_off,
-            out.addr_off.saturating_add(u64::from(out.size)),
-        );
-        self.vals
-            .retain(|&(off, size), _| off >= hi || off.saturating_add(u64::from(size)) <= lo);
+        self.vals.retain(|&(addr_off, size), _| {
+            let entry = rsleigh::Vn {
+                addr_space: rsleigh::VnSpace::UNIQUE,
+                addr_off,
+                size,
+            };
+            !vn_container::vn_overlaps(out, &entry)
+        });
         if let Some(v) = folded {
             self.vals
                 .insert((out.addr_off, out.size), mask_to(v, out.size));
@@ -291,6 +293,19 @@ mod tests {
         c.observe(at(0x10, 1), &op(Opcode::Popcount, Some(narrow), &[wide]));
         assert_eq!(c.value_of(&wide), None);
         assert_eq!(c.value_of(&narrow), None);
+    }
+
+    /// The write's end is exact at the top of the space: a saturated end
+    /// would leave the byte at `u64::MAX` readable under a write over it.
+    #[test]
+    fn a_write_at_the_top_of_the_space_invalidates_what_it_overlaps() {
+        let top = vn(VnSpace::UNIQUE, u64::MAX, 1);
+        let wide = vn(VnSpace::UNIQUE, u64::MAX, 4);
+        let mut c = PcodeConsts::default();
+        c.observe(at(0x10, 0), &op(Opcode::Copy, Some(top), &[konst_of(7, 1)]));
+        assert_eq!(c.value_of(&top), Some(7));
+        c.observe(at(0x10, 1), &op(Opcode::Popcount, Some(wide), &[top]));
+        assert_eq!(c.value_of(&top), None);
     }
 
     #[test]
