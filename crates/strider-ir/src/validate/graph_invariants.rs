@@ -6,7 +6,7 @@ use crate::DominatorTree;
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, ValueType};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::schedule::{ScheduleContext, schedule_early};
 use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
 
@@ -172,11 +172,10 @@ pub(super) fn check_function_invariants_arith_widths(
     for (node, kind) in function.reachable_kind_iter(reachable) {
         // A shift's COUNT is unconstrained in p-code (`INT_LEFT` pins only
         // input0 to the output size), so only operand 0 carries the width.
-        let checked = match kind {
-            NodeKind::IntBinaryOp(
-                IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight,
-            ) => 1,
-            _ => usize::MAX,
+        let checked = if matches!(kind, NodeKind::IntBinaryOp(op) if op.is_shift()) {
+            1
+        } else {
+            usize::MAX
         };
         // A bitcast reinterprets the SAME bits, so the two types must be the
         // same SIZE. Bytes rather than bits only because that is what every

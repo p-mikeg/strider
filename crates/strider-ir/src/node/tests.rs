@@ -178,3 +178,19 @@ fn same_value_distinct_width_shares_const_id_distinct_node() {
     assert_eq!(f.int_const_u128(v80), Some(42));
     assert_eq!(f.int_const_u128(v128), Some(42));
 }
+
+#[test]
+fn the_shifts_are_the_three_shift_ops() {
+    let shifts: Vec<IntBinaryOp> = IntBinaryOp::ALL
+        .into_iter()
+        .filter(|op| op.is_shift())
+        .collect();
+    assert_eq!(
+        shifts,
+        [
+            IntBinaryOp::ShiftRight,
+            IntBinaryOp::SShiftRight,
+            IntBinaryOp::ShiftLeft
+        ]
+    );
+}
