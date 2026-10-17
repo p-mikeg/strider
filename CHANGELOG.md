@@ -123,6 +123,11 @@
   `DecodeEngine::new(arch, sleigh)?.build_cfg(entry, &opts)`, which pins the
   entry's ISA mode and carries the decode context across builds; a bare
   `Builder` decoded ARM with ISA-mode handling off.
+- `graph_algorithms::dominance::{DomRelation, DomTree, DomTreeWalk,
+  dominator_tree_walk, dominator_tree_preorder}` are gone. `Dominators::intervals`
+  and `Dominators::tree_preorder` (siblings ascending by vertex) number the
+  tree, and `dominance_frontiers(&doms, preds)` takes the predecessor edges as
+  a closure.
 
 ### Changed, Python
 

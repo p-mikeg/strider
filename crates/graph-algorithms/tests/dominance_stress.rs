@@ -11,36 +11,13 @@ use std::hash::{Hash, Hasher};
 
 use common::cases::{self, Case};
 use graph_algorithms::dominance::{
-    DomIntervals, DomRelation, DomTree, Dominators, Frontiers, dominance_frontiers,
-    dominator_tree_preorder, dominator_tree_walk, dominators, immediate_dominators, phi_placement,
+    DomIntervals, Dominators, Frontiers, dominance_frontiers, dominators, immediate_dominators,
+    phi_placement,
 };
 use graph_algorithms::oracle;
 use petgraph::graph::NodeIndex;
 use proptest::prelude::*;
 use rustc_hash::FxHashMap;
-
-/// Predecessors and idoms are both explicit; the idom map is oracle-computed.
-struct Mock {
-    nodes: Vec<u32>,
-    preds: HashMap<u32, Vec<u32>>,
-    idom: HashMap<u32, u32>,
-}
-
-impl DomRelation for Mock {
-    type Node = u32;
-    fn nodes(&self) -> impl Iterator<Item = u32> + '_ {
-        self.nodes.iter().copied()
-    }
-    fn immediate_dominator(&self, n: u32) -> Option<u32> {
-        self.idom.get(&n).copied()
-    }
-}
-
-impl DomTree for Mock {
-    fn predecessors(&self, n: u32) -> impl Iterator<Item = u32> + '_ {
-        self.preds.get(&n).into_iter().flatten().copied()
-    }
-}
 
 /// Deterministic splitmix-ish PRNG, so failures reproduce.
 struct Rng(u64);
@@ -179,13 +156,9 @@ fn dominance_frontiers_match_definition_over_random_cfgs() {
         let preds = random_cfg(&mut rng, n, extra);
         let (dom, idom) = oracle_dom_and_idom(n, &preds);
 
-        let mock = Mock {
-            nodes: (0..n).collect(),
-            preds: preds.clone(),
-            idom: idom.clone(),
-        };
-
-        let df_impl = dominance_frontiers(&mock, 0);
+        let succs = succs_of(n, &preds);
+        let doms = dominators(0u32, |v| succs.get(&v).cloned().unwrap_or_default());
+        let df_impl = dominance_frontiers(&doms, |v| preds.get(&v).cloned().unwrap_or_default());
         // Same DF in the oracle's representation, for the IDF fixpoint below.
         let df_std: HashMap<u32, HashSet<u32>> = df_impl
             .iter()
@@ -200,7 +173,7 @@ fn dominance_frontiers_match_definition_over_random_cfgs() {
             );
         }
 
-        let order = dominator_tree_preorder(&mock, 0);
+        let order = doms.tree_preorder();
         assert_eq!(order[0], 0, "iter {iter}: preorder must start at root");
         let pos: HashMap<u32, usize> = order.iter().enumerate().map(|(i, &nn)| (nn, i)).collect();
         assert_eq!(
@@ -251,15 +224,9 @@ fn unreachable_nodes_are_skipped() {
         (3, vec![]), // island root, not reachable from 0
         (4, vec![3]),
     ]);
-    // Only reachable nodes get an idom, so 3 and 4 are absent.
-    let idom: HashMap<u32, u32> = HashMap::from([(1, 0), (2, 1)]);
-    let mock = Mock {
-        nodes: vec![0, 1, 2, 3, 4],
-        preds,
-        idom,
-    };
-
-    let df = dominance_frontiers(&mock, 0);
+    let succs = succs_of(5, &preds);
+    let doms = dominators(0u32, |v| succs.get(&v).cloned().unwrap_or_default());
+    let df = dominance_frontiers(&doms, |v| preds.get(&v).cloned().unwrap_or_default());
     // A straight-line chain has empty frontiers everywhere.
     for x in 0..5 {
         assert!(
@@ -267,42 +234,12 @@ fn unreachable_nodes_are_skipped() {
             "DF({x}) must be empty"
         );
     }
-    let order = dominator_tree_preorder(&mock, 0);
+    let order = doms.tree_preorder();
     assert_eq!(
         order,
         vec![0, 1, 2],
         "preorder excludes the unreachable island"
     );
-}
-
-/// A malformed idom relation must still terminate with each node once. The
-/// push-time dedup that drops the repeat here is also what stops an idom cycle
-/// spinning forever.
-#[test]
-fn a_repeated_node_appears_once_in_the_preorder() {
-    let mock = Mock {
-        // `nodes` promises each node exactly once; this one lies.
-        nodes: vec![0, 1, 1, 2],
-        preds: HashMap::from([(0, vec![]), (1, vec![0]), (2, vec![1])]),
-        idom: HashMap::from([(1, 0), (2, 1)]),
-    };
-    assert_eq!(dominator_tree_preorder(&mock, 0), vec![0, 1, 2]);
-}
-
-/// `DF(root) ∋ root` needs the climb from the root's predecessor to pass
-/// THROUGH the root, which only `idom(root) == None` allows. On `0 -> 1 -> 2 ->
-/// 0` the root-as-own-idom encoding silently returns `{1: [0], 2: [0]}`, with
-/// no key 0.
-#[cfg(debug_assertions)]
-#[test]
-#[should_panic(expected = "root must have no immediate dominator")]
-fn dominance_frontiers_rejects_root_as_its_own_idom() {
-    let mock = Mock {
-        nodes: vec![0, 1, 2],
-        preds: HashMap::from([(0, vec![2]), (1, vec![0]), (2, vec![1])]),
-        idom: HashMap::from([(0, 0), (1, 0), (2, 1)]),
-    };
-    let _ = dominance_frontiers(&mock, 0);
 }
 
 /// Against the fixpoint oracle, on dense irreducible graphs plus an island of
@@ -461,7 +398,7 @@ impl Id for u32 {
 /// makes hashes once, so the count is its work, independent of timing. The
 /// probe that reaches `HASH_BUDGET` panics, so superlinear work fails fast
 /// rather than exhausting time or memory.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct Counted(u32);
 
 thread_local! {
@@ -488,47 +425,37 @@ impl Id for Counted {
     }
 }
 
-/// Lift's view: every vertex in ascending order, the crate's own idoms, and
-/// explicit predecessors (duplicates and unreachable ones included).
-struct Lifted<'a, N> {
-    doms: &'a Dominators<N>,
-    preds: &'a [Vec<u32>],
-}
-
-impl<N: Id> DomRelation for Lifted<'_, N> {
-    type Node = N;
-    fn nodes(&self) -> impl Iterator<Item = N> + '_ {
-        (0..self.preds.len() as u32).map(N::at)
-    }
-    fn immediate_dominator(&self, v: N) -> Option<N> {
-        self.doms.immediate_dominator(v)
-    }
-}
-
-impl<N: Id> DomTree for Lifted<'_, N> {
-    fn predecessors(&self, v: N) -> impl Iterator<Item = N> + '_ {
-        self.preds[v.ix()].iter().map(|&p| N::at(p))
-    }
-}
-
 /// The frontiers lift computes.
 fn frontiers<N: Id>(doms: &Dominators<N>, preds: &[Vec<u32>]) -> Frontiers<N> {
-    dominance_frontiers(&Lifted { doms, preds }, N::at(0))
+    dominance_frontiers(doms, |v: N| preds[v.ix()].iter().map(|&p| N::at(p)))
 }
 
 /// The preorder lift walks: siblings ascending by vertex.
-fn preorder_ascending<N: Id>(doms: &Dominators<N>, preds: &[Vec<u32>]) -> Vec<N> {
-    dominator_tree_preorder(&Lifted { doms, preds }, N::at(0))
+fn preorder_ascending<N: Id + Ord>(doms: &Dominators<N>) -> Vec<N> {
+    doms.tree_preorder()
 }
 
 /// The preorder strider-ir walks: siblings in depth-first discovery order.
 fn preorder_by_discovery<N: Id>(doms: &Dominators<N>) -> Vec<N> {
-    dominator_tree_preorder(doms, N::at(0))
+    doms.intervals()
+        .preorder()
+        .iter()
+        .map(|&at| doms.vertices()[at as usize])
+        .collect()
 }
 
-/// `(enter, exit)` of each reachable vertex.
+/// `(enter, exit)` of each reachable vertex, from 1 as strider-ir stores
+/// them.
 fn spans<N: Id>(doms: &Dominators<N>) -> FxHashMap<N, (u32, u32)> {
-    dominator_tree_walk(doms, N::at(0)).span
+    let intervals = doms.intervals();
+    doms.vertices()
+        .iter()
+        .enumerate()
+        .map(|(at, &v)| {
+            let (enter, exit) = intervals.span(at as u32);
+            (v, (enter + 1, exit + 1))
+        })
+        .collect()
 }
 
 /// Every dominance answer rooted at 0, against the definitions and petgraph.
@@ -623,7 +550,7 @@ fn check_dominance(c: &Case) {
     );
     let ascending = oracle::tree_preorder(&idom, 0, |v| v as usize);
     assert_eq!(
-        preorder_ascending(&doms, &preds),
+        preorder_ascending(&doms),
         ascending,
         "ascending preorder, {c:?}"
     );
@@ -657,7 +584,6 @@ fn check_dominance(c: &Case) {
 /// oracle stays cheap, past that discovery order, one successor query per
 /// vertex and idoms against petgraph.
 fn check_large(c: &Case) {
-    check_numbering_against_the_walk(c);
     if c.n <= 200 {
         check_dominance(c);
         return;
@@ -792,17 +718,6 @@ fn loop_oracles_hold_on_the_named_shapes() {
     assert_eq!(loops["sibling_loops"], [(1, vec![1, 2]), (3, vec![3, 4])]);
 }
 
-/// `0 -> 2, 0 -> 1`: discovery visits 2 first, so the two sibling orders the
-/// two consumers walk differ.
-#[test]
-fn sibling_order_follows_discovery_or_vertex_as_asked() {
-    let succs = [vec![2, 1], vec![], vec![]];
-    let doms = dominators(0u32, |v| succs[v as usize].clone());
-    let preds = oracle::preds_of(&succs);
-    assert_eq!(preorder_by_discovery(&doms), [0, 2, 1]);
-    assert_eq!(preorder_ascending(&doms, &preds), [0, 1, 2]);
-}
-
 /// A chain, an error ladder (each rung also edges into one sink), a star,
 /// and a cycle back to vertex 1.
 fn scale_succs(shape: usize, n: u32, v: u32) -> Vec<u32> {
@@ -854,7 +769,7 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
         drop(fr);
         let mut got: Vec<u32> = placed.keys().map(|v| v.0).collect();
         drop(placed);
-        let order_len = preorder_ascending(&doms, &preds).len();
+        let order_len = preorder_ascending(&doms).len();
         let span_len = spans(&doms).len();
         assert_eq!(
             asked,
@@ -876,48 +791,4 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
         );
     }
     HASH_BUDGET.with(|c| c.set(u64::MAX));
-}
-
-/// The interval numbering against the walk it replaces: the same spans one
-/// higher, the same discovery preorder, and the ascending preorder.
-fn check_numbering_against_the_walk(c: &Case) {
-    let succs = c.succs();
-    let preds = oracle::preds_of(&succs);
-    let doms = dominators(0u32, |v| succs[v as usize].clone());
-    let walk = dominator_tree_walk(&doms, 0);
-    let iv = doms.intervals();
-    for (at, &v) in doms.vertices().iter().enumerate() {
-        let (enter, exit) = iv.span(at as u32);
-        assert_eq!(walk.span[&v], (enter + 1, exit + 1), "span of {v}, {c:?}");
-    }
-    let discovery: Vec<u32> = iv
-        .preorder()
-        .iter()
-        .map(|&at| doms.vertices()[at as usize])
-        .collect();
-    assert_eq!(discovery, walk.preorder, "discovery preorder, {c:?}");
-    assert_eq!(
-        doms.tree_preorder(),
-        preorder_ascending(&doms, &preds),
-        "ascending preorder, {c:?}"
-    );
-}
-
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(CASES))]
-
-    #[test]
-    fn intervals_number_the_tree_as_the_walk_did(c in cases::arb_case(10)) {
-        check_numbering_against_the_walk(&c);
-    }
-}
-
-#[test]
-fn intervals_number_the_named_shapes_as_the_walk_did() {
-    for (name, c) in cases::shapes() {
-        if c.n > 0 {
-            println!("shape {name}");
-            check_numbering_against_the_walk(&c);
-        }
-    }
 }
