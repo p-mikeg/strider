@@ -31,15 +31,15 @@ impl SealNode for TmplNodeKind {
     }
 }
 
-/// # Output-signature validity is author-owned
+/// # The raw verbs are checked at instantiation
 ///
 /// The high-level verbs (`leaf`, `unary`, `binary`) declare canonical output
 /// signatures and wire each input slot exactly once. The raw verbs
 /// ([`node`](Self::node), [`input`](Self::input), the `*_output` slot verbs)
-/// enforce nothing, and [`instantiate`](crate::template::instantiate) does not
-/// run [`strider_ir::validate`], so an author using them owns output-signature
-/// validity. Input-slot wiring IS validated at instantiation: gapped or
-/// duplicate slots error out.
+/// enforce nothing when called; [`instantiate`](crate::template::instantiate)
+/// checks every node against its node signature and refuses a gapped or
+/// duplicate input slot. No verb declares a control output, so a node whose
+/// signature has one (`Call`, `Region`, `If`, ...) cannot be built.
 pub struct TemplateBuilder {
     core: StagedGraph<TmplNodeKind, TmplValue>,
     declared_captures: Vec<crate::Capture>,
