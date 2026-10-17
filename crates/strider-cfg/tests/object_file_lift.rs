@@ -21,16 +21,17 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
         path.display()
     );
 
-    let obj = strider_reader::load_elf(&path).expect("load tzcount.o");
-    let obj = obj.checked_file().expect("the mapped file is unchanged");
+    let elf = strider_reader::load_elf(&path).expect("load tzcount.o");
+    let obj = elf.checked_file().expect("the mapped file is unchanged");
     assert_eq!(
         obj.kind(),
         object::ObjectKind::Relocatable,
         "fixture must be ET_REL"
     );
 
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj)
-        .expect("ElfFileMemReader::from_object on .o");
+    let mem =
+        strider_reader::ElfFileMemReader::new(&elf, strider_reader::elf::RelocationMode::Unapplied)
+            .expect("ElfFileMemReader::new on .o");
     let arch = SleighArch::x86_64();
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem)
         .expect("create Sleigh for ET_REL fixture");

@@ -6,7 +6,7 @@
 mod common;
 
 use common::elf_fixture::{SectionSpec, build_elf_with_sections};
-use strider_reader::elf::{LoadFilter, elf_get_loadable_regions};
+use strider_reader::elf::LoadFilter;
 
 fn parse(bytes: &[u8]) -> object::File<'_> {
     object::File::parse(bytes).expect("parse synthetic ELF")
@@ -76,8 +76,7 @@ fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss()
         SectionSpec::data(0x3000, vec![5, 6]),   // writable -> exclude
         SectionSpec::bss(0x4000, 16),            // NOBITS   -> exclude (empty data)
     ]);
-    let obj = parse(&bytes);
-    let regions = elf_get_loadable_regions(&obj).unwrap();
+    let regions = common::regions(&bytes, LoadFilter::CodeAndReadOnly);
 
     let addrs: Vec<u64> = regions.iter().map(|r| r.start_addr()).collect();
     let base = |name| common::section_base(&bytes, name);
@@ -98,8 +97,7 @@ fn elf_code_and_readonly_sections_include_text_and_rodata_exclude_data_and_bss()
 #[test]
 fn code_and_readonly_preset_propagates_data_error() {
     let buf = one_section_rel(b".broken", u64::from(object::elf::SHF_ALLOC), 0x1000, None);
-    let obj = parse(&buf);
-    let err = elf_get_loadable_regions(&obj)
+    let err = common::try_regions(&buf, LoadFilter::CodeAndReadOnly)
         .expect_err("malformed accepted section must surface an error");
     assert!(
         err.to_string().contains("failed to parse ELF"),
@@ -123,8 +121,7 @@ fn code_and_readonly_preset_propagates_region_overflow() {
         u64::MAX - 1,
         Some(&payload),
     );
-    let obj = parse(&buf);
-    let err = elf_get_loadable_regions(&obj)
+    let err = common::try_regions(&buf, LoadFilter::CodeAndReadOnly)
         .expect_err("addr+len overflow must surface as RegionOverflow");
     let msg = err.to_string();
     let expected_addr = format!("{:#x}", u64::MAX - 1);
@@ -148,10 +145,8 @@ fn code_and_readonly_preset_skips_rejected_malformed_section() {
         0x1000,
         None,
     );
-    let obj = parse(&buf);
-
     // Writable, so the code+rodata preset rejects it before reading.
-    let regions = elf_get_loadable_regions(&obj)
+    let regions = common::try_regions(&buf, LoadFilter::CodeAndReadOnly)
         .expect("filter-rejected malformed section must not surface an error");
     assert!(regions.is_empty(), "nothing was accepted");
 }
@@ -188,7 +183,7 @@ fn et_rel_sections_sharing_a_start_are_rebased_apart() {
     ]);
     let obj = parse(&bytes);
     let layout = strider_reader::elf::ElfSectionLayout::new(&obj);
-    let regions = elf_get_loadable_regions(&obj).unwrap();
+    let regions = common::regions(&bytes, LoadFilter::CodeAndReadOnly);
     assert_eq!(regions.len(), 2, "both sections stay reachable");
     let table = strider_reader::MemRegionsLookupTable::new(regions);
 
@@ -291,10 +286,8 @@ fn read_only_presets_exclude_a_writable_executable_mapping() {
         SectionSpec::rwx(0x1000, vec![0x90; 8]),
         SectionSpec::rodata(0x2000, vec![1, 2, 3, 4]),
     ]);
-    let obj = parse(&bytes);
 
-    let fetch: Vec<u64> = elf_get_loadable_regions(&obj)
-        .unwrap()
+    let fetch: Vec<u64> = common::regions(&bytes, LoadFilter::CodeAndReadOnly)
         .iter()
         .map(|r| r.start_addr())
         .collect();
@@ -336,61 +329,30 @@ fn read_only_presets_exclude_a_writable_executable_mapping() {
 }
 
 /// Section dedup is on the loaded address, so N headers naming ONE file range
-/// at N addresses each get their own copy and nothing in the file bounds their
-/// sum. A small image would otherwise ask for hundreds of gigabytes and abort.
-///
-/// The staggered shape is the same attack with every header's window shifted
-/// one byte on: distinct `(offset, size)` pairs, so a budget keyed on those
-/// grows its own denominator in lockstep with the copies and never fires. The
-/// bytes COVERED grow by one per header, which is what has to be counted.
+/// at N addresses are N regions. Each is a window into the one image, so no
+/// header's bytes are copied however many share the blob; the staggered shape
+/// shifts every window one byte on.
 #[test]
-fn many_sections_over_one_file_range_are_rejected_not_copied() {
+fn many_sections_over_one_file_range_load_as_windows() {
+    use strider_reader::ReadOnlyMemory as _;
     for stagger in [0, 1] {
         let bytes = common::elf_fixture::build_shared_file_range_elf(64, 4096, stagger);
-        let obj = parse(&bytes);
-        let err = elf_get_loadable_regions(&obj)
-            .expect_err("copy amplification must be an error, not an allocation");
-        assert!(
-            err.to_string().contains("distinct file bytes"),
-            "stagger {stagger}: {err}"
-        );
+        let regions = common::regions(&bytes, LoadFilter::CodeAndReadOnly);
+        assert_eq!(regions.len(), 64, "stagger {stagger}");
+        let elf = strider_reader::OwnedElf::parse(bytes).expect("parse");
+        let reader = strider_reader::ElfFileMemReader::new(
+            &elf,
+            strider_reader::elf::RelocationMode::Unapplied,
+        )
+        .expect("a window per header, over the one blob");
+        for region in &regions {
+            let mut buf = [0u8; 4];
+            reader
+                .read(region.end_addr() - 4, &mut buf)
+                .expect("every header's window serves its bytes");
+            assert_eq!(buf, [0x90; 4]);
+        }
     }
-}
-
-/// The staggered shape scales with `e_shnum`, so the refusal must come before
-/// the copies, not after: 200 sections over a 1 MB blob is 200 MB of `Vec`s,
-/// and 65k sections is hundreds of gigabytes.
-#[test]
-fn staggered_windows_are_refused_before_the_copies_are_made() {
-    let bytes = common::elf_fixture::build_shared_file_range_elf(200, 0x10_0000, 1);
-    assert!(
-        bytes.len() < 2 << 20,
-        "fixture geometry: the file itself stays small"
-    );
-    let obj = parse(&bytes);
-    let err = elf_get_loadable_regions(&obj).expect_err("copy amplification must be an error");
-    let copied: u64 = err
-        .to_string()
-        .split_whitespace()
-        .nth(3)
-        .and_then(|n| n.parse().ok())
-        .unwrap_or_else(|| panic!("copied byte count in: {err}"));
-    assert!(
-        copied <= 5 * 0x10_0000,
-        "at most the ceiling plus the mapping that broke it, got {copied}"
-    );
-}
-
-/// The bound must not fire on an ordinary image, where every section names its
-/// own file range.
-#[test]
-fn distinct_file_ranges_load_untouched_by_the_copy_bound() {
-    let bytes = build_elf_with_sections(&[
-        SectionSpec::text(0x1000, vec![1; 64]),
-        SectionSpec::rodata(0x2000, vec![2; 64]),
-    ]);
-    let obj = parse(&bytes);
-    assert_eq!(elf_get_loadable_regions(&obj).unwrap().len(), 2);
 }
 
 /// Two PT_LOADs at one `p_vaddr` are one region, the widest: the lookup table
@@ -399,8 +361,7 @@ fn distinct_file_ranges_load_untouched_by_the_copy_bound() {
 #[test]
 fn equal_vaddr_pt_loads_collapse_to_the_widest() {
     let bytes = common::elf_fixture::build_equal_vaddr_loads_elf(&[0x20, 0x4]);
-    let obj = parse(&bytes);
-    let regions = elf_get_loadable_regions(&obj).unwrap();
+    let regions = common::regions(&bytes, LoadFilter::CodeAndReadOnly);
     let base = common::elf_fixture::EQUAL_VADDR_LOAD_BASE;
     assert_eq!(
         regions

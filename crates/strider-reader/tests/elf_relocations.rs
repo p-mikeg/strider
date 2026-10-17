@@ -499,7 +499,11 @@ fn default_loader_omits_data_rel_ro() {
     );
     let obj = strider_reader::load_elf(&path).expect("load_elf");
     let obj = obj.checked_file().expect("the mapped file is unchanged");
-    let regions = strider_reader::elf::elf_get_loadable_regions(&obj).unwrap();
+    let regions = common::regions_of_file(
+        &path,
+        strider_reader::elf::LoadFilter::CodeAndReadOnly,
+        false,
+    );
     let table_addr = sym_addr(&obj, "dispatch_table");
     assert!(
         read_u64_le(&regions, table_addr).is_none(),
@@ -574,7 +578,6 @@ fn et_rel_byte_identical_collision_does_not_patch_the_other_section() {
 #[test]
 fn et_rel_sections_colliding_at_vma_zero_get_bases_of_their_own() {
     let fx = common::elf_fixture::build_et_rel_vma_collision_elf();
-    let obj = object::File::parse(&fx.bytes[..]).expect("parse fixture");
     let data_base = common::section_base(&fx.bytes, ".data");
     let text_base = common::section_base(&fx.bytes, ".text.f");
     assert_eq!(
@@ -588,7 +591,7 @@ fn et_rel_sections_colliding_at_vma_zero_get_bases_of_their_own() {
     for (name, regions, expected) in [
         (
             "code-and-readonly",
-            strider_reader::elf::elf_get_loadable_regions(&obj).expect("regions"),
+            common::regions(&fx.bytes, strider_reader::elf::LoadFilter::CodeAndReadOnly),
             vec![(text_base, fx.text_bytes.clone())],
         ),
         (

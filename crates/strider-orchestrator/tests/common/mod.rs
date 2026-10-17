@@ -266,8 +266,11 @@ pub(crate) fn lift_for_pipeline(
     strider_reader::ElfFileMemReader,
 ) {
     let fixture = fixtures::Fixture::open(arch.fixture(), case);
-    let obj = fixture.file();
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let mem = strider_reader::ElfFileMemReader::new(
+        fixture.elf(),
+        strider_reader::elf::RelocationMode::Unapplied,
+    )
+    .expect("mem reader");
     let (mut ana, cc) = driver_for_reader(arch, mem);
     let addr = fixture.symbol(fn_name);
     let cfg_opts = strider_cfg::CfgOptions {
@@ -284,8 +287,11 @@ pub(crate) fn lift_for_pipeline(
     let outcome = ana
         .build_ir(&cfg, cc.clone())
         .unwrap_or_else(|e| panic!("build_ir for {fn_name}: {e:?}"));
-    let rom_for_opt =
-        strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader (opt)");
+    let rom_for_opt = strider_reader::ElfFileMemReader::new(
+        fixture.elf(),
+        strider_reader::elf::RelocationMode::Unapplied,
+    )
+    .expect("rom reader (opt)");
     (outcome, cc, rom_for_opt)
 }
 

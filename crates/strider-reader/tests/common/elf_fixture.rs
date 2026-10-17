@@ -1452,9 +1452,8 @@ fn build_sections_elf(
 /// identical range `count` times and 1 is `count` windows sharing all but a
 /// byte.
 ///
-/// Section dedup is on the loaded address, so every header is its own region
-/// and the copying loader materialises `blob_len` bytes per header while the
-/// file grows by `stagger` each.
+/// Section dedup is on the loaded address, so every header is its own region,
+/// `blob_len` bytes wide, while the file grows by `stagger` each.
 pub(crate) fn build_shared_file_range_elf(
     count: usize,
     blob_len: usize,
