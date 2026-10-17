@@ -117,7 +117,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // Stash an ISA-mode commit for `pending_isa_mode`. Full `Vn` equality,
         // not just space+offset: a differently-sized varnode sharing the offset
         // is a different register.
-        if self.isa_mode_switch_vn.is_some_and(|sw| sw == *vn)
+        if self.lifter.isa_mode_switch_vn.is_some_and(|sw| sw == *vn)
             && let Some(addr) = self.builder.lift_addr()
         {
             // FIRST write per machine address wins. MIPS writes ISAModeSwitch
@@ -239,9 +239,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // turn a malformed Sleigh spec into a clean lift failure rather than
         // corrupt IR, in release and debug alike.  A `None` here is the
         // big-endian arm's subtraction going below zero.
-        let Some(shift_bits) =
-            reg_shift_from_container(self.lifter.arch.register_endianness(), reg, &container_reg)
-        else {
+        let Some(shift_bits) = reg_shift_from_container(
+            self.lifter.arch().register_endianness(),
+            reg,
+            &container_reg,
+        ) else {
             return Err(anyhow!(
                 "{op}: sub-register {reg:?} is not contained in {container_reg:?}"
             ));

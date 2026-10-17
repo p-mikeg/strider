@@ -14,6 +14,7 @@ use petgraph::stable_graph::EdgeIndex;
 use petgraph::visit::EdgeRef;
 
 use crate::Cfg;
+use crate::DecodeEngine;
 use crate::options::CfgOptions;
 use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph};
 use anyhow::{anyhow, bail};
@@ -217,6 +218,52 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             function_mode: FlowContext::default(),
             transient_defaults: &[],
             flow_commit_defaults: &[],
+            descent: None,
+        }
+    }
+
+    /// A build of the function at `start_addr` on `engine`, which
+    /// [`DecodeEngine::builder`] has pinned to `function_mode`.
+    pub(crate) fn new(
+        engine: &'a mut DecodeEngine<R>,
+        start_addr: u64,
+        function_mode: FlowContext,
+        options: &'a CfgOptions<'a>,
+    ) -> Self {
+        let DecodeEngine {
+            sleigh,
+            arch,
+            flow_vars,
+            transient_defaults,
+            flow_commit_defaults,
+            user_op_names,
+            ..
+        } = engine;
+        Self {
+            sleigh,
+            start_addr: start_addr.into(),
+            options,
+            arch: *arch,
+            region_graph: RegionGraph::new(),
+            start_addr_to_region_id: BTreeMap::new(),
+            max_shadowed_span: 0,
+            shadowed_starts: BTreeSet::new(),
+            work_queue: Vec::new(),
+            seeded_queue: Vec::new(),
+            clashing_seeded: Vec::new(),
+            undecodable_seeded: Vec::new(),
+            region_isa_mode: BTreeMap::new(),
+            flowing_isa_bits: BTreeMap::new(),
+            incomplete: crate::Incompleteness::default(),
+            non_boundary_seats: rustc_hash::FxHashMap::default(),
+            committed_next: rustc_hash::FxHashSet::default(),
+            link_register_seated: Vec::new(),
+            tail_call_seated: Vec::new(),
+            user_op_names: Some(std::borrow::Cow::Borrowed(user_op_names)),
+            flow_vars,
+            function_mode,
+            transient_defaults,
+            flow_commit_defaults,
             descent: None,
         }
     }
