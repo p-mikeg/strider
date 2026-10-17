@@ -9,14 +9,14 @@ use common::reader_contract::{
     assert_mem_reader_unmapped_is_not_mapped_error, assert_readonly_errors,
 };
 use rsleigh::{MemReader, VnAddr, VnSpace};
+use strider_reader::elf::RelocationMode;
 use strider_reader::{ElfFileMemReader, ReadOnlyMemory};
 use tempfile::NamedTempFile;
 
-/// A reader over synthetic ELF bytes, copying them the way `from_object`
-/// does.
+/// A reader over synthetic ELF bytes.
 fn reader(bytes: &[u8]) -> ElfFileMemReader {
-    let obj = object::File::parse(bytes).expect("parse synthetic ELF");
-    ElfFileMemReader::from_object(&obj).expect("from_object")
+    let elf = strider_reader::OwnedElf::parse(bytes.to_vec()).expect("parse synthetic ELF");
+    ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect("ElfFileMemReader::new")
 }
 
 fn read_raw(r: &ElfFileMemReader, addr: u64, len: usize) -> Vec<u8> {
@@ -96,8 +96,7 @@ fn elf_reader_over_a_mapped_temp_elf() {
     f.flush().unwrap();
 
     let owned = strider_reader::load_elf(f.path()).unwrap();
-    let obj = owned.checked_file().expect("the mapped file is unchanged");
-    let r = ElfFileMemReader::from_object(&obj).unwrap();
+    let r = ElfFileMemReader::new(&owned, RelocationMode::Unapplied).unwrap();
     assert_eq!(read_raw(&r, 0x1000, 4), &[0xde, 0xad, 0xbe, 0xef]);
 }
 
@@ -122,11 +121,10 @@ fn the_reader_serves_a_relocation_site_unpatched() {
         },
     );
     let elf = strider_reader::OwnedElf::parse(fx.bytes.clone()).expect("parse");
-    let obj = elf.checked_file().expect("parse");
 
     assert_eq!(
         read_raw(
-            &ElfFileMemReader::from_object(&obj).unwrap(),
+            &ElfFileMemReader::new(&elf, RelocationMode::Unapplied).unwrap(),
             fx.slot_addr,
             4
         ),

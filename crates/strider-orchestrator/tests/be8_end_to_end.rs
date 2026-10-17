@@ -43,7 +43,11 @@ fn analyze(case: &str, fn_name: &str, opt: Opt) -> Function {
     );
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let arch = SleighArch::arm_be_kernel();
-    let mem = strider_reader::ElfFileMemReader::from_object(&obj).expect("mem reader");
+    let mem = strider_reader::ElfFileMemReader::new(
+        &owned,
+        strider_reader::elf::RelocationMode::Unapplied,
+    )
+    .expect("mem reader");
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem).expect("sleigh");
     let mut lifter = strider_orchestrator::Lifter::new(arch, sleigh).expect("lifter");
     let cc = CallingConvention::arm_aapcs()
@@ -66,7 +70,11 @@ fn analyze(case: &str, fn_name: &str, opt: Opt) -> Function {
         .build_ir(&cfg, cc)
         .unwrap_or_else(|e| panic!("build_ir {fn_name}: {e:?}"))
         .function;
-    let rom = strider_reader::ElfFileMemReader::from_object(&obj).expect("rom reader");
+    let rom = strider_reader::ElfFileMemReader::new(
+        &owned,
+        strider_reader::elf::RelocationMode::Unapplied,
+    )
+    .expect("rom reader");
     let mut ctx = strider_orchestrator::opt::OptCtx::at_floor(Some(&rom));
     match opt {
         Opt::Full => strider_orchestrator::opt::default_pipeline()

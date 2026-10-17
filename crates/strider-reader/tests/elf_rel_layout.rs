@@ -124,7 +124,15 @@ fn object_file_symbols_resolve_into_their_own_section() {
     let owned = strider_reader::load_elf(&path).unwrap();
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
-    let table = MemRegionsLookupTable::new(elf::elf_get_loadable_regions(&obj).unwrap());
+    let table = MemRegionsLookupTable::new(
+        owned
+            .regions(
+                elf::RegionSource::Auto,
+                elf::LoadFilter::CodeAndReadOnly,
+                false,
+            )
+            .unwrap(),
+    );
 
     let mut addrs = Vec::new();
     for name in ["tzcount", "main"] {
@@ -235,7 +243,7 @@ fn a_rebased_writable_section_is_still_not_read_only_memory() {
     let owned = strider_reader::load_elf(&path).unwrap();
     let obj = owned.checked_file().expect("the mapped file is unchanged");
     let layout = ElfSectionLayout::new(&obj);
-    let reader = elf::ElfFileMemReader::from_object(&obj).unwrap();
+    let reader = elf::ElfFileMemReader::new(&owned, elf::RelocationMode::Unapplied).unwrap();
 
     let data = obj
         .section_by_name(".data.rel.ro.local")
@@ -385,7 +393,7 @@ fn an_unmapped_bss_address_answers_no_read() {
         "NOBITS at {bss:#x} must not be mapped"
     );
 
-    let reader = elf::ElfFileMemReader::from_object(&obj).unwrap();
+    let reader = elf::ElfFileMemReader::new(&owned, elf::RelocationMode::Unapplied).unwrap();
     assert!(
         ReadOnlyMemory::read(&reader, bss, &mut [0u8; 8]).is_err(),
         "NOBITS at {bss:#x} must never answer a ROM read"
@@ -475,7 +483,8 @@ fn a_nobits_section_overrunning_the_address_space_does_not_move_the_watermark() 
         "a section the address space cannot hold addresses nothing"
     );
 
-    let regions = elf::elf_get_loadable_regions(&obj).expect("the load must survive the .bss");
+    let regions = common::try_regions(&bytes, elf::LoadFilter::CodeAndReadOnly)
+        .expect("the load must survive the .bss");
     assert_eq!(regions.len(), 1, "only `.text` has bytes to load");
     assert_eq!(common::region_bytes(&regions[0]), vec![0x90; 4]);
     assert_eq!(
@@ -507,7 +516,11 @@ fn an_object_file_leaves_address_zero_unmapped() {
     for bytes in [synthetic, fixture_bytes] {
         let obj = object::File::parse(&bytes[..]).unwrap();
         assert_eq!(obj.kind(), object::ObjectKind::Relocatable);
-        let reader = elf::ElfFileMemReader::from_object(&obj).unwrap();
+        let reader = elf::ElfFileMemReader::new(
+            &strider_reader::OwnedElf::parse(bytes.clone()).unwrap(),
+            elf::RelocationMode::Unapplied,
+        )
+        .unwrap();
         assert!(
             ReadOnlyMemory::read(&reader, 0, &mut [0u8; 1]).is_err(),
             "address 0 must answer no ROM read"
@@ -564,7 +577,8 @@ fn a_section_overrunning_the_address_space_seats_none_of_its_symbols() {
         "a symbol of a section seated nowhere has no address"
     );
 
-    let regions = elf::elf_get_loadable_regions(&obj).expect("the .text still loads");
+    let regions = common::try_regions(&bytes, elf::LoadFilter::CodeAndReadOnly)
+        .expect("the .text still loads");
     let table = MemRegionsLookupTable::new(regions);
     assert_eq!(
         table.read(layout.symbol_address(&bssvar), &mut [0u8; 4]),

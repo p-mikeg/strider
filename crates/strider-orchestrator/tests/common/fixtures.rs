@@ -227,7 +227,8 @@ impl Fixture {
     /// An engine over the image with a second view of it as the optimiser's
     /// ROM, and the arch's convention built against that engine.
     pub fn strider(&self) -> (Strider<ElfFileMemReader>, BuiltCallingConvention) {
-        let rom = ElfFileMemReader::from_object(&self.file()).expect("rom reader");
+        let rom = ElfFileMemReader::new(&self.elf, strider_reader::elf::RelocationMode::Unapplied)
+            .expect("rom reader");
         self.strider_over(Box::new(rom))
     }
 
@@ -253,7 +254,8 @@ impl Fixture {
         rom: Box<dyn ReadOnlyMemory>,
     ) -> (Strider<ElfFileMemReader>, BuiltCallingConvention) {
         let arch = (self.arch.sleigh)();
-        let mem = ElfFileMemReader::from_object(&self.file()).expect("mem reader");
+        let mem = ElfFileMemReader::new(&self.elf, strider_reader::elf::RelocationMode::Unapplied)
+            .expect("mem reader");
         let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem).expect("sleigh");
         let strider = Strider::new(arch, sleigh, Some(rom)).expect("Strider::new");
         let cc = (self.arch.cc)()

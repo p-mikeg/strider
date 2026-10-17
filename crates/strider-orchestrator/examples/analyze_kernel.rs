@@ -20,10 +20,16 @@ fn kernel_path() -> String {
 const SYMBOL: &str = "x86emu_exec";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let obj = strider_reader::load_elf(kernel_path())?;
-    let obj = obj.checked_file().expect("the mapped file is unchanged");
-    let mem_reader = strider_reader::ElfFileMemReader::from_object(&obj)?;
-    let rom = strider_reader::ElfFileMemReader::from_object(&obj)?;
+    let elf = strider_reader::load_elf(kernel_path())?;
+    let obj = elf.checked_file().expect("the mapped file is unchanged");
+    let mem_reader = strider_reader::ElfFileMemReader::new(
+        &elf,
+        strider_reader::elf::RelocationMode::Unapplied,
+    )?;
+    let rom = strider_reader::ElfFileMemReader::new(
+        &elf,
+        strider_reader::elf::RelocationMode::Unapplied,
+    )?;
 
     let addr = obj
         .symbol_by_name(SYMBOL)

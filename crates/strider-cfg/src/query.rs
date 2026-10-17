@@ -209,11 +209,14 @@ mod tests {
             "{} is not built; run `make -C fixtures`",
             path.display()
         );
-        let obj = strider_reader::load_elf(&path)
+        let elf = strider_reader::load_elf(&path)
             .unwrap_or_else(|e| panic!("load_elf({path:?}) failed: {e:?}"));
-        let obj = obj.checked_file().expect("the mapped file is unchanged");
-        let mem = strider_reader::ElfFileMemReader::from_object(&obj)
-            .expect("ElfFileMemReader::from_object");
+        let obj = elf.checked_file().expect("the mapped file is unchanged");
+        let mem = strider_reader::ElfFileMemReader::new(
+            &elf,
+            strider_reader::elf::RelocationMode::Unapplied,
+        )
+        .expect("ElfFileMemReader::new");
         let arch = SleighArch::x86_64();
         let sleigh =
             rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem).expect("create Sleigh");

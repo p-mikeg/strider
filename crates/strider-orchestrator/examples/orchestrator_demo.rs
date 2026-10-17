@@ -31,10 +31,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    let obj = strider_reader::load_elf(binary_path)?;
-    let obj = obj.checked_file().expect("the mapped file is unchanged");
-    let mem_reader = strider_reader::ElfFileMemReader::from_object(&obj)?;
-    let rom = strider_reader::ElfFileMemReader::from_object(&obj)?;
+    let elf = strider_reader::load_elf(binary_path)?;
+    let obj = elf.checked_file().expect("the mapped file is unchanged");
+    let mem_reader = strider_reader::ElfFileMemReader::new(
+        &elf,
+        strider_reader::elf::RelocationMode::Unapplied,
+    )?;
+    let rom = strider_reader::ElfFileMemReader::new(
+        &elf,
+        strider_reader::elf::RelocationMode::Unapplied,
+    )?;
 
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
     let mut lifter = strider_orchestrator::Lifter::new(arch, sleigh)?;

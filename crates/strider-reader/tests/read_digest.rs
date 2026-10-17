@@ -25,7 +25,7 @@ use common::elf_fixture::{self as fx, RelOpts, RelPlacement, RelTable};
 use object::Endianness::{Big, Little};
 use object::elf;
 use rsleigh::{MemReader, VnAddr, VnSpace};
-use strider_reader::elf::{LoadFilter, RegionSource};
+use strider_reader::elf::{LoadFilter, RegionSource, RelocationMode};
 use strider_reader::{ElfFileMemReader, MemRegionsLookupTable, OwnedElf, ReadOnlyMemory};
 
 const SOURCES: [(&str, RegionSource); 2] = [
@@ -180,8 +180,7 @@ fn rows(out: &mut String, image: &str, elf: anyhow::Result<OwnedElf>) {
     }
     // Every address some view maps.
     let ranges = common::merge_ranges(every_view);
-    let obj = elf.checked_file().expect("parsed above");
-    let reader = ElfFileMemReader::from_object(&obj);
+    let reader = ElfFileMemReader::new(&elf, RelocationMode::Unapplied);
     let reader = reader.as_ref().map_err(refusal);
     let fetched = |r: &ElfFileMemReader, a| MemReader::read(r, ram(a), &mut [0]).is_ok();
     let fetch = reader.clone().map(|r| {
@@ -209,7 +208,7 @@ fn rows(out: &mut String, image: &str, elf: anyhow::Result<OwnedElf>) {
     row(out, image, "file_reader.rom", rom);
 }
 
-/// The overlapping, colliding and copy-amplifying shapes, and one relocation
+/// The overlapping, colliding and shared-file-range shapes, and one relocation
 /// per `relocs` entry under every placement.
 fn crafted() -> Vec<(String, Vec<u8>)> {
     let mut out: Vec<(String, Vec<u8>)> = vec![
