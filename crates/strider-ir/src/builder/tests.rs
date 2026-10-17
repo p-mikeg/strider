@@ -245,6 +245,7 @@ fn extend_noop_when_wider_than_target() -> Result<()> {
 
 /// Past 128 bits a constant extend is a real `Extend`: the `u128` carrier
 /// holds only 128 sign bits, so a folded `-1` would land with a zero upper half.
+/// A zero extension would fold correctly; it keeps the `Extend` for symmetry.
 #[test]
 fn extend_of_a_const_past_128_bits_emits_extend() -> Result<()> {
     for op in [ExtendOp::SignExtend, ExtendOp::ZeroExtend] {

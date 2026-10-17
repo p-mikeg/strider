@@ -85,9 +85,10 @@
   is `RangeMap::new(f)`, which builds both itself and returns `Result`.
 - `EditFunction::replace_all_uses` is private: it left the old producer live
   and dropped its asm-fingerprint. `replace_value` does the same rewire and
-  both of those.
-- `EditFunction::replace_value` returns `bool`, and `add_node_input` and
-  `remove_region_predecessors` return nothing: none of the three could fail.
+  handles both.
+- `EditFunction::replace_value` returns `bool`, not `Result<bool>`, and
+  `add_node_input` and `remove_region_predecessors` return nothing, not
+  `Result<()>`: none of the three could fail.
 - `ValueType::{int_for_byte_size, float_for_byte_size}` are renamed
   `int_from_bytes` / `float_from_bytes`.
 - `ValueType::ALL` is renamed `SUPPORTED`, and `ValueType::as_str` is gone:
@@ -161,7 +162,7 @@
 - `LoadForward` is a unit struct again (`Copy`); `LoadForward::default()`
   still builds one.
 - `IRBuilderExt::build_int_const_limbs` takes any integer type (it refused
-  one of at most 128 bits).
+  one of 64 bits or fewer).
 
 ### Fixed
 
@@ -197,11 +198,9 @@
 - `ConstantFold`'s shift-factor rules (`x + (x << c)` -> `x * (2^c + 1)` and
   kin) read a constant shift count unsigned, as p-code does: a boolean count
   of 1, or a count typed wider than 128 bits, now folds.
-- The lifter's p-code constant folder treats a temporary of 11, 13 or 15
-  bytes, or past 16 bytes, as unknown; it used to wrap it at 128 bits or with
-  a mask no value type has.
-- `ConstantFold` no longer folds a `Neg` whose constant operand has a
-  different width than its output (invalid IR).
+- The lifter's p-code constant folder treats an arithmetic result written to
+  a temporary of 11, 13 or 15 bytes, or past 16 bytes, as unknown; it used to
+  wrap it at 128 bits or with a mask no value type has.
 
 ### Added, Rust
 
@@ -229,8 +228,6 @@
 - `EditFunction::absorb_node_fingerprint` (the node-keyed
   `absorb_fingerprint`) and `EditFunction::clear_arg_values_from`, so no pass
   needs `function_mut()` for an overlay write.
-- `ValueType::int(bits)` / `ValueType::float(bits)`, `const fn`; an unsupported
-  width panics (a compile error in a `const`).
 - `IRBuilderExt::build_all_ones(ty)`: the all-ones constant at any integer
   width.
 - `strider_ir::eval`: integer evaluation at a declared width (`int_binary`,
@@ -247,7 +244,7 @@
   checked against a node's signature.
 - `IRViewer::access_address` and the `NodeKind::*_SLOT` input-slot constants.
 - `ValueKind` implements `Display`: a typed value prints as its type (`f64`),
-  which the node-signature errors use.
+  as the builder and template signature errors print it.
 - `vn_container::{vn_end, vn_overlaps}`, the exact varnode end and overlap
   `strider-target` and the lifter's p-code folder now share.
 

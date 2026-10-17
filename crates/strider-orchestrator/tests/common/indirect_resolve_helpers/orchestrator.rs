@@ -86,7 +86,7 @@ pub(crate) fn run_pipeline_x86_64(
         "fixture must have exactly one IR-level placeholder",
     );
     // Resolve the *current* target after the optimiser ran: the original
-    // recorded ValueId may be orphaned if any pass `replace_all_uses`-rewrote
+    // recorded ValueId may be orphaned if any pass `replace_value`-rewrote
     // the placeholder's input slot (e.g. ConstantFold folding an
     // IntBinaryOp into an IntConst).
     let target = target_value_input(&function)
