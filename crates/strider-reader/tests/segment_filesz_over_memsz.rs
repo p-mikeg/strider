@@ -74,9 +74,9 @@ fn bytes_past_p_memsz_are_not_mapped() {
 }
 
 /// The same shape on a WRITABLE-and-executable PT_LOAD. `ElfFileMemReader`'s
-/// ROM view is the fetch set minus the writable ranges, and the writable
-/// ranges stop at `p_memsz`, so the tail used to satisfy a read through a
-/// trait that promises the bytes cannot change.
+/// ROM view holds no writable mapping, so neither the mapping nor the file's
+/// bytes past its `p_memsz` answer a read through a trait that promises the
+/// bytes cannot change.
 #[test]
 fn an_rwx_tail_is_not_served_as_read_only_memory() {
     // PF_R | PF_W | PF_X
