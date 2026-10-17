@@ -329,7 +329,7 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool, vn_name: VnName<'_
             }
             push_name(&mut out, &names, value);
             out.push(':');
-            out.push_str(value_kind_str(f.value_kind(value)));
+            push_value_kind(&mut out, f.value_kind(value));
             if let Some(&id) = st.value_vn.get(&value) {
                 let _ = match f.initial_vn_opt(id) {
                     Some(vn) => write!(out, "<{}>", vn_name(&vn)),
@@ -568,12 +568,14 @@ fn op_name(kind: &NodeKind) -> &'static str {
     }
 }
 
-fn value_kind_str(kind: ValueKind) -> &'static str {
+fn push_value_kind(out: &mut String, kind: ValueKind) {
     match kind {
-        ValueKind::Typed(ty) => ty.as_str(),
-        ValueKind::Control => "ctrl",
-        ValueKind::PhiToken => "token",
-        ValueKind::Memory => "mem",
+        ValueKind::Typed(ty) => {
+            let _ = write!(out, "{ty}");
+        }
+        ValueKind::Control => out.push_str("ctrl"),
+        ValueKind::PhiToken => out.push_str("token"),
+        ValueKind::Memory => out.push_str("mem"),
     }
 }
 
