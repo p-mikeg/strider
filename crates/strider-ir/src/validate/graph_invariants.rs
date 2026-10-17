@@ -496,7 +496,7 @@ pub(super) fn check_function_invariants_initial_vars(
         let ValueKind::Typed(ty) = graph.value_kind(out) else {
             continue;
         };
-        if ValueType::int_for_byte_size(vn.size).ok() != Some(ty) {
+        if ValueType::int_from_bytes(vn.size).ok() != Some(ty) {
             errs.push(ValidationError::InitialVarTypeMismatch { node, vn, ty });
         }
     }

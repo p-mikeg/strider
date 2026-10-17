@@ -80,7 +80,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             .ok_or_else(|| anyhow!("no space info for {what} {space:?}"))?;
         self.builder.build_int_const(
             off,
-            strider_ir::ValueType::int_for_byte_size(space_info.addr_size())?,
+            strider_ir::ValueType::int_from_bytes(space_info.addr_size())?,
         )
     }
 
@@ -226,7 +226,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// Shared read/write prelude.  `op` prefixes the shift-bound error so it
     /// names the originating call site.
     ///
-    /// A container byte width with no `ValueType::int_for_byte_size` mapping
+    /// A container byte width with no `ValueType::int_from_bytes` mapping
     /// fails here at `int_type`, before any shift or mask is built on it.
     fn enter_sub_register(&self, reg: &rsleigh::Vn, op: &'static str) -> Result<SubRegOutcome> {
         let container_reg = self.find_largest_fitting_register(reg)?;
