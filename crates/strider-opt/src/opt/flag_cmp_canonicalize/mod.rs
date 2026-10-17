@@ -83,10 +83,6 @@ impl PeepholePass for FlagCmpCanonicalize {
         _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        // Killed by the `clean` below after an earlier rewrite orphaned it.
-        if !edit.is_live(root) {
-            return Ok(PeepholeRewrite::NoChange);
-        }
         let rewrite = rewrite_at(edit, root)?;
         if let PeepholeRewrite::Changed { .. } = rewrite {
             // Outermost-first, a redirect lands on a value a later root
