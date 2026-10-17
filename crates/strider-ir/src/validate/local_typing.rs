@@ -2,7 +2,7 @@ use crate::graph::Graph;
 use crate::node::{NodeId, ValueId, ValueKind};
 use crate::node_signature::expected_signature;
 
-use super::{ValidationError, kind_matches};
+use super::ValidationError;
 
 /// Checks a node's input/output [`ValueKind`]s against its signature.
 pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<ValidationError>) {
@@ -42,7 +42,7 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
             break;
         };
         let actual = graph.value_kind(input);
-        if !kind_matches(slot.kind, actual) {
+        if !slot.kind.admits(actual) {
             errs.push(ValidationError::NodeInputKindMismatch {
                 node,
                 input_idx: idx,
@@ -65,7 +65,7 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
         let Some(slot) = sig.outputs.at(idx) else {
             break;
         };
-        if !kind_matches(slot.kind, actual) {
+        if !slot.kind.admits(actual) {
             errs.push(ValidationError::NodeOutputKindMismatch {
                 node,
                 output_idx: idx,
