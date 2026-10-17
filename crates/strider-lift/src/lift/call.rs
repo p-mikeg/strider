@@ -34,7 +34,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let Some(abi) = class.built(&self.lifter.sleigh_regs)? else {
             anyhow::ensure!(
                 !terminate,
-                "CallOther {name:?} ends its region, but its class builds no node to end it"
+                "CallOther {name:?} ends its region, but its class builds no node to \
+                 end it; lift under the options the cfg was built with"
             );
             return Ok(());
         };
@@ -46,9 +47,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         Ok(())
     }
 
-    /// Whether the CFG ended `region` at the op at `addr` as `NoReturn`: the
-    /// shape it leaves a `CallOther` it decided does not return, every other
-    /// `NoReturn` region ending on a `Call` or `CallIndirect`.
+    /// Whether the CFG sealed `region` `NoReturn` at the op at `addr`. Called
+    /// only for a `CallOther`: every other `NoReturn` seal ends on a `Call` or
+    /// `CallIndirect`.
     pub(super) fn ends_no_return_region(
         &self,
         region: strider_cfg::RegionId,
@@ -185,9 +186,7 @@ pub(super) fn decode_user_op<'a>(
     crate::lift::pcode_util::ensure_const_space(id_vn, insn.opcode, "input 0")?;
     let id = u32::try_from(id_vn.addr_off)
         .map_err(|_| anyhow!("CallOther user-op id {:#x} exceeds u32", id_vn.addr_off))?;
-    Err(anyhow!(
-        "CallOther user-op id {id} not in Sleigh's user_op table"
-    ))
+    anyhow::bail!("CallOther user-op id {id} not in Sleigh's user_op table")
 }
 
 #[cfg(test)]

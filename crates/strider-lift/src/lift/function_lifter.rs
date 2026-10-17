@@ -117,9 +117,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 track(&mut all_vns, v);
             }
         }
-        // `FunctionBuilder::new` owns universe construction (seeding CC
-        // registers, dropping enclosed sub-registers), so its `all_vns()` is
-        // the canonical tracked set.  Resolving a varnode INTO that set is the
+        // `FunctionBuilder::new` seeds the CC registers and `Function::new`
+        // drops enclosed sub-registers, so the function's `all_vns()` is the
+        // canonical tracked set.  Resolving a varnode INTO that set is the
         // machine-register concern owned here: query every raw varnode plus
         // every CC register, so an ABI register narrower than its tracked
         // container (ABI says `eax`, the function tracks `rax`) resolves.
@@ -213,6 +213,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         &self,
         insn: &rsleigh::Insn,
     ) -> Option<&'a strider_target::BuiltCallingConvention> {
+        // Copied out of `self`, so the result borrows for `'a`, not `&self`.
         let ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention> =
             self.per_address_ccs;
         strider_cfg::direct_call_target(insn, self.lifter.sleigh().default_code_space())

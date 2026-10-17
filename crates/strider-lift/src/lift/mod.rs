@@ -179,8 +179,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         self.engine.build_cfg(entry, cfg_opts)
     }
 
-    /// Returns the unique set only; ordering is applied by
-    /// `FunctionBuilder::new`.
+    /// Returns the unique set only; `Function::new` keeps the largest of
+    /// nested varnodes and orders them.
     ///
     /// Only REGISTER and UNIQUE are tracked, the two spaces `read_vn` /
     /// `write_vn` route through the aliasing path that consults this set; CONST
@@ -544,9 +544,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// a register the function never names leaves a gap instead of shifting
     /// the ones after it down. Float argument registers sharing a container
     /// (AAPCS-VFP `d0`/`d1` inside `q0`) each carry their own slice of it.
-    /// The integer half, [`strider_ir::FunctionBuilder::record_register_arg_carriers`],
-    /// records each register's container outright, where the float loop below
-    /// records the register itself when several share a container.
+    /// The integer half,
+    /// [`strider_ir::FunctionBuilder::record_register_arg_carriers`], records
+    /// each register's container outright, where the float loop below records
+    /// the register itself when several share a container.
     /// No shipped convention names two integer argument registers inside one
     /// container, so the two cannot disagree today; a convention that did would
     /// make one argument out of two here while the caller side still passes
