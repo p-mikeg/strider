@@ -1166,9 +1166,13 @@ fn memory_and_opaque_builders_refuse_what_the_signature_rejects() -> Result<()> 
     let mut b = builder_with_region()?;
     let int = b.build_int_const(0x100u64, i64_)?;
     let float = b.build_float_const(0, f64_);
-    assert!(b.build_store(float, int, ram).is_err(), "float address");
+    let err = b.build_store(float, int, ram).expect_err("float address");
+    assert!(err.to_string().contains(" is f64, "), "{err}");
     assert!(b.build_store(int, float, ram).is_err(), "float data");
-    assert!(b.build_load(float, ram, i64_).is_err(), "float address");
+    assert!(
+        b.build_load(float, ram, i64_).is_err(),
+        "float load address"
+    );
     assert!(b.build_load(int, ram, f64_).is_err(), "float load output");
     assert!(b.build_cpool_ref(&[float], i64_).is_err(), "float ref");
     assert!(
