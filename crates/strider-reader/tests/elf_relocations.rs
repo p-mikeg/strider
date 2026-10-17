@@ -912,38 +912,32 @@ fn every_region_covering_a_site_serves_the_patched_bytes() {
     );
 }
 
-/// A patch is filed on EVERY region covering a site, so the patch lists cost
-/// region count times relocation count. A crafted image sets both counts
-/// independently and cheaply. The budget refuses it; the alternative is an
-/// allocation no `Result` can report.
+/// A site every one of 64 overlapping mappings covers is served patched by
+/// each of them, from one shared patch list: a crafted image chooses the
+/// overlap, and no longer the memory the patches take.
 #[test]
-fn a_site_covered_by_many_overlapping_mappings_is_refused() {
+fn every_one_of_many_overlapping_mappings_serves_a_sites_patch() {
     let bytes = common::elf_fixture::build_overlapping_loads_rela_elf(64, 512);
-    let elf = strider_reader::OwnedElf::parse(bytes).expect("parse");
-    let err = elf
+    let regions = strider_reader::OwnedElf::parse(bytes)
+        .expect("parse")
         .regions(
             strider_reader::elf::RegionSource::Auto,
             strider_reader::elf::LoadFilter::AllAllocatable,
             true,
         )
-        .expect_err("32768 patch records out of a 17 KB image must be refused")
-        .to_string();
-    assert!(err.contains("patch budget"), "got: {err}");
-}
-
-/// The refusal is the relocation applier's alone: the same image loads.
-#[test]
-fn overlapping_mappings_load_unrelocated() {
-    let bytes = common::elf_fixture::build_overlapping_loads_rela_elf(64, 512);
-    let elf = strider_reader::OwnedElf::parse(bytes).expect("parse");
-    let regions = elf
-        .regions(
-            strider_reader::elf::RegionSource::Auto,
-            strider_reader::elf::LoadFilter::AllAllocatable,
-            false,
-        )
-        .expect("regions");
+        .expect("overlapping mappings load relocated");
     assert_eq!(regions.len(), 64);
+    for region in &regions {
+        for site in [0x2000u64, 0x2000 + 8 * 511] {
+            let mut field = [0u8; 8];
+            assert_eq!(
+                region.read(site, &mut field),
+                Some(8),
+                "{region:?} at {site:#x}"
+            );
+            assert_eq!(u64::from_le_bytes(field), 0x1000, "{region:?} at {site:#x}");
+        }
+    }
 }
 
 /// An `SHT_REL` `R_386_RELATIVE` keeps `image_base + A` in its own field, so
@@ -1107,4 +1101,49 @@ fn a_mips64_be_hole_drops_r_ssym_from_the_type() {
         table.unmodelled_relocation_at(fx.slot_addr),
         Some(object::elf::R_MIPS_COPY)
     );
+}
+
+/// A relocation at the top of the address space: a slot ending at
+/// `2^64 - 1` is patched; one whose mapping ends at `2^64` loses its last
+/// byte, so no region holds the field and it is neither patched nor holed.
+#[test]
+fn a_relocation_at_the_top_of_the_address_space_loads() {
+    for (slot_addr, patched) in [(u64::MAX - 8, true), (u64::MAX - 7, false)] {
+        let fx = common::elf_fixture::build_rel_elf_placed(
+            common::elf_fixture::RelOpts {
+                endian: object::Endianness::Little,
+                is_64: true,
+                e_machine: object::elf::EM_X86_64,
+                r_type: object::elf::R_X86_64_GLOB_DAT,
+                defined_symbol: true,
+                slot_init: vec![0u8; 8],
+            },
+            // Read-only, so an uncomputed field would be a hole.
+            common::elf_fixture::RelPlacement {
+                slot_addr,
+                slot_exec: true,
+                ..Default::default()
+            },
+        );
+        let table =
+            strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+        assert_eq!(
+            table.unmodelled_relocation_at(slot_addr),
+            None,
+            "{slot_addr:#x}"
+        );
+        if patched {
+            let mut field = [0u8; 8];
+            table
+                .read_exact(slot_addr, &mut field)
+                .expect("the slot is mapped whole");
+            assert_eq!(u64::from_le_bytes(field), fx.sym_addr);
+        } else {
+            let mut field = [0u8; 7];
+            table
+                .read_exact(slot_addr, &mut field)
+                .expect("all but the last byte is mapped");
+            assert_eq!(field, [0u8; 7], "served as assembled");
+        }
+    }
 }
