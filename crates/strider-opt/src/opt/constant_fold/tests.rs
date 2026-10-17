@@ -2403,6 +2403,45 @@ fn factor_add_self_shl() -> Result<()> {
     assert_mul_with_const(&fg, x, 9, ValueType::int(64))
 }
 
+/// p-code reads a shift count unsigned, so a boolean count of 1 shifts by 1:
+/// x + (x << 1:i1) -> x*3.
+#[test]
+fn factor_reads_a_boolean_shift_count_unsigned() -> Result<()> {
+    use strider_ir::IRBuilder;
+    use strider_ir::node::ValueKind;
+    let (mut fg, x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
+        let one = b.build_int_const(1u64, ValueType::I1)?;
+        let shl = b.create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
+            [x, one],
+            [ValueKind::Typed(ValueType::int(64))],
+        );
+        let [s] = b.node_outputs_exact::<1>(shl)?;
+        b.build_int_binary_operation(x, s, IntBinaryOp::Add, ValueType::int(64))
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_mul_with_const(&fg, x, 3, ValueType::int(64))
+}
+
+/// A count typed past 128 bits still reads its value: x + (x << 2:i256) -> x*5.
+#[test]
+fn factor_reads_a_shift_count_wider_than_128_bits() -> Result<()> {
+    use strider_ir::IRBuilder;
+    use strider_ir::node::ValueKind;
+    let (mut fg, x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
+        let two = b.build_int_const(2u64, ValueType::int(256))?;
+        let shl = b.create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
+            [x, two],
+            [ValueKind::Typed(ValueType::int(64))],
+        );
+        let [s] = b.node_outputs_exact::<1>(shl)?;
+        b.build_int_binary_operation(x, s, IntBinaryOp::Add, ValueType::int(64))
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_mul_with_const(&fg, x, 5, ValueType::int(64))
+}
+
 /// x - x*3 -> x * (1 - 3), wrapping at the type width.
 #[test]
 fn factor_sub_self_mul_wraps() -> Result<()> {
