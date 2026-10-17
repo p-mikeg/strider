@@ -1256,3 +1256,123 @@ fn a_mips64el_crel_jump_is_patched() {
         .expect("the jump is patched, not a hole");
     assert_eq!(u32::from_le_bytes(word), (fx.sym_addr >> 2) as u32);
 }
+
+/// `S` exists only for a symbol: a relocation whose value reads it is a hole
+/// against STN_UNDEF, whichever row computes it. Each slot is read-only, so
+/// an uncomputed field is a hole rather than skipped.
+#[test]
+fn a_value_reading_s_against_no_symbol_is_a_hole() {
+    use common::elf_fixture::{RelOpts, RelPlacement, RelTable, build_rel_elf_placed};
+    use object::Endianness::{Big, Little};
+    use object::elf;
+    for (endian, e_machine, r_type, slot_init, table) in [
+        (
+            Big,
+            elf::EM_PPC64,
+            elf::R_PPC64_REL32,
+            vec![0u8; 4],
+            RelTable::Rel,
+        ),
+        (
+            Little,
+            elf::EM_X86_64,
+            elf::R_X86_64_GLOB_DAT,
+            vec![0u8; 8],
+            RelTable::Rel,
+        ),
+        // RELA: this loader reads no `SHT_REL` addend out of a branch.
+        (
+            Little,
+            elf::EM_AARCH64,
+            elf::R_AARCH64_CALL26,
+            0x9400_0000u32.to_le_bytes().to_vec(),
+            RelTable::Crel(Some(0)),
+        ),
+    ] {
+        let fx = build_rel_elf_placed(
+            RelOpts {
+                endian,
+                is_64: true,
+                e_machine,
+                r_type,
+                defined_symbol: false,
+                slot_init,
+            },
+            RelPlacement {
+                slot_exec: true,
+                table,
+                ..Default::default()
+            },
+        );
+        let regions = common::load_with_relocations(&fx.bytes);
+        let table = strider_reader::MemRegionsLookupTable::new(regions);
+        assert_eq!(
+            table.unmodelled_relocation_at(fx.slot_addr),
+            Some(r_type),
+            "r_type {r_type}"
+        );
+    }
+}
+
+/// `B + A` reads no symbol, so an `R_*_RELATIVE` naming one computes its
+/// addend whether that symbol resolves or not: here a weak undefined one,
+/// valued 0 (unresolved) and not.
+#[test]
+fn an_image_relative_relocation_ignores_its_symbol() {
+    let addend = 0x1234;
+    for value in [0, 0x1000] {
+        let fx = common::elf_fixture::build_rel_elf_placed(
+            common::elf_fixture::RelOpts {
+                endian: object::Endianness::Little,
+                is_64: true,
+                e_machine: object::elf::EM_X86_64,
+                r_type: object::elf::R_X86_64_RELATIVE,
+                defined_symbol: true,
+                slot_init: vec![0u8; 8],
+            },
+            // Read-only, so an uncomputed field would be a hole.
+            common::elf_fixture::RelPlacement {
+                slot_exec: true,
+                table: common::elf_fixture::RelTable::Crel(Some(addend)),
+                undefined_weak: Some(value),
+                ..Default::default()
+            },
+        );
+        let regions = common::load_with_relocations(&fx.bytes);
+        assert_eq!(
+            read_u64_le(&regions, fx.slot_addr),
+            Some(addend as u64),
+            "st_value {value:#x}"
+        );
+    }
+}
+
+/// An `R_X86_64_RELATIVE` whose eight-byte field runs past its four-byte
+/// section is neither patched nor a hole: the section's bytes are served as
+/// they are.
+#[test]
+fn an_image_relative_word_past_its_section_is_served_as_is() {
+    let slot_init = vec![0x11, 0x22, 0x33, 0x44];
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_X86_64,
+            r_type: object::elf::R_X86_64_RELATIVE,
+            defined_symbol: false,
+            slot_init: slot_init.clone(),
+        },
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            table: common::elf_fixture::RelTable::Crel(Some(0x1234)),
+            ..Default::default()
+        },
+    );
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    let mut got = [0u8; 4];
+    table
+        .read_exact(fx.slot_addr, &mut got)
+        .expect("a field past its section is no hole");
+    assert_eq!(got.to_vec(), slot_init);
+}
