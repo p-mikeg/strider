@@ -1,12 +1,12 @@
 use crate::{MemRegionsLookupTable, Result};
 
 use super::load::{OwnedElf, RelocationMode};
-use super::sections::{AddressSet, ElfSectionLayout, LoadFilter, RegionSource};
+use super::sections::RegionSource;
 
-/// An [`rsleigh::MemReader`] over an ELF's fetch image, and a
-/// [`crate::ReadOnlyMemory`] over that image minus its writable (RWX) mappings.
-/// Instruction fetch may reference a mapping that constant-load folding must
-/// not, so the two views differ.
+/// An [`rsleigh::MemReader`] over an ELF's fetch image and a
+/// [`crate::ReadOnlyMemory`] over its runtime-immutable mappings: instruction
+/// fetch may reference a mapping that constant-load folding must not, so the
+/// two views differ.
 ///
 /// Its regions are windows into the [`OwnedElf`]'s bytes, so it holds the
 /// mapping: [`check_unchanged`](Self::check_unchanged) catches a file rebuilt
@@ -16,46 +16,36 @@ use super::sections::{AddressSet, ElfSectionLayout, LoadFilter, RegionSource};
 /// shares its mapping.
 #[derive(Debug)]
 pub struct ElfFileMemReader {
-    lookup: MemRegionsLookupTable,
-    /// Every writable mapping the image declares, the fetchable RWX ones and
-    /// the ones the fetch filter dropped alike. The `ReadOnlyMemory` view is
-    /// the fetch image minus these, expressed as ranges rather than a second
-    /// table so the bytes are stored once.
-    writable: AddressSet,
+    fetch: MemRegionsLookupTable,
+    rom: MemRegionsLookupTable,
 }
 
 impl ElfFileMemReader {
-    /// Every code + read-only mapping of `elf`, as `mode` leaves them,
-    /// kind-dispatched: PT_LOAD program headers for ET_EXEC / ET_DYN,
-    /// allocatable sections at their [`ElfSectionLayout`] bases for ET_REL.
+    /// `elf`'s views under `mode`, kind-dispatched: PT_LOAD program headers
+    /// for ET_EXEC / ET_DYN, allocatable sections at their
+    /// [`ElfSectionLayout`](super::ElfSectionLayout) bases otherwise. See
+    /// [`OwnedElf::image`].
     ///
     /// # Errors
     ///
-    /// Anything [`OwnedElf::regions`] reports.
+    /// Anything [`OwnedElf::image`] reports.
     pub fn new(elf: &OwnedElf, mode: RelocationMode) -> Result<Self> {
-        let RelocationMode::Unapplied = mode;
-        let obj = elf.checked_file()?;
-        let image = elf.regions_with(
-            &obj,
-            &ElfSectionLayout::new(&obj),
-            RegionSource::Auto,
-            LoadFilter::CodeAndReadOnly,
-            false,
-        )?;
+        let image = elf.image(RegionSource::Auto, mode)?;
         Ok(Self {
-            lookup: MemRegionsLookupTable::new(image.regions),
-            writable: image.writable,
+            fetch: MemRegionsLookupTable::new(image.fetch),
+            rom: MemRegionsLookupTable::new(image.rom),
         })
     }
 
     /// One `stat` of the file the regions window, as
-    /// [`OwnedElf::check_unchanged`].
+    /// [`OwnedElf::check_unchanged`]. The ROM's mappings are a subset of the
+    /// fetch image's, so the fetch table answers for both.
     ///
     /// # Errors
     ///
     /// When the file changed on disk since it was mapped.
     pub fn check_unchanged(&self) -> Result<()> {
-        self.lookup.check_unchanged()
+        self.fetch.check_unchanged()
     }
 }
 
@@ -67,7 +57,7 @@ impl rsleigh::MemReader for ElfFileMemReader {
         addr: rsleigh::VnAddr,
         out_buf: &mut [u8],
     ) -> std::result::Result<usize, Self::Err> {
-        self.lookup.read(addr.off, out_buf).ok_or_else(|| {
+        self.fetch.read(addr.off, out_buf).ok_or_else(|| {
             crate::MemReadError(anyhow::anyhow!("address {:#x} is not mapped", addr.off))
         })
     }
@@ -75,12 +65,7 @@ impl rsleigh::MemReader for ElfFileMemReader {
 
 impl crate::ReadOnlyMemory for ElfFileMemReader {
     fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        // A writable-but-executable mapping is fetchable and NOT immutable, so
-        // it is not ROM even though it is in the fetch table.
-        if self.writable.touches(addr, buf.len()) {
-            anyhow::bail!("address {addr:#x} is in a writable mapping, not read-only memory");
-        }
-        self.lookup.read_exact(addr, buf)
+        self.rom.read_exact(addr, buf)
     }
 }
 
@@ -88,6 +73,7 @@ impl crate::ReadOnlyMemory for ElfFileMemReader {
 mod tests {
     use super::*;
     use crate::ReadOnlyMemory;
+    use crate::elf::ElfSectionLayout;
 
     /// A single RWX PT_LOAD, the firmware / `ld -N` shape. Its bytes must be
     /// FETCHABLE (it is the only mapping to decode from) yet must NOT answer
@@ -139,9 +125,11 @@ mod tests {
         .expect("an RWX mapping must be fetchable");
         assert_eq!((n, buf), (4, [0x90; 4]));
 
+        let err = ReadOnlyMemory::read(&reader, sec_addr, &mut buf)
+            .expect_err("an RWX mapping must not answer a ROM read");
         assert!(
-            ReadOnlyMemory::read(&reader, sec_addr, &mut buf).is_err(),
-            "an RWX mapping must not answer a ROM read"
+            err.to_string().contains("is not mapped"),
+            "the ROM view holds no writable mapping at all, got: {err}"
         );
     }
 }

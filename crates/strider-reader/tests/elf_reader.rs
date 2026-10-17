@@ -220,3 +220,18 @@ fn a_read_only_region_set_leaves_out_a_writable_mapping_over_it() {
         assert_eq!(buf, [0xaa; 4]);
     }
 }
+
+/// Two read-only PT_LOADs at different starts, one writable mapping cutting
+/// both so their pieces share a start: the ROM view answers from the cut
+/// pieces, the later one winning, while fetch still reads the uncut image.
+#[test]
+fn a_rom_read_over_cut_overlapping_loads_serves_the_later_piece() {
+    use object::elf::{PF_R, PF_W};
+    let r = reader(&common::elf_fixture::build_loads_elf(&[
+        (PF_R, 0x1010, 0x40, 0xbb),
+        (PF_R, 0x1000, 0x80, 0xaa),
+        (PF_R | PF_W, 0x1000, 0x20, 0xcc),
+    ]));
+    assert_mem_reader_reads(&r, 0x1020, &[0xbb; 4]);
+    assert_eq!(read_raw(&r, 0x1020, 4), [0xaa; 4]);
+}
