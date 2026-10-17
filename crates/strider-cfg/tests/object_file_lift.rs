@@ -7,7 +7,7 @@
 //! dispatch the memory map comes out empty.
 
 use object::Object;
-use strider_cfg::{Builder, CfgOptions};
+use strider_cfg::{CfgOptions, DecodeEngine};
 use strider_target::SleighArch;
 
 #[test]
@@ -32,7 +32,7 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
     let mem = strider_reader::ElfFileMemReader::from_object(&obj)
         .expect("ElfFileMemReader::from_object on .o");
     let arch = SleighArch::x86_64();
-    let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem)
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem)
         .expect("create Sleigh for ET_REL fixture");
 
     // Through the layout, not raw `st_value`: an ET_REL symbol's `st_value` is
@@ -44,8 +44,9 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
             .expect("tzcount symbol present in .o"),
     );
 
-    let cfg = Builder::for_arch(&arch, &mut sleigh, tz_addr, &CfgOptions::default())
-        .build()
+    let cfg = DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(tz_addr.into(), &CfgOptions::default())
         .expect("Builder::build on tzcount lifted from .o");
 
     // Exact region counts move with GCC optimisation and inlining, so only

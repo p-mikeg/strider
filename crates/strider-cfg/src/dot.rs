@@ -163,18 +163,19 @@ mod tests {
     use rsleigh::mem_readers::BufMemReader;
     use strider_target::SleighArch;
 
-    use crate::{Builder, CfgOptions};
+    use crate::{CfgOptions, DecodeEngine};
 
-    /// Keeps the `Sleigh` alive across the render.
+    /// Keeps the engine, and with it the `Sleigh`, alive across the render.
     fn dot_string(bytes: Vec<u8>, start: u64) -> String {
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(bytes, start);
-        let mut sleigh =
+        let sleigh =
             rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        let cfg = Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-            .build()
-            .expect("Builder::build on synthetic bytes");
-        GraphDot::new(cfg.dot_dumper(&sleigh), DotStyle::dark_cfg())
+        let mut engine = DecodeEngine::new(arch, sleigh).expect("decode engine");
+        let cfg = engine
+            .build_cfg(start.into(), &CfgOptions::default())
+            .expect("build_cfg on synthetic bytes");
+        GraphDot::new(cfg.dot_dumper(engine.sleigh()), DotStyle::dark_cfg())
             .as_dot()
             .expect("render dot")
     }

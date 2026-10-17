@@ -146,9 +146,9 @@ mod tests {
     use strider_target::SleighArch;
 
     use super::*;
+    use crate::CfgOptions;
     use crate::test_support::*;
     use crate::types::{PcodeInsnAddr, Region};
-    use crate::{Builder, CfgOptions};
 
     #[test]
     fn is_addr_tail_call_overflowing_window_top_addr_is_in_range() {
@@ -188,14 +188,15 @@ mod tests {
         let mem = strider_reader::ElfFileMemReader::from_object(&obj)
             .expect("ElfFileMemReader::from_object");
         let arch = SleighArch::x86_64();
-        let mut sleigh =
+        let sleigh =
             rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem).expect("create Sleigh");
         let entry_addr = obj
             .symbol_by_name(fn_name)
             .unwrap_or_else(|| panic!("symbol {fn_name:?} not found in {path:?}"))
             .address();
-        Builder::for_arch(&arch, &mut sleigh, entry_addr, &CfgOptions::default())
-            .build()
+        crate::DecodeEngine::new(arch, sleigh)
+            .expect("decode engine")
+            .build_cfg(entry_addr.into(), &CfgOptions::default())
             .unwrap_or_else(|e| panic!("Builder::build for {fn_name:?}: {e:?}"))
     }
 

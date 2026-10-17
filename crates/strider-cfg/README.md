@@ -7,10 +7,12 @@ sea-of-nodes IR `strider-lift` builds from it.
 
 ## What's here
 
-- `Builder::for_arch(arch, sleigh, start_addr, opts).build()` -> `Cfg`. A work
-  queue seeded with the entry drives decoding: each item either decodes a new
-  region or routes an edge to an existing one. `with_flow_context` lends the
-  sla's flowing context vars plus the function's own decode mode.
+- `DecodeEngine::new(arch, sleigh)?.build_cfg(entry, &opts)` -> `Cfg`. The
+  engine owns the Sleigh and the decode context it carries from one function
+  to the next, so every build decodes as on a fresh engine; on an arch with an
+  ISA mode the entry's low bit selects it (Thumb, MIPS16e). A work queue
+  seeded with the entry drives decoding: each item either decodes a new region
+  or routes an edge to an existing one.
 - `Region`, the graph's node: maximal straight-line pcode entered only at
   `start_addr`, ending at its `RegionTerminator`. `contains_addr` decides which
   bytes it owns, down to the pcode index, since a region can end mid-pcode
@@ -23,8 +25,6 @@ sea-of-nodes IR `strider-lift` builds from it.
   `no_return_targets` (borrowed too) lists direct-call targets that never
   return, `call_other_overrides` classifies user-op names, and `data_ranges`
   names address ranges that hold data and are never decoded.
-- `FlowVars` / `FlowContext`: the sla's flowing decode context, discovered once
-  per sla and lent to every build.
 - Queries on `Cfg` (`regions`, `region_ids`, `region_predecessors`,
   `region_if`, `switch_arm_regions`) and dark-themed Graphviz output
   (`dot_dumper`, `neighborhood_dot`).
@@ -57,7 +57,7 @@ declares its decode vars flowing but no constructor commits one (no
 
 That state is *flowing* context: as in GHIDRA's `ContextDatabase` a flowing var
 is a value committed per address, holding forward until the next change point.
-Each queued edge captures the context reaching its target and `FlowVars::pin_at`
+Each queued edge captures the context reaching its target and the builder
 commits it back before that target decodes, so a region Sleigh never
 straight-line-flowed into (a caller-seated indirect target, a backward edge)
 still decodes in the mode that reaches it. An interworking branch bakes its own

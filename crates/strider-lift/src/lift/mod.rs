@@ -716,7 +716,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             if matches!(src_terminator, strider_cfg::RegionTerminator::Unconditional) {
                 // Every CFG edge against a `translate_regions` that walks the
                 // dominator pre-order, which covers every region only because
-                // `strider_cfg::Builder::build` removes the unreachable ones.
+                // `strider_cfg::DecodeEngine::build_cfg` removes the unreachable ones.
                 self.builder.link_regions(
                     ir_region_of(region_map, src)?,
                     ir_region_of(region_map, tgt)?,
@@ -815,17 +815,11 @@ mod tests {
             .expect("build cc");
         // AArch64 `ret` = 0xD65F03C0, little-endian.
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc0, 0x03, 0x5f, 0xd6], 0x1000);
-        let mut sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-        let cfg = strider_cfg::Builder::for_arch(
-            &arch,
-            &mut sleigh,
-            0x1000,
-            &strider_cfg::CfgOptions::default(),
-        )
-        .build()
-        .expect("cfg");
-        let lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+        let mut lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let cfg = lifter
+            .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
+            .expect("cfg");
         let outcome = lifter.build_ir(&cfg, cc).expect("build_ir");
 
         assert!(
@@ -861,17 +855,11 @@ mod tests {
             vec![0x01, 0x00, 0x00, 0xd4, 0xc0, 0x03, 0x5f, 0xd6],
             0x1000,
         );
-        let mut sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-        let cfg = strider_cfg::Builder::for_arch(
-            &arch,
-            &mut sleigh,
-            0x1000,
-            &strider_cfg::CfgOptions::default(),
-        )
-        .build()
-        .expect("cfg");
-        let lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+        let mut lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let cfg = lifter
+            .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
+            .expect("cfg");
         let outcome = lifter
             .build_ir(&cfg, cc)
             .expect("`svc` must lift, not fail the function");
@@ -1043,17 +1031,11 @@ mod tests {
             0xba, 0x03, 0x00, 0x00, 0x00, 0xbe, 0x04, 0x00, 0x00, 0x00, 0xc3,
         ];
         let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
-        let mut sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-        let cfg = strider_cfg::Builder::for_arch(
-            &arch,
-            &mut sleigh,
-            0x1000,
-            &strider_cfg::CfgOptions::default(),
-        )
-        .build()
-        .expect("cfg");
-        let lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+        let mut lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let cfg = lifter
+            .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
+            .expect("cfg");
         let f = lifter.build_ir(&cfg, cc).expect("ir").function;
 
         // Ascending node id, so the group order below is creation order.

@@ -5,7 +5,7 @@
 //! decode does.
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::{Builder, Cfg, CfgOptions, FlowVars};
+use strider_cfg::{Cfg, CfgOptions, DecodeEngine};
 use strider_target::SleighArch;
 
 const BASE: u64 = 0x1000;
@@ -14,27 +14,19 @@ fn build_arm(words: &[u32]) -> Cfg {
     let arch = SleighArch::arm();
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
     let size = bytes.len() as u64;
-    let mut sleigh = rsleigh::Sleigh::new(
+    let sleigh = rsleigh::Sleigh::new(
         arch.sla_spec(),
         arch.pspec(),
         BufMemReader::new(bytes, BASE),
     )
     .expect("create Sleigh");
-    let flow = FlowVars::discover(&sleigh).expect("flow vars");
-    let transients: Vec<(&'static str, u32)> = arch
-        .transient_decode_vars()
-        .iter()
-        .map(|name| (*name, sleigh.get_context_at(0, name).expect("default")))
-        .collect();
-    let mode = flow.snapshot(&sleigh, BASE);
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::size(size),
         ..CfgOptions::default()
     };
-    Builder::for_arch(&arch, &mut sleigh, BASE, &opts)
-        .with_flow_context(&flow, mode)
-        .with_transient_defaults(&transients)
-        .build()
+    DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(BASE.into(), &opts)
         .expect("build")
 }
 

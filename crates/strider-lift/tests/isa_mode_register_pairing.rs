@@ -3,8 +3,8 @@
 //!
 //! `SleighRegs::name_to_vn` reports an unknown register as `None`, not as an
 //! error, so a misspelled `"ISAModeSwitch"` satisfies a one-directional check
-//! vacuously while the mode bit is never captured. `FunctionLifter::new`
-//! asserts the biconditional; this pins it against all 16 presets (14 distinct
+//! vacuously while the mode bit is never captured. `Lifter::new`
+//! rejects an arch that breaks the biconditional; this pins it against all 16 presets (14 distinct
 //! sla specs: `arm` / `arm_thumb` / `arm_be_kernel` share `SLA_SPEC_ARM8_LE`),
 //! in release as well as debug.
 

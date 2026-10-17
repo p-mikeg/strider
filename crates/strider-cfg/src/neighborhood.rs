@@ -64,7 +64,7 @@ mod tests {
     use rsleigh::mem_readers::BufMemReader;
     use strider_target::SleighArch;
 
-    use crate::{Builder, CfgOptions};
+    use crate::CfgOptions;
 
     // `jne +1`, `nop`, `ret`: an entry block plus two successors.
     fn two_way_cfg() -> crate::Cfg {
@@ -72,10 +72,11 @@ mod tests {
         let start = 0x1000;
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(bytes, start);
-        let mut sleigh =
+        let sleigh =
             rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-            .build()
+        crate::DecodeEngine::new(arch, sleigh)
+            .expect("decode engine")
+            .build_cfg(start.into(), &CfgOptions::default())
             .expect("Builder::build on synthetic bytes")
     }
 

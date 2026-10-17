@@ -7,91 +7,40 @@
 //! decodes in, and its IT block is the shape that makes it observable:
 //! `condit` decides whether the bytes after an `IT` are predicated.
 //!
-//! `SleighArch::flow_commit_vars` names what is re-derived, and the sla's
-//! flow class decides what each is erased TO: the pspec default for
-//! `noflow` `condit`, the predecessor's value for flowing `TEEMode`. The
-//! cross-build half of that is pinned through the production `Lifter` by
-//! `reused_lifter_rederives_flow_context`.
+//! `SleighArch::flow_commit_vars` names what is re-derived; the sla's flow
+//! class decides what each is erased TO: the pspec default for `noflow`
+//! `condit`, the predecessor's value for flowing `TEEMode`. The same through
+//! `Lifter` is pinned by `reused_lifter_rederives_flow_context`.
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::{Builder, Cfg, CfgOptions, FlowVars};
+use strider_cfg::{Cfg, CfgOptions, DecodeEngine};
 use strider_target::SleighArch;
 
 const BASE: u64 = 0x1000;
 
-/// One Sleigh engine, so successive builds share the context database exactly
-/// as a caller sweeping many functions from one handle does.
-struct Engine {
-    sleigh: rsleigh::Sleigh<BufMemReader<Vec<u8>>>,
-    arch: SleighArch,
-    flow: FlowVars,
-    transients: Vec<(&'static str, u32)>,
-    /// The pspec defaults, captured before any build committed anything.
-    defaults: strider_cfg::FlowContext,
-    /// What `Lifter::build_cfg` lends the builder so it can re-derive a
-    /// committed per-address context from this build's own decode.
-    flow_commit_defaults: Vec<(&'static str, strider_cfg::FlowCommit, u32)>,
+type Engine = DecodeEngine<BufMemReader<Vec<u8>>>;
+
+/// One engine, so successive builds share the context database exactly as a
+/// caller sweeping many functions from one handle does.
+fn thumb(bytes: Vec<u8>) -> Engine {
+    let arch = SleighArch::arm_thumb();
+    let sleigh = rsleigh::Sleigh::new(
+        arch.sla_spec(),
+        arch.pspec(),
+        BufMemReader::new(bytes, BASE),
+    )
+    .expect("create Sleigh");
+    DecodeEngine::new(arch, sleigh).expect("decode engine")
 }
 
-impl Engine {
-    fn thumb(bytes: Vec<u8>) -> Self {
-        let arch = SleighArch::arm_thumb();
-        let sleigh = rsleigh::Sleigh::new(
-            arch.sla_spec(),
-            arch.pspec(),
-            BufMemReader::new(bytes, BASE),
-        )
-        .expect("create Sleigh");
-        let flow = FlowVars::discover(&sleigh).expect("flow vars");
-        let transients: Vec<(&'static str, u32)> = arch
-            .transient_decode_vars()
-            .iter()
-            .map(|name| (*name, sleigh.get_context_at(0, name).expect("default")))
-            .collect();
-        let defaults = flow.snapshot(&sleigh, BASE);
-        let flow_commit_defaults: Vec<(&'static str, strider_cfg::FlowCommit, u32)> = arch
-            .flow_commit_vars()
-            .iter()
-            .map(|&name| {
-                let default = sleigh.get_context_at(0, name).expect("default");
-                (name, flow.commit_class(name), default)
-            })
-            .collect();
-        Self {
-            sleigh,
-            arch,
-            flow,
-            transients,
-            defaults,
-            flow_commit_defaults,
-        }
-    }
-
-    fn build(&mut self, entry: u64, size: u64) -> Cfg {
-        // The part of `Lifter::build_cfg` these tests need: without the entry
-        // pin the baseline is whatever an earlier build committed there, and
-        // every decode downstream inherits it.
-        //
-        // NOT the whole of it. Production also masks the Thumb bit off the
-        // entry and force-writes the ISA-mode var from `entry_mode_context`,
-        // which would decode these even entry addresses as ARM. They decode
-        // as Thumb because `ARMCortex.pspec` pins `TMode=1`. Production's
-        // entry contract is covered by `Lifter`'s own tests instead.
-        self.flow
-            .pin_at(&mut self.sleigh, entry, &self.defaults)
-            .expect("pin entry defaults");
-        let mode = self.flow.snapshot(&self.sleigh, entry);
-        let opts = CfgOptions {
-            bound: strider_cfg::FunctionBound::size(size),
-            ..CfgOptions::default()
-        };
-        Builder::for_arch(&self.arch, &mut self.sleigh, entry, &opts)
-            .with_flow_context(&self.flow, mode)
-            .with_transient_defaults(&self.transients)
-            .with_flow_commit_defaults(&self.flow_commit_defaults)
-            .build()
-            .expect("build")
-    }
+/// The Thumb function at `addr`, entered as production enters one: with the
+/// Thumb bit set.
+fn build(eng: &mut Engine, addr: u64, size: u64) -> Cfg {
+    let opts = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(size),
+        ..CfgOptions::default()
+    };
+    eng.build_cfg((addr | 1).into(), &opts).expect("build")
 }
 
 /// Every p-code opcode any region decoded at `addr`.
@@ -114,20 +63,20 @@ const IT_BLOCK: [u8; 8] = [0x04, 0xbf, 0x00, 0x20, 0x00, 0x20, 0x70, 0x47];
 /// a CBRANCH and dropping the flag writes, with nothing reported incomplete.
 #[test]
 fn an_earlier_builds_commit_does_not_change_this_builds_decode() {
-    let mut eng = Engine::thumb(IT_BLOCK.to_vec());
+    let mut eng = thumb(IT_BLOCK.to_vec());
 
     // Entered at 0x1002, so 0x1000's `IT` is never decoded by this build.
-    let fresh = eng.build(0x1002, 6);
+    let fresh = build(&mut eng, 0x1002, 6);
     let want = opcodes_at(&fresh, 0x1004);
 
     // Now prime the engine by building from the `IT` itself, then repeat.
-    let mut eng = Engine::thumb(IT_BLOCK.to_vec());
-    let primed = eng.build(0x1000, 8);
+    let mut eng = thumb(IT_BLOCK.to_vec());
+    let primed = build(&mut eng, 0x1000, 8);
     assert!(
         !opcodes_at(&primed, 0x1004).is_empty(),
         "the priming build must actually decode 0x1004",
     );
-    let after = eng.build(0x1002, 6);
+    let after = build(&mut eng, 0x1002, 6);
 
     assert_eq!(
         opcodes_at(&after, 0x1004),
@@ -146,8 +95,8 @@ fn an_earlier_builds_commit_does_not_change_this_builds_decode() {
 #[test]
 fn a_zero_pcode_op_instructions_own_commit_is_not_overwritten() {
     let code = vec![0xbf, 0xf3, 0x1f, 0x8f, 0x01, 0xc2, 0x70, 0x47];
-    let mut eng = Engine::thumb(code);
-    let cfg = eng.build(0x1000, 8);
+    let mut eng = thumb(code);
+    let cfg = build(&mut eng, 0x1000, 8);
     // Positively: a region owns 0x1004 and spans its two bytes while
     // recording no p-code op, which is what a zero-op ThumbEE `hb` looks
     // like. Asserting only the absence of a STORE would also pass if 0x1004
@@ -192,8 +141,8 @@ fn an_edge_into_an_it_block_is_reported_not_silently_decided() {
     code[0x10..0x12].copy_from_slice(&[0x00, 0x20]);
     code[0x12..0x14].copy_from_slice(&[0x70, 0x47]);
 
-    let mut eng = Engine::thumb(code);
-    let cfg = eng.build(0x1000, 0x14);
+    let mut eng = thumb(code);
+    let cfg = build(&mut eng, 0x1000, 0x14);
     let clashes: Vec<u64> = cfg
         .incomplete()
         .of(strider_cfg::Reason::IsaModeConflict)
