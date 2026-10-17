@@ -51,6 +51,9 @@ pub(crate) struct RelPlacement {
     pub slot_exec: bool,
     /// The encoding of `.rel.dyn`.
     pub table: RelTable,
+    /// `Some(v)`: symbol 1 is an undefined `STB_WEAK` one with `st_value` v
+    /// rather than the defined `func`.
+    pub undefined_weak: Option<u64>,
 }
 
 impl Default for RelPlacement {
@@ -60,6 +63,7 @@ impl Default for RelPlacement {
             outer_load: false,
             slot_exec: false,
             table: RelTable::Rel,
+            undefined_weak: None,
         }
     }
 }
@@ -201,21 +205,24 @@ pub(crate) fn build_rel_elf_placed(opts: RelOpts, place: RelPlacement) -> RelFix
     let sym_index: u32 = 1;
     let text_shndx: u16 = 1; // `.text` is section index 1 (see below)
     let sym_entsize = if is_64 { 24 } else { 16 };
-    let st_info = (elf::STB_GLOBAL << 4) | elf::STT_FUNC;
+    let (st_info, sym_shndx, sym_value) = match place.undefined_weak {
+        Some(value) => ((elf::STB_WEAK << 4) | elf::STT_FUNC, elf::SHN_UNDEF, value),
+        None => ((elf::STB_GLOBAL << 4) | elf::STT_FUNC, text_shndx, sym_addr),
+    };
     let mut dynsym = vec![0u8; sym_entsize]; // null symbol
     dynsym.extend_from_slice(&u32b(func_name_off));
     if is_64 {
         dynsym.push(st_info);
         dynsym.push(0); // st_other
-        dynsym.extend_from_slice(&u16b(text_shndx));
-        dynsym.extend_from_slice(&u64b(sym_addr));
+        dynsym.extend_from_slice(&u16b(sym_shndx));
+        dynsym.extend_from_slice(&u64b(sym_value));
         dynsym.extend_from_slice(&u64b(0)); // st_size
     } else {
-        dynsym.extend_from_slice(&u32b(sym_addr as u32));
+        dynsym.extend_from_slice(&u32b(sym_value as u32));
         dynsym.extend_from_slice(&u32b(0)); // st_size
         dynsym.push(st_info);
         dynsym.push(0); // st_other
-        dynsym.extend_from_slice(&u16b(text_shndx));
+        dynsym.extend_from_slice(&u16b(sym_shndx));
     }
 
     // One Elf32_Rel (8 bytes) or Elf64_Rel (16), where r_info is

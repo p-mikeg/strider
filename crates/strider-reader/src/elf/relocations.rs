@@ -36,40 +36,6 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
     base.wrapping_add(addend as u64)
 }
 
-/// The relocation's `A`, read out of `holder`, the region a read of the
-/// whole field is served from.
-///
-/// `SHT_REL` tables carry no `r_addend` field and store A in the relocation
-/// field itself; `object` reports `r_addend = 0` for them, so it is read back
-/// out of the site. A field no region holds contributes A = 0, matching the
-/// patch that is likewise skipped.
-///
-/// The field is read file-initial, unpatched: no linker emits two relocations
-/// against one field.
-fn reloc_addend(
-    r: &RelocInfo,
-    holder: Option<&MemRegion>,
-    field_addr: u64,
-    size_bytes: usize,
-    endian_le: bool,
-) -> i64 {
-    debug_assert!(
-        (1..=8).contains(&size_bytes),
-        "field width {size_bytes} is outside the sign-extend shift's range",
-    );
-    if let Some(addend) = r.rela_addend {
-        return addend;
-    }
-    // Sign-extended from the field width: a PC-relative site holds a negative A
-    // (-4 for an x86 `call rel32`).
-    holder.map_or(0, |region| {
-        sext(
-            read_field(region, field_addr, size_bytes, endian_le),
-            8 * size_bytes as u32,
-        )
-    })
-}
-
 /// Attaches one relocation patch list, sorted by address, to every region,
 /// walking the table appropriate for `obj.kind()`: `obj.dynamic_relocations()`
 /// for ET_EXEC / ET_DYN, per-section `section.relocations()` for ET_REL. Each
@@ -78,29 +44,21 @@ fn reloc_addend(
 ///
 /// # Supported
 ///
-/// Via [`RelocationKind`]:
-/// * `Absolute`, `S + A` (`R_X86_64_64`). Symbol-targeted.
-/// * `Relative`, `S + A - P` (`R_X86_64_PC32`, `R_AARCH64_PREL16/PREL32/PREL64`,
-///   `R_386_PC32`). Symbol-targeted.
-/// * `PltRelative`, valued the same as `Relative` (no PLT is materialised, so
-///   the symbol's own address is used): the 32-bit `R_X86_64_PLT32` /
-///   `R_386_PLT32` apply.
+/// Every row [`classify`] lists, which says what each `(arch, r_type)`
+/// computes and the field it is encoded into: instruction immediates, GOT and
+/// TOC references, `R_*_RELATIVE` / `IRELATIVE` (image base modelled 0; an
+/// `SHT_REL` one's field already holds the whole value and is served as
+/// assembled), GOT/PLT slots and PC-relative words. A GOT reference resolves
+/// through a synthetic GOT slot holding the symbol's address, which exists
+/// only for an ET_REL.
 ///
-/// Via raw `r_type`, which `object` reports as `RelocationKind::Unknown`:
-/// * `R_*_RELATIVE` / `R_*_IRELATIVE`: `image_base + addend`, image base
-///   modelled as 0. An `SHT_REL` one keeps A in its field, which is then
-///   already the whole value, so it is left exactly as assembled.
-/// * `R_*_GLOB_DAT` / `R_*_JUMP_SLOT`: the symbol's address at the slot
-///   (S semantics, resolved eagerly).
-/// * `R_MIPS_REL32`, both the undefined (addend-only) and defined-symbol forms,
-///   the `SHT_REL` undefined one again as assembled.
-/// * `R_ARM_REL32` / `R_PPC_REL32` / `R_PPC64_REL64`, plain word-sized
-///   `S + A - P`. `object` surfaces all three as `Unknown` with `size = 0`, so
-///   they dispatch on the raw `r_type` like the GOT/PLT slots; a PowerPC
-///   `.rodata` switch table is built out of exactly these.
-/// * The instruction, GOT and TOC relocations [`super::encodings::classify`]
-///   lists. A GOT reference resolves through a synthetic GOT slot holding the
-///   symbol's address, which exists only for an ET_REL.
+/// Otherwise the plain data fields `object` describes: `Absolute` is `S + A`
+/// (`R_X86_64_64`), `Relative` `S + A - P` (`R_X86_64_PC32`,
+/// `R_AARCH64_PREL32`), and `PltRelative` valued the same, no PLT being
+/// materialised (`R_X86_64_PLT32`).
+///
+/// `S` exists only for a symbol target: a value reading it against
+/// STN_UNDEF is not computed.
 ///
 /// On an ET_REL an undefined or `SHN_COMMON` symbol resolves to its
 /// [`ElfSectionLayout::extern_address`], outside every mapping. An undefined
@@ -501,95 +459,23 @@ fn got_regions(got: &BTreeMap<u64, (u64, usize)>, endian_le: bool) -> Result<Vec
     Ok(out)
 }
 
-/// Applies one relocation entry at the already-absolute `site.addr`.
-///
-/// Sites with no backing region are skipped; a relocation whose value is not
-/// computed becomes a hole, see [`apply_elf_relocations_with`].
+/// Applies one relocation entry at the already-absolute `site.addr`: the row
+/// [`classify`] names, else the plain field `object` describes, else a hole.
 fn apply_one_relocation(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo, pair: Option<u64>) {
+    match classify(ctx.obj.architecture(), r) {
+        Some(Kind::Marker) => {}
+        Some(Kind::Compute(value, field)) => apply_classified(ctx, site, r, pair, value, field),
+        None => apply_plain(ctx, site, r),
+    }
+}
+
+/// A plain data field `object` describes: `Absolute` is `S + A`, `Relative`
+/// and `PltRelative` `S + A - P`, the latter's L collapsing to S since no PLT
+/// is materialised. Anything else is a hole.
+fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo) {
     let obj = ctx.obj;
     let site_addr = site.addr;
     let endian_le = ctx.endian_le;
-    let arch = obj.architecture();
-
-    // Image-relative relocations store `image_base + addend` with no symbol or
-    // section reference, so `object` surfaces them as an `Absolute` target with
-    // an `Unknown` kind. Image base is modelled as the link-time base (0 for an
-    // ET_DYN), making the patched value the addend itself; width comes from the
-    // relocation type. Without this branch a PIE's dispatch-table slot reads
-    // its unrelocated file bytes wherever the slot IS mapped; under the
-    // read-only filters those slots sit in the RW `PT_LOAD` and are not mapped
-    // at all, since `PT_GNU_RELRO` is not modelled.
-    if let Some((value, size_bytes)) = image_relative_reloc(r, arch) {
-        // An `SHT_REL` site keeps A in its field, which with the base modelled
-        // as 0 is already the whole value: nothing to patch, and nothing to
-        // hole either.
-        if r.rela_addend.is_none() {
-            return;
-        }
-        let holder = ctx.holder(site, site_addr, size_bytes);
-        ctx.record(holder, site_addr, value, size_bytes, endian_le);
-        return;
-    }
-
-    // Symbol-targeted families `object` reports as `Unknown` with `size = 0`,
-    // which the plain fallback below would mis-bucket as unsupported. Each
-    // yields `(size_bytes, pc_relative, read_implicit_addend)`; first match
-    // wins.
-    let word_sized = got_or_plt_slot_reloc_size(r, arch)
-        // GOT/PLT slot, `S`. Its own field is the PLT push offset, not an
-        // addend, so it is never read back; the RELA addend is added, none
-        // under REL.
-        .map(|size_bytes| (size_bytes, false, false))
-        // Defined-symbol `R_MIPS_REL32`, `S + A`.
-        .or_else(|| {
-            mips_rel32_symbol_reloc_size(r, arch).map(|size_bytes| (size_bytes, false, true))
-        })
-        // `R_PPC_REL32` / `R_ARM_REL32` / `R_PPC64_REL64`, `S + A - P`.
-        .or_else(|| pc_relative_word_reloc(r, arch).map(|size_bytes| (size_bytes, true, true)));
-    if let Some((size_bytes, pc_relative, read_implicit_addend)) = word_sized {
-        let holder = ctx.holder(site, site_addr, size_bytes);
-        let Some(target) = r
-            .sym
-            .and_then(|idx| resolve_symbol_target(obj, ctx.layout, idx))
-        else {
-            ctx.unmodelled(holder, site_addr, size_bytes, r.type_word());
-            return;
-        };
-        // A plain word holds the address itself, see `Target::weak_undefined`.
-        if target.weak_undefined {
-            ctx.unmodelled(holder, site_addr, size_bytes, r.type_word());
-            return;
-        }
-        let addend = if read_implicit_addend {
-            reloc_addend(r, holder, site_addr, size_bytes, endian_le)
-        } else {
-            r.rela_addend.unwrap_or(0)
-        };
-        let value = apply_addend(target.addr, addend);
-        let value = if pc_relative {
-            value.wrapping_sub(site_addr)
-        } else {
-            value
-        };
-        let field = Field::Data {
-            bytes: size_bytes as u8,
-            signed: pc_relative,
-        };
-        match fit(obj, field, value) {
-            Some(value) => ctx.record(holder, site_addr, value, size_bytes, endian_le),
-            None => ctx.unmodelled(holder, site_addr, size_bytes, r.type_word()),
-        }
-        return;
-    }
-
-    match classify(arch, r) {
-        Some(Kind::Marker) => return,
-        Some(Kind::Compute(value, field)) => {
-            apply_classified(ctx, site, r, pair, value, field);
-            return;
-        }
-        None => {}
-    }
 
     // `object` read a mips64el `Elf64_Rel`'s kind and size off its symbol
     // index, so they describe nothing.
@@ -617,7 +503,6 @@ fn apply_one_relocation(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo, p
             generic.encoding,
             object::RelocationEncoding::Generic | object::RelocationEncoding::X86Signed
         );
-    // `PltRelative`'s L collapses to S here since no PLT is materialised.
     let pc_relative = match generic.kind {
         RelocationKind::Absolute => Some(false),
         RelocationKind::Relative | RelocationKind::PltRelative => Some(true),
@@ -638,7 +523,8 @@ fn apply_one_relocation(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo, p
     // `r_offset` addresses the storage unit, inside which the field can be
     // offset. A `r_offset` at the very top of the address space is malformed;
     // the skew would carry the field out of it.
-    let Some(field_addr) = site_addr.checked_add(mips_half_field_skew(r, arch, endian_le)) else {
+    let skew = mips_half_field_skew(r, obj.architecture(), endian_le);
+    let Some(field_addr) = site_addr.checked_add(skew) else {
         return;
     };
 
@@ -658,7 +544,21 @@ fn apply_one_relocation(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo, p
         ctx.unmodelled(holder, field_addr, size_bytes, r.type_word());
         return;
     }
-    let addend = reloc_addend(r, holder, field_addr, size_bytes, endian_le);
+    let field = Field::Data {
+        bytes: size_bytes as u8,
+        signed: pc_relative || matches!(generic.encoding, object::RelocationEncoding::X86Signed),
+    };
+    // `SHT_REL` keeps A in the field, sign-extended from its width: a
+    // PC-relative site holds a negative A (-4 for an x86 `call rel32`). A
+    // field no region holds contributes 0, its patch being skipped too.
+    let addend = match r.rela_addend {
+        Some(addend) => addend,
+        None => holder
+            .and_then(|region| {
+                implicit_addend(field, read_field(region, field_addr, size_bytes, endian_le))
+            })
+            .unwrap_or(0),
+    };
     // S, A, P follow the System V ABI generic relocation formula:
     // S = target_addr, A = addend, P = site_addr. P is the storage unit, not
     // the field inside it.
@@ -667,10 +567,6 @@ fn apply_one_relocation(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo, p
         value.wrapping_sub(site_addr)
     } else {
         value
-    };
-    let field = Field::Data {
-        bytes: size_bytes as u8,
-        signed: pc_relative || matches!(generic.encoding, object::RelocationEncoding::X86Signed),
     };
     match fit(obj, field, value) {
         Some(value) => ctx.record(holder, field_addr, value, size_bytes, endian_le),
@@ -713,6 +609,14 @@ fn apply_classified(
     let p = site.addr;
     let width = field.width();
     let holder = ctx.holder(site, p, width);
+    // The common case by far: a RELA image-relative word reads no symbol or field.
+    if let (Value::ImageRelative, Some(a)) = (value, r.rela_addend) {
+        match fit(ctx.obj, field, apply_addend(0, a)) {
+            Some(word) => ctx.record(holder, p, word, width, ctx.endian_le),
+            None => ctx.unmodelled(holder, p, width, r.type_word()),
+        }
+        return;
+    }
     let field_le = ctx.field_le(field);
     match compute_classified(ctx, r, pair, value, field, p, holder) {
         Some(word) => ctx.record(holder, p, word, width, field_le),
@@ -736,9 +640,11 @@ fn compute_classified(
     let thumb_le = field_le && matches!(field, Field::ThumbBranch { .. } | Field::ThumbMovw { .. });
     let raw = read_field(holder?, p, field.width(), field_le);
     let raw = if thumb_le { swap_halfwords(raw) } else { raw };
-    let target = match r.sym {
-        Some(idx) => Some(resolve_symbol_target(obj, layout, idx)?),
-        None => None,
+    // `S` exists only for a symbol target, and only a value reading it asks.
+    let target = match (value_kind.reads_symbol(), r.sym) {
+        (true, Some(idx)) => Some(resolve_symbol_target(obj, layout, idx)?),
+        (true, None) => return None,
+        (false, _) => None,
     };
     // Only a branch displacement and a GOT slot reference hide the address
     // they were built from, see `Target::weak_undefined`.
@@ -992,157 +898,6 @@ fn ppc64_local_entry_offset(st_other: u8) -> u64 {
     }
 }
 
-/// Matches the `R_*_RELATIVE` / `R_*_IRELATIVE` families: image-base + addend
-/// relocations with no symbol or section target. Yields
-/// `(value_to_write, size_bytes)`; image base is modelled as 0, so the value is
-/// the addend itself, and 0 for an `SHT_REL` site whose A is in the field.
-///
-/// `r_type` constants collide across arches (`R_X86_64_RELATIVE` and
-/// `R_386_RELATIVE` are both 8), so dispatch is on `Architecture` first and
-/// `r_type` only against that arch's constant.
-///
-/// IRELATIVE is the IFUNC variant, whose addend is the address of a resolver
-/// the dynamic linker would call to compute the slot's runtime value. Writing
-/// the resolver's address is the soundest static approximation, so it is
-/// treated exactly like RELATIVE.
-fn image_relative_reloc(r: &RelocInfo, arch: A) -> Option<(u64, usize)> {
-    let value = apply_addend(0, r.rela_addend.unwrap_or(0));
-    // `R_MIPS_REL32` is MIPS's closest analogue to RELATIVE and writes `S + A`.
-    // For an undefined / index-0 (STN_UNDEF) symbol `S` is 0, reducing it to
-    // addend-only, which is the case handled here; a defined symbol takes the
-    // defined-symbol path in the main loop. MIPS defines no separate
-    // IRELATIVE.
-    if matches!(arch, A::Mips | A::Mips64) {
-        return (r.r_type == object::elf::R_MIPS_REL32 && r.sym.is_none())
-            .then(|| (value, mips_rel32_field_bytes(r.r_type2)));
-    }
-    let r_type = r.r_type;
-    let size_bytes = match arch {
-        A::X86_64
-            if r_type == object::elf::R_X86_64_RELATIVE
-                || r_type == object::elf::R_X86_64_IRELATIVE =>
-        {
-            8
-        }
-        A::I386
-            if r_type == object::elf::R_386_RELATIVE || r_type == object::elf::R_386_IRELATIVE =>
-        {
-            4
-        }
-        A::Aarch64
-            if r_type == object::elf::R_AARCH64_RELATIVE
-                || r_type == object::elf::R_AARCH64_IRELATIVE =>
-        {
-            8
-        }
-        A::Arm
-            if r_type == object::elf::R_ARM_RELATIVE || r_type == object::elf::R_ARM_IRELATIVE =>
-        {
-            4
-        }
-        // `R_PPC64_RELATIVE == R_PPC_RELATIVE == 22`; the arch dispatch is what
-        // separates them. PPC64 ET_DYN binaries use these for function-pointer
-        // tables, which would otherwise read zero.
-        A::PowerPc64
-            if r_type == object::elf::R_PPC64_RELATIVE
-                || r_type == object::elf::R_PPC64_IRELATIVE =>
-        {
-            8
-        }
-        A::PowerPc
-            if r_type == object::elf::R_PPC_RELATIVE || r_type == object::elf::R_PPC_IRELATIVE =>
-        {
-            4
-        }
-        _ => return None,
-    };
-    Some((value, size_bytes))
-}
-
-/// Matches `R_*_GLOB_DAT` (GOT data slot) and `R_*_JUMP_SLOT` (PLT lazy-bind
-/// slot): write the symbol's address S at the site, no PC subtraction, resolved
-/// eagerly.
-///
-/// `object` reports both as `Unknown` with `size = 0`, so the size comes from
-/// the arch instead: 8 bytes on 64-bit, 4 on 32-bit. The caller computes the
-/// value (`target_addr + addend`).
-fn got_or_plt_slot_reloc_size(r: &RelocInfo, arch: A) -> Option<usize> {
-    if matches!(arch, A::Mips | A::Mips64) {
-        // A GOT slot is one target word wide regardless of the composite.
-        return (r.r_type == object::elf::R_MIPS_GLOB_DAT
-            || r.r_type == object::elf::R_MIPS_JUMP_SLOT)
-            .then_some(if arch == A::Mips64 { 8 } else { 4 });
-    }
-    let r_type = r.r_type;
-    match arch {
-        A::X86_64
-            if r_type == object::elf::R_X86_64_GLOB_DAT
-                || r_type == object::elf::R_X86_64_JUMP_SLOT =>
-        {
-            Some(8)
-        }
-        A::I386
-            if r_type == object::elf::R_386_GLOB_DAT || r_type == object::elf::R_386_JMP_SLOT =>
-        {
-            Some(4)
-        }
-        A::Aarch64
-            if r_type == object::elf::R_AARCH64_GLOB_DAT
-                || r_type == object::elf::R_AARCH64_JUMP_SLOT =>
-        {
-            Some(8)
-        }
-        A::Arm
-            if r_type == object::elf::R_ARM_GLOB_DAT || r_type == object::elf::R_ARM_JUMP_SLOT =>
-        {
-            Some(4)
-        }
-        A::PowerPc64
-            if r_type == object::elf::R_PPC64_GLOB_DAT
-                || r_type == object::elf::R_PPC64_JMP_SLOT =>
-        {
-            Some(8)
-        }
-        A::PowerPc
-            if r_type == object::elf::R_PPC_GLOB_DAT || r_type == object::elf::R_PPC_JMP_SLOT =>
-        {
-            Some(4)
-        }
-        _ => None,
-    }
-}
-
-/// `R_PPC_REL32` / `R_ARM_REL32` / `R_PPC64_REL64`: a PC-relative `S + A - P`
-/// one target word wide.
-///
-/// `object` maps none of them (its `EM_ARM` table carries only `R_ARM_ABS32`,
-/// and its PowerPC tables only the `ADDR` forms), so all three arrive as
-/// `Unknown` and would fall through as unsupported. A `.rodata` switch table is
-/// built out of exactly these on PowerPC, and leaving it unpatched costs the
-/// whole table.
-fn pc_relative_word_reloc(r: &RelocInfo, arch: A) -> Option<usize> {
-    let r_type = r.r_type;
-    match arch {
-        // `R_PPC64_REL32` shares the value 26 with `R_PPC_REL32`, and a 64-bit
-        // object builds its switch tables out of it the same way.
-        A::PowerPc | A::PowerPc64 if r_type == object::elf::R_PPC_REL32 => Some(4),
-        A::PowerPc64 if r_type == object::elf::R_PPC64_REL64 => Some(8),
-        A::Arm if r_type == object::elf::R_ARM_REL32 => Some(4),
-        _ => None,
-    }
-}
-
-/// `R_MIPS_REL32`'s field width. "REL32" names a 32-bit field, but MIPS64
-/// linkers emit it composed with `R_MIPS_64`, and that pair is the 64-bit
-/// pointer slot glibc's `ld.so` patches as one word.
-fn mips_rel32_field_bytes(r_type2: u32) -> usize {
-    if r_type2 == object::elf::R_MIPS_64 {
-        8
-    } else {
-        4
-    }
-}
-
 /// Where a MIPS relocation's field starts relative to `r_offset`.
 ///
 /// `R_MIPS_16`'s storage unit is the 32-bit word at `r_offset` and its field is
@@ -1156,16 +911,6 @@ fn mips_half_field_skew(r: &RelocInfo, arch: A, endian_le: bool) -> u64 {
     } else {
         0
     }
-}
-
-/// Matches the defined-symbol half of `R_MIPS_REL32`, which `object` surfaces
-/// as a `Symbol` target and which needs the symbol's address. The undefined
-/// half (`S = 0`, addend-only) goes through [`image_relative_reloc`].
-fn mips_rel32_symbol_reloc_size(r: &RelocInfo, arch: A) -> Option<usize> {
-    (matches!(arch, A::Mips | A::Mips64)
-        && r.r_type == object::elf::R_MIPS_REL32
-        && r.sym.is_some())
-    .then(|| mips_rel32_field_bytes(r.r_type2))
 }
 
 #[cfg(test)]
@@ -1409,34 +1154,13 @@ mod tests {
             .map(|row| (row.4, row.5))
     }
 
-    /// `WORD_ROWS` is what the word ladders apply, and what `classify` answers,
-    /// over every type number they could match; no other type takes an
-    /// image-relative or slot row.
+    /// The word rows `classify` answers, over every type number they could
+    /// be; no other type takes an image-relative or slot row.
     #[test]
-    fn classify_answers_the_word_rows() {
-        let data = |bytes: usize, signed| Field::Data {
-            bytes: bytes as u8,
-            signed,
-        };
+    fn classify_pins_the_word_rows() {
         let mut rows = 0;
         for (arch, r) in word_domain() {
-            let want = word_row(arch, &r);
-            let ladder = image_relative_reloc(&r, arch)
-                .map(|(_, n)| (Value::ImageRelative, data(n, false)))
-                .or_else(|| {
-                    got_or_plt_slot_reloc_size(&r, arch).map(|n| (Value::Slot, data(n, false)))
-                })
-                .or_else(|| {
-                    mips_rel32_symbol_reloc_size(&r, arch).map(|n| (Value::Abs, data(n, false)))
-                })
-                .or_else(|| {
-                    pc_relative_word_reloc(&r, arch).map(|n| (Value::Pcrel, data(n, true)))
-                });
-            assert_eq!(
-                ladder, want,
-                "{arch:?} {r:?}: the ladders apply another row"
-            );
-            match want {
+            match word_row(arch, &r) {
                 Some((value, field)) => {
                     rows += 1;
                     assert_eq!(
