@@ -143,7 +143,7 @@ where
 /// indirect site.
 ///
 /// Read off the cfg, which sampled it while each site's region was decoding
-/// (`Builder::sample_flowing_isa_bit`). Probing the live engine again here
+/// ([`strider_cfg::Cfg::flowing_isa_bit_at_site`]). Probing the live engine again here
 /// would answer for whichever region painted the branch address last, and
 /// [`super::merge::adopt_known_modes`] would then take the wrong `interworking`
 /// verdict.

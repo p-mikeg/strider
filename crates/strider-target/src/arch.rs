@@ -380,9 +380,8 @@ impl SleighArch {
     /// therefore erased to the value in force at the PREDECESSOR, reproducing
     /// the flow, and the re-lift then re-applies any commit of its own.
     ///
-    /// Both classes must be listed. `Builder::committed_next` licenses
-    /// `Builder::enqueue` to trust a snapshot of every flowing var at a
-    /// recorded `inst_next`, and `FlowVars::pin_at` cannot clean one up: a
+    /// Both classes must be listed. The CFG build trusts a snapshot of every
+    /// flowing var at a recorded `inst_next`, and a pin cannot clean one up: a
     /// forward paint stops at the next CHANGE POINT of that var, which is
     /// exactly where an earlier build's commit sits. Leaving ARM `TEEMode`
     /// out let a stale ThumbEE mode survive into a later `build_cfg` and drop
@@ -428,18 +427,19 @@ impl SleighArch {
     /// survive a region boundary at all, where a committed IT state has to be
     /// re-derived rather than cleared.
     ///
-    /// `FlowVars` cannot see these: it takes the sla's FLOWING set, and these
-    /// are excluded from it by definition. ARM's `LRset` picks `call [pc]` over
-    /// `goto [pc]` for `bx` (`ARMinstructions.sinc`), and `REToverride` /
-    /// `CALLoverride` reclassify a return and a call the same way. MIPS's
-    /// `PAIR_INSTRUCTION_FLAG` (`mips.sinc:412`) selects the
-    /// `lwl`/`swl`/`ldl`/`sdl` constructor that does the whole unaligned access
-    /// against the one that does half, and `ext_delay` (`mips.sinc:450`) is
-    /// subtracted from the PC-relative address MIPS16e `OFF_M16PC` computes
-    /// (`mips16.sinc:164`). `LRset`, `PAIR_INSTRUCTION_FLAG` and `ext_delay`
-    /// are committed by `globalset`, so a commit outlives the function that
-    /// made it. `REToverride` / `CALLoverride` are only ever read; clearing
-    /// them costs nothing and keeps the list one rule.
+    /// The decoder's flowing-context snapshots and pins cannot see these: they
+    /// cover the sla's FLOWING set, which excludes these by definition. ARM's
+    /// `LRset` picks `call [pc]` over `goto [pc]` for `bx`
+    /// (`ARMinstructions.sinc`), and `REToverride` / `CALLoverride` reclassify
+    /// a return and a call the same way. MIPS's `PAIR_INSTRUCTION_FLAG`
+    /// (`mips.sinc:412`) selects the `lwl`/`swl`/`ldl`/`sdl` constructor that
+    /// does the whole unaligned access against the one that does half, and
+    /// `ext_delay` (`mips.sinc:450`) is subtracted from the PC-relative address
+    /// MIPS16e `OFF_M16PC` computes (`mips16.sinc:164`). `LRset`,
+    /// `PAIR_INSTRUCTION_FLAG` and `ext_delay` are committed by `globalset`, so
+    /// a commit outlives the function that made it. `REToverride` /
+    /// `CALLoverride` are only ever read; clearing them costs nothing and keeps
+    /// the list one rule.
     #[must_use]
     pub fn transient_decode_vars(&self) -> &'static [&'static str] {
         self.facts().transient_decode_vars
