@@ -5,10 +5,11 @@ use crate::{FileBytes, MemRegion, Result};
 use super::relocations::apply_elf_relocations_with;
 use super::sections::{ElfSectionLayout, LoadFilter, RegionSource};
 
-/// Maps the file: it must not change on disk while the returned `OwnedElf`
-/// lives. [`OwnedElf::check_unchanged`] catches a file rebuilt between two
-/// operations, and every region build runs it; a change racing a read in
-/// progress is still a torn read, or SIGBUS past a shortened end.
+/// Maps the file: it must not change on disk while the returned `OwnedElf`,
+/// or any region or reader built from it, lives. [`OwnedElf::check_unchanged`]
+/// catches a file rebuilt between two operations, and every region build runs
+/// it; a change racing a read in progress is still a torn read, or SIGBUS past
+/// a shortened end.
 ///
 /// # Errors
 ///
@@ -33,6 +34,14 @@ impl std::fmt::Debug for OwnedElf {
             .field("backing_len", &self.backing.len())
             .finish_non_exhaustive()
     }
+}
+
+/// What an image's relocations are taken to have done.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RelocationMode {
+    /// Nothing: each field serves its file-initial bytes, an addend or `ld`'s
+    /// link-time value rather than its target.
+    Unapplied,
 }
 
 /// First line of a Git LFS pointer file.
@@ -174,7 +183,7 @@ impl OwnedElf {
         let obj = self.checked_file()?;
         let image = super::sections::collect_regions(
             &obj,
-            Some(&self.backing),
+            &self.backing,
             source,
             LoadFilter::AllAllocatable,
             &ElfSectionLayout::new(&obj),
@@ -211,7 +220,7 @@ impl OwnedElf {
             );
         }
         let mut image =
-            super::sections::collect_regions(obj, Some(&self.backing), source, filter, layout)?;
+            super::sections::collect_regions(obj, &self.backing, source, filter, layout)?;
         if relocate {
             let got = apply_elf_relocations_with(
                 &mut image.regions,

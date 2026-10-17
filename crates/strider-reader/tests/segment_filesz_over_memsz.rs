@@ -7,7 +7,8 @@
 //! PT_LOAD, served through a `ReadOnlyMemory` view whose whole contract is
 //! that nothing there can change under the analysis.
 
-use strider_reader::{ElfFileMemReader, ReadOnlyMemory};
+use strider_reader::elf::RelocationMode;
+use strider_reader::{ElfFileMemReader, OwnedElf, ReadOnlyMemory};
 
 const BASE: u64 = 0x2000;
 /// Bytes the image maps.
@@ -55,8 +56,9 @@ fn elf_with_one_pt_load(p_flags: u32) -> Vec<u8> {
 fn bytes_past_p_memsz_are_not_mapped() {
     // PF_R | PF_X
     let image = elf_with_one_pt_load(0b101);
-    let obj = object::File::parse(&image[..]).expect("parse");
-    let reader = ElfFileMemReader::from_object(&obj).expect("from_object");
+    let elf = OwnedElf::parse(image).expect("parse");
+    let reader =
+        ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect("ElfFileMemReader::new");
 
     let mut buf = [0u8; 8];
     reader
@@ -79,8 +81,9 @@ fn bytes_past_p_memsz_are_not_mapped() {
 fn an_rwx_tail_is_not_served_as_read_only_memory() {
     // PF_R | PF_W | PF_X
     let image = elf_with_one_pt_load(0b111);
-    let obj = object::File::parse(&image[..]).expect("parse");
-    let reader = ElfFileMemReader::from_object(&obj).expect("from_object");
+    let elf = OwnedElf::parse(image).expect("parse");
+    let reader =
+        ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect("ElfFileMemReader::new");
 
     let mut buf = [0u8; 8];
     assert!(
@@ -95,4 +98,28 @@ fn an_rwx_tail_is_not_served_as_read_only_memory() {
          lets a constant-address load fold to the file's initial value while \
          a store to the same address is live",
     );
+}
+
+/// A PT_LOAD whose bytes run past the end of the file: the load is an error,
+/// never a window past the image nor a mapping that silently goes missing.
+#[test]
+fn a_pt_load_running_past_the_end_of_the_file_is_an_error() {
+    let mut image = elf_with_one_pt_load(0b101);
+    // Eight of the `p_filesz` bytes from offset 120 remain.
+    image.truncate(120 + 8);
+    let elf = OwnedElf::parse(image).expect("the headers still parse");
+    for err in [
+        ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect_err("the reader"),
+        elf.regions(
+            strider_reader::elf::RegionSource::Auto,
+            strider_reader::elf::LoadFilter::CodeAndReadOnly,
+            false,
+        )
+        .expect_err("the regions"),
+    ] {
+        assert!(
+            err.to_string().contains("failed to parse ELF"),
+            "got: {err}"
+        );
+    }
 }
