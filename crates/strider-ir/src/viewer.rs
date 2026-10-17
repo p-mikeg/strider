@@ -370,7 +370,7 @@ pub trait IRViewer {
             .ok_or_else(|| anyhow!("{kind:?} has no input slot {slot}"))?;
         if !want.admits(actual) {
             return Err(anyhow!(
-                "operand {value:?} at {kind:?} input slot {slot} is {actual:?}, \
+                "operand {value:?} at {kind:?} input slot {slot} is {actual}, \
                  where its node signature expects {want:?}"
             ));
         }
