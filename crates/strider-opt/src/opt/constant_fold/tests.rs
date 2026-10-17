@@ -51,6 +51,7 @@ fn const_eval_absorbs_operand_fingerprints() -> Result<()> {
         "const-eval result must absorb both dying operand fingerprints \
          ({A:#x}, {B:#x}); got {fp:?}"
     );
+    assert!(fp.contains(&ADD), "and the root's own {ADD:#x}; got {fp:?}");
     Ok(())
 }
 
@@ -2534,6 +2535,39 @@ fn factor_declines_an_out_of_range_shift() -> Result<()> {
         ),
         "a width-or-wider shift count must not fold to a multiply"
     );
+    Ok(())
+}
+
+/// A count typed past 128 bits is still out of range when its value is: 64
+/// at an `I64`'s width, `2^128` past what any `u128` holds. The shift stays.
+#[test]
+fn factor_declines_a_wide_count_out_of_range() -> Result<()> {
+    use strider_ir::IRBuilder;
+    use strider_ir::node::ValueKind;
+    for limbs in [[64, 0, 0, 0], [0, 0, 1, 0]] {
+        let (mut fg, _x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
+            let count = b.build_int_const_limbs(&limbs, ValueType::int(256))?;
+            let shl = b.create_node(
+                NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
+                [x, count],
+                [ValueKind::Typed(ValueType::int(64))],
+            );
+            let [s] = b.node_outputs_exact::<1>(shl)?;
+            b.build_int_binary_operation(x, s, IntBinaryOp::Add, ValueType::int(64))
+        })?;
+        run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+        let val = return_value(fg.graph())?;
+        let add = fg.producer(val);
+        assert!(
+            matches!(fg.node_kind(add), NodeKind::IntBinaryOp(IntBinaryOp::Add))
+                && fg.node_inputs(add).into_iter().any(|v| matches!(
+                    fg.node_kind(fg.producer(v)),
+                    NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft)
+                )),
+            "count {limbs:?}: x + (x << c) must stay unfolded, got {:?}",
+            fg.node_kind(add)
+        );
+    }
     Ok(())
 }
 
