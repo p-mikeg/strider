@@ -243,6 +243,23 @@ fn extend_noop_when_wider_than_target() -> Result<()> {
     Ok(())
 }
 
+/// Past 128 bits a constant extend is a real `Extend`: the `u128` carrier
+/// holds only 128 sign bits, so a folded `-1` would land with a zero upper half.
+#[test]
+fn extend_of_a_const_past_128_bits_emits_extend() -> Result<()> {
+    for op in [ExtendOp::SignExtend, ExtendOp::ZeroExtend] {
+        let mut b = empty_builder()?;
+        let minus_one = b.build_int_const(u64::MAX, ValueType::int(64))?;
+        let extended = b.extend_if_needed(minus_one, ValueType::int(256), op)?;
+        assert!(
+            matches!(producer_kind(&b, extended), NodeKind::Extend(o) if o == op),
+            "{op:?}: got {:?}",
+            producer_kind(&b, extended)
+        );
+    }
+    Ok(())
+}
+
 /// This layer does no constant folding, so two constants still get a node.
 #[test]
 fn build_int_binary_op_produces_binary_op_node() -> Result<()> {
