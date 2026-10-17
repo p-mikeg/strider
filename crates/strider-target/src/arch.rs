@@ -159,10 +159,9 @@ impl ArchPreset {
     }
 }
 
-/// The family a preset belongs to. Every decode fact but the register byte
-/// order is one per family.
+/// The family a preset belongs to, which keys the [`DecodeFacts`] table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ArchFamily {
+pub(crate) enum ArchFamily {
     X86,
     Arm32,
     Aarch64,
@@ -173,7 +172,7 @@ pub enum ArchFamily {
 impl ArchPreset {
     /// Exhaustive, so a new preset joins a family before it compiles.
     #[must_use]
-    pub const fn family(self) -> ArchFamily {
+    pub(crate) const fn family(self) -> ArchFamily {
         match self {
             Self::X86 | Self::X86_64 => ArchFamily::X86,
             Self::Arm | Self::ArmBe | Self::ArmBeKernel | Self::ArmThumb => ArchFamily::Arm32,
