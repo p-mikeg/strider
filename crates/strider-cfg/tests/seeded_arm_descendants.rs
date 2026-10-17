@@ -4,7 +4,9 @@
 
 use rsleigh::mem_readers::BufMemReader;
 use rustc_hash::FxHashMap;
-use strider_cfg::{Builder, Cfg, CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTargets};
+use strider_cfg::{
+    Cfg, CfgOptions, DecodeEngine, PcodeInsnAddr, RegionTerminator, ResolvedTargets,
+};
 use strider_target::SleighArch;
 
 const BASE: u64 = 0x1000;
@@ -13,9 +15,8 @@ fn build(bytes: &[u8], arms: &[u64]) -> anyhow::Result<Cfg> {
     let arch = SleighArch::x86_64();
     let mut code = bytes.to_vec();
     code.resize(bytes.len() + 16, 0xcc);
-    let mut sleigh =
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), BufMemReader::new(code, BASE))
-            .expect("create Sleigh");
+    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), BufMemReader::new(code, BASE))
+        .expect("create Sleigh");
     let known = FxHashMap::from_iter([(
         PcodeInsnAddr::at_machine_start(BASE),
         ResolvedTargets::table(arms.iter().map(|&a| strider_cfg::ResolvedTarget::from(a))),
@@ -24,7 +25,9 @@ fn build(bytes: &[u8], arms: &[u64]) -> anyhow::Result<Cfg> {
         known_targets: &known,
         ..CfgOptions::default()
     };
-    Builder::for_arch(&arch, &mut sleigh, BASE, &opts).build()
+    DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(BASE.into(), &opts)
 }
 
 fn switch_arms(cfg: &Cfg) -> Vec<u64> {
@@ -175,7 +178,7 @@ fn undecodable_bytes_reached_without_an_arm_still_fail_the_function() {
         0x74, 0x05, 0xff, 0xe0, 0xc3, 0xc3, 0xc3, 0x90, 0x48, 0x89, 0xc0, 0x06,
     ];
     let arch = SleighArch::x86_64();
-    let mut sleigh = rsleigh::Sleigh::new(
+    let sleigh = rsleigh::Sleigh::new(
         arch.sla_spec(),
         arch.pspec(),
         BufMemReader::new(bytes.to_vec(), BASE),
@@ -190,8 +193,9 @@ fn undecodable_bytes_reached_without_an_arm_still_fail_the_function() {
         ..CfgOptions::default()
     };
     assert!(
-        Builder::for_arch(&arch, &mut sleigh, BASE, &opts)
-            .build()
+        DecodeEngine::new(arch, sleigh)
+            .expect("decode engine")
+            .build_cfg(BASE.into(), &opts)
             .is_err()
     );
 }
@@ -199,7 +203,7 @@ fn undecodable_bytes_reached_without_an_arm_still_fail_the_function() {
 /// Builds over `bytes` with one `known_targets` entry per site.
 fn build_sites(bytes: &[u8], size: u64, sites: &[(u64, &[u64])]) -> anyhow::Result<Cfg> {
     let arch = SleighArch::x86_64();
-    let mut sleigh = rsleigh::Sleigh::new(
+    let sleigh = rsleigh::Sleigh::new(
         arch.sla_spec(),
         arch.pspec(),
         BufMemReader::new(bytes.to_vec(), BASE),
@@ -216,7 +220,9 @@ fn build_sites(bytes: &[u8], size: u64, sites: &[(u64, &[u64])]) -> anyhow::Resu
         known_targets: &known,
         ..CfgOptions::default()
     };
-    Builder::for_arch(&arch, &mut sleigh, BASE, &opts).build()
+    DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(BASE.into(), &opts)
 }
 
 /// The arms left on the `Switch` whose dispatch is at `site`.
@@ -323,7 +329,7 @@ fn a_loop_back_edge_arm_is_not_refused_with_the_bad_arm_beside_it() {
 /// ```
 #[test]
 fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
-    use strider_cfg::{FlowVars, ResolvedTarget};
+    use strider_cfg::ResolvedTarget;
     let base = 0x10000u64;
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&0xe12f_ff10u32.to_le_bytes());
@@ -333,15 +339,12 @@ fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
     bytes.extend_from_slice(&[0; 16]);
 
     let arch = SleighArch::arm();
-    let mut sleigh = rsleigh::Sleigh::new(
+    let sleigh = rsleigh::Sleigh::new(
         arch.sla_spec(),
         arch.pspec(),
         BufMemReader::new(bytes, base),
     )
     .unwrap();
-    let flow = FlowVars::discover(&sleigh).unwrap();
-    sleigh.set_context_at(base, "TMode", 0).unwrap();
-    let mode = flow.snapshot(&sleigh, base);
     let known = FxHashMap::from_iter([(
         PcodeInsnAddr::at_machine_start(base),
         ResolvedTargets::table(vec![
@@ -354,9 +357,10 @@ fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
         known_targets: &known,
         ..CfgOptions::default()
     };
-    let cfg = Builder::for_arch(&arch, &mut sleigh, base, &opts)
-        .with_flow_context(&flow, mode)
-        .build()
+    // An even entry is ARM state.
+    let cfg = DecodeEngine::new(arch, sleigh)
+        .unwrap()
+        .build_cfg(base.into(), &opts)
         .expect("build");
 
     assert_eq!(switch_arms(&cfg), [0x10004, 0x10008]);

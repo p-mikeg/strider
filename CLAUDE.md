@@ -105,9 +105,11 @@ Strider:
 - `strider-target`: pure target descriptions (`SleighArch`,
   `CallingConvention` / `BuiltCallingConvention`, the `CallOther` ABI table).
 - `strider-reader`: ELF loader and `ReadOnlyMemory` backend.
-- `strider-cfg`: bytes -> `Cfg` of basic-block regions via Sleigh. IR-free.
-- `strider-lift`: CFG -> IR. The `Lifter<R>` engine owns the arch, `Sleigh<R>`
-  and cached `SleighRegs`; the calling convention is a per-call argument.
+- `strider-cfg`: bytes -> `Cfg` of basic-block regions via Sleigh.
+  `DecodeEngine<R>` owns the `Sleigh<R>` and the decode context it carries
+  across functions, and is the one way to build a CFG. IR-free.
+- `strider-lift`: CFG -> IR. The `Lifter<R>` engine wraps a `DecodeEngine<R>`
+  and caches `SleighRegs`; the calling convention is a per-call argument.
 - `strider-pattern`: the graph-based pattern DSL (`Pattern` / `Capture` /
   `Matcher` / `Match` / builders) over `strider-graph` with the `NeverCacheable`
   policy. `Pat` is the Python class, not a Rust type. Both recursion limits are
@@ -294,8 +296,8 @@ when both IR slots hold the same value.
   between `build_cfg` calls on one engine, so `RegionBuilder::rederive_flow`
   erases each var `SleighArch::flow_commit_vars` names and re-lifts the owning
   instruction, re-deriving the commit from this build's own decode.
-  `Lifter::build_cfg` lends that list, and dropping the lend makes the whole
-  mechanism inert, which `reused_lifter_rederives_flow_context` pins.
+  `DecodeEngine::build_cfg` always supplies that list, which
+  `reused_lifter_rederives_flow_context` pins through `Lifter`.
   What it erases TO is per var and is load-bearing in both directions, so each
   var's `FlowCommit` class is the sla's own `noflow` declaration, read off the
   engine. A `noflow` commit covers one address

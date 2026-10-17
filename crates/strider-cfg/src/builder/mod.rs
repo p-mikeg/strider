@@ -2,8 +2,7 @@ mod flow;
 mod region_builder;
 mod split;
 
-use flow::NO_FLOW_VARS;
-pub use flow::{FlowCommit, FlowContext, FlowVars};
+pub(crate) use flow::{FlowCommit, FlowContext, FlowVars};
 use region_builder::{RegionBuilder, is_unmapped_start, not_code_addr, not_code_at};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -62,31 +61,13 @@ impl ArmSeed {
     }
 }
 
-/// Incrementally constructs a [`Cfg`] from a binary entry point.
+/// Incrementally constructs a [`Cfg`] from a binary entry point, on the
+/// engine [`DecodeEngine::builder`] pinned for it.
 ///
 /// A work queue seeded with the entry address drives decoding: each item
 /// either decodes a new region or routes an edge to an existing one. A branch
 /// landing mid-region splits that region in two.
-///
-/// ```no_run
-/// use strider_cfg::Builder;
-/// use strider_cfg::CfgOptions;
-/// use strider_target::SleighArch;
-/// use rsleigh::mem_readers::BufMemReader;
-///
-/// let fn_addr: u64 = 0x1000;
-/// let reader = BufMemReader::new(Vec::<u8>::new(), fn_addr);
-/// let mut sleigh = rsleigh::Sleigh::new(
-///     rsleigh::sla_spec::SLA_SPEC_X86_64,
-///     rsleigh::pspec::PSPEC_X86_64,
-///     reader,
-/// ).expect("create Sleigh");
-/// let opts = CfgOptions::default();
-/// let arch = SleighArch::x86_64();
-/// let cfg = Builder::for_arch(&arch, &mut sleigh, fn_addr, &opts).build()?;
-/// # Ok::<(), anyhow::Error>(())
-/// ```
-pub struct Builder<'a, R: rsleigh::MemReader> {
+pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) sleigh: &'a mut rsleigh::Sleigh<R>,
     pub(super) start_addr: MachineInsnAddr,
     pub(super) options: &'a CfgOptions<'a>,
@@ -112,15 +93,12 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// LIFO for seeded arms, drained only once no direct edge is left; see
     /// [`Self::next_work_item`].
     pub(super) seeded_queue: Vec<WorkItem>,
-    /// Indexed by `user_op_id`.  `None` until [`Self::build`] fetches the
-    /// table off the engine, which [`Self::with_user_op_names`] pre-empts.
-    pub(super) user_op_names: Option<std::borrow::Cow<'a, [String]>>,
-    /// The flowing context vars, borrowed from the lift engine (discovered once
-    /// per sla); empty by default.
+    /// Indexed by `user_op_id`.
+    pub(super) user_op_names: &'a [String],
+    /// The sla's flowing context vars.
     pub(super) flow_vars: &'a FlowVars,
     /// This function's constant ISA mode, the base context a strider-resolved
-    /// target decodes in ([`Self::enqueue_resolved`]).  Empty unless
-    /// [`Self::with_flow_context`] supplies it.
+    /// target decodes in ([`Self::enqueue_resolved`]).
     pub(super) function_mode: FlowContext,
     /// `inst_next` of every instruction THIS build decoded.
     ///
@@ -142,11 +120,13 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     pub(super) committed_next: rustc_hash::FxHashSet<u64>,
     /// Each var in `SleighArch::flow_commit_vars` with its flow class and its
     /// pspec default, so a value an EARLIER build committed can be erased
-    /// before this build's own decode re-derives it; see
-    /// [`Self::with_flow_commit_defaults`].
+    /// before this build's own decode re-derives it.
     pub(super) flow_commit_defaults: &'a [(&'static str, FlowCommit, u32)],
-    /// The pspec default of each `noflow` var that changes a decode; see
-    /// [`Self::with_transient_defaults`].
+    /// The pspec default of each `noflow` var that changes a decode
+    /// ([`strider_target::SleighArch::transient_decode_vars`]). A `globalset`
+    /// of one commits at exactly one address and outlives the build that
+    /// made it, so every decode resets them unless the instruction flowing
+    /// into it committed them.
     pub(super) transient_defaults: &'a [(&'static str, u32)],
     /// The seeded arm the region under construction descends from, which every
     /// edge it enqueues inherits.
@@ -184,44 +164,6 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
 }
 
 impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
-    pub fn for_arch(
-        arch: &strider_target::SleighArch,
-        sleigh: &'a mut rsleigh::Sleigh<R>,
-        start_addr: u64,
-        options: &'a CfgOptions<'a>,
-    ) -> Self {
-        Self {
-            sleigh,
-            start_addr: start_addr.into(),
-            options,
-            arch: *arch,
-            region_graph: RegionGraph::new(),
-            start_addr_to_region_id: BTreeMap::new(),
-            max_shadowed_span: 0,
-            shadowed_starts: BTreeSet::new(),
-            work_queue: Vec::new(),
-            seeded_queue: Vec::new(),
-            clashing_seeded: Vec::new(),
-            undecodable_seeded: Vec::new(),
-            region_isa_mode: BTreeMap::new(),
-            flowing_isa_bits: BTreeMap::new(),
-            incomplete: crate::Incompleteness::default(),
-            non_boundary_seats: rustc_hash::FxHashMap::default(),
-            committed_next: rustc_hash::FxHashSet::default(),
-            link_register_seated: Vec::new(),
-            tail_call_seated: Vec::new(),
-            user_op_names: None,
-            // A single-shot build on a fresh engine has no cross-function
-            // context to leak; a reused engine supplies the vars via
-            // `with_flow_context`.
-            flow_vars: &NO_FLOW_VARS,
-            function_mode: FlowContext::default(),
-            transient_defaults: &[],
-            flow_commit_defaults: &[],
-            descent: None,
-        }
-    }
-
     /// A build of the function at `start_addr` on `engine`, which
     /// [`DecodeEngine::builder`] has pinned to `function_mode`.
     pub(crate) fn new(
@@ -259,76 +201,13 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             committed_next: rustc_hash::FxHashSet::default(),
             link_register_seated: Vec::new(),
             tail_call_seated: Vec::new(),
-            user_op_names: Some(std::borrow::Cow::Borrowed(user_op_names)),
+            user_op_names,
             flow_vars,
             function_mode,
             transient_defaults,
             flow_commit_defaults,
             descent: None,
         }
-    }
-
-    /// Supplies the flowing context vars (from [`FlowVars::discover`]) and
-    /// this function's constant ISA mode, captured at its entry.
-    ///
-    /// One setter because the two are illegal apart: vars without a mode
-    /// leaves `explore`'s `isa_mode` `None`, `region_isa_mode` never written
-    /// and the clash check on its catch-all arm, i.e. ISA-mode handling off
-    /// with nothing said.
-    #[must_use]
-    pub fn with_flow_context(
-        mut self,
-        flow_vars: &'a FlowVars,
-        function_mode: FlowContext,
-    ) -> Self {
-        // The ISA-mode var this arch re-imposes at each region must be one the
-        // sla actually flows, or the re-impose silently no-ops and
-        // interworking correctness is lost.
-        debug_assert!(
-            self.arch
-                .isa_mode_var()
-                .is_none_or(|v| flow_vars.contains(v)),
-            "arch ISA-mode var {:?} is not among the sla's flowing context vars",
-            self.arch.isa_mode_var(),
-        );
-        self.flow_vars = flow_vars;
-        self.function_mode = function_mode;
-        self
-    }
-
-    /// Supplies the default of each `noflow` context var that changes a decode
-    /// ([`strider_target::SleighArch::transient_decode_vars`]), read on an
-    /// engine nothing has decoded with yet.
-    ///
-    /// A `globalset` of one of them commits at exactly one address and outlives
-    /// the build that made it, so on a reused engine every decode resets them
-    /// to these unless the instruction flowing into it committed them.
-    #[must_use]
-    pub fn with_transient_defaults(mut self, defaults: &'a [(&'static str, u32)]) -> Self {
-        self.transient_defaults = defaults;
-        self
-    }
-
-    /// Lends the pspec defaults of `SleighArch::flow_commit_vars`. Fetching
-    /// them costs one context read per var per engine, so the lift engine
-    /// reads them once and lends them to every build.
-    #[must_use]
-    pub fn with_flow_commit_defaults(
-        mut self,
-        defaults: &'a [(&'static str, FlowCommit, u32)],
-    ) -> Self {
-        self.flow_commit_defaults = defaults;
-        self
-    }
-
-    /// Lends the `Sleigh::user_op_names()` table a caller already holds.
-    /// Fetching it is expensive and its answer is one per engine, so a caller
-    /// building a CFG per function should never make [`Self::build`] fetch its
-    /// own.
-    #[must_use]
-    pub fn with_user_op_names(mut self, user_op_names: &'a [String]) -> Self {
-        self.user_op_names = Some(std::borrow::Cow::Borrowed(user_op_names));
-        self
     }
 
     /// Enqueue `addr` as a *direct* successor of the region at `source_addr`
@@ -783,7 +662,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                         .first()
                         .filter(|vn| vn.addr_space == rsleigh::VnSpace::CONST)
                         .and_then(|vn| usize::try_from(vn.addr_off).ok())
-                        .and_then(|id| self.user_op_names.as_deref().and_then(|n| n.get(id)))
+                        .and_then(|id| self.user_op_names.get(id))
                         .is_some_and(|name| name == "LOCK" || name == "UNLOCK")
             })
             .cloned()
@@ -1017,13 +896,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             .retain_nodes(|_, region| dfs.discovered.contains(region.index()));
     }
 
-    pub fn build(mut self) -> Result<Cfg> {
-        // An empty table classifies every `CallOther` as returning, so a
-        // no-return one falls through and the region decodes on into whatever
-        // follows it.
-        if self.user_op_names.is_none() {
-            self.user_op_names = Some(std::borrow::Cow::Owned(self.sleigh.user_op_names()?));
-        }
+    pub(crate) fn build(mut self) -> Result<Cfg> {
         let lost_successor = self.drain()?;
         self.finish(lost_successor)
     }
@@ -1215,8 +1088,10 @@ mod tests {
         options: &crate::CfgOptions<'_>,
     ) -> crate::Result<crate::Cfg> {
         let arch = strider_target::SleighArch::x86_64();
-        let mut sleigh = make_sleigh_over(bytes, base);
-        super::Builder::for_arch(&arch, &mut sleigh, base, options).build()
+        let sleigh = make_sleigh_over(bytes, base);
+        crate::DecodeEngine::new(arch, sleigh)
+            .expect("decode engine")
+            .build_cfg(base.into(), options)
     }
 
     /// Every `Switch` arm must resolve to a successor region starting exactly at
@@ -1344,11 +1219,11 @@ mod tests {
     #[test]
     fn an_unmapped_entry_is_still_an_error() {
         let arch = strider_target::SleighArch::x86_64();
-        let mut sleigh = make_sleigh_over(vec![0xc3; 8], 0x1000);
-        let err =
-            super::Builder::for_arch(&arch, &mut sleigh, 0x9000, &crate::CfgOptions::default())
-                .build()
-                .expect_err("an unmapped entry has no function to report on");
+        let sleigh = make_sleigh_over(vec![0xc3; 8], 0x1000);
+        let err = crate::DecodeEngine::new(arch, sleigh)
+            .expect("decode engine")
+            .build_cfg(0x9000u64.into(), &crate::CfgOptions::default())
+            .expect_err("an unmapped entry has no function to report on");
         assert!(
             err.to_string().contains("0x9000"),
             "the error must name the entry; got {err}",
@@ -1847,8 +1722,8 @@ mod tests {
     #[cfg(debug_assertions)]
     #[should_panic(expected = "names no arm of the Switch")]
     fn seating_an_interior_target_naming_no_arm_trips_the_invariant() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let owner = b.add_region(make_region(&[(0x2000, 0)])).unwrap();
         let mut dispatch = make_region(&[(0x1000, 0)]);
         dispatch.terminator = RegionTerminator::Switch {
@@ -1897,10 +1772,9 @@ mod tests {
         put(0x1010, 0xe12f_ff10); // bx r0
 
         let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
-        let mut sleigh =
+        let sleigh =
             rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        let flow = crate::FlowVars::discover(&sleigh).expect("discover flow vars");
-        let function_mode = flow.snapshot(&sleigh, base);
+        let mut engine = crate::DecodeEngine::new(arch, sleigh).expect("decode engine");
         let mut known_targets = rustc_hash::FxHashMap::default();
         known_targets.insert(
             PcodeInsnAddr::at_machine_start(0x1010),
@@ -1913,10 +1787,7 @@ mod tests {
             known_targets: &known_targets,
             ..crate::CfgOptions::default()
         };
-        let cfg = super::Builder::for_arch(&arch, &mut sleigh, base, &opts)
-            .with_flow_context(&flow, function_mode)
-            .build()
-            .expect("build");
+        let cfg = engine.build_cfg(base.into(), &opts).expect("build");
 
         let dispatch = cfg
             .regions()
@@ -1931,7 +1802,7 @@ mod tests {
             "the dispatch's own region decoded as ARM",
         );
         assert!(
-            crate::flowing_isa_bit_at(&arch, &sleigh, dispatch.machine_addr.addr, false),
+            crate::flowing_isa_bit_at(&arch, engine.sleigh(), dispatch.machine_addr.addr, false),
             "premise: a read after the build must see the Thumb arm's paint, or \
              the seal-time sample is proving nothing",
         );
@@ -1959,21 +1830,20 @@ mod tests {
         use crate::builder::flow::CONTEXT_READS;
         let arch = strider_target::SleighArch::arm();
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x100], 0x1000);
-        let mut sleigh =
+        let sleigh =
             rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        let flow = crate::FlowVars::discover(&sleigh).expect("discover flow vars");
+        let mut engine = crate::DecodeEngine::new(arch, sleigh).expect("decode engine");
 
         CONTEXT_READS.with(|n| n.set(0));
-        let _ = flow.snapshot(&sleigh, 0x1000);
+        let _ = engine.flow_vars.snapshot(&engine.sleigh, 0x1000);
         let per_snapshot = CONTEXT_READS.with(std::cell::Cell::get);
         assert!(per_snapshot > 1, "premise: the ARM sla flows several vars");
 
-        // A real entry context, as `build_cfg` supplies: the ISA-mode var is
-        // taken out of it, so an empty one would make the count vacuous.
-        let function_mode = flow.snapshot(&sleigh, 0x1000);
+        // The entry context the engine hands the builder is a real one, whose
+        // ISA-mode var `enqueue` takes from the parent; an empty one would make
+        // the count vacuous.
         let opts = crate::CfgOptions::default();
-        let mut b = super::Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-            .with_flow_context(&flow, function_mode);
+        let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
         CONTEXT_READS.with(|n| n.set(0));
         b.enqueue(None, addr(0x1000, 0), 0x1000);
         assert_eq!(
@@ -1991,43 +1861,37 @@ mod tests {
     fn enqueue_ignores_a_context_commit_this_build_did_not_make() {
         let arch = strider_target::SleighArch::arm();
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x100], 0x1000);
-        let mut sleigh =
+        let sleigh =
             rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        let flow = crate::FlowVars::discover(&sleigh).expect("discover flow vars");
+        let mut engine = crate::DecodeEngine::new(arch, sleigh).expect("decode engine");
 
         // Pure IT-block state: `enqueue` takes only the ISA-mode var from the
         // parent, so this one comes from the baseline either way.
         let victim = "cond_mask";
-        assert!(flow.contains(victim), "the ARM sla flows {victim}");
+        assert!(
+            engine.flow_vars.contains(victim),
+            "the ARM sla flows {victim}"
+        );
         assert_ne!(arch.isa_mode_var(), Some(victim));
 
-        let function_mode = flow.snapshot(&sleigh, 0x1000);
-        let clean = flow.value_of(&function_mode, victim).expect("read");
+        let entry = engine.flow_vars.snapshot(&engine.sleigh, 0x1000);
+        let clean = engine.flow_vars.value_of(&entry, victim).expect("read");
 
         // A previous function's `globalset`, still held forward at the target.
         let stale = clean ^ 1;
-        sleigh
+        engine
+            .sleigh
             .set_context_at(0x1040, victim, stale)
             .expect("commit a stale context");
 
-        // Lent as `Lifter::build_cfg` lends it: a snapshot is trusted only
-        // where `rederive_flow` has something to re-derive.
-        let fcd: Vec<_> = arch
-            .flow_commit_vars()
-            .iter()
-            .map(|&name| {
-                let default = sleigh.get_context_at(0, name).expect("default");
-                (name, flow.commit_class(name), default)
-            })
-            .collect();
-
+        // ARM re-derives committed context, so a snapshot is trusted only
+        // where this build committed.
         let opts = crate::CfgOptions::default();
-        let mut b = super::Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-            .with_flow_context(&flow, function_mode)
-            .with_flow_commit_defaults(&fcd);
+        let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
         b.enqueue(None, addr(0x1040, 0), 0x1000);
         assert_eq!(
-            flow.value_of(&b.work_queue.last().expect("queued").carried, victim),
+            b.flow_vars
+                .value_of(&b.work_queue.last().expect("queued").carried, victim),
             Some(clean),
             "a commit this build never made must not be carried",
         );
@@ -2037,7 +1901,8 @@ mod tests {
         b.committed_next.insert(0x1040);
         b.enqueue(None, addr(0x1040, 0), 0x1000);
         assert_eq!(
-            flow.value_of(&b.work_queue.last().expect("queued").carried, victim),
+            b.flow_vars
+                .value_of(&b.work_queue.last().expect("queued").carried, victim),
             Some(stale),
             "this build's own commit IS carried",
         );
@@ -2056,30 +1921,32 @@ mod tests {
             "x86-64 commits nothing to re-derive",
         );
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x100], 0x1000);
-        let mut sleigh =
+        let sleigh =
             rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        let flow = crate::FlowVars::discover(&sleigh).expect("discover flow vars");
-        let victim = sleigh
+        let mut engine = crate::DecodeEngine::new(arch, sleigh).expect("decode engine");
+        let victim = engine
+            .sleigh
             .flow_context_vars()
             .expect("flow vars")
             .into_iter()
             .next()
             .expect("x86-64 declares flowing vars");
 
-        let function_mode = flow.snapshot(&sleigh, 0x1000);
-        let clean = flow.value_of(&function_mode, &victim).expect("read");
-        sleigh
+        let entry = engine.flow_vars.snapshot(&engine.sleigh, 0x1000);
+        let clean = engine.flow_vars.value_of(&entry, &victim).expect("read");
+        engine
+            .sleigh
             .set_context_at(0x1040, &victim, clean ^ 1)
             .expect("commit out of band");
 
         let opts = crate::CfgOptions::default();
-        let mut b = super::Builder::for_arch(&arch, &mut sleigh, 0x1000, &opts)
-            .with_flow_context(&flow, function_mode);
+        let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
         // Vouched for, and still not read: nothing re-derived it.
         b.committed_next.insert(0x1040);
         b.enqueue(None, addr(0x1040, 0), 0x1000);
         assert_eq!(
-            flow.value_of(&b.work_queue.last().expect("queued").carried, &victim),
+            b.flow_vars
+                .value_of(&b.work_queue.last().expect("queued").carried, &victim),
             Some(clean),
             "a snapshot was trusted on an arch that re-derives nothing",
         );
@@ -2087,8 +1954,8 @@ mod tests {
 
     #[test]
     fn add_region_inserts_into_graph_and_map() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let r = make_region(&[(0x1000, 0), (0x1004, 0)]);
         let id = b.add_region(r).unwrap();
 
@@ -2099,8 +1966,8 @@ mod tests {
     #[test]
     fn add_region_empty_region_with_disallowed_terminator_returns_error() {
         // Any other terminator on an empty region is a construction bug.
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let empty = Region {
             start_addr: addr(0x1000, 0),
             insns: Vec::new(),
@@ -2119,8 +1986,8 @@ mod tests {
         // `build` segments at every zero-pcode-op instruction, so an
         // `Unconditional` region sealed at one owns no `RegionInstruction`
         // (`Region::insns`).
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let empty = Region {
             start_addr: addr(0x1000, 0),
             insns: Vec::new(),
@@ -2134,8 +2001,8 @@ mod tests {
     #[test]
     fn add_region_empty_tail_call_is_allowed() {
         // The stub for a CondBranch arm leaving the function bound.
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let empty = Region {
             start_addr: addr(0x9000, 0),
             insns: Vec::new(),
@@ -2150,8 +2017,8 @@ mod tests {
 
     #[test]
     fn add_region_two_regions_both_present_with_distinct_indices() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let r1 = make_region(&[(0x1000, 0)]);
         let r2 = make_region(&[(0x1010, 0)]);
         let id1 = b.add_region(r1).unwrap();
@@ -2165,8 +2032,8 @@ mod tests {
 
     #[test]
     fn find_region_empty_graph_returns_none() {
-        let mut sleigh = make_sleigh();
-        let b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let b = make_builder(0x1000, &mut engine);
         assert!(b.find_region_containing_addr(addr(0x1000, 0)).is_none());
     }
 
@@ -2174,8 +2041,8 @@ mod tests {
     /// and its last instruction all resolve to it.
     #[test]
     fn find_region_at_addr_covers_the_whole_span() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let id = b
             .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
             .unwrap();
@@ -2194,8 +2061,8 @@ mod tests {
     /// containment on the last start alone reports those bytes unowned.
     #[test]
     fn find_region_at_addr_shadowed_by_an_overlapping_region() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let mut wide = make_region(&[(0x1000, 0)]);
         wide.insns[0].len = 10;
         let id = b.add_region(wide).unwrap();
@@ -2213,8 +2080,8 @@ mod tests {
     /// start below it does not.
     #[test]
     fn a_lookup_miss_over_disjoint_regions_probes_one_region() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let mut wide = make_region(&[(0x1000, 0)]);
         wide.insns[0].len = 0x1000;
         b.add_region(wide).unwrap();
@@ -2233,8 +2100,8 @@ mod tests {
     /// wider region, which owns the bytes past it.
     #[test]
     fn find_region_at_addr_shadowed_by_an_earlier_added_region() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         b.add_region(make_region(&[(0x1005, 0)])).unwrap();
         let mut wide = make_region(&[(0x1000, 0)]);
         wide.insns[0].len = 0x10;
@@ -2248,8 +2115,8 @@ mod tests {
 
     #[test]
     fn find_region_beyond_end_returns_none() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         b.add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
             .unwrap();
         assert!(b.find_region_containing_addr(addr(0x1020, 0)).is_none());
@@ -2257,8 +2124,8 @@ mod tests {
 
     #[test]
     fn find_region_two_adjacent_regions_route_correctly() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let id1 = b
             .add_region(make_region(&[(0x1000, 0), (0x100f, 0)]))
             .unwrap();
@@ -2292,8 +2159,8 @@ mod tests {
     /// assertion pins which of the two the demotion uses.
     #[test]
     fn emptied_switch_table_demotes_to_unresolved_at_the_dispatch_addr() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let target_vn = rsleigh::Vn {
             addr_space: rsleigh::VnSpace::REGISTER,
             addr_off: 0x38,
@@ -2340,8 +2207,8 @@ mod tests {
     /// contract forbids.
     #[test]
     fn an_undecodable_arm_is_dropped_only_from_the_site_that_seeded_it() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let target_vn = rsleigh::Vn {
             addr_space: rsleigh::VnSpace::REGISTER,
             addr_off: 0x38,
@@ -2404,8 +2271,8 @@ mod tests {
     /// terminator edges to the region that OWNS the interior address.
     #[test]
     fn non_switch_parent_edges_to_the_owning_region() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let parent = b.add_region(make_region(&[(0x1000, 0)])).unwrap();
         let owner = b
             .add_region(make_region(&[(0x2000, 0), (0x2008, 0)]))
@@ -2422,8 +2289,8 @@ mod tests {
 
     #[test]
     fn split_at_start_is_noop() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let id = b
             .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
             .unwrap();
@@ -2439,8 +2306,8 @@ mod tests {
 
     #[test]
     fn split_creates_two_regions_second_keeps_original_id() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let original = b
             .add_region(make_region(&[
                 (0x1000, 0),
@@ -2461,8 +2328,8 @@ mod tests {
         // original terminator) non-empty, so it never silently bypasses
         // `add_region`'s empty-region guard.
         for split_at in [0x1004u64, 0x1008, 0x100c] {
-            let mut sleigh = make_sleigh();
-            let mut b = make_builder(0x1000, &mut sleigh);
+            let mut engine = make_engine();
+            let mut b = make_builder(0x1000, &mut engine);
             let original = b
                 .add_region(make_region(&[
                     (0x1000, 0),
@@ -2482,8 +2349,8 @@ mod tests {
 
     #[test]
     fn split_produces_correct_addr_ranges() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let original = b
             .add_region(make_region(&[
                 (0x1000, 0),
@@ -2504,8 +2371,8 @@ mod tests {
 
     #[test]
     fn split_adds_fallthrough_edge() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let original = b
             .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
             .unwrap();
@@ -2518,8 +2385,8 @@ mod tests {
 
     #[test]
     fn split_rewires_incoming_edges_to_first_half() {
-        let mut sleigh = make_sleigh();
-        let mut b = make_builder(0x1000, &mut sleigh);
+        let mut engine = make_engine();
+        let mut b = make_builder(0x1000, &mut engine);
         let a = b.add_region(make_region(&[(0x0ff0, 0)])).unwrap();
         let b_id = b
             .add_region(make_region(&[(0x1000, 0), (0x1004, 0), (0x1008, 0)]))
@@ -2544,5 +2411,50 @@ mod tests {
             .collect();
         assert_eq!(second_incoming.len(), 1);
         assert_eq!(second_incoming[0].source(), first);
+    }
+
+    /// The probe lifts a MID-INSTRUCTION address out of band, and
+    /// `oneInstruction` applies that constructor's `globalset`s with no
+    /// `RegionBuilder` to re-derive them. So it must not run where
+    /// `Builder::enqueue` believes a snapshot of the engine, which it does
+    /// exactly where this build re-derives committed context.
+    ///
+    /// Asserted on the difference the guard makes, not on a `false` return:
+    /// the probe answers `false` for almost any address, so a test that only
+    /// checks `false` passes whether the guard is there or not.
+    #[test]
+    fn re_deriving_committed_context_bars_the_reentry_probe() {
+        // 0x1000 je 0x1003 ; 0x1002 lock xadd %ecx,(%eax) ; mov %ecx,%eax ; ret
+        const LOCK_REENTRY: [u8; 9] = [0x74, 0x01, 0xf0, 0x0f, 0xc1, 0x08, 0x89, 0xc8, 0xc3];
+        let interior = |lent: &'static [(&'static str, super::FlowCommit, u32)]| {
+            let arch = strider_target::SleighArch::x86();
+            let reader = rsleigh::mem_readers::BufMemReader::new(LOCK_REENTRY.to_vec(), 0x1000);
+            let sleigh =
+                rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+            let mut engine = crate::DecodeEngine::new(arch, sleigh).expect("decode engine");
+            let opts = crate::CfgOptions::default();
+            let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
+            b.flow_commit_defaults = lent;
+            b.build()
+                .expect("build")
+                .incomplete()
+                .of(crate::Reason::InteriorTarget)
+                .map(|a| a.machine_addr.addr)
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            interior(&[]).is_empty(),
+            "with nothing to re-derive the probe runs and the reentry is exact",
+        );
+        // `segover` is a real x86 flowing var (`ia.sinc:411`) that no
+        // constructor commits, standing in for an arch that does commit one:
+        // what is under test is the guard, not this var. It has to exist in
+        // the sla, because `rederive_flow` reads every name it is lent.
+        assert_eq!(
+            interior(&[("segover", super::FlowCommit::Flowing, 0)]),
+            vec![0x1003],
+            "with committed context to re-derive the probe must be barred, so the \
+             reentry falls back to being reported as interior",
+        );
     }
 }

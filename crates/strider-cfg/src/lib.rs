@@ -34,7 +34,6 @@ pub(crate) fn flowing_isa_bit_at<R: rsleigh::MemReader>(
     })
 }
 
-pub use builder::{Builder, FlowCommit, FlowContext, FlowVars};
 pub use engine::DecodeEngine;
 pub use incomplete::{Incompleteness, Reason};
 pub use indirect_resolver::{Arms, ResolvedTarget, ResolvedTargets};
@@ -51,7 +50,7 @@ use types::RegionGraph;
 
 use petgraph::graph::NodeIndex;
 
-/// A completed CFG for a single function, produced by [`Builder::build`].
+/// A completed CFG for a single function, produced by [`DecodeEngine::build_cfg`].
 #[derive(Debug)]
 pub struct Cfg {
     pub(crate) region_graph: RegionGraph,

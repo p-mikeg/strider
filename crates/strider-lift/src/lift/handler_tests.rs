@@ -105,23 +105,18 @@ fn with_test_lifter_arch_cc(
     all_vns: Vec<Vn>,
     f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
 ) {
-    let mut sleigh = rsleigh::Sleigh::new(
+    let sleigh = rsleigh::Sleigh::new(
         arch.sla_spec(),
         arch.pspec(),
         BufMemReader::new(term_bytes, 0x1000),
     )
     .expect("create test Sleigh");
-    let cfg = strider_cfg::Builder::for_arch(
-        &arch,
-        &mut sleigh,
-        0x1000,
-        &strider_cfg::CfgOptions::default(),
-    )
-    .build()
-    .expect("throwaway cfg");
+    let mut lifter = Lifter::new(arch, sleigh).expect("lifter");
+    let cfg = lifter
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
+        .expect("throwaway cfg");
     // Value opcodes never consult the region id or map, so any valid id works.
     let region_id = cfg.entry();
-    let lifter = Lifter::new(arch, sleigh).expect("lifter");
     let no_overrides = rustc_hash::FxHashMap::default();
     let no_call_other_overrides = strider_target::call_other_abi::CallOtherOverrides::default();
     let mut driver = FunctionLifter::new(

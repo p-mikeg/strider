@@ -3,12 +3,10 @@
 //! address.
 
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::{
-    Builder, Cfg, CfgOptions, FlowVars, PcodeInsnAddr, ResolvedTarget, ResolvedTargets,
-};
+use strider_cfg::{Cfg, CfgOptions, DecodeEngine, PcodeInsnAddr, ResolvedTarget, ResolvedTargets};
 use strider_target::SleighArch;
 
-type Engine = rsleigh::Sleigh<BufMemReader<Vec<u8>>>;
+type Engine = DecodeEngine<BufMemReader<Vec<u8>>>;
 
 /// fixtures/out/mips32be/control.elf `abs_val`:
 ///
@@ -28,29 +26,19 @@ const ABS_VAL_BASE: u64 = 0x4007d0;
 
 fn engine(bytes: Vec<u8>, base: u64) -> Engine {
     let arch = SleighArch::mipsbe32();
-    rsleigh::Sleigh::new(
+    let sleigh = rsleigh::Sleigh::new(
         arch.sla_spec(),
         arch.pspec(),
         BufMemReader::new(bytes, base),
     )
-    .expect("create Sleigh")
+    .expect("create Sleigh");
+    DecodeEngine::new(arch, sleigh).expect("decode engine")
 }
 
-/// A cold build at `entry` in ISA `mode`, pinned the way `Lifter::build_cfg`
-/// pins one.
-fn build(
-    s: &mut Engine,
-    flow: &FlowVars,
-    entry: u64,
-    mode: u32,
-    opts: &CfgOptions,
-) -> anyhow::Result<Cfg> {
-    let arch = SleighArch::mipsbe32();
-    s.set_context_at(entry, "ISA_MODE", mode).unwrap();
-    let function_mode = flow.snapshot(s, entry);
-    Builder::for_arch(&arch, s, entry, opts)
-        .with_flow_context(flow, function_mode)
-        .build()
+/// A cold build at `entry` in ISA `mode`, which production reads off the
+/// entry's low bit.
+fn build(e: &mut Engine, entry: u64, mode: u32, opts: &CfgOptions) -> anyhow::Result<Cfg> {
+    e.build_cfg((entry | u64::from(mode)).into(), opts)
 }
 
 fn bounded(size: u64) -> CfgOptions<'static> {
@@ -74,12 +62,11 @@ fn lens_at(cfg: &Cfg, start: u64) -> Vec<(u64, u32)> {
 #[test]
 fn a_mips16_build_at_a_slot_address_does_not_change_the_next_mips32_build() {
     let mut fresh = engine(ABS_VAL.to_vec(), ABS_VAL_BASE);
-    let flow = FlowVars::discover(&fresh).unwrap();
-    let clean = build(&mut fresh, &flow, ABS_VAL_BASE, 0, &bounded(24)).expect("fresh build");
+    let clean = build(&mut fresh, ABS_VAL_BASE, 0, &bounded(24)).expect("fresh build");
 
     let mut reused = engine(ABS_VAL.to_vec(), ABS_VAL_BASE);
-    let _ = build(&mut reused, &flow, ABS_VAL_BASE + 4, 1, &bounded(64));
-    let again = build(&mut reused, &flow, ABS_VAL_BASE, 0, &bounded(24))
+    let _ = build(&mut reused, ABS_VAL_BASE + 4, 1, &bounded(64));
+    let again = build(&mut reused, ABS_VAL_BASE, 0, &bounded(24))
         .expect("the same bytes, entry and mode must build on a reused engine");
     assert_eq!(
         lens_at(&again, ABS_VAL_BASE),
@@ -107,7 +94,6 @@ fn a_mips16_arm_at_a_slot_does_not_corrupt_a_later_decode_of_its_branch() {
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_be_bytes()).collect();
     let run = |arms: Vec<ResolvedTarget>| {
         let mut s = engine(bytes.clone(), 0x1000);
-        let flow = FlowVars::discover(&s).unwrap();
         let known = rustc_hash::FxHashMap::from_iter([(
             PcodeInsnAddr::at_machine_start(0x1000),
             ResolvedTargets::table(arms),
@@ -116,7 +102,7 @@ fn a_mips16_arm_at_a_slot_does_not_corrupt_a_later_decode_of_its_branch() {
             known_targets: &known,
             ..bounded(0x28)
         };
-        let cfg = build(&mut s, &flow, 0x1000, 0, &opts).expect("build");
+        let cfg = build(&mut s, 0x1000, 0, &opts).expect("build");
         lens_at(&cfg, 0x1008)
     };
     let clean = run(vec![ResolvedTarget::new(0x1020, None)]);
