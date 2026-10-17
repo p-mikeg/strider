@@ -1,5 +1,5 @@
-//! ELF relocation application, as a per-region patch list applied when a read
-//! crosses a site.
+//! ELF relocation application, as one sorted patch list per image that every
+//! region shares and a read applies where it crosses a site.
 //!
 //! An image that has not been through its linker, or through `ld.so`, holds
 //! only an addend, or nothing, in every cross-reference field. An ET_REL's
@@ -20,6 +20,7 @@ use object::{
 };
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use super::encodings::{Field, Half, Isa, Kind, Value, classify, encode, implicit_addend, sext};
 use super::sections::AddressRanges;
@@ -35,22 +36,20 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
     base.wrapping_add(addend as u64)
 }
 
-/// The relocation's `A`, read out of the first region `overlapping` names that
-/// holds the WHOLE field: a region serving only part of it cannot answer the
-/// read either, so it would contribute a truncated A.
+/// The relocation's `A`, read out of `holder`, the region a read of the
+/// whole field is served from.
 ///
 /// `SHT_REL` tables carry no `r_addend` field and store A in the relocation
 /// field itself; `object` reports `r_addend = 0` for them, so it is read back
-/// out of the site. A site no region covers contributes A = 0, matching the
+/// out of the site. A field no region holds contributes A = 0, matching the
 /// patch that is likewise skipped.
 ///
 /// The field is read file-initial, unpatched: no linker emits two relocations
 /// against one field.
 fn reloc_addend(
     reloc: &object::Relocation,
-    regions: &[MemRegion],
-    overlapping: &[usize],
-    site_addr: u64,
+    holder: Option<&MemRegion>,
+    field_addr: u64,
     size_bytes: usize,
     endian_le: bool,
 ) -> i64 {
@@ -63,13 +62,19 @@ fn reloc_addend(
     }
     // Sign-extended from the field width: a PC-relative site holds a negative A
     // (-4 for an x86 `call rel32`).
-    read_field(regions, overlapping, site_addr, size_bytes, endian_le)
-        .map_or(0, |raw| sext(raw, 8 * size_bytes as u32))
+    holder.map_or(0, |region| {
+        sext(
+            read_field(region, field_addr, size_bytes, endian_le),
+            8 * size_bytes as u32,
+        )
+    })
 }
 
-/// Installs a relocation patch list on each region, walking the table
-/// appropriate for `obj.kind()`: `obj.dynamic_relocations()` for ET_EXEC /
-/// ET_DYN, per-section `section.relocations()` for ET_REL.
+/// Attaches one relocation patch list, sorted by address, to every region,
+/// walking the table appropriate for `obj.kind()`: `obj.dynamic_relocations()`
+/// for ET_EXEC / ET_DYN, per-section `section.relocations()` for ET_REL. Each
+/// region keeps the part that can overlap it, so a read searches no more
+/// patches than a list of its own would hold.
 ///
 /// # Supported
 ///
@@ -123,10 +128,7 @@ fn reloc_addend(
 ///
 /// # Errors
 ///
-/// When a loaded section's bytes cannot be read, or when a site lands in more
-/// overlapping regions than the [`MAX_PATCH_AMPLIFICATION`] budget allows: the
-/// patch lists are the memory an image chooses the size of, so exhausting the
-/// budget fails the load rather than serving some sites unpatched.
+/// When a loaded section's bytes cannot be read.
 pub(crate) fn apply_elf_relocations_with(
     regions: &mut [MemRegion],
     obj: &object::File<'_>,
@@ -139,14 +141,6 @@ pub(crate) fn apply_elf_relocations_with(
     // One lookup per relocation instead of a scan of every region; an ET_REL
     // carries one region per SHF_ALLOC section.
     let region_index = RegionIndex::new(regions);
-
-    let mut patches: Vec<Vec<Patch>> = vec![Vec::new(); regions.len()];
-    let mut sink = PatchSink {
-        per_region: &mut patches,
-        sites: 0,
-        records: 0,
-        scratch: Vec::new(),
-    };
     let mut ctx = Ctx {
         obj,
         layout,
@@ -159,30 +153,36 @@ pub(crate) fn apply_elf_relocations_with(
             || obj.architecture() == A::Aarch64,
         opd_entries: super::sections::opd_entries(obj, layout),
         got: BTreeMap::new(),
+        patches: Vec::new(),
     };
     for_each_reloc_site(obj, &owners, layout, |site_addr, avail, reloc, pair| {
         apply_one_relocation(
             &mut ctx,
-            &mut sink,
             RelocSite {
                 addr: site_addr,
                 avail,
             },
             reloc,
             pair,
-        )
-    })?;
+        );
+    });
     let got = got_regions(&ctx.got, ctx.endian_le)?;
-    for (region, patches) in regions.iter_mut().zip(patches) {
-        region.set_patches(patches);
+    let mut patches = ctx.patches;
+    // Stable, so the last patch recorded at a site is the one a read applies.
+    patches.sort_by_key(|p| p.addr);
+    let patches: Arc<[Patch]> = patches.into();
+    for region in regions {
+        region.attach_patches(&patches);
     }
     Ok(got)
 }
 
-/// What every relocation in one walk reads, and the GOT slots it fills.
+/// What every relocation in one walk reads, and what it records.
 struct Ctx<'a, 'd> {
     obj: &'a object::File<'d>,
     layout: &'a super::sections::ElfSectionLayout,
+    /// Unique starts (`collapse_equal_starts`), so the highest-start region
+    /// holding a field is the one a read of it reaches.
     regions: &'a [MemRegion],
     region_index: &'a RegionIndex,
     writable: &'a AddressRanges,
@@ -196,14 +196,87 @@ struct Ctx<'a, 'd> {
     opd_entries: BTreeMap<u64, u64>,
     /// GOT slot address -> (the symbol address it holds, slot width).
     got: BTreeMap<u64, (u64, usize)>,
+    /// Every patch the walk records, in record order.
+    patches: Vec<Patch>,
 }
 
-impl Ctx<'_, '_> {
+impl<'a> Ctx<'a, '_> {
     /// The byte order `field` is read and patched in.
     fn field_le(&self, field: Field) -> bool {
         match field {
             Field::Data { .. } => self.endian_le,
             _ => self.insn_le,
+        }
+    }
+
+    /// The highest-start region holding all of `[addr, addr + width)`: the
+    /// one a read of the whole field is served from.
+    fn holding(&self, addr: u64, width: usize) -> Option<&'a MemRegion> {
+        let regions = self.regions;
+        let i = self.region_index.covering(addr, width as u64).next()?;
+        Some(&regions[i])
+    }
+
+    /// [`holding`](Self::holding) for a field of `site`, and `None` too when
+    /// the field runs past `site.avail`, what is left of the section owning
+    /// the site. A field past its section, or past the end of every mapping
+    /// holding its first byte, would write a neighbour's bytes, so it is
+    /// neither patched nor holed.
+    fn holder(&self, site: RelocSite, addr: u64, width: usize) -> Option<&'a MemRegion> {
+        // `addr` is `site.addr` plus a non-negative `mips_half_field_skew` and
+        // `width` is at most 8, so neither wraps; saturating anyway keeps a
+        // malformed pair on the `None` path.
+        if addr.wrapping_sub(site.addr).saturating_add(width as u64) > site.avail {
+            return None;
+        }
+        self.holding(addr, width)
+    }
+
+    /// Records the low `width` bytes of `value` at `addr` when a region holds
+    /// the field. Every region overlapping it then serves the patch, clipped
+    /// to its own bytes: a narrow read inside a field that straddles an inner
+    /// region's end is that region's, a wide one the outer region's.
+    fn record(
+        &mut self,
+        holder: Option<&MemRegion>,
+        addr: u64,
+        value: u64,
+        width: usize,
+        endian_le: bool,
+    ) {
+        if holder.is_some()
+            && let Some(patch) = Patch::new(addr, value, width, endian_le)
+        {
+            self.patches.push(patch);
+        }
+    }
+
+    /// A relocation whose value is not computed: a hole over the field, when
+    /// a region holds it, unless the field is writable and NOT executable at
+    /// runtime.
+    ///
+    /// Writable data the program rewrites anyway is not worth a hole.  A
+    /// writable EXECUTABLE field is a different thing: `CodeAndReadOnly` keeps
+    /// an RWX mapping on purpose (firmware, `ld -N`), so those bytes reach the
+    /// decoder, and serving them unrelocated hands it a plausible wrong
+    /// instruction with nothing said about it.
+    fn unmodelled(
+        &mut self,
+        holder: Option<&MemRegion>,
+        addr: u64,
+        width: usize,
+        reloc: &object::Relocation,
+    ) {
+        let RelocationFlags::Elf { r_type } = reloc.flags() else {
+            unreachable!("an ELF relocation carries ELF flags");
+        };
+        // mips64el `SHT_REL` reports the real `r_sym` in `r_type`.
+        let r_type =
+            mips_type_word(reloc, self.obj.architecture(), self.endian_le).unwrap_or(r_type);
+        if holder.is_some()
+            && (!self.writable.touches(addr, width) || self.executable.touches(addr, width))
+        {
+            self.patches.push(Patch::hole(addr, width, r_type));
         }
     }
 }
@@ -244,9 +317,8 @@ fn for_each_reloc_site<F>(
     owners: &std::collections::BTreeSet<usize>,
     layout: &super::sections::ElfSectionLayout,
     mut f: F,
-) -> Result<()>
-where
-    F: FnMut(u64, u64, &object::Relocation, Option<u64>) -> Result<()>,
+) where
+    F: FnMut(u64, u64, &object::Relocation, Option<u64>),
 {
     match obj.kind() {
         object::ObjectKind::Relocatable => {
@@ -274,20 +346,19 @@ where
                         .copied()
                         .flatten()
                         .map(|lo| sec_base.wrapping_add(lo));
-                    f(sec_base.wrapping_add(*offset), avail, reloc, pair)?;
+                    f(sec_base.wrapping_add(*offset), avail, reloc, pair);
                 }
             }
         }
         _ => {
             let Some(dyn_relocs) = obj.dynamic_relocations() else {
-                return Ok(());
+                return;
             };
             for (site_addr, reloc) in dyn_relocs {
-                f(site_addr, u64::MAX, &reloc, None)?;
+                f(site_addr, u64::MAX, &reloc, None);
             }
         }
     }
-    Ok(())
 }
 
 /// For each `SHT_REL` `R_MIPS_HI16` in `relocs`, the offset of the next
@@ -355,17 +426,12 @@ fn got_regions(got: &BTreeMap<u64, (u64, usize)>, endian_le: bool) -> Result<Vec
 ///
 /// Sites with no backing region are skipped; a relocation whose value is not
 /// computed becomes a hole, see [`apply_elf_relocations_with`].
-///
-/// # Errors
-///
-/// When the patches would exceed the sink's budget.
 fn apply_one_relocation(
     ctx: &mut Ctx<'_, '_>,
-    sink: &mut PatchSink<'_>,
     site: RelocSite,
     reloc: &object::Relocation,
     pair: Option<u64>,
-) -> Result<()> {
+) {
     let obj = ctx.obj;
     let site_addr = site.addr;
     let endian_le = ctx.endian_le;
@@ -384,11 +450,11 @@ fn apply_one_relocation(
         // as 0 is already the whole value: nothing to patch, and nothing to
         // hole either.
         if reloc.has_implicit_addend() {
-            return Ok(());
+            return;
         }
-        let site_regions = sink.covering(ctx, site, site_addr, size_bytes)?;
-        sink.record(site_regions, site_addr, value, size_bytes, endian_le);
-        return Ok(());
+        let holder = ctx.holder(site, site_addr, size_bytes);
+        ctx.record(holder, site_addr, value, size_bytes, endian_le);
+        return;
     }
 
     // Symbol-targeted families `object` reports as `Unknown` with `size = 0`,
@@ -408,25 +474,18 @@ fn apply_one_relocation(
         // `R_PPC_REL32` / `R_ARM_REL32` / `R_PPC64_REL64`, `S + A - P`.
         .or_else(|| pc_relative_word_reloc(reloc, arch).map(|size_bytes| (size_bytes, true, true)));
     if let Some((size_bytes, pc_relative, read_implicit_addend)) = word_sized {
-        let site_regions = sink.covering(ctx, site, site_addr, size_bytes)?;
+        let holder = ctx.holder(site, site_addr, size_bytes);
         let Some(target) = resolve_symbol_target(obj, ctx.layout, reloc, endian_le) else {
-            sink.unmodelled(ctx, site_regions, site_addr, size_bytes, reloc);
-            return Ok(());
+            ctx.unmodelled(holder, site_addr, size_bytes, reloc);
+            return;
         };
         // A plain word holds the address itself, see `Target::weak_undefined`.
         if target.weak_undefined {
-            sink.unmodelled(ctx, site_regions, site_addr, size_bytes, reloc);
-            return Ok(());
+            ctx.unmodelled(holder, site_addr, size_bytes, reloc);
+            return;
         }
         let addend = if read_implicit_addend {
-            reloc_addend(
-                reloc,
-                ctx.regions,
-                &site_regions,
-                site_addr,
-                size_bytes,
-                endian_le,
-            )
+            reloc_addend(reloc, holder, site_addr, size_bytes, endian_le)
         } else {
             reloc.addend()
         };
@@ -441,10 +500,10 @@ fn apply_one_relocation(
             signed: pc_relative,
         };
         match fit(obj, field, value) {
-            Some(value) => sink.record(site_regions, site_addr, value, size_bytes, endian_le),
-            None => sink.unmodelled(ctx, site_regions, site_addr, size_bytes, reloc),
+            Some(value) => ctx.record(holder, site_addr, value, size_bytes, endian_le),
+            None => ctx.unmodelled(holder, site_addr, size_bytes, reloc),
         }
-        return Ok(());
+        return;
     }
 
     // mips64el `SHT_REL`: `object` reads `r_info` as one little-endian `u64`, so
@@ -452,13 +511,14 @@ fn apply_one_relocation(
     // against `R_MIPS_16` / `R_MIPS_32` / `R_MIPS_64` (symbol index 1, 2, 18).
     // Every MIPS relocation handled here dispatches on the raw `r_type` above.
     if matches!(arch, A::Mips64) && endian_le && reloc.has_implicit_addend() {
-        let site_regions = sink.covering(ctx, site, site_addr, UNKNOWN_FIELD_BYTES)?;
-        sink.unmodelled(ctx, site_regions, site_addr, UNKNOWN_FIELD_BYTES, reloc);
-        return Ok(());
+        let holder = ctx.holder(site, site_addr, UNKNOWN_FIELD_BYTES);
+        ctx.unmodelled(holder, site_addr, UNKNOWN_FIELD_BYTES, reloc);
+        return;
     }
 
     if let Some(kind) = classified(reloc, arch, endian_le) {
-        return apply_classified(ctx, sink, site, reloc, pair, kind);
+        apply_classified(ctx, site, reloc, pair, kind);
+        return;
     }
 
     // `size` is in bits, and 0 nominally means "the kind's default". Absolute /
@@ -492,9 +552,9 @@ fn apply_one_relocation(
         } else {
             UNKNOWN_FIELD_BYTES
         };
-        let site_regions = sink.covering(ctx, site, site_addr, width)?;
-        sink.unmodelled(ctx, site_regions, site_addr, width, reloc);
-        return Ok(());
+        let holder = ctx.holder(site, site_addr, width);
+        ctx.unmodelled(holder, site_addr, width, reloc);
+        return;
     };
     let size_bytes = (size_bits / 8) as usize;
 
@@ -503,10 +563,10 @@ fn apply_one_relocation(
     // the skew would carry the field out of it.
     let Some(field_addr) = site_addr.checked_add(mips_half_field_skew(reloc, arch, endian_le))
     else {
-        return Ok(());
+        return;
     };
 
-    let site_regions = sink.covering(ctx, site, field_addr, size_bytes)?;
+    let holder = ctx.holder(site, field_addr, size_bytes);
     // `object`'s ELF `parse_relocation` yields only `Symbol` or `Absolute`;
     // the latter (an immediate with no symbol) has no target to add.
     let target = match reloc.target() {
@@ -514,24 +574,17 @@ fn apply_one_relocation(
         _ => None,
     };
     let Some(target) = target else {
-        sink.unmodelled(ctx, site_regions, field_addr, size_bytes, reloc);
-        return Ok(());
+        ctx.unmodelled(holder, field_addr, size_bytes, reloc);
+        return;
     };
     // `PltRelative` is a call or jump, whose displacement hides the address it
     // was built from; every other plain field holds that address, see
     // `Target::weak_undefined`.
     if target.weak_undefined && !matches!(reloc.kind(), RelocationKind::PltRelative) {
-        sink.unmodelled(ctx, site_regions, field_addr, size_bytes, reloc);
-        return Ok(());
+        ctx.unmodelled(holder, field_addr, size_bytes, reloc);
+        return;
     }
-    let addend = reloc_addend(
-        reloc,
-        ctx.regions,
-        &site_regions,
-        field_addr,
-        size_bytes,
-        endian_le,
-    );
+    let addend = reloc_addend(reloc, holder, field_addr, size_bytes, endian_le);
     // S, A, P follow the System V ABI generic relocation formula:
     // S = target_addr, A = addend, P = site_addr. P is the storage unit, not
     // the field inside it.
@@ -546,10 +599,9 @@ fn apply_one_relocation(
         signed: pc_relative || matches!(reloc.encoding(), object::RelocationEncoding::X86Signed),
     };
     match fit(obj, field, value) {
-        Some(value) => sink.record(site_regions, field_addr, value, size_bytes, endian_le),
-        None => sink.unmodelled(ctx, site_regions, field_addr, size_bytes, reloc),
+        Some(value) => ctx.record(holder, field_addr, value, size_bytes, endian_le),
+        None => ctx.unmodelled(holder, field_addr, size_bytes, reloc),
     }
-    Ok(())
 }
 
 /// Field width assumed for a relocation whose type gives none: an instruction
@@ -590,32 +642,26 @@ fn classified(
 }
 
 /// A [`classify`]-listed relocation, see [`super::encodings`].
-///
-/// # Errors
-///
-/// When the patches would exceed the sink's budget.
 fn apply_classified(
     ctx: &mut Ctx<'_, '_>,
-    sink: &mut PatchSink<'_>,
     site: RelocSite,
     reloc: &object::Relocation,
     pair: Option<u64>,
     kind: Kind,
-) -> Result<()> {
+) {
     let (value_kind, field) = match kind {
-        Kind::Marker => return Ok(()),
+        Kind::Marker => return,
         Kind::Compute(value, field) => (value, field),
         Kind::Ppc64Call { .. } | Kind::PpcPltCall => (Value::Pcrel, Field::PpcBranch24),
     };
     let p = site.addr;
     let width = field.width();
-    let site_regions = sink.covering(ctx, site, p, width)?;
+    let holder = ctx.holder(site, p, width);
     let field_le = ctx.field_le(field);
-    match compute_classified(ctx, reloc, pair, kind, value_kind, field, p, &site_regions) {
-        Some(word) => sink.record(site_regions, p, word, width, field_le),
-        None => sink.unmodelled(ctx, site_regions, p, width, reloc),
+    match compute_classified(ctx, reloc, pair, kind, value_kind, field, p, holder) {
+        Some(word) => ctx.record(holder, p, word, width, field_le),
+        None => ctx.unmodelled(holder, p, width, reloc),
     }
-    Ok(())
 }
 
 /// The patched field of a [`classify`]-listed relocation at `p`, `None` when
@@ -629,12 +675,12 @@ fn compute_classified(
     value_kind: Value,
     field: Field,
     p: u64,
-    site_regions: &[usize],
+    holder: Option<&MemRegion>,
 ) -> Option<u64> {
     let (obj, layout, endian_le) = (ctx.obj, ctx.layout, ctx.endian_le);
     let field_le = ctx.field_le(field);
     let thumb_le = field_le && matches!(field, Field::ThumbBranch { .. } | Field::ThumbMovw { .. });
-    let raw = read_field(ctx.regions, site_regions, p, field.width(), field_le)?;
+    let raw = read_field(holder?, p, field.width(), field_le);
     let raw = if thumb_le { swap_halfwords(raw) } else { raw };
     let target = match reloc.target() {
         RelocationTarget::Symbol(_) => Some(resolve_symbol_target(obj, layout, reloc, endian_le)?),
@@ -658,7 +704,8 @@ fn compute_classified(
     match field {
         // The low half of an `SHT_REL` HI16's addend is its LO16's field.
         Field::MipsHalf16(Half::Ha) if reloc.has_implicit_addend() => {
-            let lo = read_field_at(ctx, pair?, 4)?;
+            let pair = pair?;
+            let lo = read_field(ctx.holding(pair, 4)?, pair, 4, ctx.endian_le);
             a = (a << 16) + sext(lo & 0xffff, 16);
         }
         Field::Mips26 if reloc.has_implicit_addend() && !target.is_some_and(|t| t.local) => {
@@ -740,20 +787,8 @@ fn value_kind_through_got(value: Value) -> bool {
     )
 }
 
-/// The file-initial `width`-byte field at `addr`, read out of the first region
-/// in `site_regions` holding all of it.
-fn read_field(
-    regions: &[MemRegion],
-    site_regions: &[usize],
-    addr: u64,
-    width: usize,
-    endian_le: bool,
-) -> Option<u64> {
-    let end = addr.checked_add(width as u64)?;
-    let region = site_regions
-        .iter()
-        .map(|&i| &regions[i])
-        .find(|r| r.start_addr() <= addr && end <= r.end_addr())?;
+/// The file-initial `width`-byte field at `addr`, which `region` holds whole.
+fn read_field(region: &MemRegion, addr: u64, width: usize, endian_le: bool) -> u64 {
     let off = (addr - region.start_addr()) as usize;
     let field = &region.raw()[off..off + width];
     let mut raw = 0u64;
@@ -766,188 +801,13 @@ fn read_field(
             raw = (raw << 8) | u64::from(b);
         }
     }
-    Some(raw)
-}
-
-/// [`read_field`] from whichever region holds the whole field.
-fn read_field_at(ctx: &Ctx<'_, '_>, addr: u64, width: usize) -> Option<u64> {
-    let holders: Vec<usize> = ctx.region_index.covering(addr, width as u64).collect();
-    read_field(ctx.regions, &holders, addr, width, ctx.endian_le)
+    raw
 }
 
 /// A Thumb-2 instruction read as one little-endian word, with its halfwords
 /// swapped to put the first one high, or back.
 fn swap_halfwords(word: u64) -> u64 {
     ((word & 0xffff) << 16) | ((word >> 16) & 0xffff)
-}
-
-/// Slice indices of every region overlapping `[addr, addr + size_bytes)`,
-/// highest `start` first, at most one per start; empty unless some region
-/// holds the WHOLE field.
-///
-/// OVERLAPPING, not covering, because which region serves a read depends on
-/// the read's width: a narrow read inside a field that straddles an inner
-/// region's end is served by that inner region while a wide one falls through
-/// to the outer, so patching only the coverers answers the two differently.
-/// [`MemRegion::read`] clips a patch to the bytes it serves, so a region
-/// holding part of the field takes just that part.
-///
-/// The whole-field anchor is what keeps that from patching a NEIGHBOUR: a
-/// field no region holds in full has run past the end of the mapping it
-/// started in, and the bytes past that end belong to whatever is mapped next.
-///
-/// One per start because equal-start regions collapse in
-/// [`crate::MemRegionsLookupTable`], last-inserted winning, so only that one
-/// is ever read; the walk is in descending slice order within a start, so the
-/// first of a run IS the last-inserted.
-fn overlapping_regions<'a>(
-    index: &'a RegionIndex,
-    regions: &'a [MemRegion],
-    addr: u64,
-    size_bytes: usize,
-) -> impl Iterator<Item = usize> + 'a {
-    let size = size_bytes as u64;
-    let end = match index.covering(addr, size).next() {
-        Some(_) => addr.saturating_add(size),
-        // An empty range, so the walk yields nothing.
-        None => addr,
-    };
-    let mut prev: Option<u64> = None;
-    index.overlapping(addr, end).filter(move |&i| {
-        let start = regions[i].start_addr();
-        let first_of_run = prev != Some(start);
-        prev = Some(start);
-        first_of_run
-    })
-}
-
-/// Ceiling on recorded patches, as a multiple of the sites recording them.
-const MAX_PATCH_AMPLIFICATION: usize = 4;
-
-/// The per-region patch lists being filled, and what has been charged against
-/// [`MAX_PATCH_AMPLIFICATION`].
-///
-/// A site is patched on EVERY region overlapping it, so N regions nested over M
-/// relocations record N*M patches out of a file costing O(N + M) bytes, both
-/// counts being the image's to choose.
-struct PatchSink<'a> {
-    per_region: &'a mut [Vec<Patch>],
-    sites: usize,
-    records: usize,
-    /// Handed out by [`PatchSink::covering`] and taken back by
-    /// [`PatchSink::record`], so the covering list is allocated once for the
-    /// whole walk rather than once per site.
-    scratch: Vec<usize>,
-}
-
-impl PatchSink<'_> {
-    /// The regions overlapping a field, charged to the budget. Empty when the
-    /// field runs past `site.avail`, what is left of the section owning the
-    /// site: such a field belongs to no section and would patch a neighbour's
-    /// bytes. [`overlapping_regions`] applies the same rule against the
-    /// mappings.
-    ///
-    /// # Errors
-    ///
-    /// When the patches recorded would exceed [`MAX_PATCH_AMPLIFICATION`]
-    /// times the sites recording them.
-    fn covering(
-        &mut self,
-        ctx: &Ctx<'_, '_>,
-        site: RelocSite,
-        field_addr: u64,
-        size_bytes: usize,
-    ) -> Result<Vec<usize>> {
-        let mut covering = std::mem::take(&mut self.scratch);
-        covering.clear();
-        // `field_addr` is `site.addr` plus a non-negative `mips_half_field_skew`
-        // and `size_bytes` is at most 8, so neither wraps; saturating anyway
-        // keeps a malformed pair on the empty-covering path.
-        if field_addr
-            .wrapping_sub(site.addr)
-            .saturating_add(size_bytes as u64)
-            > site.avail
-        {
-            return Ok(covering);
-        }
-        self.sites += 1;
-        let allowance = self
-            .sites
-            .saturating_mul(MAX_PATCH_AMPLIFICATION)
-            .saturating_sub(self.records);
-        // One past the allowance is enough to report the overrun, and is what
-        // keeps a site covered by every region of a crafted image from
-        // materialising that list at all.
-        covering.extend(
-            overlapping_regions(ctx.region_index, ctx.regions, field_addr, size_bytes)
-                .take(allowance + 1),
-        );
-        if covering.len() > allowance {
-            anyhow::bail!(
-                "relocation site {field_addr:#x} lands in more overlapping regions than the \
-                 {MAX_PATCH_AMPLIFICATION}x patch budget over {} sites allows",
-                self.sites
-            );
-        }
-        self.records += covering.len();
-        Ok(covering)
-    }
-
-    /// Records the low `size_bytes` of `value` at `site_addr`, on every region
-    /// in `covering`, and takes that buffer back for the next site.
-    ///
-    /// An empty `covering` silently skips: the site is unmapped, or its field
-    /// width runs past the end of the section owning it, or past the end of
-    /// every mapping holding its first byte.
-    fn record(
-        &mut self,
-        covering: Vec<usize>,
-        site_addr: u64,
-        value: u64,
-        size_bytes: usize,
-        endian_le: bool,
-    ) {
-        if let Some(patch) = Patch::new(site_addr, value, size_bytes, endian_le) {
-            self.push(&covering, patch);
-        }
-        self.scratch = covering;
-    }
-
-    /// A relocation whose value is not computed: a hole over the field on
-    /// every region in `covering`, unless the field is writable and NOT
-    /// executable at runtime.
-    ///
-    /// Writable data the program rewrites anyway is not worth a hole.  A
-    /// writable EXECUTABLE field is a different thing: `CodeAndReadOnly` keeps
-    /// an RWX mapping on purpose (firmware, `ld -N`), so those bytes reach the
-    /// decoder, and serving them unrelocated hands it a plausible wrong
-    /// instruction with nothing said about it.
-    fn unmodelled(
-        &mut self,
-        ctx: &Ctx<'_, '_>,
-        covering: Vec<usize>,
-        field_addr: u64,
-        size_bytes: usize,
-        reloc: &object::Relocation,
-    ) {
-        let RelocationFlags::Elf { r_type } = reloc.flags() else {
-            unreachable!("an ELF relocation carries ELF flags");
-        };
-        // mips64el `SHT_REL` reports the real `r_sym` in `r_type`.
-        let r_type = mips_type_word(reloc, ctx.obj.architecture(), ctx.endian_le).unwrap_or(r_type);
-        if !ctx.writable.touches(field_addr, size_bytes)
-            || ctx.executable.touches(field_addr, size_bytes)
-        {
-            self.push(&covering, Patch::hole(field_addr, size_bytes, r_type));
-        }
-        self.scratch = covering;
-    }
-
-    fn push(&mut self, covering: &[usize], patch: Patch) {
-        for &i in covering {
-            self.per_region[i].push(patch);
-        }
-    }
 }
 
 /// The real symbol index of a MIPS64 relocation whose `r_info` `object`
@@ -1410,57 +1270,9 @@ mod tests {
         assert_eq!(once, bytes(&regions));
     }
 
-    fn overlapping(regions: &[MemRegion], addr: u64, size_bytes: usize) -> Vec<usize> {
-        let index = RegionIndex::new(regions);
-        overlapping_regions(&index, regions, addr, size_bytes).collect()
-    }
-
-    /// A field straddling a shorter higher-start region's end is patched on
-    /// BOTH: the inner region serves a narrow read of it. A site past every
-    /// region resolves to nothing.
-    #[test]
-    fn the_patched_set_is_every_region_holding_any_of_the_field() {
-        let regions = vec![
-            MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
-            MemRegion::new(0x1080, vec![0u8; 4]).unwrap(),
-        ];
-        assert_eq!(overlapping(&regions, 0x1080, 4), vec![1, 0]);
-        assert_eq!(overlapping(&regions, 0x1080, 8), vec![1, 0]);
-        assert!(
-            overlapping(&regions, 0x10fc, 8).is_empty(),
-            "no region holds the whole field, so the bytes past the end are a neighbour's"
-        );
-        assert!(overlapping(&regions, 0x1100, 4).is_empty());
-        assert!(overlapping(&regions, 0x9000, 1).is_empty());
-    }
-
-    /// A field two regions both fully cover is patched on both: a read wide
-    /// enough to miss the inner one falls through to the outer, which must
-    /// serve the same relocated bytes.
-    #[test]
-    fn every_region_covering_a_field_is_reported() {
-        let regions = vec![
-            MemRegion::new(0x1000, vec![0u8; 0x20]).unwrap(),
-            MemRegion::new(0x1010, vec![0u8; 0x08]).unwrap(),
-        ];
-        assert_eq!(overlapping(&regions, 0x1014, 4), vec![1, 0]);
-    }
-
-    /// Equal starts collapse in `MemRegionsLookupTable`, so only the region a
-    /// read can actually reach is patched.
-    #[test]
-    fn regions_sharing_a_start_are_patched_once() {
-        let regions = vec![
-            MemRegion::new(0x1000, vec![0u8; 0x20]).unwrap(),
-            MemRegion::new(0x1000, vec![0u8; 0x20]).unwrap(),
-        ];
-        assert_eq!(overlapping(&regions, 0x1000, 4), vec![1]);
-    }
-
     /// Which region serves a read depends on the read's WIDTH, so a field
     /// straddling an inner region's end has to read back patched at every
-    /// width. Patching only the regions fully covering it left the narrow read
-    /// on the file-initial bytes.
+    /// width: every region overlapping it keeps the patch.
     #[test]
     fn a_field_over_an_inner_regions_end_reads_back_patched_at_every_width() {
         let field = 0x1084;
@@ -1469,9 +1281,10 @@ mod tests {
             MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
             MemRegion::new(0x1080, vec![0u8; 8]).unwrap(),
         ];
-        let patch = Patch::new(field, value, 8, true).expect("an 8 byte field");
-        for i in overlapping(&regions, field, 8) {
-            regions[i].set_patches(vec![patch]);
+        let all: Arc<[Patch]> =
+            vec![Patch::new(field, value, 8, true).expect("an 8 byte field")].into();
+        for region in &mut regions {
+            region.attach_patches(&all);
         }
 
         let table = crate::MemRegionsLookupTable::new(regions);
@@ -1485,5 +1298,30 @@ mod tests {
             .expect("the outer region");
         assert_eq!(wide, value.to_le_bytes());
         assert_eq!(narrow, wide[..4]);
+    }
+
+    /// A field starting below a region's start still lands in it: a region
+    /// keeps the patches up to `MAX_PATCH_LEN - 1` bytes before it, so the
+    /// inner region serves the field's tail patched.
+    #[test]
+    fn a_field_over_an_inner_regions_start_reads_back_patched() {
+        let field = 0x107c;
+        let value = 0xdead_beef_feed_face_u64;
+        let mut regions = vec![
+            MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
+            MemRegion::new(0x1080, vec![0u8; 8]).unwrap(),
+        ];
+        let all: Arc<[Patch]> =
+            vec![Patch::new(field, value, 8, true).expect("an 8 byte field")].into();
+        for region in &mut regions {
+            region.attach_patches(&all);
+        }
+
+        let table = crate::MemRegionsLookupTable::new(regions);
+        let mut tail = [0u8; 4];
+        table
+            .read_exact(0x1080, &mut tail)
+            .expect("the inner region");
+        assert_eq!(tail, value.to_le_bytes()[4..]);
     }
 }
