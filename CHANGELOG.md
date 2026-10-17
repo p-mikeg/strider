@@ -177,6 +177,8 @@
   its region instead of re-deciding under the `cfg_opts` it is handed, so a
   CFG built under other `call_other_overrides` lifts as it was built (the
   op's footprint still comes from `cfg_opts`).
+- A `CALL` whose target operand is not in the code space selects no
+  `per_address_ccs` override; the CFG's no-return rule already ignored it.
 
 ### Fixed
 
@@ -270,6 +272,8 @@
   it the one with the greatest start.
 - `strider_cfg::user_op_of`: the user-op a `CallOther` names, the one decode
   the CFG and the lift read.
+- `strider_cfg::direct_call_target`: a direct `Call`'s target address, read
+  only from a code-space operand; the one rule the CFG and the lift select by.
 
 ## 0.2.0
 
