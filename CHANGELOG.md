@@ -151,6 +151,8 @@
   output type`.
 - A rewrite template's node-signature error spells a typed value as its type
   (`i64`), not `Typed(I64)`.
+- `Cfg.region_at` answers the region with the greatest start where regions
+  overlap, the rule the CFG builds by; it answered the lowest index.
 
 ### Added, Python
 
@@ -260,6 +262,8 @@
 - `strider_cfg::DecodeEngine`: the Sleigh and the decode context it carries
   across functions; `DecodeEngine::new(arch, sleigh)?.build_cfg(entry, &opts)`
   builds a CFG as `Lifter::build_cfg` does.
+- `Cfg::region_containing`: the region owning an address, of those containing
+  it the one with the greatest start.
 
 ## 0.2.0
 
