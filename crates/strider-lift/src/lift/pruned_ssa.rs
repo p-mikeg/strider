@@ -189,7 +189,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 let class = decode_user_op(insn, self.lifter.user_op_names())
                     .ok()
                     .and_then(|(_, name)| {
-                        classify_with(self.call_other_overrides, self.lifter.arch.preset(), name)
+                        classify_with(self.call_other_overrides, self.lifter.arch().preset(), name)
                     });
                 let abi = match class {
                     Some(class) => class.built(self.lifter.sleigh_regs())?,
