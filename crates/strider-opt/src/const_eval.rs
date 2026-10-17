@@ -41,27 +41,20 @@ pub(crate) fn high_low_shift_bits(
 
 /// Whether every operand already carries `expected`'s bit width.
 ///
-/// A const-eval fold masks all operands to one width, which is only correct
-/// when they already carry it. `check_function_invariants_arith_widths` covers
-/// the arithmetic operands; a shift COUNT is exempt there, so this is the only
-/// check standing over it. Both const-eval paths ask here: this evaluator,
-/// whose answer becomes a decoded branch target, and `ConstantFold`'s rules.
-pub(crate) fn widths_carry(
-    bits: impl Iterator<Item = Option<ValueType>>,
-    expected: ValueType,
-) -> bool {
-    let want = expected.bit_width();
-    bits.into_iter()
-        .all(|t| t.is_some_and(|t| t.bit_width() == want))
-}
-
-/// [`widths_carry`] over values of `function`.
+/// A fold masks all operands to one width, which is only correct when they
+/// already carry it. `check_function_invariants_arith_widths` covers the
+/// arithmetic operands; a shift COUNT is exempt there, so this is the only
+/// check standing over it.
 fn operands_carry(function: &Function, operands: &[ValueId], expected: ValueType) -> Option<()> {
-    widths_carry(
-        operands.iter().map(|v| function.value_type_opt(*v)),
-        expected,
-    )
-    .then_some(())
+    let want = expected.bit_width();
+    operands
+        .iter()
+        .all(|&v| {
+            function
+                .value_type_opt(v)
+                .is_some_and(|t| t.bit_width() == want)
+        })
+        .then_some(())
 }
 
 /// The constant value of `value`, given `resolve` for its inputs' constants.

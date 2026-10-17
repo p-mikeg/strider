@@ -1,20 +1,24 @@
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
-use strider_ir::eval;
 
+use crate::EditFunction;
+use crate::const_eval::eval_node_const;
+use crate::error::Result;
 use crate::opt::width_guards::{same_width, shift_in_range};
 use crate::rewrite_rule;
+use smallvec::SmallVec;
+use strider_ir::node::{NodeId, ValueId};
+use strider_ir::{IRBuilderExt, IRViewer};
 use strider_pattern::{
-    Capture, CaptureExt, any_float_binary, any_float_cmp, any_float_unary, any_int_binary,
-    any_int_cmp, any_int_unary, bool_const_with, bool_not, float_bits_to_int, float_const,
-    float_const_with, int_add, int_and, int_bits_to_float, int_const, int_const_with, int_lzcount,
-    int_mul, int_neg, int_or, int_popcount, int_shl, int_shr, int_sign_extend, int_sshr, int_sub,
-    int_truncate, int_xor, int_zero_extend, template, var,
+    Capture, CaptureExt, any_float_binary, any_float_cmp, any_float_unary, bool_const_with,
+    bool_not, float_bits_to_int, float_const, float_const_with, int_add, int_and,
+    int_bits_to_float, int_const, int_const_with, int_mul, int_neg, int_or, int_shl, int_shr,
+    int_sign_extend, int_sshr, int_sub, int_truncate, int_xor, int_zero_extend, template, var,
 };
 
 /// Every constant-fold rule, in application order.
 pub(super) fn build_rules() -> Vec<crate::BoxedRule> {
     let mut rules = build_identity_rules();
-    rules.extend(build_const_eval_rules());
+    rules.push(Box::new(const_eval_rule));
     rules.extend(build_bool_float_rules());
     rules.extend(build_reassoc_and_mask_rules());
     rules.extend(build_factor_rules());
@@ -547,138 +551,36 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
     ]
 }
 
-/// [`crate::const_eval::widths_carry`] over captures, in the rules' carrier.
-fn require_operand_widths(
-    edit: &strider_pattern::TemplateCtx<'_>,
-    operands: &[Capture],
-    expected: strider_ir::node::ValueType,
-) -> crate::error::Result<()> {
-    let carried = crate::const_eval::widths_carry(
-        operands
-            .iter()
-            .map(|&c| edit.bindings.get_type(c, edit.function)),
-        expected,
-    );
-    carried.then_some(()).ok_or_else(strider_pattern::skip)
-}
-
-fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
-    let (op, l, r, v) = (
-        Capture::new(),
-        Capture::new(),
-        Capture::new(),
-        Capture::new(),
-    );
-
-    vec![
-        // The width guard protects against a wider operand (say a shift amount)
-        // whose value the output-width mask would silently change.
-        {
-            rewrite_rule(
-                any_int_binary(int_const(l), int_const(r)).capture(op),
-                strider_pattern::int_const_with_fn(move |edit| {
-                    let ty = edit.root_ty;
-                    require_operand_widths(edit, &[l, r], ty)?;
-                    let op = edit
-                        .bindings
-                        .get_int_binary_op(op, edit.function.graph())
-                        .ok_or_else(|| strider_pattern::missing_binding("int_binary_op"))?;
-                    let l = edit
-                        .bindings
-                        .get_uint(l, edit.function)
-                        .ok_or_else(strider_pattern::skip)?;
-                    let r = edit
-                        .bindings
-                        .get_uint(r, edit.function)
-                        .ok_or_else(strider_pattern::skip)?;
-                    eval::int_binary(op, l, r, ty).ok_or_else(strider_pattern::skip)
-                }),
-            )
-        },
-        {
-            rewrite_rule(
-                any_int_unary(int_const(v)).capture(op),
-                int_const_with!([op: int_unary_op, v: uint, ty] =>
-                    eval::int_unary(op, v, ty).ok_or_else(strider_pattern::skip)?
-                ),
-            )
-        },
-        // Both operands are masked to the LHS operand type. A wider RHS masked
-        // down that far can flip a `Less` / `Sless` / `Carry` verdict, hence
-        // the width guard.
-        {
-            rewrite_rule(
-                any_int_cmp(int_const(l), int_const(r)).capture(op),
-                strider_pattern::bool_const_with_fn(move |edit| {
-                    let input_ty = strider_pattern::first_value_input_type(edit)
-                        .ok_or_else(strider_pattern::skip)?;
-                    require_operand_widths(edit, &[l, r], input_ty)?;
-                    let op = edit
-                        .bindings
-                        .get_int_cmp_op(op, edit.function.graph())
-                        .ok_or_else(|| strider_pattern::missing_binding("int_cmp_op"))?;
-                    let l = edit
-                        .bindings
-                        .get_uint(l, edit.function)
-                        .ok_or_else(strider_pattern::skip)?;
-                    let r = edit
-                        .bindings
-                        .get_uint(r, edit.function)
-                        .ok_or_else(strider_pattern::skip)?;
-                    eval::int_cmp(op, l, r, input_ty).ok_or_else(strider_pattern::skip)
-                }),
-            )
-        },
-        // The wider IntConst's raw value is not masked to the truncate's output
-        // width for us, so mask explicitly; otherwise a narrow IntConst holding
-        // wide bits lands in the IR.
-        {
-            rewrite_rule(
-                int_truncate(int_const(v)),
-                int_const_with!([v: uint, ty] =>
-                    ty.get_unsigned_int(v).ok_or_else(strider_pattern::skip)?
-                ),
-            )
-        },
-        {
-            rewrite_rule(
-                int_zero_extend(int_const(v)),
-                int_const_with!([v: uint, ty] =>
-                    ty.get_unsigned_int(v).ok_or_else(strider_pattern::skip)?
-                ),
-            )
-        },
-        {
-            rewrite_rule(
-                int_sign_extend(int_const(v)),
-                int_const_with!([v: uint, in_ty, ty] => {
-                    let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
-                    eval::sign_extend(v, input_ty, ty)
-                        .ok_or_else(strider_pattern::skip)?
-                }),
-            )
-        },
-        {
-            rewrite_rule(
-                int_popcount(int_const(v)),
-                int_const_with!([v: uint, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
-                    eval::popcount(v, input_ty)
-                        .ok_or_else(strider_pattern::skip)?
-                }),
-            )
-        },
-        {
-            rewrite_rule(
-                int_lzcount(int_const(v)),
-                int_const_with!([v: uint, in_ty] => {
-                    let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
-                    eval::lzcount(v, input_ty)
-                        .ok_or_else(strider_pattern::skip)?
-                }),
-            )
-        },
-    ]
+/// Folds an integer node over constant operands through [`eval_node_const`],
+/// the evaluator load folding and the branch classifier read too.
+///
+/// Mirrors `rewrite_rule`: the dying operands' fingerprints go into the
+/// result, `replace_value` absorbs the root's, and a root with no uses falls
+/// through to the later rules.
+fn const_eval_rule(edit: &mut EditFunction<'_>, root: NodeId) -> Result<Option<ValueId>> {
+    let f = edit.function();
+    let Ok((out, ty)) = f.single_value_output(root) else {
+        return Ok(None);
+    };
+    // A float node keeps the float rules.
+    if !ty.is_integer() {
+        return Ok(None);
+    }
+    let Some(k) = eval_node_const(f, out, &|v| f.int_const_u128(v), None) else {
+        return Ok(None);
+    };
+    let operands: SmallVec<[NodeId; 2]> = f
+        .node_inputs(root)
+        .into_iter()
+        .map(|v| f.producer(v))
+        .collect();
+    let new = edit.build_int_const(k, ty)?;
+    let producer = edit.producer(new);
+    for from in operands {
+        edit.absorb_node_fingerprint(producer, from);
+    }
+    let changed = edit.replace_value(out, new);
+    Ok(changed.then_some(new))
 }
 
 /// Const-eval rules for the I1 boolean ops and all float ops. The absorbing

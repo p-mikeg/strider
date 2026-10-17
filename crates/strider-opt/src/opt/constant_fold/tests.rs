@@ -115,6 +115,65 @@ fn int_binary_fold_skips_width_mismatched_operands() -> Result<()> {
     Ok(())
 }
 
+/// `Neg` evaluates at its output width, so an operand of another width is not
+/// that constant. `validate` rejects the node, but a rewrite can mint one
+/// mid-pipeline, where nothing has validated yet.
+#[test]
+fn int_unary_fold_skips_a_width_mismatched_operand() -> Result<()> {
+    use strider_ir::node::ValueKind;
+    let mut fg = make_fn(|b| {
+        let wide = b.build_int_const(0x1_0000_0001u64, ValueType::int(64))?;
+        b.build_int_unary_operation(wide, IntUnaryOp::Neg, ValueType::int(64))
+    })?;
+    let mut edit = crate::EditFunction::new(&mut fg);
+    let neg64 = return_value(edit.function().graph())?;
+    let [wide] = edit.producer_inputs_exact::<1>(neg64)?;
+    let neg = edit.create_node(
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+        [wide],
+        [ValueKind::Typed(ValueType::int(32))],
+    );
+    let [narrow] = edit.node_outputs_exact::<1>(neg)?;
+    assert!(
+        edit.replace_value(neg64, narrow),
+        "the return reads the narrow Neg"
+    );
+
+    for (i, rule) in super::rules::build_rules().into_iter().enumerate() {
+        assert!(
+            rule(&mut edit, neg)?.is_none(),
+            "rule {i} folded a `Neg` over a wider constant"
+        );
+    }
+    Ok(())
+}
+
+/// A foldable root nothing reads is left to the later rules: the fold
+/// answers only when it redirected a use.
+#[test]
+fn const_eval_answers_nothing_for_a_root_without_uses() -> Result<()> {
+    use strider_ir::node::ValueKind;
+    let mut fg = make_fn(|b| b.build_int_const(1u64, ValueType::int(64)))?;
+    let mut edit = crate::EditFunction::new(&mut fg);
+    let c3 = edit.build_int_const(3u64, ValueType::int(64))?;
+    let c4 = edit.build_int_const(4u64, ValueType::int(64))?;
+    let add = edit.create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [c3, c4],
+        [ValueKind::Typed(ValueType::int(64))],
+    );
+    let [sum] = edit.node_outputs_exact::<1>(add)?;
+    assert_eq!(edit.value_uses(sum).count(), 0, "nothing reads the Add");
+
+    for (i, rule) in super::rules::build_rules().into_iter().enumerate() {
+        assert!(
+            rule(&mut edit, add)?.is_none(),
+            "rule {i} answered for a root nothing reads"
+        );
+    }
+    Ok(())
+}
+
 /// `validate` rejects a mixed-width comparison outright, which is what keeps
 /// `eval::int_cmp` (which masks both operands to the LHS width, and so would
 /// silently narrow a wider RHS) from ever seeing one.  Its own width guard
