@@ -544,28 +544,15 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// a register the function never names leaves a gap instead of shifting
     /// the ones after it down. Float argument registers sharing a container
     /// (AAPCS-VFP `d0`/`d1` inside `q0`) each carry their own slice of it.
-    /// The integer loop records `container_of(reg)` outright, where the float
-    /// loop below records the register itself when several share a container.
+    /// The integer half, [`strider_ir::FunctionBuilder::record_register_arg_carriers`],
+    /// records each register's container outright, where the float loop below
+    /// records the register itself when several share a container.
     /// No shipped convention names two integer argument registers inside one
     /// container, so the two cannot disagree today; a convention that did would
     /// make one argument out of two here while the caller side still passes
     /// each as its own slice.
     fn record_register_arg_carriers(&mut self) -> Result<()> {
-        let arg_regs = self
-            .builder
-            .function()
-            .default_cc()
-            .arg_passing_regs
-            .clone();
-        for (i, reg) in arg_regs.iter().enumerate() {
-            let container = self.container_of(reg);
-            if let Some(value) = self.builder.function().initial_var_value(&container) {
-                self.builder
-                    .function_mut()
-                    .side_tables_mut()
-                    .register_arg_value(i as u32, value);
-            }
-        }
+        self.builder.record_register_arg_carriers();
         let float_slots = {
             let function = self.builder.function();
             function
