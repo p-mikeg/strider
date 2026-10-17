@@ -159,6 +159,143 @@ impl ArchPreset {
     }
 }
 
+/// The family a preset belongs to. Every decode fact but the register byte
+/// order is one per family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ArchFamily {
+    X86,
+    Arm32,
+    Aarch64,
+    Mips,
+    Ppc,
+}
+
+impl ArchPreset {
+    /// Exhaustive, so a new preset joins a family before it compiles.
+    #[must_use]
+    pub const fn family(self) -> ArchFamily {
+        match self {
+            Self::X86 | Self::X86_64 => ArchFamily::X86,
+            Self::Arm | Self::ArmBe | Self::ArmBeKernel | Self::ArmThumb => ArchFamily::Arm32,
+            Self::Aarch64 | Self::Aarch64Be => ArchFamily::Aarch64,
+            Self::MipsBe32 | Self::MipsLe32 | Self::MipsBe64 | Self::MipsLe64 => ArchFamily::Mips,
+            Self::Ppc32Be | Self::Ppc32Le | Self::Ppc64Be | Self::Ppc64Le => ArchFamily::Ppc,
+        }
+    }
+}
+
+/// What decoding and lifting know about one family, each field the answer of
+/// the [`SleighArch`] method of the same name. No `Default`: a new family
+/// answers every field.
+struct DecodeFacts {
+    isa_mode_var: Option<&'static str>,
+    flow_commit_vars: &'static [(&'static str, FlowCommit)],
+    transient_decode_vars: &'static [&'static str],
+    has_delay_slots: bool,
+    /// [`SleighArch::callother_output_is_exact_in`] short of its x87 rule.
+    callother_output_exact: bool,
+    internal_registers: &'static [&'static str],
+}
+
+impl ArchFamily {
+    fn facts(self) -> &'static DecodeFacts {
+        match self {
+            Self::X86 => &X86_FACTS,
+            Self::Arm32 => &ARM32_FACTS,
+            Self::Aarch64 => &AARCH64_FACTS,
+            Self::Mips => &MIPS_FACTS,
+            Self::Ppc => &PPC_FACTS,
+        }
+    }
+}
+
+static X86_FACTS: DecodeFacts = DecodeFacts {
+    isa_mode_var: None,
+    flow_commit_vars: &[],
+    transient_decode_vars: &[],
+    has_delay_slots: false,
+    callother_output_exact: true,
+    internal_registers: &["xmmTmp1", "xmmTmp2"],
+};
+
+static ARM32_FACTS: DecodeFacts = DecodeFacts {
+    isa_mode_var: Some("TMode"),
+    flow_commit_vars: &[
+        ("condit", FlowCommit::NoFlow),
+        ("TEEMode", FlowCommit::Flowing),
+    ],
+    // `condit` is deliberately absent: it belongs to `flow_commit_vars`, which
+    // RE-DERIVES it by re-lifting the owning instruction. These are cleared
+    // with no re-lift, including at a region start, which destroys an IT state
+    // the predecessor legitimately committed.
+    transient_decode_vars: &["LRset", "REToverride", "CALLoverride"],
+    has_delay_slots: false,
+    callother_output_exact: false,
+    internal_registers: &[
+        "mult_addr",
+        "mult_dat8",
+        "mult_dat16",
+        "tmpNG",
+        "tmpZR",
+        "tmpCY",
+        "tmpOV",
+    ],
+};
+
+static AARCH64_FACTS: DecodeFacts = DecodeFacts {
+    isa_mode_var: None,
+    flow_commit_vars: &[],
+    transient_decode_vars: &[],
+    has_delay_slots: false,
+    callother_output_exact: false,
+    internal_registers: &[
+        "tmp_ldWn",
+        "tmp_ldXn",
+        "tmp_stWn",
+        "tmp_stXn",
+        "VecMemAddr",
+        "VectorSelem",
+        "VecRegAddr",
+        "glob_mask32",
+        "glob_mask64",
+        "TMPZ1",
+        "TMPZ2",
+        "TMPZ3",
+        "TMPZ4",
+        "TMPZ5",
+        "TMPZ6",
+        "tmpCY",
+        "tmpOV",
+        "tmpNG",
+        "tmpZR",
+    ],
+};
+
+static MIPS_FACTS: DecodeFacts = DecodeFacts {
+    // The low bit selects the alternate ISA, which `RELP` fixes: every MIPS
+    // pspec here pins it to 1, so that ISA is MIPS16e. rsleigh ships
+    // `PSPEC_MIPS32MICRO` / `PSPEC_MIPS64MICRO` for `RELP=0` (microMIPS) and no
+    // preset uses them, so a microMIPS image decodes its odd-addressed
+    // functions against MIPS16e tables.
+    isa_mode_var: Some("ISA_MODE"),
+    flow_commit_vars: &[],
+    // `ext_delay` is written by the five MIPS16e branch/call constructors
+    // (`mips16.sinc:520,528,542,550,557`), reachable only at `ISA_MODE=1`.
+    transient_decode_vars: &["PAIR_INSTRUCTION_FLAG", "ext_delay"],
+    has_delay_slots: true,
+    callother_output_exact: false,
+    internal_registers: &["tsp"],
+};
+
+static PPC_FACTS: DecodeFacts = DecodeFacts {
+    isa_mode_var: None,
+    flow_commit_vars: &[],
+    transient_decode_vars: &[],
+    has_delay_slots: false,
+    callother_output_exact: false,
+    internal_registers: &["r2Save", "RESERVE_ADDRESS"],
+};
+
 /// The Sleigh configuration describing one target architecture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SleighArch {
@@ -223,6 +360,10 @@ impl SleighArch {
         self.preset
     }
 
+    fn facts(&self) -> &'static DecodeFacts {
+        self.preset.family().facts()
+    }
+
     /// The context variable holding the address-low-bit ISA mode, or `None` on
     /// arches with no such mode (they decode from the pspec default).
     ///
@@ -231,22 +372,7 @@ impl SleighArch {
     /// still appears at even addresses and a resolved `bx` still interworks.
     #[must_use]
     pub fn isa_mode_var(&self) -> Option<&'static str> {
-        match self.preset {
-            ArchPreset::Arm
-            | ArchPreset::ArmBe
-            | ArchPreset::ArmBeKernel
-            | ArchPreset::ArmThumb => Some("TMode"),
-            // The low bit selects the alternate ISA, which `RELP` fixes: every
-            // MIPS pspec here pins it to 1, so that ISA is MIPS16e. rsleigh
-            // ships `PSPEC_MIPS32MICRO` / `PSPEC_MIPS64MICRO` for `RELP=0`
-            // (microMIPS) and no preset uses them, so a microMIPS image decodes
-            // its odd-addressed functions against MIPS16e tables.
-            ArchPreset::MipsBe32
-            | ArchPreset::MipsLe32
-            | ArchPreset::MipsBe64
-            | ArchPreset::MipsLe64 => Some("ISA_MODE"),
-            _ => None,
-        }
+        self.facts().isa_mode_var
     }
 
     /// The context vars whose value AT AN ADDRESS a constructor commits, and
@@ -296,16 +422,7 @@ impl SleighArch {
     /// value cannot change the lift.
     #[must_use]
     pub fn flow_commit_vars(&self) -> &'static [(&'static str, FlowCommit)] {
-        match self.preset {
-            ArchPreset::Arm
-            | ArchPreset::ArmBe
-            | ArchPreset::ArmBeKernel
-            | ArchPreset::ArmThumb => &[
-                ("condit", FlowCommit::NoFlow),
-                ("TEEMode", FlowCommit::Flowing),
-            ],
-            _ => &[],
-        }
+        self.facts().flow_commit_vars
     }
 
     /// Whether this sla commits a context value a later decode must not
@@ -334,23 +451,14 @@ impl SleighArch {
     ///   than re-derived.
     #[must_use]
     pub fn commits_flow_context(&self) -> bool {
-        matches!(
-            self.preset,
-            ArchPreset::Arm | ArchPreset::ArmBe | ArchPreset::ArmBeKernel | ArchPreset::ArmThumb
-        )
+        !self.facts().flow_commit_vars.is_empty()
     }
 
     /// Whether the sla decodes a branch together with its delay slot, one
     /// `lift_one` spanning both.
     #[must_use]
     pub fn has_delay_slots(&self) -> bool {
-        matches!(
-            self.preset,
-            ArchPreset::MipsBe32
-                | ArchPreset::MipsLe32
-                | ArchPreset::MipsBe64
-                | ArchPreset::MipsLe64
-        )
+        self.facts().has_delay_slots
     }
 
     /// Context vars the sla declares `noflow` that still change which
@@ -376,25 +484,7 @@ impl SleighArch {
     /// them costs nothing and keeps the list one rule.
     #[must_use]
     pub fn transient_decode_vars(&self) -> &'static [&'static str] {
-        match self.preset {
-            ArchPreset::MipsBe32
-            | ArchPreset::MipsLe32
-            | ArchPreset::MipsBe64
-            // `ext_delay` is written by the five MIPS16e branch/call
-            // constructors (`mips16.sinc:520,528,542,550,557`), reachable only
-            // at `ISA_MODE=1`.
-            | ArchPreset::MipsLe64 => &["PAIR_INSTRUCTION_FLAG", "ext_delay"],
-            ArchPreset::Arm
-            | ArchPreset::ArmBe
-            | ArchPreset::ArmBeKernel
-            // `condit` is deliberately absent: it belongs to
-            // `flow_commit_vars`, which RE-DERIVES it by re-lifting the owning
-            // instruction. These are cleared with no re-lift, including at a
-            // region start, which destroys an IT state the predecessor
-            // legitimately committed.
-            | ArchPreset::ArmThumb => &["LRset", "REToverride", "CALLoverride"],
-            _ => &[],
-        }
+        self.facts().transient_decode_vars
     }
 
     /// Whether a `CallOther` whose pcode output is a sub-register of
@@ -419,7 +509,7 @@ impl SleighArch {
     /// whole-container clobber too, which is opaque rather than wrong.
     #[must_use]
     pub fn callother_output_is_exact_in(&self, container: &rsleigh::Vn) -> bool {
-        matches!(self.preset, ArchPreset::X86 | ArchPreset::X86_64) && container.size != 10
+        self.facts().callother_output_exact && container.size != 10
     }
 
     /// Registers the sla declares for its own semantics rather than as
@@ -441,50 +531,7 @@ impl SleighArch {
     /// (`:53`), which only a later `stwcx` on the same thread consults.
     #[must_use]
     pub fn internal_registers(&self) -> &'static [&'static str] {
-        match self.preset {
-            ArchPreset::Arm
-            | ArchPreset::ArmBe
-            | ArchPreset::ArmBeKernel
-            | ArchPreset::ArmThumb => &[
-                "mult_addr",
-                "mult_dat8",
-                "mult_dat16",
-                "tmpNG",
-                "tmpZR",
-                "tmpCY",
-                "tmpOV",
-            ],
-            ArchPreset::Aarch64 | ArchPreset::Aarch64Be => &[
-                "tmp_ldWn",
-                "tmp_ldXn",
-                "tmp_stWn",
-                "tmp_stXn",
-                "VecMemAddr",
-                "VectorSelem",
-                "VecRegAddr",
-                "glob_mask32",
-                "glob_mask64",
-                "TMPZ1",
-                "TMPZ2",
-                "TMPZ3",
-                "TMPZ4",
-                "TMPZ5",
-                "TMPZ6",
-                "tmpCY",
-                "tmpOV",
-                "tmpNG",
-                "tmpZR",
-            ],
-            ArchPreset::X86 | ArchPreset::X86_64 => &["xmmTmp1", "xmmTmp2"],
-            ArchPreset::MipsBe32
-            | ArchPreset::MipsLe32
-            | ArchPreset::MipsBe64
-            | ArchPreset::MipsLe64 => &["tsp"],
-            ArchPreset::Ppc32Be
-            | ArchPreset::Ppc32Le
-            | ArchPreset::Ppc64Be
-            | ArchPreset::Ppc64Le => &["r2Save", "RESERVE_ADDRESS"],
-        }
+        self.facts().internal_registers
     }
 
     /// The ISA-mode context a cold entry at `entry_addr` decodes in, as
@@ -660,15 +707,8 @@ mod tests {
                 "{preset:?} must carry the mode it decodes with",
             );
             let expected = matches!(
-                preset,
-                ArchPreset::Arm
-                    | ArchPreset::ArmBe
-                    | ArchPreset::ArmBeKernel
-                    | ArchPreset::ArmThumb
-                    | ArchPreset::MipsBe32
-                    | ArchPreset::MipsLe32
-                    | ArchPreset::MipsBe64
-                    | ArchPreset::MipsLe64
+                preset.family(),
+                super::ArchFamily::Arm32 | super::ArchFamily::Mips
             );
             assert_eq!(
                 arch.isa_mode_var().is_some(),

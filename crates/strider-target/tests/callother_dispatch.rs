@@ -530,7 +530,7 @@ fn arm32_smc_and_hvc_clobber_the_smccc_result_registers() {
 
 /// The x86 rows whose ABI is an empty register footprint carry no information
 /// beyond `PURE` / `MEM_CLOBBER`; arch scoping lives in the row's
-/// `preset_arches`, not in its class.  Pins the classification each name
+/// `scope`, not in its class.  Pins the classification each name
 /// resolves to on both x86 widths, and that no other arch answers for them.
 #[test]
 fn x86_empty_footprint_rows_are_pure_or_mem_clobber() {
