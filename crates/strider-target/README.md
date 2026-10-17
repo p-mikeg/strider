@@ -2,8 +2,8 @@
 
 Pure target-description data: architecture presets, calling conventions, and the
 CallOther ABI table, the descriptors the lifting and optimizing layers read. It
-sits at the bottom of the dependency graph so every layer names the same ABI
-types.
+sits at the bottom of the dependency graph, above only `vn-container`, so every
+layer names the same ABI types.
 
 ## What's here
 

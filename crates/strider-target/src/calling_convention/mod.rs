@@ -140,14 +140,6 @@ impl Default for BuiltCallingConvention {
 /// Far outside any real architecture's register file.
 pub(crate) const SYNTHETIC_STACK_VN_OFFSET: u64 = 0xFFFF_FFFF_FFFF_0000;
 
-/// Byte ranges intersecting inside one address space.  `u128` because
-/// `addr_off + size` is exact only there, as in `preserves_all_bytes_of`.
-fn vns_overlap(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
-    a.addr_space == b.addr_space
-        && u128::from(a.addr_off) < u128::from(b.addr_off) + u128::from(b.size)
-        && u128::from(b.addr_off) < u128::from(a.addr_off) + u128::from(a.size)
-}
-
 /// First entry of `a` sharing a byte with any entry of `b`.  Overlap rather
 /// than equality: AArch64's `q8` CONTAINS `d8`, both overlaid on `z8` at
 /// `offset=0x5000` (`AARCH64instructions.sinc:638`/`:674` little-endian,
@@ -156,7 +148,7 @@ fn vns_overlap(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
 /// `q8` at `z8`+16 and `d8` at `z8`+24.
 fn first_overlapping<'a>(a: &'a [rsleigh::Vn], b: &[rsleigh::Vn]) -> Option<&'a rsleigh::Vn> {
     a.iter()
-        .find(|vn| b.iter().any(|other| vns_overlap(vn, other)))
+        .find(|vn| b.iter().any(|other| vn_container::vn_overlaps(vn, other)))
 }
 
 /// First entry of `list` appearing twice.  EXACT equality, unlike the
@@ -178,16 +170,14 @@ impl BuiltCallingConvention {
     /// `q4` is `d8`|`d9` and AAPCS 5.1.2.1 preserves both, while AArch64's
     /// `q8` holds `d8` plus 64 bits AAPCS64 6.1.2 lets a callee trash.
     fn preserves_all_bytes_of(&self, vn: &rsleigh::Vn) -> bool {
-        // Exact, as `vn_container::end_of` is: saturating at `u64::MAX` would
-        // shorten the range and report a partly-clobbered container preserved.
-        let end = u128::from(vn.addr_off) + u128::from(vn.size);
+        let end = vn_container::vn_end(vn);
         let mut covered_to = u128::from(vn.addr_off);
         while covered_to < end {
             let Some(reach) = self
                 .callee_saved_regs
                 .iter()
                 .filter(|s| s.addr_space == vn.addr_space && u128::from(s.addr_off) <= covered_to)
-                .map(|s| u128::from(s.addr_off) + u128::from(s.size))
+                .map(vn_container::vn_end)
                 .filter(|&s_end| s_end > covered_to)
                 .max()
             else {
@@ -366,7 +356,7 @@ impl BuiltCallingConvention {
             if self
                 .callee_saved_regs
                 .iter()
-                .any(|saved| vns_overlap(vn, saved))
+                .any(|saved| vn_container::vn_overlaps(vn, saved))
             {
                 return Err(anyhow::anyhow!(
                     "BuiltCallingConvention: varnode {vn:?} in \

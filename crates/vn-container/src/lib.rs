@@ -4,9 +4,9 @@ fn is_aliasable_space(space: rsleigh::VnSpace) -> bool {
     space == rsleigh::VnSpace::REGISTER || space == rsleigh::VnSpace::UNIQUE
 }
 
-// `u128` so the sum is exact: saturating at `u64::MAX` would report a
-// non-containing pair as contained.
-fn end_of(v: &rsleigh::Vn) -> u128 {
+/// One past `v`'s last byte. `u128`, so the sum is exact: saturating at
+/// `u64::MAX` would report a non-containing pair as contained.
+pub fn vn_end(v: &rsleigh::Vn) -> u128 {
     u128::from(v.addr_off) + u128::from(v.size)
 }
 
@@ -15,7 +15,14 @@ fn end_of(v: &rsleigh::Vn) -> u128 {
 pub fn vn_contains(outer: &rsleigh::Vn, inner: &rsleigh::Vn) -> bool {
     outer.addr_space == inner.addr_space
         && outer.addr_off <= inner.addr_off
-        && end_of(outer) >= end_of(inner)
+        && vn_end(outer) >= vn_end(inner)
+}
+
+/// True when `a` and `b` share a byte in the same address space.
+pub fn vn_overlaps(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
+    a.addr_space == b.addr_space
+        && u128::from(a.addr_off) < vn_end(b)
+        && u128::from(b.addr_off) < vn_end(a)
 }
 
 /// Keeps only the largest enclosing varnode per REGISTER/UNIQUE range (drop
@@ -66,7 +73,7 @@ pub fn dedup_overlapping_largest(all_used_variables: &[rsleigh::Vn]) -> Vec<rsle
         let mut max_end: u128 = 0;
         let mut earliest_at_max_end: u64 = u64::MAX;
         for (idx, v) in bucket {
-            let v_end = end_of(&v);
+            let v_end = vn_end(&v);
             let enclosed =
                 max_end > v_end || (max_end == v_end && earliest_at_max_end < v.addr_off);
             // `earliest_at_max_end` advances on STRICT growth only: it has to
@@ -177,7 +184,7 @@ impl ContainerMap {
                     active.push(opens[ti]);
                     ti += 1;
                 }
-                active.retain(|c| end_of(c) >= u128::from(q_start));
+                active.retain(|c| vn_end(c) >= u128::from(q_start));
                 map.insert(q, largest_container_in(&active, &q));
             }
         }
@@ -245,7 +252,7 @@ mod tests {
         assert_eq!(dedup_overlapping_largest(&[wide, narrow]), vec![wide]);
     }
 
-    /// Both ends run past `u64::MAX`, so a saturating `end_of` reports them
+    /// Both ends run past `u64::MAX`, so a saturating `vn_end` reports them
     /// equal and calls the WIDER varnode contained in the narrower, which then
     /// underflows the container-shift arithmetic.
     #[test]
@@ -364,5 +371,27 @@ mod tests {
         // No queries, so every lookup misses and falls through to the scan.
         let cm = ContainerMap::build(&[rax], std::iter::empty());
         assert_eq!(cm.container_of(&[rax], &reg(0, 4)), rax);
+    }
+
+    /// Exact past `u64::MAX`, half-open, and per space.
+    #[test]
+    fn vn_overlaps_is_exact_half_open_and_per_space() {
+        assert_eq!(vn_end(&reg(u64::MAX, 4)), u128::from(u64::MAX) + 4);
+        // A saturated end would put both ranges at `u64::MAX` and miss the
+        // byte they share.
+        assert!(vn_overlaps(&reg(u64::MAX, 4), &reg(u64::MAX - 1, 2)));
+        assert!(vn_overlaps(&reg(0, 8), &reg(4, 2)));
+        assert!(
+            !vn_overlaps(&reg(0, 4), &reg(4, 4)),
+            "adjacent ranges share no byte"
+        );
+        assert!(
+            !vn_overlaps(&reg(4, 4), &reg(0, 4)),
+            "adjacent ranges share no byte"
+        );
+        assert!(
+            !vn_overlaps(&reg(0, 8), &uniq(0, 8)),
+            "spaces never overlap"
+        );
     }
 }
