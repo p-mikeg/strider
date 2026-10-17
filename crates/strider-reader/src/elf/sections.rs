@@ -146,33 +146,6 @@ fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> Ad
     AddressRanges::merged(out)
 }
 
-/// The instruction-FETCH image, kind-dispatched per the module docs: PT_LOAD
-/// program headers for ET_EXEC / ET_DYN, sections at their
-/// [`ElfSectionLayout`] bases otherwise.
-///
-/// A writable-but-executable mapping is included, since a firmware image can
-/// ship a single RWX PT_LOAD and there would otherwise be nothing to decode.
-/// That makes this a superset of the runtime-immutable image;
-/// [`super::ElfFileMemReader`] subtracts the writable ones from it for its
-/// [`crate::ReadOnlyMemory`] view.
-///
-/// # Errors
-///
-/// When an accepted segment or section's `data()` can't be read, its
-/// `address + length` would exceed `u64::MAX`, or the copies exceed the
-/// loader's amplification ceiling over the distinct file bytes behind them;
-/// every mapping is copied here, the caller holding no image to window into.
-pub fn elf_get_loadable_regions(obj: &object::File<'_>) -> Result<Vec<MemRegion>> {
-    Ok(collect_regions(
-        obj,
-        None,
-        RegionSource::Auto,
-        LoadFilter::CodeAndReadOnly,
-        &ElfSectionLayout::new(obj),
-    )?
-    .regions)
-}
-
 /// The mappings one walk accepted, and which addresses are writable.
 #[derive(Default)]
 pub(crate) struct LoadedImage {
@@ -308,11 +281,10 @@ impl AddressRanges {
 }
 
 /// One accepted section, carrying everything the section walks read.
-struct AcceptedSection<'d> {
+struct AcceptedSection {
     index: usize,
     base: u64,
     file_range: Option<(u64, u64)>,
-    data: &'d [u8],
 }
 
 /// Every section the section walk accepts under `filter`, in index order.
@@ -327,11 +299,11 @@ struct AcceptedSection<'d> {
 /// # Errors
 ///
 /// When an accepted section's `data()` can't be read.
-fn accepted_sections<'d>(
-    obj: &object::File<'d>,
+fn accepted_sections(
+    obj: &object::File<'_>,
     filter: LoadFilter,
     layout: &ElfSectionLayout,
-) -> Result<Vec<AcceptedSection<'d>>> {
+) -> Result<Vec<AcceptedSection>> {
     let mut out = Vec::new();
     for sec in obj.sections() {
         let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
@@ -348,7 +320,6 @@ fn accepted_sections<'d>(
             index: sec.index().0,
             base: layout.section_base(&sec),
             file_range: sec.file_range(),
-            data,
         });
     }
     Ok(out)
@@ -360,11 +331,11 @@ fn accepted_sections<'d>(
 /// # Errors
 ///
 /// Same as [`accepted_sections`].
-fn deduped_sections<'d>(
-    obj: &object::File<'d>,
+fn deduped_sections(
+    obj: &object::File<'_>,
     filter: LoadFilter,
     layout: &ElfSectionLayout,
-) -> Result<Vec<AcceptedSection<'d>>> {
+) -> Result<Vec<AcceptedSection>> {
     let mut seen: std::collections::BTreeSet<u64> = std::collections::BTreeSet::new();
     Ok(accepted_sections(obj, filter, layout)?
         .into_iter()
@@ -875,19 +846,16 @@ pub(crate) fn loaded_section_indices(
         .collect())
 }
 
-/// `bytes`, when given, is the whole image the regions are windows into; the
-/// regions then share it instead of copying. `None` copies each mapping, for a
-/// caller holding only a parsed [`object::File`].
+/// The regions `source` and `filter` select, as windows into `bytes`, the
+/// whole image `obj` was parsed from.
 ///
 /// # Errors
 ///
-/// When an accepted segment or section's `data()` can't be read, its
-/// `address + length` would exceed `u64::MAX`, or, on the copying path, the
-/// copies exceed [`MAX_COPY_AMPLIFICATION`] times the distinct file bytes
-/// behind them.
+/// When an accepted segment or section's `data()` can't be read, or its
+/// `address + length` would exceed `u64::MAX`.
 pub(crate) fn collect_regions(
     obj: &object::File<'_>,
-    bytes: Option<&FileBytes>,
+    bytes: &FileBytes,
     source: RegionSource,
     filter: LoadFilter,
     layout: &ElfSectionLayout,
@@ -915,99 +883,19 @@ pub(crate) fn collect_regions(
     })
 }
 
-/// Ceiling on the bytes the copying path materialises, as a multiple of the
-/// distinct file bytes it has been asked to copy.
-const MAX_COPY_AMPLIFICATION: u64 = 4;
-
-/// What the copying path has allocated, against the file bytes it has seen.
+/// One mapping, `range` being its file extent, as a window into `bytes`.
 ///
-/// Headers name a file extent and an address independently, so N mappings can
-/// each copy one blob: `sh_size` is bounded by the file, their sum is not. A
-/// crafted 8 MB image with 65k allocatable section headers over one 4 MB blob
-/// otherwise asks for a quarter of a terabyte and aborts.
+/// # Errors
 ///
-/// The denominator is the merged UNION of those extents, not a set of
-/// `(offset, size)` keys: N windows over one blob at N consecutive offsets are
-/// N distinct keys but cover blob + N bytes, so keys would let the copies grow
-/// in lockstep with the denominator and the ratio never fire.
-#[derive(Default)]
-struct CopyBudget {
-    copied: u64,
-    /// Disjoint, non-touching `[start, end)` file extents, keyed by start.
-    covered: BTreeMap<u64, u64>,
-    covered_total: u64,
-}
-
-impl CopyBudget {
-    /// # Errors
-    ///
-    /// When the copies exceed [`MAX_COPY_AMPLIFICATION`] times the distinct
-    /// file bytes behind them.
-    fn charge(&mut self, range: Option<(u64, u64)>, len: u64) -> Result<()> {
-        let fresh = match range {
-            Some((offset, extent)) => self.cover(offset, extent),
-            // No file extent to attribute the bytes to, so they are their own
-            // denominator.
-            None => len,
-        };
-        self.covered_total = self.covered_total.saturating_add(fresh);
-        self.copied = self.copied.saturating_add(len);
-        if self.copied > self.covered_total.saturating_mul(MAX_COPY_AMPLIFICATION) {
-            anyhow::bail!(
-                "loading would copy {} bytes out of {} distinct file bytes",
-                self.copied,
-                self.covered_total
-            );
-        }
-        Ok(())
-    }
-
-    /// Adds `[offset, offset + len)` to the union, absorbing every extent it
-    /// overlaps or touches, and answers the bytes the union gained.
-    fn cover(&mut self, offset: u64, len: u64) -> u64 {
-        let Some(end) = offset.checked_add(len).filter(|_| len != 0) else {
-            return 0;
-        };
-        let (mut lo, mut hi, mut absorbed) = (offset, end, 0u64);
-        // Descending from the last extent starting at or before `hi`: extents
-        // are disjoint, so the first one ending below `lo` ends the run.
-        while let Some((&start, &stop)) = self.covered.range(..=hi).next_back() {
-            if stop < lo {
-                break;
-            }
-            (lo, hi) = (lo.min(start), hi.max(stop));
-            absorbed += stop - start;
-            self.covered.remove(&start);
-        }
-        self.covered.insert(lo, hi);
-        (hi - lo) - absorbed
-    }
-}
-
-/// One mapping of `data`, as a window into `bytes` when the image is at hand
-/// and `range` is its file-backed extent, else as an owned copy charged to
-/// `budget`.
-fn region_from(
-    bytes: Option<&FileBytes>,
-    addr: u64,
-    range: Option<(u64, u64)>,
-    data: &[u8],
-    budget: &mut CopyBudget,
-) -> Result<MemRegion> {
+/// When a mapping with bytes has no file extent, or the window does not fit
+/// `bytes` or the address space.
+fn region_from(bytes: &FileBytes, addr: u64, range: Option<(u64, u64)>) -> Result<MemRegion> {
+    let (offset, len) = range
+        .ok_or_else(|| anyhow::anyhow!("the mapping at {addr:#x} has bytes but no file extent"))?;
     // The byte at `u64::MAX` is unmappable, so a mapping ending exactly at
     // 2^64 loses that byte rather than failing the load.
-    let tops_out =
-        |len: u64| len != 0 && addr.checked_add(len).is_none() && addr.wrapping_add(len) == 0;
-    match (bytes, range) {
-        (Some(bytes), Some((offset, len))) => {
-            MemRegion::window(addr, bytes, offset, len - u64::from(tops_out(len)))
-        }
-        _ => {
-            budget.charge(range, data.len() as u64)?;
-            let len = data.len() - usize::from(tops_out(data.len() as u64));
-            MemRegion::new(addr, data[..len].to_vec())
-        }
-    }
+    let tops_out = len != 0 && addr.checked_add(len).is_none() && addr.wrapping_add(len) == 0;
+    MemRegion::window(addr, bytes, offset, len - u64::from(tops_out))
 }
 
 /// One accepted PT_LOAD, carrying everything the segment walk reads.
@@ -1031,7 +919,7 @@ struct AcceptedSegment<'d> {
 /// of bytes that belong to no mapping.
 fn collect_loadable_segments<'d>(
     obj: &object::File<'d>,
-    bytes: Option<&FileBytes>,
+    bytes: &FileBytes,
     filter: LoadFilter,
 ) -> Result<LoadedImage> {
     let mut out = LoadedImage::default();
@@ -1096,16 +984,10 @@ fn collect_loadable_segments<'d>(
     let mut keep: Vec<usize> = widest.into_values().collect();
     keep.sort_unstable();
 
-    let mut budget = CopyBudget::default();
     for i in keep {
         let seg = &accepted[i];
-        out.regions.push(region_from(
-            bytes,
-            seg.addr,
-            Some(seg.file_range),
-            seg.data,
-            &mut budget,
-        )?);
+        out.regions
+            .push(region_from(bytes, seg.addr, Some(seg.file_range))?);
     }
     Ok(out)
 }
@@ -1115,7 +997,7 @@ fn collect_loadable_segments<'d>(
 /// on that base.
 fn collect_loadable_sections_dedup(
     obj: &object::File<'_>,
-    bytes: Option<&FileBytes>,
+    bytes: &FileBytes,
     filter: LoadFilter,
     layout: &ElfSectionLayout,
 ) -> Result<LoadedImage> {
@@ -1136,15 +1018,9 @@ fn collect_loadable_sections_dedup(
             }
         }
     }
-    let mut budget = CopyBudget::default();
     for sec in deduped_sections(obj, filter, layout)? {
-        out.regions.push(region_from(
-            bytes,
-            sec.base,
-            sec.file_range,
-            sec.data,
-            &mut budget,
-        )?);
+        out.regions
+            .push(region_from(bytes, sec.base, sec.file_range)?);
     }
     Ok(out)
 }
