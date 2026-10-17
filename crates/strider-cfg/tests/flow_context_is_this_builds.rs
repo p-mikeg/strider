@@ -7,8 +7,8 @@
 //! decodes in, and its IT block is the shape that makes it observable:
 //! `condit` decides whether the bytes after an `IT` are predicated.
 //!
-//! `SleighArch::flow_commit_vars` names what is re-derived, each with the
-//! flow class that decides what it is erased TO: the pspec default for
+//! `SleighArch::flow_commit_vars` names what is re-derived, and the sla's
+//! flow class decides what each is erased TO: the pspec default for
 //! `noflow` `condit`, the predecessor's value for flowing `TEEMode`. The
 //! cross-build half of that is pinned through the production `Lifter` by
 //! `reused_lifter_rederives_flow_context`.
@@ -30,7 +30,7 @@ struct Engine {
     defaults: strider_cfg::FlowContext,
     /// What `Lifter::build_cfg` lends the builder so it can re-derive a
     /// committed per-address context from this build's own decode.
-    flow_commit_defaults: Vec<(&'static str, strider_target::FlowCommit, u32)>,
+    flow_commit_defaults: Vec<(&'static str, strider_cfg::FlowCommit, u32)>,
 }
 
 impl Engine {
@@ -49,10 +49,13 @@ impl Engine {
             .map(|name| (*name, sleigh.get_context_at(0, name).expect("default")))
             .collect();
         let defaults = flow.snapshot(&sleigh, BASE);
-        let flow_commit_defaults: Vec<(&'static str, strider_target::FlowCommit, u32)> = arch
+        let flow_commit_defaults: Vec<(&'static str, strider_cfg::FlowCommit, u32)> = arch
             .flow_commit_vars()
             .iter()
-            .map(|&(name, flow)| (name, flow, sleigh.get_context_at(0, name).expect("default")))
+            .map(|&name| {
+                let default = sleigh.get_context_at(0, name).expect("default");
+                (name, flow.commit_class(name), default)
+            })
             .collect();
         Self {
             sleigh,

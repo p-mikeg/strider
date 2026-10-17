@@ -92,7 +92,7 @@ pub struct Lifter<R: rsleigh::MemReader> {
     /// Each [`SleighArch::flow_commit_vars`] var with its flow class and pspec
     /// default, read once per engine. A default is committed globally, so any
     /// address reads the same value.
-    flow_commit_defaults: Vec<(&'static str, strider_target::FlowCommit, u32)>,
+    flow_commit_defaults: Vec<(&'static str, strider_cfg::FlowCommit, u32)>,
     /// The entry context each ISA mode last pinned, keyed by the mode value
     /// ([`SleighArch::entry_mode_context`]), `None` for an arch without one.
     entry_contexts: rustc_hash::FxHashMap<Option<u32>, strider_cfg::FlowContext>,
@@ -140,10 +140,13 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // A hard error, unlike `transient_defaults` below: a named var the sla
         // does not declare means this preset's list is wrong, and silently
         // dropping it would leave the leak it exists to close.
-        let flow_commit_defaults: Vec<(&'static str, strider_target::FlowCommit, u32)> = arch
+        let flow_commit_defaults: Vec<(&'static str, strider_cfg::FlowCommit, u32)> = arch
             .flow_commit_vars()
             .iter()
-            .map(|&(name, flow)| Ok((name, flow, sleigh.get_context_at(0, name)?)))
+            .map(|&name| {
+                let class = flow_vars.commit_class(name);
+                Ok((name, class, sleigh.get_context_at(0, name)?))
+            })
             .collect::<Result<_>>()?;
         let transient_defaults = arch
             .transient_decode_vars()
