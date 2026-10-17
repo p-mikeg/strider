@@ -219,10 +219,15 @@
   copied.
 - `ElfFileMemReader`'s `ReadOnlyMemory` view is the image's immutable
   mappings, built once, rather than the fetch image minus its writable ranges
-  at every read; a read of a writable address errors "not mapped", where it
-  said "is in a writable mapping". Where a writable mapping cuts two
-  overlapping read-only PT_LOADs into pieces at one start, a crafted shape,
-  the ROM view serves the later piece's bytes, as `OwnedElf::regions` does.
+  at every read; a read of a writable address errors as unmapped ("not
+  mapped", or "spans past mapped memory" for a read running into one), where
+  it said "is in a writable mapping". Two crafted shapes serve other bytes:
+  where a writable mapping cuts two overlapping read-only mappings into
+  pieces at one start, the ROM view serves the later piece's bytes, as
+  `OwnedElf::regions` does; and on an image the section walk serves without
+  a rebase (ET_CORE, an unknown `e_type`), a read-only section that shares
+  its address with an earlier writable one answers ROM reads past that one's
+  end, where fetch keeps only the earlier section.
 
 ### Fixed
 

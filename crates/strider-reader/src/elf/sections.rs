@@ -955,10 +955,10 @@ fn collect_loadable_segments<'d>(
         // image happily, and the two real loaders disagree (Linux `elf_map`
         // sizes the mapping from `p_filesz`, glibc rejects the segment). The
         // mapped extent is taken as `p_memsz` because `writable` /
-        // `executable` are tracked on it, so serving the tail would let the
-        // ROM view (read-only regions cut by `writable`) answer for the tail
-        // of a WRITABLE segment, and would answer a straddling fetch from the
-        // wrong one. Clamping under-approximates rather than over-serves: an
+        // `executable` are tracked on it, so serving the tail would let a ROM
+        // view that takes every segment and cuts `writable` back out
+        // (`ImmutableAndRelocatedGot`) answer for the tail of a WRITABLE
+        // segment, and would answer a straddling fetch from the wrong one. Clamping under-approximates rather than over-serves: an
         // address in the tail reads as unmapped.
         // Saturating on a 32-bit host, where `p_memsz` can exceed
         // `usize::MAX`: the `min` then yields `data.len()`, which is right,

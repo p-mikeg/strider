@@ -73,30 +73,30 @@ fn bytes_past_p_memsz_are_not_mapped() {
     );
 }
 
-/// The same shape on a WRITABLE-and-executable PT_LOAD. `ElfFileMemReader`'s
-/// ROM view holds no writable mapping, so neither the mapping nor the file's
-/// bytes past its `p_memsz` answer a read through a trait that promises the
-/// bytes cannot change.
+/// The same shape on a WRITABLE PT_LOAD, under the one ROM view that takes
+/// writable segments and cuts `writable` back out (`got_is_rom`): the cut
+/// stops at `p_memsz`, so neither the mapping nor the file's bytes past it
+/// may answer a read through a trait that promises the bytes cannot change.
 #[test]
-fn an_rwx_tail_is_not_served_as_read_only_memory() {
-    // PF_R | PF_W | PF_X
-    let image = elf_with_one_pt_load(0b111);
+fn a_writable_tail_is_not_served_as_read_only_memory() {
+    // PF_R | PF_W
+    let image = elf_with_one_pt_load(0b110);
     let elf = OwnedElf::parse(image).expect("parse");
-    let reader =
-        ElfFileMemReader::new(&elf, RelocationMode::Unapplied).expect("ElfFileMemReader::new");
+    let reader = ElfFileMemReader::new(&elf, RelocationMode::Applied { got_is_rom: true })
+        .expect("ElfFileMemReader::new");
 
     let mut buf = [0u8; 8];
     assert!(
         reader.read(BASE, &mut buf).is_err(),
-        "an RWX mapping is not read-only memory, so even its prefix must be \
-         refused here",
+        "a writable mapping is not read-only memory, so even its prefix must \
+         be refused here",
     );
     let past = BASE + MEMSZ;
     assert!(
         reader.read(past, &mut buf).is_err(),
-        "{past:#x} is the tail of an RWX mapping past p_memsz; answering it \
-         lets a constant-address load fold to the file's initial value while \
-         a store to the same address is live",
+        "{past:#x} is the tail of a writable mapping past p_memsz; answering \
+         it lets a constant-address load fold to the file's initial value \
+         while a store to the same address is live",
     );
 }
 
