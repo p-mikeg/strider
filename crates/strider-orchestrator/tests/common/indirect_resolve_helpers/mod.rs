@@ -4,7 +4,7 @@
 //! flat re-exports below, not from the sub-modules.
 //!
 //! The target these helpers return is NOT the `ValueId` recorded at lift time:
-//! `ConstantFold`'s `replace_all_uses` rewires can invalidate that id, so they
+//! `ConstantFold`'s `replace_value` rewires can invalidate that id, so they
 //! re-read the placeholder `IndirectBranch`'s current value-input off the
 //! post-optimisation graph.
 
