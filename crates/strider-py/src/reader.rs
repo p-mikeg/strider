@@ -6,7 +6,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyDict};
 
 use crate::errors::into_strider_err;
-use strider_reader::elf::{ElfSectionLayout, LoadFilter, OpdTable, RegionSource, without_ranges};
+use strider_reader::elf::{
+    AddressSet, ElfSectionLayout, LoadFilter, OpdTable, RegionSource, without_ranges,
+};
 use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory, RegionIndex};
 
 /// The GIL already serialises every access; `Mutex` is here so a wrapper
@@ -263,7 +265,7 @@ pub struct PyLoadedElf {
     elfs: Vec<strider_reader::OwnedElf>,
     /// Every address a loaded ELF maps writable, which no ELF's read-only
     /// view may serve.
-    writable: Vec<(u64, u64)>,
+    writable: AddressSet,
     /// Instruction fetch / raw reads; includes writable sections when
     /// relocations were applied.
     mem: PyBufferReader,
@@ -301,20 +303,12 @@ fn region_spans(regions: &[MemRegion]) -> Vec<(u64, u64)> {
         .collect()
 }
 
-/// Every address `new` covers is covered by `existing`.
-fn spans_covered(existing: &[(u64, u64)], new: &[(u64, u64)]) -> bool {
-    let mut spans = existing.to_vec();
-    spans.sort_unstable();
-    let mut merged: Vec<(u64, u64)> = Vec::with_capacity(spans.len());
-    for (lo, hi) in spans {
-        match merged.last_mut() {
-            Some(last) if lo <= last.1 => last.1 = last.1.max(hi),
-            _ => merged.push((lo, hi)),
-        }
-    }
-    // Merged spans are disjoint, so a span inside their union is inside one.
-    new.iter()
-        .all(|&(lo, hi)| merged.iter().any(|&(s, e)| s <= lo && hi <= e))
+/// Every address `new` maps is mapped by `existing`.
+fn regions_covered(existing: &[MemRegion], new: &[MemRegion]) -> bool {
+    let mapped = AddressSet::merged(region_spans(existing));
+    region_spans(new)
+        .iter()
+        .all(|&(lo, hi)| mapped.covers(lo, hi))
 }
 
 /// A sub-range where `new` serves different bytes than `existing` at an
@@ -855,9 +849,10 @@ impl PyLoadedElf {
     ) -> PyResult<()> {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
         let mem_regions = elf_to_mem_regions(&obj, self.source, apply_relocations)?;
-        let writable = obj
-            .writable_ranges(self.source.into())
-            .map_err(into_strider_err)?;
+        let writable = AddressSet::merged(
+            obj.writable_ranges(self.source.into())
+                .map_err(into_strider_err)?,
+        );
         let rom_regions = without_ranges(
             elf_to_rom_regions(&obj, self.source, apply_relocations, relocated_got_is_rom)?,
             &self.writable,
@@ -877,11 +872,11 @@ impl PyLoadedElf {
         // here and a merge would append a second copy of both. An image
         // mapping nothing still goes through, for its symbols.
         if !mem_regions.is_empty()
-            && spans_covered(
-                &region_spans(&self.mem.inner.lock_shared().regions),
-                &region_spans(&mem_regions),
-            )
-            && spans_covered(&self.writable, &writable)
+            && regions_covered(&self.mem.inner.lock_shared().regions, &mem_regions)
+            && writable
+                .as_slice()
+                .iter()
+                .all(|&(lo, hi)| self.writable.covers(lo, hi))
         {
             return Ok(());
         }
@@ -892,7 +887,14 @@ impl PyLoadedElf {
             rom.regions = kept;
         }
         invalidate_and_extend(&self.rom, rom_regions);
-        self.writable.extend(writable);
+        self.writable = AddressSet::merged(
+            self.writable
+                .as_slice()
+                .iter()
+                .chain(writable.as_slice())
+                .copied()
+                .collect(),
+        );
         self.elfs.push(obj);
         self.symbol_table.lock_shared().take();
         self.data_ranges.lock_shared().take();
@@ -978,9 +980,10 @@ fn load_elf_impl(
         apply_relocations,
         relocated_got_is_rom,
     )?);
-    let writable = obj
-        .writable_ranges(source.into())
-        .map_err(into_strider_err)?;
+    let writable = AddressSet::merged(
+        obj.writable_ranges(source.into())
+            .map_err(into_strider_err)?,
+    );
     Ok(PyLoadedElf {
         elfs: vec![obj],
         writable,

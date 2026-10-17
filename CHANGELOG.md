@@ -138,6 +138,7 @@
   94 ms on a 124 MB `.so`. `ElfFileMemReader::new(&elf,
   RelocationMode::Unapplied)` windows an `OwnedElf`'s bytes; a caller holding
   only an `object::File` or a byte slice builds one with `OwnedElf::parse`.
+- `elf::without_ranges` takes an `&elf::AddressSet` instead of a range slice.
 
 ### Changed, Python
 
@@ -326,6 +327,8 @@
 - `FunctionBuilder::record_register_arg_carriers` outside `test-util`.
 - `ElfFileMemReader::new(&OwnedElf, elf::RelocationMode)` and
   `ElfFileMemReader::check_unchanged`.
+- `elf::AddressSet`, the merged range set `AddressSet::merged` builds;
+  `AddressSet::covers` answers whether it holds a whole range in O(log n).
 
 ## 0.2.0
 
