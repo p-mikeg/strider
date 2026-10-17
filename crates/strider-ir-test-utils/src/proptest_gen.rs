@@ -129,23 +129,27 @@ struct Pools {
 impl Pools {
     fn bucket(&self, ty: ValueType) -> &Vec<strider_ir::Value> {
         match ty {
-            ValueType::I8 => &self.u8s,
-            ValueType::I16 => &self.u16s,
-            ValueType::I32 => &self.u32s,
-            ValueType::I64 => &self.u64s,
+            ValueType::Int(8) => &self.u8s,
+            ValueType::Int(16) => &self.u16s,
+            ValueType::Int(32) => &self.u32s,
+            ValueType::Int(64) => &self.u64s,
             ValueType::I1 => &self.bools,
-            _ => panic!("unsupported width in strategy: {ty:?}"),
+            ValueType::Int(_) | ValueType::Float(_) => {
+                panic!("unsupported width in strategy: {ty:?}")
+            }
         }
     }
 
     fn bucket_mut(&mut self, ty: ValueType) -> &mut Vec<strider_ir::Value> {
         match ty {
-            ValueType::I8 => &mut self.u8s,
-            ValueType::I16 => &mut self.u16s,
-            ValueType::I32 => &mut self.u32s,
-            ValueType::I64 => &mut self.u64s,
+            ValueType::Int(8) => &mut self.u8s,
+            ValueType::Int(16) => &mut self.u16s,
+            ValueType::Int(32) => &mut self.u32s,
+            ValueType::Int(64) => &mut self.u64s,
             ValueType::I1 => &mut self.bools,
-            _ => panic!("unsupported width in strategy: {ty:?}"),
+            ValueType::Int(_) | ValueType::Float(_) => {
+                panic!("unsupported width in strategy: {ty:?}")
+            }
         }
     }
 

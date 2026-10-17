@@ -198,12 +198,16 @@ SShiftRight,ShiftLeft,Mul}`; `IntCmpOp{Equal,Sless,Less,Carry,Scarry,Sborrow}`
 `ExtendOp{ZeroExtend,SignExtend}`. Subtraction and the `<=` / `!=` comparisons
 arrive already lowered.
 
-`ValueType` (`node/value_type.rs`): `I1, I8, I16, I24, I32, I40, I48, I56, I64,
-I72, I80, I96, I112, I128, I256, I512, F16, F32, F64, F80, F128`. Booleans are
-the 1-bit integer `I1`. The width set is measured against the sla specs: an
-unmapped width fails the whole function's lift, so every width a Sleigh varnode
-or temporary carries needs a variant. `bit_width(I1) == 1` (the one case where
-width != byte_size*8); `int_from_bytes(1) -> I8`, never `I1`.
+`ValueType` (`node/value_type.rs`): `enum { Int(u16), Float(u16) }`, the width
+in bits. The valid widths are the `SUPPORTED` list: integers 1, 8, 16, 24, 32,
+40, 48, 56, 64, 72, 80, 96, 112, 128, 256, 512 and floats 16, 32, 64, 80, 128.
+`ValueType::I1` (booleans are the 1-bit integer) is the one named type; write
+the rest `ValueType::int(32)` / `ValueType::float(64)`, which panic on an
+unlisted width, and match `Int(w)` / `Float(w)`. The list is measured against
+the sla specs: an unmapped width fails the whole function's lift, so every
+width a Sleigh varnode or temporary carries needs an entry. `bit_width(I1) ==
+1` (the one case where width != byte_size*8); `int_from_bytes(1) -> I8`, never
+`I1`. `Debug` spells `I32`, `Display` `i32`.
 
 `expected_signature` (`node_signature.rs`) is the SSoT for each kind's slot
 kinds. `Graph` holds only structure; per-function overlay (entry, `default_cc`,
