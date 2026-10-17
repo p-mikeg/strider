@@ -8,15 +8,16 @@
 
 use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
-use strider_cfg::{Builder, Cfg, CfgOptions};
+use strider_cfg::{Cfg, CfgOptions, DecodeEngine};
 use strider_target::SleighArch;
 
 fn build(bytes: Vec<u8>, start: u64) -> Cfg {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, start);
-    let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    Builder::for_arch(&arch, &mut sleigh, start, &CfgOptions::default())
-        .build()
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(start.into(), &CfgOptions::default())
         .expect("build")
 }
 

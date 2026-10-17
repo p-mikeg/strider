@@ -25,16 +25,12 @@
 //! its own ISA-mode bit into the captured context it hands the target (see
 //! [`FlowVars::with_mode_bit`]).
 
-/// The context vars the sla marks as flowing. Constant per sla, so the lift
-/// engine reads it once and lends it to every [`Builder`](super::Builder).
+/// The context vars the sla marks as flowing. Constant per sla, so the
+/// [`DecodeEngine`](crate::DecodeEngine) reads it once.
 #[derive(Default)]
-pub struct FlowVars {
+pub(crate) struct FlowVars {
     vars: Vec<String>,
 }
-
-/// Shared empty set, so a builder with no flowing context borrows rather than
-/// allocates.
-pub(crate) static NO_FLOW_VARS: FlowVars = FlowVars { vars: Vec::new() };
 
 #[cfg(test)]
 thread_local! {
@@ -197,12 +193,12 @@ impl FlowVars {
 /// The value of each flow var at a program point, positionally aligned with the
 /// [`FlowVars`] that produced it.
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
-pub struct FlowContext(Vec<u32>);
+pub(crate) struct FlowContext(Vec<u32>);
 
 /// Whether the sla declares a committed context var flowing, which decides
 /// what `RegionBuilder::rederive_flow` erases it to.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum FlowCommit {
+pub(crate) enum FlowCommit {
     /// Confined to one address, so the pspec default is the erase target.
     NoFlow,
     /// Painted forward to persist, so the predecessor's value is.
@@ -249,9 +245,7 @@ mod tests {
         assert_eq!(vars.with_mode_bit(&base, "nope", true), base);
     }
 
-    /// `Builder::with_flow_context` supplies both together, and
-    /// setters and `function_mode` defaults to an empty `FlowContext`, so a
-    /// `FlowVars` can be handed a context it did not produce.
+    /// A context built for another `FlowVars` (an empty one, say) must not index out of bounds.
     #[test]
     fn a_context_shorter_than_the_var_list_does_not_index_out_of_bounds() {
         let vars = arm_like();
