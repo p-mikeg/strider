@@ -41,8 +41,8 @@ pub use indirect_resolver::{Arms, ResolvedTarget, ResolvedTargets};
 pub use options::{CfgOptions, DataRanges, FunctionBound, NO_TARGETS, seated_from, seated_in};
 pub use pcode_text::{insn_plain_text, insn_text};
 
-pub use query::IfRegionSuccessors;
 pub(crate) use query::is_addr_tail_call;
+pub use query::{IfRegionSuccessors, user_op_of};
 pub use types::{
     MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator, UndecodableTarget,
 };

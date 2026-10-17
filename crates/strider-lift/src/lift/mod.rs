@@ -265,7 +265,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             .map(|wrapped| &wrapped.insn)
             .filter(|insn| insn.opcode == rsleigh::Opcode::CallOther)
         {
-            let Ok((_, name)) = call::decode_user_op(insn, self.user_op_names()) else {
+            let Some((_, name)) = strider_cfg::user_op_of(insn, self.user_op_names()) else {
                 continue;
             };
             match classify_with(overrides, self.arch().preset(), name) {
@@ -357,8 +357,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         )
     }
 
-    /// `cfg_opts` is what `cfg` was built with: the lift classifies each
-    /// `CallOther` under its `call_other_overrides`, as the build did. `cc` is
+    /// `cfg_opts` classifies each `CallOther`'s footprint under its
+    /// `call_other_overrides`; whether one ends control is the `cfg`'s own
+    /// `NoReturn` seal. Pass the options `cfg` was built with. `cc` is
     /// the function default; a direct Call whose target is in
     /// `per_address_ccs` is built with that override instead. The overrides
     /// must be built against this engine's registers and fit its arch, as
