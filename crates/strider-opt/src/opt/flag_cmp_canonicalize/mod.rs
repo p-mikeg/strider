@@ -635,7 +635,9 @@ fn single_bit_term(
                     0,
                     matches!(f.kind_of_value(src), NodeKind::IntCmpOp(_)).then_some(src),
                 )),
-                _ => single_bit_term(f, src, depth + 1),
+                Some(ValueType::Int(_) | ValueType::Float(_)) | None => {
+                    single_bit_term(f, src, depth + 1)
+                }
             }
         }
         // `And(v, single-bit const)` keeps that bit; its value stays unknown.

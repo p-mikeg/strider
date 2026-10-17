@@ -132,11 +132,11 @@ impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
                 }
             }
             NodeKind::FloatConst(bits) => match self.out_type(node) {
-                Some(ValueType::F32) => {
+                Some(ValueType::Float(32)) => {
                     let v = f32::from_bits(*bits as u32);
                     format!("const {v}:f32")
                 }
-                Some(ValueType::F64) => {
+                Some(ValueType::Float(64)) => {
                     let v = f64::from_bits(*bits);
                     format!("const {v}:f64")
                 }
