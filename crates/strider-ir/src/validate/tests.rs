@@ -909,10 +909,9 @@ fn graph_invariants_dangling_switch_table_id_detected() {
     });
 }
 
-/// The width-agreement rule had no assertion anywhere, so an edit to its
-/// `checked` table or its bitcast arm would have passed the suite. Both arms
-/// are pinned: an operand narrower than the output, and a bitcast between
-/// types of different size.
+/// An `Add` operand narrower than the output is the mismatch; the comparison
+/// and bitcast arms are pinned by
+/// `graph_invariants_comparison_and_bitcast_widths_detected`.
 #[test]
 fn graph_invariants_arithmetic_width_mismatch_detected() {
     let mut s = spine();
@@ -961,6 +960,57 @@ fn graph_invariants_a_shift_count_may_be_narrower_than_the_output() {
 
     assert_no_validation_err(&s.f, |e| {
         matches!(e, ValidationError::ArithmeticWidthMismatch { .. })
+    });
+}
+
+/// A comparison is evaluated at operand 0's width, so a wider operand 1 is
+/// the mismatch; a bitcast must keep its byte size.
+#[test]
+fn graph_invariants_comparison_and_bitcast_widths_detected() {
+    let mut s = spine();
+    let (_, narrow) = int_const(&mut s.f, 1, ValueType::int(8));
+    let (_, wide) = int_const(&mut s.f, 2, ValueType::int(32));
+    let cmp = s.f.graph_mut().create_node(
+        NodeKind::IntCmpOp(crate::IntCmpOp::Equal),
+        [narrow, wide],
+        [ValueKind::Typed(ValueType::I1)],
+    );
+    let [flag] = s.f.node_outputs_exact::<1>(cmp).unwrap();
+    let cast = s.f.graph_mut().create_node(
+        NodeKind::IntBitsToFloat,
+        [wide],
+        [ValueKind::Typed(ValueType::float(64))],
+    );
+    let [bits] = s.f.node_outputs_exact::<1>(cast).unwrap();
+    let _ret = s.f.graph_mut().create_node(
+        NodeKind::Return,
+        [s.entry_ctrl, s.mem_value, flag, bits],
+        [],
+    );
+
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::ArithmeticWidthMismatch {
+                kind: NodeKind::IntCmpOp(_),
+                operand_idx: 1,
+                operand_width: 32,
+                expected_width: 8,
+                ..
+            }
+        )
+    });
+    assert_validation_err(&s.f, |e| {
+        matches!(
+            e,
+            ValidationError::ArithmeticWidthMismatch {
+                kind: NodeKind::IntBitsToFloat,
+                operand_idx: 0,
+                operand_width: 32,
+                expected_width: 64,
+                ..
+            }
+        )
     });
 }
 
