@@ -113,6 +113,20 @@ impl FunctionBuilder {
         self.internal_registers = registers;
     }
 
+    /// Registers each arg-passing register's largest tracked container's
+    /// `InitialVar` as the carrier for that argument's positional index.
+    pub fn record_register_arg_carriers(&mut self) {
+        let arg_regs: Vec<rsleigh::Vn> = self.function.default_cc().arg_passing_regs.clone();
+        for (i, reg) in arg_regs.iter().enumerate() {
+            let container = vn_container::largest_container_in(self.function.all_vns(), reg);
+            if let Some(value) = self.function.initial_var_value(&container) {
+                self.function
+                    .side_tables_mut()
+                    .register_arg_value(i as u32, value);
+            }
+        }
+    }
+
     /// Attributes every subsequent `create_node` to `addr` until replaced.
     #[inline]
     pub fn set_lift_addr(&mut self, addr: Option<u64>) {

@@ -132,9 +132,11 @@ pub fn smallest_enclosing(vns: &[rsleigh::Vn], vn: &rsleigh::Vn) -> Option<rslei
 }
 
 /// O(1) `vn -> container` lookup for the register-aliasing reads, built once
-/// per function. A miss falls back to a linear scan.
+/// per function over the tracked set, which it keeps: a miss falls back to a
+/// linear scan of it.
 #[derive(Debug, Clone, Default)]
 pub struct ContainerMap {
+    tracked: Box<[rsleigh::Vn]>,
     map: FxHashMap<rsleigh::Vn, rsleigh::Vn>,
 }
 
@@ -188,16 +190,19 @@ impl ContainerMap {
                 map.insert(q, largest_container_in(&active, &q));
             }
         }
-        Self { map }
+        Self {
+            tracked: tracked.into(),
+            map,
+        }
     }
 
     /// Map hit, else an on-the-fly [`largest_container_in`] scan for an ad-hoc
     /// varnode. Returns `vn` when nothing tracked contains it.
-    pub fn container_of(&self, tracked: &[rsleigh::Vn], vn: &rsleigh::Vn) -> rsleigh::Vn {
+    pub fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
         if let Some(c) = self.map.get(vn) {
             return *c;
         }
-        largest_container_in(tracked, vn)
+        largest_container_in(&self.tracked, vn)
     }
 }
 
@@ -286,9 +291,9 @@ mod tests {
         assert_eq!(survivors, vec![a, b]);
 
         let cm = ContainerMap::build(&survivors, [a, b, inner]);
-        assert_eq!(cm.container_of(&survivors, &inner), b, "widest encloser");
-        assert_eq!(cm.container_of(&survivors, &a), a);
-        assert_eq!(cm.container_of(&survivors, &b), b);
+        assert_eq!(cm.container_of(&inner), b, "widest encloser");
+        assert_eq!(cm.container_of(&a), a);
+        assert_eq!(cm.container_of(&b), b);
     }
 
     /// Byte-identical varnodes never subsume one another (enclosure is
@@ -334,7 +339,7 @@ mod tests {
         let cm = ContainerMap::build(&survivors, queries.iter().copied());
         for q in &queries {
             assert_eq!(
-                cm.container_of(&survivors, q),
+                cm.container_of(q),
                 largest_container_in(&survivors, q),
                 "{q:?}"
             );
@@ -365,12 +370,16 @@ mod tests {
         );
     }
 
+    /// The map keeps its own copy of the tracked set, so a miss scans that,
+    /// whatever became of the caller's slice.
     #[test]
-    fn container_map_falls_back_to_linear_scan_for_adhoc() {
+    fn container_map_falls_back_to_its_own_tracked_set() {
         let rax = reg(0, 8);
+        let tracked = vec![rax];
         // No queries, so every lookup misses and falls through to the scan.
-        let cm = ContainerMap::build(&[rax], std::iter::empty());
-        assert_eq!(cm.container_of(&[rax], &reg(0, 4)), rax);
+        let cm = ContainerMap::build(&tracked, std::iter::empty());
+        drop(tracked);
+        assert_eq!(cm.container_of(&reg(0, 4)), rax);
     }
 
     /// Exact past `u64::MAX`, half-open, and per space.
