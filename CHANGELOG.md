@@ -128,6 +128,9 @@
   and `Dominators::tree_preorder` (siblings ascending by vertex) number the
   tree, and `dominance_frontiers(&doms, preds)` takes the predecessor edges as
   a closure.
+- `Function::new` keeps only the largest of nested varnodes, as
+  `FunctionBuilder::new` did; it only sorted. `Function::set_all_vns`
+  (test-util) is gone.
 
 ### Changed, Python
 

@@ -94,9 +94,8 @@ impl FunctionBuilder {
                 all_used_variables.push(*v);
             }
         }
-        let tracked_vns = vn_container::dedup_overlapping_largest(&all_used_variables);
         let mut fb = FunctionBuilder {
-            function: Function::new(cc, endianness, tracked_vns),
+            function: Function::new(cc, endianness, all_used_variables),
             entry_memory: ValueId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,
