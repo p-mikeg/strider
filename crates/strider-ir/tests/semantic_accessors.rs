@@ -35,6 +35,15 @@ fn store_and_load_address_data_accessors() {
 
     let load = f.producer(loaded);
     assert_eq!(f.load_addr(load), load_addr_val, "load_addr is slot 1");
+
+    assert_eq!(f.access_address(store), Some(store_addr_val));
+    assert_eq!(f.access_address(load), Some(load_addr_val));
+    // A `Return` has a slot 1 too (its memory), but no address.
+    let ret = f
+        .walk()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
+        .expect("a Return node");
+    assert_eq!(f.access_address(ret), None);
 }
 
 #[test]

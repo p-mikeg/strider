@@ -176,8 +176,7 @@ impl MemWalker<'_> {
             return false;
         };
         let stack_args = function.get_cc(call).stack_args;
-        // Call inputs are [control, memory, target, sp, ...args].
-        let sp_value = function.node_inputs(call)[3];
+        let sp_value = function.node_inputs(call)[NodeKind::CALL_SP_SLOT];
         let Some(MemExpr {
             base: call_base,
             offset: call_sp_off,
