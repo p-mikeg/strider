@@ -35,7 +35,7 @@ use crate::value_range::Interval;
 use strider_cfg::{ResolvedTarget, ResolvedTargets};
 use strider_ir::IRViewer;
 use strider_ir::IntBinaryOp;
-use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId};
+use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 
 /// `rom` is the binary's read-only image; `None` disables the rodata arm.  The
 /// stack-pointer varnode and the target endianness come off `function`.
@@ -89,7 +89,7 @@ pub(crate) fn classify_dispatch_value(
     )?;
     let idx_mask = function
         .value_type_opt(idx_value)
-        .and_then(crate::opt::known_bits::type_mask_u128)?;
+        .and_then(ValueType::int_mask_u128)?;
 
     let mut ev = super::eval::Evaluator::new(function, rom, assumptions);
     let pruned = super::eval::cone_order_pruned(function, target_value, idx_value);
@@ -335,7 +335,7 @@ fn offsets_keep_range(
                     offset,
                     function
                         .value_type_opt(value)
-                        .and_then(crate::opt::known_bits::type_mask_u128),
+                        .and_then(ValueType::int_mask_u128),
                 ) else {
                     return true;
                 };
@@ -443,7 +443,7 @@ fn bounded_index(
 /// A type past 128 bits is rejected outright: the interval's `u128` carrier
 /// cannot represent its top, so every interval there would read as narrowed.
 fn index_bound_ok(ty: strider_ir::node::ValueType, iv: Interval) -> bool {
-    crate::opt::known_bits::type_mask_u128(ty).is_some_and(|mask| {
+    ty.int_mask_u128().is_some_and(|mask| {
         !iv.is_empty() && iv.hi() < mask && iv.count() <= u128::from(MAX_TABLE_ENTRIES)
     })
 }
