@@ -274,6 +274,9 @@
   the CFG and the lift read.
 - `strider_cfg::direct_call_target`: a direct `Call`'s target address, read
   only from a code-space operand; the one rule the CFG and the lift select by.
+- `Dominators::intervals` / `Dominators::tree_preorder` and
+  `DomIntervals::{span, preorder}`: the dominator tree's one numbering, and its
+  preorder with siblings ascending by vertex.
 
 ## 0.2.0
 
