@@ -1,6 +1,7 @@
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
 use super::eval_int::{eval_int_binary, eval_int_cmp};
 
+use crate::opt::width_guards::{same_width, shift_in_range};
 use crate::rewrite_rule;
 use strider_pattern::{
     Capture, CaptureExt, any_float_binary, any_float_cmp, any_float_unary, any_int_binary,
@@ -21,58 +22,6 @@ pub(super) fn build_rules() -> Vec<crate::BoxedRule> {
     rules
 }
 
-/// Whether every listed capture carries `ty`'s bit width.
-///
-/// These rules move a constant across an operator boundary, which is an
-/// identity only when the whole shape evaluates at one width: reassociating
-/// `Add(Add(x:I8, C1:I8):I8, C2:I16):I16` into one `I16` add loses the inner
-/// add's 8-bit wraparound and changes the value. `validate` rejects such a
-/// node, but a rewrite can mint one mid-pipeline, where nothing has validated
-/// yet.
-fn all_same_width(
-    edit: &strider_pattern::Matcher,
-    binds: &strider_pattern::Bindings,
-    ty: strider_ir::node::ValueType,
-    caps: &[Capture],
-) -> bool {
-    caps.iter().all(|&c| {
-        binds
-            .get_type(c, edit.function())
-            .is_some_and(|t| t.bit_width() == ty.bit_width())
-    })
-}
-
-/// Whether a coefficient computed in `u128` carries `ty`'s modulus.
-///
-/// `get_uint` answers at I256/I512 for any value that fits a `u128`, so the
-/// coefficient arithmetic would run in the `u128` modulus rather than the
-/// type's: an I256 `C = 2^128 - 1` would give `C + 1 == 0` instead of `2^128`.
-/// The shift forms get the same bound from [`shift_in_range`].
-fn coefficient_fits_carrier(ty: strider_ir::node::ValueType) -> bool {
-    ty.bit_width() <= 128
-}
-
-/// Whether `cap` binds a shift count `2^C` is buildable from: refuses widths
-/// over 128 and counts outside `0..width`.
-///
-/// A count is an ordinary constant of the shifted type, so an `I64` shift can
-/// name 200, and `1u128 << 200` panics. The guard is about the shift in this
-/// rule, not about the shift in the program.
-fn shift_in_range(
-    edit: &strider_pattern::Matcher,
-    binds: &strider_pattern::Bindings,
-    ty: strider_ir::node::ValueType,
-    cap: Capture,
-) -> bool {
-    let Ok(width) = i128::try_from(ty.bit_width()) else {
-        return false;
-    };
-    width <= 128
-        && binds
-            .get_int(cap, edit.function())
-            .is_some_and(|c| (0..width).contains(&c))
-}
-
 /// Collecting a value against itself: `x + x*C` and friends become one `Mul`.
 ///
 /// Subtraction arrives lowered to `Add(a, Neg(b))`, so the difference forms
@@ -83,7 +32,8 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
     // x + x*C -> x*(C + 1)
     let add_self_mul = rewrite_rule(
         int_add(var(x), int_mul(var(x), int_const(c1))).when_match(move |edit, ty, binds| {
-            coefficient_fits_carrier(ty) && all_same_width(edit, binds, ty, &[x, c1])
+            ty.int_mask_u128().is_some()
+                && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
         }),
         template::int_mul(var(x), int_const_with!([c1: uint] => c1.wrapping_add(1))),
     );
@@ -95,7 +45,8 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             int_mul(var(x), int_const(c2)),
         )
         .when_match(move |edit, ty, binds| {
-            coefficient_fits_carrier(ty) && all_same_width(edit, binds, ty, &[x, c1, c2])
+            ty.int_mask_u128().is_some()
+                && same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
         }),
         template::int_mul(
             var(x),
@@ -106,7 +57,10 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
     // x + (x << C) -> x*(2^C + 1)
     let add_self_shl = rewrite_rule(
         int_add(var(x), int_shl(var(x), int_const(c1))).when_match(move |edit, ty, binds| {
-            all_same_width(edit, binds, ty, &[x]) && shift_in_range(edit, binds, ty, c1)
+            same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
+                && binds
+                    .get_uint(c1, edit.function())
+                    .is_some_and(|c| shift_in_range(ty, c))
         }),
         template::int_mul(
             var(x),
@@ -118,7 +72,8 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
     let sub_self_mul = rewrite_rule(
         int_add(var(x), int_neg(int_mul(var(x), int_const(c1)))).when_match(
             move |edit, ty, binds| {
-                coefficient_fits_carrier(ty) && all_same_width(edit, binds, ty, &[x, c1])
+                ty.int_mask_u128().is_some()
+                    && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
             },
         ),
         template::int_mul(
@@ -134,7 +89,8 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             int_neg(int_mul(var(x), int_const(c2))),
         )
         .when_match(move |edit, ty, binds| {
-            coefficient_fits_carrier(ty) && all_same_width(edit, binds, ty, &[x, c1, c2])
+            ty.int_mask_u128().is_some()
+                && same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
         }),
         template::int_mul(
             var(x),
@@ -146,7 +102,10 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
     let sub_self_shl = rewrite_rule(
         int_add(var(x), int_neg(int_shl(var(x), int_const(c1)))).when_match(
             move |edit, ty, binds| {
-                all_same_width(edit, binds, ty, &[x]) && shift_in_range(edit, binds, ty, c1)
+                same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
+                    && binds
+                        .get_uint(c1, edit.function())
+                        .is_some_and(|c| shift_in_range(ty, c))
             },
         ),
         template::int_mul(
@@ -162,9 +121,11 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             int_shl(var(x), int_const(c2)),
         )
         .when_match(move |edit, ty, binds| {
-            coefficient_fits_carrier(ty)
-                && all_same_width(edit, binds, ty, &[x, c1])
-                && shift_in_range(edit, binds, ty, c2)
+            ty.int_mask_u128().is_some()
+                && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
+                && binds
+                    .get_uint(c2, edit.function())
+                    .is_some_and(|c| shift_in_range(ty, c))
         }),
         template::int_mul(
             var(x),
@@ -179,9 +140,13 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             int_shl(var(x), int_const(c2)),
         )
         .when_match(move |edit, ty, binds| {
-            all_same_width(edit, binds, ty, &[x])
-                && shift_in_range(edit, binds, ty, c1)
-                && shift_in_range(edit, binds, ty, c2)
+            same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
+                && binds
+                    .get_uint(c1, edit.function())
+                    .is_some_and(|c| shift_in_range(ty, c))
+                && binds
+                    .get_uint(c2, edit.function())
+                    .is_some_and(|c| shift_in_range(ty, c))
         }),
         template::int_mul(
             var(x),
@@ -196,9 +161,11 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             int_neg(int_shl(var(x), int_const(c2))),
         )
         .when_match(move |edit, ty, binds| {
-            coefficient_fits_carrier(ty)
-                && all_same_width(edit, binds, ty, &[x, c1])
-                && shift_in_range(edit, binds, ty, c2)
+            ty.int_mask_u128().is_some()
+                && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
+                && binds
+                    .get_uint(c2, edit.function())
+                    .is_some_and(|c| shift_in_range(ty, c))
         }),
         template::int_mul(
             var(x),
@@ -213,9 +180,11 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             int_neg(int_mul(var(x), int_const(c2))),
         )
         .when_match(move |edit, ty, binds| {
-            coefficient_fits_carrier(ty)
-                && all_same_width(edit, binds, ty, &[x, c2])
-                && shift_in_range(edit, binds, ty, c1)
+            ty.int_mask_u128().is_some()
+                && same_width(edit.function(), binds, &[x, c2]) == Some(ty.bit_width())
+                && binds
+                    .get_uint(c1, edit.function())
+                    .is_some_and(|c| shift_in_range(ty, c))
         }),
         template::int_mul(
             var(x),
@@ -231,7 +200,8 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
     let sub_mul_self = rewrite_rule(
         int_add(int_mul(var(x), int_const(c1)), int_neg(var(x))).when_match(
             move |edit, ty, binds| {
-                coefficient_fits_carrier(ty) && all_same_width(edit, binds, ty, &[x, c1])
+                ty.int_mask_u128().is_some()
+                    && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
             },
         ),
         template::int_mul(var(x), int_const_with!([c1: uint] => c1.wrapping_sub(1))),
@@ -241,7 +211,10 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
     let sub_shl_self = rewrite_rule(
         int_add(int_shl(var(x), int_const(c1)), int_neg(var(x))).when_match(
             move |edit, ty, binds| {
-                all_same_width(edit, binds, ty, &[x]) && shift_in_range(edit, binds, ty, c1)
+                same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
+                    && binds
+                        .get_uint(c1, edit.function())
+                        .is_some_and(|c| shift_in_range(ty, c))
             },
         ),
         template::int_mul(
@@ -257,9 +230,13 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             int_neg(int_shl(var(x), int_const(c2))),
         )
         .when_match(move |edit, ty, binds| {
-            all_same_width(edit, binds, ty, &[x])
-                && shift_in_range(edit, binds, ty, c1)
-                && shift_in_range(edit, binds, ty, c2)
+            same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
+                && binds
+                    .get_uint(c1, edit.function())
+                    .is_some_and(|c| shift_in_range(ty, c))
+                && binds
+                    .get_uint(c2, edit.function())
+                    .is_some_and(|c| shift_in_range(ty, c))
         }),
         template::int_mul(
             var(x),
@@ -300,7 +277,8 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     let rule_add_add = rewrite_rule(
         int_add(int_add(var(x), int_const(c1)), int_const(c2)).when_match(
             move |edit, ty, binds| {
-                coefficient_fits_carrier(ty) && all_same_width(edit, binds, ty, &[x, c1, c2])
+                ty.int_mask_u128().is_some()
+                    && same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
             },
         ),
         template::int_add(
@@ -311,8 +289,11 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
 
     // (x & C1) & C2 -> x & (C1 & C2)
     let rule_and_merge = rewrite_rule(
-        int_and(int_and(var(x), int_const(c1)), int_const(c2))
-            .when_match(move |edit, ty, binds| all_same_width(edit, binds, ty, &[x, c1, c2])),
+        int_and(int_and(var(x), int_const(c1)), int_const(c2)).when_match(
+            move |edit, ty, binds| {
+                same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
+            },
+        ),
         template::int_and(var(x), int_const_with!([c1: uint, c2: uint] => c1 & c2)),
     );
 
@@ -335,7 +316,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             ) else {
                 return false;
             };
-            if !all_same_width(edit, binds, ty, &[x, y, c1, c2, c3]) {
+            if same_width(edit.function(), binds, &[x, y, c1, c2, c3]) != Some(ty.bit_width()) {
                 return false;
             }
             (v1 & v3) == 0 || (v2 & v3) == 0
@@ -359,7 +340,8 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             // `get_uint` masks each constant to ITS declared width, so
             // without width agreement the disjointness test runs in the
             // wrong modulus.
-            all_same_width(edit, binds, ty, &[x, c1, c2]) && (set_bits & mask) == 0
+            same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
+                && (set_bits & mask) == 0
         }),
         template::int_and(var(x), var(c2)),
     );
