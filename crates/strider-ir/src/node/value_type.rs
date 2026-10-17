@@ -364,7 +364,7 @@ mod tests {
             assert_eq!(ty.byte_size(), n as usize);
             assert!(ty.is_integer());
         }
-        assert_eq!(ValueType::int_for_byte_size(1).unwrap(), ValueType::I8);
+        assert_eq!(ValueType::int_for_byte_size(1).unwrap(), ValueType::int(8));
 
         for n in [2u32, 4, 8, 10, 16] {
             let ty = ValueType::float_for_byte_size(n)
@@ -377,34 +377,37 @@ mod tests {
     #[test]
     fn bit_mask_u128_widths() {
         assert_eq!(ValueType::I1.bit_mask_u128(), 0x1u128);
-        assert_eq!(ValueType::I8.bit_mask_u128(), 0xffu128);
-        assert_eq!(ValueType::I16.bit_mask_u128(), 0xffffu128);
-        assert_eq!(ValueType::I32.bit_mask_u128(), 0xffff_ffffu128);
-        assert_eq!(ValueType::I64.bit_mask_u128(), u64::MAX as u128);
-        assert_eq!(ValueType::I128.bit_mask_u128(), u128::MAX);
-        assert_eq!(ValueType::F32.bit_mask_u128(), 0);
-        assert_eq!(ValueType::F64.bit_mask_u128(), 0);
+        assert_eq!(ValueType::int(8).bit_mask_u128(), 0xffu128);
+        assert_eq!(ValueType::int(16).bit_mask_u128(), 0xffffu128);
+        assert_eq!(ValueType::int(32).bit_mask_u128(), 0xffff_ffffu128);
+        assert_eq!(ValueType::int(64).bit_mask_u128(), u64::MAX as u128);
+        assert_eq!(ValueType::int(128).bit_mask_u128(), u128::MAX);
+        assert_eq!(ValueType::float(32).bit_mask_u128(), 0);
+        assert_eq!(ValueType::float(64).bit_mask_u128(), 0);
     }
 
     #[test]
     fn get_unsigned_int_masks_to_width() {
         assert_eq!(
-            ValueType::I16.get_unsigned_int(0x12345678u128),
+            ValueType::int(16).get_unsigned_int(0x12345678u128),
             Some(0x5678u128)
         );
         assert_eq!(
-            ValueType::I32.get_unsigned_int(0x12345678u128),
+            ValueType::int(32).get_unsigned_int(0x12345678u128),
             Some(0x12345678u128)
         );
-        assert_eq!(ValueType::I128.get_unsigned_int(u128::MAX), Some(u128::MAX));
-        assert_eq!(ValueType::F32.get_unsigned_int(0x12345678u128), None);
+        assert_eq!(
+            ValueType::int(128).get_unsigned_int(u128::MAX),
+            Some(u128::MAX)
+        );
+        assert_eq!(ValueType::float(32).get_unsigned_int(0x12345678u128), None);
         // Every bit above the declared width clears.
         assert_eq!(
-            ValueType::I8.get_unsigned_int(u128::MAX),
+            ValueType::int(8).get_unsigned_int(u128::MAX),
             Some(u128::from(u8::MAX))
         );
         assert_eq!(
-            ValueType::I64.get_unsigned_int(u128::MAX),
+            ValueType::int(64).get_unsigned_int(u128::MAX),
             Some(u128::from(u64::MAX))
         );
         // I1 masks to the low bit.
@@ -416,33 +419,39 @@ mod tests {
     #[test]
     fn get_signed_int_sign_extends_negative_at_narrow_widths() {
         let neg50_at_u32 = 0xffff_ffceu128;
-        assert_eq!(ValueType::I32.get_signed_int(neg50_at_u32), Some(-50i128));
-        assert_eq!(ValueType::I8.get_signed_int(0xceu128), Some(-50i128));
-        assert_eq!(ValueType::I32.get_signed_int(50u128), Some(50i128));
+        assert_eq!(
+            ValueType::int(32).get_signed_int(neg50_at_u32),
+            Some(-50i128)
+        );
+        assert_eq!(ValueType::int(8).get_signed_int(0xceu128), Some(-50i128));
+        assert_eq!(ValueType::int(32).get_signed_int(50u128), Some(50i128));
     }
 
     #[test]
     fn get_signed_int_handles_full_u128_width() {
         let neg1_at_u128 = u128::MAX;
-        assert_eq!(ValueType::I128.get_signed_int(neg1_at_u128), Some(-1i128));
+        assert_eq!(
+            ValueType::int(128).get_signed_int(neg1_at_u128),
+            Some(-1i128)
+        );
         let max_pos = i128::MAX as u128;
-        assert_eq!(ValueType::I128.get_signed_int(max_pos), Some(i128::MAX));
+        assert_eq!(ValueType::int(128).get_signed_int(max_pos), Some(i128::MAX));
     }
 
     #[test]
     fn bit_mask_u128_for_u80() {
         let expected: u128 = (1u128 << 80) - 1;
-        assert_eq!(ValueType::I80.bit_mask_u128(), expected);
-        assert_eq!(ValueType::F80.bit_mask_u128(), 0);
+        assert_eq!(ValueType::int(80).bit_mask_u128(), expected);
+        assert_eq!(ValueType::float(80).bit_mask_u128(), 0);
     }
 
     #[test]
     fn get_unsigned_int_for_u80_masks_to_80_bits() {
         let raw: u128 = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFFu128;
         let mask: u128 = (1u128 << 80) - 1;
-        assert_eq!(ValueType::I80.get_unsigned_int(raw), Some(mask));
+        assert_eq!(ValueType::int(80).get_unsigned_int(raw), Some(mask));
         assert_eq!(
-            ValueType::I80.get_unsigned_int(0x12345678),
+            ValueType::int(80).get_unsigned_int(0x12345678),
             Some(0x12345678)
         );
     }
@@ -450,52 +459,55 @@ mod tests {
     #[test]
     fn get_signed_int_for_u80_sign_extends() {
         let neg1_at_u80 = (1u128 << 80) - 1;
-        assert_eq!(ValueType::I80.get_signed_int(neg1_at_u80), Some(-1i128));
-        assert_eq!(ValueType::I80.get_signed_int(50u128), Some(50i128));
+        assert_eq!(ValueType::int(80).get_signed_int(neg1_at_u80), Some(-1i128));
+        assert_eq!(ValueType::int(80).get_signed_int(50u128), Some(50i128));
         let neg50 = ((1u128 << 80) - 1) ^ 49;
-        assert_eq!(ValueType::I80.get_signed_int(neg50), Some(-50i128));
+        assert_eq!(ValueType::int(80).get_signed_int(neg50), Some(-50i128));
     }
 
     #[test]
     fn int_for_byte_size_10_is_i80() {
         let ty = ValueType::int_for_byte_size(10).expect("10 must convert to I80");
-        assert_eq!(ty, ValueType::I80);
+        assert_eq!(ty, ValueType::int(80));
     }
 
     #[test]
     fn int_for_byte_size_maps_widths() {
         use super::ValueType as T;
-        assert_eq!(T::int_for_byte_size(1).unwrap(), T::I8);
-        assert_eq!(T::int_for_byte_size(6).unwrap(), T::I48);
-        assert_eq!(T::int_for_byte_size(8).unwrap(), T::I64);
-        assert_eq!(T::int_for_byte_size(64).unwrap(), T::I512);
-        assert_eq!(T::int_for_byte_size(3).unwrap(), T::I24);
+        assert_eq!(T::int_for_byte_size(1).unwrap(), T::int(8));
+        assert_eq!(T::int_for_byte_size(6).unwrap(), T::int(48));
+        assert_eq!(T::int_for_byte_size(8).unwrap(), T::int(64));
+        assert_eq!(T::int_for_byte_size(64).unwrap(), T::int(512));
+        assert_eq!(T::int_for_byte_size(3).unwrap(), T::int(24));
 
         // I48 fits u64, so it is not wide.
-        assert_eq!(T::I48.byte_size(), 6);
-        assert_eq!(T::I48.bit_width(), 48);
-        assert!(!T::I48.is_wide_int());
-        assert_eq!(T::I48.bit_mask_u128(), (1u128 << 48) - 1);
-        assert_eq!(T::I48.get_signed_int((1u128 << 48) - 1), Some(-1i128));
+        assert_eq!(T::int(48).byte_size(), 6);
+        assert_eq!(T::int(48).bit_width(), 48);
+        assert!(!T::int(48).is_wide_int());
+        assert_eq!(T::int(48).bit_mask_u128(), (1u128 << 48) - 1);
+        assert_eq!(T::int(48).get_signed_int((1u128 << 48) - 1), Some(-1i128));
     }
 
     /// Pins the `bits >= 128` guard: past the carrier, the mask approximates.
     #[test]
     fn bit_mask_u128_for_u256_and_u512_is_u128_max() {
-        assert_eq!(ValueType::I256.bit_mask_u128(), u128::MAX);
-        assert_eq!(ValueType::I512.bit_mask_u128(), u128::MAX);
+        assert_eq!(ValueType::int(256).bit_mask_u128(), u128::MAX);
+        assert_eq!(ValueType::int(512).bit_mask_u128(), u128::MAX);
     }
 
     /// A > 128-bit query must fail loudly rather than return the low 128 bits
     /// as a success.
     #[test]
     fn get_unsigned_int_i256_does_not_falsely_succeed() {
-        assert_eq!(ValueType::I256.get_unsigned_int(0xDEAD_BEEFu128), None);
-        assert_eq!(ValueType::I256.get_unsigned_int(u128::MAX), None);
-        assert_eq!(ValueType::I512.get_unsigned_int(42u128), None);
-        assert_eq!(ValueType::I256.get_signed_int(0xDEAD_BEEFu128), None);
-        assert_eq!(ValueType::I512.get_signed_int(42u128), None);
+        assert_eq!(ValueType::int(256).get_unsigned_int(0xDEAD_BEEFu128), None);
+        assert_eq!(ValueType::int(256).get_unsigned_int(u128::MAX), None);
+        assert_eq!(ValueType::int(512).get_unsigned_int(42u128), None);
+        assert_eq!(ValueType::int(256).get_signed_int(0xDEAD_BEEFu128), None);
+        assert_eq!(ValueType::int(512).get_signed_int(42u128), None);
         // Exactly 128 bits still fits the carrier.
-        assert_eq!(ValueType::I128.get_unsigned_int(u128::MAX), Some(u128::MAX));
+        assert_eq!(
+            ValueType::int(128).get_unsigned_int(u128::MAX),
+            Some(u128::MAX)
+        );
     }
 }

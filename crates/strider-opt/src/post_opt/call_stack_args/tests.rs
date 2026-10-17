@@ -34,45 +34,45 @@ fn local_inits_in_arg_window_are_collected_too() -> Result<()> {
     let sp0 = b.read_variable(&sp)?;
     // `push ebx`, `sub esp, 16`, 4x zero-init, push arg1, push arg0, then the
     // implicit call ret-push.
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let sixteen = b.build_int_const(16u64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let sixteen = b.build_int_const(16u64, ValueType::int(32))?;
 
-    let sp_after_push_ebx = b.build_sub_as_add_neg(sp0, four, ValueType::I32)?;
+    let sp_after_push_ebx = b.build_sub_as_add_neg(sp0, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_after_push_ebx)?;
-    let init_ebx = b.build_int_const(0xEBu64, ValueType::I32)?;
+    let init_ebx = b.build_int_const(0xEBu64, ValueType::int(32))?;
     b.build_store(sp_after_push_ebx, init_ebx, rsleigh::VnSpace::RAM)?;
 
-    let sp_after_sub = b.build_sub_as_add_neg(sp_after_push_ebx, sixteen, ValueType::I32)?;
+    let sp_after_sub = b.build_sub_as_add_neg(sp_after_push_ebx, sixteen, ValueType::int(32))?;
     b.write_variable(&sp, sp_after_sub)?;
 
     // buf[0..16] at esp+0,+4,+8,+12, i.e. [-20, -16, -12, -8].
-    let zero = b.build_int_const(0u64, ValueType::I32)?;
+    let zero = b.build_int_const(0u64, ValueType::int(32))?;
     for k in 0..4 {
-        let off = b.build_int_const((k * 4) as u64, ValueType::I32)?;
+        let off = b.build_int_const((k * 4) as u64, ValueType::int(32))?;
         let addr =
-            b.build_int_binary_operation(sp_after_sub, off, IntBinaryOp::Add, ValueType::I32)?;
+            b.build_int_binary_operation(sp_after_sub, off, IntBinaryOp::Add, ValueType::int(32))?;
         b.build_store(addr, zero, rsleigh::VnSpace::RAM)?;
     }
 
     // push arg1 = 1 at [sp - 24].
-    let sp_push_arg1 = b.build_sub_as_add_neg(sp_after_sub, four, ValueType::I32)?;
+    let sp_push_arg1 = b.build_sub_as_add_neg(sp_after_sub, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_push_arg1)?;
-    let arg1 = b.build_int_const(1u64, ValueType::I32)?;
+    let arg1 = b.build_int_const(1u64, ValueType::int(32))?;
     b.build_store(sp_push_arg1, arg1, rsleigh::VnSpace::RAM)?;
 
     // push arg0 = 42 at [sp - 28].
-    let sp_push_arg0 = b.build_sub_as_add_neg(sp_push_arg1, four, ValueType::I32)?;
+    let sp_push_arg0 = b.build_sub_as_add_neg(sp_push_arg1, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_push_arg0)?;
-    let arg0 = b.build_int_const(42u64, ValueType::I32)?;
+    let arg0 = b.build_int_const(42u64, ValueType::int(32))?;
     b.build_store(sp_push_arg0, arg0, rsleigh::VnSpace::RAM)?;
 
     // Implicit ret-addr push at [sp - 32], mimicking x86 `call`.
-    let sp_call = b.build_sub_as_add_neg(sp_push_arg0, four, ValueType::I32)?;
+    let sp_call = b.build_sub_as_add_neg(sp_push_arg0, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_call)?;
-    let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
+    let retaddr = b.build_int_const(0x1234u64, ValueType::int(32))?;
     b.build_store(sp_call, retaddr, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -103,15 +103,16 @@ fn outgoing_wide_arg_store_collected_as_one_arg() -> Result<()> {
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
     // a = double stored as I64 at sp+0, covering slots 0 and 1.
-    let a = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, ValueType::I64)?;
+    let a = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, ValueType::int(64))?;
     b.build_store(sp_v0, a, rsleigh::VnSpace::RAM)?;
     // b = int stored as I32 at sp+8, slot 2.
-    let eight = b.build_int_const(8u64, ValueType::I32)?;
-    let sp_plus_8 = b.build_int_binary_operation(sp_v0, eight, IntBinaryOp::Add, ValueType::I32)?;
-    let bv = b.build_int_const(7u64, ValueType::I32)?;
+    let eight = b.build_int_const(8u64, ValueType::int(32))?;
+    let sp_plus_8 =
+        b.build_int_binary_operation(sp_v0, eight, IntBinaryOp::Add, ValueType::int(32))?;
+    let bv = b.build_int_const(7u64, ValueType::int(32))?;
     b.build_store(sp_plus_8, bv, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -150,23 +151,23 @@ fn outgoing_span_four_wide_arg_store_collected_as_one_arg() -> Result<()> {
     // a = 16-byte value at sp+0, covering slots 0..3.
     let const_id_a = b
         .function_mut()
-        .intern_int_const(0xABCD_u128, ValueType::I128);
+        .intern_int_const(0xABCD_u128, ValueType::int(128));
     let a = strider_ir_test_utils::sentinel_node(
         b.function_mut(),
         NodeKind::IntConst(const_id_a),
         [],
-        [strider_ir::node::ValueKind::Typed(ValueType::I128)],
+        [strider_ir::node::ValueKind::Typed(ValueType::int(128))],
     );
     let a_val = b.function().node_outputs_exact::<1>(a).unwrap()[0];
     b.build_store(sp_v0, a_val, rsleigh::VnSpace::RAM)?;
     // b = int at sp+16, slot 4.
-    let sixteen = b.build_int_const(16u64, ValueType::I32)?;
+    let sixteen = b.build_int_const(16u64, ValueType::int(32))?;
     let sp_plus_16 =
-        b.build_int_binary_operation(sp_v0, sixteen, IntBinaryOp::Add, ValueType::I32)?;
-    let bv = b.build_int_const(7u64, ValueType::I32)?;
+        b.build_int_binary_operation(sp_v0, sixteen, IntBinaryOp::Add, ValueType::int(32))?;
+    let bv = b.build_int_const(7u64, ValueType::int(32))?;
     b.build_store(sp_plus_16, bv, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -205,23 +206,23 @@ fn outgoing_span_three_wide_arg_store_collected_as_one_arg() -> Result<()> {
     // a = 10-byte value at sp+0, covering slots 0..2.
     let const_id_a = b
         .function_mut()
-        .intern_int_const(0xABCD_u128, ValueType::I80);
+        .intern_int_const(0xABCD_u128, ValueType::int(80));
     let a = strider_ir_test_utils::sentinel_node(
         b.function_mut(),
         NodeKind::IntConst(const_id_a),
         [],
-        [strider_ir::node::ValueKind::Typed(ValueType::I80)],
+        [strider_ir::node::ValueKind::Typed(ValueType::int(80))],
     );
     let a_val = b.function().node_outputs_exact::<1>(a).unwrap()[0];
     b.build_store(sp_v0, a_val, rsleigh::VnSpace::RAM)?;
     // b = int at sp+12, slot 3.
-    let twelve = b.build_int_const(12u64, ValueType::I32)?;
+    let twelve = b.build_int_const(12u64, ValueType::int(32))?;
     let sp_plus_12 =
-        b.build_int_binary_operation(sp_v0, twelve, IntBinaryOp::Add, ValueType::I32)?;
-    let bv = b.build_int_const(7u64, ValueType::I32)?;
+        b.build_int_binary_operation(sp_v0, twelve, IntBinaryOp::Add, ValueType::int(32))?;
+    let bv = b.build_int_const(7u64, ValueType::int(32))?;
     b.build_store(sp_plus_12, bv, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -273,18 +274,18 @@ fn cdecl_two_stack_args_collected_in_order() -> Result<()> {
         .stack_args(stack_args_at(0, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_v1)?;
-    let arg1 = b.build_int_const(22u64, ValueType::I32)?;
+    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
     b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
 
-    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::I32)?;
+    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_v2)?;
-    let arg0 = b.build_int_const(11u64, ValueType::I32)?;
+    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
     b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -319,19 +320,19 @@ fn collects_ten_stack_args() -> Result<()> {
     let mut b = sp_frame(sp)
         .stack_args(stack_args_at(0, 4))
         .build_fn_single_region()?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
     let mut sp_cur = b.read_variable(&sp)?;
     // Each `push` decrements SP and stores, so pushing argN..arg0 leaves the
     // most recent (arg0) at the chain head, slot 0.  Value `100 + i` identifies
     // arg `i`.
     for i in (0..N).rev() {
-        sp_cur = b.build_sub_as_add_neg(sp_cur, four, ValueType::I32)?;
+        sp_cur = b.build_sub_as_add_neg(sp_cur, four, ValueType::int(32))?;
         b.write_variable(&sp, sp_cur)?;
-        let arg = b.build_int_const((100 + i) as u64, ValueType::I32)?;
+        let arg = b.build_int_const((100 + i) as u64, ValueType::int(32))?;
         b.build_store(sp_cur, arg, rsleigh::VnSpace::RAM)?;
     }
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -364,15 +365,15 @@ fn slot_hole_truncates_collection_to_dense_prefix() -> Result<()> {
         .stack_args(stack_args_at(0, 4))
         .build_fn_single_region()?;
     let sp_v = b.read_variable(&sp)?;
-    let arg0 = b.build_int_const(0xA0u64, ValueType::I32)?;
+    let arg0 = b.build_int_const(0xA0u64, ValueType::int(32))?;
     b.build_store(sp_v, arg0, rsleigh::VnSpace::RAM)?;
     // Slot 2 at sp+8; slot 1 (sp+4) is left unfilled.
-    let eight = b.build_int_const(8u64, ValueType::I32)?;
-    let addr8 = b.build_int_binary_operation(sp_v, eight, IntBinaryOp::Add, ValueType::I32)?;
-    let arg2 = b.build_int_const(0xA2u64, ValueType::I32)?;
+    let eight = b.build_int_const(8u64, ValueType::int(32))?;
+    let addr8 = b.build_int_binary_operation(sp_v, eight, IntBinaryOp::Add, ValueType::int(32))?;
+    let arg2 = b.build_int_const(0xA2u64, ValueType::int(32))?;
     b.build_store(addr8, arg2, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -401,13 +402,13 @@ fn single_arg_collected_when_higher_slot_missing() -> Result<()> {
         .stack_args(stack_args_at(0, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_v1)?;
-    let only_arg = b.build_int_const(99u64, ValueType::I32)?;
+    let only_arg = b.build_int_const(99u64, ValueType::int(32))?;
     b.build_store(sp_v1, only_arg, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -428,20 +429,21 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
         .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
 
     // rel = +8 from the anchor at sp-4 below, i.e. slot 1.
-    let sp_plus_4 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
-    let arg1 = b.build_int_const(22u64, ValueType::I32)?;
+    let sp_plus_4 =
+        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
     b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
 
     // Chain anchor at rel 0, below slot 0's probe offset (rel 4).
-    let sp_minus_4 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
+    let sp_minus_4 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_minus_4)?;
-    let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
+    let retaddr = b.build_int_const(0x1234u64, ValueType::int(32))?;
     b.build_store(sp_minus_4, retaddr, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -468,7 +470,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
         .stack_args(stack_args_at(0, 4))
         .build_fn_single_region()?;
     let _sp_val = b.read_variable(&sp)?;
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -499,23 +501,23 @@ fn disjoint_in_window_store_is_collected_not_a_terminator() -> Result<()> {
         .stack_args(stack_args_at(0, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_v1)?;
-    let arg1 = b.build_int_const(22u64, ValueType::I32)?;
+    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
     b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
 
     // Trash store at sp+0, inside the cdecl arg-offset range and addressing
     // the same memory class as an arg slot.
-    let trash = b.build_int_const(0xAAAAu64, ValueType::I32)?;
+    let trash = b.build_int_const(0xAAAAu64, ValueType::int(32))?;
     b.build_store(sp_v0, trash, rsleigh::VnSpace::RAM)?;
 
-    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::I32)?;
+    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_v2)?;
-    let arg0 = b.build_int_const(11u64, ValueType::I32)?;
+    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
     b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -545,24 +547,24 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
         .stack_args(stack_args_at(0, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_v1)?;
-    let arg1 = b.build_int_const(22u64, ValueType::I32)?;
+    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
     b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
 
     // A global write at a constant address, cross-class against the stack-arg
     // slots.
-    let global_addr = b.build_int_const(0xDEAD_BEEFu64, ValueType::I32)?;
-    let global_data = b.build_int_const(0x1234u64, ValueType::I32)?;
+    let global_addr = b.build_int_const(0xDEAD_BEEFu64, ValueType::int(32))?;
+    let global_data = b.build_int_const(0x1234u64, ValueType::int(32))?;
     b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
 
-    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::I32)?;
+    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_v2)?;
-    let arg0 = b.build_int_const(11u64, ValueType::I32)?;
+    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
     b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -600,25 +602,25 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
         .stack_args(stack_args_at(0, 4))
         .build_fn_single_region()?;
     let sp_initial = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
 
     let mut sp_cur = sp_initial;
-    let global_data = b.build_int_const(0x1234u64, ValueType::I32)?;
+    let global_data = b.build_int_const(0x1234u64, ValueType::int(32))?;
     for (i, base_global_addr) in [0xCAFE0000u64, 0xCAFE0010, 0xCAFE0020, 0xCAFE0030]
         .into_iter()
         .enumerate()
     {
         let arg_idx = 3 - i;
-        sp_cur = b.build_sub_as_add_neg(sp_cur, four, ValueType::I32)?;
+        sp_cur = b.build_sub_as_add_neg(sp_cur, four, ValueType::int(32))?;
         b.write_variable(&sp, sp_cur)?;
-        let arg = b.build_int_const(arg_vals[arg_idx], ValueType::I32)?;
+        let arg = b.build_int_const(arg_vals[arg_idx], ValueType::int(32))?;
         b.build_store(sp_cur, arg, rsleigh::VnSpace::RAM)?;
 
-        let g_addr = b.build_int_const(base_global_addr, ValueType::I32)?;
+        let g_addr = b.build_int_const(base_global_addr, ValueType::int(32))?;
         b.build_store(g_addr, global_data, rsleigh::VnSpace::RAM)?;
     }
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -657,20 +659,21 @@ fn cdecl_args_pushed_in_program_order_collected() -> Result<()> {
     let sp_v0 = b.read_variable(&sp)?;
     // In cdecl the outgoing-args region sits at the bottom of the frame and is
     // written without first decrementing SP.
-    let arg0 = b.build_int_const(11u64, ValueType::I32)?;
+    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
     b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
 
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let sp_plus_4 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
-    let arg1 = b.build_int_const(22u64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let sp_plus_4 =
+        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
     b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
 
-    let sp_after_call_push = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
+    let sp_after_call_push = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_after_call_push)?;
-    let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
+    let retaddr = b.build_int_const(0x1234u64, ValueType::int(32))?;
     b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -705,26 +708,28 @@ fn cdecl_three_args_in_arbitrary_order_collected() -> Result<()> {
         .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let eight = b.build_int_const(8u64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let eight = b.build_int_const(8u64, ValueType::int(32))?;
 
-    let sp_plus_4 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
-    let arg1 = b.build_int_const(22u64, ValueType::I32)?;
+    let sp_plus_4 =
+        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
     b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
 
-    let arg0 = b.build_int_const(11u64, ValueType::I32)?;
+    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
     b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
 
-    let sp_plus_8 = b.build_int_binary_operation(sp_v0, eight, IntBinaryOp::Add, ValueType::I32)?;
-    let arg2 = b.build_int_const(33u64, ValueType::I32)?;
+    let sp_plus_8 =
+        b.build_int_binary_operation(sp_v0, eight, IntBinaryOp::Add, ValueType::int(32))?;
+    let arg2 = b.build_int_const(33u64, ValueType::int(32))?;
     b.build_store(sp_plus_8, arg2, rsleigh::VnSpace::RAM)?;
 
-    let sp_after_call_push = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
+    let sp_after_call_push = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_after_call_push)?;
-    let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
+    let retaddr = b.build_int_const(0x1234u64, ValueType::int(32))?;
     b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -756,26 +761,27 @@ fn most_recent_value_wins_for_repeated_slot() -> Result<()> {
         .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
 
     // Stale arg0, the older write.
-    let stale = b.build_int_const(0xBADu64, ValueType::I32)?;
+    let stale = b.build_int_const(0xBADu64, ValueType::int(32))?;
     b.build_store(sp_v0, stale, rsleigh::VnSpace::RAM)?;
 
-    let sp_plus_4 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
-    let arg1 = b.build_int_const(22u64, ValueType::I32)?;
+    let sp_plus_4 =
+        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
     b.build_store(sp_plus_4, arg1, rsleigh::VnSpace::RAM)?;
 
     // Overwrites the stale value.
-    let arg0 = b.build_int_const(11u64, ValueType::I32)?;
+    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
     b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
 
-    let sp_after_call_push = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
+    let sp_after_call_push = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_after_call_push)?;
-    let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
+    let retaddr = b.build_int_const(0x1234u64, ValueType::int(32))?;
     b.build_store(sp_after_call_push, retaddr, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -807,30 +813,30 @@ fn out_of_window_stack_store_terminates_walk() -> Result<()> {
         .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let sixteen = b.build_int_const(16u64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let sixteen = b.build_int_const(16u64, ValueType::int(32))?;
 
     // Below slot 0, so outside the stack-arg slot set.
-    let sp_minus_16 = b.build_sub_as_add_neg(sp_v0, sixteen, ValueType::I32)?;
-    let local = b.build_int_const(0xDEADu64, ValueType::I32)?;
+    let sp_minus_16 = b.build_sub_as_add_neg(sp_v0, sixteen, ValueType::int(32))?;
+    let local = b.build_int_const(0xDEADu64, ValueType::int(32))?;
     b.build_store(sp_minus_16, local, rsleigh::VnSpace::RAM)?;
 
-    let sp_minus_4 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
-    let arg1 = b.build_int_const(22u64, ValueType::I32)?;
+    let sp_minus_4 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
+    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
     b.build_store(sp_minus_4, arg1, rsleigh::VnSpace::RAM)?;
 
-    let eight = b.build_int_const(8u64, ValueType::I32)?;
-    let sp_minus_8 = b.build_sub_as_add_neg(sp_v0, eight, ValueType::I32)?;
-    let arg0 = b.build_int_const(11u64, ValueType::I32)?;
+    let eight = b.build_int_const(8u64, ValueType::int(32))?;
+    let sp_minus_8 = b.build_sub_as_add_neg(sp_v0, eight, ValueType::int(32))?;
+    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
     b.build_store(sp_minus_8, arg0, rsleigh::VnSpace::RAM)?;
 
-    let twelve = b.build_int_const(12u64, ValueType::I32)?;
-    let sp_minus_12 = b.build_sub_as_add_neg(sp_v0, twelve, ValueType::I32)?;
+    let twelve = b.build_int_const(12u64, ValueType::int(32))?;
+    let sp_minus_12 = b.build_sub_as_add_neg(sp_v0, twelve, ValueType::int(32))?;
     b.write_variable(&sp, sp_minus_12)?;
-    let retaddr = b.build_int_const(0x1234u64, ValueType::I32)?;
+    let retaddr = b.build_int_const(0x1234u64, ValueType::int(32))?;
     b.build_store(sp_minus_12, retaddr, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -878,16 +884,17 @@ fn call_stack_arg_collect_uses_default_when_no_override() -> Result<()> {
         .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let sp_plus_4 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
-    let arg0 = b.build_int_const(77u64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let sp_plus_4 =
+        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let arg0 = b.build_int_const(77u64, ValueType::int(32))?;
     b.build_store(sp_plus_4, arg0, rsleigh::VnSpace::RAM)?;
 
     // Ret-addr-push anchor.
-    let anchor = b.build_int_const(0xABCDu64, ValueType::I32)?;
+    let anchor = b.build_int_const(0xABCDu64, ValueType::int(32))?;
     b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x2000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x2000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -919,10 +926,10 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let arg0 = b.build_int_const(66u64, ValueType::I32)?;
+    let arg0 = b.build_int_const(66u64, ValueType::int(32))?;
     b.build_store(sp_v0, arg0, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x5000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x5000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -987,16 +994,17 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let sp_plus_4 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
-    let arg0 = b.build_int_const(77u64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let sp_plus_4 =
+        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let arg0 = b.build_int_const(77u64, ValueType::int(32))?;
     b.build_store(sp_plus_4, arg0, rsleigh::VnSpace::RAM)?;
 
     // Anchor store at sp+0 (ret-addr-push role).
-    let anchor = b.build_int_const(0x1234u64, ValueType::I32)?;
+    let anchor = b.build_int_const(0x1234u64, ValueType::int(32))?;
     b.build_store(sp_v0, anchor, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x2000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x2000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -1022,7 +1030,8 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // Slot 1 is the address, made opaque so decomposition returns None.
     let opaque_addr = {
         let mut ef = strider_ir::EditFunction::new(&mut fg);
-        ef.build_int_const(0xDEAD_BEEFu64, ValueType::I32).unwrap()
+        ef.build_int_const(0xDEAD_BEEFu64, ValueType::int(32))
+            .unwrap()
     };
     let addr_input_id = fg.node_input_id_at(arg0_store, 1).unwrap();
     fg.graph_mut().update_input(addr_input_id, opaque_addr);
@@ -1078,16 +1087,17 @@ fn collect_walk_steps(slots: usize) -> Result<u64> {
     let entry_sp = b.read_variable(&sp)?;
     let frame_bytes = 4 * slots as i64;
     for i in 0..slots {
-        let off = b.build_int_const((4 * i as i64 - frame_bytes) as u64, ValueType::I32)?;
-        let addr = b.build_int_binary_operation(entry_sp, off, IntBinaryOp::Add, ValueType::I32)?;
-        let arg = b.build_int_const(0x100 + i as u64, ValueType::I32)?;
+        let off = b.build_int_const((4 * i as i64 - frame_bytes) as u64, ValueType::int(32))?;
+        let addr =
+            b.build_int_binary_operation(entry_sp, off, IntBinaryOp::Add, ValueType::int(32))?;
+        let arg = b.build_int_const(0x100 + i as u64, ValueType::int(32))?;
         b.build_store(addr, arg, rsleigh::VnSpace::RAM)?;
     }
-    let frame = b.build_int_const((-frame_bytes) as u64, ValueType::I32)?;
+    let frame = b.build_int_const((-frame_bytes) as u64, ValueType::int(32))?;
     let call_sp =
-        b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::I32)?;
+        b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::int(32))?;
     b.write_variable(&sp, call_sp)?;
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call(target, &[], &[], 0)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -1135,15 +1145,16 @@ fn partly_overwritten_wide_store_supplies_no_arg() -> Result<()> {
         .stack_args(stack_args_at(0, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let wide = b.build_int_const(0xAAAA_AAAA_AAAA_AAAAu64, ValueType::I64)?;
+    let wide = b.build_int_const(0xAAAA_AAAA_AAAA_AAAAu64, ValueType::int(64))?;
     b.build_store(sp_v0, wide, rsleigh::VnSpace::RAM)?;
     // Patches the high half of the wide store, i.e. slot 1.
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let sp_plus_4 = b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::I32)?;
-    let patch = b.build_int_const(0xBBBB_BBBBu64, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let sp_plus_4 =
+        b.build_int_binary_operation(sp_v0, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let patch = b.build_int_const(0xBBBB_BBBBu64, ValueType::int(32))?;
     b.build_store(sp_plus_4, patch, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -1168,18 +1179,18 @@ fn repeated_pipeline_runs_leave_the_collected_tail_alone() -> Result<()> {
         .stack_args(stack_args_at(0, 4))
         .build_fn_single_region()?;
     let sp_v0 = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::I32)?;
-    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::I32)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let sp_v1 = b.build_sub_as_add_neg(sp_v0, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_v1)?;
-    let arg1 = b.build_int_const(22u64, ValueType::I32)?;
+    let arg1 = b.build_int_const(22u64, ValueType::int(32))?;
     b.build_store(sp_v1, arg1, rsleigh::VnSpace::RAM)?;
 
-    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::I32)?;
+    let sp_v2 = b.build_sub_as_add_neg(sp_v1, four, ValueType::int(32))?;
     b.write_variable(&sp, sp_v2)?;
-    let arg0 = b.build_int_const(11u64, ValueType::I32)?;
+    let arg0 = b.build_int_const(11u64, ValueType::int(32))?;
     b.build_store(sp_v2, arg0, rsleigh::VnSpace::RAM)?;
 
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -1213,12 +1224,12 @@ fn collect_at_the_offset_carrier_top(first_slot: i128, frame: i128) -> Result<us
         .stack_args(stack_args_at(first_slot, 4))
         .build_fn_single_region()?;
     let sp0 = b.read_variable(&sp)?;
-    let top = b.build_int_const(frame as u128, ValueType::I128)?;
-    let sp1 = b.build_int_binary_operation(sp0, top, IntBinaryOp::Add, ValueType::I128)?;
+    let top = b.build_int_const(frame as u128, ValueType::int(128))?;
+    let sp1 = b.build_int_binary_operation(sp0, top, IntBinaryOp::Add, ValueType::int(128))?;
     b.write_variable(&sp, sp1)?;
-    let arg = b.build_int_const(7u64, ValueType::I32)?;
+    let arg = b.build_int_const(7u64, ValueType::int(32))?;
     b.build_store(sp1, arg, rsleigh::VnSpace::RAM)?;
-    let target = b.build_int_const(0x1000u64, ValueType::I128)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(128))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);
@@ -1251,17 +1262,17 @@ fn collect_across_the_wrap(call_sp: u64, stores: &[u64]) -> Result<usize> {
         .build_fn_single_region()?;
     let sp0 = b.read_variable(&sp)?;
     let at = |b: &mut strider_ir::FunctionBuilder, off: u64| -> Result<ValueId> {
-        let c = b.build_int_const(off, ValueType::I32)?;
-        b.build_int_binary_operation(sp0, c, IntBinaryOp::Add, ValueType::I32)
+        let c = b.build_int_const(off, ValueType::int(32))?;
+        b.build_int_binary_operation(sp0, c, IntBinaryOp::Add, ValueType::int(32))
     };
     let sp1 = at(&mut b, call_sp)?;
     b.write_variable(&sp, sp1)?;
     for (i, &off) in stores.iter().enumerate() {
         let addr = at(&mut b, off)?;
-        let data = b.build_int_const(0x11u64 * (i as u64 + 1), ValueType::I32)?;
+        let data = b.build_int_const(0x11u64 * (i as u64 + 1), ValueType::int(32))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     }
-    let target = b.build_int_const(0x1000u64, ValueType::I32)?;
+    let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
     b.build_call_cc(target, None)?;
     b.build_return(None, &[])?;
     b.set_lift_addr(None);

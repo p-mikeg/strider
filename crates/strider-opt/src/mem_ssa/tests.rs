@@ -36,7 +36,7 @@ fn assert_clean(fg: &Function, r: NodeId) {
 }
 
 fn empty_chain() -> (Function, ValueId) {
-    let fg = make_empty_fn(|b| b.build_int_const(7u64, ValueType::I64)).unwrap();
+    let fg = make_empty_fn(|b| b.build_int_const(7u64, ValueType::int(64))).unwrap();
     let im = fg
         .walk_kind(|k| matches!(k, NodeKind::InitialMemory))
         .next()
@@ -50,12 +50,12 @@ fn linear_store_chain(depth: usize) -> (Function, ValueId, Vec<ValueId>) {
     let fg = make_empty_fn(|b| {
         for i in 0..depth {
             let addr = b
-                .build_int_const(0x1000u64 + (i as u64) * 8, ValueType::I64)
+                .build_int_const(0x1000u64 + (i as u64) * 8, ValueType::int(64))
                 .unwrap();
-            let v = b.build_int_const(i as u64, ValueType::I64).unwrap();
+            let v = b.build_int_const(i as u64, ValueType::int(64)).unwrap();
             b.build_store(addr, v, rsleigh::VnSpace::RAM).unwrap();
         }
-        b.build_int_const(7u64, ValueType::I64)
+        b.build_int_const(7u64, ValueType::int(64))
     })
     .unwrap();
     let ret = fg
@@ -84,12 +84,12 @@ fn linear_store_chain(depth: usize) -> (Function, ValueId, Vec<ValueId>) {
 fn linear_chain_with_load(depth: usize) -> (Function, NodeId, ValueId, Vec<ValueId>) {
     let fg = make_empty_fn(|b| {
         for i in 0..depth {
-            let addr = b.build_int_const(0x1000u64 + (i as u64) * 8, ValueType::I64)?;
-            let v = b.build_int_const(i as u64, ValueType::I64)?;
+            let addr = b.build_int_const(0x1000u64 + (i as u64) * 8, ValueType::int(64))?;
+            let v = b.build_int_const(i as u64, ValueType::int(64))?;
             b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
         }
-        let laddr = b.build_int_const(0x9000u64, ValueType::I64)?;
-        b.build_load(laddr, rsleigh::VnSpace::RAM, ValueType::I64)
+        let laddr = b.build_int_const(0x9000u64, ValueType::int(64))?;
+        b.build_load(laddr, rsleigh::VnSpace::RAM, ValueType::int(64))
     })
     .unwrap();
     let load = fg
@@ -171,10 +171,10 @@ fn narrowing_is_idempotent() {
 /// `(function, initial_memory_output, store_memory_output, region_phi_token)`.
 fn base_with_store() -> (Function, ValueId, ValueId, ValueId) {
     let fg = make_empty_fn(|b| {
-        let addr = b.build_int_const(0x10u64, ValueType::I64)?;
-        let v = b.build_int_const(0x42u64, ValueType::I64)?;
+        let addr = b.build_int_const(0x10u64, ValueType::int(64))?;
+        let v = b.build_int_const(0x42u64, ValueType::int(64))?;
         b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-        b.build_int_const(7u64, ValueType::I64)
+        b.build_int_const(7u64, ValueType::int(64))
     })
     .unwrap();
     let im_node = fg
@@ -196,12 +196,12 @@ fn base_with_store() -> (Function, ValueId, ValueId, ValueId) {
 }
 
 fn mk_const(fg: &mut Function, v: u64) -> ValueId {
-    let const_id = fg.intern_int_const(u128::from(v), ValueType::I64);
+    let const_id = fg.intern_int_const(u128::from(v), ValueType::int(64));
     let n = strider_ir_test_utils::sentinel_node(
         fg,
         NodeKind::IntConst(const_id),
         [],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     );
     fg.node_outputs_exact::<1>(n).unwrap()[0]
 }
@@ -222,7 +222,7 @@ fn mk_load(fg: &mut Function, mem: ValueId, addr: ValueId) -> NodeId {
         fg,
         NodeKind::Load(rsleigh::VnSpace::RAM),
         [mem, addr],
-        [ValueKind::Typed(ValueType::I64)],
+        [ValueKind::Typed(ValueType::int(64))],
     )
 }
 
@@ -338,10 +338,10 @@ fn linear_chain_all_clean_returns_none() {
 /// predecessors all route straight to `InitialMemory`.
 fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
     let mut fg = make_empty_fn(|b| {
-        let addr = b.build_int_const(0x100u64, ValueType::I64)?;
-        let v = b.build_int_const(0x42u64, ValueType::I64)?;
+        let addr = b.build_int_const(0x100u64, ValueType::int(64))?;
+        let v = b.build_int_const(0x42u64, ValueType::int(64))?;
         b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-        b.build_int_const(7u64, ValueType::I64)
+        b.build_int_const(7u64, ValueType::int(64))
     })
     .unwrap();
     let im_node = fg
@@ -393,10 +393,10 @@ fn mem_phi_all_arms_clean_returns_none() {
 fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     // Two arms: one through an aliasing Store, one through InitialMemory.
     let mut fg = make_empty_fn(|b| {
-        let addr = b.build_int_const(0x200u64, ValueType::I64)?;
-        let v = b.build_int_const(0x99u64, ValueType::I64)?;
+        let addr = b.build_int_const(0x200u64, ValueType::int(64))?;
+        let v = b.build_int_const(0x99u64, ValueType::int(64))?;
         b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-        b.build_int_const(7u64, ValueType::I64)
+        b.build_int_const(7u64, ValueType::int(64))
     })
     .unwrap();
     let im_node = fg
@@ -434,10 +434,10 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
 #[test]
 fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
     let mut fg = make_empty_fn(|b| {
-        let addr = b.build_int_const(0x300u64, ValueType::I64)?;
-        let v = b.build_int_const(0x77u64, ValueType::I64)?;
+        let addr = b.build_int_const(0x300u64, ValueType::int(64))?;
+        let v = b.build_int_const(0x77u64, ValueType::int(64))?;
         b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
-        b.build_int_const(7u64, ValueType::I64)
+        b.build_int_const(7u64, ValueType::int(64))
     })
     .unwrap();
     let store_node = fg

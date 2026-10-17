@@ -364,9 +364,9 @@ mod tests {
             .arg(arg)
             .build_fn_single_region()
             .unwrap();
-        let c = b.build_int_const(42u64, ValueType::I64).unwrap();
+        let c = b.build_int_const(42u64, ValueType::int(64)).unwrap();
         b.write_variable(&arg, c).unwrap();
-        let tgt = b.build_int_const(0xABCDu64, ValueType::I64).unwrap();
+        let tgt = b.build_int_const(0xABCDu64, ValueType::int(64)).unwrap();
         b.build_call_cc(tgt, None).unwrap();
         b.build_return(None, &[]).unwrap();
         b.build().unwrap()

@@ -466,7 +466,7 @@ mod tests {
         let src = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [data_value] = graph.node_outputs_exact::<1>(src).unwrap();
 
@@ -501,7 +501,7 @@ mod tests {
         let node = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let succs: Vec<_> = cfg_succs(&graph, node).collect();
         assert!(
@@ -561,7 +561,7 @@ mod tests {
             [],
             [
                 ValueKind::Control,
-                ValueKind::Typed(ValueType::I64),
+                ValueKind::Typed(ValueType::int(64)),
                 ValueKind::Memory,
                 ValueKind::Control,
             ],
@@ -595,7 +595,7 @@ mod tests {
         let node = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
             [],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let outs: Vec<_> = cfg_outputs(&graph, node).collect();
         assert!(outs.is_empty());
@@ -608,19 +608,19 @@ mod tests {
         let a = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [a_value] = graph.node_outputs_exact::<1>(a).unwrap();
         let c = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(4_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [c_value] = graph.node_outputs_exact::<1>(c).unwrap();
         let add = graph.create_node(
             NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
             [a_value, c_value],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [_add_value] = graph.node_outputs_exact::<1>(add).unwrap();
 
@@ -645,13 +645,13 @@ mod tests {
         let c = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [c_value] = graph.node_outputs_exact::<1>(c).unwrap();
         let add = graph.create_node(
             NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
             [c_value, c_value],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [_add_value] = graph.node_outputs_exact::<1>(add).unwrap();
 
@@ -668,7 +668,7 @@ mod tests {
         let n = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new((v) as usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [out] = graph.node_outputs_exact::<1>(n).unwrap();
         (n, out)
@@ -683,7 +683,7 @@ mod tests {
         let n = graph.create_node(
             NodeKind::IntBinaryOp(op),
             [l, r],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [out] = graph.node_outputs_exact::<1>(n).unwrap();
         (n, out)
@@ -696,7 +696,7 @@ mod tests {
         let neg = graph.create_node(
             NodeKind::IntUnaryOp(crate::IntUnaryOp::Neg),
             [kv],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [negv] = graph.node_outputs_exact::<1>(neg).unwrap();
         let (add, _addv) = int_bin(&mut graph, crate::IntBinaryOp::Add, kv, negv);
@@ -779,7 +779,7 @@ mod tests {
         let neg = graph.create_node(
             NodeKind::IntUnaryOp(crate::IntUnaryOp::Neg),
             [kv],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
 
         let empty: DenseEntitySet<NodeId> = DenseEntitySet::new();
@@ -811,7 +811,7 @@ mod tests {
         let data = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [data_value] = graph.node_outputs_exact::<1>(data).unwrap();
         let b = graph.create_node(NodeKind::Return, [], []);
@@ -881,19 +881,19 @@ mod tests {
         let a = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [a_value] = graph.node_outputs_exact::<1>(a).unwrap();
         let c = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(4_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [c_value] = graph.node_outputs_exact::<1>(c).unwrap();
         let add = graph.create_node(
             NodeKind::IntBinaryOp(crate::IntBinaryOp::Add),
             [a_value, c_value],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [add_value] = graph.node_outputs_exact::<1>(add).unwrap();
         let ret = graph.create_node(NodeKind::Return, [], []);
@@ -927,7 +927,7 @@ mod tests {
         let data = graph.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [data_value] = graph.node_outputs_exact::<1>(data).unwrap();
         let ret = graph.create_node(NodeKind::Return, [], []);
@@ -1035,10 +1035,10 @@ mod tests {
         let mut b = builder_with_region().unwrap();
 
         let space = rsleigh::VnSpace::RAM;
-        let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
-        let data = b.build_int_const(7u64, ValueType::I32).unwrap();
+        let addr = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
+        let data = b.build_int_const(7u64, ValueType::int(32)).unwrap();
         b.build_store(addr, data, space).unwrap();
-        b.build_load(addr, space, ValueType::I32).unwrap();
+        b.build_load(addr, space, ValueType::int(32)).unwrap();
 
         // Must not appear in the result.
         let (arith, _) = int_bin(

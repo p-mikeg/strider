@@ -730,7 +730,7 @@ mod tests {
     #[test]
     fn create_then_kill_tracks_liveness() {
         let mut b = single_region_builder();
-        let root = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let root = b.build_int_const(1u64, ValueType::int(64)).unwrap();
         b.build_return(Some(root), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
@@ -740,7 +740,7 @@ mod tests {
         let node = ctx.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         assert!(ctx.is_live(node), "freshly created node is live");
         assert!(ctx.is_root(node), "input-less fresh const is a root");
@@ -755,10 +755,10 @@ mod tests {
     #[test]
     fn generation_counts_rewires_and_kills_but_not_creation() {
         let mut b = single_region_builder();
-        let one = b.build_int_const(1u64, ValueType::I64).unwrap();
-        let two = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let two = b.build_int_const(2u64, ValueType::int(64)).unwrap();
         let sum = b
-            .build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(sum), &[]).unwrap();
         b.set_lift_addr(None);
@@ -766,7 +766,7 @@ mod tests {
         let add = function.producer(sum);
 
         let mut ctx = EditFunction::new(&mut function);
-        let three = ctx.build_int_const(3u64, ValueType::I64).unwrap();
+        let three = ctx.build_int_const(3u64, ValueType::int(64)).unwrap();
         assert_eq!(ctx.generation(), 0, "creating a node rewires nothing");
 
         let slot = ctx.function().node_input_id_at(add, 1).unwrap();
@@ -788,10 +788,10 @@ mod tests {
     #[test]
     fn postorder_is_walked_once_per_edits_reading() {
         let mut b = single_region_builder();
-        let one = b.build_int_const(1u64, ValueType::I64).unwrap();
-        let two = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let two = b.build_int_const(2u64, ValueType::int(64)).unwrap();
         let sum = b
-            .build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(sum), &[]).unwrap();
         b.set_lift_addr(None);
@@ -808,7 +808,7 @@ mod tests {
             "two reads with no edit between them must share one walk"
         );
 
-        let three = ctx.build_int_const(3u64, ValueType::I64).unwrap();
+        let three = ctx.build_int_const(3u64, ValueType::int(64)).unwrap();
         assert_eq!(
             ctx.postorder_walks.get(),
             1,
@@ -844,7 +844,7 @@ mod tests {
     #[test]
     fn resync_live_set_drops_cache_stale_unreachable_nodes() {
         let mut b = single_region_builder();
-        let root = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let root = b.build_int_const(1u64, ValueType::int(64)).unwrap();
         b.build_return(Some(root), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
@@ -855,13 +855,13 @@ mod tests {
         let x = ctx.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let xv = ctx.node_outputs(x)[0];
         let y = ctx.create_node(
             NodeKind::IntUnaryOp(crate::IntUnaryOp::Neg),
             [xv],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         assert!(
             ctx.is_live(x) && ctx.is_live(y),
@@ -886,18 +886,18 @@ mod tests {
     fn will_attach_value_resurrection_re_canonicalizes_twin() {
         let mut b = single_region_builder();
         b.set_lift_addr(Some(0xA));
-        let x = b.build_int_const(11u64, ValueType::I64).unwrap();
-        let y = b.build_int_const(22u64, ValueType::I64).unwrap();
-        let z = b.build_int_const(33u64, ValueType::I64).unwrap();
+        let x = b.build_int_const(11u64, ValueType::int(64)).unwrap();
+        let y = b.build_int_const(22u64, ValueType::int(64)).unwrap();
+        let z = b.build_int_const(33u64, ValueType::int(64)).unwrap();
         // A = Add(x, y): live (consumed by the Return), in the dedup cache.
         let a = b
-            .build_int_binary_operation(x, y, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(x, y, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         // C = Add(x, z): a different shape, left orphaned so it is dead at
         // populate time.
         b.set_lift_addr(Some(0xC));
         let c = b
-            .build_int_binary_operation(x, z, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(x, z, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.set_lift_addr(Some(0xA));
         b.build_return(Some(a), &[]).unwrap();
@@ -949,17 +949,17 @@ mod tests {
     fn canonicalize_node_merge_is_loud_on_broken_invariant() {
         let mut b = single_region_builder();
         b.set_lift_addr(Some(0x1));
-        let x = b.build_int_const(7u64, ValueType::I64).unwrap();
-        let y = b.build_int_const(8u64, ValueType::I64).unwrap();
-        let z = b.build_int_const(9u64, ValueType::I64).unwrap();
+        let x = b.build_int_const(7u64, ValueType::int(64)).unwrap();
+        let y = b.build_int_const(8u64, ValueType::int(64)).unwrap();
+        let z = b.build_int_const(9u64, ValueType::int(64)).unwrap();
         let a = b
-            .build_int_binary_operation(x, y, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(x, y, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         let c = b
-            .build_int_binary_operation(x, z, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(x, z, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         let top = b
-            .build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(top), &[]).unwrap();
         b.set_lift_addr(None);
@@ -986,20 +986,20 @@ mod tests {
         let mut b = single_region_builder();
         // A = Add(x, y) at addr 0xA; C = Add(x, z) at DISTINCT addr 0xC.
         b.set_lift_addr(Some(0xA));
-        let x = b.build_int_const(1u64, ValueType::I64).unwrap();
-        let y = b.build_int_const(2u64, ValueType::I64).unwrap();
-        let z = b.build_int_const(3u64, ValueType::I64).unwrap();
+        let x = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let y = b.build_int_const(2u64, ValueType::int(64)).unwrap();
+        let z = b.build_int_const(3u64, ValueType::int(64)).unwrap();
         let a = b
-            .build_int_binary_operation(x, y, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(x, y, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.set_lift_addr(Some(0xC));
         let c = b
-            .build_int_binary_operation(x, z, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(x, z, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         // top = Add(a, c) keeps BOTH A and C live.
         b.set_lift_addr(Some(0xA));
         let top = b
-            .build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(a, c, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(top), &[]).unwrap();
         b.set_lift_addr(None);
@@ -1036,10 +1036,10 @@ mod tests {
     fn replace_value_then_clean_keeps_live_eq_reachable() {
         let mut b = single_region_builder();
         b.set_lift_addr(Some(0x10));
-        let c1 = b.build_int_const(5u64, ValueType::I64).unwrap();
-        let c2 = b.build_int_const(6u64, ValueType::I64).unwrap();
+        let c1 = b.build_int_const(5u64, ValueType::int(64)).unwrap();
+        let c2 = b.build_int_const(6u64, ValueType::int(64)).unwrap();
         let add = b
-            .build_int_binary_operation(c1, c2, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(c1, c2, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(add), &[]).unwrap();
         b.set_lift_addr(None);
@@ -1077,7 +1077,7 @@ mod tests {
     #[test]
     fn kill_cached_node_then_recreate_yields_fresh_live_node() {
         let mut b = single_region_builder();
-        let root = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let root = b.build_int_const(1u64, ValueType::int(64)).unwrap();
         b.build_return(Some(root), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
@@ -1086,7 +1086,7 @@ mod tests {
         let node = ctx.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         ctx.kill_node(node);
         assert!(!ctx.is_live(node));
@@ -1094,7 +1094,7 @@ mod tests {
         let recreated = ctx.create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         assert_ne!(
             recreated, node,
@@ -1110,10 +1110,10 @@ mod tests {
     #[test]
     fn cull_dead_twice_is_idempotent() {
         let mut b = single_region_builder();
-        let root = b.build_int_const(5u64, ValueType::I64).unwrap();
+        let root = b.build_int_const(5u64, ValueType::int(64)).unwrap();
         // A dead consumer of the live const: a Neg whose output nothing uses.
         let dead_neg = b
-            .build_int_unary_operation(root, crate::node::IntUnaryOp::Neg, ValueType::I64)
+            .build_int_unary_operation(root, crate::node::IntUnaryOp::Neg, ValueType::int(64))
             .unwrap();
         b.build_return(Some(root), &[]).unwrap();
         b.set_lift_addr(None);
@@ -1153,11 +1153,11 @@ mod tests {
     #[test]
     fn replace_value_resurrects_previously_dead_producer() {
         let mut b = single_region_builder();
-        let c1 = b.build_int_const(5u64, ValueType::I64).unwrap();
-        let c2 = b.build_int_const(6u64, ValueType::I64).unwrap();
+        let c1 = b.build_int_const(5u64, ValueType::int(64)).unwrap();
+        let c2 = b.build_int_const(6u64, ValueType::int(64)).unwrap();
         // Orphan producer: a Neg nothing consumes (unreachable at populate).
         let orphan = b
-            .build_int_unary_operation(c2, crate::node::IntUnaryOp::Neg, ValueType::I64)
+            .build_int_unary_operation(c2, crate::node::IntUnaryOp::Neg, ValueType::int(64))
             .unwrap();
         b.build_return(Some(c1), &[]).unwrap();
         b.set_lift_addr(None);
@@ -1221,17 +1221,18 @@ mod tests {
             const RESURRECTIONS: u64 = 400;
             let mut b = single_region_builder();
             for i in 0..pad {
-                b.build_int_const(i + 0x10_0000, ValueType::I64).unwrap();
+                b.build_int_const(i + 0x10_0000, ValueType::int(64))
+                    .unwrap();
             }
             let orphans: Vec<ValueId> = (0..RESURRECTIONS)
                 .map(|i| {
-                    let k = b.build_int_const(i, ValueType::I64).unwrap();
-                    b.build_int_unary_operation(k, crate::node::IntUnaryOp::Neg, ValueType::I64)
+                    let k = b.build_int_const(i, ValueType::int(64)).unwrap();
+                    b.build_int_unary_operation(k, crate::node::IntUnaryOp::Neg, ValueType::int(64))
                         .unwrap()
                 })
                 .collect();
             let live: Vec<ValueId> = (0..RESURRECTIONS)
-                .map(|i| b.build_int_const(i + 0x1000, ValueType::I64).unwrap())
+                .map(|i| b.build_int_const(i + 0x1000, ValueType::int(64)).unwrap())
                 .collect();
             b.build_return(None, &live).unwrap();
             b.set_lift_addr(None);
@@ -1263,14 +1264,14 @@ mod tests {
     #[test]
     fn update_input_resurrects_previously_dead_producer() {
         let mut b = single_region_builder();
-        let c1 = b.build_int_const(5u64, ValueType::I64).unwrap();
+        let c1 = b.build_int_const(5u64, ValueType::int(64)).unwrap();
         // A dead 3-node cone: Neg(Neg(k)), nothing consumes the outer Neg.
-        let k = b.build_int_const(7u64, ValueType::I64).unwrap();
+        let k = b.build_int_const(7u64, ValueType::int(64)).unwrap();
         let inner = b
-            .build_int_unary_operation(k, crate::node::IntUnaryOp::Neg, ValueType::I64)
+            .build_int_unary_operation(k, crate::node::IntUnaryOp::Neg, ValueType::int(64))
             .unwrap();
         let outer = b
-            .build_int_unary_operation(inner, crate::node::IntUnaryOp::Neg, ValueType::I64)
+            .build_int_unary_operation(inner, crate::node::IntUnaryOp::Neg, ValueType::int(64))
             .unwrap();
         b.build_return(Some(c1), &[]).unwrap();
         b.set_lift_addr(None);
@@ -1328,11 +1329,11 @@ mod tests {
     #[test]
     fn add_node_input_resurrects_previously_dead_producer() {
         let mut b = single_region_builder();
-        let c1 = b.build_int_const(5u64, ValueType::I64).unwrap();
-        let c2 = b.build_int_const(6u64, ValueType::I64).unwrap();
+        let c1 = b.build_int_const(5u64, ValueType::int(64)).unwrap();
+        let c2 = b.build_int_const(6u64, ValueType::int(64)).unwrap();
         // Orphan producer: a Neg nothing consumes (unreachable at populate).
         let orphan = b
-            .build_int_unary_operation(c2, crate::node::IntUnaryOp::Neg, ValueType::I64)
+            .build_int_unary_operation(c2, crate::node::IntUnaryOp::Neg, ValueType::int(64))
             .unwrap();
         b.build_return(Some(c1), &[]).unwrap();
         b.set_lift_addr(None);
@@ -1374,10 +1375,10 @@ mod tests {
     fn attach_already_live_value_keeps_cached_state_unchanged() {
         let mut b = single_region_builder();
         b.set_lift_addr(Some(0x10));
-        let c1 = b.build_int_const(5u64, ValueType::I64).unwrap();
-        let c2 = b.build_int_const(6u64, ValueType::I64).unwrap();
+        let c1 = b.build_int_const(5u64, ValueType::int(64)).unwrap();
+        let c2 = b.build_int_const(6u64, ValueType::int(64)).unwrap();
         let add = b
-            .build_int_binary_operation(c1, c2, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(c1, c2, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(add), &[]).unwrap();
         b.set_lift_addr(None);
@@ -1418,10 +1419,10 @@ mod tests {
     #[test]
     fn cull_dead_after_resurrect_keeps_node_and_validates() {
         let mut b = single_region_builder();
-        let c1 = b.build_int_const(5u64, ValueType::I64).unwrap();
+        let c1 = b.build_int_const(5u64, ValueType::int(64)).unwrap();
         // Orphan consuming the LIVE c1 (raw-reachable from the c1 root).
         let orphan = b
-            .build_int_unary_operation(c1, crate::node::IntUnaryOp::Neg, ValueType::I64)
+            .build_int_unary_operation(c1, crate::node::IntUnaryOp::Neg, ValueType::int(64))
             .unwrap();
         b.build_return(Some(c1), &[]).unwrap();
         b.set_lift_addr(None);
@@ -1518,11 +1519,11 @@ mod tests {
     fn resurrect_load_marks_its_memory_store_live() {
         let mut b = single_region_builder();
         b.set_lift_addr(Some(0x10));
-        let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
-        let data = b.build_int_const(0x42u64, ValueType::I64).unwrap();
+        let addr = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
+        let data = b.build_int_const(0x42u64, ValueType::int(64)).unwrap();
         let init_mem = b.entry_memory;
         // The live spine returns an unrelated const.
-        let ret_val = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let ret_val = b.build_int_const(1u64, ValueType::int(64)).unwrap();
         b.build_return(Some(ret_val), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
@@ -1539,7 +1540,7 @@ mod tests {
         let load_node = function.graph_mut().create_node(
             NodeKind::Load(rsleigh::VnSpace::RAM),
             [store_mem, addr],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let loaded = function.node_outputs_exact::<1>(load_node).unwrap()[0];
         for n in [store_node, load_node] {
@@ -1595,10 +1596,10 @@ mod tests {
     fn clean_keeps_side_effect_node() {
         let mut b = single_region_builder();
         b.set_lift_addr(Some(0x10));
-        let addr = b.build_int_const(0x1000u64, ValueType::I64).unwrap();
-        let data = b.build_int_const(0x42u64, ValueType::I64).unwrap();
+        let addr = b.build_int_const(0x1000u64, ValueType::int(64)).unwrap();
+        let data = b.build_int_const(0x42u64, ValueType::int(64)).unwrap();
         b.build_store(addr, data, rsleigh::VnSpace::RAM).unwrap();
-        let ret_val = b.build_int_const(1u64, ValueType::I64).unwrap();
+        let ret_val = b.build_int_const(1u64, ValueType::int(64)).unwrap();
         b.build_return(Some(ret_val), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
@@ -1664,7 +1665,7 @@ mod tests {
                     (0xC0 + i as u64) as usize,
                 )),
                 [],
-                [ValueKind::Typed(ValueType::I64)],
+                [ValueKind::Typed(ValueType::int(64))],
             );
             let v = ctx.function().node_outputs(k)[0];
             consts.push(v);
@@ -1673,7 +1674,7 @@ mod tests {
         let phi = ctx.create_node(
             NodeKind::Phi,
             phi_inputs,
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
 
         // Remove predecessors {1, 3, 6} in one batch (unsorted on purpose).
@@ -1701,11 +1702,11 @@ mod tests {
     fn clean_dead_chain_cost_is_linear() {
         fn kill_chain(n: usize) -> u64 {
             let mut b = single_region_builder();
-            let three = b.build_int_const(3u64, ValueType::I64).unwrap();
-            let mut x = b.build_int_const(1u64, ValueType::I64).unwrap();
+            let three = b.build_int_const(3u64, ValueType::int(64)).unwrap();
+            let mut x = b.build_int_const(1u64, ValueType::int(64)).unwrap();
             for _ in 0..n {
                 x = b
-                    .build_int_binary_operation(x, three, IntBinaryOp::Add, ValueType::I64)
+                    .build_int_binary_operation(x, three, IntBinaryOp::Add, ValueType::int(64))
                     .unwrap();
             }
             b.build_return(Some(x), &[]).unwrap();
@@ -1723,7 +1724,7 @@ mod tests {
                 .expect("Return reads the chain head");
 
             let mut ctx = EditFunction::new(&mut function);
-            let zero = ctx.build_int_const(0u64, ValueType::I64).unwrap();
+            let zero = ctx.build_int_const(0u64, ValueType::int(64)).unwrap();
             let slot = ctx.function().node_input_id_at(ret, slot_index).unwrap();
             let before = ctx.queue_pops;
             ctx.update_input(slot, zero);
@@ -1761,14 +1762,14 @@ mod function_state_tests {
         let mut b = single_region_builder();
 
         b.set_lift_addr(Some(0x10));
-        let k1 = b.build_int_const(7u64, ValueType::I64).unwrap();
-        let k2 = b.build_int_const(11u64, ValueType::I64).unwrap();
+        let k1 = b.build_int_const(7u64, ValueType::int(64)).unwrap();
+        let k2 = b.build_int_const(11u64, ValueType::int(64)).unwrap();
         let sum = b
-            .build_int_binary_operation(k1, k2, IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(k1, k2, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(sum), &[]).unwrap();
         // Created but never wired into anything.
-        let dangling = b.build_int_const(0xDEAD_u64, ValueType::I64).unwrap();
+        let dangling = b.build_int_const(0xDEAD_u64, ValueType::int(64)).unwrap();
         b.set_lift_addr(None);
         let function = b.build().unwrap();
 

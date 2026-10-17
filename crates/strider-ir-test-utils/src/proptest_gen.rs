@@ -10,10 +10,10 @@ use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IntBinaryOp, IntCmpOp,
 /// I8..I64 only, so no step crosses the wide-constant boundary.
 fn int_ty() -> impl Strategy<Value = ValueType> {
     prop_oneof![
-        Just(ValueType::I8),
-        Just(ValueType::I16),
-        Just(ValueType::I32),
-        Just(ValueType::I64),
+        Just(ValueType::int(8)),
+        Just(ValueType::int(16)),
+        Just(ValueType::int(32)),
+        Just(ValueType::int(64)),
     ]
 }
 
@@ -306,24 +306,24 @@ mod tests {
     fn a_no_op_width_change_does_not_poison_the_destination_bucket() {
         let f = replay(&[
             Step::EmitIntConst {
-                width: ValueType::I64,
+                width: ValueType::int(64),
                 value: 1,
                 lift_off: 0,
             },
             Step::EmitIntConst {
-                width: ValueType::I32,
+                width: ValueType::int(32),
                 value: 2,
                 lift_off: 1,
             },
             Step::EmitTruncate {
-                src_width: ValueType::I32,
-                dst_width: ValueType::I64,
+                src_width: ValueType::int(32),
+                dst_width: ValueType::int(64),
                 src_idx: 0,
                 lift_off: 2,
             },
             // Index 1 of the I64 bucket: the poisoned entry, if it got in.
             Step::EmitBinaryOp {
-                width: ValueType::I64,
+                width: ValueType::int(64),
                 op: IntBinaryOp::Add,
                 lhs_idx: 1,
                 rhs_idx: 1,

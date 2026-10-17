@@ -103,7 +103,7 @@ mod tests {
         let node_id = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         assert_eq!(
             function.node_kind(node_id),
@@ -114,7 +114,7 @@ mod tests {
         check_node_output_kinds(
             function.graph(),
             node_id,
-            vec![ValueKind::Typed(ValueType::I64)],
+            vec![ValueKind::Typed(ValueType::int(64))],
         );
         check_node_output_definitions(function.graph(), node_id, vec![(node_id, 0)]);
     }
@@ -127,7 +127,7 @@ mod tests {
         let node_id = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [value] = function.node_outputs_exact::<1>(node_id).unwrap();
         let two_step = function.node_kind(function.producer(value));
@@ -149,7 +149,7 @@ mod tests {
                 (0xdead_beef_u64) as usize,
             )),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let arena_after_first = function.graph().all_node_ids().count();
         for _ in 0..1000 {
@@ -158,7 +158,7 @@ mod tests {
                     (0xdead_beef_u64) as usize,
                 )),
                 [],
-                [ValueKind::Typed(ValueType::I64)],
+                [ValueKind::Typed(ValueType::int(64))],
             );
             assert_eq!(id, first, "cache hit must return the original id");
         }
@@ -176,12 +176,12 @@ mod tests {
         let a = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             [],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let b = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         assert_ne!(
             a, b,
@@ -197,8 +197,12 @@ mod tests {
         use crate::{IRBuilderExt, IRViewer};
         let mut function = test_function();
         // -4 at I8: only the low 8 bits of 0x1FC matter.
-        let wide = function.build_int_const(0x1FCu128, ValueType::I8).unwrap();
-        let masked = function.build_int_const(0xFCu128, ValueType::I8).unwrap();
+        let wide = function
+            .build_int_const(0x1FCu128, ValueType::int(8))
+            .unwrap();
+        let masked = function
+            .build_int_const(0xFCu128, ValueType::int(8))
+            .unwrap();
         assert_eq!(
             function.producer(wide),
             function.producer(masked),
@@ -268,10 +272,10 @@ mod tests {
         let c = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [c_value] = function.node_outputs_exact::<1>(c).unwrap();
-        let ty = ValueKind::Typed(ValueType::I64);
+        let ty = ValueKind::Typed(ValueType::int(64));
         let p1 = function
             .graph_mut()
             .create_node(NodeKind::Phi, [phi_token, c_value], [ty]);
@@ -289,7 +293,7 @@ mod tests {
         let mut function = test_function();
         let id_a = InitialVnId::from_index(0);
         let id_b = InitialVnId::from_index(1);
-        let value_kind = ValueKind::Typed(ValueType::I64);
+        let value_kind = ValueKind::Typed(ValueType::int(64));
         let v1 = function
             .graph_mut()
             .create_node(NodeKind::InitialVar(id_a), [], [value_kind]);
@@ -320,7 +324,7 @@ mod tests {
         let target = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(0x1000_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [target_value] = function.node_outputs_exact::<1>(target).unwrap();
         let outs = [ValueKind::Control, ValueKind::Memory];
@@ -381,7 +385,7 @@ mod tests {
         let const_node = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [const_value] = function.node_outputs_exact::<1>(const_node).unwrap();
 
@@ -404,14 +408,14 @@ mod tests {
         let c0 = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [out0] = function.node_outputs_exact::<1>(c0).unwrap();
 
         let c1 = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [out1] = function.node_outputs_exact::<1>(c1).unwrap();
 
@@ -453,14 +457,14 @@ mod tests {
         let old = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(10_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [old_value] = function.node_outputs_exact::<1>(old).unwrap();
 
         let new = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(20_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [new_value] = function.node_outputs_exact::<1>(new).unwrap();
 
@@ -486,17 +490,17 @@ mod tests {
         let lhs = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let rhs = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(9_usize)),
             [],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let [lhs_value] = function.node_outputs_exact::<1>(lhs).unwrap();
         let [rhs_value] = function.node_outputs_exact::<1>(rhs).unwrap();
 
-        let ty = ValueKind::Typed(ValueType::I32);
+        let ty = ValueKind::Typed(ValueType::int(32));
         let add_a = function.graph_mut().create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
             [lhs_value, rhs_value],
@@ -531,7 +535,7 @@ mod tests {
         let c = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(99_usize)),
             [],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let [value] = function.node_outputs_exact::<1>(c).unwrap();
 
@@ -561,7 +565,7 @@ mod tests {
         let node = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I8)],
+            [ValueKind::Typed(ValueType::int(8))],
         );
         let [value] = function.node_outputs_exact::<1>(node).unwrap();
         assert_eq!(function.producer(value), node);
@@ -589,7 +593,7 @@ mod tests {
         let src = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let [value] = function.node_outputs_exact::<1>(src).unwrap();
 
@@ -622,7 +626,7 @@ mod tests {
         let src = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(3_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [value] = function.node_outputs_exact::<1>(src).unwrap();
 
@@ -647,14 +651,14 @@ mod tests {
         let old_src = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [old_value] = function.node_outputs_exact::<1>(old_src).unwrap();
 
         let new_src = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(2_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [new_value] = function.node_outputs_exact::<1>(new_src).unwrap();
 
@@ -690,14 +694,14 @@ mod tests {
         let old_src = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(10_usize)),
             [],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let [old_value] = function.node_outputs_exact::<1>(old_src).unwrap();
 
         let new_src = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(20_usize)),
             [],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let [new_value] = function.node_outputs_exact::<1>(new_src).unwrap();
 
@@ -733,7 +737,7 @@ mod tests {
             let n = function.graph_mut().create_node(
                 NodeKind::IntConst(crate::node::const_value::ConstId::new(10_usize)),
                 [],
-                [ValueKind::Typed(ValueType::I64)],
+                [ValueKind::Typed(ValueType::int(64))],
             );
             function.node_outputs_exact::<1>(n).unwrap()[0]
         };
@@ -741,7 +745,7 @@ mod tests {
             let n = function.graph_mut().create_node(
                 NodeKind::IntConst(crate::node::const_value::ConstId::new(20_usize)),
                 [],
-                [ValueKind::Typed(ValueType::I64)],
+                [ValueKind::Typed(ValueType::int(64))],
             );
             function.node_outputs_exact::<1>(n).unwrap()[0]
         };
@@ -749,7 +753,7 @@ mod tests {
             let n = function.graph_mut().create_node(
                 NodeKind::IntConst(crate::node::const_value::ConstId::new(30_usize)),
                 [],
-                [ValueKind::Typed(ValueType::I64)],
+                [ValueKind::Typed(ValueType::int(64))],
             );
             function.node_outputs_exact::<1>(n).unwrap()[0]
         };
@@ -793,7 +797,7 @@ mod tests {
             let n = function.graph_mut().create_node(
                 NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
                 [],
-                [ValueKind::Typed(ValueType::I64)],
+                [ValueKind::Typed(ValueType::int(64))],
             );
             function.node_outputs_exact::<1>(n).unwrap()[0]
         };
@@ -801,7 +805,7 @@ mod tests {
             let n = function.graph_mut().create_node(
                 NodeKind::IntConst(crate::node::const_value::ConstId::new(2_usize)),
                 [],
-                [ValueKind::Typed(ValueType::I64)],
+                [ValueKind::Typed(ValueType::int(64))],
             );
             function.node_outputs_exact::<1>(n).unwrap()[0]
         };
@@ -836,22 +840,22 @@ mod tests {
         let a = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
             [],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let b = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(2_usize)),
             [],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let c = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(3_usize)),
             [],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let [a_value] = function.node_outputs_exact::<1>(a).unwrap();
         let [b_value] = function.node_outputs_exact::<1>(b).unwrap();
         let [c_value] = function.node_outputs_exact::<1>(c).unwrap();
-        let ty = ValueKind::Typed(ValueType::I32);
+        let ty = ValueKind::Typed(ValueType::int(32));
 
         let add_ab = function.graph_mut().create_node(
             NodeKind::IntBinaryOp(IntBinaryOp::Add),
@@ -884,7 +888,7 @@ mod tests {
         let src = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(99_usize)),
             [],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let [value] = function.node_outputs_exact::<1>(src).unwrap();
 
@@ -909,7 +913,7 @@ mod tests {
         let src = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [value] = function.node_outputs_exact::<1>(src).unwrap();
 
@@ -942,7 +946,7 @@ mod tests {
         let node = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             [],
-            [ValueKind::Typed(ValueType::I8)],
+            [ValueKind::Typed(ValueType::int(8))],
         );
         let err = function.node_outputs_exact::<2>(node).unwrap_err();
         assert!(
@@ -957,7 +961,7 @@ mod tests {
         let src = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let [value] = function.node_outputs_exact::<1>(src).unwrap();
 
@@ -978,19 +982,19 @@ mod tests {
         let c = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         let cval = function.node_outputs(c).iter().copied().next().unwrap();
         // Two consumers of cval, to give the use-list real ordering.
         let _a = function.graph_mut().create_node(
             NodeKind::Truncate,
             [cval],
-            [ValueKind::Typed(ValueType::I32)],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let b = function.graph_mut().create_node(
             NodeKind::IntUnaryOp(IntUnaryOp::Neg),
             [cval],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
 
         let head_before = function.graph().value_first_use_id(cval);
@@ -1095,7 +1099,7 @@ mod tests {
         let nid = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         assert_eq!(function.get_cc(nid), function.default_cc());
         assert!(function.get_cc(nid).stack_args.is_none());
@@ -1129,7 +1133,7 @@ mod tests {
             [
                 ValueKind::Control,
                 ValueKind::Memory,
-                ValueKind::Typed(ValueType::I64),
+                ValueKind::Typed(ValueType::int(64)),
             ],
         );
         let clobber_value = function.node_outputs(nid)[2];
@@ -1152,7 +1156,7 @@ mod tests {
         let a = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         function
             .side_tables_mut()
@@ -1160,7 +1164,7 @@ mod tests {
         let b = function.graph_mut().create_node(
             NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
             [],
-            [ValueKind::Typed(ValueType::I64)],
+            [ValueKind::Typed(ValueType::int(64))],
         );
         assert_eq!(a, b, "cacheable nodes should dedup");
         function

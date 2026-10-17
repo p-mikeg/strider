@@ -239,7 +239,7 @@ fn arm_neon_float_args_keep_their_abi_positions_end_to_end() {
     for (j, v) in float_args.iter().enumerate() {
         assert_eq!(
             f.value_type(*v).unwrap(),
-            strider_ir::ValueType::I64,
+            strider_ir::ValueType::int(64),
             "float argument {j} is one 64-bit d register, not a fused q container",
         );
     }

@@ -436,7 +436,7 @@ mod tests {
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let v = b.build_int_const(k, ValueType::I64).unwrap();
+        let v = b.build_int_const(k, ValueType::int(64)).unwrap();
         b.build_return(Some(v), &[]).unwrap();
         b.set_lift_addr(None);
         b.build().unwrap()
@@ -449,10 +449,10 @@ mod tests {
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let one = b.build_int_const(1u64, ValueType::I64).unwrap();
-        let two = b.build_int_const(2u64, ValueType::I64).unwrap();
+        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let two = b.build_int_const(2u64, ValueType::int(64)).unwrap();
         let sum = b
-            .build_int_binary_operation(one, two, strider_ir::IntBinaryOp::Add, ValueType::I64)
+            .build_int_binary_operation(one, two, strider_ir::IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(sum), &[]).unwrap();
         b.set_lift_addr(None);
@@ -564,7 +564,7 @@ mod tests {
                 // pass's own, added once.
                 if edit.node_inputs(ret).len() == 3 {
                     // `build_int_const` carries no contributor stamp.
-                    let value = edit.build_int_const(7u64, ValueType::I64)?;
+                    let value = edit.build_int_const(7u64, ValueType::int(64))?;
                     edit.add_node_input(ret, value);
                 }
                 Ok(OptimizationResult::Changed)
@@ -669,7 +669,7 @@ mod tests {
                 .live_of_kind(|k| matches!(k, strider_ir::node::NodeKind::Return))
                 .next()
                 .expect("the fixture returns");
-            let value = edit.build_int_const(100 + run as u64, ValueType::I64)?;
+            let value = edit.build_int_const(100 + run as u64, ValueType::int(64))?;
             let old = edit.node_inputs(ret)[2];
             edit.absorb_fingerprint(value, old);
             edit.replace_value(old, value);
@@ -732,7 +732,7 @@ mod tests {
                     .live_of_kind(|k| matches!(k, NodeKind::Return))
                     .next()
                     .expect("the fixture returns");
-                let value = edit.build_int_const(9u64, ValueType::I64)?;
+                let value = edit.build_int_const(9u64, ValueType::int(64))?;
                 let slot = edit.node_input_id_at(ret, 2)?;
                 edit.update_input(slot, value);
                 Ok(OptimizationResult::NoChange)
@@ -804,11 +804,11 @@ mod tests {
         b.set_region(region);
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let sp_v = b.read_variable(&sp)?;
-        let four = b.build_int_const(4u64, ValueType::I32)?;
-        let addr = b.build_sub_as_add_neg(sp_v, four, ValueType::I32)?;
-        let data = b.build_int_const(0x42u64, ValueType::I32)?;
+        let four = b.build_int_const(4u64, ValueType::int(32))?;
+        let addr = b.build_sub_as_add_neg(sp_v, four, ValueType::int(32))?;
+        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::I32)?;
+        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut function = b.build()?;
@@ -838,10 +838,11 @@ mod tests {
     fn long_reassoc_chain_converges() -> crate::Result<()> {
         use strider_ir::IntBinaryOp;
         let mut function = strider_ir_test_utils::make_empty_fn(|b| {
-            let mut acc = b.build_int_const(0u64, ValueType::I64)?;
+            let mut acc = b.build_int_const(0u64, ValueType::int(64))?;
             for _ in 0..50 {
-                let one = b.build_int_const(1u64, ValueType::I64)?;
-                acc = b.build_int_binary_operation(acc, one, IntBinaryOp::Add, ValueType::I64)?;
+                let one = b.build_int_const(1u64, ValueType::int(64))?;
+                acc =
+                    b.build_int_binary_operation(acc, one, IntBinaryOp::Add, ValueType::int(64))?;
             }
             Ok(acc)
         })?;
