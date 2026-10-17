@@ -94,7 +94,7 @@ pub(crate) trait PeepholePass {
         SeedOrder::ReversePostorder
     }
 
-    /// `root` always matches [`Self::matches_kind`].
+    /// `root` always matches [`Self::matches_kind`] and is live.
     ///
     /// # Errors
     /// Propagates the first error from the underlying rewrite.
@@ -156,6 +156,10 @@ pub(crate) fn run_peephole<P: PeepholePass>(
                 "peephole pass did not converge after {dequeue_budget} worklist \
                  dequeues; a rule pair is most likely undoing another's work"
             );
+        }
+        // An earlier rewrite of this sweep may have culled it.
+        if !edit.is_live(root) {
+            continue;
         }
         if propagate {
             consumers.clear();
@@ -224,6 +228,8 @@ mod tests {
         /// Never consume `create_matching_once`, so every rewrite mints
         /// another matching node: a stand-in for a non-confluent rule pair.
         cascade_forever: bool,
+        /// Killed on the first visit, which then rewrites nothing.
+        kill_first: RefCell<Option<NodeId>>,
     }
 
     impl ScriptedPass {
@@ -236,6 +242,7 @@ mod tests {
                 visit_log: RefCell::default(),
                 create_matching_once: RefCell::new(false),
                 cascade_forever: false,
+                kill_first: RefCell::new(None),
             }
         }
     }
@@ -254,6 +261,10 @@ mod tests {
         ) -> Result<PeepholeRewrite> {
             use cranelift_entity::EntityRef;
             self.visit_log.borrow_mut().push(root.index() as u32);
+            if let Some(victim) = self.kill_first.borrow_mut().take() {
+                edit.kill_node(victim);
+                return Ok(PeepholeRewrite::NoChange);
+            }
             if self.return_error {
                 return Err(anyhow::anyhow!("scripted-pass forced error"));
             }
@@ -407,6 +418,36 @@ mod tests {
         assert!(
             log.contains(&new_node_idx),
             "freshly-created matching node {new_node_idx} must be re-visited, log={log:?}",
+        );
+    }
+
+    /// A seed an earlier visit of the same sweep killed is never handed to
+    /// `try_rewrite`.
+    #[test]
+    fn run_peephole_skips_a_seed_killed_earlier_in_the_sweep() {
+        use cranelift_entity::EntityRef;
+        let mut fg = make_empty_fn(|b| {
+            let a = b.build_int_const(1u64, ValueType::I64)?;
+            let bb = b.build_int_const(2u64, ValueType::I64)?;
+            let c = b.build_int_const(3u64, ValueType::I64)?;
+            let inner = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::I64)?;
+            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::I64)
+        })
+        .unwrap();
+        let outer = fg.producer(crate::test_support::return_value(fg.graph()).unwrap());
+        // Seeds run operands first, so the inner Add's visit kills the outer.
+        let pass = ScriptedPass {
+            kill_first: RefCell::new(Some(outer)),
+            ..ScriptedPass::new(match_add, false, false)
+        };
+        let mut edit = crate::EditFunction::new(&mut fg);
+        let mut octx = crate::pipeline::OptCtx::at_floor(None);
+        run_peephole(&pass, &mut edit, &mut octx).unwrap();
+        let log = pass.visit_log.borrow().clone();
+        assert_eq!(log.len(), 1, "only the inner Add is visited: {log:?}");
+        assert!(
+            !log.contains(&(outer.index() as u32)),
+            "the killed Add was visited: {log:?}"
         );
     }
 
