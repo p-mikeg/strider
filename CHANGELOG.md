@@ -193,6 +193,10 @@
   arch and sla disagree on the ISA mode: a mode var the sla does not flow, or
   (not `DecodeEngine::new`) an unpaired `ISAModeSwitch`. Before, only a debug
   build asserted it.
+- `OwnedElf::regions` keeps one region per start: the pieces a writable
+  mapping cuts out of two overlapping read-only ones collapse to the later,
+  as `MemRegionsLookupTable` collapses them, so a crafted image can return
+  fewer regions.
 
 ### Fixed
 
