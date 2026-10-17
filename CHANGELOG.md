@@ -93,6 +93,12 @@
 - `ValueType::ALL` is renamed `SUPPORTED`, and `ValueType::as_str` is gone:
   `Display` spells the same `i32` / `f64`, and `ValueType` now parses that
   spelling (`FromStr`).
+- `ValueType` is `enum { Int(u16), Float(u16) }`, the width in bits. Only
+  `ValueType::I1` keeps a name: write `ValueType::int(32)` /
+  `ValueType::float(64)` (`const fn`s that panic, or fail to compile in a
+  `const`, on a width outside `SUPPORTED`; `is_supported` tests one) and
+  match `Int(w)` / `Float(w)`. `Debug` and `Display` print `I32` / `i32` as
+  before; `float_from_bytes`' error no longer lists the valid sizes.
 
 ### Changed, Python
 
