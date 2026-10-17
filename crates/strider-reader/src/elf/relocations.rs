@@ -582,9 +582,13 @@ fn apply_one_relocation(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo, p
         return;
     }
 
-    if let Some(kind) = classified(r, arch) {
-        apply_classified(ctx, site, r, pair, kind);
-        return;
+    match classify(arch, r) {
+        Some(Kind::Marker) => return,
+        Some(Kind::Compute(value, field)) => {
+            apply_classified(ctx, site, r, pair, value, field);
+            return;
+        }
+        None => {}
     }
 
     // `object` read a mips64el `Elf64_Rel`'s kind and size off its symbol
@@ -692,33 +696,25 @@ fn fit(obj: &object::File<'_>, field: Field, value: u64) -> Option<u64> {
     encode(field, 0, value, Isa::Same, 0)
 }
 
-/// The [`classify`] answer for `r`, `None` for a type it does not list or a
-/// MIPS composite of more than one type.
-fn classified(r: &RelocInfo, arch: A) -> Option<Kind> {
-    if r.r_type2 != object::elf::R_MIPS_NONE || r.r_type3 != object::elf::R_MIPS_NONE {
-        return None;
-    }
-    classify(arch, r.r_type)
-}
-
 /// A [`classify`]-listed relocation, see [`super::encodings`].
 fn apply_classified(
     ctx: &mut Ctx<'_, '_>,
     site: RelocSite,
     r: &RelocInfo,
     pair: Option<u64>,
-    kind: Kind,
+    value: Value,
+    field: Field,
 ) {
-    let (value_kind, field) = match kind {
-        Kind::Marker => return,
-        Kind::Compute(value, field) => (value, field),
-        Kind::Ppc64Call { .. } | Kind::PpcPltCall => (Value::Pcrel, Field::PpcBranch24),
-    };
+    // An `SHT_REL` image-relative field already holds `B + A`, the image base
+    // `B` modelled 0: nothing to patch, and nothing to hole either.
+    if value == Value::ImageRelative && r.rela_addend.is_none() {
+        return;
+    }
     let p = site.addr;
     let width = field.width();
     let holder = ctx.holder(site, p, width);
     let field_le = ctx.field_le(field);
-    match compute_classified(ctx, r, pair, kind, value_kind, field, p, holder) {
+    match compute_classified(ctx, r, pair, value, field, p, holder) {
         Some(word) => ctx.record(holder, p, word, width, field_le),
         None => ctx.unmodelled(holder, p, width, r.type_word()),
     }
@@ -726,12 +722,10 @@ fn apply_classified(
 
 /// The patched field of a [`classify`]-listed relocation at `p`, `None` when
 /// it is not computed.
-#[allow(clippy::too_many_arguments)]
 fn compute_classified(
     ctx: &mut Ctx<'_, '_>,
     r: &RelocInfo,
     pair: Option<u64>,
-    kind: Kind,
     value_kind: Value,
     field: Field,
     p: u64,
@@ -756,9 +750,11 @@ fn compute_classified(
     }
     let s = target.map_or(0, |t| t.addr);
 
-    let mut a = match r.rela_addend {
-        Some(a) => a,
-        None => implicit_addend(field, raw)?,
+    let mut a = match (value_kind, r.rela_addend) {
+        (_, Some(a)) => a,
+        // A slot's `SHT_REL` field holds the PLT push address, not an addend.
+        (Value::Slot, None) => 0,
+        (_, None) => implicit_addend(field, raw)?,
     };
     match field {
         // The low half of an `SHT_REL` HI16's addend is its LO16's field.
@@ -800,11 +796,23 @@ fn compute_classified(
     };
     let sa = apply_addend(branch_s, a);
     let page = |x: u64| x & !0xfff;
-    let value = match (kind, value_kind) {
-        (Kind::PpcPltCall, _) => s.wrapping_sub(p),
+    let value = match value_kind {
+        Value::Abs | Value::Slot => sa,
+        Value::Pcrel => sa.wrapping_sub(p),
+        Value::PagePcrel => page(sa).wrapping_sub(page(p)),
+        Value::GotPcrel => apply_addend(got_slot(ctx)?, a).wrapping_sub(p),
+        Value::GotPagePcrel => page(got_slot(ctx)?).wrapping_sub(page(p)),
+        Value::Got => got_slot(ctx)?,
+        Value::GotOffset => apply_addend(got_slot(ctx)?.wrapping_sub(got_base?), a),
+        Value::GotRelative => sa.wrapping_sub(got_base?),
+        Value::GotBasePcrel => apply_addend(got_base?, a).wrapping_sub(p),
+        Value::TocRelative => sa.wrapping_sub(layout.toc_base()?),
+        Value::Toc => apply_addend(layout.toc_base()?, a),
+        Value::ImageRelative => apply_addend(0, a),
+        Value::PltCall => s.wrapping_sub(p),
         // A descriptor's entry is where `S + A` in `.opd` relocates to.
-        (Kind::Ppc64Call { .. }, _) if target?.in_opd => ctx.opd_entries.get(&sa)?.wrapping_sub(p),
-        (Kind::Ppc64Call { notoc }, _) => {
+        Value::Ppc64Call { .. } if target?.in_opd => ctx.opd_entries.get(&sa)?.wrapping_sub(p),
+        Value::Ppc64Call { notoc } => {
             let entry = if notoc {
                 sa
             } else {
@@ -812,17 +820,6 @@ fn compute_classified(
             };
             entry.wrapping_sub(p)
         }
-        (_, Value::Abs) => sa,
-        (_, Value::Pcrel) => sa.wrapping_sub(p),
-        (_, Value::PagePcrel) => page(sa).wrapping_sub(page(p)),
-        (_, Value::GotPcrel) => apply_addend(got_slot(ctx)?, a).wrapping_sub(p),
-        (_, Value::GotPagePcrel) => page(got_slot(ctx)?).wrapping_sub(page(p)),
-        (_, Value::Got) => got_slot(ctx)?,
-        (_, Value::GotOffset) => apply_addend(got_slot(ctx)?.wrapping_sub(got_base?), a),
-        (_, Value::GotRelative) => sa.wrapping_sub(got_base?),
-        (_, Value::GotBasePcrel) => apply_addend(got_base?, a).wrapping_sub(p),
-        (_, Value::TocRelative) => sa.wrapping_sub(layout.toc_base()?),
-        (_, Value::Toc) => apply_addend(layout.toc_base()?, a),
     };
     let word = match field {
         Field::Data { .. } => fit(obj, field, value)?,
@@ -1274,5 +1271,189 @@ mod tests {
             .read_exact(0x1080, &mut tail)
             .expect("the inner region");
         assert_eq!(tail, value.to_le_bytes()[4..]);
+    }
+
+    /// A relocation the word domain builds: `r_type` against symbol 1 or
+    /// STN_UNDEF, MIPS64's second type `r_type2`.
+    fn word_info(r_type: u32, r_type2: u32, sym: bool) -> RelocInfo {
+        RelocInfo {
+            r_type,
+            r_type2,
+            r_type3: object::elf::R_MIPS_NONE,
+            sym: sym.then_some(object::SymbolIndex(1)),
+            rela_addend: Some(0),
+            generic: None,
+        }
+    }
+
+    /// Every type number below 1101 on every arch the word rows serve, against
+    /// a symbol and none, MIPS64 with and without `R_MIPS_64` composed.
+    fn word_domain() -> impl Iterator<Item = (A, RelocInfo)> {
+        [
+            A::X86_64,
+            A::I386,
+            A::Aarch64,
+            A::Arm,
+            A::PowerPc,
+            A::PowerPc64,
+            A::Mips,
+            A::Mips64,
+        ]
+        .into_iter()
+        .flat_map(|arch| {
+            let seconds: &'static [u32] = if arch == A::Mips64 {
+                &[object::elf::R_MIPS_NONE, object::elf::R_MIPS_64]
+            } else {
+                &[object::elf::R_MIPS_NONE]
+            };
+            seconds.iter().flat_map(move |&r_type2| {
+                (0..=1100u32).flat_map(move |r_type| {
+                    [false, true].map(move |sym| (arch, word_info(r_type, r_type2, sym)))
+                })
+            })
+        })
+    }
+
+    const D4: Field = Field::Data {
+        bytes: 4,
+        signed: false,
+    };
+    const D8: Field = Field::Data {
+        bytes: 8,
+        signed: false,
+    };
+    const S4: Field = Field::Data {
+        bytes: 4,
+        signed: true,
+    };
+    const S8: Field = Field::Data {
+        bytes: 8,
+        signed: true,
+    };
+
+    /// `(arch, r_type, r_type2, symbol, value, field)`.
+    type WordRow = (A, u32, u32, Option<bool>, Value, Field);
+
+    /// The word rows, a `None` symbol matching both.
+    const WORD_ROWS: &[WordRow] = {
+        use Value::{Abs, ImageRelative as Ir, Pcrel, Slot};
+        use object::elf as e;
+        &[
+            (A::X86_64, e::R_X86_64_RELATIVE, 0, None, Ir, D8),
+            (A::X86_64, e::R_X86_64_IRELATIVE, 0, None, Ir, D8),
+            (A::X86_64, e::R_X86_64_GLOB_DAT, 0, None, Slot, D8),
+            (A::X86_64, e::R_X86_64_JUMP_SLOT, 0, None, Slot, D8),
+            (A::I386, e::R_386_RELATIVE, 0, None, Ir, D4),
+            (A::I386, e::R_386_IRELATIVE, 0, None, Ir, D4),
+            (A::I386, e::R_386_GLOB_DAT, 0, None, Slot, D4),
+            (A::I386, e::R_386_JMP_SLOT, 0, None, Slot, D4),
+            (A::Aarch64, e::R_AARCH64_RELATIVE, 0, None, Ir, D8),
+            (A::Aarch64, e::R_AARCH64_IRELATIVE, 0, None, Ir, D8),
+            (A::Aarch64, e::R_AARCH64_GLOB_DAT, 0, None, Slot, D8),
+            (A::Aarch64, e::R_AARCH64_JUMP_SLOT, 0, None, Slot, D8),
+            (A::Arm, e::R_ARM_RELATIVE, 0, None, Ir, D4),
+            (A::Arm, e::R_ARM_IRELATIVE, 0, None, Ir, D4),
+            (A::Arm, e::R_ARM_GLOB_DAT, 0, None, Slot, D4),
+            (A::Arm, e::R_ARM_JUMP_SLOT, 0, None, Slot, D4),
+            (A::Arm, e::R_ARM_REL32, 0, None, Pcrel, S4),
+            (A::PowerPc, e::R_PPC_RELATIVE, 0, None, Ir, D4),
+            (A::PowerPc, e::R_PPC_IRELATIVE, 0, None, Ir, D4),
+            (A::PowerPc, e::R_PPC_GLOB_DAT, 0, None, Slot, D4),
+            (A::PowerPc, e::R_PPC_JMP_SLOT, 0, None, Slot, D4),
+            (A::PowerPc, e::R_PPC_REL32, 0, None, Pcrel, S4),
+            (A::PowerPc64, e::R_PPC64_RELATIVE, 0, None, Ir, D8),
+            (A::PowerPc64, e::R_PPC64_IRELATIVE, 0, None, Ir, D8),
+            (A::PowerPc64, e::R_PPC64_GLOB_DAT, 0, None, Slot, D8),
+            (A::PowerPc64, e::R_PPC64_JMP_SLOT, 0, None, Slot, D8),
+            (A::PowerPc64, e::R_PPC64_REL32, 0, None, Pcrel, S4),
+            (A::PowerPc64, e::R_PPC64_REL64, 0, None, Pcrel, S8),
+            (A::Mips, e::R_MIPS_REL32, 0, Some(false), Ir, D4),
+            (A::Mips, e::R_MIPS_REL32, 0, Some(true), Abs, D4),
+            (A::Mips, e::R_MIPS_GLOB_DAT, 0, None, Slot, D4),
+            (A::Mips, e::R_MIPS_JUMP_SLOT, 0, None, Slot, D4),
+            (A::Mips64, e::R_MIPS_REL32, 0, Some(false), Ir, D4),
+            (
+                A::Mips64,
+                e::R_MIPS_REL32,
+                e::R_MIPS_64,
+                Some(false),
+                Ir,
+                D8,
+            ),
+            (A::Mips64, e::R_MIPS_REL32, 0, Some(true), Abs, D4),
+            (
+                A::Mips64,
+                e::R_MIPS_REL32,
+                e::R_MIPS_64,
+                Some(true),
+                Abs,
+                D8,
+            ),
+            (A::Mips64, e::R_MIPS_GLOB_DAT, 0, None, Slot, D8),
+            (A::Mips64, e::R_MIPS_GLOB_DAT, e::R_MIPS_64, None, Slot, D8),
+            (A::Mips64, e::R_MIPS_JUMP_SLOT, 0, None, Slot, D8),
+            (A::Mips64, e::R_MIPS_JUMP_SLOT, e::R_MIPS_64, None, Slot, D8),
+        ]
+    };
+
+    /// The row `WORD_ROWS` gives `r` on `arch`.
+    fn word_row(arch: A, r: &RelocInfo) -> Option<(Value, Field)> {
+        WORD_ROWS
+            .iter()
+            .find(|row| {
+                row.0 == arch
+                    && row.1 == r.r_type
+                    && row.2 == r.r_type2
+                    && row.3.is_none_or(|sym| sym == r.sym.is_some())
+            })
+            .map(|row| (row.4, row.5))
+    }
+
+    /// `WORD_ROWS` is what the word ladders apply, and what `classify` answers,
+    /// over every type number they could match; no other type takes an
+    /// image-relative or slot row.
+    #[test]
+    fn classify_answers_the_word_rows() {
+        let data = |bytes: usize, signed| Field::Data {
+            bytes: bytes as u8,
+            signed,
+        };
+        let mut rows = 0;
+        for (arch, r) in word_domain() {
+            let want = word_row(arch, &r);
+            let ladder = image_relative_reloc(&r, arch)
+                .map(|(_, n)| (Value::ImageRelative, data(n, false)))
+                .or_else(|| {
+                    got_or_plt_slot_reloc_size(&r, arch).map(|n| (Value::Slot, data(n, false)))
+                })
+                .or_else(|| {
+                    mips_rel32_symbol_reloc_size(&r, arch).map(|n| (Value::Abs, data(n, false)))
+                })
+                .or_else(|| {
+                    pc_relative_word_reloc(&r, arch).map(|n| (Value::Pcrel, data(n, true)))
+                });
+            assert_eq!(
+                ladder, want,
+                "{arch:?} {r:?}: the ladders apply another row"
+            );
+            match want {
+                Some((value, field)) => {
+                    rows += 1;
+                    assert_eq!(
+                        classify(arch, &r),
+                        Some(Kind::Compute(value, field)),
+                        "{arch:?} {r:?}"
+                    );
+                }
+                None => assert!(
+                    !matches!(
+                        classify(arch, &r),
+                        Some(Kind::Compute(Value::ImageRelative | Value::Slot, _))
+                    ),
+                    "{arch:?} {r:?} takes a word row WORD_ROWS lacks"
+                ),
+            }
+        }
+        assert_eq!(rows, 74, "40 rows, the 34 either-symbol ones counted twice");
     }
 }
