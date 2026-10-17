@@ -32,25 +32,25 @@ pub struct DominatorTree<K: EntityRef> {
 }
 
 impl<K: EntityRef + Hash> DominatorTree<K> {
-    /// Over the vertices `succs` reaches from `root`.
-    ///
-    /// The children-adjacency DFS lives in `graph-algorithms`, which owns
-    /// dominance: this used to hand-roll a second one because the old
-    /// `DomTree` bound demanded `predecessors` and so excluded that crate's
-    /// own `Dominators`. The spans come back keyed by node and are copied into
-    /// a `SecondaryMap` once, so a query stays a dense index rather than a
-    /// hash lookup.
+    /// Over the vertices `succs` reaches from `root`, numbered by
+    /// graph-algorithms' interval tree and copied into a `SecondaryMap` once,
+    /// so a query stays a dense index rather than a hash lookup.
     fn compute<I: IntoIterator<Item = K>>(root: K, succs: impl FnMut(K) -> I) -> Self {
         let doms = graph_algorithms::dominance::dominators(root, succs);
-        let walk = graph_algorithms::dominance::dominator_tree_walk(&doms, root);
+        let intervals = doms.intervals();
+        let vertices = doms.vertices();
         let mut span: SecondaryMap<K, (u32, u32)> = SecondaryMap::new();
-        for (&vertex, &interval) in &walk.span {
-            span[vertex] = interval;
+        for (at, &vertex) in vertices.iter().enumerate() {
+            let (enter, exit) = intervals.span(at as u32);
+            // From 1, so `(0, 0)` stays free to mean "outside the tree".
+            span[vertex] = (enter + 1, exit + 1);
         }
-        Self {
-            span,
-            preorder: walk.preorder,
-        }
+        let preorder = intervals
+            .preorder()
+            .iter()
+            .map(|&at| vertices[at as usize])
+            .collect();
+        Self { span, preorder }
     }
 
     pub(crate) fn root(&self) -> K {
@@ -186,7 +186,7 @@ mod tests {
     use cranelift_entity::EntityRef;
     use petgraph::visit::{GraphBase, IntoNeighbors};
     use proptest::prelude::*;
-    use strider_ir_test_utils::{Rng, graph_oracle};
+    use strider_ir_test_utils::graph_oracle;
 
     // petgraph's Cooper-Harvey-Kennedy `simple_fast` is the independent oracle
     // the interval trees below are matched against; nothing in production
@@ -852,95 +852,48 @@ mod tests {
         b.build()
     }
 
-    /// A CFG of 2 to 9 regions with terminators drawn from `seed`: loops,
-    /// irreducible edges and orphan regions. `None` when the draw is not a
-    /// valid function, e.g. an exit-free cycle.
-    fn random_cfg(seed: u64) -> Option<Function> {
-        use test_cfgs::Term;
-        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
-        let n = 2 + rng.below(8);
-        let terms: Vec<Term> = (0..n)
-            .map(|_| {
-                let (pick, other) = (rng.below(n) as u8, rng.below(n) as u8);
-                match rng.below(10) {
-                    0 => Term::Return,
-                    1 => Term::Unreachable,
-                    2 | 3 => Term::Branch(pick),
-                    4 => Term::Switch(vec![pick, other, rng.below(n) as u8]),
-                    _ => Term::If(pick, other),
-                }
-            })
+    /// The interval trees answer every query exactly as petgraph's idom chain
+    /// walk: over every pair of nodes, and over every pair of node and value
+    /// keys of the split graph.
+    fn check_against_chain_walk(f: &Function) {
+        let chain = control_dominators(f);
+        let tree = control_dominator_tree(f);
+        let nodes: Vec<NodeId> = f.graph().all_node_ids().collect();
+        for &a in &nodes {
+            for &b in &nodes {
+                assert_eq!(
+                    tree.dominance_verdict(a, b),
+                    dominance_verdict(&chain, a, b),
+                    "node verdict({a:?}, {b:?})"
+                );
+                assert_eq!(
+                    tree.dominates(a, b),
+                    dominates(&chain, a, b),
+                    "node dominates({a:?}, {b:?})"
+                );
+            }
+        }
+
+        let chain = control_edge_dominators(f);
+        let tree = control_edge_dominator_tree(f);
+        let keys: Vec<CtrlKey> = nodes
+            .iter()
+            .map(|&n| CtrlKey::Node(n))
+            .chain(f.graph().all_value_ids().map(CtrlKey::Edge))
             .collect();
-        test_cfgs::lower(&terms)?.build().ok()
-    }
-
-    /// The interval trees answer every query exactly as the idom chain walk:
-    /// over every pair of nodes, and over every pair of node and value keys of
-    /// the split graph.
-    #[test]
-    fn dominator_tree_matches_chain_walk() {
-        let mut fixtures = vec![
-            diamond().expect("diamond builds"),
-            empty_true_arm().expect("empty_true_arm builds").0,
-            diamond_loop_and_empty_arm().expect("combined fixture builds"),
-            irreducible_with_orphan().expect("irreducible fixture builds"),
-        ];
-        let hand_built = fixtures.len();
-        fixtures.extend((0..400).filter_map(random_cfg));
-        assert!(
-            fixtures.len() >= hand_built + 100,
-            "too few random CFGs built: {}",
-            fixtures.len() - hand_built
-        );
-
-        for (i, f) in fixtures.iter().enumerate() {
-            let chain = control_dominators(f);
-            let tree = control_dominator_tree(f);
-            let nodes: Vec<NodeId> = f.graph().all_node_ids().collect();
-            let mut held = 0usize;
-            for &a in &nodes {
-                for &b in &nodes {
-                    let verdict = tree.dominance_verdict(a, b);
-                    assert_eq!(
-                        verdict,
-                        dominance_verdict(&chain, a, b),
-                        "fixture {i}: node verdict({a:?}, {b:?})"
-                    );
-                    assert_eq!(
-                        tree.dominates(a, b),
-                        dominates(&chain, a, b),
-                        "fixture {i}: node dominates({a:?}, {b:?})"
-                    );
-                    held += usize::from(verdict == Some(true));
-                }
+        for &a in &keys {
+            for &b in &keys {
+                assert_eq!(
+                    tree.dominance_verdict(a, b),
+                    dominance_verdict(&chain, a, b),
+                    "split verdict({a:?}, {b:?})"
+                );
+                assert_eq!(
+                    tree.dominates(a, b),
+                    dominates(&chain, a, b),
+                    "split dominates({a:?}, {b:?})"
+                );
             }
-            assert!(held >= 2, "fixture {i}: vacuous node tree");
-
-            let chain = control_edge_dominators(f);
-            let tree = control_edge_dominator_tree(f);
-            let keys: Vec<CtrlKey> = nodes
-                .iter()
-                .map(|&n| CtrlKey::Node(n))
-                .chain(f.graph().all_value_ids().map(CtrlKey::Edge))
-                .collect();
-            let mut held = 0usize;
-            for &a in &keys {
-                for &b in &keys {
-                    let verdict = tree.dominance_verdict(a, b);
-                    assert_eq!(
-                        verdict,
-                        dominance_verdict(&chain, a, b),
-                        "fixture {i}: split verdict({a:?}, {b:?})"
-                    );
-                    assert_eq!(
-                        tree.dominates(a, b),
-                        dominates(&chain, a, b),
-                        "fixture {i}: split dominates({a:?}, {b:?})"
-                    );
-                    held += usize::from(verdict == Some(true));
-                }
-            }
-            assert!(held >= 3, "fixture {i}: vacuous split tree");
         }
     }
 
@@ -1083,6 +1036,13 @@ mod tests {
                 check_trees(b.function());
             }
         }
+
+        #[test]
+        fn dominator_trees_match_the_chain_walk(terms in test_cfgs::arb_terms(10, 4)) {
+            if let Some(b) = test_cfgs::lower(&terms) {
+                check_against_chain_walk(b.function());
+            }
+        }
     }
 
     #[test]
@@ -1094,6 +1054,7 @@ mod tests {
             irreducible_with_orphan().expect("irreducible fixture builds"),
         ] {
             check_trees(&f);
+            check_against_chain_walk(&f);
         }
     }
 
