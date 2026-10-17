@@ -3,7 +3,7 @@
 //! `SleighArch::transient_decode_vars` nor `SleighArch::isa_mode_var` covers,
 //! so a value one function commits does reach a later decode on a reused
 //! engine. It is excluded for exactly one reason: the lift is the same either
-//! way. `SleighArch::commits_flow_context`'s doc cites this file for it.
+//! way. `SleighArch::flow_commit_vars`'s doc cites this file for it.
 //!
 //! Six constructors are guarded on `linkreg=1`, each with a twin that is not.
 //! Whether Sleigh actually SELECTS the twin is observable, because every twin

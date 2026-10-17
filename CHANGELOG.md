@@ -115,6 +115,9 @@
 - `build_store`, `build_load`, `build_cpool_ref` and `build_new` return `Err`
   on a float address, data or `CPoolRef` operand, and on a float output for
   `Load`, `CPoolRef` or `New`; each checks its node signature.
+- `strider_target::FlowCommit` and `SleighArch::commits_flow_context` are
+  gone, and `SleighArch::flow_commit_vars` lists names alone: each var's flow
+  class is the sla's own `noflow` declaration, read off by the decoder.
 
 ### Changed, Python
 

@@ -3,7 +3,7 @@ mod region_builder;
 mod split;
 
 use flow::NO_FLOW_VARS;
-pub use flow::{FlowContext, FlowVars};
+pub use flow::{FlowCommit, FlowContext, FlowVars};
 use region_builder::{RegionBuilder, is_unmapped_start, not_code_addr, not_code_at};
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -143,7 +143,7 @@ pub struct Builder<'a, R: rsleigh::MemReader> {
     /// pspec default, so a value an EARLIER build committed can be erased
     /// before this build's own decode re-derives it; see
     /// [`Self::with_flow_commit_defaults`].
-    pub(super) flow_commit_defaults: &'a [(&'static str, strider_target::FlowCommit, u32)],
+    pub(super) flow_commit_defaults: &'a [(&'static str, FlowCommit, u32)],
     /// The pspec default of each `noflow` var that changes a decode; see
     /// [`Self::with_transient_defaults`].
     pub(super) transient_defaults: &'a [(&'static str, u32)],
@@ -268,7 +268,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     #[must_use]
     pub fn with_flow_commit_defaults(
         mut self,
-        defaults: &'a [(&'static str, strider_target::FlowCommit, u32)],
+        defaults: &'a [(&'static str, FlowCommit, u32)],
     ) -> Self {
         self.flow_commit_defaults = defaults;
         self
@@ -668,7 +668,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Gated on the arch declaring no ISA-mode var, so a throwaway decode
     /// cannot leak mode state, and so this cannot reach a preset whose
     /// commits `Builder::enqueue` believes (see
-    /// `a_preset_that_commits_flow_context_names_the_vars_to_re_derive`).
+    /// `a_preset_that_re_derives_context_has_an_isa_mode_var`).
     ///
     /// The gate admits every arch without a mode var, AArch64 and PowerPC
     /// among them, and the length check is AFTER the decode, so it is not what
@@ -1968,7 +1968,10 @@ mod tests {
         let fcd: Vec<_> = arch
             .flow_commit_vars()
             .iter()
-            .map(|&(name, f)| (name, f, sleigh.get_context_at(0, name).expect("default")))
+            .map(|&name| {
+                let default = sleigh.get_context_at(0, name).expect("default");
+                (name, flow.commit_class(name), default)
+            })
             .collect();
 
         let opts = crate::CfgOptions::default();

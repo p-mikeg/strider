@@ -296,8 +296,9 @@ when both IR slots hold the same value.
   instruction, re-deriving the commit from this build's own decode.
   `Lifter::build_cfg` lends that list, and dropping the lend makes the whole
   mechanism inert, which `reused_lifter_rederives_flow_context` pins.
-  What it erases TO is per var and is load-bearing in both directions, which is
-  why each carries a `FlowCommit` class. A `noflow` commit covers one address
+  What it erases TO is per var and is load-bearing in both directions, so each
+  var's `FlowCommit` class is the sla's own `noflow` declaration, read off the
+  engine. A `noflow` commit covers one address
   (`setContextRegion(a, a+1)`), so the pspec DEFAULT is right for ARM `condit`:
   `set_context_at` paints FORWARD to the next change point, and writing a live
   IT state forward predicates the code after it and can fail the decode

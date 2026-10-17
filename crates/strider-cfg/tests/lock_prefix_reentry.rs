@@ -19,7 +19,7 @@ fn build_x86(bytes: Vec<u8>) -> Cfg {
 /// reentry probe's throwaway decode.
 fn build_x86_with(
     bytes: Vec<u8>,
-    flow_commit_defaults: &[(&'static str, strider_target::FlowCommit, u32)],
+    flow_commit_defaults: &[(&'static str, strider_cfg::FlowCommit, u32)],
 ) -> Cfg {
     let arch = SleighArch::x86();
     let mut sleigh = Sleigh::new(
@@ -127,7 +127,7 @@ fn lending_committed_context_bars_the_reentry_probe() {
     // commits, standing in for an arch that does commit one: what is under
     // test is the guard, not this var. It has to exist in the sla, because
     // `rederive_flow` reads every name it is lent.
-    let lent = [("segover", strider_target::FlowCommit::NoFlow, 0u32)];
+    let lent = [("segover", strider_cfg::FlowCommit::Flowing, 0u32)];
     assert_eq!(
         interior(&build_x86_with(LOCK_REENTRY.to_vec(), &lent)),
         vec![0x1003],

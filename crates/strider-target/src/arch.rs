@@ -189,7 +189,7 @@ impl ArchPreset {
 /// answers every field.
 struct DecodeFacts {
     isa_mode_var: Option<&'static str>,
-    flow_commit_vars: &'static [(&'static str, FlowCommit)],
+    flow_commit_vars: &'static [&'static str],
     transient_decode_vars: &'static [&'static str],
     has_delay_slots: bool,
     /// [`SleighArch::callother_output_is_exact_in`] short of its x87 rule.
@@ -220,10 +220,7 @@ static X86_FACTS: DecodeFacts = DecodeFacts {
 
 static ARM32_FACTS: DecodeFacts = DecodeFacts {
     isa_mode_var: Some("TMode"),
-    flow_commit_vars: &[
-        ("condit", FlowCommit::NoFlow),
-        ("TEEMode", FlowCommit::Flowing),
-    ],
+    flow_commit_vars: &["condit", "TEEMode"],
     // `condit` is deliberately absent: it belongs to `flow_commit_vars`, which
     // RE-DERIVES it by re-lifting the owning instruction. These are cleared
     // with no re-lift, including at a region start, which destroys an IT state
@@ -319,16 +316,6 @@ macro_rules! arch_ctor {
     };
 }
 
-/// Whether the sla declares a committed context var as flowing, which decides
-/// what [`SleighArch::flow_commit_vars`] re-derives its value from.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum FlowCommit {
-    /// Confined to one address, so the pspec default is the erase target.
-    NoFlow,
-    /// Painted forward to persist, so the predecessor's value is.
-    Flowing,
-}
-
 impl SleighArch {
     pub fn sla_spec(&self) -> rsleigh::sla_spec::SlaSpec {
         self.sla_spec
@@ -379,8 +366,8 @@ impl SleighArch {
     /// which therefore have to be re-derived from this build's own decode
     /// rather than read out of the engine.
     ///
-    /// Each var paired with whether the sla declares it FLOWING, which decides
-    /// what the erase re-derives FROM.
+    /// What the erase re-derives FROM depends on whether the sla declares the
+    /// var FLOWING, which the decoder reads off the engine.
     ///
     /// A `noflow` commit covers one address
     /// (`ParserContext::applyCommits` gives it `setContextRegion(a, a+1)`), so
@@ -419,39 +406,11 @@ impl SleighArch {
     /// `linkreg` IS committed to a differing value by `mtlr`
     /// (`ppc_embedded.sinc:155`) and is flowing, but every constructor it
     /// selects emits p-code identical to its `linkreg=0` twin, so a stale
-    /// value cannot change the lift.
+    /// value cannot change the lift, which
+    /// `a_stale_linkreg_cannot_change_a_powerpc_lift` pins.
     #[must_use]
-    pub fn flow_commit_vars(&self) -> &'static [(&'static str, FlowCommit)] {
+    pub fn flow_commit_vars(&self) -> &'static [&'static str] {
         self.facts().flow_commit_vars
-    }
-
-    /// Whether this sla commits a context value a later decode must not
-    /// believe, i.e. whether [`Self::flow_commit_vars`] has to name anything.
-    ///
-    /// Not the raw "does any constructor `globalset`" predicate, which is also
-    /// true of PowerPC. Verified against every language dir rsleigh ships:
-    ///
-    /// - x86 and AArch64 contain no `globalset` at all.
-    /// - MIPS commits `ISA_MODE` only at a `jalx` CALL target, which analysis
-    ///   never decodes; its `PAIR_INSTRUCTION_FLAG` and `ext_delay` are
-    ///   `noflow` and go to [`Self::transient_decode_vars`].
-    /// - PowerPC `linkreg` IS committed to a differing value, by `mtlr`
-    ///   (`ppc_embedded.sinc:155`) at `inst_next` and by ~45 constructors at
-    ///   `inst_start`, and it is FLOWING, so a region-start pin does NOT cover
-    ///   it: a forward paint stops at the next change point of that var, which
-    ///   is where the stale commit sits. It is excluded for one reason only,
-    ///   that every constructor a `linkreg=1` selects emits p-code identical
-    ///   to its `linkreg=0` twin, which
-    ///   `a_stale_linkreg_cannot_change_a_powerpc_lift` pins.
-    /// - ARM commits `TEEMode` and the IT-block `condit` group at `inst_next`,
-    ///   and `TMode` both at `inst_next` (`ARMTHUMBinstructions.sinc:1594`,
-    ///   `:2662`) and at a branch TARGET (`ARMinstructions.sinc:677`,
-    ///   `ARMTHUMBinstructions.sinc:1544`). `TMode` is covered by
-    ///   [`Self::isa_mode_var`] instead, re-imposed per instruction rather
-    ///   than re-derived.
-    #[must_use]
-    pub fn commits_flow_context(&self) -> bool {
-        !self.facts().flow_commit_vars.is_empty()
     }
 
     /// Whether the sla decodes a branch together with its delay slot, one
@@ -646,25 +605,15 @@ impl SleighArch {
 mod tests {
     use super::{ArchPreset, SleighArch};
 
-    /// The two lists are one fact. `commits_flow_context` reports it,
-    /// `flow_commit_vars` acts on it, and nothing else ties them together, so
-    /// a preset added to one and not the other would decode against whatever
-    /// an earlier build left.
-    ///
-    /// Also that naming vars implies having an ISA-mode var, which is what
-    /// keeps `Builder::is_benign_prefix_reentry`'s throwaway decode away from
-    /// every preset whose commits are believed: that probe is gated on
+    /// Naming vars to re-derive implies an ISA-mode var, which keeps
+    /// `Builder::is_benign_prefix_reentry`'s throwaway decode away from every
+    /// preset whose commits are believed: that probe is gated on
     /// `isa_mode_var` being `None`, and `Builder::enqueue` reads the engine
     /// only where `flow_commit_vars` is non-empty, so the two are disjoint.
     #[test]
-    fn a_preset_that_commits_flow_context_names_the_vars_to_re_derive() {
+    fn a_preset_that_re_derives_context_has_an_isa_mode_var() {
         for preset in ArchPreset::ALL {
             let arch = preset.arch();
-            assert_eq!(
-                arch.commits_flow_context(),
-                !arch.flow_commit_vars().is_empty(),
-                "{preset:?} reports one answer and lists the other"
-            );
             assert!(
                 arch.flow_commit_vars().is_empty() || arch.isa_mode_var().is_some(),
                 "{preset:?} names vars to re-derive but has no ISA-mode var, so a \

@@ -33,7 +33,7 @@ pub(crate) fn flowing_isa_bit_at<R: rsleigh::MemReader>(
     })
 }
 
-pub use builder::{Builder, FlowContext, FlowVars};
+pub use builder::{Builder, FlowCommit, FlowContext, FlowVars};
 pub use incomplete::{Incompleteness, Reason};
 pub use indirect_resolver::{Arms, ResolvedTarget, ResolvedTargets};
 pub use options::{CfgOptions, DataRanges, FunctionBound, NO_TARGETS, seated_from, seated_in};

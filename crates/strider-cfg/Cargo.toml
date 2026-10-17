@@ -20,6 +20,8 @@ rustc-hash.workspace = true
 [dev-dependencies]
 strider-reader.workspace = true
 object.workspace = true
+# `ArchPreset::arch`, for the tests that sweep every preset.
+strider-target = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true
