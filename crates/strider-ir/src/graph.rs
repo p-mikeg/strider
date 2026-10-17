@@ -51,7 +51,7 @@ pub type Inputs<'a> = strider_graph::Inputs<'a, NodeKind, ValueKind, IrCacheable
 mod tests {
     use super::*;
     use crate::IRViewer;
-    use crate::function::test_function;
+    use crate::function::{test_function, test_function_tracking};
     use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
     use cranelift_entity::EntityRef;
     use rustc_hash::FxHashSet;
@@ -1126,7 +1126,12 @@ mod tests {
 
     #[test]
     fn value_vn_clobber_tag_round_trips() {
-        let mut function = test_function();
+        let vn = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x10,
+            addr_space: rsleigh::VnSpace::REGISTER,
+        };
+        let mut function = test_function_tracking(vec![vn]);
         let nid = function.graph_mut().create_node(
             NodeKind::Call { cc: None },
             [],
@@ -1137,12 +1142,6 @@ mod tests {
             ],
         );
         let clobber_value = function.node_outputs(nid)[2];
-        let vn = rsleigh::Vn {
-            size: 8,
-            addr_off: 0x10,
-            addr_space: rsleigh::VnSpace::REGISTER,
-        };
-        function.set_all_vns(vec![vn]); // only a tracked vn can be tagged
         assert!(function.get_vn_for_value(clobber_value).is_none());
         function.set_vn_for_value(clobber_value, vn);
         assert_eq!(function.get_vn_for_value(clobber_value), Some(vn));
