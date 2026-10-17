@@ -140,18 +140,24 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
     }
 
-    /// `limbs` is little-endian. Requires a wide `output_type`.
+    /// `limbs` is little-endian. Missing limbs are zero, limbs past the type's
+    /// width are ignored and bits above it dropped; a value that fits `u128`
+    /// interns as `build_int_const` would.
     fn build_int_const_limbs(&mut self, limbs: &[u64], output_type: ValueType) -> Result<ValueId> {
-        if !output_type.is_wide_int() {
+        if !output_type.is_integer() {
             return Err(anyhow!(
-                "build_int_const_limbs called with non-wide output type {output_type:?}; \
-                 use build_int_const for ≤ I128"
+                "build_int_const_limbs called with non-integer type {output_type:?}"
             ));
         }
         let id = self
             .function_mut()
             .intern_int_const_limbs(limbs, output_type);
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
+    }
+
+    /// The all-ones `IntConst` of `ty`, at any integer width.
+    fn build_all_ones(&mut self, ty: ValueType) -> Result<ValueId> {
+        self.build_int_const_limbs(&vec![u64::MAX; ty.bit_width().div_ceil(64)], ty)
     }
 
     /// Strict: both operands must already carry `output_type`, a shift's count

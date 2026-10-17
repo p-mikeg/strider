@@ -265,26 +265,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }))
     }
 
-    /// `limbs` is little-endian.  Widths past `u128` need the limb interner.
-    fn build_mask_const(&mut self, limbs: &[u64], ty: ValueType) -> Result<Value> {
-        if ty.bit_width() > 128 {
-            return self.builder.build_int_const_limbs(limbs, ty);
-        }
-        // The early return above guards on `ty`; this shift is bounded by
-        // `limbs`. They agree only because every caller derives `limbs` from
-        // `ty` via `shifted_ones_limbs`, so a `ValueType` between I128 and
-        // I256 would overflow the shift rather than take the return.
-        debug_assert!(
-            limbs.len() <= 2,
-            "a >128-bit width must take the early return"
-        );
-        let mut bits: u128 = 0;
-        for (i, limb) in limbs.iter().enumerate() {
-            bits |= u128::from(*limb) << (i * 64);
-        }
-        self.builder.build_int_const(bits, ty)
-    }
-
     /// Positions `val` at its bit slot in the container and merges it with the
     /// preserved container bits.
     fn build_masked_insert(
@@ -312,7 +292,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             ty,
         )?;
 
-        let container_mask = self.build_mask_const(&container_mask, ty)?;
+        let container_mask = self.builder.build_int_const_limbs(&container_mask, ty)?;
         let preserved = self.builder.build_int_binary_operation(
             container_val,
             container_mask,
