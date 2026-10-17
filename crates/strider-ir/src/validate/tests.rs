@@ -23,8 +23,13 @@ struct Spine {
 }
 
 fn spine() -> Spine {
-    use crate::function::{test_function, test_initial_memory};
-    let f = test_function();
+    spine_tracking(Vec::new())
+}
+
+/// [`spine`] over a function tracking `vns`.
+fn spine_tracking(vns: Vec<rsleigh::Vn>) -> Spine {
+    use crate::function::{test_function_tracking, test_initial_memory};
+    let f = test_function_tracking(vns);
     let entry = f.entry();
     let mem = test_initial_memory(&f);
     let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
@@ -184,7 +189,6 @@ fn test_vn() -> rsleigh::Vn {
 /// rewritten away from `InitialVar(vn)`.
 #[test]
 fn validate_flags_stale_initial_var_index_entry() {
-    let mut s = spine();
     let vn = test_vn();
     let other_vn = rsleigh::Vn {
         addr_off: 0x40,
@@ -192,7 +196,7 @@ fn validate_flags_stale_initial_var_index_entry() {
         size: 4,
     };
     // Two tracked varnodes so `InitialVnId` 0/1 resolve to vn/other_vn.
-    s.f.set_all_vns(vec![vn, other_vn]);
+    let mut s = spine_tracking(vec![vn, other_vn]);
     let iv = s.f.graph_mut().create_node(
         NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
         [],
@@ -224,11 +228,10 @@ fn validate_flags_stale_initial_var_index_entry() {
 /// A `value_vn` tag whose reachable producer is not a Phi / Call / CallOther.
 #[test]
 fn validate_flags_stale_value_vn_entry() {
-    let mut s = spine();
     let vn = test_vn();
+    let mut s = spine_tracking(vec![vn]);
     let (k, kv) = int_const(&mut s.f, 7, ValueType::int(32));
     stamp(&mut s.f, k);
-    s.f.set_all_vns(vec![vn]); // only a tracked vn can be tagged
     s.f.set_vn_for_value(kv, vn);
     let ret =
         s.f.graph_mut()
@@ -270,9 +273,8 @@ fn validate_flags_initial_var_with_unminted_varnode_id() {
 
 #[test]
 fn validate_flags_initial_var_typed_against_its_varnode_size() {
-    let mut s = spine();
     let vn = test_vn();
-    s.f.set_all_vns(vec![vn]);
+    let mut s = spine_tracking(vec![vn]);
     let id = s.f.vn_id_of(&vn).expect("vn is tracked");
     let (iv, _) = returned_initial_var(&mut s, id, ValueType::int(8));
 
@@ -284,32 +286,34 @@ fn validate_flags_initial_var_typed_against_its_varnode_size() {
 
 #[test]
 fn validate_accepts_initial_var_typed_by_its_varnode_size() {
-    let mut s = spine();
     let vn = test_vn();
-    s.f.set_all_vns(vec![vn]);
+    let mut s = spine_tracking(vec![vn]);
     let id = s.f.vn_id_of(&vn).expect("vn is tracked");
     returned_initial_var(&mut s, id, ValueType::int(32));
 
     validate(&s.f).expect("a 4-byte varnode read as I32 validates");
 }
 
-/// Side-table entries keyed by ids the interner no longer holds are reported,
-/// not resolved.
+/// Side-table entries keyed by an id no interner minted are reported, not
+/// resolved: the payload, `initial_var_index` and `value_vn` once each.
 #[test]
 fn validate_reports_side_table_entries_keyed_by_unminted_varnode_ids() {
     let mut s = spine();
-    let vn = test_vn();
-    s.f.set_all_vns(vec![vn]);
-    let id = s.f.vn_id_of(&vn).expect("vn is tracked");
+    let id = InitialVnId::from_index(0);
     let (iv, value) = returned_initial_var(&mut s, id, ValueType::int(32));
     s.f.side_tables_mut().initial_var_index.insert(id, iv);
-    s.f.set_vn_for_value(value, vn);
-    s.f.set_all_vns(Vec::new());
+    s.f.side_tables_mut().value_vn.insert(value, id);
 
-    assert_validation_err(
-        &s.f,
-        |e| matches!(e, ValidationError::DanglingInitialVnId { node, .. } if *node == iv),
-    );
+    let errs = validate(&s.f).unwrap_err();
+    let dangling = errs
+        .0
+        .iter()
+        .filter(|e| {
+            matches!(e, ValidationError::DanglingInitialVnId { node, id: found }
+                if *node == iv && *found == id)
+        })
+        .count();
+    assert_eq!(dangling, 3, "{errs:?}");
 }
 
 #[test]
