@@ -1,5 +1,5 @@
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
-use super::eval_int::{eval_int_binary, eval_int_cmp};
+use strider_ir::eval;
 
 use crate::opt::width_guards::{same_width, shift_in_range};
 use crate::rewrite_rule;
@@ -591,7 +591,7 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                         .bindings
                         .get_uint(r, edit.function)
                         .ok_or_else(strider_pattern::skip)?;
-                    eval_int_binary(op, l, r, ty).ok_or_else(strider_pattern::skip)
+                    eval::int_binary(op, l, r, ty).ok_or_else(strider_pattern::skip)
                 }),
             )
         },
@@ -599,7 +599,7 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
             rewrite_rule(
                 any_int_unary(int_const(v)).capture(op),
                 int_const_with!([op: int_unary_op, v: uint, ty] =>
-                    super::eval_int::eval_int_unary(op, v, ty).ok_or_else(strider_pattern::skip)?
+                    eval::int_unary(op, v, ty).ok_or_else(strider_pattern::skip)?
                 ),
             )
         },
@@ -625,7 +625,7 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                         .bindings
                         .get_uint(r, edit.function)
                         .ok_or_else(strider_pattern::skip)?;
-                    eval_int_cmp(op, l, r, input_ty).ok_or_else(strider_pattern::skip)
+                    eval::int_cmp(op, l, r, input_ty).ok_or_else(strider_pattern::skip)
                 }),
             )
         },
@@ -653,7 +653,7 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 int_sign_extend(int_const(v)),
                 int_const_with!([v: uint, in_ty, ty] => {
                     let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
-                    super::eval_int::eval_sign_extend(v, input_ty, ty)
+                    eval::sign_extend(v, input_ty, ty)
                         .ok_or_else(strider_pattern::skip)?
                 }),
             )
@@ -663,7 +663,7 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 int_popcount(int_const(v)),
                 int_const_with!([v: uint, in_ty] => {
                     let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
-                    super::eval_int::eval_popcount(v, input_ty)
+                    eval::popcount(v, input_ty)
                         .ok_or_else(strider_pattern::skip)?
                 }),
             )
@@ -673,7 +673,7 @@ fn build_const_eval_rules() -> Vec<crate::BoxedRule> {
                 int_lzcount(int_const(v)),
                 int_const_with!([v: uint, in_ty] => {
                     let input_ty = in_ty.ok_or_else(strider_pattern::skip)?;
-                    super::eval_int::eval_lzcount(v, input_ty)
+                    eval::lzcount(v, input_ty)
                         .ok_or_else(strider_pattern::skip)?
                 }),
             )

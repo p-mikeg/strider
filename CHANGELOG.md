@@ -218,6 +218,9 @@
   width panics (a compile error in a `const`).
 - `IRBuilderExt::build_all_ones(ty)`: the all-ones constant at any integer
   width.
+- `strider_ir::eval`: integer evaluation at a declared width (`int_binary`,
+  `int_cmp`, `int_unary`, `sign_extend`, `popcount`, `lzcount`), `None` where
+  the result is undefined or the width is past 128 bits.
 
 ## 0.2.0
 
