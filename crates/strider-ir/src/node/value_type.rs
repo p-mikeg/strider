@@ -69,7 +69,7 @@ impl ValueType {
     /// The integer type of an `n`-byte varnode: one byte is `I8`, never `I1`.
     pub fn int_from_bytes(n: u32) -> crate::error::Result<Self> {
         Self::from_bytes(n, Self::Int)
-            .ok_or_else(|| anyhow!("unsupported node output size: {n} bytes"))
+            .ok_or_else(|| anyhow!("unsupported integer varnode size: {n} bytes"))
     }
 
     /// The float type of an `n`-byte varnode.
@@ -298,27 +298,40 @@ mod tests {
     /// The parser takes exactly the `Display` spelling; sizes off the list err.
     #[test]
     fn parse_and_from_bytes_refuse_unlisted_types() {
-        for bad in ["", "i", "i12", "i08", "I32", "f8", "u32", "i32 "] {
+        for bad in [
+            "", "i", "i12", "i08", "I32", "f8", "u32", "i32 ", "i+8", "i0", "i 8", "i8_", "f99999",
+            "\u{e9}8",
+        ] {
             let err = bad.parse::<ValueType>().expect_err(bad);
+            let msg = err.to_string();
             assert!(
-                err.to_string().ends_with(
+                msg.starts_with(&format!("unknown value type {bad:?}: ")),
+                "{msg}"
+            );
+            assert!(
+                msg.ends_with(
                     "expected one of i1, i8, i16, i24, i32, i40, \
                      i48, i56, i64, i72, i80, i96, i112, i128, i256, i512, f16, f32, f64, \
                      f80, f128"
                 ),
-                "{bad:?}: {err}"
+                "{bad:?}: {msg}"
             );
         }
         for n in [0u32, 11, 13, 15, 17, 33, 65, u32::MAX] {
             let err = ValueType::int_from_bytes(n).expect_err("unlisted size");
             assert!(
                 err.to_string()
-                    .contains(&format!("unsupported node output size: {n} bytes")),
+                    .contains(&format!("unsupported integer varnode size: {n} bytes")),
                 "{err}"
             );
         }
         for n in [0u32, 1, 3, 12, 32] {
-            assert!(ValueType::float_from_bytes(n).is_err(), "{n}");
+            let err = ValueType::float_from_bytes(n).expect_err("unlisted size");
+            assert!(
+                err.to_string()
+                    .contains(&format!("unsupported float varnode size: {n} bytes")),
+                "{err}"
+            );
         }
     }
 
@@ -335,9 +348,6 @@ mod tests {
         assert!(ValueType::SUPPORTED.iter().all(|ty| ty.is_supported()));
         for ty in [ValueType::Int(0), ValueType::Int(12), ValueType::Float(8)] {
             assert!(!ty.is_supported(), "{ty:?}");
-        }
-        for bad in ["i+8", "i0", "i 8", "i8_", "f99999", "\u{e9}8"] {
-            assert!(bad.parse::<ValueType>().is_err(), "{bad:?}");
         }
     }
 

@@ -1582,7 +1582,7 @@ fn subpiece_ymm_high_lane() {
 
 /// An 11-byte width has no integer `ValueType`, so the lift must fail.  The
 /// error has to name the offending machine instruction, otherwise a failed
-/// whole-function lift reports only a bare "unsupported node output size".
+/// whole-function lift reports only a bare "unsupported integer varnode size".
 #[test]
 fn load_odd_byte_width_errors_with_asm_context() {
     with_test_lifter(|d, rid| {
@@ -1601,7 +1601,7 @@ fn load_odd_byte_width_errors_with_asm_context() {
         // `{:#}` renders the outer asm context and the inner width cause.
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("unsupported node output size") || msg.contains("11 bytes"),
+            msg.contains("unsupported integer varnode size: 11 bytes"),
             "error must still describe the unsupported width; got: {msg}"
         );
         assert!(

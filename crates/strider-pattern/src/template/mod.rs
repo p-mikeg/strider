@@ -205,7 +205,7 @@ pub fn instantiate<B: IRBuilder>(
             // A `Store` with no explicit output vertex gets a value output here.
             if !want.admits(*got) {
                 anyhow::bail!(
-                    "template node {kind:?} declares {got:?} at output slot {slot}, \
+                    "template node {kind:?} declares {got} at output slot {slot}, \
                      where its node signature expects {want:?}"
                 );
             }
@@ -591,9 +591,6 @@ fn check_operand_types(
             .expected_input_kind(slot)
             .expect("a slot within the arity checked above");
         if !class.admits(got) {
-            let got = got
-                .as_value()
-                .map_or_else(|| format!("{got:?}"), |t| t.to_string());
             anyhow::bail!(
                 "template node {kind:?} takes {got} at input slot {slot}, \
                  where its node signature expects {class:?}"

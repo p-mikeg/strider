@@ -98,7 +98,8 @@
   `ValueType::float(64)` (`const fn`s that panic, or fail to compile in a
   `const`, on a width outside `SUPPORTED`; `is_supported` tests one) and
   match `Int(w)` / `Float(w)`. `Debug` and `Display` print `I32` / `i32` as
-  before; `float_from_bytes`' error no longer lists the valid sizes.
+  before; `float_from_bytes`' error no longer lists the valid sizes, and
+  `int_from_bytes`' reads `unsupported integer varnode size`.
 - `ValueType::bit_mask_u128` is gone: it saturated to `u128::MAX` past 128
   bits. `wrap_u128(v)` reduces a value to the width, exactly at every width
   (a float gives 0); `int_mask_u128()` is the all-ones value, `None` for a
@@ -137,8 +138,10 @@
 - A pass added from Python carries its own type name in Rust panics and debug
   output.
 - An unknown type name passed to `value_ty()` / `of_type()` raises
-  `unknown value type "<name>": expected one of i1, ...`, the name lowercased;
-  it read `unknown output type`.
+  `unknown value type "<name>": expected one of i1, ...`; it read `unknown
+  output type`.
+- A rewrite template's node-signature error spells a typed value as its type
+  (`i64`), not `Typed(I64)`.
 
 ### Added, Python
 
@@ -243,6 +246,8 @@
 - `IRViewer::{require_slot, require_output_type}`: a value or output type
   checked against a node's signature.
 - `IRViewer::access_address` and the `NodeKind::*_SLOT` input-slot constants.
+- `ValueKind` implements `Display`: a typed value prints as its type (`f64`),
+  which the node-signature errors use.
 - `vn_container::{vn_end, vn_overlaps}`, the exact varnode end and overlap
   `strider-target` and the lifter's p-code folder now share.
 

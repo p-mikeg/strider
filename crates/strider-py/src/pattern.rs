@@ -696,9 +696,13 @@ fn rhs_error(kind: &str) -> PyErr {
     ))
 }
 
-/// Case-insensitive: `"i1"` / `"I64"` / `"f32"`.
+/// Case-insensitive: `"i1"` / `"I64"` / `"f32"`. A refusal names `name` as
+/// given: no spelling the lowercase one refuses parses.
 fn parse_value_ty(name: &str) -> PyResult<T> {
-    name.to_ascii_lowercase().parse().map_err(into_strider_err)
+    name.to_ascii_lowercase()
+        .parse()
+        .or_else(|_| name.parse())
+        .map_err(into_strider_err)
 }
 
 impl PatRepr {

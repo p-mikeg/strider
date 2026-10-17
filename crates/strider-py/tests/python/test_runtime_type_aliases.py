@@ -52,6 +52,11 @@ def test_valuety_is_exactly_the_rust_value_type_set():
     assert rust == {t.lower() for t in typing.get_args(p.ValueTy)}
 
 
+def test_an_unknown_value_type_is_named_as_the_caller_spelled_it():
+    with pytest.raises(strider.StriderError, match='unknown value type "I7"'):
+        p.anything().value_ty("I7")  # pyright: ignore[reportArgumentType]
+
+
 #: Each op-name parser and the `Literal` its argument is typed with.
 _OP_NAME_LITERALS = {
     "int_cmp": "IntCmpOpName",

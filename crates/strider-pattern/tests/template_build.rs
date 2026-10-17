@@ -531,6 +531,7 @@ fn instantiate_rejects_an_output_kind_the_node_signature_forbids() {
         msg.contains("output slot 0") && msg.contains("Memory"),
         "the error must name the slot and the kind the signature expects, got: {msg}"
     );
+    assert!(msg.contains("declares i64 at"), "typed as `i64`: {msg}");
 }
 
 /// A float-typed root has no integer literal to intern, so an `int_const` RHS
