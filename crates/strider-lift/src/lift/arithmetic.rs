@@ -72,6 +72,94 @@ fn reject_operand_width_mismatch(operand: &rsleigh::Vn, output: &rsleigh::Vn) ->
     Ok(())
 }
 
+/// A width rule on one raw p-code operand, checked before it is read.
+#[derive(Clone, Copy)]
+enum WidthGuard {
+    Any,
+    /// Coercion would truncate a wider operand, and the op's low bits do not
+    /// survive that.
+    NotWider,
+    /// The lowering agrees with p-code only at the output width.
+    Equal,
+}
+
+impl WidthGuard {
+    fn check(self, insn: &rsleigh::Insn, slot: usize, out: &rsleigh::Vn) -> Result<()> {
+        match self {
+            Self::Any => Ok(()),
+            Self::NotWider => reject_operand_wider_than_output(nth_input_or_err(insn, slot)?, out),
+            Self::Equal => reject_operand_width_mismatch(nth_input_or_err(insn, slot)?, out),
+        }
+    }
+}
+
+/// How one operand is brought to the output width.
+#[derive(Clone, Copy)]
+enum Coerce {
+    /// Truncate a wider operand, zero-extend a narrower one.
+    Convert,
+    /// Sign-extend a narrower operand; never truncates.
+    SignExtend,
+}
+
+impl Coerce {
+    fn apply(
+        self,
+        b: &mut strider_ir::FunctionBuilder,
+        v: strider_ir::Value,
+        ty: ValueType,
+    ) -> Result<strider_ir::Value> {
+        match self {
+            Self::Convert => b.convert_to_int_if_needed(v, ty),
+            Self::SignExtend => b.extend_if_needed(v, ty, ExtendOp::SignExtend),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct OperandPolicy {
+    guard: WidthGuard,
+    coerce: Coerce,
+}
+
+const PLAIN: OperandPolicy = OperandPolicy {
+    guard: WidthGuard::Any,
+    coerce: Coerce::Convert,
+};
+
+/// Each operand's policy, `[lhs, rhs]`. A shift's rhs is its count: p-code
+/// leaves it any width (`sar reg, cl`), so it is saturated, then converted,
+/// and zero-extends even under `SShiftRight`.
+fn binary_lift_policy(op: IntBinaryOp) -> [OperandPolicy; 2] {
+    use IntBinaryOp as Op;
+    let unsigned = OperandPolicy {
+        guard: WidthGuard::NotWider,
+        coerce: Coerce::Convert,
+    };
+    let signed = OperandPolicy {
+        guard: WidthGuard::NotWider,
+        coerce: Coerce::SignExtend,
+    };
+    match op {
+        Op::Add | Op::And | Op::Or | Op::Xor | Op::Mul | Op::ShiftLeft | Op::ShiftRight => {
+            [PLAIN, PLAIN]
+        }
+        Op::Div | Op::Rem => [unsigned, unsigned],
+        Op::Sdiv | Op::Srem => [signed, signed],
+        // The value sign-extends to the OUTPUT width, while
+        // `OpBehaviorIntSright` fills at the INPUT width (sizein=4/sizeout=8
+        // over 0xFFFFFFFF gives GHIDRA 0xFFFFFFFF, this lowering
+        // 0xFFFFFFFFFFFFFFFF): the two agree only at equal widths.
+        Op::SShiftRight => [
+            OperandPolicy {
+                guard: WidthGuard::Equal,
+                coerce: Coerce::SignExtend,
+            },
+            PLAIN,
+        ],
+    }
+}
+
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(super) fn process_int_unary_op(
         &mut self,
@@ -148,67 +236,27 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
 
     /// Permissive about mixed input widths: real Sleigh on 64-bit arches
     /// mixes an 8-byte register with a 4-byte spill or immediate, so each
-    /// operand is coerced to the output width. Equal-width lift-time checks
-    /// are reserved for the lowered forms, whose arithmetic requires them.
+    /// operand is brought to the output width by [`binary_lift_policy`].
     pub(super) fn process_int_binary_op(
         &mut self,
         insn: &rsleigh::Insn,
         op: IntBinaryOp,
     ) -> Result<()> {
-        // That coercion silently truncates an operand WIDER than the output.
-        // Division and remainder low bits are not width-agnostic, so a
-        // truncated operand corrupts the result: guard both operands.
-        // `SShiftRight`'s value is guarded in BOTH directions, a narrower one
-        // diverging from GHIDRA as well; its shift count may legally be any
-        // width (`sar reg, cl`), so the count is not guarded at all.
         let out_vn = require_output_vn(insn)?;
-        match op {
-            IntBinaryOp::Sdiv | IntBinaryOp::Srem | IntBinaryOp::Div | IntBinaryOp::Rem => {
-                reject_operand_wider_than_output(nth_input_or_err(insn, 0)?, out_vn)?;
-                reject_operand_wider_than_output(nth_input_or_err(insn, 1)?, out_vn)?;
-            }
-            IntBinaryOp::SShiftRight => {
-                reject_operand_width_mismatch(nth_input_or_err(insn, 0)?, out_vn)?;
-            }
-            _ => {}
+        let policy = binary_lift_policy(op);
+        for (slot, p) in policy.iter().enumerate() {
+            p.guard.check(insn, slot, out_vn)?;
         }
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
         let out_ty = out_vn.int_type()?;
-        // Sdiv / Srem / SShiftRight SIGN-extend a narrower operand; every other op
-        // zero-extends, correct for the bitwise / shift-left / unsigned ops
-        // whose low-width result is sign-agnostic.  Equal widths, the common
-        // case, make the coercion a no-op.
-        //
-        // `SShiftRight` sign-extends its value to the OUTPUT width and
-        // zero-extends its count.  `OpBehaviorIntSright` instead computes the
-        // sign-fill mask at the INPUT width and leaves the bits above it zero
-        // (sizein=4/sizeout=8 over 0xFFFFFFFF gives GHIDRA 0xFFFFFFFF, this
-        // lowering 0xFFFFFFFFFFFFFFFF), so the two agree only at equal widths,
-        // which the guard above is what makes true.
-        let rhs = match op {
-            IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight => {
-                self.saturate_shift_count(rhs, out_ty)?
-            }
-            _ => rhs,
+        let rhs = if op.is_shift() {
+            self.saturate_shift_count(rhs, out_ty)?
+        } else {
+            rhs
         };
-        let (lhs, rhs) = match op {
-            IntBinaryOp::Sdiv | IntBinaryOp::Srem => (
-                self.builder
-                    .extend_if_needed(lhs, out_ty, ExtendOp::SignExtend)?,
-                self.builder
-                    .extend_if_needed(rhs, out_ty, ExtendOp::SignExtend)?,
-            ),
-            IntBinaryOp::SShiftRight => (
-                self.builder
-                    .extend_if_needed(lhs, out_ty, ExtendOp::SignExtend)?,
-                self.builder.convert_to_int_if_needed(rhs, out_ty)?,
-            ),
-            _ => (
-                self.builder.convert_to_int_if_needed(lhs, out_ty)?,
-                self.builder.convert_to_int_if_needed(rhs, out_ty)?,
-            ),
-        };
+        let lhs = policy[0].coerce.apply(&mut self.builder, lhs, out_ty)?;
+        let rhs = policy[1].coerce.apply(&mut self.builder, rhs, out_ty)?;
         let result = self
             .builder
             .build_int_binary_operation(lhs, rhs, op, out_ty)?;
