@@ -239,6 +239,14 @@
 - The lifter's p-code constant folder treats an arithmetic result written to
   a temporary of 11, 13 or 15 bytes, or past 16 bytes, as unknown; it used to
   wrap it at 128 bits or with a mask no value type has.
+- A mips64el `SHT_REL` relocation is applied by its real type. Its
+  `R_MIPS_NONE` / `R_MIPS_JALR` markers were holes, so the null
+  `R_MIPS_NONE` BFD puts at `r_offset` 0 of every PIE and `.so` hid the
+  image's first four bytes, and `R_MIPS_26` / `HI16` / `LO16` / `HIGHER` /
+  `HIGHEST` / `PC16` were never applied. An entry whose `r_sym` is 0 has no
+  symbol. A mips64el `SHT_CREL` entry, which was read as a transposed
+  `SHT_REL` one, is applied as written; in an image that also holds an
+  `SHT_CREL` table a mips64el `SHT_REL` entry is read as written too.
 
 ### Added, Rust
 
