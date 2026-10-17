@@ -1,5 +1,7 @@
+use std::ops::RangeInclusive;
+
 use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
-use crate::node_signature::ExpectedValueKind;
+use crate::node_signature::{Conversion, ExpectedValueKind, OperandWidth};
 use cranelift_entity::entity_impl;
 
 /// Where a function argument is passed.
@@ -183,6 +185,71 @@ impl NodeKind {
             .outputs
             .at(idx)
             .map(|s| s.kind)
+    }
+
+    /// The value kind input slot `idx` admits, `None` past the arity bound.
+    #[must_use]
+    pub fn expected_input_kind(&self, idx: usize) -> Option<ExpectedValueKind> {
+        crate::node_signature::expected_signature(self)
+            .inputs
+            .at(idx)
+            .map(|s| s.kind)
+    }
+
+    /// How many inputs the signature admits; a repeating tail ends at
+    /// `usize::MAX`.
+    #[must_use]
+    pub fn input_arity(&self) -> RangeInclusive<usize> {
+        let inputs = crate::node_signature::expected_signature(self).inputs;
+        inputs.head_len()..=inputs.max_len()
+    }
+
+    /// The width input `slot` owes this node, as `validate` checks it.
+    #[must_use]
+    pub fn operand_width(&self, slot: usize) -> OperandWidth {
+        match self {
+            // p-code leaves a shift COUNT any width.
+            Self::IntBinaryOp(op) => {
+                if op.is_shift() && slot > 0 {
+                    OperandWidth::Free
+                } else {
+                    OperandWidth::OfOutput
+                }
+            }
+            Self::IntUnaryOp(..) | Self::FloatBinaryOp(..) | Self::FloatUnaryOp(..) => {
+                OperandWidth::OfOutput
+            }
+            Self::IntCmpOp(..) | Self::FloatCmpOp(..) => OperandWidth::OfFirstOperand,
+            Self::Extend(..) => OperandWidth::Conversion(Conversion::Widen),
+            Self::Truncate => OperandWidth::Conversion(Conversion::Narrow),
+            Self::IntBitsToFloat | Self::FloatBitsToInt => {
+                OperandWidth::Conversion(Conversion::SameSize)
+            }
+            Self::Entry
+            | Self::InitialMemory
+            | Self::InitialVar(..)
+            | Self::Region
+            | Self::MemPhi
+            | Self::Phi
+            | Self::If
+            | Self::Switch(..)
+            | Self::Call { .. }
+            | Self::Return
+            | Self::IndirectBranch
+            | Self::Unreachable
+            | Self::Load(..)
+            | Self::Store(..)
+            | Self::IntConst(..)
+            | Self::Popcount
+            | Self::Lzcount
+            | Self::FloatConst(..)
+            | Self::IntToFloat
+            | Self::FloatToInt
+            | Self::FloatToFloat
+            | Self::CallOther { .. }
+            | Self::CPoolRef
+            | Self::New => OperandWidth::Free,
+        }
     }
 
     /// Consumes control and produces none. The single statement of the

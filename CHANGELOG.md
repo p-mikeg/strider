@@ -229,6 +229,9 @@
 - `IntBinaryOp::is_shift`: whether operand 1 is a shift count.
 - `ExpectedValueKind::admits`, the slot-kind check `validate` and the
   template both read.
+- `NodeKind::{expected_input_kind, input_arity, operand_width}`,
+  `OperandWidth` and `Conversion`: each input slot's kind, arity and width,
+  the one source `validate`, the template and the builders read.
 
 ## 0.2.0
 
