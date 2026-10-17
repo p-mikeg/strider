@@ -1076,7 +1076,7 @@ mod tests {
             let regs = arch.probe_regs().expect("probe regs");
             let unmappable: Vec<(&str, u32)> = regs
                 .iter()
-                .filter(|r| strider_ir::ValueType::int_for_byte_size(r.vn.size).is_err())
+                .filter(|r| strider_ir::ValueType::int_from_bytes(r.vn.size).is_err())
                 .map(|r| (r.name, r.vn.size))
                 .collect();
             assert!(

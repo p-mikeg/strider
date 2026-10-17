@@ -199,7 +199,7 @@ impl FunctionBuilder {
     ) -> Result<ValueId> {
         self.require_phi_token_kind(phi_token)?;
         self.validate_value_inputs(incoming_values)?;
-        let output_type = ValueType::int_for_byte_size(var.size)?;
+        let output_type = ValueType::int_from_bytes(var.size)?;
         let phi_value = self.build_single_output_pure(
             NodeKind::Phi,
             core::iter::once(phi_token).chain(incoming_values.iter().copied()),
