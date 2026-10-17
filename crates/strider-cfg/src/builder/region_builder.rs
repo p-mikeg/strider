@@ -1,7 +1,7 @@
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
-use super::Builder;
+use super::{Builder, FlowCommit};
 use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator};
 use anyhow::{anyhow, bail};
 
@@ -285,10 +285,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let mut wrote = false;
         for &(name, flow, default) in vars {
             let want = match flow {
-                strider_target::FlowCommit::NoFlow => default,
-                strider_target::FlowCommit::Flowing => {
-                    self.builder.sleigh.get_context_at(from, name)?
-                }
+                FlowCommit::NoFlow => default,
+                FlowCommit::Flowing => self.builder.sleigh.get_context_at(from, name)?,
             };
             if self.builder.sleigh.get_context_at(at, name)? != want {
                 self.builder.sleigh.set_context_at(at, name, want)?;
