@@ -35,7 +35,7 @@ use strider_pattern::{
 };
 
 use crate::error::Result;
-use crate::opt::width_guards::{carrier_mask, same_width, shift_in_range};
+use crate::opt::width_guards::{carrier_mask, same_width, shift_count_in_range};
 use crate::peephole::{PeepholePass, PeepholeRewrite, SeedOrder, first_matching_rule};
 
 #[derive(Clone)]
@@ -372,13 +372,9 @@ fn build_rules() -> Vec<BoxedRule> {
     // `x << C` is 0 and the test is const-false, a different rewrite.
     rules.push(rewrite_rule(
         int_slt(int_shl(var(x), int_const(n)), int_const(0u128)).when_match(move |edit, _ty, b| {
-            let (Some(c), Some(ty)) = (
-                b.get_uint(n, edit.function()),
-                b.get_type(x, edit.function()),
-            ) else {
-                return false;
-            };
-            shift_in_range(ty, c)
+            let f = edit.function();
+            b.get_type(x, f)
+                .is_some_and(|ty| shift_count_in_range(f, b, ty, n))
         }),
         template::bool_not(template::int_eq(
             capture_typed(

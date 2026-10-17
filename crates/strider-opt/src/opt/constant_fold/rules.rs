@@ -3,7 +3,7 @@ use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
 use crate::EditFunction;
 use crate::const_eval::eval_node_const;
 use crate::error::Result;
-use crate::opt::width_guards::{same_width, shift_in_range};
+use crate::opt::width_guards::{same_width, shift_count_in_range};
 use crate::rewrite_rule;
 use smallvec::SmallVec;
 use strider_ir::node::{NodeId, ValueId};
@@ -27,6 +27,8 @@ pub(super) fn build_rules() -> Vec<crate::BoxedRule> {
 }
 
 /// Collecting a value against itself: `x + x*C` and friends become one `Mul`.
+/// The coefficient is computed in `u128`, so the root's type must have a
+/// `u128` modulus (see [`shift_count_in_range`]).
 ///
 /// Subtraction arrives lowered to `Add(a, Neg(b))`, so the difference forms
 /// match that shape rather than an `IntSub`.
@@ -62,9 +64,7 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
     let add_self_shl = rewrite_rule(
         int_add(var(x), int_shl(var(x), int_const(c1))).when_match(move |edit, ty, binds| {
             same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
-                && binds
-                    .get_uint(c1, edit.function())
-                    .is_some_and(|c| shift_in_range(ty, c))
+                && shift_count_in_range(edit.function(), binds, ty, c1)
         }),
         template::int_mul(
             var(x),
@@ -107,9 +107,7 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
         int_add(var(x), int_neg(int_shl(var(x), int_const(c1)))).when_match(
             move |edit, ty, binds| {
                 same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
-                    && binds
-                        .get_uint(c1, edit.function())
-                        .is_some_and(|c| shift_in_range(ty, c))
+                    && shift_count_in_range(edit.function(), binds, ty, c1)
             },
         ),
         template::int_mul(
@@ -127,9 +125,7 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
         .when_match(move |edit, ty, binds| {
             ty.int_mask_u128().is_some()
                 && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
-                && binds
-                    .get_uint(c2, edit.function())
-                    .is_some_and(|c| shift_in_range(ty, c))
+                && shift_count_in_range(edit.function(), binds, ty, c2)
         }),
         template::int_mul(
             var(x),
@@ -145,12 +141,8 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
         )
         .when_match(move |edit, ty, binds| {
             same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
-                && binds
-                    .get_uint(c1, edit.function())
-                    .is_some_and(|c| shift_in_range(ty, c))
-                && binds
-                    .get_uint(c2, edit.function())
-                    .is_some_and(|c| shift_in_range(ty, c))
+                && shift_count_in_range(edit.function(), binds, ty, c1)
+                && shift_count_in_range(edit.function(), binds, ty, c2)
         }),
         template::int_mul(
             var(x),
@@ -167,9 +159,7 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
         .when_match(move |edit, ty, binds| {
             ty.int_mask_u128().is_some()
                 && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
-                && binds
-                    .get_uint(c2, edit.function())
-                    .is_some_and(|c| shift_in_range(ty, c))
+                && shift_count_in_range(edit.function(), binds, ty, c2)
         }),
         template::int_mul(
             var(x),
@@ -186,9 +176,7 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
         .when_match(move |edit, ty, binds| {
             ty.int_mask_u128().is_some()
                 && same_width(edit.function(), binds, &[x, c2]) == Some(ty.bit_width())
-                && binds
-                    .get_uint(c1, edit.function())
-                    .is_some_and(|c| shift_in_range(ty, c))
+                && shift_count_in_range(edit.function(), binds, ty, c1)
         }),
         template::int_mul(
             var(x),
@@ -216,9 +204,7 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
         int_add(int_shl(var(x), int_const(c1)), int_neg(var(x))).when_match(
             move |edit, ty, binds| {
                 same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
-                    && binds
-                        .get_uint(c1, edit.function())
-                        .is_some_and(|c| shift_in_range(ty, c))
+                    && shift_count_in_range(edit.function(), binds, ty, c1)
             },
         ),
         template::int_mul(
@@ -235,12 +221,8 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
         )
         .when_match(move |edit, ty, binds| {
             same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
-                && binds
-                    .get_uint(c1, edit.function())
-                    .is_some_and(|c| shift_in_range(ty, c))
-                && binds
-                    .get_uint(c2, edit.function())
-                    .is_some_and(|c| shift_in_range(ty, c))
+                && shift_count_in_range(edit.function(), binds, ty, c1)
+                && shift_count_in_range(edit.function(), binds, ty, c2)
         }),
         template::int_mul(
             var(x),

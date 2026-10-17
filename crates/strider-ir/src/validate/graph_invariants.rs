@@ -222,12 +222,10 @@ pub(super) fn check_function_invariants_arith_widths(
                 None => continue,
             }
         };
-        for &(slot, w) in operands.iter().filter(|&&(slot, _)| {
-            matches!(
-                kind.operand_width(slot),
-                OperandWidth::OfOutput | OperandWidth::OfFirstOperand
-            )
-        }) {
+        for &(slot, w) in operands
+            .iter()
+            .filter(|&&(slot, _)| ties_to_node_width(kind.operand_width(slot)))
+        {
             if w != expected {
                 errs.push(ValidationError::ArithmeticWidthMismatch {
                     node,
@@ -238,6 +236,14 @@ pub(super) fn check_function_invariants_arith_widths(
                 });
             }
         }
+    }
+}
+
+/// Whether a slot under `rule` carries the node's one evaluation width.
+fn ties_to_node_width(rule: OperandWidth) -> bool {
+    match rule {
+        OperandWidth::OfOutput | OperandWidth::OfFirstOperand => true,
+        OperandWidth::Conversion(_) | OperandWidth::Free => false,
     }
 }
 
