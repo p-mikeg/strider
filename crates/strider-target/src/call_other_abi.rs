@@ -1664,10 +1664,12 @@ mod tests {
     fn set_isa_mode_is_noop_on_every_arch() {
         // `setISAMode` is NoOp on every arch (incl. ARM32); the mode is carried
         // on the `IndirectBranch`, not this op (see the TABLE comment above).
-        for arm in crate::ArchPreset::ALL
+        let arm32: Vec<_> = crate::ArchPreset::ALL
             .iter()
             .filter(|p| p.family() == crate::ArchFamily::Arm32)
-        {
+            .collect();
+        assert_eq!(arm32.len(), 4, "the ARM32 presets: {arm32:?}");
+        for arm in arm32 {
             assert_eq!(
                 classify(*arm, "setISAMode"),
                 Some(CallOtherClass::NoOp),
