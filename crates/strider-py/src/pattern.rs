@@ -698,20 +698,7 @@ fn rhs_error(kind: &str) -> PyErr {
 
 /// Case-insensitive: `"i1"` / `"I64"` / `"f32"`.
 fn parse_value_ty(name: &str) -> PyResult<T> {
-    let lower = name.to_ascii_lowercase();
-    T::ALL
-        .into_iter()
-        .find(|t| t.as_str() == lower)
-        .ok_or_else(|| {
-            into_strider_err(anyhow::anyhow!(
-                "unknown output type {name:?}: expected one of {}",
-                T::ALL
-                    .into_iter()
-                    .map(T::as_str)
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ))
-        })
+    name.to_ascii_lowercase().parse().map_err(into_strider_err)
 }
 
 impl PatRepr {

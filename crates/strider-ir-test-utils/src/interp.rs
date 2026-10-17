@@ -579,7 +579,7 @@ impl<'a, 'e> Machine<'a, 'e> {
 fn int_type(f: &Function, v: ValueId) -> Eval<ValueType> {
     match f.value_type_opt(v) {
         Some(ty) if ty.is_integer() && ty.bit_width() <= 128 => Ok(ty),
-        Some(ty) => unsupported(format!("a {} value", ty.as_str())),
+        Some(ty) => unsupported(format!("a {ty} value")),
         None => unsupported("a control, memory or token edge as a value"),
     }
 }
