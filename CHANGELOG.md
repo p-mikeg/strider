@@ -190,6 +190,8 @@
 - The lifter's p-code constant folder treats a temporary of 11, 13 or 15
   bytes, or past 16 bytes, as unknown; it used to wrap it at 128 bits or with
   a mask no value type has.
+- `ConstantFold` no longer folds a `Neg` whose constant operand has a
+  different width than its output (invalid IR).
 
 ### Added, Rust
 
