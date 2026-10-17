@@ -80,8 +80,7 @@ impl MatchPat for IntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let v = self.v;
         int_const_leaf(b, None, move |stored, ty| {
-            let mask = ty.bit_mask_u128();
-            (stored & mask) == (v & mask)
+            ty.wrap_u128(stored) == ty.wrap_u128(v)
         })
     }
 }
@@ -129,7 +128,7 @@ fn value_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
     if output_width == 0 {
         return false;
     }
-    let output_mask = out_ty.bit_mask_u128();
+    let output_mask = low_bits_mask_u128(output_width);
     // `v` must itself BE a value at the width it is compared at, or a search
     // for `0x1234` matches a stored `0x34` on the low bits they share.
     if (stored & output_mask) == (v & output_mask) && fits_width(v, output_width) {
@@ -410,12 +409,11 @@ impl MatchPat for IntConstAnyOf {
             let masked = match cache.iter().find(|(w, _)| *w == bits) {
                 Some((_, s)) => s,
                 None => {
-                    let mask = ty.bit_mask_u128();
-                    cache.push((bits, set.iter().map(|v| v & mask).collect()));
+                    cache.push((bits, set.iter().map(|&v| ty.wrap_u128(v)).collect()));
                     &cache[cache.len() - 1].1
                 }
             };
-            masked.contains(&(stored & ty.bit_mask_u128()))
+            masked.contains(&ty.wrap_u128(stored))
         })
     }
 }
