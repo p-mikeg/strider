@@ -212,12 +212,13 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // The target varnode is in the code space and its offset IS the target
         // address, not a pointer to dereference.
         let target_vn = nth_input_or_err(insn, 0)?;
-        let space = target_vn.addr_space;
-        let target_addr = target_vn.addr_off;
-        let call_address = self.build_addr_const(space, target_addr, "call target space")?;
-        // Cloned so the `per_address_ccs` borrow ends before the &mut call.
-        let override_cc = self.per_address_ccs.get(&target_addr).cloned();
-        self.build_cc_call(call_address, override_cc.as_ref(), None)?;
+        let call_address = self.build_addr_const(
+            target_vn.addr_space,
+            target_vn.addr_off,
+            "call target space",
+        )?;
+        let override_cc = self.call_override(insn);
+        self.build_cc_call(call_address, override_cc, None)?;
         Ok(())
     }
 

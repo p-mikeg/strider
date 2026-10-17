@@ -39,6 +39,20 @@ pub fn user_op_of<'n>(insn: &rsleigh::Insn, names: &'n [String]) -> Option<(u32,
     names.get(id as usize).map(|name| (id, name.as_str()))
 }
 
+/// A direct `Call`'s target address: its first operand, when that names the
+/// code space. Any other operand is no address (a register offset would read
+/// as one).
+#[must_use]
+pub fn direct_call_target(insn: &rsleigh::Insn, code_space: rsleigh::VnSpace) -> Option<u64> {
+    if insn.opcode != rsleigh::Opcode::Call {
+        return None;
+    }
+    insn.inputs
+        .first()
+        .filter(|vn| vn.addr_space == code_space)
+        .map(|vn| vn.addr_off)
+}
+
 pub struct IfRegionSuccessors {
     pub if_true_region: Option<NodeIndex>,
     /// The fall-through side.
@@ -385,5 +399,34 @@ mod tests {
             None
         );
         assert_eq!(of(call_other(None)), None);
+    }
+
+    /// A direct `Call`'s target is its operand only in the code space; a
+    /// `CallIndirect` names no address.
+    #[test]
+    fn direct_call_target_reads_a_code_space_operand_only() {
+        let op = |opcode, addr_space| rsleigh::Insn {
+            opcode,
+            output: None,
+            inputs: vec![rsleigh::Vn {
+                addr_space,
+                addr_off: 0x10,
+                size: 8,
+            }]
+            .into(),
+        };
+        let code = rsleigh::VnSpace::RAM;
+        assert_eq!(
+            direct_call_target(&op(rsleigh::Opcode::Call, code), code),
+            Some(0x10)
+        );
+        assert_eq!(
+            direct_call_target(&op(rsleigh::Opcode::Call, rsleigh::VnSpace::REGISTER), code),
+            None
+        );
+        assert_eq!(
+            direct_call_target(&op(rsleigh::Opcode::CallIndirect, code), code),
+            None
+        );
     }
 }

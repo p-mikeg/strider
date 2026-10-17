@@ -559,20 +559,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
-        // A direct call's target is its first pcode input, a code-space address
-        // constant. Guarded on the space, or a register offset reads as an
-        // address and can match a no-return target.
-        let default_code_space = self.builder.sleigh.default_code_space();
-        let target_no_return = insn
-            .inputs
-            .first()
-            .filter(|target_vn| target_vn.addr_space == default_code_space)
-            .is_some_and(|target_vn| {
-                self.builder
-                    .options
-                    .no_return_targets
-                    .contains(&target_vn.addr_off)
-            });
+        let target_no_return =
+            crate::direct_call_target(insn, self.builder.sleigh.default_code_space())
+                .is_some_and(|target| self.builder.options.no_return_targets.contains(&target));
         let return_oob = self.is_branch_tail_call_nocheck(next_pcode_addr(addr, lift_res)?);
         if target_no_return || return_oob {
             self.finish_current_region(RegionTerminator::NoReturn)?;

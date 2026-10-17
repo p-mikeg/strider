@@ -3,15 +3,18 @@ use anyhow::Result;
 use super::Lifter;
 
 /// Every address a `Call` this cfg holds selects its `per_address_ccs`
-/// override by: a direct call's target operand, and a tail-call terminator's
-/// target.  Mirror of `handle_call` / `handle_tail_call`.
-fn override_call_targets(cfg: &strider_cfg::Cfg) -> impl Iterator<Item = u64> + '_ {
-    cfg.regions().flat_map(|region| {
+/// override by: a direct call's target ([`strider_cfg::direct_call_target`]),
+/// and a tail-call terminator's target. Mirror of
+/// [`FunctionLifter::call_override`] and `handle_tail_call`.
+fn override_call_targets(
+    cfg: &strider_cfg::Cfg,
+    code_space: rsleigh::VnSpace,
+) -> impl Iterator<Item = u64> + '_ {
+    cfg.regions().flat_map(move |region| {
         region
             .insns
             .iter()
-            .filter(|w| w.insn.opcode == rsleigh::Opcode::Call)
-            .filter_map(|w| w.insn.inputs.first().map(|vn| vn.addr_off))
+            .filter_map(move |w| strider_cfg::direct_call_target(&w.insn, code_space))
             .chain(match region.terminator {
                 strider_cfg::RegionTerminator::TailCall { target } => Some(target.addr),
                 _ => None,
@@ -106,7 +109,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // `float_arg_slots` and truncates the call's float arguments there.
         // Only the overrides THIS cfg selects: a caller passes a binary-wide
         // table, and walking all of it costs the table per function.
-        for o in override_call_targets(cfg).filter_map(|addr| per_address_ccs.get(&addr)) {
+        for o in override_call_targets(cfg, lifter.sleigh().default_code_space())
+            .filter_map(|addr| per_address_ccs.get(&addr))
+        {
             lifter.check_cc(o)?;
             for &v in o.arg_passing_regs.iter().chain(&o.arg_passing_regs_float) {
                 track(&mut all_vns, v);
@@ -202,6 +207,18 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.builder.set_lift_addr(None);
         res
     }
+
+    /// The `per_address_ccs` override a direct `Call` selects, if any.
+    pub(crate) fn call_override(
+        &self,
+        insn: &rsleigh::Insn,
+    ) -> Option<&'a strider_target::BuiltCallingConvention> {
+        let ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention> =
+            self.per_address_ccs;
+        strider_cfg::direct_call_target(insn, self.lifter.sleigh().default_code_space())
+            .and_then(|target| ccs.get(&target))
+    }
+
     /// A zero-pcode-op entry region carries no instruction, so its start address
     /// is the fallback: a sink stamped with no address fails the fingerprint
     /// invariant.
