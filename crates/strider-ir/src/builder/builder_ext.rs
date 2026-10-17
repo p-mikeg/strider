@@ -6,6 +6,7 @@ use anyhow::anyhow;
 use crate::IRViewer;
 use crate::builder::IRBuilder;
 use crate::error::Result;
+use crate::eval;
 use crate::node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeKind,
     ValueId, ValueKind, ValueType,
@@ -64,21 +65,16 @@ pub trait IRBuilderExt: IRBuilder {
             return Ok(value_id);
         }
 
-        // Past the `u128` carrier the fold would have to widen through a type
-        // it cannot represent: `signed_val as u128` carries only 128 sign bits,
-        // so a negative constant would land with a ZERO upper half. Emit a real
-        // `Extend` there instead; `strider-opt`'s `eval_sign_extend` declines
-        // the same fold.
-        if output_type.bit_width() <= 128
-            && let Some(unsigned_val) = self.int_const_u128(value_id)
-            && let Some(signed_val) = self.int_const_i128(value_id)
-        {
-            // `i128 as u128` reinterprets the sign-extended bits, which
-            // `build_int_const` then masks to width.
-            return match op {
-                ExtendOp::SignExtend => self.build_int_const(signed_val as u128, output_type),
-                ExtendOp::ZeroExtend => self.build_int_const(unsigned_val, output_type),
+        // A constant folds where the output has a `u128` modulus; past it the
+        // carrier cannot hold the sign bits, so a real `Extend` is emitted.
+        if let Some(v) = self.int_const_u128(value_id) {
+            let folded = match op {
+                ExtendOp::SignExtend => eval::sign_extend(v, curr_output_type, output_type),
+                ExtendOp::ZeroExtend => output_type.get_unsigned_int(v),
             };
+            if let Some(k) = folded {
+                return self.build_int_const(k, output_type);
+            }
         }
 
         if curr_output_type.bit_width() == output_type.bit_width() {
