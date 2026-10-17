@@ -171,28 +171,19 @@ fn type_info_table_matches_variants() {
 
 #[test]
 fn int_for_byte_size_to_node_output_type() {
-    assert_eq!(ValueType::int_for_byte_size(1).unwrap(), ValueType::int(8));
-    assert_eq!(ValueType::int_for_byte_size(2).unwrap(), ValueType::int(16));
-    assert_eq!(ValueType::int_for_byte_size(3).unwrap(), ValueType::int(24));
-    assert_eq!(ValueType::int_for_byte_size(4).unwrap(), ValueType::int(32));
-    assert_eq!(ValueType::int_for_byte_size(5).unwrap(), ValueType::int(40));
-    assert_eq!(ValueType::int_for_byte_size(7).unwrap(), ValueType::int(56));
-    assert_eq!(ValueType::int_for_byte_size(8).unwrap(), ValueType::int(64));
-    assert_eq!(ValueType::int_for_byte_size(9).unwrap(), ValueType::int(72));
-    assert_eq!(
-        ValueType::int_for_byte_size(16).unwrap(),
-        ValueType::int(128)
-    );
-    assert_eq!(
-        ValueType::int_for_byte_size(32).unwrap(),
-        ValueType::int(256)
-    );
-    assert_eq!(
-        ValueType::int_for_byte_size(64).unwrap(),
-        ValueType::int(512)
-    );
+    assert_eq!(ValueType::int_from_bytes(1).unwrap(), ValueType::int(8));
+    assert_eq!(ValueType::int_from_bytes(2).unwrap(), ValueType::int(16));
+    assert_eq!(ValueType::int_from_bytes(3).unwrap(), ValueType::int(24));
+    assert_eq!(ValueType::int_from_bytes(4).unwrap(), ValueType::int(32));
+    assert_eq!(ValueType::int_from_bytes(5).unwrap(), ValueType::int(40));
+    assert_eq!(ValueType::int_from_bytes(7).unwrap(), ValueType::int(56));
+    assert_eq!(ValueType::int_from_bytes(8).unwrap(), ValueType::int(64));
+    assert_eq!(ValueType::int_from_bytes(9).unwrap(), ValueType::int(72));
+    assert_eq!(ValueType::int_from_bytes(16).unwrap(), ValueType::int(128));
+    assert_eq!(ValueType::int_from_bytes(32).unwrap(), ValueType::int(256));
+    assert_eq!(ValueType::int_from_bytes(64).unwrap(), ValueType::int(512));
     for bad in [0u32, 11, 13, 15, 17, 33, 65] {
-        let err = ValueType::int_for_byte_size(bad).expect_err("invalid size");
+        let err = ValueType::int_from_bytes(bad).expect_err("invalid size");
         let msg = err.to_string();
         assert!(
             msg.contains(&format!("unsupported node output size: {bad} bytes")),

@@ -88,6 +88,8 @@
   both of those.
 - `EditFunction::replace_value` returns `bool`, and `add_node_input` and
   `remove_region_predecessors` return nothing: none of the three could fail.
+- `ValueType::{int_for_byte_size, float_for_byte_size}` are renamed
+  `int_from_bytes` / `float_from_bytes`.
 
 ### Changed, Python
 

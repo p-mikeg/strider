@@ -1646,7 +1646,7 @@ fn write_bool_to_byte_reg_var_coerces_to_int() -> Result<()> {
     let bool_val = b.build_int_cmp_operation(lhs, rhs, IntCmpOp::Less, ValueType::int(32))?;
 
     // Mirror the lifter: coerce to the register's declared int type, write.
-    let reg_ty = ValueType::int_for_byte_size(flag.size)?;
+    let reg_ty = ValueType::int_from_bytes(flag.size)?;
     let coerced = b.convert_to_int_if_needed(bool_val, reg_ty)?;
     b.write_variable(&flag, coerced)?;
 

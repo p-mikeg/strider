@@ -248,7 +248,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
-        let cmp_width = strider_ir::ValueType::int_for_byte_size(in0_size.max(in1_size))?;
+        let cmp_width = strider_ir::ValueType::int_from_bytes(in0_size.max(in1_size))?;
         let ext_op = match op {
             IntCmpOp::Sless | IntCmpOp::Scarry | IntCmpOp::Sborrow => ExtendOp::SignExtend,
             IntCmpOp::Equal | IntCmpOp::Less | IntCmpOp::Carry => ExtendOp::ZeroExtend,

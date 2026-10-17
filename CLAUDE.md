@@ -203,7 +203,7 @@ I72, I80, I96, I112, I128, I256, I512, F16, F32, F64, F80, F128`. Booleans are
 the 1-bit integer `I1`. The width set is measured against the sla specs: an
 unmapped width fails the whole function's lift, so every width a Sleigh varnode
 or temporary carries needs a variant. `bit_width(I1) == 1` (the one case where
-width != byte_size*8); `int_for_byte_size(1) -> I8`, never `I1`.
+width != byte_size*8); `int_from_bytes(1) -> I8`, never `I1`.
 
 `expected_signature` (`node_signature.rs`) is the SSoT for each kind's slot
 kinds. `Graph` holds only structure; per-function overlay (entry, `default_cc`,
