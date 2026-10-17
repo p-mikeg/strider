@@ -430,11 +430,6 @@ fn frontiers<N: Id>(doms: &Dominators<N>, preds: &[Vec<u32>]) -> Frontiers<N> {
     dominance_frontiers(doms, |v: N| preds[v.ix()].iter().map(|&p| N::at(p)))
 }
 
-/// The preorder lift walks: siblings ascending by vertex.
-fn preorder_ascending<N: Id + Ord>(doms: &Dominators<N>) -> Vec<N> {
-    doms.tree_preorder()
-}
-
 /// The preorder strider-ir walks: siblings in depth-first discovery order.
 fn preorder_by_discovery<N: Id>(doms: &Dominators<N>) -> Vec<N> {
     doms.intervals()
@@ -549,11 +544,7 @@ fn check_dominance(c: &Case) {
         "discovery preorder, {c:?}"
     );
     let ascending = oracle::tree_preorder(&idom, 0, |v| v as usize);
-    assert_eq!(
-        preorder_ascending(&doms),
-        ascending,
-        "ascending preorder, {c:?}"
-    );
+    assert_eq!(doms.tree_preorder(), ascending, "ascending preorder, {c:?}");
     let span = spans(&doms);
     for (a, row) in dom.iter().enumerate() {
         assert_eq!(
@@ -613,8 +604,9 @@ fn check_large(c: &Case) {
 }
 
 /// The tree numberings against the idoms, in one pass each: `tree_preorder`
-/// is a preorder of the tree with siblings ascending, and every span nests in
-/// its idom's.
+/// is a preorder of the tree with siblings ascending, every span nests in its
+/// idom's, and `intervals().preorder()` is the order of `enter`, with sibling
+/// spans disjoint.
 fn check_tree_numbering(doms: &Dominators<u32>, n: u32) {
     let order = doms.tree_preorder();
     assert_eq!(order.len(), doms.vertices().len(), "preorder length, n {n}");
@@ -654,6 +646,29 @@ fn check_tree_numbering(doms: &Dominators<u32>, n: u32) {
             de < ve && vx < dx,
             "span of {v} ({ve}, {vx}) outside its idom {idom}'s ({de}, {dx}), n {n}"
         );
+    }
+
+    // Each span either nests in the innermost still-open one or starts after
+    // it closes, so siblings never overlap.
+    let mut open: Vec<(u32, u32)> = Vec::new();
+    for &at in iv.preorder() {
+        let (e, x) = iv.span(at);
+        assert!(e < x, "span of position {at} is ({e}, {x}), n {n}");
+        if let Some(&(prev, _)) = open.last() {
+            assert!(prev < e, "preorder enters {at} at {e} after {prev}, n {n}");
+        }
+        while let Some(&(_, top_x)) = open.last()
+            && top_x < e
+        {
+            open.pop();
+        }
+        if let Some(&(top_e, top_x)) = open.last() {
+            assert!(
+                top_e < e && x < top_x,
+                "span ({e}, {x}) of position {at} overlaps open ({top_e}, {top_x}), n {n}"
+            );
+        }
+        open.push((e, x));
     }
 }
 
@@ -769,7 +784,7 @@ fn dominance_work_is_linear_on_million_vertex_graphs() {
         drop(fr);
         let mut got: Vec<u32> = placed.keys().map(|v| v.0).collect();
         drop(placed);
-        let order_len = preorder_ascending(&doms).len();
+        let order_len = doms.tree_preorder().len();
         let span_len = spans(&doms).len();
         assert_eq!(
             asked,
