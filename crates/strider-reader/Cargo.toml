@@ -20,6 +20,11 @@ anyhow.workspace = true
 workspace = true
 
 [dev-dependencies]
+criterion.workspace = true
 object = { workspace = true, features = ["write"] }
 proptest.workspace = true
 tempfile = "3.10"
+
+[[bench]]
+name = "read"
+harness = false
