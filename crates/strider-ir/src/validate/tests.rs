@@ -277,7 +277,7 @@ fn validate_flags_initial_var_typed_against_its_varnode_size() {
     let (iv, _) = returned_initial_var(&mut s, id, ValueType::int(8));
 
     assert_validation_err(&s.f, |e| {
-        matches!(e, ValidationError::InitialVarTypeMismatch { node, ty: ValueType::I8, .. }
+        matches!(e, ValidationError::InitialVarTypeMismatch { node, ty: ValueType::Int(8), .. }
             if *node == iv)
     });
 }
@@ -407,8 +407,8 @@ fn graph_invariants_phi_input_type_mismatch() {
             e,
             ValidationError::PhiInputTypeMismatch {
                 input_index: 1,
-                output_ty: ValueType::I64,
-                input_ty: ValueType::I8,
+                output_ty: ValueType::Int(64),
+                input_ty: ValueType::Int(8),
                 ..
             }
         )

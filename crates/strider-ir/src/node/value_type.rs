@@ -1,196 +1,119 @@
-// The enum and its `SUPPORTED` listing come from one variant list, so a new width
-// cannot reach the exhaustive matches without reaching `SUPPORTED`.
-macro_rules! value_types {
-    ($( $(#[$meta:meta])* $name:ident ),* $(,)?) => {
-        /// Integer variants name their width in bits; `I1` is one of them.
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-        pub enum ValueType {
-            $( $(#[$meta])* $name, )*
-        }
+use anyhow::anyhow;
 
-        impl ValueType {
-            /// Every type: integers, then floats, each by width (`Ord`
-            /// order). The list `FromStr` and the Python bindings read.
-            pub const SUPPORTED: [Self; [$(value_types!(@unit $name)),*].len()] =
-                [$(Self::$name),*];
-        }
-    };
-    (@unit $name:ident) => { () };
+/// A value's type: an integer or an IEEE float, by its width in bits.
+///
+/// Only [`Self::SUPPORTED`] widths are valid: [`Self::int`], [`Self::float`],
+/// the `*_from_bytes` constructors and `FromStr` refuse any other. Integers
+/// order before floats, each by width.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ValueType {
+    Int(u16),
+    Float(u16),
 }
 
-value_types! {
-    /// The boolean type: a comparison or logical-op result, 0 or 1.
-    I1,
-    I8,
-    I16,
-    /// x86 `SegmentLimit` result (`tmp:3`).
-    I24,
-    I32,
-    /// x86 `adcx`/`adox` 32-bit carry accumulator (`tmp:5`).
-    I40,
-    /// 6-byte varnode, seen on some ARM instructions.
-    I48,
-    /// AArch64 `sext(tmp:7)` in `cmpp` / `subp` (56-bit tagged pointers).
-    I56,
-    I64,
-    /// x86 `adcx`/`adox` 64-bit carry accumulator, AArch64 fixed-point
-    /// `ucvtf` (`tmp:9`).
-    I72,
-    /// The x87 ST0/STn bit-pattern view.
-    I80,
-    /// x86-64 `GDTR` / `IDTR`.
-    I96,
-    /// x86-64 `LDTR` / `TR`.
-    I112,
-    I128,
-    I256,
-    /// AVX-512 `zmm`.
-    I512,
-    /// IEEE half precision (AArch64 FPR16, ARM `vcvt.f16`).
-    F16,
-    F32,
-    F64,
-    /// x87 extended precision (Intel long double).
-    F80,
-    /// ARM's `vcvt.f32.f16 Qd,Dm` writes a 16-byte float destination.
-    F128,
+// `SUPPORTED` and `is_supported` read one width list.
+macro_rules! supported_widths {
+    (int: $($i:literal)*; float: $($f:literal)*) => {
+        impl ValueType {
+            /// Every type: integers, then floats, each by width (`Ord`
+            /// order).
+            pub const SUPPORTED: [Self; [$($i,)* $($f,)*].len()] =
+                [$(Self::Int($i),)* $(Self::Float($f),)*];
+
+            /// Whether this width is one of [`Self::SUPPORTED`].
+            #[inline]
+            pub const fn is_supported(self) -> bool {
+                match self {
+                    Self::Int(w) => matches!(w, $($i)|*),
+                    Self::Float(w) => matches!(w, $($f)|*),
+                }
+            }
+        }
+    };
+}
+
+// Past the powers of two, each width is one a vendored sla spec puts on a
+// varnode or temporary: i24 x86 `SegmentLimit` (`tmp:3`); i40 and i72 the x86
+// `adcx`/`adox` carry accumulators (`tmp:5`, `tmp:9`), i72 also AArch64
+// fixed-point `ucvtf`; i48 some ARM instructions; i56 AArch64 `cmpp`/`subp`;
+// i80 the x87 ST bit pattern; i96 and i112 x86-64 `GDTR`/`IDTR` and
+// `LDTR`/`TR`; i512 AVX-512 `zmm`; f16 AArch64 FPR16 and ARM `vcvt.f16`; f80
+// x87 extended precision; f128 the destination of ARM `vcvt.f32.f16 Qd,Dm`.
+supported_widths! {
+    int: 1 8 16 24 32 40 48 56 64 72 80 96 112 128 256 512;
+    float: 16 32 64 80 128
 }
 
 impl ValueType {
+    /// The boolean type: a comparison or logical-op result, 0 or 1.
+    pub const I1: Self = Self::Int(1);
+
     /// The integer type `bits` wide. Panics on an unsupported width, which in
     /// a `const` is a compile error.
     #[inline]
     pub const fn int(bits: u16) -> Self {
-        match bits {
-            1 => Self::I1,
-            8 => Self::I8,
-            16 => Self::I16,
-            24 => Self::I24,
-            32 => Self::I32,
-            40 => Self::I40,
-            48 => Self::I48,
-            56 => Self::I56,
-            64 => Self::I64,
-            72 => Self::I72,
-            80 => Self::I80,
-            96 => Self::I96,
-            112 => Self::I112,
-            128 => Self::I128,
-            256 => Self::I256,
-            512 => Self::I512,
-            _ => panic!("unsupported integer width"),
-        }
+        let ty = Self::Int(bits);
+        assert!(ty.is_supported(), "unsupported integer width");
+        ty
     }
 
     /// The float type `bits` wide; panics as [`Self::int`] does.
     #[inline]
     pub const fn float(bits: u16) -> Self {
-        match bits {
-            16 => Self::F16,
-            32 => Self::F32,
-            64 => Self::F64,
-            80 => Self::F80,
-            128 => Self::F128,
-            _ => panic!("unsupported float width"),
-        }
+        let ty = Self::Float(bits);
+        assert!(ty.is_supported(), "unsupported float width");
+        ty
     }
-}
 
-impl ValueType {
+    /// The integer type of an `n`-byte varnode: one byte is `I8`, never `I1`.
+    pub fn int_from_bytes(n: u32) -> crate::error::Result<Self> {
+        Self::from_bytes(n, Self::Int)
+            .ok_or_else(|| anyhow!("unsupported node output size: {n} bytes"))
+    }
+
+    /// The float type of an `n`-byte varnode.
+    pub fn float_from_bytes(n: u32) -> crate::error::Result<Self> {
+        Self::from_bytes(n, Self::Float)
+            .ok_or_else(|| anyhow!("unsupported float varnode size: {n} bytes"))
+    }
+
+    fn from_bytes(n: u32, of_bits: fn(u16) -> Self) -> Option<Self> {
+        let ty = of_bits(u16::try_from(n.checked_mul(8)?).ok()?);
+        ty.is_supported().then_some(ty)
+    }
+
     #[inline]
-    fn as_str(self) -> &'static str {
+    pub const fn bit_width(self) -> usize {
         match self {
-            Self::I1 => "i1",
-            Self::I8 => "i8",
-            Self::I16 => "i16",
-            Self::I24 => "i24",
-            Self::I32 => "i32",
-            Self::I40 => "i40",
-            Self::I48 => "i48",
-            Self::I56 => "i56",
-            Self::I64 => "i64",
-            Self::I72 => "i72",
-            Self::I80 => "i80",
-            Self::I96 => "i96",
-            Self::I112 => "i112",
-            Self::I128 => "i128",
-            Self::I256 => "i256",
-            Self::I512 => "i512",
-            Self::F16 => "f16",
-            Self::F32 => "f32",
-            Self::F64 => "f64",
-            Self::F80 => "f80",
-            Self::F128 => "f128",
+            Self::Int(w) | Self::Float(w) => w as usize,
         }
     }
 
     /// `I1` and `I8` both occupy 1 byte.
     #[inline]
-    pub fn byte_size(self) -> usize {
-        match self {
-            Self::I1 | Self::I8 => 1,
-            Self::I16 | Self::F16 => 2,
-            Self::I24 => 3,
-            Self::I32 | Self::F32 => 4,
-            Self::I40 => 5,
-            Self::I48 => 6,
-            Self::I56 => 7,
-            Self::I64 | Self::F64 => 8,
-            Self::I72 => 9,
-            Self::I80 | Self::F80 => 10,
-            Self::I96 => 12,
-            Self::I112 => 14,
-            Self::I128 | Self::F128 => 16,
-            Self::I256 => 32,
-            Self::I512 => 64,
-        }
-    }
-
-    /// `byte_size * 8` for everything except `I1`, which is 1 bit in a byte.
-    #[inline]
-    pub fn bit_width(self) -> usize {
-        match self {
-            Self::I1 => 1,
-            Self::I8 => 8,
-            Self::I16 | Self::F16 => 16,
-            Self::I24 => 24,
-            Self::I32 | Self::F32 => 32,
-            Self::I40 => 40,
-            Self::I48 => 48,
-            Self::I56 => 56,
-            Self::I64 | Self::F64 => 64,
-            Self::I72 => 72,
-            Self::I80 | Self::F80 => 80,
-            Self::I96 => 96,
-            Self::I112 => 112,
-            Self::I128 | Self::F128 => 128,
-            Self::I256 => 256,
-            Self::I512 => 512,
-        }
+    pub const fn byte_size(self) -> usize {
+        self.bit_width().div_ceil(8)
     }
 
     #[inline]
-    pub fn is_bool(self) -> bool {
-        self == Self::I1
+    pub const fn is_bool(self) -> bool {
+        matches!(self, Self::I1)
     }
 
     #[inline]
-    pub fn is_integer(self) -> bool {
-        !self.is_float()
+    pub const fn is_integer(self) -> bool {
+        matches!(self, Self::Int(_))
     }
 
     #[inline]
-    pub fn is_float(self) -> bool {
-        matches!(
-            self,
-            Self::F16 | Self::F32 | Self::F64 | Self::F80 | Self::F128
-        )
+    pub const fn is_float(self) -> bool {
+        matches!(self, Self::Float(_))
     }
 
     /// An integer too wide for `u64`.
     #[inline]
-    pub fn is_wide_int(self) -> bool {
-        self.is_integer() && self.byte_size() > 8
+    pub const fn is_wide_int(self) -> bool {
+        matches!(self, Self::Int(w) if w > 64)
     }
 
     /// All-ones mask for this integer type. `I256` / `I512` return `u128::MAX`,
@@ -247,6 +170,21 @@ impl ValueType {
             Some(masked as i128)
         }
     }
+
+    /// The `Display` spelling read back; `None` for any other text.
+    fn parse(s: &str) -> Option<Self> {
+        let (of_bits, digits): (fn(u16) -> Self, &str) = match s.split_at_checked(1)? {
+            ("i", digits) => (Self::Int, digits),
+            ("f", digits) => (Self::Float, digits),
+            _ => return None,
+        };
+        // `u16::from_str` also takes `+8` and `08`, which `Display` never writes.
+        if digits.starts_with('0') || !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let ty = of_bits(digits.parse().ok()?);
+        ty.is_supported().then_some(ty)
+    }
 }
 
 /// Mask of the low `bits` bits. `bits >= 128` saturates to `u128::MAX`, the
@@ -260,46 +198,23 @@ pub fn low_bits_mask_u128(bits: usize) -> u128 {
     }
 }
 
-impl ValueType {
-    /// Byte size 1 maps to `I8`, never `I1`.
-    pub fn int_from_bytes(n: u32) -> crate::error::Result<Self> {
-        match n {
-            1 => Ok(Self::I8),
-            2 => Ok(Self::I16),
-            3 => Ok(Self::I24),
-            4 => Ok(Self::I32),
-            5 => Ok(Self::I40),
-            6 => Ok(Self::I48),
-            7 => Ok(Self::I56),
-            8 => Ok(Self::I64),
-            9 => Ok(Self::I72),
-            10 => Ok(Self::I80),
-            12 => Ok(Self::I96),
-            14 => Ok(Self::I112),
-            16 => Ok(Self::I128),
-            32 => Ok(Self::I256),
-            64 => Ok(Self::I512),
-            n => Err(anyhow::anyhow!("unsupported node output size: {n} bytes")),
-        }
-    }
-
-    pub fn float_from_bytes(n: u32) -> crate::error::Result<Self> {
-        match n {
-            2 => Ok(Self::F16),
-            4 => Ok(Self::F32),
-            8 => Ok(Self::F64),
-            10 => Ok(Self::F80),
-            16 => Ok(Self::F128),
-            other => Err(anyhow::anyhow!(
-                "unsupported float varnode size {other} bytes (expected 2, 4, 8, 10, or 16)"
-            )),
+/// `I32` / `F64`: the spelling Python's `Node.value_type()` returns.
+impl std::fmt::Debug for ValueType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Int(w) => write!(f, "I{w}"),
+            Self::Float(w) => write!(f, "F{w}"),
         }
     }
 }
 
+/// `i32` / `f64`: the IR text spelling.
 impl std::fmt::Display for ValueType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
+        match self {
+            Self::Int(w) => write!(f, "i{w}"),
+            Self::Float(w) => write!(f, "f{w}"),
+        }
     }
 }
 
@@ -308,16 +223,13 @@ impl std::str::FromStr for ValueType {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::SUPPORTED
-            .into_iter()
-            .find(|t| t.to_string() == s)
-            .ok_or_else(|| {
-                let names: Vec<String> = Self::SUPPORTED.iter().map(ToString::to_string).collect();
-                anyhow::anyhow!(
-                    "unknown value type {s:?}: expected one of {}",
-                    names.join(", ")
-                )
-            })
+        Self::parse(s).ok_or_else(|| {
+            let names = Self::SUPPORTED.map(|ty| ty.to_string());
+            anyhow!(
+                "unknown value type {s:?}: expected one of {}",
+                names.join(", ")
+            )
+        })
     }
 }
 
@@ -339,6 +251,7 @@ impl VnTypeExt for rsleigh::Vn {
         ValueType::float_from_bytes(self.size)
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::ValueType;
@@ -403,6 +316,25 @@ mod tests {
         }
         for n in [0u32, 1, 3, 12, 32] {
             assert!(ValueType::float_from_bytes(n).is_err(), "{n}");
+        }
+    }
+
+    /// A type is its kind and width; only the listed widths are supported.
+    #[test]
+    fn a_type_is_a_kind_and_a_width() {
+        assert_eq!(ValueType::int(32), ValueType::Int(32));
+        assert_eq!(ValueType::float(64), ValueType::Float(64));
+        assert_eq!(ValueType::I1, ValueType::Int(1));
+        assert_eq!(
+            format!("{:?} {:?}", ValueType::I1, ValueType::Float(80)),
+            "I1 F80"
+        );
+        assert!(ValueType::SUPPORTED.iter().all(|ty| ty.is_supported()));
+        for ty in [ValueType::Int(0), ValueType::Int(12), ValueType::Float(8)] {
+            assert!(!ty.is_supported(), "{ty:?}");
+        }
+        for bad in ["i+8", "i0", "i 8", "i8_", "f99999", "\u{e9}8"] {
+            assert!(bad.parse::<ValueType>().is_err(), "{bad:?}");
         }
     }
 
