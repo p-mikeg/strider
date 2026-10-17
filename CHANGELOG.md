@@ -197,6 +197,10 @@
   mapping cuts out of two overlapping read-only ones collapse to the later,
   as `MemRegionsLookupTable` collapses them, so a crafted image can return
   fewer regions.
+- A relocated image no longer fails to load with "patch budget": every
+  region shares one patch list, so a site any number of overlapping
+  mappings cover is patched in all of them at no extra cost. Python
+  `load_elf` / `add_elf` stop raising on such an image too.
 
 ### Fixed
 

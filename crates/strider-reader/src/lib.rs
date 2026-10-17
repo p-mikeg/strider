@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Range;
+use std::sync::Arc;
 
 pub type Result<T> = anyhow::Result<T>;
 
@@ -115,9 +117,10 @@ pub struct MemRegion {
     bytes: FileBytes,
     offset: usize,
     len: usize,
-    /// Sorted by `addr`, insertion order kept within one address so the
-    /// last-collected patch at a site is the one that lands.
-    patches: Option<std::sync::Arc<[Patch]>>,
+    /// The image's relocation patches, sorted by `addr` with insertion order
+    /// kept within one address (the last-collected patch at a site lands),
+    /// and the range of them that can overlap this region.
+    patches: Option<(Arc<[Patch]>, Range<usize>)>,
 }
 
 impl std::fmt::Debug for MemRegion {
@@ -125,7 +128,7 @@ impl std::fmt::Debug for MemRegion {
         f.debug_struct("MemRegion")
             .field("start_addr", &format_args!("{:#x}", self.start_addr))
             .field("len", &self.len)
-            .field("patches", &self.patches.as_ref().map_or(0, |p| p.len()))
+            .field("patches", &self.patches().len())
             .finish()
     }
 }
@@ -190,16 +193,21 @@ impl MemRegion {
         Ok(())
     }
 
-    /// Replaces the patch list, sorting by address; see the field docs for the
-    /// equal-address rule.
-    pub(crate) fn set_patches(&mut self, mut patches: Vec<Patch>) {
-        if patches.is_empty() {
-            self.patches = None;
-            return;
+    /// Shares `all`, the image's patches sorted by `addr`, keeping the range
+    /// that can overlap this region; replaces any it carried.
+    pub(crate) fn attach_patches(&mut self, all: &Arc<[Patch]>) {
+        let lo =
+            all.partition_point(|p| p.addr < self.start_addr.saturating_sub(MAX_PATCH_LEN - 1));
+        let hi = all.partition_point(|p| p.addr < self.end_addr());
+        self.patches = (lo < hi).then(|| (Arc::clone(all), lo..hi));
+    }
+
+    /// The patches that can overlap this region, sorted by `addr`.
+    fn patches(&self) -> &[Patch] {
+        match &self.patches {
+            Some((all, range)) => &all[range.clone()],
+            None => &[],
         }
-        // Stable, so equal-address patches keep collection order.
-        patches.sort_by_key(|p| p.addr);
-        self.patches = Some(patches.into());
     }
 
     pub fn start_addr(&self) -> u64 {
@@ -274,59 +282,35 @@ impl MemRegion {
     pub fn read(&self, addr: u64, out: &mut [u8]) -> Option<usize> {
         let (offset, available) = self.available_at(addr)?;
         let mut to_copy = available.min(out.len());
-        if let Some(hole) = self.first_hole_in(addr, to_copy) {
+        let near = self.patches_from(addr);
+        if let Some(hole) = first_hole_in(near, addr, to_copy) {
             if hole.addr <= addr {
                 return None;
             }
             to_copy = (hole.addr - addr) as usize;
         }
         out[..to_copy].copy_from_slice(&self.raw()[offset..offset + to_copy]);
-        self.apply_patches(addr, &mut out[..to_copy]);
+        apply_patches(near, addr, &mut out[..to_copy]);
         Some(to_copy)
     }
 
     /// The `r_type` of the uncomputed relocation field covering `addr`, if any.
     pub fn unmodelled_relocation_at(&self, addr: u64) -> Option<u32> {
         self.contains(addr)
-            .then(|| self.first_hole_in(addr, 1))
+            .then(|| first_hole_in(self.patches_from(addr), addr, 1))
             .flatten()
             .filter(|h| h.addr <= addr)
             .and_then(|h| h.unmodelled)
     }
 
-    /// The patches that may overlap `[addr, addr + len)`, in address order.
-    fn patches_near(&self, addr: u64, len: usize) -> impl Iterator<Item = &Patch> {
-        let patches = self.patches.as_deref().unwrap_or(&[]);
-        let end = addr.saturating_add(len as u64);
-        let first = patches.partition_point(|p| p.addr < addr.saturating_sub(MAX_PATCH_LEN - 1));
-        patches[first..]
-            .iter()
-            .take_while(move |p| p.addr < end)
-            .filter(move |p| p.end() > addr)
-    }
-
-    /// The lowest uncomputed field overlapping `[addr, addr + len)`.
-    fn first_hole_in(&self, addr: u64, len: usize) -> Option<&Patch> {
-        self.patches_near(addr, len)
-            .find(|p| p.unmodelled.is_some())
-    }
-
-    /// Overwrites the parts of `buf` (holding the bytes at `addr`) that a
-    /// relocation patch covers.
-    fn apply_patches(&self, addr: u64, buf: &mut [u8]) {
-        let end = addr.saturating_add(buf.len() as u64);
-        for p in self.patches_near(addr, buf.len()) {
-            if p.unmodelled.is_some() {
-                continue;
-            }
-            let (lo, hi) = (p.addr.max(addr), p.end().min(end));
-            let (dst, src, n) = (
-                (lo - addr) as usize,
-                (lo - p.addr) as usize,
-                (hi - lo) as usize,
-            );
-            buf[dst..dst + n].copy_from_slice(&p.value[src..src + n]);
+    /// This region's patches from the first that can overlap `addr` on.
+    fn patches_from(&self, addr: u64) -> &[Patch] {
+        let patches = self.patches();
+        if patches.is_empty() {
+            return patches;
         }
+        let first = patches.partition_point(|p| p.addr < addr.saturating_sub(MAX_PATCH_LEN - 1));
+        &patches[first..]
     }
 
     /// `(index into the window, non-zero bytes remaining)`, or `None` when
@@ -364,6 +348,38 @@ impl MemRegion {
             }
         }
         true
+    }
+}
+
+/// The patches of `near`, which starts at the first that can overlap `addr`,
+/// overlapping `[addr, addr + len)`, in address order.
+fn overlapping(near: &[Patch], addr: u64, len: usize) -> impl Iterator<Item = &Patch> {
+    let end = addr.saturating_add(len as u64);
+    near.iter()
+        .take_while(move |p| p.addr < end)
+        .filter(move |p| p.end() > addr)
+}
+
+/// The lowest uncomputed field of `near` overlapping `[addr, addr + len)`.
+fn first_hole_in(near: &[Patch], addr: u64, len: usize) -> Option<&Patch> {
+    overlapping(near, addr, len).find(|p| p.unmodelled.is_some())
+}
+
+/// Overwrites the parts of `buf` (holding the bytes at `addr`) that a patch
+/// of `near` covers.
+fn apply_patches(near: &[Patch], addr: u64, buf: &mut [u8]) {
+    let end = addr.saturating_add(buf.len() as u64);
+    for p in overlapping(near, addr, buf.len()) {
+        if p.unmodelled.is_some() {
+            continue;
+        }
+        let (lo, hi) = (p.addr.max(addr), p.end().min(end));
+        let (dst, src, n) = (
+            (lo - addr) as usize,
+            (lo - p.addr) as usize,
+            (hi - lo) as usize,
+        );
+        buf[dst..dst + n].copy_from_slice(&p.value[src..src + n]);
     }
 }
 
