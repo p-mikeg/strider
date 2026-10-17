@@ -57,7 +57,8 @@ impl Function {
     /// Builds the `Entry` node.  `InitialMemory` is the `FunctionBuilder`'s job.
     ///
     /// `tracked_vns` keeps only the largest of nested varnodes
-    /// ([`vn_container::dedup_overlapping_largest`]), sorted.
+    /// ([`vn_container::dedup_overlapping_largest`]), sorted by space shortcut,
+    /// offset and size.
     pub fn new(
         default_cc: strider_target::BuiltCallingConvention,
         endianness: strider_target::Endianness,

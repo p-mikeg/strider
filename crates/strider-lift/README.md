@@ -7,9 +7,10 @@ register modelled as an SSA variable.
 
 ## What's here
 
-- `Lifter<R>`, the engine: built once per architecture over a
-  `strider_cfg::DecodeEngine<R>` and reused across functions and rebuild rounds, since
-  `Sleigh::regs()` is expensive and the register table never changes.
+- `Lifter<R>`, the engine: built once per architecture over an
+  `rsleigh::Sleigh<R>`, which it wraps in a `strider_cfg::DecodeEngine<R>`, and
+  reused across functions and rebuild rounds, since `Sleigh::regs()` is
+  expensive and the register table never changes.
   `build_cfg(entry, cfg_opts)` decodes; `build_ir(cfg, cc)` /
   `build_ir_with(cfg, cc, cfg_opts, per_address_ccs)` lift, given the
   `CfgOptions` the cfg was built with. The calling convention is per function,
@@ -42,7 +43,7 @@ starts and comes from four places, because a register missing from it has no
 - every register a LOAD or STORE reaches through the REGISTER space by a
   computed address, which is likewise in no operand.
 
-`FunctionBuilder::new` then folds the set into largest containers.
+`Function::new` then folds the set into largest containers and sorts it.
 
 ## Register aliasing
 
