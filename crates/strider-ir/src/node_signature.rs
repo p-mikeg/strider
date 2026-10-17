@@ -1,7 +1,7 @@
 //! Single source of truth for every node's slot shape: kind (validation),
 //! name (dot labels), and role (dot colors).
 
-use crate::node::NodeKind;
+use crate::node::{NodeKind, ValueKind};
 
 /// A slot's admissible value kinds, coarser than the concrete
 /// [`ValueKind`](crate::node::ValueKind) stored on real outputs.
@@ -19,6 +19,29 @@ pub enum ExpectedValueKind {
 }
 
 const _: () = assert!(size_of::<ExpectedValueKind>() == 1);
+
+impl ExpectedValueKind {
+    /// Whether a value of kind `actual` may fill a slot of this class.
+    pub fn admits(self, actual: ValueKind) -> bool {
+        match (self, actual) {
+            (Self::Control, ValueKind::Control)
+            | (Self::Memory, ValueKind::Memory)
+            | (Self::PhiToken, ValueKind::PhiToken)
+            | (Self::AnyValue, ValueKind::Typed(_)) => true,
+            (Self::Bool, ValueKind::Typed(t)) => t.is_bool(),
+            (Self::AnyInt, ValueKind::Typed(t)) => t.is_integer(),
+            (Self::AnyFloat, ValueKind::Typed(t)) => t.is_float(),
+            (Self::Control | Self::Memory | Self::PhiToken, ValueKind::Typed(_))
+            | (Self::Control, ValueKind::Memory | ValueKind::PhiToken)
+            | (Self::Memory, ValueKind::Control | ValueKind::PhiToken)
+            | (Self::PhiToken, ValueKind::Control | ValueKind::Memory)
+            | (
+                Self::Bool | Self::AnyInt | Self::AnyFloat | Self::AnyValue,
+                ValueKind::Control | ValueKind::Memory | ValueKind::PhiToken,
+            ) => false,
+        }
+    }
+}
 
 /// Drives label colors in dot rendering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -687,5 +710,34 @@ mod tests {
             sig.outputs.tail.is_some(),
             "switch has variadic control outputs"
         );
+    }
+
+    /// Which value kinds each slot class admits, both directions.
+    #[test]
+    fn admits_is_the_slot_class_table() {
+        use crate::node::{ValueKind as V, ValueType};
+        let actual = [
+            V::Control,
+            V::Memory,
+            V::PhiToken,
+            V::Typed(ValueType::I1),
+            V::Typed(ValueType::int(32)),
+            V::Typed(ValueType::float(64)),
+        ];
+        use ExpectedValueKind as E;
+        let rows: [(E, [bool; 6]); 7] = [
+            (E::Control, [true, false, false, false, false, false]),
+            (E::Memory, [false, true, false, false, false, false]),
+            (E::PhiToken, [false, false, true, false, false, false]),
+            (E::Bool, [false, false, false, true, false, false]),
+            (E::AnyInt, [false, false, false, true, true, false]),
+            (E::AnyFloat, [false, false, false, false, false, true]),
+            (E::AnyValue, [false, false, false, true, true, true]),
+        ];
+        for (want, row) in rows {
+            for (got, admitted) in actual.into_iter().zip(row) {
+                assert_eq!(want.admits(got), admitted, "{want:?} admits {got:?}");
+            }
+        }
     }
 }
