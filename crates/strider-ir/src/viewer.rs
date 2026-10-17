@@ -22,7 +22,7 @@ macro_rules! value_kind_requirements {
 /// Each generated method reads a fixed input slot, panicking on the arity the
 /// validator already guarantees.
 macro_rules! semantic_slot_accessors {
-    ($($(#[$m:meta])* $name:ident => $arity:literal [$slot:literal] $msg:literal;)+) => { $(
+    ($($(#[$m:meta])* $name:ident => $arity:literal [$slot:expr] $msg:literal;)+) => { $(
         $(#[$m])*
         fn $name(&self, node: NodeId) -> ValueId {
             self.node_inputs_exact::<$arity>(node).expect($msg)[$slot]
@@ -216,16 +216,28 @@ pub trait IRViewer {
     // of that kind.
     semantic_slot_accessors! {
         /// `If` input slot 1 of `[control, cond]`.
-        if_cond => 2[1] "If node has [control, cond] inputs";
+        if_cond => 2[NodeKind::IF_COND_SLOT] "If node has [control, cond] inputs";
 
         /// `Store` input slot 1 of `[memory, addr, data]`.
-        store_addr => 3[1] "Store node has [memory, addr, data] inputs";
+        store_addr => 3[NodeKind::ACCESS_ADDR_SLOT] "Store node has [memory, addr, data] inputs";
 
         /// `Store` input slot 2 of `[memory, addr, data]`.
-        store_data => 3[2] "Store node has [memory, addr, data] inputs";
+        store_data => 3[NodeKind::STORE_DATA_SLOT] "Store node has [memory, addr, data] inputs";
 
         /// `Load` input slot 1 of `[memory, addr]`.
-        load_addr => 2[1] "Load node has [memory, addr] inputs";
+        load_addr => 2[NodeKind::ACCESS_ADDR_SLOT] "Load node has [memory, addr] inputs";
+    }
+
+    /// The address of a `Load` / `Store`; `None` for any other kind, and for a
+    /// short input list, since whole-graph sweeps reach malformed and dead
+    /// nodes.
+    fn access_address(&self, node: NodeId) -> Option<ValueId> {
+        if !matches!(self.node_kind(node), NodeKind::Load(_) | NodeKind::Store(_)) {
+            return None;
+        }
+        self.node_inputs(node)
+            .get(NodeKind::ACCESS_ADDR_SLOT)
+            .copied()
     }
 
     /// `IndirectBranch` dispatch value, slot 2 of `[control, memory, target,
