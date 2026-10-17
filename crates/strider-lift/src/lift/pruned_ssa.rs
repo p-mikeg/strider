@@ -175,7 +175,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // A call writes the CC's ret + clobber registers and adjusts SP,
             // none of which appear as pcode outputs, so they come from the CC.
             Opcode::Call | Opcode::CallIndirect => {
-                self.record_cc_call_effects(self.call_cc_override_for(insn), r, defs, exp);
+                self.record_cc_call_effects(self.call_override(insn), r, defs, exp);
             }
             // Mirrors `build_abi_call_other`: pcode output plus the ABI's
             // implicit reads and writes. Over-records the output for the NoOp
@@ -325,19 +325,5 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
     fn vn_id_of_container(&self, vn: &rsleigh::Vn) -> Option<InitialVnId> {
         self.builder.function().vn_id_of(&self.container_of(vn))
-    }
-
-    /// Mirrors `handle_call`'s CC selection: the per-address override for a
-    /// registered direct-call target, `None` for the function default.
-    fn call_cc_override_for(
-        &self,
-        insn: &rsleigh::Insn,
-    ) -> Option<&strider_target::BuiltCallingConvention> {
-        if insn.opcode == rsleigh::Opcode::Call
-            && let Some(target) = insn.inputs.first().map(|v| v.addr_off)
-        {
-            return self.per_address_ccs.get(&target);
-        }
-        None
     }
 }

@@ -42,7 +42,7 @@ pub use options::{CfgOptions, DataRanges, FunctionBound, NO_TARGETS, seated_from
 pub use pcode_text::{insn_plain_text, insn_text};
 
 pub(crate) use query::is_addr_tail_call;
-pub use query::{IfRegionSuccessors, user_op_of};
+pub use query::{IfRegionSuccessors, direct_call_target, user_op_of};
 pub use types::{
     MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator, UndecodableTarget,
 };
