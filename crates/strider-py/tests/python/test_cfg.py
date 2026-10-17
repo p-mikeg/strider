@@ -228,7 +228,7 @@ def _stub_inside_a_crossing_jmp():
 def test_region_at_answers_the_greatest_start_where_regions_overlap():
     """0x1009 is a byte of the `jmp` and the stub's own start, so two regions
     contain it; the owner is the one starting last, the rule the build routes
-    edges by."""
+    edges by. 0x100a is past the stub, so it falls back to the `jmp`."""
     cfg = _stub_inside_a_crossing_jmp()
     jmp = cfg.region_at(0x1008)
     stub = cfg.region_at(0x1009)
@@ -236,3 +236,4 @@ def test_region_at_answers_the_greatest_start_where_regions_overlap():
     assert cfg._region_texts()[jmp] != ""
     assert stub != jmp
     assert cfg._region_texts()[stub] == ""
+    assert cfg.region_at(0x100a) == jmp

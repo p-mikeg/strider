@@ -1,5 +1,5 @@
-//! `Builder::build` driven by hand-crafted byte sequences, covering the
-//! boundary shapes a real binary rarely reaches.
+//! `DecodeEngine::build_cfg` driven by hand-crafted byte sequences, covering
+//! the boundary shapes a real binary rarely reaches.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -24,7 +24,7 @@ fn build_from_bytes(bytes: Vec<u8>, start: u64) -> Cfg {
     DecodeEngine::new(arch, sleigh)
         .expect("decode engine")
         .build_cfg(start.into(), &CfgOptions::default())
-        .expect("Builder::build on synthetic bytes")
+        .expect("build_cfg on synthetic bytes")
 }
 
 fn build_from_bytes_opts(bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> Cfg {
@@ -33,7 +33,7 @@ fn build_from_bytes_opts(bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> Cfg {
     DecodeEngine::new(arch, sleigh)
         .expect("decode engine")
         .build_cfg(start.into(), opts)
-        .expect("Builder::build on synthetic bytes")
+        .expect("build_cfg on synthetic bytes")
 }
 
 /// A call to a `no_return_targets` address ends its region even MID-function,
@@ -566,7 +566,7 @@ fn build_ppc32be(words: &[u32], start: u64, opts: &CfgOptions) -> Cfg {
     DecodeEngine::new(arch, sleigh)
         .expect("decode engine")
         .build_cfg(start.into(), opts)
-        .expect("Builder::build on synthetic ppc words")
+        .expect("build_cfg on synthetic ppc words")
 }
 
 /// `li r3,1` / the trap / `li r3,2` / `blr`, as (sealed at the trap, addresses

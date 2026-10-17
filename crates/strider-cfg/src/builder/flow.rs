@@ -5,16 +5,16 @@
 //! `TMode`) plus per-instruction decode internals (condition eval, IT-block
 //! state, register-list iteration, x86 operand/address size) Sleigh flows
 //! along straight-line code. Only some are ever `globalset`, and a committed
-//! value is a per-address fact this build must re-derive rather than read:
-//! `SleighArch::flow_commit_vars` names them, the sla's flow class decides
-//! what each is erased to, and `RegionBuilder::rederive_flow` does the
-//! deriving. A pin cannot stand in for that on a FLOWING var: a forward paint
-//! stops at the next change point of that var, which is where an earlier
-//! build's commit sits. x86 declares dozens
-//! flowing but commits none, so snapshotting and pinning there only read;
-//! PowerPC's `linkreg` IS committed to a differing value by `mtlr`, but every
-//! constructor it selects emits the same p-code as its `linkreg=0` twin, so a
-//! stale value cannot change the lift.
+//! value is a per-address fact this build must re-derive rather than read.
+//! `SleighArch::flow_commit_vars` names those vars and
+//! `RegionBuilder::rederive_flow` re-derives them, erasing each to what its
+//! sla flow class says. A pin cannot stand in for that on a FLOWING var: a
+//! forward paint stops at the next change point of that var, which is where
+//! an earlier build's commit sits. x86 declares dozens flowing but commits
+//! none, so snapshotting and pinning there only read; PowerPC's `linkreg` IS
+//! committed to a differing value by `mtlr`, but every constructor it selects
+//! emits the same p-code as its `linkreg=0` twin, so a stale value cannot
+//! change the lift.
 //!
 //! Like GHIDRA's `ContextDatabase`, the context is a value committed per
 //! address. Pin a cold entry back to the pspec defaults (undo a prior
@@ -27,7 +27,6 @@
 
 /// The context vars the sla marks as flowing. Constant per sla, so the
 /// [`DecodeEngine`](crate::DecodeEngine) reads it once.
-#[derive(Default)]
 pub(crate) struct FlowVars {
     vars: Vec<String>,
 }
@@ -84,7 +83,7 @@ impl FlowVars {
     }
 
     /// `ctx`'s value for the flow var named `var`, or `None` if not a flow var
-    /// or `ctx` is not one of ours (a default-constructed `function_mode`).
+    /// or `ctx` was not snapshotted by these vars.
     #[must_use]
     pub fn value_of(&self, ctx: &FlowContext, var: &str) -> Option<u32> {
         self.vars
@@ -99,7 +98,10 @@ impl FlowVars {
         self.vars.iter().any(|n| n == name)
     }
 
-    /// `name`'s class: flowing exactly when the sla declares it so.
+    /// `name`'s class: flowing exactly when the sla declares it so. `name`
+    /// must be a context var the sla declares, or it reads `NoFlow`;
+    /// [`DecodeEngine::new`](crate::DecodeEngine::new) rejects an undeclared
+    /// one by reading its default.
     #[must_use]
     pub fn commit_class(&self, name: &str) -> FlowCommit {
         if self.contains(name) {
@@ -157,8 +159,8 @@ impl FlowVars {
     /// value may be the pspec default: a target the mode has not
     /// straight-line-flowed to yet (a forward branch).
     ///
-    /// No-op when `var` is not a flow var of this sla, `ctx` is not one of ours
-    /// (a default-constructed `function_mode`), or the read fails.
+    /// No-op when `var` is not a flow var of this sla, `ctx` was not
+    /// snapshotted by these vars, or the read fails.
     pub fn take_var_at<R: rsleigh::MemReader>(
         &self,
         ctx: &mut FlowContext,
@@ -245,7 +247,8 @@ mod tests {
         assert_eq!(vars.with_mode_bit(&base, "nope", true), base);
     }
 
-    /// A context built for another `FlowVars` (an empty one, say) must not index out of bounds.
+    /// A context built for another `FlowVars` (an empty one, say) must not
+    /// index out of bounds.
     #[test]
     fn a_context_shorter_than_the_var_list_does_not_index_out_of_bounds() {
         let vars = arm_like();

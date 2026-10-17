@@ -54,8 +54,9 @@ pub struct DecodeEngine<R: rsleigh::MemReader> {
 impl<R: rsleigh::MemReader> DecodeEngine<R> {
     /// # Errors
     ///
-    /// When the sla does not flow the arch's ISA-mode var, or does not declare
-    /// a var the arch re-derives.
+    /// When the sla's user-op names or flowing context vars cannot be read,
+    /// the sla does not flow the arch's ISA-mode var, or it does not declare a
+    /// var the arch re-derives.
     pub fn new(arch: strider_target::SleighArch, sleigh: rsleigh::Sleigh<R>) -> Result<Self> {
         // Not `unwrap_or_default`: with an empty table the CFG classifies every
         // `CallOther` as returning, so a no-return one decodes on into whatever
