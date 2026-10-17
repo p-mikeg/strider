@@ -416,6 +416,95 @@ fn plain_opcodes_lower_to_their_ir_shape() {
     }
 }
 
+/// A narrow operand reaches each binary op through that op's own coercion:
+/// signed division sign-extends both operands, every other op zero-extends,
+/// and a shift COUNT zero-extends even under `SShiftRight`, whose value must
+/// already match the output.
+#[test]
+fn a_narrow_operand_takes_its_ops_coercion() {
+    let (r0, r8, b16) = (reg(0), reg(8), reg_vn(16, 1));
+    let count = const_vn(0x80, 1);
+    let rows: &[(Opcode, Vn, &str)] = &[
+        (
+            Opcode::IntAdd,
+            b16,
+            "IntBinaryOp(Add):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
+        ),
+        (
+            Opcode::IntMul,
+            b16,
+            "IntBinaryOp(Mul):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
+        ),
+        (
+            Opcode::IntAnd,
+            b16,
+            "IntBinaryOp(And):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
+        ),
+        (
+            Opcode::IntOr,
+            b16,
+            "IntBinaryOp(Or):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
+        ),
+        (
+            Opcode::IntXor,
+            b16,
+            "IntBinaryOp(Xor):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
+        ),
+        (
+            Opcode::IntDiv,
+            b16,
+            "IntBinaryOp(Div):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
+        ),
+        (
+            Opcode::IntRem,
+            b16,
+            "IntBinaryOp(Rem):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
+        ),
+        (
+            Opcode::IntSdiv,
+            b16,
+            "IntBinaryOp(Sdiv):i32(Extend(SignExtend):i32(r16), 0xffffff80:i32)",
+        ),
+        (
+            Opcode::IntSrem,
+            b16,
+            "IntBinaryOp(Srem):i32(Extend(SignExtend):i32(r16), 0xffffff80:i32)",
+        ),
+        (
+            Opcode::IntLeft,
+            b16,
+            "IntBinaryOp(ShiftLeft):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
+        ),
+        (
+            Opcode::IntRight,
+            b16,
+            "IntBinaryOp(ShiftRight):i32(Extend(ZeroExtend):i32(r16), 0x80:i32)",
+        ),
+        (
+            Opcode::IntSright,
+            r0,
+            "IntBinaryOp(SShiftRight):i32(r0, 0x80:i32)",
+        ),
+    ];
+    for &(opcode, lhs, expected) in rows {
+        with_test_lifter_tracking(vec![r0, r8, b16], |d, rid| {
+            let insn = Insn {
+                opcode,
+                output: Some(r8),
+                inputs: vec![lhs, count].into(),
+            };
+            d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+                .unwrap_or_else(|e| panic!("{opcode:?} must lift: {e}"));
+            let written = d.read_vn(&r8).expect("read back the output");
+            assert_eq!(
+                operand_tree(d.builder.function(), written),
+                expected,
+                "{opcode:?}"
+            );
+        });
+    }
+}
+
 /// No vendored sla emits `Insert` / `Extract`, and lowering them exactly past
 /// 128 bits needs limb-wise masks, so both fail closed rather than carry an
 /// untested path.
