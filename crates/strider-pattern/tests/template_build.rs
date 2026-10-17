@@ -624,3 +624,84 @@ fn instantiate_refuses_an_ill_typed_operand() {
         assert!(err.contains(detail), "got: {err}");
     }
 }
+
+/// `Load(Store(..))` over a fresh `InitialMemory`, the Store's inputs wired by
+/// `wire` from `[mem, addr]`. No other vertex is staged: an unconsumed one is
+/// a second sink, which `instantiate` refuses for its own reason.
+fn store_then_load(
+    wire: impl FnOnce(&mut TemplateBuilder, template::TmplNodeRef, [template::TmplValueRef; 2]),
+) -> Template {
+    let space = rsleigh::VnSpace::RAM;
+    let mut b = TemplateBuilder::new();
+    let mem_node = b.node(KindSpec::Exact(NodeKind::InitialMemory));
+    let mem = b.memory_output(mem_node, 0);
+    let addr = b.leaf(KindSpec::Any);
+    b.set_template_kind(
+        addr,
+        template::TemplateKind::FnIntConst(Box::new(|_| Ok(0x100u128))),
+    );
+    b.set_value_ty(addr, T::int(64));
+    let store = b.node(KindSpec::Exact(NodeKind::Store(space)));
+    wire(&mut b, store, [mem, addr]);
+    let store_mem = b.memory_output(store, 0);
+    let load = b.node(KindSpec::Exact(NodeKind::Load(space)));
+    b.input(load, 0, store_mem);
+    b.input(load, 1, addr);
+    let _value = b.value_output(load, 0);
+    b.finish()
+}
+
+/// A `Load` reading the memory token where its address goes.
+fn load_with_memory_as_address() -> Template {
+    let space = rsleigh::VnSpace::RAM;
+    let mut b = TemplateBuilder::new();
+    let mem_node = b.node(KindSpec::Exact(NodeKind::InitialMemory));
+    let mem = b.memory_output(mem_node, 0);
+    let load = b.node(KindSpec::Exact(NodeKind::Load(space)));
+    b.input(load, 0, mem);
+    b.input(load, 1, mem);
+    let _value = b.value_output(load, 0);
+    b.finish()
+}
+
+/// A raw memory node is held to its node signature like every other kind: a
+/// memory token where data or an address goes, or a missing operand, is
+/// refused before it reaches the graph.
+#[test]
+fn a_raw_memory_node_off_its_signature_is_refused() {
+    let memory_as_data = store_then_load(|b, store, [mem, addr]| {
+        b.input(store, 0, mem);
+        b.input(store, 1, addr);
+        b.input(store, 2, mem);
+    });
+    let two_inputs = store_then_load(|b, store, [mem, addr]| {
+        b.input(store, 0, mem);
+        b.input(store, 1, addr);
+    });
+    for (label, tpl, kind, detail) in [
+        ("memory as data", memory_as_data, "Store", "input slot 2"),
+        ("two inputs", two_inputs, "Store", "2 inputs"),
+        (
+            "memory as address",
+            load_with_memory_as_address(),
+            "Load",
+            "input slot 1",
+        ),
+    ] {
+        let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
+        let lhs_root = fx.walk().next().unwrap();
+        let mut ef = EditFunction::new(&mut fx);
+        let err = instantiate(
+            &tpl,
+            &mut ef,
+            &Bindings::default(),
+            lhs_root,
+            &[lhs_root],
+            T::int(64),
+        )
+        .expect_err(label)
+        .to_string();
+        assert!(err.contains(kind), "{label}: {err}");
+        assert!(err.contains(detail), "{label}: {err}");
+    }
+}
