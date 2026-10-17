@@ -217,6 +217,12 @@
   reader is a SIGBUS, as under any `OwnedElf`; `STRIDER_NO_MMAP=1` reads the
   file instead. A load no longer fails with "distinct file bytes": nothing is
   copied.
+- `ElfFileMemReader`'s `ReadOnlyMemory` view is the image's immutable
+  mappings, built once, rather than the fetch image minus its writable ranges
+  at every read; a read of a writable address errors "not mapped", where it
+  said "is in a writable mapping". Where a writable mapping cuts two
+  overlapping read-only PT_LOADs into pieces at one start, a crafted shape,
+  the ROM view serves the later piece's bytes, as `OwnedElf::regions` does.
 
 ### Fixed
 
@@ -329,6 +335,10 @@
   `ElfFileMemReader::check_unchanged`.
 - `elf::AddressSet`, the merged range set `AddressSet::merged` builds;
   `AddressSet::covers` answers whether it holds a whole range in O(log n).
+- `OwnedElf::image(source, mode)` returns an `elf::ElfImage`: the fetch and ROM
+  region sets and the writable `AddressSet` a `RelocationMode` picks, from one
+  parse. `RelocationMode::Applied { got_is_rom }` also builds a relocated
+  `ElfFileMemReader`.
 
 ## 0.2.0
 

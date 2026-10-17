@@ -2,9 +2,10 @@
 
 Loads a binary into memory and serves its bytes to the rest of the pipeline. The
 fetch image is exposed as a Sleigh instruction source (`rsleigh::MemReader`) for
-lifting; that image minus its writable mappings is exposed as `ReadOnlyMemory`
+lifting; the image's runtime-immutable mappings are exposed as `ReadOnlyMemory`
 for the optimizer's `LoadReadOnly` pass that folds constant loads, which must
-not read a mapping the program can write.
+not read a mapping the program can write. `OwnedElf::image` builds both, and the
+image's writable addresses, from one parse.
 
 ## What's here
 
@@ -13,12 +14,14 @@ not read a mapping the program can write.
   merge: the highest-start region fully covering the request, else the region
   serving the most bytes from the address. Both are O(log n) descents of a
   max-end tree, whether the regions are disjoint or nest.
-- `ElfFileMemReader`: the ELF backend, `ElfFileMemReader::new(&elf,
-  RelocationMode::Unapplied)` over an `OwnedElf`, whose bytes its regions
-  window; implements both reader traits. It serves the file-initial bytes, so
-  an unlinked or not-yet-`ld.so`'d image serves each relocation site's
-  unrelocated field (an addend, or `ld`'s link-time value), never its target;
-  the relocated view of an image is an `OwnedElf::regions(.., relocate)` load.
+- `ElfFileMemReader`: the ELF backend, `ElfFileMemReader::new(&elf, mode)`
+  over an `OwnedElf`, whose bytes its regions window; implements both reader
+  traits over the `OwnedElf::image` that `mode` picks.
+  `RelocationMode::Unapplied` serves the file-initial bytes, so an unlinked or
+  not-yet-`ld.so`'d image serves each relocation site's unrelocated field (an
+  addend, or `ld`'s link-time value), never its target;
+  `RelocationMode::Applied { got_is_rom }` serves the fields this loader
+  relocates, and with `got_is_rom` its `.got` / `.data.rel.ro` as ROM.
 - `load_elf(path)`: memory-map an ELF into an `OwnedElf`; `OwnedElf::parse`
   takes bytes already in memory. `OwnedElf::regions(source, filter, relocate)`:
   one region set cut from those bytes; several sets (a fetch image and its ROM
@@ -97,11 +100,11 @@ across it fails with the relocation type named. An `SHT_REL` `R_*_RELATIVE` is
 not one of those: its field already holds the whole value, and is served as
 assembled.
 
-The `ReadOnlyMemory` view rejects any writable mapping outright, so on an image
-whose only PT_LOAD is RWX (the MIPS `vmlinux` shape; x86-64 and arm64 ship
-separate RX / R / RW PT_LOADs) every `ReadOnlyMemory::read` fails and nothing
-folds. Supply your own `ReadOnlyMemory` over the constant data for such an
-image.
+The `ReadOnlyMemory` view holds no writable mapping (`got_is_rom`'s `.got` and
+`.data.rel.ro` aside), so on an image whose only PT_LOAD is RWX (the MIPS
+`vmlinux` shape; x86-64 and arm64 ship separate RX / R / RW PT_LOADs) every
+other `ReadOnlyMemory::read` fails and nothing else folds. Supply your own
+`ReadOnlyMemory` over the constant data for such an image.
 
 Depends only on `object`, `memmap2`, `read-only-memory`, `rsleigh`, and
 `anyhow`.
