@@ -1,6 +1,6 @@
 # strider-target
 
-Pure target-description data: architecture presets, calling conventions, and the
+Target-description data: architecture presets, calling conventions, and the
 CallOther ABI table, the descriptors the lifting and optimizing layers read. It
 sits at the bottom of the dependency graph, above only `vn-container`, so every
 layer names the same ABI types.
@@ -15,6 +15,10 @@ layer names the same ABI types.
   elsewhere. The two MIPS pspecs (`PSPEC_MIPS32`, `PSPEC_MIPS64`, shared by the
   four MIPS presets) pin `RELP=1`, so the alternate ISA is MIPS16e and a
   microMIPS image decodes its odd-addressed functions against MIPS16e tables.
+- `ArchNames`: an arch's register and space names, default code space and
+  `ram` address width, all a render reads. `SleighArch::names()` builds it
+  once per preset per process off a Sleigh over an empty image, so this
+  crate does construct a decoder, one per preset used.
 - `CallingConvention`: a register-name description of how arguments are passed
   and results returned, with a preset per userland ABI plus four
   kernel-internal ones: `x86_linux_kernel` and the three PowerPC
