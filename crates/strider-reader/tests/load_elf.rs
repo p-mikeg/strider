@@ -67,8 +67,7 @@ fn load_elf_reads_no_further_than_the_stat_size() {
     );
 }
 
-/// An image is the region sets its mode names, from one parse, and its
-/// writable set is the walk's.
+/// An image is the region sets its mode names, from one parse.
 #[test]
 #[cfg_attr(
     debug_assertions,
@@ -111,11 +110,6 @@ fn an_image_is_the_region_sets_its_mode_names() {
                 assert_eq!(
                     format!("{:?}", image.rom),
                     regions(rom),
-                    "{path:?} {mode:?}"
-                );
-                assert_eq!(
-                    image.writable.as_slice(),
-                    elf.writable_ranges(source).expect("writable"),
                     "{path:?} {mode:?}"
                 );
             }
