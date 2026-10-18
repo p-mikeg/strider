@@ -577,6 +577,11 @@ macro_rules! value_op_factories {
         float_unary_factory!($bound, Round, float_round,
             concat!($verb, " a float round to nearest, ties away from zero."));
 
+        #[doc = concat!($verb, " a variant-agnostic float unary op `float_unary(op, x)`.")]
+        pub fn float_unary<I: $bound>(op: FloatUnaryOp, inner: I) -> FloatUnaryFixed<I> {
+            FloatUnaryFixed { op, inner }
+        }
+
         binary_factory!($bound, FloatCmpFixed, FloatCmpOp, Equal, float_eq,
             concat!($verb, " a float equality `lhs == rhs`. Commutative."));
         binary_factory!($bound, FloatCmpFixed, FloatCmpOp, Less, float_lt,
