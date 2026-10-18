@@ -250,6 +250,10 @@
   a rebase (ET_CORE, an unknown `e_type`), a read-only section that shares
   its address with an earlier writable-and-executable one answers ROM reads
   past that one's end, where fetch keeps only the earlier section.
+- `.ordered()` on `int_ne`, `int_le`, `int_sle` and `float_ne` pins the
+  comparison holding the pair written, not the `Xor` the lowering adds over
+  it, under every wrapper; on `float_le` and `float_is_nan` it is a no-op (it
+  pinned their `Or` / `Xor`). Python's `.ordered()` already did this.
 
 ### Fixed
 
@@ -368,6 +372,10 @@
   region sets and the writable `AddressSet` a `RelocationMode` picks, from one
   parse. `RelocationMode::Applied { got_is_rom }` also builds a relocated
   `ElfFileMemReader`.
+- `MatchPat::compile_ordered`, the lowering `.ordered()` uses: the root
+  pinned, unless a shape names another node. `typed::value_ops::Negated`, the
+  return type of `int_ne`, `int_le`, `int_sle` and `float_ne` on both sides,
+  is one that does.
 
 ## 0.2.0
 
