@@ -45,7 +45,7 @@ def test_custom_cc_rejects_unknown_register_name():
     mem, _ = _mem_with_func_bytes()
     arch = strider.sleigh.SleighArch.x86_64()
     sleigh = strider.sleigh.Sleigh(arch, mem)
-    with pytest.raises(strider.StriderError, match=r"(?i)unknown register"):
+    with pytest.raises(strider.StriderError, match=r"unknown sleigh register name"):
         strider.sleigh.CallingConvention.custom(
             sleigh=sleigh,
             arg_passing_regs=["DEFINITELY_NOT_A_REG"],
@@ -127,3 +127,34 @@ def test_custom_cc_rejects_stack_arch_with_zero_ret_stack_pop():
         build(0)
     # The ABI-correct x86 value is accepted.
     assert build(4).name() == "custom"
+
+
+@pytest.mark.parametrize(
+    ("stack_pointer", "stack_arg_base", "stack_arg_increment", "match"),
+    [
+        ("ESP", None, 8, "stack pointer"),
+        ("RSP", 8, 4, "stack-arg increment"),
+    ],
+    ids=["narrow_sp", "narrow_slot"],
+)
+def test_custom_cc_rejects_geometry_of_another_width_at_construction(
+    stack_pointer, stack_arg_base, stack_arg_increment, match
+):
+    """x86-64 addresses are 8 bytes, so a 4-byte `ESP`, or 4-byte stack-arg
+    slots, describe another arch: raised here rather than at `analyze`."""
+    mem, _ = _mem_with_func_bytes()
+    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86_64(), mem)
+    with pytest.raises(strider.StriderError, match=match):
+        strider.sleigh.CallingConvention.custom(
+            sleigh=sleigh,
+            arg_passing_regs=[],
+            callee_saved_regs=[],
+            ret_val_regs=[],
+            ret_val_regs_float=[],
+            stack_pointer=stack_pointer,
+            stack_arg_base=stack_arg_base,
+            stack_arg_increment=stack_arg_increment,
+            ret_stack_pop=8,
+            link_register=None,
+            preserves_memory=False,
+        )

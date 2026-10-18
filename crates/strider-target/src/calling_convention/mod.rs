@@ -2,20 +2,29 @@ use anyhow::anyhow;
 
 use crate::Result;
 
-pub(crate) fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh::Vn> {
+/// The register `name` names in `sleigh_regs`.
+///
+/// # Errors
+///
+/// `name` is not a register of this table.
+pub fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsleigh::Vn> {
     sleigh_regs
         .name_to_vn(name)
         .ok_or_else(|| anyhow!("unknown sleigh register name {name:?}"))
 }
 
 /// Order-preserving; short-circuits on the first unknown name.
-pub(crate) fn regs_to_vns(
+///
+/// # Errors
+///
+/// A name is not a register of this table.
+pub fn regs_to_vns(
     sleigh_regs: &rsleigh::SleighRegs,
-    reg_names: &[&str],
+    reg_names: impl IntoIterator<Item: AsRef<str>>,
 ) -> Result<Vec<rsleigh::Vn>> {
     reg_names
-        .iter()
-        .map(|&name| vn_for_name(sleigh_regs, name))
+        .into_iter()
+        .map(|name| vn_for_name(sleigh_regs, name.as_ref()))
         .collect()
 }
 
@@ -395,8 +404,8 @@ impl BuiltCallingConvention {
             if let Some(vn) = first_overlapping(list, std::slice::from_ref(&self.stack_vn)) {
                 return Err(anyhow::anyhow!(
                     "BuiltCallingConvention: varnode {vn:?} in {list_name} shares \
-                     bytes with stack_vn {:?} (the SP is implicit and must not be \
-                     in any reg list)",
+                     bytes with the stack pointer {:?} (the SP is implicit and must \
+                     not be in any reg list)",
                     self.stack_vn,
                 ));
             }
@@ -457,8 +466,8 @@ impl BuiltCallingConvention {
         let sp = self.stack_vn.size;
         if sp != addr_size {
             return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: stack_vn {:?} is {sp} bytes, and this arch's \
-                 addresses are {addr_size}: the convention describes another arch",
+                "BuiltCallingConvention: stack pointer {:?} is {sp} bytes, and this \
+                 arch's addresses are {addr_size}: the convention describes another arch",
                 self.stack_vn,
             ));
         }
