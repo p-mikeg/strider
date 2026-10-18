@@ -140,7 +140,9 @@
   only an `object::File` or a byte slice builds one with `OwnedElf::parse`.
 - `elf::without_ranges` takes an `&elf::AddressSet` instead of a range slice.
 - `OwnedElf::writable_ranges` is gone: `OwnedElf::image(..).writable` is the
-  same set, merged, from the parse that builds the regions.
+  same set as an `elf::AddressSet` (`as_slice` for the ranges), from the parse
+  that builds the regions. `image(.., RelocationMode::Applied { .. })`
+  relocates too, so it can fail where `writable_ranges` did not.
 
 ### Changed, Python
 
@@ -171,10 +173,16 @@
   (`i64`), not `Typed(I64)`.
 - `Cfg.region_at` answers the region with the greatest start where regions
   overlap, the rule the CFG builds by; it answered the lowest index.
-- `load_elf` and `ElfLifter.add_elf` parse and walk an image once per view
-  instead of three times; with `apply_relocations=False` they no longer read
-  the writable mappings they do not load, and the `relocated_got_is_rom`
-  refusal comes before any walk.
+- `load_elf` and `ElfLifter.add_elf` build an image from one parse and one
+  walk per view, where they parsed and walked it three times. With
+  `apply_relocations=False` they no longer read the writable mappings they do
+  not load, so an image whose dropped writable mapping cannot be read loads
+  instead of raising; the `relocated_got_is_rom` refusal comes before any walk.
+- `load_elf` and `add_elf` see the region and relocation changes under
+  Changed, Rust: a crafted image's read-only pieces left at one start collapse
+  to the later, and with `apply_relocations=True` no image fails with "patch
+  budget", a GOT-base or TOC-pointer word no longer needs its symbol, and an
+  image-relative word whose addend does not fit it is a hole or wrapped.
 
 ### Added, Python
 
@@ -205,24 +213,28 @@
   arch and sla disagree on the ISA mode: a mode var the sla does not flow, or
   (not `DecodeEngine::new`) an unpaired `ISAModeSwitch`. Before, only a debug
   build asserted it.
-- `OwnedElf::regions` keeps one region per start: the pieces a writable
-  mapping cuts out of two overlapping read-only ones collapse to the later,
-  as `MemRegionsLookupTable` collapses them, so a crafted image can return
-  fewer regions.
+- `OwnedElf::regions` keeps one region per start: where a writable mapping
+  cuts two overlapping read-only ones, the pieces left over that share a
+  start collapse to the later, as `MemRegionsLookupTable` collapses them, so
+  a crafted image can return fewer regions.
 - A relocated image no longer fails to load with "patch budget": every
   region shares one patch list, so a site any number of overlapping
-  mappings cover is patched in all of them at no extra cost. Python
-  `load_elf` / `add_elf` stop raising on such an image too.
-- A GOT-base- or TOC-relative relocation (`R_*_GOTPC*`, `R_PPC64_TOC`),
-  whose value does not read the symbol, no longer needs the symbol to
-  resolve.
-- A MIPS64 RELA `R_MIPS_REL32` against STN_UNDEF with no `R_MIPS_64`
-  composed is a hole when its addend fits neither 32-bit signedness, rather
-  than truncated.
-- `ElfFileMemReader` holds the file's mapping: a file truncated under a live
-  reader is a SIGBUS, as under any `OwnedElf`; `STRIDER_NO_MMAP=1` reads the
-  file instead. A load no longer fails with "distinct file bytes": nothing is
-  copied.
+  mappings cover is patched in all of them at no extra cost.
+- A GOT-base or TOC-pointer relocation (`R_386_GOTPC`, `R_X86_64_GOTPC32` /
+  `GOTPC64`, `R_ARM_GOTPC`, `R_PPC64_TOC`), whose value does not read the
+  symbol, no longer needs the symbol to resolve.
+- An image-relative word whose RELA addend its field cannot hold under the
+  image's address width is no longer truncated or written whole. A MIPS64
+  `R_MIPS_REL32` against STN_UNDEF with no `R_MIPS_64` composed whose addend
+  fits neither 32-bit signedness is a hole, and so is such an `R_*_RELATIVE`
+  / `IRELATIVE` in a crafted ELF64 `EM_386` / `EM_ARM` / `EM_PPC` image; a
+  crafted ELF32 `EM_PPC64` `SHT_CREL` `R_PPC64_RELATIVE` is wrapped to 32
+  bits.
+- `ElfFileMemReader` holds the file's mapping: a read past the end of a file
+  truncated under a live reader, or a paging error on a network or 9p mount,
+  is a SIGBUS, as through any mapped `OwnedElf` (an `OwnedElf::parse` one owns
+  its bytes); `STRIDER_NO_MMAP=1` reads the file instead. A load no longer
+  fails with "distinct file bytes": nothing is copied.
 - `ElfFileMemReader`'s `ReadOnlyMemory` view is the image's immutable
   mappings, built once, rather than the fetch image minus its writable ranges
   at every read; a read of a writable address errors as unmapped ("not
@@ -232,8 +244,8 @@
   pieces at one start, the ROM view serves the later piece's bytes, as
   `OwnedElf::regions` does; and on an image the section walk serves without
   a rebase (ET_CORE, an unknown `e_type`), a read-only section that shares
-  its address with an earlier writable one answers ROM reads past that one's
-  end, where fetch keeps only the earlier section.
+  its address with an earlier writable-and-executable one answers ROM reads
+  past that one's end, where fetch keeps only the earlier section.
 
 ### Fixed
 
@@ -272,12 +284,12 @@
 - The lifter's p-code constant folder treats an arithmetic result written to
   a temporary of 11, 13 or 15 bytes, or past 16 bytes, as unknown; it used to
   wrap it at 128 bits or with a mask no value type has.
-- A mips64el `SHT_REL` relocation is applied by its real type. Its
-  `R_MIPS_NONE` / `R_MIPS_JALR` markers were holes, so the null
-  `R_MIPS_NONE` BFD puts at `r_offset` 0 of every PIE and `.so` hid the
-  image's first four bytes, and `R_MIPS_26` / `HI16` / `LO16` / `HIGHER` /
-  `HIGHEST` / `PC16` were never applied. An entry whose `r_sym` is 0 has no
-  symbol. A mips64el `SHT_CREL` entry, which was read as a transposed
+- A mips64el `SHT_REL` relocation is dispatched by its real type; a lone
+  `R_MIPS_16` / `32` / `64` is still a hole. Its `R_MIPS_NONE` /
+  `R_MIPS_JALR` markers were holes, so the null `R_MIPS_NONE` BFD puts at
+  `r_offset` 0 of every PIE and `.so` hid the image's first four bytes, and
+  `R_MIPS_26` / `HI16` / `LO16` / `HIGHER` / `HIGHEST` / `PC16` were never
+  applied. A mips64el `SHT_CREL` entry, which was read as a transposed
   `SHT_REL` one, is applied as written; in an image that also holds an
   `SHT_CREL` table a mips64el `SHT_REL` entry is read as written too.
 - A relocation whose value reads the symbol is a hole against STN_UNDEF
@@ -342,10 +354,12 @@
   `DomIntervals::{span, preorder}`: the dominator tree's one numbering, and its
   preorder with siblings ascending by vertex.
 - `FunctionBuilder::record_register_arg_carriers` outside `test-util`.
-- `ElfFileMemReader::new(&OwnedElf, elf::RelocationMode)` and
+- `elf::RelocationMode` (`Unapplied`, `Applied { got_is_rom }`),
+  `ElfFileMemReader::new(&OwnedElf, elf::RelocationMode)` and
   `ElfFileMemReader::check_unchanged`.
-- `elf::AddressSet`, the merged range set `AddressSet::merged` builds;
-  `AddressSet::covers` answers whether it holds a whole range in O(log n).
+- `elf::AddressSet`, the merged range set `AddressSet::merged` builds, read
+  through `AddressSet::as_slice`; `AddressSet::covers` answers whether it
+  holds a whole range in O(log n).
 - `OwnedElf::image(source, mode)` returns an `elf::ElfImage`: the fetch and ROM
   region sets and the writable `AddressSet` a `RelocationMode` picks, from one
   parse. `RelocationMode::Applied { got_is_rom }` also builds a relocated
