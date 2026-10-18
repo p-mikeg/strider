@@ -212,6 +212,11 @@
   a `read()` callback or another thread, raise `StriderError` ("already in
   use"), where all but `analyze`, `build_cfg` and `optimize` raised PyO3's
   `RuntimeError`. Such an `add_elf` merges nothing.
+- `AssumptionOptions(...)` takes its defaults from Rust: a field passed
+  `None` takes its default (it raised `TypeError`), `noalias_allocators`
+  reads back sorted and deduplicated, `repr` included (it kept the order and
+  duplicates given), and the constructor's signature shows `None` for every
+  default.
 
 ### Added, Python
 
