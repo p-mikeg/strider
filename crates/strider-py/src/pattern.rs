@@ -2404,8 +2404,8 @@ pub(crate) fn checked_signed_i64(value: i128) -> PyResult<i64> {
 
 value_ops!(PyPat, "Pattern", " Commutative.");
 
-// The lowered comparisons with no build form: their lowerings fan one operand
-// into two slots, which a template cannot express.
+// The lowered comparisons with no template factory: a RHS spells their shape
+// from the primitive ops.
 value_op!(
     PyPat, "Pattern", "", unary_bare float_is_nan, FloatIsNan,
     "`x` is NaN, the IEEE 754 self-inequality `x != x`."
