@@ -183,6 +183,10 @@
   to the later, and with `apply_relocations=True` no image fails with "patch
   budget", a GOT-base or TOC-pointer word no longer needs its symbol, and an
   image-relative word whose addend does not fit it is a hole or wrapped.
+- A match-only `Pat` refused as a rewrite RHS, at the top or nested in a
+  `Template`, is named by its constructor: `cannot use anything() as a
+  rewrite RHS` (was `any`), `one_of()`, `float_le()`, `.when()`, the
+  spellings `.ordered()`'s refusal uses.
 
 ### Added, Python
 

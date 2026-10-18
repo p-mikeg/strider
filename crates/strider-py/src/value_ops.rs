@@ -1,7 +1,7 @@
 //! The value-op constructor vocabulary, stated once and emitted twice: over
 //! `PyPat` for `strider.pattern` (matching) and over `PyTemplate` for
 //! `strider.template` (building). Both modules expose the same 53 names with
-//! the same arities and the same `PatRepr` variants.
+//! the same arities and the same `TmplRepr` variants.
 
 /// One `#[pyfunction]` per row. `$ty` is the module's wrapper, `$verb` the
 /// doc prefix, `$comm` the note a `binary_comm` row appends (empty where
@@ -11,49 +11,49 @@ macro_rules! value_op {
         #[doc = concat!($verb, ": ", $doc)]
         #[pyfunction]
         pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> $ty {
-            <$ty>::from_repr(PatRepr::$repr($op, l, r))
+            <$ty>::from_tmpl(TmplRepr::$repr($op, l, r))
         }
     };
     ($ty:ident, $verb:literal, $comm:literal, binary_comm $name:ident, $repr:ident, $op:expr, $doc:literal) => {
         #[doc = concat!($verb, ": ", $doc, $comm)]
         #[pyfunction]
         pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> $ty {
-            <$ty>::from_repr(PatRepr::$repr($op, l, r))
+            <$ty>::from_tmpl(TmplRepr::$repr($op, l, r))
         }
     };
     ($ty:ident, $verb:literal, $comm:literal, unary $name:ident, $repr:ident, $op:expr, $doc:literal) => {
         #[doc = concat!($verb, ": ", $doc)]
         #[pyfunction]
         pub fn $name(operand: Py<PyAny>) -> $ty {
-            <$ty>::from_repr(PatRepr::$repr($op, operand))
+            <$ty>::from_tmpl(TmplRepr::$repr($op, operand))
         }
     };
     ($ty:ident, $verb:literal, $comm:literal, binary_bare $name:ident, $repr:ident, $doc:literal) => {
         #[doc = concat!($verb, ": ", $doc)]
         #[pyfunction]
         pub fn $name(l: Py<PyAny>, r: Py<PyAny>) -> $ty {
-            <$ty>::from_repr(PatRepr::$repr(l, r))
+            <$ty>::from_tmpl(TmplRepr::$repr(l, r))
         }
     };
     ($ty:ident, $verb:literal, $comm:literal, unary_bare $name:ident, $repr:ident, $doc:literal) => {
         #[doc = concat!($verb, ": ", $doc)]
         #[pyfunction]
         pub fn $name(operand: Py<PyAny>) -> $ty {
-            <$ty>::from_repr(PatRepr::$repr(operand))
+            <$ty>::from_tmpl(TmplRepr::$repr(operand))
         }
     };
     ($ty:ident, $verb:literal, $comm:literal, binary_named $name:ident, $repr:ident, $parse:path, $doc:literal) => {
         #[doc = concat!($verb, ": ", $doc)]
         #[pyfunction]
         pub fn $name(op: &str, l: Py<PyAny>, r: Py<PyAny>) -> PyResult<$ty> {
-            Ok(<$ty>::from_repr(PatRepr::$repr($parse(op)?, l, r)))
+            Ok(<$ty>::from_tmpl(TmplRepr::$repr($parse(op)?, l, r)))
         }
     };
     ($ty:ident, $verb:literal, $comm:literal, unary_named $name:ident, $repr:ident, $parse:path, $doc:literal) => {
         #[doc = concat!($verb, ": ", $doc)]
         #[pyfunction]
         pub fn $name(op: &str, operand: Py<PyAny>) -> PyResult<$ty> {
-            Ok(<$ty>::from_repr(PatRepr::$repr($parse(op)?, operand)))
+            Ok(<$ty>::from_tmpl(TmplRepr::$repr($parse(op)?, operand)))
         }
     };
 }
@@ -72,7 +72,7 @@ macro_rules! emit_value_ops {
     };
 }
 
-/// The vocabulary. A row is `[shape name, PatRepr variant, op, doc]`; the
+/// The vocabulary. A row is `[shape name, TmplRepr variant, op, doc]`; the
 /// Python name is the Rust name.
 macro_rules! value_ops {
     ($ty:ident, $verb:literal, $comm:literal) => {

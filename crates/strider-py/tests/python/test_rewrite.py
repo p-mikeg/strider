@@ -1,3 +1,5 @@
+import re
+
 import pytest
 
 import strider
@@ -179,3 +181,41 @@ def test_capture_over_another_var_rhs_is_the_captured_value():
     plain, x = _x_times_4()
     assert plain.rewrite(find=int_mul(var(x), int_const(4)), replace=var(x)) == 3
     assert g.to_text() == plain.to_text()
+
+
+@pytest.mark.parametrize(
+    ("replace", "name"),
+    [
+        (lambda: anything(), "anything()"),
+        (lambda: strider.pattern.one_of([int_const(0), int_const(1)]), "one_of()"),
+        (lambda: strider.pattern.float_le(var(Capture()), var(Capture())), "float_le()"),
+        (lambda: var(Capture()).when(lambda m: True), ".when()"),
+        (lambda: tpl.int_add(anything(), 1), "anything()"),
+    ],
+    ids=["anything", "one_of", "float_le", "when", "nested"],
+)
+def test_a_match_only_rhs_is_refused_by_its_constructor(replace, name):
+    """A match-only `Pat` as a RHS, at the top or nested in a `Template`, is
+    refused naming the constructor that built it."""
+    g = _build_graph()
+    x = Capture()
+    with pytest.raises(
+        strider.StriderError, match=re.escape(f"cannot use {name} as a rewrite RHS")
+    ):
+        g.rewrite(find=int_add(var(x), int_const(0)), replace=replace())
+
+
+def test_a_pat_rhs_builds_what_its_template_twin_builds():
+    """A build-valid `Pat` RHS and the `Template` spelling it builds one
+    graph."""
+    x = Capture()
+    via_pat, via_template = _build_graph(), _build_graph()
+    fired_pat = via_pat.rewrite(
+        find=int_mul(var(x), int_const(4)), replace=int_shl(var(x), int_const(2))
+    )
+    fired_template = via_template.rewrite(
+        find=int_mul(var(x), int_const(4)),
+        replace=tpl.int_shl(tpl.var(x), tpl.int_const(2)),
+    )
+    assert fired_pat == fired_template == 3
+    assert via_pat.to_text() == via_template.to_text()
