@@ -102,8 +102,10 @@ Strider:
 - `strider-ir`: the sea-of-nodes IR. `strider_ir::eval` is the one integer
   evaluator, `ExpectedValueKind::admits` the one slot-kind check and
   `NodeKind::operand_width` the one operand-width rule.
-- `strider-target`: pure target descriptions (`SleighArch`,
-  `CallingConvention` / `BuiltCallingConvention`, the `CallOther` ABI table).
+- `strider-target`: target descriptions (`SleighArch`,
+  `CallingConvention` / `BuiltCallingConvention`, the `CallOther` ABI table)
+  and `ArchNames`, each preset's register and space names, read off a Sleigh
+  it builds once per preset per process (`SleighArch::names`).
 - `strider-reader`: ELF loader and `ReadOnlyMemory` backend.
 - `strider-cfg`: bytes -> `Cfg` of basic-block regions via Sleigh.
   `DecodeEngine<R>` owns the `Sleigh<R>` and the decode context it carries
