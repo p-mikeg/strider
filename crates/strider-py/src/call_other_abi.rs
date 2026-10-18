@@ -102,7 +102,8 @@ impl PyCallOtherAbi {
     /// first use.
     ///
     /// Args:
-    ///     sleigh: The `Sleigh` instance to resolve register names against.
+    ///     sleigh: The `SleighArch` to resolve register names against, or a
+    ///         `Sleigh` built for one.
     ///     implicit_reads: Registers read beyond the pcode-explicit operands.
     ///         They lead the lifted call's argument list.
     ///     implicit_writes: Registers written or clobbered beyond the
@@ -125,18 +126,16 @@ impl PyCallOtherAbi {
     fn custom(
         _cls: &Bound<'_, PyType>,
         py: Python<'_>,
-        sleigh: Py<crate::sleigh::PySleigh>,
+        sleigh: crate::arch::ArchArg,
         implicit_reads: Vec<String>,
         implicit_writes: Vec<String>,
         clobbers_memory: bool,
         no_return: bool,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        let source_arch = sleigh_borrow.arch;
-        drop(sleigh_borrow);
+        let source_arch = sleigh.arch(py);
+        let regs = source_arch.names().regs();
         let resolve = |field: &str, names: &[String]| {
-            strider_target::calling_convention::regs_to_vns(&regs, names).map_err(|e| {
+            strider_target::calling_convention::regs_to_vns(regs, names).map_err(|e| {
                 crate::errors::into_strider_err(e.context(format!("CallOtherAbi.custom: {field}")))
             })
         };

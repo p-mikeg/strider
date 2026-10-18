@@ -27,8 +27,8 @@ IMAGE = SYSCALL_STUB.ljust(ADD_ENTRY - BASE, b"\x00") + REG_ABI_ADD + bytes(16)
 
 mem = reader.BufferReader(BASE, IMAGE)
 lft = strider.lift.lifter(sleigh.SleighArch.x86(), mem)
-# Register names resolve against a Sleigh, so both `custom` constructors need one.
-sl = sleigh.Sleigh(sleigh.SleighArch.x86(), mem)
+# Register names resolve against the arch, which both `custom` constructors take.
+sl = sleigh.SleighArch.x86()
 cdecl = sleigh.CallingConvention.x86_cdecl()
 
 
