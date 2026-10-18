@@ -126,14 +126,15 @@ A plain `Lifter` needs an address and a calling convention:
 _cfg, fn, _u = lft.analyze(0x1000, sleigh.CallingConvention.x86_64_systemv())
 ```
 
-A handle decodes only on the thread that built it. `analyze`, `build_cfg`,
-`optimize`, `pcode_at`, `reg`, `reg_name`, `call_other_abi`, `user_op_names`
-and any renderer given `lifter=` raise
-`StriderError: this Lifter was built on another thread` anywhere else; the
-handle itself still moves and drops freely. A worker thread builds its own over
-the same `prog.arch`, `prog.reader()` and `prog.rom()`, and since `analyze`
-drops the GIL the two run in parallel. `optimize` holds the GIL for its whole
-run.
+A handle works on any thread, one call at a time. `analyze`, `build_cfg`,
+`optimize`, `pcode_at`, `reg`, `reg_name`, `call_other_abi`, `user_op_names`,
+`add_elf`, and a plain `Lifter`'s `arch`, `reader()` and `rom()`, called while
+another call is in flight on the same handle, from a `read()` callback or
+another thread, raise `StriderError: this Lifter is already in use`; such an
+`add_elf` merges nothing. To analyse in parallel, a worker thread builds its
+own over the same `prog.arch`, `prog.reader()` and `prog.rom()`; since
+`analyze` drops the GIL the two run in parallel. `optimize` holds the GIL for
+its whole run.
 
 ### `lift.LifterOptions`, per-call tuning
 

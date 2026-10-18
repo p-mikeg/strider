@@ -86,10 +86,11 @@ and is the quickest way to see the shape a pattern has to match;
 [python-api.md](python-api.md#10-visualizing) has the view it opens on, the
 keys and the toolbar.
 
-A lift handle decodes only on the thread that built it; a worker thread builds
-its own over the same `arch` / `reader()` / `rom()` and calls
-`analyze(addr, cc)`, since a plain handle stores no default convention and
-carries no symbols. `analyze` releases the GIL, so the two run in parallel.
+A lift handle serves one call at a time, from any thread; to analyse in
+parallel, a worker builds its own over the same `arch` / `reader()` / `rom()`
+and calls `analyze(addr, cc)`, since a plain handle stores no default
+convention and carries no symbols. `analyze` releases the GIL, so the two run
+in parallel.
 
 An analysis failure is a `strider.StriderError`, and its `.backtrace` carries
 the message followed by the Rust backtrace; `STRIDER_BACKTRACE=1` folds that

@@ -93,12 +93,11 @@ for sym in prog.functions():
     ...
 ```
 
-**One handle per thread** if you want them in parallel. A handle decodes only
-on the thread that built it and raises `StriderError` elsewhere, but `analyze`
-drops the GIL, so a worker that builds its own handle over the same
-`prog.arch`, `prog.reader()` and `prog.rom()` runs alongside this one. A plain
-handle has no symbols and no default convention, so call
-`analyze(addr, prog.cc)` on it.
+**One handle per thread** if you want them in parallel. A handle serves one
+call at a time from any thread, and `analyze` drops the GIL, so a worker that
+builds its own handle over the same `prog.arch`, `prog.reader()` and
+`prog.rom()` runs alongside this one. A plain handle has no symbols and no
+default convention, so call `analyze(addr, prog.cc)` on it.
 
 ## Writing a query
 

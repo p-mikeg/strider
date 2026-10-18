@@ -279,9 +279,10 @@ when both IR slots hold the same value.
     shared rather than duplicated.
   - `strider-py`: no `#[pyclass(unsendable)]` remains. `OptimizerPipeline`
     was the last, and holds a `Mutex<OptimizerPipeline>` instead.
-    `Lifter` moves and drops anywhere but decodes only on its creating thread,
-    which `ThreadPinned` enforces with a catchable `StriderError`, because
-    `Sleigh` is thread-affine (see below). `BufferReader` is an
+    `Lifter` moves, drops and runs anywhere, one call at a time: the `PyCell`
+    borrow flag `analyze` / `build_cfg` hold across the GIL release and across
+    a `read()` callback makes a second call, on any thread, raise the
+    re-entrant `StriderError`. `BufferReader` is an
     `Arc<Mutex<_>>`, so a clone shares the region memo and the wrapper is
     still `Send`; `_LoadedElf` holds two of those and a `Mutex` symbol table.
     Everything else moves, so a REPL or notebook that introspects off-thread

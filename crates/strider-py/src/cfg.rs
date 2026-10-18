@@ -119,10 +119,6 @@ impl PyCfg {
 #[pymethods]
 impl PyCfg {
     /// The `Lifter` that built this CFG.
-    ///
-    /// Its `arch` / `reader()` / `rom()` are what a second handle over the same
-    /// memory is built from, which is how a renderer on another thread gets a
-    /// decoder of its own without disturbing this one.
     #[getter]
     fn lifter(&self, py: Python<'_>) -> Py<PyLifter> {
         self.lifter.clone_ref(py)
