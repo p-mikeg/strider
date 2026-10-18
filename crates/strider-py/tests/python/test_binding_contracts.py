@@ -2,8 +2,8 @@
 
 The options views hand out immutable values, `build_cfg` reports only the seeds
 it seated, `pcode_at` answers the same whatever order the calls came in,
-merging an image does nothing when it is already loaded and nothing when the
-handle cannot rebuild, `build_cfg` and `analyze` answer the same for a bad
+merging an image does nothing when it is already loaded and reaches every view
+from any thread, `build_cfg` and `analyze` answer the same for a bad
 `entry`, a rewrite does not burn a one-shot pattern on a bad replacement,
 importing strider exports nothing to a child process, a custom convention is
 checked against the register table rather than the preset name, and a pattern
@@ -151,30 +151,34 @@ def test_walking_a_stream_decodes_it_once():
 # --- add_elf ----------------------------------------------------------------
 
 
-def test_an_add_elf_that_cannot_rebuild_merges_nothing():
-    """A `_rebuild` that raises leaves the handle whole: `symbol`, `read` and
-    the decoder all see the pre-merge ELF."""
+def test_an_add_elf_off_thread_merges_into_every_view():
+    """`add_elf` from a thread that did not build the handle merges, and
+    `symbol`, `read` and the decoder all see the new ELF, as an on-thread
+    merge does."""
     import threading
 
-    prog = strider.lift.load_elf(str(fixture_path("x86", "memory")))
-    other = str(fixture_path("x86", "elf_relocs"))
-    before = _image_state(prog)
+    path, other = str(fixture_path("x86", "memory")), str(fixture_path("x86", "elf_relocs"))
+    prog, expected = strider.lift.load_elf(path), strider.lift.load_elf(path)
+    expected.add_elf(other)
     failure: list[str] = []
 
     def off_thread():
         try:
             prog.add_elf(other)
-        except strider.StriderError:
-            failure.append("raised")
+        except strider.StriderError as e:
+            failure.append(str(e))
 
-    t = threading.Thread(target=off_thread)
+    t = threading.Thread(target=off_thread, daemon=True)
     t.start()
-    t.join()
-    assert failure == ["raised"]
-    assert _image_state(prog) == before
-    # Still mergeable on the owning thread.
-    prog.add_elf(other)
-    assert "helper_a" in prog.symbols()
+    t.join(60)
+    assert not t.is_alive(), "add_elf hung"
+    assert failure == []
+    assert _image_state(prog) == _image_state(expected)
+    ignore = strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE)
+    assert (
+        prog.analyze("helper_a", opts=ignore).function.to_text()
+        == expected.analyze("helper_a", opts=ignore).function.to_text()
+    )
 
 
 def test_re_merging_a_loaded_image_does_nothing():
