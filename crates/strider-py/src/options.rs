@@ -578,7 +578,7 @@ impl PerAddressCcs {
 
 /// A resolved `per_address_ccs` table and the arch it was resolved against.
 type BuiltPerAddressCcs = (
-    crate::strider_cls::SourceArch,
+    strider_target::SleighArch,
     std::sync::Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
 );
 
@@ -680,7 +680,7 @@ impl PyLifterOptions {
     pub(crate) fn built_per_address_ccs(
         &self,
         regs: &rsleigh::SleighRegs,
-        target: crate::strider_cls::SourceArch,
+        target: strider_target::SleighArch,
     ) -> PyResult<std::sync::Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>>
     {
         let Some(table) = &self.per_address_ccs else {

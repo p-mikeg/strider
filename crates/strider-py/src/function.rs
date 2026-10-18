@@ -28,7 +28,7 @@ fn resolve_lifter<'py>(
             let l = l
                 .try_borrow()
                 .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-            l.check_arch_is(cfg.arch_name)?;
+            l.check_arch_is(cfg.arch)?;
             Ok(l)
         }
         None => Ok(cfg.lifter.bind(py).try_borrow()?),
@@ -262,7 +262,7 @@ impl PyFunction {
         // raises on a mismatched arch, a re-entrant handle or a foreign thread,
         // and returning a graph here would report none of the three.
         if let Some(l) = lifter {
-            let arch = self.cfg.bind(py).try_borrow()?.arch_name;
+            let arch = self.cfg.bind(py).try_borrow()?.arch;
             let l = l
                 .try_borrow()
                 .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;

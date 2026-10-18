@@ -64,58 +64,19 @@ impl ThreadPinned {
     }
 }
 
-/// The arch a `custom(...)` convention or user-op ABI froze its register
-/// varnodes against.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct SourceArch {
-    /// The preset name, for messages.
-    pub(crate) name: &'static str,
-    /// The register table's identity: the sla carries it, so two presets over
-    /// one sla (`arm` / `arm_thumb` / `arm_be_kernel`) resolve a register name
-    /// to the same varnode.
-    pub(crate) sla: rsleigh::sla_spec::SlaSpec,
-}
-
-impl SourceArch {
-    pub(crate) fn new(arch: strider_target::SleighArch, name: &'static str) -> Self {
-        Self {
-            name,
-            sla: arch.sla_spec(),
-        }
-    }
-
-    fn resolves_like(self, other: Self) -> bool {
-        self.name == other.name || self.sla == other.sla
-    }
-}
-
-/// By name, which fixes the sla.
-impl PartialEq for SourceArch {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name
-    }
-}
-
-impl Eq for SourceArch {}
-
-impl std::hash::Hash for SourceArch {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.name.hash(state);
-    }
-}
-
 /// A `custom(...)` convention or user-op ABI froze varnodes resolved against
 /// one arch's register table; the same name denotes a different varnode under
 /// another sla (x86-64 `EDI` is `%[0x38]:4`, x86 `EDI` is `%[0x1c]:4`), so
-/// consuming it there silently mismatches every register.
+/// consuming it there silently mismatches every register. Two presets over
+/// one sla (`arm` / `arm_thumb` / `arm_be_kernel`) resolve alike.
 fn check_source_arch(
-    source_arch: Option<SourceArch>,
-    target: SourceArch,
+    source_arch: Option<strider_target::SleighArch>,
+    target: strider_target::SleighArch,
     what: std::fmt::Arguments<'_>,
 ) -> PyResult<()> {
     match source_arch {
-        Some(source) if !source.resolves_like(target) => {
-            let (source, target) = (source.name, target.name);
+        Some(source) if source.sla_spec() != target.sla_spec() => {
+            let (source, target) = (source.preset().name(), target.preset().name());
             Err(into_strider_err(anyhow::anyhow!(
                 "{what} was built against a {source:?} Sleigh but is being used \
                  with a {target:?} Lifter, whose register table is a different \
@@ -130,7 +91,7 @@ fn check_source_arch(
 pub(crate) fn build_cc(
     cc: &PyCallingConvention,
     regs: &rsleigh::SleighRegs,
-    target: SourceArch,
+    target: strider_target::SleighArch,
 ) -> PyResult<strider_target::BuiltCallingConvention> {
     check_source_arch(
         cc.source_arch,
@@ -148,7 +109,7 @@ pub(crate) fn build_cc(
 pub(crate) fn build_per_address_ccs(
     per_address_ccs_py: &std::collections::HashMap<u64, PyCallingConvention>,
     regs: &rsleigh::SleighRegs,
-    target: SourceArch,
+    target: strider_target::SleighArch,
 ) -> PyResult<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>> {
     per_address_ccs_py
         .iter()
@@ -282,7 +243,7 @@ pub(crate) fn build_strider(
 /// that is not a dict gets the message instead of a panic.
 fn overrides_from(
     call_other_abis: &std::collections::HashMap<String, crate::call_other_abi::PyCallOtherAbi>,
-    target: SourceArch,
+    target: strider_target::SleighArch,
 ) -> PyResult<strider_target::call_other_abi::CallOtherOverrides> {
     for (name, abi) in call_other_abis {
         check_source_arch(
@@ -328,7 +289,7 @@ pub(crate) fn seat_known_targets(
 /// `build_cfg` came to ignore `known_targets` entirely.
 pub(crate) fn cfg_options_from(
     opts: &PyCfgOptions,
-    target: SourceArch,
+    target: strider_target::SleighArch,
 ) -> PyResult<strider_cfg::CfgOptions<'_>> {
     Ok(strider_cfg::CfgOptions {
         bound: opts.bound,
@@ -441,13 +402,9 @@ pub struct PyLifter {
     /// Owns the Sleigh, cached register table and optional rom. Pinned to
     /// the creating thread for USE; still free to move and to be dropped.
     inner: ThreadPinned,
-    /// The `SleighArch` preset this handle was built for, compared against
-    /// the arch a `custom(...)` CC / `CallOtherAbi` froze its varnodes on.
-    pub(crate) arch_name: &'static str,
-    /// The arch itself, so `arch` can hand back a `SleighArch` and a caller can
-    /// build a second handle over the same memory. `Copy`, so keeping it costs
-    /// nothing over the name alone.
-    arch: strider_target::SleighArch,
+    /// The arch this handle was built for: what `arch` hands back, and what a
+    /// `custom(...)` CC / `CallOtherAbi` must have frozen its varnodes on.
+    pub(crate) arch: strider_target::SleighArch,
     /// The same Python reader/rom callback objects the adapters hold, so
     /// `__traverse__` can make the otherwise-buried lifter to reader edge
     /// visible to the cyclic GC.  Empty for the owned-data path.
@@ -520,28 +477,23 @@ impl PyLifter {
     /// rendering an x86-64 function through an aarch64 handle names RAX `pc`
     /// and RCX `sp`, and emits no error at all, so the check has to be here.
     ///
-    /// Takes the graph's arch NAME rather than its handle: reading it off that
+    /// Takes the graph's arch rather than its handle: reading it off that
     /// handle would borrow the one `analyze` holds mutably with the GIL
     /// released, which is the contention this whole path exists to avoid.
-    pub(crate) fn check_arch_is(&self, graph_arch: &'static str) -> PyResult<()> {
-        if self.arch_name == graph_arch {
+    pub(crate) fn check_arch_is(&self, graph_arch: strider_target::SleighArch) -> PyResult<()> {
+        if self.arch == graph_arch {
             return Ok(());
         }
         Err(into_strider_err(anyhow::anyhow!(
             "lifter is for {}, but this graph was lifted with {}; a render \
              resolves names through the arch's own tables, so the two must match",
-            self.arch_name,
-            graph_arch
+            self.arch.preset().name(),
+            graph_arch.preset().name()
         )))
     }
 
     pub(crate) fn sleigh(&self) -> PyResult<&rsleigh::Sleigh<AnyMemReader>> {
         Ok(self.inner.get()?.sleigh())
-    }
-
-    /// What a `custom(...)` convention or user-op ABI is checked against.
-    pub(crate) fn source_arch(&self) -> SourceArch {
-        SourceArch::new(self.arch, self.arch_name)
     }
 
     /// Retires any cached `pcode_at` sweep engine, for a caller about to
@@ -603,11 +555,9 @@ fn build_lifter(
     let mem_input = mem.extract::<MemInput>()?;
     let rom_input = rom.as_ref().map(|r| r.extract::<MemInput>()).transpose()?;
     let py_deps = collect_py_deps(&mem_input, rom_input.as_ref());
-    let arch_name = arch.preset_name;
     let arch_value = arch.inner;
     Ok(PyLifter {
         inner: ThreadPinned::new(build_strider(arch, mem_input, rom_input)?),
-        arch_name,
         arch: arch_value,
         py_deps,
         mem_obj: Some(mem.unbind()),
@@ -628,10 +578,7 @@ impl PyLifter {
     /// same arch.
     #[getter]
     fn arch(&self) -> crate::arch::PySleighArch {
-        crate::arch::PySleighArch {
-            inner: self.arch,
-            preset_name: self.arch_name,
-        }
+        crate::arch::PySleighArch { inner: self.arch }
     }
 
     /// Build a handle for `arch` reading code from `mem`, with `rom` as the
@@ -768,7 +715,7 @@ impl PyLifter {
             let lifter = try_borrow_lifter(&slf, py)?;
             crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
         }
-        let target = try_borrow_lifter(&slf, py)?.source_arch();
+        let target = try_borrow_lifter(&slf, py)?.arch;
         // The borrow outlives `cfg_opts`, which holds the seeded table rather
         // than a copy of it.
         let opts_ref = opts.as_ref().map(|o| o.borrow(py));
@@ -844,7 +791,7 @@ impl PyLifter {
             crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
             crate::reader::check_mem_unchanged(py, &lifter.rom_obj)?;
             let regs = lifter.inner.get()?.sleigh_regs();
-            let target = lifter.source_arch();
+            let target = lifter.arch;
             let cc_built = build_cc(&cc, regs, target)?;
             let per_address_built = opts.borrow(py).built_per_address_ccs(regs, target)?;
             (target, cc_built, per_address_built)
