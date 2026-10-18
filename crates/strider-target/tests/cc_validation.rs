@@ -32,8 +32,8 @@ fn validate_rejects_sp_in_arg_passing_regs() {
     );
     let msg = res.unwrap_err().to_string();
     assert!(
-        msg.contains("stack_vn") && msg.contains("arg_passing_regs"),
-        "error must name both stack_vn and the offending list, got: {msg}",
+        msg.contains("stack pointer") && msg.contains("arg_passing_regs"),
+        "error must name both the stack pointer and the offending list, got: {msg}",
     );
 }
 
@@ -241,8 +241,8 @@ fn validate_rejects_a_stack_pointer_subregister() {
             .expect_err("an SP sub-register must be rejected")
             .to_string();
         assert!(
-            msg.contains("stack_vn") && msg.contains(list_name),
-            "error must name stack_vn and {list_name}, got: {msg}",
+            msg.contains("stack pointer") && msg.contains(list_name),
+            "error must name the stack pointer and {list_name}, got: {msg}",
         );
     }
 }
