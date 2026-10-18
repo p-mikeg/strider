@@ -15,6 +15,15 @@ pub trait MatchPat: Sized + Send {
         self.compile(b)
     }
 
+    /// Lower with the operand order pinned on the node holding the pair this
+    /// pattern was written with: the root, except where a lowering added the
+    /// root over it (`int_ne` pins its `int_eq`).
+    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let o = self.compile(b);
+        b.set_force_ordered(o);
+        o
+    }
+
     /// Nothing consumes the root's output, so a value anchor there also
     /// accepts the memory token of a node producing no value at all: a `Call`
     /// under a convention with no return or clobber registers, which
@@ -55,12 +64,18 @@ impl<P: MatchPat> MatchPat for Captured<P> {
         b.capture_output(o, self.cap);
         o
     }
+
+    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let o = self.inner.compile_ordered(b);
+        b.capture_output(o, self.cap);
+        o
+    }
 }
 
 /// Emit a `MatchPat` decorator: a struct wrapping `inner: P` plus the listed
-/// payload fields, whose `compile` lowers the inner pattern, runs `$body` (with
-/// `b` the builder, `o` the inner root output, `self` bound) to annotate the
-/// root, and returns `o`.
+/// payload fields, whose `compile`, `compile_mem` and `compile_ordered` lower
+/// the inner pattern the same way, run `$body` (with `b` the builder, `o` the
+/// inner root output, `self` bound) to annotate the root, and return `o`.
 macro_rules! decorator {
     (
         $(#[$smeta:meta])*
@@ -85,6 +100,12 @@ macro_rules! decorator {
 
             fn compile_mem($me, $b: &mut MatcherBuilder) -> PatValueRef {
                 let $o = $me.inner.compile_mem($b);
+                $body
+                $o
+            }
+
+            fn compile_ordered($me, $b: &mut MatcherBuilder) -> PatValueRef {
+                let $o = $me.inner.compile_ordered($b);
                 $body
                 $o
             }
@@ -115,11 +136,26 @@ decorator! {
     }
 }
 
-decorator! {
-    /// Disables commutative operand reordering on the inner root.
-    Ordered<P>
-    {}
-    |b, o, self| { b.set_force_ordered(o); }
+/// Pins the operand order of the node holding the pair the inner pattern was
+/// written with; see [`MatchPat::compile_ordered`].
+pub struct Ordered<P> {
+    inner: P,
+}
+
+impl<P: MatchPat> MatchPat for Ordered<P> {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.inner.compile_ordered(b)
+    }
+
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let o = self.inner.compile_mem(b);
+        b.set_force_ordered(o);
+        o
+    }
+
+    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.inner.compile_ordered(b)
+    }
 }
 
 decorator! {
@@ -163,6 +199,8 @@ pub trait CaptureExt: MatchPat {
     {
         Limited { inner: self, f }
     }
+    /// Stop the matcher retrying, swapped, the operand pair this pattern was
+    /// written with; see [`MatchPat::compile_ordered`].
     fn ordered(self) -> Ordered<Self> {
         Ordered { inner: self }
     }

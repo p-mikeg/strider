@@ -206,6 +206,44 @@ dual_pat!(IntCmpFixed<L, R>, |self, b| {
     compile_two_input(b, kind, self.lhs, self.rhs, Some(ValueType::I1))
 });
 
+/// `int_xor(cmp, 1):I1`, the lifter's `!=` / `<=`; `.ordered()` pins `cmp`,
+/// the node holding the pair the caller wrote.
+pub struct Negated<C> {
+    cmp: C,
+}
+
+impl<C: MatchPat> MatchPat for Negated<C> {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        compile_int_binary(
+            b,
+            IntBinaryOp::Xor,
+            self.cmp,
+            crate::typed::consts::bool_const(true),
+        )
+    }
+
+    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let cmp = self.cmp.compile_ordered(b);
+        compile_int_binary(
+            b,
+            IntBinaryOp::Xor,
+            Pre(cmp),
+            crate::typed::consts::bool_const(true),
+        )
+    }
+}
+
+impl<C: TemplatePat> TemplatePat for Negated<C> {
+    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
+        compile_int_binary(
+            b,
+            IntBinaryOp::Xor,
+            self.cmp,
+            crate::typed::consts::bool_const(true),
+        )
+    }
+}
+
 variant_binary_any!(
     /// Output `I1`. Match-only.
     AnyIntCmp,
@@ -327,6 +365,12 @@ impl<L: MatchPat, R: MatchPat> MatchPat for FloatLe<L, R> {
         .compile(b);
         compile_bool_binary(b, IntBinaryOp::Or, Pre(less), Pre(equal))
     }
+
+    // The `Less` orders the pair already; pinning the `Or` would order the
+    // two comparisons instead.
+    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.compile(b)
+    }
 }
 
 pub fn float_le<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> FloatLe<L, R> {
@@ -356,6 +400,11 @@ impl<I: MatchPat> MatchPat for FloatIsNan<I> {
             Pre(eq),
             crate::typed::consts::bool_const(true),
         )
+    }
+
+    // One operand in both equality slots: no pair to order.
+    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.compile(b)
     }
 }
 
@@ -415,9 +464,6 @@ macro_rules! value_op_factories {
     (
         bound = $bound:path,
         verb = $verb:literal,
-        // The xor's `1` for the lowered `int_ne` / `int_le` / ... shapes,
-        // passed in so it carries this scope's trait bound.
-        ne_one = $ne_one:expr,
     ) => {
         binary_factory!($bound, IntBinaryFixed, IntBinaryOp, Add, int_add,
             concat!($verb, " unsigned addition `lhs + rhs`. Commutative."));
@@ -496,19 +542,19 @@ macro_rules! value_op_factories {
         binary_factory!($bound, IntCmpFixed, IntCmpOp, Sborrow, int_sborrow,
             concat!($verb, " a signed subtraction borrow."));
 
-        #[doc = concat!($verb, " an unsigned not-equal `lhs != rhs`, i.e. `int_xor(int_eq(l, r), 1):I1`.")]
-        pub fn int_ne<L: $bound, R: $bound>(lhs: L, rhs: R) -> impl $bound {
-            int_xor(int_eq(lhs, rhs), $ne_one)
+        #[doc = concat!($verb, " an unsigned not-equal `lhs != rhs`, i.e. `int_xor(int_eq(l, r), 1):I1`; `.ordered()` pins the `int_eq`.")]
+        pub fn int_ne<L: $bound, R: $bound>(lhs: L, rhs: R) -> Negated<IntCmpFixed<L, R>> {
+            Negated { cmp: int_eq(lhs, rhs) }
         }
 
-        #[doc = concat!($verb, " an unsigned less-or-equal `lhs <= rhs`, i.e. `int_xor(int_lt(r, l), 1):I1`.")]
-        pub fn int_le<L: $bound, R: $bound>(lhs: L, rhs: R) -> impl $bound {
-            int_xor(int_lt(rhs, lhs), $ne_one)
+        #[doc = concat!($verb, " an unsigned less-or-equal `lhs <= rhs`, i.e. `int_xor(int_lt(r, l), 1):I1`; `.ordered()` pins the `int_lt`.")]
+        pub fn int_le<L: $bound, R: $bound>(lhs: L, rhs: R) -> Negated<IntCmpFixed<R, L>> {
+            Negated { cmp: int_lt(rhs, lhs) }
         }
 
-        #[doc = concat!($verb, " a signed less-or-equal `(signed)lhs <= (signed)rhs`, i.e. `int_xor(int_slt(r, l), 1):I1`.")]
-        pub fn int_sle<L: $bound, R: $bound>(lhs: L, rhs: R) -> impl $bound {
-            int_xor(int_slt(rhs, lhs), $ne_one)
+        #[doc = concat!($verb, " a signed less-or-equal `(signed)lhs <= (signed)rhs`, i.e. `int_xor(int_slt(r, l), 1):I1`; `.ordered()` pins the `int_slt`.")]
+        pub fn int_sle<L: $bound, R: $bound>(lhs: L, rhs: R) -> Negated<IntCmpFixed<R, L>> {
+            Negated { cmp: int_slt(rhs, lhs) }
         }
 
         binary_factory!($bound, FloatBinaryFixed, FloatBinaryOp, Add, float_add,
@@ -536,9 +582,9 @@ macro_rules! value_op_factories {
         binary_factory!($bound, FloatCmpFixed, FloatCmpOp, Less, float_lt,
             concat!($verb, " a float less-than `lhs < rhs`."));
 
-        #[doc = concat!($verb, " a float not-equal `lhs != rhs`, i.e. `int_xor(float_eq(l, r), 1):I1`.")]
-        pub fn float_ne<L: $bound, R: $bound>(lhs: L, rhs: R) -> impl $bound {
-            int_xor(float_eq(lhs, rhs), $ne_one)
+        #[doc = concat!($verb, " a float not-equal `lhs != rhs`, i.e. `int_xor(float_eq(l, r), 1):I1`; `.ordered()` pins the `float_eq`.")]
+        pub fn float_ne<L: $bound, R: $bound>(lhs: L, rhs: R) -> Negated<FloatCmpFixed<L, R>> {
+            Negated { cmp: float_eq(lhs, rhs) }
         }
 
         binary_factory!($bound, BoolBinaryFixed, IntBinaryOp, And, bool_and,
@@ -640,7 +686,6 @@ macro_rules! float_unary_factory {
 value_op_factories! {
     bound = MatchPat,
     verb = "Match",
-    ne_one = crate::typed::consts::bool_const(true),
 }
 
 // Build-side twins, re-exported at the crate root as
@@ -655,15 +700,13 @@ pub mod template {
     };
 
     use crate::template::template_pat::TemplatePat;
-    use crate::typed::consts::bool_const;
     use crate::typed::value_ops::{
         BitNot, BoolBinaryFixed, BoolNot, Cast, FloatBinaryFixed, FloatCmpFixed, FloatSub,
-        FloatUnaryFixed, IntBinaryFixed, IntCmpFixed, IntUnaryFixed, Sub,
+        FloatUnaryFixed, IntBinaryFixed, IntCmpFixed, IntUnaryFixed, Negated, Sub,
     };
 
     value_op_factories! {
         bound = TemplatePat,
         verb = "Build",
-        ne_one = bool_const(true),
     }
 }

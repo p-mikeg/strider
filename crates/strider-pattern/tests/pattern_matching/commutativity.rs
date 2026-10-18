@@ -927,3 +927,119 @@ fn a_capture_free_pattern_stops_at_the_first_ordering() {
         (2, 2),
     );
 }
+
+/// `return(zext(Xor(Equal(5, 3), 1)))`: `int_ne(5, 3)` as the lifter lowers it.
+fn lowered_int_ne_5_3() -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let a = t.u64(5);
+    let b = t.u64(3);
+    let eq = t.int_cmp(a, b, IntCmpOp::Equal);
+    let ne = t.bool_not(eq);
+    let wide = t.zext_to(ne, strider_ir::node::ValueType::int(64));
+    t.ret_val(wide)
+}
+
+/// The pair `int_ne` was written with sits on its `Equal`, not on the `Xor`
+/// the lowering adds, so that is what `.ordered()` pins.
+#[test]
+fn ordered_pins_the_comparison_a_lowered_int_ne_holds() {
+    let function = lowered_int_ne_5_3();
+    let swapped = || int_ne(int_const(3u128), int_const(5u128));
+    a::matches(&function, swapped().into_pattern(), 1);
+    a::none(&function, swapped().ordered().into_pattern());
+    a::matches(
+        &function,
+        int_ne(int_const(5u128), int_const(3u128))
+            .ordered()
+            .into_pattern(),
+        1,
+    );
+}
+
+/// The pin lands under every wrapper, on either side of `.ordered()`.
+#[test]
+fn ordered_pins_a_lowered_int_ne_under_its_wrappers() {
+    let function = lowered_int_ne_5_3();
+    let c = Capture::new();
+    let swapped = || int_ne(int_const(3u128), int_const(5u128));
+    a::none(&function, swapped().capture(c).ordered().into_pattern());
+    a::none(&function, swapped().ordered().capture(c).into_pattern());
+    a::none(&function, swapped().of_width(1).ordered().into_pattern());
+    a::none(&function, swapped().ordered().of_width(1).into_pattern());
+}
+
+/// Nested as an operand, the pin still reaches the inner comparison.
+#[test]
+fn ordered_pins_a_lowered_int_ne_nested_as_an_operand() {
+    let function = lowered_int_ne_5_3();
+    a::none(
+        &function,
+        int_zero_extend(int_ne(int_const(3u128), int_const(5u128)).ordered()).into_pattern(),
+    );
+    a::matches(
+        &function,
+        int_zero_extend(int_ne(int_const(5u128), int_const(3u128)).ordered()).into_pattern(),
+        1,
+    );
+}
+
+/// `float_ne(1.0, 2.0)` is `Xor(FloatEqual(1.0, 2.0), 1)`: as for `int_ne`.
+#[test]
+fn ordered_pins_the_comparison_a_lowered_float_ne_holds() {
+    let function = {
+        let mut t = Tb::empty();
+        let a = t.f64(1.0);
+        let b = t.f64(2.0);
+        let eq = t.fcmp(a, b, FloatCmpOp::Equal);
+        let ne = t.bool_not(eq);
+        let as_int = t.as_int(ne, strider_ir::node::ValueType::int(64));
+        t.ret_val(as_int)
+    };
+    let ne = |l: f64, r: f64| float_ne(float_const(l.to_bits()), float_const(r.to_bits()));
+    a::none(&function, ne(2.0, 1.0).ordered().into_pattern());
+    a::matches(&function, ne(1.0, 2.0).ordered().into_pattern(), 1);
+}
+
+/// `float_le(l, r)` is `Or(FloatLess(l, r), FloatEqual(l, r))`; the `Less`
+/// orders its pair already, so `.ordered()` adds nothing, and an `Or` holding
+/// the two comparisons the other way round still matches.
+#[test]
+fn ordered_is_a_no_op_on_float_le() {
+    let function = {
+        let mut t = Tb::empty();
+        let a = t.f64(1.0);
+        let b = t.f64(2.0);
+        let lt = t.fcmp(a, b, FloatCmpOp::Less);
+        let eq = t.fcmp(a, b, FloatCmpOp::Equal);
+        let le = t.bool_bin(eq, lt, IntBinaryOp::Or);
+        let as_int = t.as_int(le, strider_ir::node::ValueType::int(64));
+        t.ret_val(as_int)
+    };
+    let le = || {
+        float_le(
+            float_const(1.0_f64.to_bits()),
+            float_const(2.0_f64.to_bits()),
+        )
+    };
+    a::matches(&function, le().into_pattern(), 1);
+    a::matches(&function, le().ordered().into_pattern(), 1);
+}
+
+/// `float_is_nan(x)` is `Xor(FloatEqual(x, x), 1)`, one operand in both
+/// equality slots, so `.ordered()` adds nothing, and an `Xor` holding its
+/// `1` first still matches.
+#[test]
+fn ordered_is_a_no_op_on_float_is_nan() {
+    let function = {
+        let mut t = Tb::empty();
+        let x = t.f64(1.0);
+        let one = t.boolean(true);
+        let eq = t.fcmp(x, x, FloatCmpOp::Equal);
+        let nan = t.bool_bin(one, eq, IntBinaryOp::Xor);
+        let as_int = t.as_int(nan, strider_ir::node::ValueType::int(64));
+        t.ret_val(as_int)
+    };
+    let nan = || float_is_nan(float_const(1.0_f64.to_bits()));
+    a::matches(&function, nan().into_pattern(), 1);
+    a::matches(&function, nan().ordered().into_pattern(), 1);
+}
