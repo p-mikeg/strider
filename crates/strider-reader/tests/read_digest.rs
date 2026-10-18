@@ -161,9 +161,9 @@ fn rows(out: &mut String, image: &str, elf: anyhow::Result<OwnedElf>) {
             }
         }
         // The barrier a ROM view built from these regions subtracts.
-        let writable = elf.writable_ranges(source).map(|ranges| {
+        let writable = elf.image(source, RelocationMode::Unapplied).map(|loaded| {
             let mut h = Fnv::default();
-            for (start, end) in ranges {
+            for &(start, end) in loaded.writable.as_slice() {
                 h.eat(&start.to_le_bytes());
                 h.eat(&end.to_le_bytes());
             }

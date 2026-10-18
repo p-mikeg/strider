@@ -7,7 +7,7 @@ use pyo3::types::{PyBytes, PyDict};
 
 use crate::errors::into_strider_err;
 use strider_reader::elf::{
-    AddressSet, ElfSectionLayout, LoadFilter, OpdTable, RegionSource, without_ranges,
+    AddressSet, ElfSectionLayout, OpdTable, RegionSource, RelocationMode, without_ranges,
 };
 use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory, RegionIndex};
 
@@ -204,58 +204,29 @@ impl From<ElfRegionSource> for RegionSource {
     }
 }
 
-/// Instruction fetch / raw reads: writable sections are included only when
-/// relocations are applied, so a relocated `.got` / `.data.rel.ro` is readable.
-fn elf_to_mem_regions(
-    elf: &strider_reader::OwnedElf,
-    source: ElfRegionSource,
-    apply_relocations: bool,
-) -> PyResult<Vec<MemRegion>> {
-    let filter = if apply_relocations {
-        LoadFilter::AllAllocatable
-    } else {
-        LoadFilter::CodeAndReadOnly
-    };
-    elf.regions(source.into(), filter, apply_relocations)
-        .map_err(into_strider_err)
-}
-
-/// Code + read-only sections only; writable ones (`.data`, `.got`,
-/// `.data.rel.ro`) are EXCLUDED, so every address here is
-/// runtime-immutable.
+/// What `apply_relocations` and `relocated_got_is_rom` claim about the image.
+/// Relocated, fetch maps every writable section too; `relocated_got_is_rom`
+/// takes `.got` and `.data.rel.ro` into the ROM on the caller's claim that
+/// nothing rewrites them once the loader has run (never `.got.plt`).
 ///
-/// `relocated_got_is_rom` takes `.got` and `.data.rel.ro` back in, on the
-/// caller's claim that nothing rewrites them once the loader has run. Never
-/// `.got.plt`; see [`LoadFilter::ImmutableAndRelocatedGot`].
-///
-/// Refuses it together with `apply_relocations=False`, which denies that same
-/// claim.
-///
-/// Shares one backing buffer with [`elf_to_mem_regions`]: the ROM is a filter
-/// over the same bytes.
-fn elf_to_rom_regions(
-    elf: &strider_reader::OwnedElf,
-    source: ElfRegionSource,
+/// Refuses `relocated_got_is_rom` without `apply_relocations`, which denies
+/// that same claim.
+fn relocation_mode(
     apply_relocations: bool,
     relocated_got_is_rom: bool,
-) -> PyResult<Vec<MemRegion>> {
-    if relocated_got_is_rom && !apply_relocations {
-        return Err(into_strider_err(anyhow::anyhow!(
+) -> PyResult<RelocationMode> {
+    match (apply_relocations, relocated_got_is_rom) {
+        (true, got_is_rom) => Ok(RelocationMode::Applied { got_is_rom }),
+        (false, false) => Ok(RelocationMode::Unapplied),
+        (false, true) => Err(into_strider_err(anyhow::anyhow!(
             "relocated_got_is_rom=True claims the loader has already relocated \
              `.got` / `.data.rel.ro`, and apply_relocations=False says it has not. \
              Served unrelocated, those slots read as their on-disk bytes, which is 0 \
              on a PIE (the address lives in the relocation addend), and a dispatch \
              through one folds to address 0 with nothing reported unresolved. Pass \
              apply_relocations=True, or relocated_got_is_rom=False"
-        )));
+        ))),
     }
-    let filter = if relocated_got_is_rom {
-        LoadFilter::ImmutableAndRelocatedGot
-    } else {
-        LoadFilter::ImmutableOnly
-    };
-    elf.regions(source.into(), filter, apply_relocations)
-        .map_err(into_strider_err)
 }
 
 /// Parsed ELF binary.  Construct via `strider.lift.load_elf(path)`.
@@ -847,18 +818,14 @@ impl PyLoadedElf {
         apply_relocations: bool,
         relocated_got_is_rom: bool,
     ) -> PyResult<()> {
-        let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-        let mem_regions = elf_to_mem_regions(&obj, self.source, apply_relocations)?;
-        let writable = AddressSet::merged(
-            obj.writable_ranges(self.source.into())
-                .map_err(into_strider_err)?,
-        );
-        let rom_regions = without_ranges(
-            elf_to_rom_regions(&obj, self.source, apply_relocations, relocated_got_is_rom)?,
-            &self.writable,
-        );
+        let elf = strider_reader::load_elf(path).map_err(into_strider_err)?;
+        let mode = relocation_mode(apply_relocations, relocated_got_is_rom)?;
+        let image = elf
+            .image(self.source.into(), mode)
+            .map_err(into_strider_err)?;
+        let rom_regions = without_ranges(image.rom, &self.writable);
         if let Some((lo, hi)) =
-            differing_overlap(&self.mem.inner.lock_shared().regions, &mem_regions)
+            differing_overlap(&self.mem.inner.lock_shared().regions, &image.fetch)
         {
             return Err(into_strider_err(anyhow::anyhow!(
                 "add_elf: {path} maps [{lo:#x}, {hi:#x}) with bytes that differ from what is \
@@ -871,19 +838,20 @@ impl PyLoadedElf {
         // the read-only view, so its regions and symbols are the ones already
         // here and a merge would append a second copy of both. An image
         // mapping nothing still goes through, for its symbols.
-        if !mem_regions.is_empty()
-            && regions_covered(&self.mem.inner.lock_shared().regions, &mem_regions)
-            && writable
+        if !image.fetch.is_empty()
+            && regions_covered(&self.mem.inner.lock_shared().regions, &image.fetch)
+            && image
+                .writable
                 .as_slice()
                 .iter()
                 .all(|&(lo, hi)| self.writable.covers(lo, hi))
         {
             return Ok(());
         }
-        invalidate_and_extend(&self.mem, mem_regions);
+        invalidate_and_extend(&self.mem, image.fetch);
         {
             let mut rom = self.rom.inner.lock_shared();
-            let kept = without_ranges(std::mem::take(&mut rom.regions), &writable);
+            let kept = without_ranges(std::mem::take(&mut rom.regions), &image.writable);
             rom.regions = kept;
         }
         invalidate_and_extend(&self.rom, rom_regions);
@@ -891,11 +859,11 @@ impl PyLoadedElf {
             self.writable
                 .as_slice()
                 .iter()
-                .chain(writable.as_slice())
+                .chain(image.writable.as_slice())
                 .copied()
                 .collect(),
         );
-        self.elfs.push(obj);
+        self.elfs.push(elf);
         self.symbol_table.lock_shared().take();
         self.data_ranges.lock_shared().take();
         Ok(())
@@ -972,25 +940,16 @@ fn load_elf_impl(
     apply_relocations: bool,
     relocated_got_is_rom: bool,
 ) -> PyResult<PyLoadedElf> {
-    let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
-    let mem = PyBufferReader::from_regions(elf_to_mem_regions(&obj, source, apply_relocations)?);
-    let rom = PyBufferReader::from_regions(elf_to_rom_regions(
-        &obj,
-        source,
-        apply_relocations,
-        relocated_got_is_rom,
-    )?);
-    let writable = AddressSet::merged(
-        obj.writable_ranges(source.into())
-            .map_err(into_strider_err)?,
-    );
+    let elf = strider_reader::load_elf(path).map_err(into_strider_err)?;
+    let mode = relocation_mode(apply_relocations, relocated_got_is_rom)?;
+    let image = elf.image(source.into(), mode).map_err(into_strider_err)?;
     Ok(PyLoadedElf {
-        elfs: vec![obj],
-        writable,
+        elfs: vec![elf],
+        writable: image.writable,
         symbol_elfs: Vec::new(),
         extra_symbols: Vec::new(),
-        mem,
-        rom,
+        mem: PyBufferReader::from_regions(image.fetch),
+        rom: PyBufferReader::from_regions(image.rom),
         source,
         symbol_table: Mutex::new(None),
         data_ranges: Mutex::new(None),
@@ -1007,7 +966,7 @@ fn load_elf_impl(
 ///
 /// `relocated_got_is_rom` additionally serves `.got` / `.data.rel.ro` as
 /// read-only memory, which constant-folds a load through them; see
-/// [`elf_to_rom_regions`].  `apply_relocations` defaults to `false` here, so
+/// [`relocation_mode`].  `apply_relocations` defaults to `false` here, so
 /// it has to be passed alongside: the pair without it is refused.
 #[pyfunction]
 #[pyo3(name = "_load_elf_from_segments", signature = (path, apply_relocations=false, relocated_got_is_rom=false))]
