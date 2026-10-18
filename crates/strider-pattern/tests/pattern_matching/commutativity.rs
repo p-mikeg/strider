@@ -966,6 +966,30 @@ fn ordered_pins_a_lowered_int_ne_under_its_wrappers() {
     a::none(&function, swapped().ordered().capture(c).into_pattern());
     a::none(&function, swapped().of_width(1).ordered().into_pattern());
     a::none(&function, swapped().ordered().of_width(1).into_pattern());
+    a::none(
+        &function,
+        inputs_of_width(1, swapped()).ordered().into_pattern(),
+    );
+    a::none(
+        &function,
+        inputs_of_width(1, swapped().ordered()).into_pattern(),
+    );
+
+    let written = || int_ne(int_const(5u128), int_const(3u128));
+    a::matches(&function, written().capture(c).ordered().into_pattern(), 1);
+    a::matches(&function, written().ordered().capture(c).into_pattern(), 1);
+    a::matches(&function, written().of_width(1).ordered().into_pattern(), 1);
+    a::matches(&function, written().ordered().of_width(1).into_pattern(), 1);
+    a::matches(
+        &function,
+        inputs_of_width(1, written()).ordered().into_pattern(),
+        1,
+    );
+    a::matches(
+        &function,
+        inputs_of_width(1, written().ordered()).into_pattern(),
+        1,
+    );
 }
 
 /// Nested as an operand, the pin still reaches the inner comparison.
@@ -1042,4 +1066,49 @@ fn ordered_is_a_no_op_on_float_is_nan() {
     let nan = || float_is_nan(float_const(1.0_f64.to_bits()));
     a::matches(&function, nan().into_pattern(), 1);
     a::matches(&function, nan().ordered().into_pattern(), 1);
+}
+
+/// `return(zext(Xor(1, cmp(l, r))))`: a lowered `!=` / `<=` with its `Xor`
+/// operands the other way round from the lifter's.
+fn one_first_negated_cmp(l: u64, r: u64, op: IntCmpOp) -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let a = t.u64(l);
+    let b = t.u64(r);
+    let one = t.boolean(true);
+    let cmp = t.int_cmp(a, b, op);
+    let negated = t.bool_bin(one, cmp, IntBinaryOp::Xor);
+    let wide = t.zext_to(negated, strider_ir::node::ValueType::int(64));
+    t.ret_val(wide)
+}
+
+/// The `Xor` a lowered `int_ne` adds stays commutative under `.ordered()`,
+/// and a second `.ordered()` pins nothing more.
+#[test]
+fn ordered_leaves_the_xor_of_a_lowered_int_ne_commutative() {
+    let function = one_first_negated_cmp(5, 3, IntCmpOp::Equal);
+    let written = || int_ne(int_const(5u128), int_const(3u128));
+    a::matches(&function, written().ordered().into_pattern(), 1);
+    a::matches(&function, written().ordered().ordered().into_pattern(), 1);
+    a::none(
+        &function,
+        int_ne(int_const(3u128), int_const(5u128))
+            .ordered()
+            .into_pattern(),
+    );
+}
+
+/// `int_le(l, r)` is `Xor(Less(r, l), 1)`: the `Less` orders its pair
+/// already, so `.ordered()` matches what the plain pattern does, and the
+/// `Xor` still swaps. `int_sle` is the same over `Sless`.
+#[test]
+fn ordered_is_a_no_op_on_int_le_and_int_sle() {
+    fn check<P: MatchPat>(op: IntCmpOp, le: impl Fn(u128, u128) -> P) {
+        let function = one_first_negated_cmp(3, 5, op);
+        a::matches(&function, le(5, 3).into_pattern(), 1);
+        a::matches(&function, le(5, 3).ordered().into_pattern(), 1);
+        a::none(&function, le(3, 5).into_pattern());
+        a::none(&function, le(3, 5).ordered().into_pattern());
+    }
+    check(IntCmpOp::Less, |l, r| int_le(int_const(l), int_const(r)));
+    check(IntCmpOp::Sless, |l, r| int_sle(int_const(l), int_const(r)));
 }
