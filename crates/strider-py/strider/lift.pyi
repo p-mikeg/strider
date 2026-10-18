@@ -209,8 +209,8 @@ class Lifter:
     def arch(self) -> SleighArch:
         """The `SleighArch` this handle decodes with.
 
-        Enough, with `reader()` and `rom()`, to build a SECOND handle over the
-        same memory, which is how a thread that does not own this one renders."""
+        Enough, with `reader()` and `rom()`, to build a second handle over the
+        same memory."""
         ...
     def reader(self) -> MemLike:
         """The code source (`BufferReader` or `MemReader`) this handle was

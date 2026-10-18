@@ -11,7 +11,6 @@ use pyo3::prelude::*;
 use crate::dot::{DEFAULT_CFG_STYLE, dot_style_for, render};
 use crate::errors::into_strider_err;
 use crate::node::PyNode;
-use crate::reader::AnyMemReader;
 use crate::strider_cls::PyLifter;
 
 /// Control-flow graph of a single function, from `Lifter.build_cfg` or
@@ -20,13 +19,12 @@ use crate::strider_cls::PyLifter;
 #[pyclass(name = "Cfg", module = "strider.cfg")]
 pub struct PyCfg {
     pub(crate) inner: strider_cfg::Cfg,
-    /// The `Lifter` that built `inner`, borrowed for its Sleigh.
+    /// The `Lifter` that built `inner`: `Cfg.lifter`, and `optimize`'s
+    /// same-handle check.
     pub(crate) lifter: Py<PyLifter>,
-    /// That lifter's arch, copied at construction so a render can check a
-    /// supplied handle against it WITHOUT borrowing `lifter`: `analyze` holds
-    /// that one mutably with the GIL released, and a borrow here would fail for
-    /// the length of an analysis, which is exactly when a background explorer
-    /// is rendering.
+    /// That lifter's arch, whose name table every render reads, so a render
+    /// never borrows `lifter` (which `analyze` holds mutably with the GIL
+    /// released).
     pub(crate) arch: strider_target::SleighArch,
     /// `machine_addr -> joined p-code text`.
     pcode_map: OnceLock<HashMap<u64, String>>,
@@ -58,43 +56,6 @@ impl PyCfg {
         }
     }
 
-    fn with_sleigh<R>(
-        &self,
-        py: Python<'_>,
-        f: impl FnOnce(&rsleigh::Sleigh<AnyMemReader>) -> PyResult<R>,
-    ) -> PyResult<R> {
-        self.with_sleigh_of(py, None, f)
-    }
-
-    /// `with` renders through a handle other than the one that built this CFG,
-    /// which is how a thread that does not own the original decoder renders.
-    fn with_sleigh_of<R>(
-        &self,
-        py: Python<'_>,
-        with: Option<&Bound<'_, PyLifter>>,
-        f: impl FnOnce(&rsleigh::Sleigh<AnyMemReader>) -> PyResult<R>,
-    ) -> PyResult<R> {
-        // `borrow` would panic when the owning `Lifter` is mid-`analyze`
-        // (a `read()` callback rendering this Cfg), and that surfaces as
-        // `PanicException`, a `BaseException` no `except Exception` catches.
-        match with {
-            Some(l) => {
-                let b = l
-                    .try_borrow()
-                    .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-                b.check_arch_is(self.arch)?;
-                f(b.sleigh()?)
-            }
-            None => {
-                let lifter_borrow = self
-                    .lifter
-                    .try_borrow(py)
-                    .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-                f(lifter_borrow.sleigh()?)
-            }
-        }
-    }
-
     /// `center` as a region id this CFG actually has.
     ///
     /// `RegionId::new` takes any `usize`, so an out-of-range argument would
@@ -114,20 +75,16 @@ impl PyCfg {
 
     fn render_dot(
         &self,
-        py: Python<'_>,
         style: Option<&str>,
         html: bool,
         path: Option<&str>,
-        with: Option<&Bound<'_, PyLifter>>,
     ) -> PyResult<Option<String>> {
         let style = style.unwrap_or(DEFAULT_CFG_STYLE);
-        self.with_sleigh_of(py, with, |_sleigh| {
-            let d = dot::GraphDot::new(
-                self.inner.dot_dumper(self.arch.names()),
-                dot_style_for(Some(style))?,
-            );
-            render(&d, html, path)
-        })
+        let d = dot::GraphDot::new(
+            self.inner.dot_dumper(self.arch.names()),
+            dot_style_for(Some(style))?,
+        );
+        render(&d, html, path)
     }
 
     /// Ops of one machine instruction are joined with `"; "` in `insn_index`
@@ -219,31 +176,17 @@ impl PyCfg {
     /// Render the CFG to DOT. Returns the DOT string when `path` is
     /// `None`, otherwise writes it to `path` and returns `None`.
     /// `style` selects the dot theme (default `"dark_cfg"`).
-    #[pyo3(signature = (path=None, style=None, *, lifter=None))]
-    fn to_dot(
-        &self,
-        py: Python<'_>,
-        path: Option<&str>,
-        style: Option<&str>,
-        lifter: Option<&Bound<'_, PyLifter>>,
-    ) -> PyResult<Option<String>> {
-        self.render_dot(py, style, false, path, lifter)
+    #[pyo3(signature = (path=None, style=None))]
+    fn to_dot(&self, path: Option<&str>, style: Option<&str>) -> PyResult<Option<String>> {
+        self.render_dot(style, false, path)
     }
 
     /// Render the CFG to a standalone HTML page. Returns the HTML string
     /// when `path` is `None`, otherwise writes it and returns `None`.
     /// `style` selects the dot theme (default `"dark_cfg"`).
-    ///
-    /// Takes no `lifter=`, so it always renders through the owning handle and
-    /// raises off its thread; `to_dot(lifter=...)` is the escape hatch.
     #[pyo3(signature = (path=None, style=None))]
-    fn to_html(
-        &self,
-        py: Python<'_>,
-        path: Option<&str>,
-        style: Option<&str>,
-    ) -> PyResult<Option<String>> {
-        self.render_dot(py, style, true, path, None)
+    fn to_html(&self, path: Option<&str>, style: Option<&str>) -> PyResult<Option<String>> {
+        self.render_dot(style, true, path)
     }
 
     /// The lifted p-code for the machine instruction at `addr`: every p-code
@@ -304,30 +247,21 @@ impl PyCfg {
 
     /// Pretty neighborhood DOT around region `center`: BFS over predecessor
     /// and successor regions, capped at `max_nodes`.
-    #[pyo3(signature = (center, depth=5, max_nodes=60, *, lifter=None))]
-    fn neighborhood_dot(
-        &self,
-        py: Python<'_>,
-        center: u32,
-        depth: usize,
-        max_nodes: usize,
-        lifter: Option<&Bound<'_, PyLifter>>,
-    ) -> PyResult<String> {
+    #[pyo3(signature = (center, depth=5, max_nodes=60))]
+    fn neighborhood_dot(&self, center: u32, depth: usize, max_nodes: usize) -> PyResult<String> {
         let node = self.region_id(center)?;
-        self.with_sleigh_of(py, lifter, |_sleigh| {
-            self.inner
-                .neighborhood_dot(self.arch.names(), node, depth, max_nodes)
-                .map_err(into_strider_err)
-        })
+        self.inner
+            .neighborhood_dot(self.arch.names(), node, depth, max_nodes)
+            .map_err(into_strider_err)
     }
 
     /// Disassembly text per region index, joined with `"\n"`.
     #[pyo3(name = "_region_texts")]
-    fn region_texts(&self, py: Python<'_>) -> PyResult<HashMap<u32, String>> {
-        self.with_sleigh(py, |_sleigh| {
-            let g = self.inner.region_graph();
-            let mut out = HashMap::new();
-            for idx in g.node_indices() {
+    fn region_texts(&self) -> HashMap<u32, String> {
+        let names = self.arch.names();
+        let g = self.inner.region_graph();
+        g.node_indices()
+            .map(|idx| {
                 let region = g
                     .node_weight(idx)
                     .expect("node_indices() only yields present nodes");
@@ -335,15 +269,13 @@ impl PyCfg {
                     .insns
                     .iter()
                     .map(|ri| {
-                        strider_cfg::insn_text(&ri.insn, self.inner.space_ids(), self.arch.names())
-                            .to_string()
+                        strider_cfg::insn_text(&ri.insn, self.inner.space_ids(), names).to_string()
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
-                out.insert(idx.index() as u32, text);
-            }
-            Ok(out)
-        })
+                (idx.index() as u32, text)
+            })
+            .collect()
     }
 
     /// The index of the region owning `addr`; where regions overlap, the one
