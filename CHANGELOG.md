@@ -215,8 +215,8 @@
 - `AssumptionOptions(...)` takes its defaults from Rust: a field passed
   `None` takes its default (it raised `TypeError`), `noalias_allocators`
   reads back sorted and deduplicated, `repr` included (it kept the order and
-  duplicates given), and the constructor's signature shows `None` for every
-  default.
+  duplicates given), and on Python 3.10+ the constructor's signature shows
+  `None` for every default.
 
 ### Added, Python
 

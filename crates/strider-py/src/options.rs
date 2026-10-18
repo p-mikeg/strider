@@ -397,8 +397,7 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 /// `return_slots_survive_untracked_writes`, each of which every compiler this
 /// analyses honours.
 ///
-/// An omitted or `None` field takes the default, which is Rust's
-/// `AssumptionOptions::default`.
+/// An omitted or `None` field takes the analysis default, as listed below.
 #[pyclass(name = "AssumptionOptions", module = "strider.lift")]
 #[derive(Clone, Default)]
 pub struct PyAssumptionOptions {
@@ -409,7 +408,7 @@ pub struct PyAssumptionOptions {
 trait PyField<P> {
     fn to_py(&self) -> P;
     fn from_py(value: P) -> Self;
-    /// The value as the constructor call that sets it spells it.
+    /// The value as a constructor argument spells it.
     fn py_repr(&self) -> String;
 }
 
@@ -454,13 +453,12 @@ macro_rules! assumption_fields {
             #[new]
             #[pyo3(signature = (*, $($name = None),*))]
             fn new($($name: Option<$py>),*) -> Self {
-                let mut inner = AssumptionOptions::default();
-                $(
-                    if let Some(value) = $name {
-                        inner.$name = PyField::from_py(value);
-                    }
-                )*
-                Self { inner }
+                let d = AssumptionOptions::default();
+                Self {
+                    inner: AssumptionOptions {
+                        $($name: $name.map_or(d.$name, PyField::from_py)),*
+                    },
+                }
             }
 
             $(
