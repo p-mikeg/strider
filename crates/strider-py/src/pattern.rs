@@ -1358,6 +1358,10 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
             DynTemplate(Box::new(move |b| tc(tpl::int_extend(op, x), b)))
         }
         PatRepr::IntCmp(op, l, r) => t_binop!(tpl::int_cmp, op, l, r),
+        PatRepr::IntNe(l, r) => t_bin!(tpl::int_ne, l, r),
+        PatRepr::IntLe(l, r) => t_bin!(tpl::int_le, l, r),
+        PatRepr::IntSle(l, r) => t_bin!(tpl::int_sle, l, r),
+        PatRepr::FloatNe(l, r) => t_bin!(tpl::float_ne, l, r),
         PatRepr::FloatBinary(op, l, r) => t_binop!(tpl::float_binary, op, l, r),
         PatRepr::FloatSub(l, r) => t_bin!(tpl::float_sub, l, r),
         PatRepr::FloatUnary(kind, x) => {
@@ -1409,10 +1413,6 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
         PatRepr::OneOf(_, first) => {
             return Err(rhs_error(if *first { "first_of" } else { "one_of" }));
         }
-        PatRepr::IntNe(..) => return Err(rhs_error("int_ne")),
-        PatRepr::IntLe(..) => return Err(rhs_error("int_le")),
-        PatRepr::IntSle(..) => return Err(rhs_error("int_sle")),
-        PatRepr::FloatNe(..) => return Err(rhs_error("float_ne")),
         PatRepr::FloatLe(..) => return Err(rhs_error("float_le")),
         PatRepr::FloatIsNan(_) => return Err(rhs_error("float_is_nan")),
         PatRepr::AnyIntBinary(..) => return Err(rhs_error("any_int_binary")),
@@ -2404,15 +2404,12 @@ pub(crate) fn checked_signed_i64(value: i128) -> PyResult<i64> {
 
 value_ops!(PyPat, "Pattern", " Commutative.");
 
-// The lowered comparisons, which only the matching side names.
-value_op!(PyPat, "Pattern", "", binary_bare int_ne, IntNe, "integer `a != b`.");
-value_op!(PyPat, "Pattern", "", binary_bare int_le, IntLe, "unsigned `a <= b`.");
-value_op!(PyPat, "Pattern", "", binary_bare int_sle, IntSle, "signed `a <= b`.");
+// The lowered comparisons with no build form: their lowerings fan one operand
+// into two slots, which a template cannot express.
 value_op!(
     PyPat, "Pattern", "", unary_bare float_is_nan, FloatIsNan,
     "`x` is NaN, the IEEE 754 self-inequality `x != x`."
 );
-value_op!(PyPat, "Pattern", "", binary_bare float_ne, FloatNe, "float `a != b`.");
 value_op!(
     PyPat, "Pattern", "", binary_bare float_le, FloatLe,
     "float `a <= b`, NaN-aware."
@@ -4494,11 +4491,7 @@ pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(region);
     add_fn!(predicate);
     register_value_ops(m)?;
-    add_fn!(int_ne);
-    add_fn!(int_le);
-    add_fn!(int_sle);
     add_fn!(float_is_nan);
-    add_fn!(float_ne);
     add_fn!(float_le);
     add_fn!(load);
     add_fn!(store);
