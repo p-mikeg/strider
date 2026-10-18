@@ -35,7 +35,9 @@ image's writable addresses, from one parse.
   descriptor, and
   `mapping_symbol_data_ranges` turns an ARM or AArch64 image's `$d` marks into
   the data ranges a CFG build must not decode. The relocation machinery itself
-  is crate-private; it is reached through `OwnedElf::regions(.., relocate)`.
+  is crate-private; it is reached through
+  `OwnedElf::image(.., RelocationMode::Applied { .. })`, which
+  `ElfFileMemReader::new` takes too.
 
 ## Loading is lazy
 
@@ -63,7 +65,8 @@ Not checked, and not checkable:
 
 - Every `read`. They are syscall-free and stay that way, so a change landing
   after an operation's check and before its reads is still a torn read, or a
-  SIGBUS past a shortened end that kills the process uncatchably.
+  SIGBUS past a shortened end that kills the process uncatchably. A paging
+  error on a network or 9p mount is a SIGBUS too, for a file nothing writes.
 - A rewrite in place that preserves the size and lands within the same second:
   the identity is size plus mtime at whole-second granularity.
 - A different file moved onto the path. The mapped inode is untouched, its bytes
@@ -95,10 +98,11 @@ data is big-endian there. The GOT and TOC are this loader's, so their bytes
 differ from any real link's while computing the same addresses. A relocation it
 cannot compute (TLS, MIPS GP-relative, a branch that would need a veneer, or
 one reading a symbol against STN_UNDEF) is never left as its unrelocated
-field: outside a writable mapping the field is a hole, so decoding or folding
-across it fails with the relocation type named. An `SHT_REL` `R_*_RELATIVE` is
-not one of those: its field already holds the whole value, and is served as
-assembled.
+field where it would be decoded or folded: the field is a hole, so decoding or
+folding across it fails with the relocation type named. Which fields become
+holes is `Ctx::unmodelled`'s rule, in `src/elf/relocations.rs`. An `SHT_REL`
+`R_*_RELATIVE` is not one of those: its field already holds the whole value,
+and is served as assembled.
 
 The `ReadOnlyMemory` view holds no writable mapping (`got_is_rom`'s `.got` and
 `.data.rel.ro` aside), so on an image whose only PT_LOAD is RWX (the MIPS

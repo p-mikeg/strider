@@ -41,8 +41,8 @@ fn a_defined_mips_rel32_writes_the_symbol_value() {
 #[test]
 fn an_undefined_mips_rel32_stays_addend_only() {
     // The STN_UNDEF case stays addend-only: `S = 0` and the `REL` addend is 0,
-    // so the slot reads 0. `object` reports it as `RelocationTarget::Absolute`,
-    // routing through `image_relative_reloc`.
+    // so the slot reads 0. It is `classify`'s image-relative row, whose
+    // `SHT_REL` field already holds the whole value and is served as is.
     let fx = common::elf_fixture::build_mips32be_rel32_elf_with(false);
 
     let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);

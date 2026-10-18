@@ -593,8 +593,8 @@ impl MaxEnd {
     }
 }
 
-/// `regions` with each run of equal starts collapsed to its last region,
-/// order otherwise kept: which of two same-start regions a read reaches.
+/// `regions` with each run of equal starts collapsed to its last region, the
+/// one a read reaches, order otherwise kept.
 pub(crate) fn collapse_equal_starts(regions: Vec<MemRegion>) -> Vec<MemRegion> {
     let last: BTreeMap<u64, usize> = regions
         .iter()

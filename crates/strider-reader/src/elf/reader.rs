@@ -8,12 +8,14 @@ use super::sections::RegionSource;
 /// and `.data.rel.ro` under `got_is_rom`): instruction fetch may reference a
 /// mapping that constant-load folding must not, so the two views differ.
 ///
-/// Its regions are windows into the [`OwnedElf`]'s bytes, so it holds the
-/// mapping: [`check_unchanged`](Self::check_unchanged) catches a file rebuilt
-/// between two operations, and a file truncated under a live reader is a
-/// SIGBUS (`STRIDER_NO_MMAP=1` reads the file instead). Once the reader is
-/// handed to `Sleigh` or a `Strider`, check through the [`OwnedElf`] that
-/// shares its mapping.
+/// Its regions are windows into the [`OwnedElf`]'s bytes, so over a mapped
+/// file it holds the mapping: [`check_unchanged`](Self::check_unchanged)
+/// catches a file rebuilt between two operations, and a read past the end of
+/// a file truncated under a live reader, or a paging error on a network or 9p
+/// mount, is a SIGBUS (`STRIDER_NO_MMAP=1` reads the file instead; an
+/// [`OwnedElf::parse`] image owns its bytes). Once the reader is handed to
+/// `Sleigh` or a `Strider`, check through the [`OwnedElf`] that shares its
+/// mapping.
 #[derive(Debug)]
 pub struct ElfFileMemReader {
     fetch: MemRegionsLookupTable,

@@ -10,9 +10,9 @@
 //! one of those decodes as a plausible reference into the image itself. This
 //! applies the relocations statically.
 //!
-//! A relocation whose value is not computed is not left in place: outside a
-//! writable mapping its field becomes a hole no read serves, see
-//! [`apply_elf_relocations_with`].
+//! A relocation whose value is not computed is not left in place where it
+//! would be decoded or folded: its field becomes a hole no read serves, by the
+//! rule [`Ctx::unmodelled`] states.
 
 use object::{
     Architecture as A, Object, ObjectSection, ObjectSymbol, ObjectSymbolTable, RelocationFlags,
@@ -72,9 +72,9 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 ///
 /// A relocation whose value is not computed (a kind not listed above, a symbol
 /// with no address or a weak undefined one, a value its field cannot hold, a
-/// branch needing a veneer) leaves no plausible bytes behind: unless the field
-/// is in a writable mapping, which nothing folds, it becomes a hole no read
-/// serves, so decoding or folding through it fails.
+/// branch needing a veneer) leaves no plausible bytes behind where they would
+/// be decoded or folded: [`Ctx::unmodelled`] says which fields become holes,
+/// through which decoding or folding fails.
 ///
 /// Any patch list the regions already carry is replaced, so re-applying over
 /// one region set is idempotent.
@@ -225,7 +225,8 @@ impl<'a> Ctx<'a, '_> {
     /// writable EXECUTABLE field is a different thing: `CodeAndReadOnly` keeps
     /// an RWX mapping on purpose (firmware, `ld -N`), so those bytes reach the
     /// decoder, and serving them unrelocated hands it a plausible wrong
-    /// instruction with nothing said about it.
+    /// instruction with nothing said about it. A ROM view's served `.got` /
+    /// `.data.rel.ro` has left `writable`, so a field there is a hole too.
     fn unmodelled(&mut self, holder: Option<&MemRegion>, addr: u64, width: usize, r_type: u32) {
         if holder.is_some()
             && (!self.writable.touches(addr, width) || self.executable.touches(addr, width))
@@ -383,9 +384,9 @@ fn for_each_reloc_site<F>(
                     // names.  A malformed object can point it past the end,
                     // where the site still lands in SOME loaded region and
                     // would silently patch an unrelated section's bytes.
-                    // The reported size is 0 for every type dispatched on the
-                    // raw `r_type`, so the budget travels to where the width is
-                    // actually chosen instead of being checked here.
+                    // `object` sizes only the types it knows, so `avail`
+                    // travels to where the width is chosen instead of being
+                    // checked here.
                     let avail = sec_size.saturating_sub(*offset);
                     let pair = pairs
                         .get(i)
@@ -485,8 +486,8 @@ fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo) {
     let site_addr = site.addr;
     let endian_le = ctx.endian_le;
 
-    // `object` read a mips64el `Elf64_Rel`'s kind and size off its symbol
-    // index, so they describe nothing.
+    // A mips64el implicit-addend entry, whose kind and size `object` may
+    // have read off its symbol index.
     let Some(generic) = r.generic else {
         let holder = ctx.holder(site, site_addr, UNKNOWN_FIELD_BYTES);
         ctx.unmodelled(holder, site_addr, UNKNOWN_FIELD_BYTES, r.type_word());
