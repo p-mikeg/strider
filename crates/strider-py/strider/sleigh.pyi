@@ -196,9 +196,10 @@ class CallingConvention:
 
         The resolved varnodes are frozen against `sleigh`'s architecture, so
         the result is usable only with a `Lifter` for that same arch; any
-        other raises `StriderError` at `analyze` time. So do a `stack_pointer`
-        not as wide as the arch's addresses and, with `stack_arg_base` set, a
-        `stack_arg_increment` other than that width.
+        other raises `StriderError` at `analyze` time. A `stack_pointer` not
+        as wide as the arch's addresses, with `stack_arg_base` set a
+        `stack_arg_increment` other than that width, and with
+        `link_register=None` a `ret_stack_pop` below it raise here.
         """
         ...
     def preserves_all(self) -> CallingConvention:

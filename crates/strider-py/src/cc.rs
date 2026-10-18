@@ -113,9 +113,10 @@ impl PyCallingConvention {
     ///
     /// The frozen varnodes belong to `sleigh`'s architecture, so the result is
     /// usable only with a `Lifter` for that same arch; any other raises
-    /// `StriderError` at `analyze` time.  So do a `stack_pointer` not as wide as
-    /// the arch's addresses and, with `stack_arg_base` set, a
-    /// `stack_arg_increment` other than that width.
+    /// `StriderError` at `analyze` time. A `stack_pointer` not as wide as the
+    /// arch's addresses, with `stack_arg_base` set a `stack_arg_increment` other
+    /// than that width, and with `link_register=None` a `ret_stack_pop` below it
+    /// raise here.
     #[classmethod]
     #[pyo3(signature = (
         sleigh,
@@ -152,34 +153,27 @@ impl PyCallingConvention {
         let regs = sleigh_borrow.regs.clone();
         let source_arch = sleigh_borrow.arch;
         drop(sleigh_borrow);
-        let resolve = |name: &str| {
-            regs.name_to_vn(name).ok_or_else(|| {
-                crate::errors::into_strider_err(anyhow::anyhow!(
-                    "CallingConvention.custom: unknown register name {name:?}"
-                ))
-            })
+        let in_field = |field: &str, e: anyhow::Error| {
+            crate::errors::into_strider_err(e.context(format!("CallingConvention.custom: {field}")))
         };
-        let resolve_list = |names: &[String]| -> PyResult<Vec<rsleigh::Vn>> {
-            names.iter().map(|n| resolve(n)).collect()
+        let list = |field: &str, names: &[String]| {
+            strider_target::calling_convention::regs_to_vns(&regs, names)
+                .map_err(|e| in_field(field, e))
         };
-        let arg_vns = resolve_list(&arg_passing_regs)?;
-        let arg_float_vns = resolve_list(&arg_passing_regs_float)?;
-        let callee_vns = resolve_list(&callee_saved_regs)?;
-        let ret_vns = resolve_list(&ret_val_regs)?;
-        let ret_float_vns = resolve_list(&ret_val_regs_float)?;
-        let sp_vn = resolve(&stack_pointer)?;
-        let lr_vn = link_register.as_deref().map(resolve).transpose()?;
-        // A stack-pushing convention (no link register) has `call` push a
-        // pointer-size return address; a smaller `ret_stack_pop` drifts SP.
-        let ptr_size = i64::from(sp_vn.size);
-        if lr_vn.is_none() && ret_stack_pop < ptr_size {
-            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
-                "custom(): a stack-pushing convention (link_register=None) needs \
-                 ret_stack_pop >= {ptr_size} to account for the return address \
-                 `call` pushes (x86: 4, x86-64: 8); got {ret_stack_pop}. A \
-                 link-register arch (ARM/MIPS/PPC) uses 0 but must set link_register."
-            )));
-        }
+        let one = |field: &str, name: &str| {
+            strider_target::calling_convention::vn_for_name(&regs, name)
+                .map_err(|e| in_field(field, e))
+        };
+        let arg_vns = list("arg_passing_regs", &arg_passing_regs)?;
+        let arg_float_vns = list("arg_passing_regs_float", &arg_passing_regs_float)?;
+        let callee_vns = list("callee_saved_regs", &callee_saved_regs)?;
+        let ret_vns = list("ret_val_regs", &ret_val_regs)?;
+        let ret_float_vns = list("ret_val_regs_float", &ret_val_regs_float)?;
+        let sp_vn = one("stack_pointer", &stack_pointer)?;
+        let lr_vn = link_register
+            .as_deref()
+            .map(|name| one("link_register", name))
+            .transpose()?;
         let stack_args = stack_arg_base.map(|base_offset| strider_target::StackArgs {
             base_offset,
             increment: stack_arg_increment,
@@ -200,9 +194,10 @@ impl PyCallingConvention {
             // presets that carry an ABI guarantee do.
             entry_address_vn: None,
         };
+        built.validate().map_err(crate::errors::into_strider_err)?;
         built
-            .validate()
-            .map_err(|e| crate::errors::into_strider_err(e.into()))?;
+            .check_addr_size(source_arch.names().ram_addr_size())
+            .map_err(crate::errors::into_strider_err)?;
         Ok(Self {
             inner: CcImpl::Custom(Box::new(built)),
             preset_name: "custom",
