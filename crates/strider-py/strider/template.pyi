@@ -74,6 +74,13 @@ def int_lt(l: TemplateLike, r: TemplateLike) -> Template:
     """Build an unsigned less-than test."""
 def int_slt(l: TemplateLike, r: TemplateLike) -> Template:
     """Build a signed less-than test."""
+def int_ne(l: TemplateLike, r: TemplateLike) -> Template:
+    """Build an integer inequality test, the lifter's `Xor(Equal(l, r), 1)`."""
+def int_le(l: TemplateLike, r: TemplateLike) -> Template:
+    """Build an unsigned less-or-equal test, the lifter's
+    `Xor(Less(r, l), 1)`."""
+def int_sle(l: TemplateLike, r: TemplateLike) -> Template:
+    """Build a signed less-or-equal test, the lifter's `Xor(Sless(r, l), 1)`."""
 def int_carry(l: TemplateLike, r: TemplateLike) -> Template:
     """Build an unsigned-addition carry test."""
 def int_scarry(l: TemplateLike, r: TemplateLike) -> Template:
@@ -123,6 +130,9 @@ def float_eq(l: TemplateLike, r: TemplateLike) -> Template:
     """Build a float equality test."""
 def float_lt(l: TemplateLike, r: TemplateLike) -> Template:
     """Build a float less-than test."""
+def float_ne(l: TemplateLike, r: TemplateLike) -> Template:
+    """Build a float inequality test, the lifter's
+    `Xor(FloatEqual(l, r), 1)`."""
 
 def int_to_float(operand: TemplateLike) -> Template:
     """Build a signed-integer conversion to the nearest representable float."""
