@@ -4,7 +4,6 @@
 use std::collections::VecDeque;
 use std::io;
 
-use rsleigh::MemReader;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::FunctionDotDumper;
@@ -73,7 +72,7 @@ pub(super) fn neighborhood_nodes(
     seen
 }
 
-impl<R: MemReader> FunctionDotDumper<'_, R> {
+impl FunctionDotDumper<'_> {
     /// Standalone DOT for the depth-`depth` neighborhood around `center`, with
     /// `center` highlighted.
     ///
@@ -100,8 +99,7 @@ impl<R: MemReader> FunctionDotDumper<'_, R> {
         let restricted = FunctionDotDumper {
             entry: self.entry,
             function: self.function,
-            sleigh: self.sleigh,
-            regs: std::borrow::Cow::Borrowed(&self.regs),
+            names: self.names,
             node_to_arg_indices: self.node_to_arg_indices.clone(),
             nodes: Some(set),
             center: Some(center),

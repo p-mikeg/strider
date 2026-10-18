@@ -479,21 +479,19 @@ impl Function {
         self.call_ccs = ccs;
     }
 
-    pub fn dot_dumper<'a, R: rsleigh::MemReader>(
+    /// The pretty renderer, naming registers and spaces through `names`.
+    pub fn dot_dumper<'a>(
         &'a self,
-        sleigh: &'a rsleigh::Sleigh<R>,
-    ) -> crate::Result<crate::function::dot::FunctionDotDumper<'a, R>> {
-        let entry = self.entry;
-        let node_to_arg_indices = crate::function::dot::build_arg_reverse_map(self);
-        Ok(crate::function::dot::FunctionDotDumper {
-            entry,
+        names: &'a strider_target::ArchNames,
+    ) -> crate::function::dot::FunctionDotDumper<'a> {
+        crate::function::dot::FunctionDotDumper {
+            entry: self.entry,
             function: self,
-            sleigh,
-            regs: std::borrow::Cow::Owned(sleigh.regs()?),
-            node_to_arg_indices,
+            names,
+            node_to_arg_indices: crate::function::dot::build_arg_reverse_map(self),
             nodes: None,
             center: None,
-        })
+        }
     }
 }
 

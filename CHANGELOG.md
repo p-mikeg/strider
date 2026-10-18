@@ -143,6 +143,11 @@
   same set as an `elf::AddressSet` (`as_slice` for the ranges), from the parse
   that builds the regions. `image(.., RelocationMode::Applied { .. })`
   relocates too, so it can fail where `writable_ranges` did not.
+- `Function::dot_dumper`, `Cfg::dot_dumper`, `Cfg::neighborhood_dot` and
+  `strider_cfg::insn_text` take `&ArchNames` (`arch.names()`) instead of a
+  `Sleigh` and its register table; `FunctionDotDumper` and `CfgDotDumper`
+  lose their reader parameter, and `Function::dot_dumper` no longer returns
+  a `Result`.
 
 ### Changed, Python
 
