@@ -187,6 +187,13 @@
   `Template`, is named by its constructor: `cannot use anything() as a
   rewrite RHS` (was `any`), `one_of()`, `float_le()`, `.when()`, the
   spellings `.ordered()`'s refusal uses.
+- `CallingConvention.custom` raises at construction for stack geometry that
+  does not fit its arch: a stack pointer not as wide as its addresses, a
+  stack-argument stride other than that width, or with no link register a
+  `ret_stack_pop` below it (the first two raised at `analyze`). An unknown
+  register name in either `custom` names its list:
+  `CallingConvention.custom: arg_passing_regs: unknown sleigh register name
+  "X"`.
 
 ### Added, Python
 
@@ -258,6 +265,11 @@
   comparison holding the pair written, not the `Xor` the lowering adds over
   it, under every wrapper; on `float_le` and `float_is_nan` it is a no-op (it
   pinned their `Or` / `Xor`). Python's `.ordered()` already did this.
+- `Lifter::build_ir_with`, and so `Strider::analyze`, refuse a default
+  calling convention that fails `BuiltCallingConvention::validate` (a
+  struct literal; every built one is validated already). Per-address
+  overrides keep the stack-geometry check alone. Convention errors say
+  "stack pointer" where they said `stack_vn`.
 
 ### Fixed
 
@@ -386,6 +398,8 @@
   code space and `ram` address width, which is all a render reads;
   `SleighArch::names()` builds it once per preset per process.
   `ArchPreset::name()` is the preset's constructor name.
+- `calling_convention::{vn_for_name, regs_to_vns}` are public, the latter
+  over any iterator of names.
 
 ## 0.2.0
 
