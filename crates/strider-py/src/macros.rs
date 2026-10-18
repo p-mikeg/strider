@@ -36,7 +36,6 @@ macro_rules! forall_preset {
                 fn $name(_cls: &Bound<'_, PyType>) -> Self {
                     Self {
                         inner: <$inner_ty>::$name(),
-                        preset_name: stringify!($name),
                     }
                 }
             )*

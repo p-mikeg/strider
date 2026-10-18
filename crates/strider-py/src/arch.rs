@@ -10,14 +10,13 @@ use crate::macros::forall_preset;
 #[derive(Clone)]
 pub struct PySleighArch {
     pub(crate) inner: strider_target::SleighArch,
-    pub(crate) preset_name: &'static str,
 }
 
 #[pymethods]
 impl PySleighArch {
     /// The preset name this arch was constructed from (e.g. `"x86_64"`).
     fn name(&self) -> &'static str {
-        self.preset_name
+        self.inner.preset().name()
     }
 
     /// Byte order of this architecture: `"little"` or `"big"`.
@@ -30,7 +29,7 @@ impl PySleighArch {
 
     /// `SleighArch.<preset>()`, the call that produces this arch.
     fn __repr__(&self) -> String {
-        format!("SleighArch.{}()", self.preset_name)
+        format!("SleighArch.{}()", self.name())
     }
 }
 
