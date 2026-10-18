@@ -1,6 +1,6 @@
 //! The value-op constructor vocabulary, stated once and emitted twice: over
 //! `PyPat` for `strider.pattern` (matching) and over `PyTemplate` for
-//! `strider.template` (building). Both modules expose the same 49 names with
+//! `strider.template` (building). Both modules expose the same 53 names with
 //! the same arities and the same `PatRepr` variants.
 
 /// One `#[pyfunction]` per row. `$ty` is the module's wrapper, `$verb` the
@@ -117,6 +117,12 @@ macro_rules! value_ops {
                 "`IntCmpOp::Scarry` (signed add overflow)."]
             [binary int_sborrow, IntCmp, strider_ir::IntCmpOp::Sborrow,
                 "`IntCmpOp::Sborrow` (signed subtract overflow)."]
+            [binary_bare int_ne, IntNe,
+                "integer `a != b`, the lifter's `Xor(Equal(a, b), 1)`."]
+            [binary_bare int_le, IntLe,
+                "unsigned `a <= b`, the lifter's `Xor(Less(b, a), 1)`."]
+            [binary_bare int_sle, IntSle,
+                "signed `a <= b`, the lifter's `Xor(Sless(b, a), 1)`."]
             [unary int_neg, IntUnary, IntUnaryKind::Neg,
                 "`IntUnaryOp::Neg`, two's-complement negation (`-x`)."]
             [unary_bare int_not, BitNot,
@@ -157,6 +163,8 @@ macro_rules! value_ops {
                 "`FloatCmpOp::Equal` (`a == b`)."]
             [binary float_lt, FloatCmp, strider_ir::FloatCmpOp::Less,
                 "`FloatCmpOp::Less` (`a < b`)."]
+            [binary_bare float_ne, FloatNe,
+                "float `a != b`, the lifter's `Xor(FloatEqual(a, b), 1)`."]
             [unary int_to_float, Cast, CastKind::IntToFloat,
                 "`IntToFloat`, a signed integer to the nearest representable float."]
             [unary float_to_int, Cast, CastKind::FloatToInt,
