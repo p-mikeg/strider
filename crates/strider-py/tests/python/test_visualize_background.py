@@ -25,14 +25,13 @@ def _analyzed():
 
 def test_background_serves_and_leaves_the_calling_thread_free():
     """The point of the mode: browse and query at the same time. Rendering runs
-    on the server thread through a decoder of its own, so the caller's handle
-    is never borrowed out from under it."""
+    on the server thread and reads the arch's name table, so the caller's
+    handle is never borrowed out from under it."""
     fn = _analyzed().function
     port = strider.explore.visualize(fn, background=True)
     try:
         entry = _get(port, "/entry").strip()
-        # pretty rendering resolves register names, which is the path that
-        # needs a decoder at all
+        # pretty rendering resolves register names
         dot = _get(port, f"/dot?center={entry}&pretty=1")
         assert dot.startswith("digraph")
         # ...while this thread keeps using the original handle

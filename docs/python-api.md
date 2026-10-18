@@ -830,11 +830,10 @@ port = prog.visualize(fn, background=True)
 strider.explore.shutdown(port)   # stops the server and joins its thread
 ```
 
-The server renders through its own decoder, built from the lifter's `arch`,
-`reader()` and `rom()`, so your handle stays free to `analyze` while a page
-renders. `shutdown` is registered to run before the interpreter joins
-non-daemon threads, so an explorer left running does not hang or abort the
-process at exit.
+A render reads the arch's name table, not a decoder, so your handle stays free
+to `analyze` while a page renders. `shutdown` is registered to run before the
+interpreter joins non-daemon threads, so an explorer left running does not hang
+or abort the process at exit.
 
 For static output use the renderers in
 [section 3](#3-the-function-and-its-nodes).

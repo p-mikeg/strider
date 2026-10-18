@@ -6,7 +6,6 @@ from __future__ import annotations
 from typing import Optional, Sequence, Union
 
 from .cfg import Cfg, DotStyle
-from .lift import Lifter
 from .pattern import (
     Capture,
     CaptureKey,
@@ -145,7 +144,6 @@ class Function:
         path: Optional[str] = ...,
         *,
         pretty: Union[bool, DotStyle] = ...,
-        lifter: Optional["Lifter"] = ...,
     ) -> Optional[str]:
         """Render the IR graph to DOT. Returns the string when `path` is
         `None`, else writes it to `path` and returns `None`.
@@ -156,7 +154,7 @@ class Function:
         virtual nodes.
 
         `pretty=True` inlines constants, adds virtual nodes, and resolves
-        register names against the disassembler behind the parent `Cfg`. A
+        register names through the arch's name table, which needs no decoder. A
         `DotStyle` name in place of `True` picks the theme; an unrecognised
         name raises `StriderError`.
         """
@@ -191,7 +189,6 @@ class Function:
         count_producers: bool = ...,
         *,
         pretty: bool = ...,
-        lifter: Optional["Lifter"] = ...,
     ) -> str:
         """DOT for the nodes within `depth` hops of node `center`. A hub
         (degree over `hub_cap`) is shown and its inputs are followed, but its

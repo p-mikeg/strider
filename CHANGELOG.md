@@ -24,6 +24,11 @@
 - `OptimizerPipeline.default().post_passes` no longer lists
   `StackOffsetDetect`; every run still records the stack and heap slots after
   its post-passes.
+- `lifter=` is gone from `Function.to_dot`, `Function.neighborhood_dot`,
+  `Cfg.to_dot` and `Cfg.neighborhood_dot`, and with it the check that a
+  supplied handle matched the graph's arch: a render reads the arch's name
+  table, not a decoder, so it runs on any thread and while the owning
+  `Lifter` is mid-`analyze`, where both raised.
 
 ### Breaking, Rust
 

@@ -230,30 +230,6 @@ class _Visualizer(Protocol):
     def completions(self) -> list[str]: ...
 
 
-class _RenderSources:
-    """What a serving thread needs to build a decoder of its own.
-
-    Captured from the target's own handle when the visualizer is CONSTRUCTED,
-    never when a render arrives. Reading `arch` / `reader()` / `rom()` takes a
-    shared borrow of that handle, and `analyze` holds it mutably with the GIL
-    released, so a read from the serving thread fails with "Already mutably
-    borrowed" for as long as the analysis runs. Constructing happens on the
-    caller's thread, where no analysis of theirs can be in flight.
-    """
-
-    def __init__(self, lifter: Any) -> None:
-        self._arch = lifter.arch
-        self._mem = lifter.reader()
-        self._rom = lifter.rom()
-
-    def build(self) -> Any:
-        """A handle pinned to the calling thread. Costs an sla parse, so the
-        caller keeps it rather than building one per render."""
-        from . import lift as _lift
-
-        return _lift.lifter(self._arch, self._mem, self._rom)
-
-
 #: A neighborhood knob set to 0 means "no limit". The renderers compare against
 #: these bounds rather than allocating from them, so an unreachable bound is how
 #: "unlimited" is spelled.
@@ -275,16 +251,6 @@ class _IrVisualizer:
     def __init__(self, function: Function, whole: bool = True) -> None:
         self._fn = function
         self._whole = whole
-        self._sources = _RenderSources(function.cfg.lifter)
-        self._render_lifter: Any = None
-
-    def _lifter(self) -> Any:
-        """A decoder owned by whichever thread renders, built from
-        `self._sources`. See `_RenderSources` for why those are captured
-        before serving rather than read here."""
-        if self._render_lifter is None:
-            self._render_lifter = self._sources.build()
-        return self._render_lifter
 
     def entry(self) -> int:
         """The node id to center the first view on."""
@@ -309,11 +275,9 @@ class _IrVisualizer:
         structure-faithful view for when the readable one cannot be trusted.
         `whole` renders every node and ignores the neighborhood knobs."""
         pretty = params.get("pretty", True)
-        # Only a pretty render needs a decoder; the raw one is pure IR.
-        lf = self._lifter() if pretty else None
         if params.pop("whole", False):
-            return cast("str", self._fn.to_dot(pretty=pretty, lifter=lf))
-        return self._fn.neighborhood_dot(center, **_uncap(params), lifter=lf)
+            return cast("str", self._fn.to_dot(pretty=pretty))
+        return self._fn.neighborhood_dot(center, **_uncap(params))
 
     def search(self, query: str) -> dict[str, Any]:
         """Node ids matching the pattern expression `query`."""
@@ -332,17 +296,7 @@ class _CfgVisualizer:
         reuse by every text search."""
         self._cfg = cfg
         self._whole = whole
-        # Decodes, so it runs here, on the thread that owns the lifter, and the
-        # server thread only ever reads the result.
         self._texts: dict[int, str] = cfg._region_texts()
-        self._sources = _RenderSources(cfg.lifter)
-        self._render_lifter: Any = None
-
-    def _lifter(self) -> Any:
-        """A decoder owned by whichever thread renders; see `_IrVisualizer`."""
-        if self._render_lifter is None:
-            self._render_lifter = self._sources.build()
-        return self._render_lifter
 
     def entry(self) -> int:
         """The region index to center the first view on."""
@@ -363,10 +317,9 @@ class _CfgVisualizer:
     def dot(self, center: int, params: dict[str, Any]) -> str:
         """DOT for the regions around `center`, `params` holding one value per
         declared control. `whole` renders every region."""
-        lf = self._lifter()
         if params.pop("whole", False):
-            return cast("str", self._cfg.to_dot(lifter=lf))
-        return self._cfg.neighborhood_dot(center, **_uncap(params), lifter=lf)
+            return cast("str", self._cfg.to_dot())
+        return self._cfg.neighborhood_dot(center, **_uncap(params))
 
     def search(self, query: str) -> dict[str, Any]:
         """Center the region containing `query` when it parses as an address,
@@ -660,8 +613,7 @@ class _Server(socketserver.TCPServer):
     """Carries the visualizer, its entry node and its render controls for
     `_Handler` to read.
 
-    Single-threaded: one request at a time. Decoding is pinned to a thread, so
-    rendering uses the visualizer's own `Lifter`.
+    Single-threaded: one request at a time.
     """
 
     allow_reuse_address = True
@@ -833,9 +785,8 @@ def visualize(
     the server, since a thread still parked in the serve loop at interpreter
     exit aborts the process.
 
-    Either way the server renders through a decoder of its own, built on the
-    serving thread from this one's arch and readers, since decoding is pinned
-    to its creating thread."""
+    Either way a render reads the arch's name table, not a decoder, so the
+    server renders while this thread keeps analysing."""
     if depth is not None and depth < 0:
         # The control clamps to its min of 0, and 0 is the uncapped sentinel.
         raise ValueError(f"depth must be >= 0, got {depth}")
@@ -866,7 +817,7 @@ def _serve_background(
 
     Binding happens on THIS thread, before the worker starts, so a port already
     in use raises here instead of vanishing into the thread. Rendering then runs
-    on the worker, which is why the visualizer needs a decoder of its own."""
+    on the worker."""
     srv = _Server((host, port), visualizer, depth)
     bound_port: int = srv.server_address[1]
     url = _url(host, bound_port)
