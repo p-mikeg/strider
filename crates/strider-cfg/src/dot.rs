@@ -11,31 +11,28 @@ use anyhow::anyhow;
 use crate::Result;
 
 impl Cfg {
-    /// `sleigh` is borrowed for register-name resolution and instruction
-    /// formatting.
-    pub fn dot_dumper<'a, R: rsleigh::MemReader>(
-        &'a self,
-        sleigh: &'a rsleigh::Sleigh<R>,
-    ) -> CfgDotDumper<'a, R> {
+    /// Names registers and spaces through `names`; a LOAD / STORE space id
+    /// resolves through this CFG's own space ids.
+    pub fn dot_dumper<'a>(&'a self, names: &'a strider_target::ArchNames) -> CfgDotDumper<'a> {
         CfgDotDumper {
             cfg: self,
-            sleigh,
+            names,
             nodes: None,
             center: None,
         }
     }
 }
 
-pub struct CfgDotDumper<'a, R: rsleigh::MemReader> {
+pub struct CfgDotDumper<'a> {
     cfg: &'a Cfg,
-    sleigh: &'a rsleigh::Sleigh<R>,
+    names: &'a strider_target::ArchNames,
     /// Restricts the dump to these regions; `None` dumps every region.
     nodes: Option<&'a rustc_hash::FxHashSet<NodeIndex>>,
     /// Rendered with a gold border.
     center: Option<NodeIndex>,
 }
 
-impl<'a, R: rsleigh::MemReader> CfgDotDumper<'a, R> {
+impl<'a> CfgDotDumper<'a> {
     /// Restricts the dump to `nodes` and highlights `center`, so a
     /// neighborhood renders through the same label and edge rules as a whole
     /// CFG rather than a second emitter.
@@ -50,18 +47,12 @@ impl<'a, R: rsleigh::MemReader> CfgDotDumper<'a, R> {
     }
 }
 
-impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
+impl GraphDotDumper for CfgDotDumper<'_> {
     type Node = NodeIndex;
     type Error = anyhow::Error;
-    /// Resolving `regs` walks the arch's register table over FFI, and
-    /// `GraphDot` calls [`Self::dump_as_dot`] once per region, so it is built
-    /// once per dump here.  The failure is carried as text: creating the state
-    /// cannot fail.
-    type State = std::result::Result<rsleigh::SleighRegs, String>;
+    type State = ();
 
-    fn create_initial_state(&self) -> Self::State {
-        self.sleigh.regs().map_err(|e| e.to_string())
-    }
+    fn create_initial_state(&self) -> Self::State {}
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
         self.cfg
@@ -75,7 +66,7 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
         &self,
         node_id: Self::Node,
         out: &mut dot::DotEmitter,
-        state: &mut Self::State,
+        _state: &mut Self::State,
     ) -> Result<()> {
         let dot_id = node_id.index().to_string();
         let node = self
@@ -88,12 +79,9 @@ impl<R: rsleigh::MemReader> GraphDotDumper for CfgDotDumper<'_, R> {
 
         let mut label = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
 
-        let regs = state
-            .as_ref()
-            .map_err(|e| anyhow!("sleigh register table unavailable: {e}"))?;
         for insn in &node.insns {
             let insn_addr = insn.addr.machine_addr.addr;
-            let pretty = crate::insn_text(&insn.insn, &self.cfg.space_ids, self.sleigh, regs);
+            let pretty = crate::insn_text(&insn.insn, &self.cfg.space_ids, self.names);
             write!(&mut label, "\\l{insn_addr:#x}: {pretty}").map_err(anyhow::Error::from)?;
         }
         write!(&mut label, "\\l").map_err(anyhow::Error::from)?;
@@ -165,7 +153,6 @@ mod tests {
 
     use crate::{CfgOptions, DecodeEngine};
 
-    /// Keeps the engine, and with it the `Sleigh`, alive across the render.
     fn dot_string(bytes: Vec<u8>, start: u64) -> String {
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(bytes, start);
@@ -175,7 +162,7 @@ mod tests {
         let cfg = engine
             .build_cfg(start.into(), &CfgOptions::default())
             .expect("build_cfg on synthetic bytes");
-        GraphDot::new(cfg.dot_dumper(engine.sleigh()), DotStyle::dark_cfg())
+        GraphDot::new(cfg.dot_dumper(arch.names()), DotStyle::dark_cfg())
             .as_dot()
             .expect("render dot")
     }

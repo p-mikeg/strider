@@ -12,29 +12,12 @@ fn int_const_node(f: &mut Function, v: u128, ty: ValueType) -> NodeId {
         .create_node(NodeKind::IntConst(id), [], [ValueKind::Typed(ty)])
 }
 
-/// Empty-buffer probe: these tests decode no instructions.
-fn probe_sleigh() -> rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
-    let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-    rsleigh::Sleigh::new(
-        rsleigh::sla_spec::SLA_SPEC_X86_64,
-        rsleigh::pspec::PSPEC_X86_64,
-        probe,
-    )
-    .expect("create probe Sleigh")
-}
-
-type ProbeReader = rsleigh::mem_readers::BufMemReader<Vec<u8>>;
-
-fn make_dumper<'a>(
-    function: &'a Function,
-    entry: NodeId,
-    sleigh: &'a rsleigh::Sleigh<ProbeReader>,
-) -> FunctionDotDumper<'a, ProbeReader> {
+/// These tests decode no instructions.
+fn make_dumper(function: &Function, entry: NodeId) -> FunctionDotDumper<'_> {
     FunctionDotDumper {
         entry,
         function,
-        sleigh,
-        regs: std::borrow::Cow::Owned(sleigh.regs().expect("regs")),
+        names: strider_target::SleighArch::x86_64().names(),
         node_to_arg_indices: build_arg_reverse_map(function),
         nodes: None,
         center: None,
@@ -52,8 +35,7 @@ fn render_with_state(
     function: &Function,
     entry: NodeId,
 ) -> (String, super::FunctionDotDumperState) {
-    let sleigh = probe_sleigh();
-    let dumper = make_dumper(function, entry, &sleigh);
+    let dumper = make_dumper(function, entry);
     let mut out = ::dot::DotEmitter::new("G", &::dot::DotStyle::empty());
     let mut state = dumper.create_initial_state();
     for node in dumper.iter_nodes() {
@@ -70,8 +52,7 @@ fn phi_without_an_output_labels_rather_than_panicking() {
     let mut f = test_function();
     let entry = f.entry();
     let phi = f.graph_mut().create_node(NodeKind::Phi, [], []);
-    let sleigh = probe_sleigh();
-    let dumper = make_dumper(&f, entry, &sleigh);
+    let dumper = make_dumper(&f, entry);
     assert_eq!(dumper.pretty_label(phi), "φ Val");
 }
 
@@ -494,8 +475,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     f.graph_mut()
         .create_node(NodeKind::Return, [cs_false_ctrl], []);
 
-    let sleigh = probe_sleigh();
-    let dumper = make_dumper(&f, entry, &sleigh);
+    let dumper = make_dumper(&f, entry);
 
     let style = ::dot::DotStyle::empty();
     let mut emitter = ::dot::DotEmitter::new("test", &style);
@@ -1067,8 +1047,7 @@ fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
     f.graph_mut()
         .create_node(NodeKind::Return, [ctrl, memv, a2v], []);
 
-    let sleigh = probe_sleigh();
-    let dumper = make_dumper(&f, entry, &sleigh);
+    let dumper = make_dumper(&f, entry);
 
     let dot = dumper.neighborhood_dot(add1, 3, 12, 100, false).unwrap();
     let decl = node_decls(&dot)
@@ -1134,8 +1113,7 @@ fn neighborhood_duplicates_shared_const_per_use() {
     let center = mk_add(&mut f, a1v, a2v);
 
     let entry = f.entry();
-    let sleigh = probe_sleigh();
-    let dumper = make_dumper(&f, entry, &sleigh);
+    let dumper = make_dumper(&f, entry);
     let dot = dumper.neighborhood_dot(center, 3, 12, 100, false).unwrap();
 
     let sevens = node_decls(&dot)

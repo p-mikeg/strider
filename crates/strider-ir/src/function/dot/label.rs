@@ -1,28 +1,22 @@
-use rsleigh::MemReader;
-
 use super::{FunctionDotDumper, node_fillcolor};
 use crate::IRViewer;
 use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
 /// A REGISTER varnode matching a named register renders as that name (`"RAX"`);
 /// anything else as `<space>[0x<off>]:<size>`, or `0x<off>:<size>` for CONST.
-pub(crate) fn vn_to_display_name<R: MemReader>(
-    sleigh: &rsleigh::Sleigh<R>,
-    regs: &rsleigh::SleighRegs,
-    vn: &rsleigh::Vn,
-) -> String {
-    vn.ctx_fmt(sleigh, regs).to_string()
+pub(crate) fn vn_to_display_name(names: &strider_target::ArchNames, vn: &rsleigh::Vn) -> String {
+    names.vn(*vn).to_string()
 }
 
-impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
+impl FunctionDotDumper<'_> {
     fn vn_to_name(&self, vn: &rsleigh::Vn) -> String {
-        vn_to_display_name(self.sleigh, &self.regs, vn)
+        vn_to_display_name(self.names, vn)
     }
 
     /// Checks the default code space first so arches whose code space isn't
     /// literally `RAM` still render as "ram".
     fn pretty_vnspace(&self, space: rsleigh::VnSpace) -> &'static str {
-        let default = self.sleigh.default_code_space();
+        let default = self.names.default_code_space();
         if space == default {
             return "ram";
         }
@@ -254,90 +248,74 @@ mod tests {
     use super::vn_to_display_name;
     use rsleigh::{Vn, VnSpace};
 
-    /// Empty-buffer probe: these tests decode no instructions.
-    fn probe_sleigh() -> rsleigh::Sleigh<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
-        let probe = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-        rsleigh::Sleigh::new(
-            rsleigh::sla_spec::SLA_SPEC_X86_64,
-            rsleigh::pspec::PSPEC_X86_64,
-            probe,
-        )
-        .expect("probe Sleigh")
+    /// These tests decode no instructions.
+    fn names() -> &'static strider_target::ArchNames {
+        strider_target::SleighArch::x86_64().names()
     }
 
     #[test]
     fn const_formats_as_hex_offset_colon_size() {
-        let sleigh = probe_sleigh();
         let vn = Vn {
             addr_off: 0x2a,
             addr_space: VnSpace::CONST,
             size: 4,
         };
-        let name = vn_to_display_name(&sleigh, &sleigh.regs().unwrap(), &vn);
-        assert_eq!(name, "0x2a:4");
+        assert_eq!(vn_to_display_name(names(), &vn), "0x2a:4");
     }
 
     #[test]
     fn ram_formats_as_ram_offset_size() {
-        let sleigh = probe_sleigh();
         let vn = Vn {
             addr_off: 0x1000,
             addr_space: VnSpace::RAM,
             size: 8,
         };
-        let name = vn_to_display_name(&sleigh, &sleigh.regs().unwrap(), &vn);
-        assert_eq!(name, "ram[0x1000]:8");
+        assert_eq!(vn_to_display_name(names(), &vn), "ram[0x1000]:8");
     }
 
     #[test]
     fn unique_formats_as_unique_offset_size() {
-        let sleigh = probe_sleigh();
         let vn = Vn {
             addr_off: 0x80,
             addr_space: VnSpace::UNIQUE,
             size: 1,
         };
-        let name = vn_to_display_name(&sleigh, &sleigh.regs().unwrap(), &vn);
-        assert_eq!(name, "unique[0x80]:1");
+        assert_eq!(vn_to_display_name(names(), &vn), "unique[0x80]:1");
     }
 
     #[test]
     fn register_known_offset_returns_register_name() {
-        let sleigh = probe_sleigh();
-        let regs = sleigh.regs().expect("regs");
         // The register table varies across .sla versions, so try several.
         let candidates = ["RAX", "RDI", "RSI", "EAX", "AX"];
         let (name, vn) = candidates
             .iter()
-            .find_map(|&n| regs.name_to_vn(n).map(|v| (n, v)))
+            .find_map(|&n| names().regs().name_to_vn(n).map(|v| (n, v)))
             .expect("no known register resolved");
-        let resolved = vn_to_display_name(&sleigh, &regs, &vn);
-        assert_eq!(resolved, name);
+        assert_eq!(vn_to_display_name(names(), &vn), name);
     }
 
     #[test]
     fn register_unknown_offset_falls_back_to_space_addr_size() {
-        let sleigh = probe_sleigh();
         // A REGISTER-space offset the register table won't map.
         let bogus = Vn {
             addr_off: 0xffff_ffff_ffff_ffff,
             addr_space: VnSpace::REGISTER,
             size: 1,
         };
-        let resolved = vn_to_display_name(&sleigh, &sleigh.regs().unwrap(), &bogus);
-        assert_eq!(resolved, "register[0xffffffffffffffff]:1");
+        assert_eq!(
+            vn_to_display_name(names(), &bogus),
+            "register[0xffffffffffffffff]:1"
+        );
     }
 
     #[test]
     fn unknown_space_byte_falls_back_to_shortcut_char() {
-        let sleigh = probe_sleigh();
         // A shortcut that is none of CONST/REGISTER/RAM/UNIQUE.
         let exotic = Vn {
             addr_off: 0,
             addr_space: VnSpace::new(b'?'),
             size: 1,
         };
-        let resolved = vn_to_display_name(&sleigh, &sleigh.regs().unwrap(), &exotic);
-        assert_eq!(resolved, "?[0x0]:1");
+        assert_eq!(vn_to_display_name(names(), &exotic), "?[0x0]:1");
     }
 }
