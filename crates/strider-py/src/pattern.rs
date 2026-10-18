@@ -21,7 +21,7 @@ use strider_pattern::{
 };
 
 use crate::errors::into_strider_err;
-use crate::value_ops::{value_op, value_ops};
+use crate::value_ops::value_ops;
 use strider_pattern::WithOutput;
 
 /// Binds a matched node so its value, op variant or fingerprint can be read
@@ -214,32 +214,15 @@ pub(crate) enum CastKind {
     FloatToFloat,
 }
 
-/// The recursive shape of a `PyPat`; recompiled fresh on every query.
-///
-/// Match-only variants have no rewrite-RHS form and error from
-/// `compile_template`.
-pub(crate) enum PatRepr {
-    Any,
+/// A build-valid shape: what a `Template` holds, and what a `Pat` built by a
+/// constructor `strider.template` shares holds under [`PatRepr::Build`].
+/// Every variant compiles on both sides.
+pub(crate) enum TmplRepr {
     Var(Capture),
-    ValueOfWidth(u32),
-    InputsOfWidth(u32, Py<PyAny>),
     IntConst(u128),
     IntConstAnyWidth(i64),
-    IntConstAnyWidthAnyOf(Vec<i64>),
-    IntConstAnyOf(Vec<u128>),
     BoolConst(bool),
     FloatConst(u64),
-    AnyInt(Option<Capture>),
-    AnyBool(Option<Capture>),
-    AnyFloat(Option<Capture>),
-    AnyIntConst(Option<Capture>),
-    AnyBoolConst(Option<Capture>),
-    AnyFloatConst(Option<Capture>),
-    InitialVar,
-    InitialVarFor(rsleigh::Vn),
-    /// Alternation (`one_of` union / `first_of` cut when the flag is set).
-    /// Match-only: a rewrite RHS must build one concrete shape.
-    OneOf(Vec<Py<PyAny>>, bool),
     IntBinary(strider_ir::IntBinaryOp, Py<PyAny>, Py<PyAny>),
     /// Lowers to `int_add(l, int_neg(r))`.
     Sub(Py<PyAny>, Py<PyAny>),
@@ -259,13 +242,37 @@ pub(crate) enum PatRepr {
     FloatSub(Py<PyAny>, Py<PyAny>),
     FloatUnary(strider_ir::FloatUnaryOp, Py<PyAny>),
     FloatCmp(strider_ir::FloatCmpOp, Py<PyAny>, Py<PyAny>),
+    /// Lowers to `int_xor(float_eq(l, r), 1)`.
     FloatNe(Py<PyAny>, Py<PyAny>),
-    FloatLe(Py<PyAny>, Py<PyAny>),
-    FloatIsNan(Py<PyAny>),
     /// Boolean ops are `IntBinaryOp` at `I1`.
     BoolBinary(strider_ir::IntBinaryOp, Py<PyAny>, Py<PyAny>),
     /// Lowers to `int_xor(x, 1)`.
     BoolNot(Py<PyAny>),
+}
+
+/// The recursive shape of a `PyPat`; recompiled fresh on every query.
+/// `Build` holds the shapes a rewrite can build too; the rest are match-only.
+pub(crate) enum PatRepr {
+    Build(TmplRepr),
+    Any,
+    ValueOfWidth(u32),
+    InputsOfWidth(u32, Py<PyAny>),
+    IntConstAnyWidthAnyOf(Vec<i64>),
+    IntConstAnyOf(Vec<u128>),
+    AnyInt(Option<Capture>),
+    AnyBool(Option<Capture>),
+    AnyFloat(Option<Capture>),
+    AnyIntConst(Option<Capture>),
+    AnyBoolConst(Option<Capture>),
+    AnyFloatConst(Option<Capture>),
+    InitialVar,
+    InitialVarFor(rsleigh::Vn),
+    /// Alternation (`one_of` union / `first_of` cut when the flag is set).
+    OneOf(Vec<Py<PyAny>>, bool),
+    /// `bool_or(float_lt(l, r), float_eq(l, r))`: one pair in two slots.
+    FloatLe(Py<PyAny>, Py<PyAny>),
+    /// `int_xor(float_eq(x, x), 1)`: one operand in both slots.
+    FloatIsNan(Py<PyAny>),
     AnyIntBinary(Capture, Py<PyAny>, Py<PyAny>),
     AnyIntUnary(Capture, Py<PyAny>),
     AnyIntCmp(Capture, Py<PyAny>, Py<PyAny>),
@@ -278,7 +285,7 @@ pub(crate) enum PatRepr {
     // per wrapper tells the collector about references that do not exist.
     Captured(Py<PyAny>, Capture),
     Guarded(Py<PyAny>, Py<PyAny>),
-    /// Pins the wrapped shape's root operand order. Match-only.
+    /// Pins the wrapped shape's operand order.
     Ordered(Py<PyAny>),
     OfWidth(Py<PyAny>, u32),
     ValueTy(Py<PyAny>, strider_ir::node::ValueType),
@@ -315,6 +322,10 @@ impl PyPat {
             repr: Arc::new(repr),
             depth: 0,
         }
+    }
+
+    pub(crate) fn from_tmpl(t: TmplRepr) -> Self {
+        Self::from_repr(PatRepr::Build(t))
     }
 }
 
@@ -429,7 +440,7 @@ pub(crate) fn compile_operand_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch>
     // narrow with `.of_width`. Anything wider than 128 bits has no carrier and
     // falls through to the operand-kind error below.
     if let Some(v) = extract_int_operand(ob)? {
-        return PatRepr::IntConst(v).compile_match(py);
+        return TmplRepr::IntConst(v).compile_match(py);
     }
     if let Ok(c) = ob.extract::<PyRef<'_, PyCapture>>() {
         let cap = c.inner;
@@ -484,14 +495,13 @@ pub(crate) fn compile_operand_template(ob: &Bound<'_, PyAny>) -> PyResult<DynTem
     if let Ok(t) = ob.downcast::<crate::template::PyTemplate>() {
         return t.borrow().repr.compile_template(py);
     }
-    // Back-compat: a bare `Pat` is still accepted as a nested RHS operand.
-    // Only its build-valid subset compiles; match-only shapes error.
+    // A bare `Pat` nests as a RHS operand until 0.3.0 removes it.
     if let Ok(p) = ob.downcast::<PyPat>() {
-        return p.borrow().repr.compile_template(py);
+        return pat_as_template(&p.borrow().repr, py);
     }
     // A raw int builds an `int_const(value)` on the RHS too.
     if let Some(v) = extract_int_operand(ob)? {
-        return PatRepr::IntConst(v).compile_template(py);
+        return TmplRepr::IntConst(v).compile_template(py);
     }
     if let Ok(c) = ob.extract::<PyRef<'_, PyCapture>>() {
         let cap = c.inner;
@@ -626,57 +636,121 @@ fn wraps_alternation(ob: &Bound<'_, PyAny>) -> bool {
 /// shape otherwise. Commutativity itself is not decided here: the matcher pins
 /// nothing unless the matched IR kind reports `is_commutative`.
 fn orderable(repr: &PatRepr) -> Result<(), &'static str> {
-    match repr {
-        PatRepr::IntBinary(..)
-        | PatRepr::Sub(..)
-        | PatRepr::IntCmp(..)
-        | PatRepr::IntNe(..)
-        | PatRepr::IntLe(..)
-        | PatRepr::IntSle(..)
-        | PatRepr::FloatBinary(..)
-        | PatRepr::FloatSub(..)
-        | PatRepr::FloatCmp(..)
-        | PatRepr::FloatNe(..)
-        | PatRepr::FloatLe(..)
+    let pair = match repr {
+        PatRepr::Build(t) => matches!(
+            t,
+            TmplRepr::IntBinary(..)
+                | TmplRepr::Sub(..)
+                | TmplRepr::IntCmp(..)
+                | TmplRepr::IntNe(..)
+                | TmplRepr::IntLe(..)
+                | TmplRepr::IntSle(..)
+                | TmplRepr::FloatBinary(..)
+                | TmplRepr::FloatSub(..)
+                | TmplRepr::FloatCmp(..)
+                | TmplRepr::FloatNe(..)
+                | TmplRepr::BoolBinary(..)
+        ),
+        PatRepr::FloatLe(..)
         | PatRepr::FloatIsNan(_)
-        | PatRepr::BoolBinary(..)
         | PatRepr::AnyIntBinary(..)
         | PatRepr::AnyIntCmp(..)
         | PatRepr::AnyBoolBinary(..)
         | PatRepr::AnyFloatBinary(..)
-        | PatRepr::AnyFloatCmp(..) => Ok(()),
-        PatRepr::Any => Err("anything()"),
-        PatRepr::Var(_) => Err("var()"),
-        PatRepr::ValueOfWidth(_) => Err("value_of_width()"),
-        PatRepr::InputsOfWidth(..) => Err("inputs_of_width()"),
-        PatRepr::IntConst(_) | PatRepr::AnyIntConst(_) => Err("int_const()"),
-        PatRepr::IntConstAnyWidth(_) => Err("int_const_any_width()"),
-        PatRepr::IntConstAnyWidthAnyOf(_) => Err("int_const_any_width([..])"),
-        PatRepr::IntConstAnyOf(_) => Err("int_const([..])"),
-        PatRepr::BoolConst(_) | PatRepr::AnyBoolConst(_) => Err("bool_const()"),
-        PatRepr::FloatConst(_) | PatRepr::AnyFloatConst(_) => Err("float_const()"),
-        PatRepr::AnyInt(_) => Err("any_int()"),
-        PatRepr::AnyBool(_) => Err("any_bool()"),
-        PatRepr::AnyFloat(_) => Err("any_float()"),
-        PatRepr::InitialVar => Err("initial_var()"),
-        PatRepr::InitialVarFor(_) => Err("initial_var_for()"),
-        PatRepr::OneOf(_, true) => Err("first_of()"),
-        PatRepr::OneOf(_, false) => Err("one_of()"),
-        PatRepr::BitNot(_) => Err("int_not()"),
-        PatRepr::IntUnary(IntUnaryKind::Neg, _) => Err("int_neg()"),
-        PatRepr::IntUnary(IntUnaryKind::Popcount, _) => Err("int_popcount()"),
-        PatRepr::IntUnary(IntUnaryKind::Lzcount, _) => Err("int_lzcount()"),
-        PatRepr::Cast(..) | PatRepr::Extend(..) => Err("a cast"),
-        PatRepr::FloatUnary(..) => Err("a float unary op"),
-        PatRepr::BoolNot(_) => Err("bool_not()"),
-        PatRepr::AnyIntUnary(..) => Err("any_int_unary()"),
-        PatRepr::AnyFloatUnary(..) => Err("any_float_unary()"),
-        PatRepr::Finished { .. } => Err("a control / variadic builder"),
-        PatRepr::Captured(..)
+        | PatRepr::AnyFloatCmp(..) => true,
+        PatRepr::Any
+        | PatRepr::ValueOfWidth(_)
+        | PatRepr::InputsOfWidth(..)
+        | PatRepr::IntConstAnyWidthAnyOf(_)
+        | PatRepr::IntConstAnyOf(_)
+        | PatRepr::AnyInt(_)
+        | PatRepr::AnyBool(_)
+        | PatRepr::AnyFloat(_)
+        | PatRepr::AnyIntConst(_)
+        | PatRepr::AnyBoolConst(_)
+        | PatRepr::AnyFloatConst(_)
+        | PatRepr::InitialVar
+        | PatRepr::InitialVarFor(_)
+        | PatRepr::OneOf(..)
+        | PatRepr::AnyIntUnary(..)
+        | PatRepr::AnyFloatUnary(..)
+        | PatRepr::Captured(..)
         | PatRepr::Guarded(..)
         | PatRepr::Ordered(_)
         | PatRepr::OfWidth(..)
-        | PatRepr::ValueTy(..) => Err("a chained wrapper"),
+        | PatRepr::ValueTy(..)
+        | PatRepr::Finished(_) => false,
+    };
+    if pair { Ok(()) } else { Err(repr.name()) }
+}
+
+impl TmplRepr {
+    /// The constructor that builds this shape, as an error names it.
+    fn name(&self) -> &'static str {
+        match self {
+            TmplRepr::Var(_) => "var()",
+            TmplRepr::IntConst(_) => "int_const()",
+            TmplRepr::IntConstAnyWidth(_) => "int_const_any_width()",
+            TmplRepr::BoolConst(_) => "bool_const()",
+            TmplRepr::FloatConst(_) => "float_const()",
+            TmplRepr::IntBinary(..) => "int_binary()",
+            TmplRepr::Sub(..) => "int_sub()",
+            TmplRepr::BitNot(_) => "int_not()",
+            TmplRepr::IntUnary(IntUnaryKind::Neg, _) => "int_neg()",
+            TmplRepr::IntUnary(IntUnaryKind::Popcount, _) => "int_popcount()",
+            TmplRepr::IntUnary(IntUnaryKind::Lzcount, _) => "int_lzcount()",
+            TmplRepr::Cast(..) | TmplRepr::Extend(..) => "a cast",
+            TmplRepr::IntCmp(..) => "int_cmp()",
+            TmplRepr::IntNe(..) => "int_ne()",
+            TmplRepr::IntLe(..) => "int_le()",
+            TmplRepr::IntSle(..) => "int_sle()",
+            TmplRepr::FloatBinary(..) => "float_binary()",
+            TmplRepr::FloatSub(..) => "float_sub()",
+            TmplRepr::FloatUnary(..) => "a float unary op",
+            TmplRepr::FloatCmp(..) => "float_cmp()",
+            TmplRepr::FloatNe(..) => "float_ne()",
+            TmplRepr::BoolBinary(..) => "bool_binary()",
+            TmplRepr::BoolNot(_) => "bool_not()",
+        }
+    }
+}
+
+impl PatRepr {
+    /// The constructor that builds this shape, as an error names it.
+    fn name(&self) -> &'static str {
+        match self {
+            PatRepr::Build(t) => t.name(),
+            PatRepr::Any => "anything()",
+            PatRepr::ValueOfWidth(_) => "value_of_width()",
+            PatRepr::InputsOfWidth(..) => "inputs_of_width()",
+            PatRepr::IntConstAnyWidthAnyOf(_) => "int_const_any_width([..])",
+            PatRepr::IntConstAnyOf(_) => "int_const([..])",
+            PatRepr::AnyInt(_) => "any_int()",
+            PatRepr::AnyBool(_) => "any_bool()",
+            PatRepr::AnyFloat(_) => "any_float()",
+            PatRepr::AnyIntConst(_) => "int_const()",
+            PatRepr::AnyBoolConst(_) => "bool_const()",
+            PatRepr::AnyFloatConst(_) => "float_const()",
+            PatRepr::InitialVar => "initial_var()",
+            PatRepr::InitialVarFor(_) => "initial_var_for()",
+            PatRepr::OneOf(_, true) => "first_of()",
+            PatRepr::OneOf(_, false) => "one_of()",
+            PatRepr::FloatLe(..) => "float_le()",
+            PatRepr::FloatIsNan(_) => "float_is_nan()",
+            PatRepr::AnyIntBinary(..) => "any_int_binary()",
+            PatRepr::AnyIntUnary(..) => "any_int_unary()",
+            PatRepr::AnyIntCmp(..) => "any_int_cmp()",
+            PatRepr::AnyBoolBinary(..) => "any_bool_binary()",
+            PatRepr::AnyFloatBinary(..) => "any_float_binary()",
+            PatRepr::AnyFloatUnary(..) => "any_float_unary()",
+            PatRepr::AnyFloatCmp(..) => "any_float_cmp()",
+            PatRepr::Captured(..) => ".capture()",
+            PatRepr::Guarded(..) => ".when()",
+            PatRepr::Ordered(_) => ".ordered()",
+            PatRepr::OfWidth(..) => ".of_width()",
+            PatRepr::ValueTy(..) => ".value_ty()",
+            PatRepr::Finished(_) => "a control / variadic builder",
+        }
     }
 }
 
@@ -742,28 +816,12 @@ impl PatRepr {
     /// Every Python object this node holds, for the cyclic GC.
     pub(crate) fn traverse(&self, visit: &pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
         match self {
+            PatRepr::Build(t) => t.traverse(visit)?,
             PatRepr::InputsOfWidth(_, x)
-            | PatRepr::BitNot(x)
-            | PatRepr::IntUnary(_, x)
-            | PatRepr::Cast(_, x)
-            | PatRepr::Extend(_, x)
-            | PatRepr::FloatUnary(_, x)
             | PatRepr::FloatIsNan(x)
-            | PatRepr::BoolNot(x)
             | PatRepr::AnyIntUnary(_, x)
             | PatRepr::AnyFloatUnary(_, x) => visit.call(x)?,
-            PatRepr::IntBinary(_, l, r)
-            | PatRepr::Sub(l, r)
-            | PatRepr::IntCmp(_, l, r)
-            | PatRepr::IntNe(l, r)
-            | PatRepr::IntLe(l, r)
-            | PatRepr::IntSle(l, r)
-            | PatRepr::FloatBinary(_, l, r)
-            | PatRepr::FloatSub(l, r)
-            | PatRepr::FloatCmp(_, l, r)
-            | PatRepr::FloatNe(l, r)
-            | PatRepr::FloatLe(l, r)
-            | PatRepr::BoolBinary(_, l, r)
+            PatRepr::FloatLe(l, r)
             | PatRepr::AnyIntBinary(_, l, r)
             | PatRepr::AnyIntCmp(_, l, r)
             | PatRepr::AnyBoolBinary(_, l, r)
@@ -796,14 +854,9 @@ impl PatRepr {
             }
             // Hold no Python object.
             PatRepr::Any
-            | PatRepr::Var(_)
             | PatRepr::ValueOfWidth(_)
-            | PatRepr::IntConst(_)
-            | PatRepr::IntConstAnyWidth(_)
             | PatRepr::IntConstAnyWidthAnyOf(_)
             | PatRepr::IntConstAnyOf(_)
-            | PatRepr::BoolConst(_)
-            | PatRepr::FloatConst(_)
             | PatRepr::AnyInt(_)
             | PatRepr::AnyBool(_)
             | PatRepr::AnyFloat(_)
@@ -819,10 +872,53 @@ impl PatRepr {
     pub(crate) fn compile_match(&self, py: Python<'_>) -> PyResult<DynMatch> {
         compile_repr_match(self, py)
     }
+}
 
-    /// Errors if this representation is match-only.
+impl TmplRepr {
+    /// Every Python object this node holds, for the cyclic GC.
+    pub(crate) fn traverse(&self, visit: &pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        match self {
+            TmplRepr::BitNot(x)
+            | TmplRepr::IntUnary(_, x)
+            | TmplRepr::Cast(_, x)
+            | TmplRepr::Extend(_, x)
+            | TmplRepr::FloatUnary(_, x)
+            | TmplRepr::BoolNot(x) => visit.call(x)?,
+            TmplRepr::IntBinary(_, l, r)
+            | TmplRepr::Sub(l, r)
+            | TmplRepr::IntCmp(_, l, r)
+            | TmplRepr::IntNe(l, r)
+            | TmplRepr::IntLe(l, r)
+            | TmplRepr::IntSle(l, r)
+            | TmplRepr::FloatBinary(_, l, r)
+            | TmplRepr::FloatSub(l, r)
+            | TmplRepr::FloatCmp(_, l, r)
+            | TmplRepr::FloatNe(l, r)
+            | TmplRepr::BoolBinary(_, l, r) => {
+                visit.call(l)?;
+                visit.call(r)?;
+            }
+            // Hold no Python object.
+            TmplRepr::Var(_)
+            | TmplRepr::IntConst(_)
+            | TmplRepr::IntConstAnyWidth(_)
+            | TmplRepr::BoolConst(_)
+            | TmplRepr::FloatConst(_) => {}
+        }
+        Ok(())
+    }
+
+    /// The match side, at a compile level of its own.
+    pub(crate) fn compile_match(&self, py: Python<'_>) -> PyResult<DynMatch> {
+        let _depth = DepthGuard::enter()?;
+        compile_tmpl_match(self, py)
+    }
+
+    /// The build side, at a compile level of its own. Total over its own
+    /// shape; a nested `Pat` operand can still be refused.
     pub(crate) fn compile_template(&self, py: Python<'_>) -> PyResult<DynTemplate> {
-        compile_repr_template(self, py)
+        let _depth = DepthGuard::enter()?;
+        compile_tmpl_template(self, py)
     }
 }
 
@@ -1019,222 +1115,213 @@ fn op_match(py: Python<'_>, ob: &Py<PyAny>) -> PyResult<DynMatch> {
     compile_operand_match(ob.bind(py))
 }
 
-#[allow(clippy::too_many_lines)]
+// Operands compile eagerly while the GIL and the `Bound`s are held, so the
+// box owns only child shims and outlives those borrows.
+
+fn bin_match<P: MatchPat + 'static>(
+    py: Python<'_>,
+    l: &Py<PyAny>,
+    r: &Py<PyAny>,
+    f: impl FnOnce(DynMatch, DynMatch) -> P,
+) -> PyResult<DynMatch> {
+    let l = op_match(py, l)?;
+    let r = op_match(py, r)?;
+    Ok(DynMatch::new(f(l, r)))
+}
+
+fn un_match<P: MatchPat + 'static>(
+    py: Python<'_>,
+    x: &Py<PyAny>,
+    f: impl FnOnce(DynMatch) -> P,
+) -> PyResult<DynMatch> {
+    Ok(DynMatch::new(f(op_match(py, x)?)))
+}
+
+/// The match side of a `Pat`: the match-only shapes here, the build-valid
+/// ones through [`compile_tmpl_match`] under this level's guard.
 fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
-    // Operands compile eagerly while the GIL and the `Bound`s are held, so the
-    // boxed closure owns only child shims and outlives those borrows. These
-    // macros stamp out that skeleton: `m_binop` carries a leading op value,
-    // `m_bin` / `m_un` do not, and the `*_any` pair appends `.capture`.
-    macro_rules! m_binop {
-        ($f:path, $op:ident, $l:ident, $r:ident) => {{
-            let op = *$op;
-            let l = op_match(py, $l)?;
-            let r = op_match(py, $r)?;
-            DynMatch::new($f(op, l, r))
-        }};
-    }
-    macro_rules! m_bin {
-        ($f:path, $l:ident, $r:ident) => {{
-            let l = op_match(py, $l)?;
-            let r = op_match(py, $r)?;
-            DynMatch::new($f(l, r))
-        }};
-    }
-    macro_rules! m_un {
-        ($f:path, $x:ident) => {{
-            let x = op_match(py, $x)?;
-            DynMatch::new($f(x))
-        }};
-    }
-    macro_rules! m_bin_any {
-        ($f:path, $c:ident, $l:ident, $r:ident) => {{
-            let c = *$c;
-            let l = op_match(py, $l)?;
-            let r = op_match(py, $r)?;
-            DynMatch::new($f(l, r).capture(c))
-        }};
-    }
-    macro_rules! m_un_any {
-        ($f:path, $c:ident, $x:ident) => {{
-            let c = *$c;
-            let x = op_match(py, $x)?;
-            DynMatch::new($f(x).capture(c))
-        }};
-    }
     let _depth = DepthGuard::enter()?;
-    Ok(match repr {
-        PatRepr::Any => DynMatch::new(sp::anything()),
-        PatRepr::Var(c) => {
-            let c = *c;
-            DynMatch::new(sp::var(c))
-        }
-        PatRepr::ValueOfWidth(n) => {
-            let n = *n;
-            DynMatch::new(sp::value_of_width(n))
-        }
+    match repr {
+        PatRepr::Build(t) => compile_tmpl_match(t, py),
+        PatRepr::Any => Ok(DynMatch::new(sp::anything())),
+        PatRepr::ValueOfWidth(n) => Ok(DynMatch::new(sp::value_of_width(*n))),
         PatRepr::InputsOfWidth(n, inner) => {
             let n = *n;
-            let i = op_match(py, inner)?;
-            DynMatch::new(sp::inputs_of_width(n, i))
-        }
-        PatRepr::IntConst(v) => {
-            let v = *v;
-            DynMatch::new(sp::int_const(v))
-        }
-        PatRepr::IntConstAnyWidth(v) => {
-            let v = *v;
-            DynMatch::new(sp::int_const_any_width(v))
+            un_match(py, inner, |i| sp::inputs_of_width(n, i))
         }
         PatRepr::IntConstAnyWidthAnyOf(vals) => {
-            let vals = vals.clone();
-            DynMatch::new(sp::int_const_any_width(vals))
+            Ok(DynMatch::new(sp::int_const_any_width(vals.clone())))
         }
-        PatRepr::IntConstAnyOf(vals) => {
-            let vals = vals.clone();
-            DynMatch::new(sp::int_const(vals))
-        }
-        PatRepr::BoolConst(v) => {
-            let v = *v;
-            DynMatch::new(sp::bool_const(v))
-        }
-        PatRepr::FloatConst(bits) => {
-            let bits = *bits;
-            DynMatch::new(sp::float_const(bits))
-        }
+        PatRepr::IntConstAnyOf(vals) => Ok(DynMatch::new(sp::int_const(vals.clone()))),
         PatRepr::AnyInt(c) => {
             let c = *c;
-            DynMatch::from_fn(move |b| match c {
+            Ok(DynMatch::from_fn(move |b| match c {
                 Some(c) => mc(sp::any_int().capture(c), b),
                 None => mc(sp::any_int(), b),
-            })
+            }))
         }
         PatRepr::AnyBool(c) => {
             let c = *c;
-            DynMatch::from_fn(move |b| match c {
+            Ok(DynMatch::from_fn(move |b| match c {
                 Some(c) => mc(sp::any_bool().capture(c), b),
                 None => mc(sp::any_bool(), b),
-            })
+            }))
         }
         PatRepr::AnyFloat(c) => {
             let c = *c;
-            DynMatch::from_fn(move |b| match c {
+            Ok(DynMatch::from_fn(move |b| match c {
                 Some(c) => mc(sp::any_float().capture(c), b),
                 None => mc(sp::any_float(), b),
-            })
+            }))
         }
         PatRepr::AnyIntConst(c) => {
             let c = *c;
-            DynMatch::from_fn(move |b| match c {
+            Ok(DynMatch::from_fn(move |b| match c {
                 Some(c) => mc(sp::int_const(c), b),
                 None => mc(sp::any_int_const(), b),
-            })
+            }))
         }
         PatRepr::AnyBoolConst(c) => {
             let c = *c;
-            DynMatch::from_fn(move |b| match c {
+            Ok(DynMatch::from_fn(move |b| match c {
                 Some(c) => mc(sp::bool_const(c), b),
                 None => mc(sp::any_bool_const(), b),
-            })
+            }))
         }
         PatRepr::AnyFloatConst(c) => {
             let c = *c;
-            DynMatch::from_fn(move |b| match c {
+            Ok(DynMatch::from_fn(move |b| match c {
                 Some(c) => mc(sp::float_const(c), b),
                 None => mc(sp::any_float_const(), b),
-            })
+            }))
         }
-        PatRepr::InitialVar => DynMatch::new(sp::initial_var()),
-        PatRepr::InitialVarFor(vn) => {
-            let vn = *vn;
-            DynMatch::new(sp::initial_var_for(vn))
-        }
+        PatRepr::InitialVar => Ok(DynMatch::new(sp::initial_var())),
+        PatRepr::InitialVarFor(vn) => Ok(DynMatch::new(sp::initial_var_for(*vn))),
         PatRepr::OneOf(alts, first) => {
-            let first = *first;
             let boxed: Vec<sp::BoxedAlt> = alts
                 .iter()
                 .map(|a| compile_alt_arm_operand(a.bind(py)).map(sp::boxed_alt))
                 .collect::<PyResult<_>>()?;
-            let alt = if first {
+            Ok(DynMatch::new(if *first {
                 sp::OneOf::first(boxed)
             } else {
                 sp::OneOf::new(boxed)
-            };
-            DynMatch::new(alt)
+            }))
         }
-        PatRepr::IntBinary(op, l, r) => m_binop!(sp::int_binary, op, l, r),
-        PatRepr::Sub(l, r) => m_bin!(sp::int_sub, l, r),
-        PatRepr::BitNot(x) => m_un!(sp::int_not, x),
-        PatRepr::IntUnary(kind, x) => {
-            let kind = *kind;
-            let x = op_match(py, x)?;
-            DynMatch::from_fn(move |b| match kind {
-                IntUnaryKind::Neg => mc(sp::int_neg(x), b),
-                IntUnaryKind::Popcount => mc(sp::int_popcount(x), b),
-                IntUnaryKind::Lzcount => mc(sp::int_lzcount(x), b),
-            })
+        PatRepr::FloatLe(l, r) => bin_match(py, l, r, sp::float_le),
+        PatRepr::FloatIsNan(x) => un_match(py, x, sp::float_is_nan),
+        PatRepr::AnyIntBinary(c, l, r) => {
+            let c = *c;
+            bin_match(py, l, r, |l, r| sp::any_int_binary(l, r).capture(c))
         }
-        PatRepr::Cast(kind, x) => {
-            let kind = *kind;
-            let x = op_match(py, x)?;
-            DynMatch::from_fn(move |b| cast_match(kind, x, b))
+        PatRepr::AnyIntUnary(c, x) => {
+            let c = *c;
+            un_match(py, x, |x| sp::any_int_unary(x).capture(c))
         }
-        PatRepr::Extend(op, x) => {
-            let op = *op;
-            let x = op_match(py, x)?;
-            DynMatch::new(sp::int_extend(op, x))
+        PatRepr::AnyIntCmp(c, l, r) => {
+            let c = *c;
+            bin_match(py, l, r, |l, r| sp::any_int_cmp(l, r).capture(c))
         }
-        PatRepr::IntCmp(op, l, r) => m_binop!(sp::int_cmp, op, l, r),
-        PatRepr::IntNe(l, r) => m_bin!(sp::int_ne, l, r),
-        PatRepr::IntLe(l, r) => m_bin!(sp::int_le, l, r),
-        PatRepr::IntSle(l, r) => m_bin!(sp::int_sle, l, r),
-        PatRepr::FloatBinary(op, l, r) => m_binop!(sp::float_binary, op, l, r),
-        PatRepr::FloatSub(l, r) => m_bin!(sp::float_sub, l, r),
-        PatRepr::FloatUnary(op, x) => {
-            let op = *op;
-            let x = op_match(py, x)?;
-            DynMatch::new(sp::float_unary(op, x))
+        PatRepr::AnyBoolBinary(c, l, r) => {
+            let c = *c;
+            bin_match(py, l, r, |l, r| sp::any_bool_binary(l, r).capture(c))
         }
-        PatRepr::FloatCmp(op, l, r) => m_binop!(sp::float_cmp, op, l, r),
-        PatRepr::FloatNe(l, r) => m_bin!(sp::float_ne, l, r),
-        PatRepr::FloatLe(l, r) => m_bin!(sp::float_le, l, r),
-        PatRepr::FloatIsNan(x) => m_un!(sp::float_is_nan, x),
-        PatRepr::BoolBinary(op, l, r) => m_binop!(sp::bool_binary, op, l, r),
-        PatRepr::BoolNot(x) => m_un!(sp::bool_not, x),
-        PatRepr::AnyIntBinary(c, l, r) => m_bin_any!(sp::any_int_binary, c, l, r),
-        PatRepr::AnyIntUnary(c, x) => m_un_any!(sp::any_int_unary, c, x),
-        PatRepr::AnyIntCmp(c, l, r) => m_bin_any!(sp::any_int_cmp, c, l, r),
-        PatRepr::AnyBoolBinary(c, l, r) => m_bin_any!(sp::any_bool_binary, c, l, r),
-        PatRepr::AnyFloatBinary(c, l, r) => m_bin_any!(sp::any_float_binary, c, l, r),
-        PatRepr::AnyFloatUnary(c, x) => m_un_any!(sp::any_float_unary, c, x),
-        PatRepr::AnyFloatCmp(c, l, r) => m_bin_any!(sp::any_float_cmp, c, l, r),
+        PatRepr::AnyFloatBinary(c, l, r) => {
+            let c = *c;
+            bin_match(py, l, r, |l, r| sp::any_float_binary(l, r).capture(c))
+        }
+        PatRepr::AnyFloatUnary(c, x) => {
+            let c = *c;
+            un_match(py, x, |x| sp::any_float_unary(x).capture(c))
+        }
+        PatRepr::AnyFloatCmp(c, l, r) => {
+            let c = *c;
+            bin_match(py, l, r, |l, r| sp::any_float_cmp(l, r).capture(c))
+        }
         PatRepr::Captured(inner, c) => {
             let c = *c;
-            let inner = compile_operand_match(inner.bind(py))?;
-            DynMatch::new(inner.capture(c))
+            un_match(py, inner, |i| i.capture(c))
         }
         PatRepr::Guarded(inner, f) => {
-            let inner = compile_operand_match(inner.bind(py))?;
             let f = f.clone_ref(py);
-            DynMatch::new(wrap_when(inner, f))
+            un_match(py, inner, |i| wrap_when(i, f))
         }
-        PatRepr::Ordered(inner) => DynMatch::new(compile_operand_match(inner.bind(py))?.ordered()),
+        PatRepr::Ordered(inner) => un_match(py, inner, |i| i.ordered()),
         PatRepr::OfWidth(inner, n) => {
             let n = *n;
-            let inner = compile_operand_match(inner.bind(py))?;
-            DynMatch::new(inner.of_width(n))
+            un_match(py, inner, |i| i.of_width(n))
         }
         PatRepr::ValueTy(inner, ty) => {
             let ty = *ty;
-            let inner = compile_operand_match(inner.bind(py))?;
-            DynMatch::new(inner.value_ty(ty))
+            un_match(py, inner, |i| i.value_ty(ty))
         }
-        PatRepr::Finished { .. } => {
-            return Err(into_strider_err(anyhow::anyhow!(
-                "a finished control / variadic pattern cannot be nested as a \
-                 value operand"
-            )));
+        PatRepr::Finished(_) => Err(into_strider_err(anyhow::anyhow!(
+            "a finished control / variadic pattern cannot be nested as a \
+             value operand"
+        ))),
+    }
+}
+
+/// The match side of a build-valid shape. The caller holds this level's
+/// [`DepthGuard`].
+fn compile_tmpl_match(t: &TmplRepr, py: Python<'_>) -> PyResult<DynMatch> {
+    match t {
+        TmplRepr::Var(c) => Ok(DynMatch::new(sp::var(*c))),
+        TmplRepr::IntConst(v) => Ok(DynMatch::new(sp::int_const(*v))),
+        TmplRepr::IntConstAnyWidth(v) => Ok(DynMatch::new(sp::int_const_any_width(*v))),
+        TmplRepr::BoolConst(v) => Ok(DynMatch::new(sp::bool_const(*v))),
+        TmplRepr::FloatConst(bits) => Ok(DynMatch::new(sp::float_const(*bits))),
+        TmplRepr::IntBinary(op, l, r) => {
+            let op = *op;
+            bin_match(py, l, r, |l, r| sp::int_binary(op, l, r))
         }
-    })
+        TmplRepr::Sub(l, r) => bin_match(py, l, r, sp::int_sub),
+        TmplRepr::BitNot(x) => un_match(py, x, sp::int_not),
+        TmplRepr::IntUnary(kind, x) => {
+            let kind = *kind;
+            let x = op_match(py, x)?;
+            Ok(DynMatch::from_fn(move |b| match kind {
+                IntUnaryKind::Neg => mc(sp::int_neg(x), b),
+                IntUnaryKind::Popcount => mc(sp::int_popcount(x), b),
+                IntUnaryKind::Lzcount => mc(sp::int_lzcount(x), b),
+            }))
+        }
+        TmplRepr::Cast(kind, x) => {
+            let kind = *kind;
+            let x = op_match(py, x)?;
+            Ok(DynMatch::from_fn(move |b| cast_match(kind, x, b)))
+        }
+        TmplRepr::Extend(op, x) => {
+            let op = *op;
+            un_match(py, x, |x| sp::int_extend(op, x))
+        }
+        TmplRepr::IntCmp(op, l, r) => {
+            let op = *op;
+            bin_match(py, l, r, |l, r| sp::int_cmp(op, l, r))
+        }
+        TmplRepr::IntNe(l, r) => bin_match(py, l, r, sp::int_ne),
+        TmplRepr::IntLe(l, r) => bin_match(py, l, r, sp::int_le),
+        TmplRepr::IntSle(l, r) => bin_match(py, l, r, sp::int_sle),
+        TmplRepr::FloatBinary(op, l, r) => {
+            let op = *op;
+            bin_match(py, l, r, |l, r| sp::float_binary(op, l, r))
+        }
+        TmplRepr::FloatSub(l, r) => bin_match(py, l, r, sp::float_sub),
+        TmplRepr::FloatUnary(op, x) => {
+            let op = *op;
+            un_match(py, x, |x| sp::float_unary(op, x))
+        }
+        TmplRepr::FloatCmp(op, l, r) => {
+            let op = *op;
+            bin_match(py, l, r, |l, r| sp::float_cmp(op, l, r))
+        }
+        TmplRepr::FloatNe(l, r) => bin_match(py, l, r, sp::float_ne),
+        TmplRepr::BoolBinary(op, l, r) => {
+            let op = *op;
+            bin_match(py, l, r, |l, r| sp::bool_binary(op, l, r))
+        }
+        TmplRepr::BoolNot(x) => un_match(py, x, sp::bool_not),
+    }
 }
 
 fn cast_match(kind: CastKind, x: DynMatch, b: &mut MatcherBuilder) -> PatValueRef {
@@ -1254,100 +1341,128 @@ fn op_tpl(py: Python<'_>, ob: &Py<PyAny>) -> PyResult<DynTemplate> {
     compile_operand_template(ob.bind(py))
 }
 
-#[allow(clippy::too_many_lines)]
-fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate> {
-    // Composite ops go through the `TemplatePat`-bounded `tpl::` twins: a
-    // `DynTemplate` operand is `TemplatePat`, not `MatchPat`, so it cannot
-    // feed the match-side factories. Leaves stay on the dual-trait builders.
-    // The macros mirror the match side.
-    macro_rules! t_binop {
-        ($f:path, $op:ident, $l:ident, $r:ident) => {{
-            let op = *$op;
-            let l = op_tpl(py, $l)?;
-            let r = op_tpl(py, $r)?;
-            DynTemplate(Box::new(move |b| tc($f(op, l, r), b)))
-        }};
-    }
-    macro_rules! t_bin {
-        ($f:path, $l:ident, $r:ident) => {{
-            let l = op_tpl(py, $l)?;
-            let r = op_tpl(py, $r)?;
-            DynTemplate(Box::new(move |b| tc($f(l, r), b)))
-        }};
-    }
-    macro_rules! t_un {
-        ($f:path, $x:ident) => {{
-            let x = op_tpl(py, $x)?;
-            DynTemplate(Box::new(move |b| tc($f(x), b)))
-        }};
-    }
-    let _depth = DepthGuard::enter()?;
-    Ok(match repr {
-        PatRepr::Var(c) => {
+// Composite ops go through the `TemplatePat`-bounded `tpl::` twins: a
+// `DynTemplate` operand is `TemplatePat`, not `MatchPat`, so it cannot feed
+// the match-side factories. Leaves stay on the dual-trait builders.
+
+fn bin_tpl<P: TemplatePat + Send + 'static>(
+    py: Python<'_>,
+    l: &Py<PyAny>,
+    r: &Py<PyAny>,
+    f: impl FnOnce(DynTemplate, DynTemplate) -> P,
+) -> PyResult<DynTemplate> {
+    let l = op_tpl(py, l)?;
+    let r = op_tpl(py, r)?;
+    let p = f(l, r);
+    Ok(DynTemplate(Box::new(move |b| tc(p, b))))
+}
+
+fn un_tpl<P: TemplatePat + Send + 'static>(
+    py: Python<'_>,
+    x: &Py<PyAny>,
+    f: impl FnOnce(DynTemplate) -> P,
+) -> PyResult<DynTemplate> {
+    let p = f(op_tpl(py, x)?);
+    Ok(DynTemplate(Box::new(move |b| tc(p, b))))
+}
+
+/// The build side of a build-valid shape, total over the shape itself; a
+/// nested `Pat` operand can still be refused. The caller holds this level's
+/// [`DepthGuard`].
+fn compile_tmpl_template(t: &TmplRepr, py: Python<'_>) -> PyResult<DynTemplate> {
+    match t {
+        TmplRepr::Var(c) => {
             let c = *c;
-            DynTemplate(Box::new(move |b| template_var(b, c)))
+            Ok(DynTemplate(Box::new(move |b| template_var(b, c))))
         }
-        PatRepr::IntConst(v) => {
+        TmplRepr::IntConst(v) => {
             let v = *v;
-            DynTemplate(Box::new(move |b| tc(sp::int_const(v), b)))
+            Ok(DynTemplate(Box::new(move |b| tc(sp::int_const(v), b))))
         }
-        PatRepr::IntConstAnyWidth(v) => {
+        TmplRepr::IntConstAnyWidth(v) => {
             let v = *v;
-            DynTemplate(Box::new(move |b| tc(sp::int_const_any_width(v), b)))
+            Ok(DynTemplate(Box::new(move |b| {
+                tc(sp::int_const_any_width(v), b)
+            })))
         }
-        PatRepr::BoolConst(v) => {
+        TmplRepr::BoolConst(v) => {
             let v = *v;
-            DynTemplate(Box::new(move |b| tc(sp::bool_const(v), b)))
+            Ok(DynTemplate(Box::new(move |b| tc(sp::bool_const(v), b))))
         }
-        PatRepr::FloatConst(bits) => {
+        TmplRepr::FloatConst(bits) => {
             let bits = *bits;
-            DynTemplate(Box::new(move |b| tc(sp::float_const(bits), b)))
+            Ok(DynTemplate(Box::new(move |b| tc(sp::float_const(bits), b))))
         }
-        PatRepr::IntBinary(op, l, r) => t_binop!(tpl::int_binary, op, l, r),
-        PatRepr::Sub(l, r) => t_bin!(tpl::int_sub, l, r),
-        PatRepr::BitNot(x) => t_un!(tpl::int_not, x),
-        PatRepr::IntUnary(kind, x) => {
+        TmplRepr::IntBinary(op, l, r) => {
+            let op = *op;
+            bin_tpl(py, l, r, |l, r| tpl::int_binary(op, l, r))
+        }
+        TmplRepr::Sub(l, r) => bin_tpl(py, l, r, tpl::int_sub),
+        TmplRepr::BitNot(x) => un_tpl(py, x, tpl::int_not),
+        TmplRepr::IntUnary(kind, x) => {
             let kind = *kind;
             let x = op_tpl(py, x)?;
-            DynTemplate(Box::new(move |b| match kind {
+            Ok(DynTemplate(Box::new(move |b| match kind {
                 IntUnaryKind::Neg => tc(tpl::int_neg(x), b),
                 IntUnaryKind::Popcount => tc(tpl::int_popcount(x), b),
                 IntUnaryKind::Lzcount => tc(tpl::int_lzcount(x), b),
-            }))
+            })))
         }
-        PatRepr::Cast(kind, x) => {
+        TmplRepr::Cast(kind, x) => {
             let kind = *kind;
             let x = op_tpl(py, x)?;
-            DynTemplate(Box::new(move |b| cast_tpl(kind, x, b)))
+            Ok(DynTemplate(Box::new(move |b| cast_tpl(kind, x, b))))
         }
-        PatRepr::Extend(op, x) => {
+        TmplRepr::Extend(op, x) => {
             let op = *op;
-            let x = op_tpl(py, x)?;
-            DynTemplate(Box::new(move |b| tc(tpl::int_extend(op, x), b)))
+            un_tpl(py, x, |x| tpl::int_extend(op, x))
         }
-        PatRepr::IntCmp(op, l, r) => t_binop!(tpl::int_cmp, op, l, r),
-        PatRepr::IntNe(l, r) => t_bin!(tpl::int_ne, l, r),
-        PatRepr::IntLe(l, r) => t_bin!(tpl::int_le, l, r),
-        PatRepr::IntSle(l, r) => t_bin!(tpl::int_sle, l, r),
-        PatRepr::FloatNe(l, r) => t_bin!(tpl::float_ne, l, r),
-        PatRepr::FloatBinary(op, l, r) => t_binop!(tpl::float_binary, op, l, r),
-        PatRepr::FloatSub(l, r) => t_bin!(tpl::float_sub, l, r),
-        PatRepr::FloatUnary(op, x) => {
+        TmplRepr::IntCmp(op, l, r) => {
             let op = *op;
-            let x = op_tpl(py, x)?;
-            DynTemplate(Box::new(move |b| tc(tpl::float_unary(op, x), b)))
+            bin_tpl(py, l, r, |l, r| tpl::int_cmp(op, l, r))
         }
-        PatRepr::FloatCmp(op, l, r) => t_binop!(tpl::float_cmp, op, l, r),
-        PatRepr::BoolBinary(op, l, r) => t_binop!(tpl::bool_binary, op, l, r),
-        PatRepr::BoolNot(x) => t_un!(tpl::bool_not, x),
+        TmplRepr::IntNe(l, r) => bin_tpl(py, l, r, tpl::int_ne),
+        TmplRepr::IntLe(l, r) => bin_tpl(py, l, r, tpl::int_le),
+        TmplRepr::IntSle(l, r) => bin_tpl(py, l, r, tpl::int_sle),
+        TmplRepr::FloatBinary(op, l, r) => {
+            let op = *op;
+            bin_tpl(py, l, r, |l, r| tpl::float_binary(op, l, r))
+        }
+        TmplRepr::FloatSub(l, r) => bin_tpl(py, l, r, tpl::float_sub),
+        TmplRepr::FloatUnary(op, x) => {
+            let op = *op;
+            un_tpl(py, x, |x| tpl::float_unary(op, x))
+        }
+        TmplRepr::FloatCmp(op, l, r) => {
+            let op = *op;
+            bin_tpl(py, l, r, |l, r| tpl::float_cmp(op, l, r))
+        }
+        TmplRepr::FloatNe(l, r) => bin_tpl(py, l, r, tpl::float_ne),
+        TmplRepr::BoolBinary(op, l, r) => {
+            let op = *op;
+            bin_tpl(py, l, r, |l, r| tpl::bool_binary(op, l, r))
+        }
+        TmplRepr::BoolNot(x) => un_tpl(py, x, tpl::bool_not),
+    }
+}
+
+/// A `Pat` where a rewrite builds, accepted until 0.3.0 removes it: a
+/// build-valid shape compiles as its `Template` twin, a `.capture(c)` over a
+/// `var()` / `anything()` leaf stands for the value `c` matched, and anything
+/// else is refused by its constructor's name.
+fn pat_as_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate> {
+    let _depth = DepthGuard::enter()?;
+    match repr {
+        PatRepr::Build(t) => compile_tmpl_template(t, py),
         PatRepr::Captured(inner, c) => {
-            // On a RHS a capture stands for the matched LHS value and replaces
-            // what it wraps, so only a `var()` / `anything()` leaf, which builds
-            // nothing itself, may be wrapped.
-            let leaf = inner
-                .bind(py)
-                .downcast::<PyPat>()
-                .is_ok_and(|p| matches!(&*p.borrow().repr, PatRepr::Var(_) | PatRepr::Any));
+            // A RHS capture replaces what it wraps, so only a leaf that
+            // builds nothing itself may be wrapped.
+            let leaf = inner.bind(py).downcast::<PyPat>().is_ok_and(|p| {
+                matches!(
+                    &*p.borrow().repr,
+                    PatRepr::Build(TmplRepr::Var(_)) | PatRepr::Any
+                )
+            });
             if !leaf {
                 return Err(into_strider_err(anyhow::anyhow!(
                     "cannot use .capture() over anything but var() / anything() as a \
@@ -1356,39 +1471,10 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
                 )));
             }
             let c = *c;
-            DynTemplate(Box::new(move |b| b.capture(c)))
+            Ok(DynTemplate(Box::new(move |b| b.capture(c))))
         }
-        PatRepr::Any => return Err(rhs_error("any")),
-        PatRepr::ValueOfWidth(_) => return Err(rhs_error("value_of_width")),
-        PatRepr::InputsOfWidth(..) => return Err(rhs_error("inputs_of_width")),
-        PatRepr::IntConstAnyOf(_) => return Err(rhs_error("int_const([..])")),
-        PatRepr::IntConstAnyWidthAnyOf(_) => return Err(rhs_error("int_const_any_width([..])")),
-        PatRepr::AnyInt(_) => return Err(rhs_error("any_int")),
-        PatRepr::AnyBool(_) => return Err(rhs_error("any_bool")),
-        PatRepr::AnyFloat(_) => return Err(rhs_error("any_float")),
-        PatRepr::AnyIntConst(_) => return Err(rhs_error("int_const()")),
-        PatRepr::AnyBoolConst(_) => return Err(rhs_error("bool_const()")),
-        PatRepr::AnyFloatConst(_) => return Err(rhs_error("float_const()")),
-        PatRepr::InitialVar => return Err(rhs_error("initial_var")),
-        PatRepr::InitialVarFor(_) => return Err(rhs_error("initial_var_for")),
-        PatRepr::OneOf(_, first) => {
-            return Err(rhs_error(if *first { "first_of" } else { "one_of" }));
-        }
-        PatRepr::FloatLe(..) => return Err(rhs_error("float_le")),
-        PatRepr::FloatIsNan(_) => return Err(rhs_error("float_is_nan")),
-        PatRepr::AnyIntBinary(..) => return Err(rhs_error("any_int_binary")),
-        PatRepr::AnyIntUnary(..) => return Err(rhs_error("any_int_unary")),
-        PatRepr::AnyIntCmp(..) => return Err(rhs_error("any_int_cmp")),
-        PatRepr::AnyBoolBinary(..) => return Err(rhs_error("any_bool_binary")),
-        PatRepr::AnyFloatBinary(..) => return Err(rhs_error("any_float_binary")),
-        PatRepr::AnyFloatUnary(..) => return Err(rhs_error("any_float_unary")),
-        PatRepr::AnyFloatCmp(..) => return Err(rhs_error("any_float_cmp")),
-        PatRepr::Ordered(..) => return Err(rhs_error(".ordered()")),
-        PatRepr::Guarded(..) => return Err(rhs_error(".when()")),
-        PatRepr::OfWidth(..) => return Err(rhs_error(".of_width()")),
-        PatRepr::ValueTy(..) => return Err(rhs_error(".value_ty()")),
-        PatRepr::Finished { .. } => return Err(rhs_error("control / variadic builder")),
-    })
+        other => Err(rhs_error(other.name())),
+    }
 }
 
 fn cast_tpl(kind: CastKind, x: DynTemplate, b: &mut TemplateBuilder) -> TmplValueRef {
@@ -1427,7 +1513,7 @@ impl PatRepr {
     }
 
     pub(crate) fn to_template(&self, py: Python<'_>) -> PyResult<Template> {
-        Ok(self.compile_template(py)?.into_template())
+        Ok(pat_as_template(self, py)?.into_template())
     }
 }
 
@@ -1500,7 +1586,7 @@ impl PatLike<'_> {
         match self {
             PatLike::Pat(p) => p.borrow().repr.to_pattern(py),
             PatLike::Capture(c) => Ok(strider_pattern::var(c.borrow().inner).into_pattern()),
-            PatLike::Int(v) => PatRepr::IntConst(*v as u128).to_pattern(py),
+            PatLike::Int(v) => PatRepr::Build(TmplRepr::IntConst(*v as u128)).to_pattern(py),
             PatLike::CallPat(b) => b.borrow().build_pattern_py(py),
             PatLike::CallOtherPat(b) => b.borrow().build_pattern_py(py),
             PatLike::RetPat(b) => b.borrow().build_pattern_py(py),
@@ -1535,9 +1621,8 @@ impl PatLike<'_> {
 
 /// Rewrite-RHS input, separate from the match-side `PatLike` so
 /// `Function.rewrite` / `rewrite_all` type `replace` against the build-valid
-/// `Template`. A bare `Pat` is accepted for back-compat, but only its
-/// build-valid subset compiles: a match-only `Pat` such as `anything()`
-/// raises.
+/// `Template`. A bare `Pat` is accepted until 0.3.0 removes it, through
+/// [`pat_as_template`].
 #[derive(FromPyObject)]
 pub enum TemplateLike<'py> {
     Template(Bound<'py, crate::template::PyTemplate>),
@@ -2019,7 +2104,7 @@ pub fn any_() -> PyPat {
 /// Wildcard that binds the matched node to capture `c`.
 #[pyfunction]
 pub fn var(c: PyRef<'_, PyCapture>) -> PyPat {
-    PyPat::from_repr(PatRepr::Var(c.inner))
+    PyPat::from_tmpl(TmplRepr::Var(c.inner))
 }
 
 /// Match any value output exactly `n` bits wide.
@@ -2073,8 +2158,8 @@ pub fn int_const(value: Option<IntConstArg>) -> PyPat {
     PyPat::from_repr(match value {
         None => PatRepr::AnyIntConst(None),
         Some(IntConstArg::Cap(c)) => PatRepr::AnyIntConst(Some(c.get().inner)),
-        Some(IntConstArg::One(v)) => PatRepr::IntConst(v as u128),
-        Some(IntConstArg::Wide(v)) => PatRepr::IntConst(v),
+        Some(IntConstArg::One(v)) => PatRepr::Build(TmplRepr::IntConst(v as u128)),
+        Some(IntConstArg::Wide(v)) => PatRepr::Build(TmplRepr::IntConst(v)),
         // `as u128` is the scalar form's conversion: a negative carries its
         // 128-bit two's complement, which the core masks to the candidate's
         // width.  Narrowing to `u64` first would sign-extend only to 64 bits
@@ -2103,7 +2188,9 @@ pub enum IntConstAnyWidthArg {
 #[pyfunction]
 pub fn int_const_any_width(value: IntConstAnyWidthArg) -> PyResult<PyPat> {
     Ok(PyPat::from_repr(match value {
-        IntConstAnyWidthArg::One(v) => PatRepr::IntConstAnyWidth(checked_signed_i64(v)?),
+        IntConstAnyWidthArg::One(v) => {
+            PatRepr::Build(TmplRepr::IntConstAnyWidth(checked_signed_i64(v)?))
+        }
         IntConstAnyWidthArg::Set(vs) => PatRepr::IntConstAnyWidthAnyOf(
             vs.into_iter()
                 .map(checked_signed_i64)
@@ -2130,7 +2217,7 @@ pub fn bool_const(value: Option<BoolConstArg>) -> PyPat {
     PyPat::from_repr(match value {
         None => PatRepr::AnyBoolConst(None),
         Some(BoolConstArg::Cap(c)) => PatRepr::AnyBoolConst(Some(c.get().inner)),
-        Some(BoolConstArg::One(v)) => PatRepr::BoolConst(v),
+        Some(BoolConstArg::One(v)) => PatRepr::Build(TmplRepr::BoolConst(v)),
     })
 }
 
@@ -2152,7 +2239,7 @@ pub fn float_const(bits: Option<FloatConstArg>) -> PyPat {
     PyPat::from_repr(match bits {
         None => PatRepr::AnyFloatConst(None),
         Some(FloatConstArg::Cap(c)) => PatRepr::AnyFloatConst(Some(c.get().inner)),
-        Some(FloatConstArg::Bits(b)) => PatRepr::FloatConst(b),
+        Some(FloatConstArg::Bits(b)) => PatRepr::Build(TmplRepr::FloatConst(b)),
     })
 }
 
@@ -2384,16 +2471,17 @@ pub(crate) fn checked_signed_i64(value: i128) -> PyResult<i64> {
 
 value_ops!(PyPat, "Pattern", " Commutative.");
 
-// The lowered comparisons with no template factory: a RHS spells their shape
-// from the primitive ops.
-value_op!(
-    PyPat, "Pattern", "", unary_bare float_is_nan, FloatIsNan,
-    "`x` is NaN, the IEEE 754 self-inequality `x != x`."
-);
-value_op!(
-    PyPat, "Pattern", "", binary_bare float_le, FloatLe,
-    "float `a <= b`, NaN-aware."
-);
+/// Pattern: `x` is NaN, the IEEE 754 self-inequality `x != x`.
+#[pyfunction]
+pub fn float_is_nan(operand: Py<PyAny>) -> PyPat {
+    PyPat::from_repr(PatRepr::FloatIsNan(operand))
+}
+
+/// Pattern: float `a <= b`, NaN-aware.
+#[pyfunction]
+pub fn float_le(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
+    PyPat::from_repr(PatRepr::FloatLe(l, r))
+}
 
 /// Match any `IntBinaryOp` over `(l, r)` and bind the op variant to `c`.
 #[pyfunction]

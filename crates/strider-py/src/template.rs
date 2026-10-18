@@ -1,10 +1,10 @@
-//! The free functions here construct the build-valid subset of pattern
-//! variants; `.when()`, the commutativity toggle and `.ordered()` are
-//! match-only.
+//! The free functions here construct the build-valid shapes; `.when()`, the
+//! commutativity toggle and `.ordered()` are match-only.
 
 use pyo3::prelude::*;
+use strider_pattern::TemplatePat as _;
 
-use crate::pattern::{CastKind, IntUnaryKind, PatRepr, PyCapture};
+use crate::pattern::{CastKind, IntUnaryKind, PyCapture, TmplRepr};
 use crate::value_ops::value_ops;
 
 /// A type-checked rewrite-RHS expression. Construct via the free functions in
@@ -12,18 +12,18 @@ use crate::value_ops::value_ops;
 /// `replace` to `Function.rewrite` / `rewrite_all`.
 #[pyclass(name = "Template", module = "strider.template")]
 pub struct PyTemplate {
-    pub(crate) repr: std::sync::Arc<PatRepr>,
+    pub(crate) repr: std::sync::Arc<TmplRepr>,
 }
 
 impl PyTemplate {
-    pub(crate) fn from_repr(repr: PatRepr) -> Self {
+    pub(crate) fn from_tmpl(repr: TmplRepr) -> Self {
         Self {
             repr: std::sync::Arc::new(repr),
         }
     }
 
     pub(crate) fn to_template(&self, py: Python<'_>) -> PyResult<strider_pattern::Template> {
-        self.repr.to_template(py)
+        Ok(self.repr.compile_template(py)?.into_template())
     }
 }
 
@@ -31,7 +31,7 @@ impl Drop for PyTemplate {
     fn drop(&mut self) {
         crate::pattern::defer_drop(std::mem::replace(
             &mut self.repr,
-            std::sync::Arc::new(PatRepr::Any),
+            std::sync::Arc::new(TmplRepr::BoolConst(false)),
         ));
     }
 }
@@ -53,14 +53,14 @@ impl PyTemplate {
 /// The one build-valid wildcard.
 #[pyfunction]
 pub fn var(c: PyRef<'_, PyCapture>) -> PyTemplate {
-    PyTemplate::from_repr(PatRepr::Var(c.inner))
+    PyTemplate::from_tmpl(TmplRepr::Var(c.inner))
 }
 
 /// Build an `IntConst` whose stored value, masked to the output width, is
 /// `value`. Bit-pattern equality; negatives use the sign-extended form.
 #[pyfunction]
 pub fn int_const(value: WideInt) -> PyTemplate {
-    PyTemplate::from_repr(PatRepr::IntConst(value.bits()))
+    PyTemplate::from_tmpl(TmplRepr::IntConst(value.bits()))
 }
 
 /// A 128-bit constant from either side of the signed/unsigned split, so
@@ -85,13 +85,13 @@ impl WideInt {
 /// Build an `I1` boolean constant equal to `value`.
 #[pyfunction]
 pub fn bool_const(value: bool) -> PyTemplate {
-    PyTemplate::from_repr(PatRepr::BoolConst(value))
+    PyTemplate::from_tmpl(TmplRepr::BoolConst(value))
 }
 
 /// Build a `FloatConst` with raw bits `bits`.
 #[pyfunction]
 pub fn float_const(bits: u64) -> PyTemplate {
-    PyTemplate::from_repr(PatRepr::FloatConst(bits))
+    PyTemplate::from_tmpl(TmplRepr::FloatConst(bits))
 }
 
 value_ops!(PyTemplate, "Build", "");
