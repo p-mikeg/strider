@@ -547,12 +547,12 @@ macro_rules! value_op_factories {
             Negated { cmp: int_eq(lhs, rhs) }
         }
 
-        #[doc = concat!($verb, " an unsigned less-or-equal `lhs <= rhs`, i.e. `int_xor(int_lt(r, l), 1):I1`; `.ordered()` pins the `int_lt`.")]
+        #[doc = concat!($verb, " an unsigned less-or-equal `lhs <= rhs`, i.e. `int_xor(int_lt(r, l), 1):I1`; `.ordered()` is a no-op, the `int_lt` orders its pair.")]
         pub fn int_le<L: $bound, R: $bound>(lhs: L, rhs: R) -> Negated<IntCmpFixed<R, L>> {
             Negated { cmp: int_lt(rhs, lhs) }
         }
 
-        #[doc = concat!($verb, " a signed less-or-equal `(signed)lhs <= (signed)rhs`, i.e. `int_xor(int_slt(r, l), 1):I1`; `.ordered()` pins the `int_slt`.")]
+        #[doc = concat!($verb, " a signed less-or-equal `(signed)lhs <= (signed)rhs`, i.e. `int_xor(int_slt(r, l), 1):I1`; `.ordered()` is a no-op, the `int_slt` orders its pair.")]
         pub fn int_sle<L: $bound, R: $bound>(lhs: L, rhs: R) -> Negated<IntCmpFixed<R, L>> {
             Negated { cmp: int_slt(rhs, lhs) }
         }
