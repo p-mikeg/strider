@@ -1001,6 +1001,30 @@ mod tests {
         assert_eq!(narrow, wide[..4]);
     }
 
+    /// A field starting at a region's last byte is that region's too: a
+    /// one-byte read there serves the field's first byte patched.
+    #[test]
+    fn a_field_at_an_inner_regions_last_byte_reads_back_patched() {
+        let field = 0x1087;
+        let value = 0xdead_beef_feed_face_u64;
+        let mut regions = vec![
+            MemRegion::new(0x1000, vec![0u8; 0x100]).unwrap(),
+            MemRegion::new(0x1080, vec![0u8; 8]).unwrap(),
+        ];
+        let all: Arc<[Patch]> =
+            vec![Patch::new(field, value, 8, true).expect("an 8 byte field")].into();
+        for region in &mut regions {
+            region.attach_patches(&all);
+        }
+
+        let table = crate::MemRegionsLookupTable::new(regions);
+        let mut last = [0u8; 1];
+        table
+            .read_exact(field, &mut last)
+            .expect("the inner region");
+        assert_eq!(last, value.to_le_bytes()[..1]);
+    }
+
     /// A field starting below a region's start still lands in it: a region
     /// keeps the patches up to `MAX_PATCH_LEN - 1` bytes before it, so the
     /// inner region serves the field's tail patched.
@@ -1027,12 +1051,12 @@ mod tests {
     }
 
     /// A relocation the word domain builds: `r_type` against symbol 1 or
-    /// STN_UNDEF, MIPS64's second type `r_type2`.
-    fn word_info(r_type: u32, r_type2: u32, sym: bool) -> RelocInfo {
+    /// STN_UNDEF, MIPS64's second and third types `r_type2` / `r_type3`.
+    fn word_info(r_type: u32, (r_type2, r_type3): (u32, u32), sym: bool) -> RelocInfo {
         RelocInfo {
             r_type,
             r_type2,
-            r_type3: object::elf::R_MIPS_NONE,
+            r_type3,
             sym: sym.then_some(object::SymbolIndex(1)),
             rela_addend: Some(0),
             generic: None,
@@ -1040,7 +1064,8 @@ mod tests {
     }
 
     /// Every type number below 1101 on every arch the word rows serve, against
-    /// a symbol and none, MIPS64 with and without `R_MIPS_64` composed.
+    /// a symbol and none, MIPS64 with no composite, with `R_MIPS_64` or
+    /// `R_MIPS_SUB` second, and with `R_MIPS_64` then `R_MIPS_SUB`.
     fn word_domain() -> impl Iterator<Item = (A, RelocInfo)> {
         [
             A::X86_64,
@@ -1054,14 +1079,20 @@ mod tests {
         ]
         .into_iter()
         .flat_map(|arch| {
-            let seconds: &'static [u32] = if arch == A::Mips64 {
-                &[object::elf::R_MIPS_NONE, object::elf::R_MIPS_64]
+            use object::elf::{R_MIPS_64, R_MIPS_NONE, R_MIPS_SUB};
+            let composites: &'static [(u32, u32)] = if arch == A::Mips64 {
+                &[
+                    (R_MIPS_NONE, R_MIPS_NONE),
+                    (R_MIPS_64, R_MIPS_NONE),
+                    (R_MIPS_SUB, R_MIPS_NONE),
+                    (R_MIPS_64, R_MIPS_SUB),
+                ]
             } else {
-                &[object::elf::R_MIPS_NONE]
+                &[(R_MIPS_NONE, R_MIPS_NONE)]
             };
-            seconds.iter().flat_map(move |&r_type2| {
+            composites.iter().flat_map(move |&rest| {
                 (0..=1100u32).flat_map(move |r_type| {
-                    [false, true].map(move |sym| (arch, word_info(r_type, r_type2, sym)))
+                    [false, true].map(move |sym| (arch, word_info(r_type, rest, sym)))
                 })
             })
         })
@@ -1084,7 +1115,8 @@ mod tests {
         signed: true,
     };
 
-    /// `(arch, r_type, r_type2, symbol, value, field)`.
+    /// `(arch, r_type, r_type2, symbol, value, field)`; a third type changes
+    /// no row.
     type WordRow = (A, u32, u32, Option<bool>, Value, Field);
 
     /// The word rows, a `None` symbol matching both.
@@ -1142,10 +1174,35 @@ mod tests {
                 Abs,
                 D8,
             ),
+            (
+                A::Mips64,
+                e::R_MIPS_REL32,
+                e::R_MIPS_SUB,
+                Some(false),
+                Ir,
+                D4,
+            ),
+            (
+                A::Mips64,
+                e::R_MIPS_REL32,
+                e::R_MIPS_SUB,
+                Some(true),
+                Abs,
+                D4,
+            ),
             (A::Mips64, e::R_MIPS_GLOB_DAT, 0, None, Slot, D8),
             (A::Mips64, e::R_MIPS_GLOB_DAT, e::R_MIPS_64, None, Slot, D8),
+            (A::Mips64, e::R_MIPS_GLOB_DAT, e::R_MIPS_SUB, None, Slot, D8),
             (A::Mips64, e::R_MIPS_JUMP_SLOT, 0, None, Slot, D8),
             (A::Mips64, e::R_MIPS_JUMP_SLOT, e::R_MIPS_64, None, Slot, D8),
+            (
+                A::Mips64,
+                e::R_MIPS_JUMP_SLOT,
+                e::R_MIPS_SUB,
+                None,
+                Slot,
+                D8,
+            ),
         ]
     };
 
@@ -1186,6 +1243,10 @@ mod tests {
                 ),
             }
         }
-        assert_eq!(rows, 74, "40 rows, the 34 either-symbol ones counted twice");
+        assert_eq!(
+            rows, 86,
+            "44 rows, the 36 either-symbol ones counted twice, and the 4 \
+             `R_MIPS_64` ones 6 more times under a third type"
+        );
     }
 }

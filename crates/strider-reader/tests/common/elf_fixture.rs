@@ -54,6 +54,9 @@ pub(crate) struct RelPlacement {
     /// `Some(v)`: symbol 1 is an undefined `STB_WEAK` one with `st_value` v
     /// rather than the defined `func`.
     pub undefined_weak: Option<u64>,
+    /// An empty `SHT_CREL` section beside `.rel.dyn`, linked to no symbol
+    /// table, so the image holds a CREL table that relocates nothing.
+    pub empty_crel: bool,
 }
 
 impl Default for RelPlacement {
@@ -64,6 +67,7 @@ impl Default for RelPlacement {
             slot_exec: false,
             table: RelTable::Rel,
             undefined_weak: None,
+            empty_crel: false,
         }
     }
 }
@@ -268,6 +272,11 @@ pub(crate) fn build_rel_elf_placed(opts: RelOpts, place: RelPlacement) -> RelFix
         let dynstr_idx = w.reserve_section_index();
         let reldyn_name = w.add_section_name(b".rel.dyn");
         let _reldyn_idx = w.reserve_section_index();
+        let crel_name = place.empty_crel.then(|| {
+            let name = w.add_section_name(b".crel.empty");
+            w.reserve_section_index();
+            name
+        });
         let _shstr = w.reserve_shstrtab_section_index();
 
         assert_eq!(text_idx.0, u32::from(text_shndx));
@@ -425,6 +434,20 @@ pub(crate) fn build_rel_elf_placed(opts: RelOpts, place: RelPlacement) -> RelFix
                 RelTable::Crel(_) => 1,
             },
         });
+        if let Some(name) = crel_name {
+            w.write_section_header(&SectionHeader {
+                name: Some(name),
+                sh_type: elf::SHT_CREL,
+                sh_flags: 0,
+                sh_addr: 0,
+                sh_offset: 0,
+                sh_size: 0,
+                sh_link: 0,
+                sh_info: 0,
+                sh_addralign: 1,
+                sh_entsize: 1,
+            });
+        }
         w.write_shstrtab_section_header();
     }
 
