@@ -24,7 +24,8 @@ fn read_benches(c: &mut Criterion) {
     };
     let elf = OwnedElf::open(&path).expect("open STRIDER_BENCH_ELF");
     let obj = elf.checked_file().expect("parse STRIDER_BENCH_ELF");
-    // Every 4th executable address, as instruction fetch reads them.
+    // The first `PROBES` of every 4th executable address, in section order,
+    // as instruction fetch reads them.
     let code: Vec<u64> = obj
         .sections()
         .filter(|s| {
@@ -34,7 +35,7 @@ fn read_benches(c: &mut Criterion) {
         .flat_map(|s| (s.address()..s.address().saturating_add(s.size())).step_by(4))
         .take(PROBES)
         .collect();
-    // Every relocation site, the reads that cross a patch.
+    // The first `PROBES` relocation sites, the reads that cross a patch.
     let sites: Vec<u64> = obj
         .dynamic_relocations()
         .into_iter()
