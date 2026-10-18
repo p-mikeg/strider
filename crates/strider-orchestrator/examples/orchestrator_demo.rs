@@ -60,13 +60,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cfg = lifter.build_cfg(strider_cfg::MachineInsnAddr::from(addr), &cfg_options)?;
 
-    let dot = dot::GraphDot::new(cfg.dot_dumper(lifter.sleigh()), dot::DotStyle::dark_cfg());
+    let dot = dot::GraphDot::new(cfg.dot_dumper(arch.names()), dot::DotStyle::dark_cfg());
     dot.dump_as_html(format!("{prefix}cfg.html"))?;
     dot.dump_as_dot(format!("{prefix}cfg.dot"))?;
 
     let mut function = lifter.build_ir(&cfg, cc)?.function;
 
-    let dot = dot::GraphDot::new(function.dot_dumper(lifter.sleigh())?, dot::DotStyle::dark());
+    let dot = dot::GraphDot::new(function.dot_dumper(arch.names()), dot::DotStyle::dark());
     println!("dumping IR graph -> {prefix}graph.html");
     dot.dump_as_html(format!("{prefix}graph.html"))?;
     dot.dump_as_dot(format!("{prefix}graph.dot"))?;
@@ -77,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &mut strider_orchestrator::opt::OptCtx::new(Some(&rom)),
     )?;
 
-    let dot = dot::GraphDot::new(function.dot_dumper(lifter.sleigh())?, dot::DotStyle::dark());
+    let dot = dot::GraphDot::new(function.dot_dumper(arch.names()), dot::DotStyle::dark());
     println!("dumping opt IR graph -> {prefix}graph-opt.html");
     dot.dump_as_html(format!("{prefix}graph-opt.html"))?;
     dot.dump_as_dot(format!("{prefix}graph-opt.dot"))?;

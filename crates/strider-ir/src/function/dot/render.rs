@@ -1,4 +1,3 @@
-use rsleigh::MemReader;
 use rustc_hash::FxHashMap;
 
 use super::{FunctionDotDumper, FunctionDotDumperState, edge_style, node_fillcolor, node_shape};
@@ -15,7 +14,7 @@ fn has_one_unused_output(graph: &Graph, node: NodeId) -> bool {
     graph.value_uses(outputs[0]).next().is_none()
 }
 
-impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
+impl ::dot::GraphDotDumper for FunctionDotDumper<'_> {
     type Node = crate::node::NodeId;
     type Error = std::io::Error;
     type State = FunctionDotDumperState;
@@ -66,7 +65,7 @@ impl<'a, R: MemReader> ::dot::GraphDotDumper for FunctionDotDumper<'a, R> {
     }
 }
 
-impl<'a, R: MemReader> FunctionDotDumper<'a, R> {
+impl FunctionDotDumper<'_> {
     /// `Ok(None)` when the node draws no shared box of its own (a per-use const,
     /// or a useless `InitialVar`).
     fn try_declare_node(
