@@ -122,11 +122,55 @@ pub(crate) fn capture_display(id: u32) -> String {
     }
 }
 
-pub(crate) struct DynMatch(pub(crate) Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef + Send>);
+/// A `MatchPat` behind a box: the one type a Python pattern tree lowers
+/// through, keeping each node's own `compile_ordered`.
+pub(crate) struct DynMatch(Box<dyn ErasedMatch>);
+
+/// `MatchPat` over `self: Box<Self>`. `compile_mem` is not erased: a
+/// `DynMatch` in a memory slot lowers through `compile`.
+trait ErasedMatch: Send {
+    fn compile_boxed(self: Box<Self>, b: &mut MatcherBuilder) -> PatValueRef;
+    fn compile_ordered_boxed(self: Box<Self>, b: &mut MatcherBuilder) -> PatValueRef;
+}
+
+impl<P: MatchPat + 'static> ErasedMatch for P {
+    fn compile_boxed(self: Box<Self>, b: &mut MatcherBuilder) -> PatValueRef {
+        (*self).compile(b)
+    }
+
+    fn compile_ordered_boxed(self: Box<Self>, b: &mut MatcherBuilder) -> PatValueRef {
+        (*self).compile_ordered(b)
+    }
+}
+
+impl DynMatch {
+    pub(crate) fn new(p: impl MatchPat + 'static) -> Self {
+        Self(Box::new(p))
+    }
+
+    /// A lowering with no `MatchPat` of its own; `.ordered()` pins its root.
+    pub(crate) fn from_fn(
+        f: impl FnOnce(&mut MatcherBuilder) -> PatValueRef + Send + 'static,
+    ) -> Self {
+        Self::new(FnMatch(f))
+    }
+}
+
+struct FnMatch<F>(F);
+
+impl<F: FnOnce(&mut MatcherBuilder) -> PatValueRef + Send> MatchPat for FnMatch<F> {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        (self.0)(b)
+    }
+}
 
 impl MatchPat for DynMatch {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        (self.0)(b)
+        self.0.compile_boxed(b)
+    }
+
+    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.0.compile_ordered_boxed(b)
     }
 }
 
@@ -399,9 +443,7 @@ pub(crate) fn compile_operand_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch>
     }
     if let Ok(c) = ob.extract::<PyRef<'_, PyCapture>>() {
         let cap = c.inner;
-        return Ok(DynMatch(Box::new(move |b| {
-            mc(strider_pattern::var(cap), b)
-        })));
+        return Ok(DynMatch::new(strider_pattern::var(cap)));
     }
     if let Ok(b) = ob.downcast::<PyLoadPat>() {
         return b.borrow().compile_value(py);
@@ -478,13 +520,14 @@ pub(crate) fn compile_operand_mem(ob: &Bound<'_, PyAny>) -> PyResult<DynMem> {
     let _depth = DepthGuard::enter()?;
     let py = ob.py();
     // A `one_of` / `first_of` nests in a memory slot: its output kind is `Any`,
-    // and `DynMatch` / `DynMem` wrap the same closure, so bridge `.0` across.
+    // so its value lowering serves as the memory sub.
     // Through the chainable wrappers too, so `.cap` does not change which
     // slots accept the alternation.
     if let Ok(p) = ob.downcast::<PyPat>()
         && wraps_alternation(ob)
     {
-        return Ok(DynMem(compile_repr_match(&p.borrow().repr, py)?.0));
+        let alt = compile_repr_match(&p.borrow().repr, py)?;
+        return Ok(DynMem(Box::new(move |b| mc(alt, b))));
     }
     if let Ok(b) = ob.downcast::<PyStorePat>() {
         return b.borrow().compile_mem(py);
@@ -520,11 +563,11 @@ fn coerce_operand_list(py: Python<'_>, p: Py<PyAny>) -> PyResult<Py<PyAny>> {
 
 /// `any_input` operands and `one_of` / `first_of` arms: a memory producer
 /// (`store` / `mem_phi`) wires as a memory sub, everything else as a value sub
-/// (a wildcard already reaches control / phi-token slots). `DynMatch` and
-/// `DynMem` wrap the same closure, so the memory sub reuses the value path.
+/// (a wildcard already reaches control / phi-token slots). The memory sub is
+/// a `DynMem` boxed as a `DynMatch`, lowering through `compile` like a value.
 pub(crate) fn compile_any_input(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch> {
     if ob.downcast::<PyStorePat>().is_ok() || ob.downcast::<PyMemPhiPat>().is_ok() {
-        return Ok(DynMatch(compile_operand_mem(ob)?.0));
+        return Ok(DynMatch::new(compile_operand_mem(ob)?));
     }
     compile_operand_match(ob)
 }
@@ -542,11 +585,11 @@ fn compile_alt_arm_operand(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch> {
     // anchor stays kind-agnostic instead of pinning the value output.
     if ob.downcast::<PyCallPat>().is_ok() || ob.downcast::<PyCallOtherPat>().is_ok() {
         let inner = compile_operand_match(ob)?;
-        return Ok(DynMatch(Box::new(move |b| {
-            let out = (inner.0)(b);
+        return Ok(DynMatch::from_fn(move |b| {
+            let out = mc(inner, b);
             b.set_output_any(out);
             out
-        })));
+        }));
     }
     if let Ok(b) = ob.downcast::<PyRetPat>() {
         return b.borrow().compile_alt_arm(py);
@@ -997,20 +1040,20 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let op = *$op;
             let l = op_match(py, $l)?;
             let r = op_match(py, $r)?;
-            DynMatch(Box::new(move |b| mc($f(op, l, r), b)))
+            DynMatch::new($f(op, l, r))
         }};
     }
     macro_rules! m_bin {
         ($f:path, $l:ident, $r:ident) => {{
             let l = op_match(py, $l)?;
             let r = op_match(py, $r)?;
-            DynMatch(Box::new(move |b| mc($f(l, r), b)))
+            DynMatch::new($f(l, r))
         }};
     }
     macro_rules! m_un {
         ($f:path, $x:ident) => {{
             let x = op_match(py, $x)?;
-            DynMatch(Box::new(move |b| mc($f(x), b)))
+            DynMatch::new($f(x))
         }};
     }
     macro_rules! m_bin_any {
@@ -1018,102 +1061,102 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let c = *$c;
             let l = op_match(py, $l)?;
             let r = op_match(py, $r)?;
-            DynMatch(Box::new(move |b| mc($f(l, r).capture(c), b)))
+            DynMatch::new($f(l, r).capture(c))
         }};
     }
     macro_rules! m_un_any {
         ($f:path, $c:ident, $x:ident) => {{
             let c = *$c;
             let x = op_match(py, $x)?;
-            DynMatch(Box::new(move |b| mc($f(x).capture(c), b)))
+            DynMatch::new($f(x).capture(c))
         }};
     }
     let _depth = DepthGuard::enter()?;
     Ok(match repr {
-        PatRepr::Any => DynMatch(Box::new(|b| mc(sp::anything(), b))),
+        PatRepr::Any => DynMatch::new(sp::anything()),
         PatRepr::Var(c) => {
             let c = *c;
-            DynMatch(Box::new(move |b| mc(sp::var(c), b)))
+            DynMatch::new(sp::var(c))
         }
         PatRepr::ValueOfWidth(n) => {
             let n = *n;
-            DynMatch(Box::new(move |b| mc(sp::value_of_width(n), b)))
+            DynMatch::new(sp::value_of_width(n))
         }
         PatRepr::InputsOfWidth(n, inner) => {
             let n = *n;
             let i = op_match(py, inner)?;
-            DynMatch(Box::new(move |b| mc(sp::inputs_of_width(n, i), b)))
+            DynMatch::new(sp::inputs_of_width(n, i))
         }
         PatRepr::IntConst(v) => {
             let v = *v;
-            DynMatch(Box::new(move |b| mc(sp::int_const(v), b)))
+            DynMatch::new(sp::int_const(v))
         }
         PatRepr::IntConstAnyWidth(v) => {
             let v = *v;
-            DynMatch(Box::new(move |b| mc(sp::int_const_any_width(v), b)))
+            DynMatch::new(sp::int_const_any_width(v))
         }
         PatRepr::IntConstAnyWidthAnyOf(vals) => {
             let vals = vals.clone();
-            DynMatch(Box::new(move |b| mc(sp::int_const_any_width(vals), b)))
+            DynMatch::new(sp::int_const_any_width(vals))
         }
         PatRepr::IntConstAnyOf(vals) => {
             let vals = vals.clone();
-            DynMatch(Box::new(move |b| mc(sp::int_const(vals), b)))
+            DynMatch::new(sp::int_const(vals))
         }
         PatRepr::BoolConst(v) => {
             let v = *v;
-            DynMatch(Box::new(move |b| mc(sp::bool_const(v), b)))
+            DynMatch::new(sp::bool_const(v))
         }
         PatRepr::FloatConst(bits) => {
             let bits = *bits;
-            DynMatch(Box::new(move |b| mc(sp::float_const(bits), b)))
+            DynMatch::new(sp::float_const(bits))
         }
         PatRepr::AnyInt(c) => {
             let c = *c;
-            DynMatch(Box::new(move |b| match c {
+            DynMatch::from_fn(move |b| match c {
                 Some(c) => mc(sp::any_int().capture(c), b),
                 None => mc(sp::any_int(), b),
-            }))
+            })
         }
         PatRepr::AnyBool(c) => {
             let c = *c;
-            DynMatch(Box::new(move |b| match c {
+            DynMatch::from_fn(move |b| match c {
                 Some(c) => mc(sp::any_bool().capture(c), b),
                 None => mc(sp::any_bool(), b),
-            }))
+            })
         }
         PatRepr::AnyFloat(c) => {
             let c = *c;
-            DynMatch(Box::new(move |b| match c {
+            DynMatch::from_fn(move |b| match c {
                 Some(c) => mc(sp::any_float().capture(c), b),
                 None => mc(sp::any_float(), b),
-            }))
+            })
         }
         PatRepr::AnyIntConst(c) => {
             let c = *c;
-            DynMatch(Box::new(move |b| match c {
+            DynMatch::from_fn(move |b| match c {
                 Some(c) => mc(sp::int_const(c), b),
                 None => mc(sp::any_int_const(), b),
-            }))
+            })
         }
         PatRepr::AnyBoolConst(c) => {
             let c = *c;
-            DynMatch(Box::new(move |b| match c {
+            DynMatch::from_fn(move |b| match c {
                 Some(c) => mc(sp::bool_const(c), b),
                 None => mc(sp::any_bool_const(), b),
-            }))
+            })
         }
         PatRepr::AnyFloatConst(c) => {
             let c = *c;
-            DynMatch(Box::new(move |b| match c {
+            DynMatch::from_fn(move |b| match c {
                 Some(c) => mc(sp::float_const(c), b),
                 None => mc(sp::any_float_const(), b),
-            }))
+            })
         }
-        PatRepr::InitialVar => DynMatch(Box::new(|b| mc(sp::initial_var(), b))),
+        PatRepr::InitialVar => DynMatch::new(sp::initial_var()),
         PatRepr::InitialVarFor(vn) => {
             let vn = *vn;
-            DynMatch(Box::new(move |b| mc(sp::initial_var_for(vn), b)))
+            DynMatch::new(sp::initial_var_for(vn))
         }
         PatRepr::OneOf(alts, first) => {
             let first = *first;
@@ -1126,7 +1169,7 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             } else {
                 sp::OneOf::new(boxed)
             };
-            DynMatch(Box::new(move |b| mc(alt, b)))
+            DynMatch::new(alt)
         }
         PatRepr::IntBinary(op, l, r) => m_binop!(sp::int_binary, op, l, r),
         PatRepr::Sub(l, r) => m_bin!(sp::int_sub, l, r),
@@ -1134,21 +1177,21 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
         PatRepr::IntUnary(kind, x) => {
             let kind = *kind;
             let x = op_match(py, x)?;
-            DynMatch(Box::new(move |b| match kind {
+            DynMatch::from_fn(move |b| match kind {
                 IntUnaryKind::Neg => mc(sp::int_neg(x), b),
                 IntUnaryKind::Popcount => mc(sp::int_popcount(x), b),
                 IntUnaryKind::Lzcount => mc(sp::int_lzcount(x), b),
-            }))
+            })
         }
         PatRepr::Cast(kind, x) => {
             let kind = *kind;
             let x = op_match(py, x)?;
-            DynMatch(Box::new(move |b| cast_match(kind, x, b)))
+            DynMatch::from_fn(move |b| cast_match(kind, x, b))
         }
         PatRepr::Extend(op, x) => {
             let op = *op;
             let x = op_match(py, x)?;
-            DynMatch(Box::new(move |b| mc(sp::int_extend(op, x), b)))
+            DynMatch::new(sp::int_extend(op, x))
         }
         PatRepr::IntCmp(op, l, r) => m_binop!(sp::int_cmp, op, l, r),
         PatRepr::IntNe(l, r) => m_bin!(sp::int_ne, l, r),
@@ -1159,14 +1202,14 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
         PatRepr::FloatUnary(kind, x) => {
             let kind = *kind;
             let x = op_match(py, x)?;
-            DynMatch(Box::new(move |b| match kind {
+            DynMatch::from_fn(move |b| match kind {
                 FloatUnaryKind::Neg => mc(sp::float_neg(x), b),
                 FloatUnaryKind::Abs => mc(sp::float_abs(x), b),
                 FloatUnaryKind::Sqrt => mc(sp::float_sqrt(x), b),
                 FloatUnaryKind::Ceil => mc(sp::float_ceil(x), b),
                 FloatUnaryKind::Floor => mc(sp::float_floor(x), b),
                 FloatUnaryKind::Round => mc(sp::float_round(x), b),
-            }))
+            })
         }
         PatRepr::FloatCmp(op, l, r) => m_binop!(sp::float_cmp, op, l, r),
         PatRepr::FloatNe(l, r) => m_bin!(sp::float_ne, l, r),
@@ -1184,23 +1227,23 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
         PatRepr::Captured(inner, c) => {
             let c = *c;
             let inner = compile_operand_match(inner.bind(py))?;
-            DynMatch(Box::new(move |b| mc(inner.capture(c), b)))
+            DynMatch::new(inner.capture(c))
         }
         PatRepr::Guarded(inner, f) => {
             let inner = compile_operand_match(inner.bind(py))?;
             let f = f.clone_ref(py);
-            DynMatch(Box::new(move |b| mc(wrap_when(inner, f), b)))
+            DynMatch::new(wrap_when(inner, f))
         }
         PatRepr::Ordered(inner) => compile_ordered_match(inner.bind(py))?,
         PatRepr::OfWidth(inner, n) => {
             let n = *n;
             let inner = compile_operand_match(inner.bind(py))?;
-            DynMatch(Box::new(move |b| mc(inner.of_width(n), b)))
+            DynMatch::new(inner.of_width(n))
         }
         PatRepr::ValueTy(inner, ty) => {
             let ty = *ty;
             let inner = compile_operand_match(inner.bind(py))?;
-            DynMatch(Box::new(move |b| mc(inner.value_ty(ty), b)))
+            DynMatch::new(inner.value_ty(ty))
         }
         PatRepr::Finished { .. } => {
             return Err(into_strider_err(anyhow::anyhow!(
@@ -1212,7 +1255,7 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
 }
 
 fn ordered_dyn<P: MatchPat + 'static>(p: P) -> DynMatch {
-    DynMatch(Box::new(move |b| mc(p.ordered(), b)))
+    DynMatch::new(p.ordered())
 }
 
 /// Compiles `ob` with `.ordered()` on the node carrying the operand pair the
@@ -1229,9 +1272,7 @@ fn compile_ordered_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch> {
     macro_rules! m_ordered_cmp {
         ($f:path, $l:expr, $r:expr) => {{
             let cmp = ordered_dyn($f(op_match(py, $l)?, op_match(py, $r)?));
-            DynMatch(Box::new(move |b| {
-                mc(sp::int_xor(cmp, sp::bool_const(true)), b)
-            }))
+            DynMatch::new(sp::int_xor(cmp, sp::bool_const(true)))
         }};
     }
     Ok(match &*repr {
@@ -1240,22 +1281,22 @@ fn compile_ordered_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch> {
         PatRepr::Captured(inner, c) => {
             let c = *c;
             let inner = compile_ordered_match(inner.bind(py))?;
-            DynMatch(Box::new(move |b| mc(inner.capture(c), b)))
+            DynMatch::new(inner.capture(c))
         }
         PatRepr::Guarded(inner, f) => {
             let f = f.clone_ref(py);
             let inner = compile_ordered_match(inner.bind(py))?;
-            DynMatch(Box::new(move |b| mc(wrap_when(inner, f), b)))
+            DynMatch::new(wrap_when(inner, f))
         }
         PatRepr::OfWidth(inner, n) => {
             let n = *n;
             let inner = compile_ordered_match(inner.bind(py))?;
-            DynMatch(Box::new(move |b| mc(inner.of_width(n), b)))
+            DynMatch::new(inner.of_width(n))
         }
         PatRepr::ValueTy(inner, ty) => {
             let ty = *ty;
             let inner = compile_ordered_match(inner.bind(py))?;
-            DynMatch(Box::new(move |b| mc(inner.value_ty(ty), b)))
+            DynMatch::new(inner.value_ty(ty))
         }
         PatRepr::Ordered(inner) => compile_ordered_match(inner.bind(py))?,
         PatRepr::IntNe(l, r) => m_ordered_cmp!(sp::int_eq, l, r),
@@ -1849,20 +1890,39 @@ pub(crate) fn mem_with_when<M: MemPat + 'static>(
     out
 }
 
-/// Attaches the predicate as a full `PostMatchFn`, which keeps the matched
-/// `NodeId` the predicate needs for a real `Match.root`.
-pub(crate) fn wrap_when<P: MatchPat + 'static>(inner: P, py_func: PyObject) -> impl MatchPat {
-    let py_func = attach_when(py_func);
-    DynMatch(Box::new(move |b: &mut MatcherBuilder| {
-        let o = inner.compile(b);
-        b.set_post_match(
-            o,
-            Box::new(move |_matcher, node, _ty, bindings| {
-                run_when_predicate(node, bindings, &py_func)
-            }),
-        );
+/// `inner` with a Python `.when()` predicate on its root, attached as it
+/// lowers. Forwards `compile_ordered`, so a pin lands under the guard.
+pub(crate) struct WhenPat<P> {
+    inner: P,
+    f: PyObject,
+}
+
+impl<P: MatchPat> MatchPat for WhenPat<P> {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let o = self.inner.compile(b);
+        guard_with(b, o, self.f);
         o
-    }))
+    }
+
+    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let o = self.inner.compile_ordered(b);
+        guard_with(b, o, self.f);
+        o
+    }
+}
+
+/// Attaches `f` as a full `PostMatchFn`, which keeps the matched `NodeId` the
+/// predicate needs for a real `Match.root`.
+fn guard_with(b: &mut MatcherBuilder, o: PatValueRef, f: PyObject) {
+    let f = attach_when(f);
+    b.set_post_match(
+        o,
+        Box::new(move |_matcher, node, _ty, bindings| run_when_predicate(node, bindings, &f)),
+    );
+}
+
+pub(crate) fn wrap_when<P: MatchPat>(inner: P, f: PyObject) -> WhenPat<P> {
+    WhenPat { inner, f }
 }
 
 /// For the node-rooted control / variadic builders, which finalise straight
@@ -3027,8 +3087,8 @@ macro_rules! node_builder {
             let b = self.core_builder(py)?;
             let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
             Ok(match when {
-                Some(f) => DynMatch(Box::new(move |mb| wrap_when(b, f).compile(mb))),
-                None => DynMatch(Box::new(move |mb| b.compile(mb))),
+                Some(f) => DynMatch::new(wrap_when(b, f)),
+                None => DynMatch::new(b),
             })
         }
     };
@@ -3065,7 +3125,7 @@ macro_rules! node_builder {
         fn compile_alt_arm(&self, py: Python<'_>) -> PyResult<DynMatch> {
             let b = self.core_builder(py)?;
             let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
-            Ok(DynMatch(Box::new(move |mb| alt_arm_with_when(mc(b, mb), mb, when))))
+            Ok(DynMatch::from_fn(move |mb| alt_arm_with_when(mc(b, mb), mb, when)))
         }
     };
 
@@ -3363,8 +3423,8 @@ impl PyCallPat {
         let b = self.core_builder(py)?;
         let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
         Ok(match when {
-            Some(f) => DynMatch(Box::new(move |mb| wrap_when(b, f).compile(mb))),
-            None => DynMatch(Box::new(move |mb| b.compile(mb))),
+            Some(f) => DynMatch::new(wrap_when(b, f)),
+            None => DynMatch::new(b),
         })
     }
 
@@ -4195,7 +4255,7 @@ impl PyFunctionArgPat {
 
     fn compile_value(&self) -> DynMatch {
         let b = self.core_builder();
-        DynMatch(Box::new(move |mb| b.compile(mb)))
+        DynMatch::new(b)
     }
 
     fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
@@ -4346,7 +4406,7 @@ macro_rules! binary_op_builder {
                 let ordered = self.ordered.get();
                 let capture = self.common.borrow().capture;
                 let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
-                Ok(DynMatch(Box::new(move |mb| {
+                Ok(DynMatch::from_fn(move |mb| {
                     let pat = strider_pattern::$core(op, l, r);
                     // `.ordered()` pins commutativity on the root and must be
                     // applied before capture / when. The branch exists because
@@ -4357,7 +4417,7 @@ macro_rules! binary_op_builder {
                     } else {
                         apply_cap_when(mb, pat, capture, when)
                     }
-                })))
+                }))
             }
 
             fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
