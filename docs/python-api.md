@@ -210,7 +210,7 @@ footprint-free classes `CallOtherAbi.noop()` / `.pure()` / `.mem_clobber()` /
 `.no_return()`, or one naming implicit registers:
 
 ```python
-sl = strider.sleigh.Sleigh(sleigh.SleighArch.x86_64(), mem)
+sl = sleigh.SleighArch.x86_64()
 strider.sleigh.CallOtherAbi.custom(
     sl,                              # resolves the register names here and now
     implicit_reads=["RAX", "RDI"],   # read beyond the p-code operands
@@ -866,9 +866,9 @@ presets (`x86_64_systemv()`, ...) describe argument passing, and
 register names. `.preserves_all()` and `.preserves_regs()` derive a variant
 of a convention for a per-address override; a callee that never returns goes
 in `CfgOptions(no_return_targets=...)` instead. `CallOtherAbi`
-describes one Sleigh user-op, for `CfgOptions(call_other_abis=...)`. `Sleigh`
-exposes the raw register table when you need it without a lifter, and resolves
-the names both `custom` constructors take.
+describes one Sleigh user-op, for `CfgOptions(call_other_abis=...)`. Both
+`custom` constructors resolve register names against a `SleighArch`, whose
+`reg` / `reg_name` look registers up without a lifter.
 `crates/strider-py/examples/python/17_custom_abis.py` uses each of them.
 
 Analysis stays inside the function being lifted: a call is modelled by the
@@ -887,9 +887,8 @@ two kinds of callee need their own convention through
 
 ```python
 x86 = sleigh.SleighArch.x86()
-sl32 = strider.sleigh.Sleigh(x86, mem)
 pops_8 = sleigh.CallingConvention.custom(
-    sl32,
+    x86,
     arg_passing_regs=[],
     callee_saved_regs=["EBX", "ESI", "EDI", "EBP"],   # drop "EBX" for get_pc_thunk.bx
     ret_val_regs=["EAX", "EDX"],
