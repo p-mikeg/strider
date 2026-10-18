@@ -90,6 +90,15 @@ class SleighArch:
     def endianness(self) -> str:
         """Byte order of this architecture: `"little"` or `"big"`."""
         ...
+    def reg(self, name: str) -> Optional["Vn"]:
+        """The varnode for the register called `name`, or `None` when the
+        name is not a register of this arch."""
+        ...
+    def reg_name(self, vn: "Vn") -> Optional[str]:
+        """The register name for `vn`, or `None` when it names no register
+        (a non-register space, or an offset and size absent from this
+        arch's table)."""
+        ...
 
 class CallingConvention:
     """How a function receives arguments, returns values, and which
@@ -164,7 +173,7 @@ class CallingConvention:
     @classmethod
     def custom(
         cls,
-        sleigh: "Sleigh",
+        sleigh: Union[SleighArch, "Sleigh"],
         arg_passing_regs: list[str],
         callee_saved_regs: list[str],
         ret_val_regs: list[str],
@@ -187,6 +196,8 @@ class CallingConvention:
         `arg_passing_regs_float` names the float/vector argument registers;
         they are appended after `arg_passing_regs`, so the first one is
         `arg(len(arg_passing_regs))` in a `call()` pattern.
+
+        `sleigh` is the `SleighArch`, or a `Sleigh` built for one.
 
         Names are resolved and most ABI invariants checked here, so a bad one
         raises `StriderError` at construction. Among them, a `link_register`
@@ -318,7 +329,7 @@ class CallOtherAbi:
     @classmethod
     def custom(
         cls,
-        sleigh: Sleigh,
+        sleigh: Union[SleighArch, "Sleigh"],
         implicit_reads: list[str] = ...,
         implicit_writes: list[str] = ...,
         clobbers_memory: bool = ...,
@@ -326,6 +337,8 @@ class CallOtherAbi:
     ) -> CallOtherAbi:
         """An ABI naming implicit registers, resolved against `sleigh` here,
         so an unknown name raises `StriderError` at construction.
+
+        `sleigh` is the `SleighArch`, or a `Sleigh` built for one.
 
         `implicit_reads` are read beyond the p-code-explicit operands and
         lead the lifted call's argument list; `implicit_writes` are written
