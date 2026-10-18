@@ -8,10 +8,9 @@ use crate::reader::{AnyMemReader, MemInput};
 /// Construct via `strider.sleigh.Sleigh(arch, mem)`.
 #[pyclass(name = "Sleigh", module = "strider.sleigh")]
 pub struct PySleigh {
-    pub(crate) arch_name: &'static str,
     /// What a `custom(...)` convention or user-op ABI records as the register
     /// table it froze its varnodes against.
-    pub(crate) source_arch: crate::strider_cls::SourceArch,
+    pub(crate) arch: strider_target::SleighArch,
     /// Probed once at construction.
     pub(crate) regs: rsleigh::SleighRegs,
 }
@@ -24,8 +23,7 @@ impl PySleigh {
             .regs()
             .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::regs failed: {e:#}")))?;
         Ok(Self {
-            arch_name: arch.preset_name,
-            source_arch: crate::strider_cls::SourceArch::new(arch.inner, arch.preset_name),
+            arch: arch.inner,
             regs,
         })
     }
@@ -44,7 +42,7 @@ impl PySleigh {
 
     /// The arch preset name this Sleigh was built for (e.g. `"x86_64"`).
     fn arch_name(&self) -> &'static str {
-        self.arch_name
+        self.arch.preset().name()
     }
 
     /// Look up a register's varnode by Sleigh name, or `None` if this arch's
@@ -61,7 +59,7 @@ impl PySleigh {
 
     /// `Sleigh(arch=<preset>)`.
     fn __repr__(&self) -> String {
-        format!("Sleigh(arch={})", self.arch_name)
+        format!("Sleigh(arch={})", self.arch.preset().name())
     }
 }
 

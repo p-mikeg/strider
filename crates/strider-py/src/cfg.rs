@@ -22,12 +22,12 @@ pub struct PyCfg {
     pub(crate) inner: strider_cfg::Cfg,
     /// The `Lifter` that built `inner`, borrowed for its Sleigh.
     pub(crate) lifter: Py<PyLifter>,
-    /// That lifter's arch preset, copied at construction so a render can check
-    /// a supplied handle against it WITHOUT borrowing `lifter`: `analyze` holds
+    /// That lifter's arch, copied at construction so a render can check a
+    /// supplied handle against it WITHOUT borrowing `lifter`: `analyze` holds
     /// that one mutably with the GIL released, and a borrow here would fail for
     /// the length of an analysis, which is exactly when a background explorer
     /// is rendering.
-    pub(crate) arch_name: &'static str,
+    pub(crate) arch: strider_target::SleighArch,
     /// `machine_addr -> joined p-code text`.
     pcode_map: OnceLock<HashMap<u64, String>>,
 }
@@ -49,11 +49,11 @@ pub(crate) fn incomplete_list(
 
 impl PyCfg {
     pub(crate) fn new(py: Python<'_>, inner: strider_cfg::Cfg, lifter: Py<PyLifter>) -> Self {
-        let arch_name = lifter.borrow(py).arch_name;
+        let arch = lifter.borrow(py).arch;
         Self {
             inner,
             lifter,
-            arch_name,
+            arch,
             pcode_map: OnceLock::new(),
         }
     }
@@ -82,7 +82,7 @@ impl PyCfg {
                 let b = l
                     .try_borrow()
                     .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-                b.check_arch_is(self.arch_name)?;
+                b.check_arch_is(self.arch)?;
                 f(b.sleigh()?)
             }
             None => {
