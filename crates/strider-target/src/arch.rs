@@ -159,6 +159,32 @@ impl ArchPreset {
     }
 }
 
+impl ArchPreset {
+    /// The [`SleighArch`] constructor's name, e.g. `"x86_64"` or
+    /// `"arm_be_kernel"`.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::X86 => "x86",
+            Self::X86_64 => "x86_64",
+            Self::Arm => "arm",
+            Self::ArmBe => "arm_be",
+            Self::ArmBeKernel => "arm_be_kernel",
+            Self::ArmThumb => "arm_thumb",
+            Self::Aarch64 => "aarch64",
+            Self::Aarch64Be => "aarch64be",
+            Self::MipsBe32 => "mipsbe32",
+            Self::MipsLe32 => "mipsle32",
+            Self::MipsBe64 => "mipsbe64",
+            Self::MipsLe64 => "mipsle64",
+            Self::Ppc32Be => "ppc32be",
+            Self::Ppc32Le => "ppc32le",
+            Self::Ppc64Be => "ppc64be",
+            Self::Ppc64Le => "ppc64le",
+        }
+    }
+}
+
 /// The family a preset belongs to, which keys the [`DecodeFacts`] table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum ArchFamily {
@@ -591,12 +617,10 @@ impl SleighArch {
         arm_be_kernel => SLA_SPEC_ARM8_LE, PSPEC_ARMT, Big, ArmBeKernel
     }
 
-    /// This arch's register table, read off a Sleigh over an empty image.
+    /// This arch's register table, a copy of [`SleighArch::names`]'s.
     #[cfg(any(test, feature = "test-util"))]
     pub fn probe_regs(self) -> anyhow::Result<rsleigh::SleighRegs> {
-        let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
-        let sleigh = rsleigh::Sleigh::new(self.sla_spec, self.pspec, probe)?;
-        Ok(sleigh.regs()?)
+        Ok(self.names().regs().clone())
     }
 }
 
