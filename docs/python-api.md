@@ -752,10 +752,10 @@ function.rewrite_all([(pat1, tmpl1), (pat2, tmpl2)]) # -> total fire count
 `rewrite(find, replace)` replaces every match of a pattern with a built value.
 The right-hand side is a `strider.template.Template`, built from
 `strider.template`, which covers the value ops that can be BUILT and reuses the
-left-hand side's captures. It is a subset of `strider.pattern`: `float_le` and
-`float_is_nan` (their lowerings fan one operand into two slots) and the
-wildcards (`anything`, `any_int`) match but do not build; `int_ne` / `int_le` /
-`int_sle` / `float_ne` build the lifter's shape.
+left-hand side's captures. It is a subset of `strider.pattern`: `float_le`,
+`float_is_nan` and the wildcards (`anything`, `any_int`) match but do not
+build, so spell `float_le` / `float_is_nan`'s canonical shape instead;
+`int_ne` / `int_le` / `int_sle` / `float_ne` build the lifter's shape.
 
 `rewrite_all` makes one walk; at each node the first rule that fires wins.
 Neither is a fixed point, so a rule whose output its own `find` matches needs a
