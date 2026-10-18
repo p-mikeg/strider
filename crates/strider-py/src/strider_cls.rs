@@ -3,7 +3,6 @@ use pyo3::prelude::*;
 use crate::arch::PySleighArch;
 use crate::cc::PyCallingConvention;
 use crate::cfg::PyCfg;
-use crate::dot::dot_style_for;
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
 use crate::options::{PyCfgOptions, PyLifterOptions};
@@ -471,27 +470,6 @@ fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc
 }
 
 impl PyLifter {
-    /// Rejects a handle built for a different arch.
-    ///
-    /// The register and address-space tables a render reads are what differ:
-    /// rendering an x86-64 function through an aarch64 handle names RAX `pc`
-    /// and RCX `sp`, and emits no error at all, so the check has to be here.
-    ///
-    /// Takes the graph's arch rather than its handle: reading it off that
-    /// handle would borrow the one `analyze` holds mutably with the GIL
-    /// released, which is the contention this whole path exists to avoid.
-    pub(crate) fn check_arch_is(&self, graph_arch: strider_target::SleighArch) -> PyResult<()> {
-        if self.arch == graph_arch {
-            return Ok(());
-        }
-        Err(into_strider_err(anyhow::anyhow!(
-            "lifter is for {}, but this graph was lifted with {}; a render \
-             resolves names through the arch's own tables, so the two must match",
-            self.arch.preset().name(),
-            graph_arch.preset().name()
-        )))
-    }
-
     pub(crate) fn sleigh(&self) -> PyResult<&rsleigh::Sleigh<AnyMemReader>> {
         Ok(self.inner.get()?.sleigh())
     }
@@ -500,52 +478,6 @@ impl PyLifter {
     /// decode through the persistent Sleigh and so possibly commit context.
     fn bump_context_gen(&self) {
         self.context_gen.set(self.context_gen.get().wrapping_add(1));
-    }
-
-    /// The `Function::neighborhood_dot` `pretty=True` path: same node
-    /// selection, register names resolved against this handle's Sleigh.
-    pub(crate) fn dispatch_neighborhood_dot(
-        &self,
-        function: &PyFunction,
-        center: u32,
-        depth: usize,
-        hub_cap: usize,
-        max_nodes: usize,
-        count_producers: bool,
-    ) -> PyResult<String> {
-        with_pending_control_flow(|| {
-            self.sleigh()?;
-            let names = self.arch.names();
-            let guard = function.read_inner().map_err(into_strider_err)?;
-            let nid = guard
-                .graph()
-                .node_id_from_u32(center)
-                .ok_or_else(|| into_strider_err(anyhow::anyhow!("invalid node id {center}")))?;
-            let dumper = guard.dot_dumper(names);
-            dumper
-                .neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers)
-                .map_err(|e| into_strider_err(anyhow::anyhow!(e)))
-        })
-    }
-
-    /// Pretty-render `function`, resolving register names against this
-    /// handle's Sleigh.
-    pub(crate) fn render_dot(
-        &self,
-        function: &PyFunction,
-        style: Option<&str>,
-        html: bool,
-        path: Option<&str>,
-    ) -> PyResult<Option<String>> {
-        self.sleigh()?;
-        let names = self.arch.names();
-        let guard = function.read_inner().map_err(into_strider_err)?;
-        let dumper = guard.dot_dumper(names);
-        crate::dot::render(
-            &dot::GraphDot::new(dumper, dot_style_for(style)?),
-            html,
-            path,
-        )
     }
 }
 
