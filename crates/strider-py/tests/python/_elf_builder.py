@@ -134,3 +134,12 @@ class Elf:
             )
         with open(path, "wb") as f:
             f.write(out)
+
+
+def point_load_past_eof(path, index: int) -> None:
+    """Points PT_LOAD `index` of an image `Elf.write` wrote at the end of the
+    file, so reading that mapping fails. `Elf.write` puts the program headers
+    right after the 64-byte file header, in `loads` order."""
+    raw = bytearray(path.read_bytes())
+    struct.pack_into("<Q", raw, 64 + 56 * index + 8, len(raw))
+    path.write_bytes(bytes(raw))
