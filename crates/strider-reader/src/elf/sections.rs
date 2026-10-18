@@ -927,10 +927,10 @@ fn region_from(bytes: &FileBytes, addr: u64, range: Option<(u64, u64)>) -> Resul
 }
 
 /// One accepted PT_LOAD, carrying everything the segment walk reads.
-struct AcceptedSegment<'d> {
+struct AcceptedSegment {
     addr: u64,
+    /// The bytes it both holds and maps.
     file_range: (u64, u64),
-    data: &'d [u8],
 }
 
 /// One [`MemRegion`] per accepted PT_LOAD segment, from the bytes it both
@@ -945,13 +945,13 @@ struct AcceptedSegment<'d> {
 /// even though a wider mapping declares them. "Widest" is by MAPPED extent,
 /// so a segment declaring more file than it maps does not win on the strength
 /// of bytes that belong to no mapping.
-fn collect_loadable_segments<'d>(
-    obj: &object::File<'d>,
+fn collect_loadable_segments(
+    obj: &object::File<'_>,
     bytes: &FileBytes,
     filter: LoadFilter,
 ) -> Result<Walk> {
     let mut out = Walk::default();
-    let mut accepted: Vec<AcceptedSegment<'d>> = Vec::new();
+    let mut accepted: Vec<AcceptedSegment> = Vec::new();
     for seg in obj.segments() {
         // `obj.segments()` already yields PT_LOAD only, so `p_flags` is read
         // purely for the writable / executable filter axis.
@@ -967,7 +967,8 @@ fn collect_loadable_segments<'d>(
         if !filter.segment_accepts(p_flags) {
             continue;
         }
-        let data = seg.data().context("failed to parse ELF")?;
+        // Fails a segment whose file bytes run past the end of the file.
+        seg.data().context("failed to parse ELF")?;
         // `p_filesz` is what the FILE holds, `p_memsz` what the image MAPS.
         // The gABI specifies only the `p_memsz > p_filesz` zero-fill
         // direction and leaves the reverse undefined; `object` parses such an
@@ -977,23 +978,17 @@ fn collect_loadable_segments<'d>(
         // `executable` are tracked on it, so serving the tail would let a ROM
         // view that takes every segment and cuts `writable` back out
         // (`ImmutableAndRelocatedGot`) answer for the tail of a WRITABLE
-        // segment, and would answer a straddling fetch from the wrong one. Clamping under-approximates rather than over-serves: an
-        // address in the tail reads as unmapped.
-        // Saturating on a 32-bit host, where `p_memsz` can exceed
-        // `usize::MAX`: the `min` then yields `data.len()`, which is right,
-        // since a mapping that large clamps nothing.
-        let mapped = usize::try_from(seg.size())
-            .unwrap_or(usize::MAX)
-            .min(data.len());
-        let data = &data[..mapped];
-        if data.is_empty() {
+        // segment, and would answer a straddling fetch from the wrong one.
+        // Clamping under-approximates rather than over-serves: an address in
+        // the tail reads as unmapped.
+        let (file_off, file_len) = seg.file_range();
+        let file_len = file_len.min(seg.size());
+        if file_len == 0 {
             continue;
         }
-        let (file_off, file_len) = seg.file_range();
         accepted.push(AcceptedSegment {
             addr: seg.address(),
-            file_range: (file_off, file_len.min(seg.size())),
-            data,
+            file_range: (file_off, file_len),
         });
     }
 
@@ -1003,7 +998,7 @@ fn collect_loadable_segments<'d>(
             .entry(seg.addr)
             // First of a tie, so an image with no collisions is untouched.
             .and_modify(|w| {
-                if accepted[*w].data.len() < seg.data.len() {
+                if accepted[*w].file_range.1 < seg.file_range.1 {
                     *w = i;
                 }
             })

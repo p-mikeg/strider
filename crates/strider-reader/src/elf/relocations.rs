@@ -95,6 +95,14 @@ pub(crate) fn apply_elf_relocations_with(
     writable: &AddressSet,
     executable: &AddressSet,
 ) -> Result<Vec<MemRegion>> {
+    debug_assert!(
+        {
+            let mut starts: Vec<u64> = regions.iter().map(MemRegion::start_addr).collect();
+            starts.sort_unstable();
+            starts.windows(2).all(|w| w[0] != w[1])
+        },
+        "two regions share a start"
+    );
     let owners = super::sections::loaded_section_indices(obj, layout, loaded_with)?;
     // One lookup per relocation instead of a scan of every region; an ET_REL
     // carries one region per SHF_ALLOC section.
@@ -612,7 +620,7 @@ fn apply_classified(
     // The common case by far: a RELA image-relative word reads no symbol or field.
     if let (Value::ImageRelative, Some(a)) = (value, r.rela_addend) {
         match fit(ctx.obj, field, apply_addend(0, a)) {
-            Some(word) => ctx.record(holder, p, word, width, ctx.endian_le),
+            Some(word) => ctx.record(holder, p, word, width, ctx.field_le(field)),
             None => ctx.unmodelled(holder, p, width, r.type_word()),
         }
         return;
