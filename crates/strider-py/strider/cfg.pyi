@@ -30,8 +30,7 @@ class Cfg:
     `Lifter.build_cfg` and returned as `AnalyzeResult.cfg`."""
     @property
     def lifter(self) -> Lifter:
-        """The `Lifter` that built this CFG. Its `arch` / `reader()` / `rom()`
-        are what a second handle over the same memory is built from."""
+        """The `Lifter` that built this CFG."""
         ...
 
     def to_dot(

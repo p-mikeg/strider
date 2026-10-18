@@ -653,13 +653,13 @@ impl PyLoadedElf {
     }
 
     /// The instruction-fetch / raw-read `BufferReader` for this ELF.
-    fn reader(&self) -> PyBufferReader {
+    pub(crate) fn reader(&self) -> PyBufferReader {
         self.mem.clone()
     }
 
     /// The runtime-immutable `BufferReader` (code + read-only sections
     /// only).
-    fn ro_reader(&self) -> PyBufferReader {
+    pub(crate) fn ro_reader(&self) -> PyBufferReader {
         self.rom.clone()
     }
 
@@ -812,7 +812,7 @@ impl PyLoadedElf {
     /// Re-merging an image already fully loaded, byte for byte, is allowed and
     /// does nothing.
     #[pyo3(signature = (path, apply_relocations=true, relocated_got_is_rom=false))]
-    fn add_elf(
+    pub(crate) fn add_elf(
         &mut self,
         path: &str,
         apply_relocations: bool,
