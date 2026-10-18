@@ -376,6 +376,8 @@
   pinned, unless a shape names another node. `typed::value_ops::Negated`, the
   return type of `int_ne`, `int_le`, `int_sle` and `float_ne` on both sides,
   is one that does.
+- `float_unary(op, x)` and `template::float_unary`, the op-valued float
+  unary builder beside `float_binary`.
 
 ## 0.2.0
 

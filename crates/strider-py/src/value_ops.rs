@@ -147,17 +147,17 @@ macro_rules! value_ops {
                 "`FloatBinaryOp::Mul` (`a * b`)."]
             [binary float_div, FloatBinary, strider_ir::FloatBinaryOp::Div,
                 "`FloatBinaryOp::Div` (`a / b`)."]
-            [unary float_neg, FloatUnary, FloatUnaryKind::Neg,
+            [unary float_neg, FloatUnary, strider_ir::FloatUnaryOp::Neg,
                 "`FloatUnaryOp::Neg` (`-x`)."]
-            [unary float_abs, FloatUnary, FloatUnaryKind::Abs,
+            [unary float_abs, FloatUnary, strider_ir::FloatUnaryOp::Abs,
                 "`FloatUnaryOp::Abs` (`fabs(x)`)."]
-            [unary float_sqrt, FloatUnary, FloatUnaryKind::Sqrt,
+            [unary float_sqrt, FloatUnary, strider_ir::FloatUnaryOp::Sqrt,
                 "`FloatUnaryOp::Sqrt` (`sqrt(x)`)."]
-            [unary float_ceil, FloatUnary, FloatUnaryKind::Ceil,
+            [unary float_ceil, FloatUnary, strider_ir::FloatUnaryOp::Ceil,
                 "`FloatUnaryOp::Ceil` (`ceil(x)`)."]
-            [unary float_floor, FloatUnary, FloatUnaryKind::Floor,
+            [unary float_floor, FloatUnary, strider_ir::FloatUnaryOp::Floor,
                 "`FloatUnaryOp::Floor` (`floor(x)`)."]
-            [unary float_round, FloatUnary, FloatUnaryKind::Round,
+            [unary float_round, FloatUnary, strider_ir::FloatUnaryOp::Round,
                 "`FloatUnaryOp::Round`, round to nearest with ties away from zero."]
             [binary_comm float_eq, FloatCmp, strider_ir::FloatCmpOp::Equal,
                 "`FloatCmpOp::Equal` (`a == b`)."]
