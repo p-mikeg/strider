@@ -43,9 +43,9 @@ pub(crate) fn neighborhood_regions(
 impl Cfg {
     /// Pretty render around `center`.  Node ids are region indices; `center`
     /// gets a gold border, and is rendered whatever `max_nodes` is.
-    pub fn neighborhood_dot<R: rsleigh::MemReader>(
+    pub fn neighborhood_dot(
         &self,
-        sleigh: &rsleigh::Sleigh<R>,
+        names: &strider_target::ArchNames,
         center: NodeIndex,
         depth: usize,
         max_nodes: usize,
@@ -53,7 +53,7 @@ impl Cfg {
         let set = neighborhood_regions(self, center, depth, max_nodes);
         // The full-CFG dumper restricted to `set`: same labels, and the
         // if-true / if-false edge polarity a second emitter here did not carry.
-        let dumper = self.dot_dumper(sleigh).restricted(&set, center);
+        let dumper = self.dot_dumper(names).restricted(&set, center);
         ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark_cfg()).as_dot()
     }
 }
@@ -127,16 +127,9 @@ mod tests {
         let cfg = two_way_cfg();
         let entry = cfg.entry();
 
-        // A fresh Sleigh: the CFG does not own the one that built it.
-        let bytes = vec![0x75, 0x01, 0x90, 0xc3];
-        let start = 0x1000;
-        let arch = SleighArch::x86_64();
-        let reader = BufMemReader::new(bytes, start);
-        let sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-
+        // Names only: the CFG renders without the engine that built it.
         let dot = cfg
-            .neighborhood_dot(&sleigh, entry, 1, 999)
+            .neighborhood_dot(SleighArch::x86_64().names(), entry, 1, 999)
             .expect("neighborhood_dot");
         assert!(
             dot.contains(&format!("\"{}\"", entry.index())),

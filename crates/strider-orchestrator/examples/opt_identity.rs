@@ -73,7 +73,10 @@ fn digest_one(
                 fp.sort_unstable();
                 writeln!(text, "fp n{} {fp:x?}", node.as_u32())?;
             }
-            let cfg = GraphDot::new(r.cfg.dot_dumper(strider.sleigh()), DotStyle::dark_cfg());
+            let cfg = GraphDot::new(
+                r.cfg.dot_dumper(strider.arch().names()),
+                DotStyle::dark_cfg(),
+            );
             text.push_str(&cfg.as_dot()?);
             writeln!(
                 text,
