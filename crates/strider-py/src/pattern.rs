@@ -203,16 +203,6 @@ pub(crate) enum IntUnaryKind {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum FloatUnaryKind {
-    Neg,
-    Abs,
-    Sqrt,
-    Ceil,
-    Floor,
-    Round,
-}
-
-#[derive(Clone, Copy)]
 pub(crate) enum CastKind {
     Truncate,
     ZeroExtend,
@@ -267,7 +257,7 @@ pub(crate) enum PatRepr {
     IntSle(Py<PyAny>, Py<PyAny>),
     FloatBinary(strider_ir::FloatBinaryOp, Py<PyAny>, Py<PyAny>),
     FloatSub(Py<PyAny>, Py<PyAny>),
-    FloatUnary(FloatUnaryKind, Py<PyAny>),
+    FloatUnary(strider_ir::FloatUnaryOp, Py<PyAny>),
     FloatCmp(strider_ir::FloatCmpOp, Py<PyAny>, Py<PyAny>),
     FloatNe(Py<PyAny>, Py<PyAny>),
     FloatLe(Py<PyAny>, Py<PyAny>),
@@ -1199,17 +1189,10 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
         PatRepr::IntSle(l, r) => m_bin!(sp::int_sle, l, r),
         PatRepr::FloatBinary(op, l, r) => m_binop!(sp::float_binary, op, l, r),
         PatRepr::FloatSub(l, r) => m_bin!(sp::float_sub, l, r),
-        PatRepr::FloatUnary(kind, x) => {
-            let kind = *kind;
+        PatRepr::FloatUnary(op, x) => {
+            let op = *op;
             let x = op_match(py, x)?;
-            DynMatch::from_fn(move |b| match kind {
-                FloatUnaryKind::Neg => mc(sp::float_neg(x), b),
-                FloatUnaryKind::Abs => mc(sp::float_abs(x), b),
-                FloatUnaryKind::Sqrt => mc(sp::float_sqrt(x), b),
-                FloatUnaryKind::Ceil => mc(sp::float_ceil(x), b),
-                FloatUnaryKind::Floor => mc(sp::float_floor(x), b),
-                FloatUnaryKind::Round => mc(sp::float_round(x), b),
-            })
+            DynMatch::new(sp::float_unary(op, x))
         }
         PatRepr::FloatCmp(op, l, r) => m_binop!(sp::float_cmp, op, l, r),
         PatRepr::FloatNe(l, r) => m_bin!(sp::float_ne, l, r),
@@ -1349,17 +1332,10 @@ fn compile_repr_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate
         PatRepr::FloatNe(l, r) => t_bin!(tpl::float_ne, l, r),
         PatRepr::FloatBinary(op, l, r) => t_binop!(tpl::float_binary, op, l, r),
         PatRepr::FloatSub(l, r) => t_bin!(tpl::float_sub, l, r),
-        PatRepr::FloatUnary(kind, x) => {
-            let kind = *kind;
+        PatRepr::FloatUnary(op, x) => {
+            let op = *op;
             let x = op_tpl(py, x)?;
-            DynTemplate(Box::new(move |b| match kind {
-                FloatUnaryKind::Neg => tc(tpl::float_neg(x), b),
-                FloatUnaryKind::Abs => tc(tpl::float_abs(x), b),
-                FloatUnaryKind::Sqrt => tc(tpl::float_sqrt(x), b),
-                FloatUnaryKind::Ceil => tc(tpl::float_ceil(x), b),
-                FloatUnaryKind::Floor => tc(tpl::float_floor(x), b),
-                FloatUnaryKind::Round => tc(tpl::float_round(x), b),
-            }))
+            DynTemplate(Box::new(move |b| tc(tpl::float_unary(op, x), b)))
         }
         PatRepr::FloatCmp(op, l, r) => t_binop!(tpl::float_cmp, op, l, r),
         PatRepr::BoolBinary(op, l, r) => t_binop!(tpl::bool_binary, op, l, r),
