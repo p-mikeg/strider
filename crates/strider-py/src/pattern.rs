@@ -1234,7 +1234,7 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let f = f.clone_ref(py);
             DynMatch::new(wrap_when(inner, f))
         }
-        PatRepr::Ordered(inner) => compile_ordered_match(inner.bind(py))?,
+        PatRepr::Ordered(inner) => DynMatch::new(compile_operand_match(inner.bind(py))?.ordered()),
         PatRepr::OfWidth(inner, n) => {
             let n = *n;
             let inner = compile_operand_match(inner.bind(py))?;
@@ -1251,62 +1251,6 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
                  value operand"
             )));
         }
-    })
-}
-
-fn ordered_dyn<P: MatchPat + 'static>(p: P) -> DynMatch {
-    DynMatch::new(p.ordered())
-}
-
-/// Compiles `ob` with `.ordered()` on the node carrying the operand pair the
-/// caller wrote, which for a lowered comparison is the comparison itself
-/// rather than the root the lowering adds.
-fn compile_ordered_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch> {
-    let _depth = DepthGuard::enter()?;
-    let py = ob.py();
-    let Ok(pat) = ob.downcast::<PyPat>() else {
-        return Ok(ordered_dyn(compile_operand_match(ob)?));
-    };
-    let repr = Arc::clone(&pat.borrow().repr);
-    // `xor(cmp, 1)`, the lowered form's root, with the comparison pinned.
-    macro_rules! m_ordered_cmp {
-        ($f:path, $l:expr, $r:expr) => {{
-            let cmp = ordered_dyn($f(op_match(py, $l)?, op_match(py, $r)?));
-            DynMatch::new(sp::int_xor(cmp, sp::bool_const(true)))
-        }};
-    }
-    Ok(match &*repr {
-        // The chainable wrappers decorate the node below them, so the pin has
-        // to be placed under them and the wrapper re-applied on top.
-        PatRepr::Captured(inner, c) => {
-            let c = *c;
-            let inner = compile_ordered_match(inner.bind(py))?;
-            DynMatch::new(inner.capture(c))
-        }
-        PatRepr::Guarded(inner, f) => {
-            let f = f.clone_ref(py);
-            let inner = compile_ordered_match(inner.bind(py))?;
-            DynMatch::new(wrap_when(inner, f))
-        }
-        PatRepr::OfWidth(inner, n) => {
-            let n = *n;
-            let inner = compile_ordered_match(inner.bind(py))?;
-            DynMatch::new(inner.of_width(n))
-        }
-        PatRepr::ValueTy(inner, ty) => {
-            let ty = *ty;
-            let inner = compile_ordered_match(inner.bind(py))?;
-            DynMatch::new(inner.value_ty(ty))
-        }
-        PatRepr::Ordered(inner) => compile_ordered_match(inner.bind(py))?,
-        PatRepr::IntNe(l, r) => m_ordered_cmp!(sp::int_eq, l, r),
-        PatRepr::IntLe(l, r) => m_ordered_cmp!(sp::int_lt, r, l),
-        PatRepr::IntSle(l, r) => m_ordered_cmp!(sp::int_slt, r, l),
-        PatRepr::FloatNe(l, r) => m_ordered_cmp!(sp::float_eq, l, r),
-        // `float_le` fans its pair into a `Less` that pins the order already,
-        // and `float_is_nan` writes one operand into both equality slots.
-        PatRepr::FloatLe(..) | PatRepr::FloatIsNan(_) => compile_operand_match(ob)?,
-        _ => ordered_dyn(compile_operand_match(ob)?),
     })
 }
 
