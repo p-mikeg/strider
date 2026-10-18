@@ -121,8 +121,11 @@ impl PyCfg {
         with: Option<&Bound<'_, PyLifter>>,
     ) -> PyResult<Option<String>> {
         let style = style.unwrap_or(DEFAULT_CFG_STYLE);
-        self.with_sleigh_of(py, with, |sleigh| {
-            let d = dot::GraphDot::new(self.inner.dot_dumper(sleigh), dot_style_for(Some(style))?);
+        self.with_sleigh_of(py, with, |_sleigh| {
+            let d = dot::GraphDot::new(
+                self.inner.dot_dumper(self.arch.names()),
+                dot_style_for(Some(style))?,
+            );
             render(&d, html, path)
         })
     }
@@ -311,9 +314,9 @@ impl PyCfg {
         lifter: Option<&Bound<'_, PyLifter>>,
     ) -> PyResult<String> {
         let node = self.region_id(center)?;
-        self.with_sleigh_of(py, lifter, |sleigh| {
+        self.with_sleigh_of(py, lifter, |_sleigh| {
             self.inner
-                .neighborhood_dot(sleigh, node, depth, max_nodes)
+                .neighborhood_dot(self.arch.names(), node, depth, max_nodes)
                 .map_err(into_strider_err)
         })
     }
@@ -321,10 +324,7 @@ impl PyCfg {
     /// Disassembly text per region index, joined with `"\n"`.
     #[pyo3(name = "_region_texts")]
     fn region_texts(&self, py: Python<'_>) -> PyResult<HashMap<u32, String>> {
-        self.with_sleigh(py, |sleigh| {
-            let regs = sleigh
-                .regs()
-                .map_err(|e| into_strider_err(anyhow::anyhow!("{e:#}")))?;
+        self.with_sleigh(py, |_sleigh| {
             let g = self.inner.region_graph();
             let mut out = HashMap::new();
             for idx in g.node_indices() {
@@ -335,7 +335,7 @@ impl PyCfg {
                     .insns
                     .iter()
                     .map(|ri| {
-                        strider_cfg::insn_text(&ri.insn, self.inner.space_ids(), sleigh, &regs)
+                        strider_cfg::insn_text(&ri.insn, self.inner.space_ids(), self.arch.names())
                             .to_string()
                     })
                     .collect::<Vec<_>>()
