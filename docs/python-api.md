@@ -69,8 +69,9 @@ x86, x86-64, AArch64, ARM and Thumb, PowerPC and MIPS:
   that address, and `prog.symbol("ext_fn").address` names it.
 - A GOT reference loads from a synthetic GOT slot holding the symbol's address.
 - A relocation strider does not compute leaves no bytes behind: outside a
-  writable mapping its field is a hole no read serves, so decoding stops there,
-  and a decode starting on it fails with an error naming the relocation type.
+  writable, non-executable mapping its field is a hole no read serves, so
+  decoding stops there, and a decode starting on it fails with an error naming
+  the relocation type.
 
 ### `lift.lifter`, raw bytes and no ELF
 
