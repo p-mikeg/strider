@@ -283,16 +283,44 @@ pub(crate) enum PatRepr {
     // The wrapped `Pat` OBJECT, not its repr: a repr shared by several `Pat`s
     // has no owner to attribute its `Py` handles to, and reporting them once
     // per wrapper tells the collector about references that do not exist.
-    Captured(Py<PyAny>, Capture),
-    Guarded(Py<PyAny>, Py<PyAny>),
-    /// Pins the wrapped shape's operand order.
-    Ordered(Py<PyAny>),
-    OfWidth(Py<PyAny>, u32),
-    ValueTy(Py<PyAny>, strider_ir::node::ValueType),
+    Wrapped(Py<PyAny>, Wrap),
     /// A finished control / variadic [`Pattern`] from a control builder's
     /// `.into_pat()`. One-shot: consumed when queried, and not nestable as a
     /// value operand.
     Finished(Box<std::sync::Mutex<FinishedPattern>>),
+}
+
+/// A chained verb, decorating the root of the `Pat` it wraps.
+pub(crate) enum Wrap {
+    Capture(Capture),
+    When(Py<PyAny>),
+    /// Pins the wrapped shape's operand order.
+    Ordered,
+    OfWidth(u32),
+    ValueTy(strider_ir::node::ValueType),
+}
+
+impl Wrap {
+    /// Every Python object this verb holds, for the cyclic GC.
+    fn traverse(&self, visit: &pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
+        match self {
+            Wrap::When(f) => visit.call(f)?,
+            // Hold no Python object.
+            Wrap::Capture(_) | Wrap::Ordered | Wrap::OfWidth(_) | Wrap::ValueTy(_) => {}
+        }
+        Ok(())
+    }
+
+    /// The method that applies this verb, as an error names it.
+    fn name(&self) -> &'static str {
+        match self {
+            Wrap::Capture(_) => ".capture()",
+            Wrap::When(_) => ".when()",
+            Wrap::Ordered => ".ordered()",
+            Wrap::OfWidth(_) => ".of_width()",
+            Wrap::ValueTy(_) => ".value_ty()",
+        }
+    }
 }
 
 pub(crate) struct FinishedPattern {
@@ -621,10 +649,7 @@ fn wraps_alternation(ob: &Bound<'_, PyAny>) -> bool {
         };
         let next = match &*p.borrow().repr {
             PatRepr::OneOf(..) => return true,
-            PatRepr::Captured(inner, _)
-            | PatRepr::Guarded(inner, _)
-            | PatRepr::OfWidth(inner, _)
-            | PatRepr::ValueTy(inner, _) => inner.clone_ref(py),
+            PatRepr::Wrapped(inner, w) if !matches!(w, Wrap::Ordered) => inner.clone_ref(py),
             _ => return false,
         };
         cur = next;
@@ -674,11 +699,7 @@ fn orderable(repr: &PatRepr) -> Result<(), &'static str> {
         | PatRepr::OneOf(..)
         | PatRepr::AnyIntUnary(..)
         | PatRepr::AnyFloatUnary(..)
-        | PatRepr::Captured(..)
-        | PatRepr::Guarded(..)
-        | PatRepr::Ordered(_)
-        | PatRepr::OfWidth(..)
-        | PatRepr::ValueTy(..)
+        | PatRepr::Wrapped(..)
         | PatRepr::Finished(_) => false,
     };
     if pair { Ok(()) } else { Err(repr.name()) }
@@ -744,11 +765,7 @@ impl PatRepr {
             PatRepr::AnyFloatBinary(..) => "any_float_binary()",
             PatRepr::AnyFloatUnary(..) => "any_float_unary()",
             PatRepr::AnyFloatCmp(..) => "any_float_cmp()",
-            PatRepr::Captured(..) => ".capture()",
-            PatRepr::Guarded(..) => ".when()",
-            PatRepr::Ordered(_) => ".ordered()",
-            PatRepr::OfWidth(..) => ".of_width()",
-            PatRepr::ValueTy(..) => ".value_ty()",
+            PatRepr::Wrapped(_, w) => w.name(),
             PatRepr::Finished(_) => "a control / variadic builder",
         }
     }
@@ -761,11 +778,7 @@ fn unwrapped_repr(pat: &Bound<'_, PyPat>) -> Arc<PatRepr> {
     let mut cur = Arc::clone(&pat.borrow().repr);
     for _ in 0..MAX_PATTERN_NESTING {
         let next = match &*cur {
-            PatRepr::Captured(inner, _)
-            | PatRepr::Guarded(inner, _)
-            | PatRepr::Ordered(inner)
-            | PatRepr::OfWidth(inner, _)
-            | PatRepr::ValueTy(inner, _) => match inner.bind(py).downcast::<PyPat>() {
+            PatRepr::Wrapped(inner, _) => match inner.bind(py).downcast::<PyPat>() {
                 Ok(p) => Arc::clone(&p.borrow().repr),
                 Err(_) => return cur,
             },
@@ -835,14 +848,10 @@ impl PatRepr {
                     visit.call(a)?;
                 }
             }
-            PatRepr::Guarded(inner, f) => {
+            PatRepr::Wrapped(inner, wrap) => {
                 visit.call(inner)?;
-                visit.call(f)?;
+                wrap.traverse(visit)?;
             }
-            PatRepr::Captured(inner, _)
-            | PatRepr::Ordered(inner)
-            | PatRepr::OfWidth(inner, _)
-            | PatRepr::ValueTy(inner, _) => visit.call(inner)?,
             // Held only briefly and never across Python code; a skipped
             // report keeps the predicate alive rather than freeing it.
             PatRepr::Finished(finished) => {
@@ -1238,22 +1247,15 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let c = *c;
             bin_match(py, l, r, |l, r| sp::any_float_cmp(l, r).capture(c))
         }
-        PatRepr::Captured(inner, c) => {
-            let c = *c;
-            un_match(py, inner, |i| i.capture(c))
-        }
-        PatRepr::Guarded(inner, f) => {
-            let f = f.clone_ref(py);
-            un_match(py, inner, |i| wrap_when(i, f))
-        }
-        PatRepr::Ordered(inner) => un_match(py, inner, |i| i.ordered()),
-        PatRepr::OfWidth(inner, n) => {
-            let n = *n;
-            un_match(py, inner, |i| i.of_width(n))
-        }
-        PatRepr::ValueTy(inner, ty) => {
-            let ty = *ty;
-            un_match(py, inner, |i| i.value_ty(ty))
+        PatRepr::Wrapped(inner, wrap) => {
+            let inner = op_match(py, inner)?;
+            Ok(match wrap {
+                Wrap::Capture(c) => DynMatch::new(inner.capture(*c)),
+                Wrap::When(f) => DynMatch::new(wrap_when(inner, f.clone_ref(py))),
+                Wrap::Ordered => DynMatch::new(inner.ordered()),
+                Wrap::OfWidth(n) => DynMatch::new(inner.of_width(*n)),
+                Wrap::ValueTy(ty) => DynMatch::new(inner.value_ty(*ty)),
+            })
         }
         PatRepr::Finished(_) => Err(into_strider_err(anyhow::anyhow!(
             "a finished control / variadic pattern cannot be nested as a \
@@ -1454,7 +1456,7 @@ fn pat_as_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate> {
     let _depth = DepthGuard::enter()?;
     match repr {
         PatRepr::Build(t) => compile_tmpl_template(t, py),
-        PatRepr::Captured(inner, c) => {
+        PatRepr::Wrapped(inner, Wrap::Capture(c)) => {
             // A RHS capture replaces what it wraps, so only a leaf that
             // builds nothing itself may be wrapped.
             let leaf = inner.bind(py).downcast::<PyPat>().is_ok_and(|p| {
@@ -2046,7 +2048,7 @@ impl PyPat {
     /// Returns a new `Pat`.
     fn capture(slf: &Bound<'_, Self>, c: crate::matcher::CaptureKey<'_>) -> PyResult<PyPat> {
         let c = c.resolve()?;
-        derive(slf, |inner| PatRepr::Captured(inner, c))
+        derive(slf, |inner| PatRepr::Wrapped(inner, Wrap::Capture(c)))
     }
 
     /// Attach a Python predicate that runs after this pattern matches.
@@ -2056,25 +2058,25 @@ impl PyPat {
     /// re-raises out of `find_all` / `find_unique`, every later candidate
     /// failing without running the predicate.
     fn when(slf: &Bound<'_, Self>, f: PyObject) -> PyResult<PyPat> {
-        derive(slf, |inner| PatRepr::Guarded(inner, f))
+        derive(slf, |inner| PatRepr::Wrapped(inner, Wrap::When(f)))
     }
 
     /// Constrain the matched node's value output to exactly `n` bits.
     /// Match-only.
     fn of_width(slf: &Bound<'_, Self>, n: u32) -> PyResult<PyPat> {
-        derive(slf, |inner| PatRepr::OfWidth(inner, n))
+        derive(slf, |inner| PatRepr::Wrapped(inner, Wrap::OfWidth(n)))
     }
 
     /// Constrain the matched node's value output to the type named by `ty`,
     /// e.g. `"i1"`, `"i64"`, `"f32"`. Match-only.
     fn value_ty(slf: &Bound<'_, Self>, ty: &str) -> PyResult<PyPat> {
         let t = parse_value_ty(ty)?;
-        derive(slf, |inner| PatRepr::ValueTy(inner, t))
+        derive(slf, |inner| PatRepr::Wrapped(inner, Wrap::ValueTy(t)))
     }
 
     /// Sugar for `.of_width(1)`, a boolean output. Match-only.
     fn bool_valued(slf: &Bound<'_, Self>) -> PyResult<PyPat> {
-        derive(slf, |inner| PatRepr::OfWidth(inner, 1))
+        derive(slf, |inner| PatRepr::Wrapped(inner, Wrap::OfWidth(1)))
     }
 
     /// Stop the matcher retrying this op with its operands swapped; a no-op
@@ -2087,7 +2089,7 @@ impl PyPat {
                 "ordered() pins the operand order of a binary op; got {kind}"
             )));
         }
-        derive(slf, PatRepr::Ordered)
+        derive(slf, |inner| PatRepr::Wrapped(inner, Wrap::Ordered))
     }
 
     fn __repr__(&self) -> String {
@@ -2327,7 +2329,7 @@ pub fn first_of(patterns: Vec<Py<PyAny>>) -> PyPat {
 #[pyfunction]
 pub fn predicate(py: Python<'_>, f: PyObject) -> PyResult<PyPat> {
     let any = Py::new(py, PyPat::from_repr(PatRepr::Any))?.into_any();
-    Ok(PyPat::from_repr(PatRepr::Guarded(any, f)))
+    Ok(PyPat::from_repr(PatRepr::Wrapped(any, Wrap::When(f))))
 }
 
 // The canonical spelling each parser accepts is the op variant's `Debug`
@@ -4133,7 +4135,8 @@ macro_rules! phi_edge_links {
                     Err(_) => {
                         let cap = Capture::new();
                         let arm = Bound::new(py, one_of(vec![value.clone().unbind()]))?;
-                        let captured = derive(&arm, |inner| PatRepr::Captured(inner, cap))?;
+                        let captured =
+                            derive(&arm, |inner| PatRepr::Wrapped(inner, Wrap::Capture(cap)))?;
                         slf.common
                             .borrow_mut()
                             .any_inputs
