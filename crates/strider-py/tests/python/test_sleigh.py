@@ -82,3 +82,15 @@ def test_vn_hash_includes_addr_space():
         "Vn.__hash__ must mix in addr_space; otherwise different-space "
         "varnodes share a bucket"
     )
+
+
+def test_sleigh_arch_resolves_registers_as_a_sleigh_does():
+    arch = strider.sleigh.SleighArch.x86_64()
+    sleigh = strider.sleigh.Sleigh(arch, strider.reader.BufferReader(0x1000, b"\x00"))
+    for name in ("RSP", "EAX", "XMM0"):
+        vn = arch.reg(name)
+        assert vn is not None
+        assert vn == sleigh.reg(name)
+        assert arch.reg_name(vn) == name
+    assert arch.reg("NOT_A_REGISTER") is None
+    assert arch.reg_name(strider.sleigh.Vn(strider.sleigh.VnSpace.RAM, 0, 8)) is None

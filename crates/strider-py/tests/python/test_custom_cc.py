@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 import strider
@@ -158,3 +160,46 @@ def test_custom_cc_rejects_geometry_of_another_width_at_construction(
             link_register=None,
             preserves_memory=False,
         )
+
+
+def _systemv_names() -> dict[str, Any]:
+    return dict(
+        arg_passing_regs=["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
+        callee_saved_regs=["RBX", "R12", "R13", "R14", "R15", "RBP"],
+        ret_val_regs=["RAX", "RDX"],
+        ret_val_regs_float=["XMM0", "XMM1"],
+        stack_pointer="RSP",
+        stack_arg_base=8,
+        stack_arg_increment=8,
+        ret_stack_pop=8,
+        link_register=None,
+        preserves_memory=False,
+    )
+
+
+def test_custom_cc_takes_an_arch_and_resolves_as_a_sleigh_does():
+    mem, entry = _mem_with_func_bytes()
+    arch = strider.sleigh.SleighArch.x86_64()
+    texts = [
+        strider.lift.lifter(arch, mem)
+        .analyze(entry, strider.sleigh.CallingConvention.custom(sleigh=source, **_systemv_names()))
+        .function.to_text()
+        for source in (arch, strider.sleigh.Sleigh(arch, mem))
+    ]
+    # The `default_cc` line carries every resolved varnode.
+    assert "default_cc" in texts[0]
+    assert texts[0] == texts[1]
+
+
+def test_an_unknown_register_raises_the_same_through_an_arch():
+    mem, _ = _mem_with_func_bytes()
+    arch = strider.sleigh.SleighArch.x86_64()
+    errors = []
+    for source in (arch, strider.sleigh.Sleigh(arch, mem)):
+        with pytest.raises(strider.StriderError) as e:
+            strider.sleigh.CallingConvention.custom(
+                sleigh=source, **{**_systemv_names(), "arg_passing_regs": ["NOPE"]}
+            )
+        errors.append(str(e.value))
+    assert errors[0] == errors[1]
+    assert "NOPE" in errors[0]

@@ -194,3 +194,11 @@ def test_custom_reads_a_register_with_no_calling_convention_role():
     assert [
         sleigh.reg_name(vn) for i in node.inputs() if (vn := i.vn()) is not None
     ] == ["ECX"]
+
+
+def test_custom_takes_an_arch_and_resolves_as_a_sleigh_does():
+    by_arch = CallOtherAbi.custom(SleighArch.x86_64(), implicit_writes=["EAX", "EDX"])
+    by_sleigh = CallOtherAbi.custom(_sleigh(), implicit_writes=["EAX", "EDX"])
+    assert by_arch == by_sleigh
+    texts = [_analyze(RDTSC_RET, {"rdtsc": abi}).to_text() for abi in (by_arch, by_sleigh)]
+    assert texts[0] == texts[1]
