@@ -140,3 +140,29 @@ fn bit_not_rejects_a_saturated_mask_past_the_carrier() {
     let function = t.ret_val(narrowed);
     a::none(&function, int_not(anything()).into_pattern());
 }
+
+/// `float_unary(op, x)` is the op-valued form of `float_neg` and friends.
+#[test]
+fn float_unary_matches_the_op_it_names() {
+    use strider_ir::FloatUnaryOp;
+    let function = {
+        let mut t = Tb::empty();
+        let x = t.f64(4.0);
+        let r = t.fun(
+            x,
+            FloatUnaryOp::Sqrt,
+            strider_ir::node::ValueType::float(64),
+        );
+        let as_int = t.float_to_int(r, strider_ir::node::ValueType::int(64));
+        t.ret_val(as_int)
+    };
+    a::matches(
+        &function,
+        float_unary(FloatUnaryOp::Sqrt, anything()).into_pattern(),
+        1,
+    );
+    a::none(
+        &function,
+        float_unary(FloatUnaryOp::Neg, anything()).into_pattern(),
+    );
+}

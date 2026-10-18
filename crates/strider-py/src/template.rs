@@ -4,7 +4,7 @@
 
 use pyo3::prelude::*;
 
-use crate::pattern::{CastKind, FloatUnaryKind, IntUnaryKind, PatRepr, PyCapture};
+use crate::pattern::{CastKind, IntUnaryKind, PatRepr, PyCapture};
 use crate::value_ops::value_ops;
 
 /// A type-checked rewrite-RHS expression. Construct via the free functions in
