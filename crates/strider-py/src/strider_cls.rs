@@ -166,7 +166,7 @@ fn opt_options_from(
     py: Python<'_>,
     opts: &PyLifterOptions,
 ) -> PyResult<strider_orchestrator::opt::OptOptions> {
-    let assumptions = (&*opts.assumptions.borrow(py)).into();
+    let assumptions = opts.assumptions.borrow(py).inner.clone();
     Ok(strider_orchestrator::opt::OptOptions {
         assumptions,
         resolve_indirect_branches: opts.resolve_indirect_branches,

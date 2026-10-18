@@ -78,15 +78,17 @@ class AssumptionOptions:
     def __init__(
         self,
         *,
-        stack_global_disjoint: bool = ...,
-        assume_incoming_args_survive_calls: bool = ...,
-        distinct_sp_bases_disjoint: bool = ...,
-        callee_preserves_stack_args: bool = ...,
-        noalias_allocators: list[int] = ...,
-        escape_analysis: bool = ...,
-        return_slots_survive_untracked_writes: bool = ...,
+        stack_global_disjoint: Optional[bool] = ...,
+        assume_incoming_args_survive_calls: Optional[bool] = ...,
+        distinct_sp_bases_disjoint: Optional[bool] = ...,
+        callee_preserves_stack_args: Optional[bool] = ...,
+        noalias_allocators: Optional[list[int]] = ...,
+        escape_analysis: Optional[bool] = ...,
+        return_slots_survive_untracked_writes: Optional[bool] = ...,
     ) -> None:
-        """Build the claims; every field defaults as documented above."""
+        """Build the claims; a field omitted or `None` takes its default, as
+        documented above. `noalias_allocators` reads back sorted, without
+        duplicates."""
         ...
     @staticmethod
     def none() -> "AssumptionOptions":
