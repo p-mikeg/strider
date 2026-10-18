@@ -9,6 +9,8 @@ unmapped the load stays opaque and every address derived from it is unknown.
 
 from __future__ import annotations
 
+import struct
+
 import pytest
 import strider
 import strider._strider as ext
@@ -155,3 +157,31 @@ def test_add_elf_refuses_the_claim_without_relocations(tmp_path):
     assert "relocated_got_is_rom" in str(excinfo.value)
     # Refused before anything merged: the handle is unchanged.
     assert elf.ro_reader().read(0x501000, 8) is None
+
+
+def _image_with_unreadable_code(path, base: int) -> None:
+    """`_image_with_a_got` with its `.text` PT_LOAD pointed past the end of
+    the file, so reading that mapping fails."""
+    _image_with_a_got(path, base, b"\x22" * 8)
+    raw = bytearray(path.read_bytes())
+    # The first program header's `p_offset`.
+    struct.pack_into("<Q", raw, 64 + 8, len(raw))
+    path.write_bytes(bytes(raw))
+
+
+def test_the_refusal_comes_before_any_mapping_is_read(tmp_path):
+    """The pair is judged on its own, so an image whose code cannot be read
+    still gets the refusal rather than the read error."""
+    broken = tmp_path / "broken.elf"
+    _image_with_unreadable_code(broken, 0x500000)
+    with pytest.raises(strider.StriderError, match="relocated_got_is_rom=True claims"):
+        ext._load_elf_from_segments(str(broken), False, True)
+
+
+def test_add_elf_refuses_the_claim_before_any_mapping_is_read(tmp_path):
+    good, broken = tmp_path / "good.elf", tmp_path / "broken.elf"
+    _image_with_a_got(good, 0x400000, b"\x11" * 8)
+    _image_with_unreadable_code(broken, 0x500000)
+    elf = ext._load_elf_from_segments(str(good), True, False)
+    with pytest.raises(strider.StriderError, match="relocated_got_is_rom=True claims"):
+        elf.add_elf(str(broken), False, True)

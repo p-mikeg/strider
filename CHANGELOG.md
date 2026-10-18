@@ -139,6 +139,8 @@
   RelocationMode::Unapplied)` windows an `OwnedElf`'s bytes; a caller holding
   only an `object::File` or a byte slice builds one with `OwnedElf::parse`.
 - `elf::without_ranges` takes an `&elf::AddressSet` instead of a range slice.
+- `OwnedElf::writable_ranges` is gone: `OwnedElf::image(..).writable` is the
+  same set, merged, from the parse that builds the regions.
 
 ### Changed, Python
 
@@ -169,6 +171,10 @@
   (`i64`), not `Typed(I64)`.
 - `Cfg.region_at` answers the region with the greatest start where regions
   overlap, the rule the CFG builds by; it answered the lowest index.
+- `load_elf` and `ElfLifter.add_elf` parse and walk an image once per view
+  instead of three times; with `apply_relocations=False` they no longer read
+  the writable mappings they do not load, and the `relocated_got_is_rom`
+  refusal comes before any walk.
 
 ### Added, Python
 
