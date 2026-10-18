@@ -381,7 +381,8 @@ fn equal_vaddr_pt_loads_collapse_to_the_widest() {
 
 /// Two read-only PT_LOADs that one writable mapping cuts both leave a piece
 /// at its end. The image keeps the later piece, as a lookup table does, so
-/// every region a relocation can patch is one a read can reach.
+/// every region a relocation can patch is one a read can reach, and a read at
+/// that start serves the later piece's bytes.
 #[test]
 fn pieces_a_cut_leaves_at_one_start_collapse_to_the_last() {
     use object::elf::{PF_R, PF_W};
@@ -408,6 +409,11 @@ fn pieces_a_cut_leaves_at_one_start_collapse_to_the_last() {
             "relocate={relocate}"
         );
         assert_eq!(common::region_bytes(&regions[0]), vec![0xbb; 0x30]);
+        let mut byte = [0u8; 1];
+        strider_reader::MemRegionsLookupTable::new(regions)
+            .read_exact(0x1020, &mut byte)
+            .expect("the kept piece");
+        assert_eq!(byte, [0xbb], "relocate={relocate}");
     }
 }
 

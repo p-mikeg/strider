@@ -67,7 +67,8 @@ fn load_elf_reads_no_further_than_the_stat_size() {
     );
 }
 
-/// An image is the region sets its mode names, from one parse.
+/// An image is the region sets its mode names, from one parse, and its
+/// writable set is the same under every mode.
 #[test]
 #[cfg_attr(
     debug_assertions,
@@ -80,6 +81,12 @@ fn an_image_is_the_region_sets_its_mode_names() {
     for path in files {
         let elf = strider_reader::load_elf(&path).expect("load");
         for source in [RegionSource::Auto, RegionSource::Sections] {
+            let writable = elf
+                .image(source, M::Unapplied)
+                .expect("image")
+                .writable
+                .as_slice()
+                .to_vec();
             for (mode, fetch, rom, relocate) in [
                 (M::Unapplied, F::CodeAndReadOnly, F::ImmutableOnly, false),
                 (
@@ -111,6 +118,11 @@ fn an_image_is_the_region_sets_its_mode_names() {
                     format!("{:?}", image.rom),
                     regions(rom),
                     "{path:?} {mode:?}"
+                );
+                assert_eq!(
+                    image.writable.as_slice(),
+                    writable,
+                    "{path:?} {mode:?}: every mode sees the same writable mappings"
                 );
             }
         }
