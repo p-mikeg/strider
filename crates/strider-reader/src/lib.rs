@@ -128,7 +128,7 @@ impl std::fmt::Debug for MemRegion {
         f.debug_struct("MemRegion")
             .field("start_addr", &format_args!("{:#x}", self.start_addr))
             .field("len", &self.len)
-            .field("patches", &self.patches().len())
+            .field("patch_window", &self.patches().len())
             .finish()
     }
 }
@@ -306,9 +306,6 @@ impl MemRegion {
     /// This region's patches from the first that can overlap `addr` on.
     fn patches_from(&self, addr: u64) -> &[Patch] {
         let patches = self.patches();
-        if patches.is_empty() {
-            return patches;
-        }
         let first = patches.partition_point(|p| p.addr < addr.saturating_sub(MAX_PATCH_LEN - 1));
         &patches[first..]
     }
