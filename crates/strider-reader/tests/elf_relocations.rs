@@ -1260,6 +1260,35 @@ fn a_mips64el_crel_jump_is_patched() {
     assert_eq!(u32::from_le_bytes(word), (fx.sym_addr >> 2) as u32);
 }
 
+/// An image holding an `SHT_CREL` table reads its mips64el `SHT_REL`
+/// entries as written, untransposed: the `R_MIPS_26` jump patched alone
+/// reads as type 1, its `r_sym` word, against an out-of-range symbol, and is
+/// a hole.
+#[test]
+fn a_mips64el_rel_entry_beside_a_crel_table_is_read_as_written() {
+    let fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_MIPS,
+            r_type: object::elf::R_MIPS_26,
+            defined_symbol: true,
+            slot_init: vec![0u8; 4],
+        },
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            empty_crel: true,
+            ..Default::default()
+        },
+    );
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    assert_eq!(
+        table.unmodelled_relocation_at(fx.slot_addr),
+        Some(object::elf::R_MIPS_16)
+    );
+}
+
 /// `S` exists only for a symbol: a relocation whose value reads it is a hole
 /// against STN_UNDEF, whichever row computes it. Each slot is read-only, so
 /// an uncomputed field is a hole rather than skipped.
