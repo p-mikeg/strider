@@ -57,7 +57,7 @@ pub(crate) enum Value {
 }
 
 impl Value {
-    /// Whether the value needs `S`, which only a symbol target has.
+    /// Whether the value needs the symbol, which only a symbol target has.
     pub(crate) fn reads_symbol(self) -> bool {
         !matches!(
             self,
