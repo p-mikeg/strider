@@ -147,7 +147,6 @@ fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> Ad
 }
 
 /// The mappings one walk accepted, and which addresses are writable.
-#[derive(Default)]
 pub(crate) struct LoadedImage {
     /// One per start, as a lookup table over them keeps.
     pub(crate) regions: Vec<MemRegion>,
@@ -164,32 +163,53 @@ pub(crate) struct LoadedImage {
     pub(crate) executable: AddressSet,
 }
 
-impl LoadedImage {
+/// What a walk saw, its ranges as noted: [`LoadedImage`] before its sets are
+/// merged.
+#[derive(Default)]
+struct Walk {
+    regions: Vec<MemRegion>,
+    writable: Vec<(u64, u64)>,
+    executable: Vec<(u64, u64)>,
+}
+
+impl Walk {
     /// Address space, not file bytes: a mapping's BSS tail is writable too.
-    /// Pushed unmerged; `collect_regions` merges the set before returning it.
     fn note_writable(&mut self, start: u64, size: u64) {
         if size != 0 {
-            self.writable.0.push((start, start.saturating_add(size)));
+            self.writable.push((start, start.saturating_add(size)));
         }
     }
 
     fn note_executable(&mut self, start: u64, size: u64) {
         if size != 0 {
-            self.executable.0.push((start, start.saturating_add(size)));
+            self.executable.push((start, start.saturating_add(size)));
         }
     }
 
-    /// Cuts every writable address but `served`'s out of the regions, so that
-    /// no read of one can serve bytes the program can overwrite.
+    /// The image, every region kept whole.
+    fn into_image(self) -> LoadedImage {
+        LoadedImage {
+            regions: self.regions,
+            writable: AddressSet::merged(self.writable),
+            executable: AddressSet::merged(self.executable),
+        }
+    }
+
+    /// The image with every writable address but `served`'s cut out of the
+    /// regions, so that no read of one can serve bytes the program can
+    /// overwrite.
     ///
     /// `served` leaves `writable`, so a relocation the applier cannot compute
     /// over a served address is a hole rather than the field's file bytes:
     /// [`crate::ReadOnlyMemory`] answers from these regions alone.
-    fn without_writable_except(mut self, served: &AddressSet) -> Self {
-        self.writable = AddressSet::merged_without(std::mem::take(&mut self.writable.0), served);
-        // Mappings the cut ends inside all leave a piece at its end.
-        self.regions = crate::collapse_equal_starts(cut(self.regions, &self.writable));
-        self
+    fn without_writable_except(self, served: &AddressSet) -> LoadedImage {
+        let writable = AddressSet::merged_without(self.writable, served);
+        LoadedImage {
+            // Mappings the cut ends inside all leave a piece at its end.
+            regions: crate::collapse_equal_starts(without_ranges(self.regions, &writable)),
+            writable,
+            executable: AddressSet::merged(self.executable),
+        }
     }
 }
 
@@ -199,10 +219,6 @@ impl LoadedImage {
 /// How a read-only view of one image bars another image's
 /// [`ElfImage::writable`](super::ElfImage::writable) addresses.
 pub fn without_ranges(regions: Vec<MemRegion>, ranges: &AddressSet) -> Vec<MemRegion> {
-    cut(regions, ranges)
-}
-
-fn cut(regions: Vec<MemRegion>, ranges: &AddressSet) -> Vec<MemRegion> {
     let mut kept = Vec::with_capacity(regions.len());
     for region in regions {
         let (mut lo, end) = (region.start_addr(), region.end_addr());
@@ -223,14 +239,17 @@ fn cut(regions: Vec<MemRegion>, ranges: &AddressSet) -> Vec<MemRegion> {
     kept
 }
 
-/// `[start, end)` address ranges, ascending, disjoint and non-touching once
-/// [`merged`](Self::merged).
+/// `[start, end)` address ranges, ascending, disjoint and non-touching. Only
+/// [`merged`](Self::merged) builds a non-empty set, alone or before a cut, so
+/// every set is merged, which the queries' binary searches rely on.
 #[derive(Clone, Debug, Default)]
 pub struct AddressSet(Vec<(u64, u64)>);
 
 impl AddressSet {
-    /// `ranges` sorted, with everything that overlaps or touches merged.
+    /// `ranges` sorted, with everything that overlaps or touches merged. Each
+    /// range has `start <= end`.
     pub fn merged(mut ranges: Vec<(u64, u64)>) -> Self {
+        debug_assert!(ranges.iter().all(|&(lo, hi)| lo <= hi), "an inverted range");
         ranges.sort_unstable();
         let mut out: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
         for (lo, hi) in ranges {
@@ -242,7 +261,8 @@ impl AddressSet {
         Self(out)
     }
 
-    /// [`merged`](Self::merged) with every address of `cut_out` removed.
+    /// [`merged`](Self::merged) with every address of `cut_out` removed, by a
+    /// binary search over `cut_out`, which is merged as every set is.
     fn merged_without(ranges: Vec<(u64, u64)>, cut_out: &Self) -> Self {
         let merged = Self::merged(ranges);
         let mut out: Vec<(u64, u64)> = Vec::with_capacity(merged.0.len());
@@ -260,7 +280,8 @@ impl AddressSet {
         Self(out)
     }
 
-    /// The ranges overlapping `[lo, hi)`.
+    /// The ranges overlapping `[lo, hi)`: a binary search, which holds
+    /// because the set is merged.
     fn overlapping(&self, lo: u64, hi: u64) -> &[(u64, u64)] {
         let first = self.0.partition_point(|&(_, end)| end <= lo);
         let last = first + self.0[first..].partition_point(|&(start, _)| start < hi);
@@ -272,7 +293,8 @@ impl AddressSet {
         &self.0
     }
 
-    /// Whether `[addr, addr + len)` touches any of the ranges.
+    /// Whether `[addr, addr + len)` touches any of the ranges, through
+    /// [`overlapping`](Self::overlapping)'s binary search.
     pub(crate) fn touches(&self, addr: u64, len: usize) -> bool {
         len != 0
             && !self
@@ -885,11 +907,7 @@ pub(crate) fn collect_regions(
         LoadFilter::ImmutableAndRelocatedGot => {
             image.without_writable_except(&relocated_got_ranges(obj, layout))
         }
-        _ => LoadedImage {
-            writable: AddressSet::merged(image.writable.0),
-            executable: AddressSet::merged(image.executable.0),
-            ..image
-        },
+        _ => image.into_image(),
     })
 }
 
@@ -931,8 +949,8 @@ fn collect_loadable_segments<'d>(
     obj: &object::File<'d>,
     bytes: &FileBytes,
     filter: LoadFilter,
-) -> Result<LoadedImage> {
-    let mut out = LoadedImage::default();
+) -> Result<Walk> {
+    let mut out = Walk::default();
     let mut accepted: Vec<AcceptedSegment<'d>> = Vec::new();
     for seg in obj.segments() {
         // `obj.segments()` already yields PT_LOAD only, so `p_flags` is read
@@ -1010,8 +1028,8 @@ fn collect_loadable_sections_dedup(
     bytes: &FileBytes,
     filter: LoadFilter,
     layout: &ElfSectionLayout,
-) -> Result<LoadedImage> {
-    let mut out = LoadedImage::default();
+) -> Result<Walk> {
+    let mut out = Walk::default();
     for sec in obj.sections() {
         let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
             continue;
@@ -1041,20 +1059,33 @@ mod tests {
     use object::elf::{PF_R, PF_W, PF_X};
     use proptest::prelude::*;
 
+    /// An address low in the space or within 80 bytes of its top, so ends
+    /// saturate at `u64::MAX`.
+    fn address() -> impl Strategy<Value = u64> {
+        prop_oneof![0u64..72, (u64::MAX - 80)..=u64::MAX]
+    }
+
     proptest! {
-        /// `covers` holds exactly when every address of the range is in a
-        /// range of the set, touching and overlapping inputs included.
+        /// `covers` holds exactly when one range of the set holds the query,
+        /// and, for a non-empty query, when every address of it is in the
+        /// set: touching, overlapping and empty inputs included.
         #[test]
         fn covers_holds_exactly_when_every_address_is_in_the_set(
-            ranges in proptest::collection::vec((0u64..64, 1u64..8), 0..8),
-            lo in 0u64..72,
-            len in 1u64..12,
+            ranges in proptest::collection::vec((address(), 0u64..8), 0..8),
+            lo in address(),
+            len in 0u64..12,
         ) {
-            let ranges: Vec<(u64, u64)> = ranges.into_iter().map(|(s, n)| (s, s + n)).collect();
+            let ranges: Vec<(u64, u64)> =
+                ranges.into_iter().map(|(s, n)| (s, s.saturating_add(n))).collect();
+            let hi = lo.saturating_add(len);
             let model: std::collections::BTreeSet<u64> =
                 ranges.iter().flat_map(|&(s, e)| s..e).collect();
             let set = AddressSet::merged(ranges);
-            prop_assert_eq!(set.covers(lo, lo + len), (lo..lo + len).all(|a| model.contains(&a)));
+            let in_one = set.as_slice().iter().any(|&(s, e)| s <= lo && hi <= e);
+            prop_assert_eq!(set.covers(lo, hi), in_one);
+            if lo < hi {
+                prop_assert_eq!(set.covers(lo, hi), (lo..hi).all(|a| model.contains(&a)));
+            }
         }
     }
 
