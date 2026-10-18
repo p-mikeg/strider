@@ -324,9 +324,9 @@ class Function:
     def rewrite(self, find: _PatLike, replace: _ReplaceLike) -> int:
         """Apply one `find` to `replace` rewrite across the graph, returning
         how many times it fired. `replace` is a `strider.template.Template`;
-        a bare `strider.pattern.Pat` is accepted for compatibility, but only
-        its build-valid subset compiles. A `.when()` guard on `find` raises:
-        select the sites with `find_all` instead.
+        a bare `strider.pattern.Pat` is accepted until 0.3.0 removes it, but
+        only its build-valid subset compiles. A `.when()` guard on `find`
+        raises: select the sites with `find_all` instead.
 
         One walk of the reachable nodes, not a fixed point, so a rule whose
         output its own `find` matches needs the caller to loop.
