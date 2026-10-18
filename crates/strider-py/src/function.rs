@@ -15,26 +15,6 @@ pub struct PyFunction {
     pub(crate) cfg: Py<PyCfg>,
 }
 
-/// The decoder a `lifter=` renderer argument names, defaulting to the one that
-/// lifted `cfg`.  A caller-supplied handle must be on `cfg`'s arch and not
-/// already borrowed by an in-flight `analyze`.
-fn resolve_lifter<'py>(
-    py: Python<'py>,
-    cfg: &PyCfg,
-    lifter: Option<&Bound<'py, crate::strider_cls::PyLifter>>,
-) -> PyResult<PyRef<'py, crate::strider_cls::PyLifter>> {
-    match lifter {
-        Some(l) => {
-            let l = l
-                .try_borrow()
-                .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-            l.check_arch_is(cfg.arch)?;
-            Ok(l)
-        }
-        None => Ok(cfg.lifter.bind(py).try_borrow()?),
-    }
-}
-
 impl PyFunction {
     pub(crate) fn new(function: strider_ir::Function, cfg: Py<PyCfg>) -> Self {
         Self {
@@ -43,18 +23,22 @@ impl PyFunction {
         }
     }
 
-    /// Pretty render for `to_dot(pretty=True)` / `to_html(pretty=True)`.
+    /// Pretty render for `to_dot(pretty=True)` / `to_html(pretty=True)`,
+    /// naming registers through the arch's table rather than a decoder.
     fn pretty_dot(
         &self,
         py: Python<'_>,
         style: Option<&str>,
         path: Option<&str>,
         html: bool,
-        with: Option<&Bound<'_, crate::strider_cls::PyLifter>>,
     ) -> PyResult<Option<String>> {
-        let cfg = self.cfg.bind(py).try_borrow()?;
-        let lifter = resolve_lifter(py, &cfg, with)?;
-        lifter.render_dot(self, style, html, path)
+        let arch = self.cfg.bind(py).try_borrow()?.arch;
+        let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
+        let d = dot::GraphDot::new(
+            function.dot_dumper(arch.names()),
+            crate::dot::dot_style_for(style)?,
+        );
+        crate::dot::render(&d, html, path)
     }
 
     pub(crate) fn read_inner(&self) -> anyhow::Result<Ref<'_, strider_ir::Function>> {
@@ -142,24 +126,17 @@ impl PyFunction {
     /// side-tables inline, no constant inlining or virtual nodes.
     ///
     /// `pretty=True` inlines constants, adds virtual nodes and resolves
-    /// register names, which needs a `Sleigh`; by default the one behind the
-    /// parent `Cfg`'s `Lifter`. A theme name in place of `True` picks the dot
-    /// theme.
-    ///
-    /// `lifter=` renders through a different handle instead. Decoding is
-    /// pinned to its creating thread, so a renderer on another thread passes
-    /// its own handle here; the tables a render reads are identical for any
-    /// handle on the same arch.
-    #[pyo3(signature = (path=None, *, pretty=Pretty::Flag(false), lifter=None))]
+    /// register names through the arch's name table, which needs no decoder.
+    /// A theme name in place of `True` picks the dot theme.
+    #[pyo3(signature = (path=None, *, pretty=Pretty::Flag(false)))]
     fn to_dot(
         &self,
         py: Python<'_>,
         path: Option<&str>,
         pretty: Pretty,
-        lifter: Option<&Bound<'_, crate::strider_cls::PyLifter>>,
     ) -> PyResult<Option<String>> {
         if let Some(style) = pretty.theme() {
-            return self.pretty_dot(py, Some(style), path, /* html */ false, lifter);
+            return self.pretty_dot(py, Some(style), path, /* html */ false);
         }
         let s = self
             .with_read_value(strider_ir::Function::raw_dot)?
@@ -174,9 +151,7 @@ impl PyFunction {
     }
 
     /// Like `to_dot` but wraps the DOT in a self-contained HTML page (embedded
-    /// viz.js, no external `dot` binary). Takes no `lifter=`, so a pretty
-    /// render here always goes through the owning handle and raises off its
-    /// thread; `to_dot(pretty=True, lifter=...)` is the escape hatch.
+    /// viz.js, no external `dot` binary).
     #[pyo3(signature = (path=None, *, pretty=Pretty::Flag(false)))]
     fn to_html(
         &self,
@@ -185,7 +160,7 @@ impl PyFunction {
         pretty: Pretty,
     ) -> PyResult<Option<String>> {
         if let Some(style) = pretty.theme() {
-            return self.pretty_dot(py, Some(style), path, /* html */ true, None);
+            return self.pretty_dot(py, Some(style), path, /* html */ true);
         }
         let s = self
             .with_read_value(strider_ir::Function::raw_html)?
@@ -231,8 +206,8 @@ impl PyFunction {
     ///
     /// `pretty=False` (the default) draws the nodes exactly as stored;
     /// `pretty=True` inlines constants, adds virtual nodes and resolves
-    /// register names, so it needs the `Sleigh` behind `cfg`.
-    #[pyo3(signature = (center, depth=5, hub_cap=12, max_nodes=60, count_producers=false, *, pretty=false, lifter=None))]
+    /// register names through the arch's name table.
+    #[pyo3(signature = (center, depth=5, hub_cap=12, max_nodes=60, count_producers=false, *, pretty=false))]
     #[allow(clippy::too_many_arguments)]
     fn neighborhood_dot(
         &self,
@@ -243,38 +218,24 @@ impl PyFunction {
         max_nodes: usize,
         count_producers: bool,
         pretty: bool,
-        lifter: Option<&Bound<'_, crate::strider_cls::PyLifter>>,
     ) -> PyResult<String> {
-        if pretty {
-            let cfg = self.cfg.bind(py).try_borrow()?;
-            let lifter = resolve_lifter(py, &cfg, lifter)?;
-            return lifter.dispatch_neighborhood_dot(
-                self,
-                center,
-                depth,
-                hub_cap,
-                max_nodes,
-                count_producers,
-            );
-        }
-        // The raw render is pure IR and needs no decoder, but a `lifter=` the
-        // caller passed anyway is still checked: every other `lifter=` renderer
-        // raises on a mismatched arch, a re-entrant handle or a foreign thread,
-        // and returning a graph here would report none of the three.
-        if let Some(l) = lifter {
-            let arch = self.cfg.bind(py).try_borrow()?.arch;
-            let l = l
-                .try_borrow()
-                .map_err(|_| crate::strider_cls::reentrant_lifter_err())?;
-            l.check_arch_is(arch)?;
-            l.sleigh()?;
-        }
+        let arch = pretty
+            .then(|| self.cfg.bind(py).try_borrow().map(|cfg| cfg.arch))
+            .transpose()?;
         self.with_read_value(|function| {
             let nid = function
                 .graph()
                 .node_id_from_u32(center)
                 .ok_or_else(|| anyhow::anyhow!("invalid node id {center}"))?;
-            function.raw_neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers)
+            match arch {
+                Some(arch) => function
+                    .dot_dumper(arch.names())
+                    .neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers)
+                    .map_err(anyhow::Error::from),
+                None => {
+                    function.raw_neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers)
+                }
+            }
         })?
         .map_err(crate::errors::into_strider_err)
     }
