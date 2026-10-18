@@ -190,6 +190,10 @@
   `strider.lift.OnIncomplete`; `OnIncomplete.ERROR`, the default, raises
   `strider.lift.IncompleteAnalysis`, a `StriderError` whose `.incomplete` lists
   every `(address, reason)` as `Cfg.incomplete` does.
+- `strider.template.int_ne`, `int_le`, `int_sle` and `float_ne` build the
+  lifter's `Xor(Equal(l, r), 1)`, `Xor(Less(r, l), 1)`, `Xor(Sless(r, l), 1)`
+  and `Xor(FloatEqual(l, r), 1)`; the `strider.pattern` four used as a
+  rewrite RHS build the same shape instead of raising.
 
 ### Changed, Rust
 
