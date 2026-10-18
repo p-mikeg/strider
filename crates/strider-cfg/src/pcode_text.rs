@@ -1,22 +1,21 @@
 use std::fmt;
 
-use rsleigh::{Insn, MemReader, Opcode, Sleigh, SleighRegs, SpaceIds, Vn, VnSpace};
+use rsleigh::{Insn, Opcode, SpaceIds, Vn, VnSpace};
+use strider_target::ArchNames;
 
 /// `insn` in rsleigh's contextual spelling (`Store ram, RSP, RAX`), a LOAD /
 /// STORE space id rendered as its space's name rather than the host address of
 /// the engine's `AddrSpace`. `space_ids` must come from the engine that decoded
-/// `insn`; `sleigh` and `regs` only name things, so any engine of the arch does.
-pub fn insn_text<'a, R: MemReader>(
+/// `insn`; `names` only names things.
+pub fn insn_text<'a>(
     insn: &'a Insn,
     space_ids: &'a SpaceIds,
-    sleigh: &'a Sleigh<R>,
-    regs: &'a SleighRegs,
+    names: &'a ArchNames,
 ) -> impl fmt::Display + 'a {
     CtxInsnText {
         insn,
         space_ids,
-        sleigh,
-        regs,
+        names,
     }
 }
 
@@ -26,21 +25,20 @@ pub fn insn_plain_text<'a>(insn: &'a Insn, space_ids: &'a SpaceIds) -> impl fmt:
     PlainInsnText { insn, space_ids }
 }
 
-struct CtxInsnText<'a, R: MemReader> {
+struct CtxInsnText<'a> {
     insn: &'a Insn,
     space_ids: &'a SpaceIds,
-    sleigh: &'a Sleigh<R>,
-    regs: &'a SleighRegs,
+    names: &'a ArchNames,
 }
 
-impl<R: MemReader> fmt::Display for CtxInsnText<'_, R> {
+impl fmt::Display for CtxInsnText<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write_insn(
             f,
             self.insn,
             self.space_ids,
-            |f, space| write!(f, "{}", space.ctx_fmt(self.sleigh)),
-            |f, vn| write!(f, "{}", vn.ctx_fmt(self.sleigh, self.regs)),
+            |f, space| write!(f, "{}", self.names.space(space)),
+            |f, vn| write!(f, "{}", self.names.vn(vn)),
         )
     }
 }

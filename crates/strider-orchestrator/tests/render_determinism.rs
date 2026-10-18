@@ -11,20 +11,17 @@ fn renders<R: rsleigh::MemReader>(
     strider: &Strider<R>,
     result: &AnalyzeResult,
 ) -> Vec<(&'static str, String)> {
-    let sleigh = strider.sleigh();
+    let names = strider.arch().names();
     let (cfg, function) = (&result.cfg, &result.function);
-    let cfg_dot = GraphDot::new(cfg.dot_dumper(sleigh), DotStyle::dark_cfg());
-    let fn_dot = GraphDot::new(
-        function.dot_dumper(sleigh).expect("dot_dumper"),
-        DotStyle::dark(),
-    );
+    let cfg_dot = GraphDot::new(cfg.dot_dumper(names), DotStyle::dark_cfg());
+    let fn_dot = GraphDot::new(function.dot_dumper(names), DotStyle::dark());
     let entry = function.entry();
     vec![
         ("cfg dot", cfg_dot.as_dot().expect("cfg dot")),
         ("cfg html", cfg_dot.as_html_from_dot().expect("cfg html")),
         (
             "cfg neighborhood",
-            cfg.neighborhood_dot(sleigh, cfg.entry(), 5, 60)
+            cfg.neighborhood_dot(names, cfg.entry(), 5, 60)
                 .expect("cfg neighborhood"),
         ),
         ("function dot", fn_dot.as_dot().expect("function dot")),
@@ -35,8 +32,7 @@ fn renders<R: rsleigh::MemReader>(
         (
             "function neighborhood",
             function
-                .dot_dumper(sleigh)
-                .expect("dot_dumper")
+                .dot_dumper(names)
                 .neighborhood_dot(entry, 5, 32, 60, false)
                 .expect("function neighborhood"),
         ),

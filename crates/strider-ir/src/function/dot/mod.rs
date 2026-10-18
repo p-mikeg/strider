@@ -1,4 +1,3 @@
-use rsleigh::MemReader;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::IRViewer;
@@ -95,8 +94,8 @@ pub(super) fn role_color(role: SlotRole) -> &'static str {
 
 /// `(label, color)` for the edge into `consumer`'s `input_idx`-th slot, both
 /// driven by the consumer's expected signature.
-pub(super) fn edge_style<R: MemReader>(
-    dumper: &FunctionDotDumper<'_, R>,
+pub(super) fn edge_style(
+    dumper: &FunctionDotDumper<'_>,
     consumer: NodeId,
     input_idx: usize,
 ) -> (&'static str, &'static str) {
@@ -108,13 +107,11 @@ pub(super) fn edge_style<R: MemReader>(
     }
 }
 
-pub struct FunctionDotDumper<'a, R: MemReader> {
+pub struct FunctionDotDumper<'a> {
     pub(crate) entry: NodeId,
     pub(crate) function: &'a Function,
-    pub(crate) sleigh: &'a rsleigh::Sleigh<R>,
-    /// Resolved once: `Sleigh::regs` rebuilds the whole table per call, and a
-    /// render names a varnode per label.
-    pub(crate) regs: std::borrow::Cow<'a, rsleigh::SleighRegs>,
+    /// The arch's register and space names, all a label reads.
+    pub(crate) names: &'a strider_target::ArchNames,
     /// Carrier node -> arg tags.
     pub(crate) node_to_arg_indices: FxHashMap<NodeId, Vec<ArgTag>>,
     /// Restrict the render to the induced subgraph over these nodes; `None`
