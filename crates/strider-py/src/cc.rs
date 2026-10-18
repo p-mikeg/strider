@@ -89,7 +89,8 @@ impl PyCallingConvention {
     /// construction rather than at first use.
     ///
     /// Args:
-    ///     sleigh: The `Sleigh` instance to resolve register names against.
+    ///     sleigh: The `SleighArch` to resolve register names against, or a
+    ///         `Sleigh` built for one.
     ///     arg_passing_regs: Register names passing positional args, in ABI order.
     ///     callee_saved_regs: Registers the callee must preserve.  When
     ///         `link_register` is set, it MUST appear here.
@@ -136,7 +137,7 @@ impl PyCallingConvention {
     fn custom(
         _cls: &Bound<'_, PyType>,
         py: Python<'_>,
-        sleigh: Py<crate::sleigh::PySleigh>,
+        sleigh: crate::arch::ArchArg,
         arg_passing_regs: Vec<String>,
         callee_saved_regs: Vec<String>,
         ret_val_regs: Vec<String>,
@@ -149,19 +150,17 @@ impl PyCallingConvention {
         preserves_memory: bool,
         arg_passing_regs_float: Vec<String>,
     ) -> PyResult<Self> {
-        let sleigh_borrow = sleigh.borrow(py);
-        let regs = sleigh_borrow.regs.clone();
-        let source_arch = sleigh_borrow.arch;
-        drop(sleigh_borrow);
+        let source_arch = sleigh.arch(py);
+        let regs = source_arch.names().regs();
         let in_field = |field: &str, e: anyhow::Error| {
             crate::errors::into_strider_err(e.context(format!("CallingConvention.custom: {field}")))
         };
         let list = |field: &str, names: &[String]| {
-            strider_target::calling_convention::regs_to_vns(&regs, names)
+            strider_target::calling_convention::regs_to_vns(regs, names)
                 .map_err(|e| in_field(field, e))
         };
         let one = |field: &str, name: &str| {
-            strider_target::calling_convention::vn_for_name(&regs, name)
+            strider_target::calling_convention::vn_for_name(regs, name)
                 .map_err(|e| in_field(field, e))
         };
         let arg_vns = list("arg_passing_regs", &arg_passing_regs)?;
