@@ -199,8 +199,8 @@ pub trait CaptureExt: MatchPat {
     {
         Limited { inner: self, f }
     }
-    /// Stop the matcher retrying, swapped, the operand pair this pattern was
-    /// written with; see [`MatchPat::compile_ordered`].
+    /// Pin the operand order of the pair this pattern was written with; see
+    /// [`MatchPat::compile_ordered`].
     fn ordered(self) -> Ordered<Self> {
         Ordered { inner: self }
     }

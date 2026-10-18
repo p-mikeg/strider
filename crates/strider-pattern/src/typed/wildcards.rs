@@ -142,16 +142,25 @@ pub struct InputsOfWidth<I> {
 impl<I: MatchPat> MatchPat for InputsOfWidth<I> {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let o = self.inner.compile(b);
-        let want = self.bits;
-        // The node predicate alone. Pushing the width onto the operand vertices
-        // instead lands it on the ARMS of an alternation, which are not
-        // operands, and on the far side of a cast walk.
-        b.set_node_predicate(
-            o,
-            Box::new(move |matcher, node| inputs_of_width_check(matcher, node, want as usize)),
-        );
+        pin_inputs_width(b, o, self.bits);
         o
     }
+
+    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
+        let o = self.inner.compile_ordered(b);
+        pin_inputs_width(b, o, self.bits);
+        o
+    }
+}
+
+// The node predicate alone. Pushing the width onto the operand vertices
+// instead lands it on the ARMS of an alternation, which are not operands, and
+// on the far side of a cast walk.
+fn pin_inputs_width(b: &mut MatcherBuilder, o: PatValueRef, want: u32) {
+    b.set_node_predicate(
+        o,
+        Box::new(move |matcher, node| inputs_of_width_check(matcher, node, want as usize)),
+    );
 }
 
 fn inputs_of_width_check(matcher: &crate::Matcher, node: NodeId, want: usize) -> bool {
