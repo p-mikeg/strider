@@ -48,27 +48,22 @@ def test_dropping_a_function_off_thread_does_not_leak_its_lifter():
     assert _rss_mb() - settled < 40
 
 
-def test_sleigh_backed_work_off_thread_raises_instead_of_killing_the_thread():
-    """`PanicException` is a `BaseException`, so it escaped `except Exception`
-    and the worker died silently. These now raise a catchable error."""
+def test_a_render_runs_off_the_thread_that_built_the_lifter():
+    """A render reads the arch's name table, not the decoder, so a worker
+    thread renders exactly what the building thread does."""
     _el, cfg, fn = _analyze()
-    caught = {}
+    here = {"pretty": fn.to_dot(pretty=True), "cfg_dot": cfg.to_dot()}
+    there = {}
 
-    def run(label, thunk):
-        def body():
-            try:
-                thunk()
-                caught[label] = "ok"
-            except Exception as e:  # must be reachable
-                caught[label] = type(e).__name__
+    def body():
+        there["pretty"] = fn.to_dot(pretty=True)
+        there["cfg_dot"] = cfg.to_dot()
 
-        t = threading.Thread(target=body)
-        t.start()
-        t.join()
-
-    run("pretty", lambda: fn.to_dot(pretty=True))
-    run("cfg_dot", lambda: cfg.to_dot())
-    assert caught == {"pretty": "StriderError", "cfg_dot": "StriderError"}
+    t = threading.Thread(target=body, daemon=True)
+    t.start()
+    t.join(60)
+    assert not t.is_alive(), "render thread hung"
+    assert there == here
 
 
 def test_work_that_needs_no_sleigh_still_runs_off_thread():

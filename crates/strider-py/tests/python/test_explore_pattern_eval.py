@@ -77,10 +77,9 @@ def test_cfg_address_search_still_works():
     assert vis.search("0x1000") == {"center": cfg.region_at(0x1000)}
 
 
-def test_visualize_runs_on_the_thread_that_created_the_target():
-    """`visualize` decodes through the Lifter, which is pinned to its
-    creating thread. Off-thread it raises `StriderError`, not a
-    `PanicException`, which `except Exception` never catches."""
+def test_a_visualizer_builds_and_renders_off_the_creating_thread():
+    """The explorer reads names, not a decoder, so a visualizer built on a
+    worker thread renders there."""
     import threading
 
     _fn, cfg = _function_and_cfg()
@@ -88,15 +87,17 @@ def test_visualize_runs_on_the_thread_that_created_the_target():
 
     def run():
         try:
-            strider.explore._CfgVisualizer(cfg)
+            vis = strider.explore._CfgVisualizer(cfg)
+            out["dot"] = vis.dot(vis.entry(), {"whole": True})
         except Exception as e:
-            out["err"] = type(e).__name__
+            out["err"] = repr(e)
 
-    t = threading.Thread(target=run)
+    t = threading.Thread(target=run, daemon=True)
     t.start()
     t.join(timeout=30)
     assert not t.is_alive()
-    assert out.get("err") == "StriderError", out
+    assert "err" not in out, out
+    assert out["dot"].startswith("digraph")
     assert strider.explore.shutdown() == []
 
 

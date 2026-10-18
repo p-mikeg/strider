@@ -38,8 +38,6 @@ class Cfg:
         self,
         path: Optional[str] = ...,
         style: Optional[DotStyle] = ...,
-        *,
-        lifter: Optional[Lifter] = ...,
     ) -> Optional[str]:
         """Render the CFG to DOT. Returns the DOT string when `path` is
         `None`, otherwise writes it to `path` and returns `None`.
@@ -50,10 +48,7 @@ class Cfg:
     ) -> Optional[str]:
         """Render the CFG to a standalone HTML page. Returns the HTML string
         when `path` is `None`, otherwise writes it and returns `None`.
-        `style` selects the theme (default `"dark_cfg"`).
-
-        Takes no `lifter=`, so it always renders through the owning handle and
-        raises off its thread; `to_dot(lifter=...)` is the escape hatch."""
+        `style` selects the theme (default `"dark_cfg"`)."""
         ...
     def pcode_at(self, addr: int) -> Optional[str]:
         """The p-code lifted from the machine instruction at `addr`, joined
@@ -87,8 +82,6 @@ class Cfg:
         center: int,
         depth: int = ...,
         max_nodes: int = ...,
-        *,
-        lifter: Optional[Lifter] = ...,
     ) -> str:
         """DOT for the regions within `depth` hops of region `center`
         (predecessors and successors), capped at `max_nodes`."""
