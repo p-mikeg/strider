@@ -382,6 +382,10 @@
   is one that does.
 - `float_unary(op, x)` and `template::float_unary`, the op-valued float
   unary builder beside `float_binary`.
+- `strider_target::ArchNames`, an arch's register and space names, default
+  code space and `ram` address width, which is all a render reads;
+  `SleighArch::names()` builds it once per preset per process.
+  `ArchPreset::name()` is the preset's constructor name.
 
 ## 0.2.0
 
