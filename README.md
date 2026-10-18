@@ -126,8 +126,8 @@ strider.explore.shutdown(port)
   pan-and-zoom explorer while you keep querying. `StriderError.backtrace`
   carries the Rust trace.
 - **Threads.** `analyze` drops the GIL, so one lift handle per thread analyses
-  in parallel. A handle decodes only on the thread that built it and says so
-  rather than misbehaving.
+  in parallel. A handle works on any thread, one call at a time, and says so
+  rather than interleaving.
 - **Failing safely.** A pattern too large or too deep for the thread's stack
   and an out-of-range operand index raise `StriderError` instead of crashing
   the interpreter, and the wheel is built with overflow checks.
@@ -160,11 +160,11 @@ raise `TypeError`: those claims moved into
 `assume_incoming_args_survive_calls` (inverted) and
 `distinct_sp_bases_disjoint`.
 
-A lift handle decodes only on the thread that built it, so a script that
-analysed from a worker raises `StriderError` there. Build a second handle on
-that thread over the same `prog.arch`, `prog.reader()` and `prog.rom()`, and
-call its `analyze(addr, prog.cc)`: a plain handle stores no default convention
-and carries no symbols, so it needs both the convention and an address.
+A lift handle serves one call at a time, from any thread. To analyse in
+parallel, build a second handle over the same `prog.arch`, `prog.reader()` and
+`prog.rom()`, and call its `analyze(addr, prog.cc)`: a plain handle stores no
+default convention and carries no symbols, so it needs both the convention and
+an address.
 
 A 0.1.0 pattern that now matches nothing has most often met `ConstantFold`'s
 repeated-term factoring: `x + x*2` reaches the query as `x*3`. Draw the function

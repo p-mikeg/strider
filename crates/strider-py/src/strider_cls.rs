@@ -8,59 +8,10 @@ use crate::function::PyFunction;
 use crate::options::{PyCfgOptions, PyLifterOptions};
 use crate::reader::{AnyMemReader, MemInput};
 
-/// Pins USE to the creating thread, leaving the value free to move and to be
-/// dropped anywhere.
-///
-/// `Strider` is already `Send`: rsleigh declares it for `SleighCtxLowLevel`,
-/// so this type carries no `unsafe` and `T: Send` stays compiler-checked.
-/// What is not safe is decoding from two threads, because `lift_one` carries
-/// context-register state (ARM/Thumb, x86 segment, MIPS16) across calls and
-/// the GIL serialises those calls without stopping them interleaving. `owner`
-/// rejects the second thread.
-///
-/// Moving is what matters: pinned, a `Function` dropped on a worker thread
-/// leaks its whole `Lifter`, because PyO3 will not run an `unsendable`
-/// destructor off-thread.
-pub(crate) struct ThreadPinned {
-    owner: std::thread::ThreadId,
-    /// `None` once `PyLifter::__clear__` has released it.
-    value: Option<strider_orchestrator::Strider<AnyMemReader>>,
-}
-
-impl ThreadPinned {
-    fn new(value: strider_orchestrator::Strider<AnyMemReader>) -> Self {
-        Self {
-            owner: std::thread::current().id(),
-            value: Some(value),
-        }
-    }
-
-    fn cleared() -> PyErr {
-        into_strider_err(anyhow::anyhow!(
-            "this Lifter was cleared by the garbage collector and holds no engine"
-        ))
-    }
-
-    pub(crate) fn check(&self) -> PyResult<()> {
-        if std::thread::current().id() == self.owner {
-            return Ok(());
-        }
-        Err(into_strider_err(anyhow::anyhow!(
-            "this Lifter was built on another thread and decodes there only; \
-             build one on this thread, or move the work back to the thread that \
-             created it"
-        )))
-    }
-
-    pub(crate) fn get(&self) -> PyResult<&strider_orchestrator::Strider<AnyMemReader>> {
-        self.check()?;
-        self.value.as_ref().ok_or_else(Self::cleared)
-    }
-
-    pub(crate) fn get_mut(&mut self) -> PyResult<&mut strider_orchestrator::Strider<AnyMemReader>> {
-        self.check()?;
-        self.value.as_mut().ok_or_else(Self::cleared)
-    }
+fn cleared() -> PyErr {
+    into_strider_err(anyhow::anyhow!(
+        "this Lifter was cleared by the garbage collector and holds no engine"
+    ))
 }
 
 /// A `custom(...)` convention or user-op ABI froze varnodes resolved against
@@ -131,30 +82,27 @@ pub(crate) fn build_per_address_ccs(
         .collect::<PyResult<_>>()
 }
 
-/// Borrow the handle, erroring on a re-entrant call instead of panicking.
+/// Borrow the handle, raising the re-entrant `StriderError` when a call is
+/// already in flight on it, from this thread or another.
 ///
-/// `Py::borrow` panics when the handle is already borrowed, and a
-/// `MemReader.read` re-entering the handle surfaces that panic as
+/// Every method borrows through this: a `&self` receiver's failed borrow is
+/// PyO3's bare `RuntimeError`, and `Py::borrow` panics, which surfaces as
 /// `PanicException`, a `BaseException` no `except Exception` catches.
-fn try_borrow_lifter<'py>(
-    slf: &'py Py<PyLifter>,
-    py: Python<'py>,
-) -> PyResult<pyo3::PyRef<'py, PyLifter>> {
-    slf.try_borrow(py).map_err(|_| reentrant_lifter_err())
+fn try_borrow_lifter<'py>(slf: &Bound<'py, PyLifter>) -> PyResult<pyo3::PyRef<'py, PyLifter>> {
+    slf.try_borrow().map_err(|_| reentrant_lifter_err())
 }
 
 fn try_borrow_lifter_mut<'py>(
-    slf: &'py Py<PyLifter>,
-    py: Python<'py>,
+    slf: &Bound<'py, PyLifter>,
 ) -> PyResult<pyo3::PyRefMut<'py, PyLifter>> {
-    slf.try_borrow_mut(py).map_err(|_| reentrant_lifter_err())
+    slf.try_borrow_mut().map_err(|_| reentrant_lifter_err())
 }
 
 pub(crate) fn reentrant_lifter_err() -> PyErr {
     into_strider_err(anyhow::anyhow!(
-        "this Lifter is already in use by an in-progress analyze/build_cfg; \
-         a `read()` callback cannot re-enter the same handle. Build a \
-         separate Lifter for the nested analysis"
+        "this Lifter is already in use by an in-progress analyze/build_cfg, on \
+         this thread (a `read()` callback cannot re-enter it) or another; build \
+         a separate Lifter for concurrent work"
     ))
 }
 
@@ -398,9 +346,11 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
 /// convention is an argument of every `analyze` call.
 #[pyclass(name = "Lifter", module = "strider.lift", subclass)]
 pub struct PyLifter {
-    /// Owns the Sleigh, cached register table and optional rom. Pinned to
-    /// the creating thread for USE; still free to move and to be dropped.
-    inner: ThreadPinned,
+    /// Owns the Sleigh, cached register table and optional rom; `None` once
+    /// `__clear__` has released it. A call borrows the handle for its whole
+    /// run, so a second call while one is in flight, on this thread or
+    /// another, raises rather than interleaving.
+    inner: Option<strider_orchestrator::Strider<AnyMemReader>>,
     /// The arch this handle was built for: what `arch` hands back, and what a
     /// `custom(...)` CC / `CallOtherAbi` must have frozen its varnodes on.
     pub(crate) arch: strider_target::SleighArch,
@@ -470,8 +420,16 @@ fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc
 }
 
 impl PyLifter {
-    pub(crate) fn sleigh(&self) -> PyResult<&rsleigh::Sleigh<AnyMemReader>> {
-        Ok(self.inner.get()?.sleigh())
+    fn strider(&self) -> PyResult<&strider_orchestrator::Strider<AnyMemReader>> {
+        self.inner.as_ref().ok_or_else(cleared)
+    }
+
+    fn strider_mut(&mut self) -> PyResult<&mut strider_orchestrator::Strider<AnyMemReader>> {
+        self.inner.as_mut().ok_or_else(cleared)
+    }
+
+    fn sleigh(&self) -> PyResult<&rsleigh::Sleigh<AnyMemReader>> {
+        Ok(self.strider()?.sleigh())
     }
 
     /// Retires any cached `pcode_at` sweep engine, for a caller about to
@@ -491,7 +449,7 @@ fn build_lifter(
     let py_deps = collect_py_deps(&mem_input, rom_input.as_ref());
     let arch_value = arch.inner;
     Ok(PyLifter {
-        inner: ThreadPinned::new(build_strider(arch, mem_input, rom_input)?),
+        inner: Some(build_strider(arch, mem_input, rom_input)?),
         arch: arch_value,
         py_deps,
         mem_obj: Some(mem.unbind()),
@@ -503,16 +461,13 @@ fn build_lifter(
 
 #[pymethods]
 impl PyLifter {
-    /// The `SleighArch` this handle decodes with.
-    ///
-    /// Enough, with `reader()` and `rom()`, to build a SECOND handle over the
-    /// same memory. That is how a background renderer gets a decoder of its
-    /// own: decoding is pinned to the creating thread, but the register and
-    /// address-space tables a render reads are the same for any handle on the
-    /// same arch.
+    /// The `SleighArch` this handle decodes with. Enough, with `reader()` and
+    /// `rom()`, to build a second handle over the same memory, which is how
+    /// two threads analyse in parallel.
     #[getter]
-    fn arch(&self) -> crate::arch::PySleighArch {
-        crate::arch::PySleighArch { inner: self.arch }
+    fn arch(slf: &Bound<'_, Self>) -> PyResult<crate::arch::PySleighArch> {
+        let inner = try_borrow_lifter(slf)?.arch;
+        Ok(crate::arch::PySleighArch { inner })
     }
 
     /// Build a handle for `arch` reading code from `mem`, with `rom` as the
@@ -529,17 +484,19 @@ impl PyLifter {
 
     /// The code source (`BufferReader` or `MemReader`) this handle was built
     /// with.
-    fn reader(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.mem_obj
+    fn reader(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> {
+        try_borrow_lifter(slf)?
+            .mem_obj
             .as_ref()
-            .map(|o| o.clone_ref(py))
+            .map(|o| o.clone_ref(slf.py()))
             .ok_or_else(|| into_strider_err(anyhow::anyhow!("reader is unavailable")))
     }
 
     /// The `rom` (read-only memory for constant folding) this handle was built
     /// with, or `None` if none was supplied.
-    fn rom(&self, py: Python<'_>) -> Option<Py<PyAny>> {
-        self.rom_obj.as_ref().map(|o| o.clone_ref(py))
+    fn rom(slf: &Bound<'_, Self>) -> PyResult<Option<Py<PyAny>>> {
+        let this = try_borrow_lifter(slf)?;
+        Ok(this.rom_obj.as_ref().map(|o| o.clone_ref(slf.py())))
     }
 
     fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
@@ -568,64 +525,78 @@ impl PyLifter {
         // `Arc<Py<PyAny>>`s in `py_deps`, so the reference drops only with all
         // three.
         self.py_deps.clear();
-        self.inner.value = None;
+        self.inner = None;
         self.sweep_sleigh.get_mut().take();
         self.mem_obj = None;
         self.rom_obj = None;
     }
 
-    /// INTERNAL. Raise exactly what `_rebuild` would, without rebuilding:
-    /// a caller that commits state elsewhere first calls this, so a rebuild
-    /// that cannot run leaves nothing half-applied.
-    #[pyo3(name = "_check_usable")]
-    fn check_usable(&self) -> PyResult<()> {
-        self.inner.check()
-    }
-
     /// INTERNAL. Rebuild this handle's Sleigh and orchestrator state from
-    /// `arch`/`mem`/`rom`, so a newly merged-in ELF becomes visible.
+    /// `arch`/`mem`/`rom`.
     #[pyo3(name = "_rebuild", signature = (arch, mem, rom = None))]
     fn rebuild(
-        &mut self,
+        slf: &Bound<'_, Self>,
         arch: PySleighArch,
         mem: Bound<'_, PyAny>,
         rom: Option<Bound<'_, PyAny>>,
     ) -> PyResult<()> {
-        // Rejected up front rather than owner-preserving, so `add_elf` fails
-        // off-thread exactly as every other Sleigh-touching method does; a
-        // rebuild that kept the old owner would leave the caller holding a
-        // handle it still cannot use.
-        self.inner.check()?;
-        *self = build_lifter(arch, mem, rom)?;
+        let mut this = try_borrow_lifter_mut(slf)?;
+        this.strider()?;
+        *this = build_lifter(arch, mem, rom)?;
+        Ok(())
+    }
+
+    /// INTERNAL. Merge the ELF at `path` into `elf` and rebuild over the
+    /// merged image, under one exclusive borrow: a handle in use refuses
+    /// before anything is merged, so `symbol` and `read` never see an ELF
+    /// the decoder does not.
+    #[pyo3(name = "_merge_elf")]
+    fn merge_elf(
+        slf: &Bound<'_, Self>,
+        elf: &Bound<'_, crate::reader::PyLoadedElf>,
+        path: &str,
+        apply_relocations: bool,
+        relocated_got_is_rom: bool,
+    ) -> PyResult<()> {
+        let mut this = try_borrow_lifter_mut(slf)?;
+        this.strider()?;
+        let (mem, rom) = {
+            let mut elf = elf.try_borrow_mut()?;
+            elf.add_elf(path, apply_relocations, relocated_got_is_rom)?;
+            (elf.reader(), elf.ro_reader())
+        };
+        let py = slf.py();
+        let arch = PySleighArch { inner: this.arch };
+        *this = build_lifter(
+            arch,
+            Bound::new(py, mem)?.into_any(),
+            Some(Bound::new(py, rom)?.into_any()),
+        )?;
         Ok(())
     }
 
     /// Every Sleigh user-op name this architecture can emit, indexed by
     /// user-op id.  These are the names `CfgOptions(call_other_abis=...)`
     /// classifies.
-    fn user_op_names(&self) -> PyResult<Vec<String>> {
-        Ok(self.inner.get()?.user_op_names().to_vec())
+    fn user_op_names(slf: &Bound<'_, Self>) -> PyResult<Vec<String>> {
+        Ok(try_borrow_lifter(slf)?.strider()?.user_op_names().to_vec())
     }
 
     /// How `name` is classified: the `opts` entry for it when there is one,
     /// else the built-in table, else `None` for a name strider has no answer
-    /// for (which fails the lift of any function containing it).  Raises
-    /// `StriderError` off the handle's thread.
+    /// for (which fails the lift of any function containing it).
     #[pyo3(signature = (name, opts=None))]
     fn call_other_abi(
-        &self,
-        py: Python<'_>,
+        slf: &Bound<'_, Self>,
         name: &str,
         opts: Option<Py<PyCfgOptions>>,
     ) -> PyResult<Option<crate::call_other_abi::PyCallOtherAbi>> {
+        let preset = try_borrow_lifter(slf)?.arch.preset();
         if let Some(opts) = opts
-            && let Some(abi) = opts.borrow(py).call_other_abis.get(name)
+            && let Some(abi) = opts.borrow(slf.py()).call_other_abis.get(name)
         {
             return Ok(Some(abi.clone()));
         }
-        // `None` means "no answer for this name", so an off-thread failure
-        // must raise rather than borrow that meaning.
-        let preset = self.inner.get()?.arch().preset();
         Ok(crate::call_other_abi::PyCallOtherAbi::builtin(preset, name))
     }
 
@@ -635,7 +606,7 @@ impl PyLifter {
     /// `on_incomplete` is `ERROR` (the default, `None`).
     ///
     /// Holds the GIL for the whole build, unlike `analyze`: decoding is short
-    /// next to a full analysis, and it runs on the handle's own thread.
+    /// next to a full analysis.
     #[pyo3(signature = (entry, opts=None, *, on_incomplete=None))]
     fn build_cfg(
         slf: Py<Self>,
@@ -645,11 +616,12 @@ impl PyLifter {
         on_incomplete: Option<crate::options::PyOnIncomplete>,
     ) -> PyResult<PyCfg> {
         let entry = entry_addr(entry)?;
+        let bound = slf.bind(py);
         {
-            let lifter = try_borrow_lifter(&slf, py)?;
+            let lifter = try_borrow_lifter(bound)?;
             crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
         }
-        let target = try_borrow_lifter(&slf, py)?.arch;
+        let target = try_borrow_lifter(bound)?.arch;
         // The borrow outlives `cfg_opts`, which holds the seeded table rather
         // than a copy of it.
         let opts_ref = opts.as_ref().map(|o| o.borrow(py));
@@ -658,11 +630,10 @@ impl PyLifter {
             None => strider_cfg::CfgOptions::default(),
         };
         let inner = with_pending_control_flow(|| {
-            let mut lifter = try_borrow_lifter_mut(&slf, py)?;
+            let mut lifter = try_borrow_lifter_mut(bound)?;
             lifter.bump_context_gen();
             lifter
-                .inner
-                .get_mut()?
+                .strider_mut()?
                 .build_cfg(
                     entry,
                     &cfg_opts,
@@ -721,10 +692,10 @@ impl PyLifter {
         drop(opts_ref);
 
         let (target, cc_built, per_address_built) = {
-            let lifter = try_borrow_lifter(&slf, py)?;
+            let lifter = try_borrow_lifter(slf.bind(py))?;
             crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
             crate::reader::check_mem_unchanged(py, &lifter.rom_obj)?;
-            let regs = lifter.inner.get()?.sleigh_regs();
+            let regs = lifter.strider()?.sleigh_regs();
             let target = lifter.arch;
             let cc_built = build_cc(&cc, regs, target)?;
             let per_address_built = opts.borrow(py).built_per_address_ccs(regs, target)?;
@@ -762,13 +733,13 @@ impl PyLifter {
         // finalisation wait for the analysis, the way any other Python call
         // does. `py_deps` is empty exactly on the owned-data path.
         let result = {
-            let mut lifter = try_borrow_lifter_mut(&slf, py)?;
+            let mut lifter = try_borrow_lifter_mut(slf.bind(py))?;
             lifter.bump_context_gen();
             let reader_calls_python = !lifter.py_deps.is_empty();
             // Reborrow before the closure so its captured type is a plain
             // `&mut Strider`, not the GIL-bound `PyRefMut`, which embeds a
             // `!Send` `Python<'_>` marker and would fail `Ungil`.
-            let inner = lifter.inner.get_mut()?;
+            let inner = lifter.strider_mut()?;
             let outcome = if reader_calls_python {
                 inner.analyze(entry, &cc_built, &analyze_opts, custom_pipeline)
             } else {
@@ -822,7 +793,7 @@ impl PyLifter {
                  two must be the same handle"
             )));
         }
-        let this = slf.try_borrow().map_err(|_| reentrant_lifter_err())?;
+        let this = try_borrow_lifter(slf)?;
         // `LoadReadOnly` reads the rom, and a mapping shortened under us takes
         // a SIGBUS there, which no Python `except` can catch.
         crate::reader::check_mem_unchanged(py, &this.mem_obj)?;
@@ -832,7 +803,7 @@ impl PyLifter {
             None => Py::new(py, PyLifterOptions::new_default(py)?)?,
         };
         let options = opt_options_from(py, &opts.borrow(py))?;
-        let rom = this.inner.get()?.rom();
+        let rom = this.strider()?.rom();
         with_pending_control_flow(|| match pipeline {
             Some(p) => function.run_pipeline_in_place(p.build_pipeline(), "optimize", rom, options),
             None => {
@@ -844,20 +815,23 @@ impl PyLifter {
 
     /// Look up a register by Sleigh name, or `None` when the name is not
     /// in this arch's table.
-    fn reg(&self, name: &str) -> PyResult<Option<crate::sleigh::PyVn>> {
-        Ok(self
-            .inner
-            .get()?
+    fn reg(slf: &Bound<'_, Self>, name: &str) -> PyResult<Option<crate::sleigh::PyVn>> {
+        Ok(try_borrow_lifter(slf)?
+            .strider()?
             .sleigh_regs()
             .name_to_vn(name)
             .map(crate::sleigh::PyVn::from_inner))
     }
 
     /// The reverse of `reg`.  Returns `None` when `vn` names no register
-    /// (a non-REGISTER space, or an offset/size not in the table); never
-    /// raises.
-    fn reg_name(&self, vn: &crate::sleigh::PyVn) -> PyResult<Option<&str>> {
-        Ok(self.inner.get()?.sleigh_regs().vn_to_name(vn.inner))
+    /// (a non-REGISTER space, or an offset/size not in the table).
+    fn reg_name(slf: &Bound<'_, Self>, vn: &crate::sleigh::PyVn) -> PyResult<Option<String>> {
+        let this = try_borrow_lifter(slf)?;
+        Ok(this
+            .strider()?
+            .sleigh_regs()
+            .vn_to_name(vn.inner)
+            .map(str::to_owned))
     }
 
     /// Decode from `entry` one instruction at a time until `addr`, and
@@ -874,10 +848,12 @@ impl PyLifter {
     /// Also raises once this `Lifter` has committed more decode modes than the
     /// sweep engine can carry over, which on an ISA-mode arch is the only
     /// alternative to answering in the wrong mode.
-    fn pcode_at(&self, py: Python<'_>, entry: u64, addr: u64) -> PyResult<String> {
+    fn pcode_at(slf: &Bound<'_, Self>, entry: u64, addr: u64) -> PyResult<String> {
+        let py = slf.py();
+        let this = try_borrow_lifter(slf)?;
         // A mapping shortened under us takes a SIGBUS on the read, which no
         // Python `except` can catch.
-        crate::reader::check_mem_unchanged(py, &self.mem_obj)?;
+        crate::reader::check_mem_unchanged(py, &this.mem_obj)?;
         if addr < entry {
             return Err(into_strider_err(anyhow::anyhow!(
                 "pcode_at: addr {addr:#x} is before entry {entry:#x}"
@@ -894,12 +870,11 @@ impl PyLifter {
         // default for an address the analysis decoded in another mode:
         // `clone_would_replay_context` is what tells the two apart, and the
         // answer it cannot vouch for is refused rather than returned.
-        self.inner.check()?;
-        let context_gen = self.context_gen.get();
+        let context_gen = this.context_gen.get();
         // Taken OUT of the cell for the sweep: `lift_one` reaches a Python
         // `MemReader.read`, which can call back in here, and a borrow held
         // across that would raise `PanicException` from the nested call.
-        let cached = self
+        let cached = this
             .sweep_sleigh
             .try_borrow_mut()
             .ok()
@@ -908,7 +883,7 @@ impl PyLifter {
         let mut sweep = match cached {
             Some(s) => s,
             None => {
-                let sleigh = self.sleigh()?;
+                let sleigh = this.sleigh()?;
                 if !sleigh.clone_would_replay_context() {
                     return Err(into_strider_err(anyhow::anyhow!(
                         "pcode_at: this Lifter has pinned more decode modes than a sweep \
@@ -976,7 +951,7 @@ impl PyLifter {
                 }
             }
         });
-        if let Ok(mut slot) = self.sweep_sleigh.try_borrow_mut() {
+        if let Ok(mut slot) = this.sweep_sleigh.try_borrow_mut() {
             *slot = Some(sweep);
         }
         out
@@ -1009,7 +984,7 @@ impl PyLifter {
     // One parameter per Python keyword, which `#[pyo3(signature)]` needs here.
     #[allow(clippy::too_many_arguments)]
     fn visualize(
-        &self,
+        _slf: &Bound<'_, Self>,
         py: Python<'_>,
         target: Py<PyAny>,
         host: &str,
