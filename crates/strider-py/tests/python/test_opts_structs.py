@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import sys
 
 import pytest
 
@@ -301,9 +302,19 @@ def test_assumption_options_none_is_the_default_for_every_field():
     default = repr(strider.lift.AssumptionOptions())
     for name in _ASSUMPTION_FIELDS:
         assert repr(strider.lift.AssumptionOptions(**{name: None})) == default, name
-    params = inspect.signature(strider.lift.AssumptionOptions).parameters
-    assert list(params) == list(_ASSUMPTION_FIELDS)
-    assert all(p.default is None for p in params.values())
+    if sys.version_info >= (3, 10):  # abi3 exposes a class signature from 3.10
+        params = inspect.signature(strider.lift.AssumptionOptions).parameters
+        assert list(params) == list(_ASSUMPTION_FIELDS)
+        assert all(p.default is None for p in params.values())
+
+
+def test_assumption_options_repr():
+    assert repr(strider.lift.AssumptionOptions()) == (
+        "AssumptionOptions(stack_global_disjoint=True, "
+        "assume_incoming_args_survive_calls=True, distinct_sp_bases_disjoint=False, "
+        "callee_preserves_stack_args=False, noalias_allocators=[], "
+        "escape_analysis=False, return_slots_survive_untracked_writes=True)"
+    )
 
 
 def test_noalias_allocators_read_back_sorted_and_deduplicated():
