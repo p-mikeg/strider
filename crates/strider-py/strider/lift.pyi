@@ -195,22 +195,28 @@ class Lifter:
         mem: MemLike,
         rom: Optional[RomLike] = ...,
     ) -> _L: ...
-    def _check_usable(self) -> None:
-        """INTERNAL. Raise what `_rebuild` would, without rebuilding, so a
-        caller that commits state elsewhere can refuse before it does."""
-        ...
     def _rebuild(
         self, arch: SleighArch, mem: MemLike, rom: Optional[RomLike] = ...
     ) -> None:
-        """INTERNAL. Rebuild the handle's Sleigh and orchestrator state, so a
-        newly merged-in ELF becomes visible."""
+        """INTERNAL. Rebuild the handle's Sleigh and orchestrator state."""
+        ...
+    def _merge_elf(
+        self,
+        elf: Any,
+        path: str,
+        apply_relocations: bool,
+        relocated_got_is_rom: bool,
+    ) -> None:
+        """INTERNAL. Merge the ELF at `path` into the loaded-ELF handle `elf`
+        and rebuild over the merged image, refusing before anything is merged
+        when the handle is in use."""
         ...
     @property
     def arch(self) -> SleighArch:
         """The `SleighArch` this handle decodes with.
 
         Enough, with `reader()` and `rom()`, to build a second handle over the
-        same memory."""
+        same memory, which is how two threads analyse in parallel."""
         ...
     def reader(self) -> MemLike:
         """The code source (`BufferReader` or `MemReader`) this handle was
@@ -230,8 +236,7 @@ class Lifter:
     ) -> Optional[CallOtherAbi]:
         """How `name` is classified: the `opts` entry for it when there is
         one, else the built-in table, else `None` for a name strider has no
-        answer for (which fails the lift of any function containing it).
-        Raises `StriderError` off the handle's thread."""
+        answer for (which fails the lift of any function containing it)."""
         ...
     def build_cfg(
         self,
@@ -246,7 +251,7 @@ class Lifter:
         default, `None`).
 
         Holds the GIL for the whole build, unlike `analyze`: decoding is short
-        next to a full analysis, and it runs on the handle's own thread."""
+        next to a full analysis."""
         ...
     def analyze(
         self,

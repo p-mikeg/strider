@@ -204,6 +204,14 @@
   register name in either `custom` names its list:
   `CallingConvention.custom: arg_passing_regs: unknown sleigh register name
   "X"`.
+- A `Lifter` works on any thread: `analyze`, `build_cfg`, `optimize`,
+  `pcode_at`, `reg`, `reg_name`, `call_other_abi`, `user_op_names` and
+  `add_elf` no longer raise off the thread that built it, reversing 0.2.0. A
+  handle still serves one call at a time: those, and a plain `Lifter`'s
+  `arch`, `reader()` and `rom()`, called while another call is in flight, from
+  a `read()` callback or another thread, raise `StriderError` ("already in
+  use"), where all but `analyze`, `build_cfg` and `optimize` raised PyO3's
+  `RuntimeError`. Such an `add_elf` merges nothing.
 
 ### Added, Python
 
