@@ -997,15 +997,16 @@ def int_cmp(op: IntCmpOpName, l: ValueLike, r: ValueLike) -> Pat:
 def int_eq(l: ValueLike, r: ValueLike) -> Pat:
     """Match an integer equality test. Commutative."""
 def int_ne(l: ValueLike, r: ValueLike) -> Pat:
-    """Match an integer inequality test."""
+    """Match an integer inequality test, the lifter's `Xor(Equal(l, r), 1)`."""
 def int_lt(l: ValueLike, r: ValueLike) -> Pat:
     """Match an unsigned less-than test."""
 def int_le(l: ValueLike, r: ValueLike) -> Pat:
-    """Match an unsigned less-or-equal test."""
+    """Match an unsigned less-or-equal test, the lifter's
+    `Xor(Less(r, l), 1)`."""
 def int_slt(l: ValueLike, r: ValueLike) -> Pat:
     """Match a signed less-than test."""
 def int_sle(l: ValueLike, r: ValueLike) -> Pat:
-    """Match a signed less-or-equal test."""
+    """Match a signed less-or-equal test, the lifter's `Xor(Sless(r, l), 1)`."""
 def int_carry(l: ValueLike, r: ValueLike) -> Pat:
     """Match an unsigned-addition carry test. Commutative."""
 def int_scarry(l: ValueLike, r: ValueLike) -> Pat:
@@ -1052,7 +1053,8 @@ def float_is_nan(operand: ValueLike) -> Pat:
 def float_eq(l: ValueLike, r: ValueLike) -> Pat:
     """Match a float equality test. Commutative."""
 def float_ne(l: ValueLike, r: ValueLike) -> Pat:
-    """Match a float inequality test."""
+    """Match a float inequality test, the lifter's
+    `Xor(FloatEqual(l, r), 1)`."""
 def float_lt(l: ValueLike, r: ValueLike) -> Pat:
     """Match a float less-than test."""
 def float_le(l: ValueLike, r: ValueLike) -> Pat:
