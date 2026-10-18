@@ -396,29 +396,114 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 /// `assume_incoming_args_survive_calls` and
 /// `return_slots_survive_untracked_writes`, each of which every compiler this
 /// analyses honours.
+///
+/// An omitted or `None` field takes the default, which is Rust's
+/// `AssumptionOptions::default`.
 #[pyclass(name = "AssumptionOptions", module = "strider.lift")]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct PyAssumptionOptions {
+    pub(crate) inner: AssumptionOptions,
+}
+
+/// One field as Python reads and writes it.
+trait PyField<P> {
+    fn to_py(&self) -> P;
+    fn from_py(value: P) -> Self;
+    /// The value as the constructor call that sets it spells it.
+    fn py_repr(&self) -> String;
+}
+
+impl PyField<bool> for bool {
+    fn to_py(&self) -> bool {
+        *self
+    }
+
+    fn from_py(value: bool) -> Self {
+        value
+    }
+
+    fn py_repr(&self) -> String {
+        py_bool(*self).to_owned()
+    }
+}
+
+/// Sorted: the set has no order of its own, and a `repr` must read back.
+impl PyField<Vec<u64>> for rustc_hash::FxHashSet<u64> {
+    fn to_py(&self) -> Vec<u64> {
+        let mut v: Vec<u64> = self.iter().copied().collect();
+        v.sort_unstable();
+        v
+    }
+
+    fn from_py(value: Vec<u64>) -> Self {
+        value.into_iter().collect()
+    }
+
+    fn py_repr(&self) -> String {
+        format!("{:?}", PyField::<Vec<u64>>::to_py(self))
+    }
+}
+
+/// The getters, the keyword-only constructor (an omitted or `None` field
+/// takes `AssumptionOptions::default`'s) and `__repr__`, from one row per
+/// field.
+macro_rules! assumption_fields {
+    ($($(#[$doc:meta])* $name:ident: $py:ty),* $(,)?) => {
+        #[pymethods]
+        impl PyAssumptionOptions {
+            #[new]
+            #[pyo3(signature = (*, $($name = None),*))]
+            fn new($($name: Option<$py>),*) -> Self {
+                let mut inner = AssumptionOptions::default();
+                $(
+                    if let Some(value) = $name {
+                        inner.$name = PyField::from_py(value);
+                    }
+                )*
+                Self { inner }
+            }
+
+            $(
+                $(#[$doc])*
+                #[getter]
+                fn $name(&self) -> $py {
+                    PyField::<$py>::to_py(&self.inner.$name)
+                }
+            )*
+
+            /// Reads back as the constructor call that produces it.
+            fn __repr__(&self) -> String {
+                let fields = [$(
+                    format!(
+                        "{}={}",
+                        stringify!($name),
+                        PyField::<$py>::py_repr(&self.inner.$name)
+                    )
+                ),*];
+                format!("AssumptionOptions({})", fields.join(", "))
+            }
+        }
+    };
+}
+
+assumption_fields! {
     /// The stack and global/constant memory (`.data`, `.rodata`, `.bss`,
     /// MMIO) never overlap at runtime, so a memory walk steps through a
     /// constant-address store when looking back from a stack load and
     /// vice-versa (default `True`). Wrong only where a constant address
     /// coincidentally equals `sp + K`.
-    #[pyo3(get)]
-    pub stack_global_disjoint: bool,
+    stack_global_disjoint: bool,
 
     /// A call on an incoming stack-argument slot's memory chain leaves the
     /// slot alone (default `True`). Reaches incoming-argument detection only,
     /// where it holds for any conforming callee: those slots are the caller's
     /// memory, above the entry SP.
-    #[pyo3(get)]
-    pub assume_incoming_args_survive_calls: bool,
+    assume_incoming_args_survive_calls: bool,
 
     /// A store rooted at a different SP base than the entry SP (an
     /// alignment-masked frame local, say) is disjoint from the probed
     /// location.
-    #[pyo3(get)]
-    pub distinct_sp_bases_disjoint: bool,
+    distinct_sp_bases_disjoint: bool,
 
     /// A callee leaves the outgoing-argument slots the caller wrote as it
     /// found them, so a spill at the stack top survives the call. The psABIs
@@ -427,25 +512,23 @@ pub struct PyAssumptionOptions {
     /// Inert on its own: it only empties an outgoing-argument window that
     /// something else already consults, which is `escape_analysis` or a call
     /// to an address listed in `noalias_allocators`. Set with one of those.
-    #[pyo3(get)]
-    pub callee_preserves_stack_args: bool,
+    callee_preserves_stack_args: bool,
 
     /// Callee addresses of pure `noalias` heap allocators (`malloc`/`calloc`-like:
     /// a size in, a fresh non-overlapping pointer out, no pointer arguments).
     /// Distinct allocations are treated as disjoint, and a load steps through
     /// such a call. Disjointness holds among allocations live at once: nothing
     /// models deallocation, so a stale pointer is taken as disjoint from the
-    /// storage the allocator handed out again.
-    #[pyo3(get)]
-    pub noalias_allocators: Vec<u64>,
+    /// storage the allocator handed out again. Reads back sorted, without
+    /// duplicates.
+    noalias_allocators: Vec<u64>,
 
     /// When the frame is provably private (no stack address escapes to a
     /// callee), forward a spill load across a call and past an opaque store.
     /// An address held in an argument, a stored value, a return, or a register
     /// a call clobbers escapes; the claim is that no callee reads one from a
     /// register its convention preserves.
-    #[pyo3(get)]
-    pub escape_analysis: bool,
+    escape_analysis: bool,
 
     /// A RAM store whose address the analysis cannot place on the entry stack,
     /// and any callee or user-op, leave the slots the function saved its
@@ -454,105 +537,20 @@ pub struct PyAssumptionOptions {
     /// reported as unverified, and a store through a pointer the analysis can
     /// only guess at is checked against the slot. A store its SP decomposition
     /// places is checked either way.
-    #[pyo3(get)]
-    pub return_slots_survive_untracked_writes: bool,
-}
-
-impl Default for PyAssumptionOptions {
-    fn default() -> Self {
-        Self::from(&AssumptionOptions::default())
-    }
-}
-
-impl From<&AssumptionOptions> for PyAssumptionOptions {
-    fn from(a: &AssumptionOptions) -> Self {
-        let mut noalias_allocators: Vec<u64> = a.noalias_allocators.iter().copied().collect();
-        noalias_allocators.sort_unstable();
-        Self {
-            stack_global_disjoint: a.stack_global_disjoint,
-            assume_incoming_args_survive_calls: a.assume_incoming_args_survive_calls,
-            distinct_sp_bases_disjoint: a.distinct_sp_bases_disjoint,
-            callee_preserves_stack_args: a.callee_preserves_stack_args,
-            noalias_allocators,
-            escape_analysis: a.escape_analysis,
-            return_slots_survive_untracked_writes: a.return_slots_survive_untracked_writes,
-        }
-    }
-}
-
-impl From<&PyAssumptionOptions> for AssumptionOptions {
-    fn from(a: &PyAssumptionOptions) -> Self {
-        Self {
-            stack_global_disjoint: a.stack_global_disjoint,
-            assume_incoming_args_survive_calls: a.assume_incoming_args_survive_calls,
-            distinct_sp_bases_disjoint: a.distinct_sp_bases_disjoint,
-            callee_preserves_stack_args: a.callee_preserves_stack_args,
-            noalias_allocators: a.noalias_allocators.iter().copied().collect(),
-            escape_analysis: a.escape_analysis,
-            return_slots_survive_untracked_writes: a.return_slots_survive_untracked_writes,
-        }
-    }
+    return_slots_survive_untracked_writes: bool,
 }
 
 #[pymethods]
 impl PyAssumptionOptions {
-    /// The `#[new]` signature defaults ARE the `Default` values.
-    #[new]
-    #[pyo3(signature = (
-        *,
-        stack_global_disjoint = true,
-        assume_incoming_args_survive_calls = true,
-        distinct_sp_bases_disjoint = false,
-        callee_preserves_stack_args = false,
-        noalias_allocators = Vec::new(),
-        escape_analysis = false,
-        return_slots_survive_untracked_writes = true,
-    ))]
-    #[allow(clippy::fn_params_excessive_bools)]
-    fn new(
-        stack_global_disjoint: bool,
-        assume_incoming_args_survive_calls: bool,
-        distinct_sp_bases_disjoint: bool,
-        callee_preserves_stack_args: bool,
-        noalias_allocators: Vec<u64>,
-        escape_analysis: bool,
-        return_slots_survive_untracked_writes: bool,
-    ) -> Self {
-        Self {
-            stack_global_disjoint,
-            assume_incoming_args_survive_calls,
-            distinct_sp_bases_disjoint,
-            callee_preserves_stack_args,
-            noalias_allocators,
-            escape_analysis,
-            return_slots_survive_untracked_writes,
-        }
-    }
-
     /// Every claim cleared: the sound floor of these fields under any input
     /// program whose memory behaves as RAM, forwarding solely what the IR
     /// structurally proves. A memory-mapped register polled after a write still reads as
     /// the value written.
     #[staticmethod]
     fn none() -> Self {
-        Self::from(&AssumptionOptions::none())
-    }
-
-    /// Reads back as the constructor call that produces it.
-    fn __repr__(&self) -> String {
-        format!(
-            "AssumptionOptions(stack_global_disjoint={}, \
-             assume_incoming_args_survive_calls={}, distinct_sp_bases_disjoint={}, \
-             callee_preserves_stack_args={}, noalias_allocators={:?}, \
-             escape_analysis={}, return_slots_survive_untracked_writes={})",
-            py_bool(self.stack_global_disjoint),
-            py_bool(self.assume_incoming_args_survive_calls),
-            py_bool(self.distinct_sp_bases_disjoint),
-            py_bool(self.callee_preserves_stack_args),
-            self.noalias_allocators,
-            py_bool(self.escape_analysis),
-            py_bool(self.return_slots_survive_untracked_writes),
-        )
+        Self {
+            inner: AssumptionOptions::none(),
+        }
     }
 }
 
