@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 import strider
@@ -273,3 +275,39 @@ def test_cfg_options_repr():
         "known_targets={0 entries}, call_other_abis={0 entries}, "
         "data_ranges=[1 ranges], no_return_targets={1 entries})"
     )
+
+
+_ASSUMPTION_FIELDS = (
+    "stack_global_disjoint",
+    "assume_incoming_args_survive_calls",
+    "distinct_sp_bases_disjoint",
+    "callee_preserves_stack_args",
+    "noalias_allocators",
+    "escape_analysis",
+    "return_slots_survive_untracked_writes",
+)
+
+
+def test_assumption_options_defaults_are_the_lifter_options_defaults():
+    """One default per field, Rust's, however the group is built."""
+    built = strider.lift.AssumptionOptions()
+    nested = strider.lift.LifterOptions().assumptions
+    for name in _ASSUMPTION_FIELDS:
+        assert getattr(built, name) == getattr(nested, name), name
+    assert repr(built) == repr(nested)
+
+
+def test_assumption_options_none_is_the_default_for_every_field():
+    default = repr(strider.lift.AssumptionOptions())
+    for name in _ASSUMPTION_FIELDS:
+        assert repr(strider.lift.AssumptionOptions(**{name: None})) == default, name
+    params = inspect.signature(strider.lift.AssumptionOptions).parameters
+    assert list(params) == list(_ASSUMPTION_FIELDS)
+    assert all(p.default is None for p in params.values())
+
+
+def test_noalias_allocators_read_back_sorted_and_deduplicated():
+    top = 2**64 - 1
+    a = strider.lift.AssumptionOptions(noalias_allocators=[top, 3, 3, 1])
+    assert a.noalias_allocators == [1, 3, top]
+    assert f"noalias_allocators=[1, 3, {top}]" in repr(a)
