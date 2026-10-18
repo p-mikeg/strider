@@ -50,7 +50,7 @@ def test_a_preset_convention_must_fit_the_lifters_arch():
     4-byte stack pointer."""
     mem = strider.reader.BufferReader(0x1000, b"\xc3")
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
-    with pytest.raises(strider.StriderError, match="stack_vn"):
+    with pytest.raises(strider.StriderError, match="stack pointer"):
         lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_cdecl())
 
 
@@ -63,5 +63,5 @@ def test_load_elf_with_an_overriding_arch_refuses_the_header_convention():
         str(fixture_path("x86", "arithmetic")),
         arch=strider.sleigh.SleighArch.x86_64(),
     )
-    with pytest.raises(strider.StriderError, match="stack_vn"):
+    with pytest.raises(strider.StriderError, match="stack pointer"):
         prog.analyze("add")

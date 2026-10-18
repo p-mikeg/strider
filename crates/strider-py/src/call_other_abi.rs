@@ -135,21 +135,14 @@ impl PyCallOtherAbi {
         let regs = sleigh_borrow.regs.clone();
         let source_arch = sleigh_borrow.arch;
         drop(sleigh_borrow);
-        let resolve = |names: &[String]| -> PyResult<Vec<rsleigh::Vn>> {
-            names
-                .iter()
-                .map(|name| {
-                    regs.name_to_vn(name).ok_or_else(|| {
-                        crate::errors::into_strider_err(anyhow::anyhow!(
-                            "CallOtherAbi.custom: unknown register name {name:?}"
-                        ))
-                    })
-                })
-                .collect()
+        let resolve = |field: &str, names: &[String]| {
+            strider_target::calling_convention::regs_to_vns(&regs, names).map_err(|e| {
+                crate::errors::into_strider_err(e.context(format!("CallOtherAbi.custom: {field}")))
+            })
         };
         let built = strider_target::BuiltCallOtherAbi {
-            implicit_reads: resolve(&implicit_reads)?,
-            implicit_writes: resolve(&implicit_writes)?,
+            implicit_reads: resolve("implicit_reads", &implicit_reads)?,
+            implicit_writes: resolve("implicit_writes", &implicit_writes)?,
             clobbers_memory,
             no_return,
         };

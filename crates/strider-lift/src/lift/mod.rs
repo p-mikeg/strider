@@ -141,10 +141,23 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     }
 
     /// [`strider_target::BuiltCallingConvention::check_addr_size`] against this
-    /// engine's `ram`.
+    /// engine's `ram`: what a per-address override gets, since one comes from a
+    /// validated preset or Python's validated `custom`.
     pub(crate) fn check_cc(&self, cc: &strider_target::BuiltCallingConvention) -> Result<()> {
         cc.check_addr_size(self.ram_addr_size)
             .map_err(|e| anyhow!("{:?}: {e}", self.arch().preset()))
+    }
+
+    /// The function default: [`strider_target::BuiltCallingConvention::validate`]
+    /// and [`Self::check_cc`]. A struct literal reaches the lift otherwise
+    /// unchecked.
+    pub(crate) fn check_default_cc(
+        &self,
+        cc: &strider_target::BuiltCallingConvention,
+    ) -> Result<()> {
+        cc.validate()
+            .map_err(|e| anyhow!("{:?}: default convention: {e}", self.arch().preset()))?;
+        self.check_cc(cc)
     }
 
     #[must_use]
@@ -370,7 +383,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ///
     /// # Errors
     ///
-    /// Among others, when `cc` or an override this `cfg` selects fails
+    /// Among others, when `cc` fails
+    /// [`strider_target::BuiltCallingConvention::validate`], or `cc` or an
+    /// override this `cfg` selects fails
     /// [`strider_target::BuiltCallingConvention::check_addr_size`] for this arch.
     pub fn build_ir_with(
         &self,
@@ -380,7 +395,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         per_address_ccs: &rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     ) -> Result<LiftOutcome> {
         self.check_cfg_space_ids(cfg)?;
-        self.check_cc(&cc)?;
+        self.check_default_cc(&cc)?;
         // The CFG is rebuilt from scratch each lift, so the tracked set is
         // always scanned fresh.  `FunctionLifter::new` adds the stack vn; the
         // lifter is the SSoT for that.

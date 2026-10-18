@@ -129,7 +129,7 @@ fn every_arch_preset_lifts_under_its_conventions() {
 fn x86_cdecl_is_refused_on_an_x86_64_lifter() {
     let err = lift_at(Sa::x86_64(), X86_RET, Cc::x86_cdecl(), None)
         .expect_err("a 4-byte ESP must not stand in for x86-64's 8-byte stack pointer");
-    assert!(format!("{err:#}").contains("stack_vn"), "got: {err:#}");
+    assert!(format!("{err:#}").contains("stack pointer"), "got: {err:#}");
 }
 
 #[test]
@@ -167,5 +167,23 @@ fn a_per_address_convention_for_another_arch_is_refused() {
         Some((0x1006, Cc::x86_cdecl())),
     )
     .expect_err("an override with a 4-byte ESP must not reach an x86-64 call");
-    assert!(format!("{err:#}").contains("stack_vn"), "got: {err:#}");
+    assert!(format!("{err:#}").contains("stack pointer"), "got: {err:#}");
+}
+
+/// The default convention is validated at the lift: a struct literal reaches
+/// it otherwise unchecked, and an argument register that is also callee-saved
+/// would lift a value the callee both receives and preserves.
+#[test]
+fn a_default_convention_that_fails_validate_is_refused() {
+    let arg_also_saved = |regs: &rsleigh::SleighRegs| -> anyhow::Result<BuiltCallingConvention> {
+        let mut cc = Cc::x86_64_systemv().build(regs)?;
+        cc.callee_saved_regs.push(cc.arg_passing_regs[0]);
+        Ok(cc)
+    };
+    let err = lift_built_at(Sa::x86_64(), X86_RET, arg_also_saved, None)
+        .expect_err("a register both passed and preserved must be refused");
+    assert!(
+        format!("{err:#}").contains("callee_saved_regs"),
+        "got: {err:#}"
+    );
 }
