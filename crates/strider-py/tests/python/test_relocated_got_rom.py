@@ -9,8 +9,6 @@ unmapped the load stays opaque and every address derived from it is unknown.
 
 from __future__ import annotations
 
-import struct
-
 import pytest
 import strider
 import strider._strider as ext
@@ -163,10 +161,7 @@ def _image_with_unreadable_code(path, base: int) -> None:
     """`_image_with_a_got` with its `.text` PT_LOAD pointed past the end of
     the file, so reading that mapping fails."""
     _image_with_a_got(path, base, b"\x22" * 8)
-    raw = bytearray(path.read_bytes())
-    # The first program header's `p_offset`.
-    struct.pack_into("<Q", raw, 64 + 8, len(raw))
-    path.write_bytes(bytes(raw))
+    eb.point_load_past_eof(path, 0)
 
 
 def test_the_refusal_comes_before_any_mapping_is_read(tmp_path):
