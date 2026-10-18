@@ -196,7 +196,8 @@ impl LoadedImage {
 /// `regions` with every address of `ranges` cut out: a region a range splits
 /// becomes the pieces either side of it, sharing its bytes.
 ///
-/// How a read-only view of one image bars another image's writable mappings.
+/// How a read-only view of one image bars another image's
+/// [`ElfImage::writable`](super::ElfImage::writable) addresses.
 pub fn without_ranges(regions: Vec<MemRegion>, ranges: &AddressSet) -> Vec<MemRegion> {
     cut(regions, ranges)
 }

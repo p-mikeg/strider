@@ -236,17 +236,12 @@ impl Fixture {
     /// (`LoadFilter::ImmutableAndRelocatedGot`), the opt-in a PIC dispatch
     /// whose table base is loaded through the GOT needs.
     pub fn strider_serving_got(&self) -> (Strider<ElfFileMemReader>, BuiltCallingConvention) {
-        let regions = self
-            .elf
-            .regions(
-                strider_reader::elf::RegionSource::Auto,
-                strider_reader::elf::LoadFilter::ImmutableAndRelocatedGot,
-                true,
-            )
-            .expect("rom regions");
-        self.strider_over(Box::new(RegionRom(
-            strider_reader::MemRegionsLookupTable::new(regions),
-        )))
+        let rom = ElfFileMemReader::new(
+            &self.elf,
+            strider_reader::elf::RelocationMode::Applied { got_is_rom: true },
+        )
+        .expect("rom reader");
+        self.strider_over(Box::new(rom))
     }
 
     fn strider_over(
@@ -262,15 +257,5 @@ impl Fixture {
             .build(strider.sleigh_regs())
             .expect("build cc");
         (strider, cc)
-    }
-}
-
-/// A ROM over a region set loaded under a filter that [`ElfFileMemReader`]
-/// does not build.
-struct RegionRom(strider_reader::MemRegionsLookupTable);
-
-impl ReadOnlyMemory for RegionRom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        self.0.read_exact(addr, buf)
     }
 }
