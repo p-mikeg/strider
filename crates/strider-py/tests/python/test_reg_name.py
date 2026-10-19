@@ -1,4 +1,4 @@
-"""Reverse varnode to register-name lookup: `Sleigh.reg_name(vn)`.
+"""Reverse varnode to register-name lookup: `SleighArch.reg_name(vn)`.
 
 Without it a REGISTER-space `Vn` off a lifted function reprs as
 `%[0x4]:4`, which reads like a stack slot and misleads.
@@ -11,9 +11,7 @@ from .conftest import fixture_path
 
 
 def _x86_64_sleigh():
-    arch = strider.sleigh.SleighArch.x86_64()
-    mem = strider.reader.BufferReader(0x1000, b"\x90")
-    return strider.sleigh.Sleigh(arch, mem)
+    return strider.sleigh.SleighArch.x86_64()
 
 
 def test_reg_name_round_trips_forward_lookup():

@@ -15,7 +15,7 @@ from strider.pattern import (
     int_const, int_const_any_width, int_cmp, any_int_binary, any_int_cmp,
 )
 
-from .conftest import built_function, fixture_path, lift_bytes
+from .conftest import built_function, lift_bytes
 
 
 def _patterns_graph():
@@ -153,9 +153,7 @@ def test_phi_pat_input_chain():
 
 
 def test_phi_for_takes_vn_from_sleigh():
-    elf = fixture_path("x86", "patterns")
-    mem = strider.lift.load_elf(str(elf)).reader()
-    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86(), mem)
+    sleigh = strider.sleigh.SleighArch.x86()
     eax_vn = sleigh.reg("EAX")
     assert eax_vn is not None
     p = phi_for(eax_vn)
@@ -163,9 +161,7 @@ def test_phi_for_takes_vn_from_sleigh():
 
 
 def test_initial_var_for_constructs():
-    elf = fixture_path("x86", "patterns")
-    mem = strider.lift.load_elf(str(elf)).reader()
-    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86(), mem)
+    sleigh = strider.sleigh.SleighArch.x86()
     eax = sleigh.reg("EAX")
     assert eax is not None
     p = initial_var_for(eax)
@@ -178,9 +174,7 @@ def test_function_arg_pat_index_chain():
 
 
 def test_function_arg_reg_constructor():
-    elf = fixture_path("x64", "patterns")
-    mem = strider.lift.load_elf(str(elf)).reader()
-    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86_64(), mem)
+    sleigh = strider.sleigh.SleighArch.x86_64()
     rdi = sleigh.reg("RDI")
     assert rdi is not None
     p = function_arg_reg(rdi)
@@ -401,9 +395,7 @@ def test_vn_constructor_and_repr():
 
 
 def test_sleigh_reg_returns_vn_or_none():
-    elf = fixture_path("x86", "patterns")
-    mem = strider.lift.load_elf(str(elf)).reader()
-    sleigh = strider.sleigh.Sleigh(strider.sleigh.SleighArch.x86(), mem)
+    sleigh = strider.sleigh.SleighArch.x86()
     eax = sleigh.reg("EAX")
     assert eax is not None
     assert eax.size == 4

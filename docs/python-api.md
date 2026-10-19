@@ -875,8 +875,7 @@ of a convention for a per-address override; a callee that never returns goes
 in `CfgOptions(no_return_targets=...)` instead. `CallOtherAbi`
 describes one Sleigh user-op, for `CfgOptions(call_other_abis=...)`. Both
 `custom` constructors resolve register names against a `SleighArch`, whose
-`reg` / `reg_name` look registers up without a lifter. `Sleigh`, the older
-handle for both, stays until 0.3.0 removes it.
+`reg` / `reg_name` look registers up without a lifter.
 `crates/strider-py/examples/python/17_custom_abis.py` uses each of them.
 
 Analysis stays inside the function being lifted: a call is modelled by the
