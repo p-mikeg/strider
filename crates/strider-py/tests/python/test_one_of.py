@@ -8,6 +8,7 @@ import pytest
 
 import strider
 from strider import pattern as p
+from strider import template as tpl
 from .conftest import lift_bytes as _lift
 
 
@@ -101,6 +102,6 @@ def test_empty_alternation_matches_nothing():
 def test_one_of_is_match_only_as_rewrite_rhs():
     # one_of names no single concrete shape, so it can't be a replacement.
     fn = _lift(b"\x01\xd8\xc3")
-    with pytest.raises(strider.StriderError):
+    with pytest.raises(strider.StriderError, match=r"cannot use one_of\(\) as a rewrite RHS"):
         fn.rewrite(find=p.int_add(p.anything(), p.anything()),
-                   replace=p.one_of([p.int_const(0), p.int_const(1)]))
+                   replace=tpl.int_add(p.one_of([p.int_const(0), p.int_const(1)]), 0))  # type: ignore[arg-type]

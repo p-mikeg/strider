@@ -760,6 +760,9 @@ left-hand side's captures. It is a subset of `strider.pattern`: `float_le`,
 `float_is_nan` and the wildcards (`anything`, `any_int`) match but do not
 build, so spell `float_le` / `float_is_nan`'s canonical shape instead;
 `int_ne` / `int_le` / `int_sle` / `float_ne` build the lifter's shape.
+A `strider.pattern.Pat` is never a right-hand side: `replace=` raises
+`TypeError` for one, and one nested in a `Template` operand raises
+`StriderError` naming the constructor to respell.
 
 `rewrite_all` makes one walk; at each node the first rule that fires wins.
 Neither is a fixed point, so a rule whose output its own `find` matches needs a
