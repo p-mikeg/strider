@@ -246,6 +246,20 @@ fn if_cond_captures() {
     let hits = a::matches(&function, if_else().cond(var(c)).build(), 1);
     assert!(hits[0].value(c).is_some());
 }
+
+/// `.output(n)` on an `If` names control output `n`: 0 the true edge, 1 the
+/// false one.
+#[test]
+fn if_output_slot_binds_that_edge() {
+    let (function, if_node) = if_then_else();
+    let edges = function.node_outputs(if_node);
+    for slot in [0, 1] {
+        let c = Capture::new();
+        let hits = a::matches(&function, if_else().output(slot).capture(c).build(), 1);
+        assert_eq!(hits[0].value(c), Some(edges[slot]), "output({slot})");
+    }
+}
+
 #[test]
 fn if_capture_true_false_bind_distinct_control_outputs() {
     let (function, if_id) = if_then_else();
