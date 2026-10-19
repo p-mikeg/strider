@@ -164,6 +164,8 @@ strider-ir-test-utils -> strider-ir, strider-target, graph-algorithms
 `[dependencies]` of it, so a workspace-wide build resolves `strider-ir` with its
 `test-util` feature on. It also depends on `graph-algorithms` with `test-util`
 (the std-only `oracle` module), which a workspace-wide build likewise unifies.
+A workspace-wide build also turns on strider-graph's `edge-read-count` through
+strider-ir's dev-dependency, so a bench runs per package (`-p`).
 
 Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 `entity-utils`, `read-only-memory`, `strider-graph`, `vn-container`. Notably
@@ -171,7 +173,10 @@ Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 and the orchestrator reaches `strider-pattern` and `dot` only from its tests
 and examples. External `petgraph` is a production dependency of `strider-cfg`,
 `strider-lift` and `strider-pattern`, and a dev-dependency of `graph-algorithms`
-and `strider-ir`, whose dominance tests check against `simple_fast`.
+and `strider-ir`, whose dominance tests check against `simple_fast`;
+graph-algorithms' walk tests also check `acyclic_postorder`'s cycle verdict
+against `toposort`, and strider-pattern's tests use petgraph as the
+template-order oracle.
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
