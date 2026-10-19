@@ -1124,6 +1124,14 @@ mod tests {
         );
     }
 
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "the Sleigh was built from another sla")]
+    fn an_engine_whose_sleigh_is_another_archs_is_refused() {
+        let sleigh = make_sleigh_over(vec![0xc3; 8], 0x1000);
+        let _ = crate::DecodeEngine::new(strider_target::SleighArch::x86(), sleigh);
+    }
+
     /// A function whose first byte is unmapped has nothing to analyse, so there
     /// is no partial answer to report.
     #[test]
