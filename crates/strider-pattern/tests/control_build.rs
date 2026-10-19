@@ -5,7 +5,7 @@ mod support;
 
 use support::{assertions as a, shapes};
 
-use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::node::{NodeKind, SwitchTableId, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker};
 use strider_ir_test_utils::{RegisterSet, mem_phi_with_two_stores};
 use strider_pattern::matcher::{KindSpec, MatcherBuilder};
@@ -239,20 +239,44 @@ fn a_pinned_sole_vertex_binds_its_own_slot() {
         .walk()
         .find(|&n| matches!(function.node_kind(n), NodeKind::Switch(_)))
         .expect("the fixture's switch");
+    let outputs = function.node_outputs(switch_node);
     let c = Capture::new();
+    let hits = a::matches(&function, switch_output_at_1(c, true), 1);
+    assert_eq!(hits[0].value(c), Some(outputs[1]));
+    let hits = a::matches(&function, switch_output_at_1(c, false), outputs.len());
+    let bound: Vec<_> = hits.iter().filter_map(|m| m.value(c)).collect();
+    assert_eq!(bound, outputs);
+}
+
+/// A join dedups on the bound value, not its node: rows binding one capture
+/// to distinct outputs of one node stay distinct.
+#[test]
+fn a_join_keeps_rows_binding_distinct_outputs_of_one_node() {
+    let function = switch_fn(0x1000);
+    let c = Capture::new();
+    let pat = switch_output_at_1(c, false);
+    let rows = Matcher::new(&function)
+        .find_joined_constrained(&[&pat], &[])
+        .unwrap();
+    let bound: Vec<_> = rows.iter().filter_map(|row| row[0].value(c)).collect();
+    let switch_node = function.producer(bound[0]);
+    assert_eq!(bound, function.node_outputs(switch_node));
+}
+
+/// A raw `Switch` with one output vertex at slot 1 capturing `c`: `pinned`,
+/// it binds that slot's output; otherwise whichever output is matched.
+fn switch_output_at_1(c: Capture, pinned: bool) -> strider_pattern::Pattern {
     let mut b = MatcherBuilder::new();
     let node = b.node(KindSpec::variant_of(&NodeKind::Switch(
-        strider_ir::node::SwitchTableId::from_u32(0),
+        SwitchTableId::from_u32(0),
     )));
     let out = b.value_output(node, 1);
     b.set_output_any(out);
-    b.pin_value_out_slot(out);
+    if pinned {
+        b.pin_value_out_slot(out);
+    }
     b.capture_output(out, c);
-    let hits = a::matches(&function, b.finish(), 1);
-    assert_eq!(
-        hits[0].value(c),
-        Some(function.node_outputs(switch_node)[1])
-    );
+    b.finish()
 }
 
 fn if_then_else() -> (strider_ir::Function, strider_ir::node::NodeId) {
@@ -283,6 +307,30 @@ fn if_output_slot_binds_that_edge() {
         let c = Capture::new();
         let hits = a::matches(&function, if_else().output(slot).capture(c).build(), 1);
         assert_eq!(hits[0].value(c), Some(edges[slot]), "output({slot})");
+    }
+}
+
+/// Nested, `.output(n)` is a sibling vertex: whichever arm's region the `If`
+/// feeds, it names output `n`, so both regions match.
+#[test]
+fn if_output_slot_names_that_output_from_either_arm_region() {
+    let (function, if_node) = if_then_else();
+    let edges = function.node_outputs(if_node);
+    for slot in [0, 1] {
+        let c = Capture::new();
+        let pat = region()
+            .any_input(if_else().output(slot).capture(c))
+            .build();
+        let hits = a::matches(&function, pat, 2);
+        let mut fed: Vec<_> = hits
+            .iter()
+            .filter_map(|m| function.node_inputs(m.root()).into_iter().next())
+            .collect();
+        fed.sort_unstable_by_key(|v| edges.iter().position(|e| e == v));
+        assert_eq!(fed, edges, "output({slot})");
+        for m in &hits {
+            assert_eq!(m.value(c), Some(edges[slot]), "output({slot})");
+        }
     }
 }
 
