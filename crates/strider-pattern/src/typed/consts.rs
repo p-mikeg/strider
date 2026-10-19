@@ -502,10 +502,7 @@ impl ConstWith {
 
 impl TemplatePat for ConstWith {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        // The placeholder kind is immediately overwritten by set_template_kind
-        // and never read.
-        let o = b.leaf(KindSpec::Any);
-        b.set_template_kind(o, self.kind);
+        let o = b.dynamic_leaf(self.kind);
         for c in self.caps {
             b.declare_capture(c);
         }
