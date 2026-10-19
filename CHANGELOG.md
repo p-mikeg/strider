@@ -162,6 +162,11 @@
   `IntoNodeIdentifiers`, `Visitable`) are gone, and strider-graph no longer
   depends on petgraph: walk a graph with `graph_algorithms::walk` over a
   `GraphRef`.
+- `strider_opt::{value_range, indirect_branch_resolve, KnownBitsFacts,
+  KnownBitsMap, analyze_known_bits, classify_target}` exist only with the
+  `test-util` feature: nothing outside the crate's tests read them.
+  `classify_sites`, `ClassifiedSites`, `ReturnTargets` and the `KnownBits`
+  pass stay public.
 
 ### Changed, Python
 
