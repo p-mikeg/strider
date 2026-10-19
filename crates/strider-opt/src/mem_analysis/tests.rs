@@ -745,7 +745,9 @@ mod heap_tests {
         p.add(crate::RegionCollapse);
         p.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
         // The collapse ran at the floor; these queries run under `allocators`.
-        fg.side_tables_mut().assume(&super::allocating(allocators));
+        if fg.side_tables_mut().assume(&super::allocating(allocators)) {
+            fg.side_tables().invalidate_analyses();
+        }
         Ok(fg)
     }
 
@@ -2129,8 +2131,11 @@ mod heap_tests {
         for a in &toggles {
             // Claims only accumulate, so each toggle reads its own copy.
             let (mut fg, mut fa) = (fg.clone(), fa.clone());
-            fg.side_tables_mut().assume(a);
-            fa.side_tables_mut().assume(a);
+            for f in [&mut fg, &mut fa] {
+                if f.side_tables_mut().assume(a) {
+                    f.side_tables().invalidate_analyses();
+                }
+            }
             for purpose in [Forward, IncomingArgs, CallStackArgs, TableWalk, Structural] {
                 let analyzer = MemAnalyzer::new(MemOptions::for_purpose(purpose, a));
                 // An analyzer keeps the index of the first graph it reads.
@@ -3502,7 +3507,9 @@ mod store_index {
         let mut fg = b.build()?;
         super::super::collapse_phis(&mut fg);
         // The collapse ran at the floor; the probes run under `{ALLOC}`.
-        fg.side_tables_mut().assume(&super::allocating(&[ALLOC]));
+        if fg.side_tables_mut().assume(&super::allocating(&[ALLOC])) {
+            fg.side_tables().invalidate_analyses();
+        }
         Ok((fg, addresses))
     }
 

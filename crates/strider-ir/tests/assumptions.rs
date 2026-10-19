@@ -107,6 +107,42 @@ fn omitted_by_compares_allocator_sets_by_inclusion() {
     );
 }
 
+/// No claim holds another, and each holds the floor and itself, which does
+/// not hold it: exactly when `omitted_by` comes back empty.
+#[test]
+fn holds_all_checks_each_claim() {
+    let floor = AssumptionOptions::none();
+    let claims = each_claim();
+    for (name, claim) in &claims {
+        assert!(!floor.holds_all(claim), "the floor over {name}");
+        assert!(claim.holds_all(&floor), "{name} over the floor");
+        for (other_name, other) in &claims {
+            assert_eq!(
+                claim.holds_all(other),
+                name == other_name,
+                "{name} over {other_name}"
+            );
+            assert_eq!(
+                claim.holds_all(other),
+                other.omitted_by(claim).is_empty(),
+                "{name} over {other_name}"
+            );
+        }
+    }
+}
+
+/// An allocator set holds another when it lists each of its addresses.
+#[test]
+fn holds_all_compares_allocator_sets_by_inclusion() {
+    let listing = |addrs: &[u64]| AssumptionOptions {
+        noalias_allocators: addrs.iter().copied().collect(),
+        ..AssumptionOptions::none()
+    };
+    assert!(listing(&[1, 2]).holds_all(&listing(&[1])));
+    assert!(!listing(&[1]).holds_all(&listing(&[1, 2])));
+    assert!(!listing(&[1]).holds_all(&listing(&[2])));
+}
+
 /// The union of two claims holds both and nothing else.
 #[test]
 fn union_is_the_claimwise_or() {

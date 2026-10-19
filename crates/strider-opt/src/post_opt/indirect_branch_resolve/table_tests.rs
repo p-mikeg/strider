@@ -100,7 +100,9 @@ fn classify_with(
     mode_value: Option<ValueId>,
 ) -> Option<ResolvedTargets> {
     let mut f = f.clone();
-    f.side_tables_mut().assume(assumptions);
+    if f.side_tables_mut().assume(assumptions) {
+        f.side_tables().invalidate_analyses();
+    }
     let mut ranges = crate::value_range::RangeMap::new(&f).unwrap();
     classify_table_dispatch(&f, sole_indirect_branch(&f), rom, &mut ranges, mode_value)
 }
@@ -1941,10 +1943,13 @@ mod stack_table_cost {
         build: fn(&[u64], i64, u64) -> (strider_ir::Function, ValueId),
     ) -> (Vec<u64>, u64) {
         let targets: Vec<u64> = (0..entries as u64).map(|i| 0x401000 + i * 0x10).collect();
-        let (fg, _load) = build(&targets, -8 * entries as i64, 8);
-        let mut fg = fg;
-        fg.side_tables_mut()
-            .assume(&crate::AssumptionOptions::default());
+        let (mut fg, _load) = build(&targets, -8 * entries as i64, 8);
+        if fg
+            .side_tables_mut()
+            .assume(&crate::AssumptionOptions::default())
+        {
+            fg.side_tables().invalidate_analyses();
+        }
         let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         super::super::super::eval::SLOT_MAP_STEPS.with(|c| c.set(0));
@@ -1982,11 +1987,13 @@ mod stack_table_cost {
         // Nearer the load than the table, so the budget runs out above it.
         wire_stack_stores(&vec![0u64; filler], -0x10000, 8, sp_val, &mut b);
         wire_stack_dispatch(targets.len(), -32, 8, sp_val, &mut b, arg_vn);
-        let (fg, _load) = finish_stack_array(b.build().unwrap());
-
-        let mut fg = fg;
-        fg.side_tables_mut()
-            .assume(&crate::AssumptionOptions::default());
+        let (mut fg, _load) = finish_stack_array(b.build().unwrap());
+        if fg
+            .side_tables_mut()
+            .assume(&crate::AssumptionOptions::default())
+        {
+            fg.side_tables().invalidate_analyses();
+        }
         let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         super::super::super::eval::SLOT_MAP_STEPS.with(|c| c.set(0));

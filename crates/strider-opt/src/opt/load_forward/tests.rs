@@ -457,10 +457,10 @@ fn strict_does_not_forward_across_non_sp_intervening_store() -> Result<()> {
         Ok(())
     })?;
 
-    // `stack_global_disjoint` is cleared explicitly: on by default, it assumes
+    // At the floor `stack_global_disjoint` is off: on by default, it assumes
     // the const-addressed store disjoint and forwards instead.
     let pipeline = crate::test_support::standard_test();
-    pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
