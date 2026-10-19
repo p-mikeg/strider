@@ -695,8 +695,8 @@ fn const_family() {
     assert_eq!(count(|| any_int_const().into_pattern(), &fx), 1);
     assert_eq!(count(|| int_const([0xFFFF_FFCEu64]).into_pattern(), &fx), 1);
 
-    // The VariantWith value-set predicate must survive to match time, so 7
-    // does not match [1,2,3].
+    // The value-set predicate must survive to match time, so 7 does not
+    // match [1,2,3].
     let fx7 = make_empty_fn(|b| b.build_int_const(7u64, T::int(64))).unwrap();
     assert_eq!(count(|| int_const([1u64, 2, 3]).into_pattern(), &fx7), 0);
     assert_eq!(count(|| int_const([1u64, 7, 3]).into_pattern(), &fx7), 1);
