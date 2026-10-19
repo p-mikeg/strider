@@ -121,6 +121,46 @@ def test_a_query_on_a_quarter_megabyte_thread_raises_rather_than_crashing(nested
     assert out.stdout.startswith(("raised", "matches")), out.stdout
 
 
+def test_nested_alternations_on_a_one_megabyte_thread_match_or_raise():
+    """Each alternation level recurses through the matcher, which costs most
+    in an unoptimised build; 255 of them and their leaf are exactly the node
+    budget. A SIGSEGV takes the whole process down, so the run is a child and
+    the parent reads its exit code."""
+    body = textwrap.dedent(
+        f"""\
+        import threading
+
+        import strider
+        from strider import pattern as p
+
+        mem = strider.reader.BufferReader(0x1000, bytes([0x48, 0x01, 0xF8, 0xC3]))
+        lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+        fn = lift.analyze(
+            0x1000, strider.sleigh.CallingConvention.x86_64_systemv()
+        ).function
+
+        def run():
+            pat = p.anything()
+            for _ in range({_NESTED}):
+                pat = p.one_of([pat])
+            try:
+                print("matches", len(list(fn.find_all(pat))), flush=True)
+            except strider.StriderError as e:
+                print("raised", e, flush=True)
+
+        threading.stack_size({_SMALL_STACK})
+        t = threading.Thread(target=run)
+        t.start()
+        t.join()
+        """
+    )
+    out = subprocess.run(
+        [sys.executable, "-c", body], capture_output=True, text=True, timeout=120
+    )
+    assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
+    assert out.stdout.startswith(("raised", "matches")), out.stdout
+
+
 def test_the_count_bound_still_answers_for_a_pathological_chain():
     fn = _function()
     with pytest.raises(strider.StriderError, match="nesting too deep"):

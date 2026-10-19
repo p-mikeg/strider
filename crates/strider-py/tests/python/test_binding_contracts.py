@@ -149,16 +149,16 @@ def test_walking_a_stream_decodes_it_once():
     code = bytes([0x48, 0x83, 0xC0, 0x01]) * count  # add rax,1
     addrs = [_BASE + 4 * i for i in range(count)]
 
+    swept, swept_reader = _counted_x86_64(code)
+    swept.pcode_at(_BASE, addrs[-1])
+    sweep = swept_reader.reads
+    swept.pcode_at(_BASE, addrs[-1])
+    assert swept_reader.reads == sweep, "an address already answered reads nothing"
+
     walked, walked_reader = _counted_x86_64(code)
     for addr in addrs:
         walked.pcode_at(_BASE, addr)
-    walk = walked_reader.reads
-    walked.pcode_at(_BASE, addrs[-1])
-    assert walked_reader.reads == walk, "an address already answered reads nothing"
-
-    swept, swept_reader = _counted_x86_64(code)
-    swept.pcode_at(_BASE, addrs[-1])
-    assert walk == swept_reader.reads > 0
+    assert walked_reader.reads == sweep > 0
 
 
 # --- add_elf ----------------------------------------------------------------
