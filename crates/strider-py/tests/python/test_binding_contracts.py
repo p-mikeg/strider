@@ -123,29 +123,42 @@ def test_pcode_at_does_not_depend_on_earlier_calls(addr):
     assert walked.pcode_at(_BASE, addr) == expected
 
 
+class _CountingReader(strider.reader.MemReader):
+    """A `BufferReader` at `_BASE` that counts the reads the decoder makes."""
+
+    def __init__(self, code: bytes):
+        super().__init__()
+        self.inner = strider.reader.BufferReader(_BASE, code)
+        self.reads = 0
+
+    def read(self, addr: int, size: int):
+        self.reads += 1
+        return self.inner.read(addr, size)
+
+
+def _counted_x86_64(code: bytes):
+    reader = _CountingReader(code)
+    return strider.lift.lifter(SleighArch.x86_64(), reader), reader
+
+
 def test_walking_a_stream_decodes_it_once():
-    """One sweep serves a whole function's instructions, so a per-address walk
-    is linear rather than a decode from the entry per call."""
+    """One sweep serves a whole function's instructions: walking every address
+    reads what one sweep to the last address reads, and asking again reads
+    nothing."""
     count = 4000
-    lifter = _x86_64(bytes([0x48, 0x83, 0xC0, 0x01]) * count)  # add rax,1
+    code = bytes([0x48, 0x83, 0xC0, 0x01]) * count  # add rax,1
     addrs = [_BASE + 4 * i for i in range(count)]
 
-    t = time.perf_counter()
+    walked, walked_reader = _counted_x86_64(code)
     for addr in addrs:
-        lifter.pcode_at(_BASE, addr)
-    walk = time.perf_counter() - t
+        walked.pcode_at(_BASE, addr)
+    walk = walked_reader.reads
+    walked.pcode_at(_BASE, addrs[-1])
+    assert walked_reader.reads == walk, "an address already answered reads nothing"
 
-    t = time.perf_counter()
-    lifter.pcode_at(_BASE, addrs[-1])
-    last = time.perf_counter() - t
-    # Linear: the whole walk costs about one sweep, not one per address. The
-    # cached call reads a dict, so the comparison is against a fresh sweep.
-    one_sweep = _x86_64(bytes([0x48, 0x83, 0xC0, 0x01]) * count)
-    t = time.perf_counter()
-    one_sweep.pcode_at(_BASE, addrs[-1])
-    sweep = time.perf_counter() - t
-    assert last < sweep
-    assert walk < 20 * sweep, f"walk {walk:.3f}s against one sweep {sweep:.3f}s"
+    swept, swept_reader = _counted_x86_64(code)
+    swept.pcode_at(_BASE, addrs[-1])
+    assert walk == swept_reader.reads > 0
 
 
 # --- add_elf ----------------------------------------------------------------
