@@ -654,6 +654,19 @@ mod compact_tests {
             .create_node(NodeKind::IntConst(id), [], [ValueKind::Typed(ty)])
     }
 
+    /// The two facts about the lifted calls name no id, and survive as they
+    /// are.
+    #[test]
+    fn compact_keeps_the_call_facts() {
+        let mut f = test_function();
+        let allocators: rustc_hash::FxHashSet<u64> = [0x4000].into_iter().collect();
+        f.side_tables_mut().reset_analyses(&allocators);
+        f.side_tables_mut().set_frame_address_in_call_register();
+        f.compact().expect("compact succeeds on a valid function");
+        assert!(f.side_tables().frame_address_in_call_register());
+        assert_eq!(f.side_tables().memory_allocators(), &allocators);
+    }
+
     #[test]
     fn compact_remaps_entry_and_drops_zombies() {
         let mut f = test_function();
