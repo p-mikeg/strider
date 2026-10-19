@@ -57,6 +57,9 @@ class AssumptionOptions:
     or empty; clearing all seven is the sound floor under any input whose
     memory behaves as RAM (see `none`). What each one claims is in
     `docs/python-api.md` section 2.
+
+    Claims accumulate on a `Function` (`Function.assumptions`): `analyze`
+    starts from the ones it is given, `Lifter.optimize` adds, none withdraws.
     """
 
     # Read-only: these are getters with no setter, so a plain attribute
@@ -91,12 +94,25 @@ class AssumptionOptions:
         duplicates."""
         ...
     @staticmethod
-    def none() -> "AssumptionOptions":
-        """Every claim cleared: the sound floor of these fields under any
-        input, forwarding solely what the IR structurally proves.
+    def none(
+        *,
+        stack_global_disjoint: Optional[bool] = ...,
+        assume_incoming_args_survive_calls: Optional[bool] = ...,
+        distinct_sp_bases_disjoint: Optional[bool] = ...,
+        callee_preserves_stack_args: Optional[bool] = ...,
+        noalias_allocators: Optional[list[int]] = ...,
+        escape_analysis: Optional[bool] = ...,
+        return_slots_survive_untracked_writes: Optional[bool] = ...,
+    ) -> "AssumptionOptions":
+        """Every claim cleared, then the ones named set: with no argument, the
+        sound floor of these fields under any input, forwarding solely what
+        the IR structurally proves.
 
         Three of the seven default `True`, so this is not
-        `AssumptionOptions()`.
+        `AssumptionOptions()`, and `AssumptionOptions(escape_analysis=True)`
+        holds four claims where `none(escape_analysis=True)` holds one. Add
+        one claim to a function's with
+        `f.assumptions | AssumptionOptions.none(escape_analysis=True)`.
 
         Memory is still taken to be RAM: a load reads back the last value the
         analysed code stored at its address, with nothing outside that code
@@ -105,6 +121,11 @@ class AssumptionOptions:
         written, and no option lifts that premise.
         """
         ...
+    def union(self, other: AssumptionOptions) -> AssumptionOptions:
+        """Every claim either holds, and every allocator either lists. `a | b`
+        is the same."""
+        ...
+    def __or__(self, other: AssumptionOptions) -> AssumptionOptions: ...
 
 class OnIncomplete:
     """What `analyze` and `build_cfg` do when `Cfg.incomplete` names anything:
@@ -129,7 +150,11 @@ class LifterOptions:
     """Per-call options for `Lifter.analyze`.
 
     `cfg` holds the CFG-building options. `assumptions` holds the unchecked
-    claims about the analysed code, each of which can make the answer wrong.
+    claims about the analysed code, each of which can make the answer wrong;
+    when it is not passed, `analyze` takes the defaults and `Lifter.optimize`
+    adds no claim. An explicit `assumptions=`, `AssumptionOptions()` included,
+    is a set `optimize` adds and checks against the claims in force; `repr`
+    does not show the difference.
     `compact` drops unreachable nodes at the end. `per_address_ccs` overrides
     the calling convention for a callee, keyed by the direct-call target
     address rather than the call site. `pipeline`, when set,
@@ -299,7 +324,11 @@ class Lifter:
     ) -> None:
         """Run an optimizer pipeline over `function` in place. `pipeline=None`
         runs the default pipeline; a given pipeline is copied, so it stays
-        usable. `opts=None` takes the `LifterOptions` defaults.
+        usable. The claims `opts.assumptions` names join
+        `function.assumptions` and none is withdrawn: `opts=None`, or options
+        built without `assumptions=`, add nothing, and a set that leaves out
+        a claim already in force raises `StriderError`. Add one with
+        `function.assumptions | AssumptionOptions.none(escape_analysis=True)`.
 
         Runs against this handle's `rom`, so `LoadReadOnly` folds here exactly
         as it does inside `analyze`. Invalidates outstanding `Node` / `Match`
