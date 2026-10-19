@@ -49,6 +49,6 @@ def test_viz_standalone_js_is_private():
 
 
 def test_the_register_table_lives_on_the_arch():
-    """`SleighArch.reg` / `reg_name` are the one lookup: no separate handle
-    is built from an arch and a reader."""
+    """The arch carries the register table: no separate handle is built from
+    an arch and a reader."""
     assert not hasattr(strider.sleigh, "Sleigh")

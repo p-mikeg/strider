@@ -25,8 +25,9 @@ image's writable addresses, from one parse.
 - `load_elf(path)`: memory-map an ELF into an `OwnedElf`; `OwnedElf::parse`
   takes bytes already in memory. `OwnedElf::image(source, mode)`: the fetch
   and ROM region sets and the writable addresses `mode` picks, from one parse;
-  the sets share the one buffer. (`OwnedElf::regions` and `elf::LoadFilter`,
-  the per-filter sets `image` is cut from, need the `test-util` feature.)
+  the sets share the one buffer. (`OwnedElf::regions`, one region set cut by
+  an `elf::LoadFilter`, and `LoadFilter` itself are test-only, behind the
+  `test-util` feature.)
 - Section helpers under `elf::`: `RegionSource` picks what a region set is cut
   from. `ElfSectionLayout` lays out an ET_REL's
   colliding sections and mints each undefined symbol's `extern_address`,

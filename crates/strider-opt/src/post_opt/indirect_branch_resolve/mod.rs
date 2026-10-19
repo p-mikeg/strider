@@ -154,9 +154,9 @@ pub struct ClassifiedSites {
 /// Classifies every live `IndirectBranch` placeholder, and re-derives every
 /// live `Switch` from its retained selector. Reads `f` only.
 ///
-/// `options` are the ones `f` was optimized under; the classifiers read the
-/// claims off `f`. With `!options.resolve_indirect_branches`,
-/// `resolved` is empty.
+/// Only `options.resolve_indirect_branches` is read; the claims are `f`'s,
+/// and `options.assumptions` goes unread. With
+/// `!options.resolve_indirect_branches`, `resolved` is empty.
 ///
 /// A dispatch value only becomes classifiable once the optimizer has folded
 /// it into a recognizable shape, so `f` is the converged function.

@@ -42,23 +42,20 @@
   `"InitialVar(InitialVnId(6))"`, `"CallOther { user_op_id: 120 }"`); read
   the payload through `uint()` / `sint()`, `vn()` and `call_other_name()`.
 - `BoundCapture` (`m[c]`) keeps `has`, `int()` / `operator.index`, `==` and
-  its repr, and loses
-  its reader properties: read a capture through the `Match`, `m.uint(c)`,
-  `m.node(c)`, `m.op_opt(c)` and the rest. `m[c].uint` raises
-  `AttributeError`.
+  its repr, and loses its reader properties: read a capture through the
+  `Match`, `m.uint(c)`, `m.node(c)`, `m.op_opt(c)` and the rest. `m[c].uint`
+  raises `AttributeError`.
 - A `strider.pattern.Pat` is no longer a rewrite right-hand side:
   `Function.rewrite(replace=)` and `rewrite_all` raise `TypeError` for one,
   and one nested in a `strider.template` operand raises `StriderError`, a
   build-valid one (`var()`, `int_const()`) included. Both name its
   constructor and, where `strider.template` has a twin, point at it. Spell
-  the RHS with
-  `strider.template` (`template.var(c)`, or the bare `Capture`); the RHS
-  `.capture(c)` goes with it, as a `Template` has none.
-- `strider.sleigh.Sleigh` is gone. `SleighArch.reg(name)` and
-  `SleighArch.reg_name(vn)` look registers up, and `CallingConvention.custom`
-  / `CallOtherAbi.custom` take the `SleighArch` as `sleigh=`; anything else
-  there raises `TypeError: argument 'sleigh': ... cannot be converted to
-  'SleighArch'`; `Sleigh(..).arch_name()` is `SleighArch.name()`.
+  the RHS with `strider.template` (`template.var(c)`, or the bare
+  `Capture`); the RHS `.capture(c)` goes with it, as a `Template` has none.
+- `strider.sleigh.Sleigh` is gone: its `reg` / `reg_name` / `arch_name()`
+  are `SleighArch.reg` / `reg_name` / `name()`, and a `sleigh=` other than a
+  `SleighArch` raises `TypeError: argument 'sleigh': ... cannot be converted
+  to 'SleighArch'`.
 - `Lifter.optimize` adds the claims `opts.assumptions` names to the function's
   and withdraws none. `opts=None`, or a `LifterOptions` built without
   `assumptions=`, adds nothing, where it applied the three default claims; a
@@ -223,19 +220,25 @@
   `pin_value_out_slot(out)`, which pins the vertex's own slot; create the
   vertex at the slot you pinned.
 - `Match::bindings_clone` is gone: it was `m.bindings().clone()`.
-- `OwnedElf::regions` and `strider_reader::elf::LoadFilter` need the new
-  `test-util` feature, and `strider_reader::elf::sections` is private (its
+- `OwnedElf::regions` and `strider_reader::elf::LoadFilter` are test-only
+  (`test-util` feature), and `strider_reader::elf::sections` is private (its
   public items stay re-exported under `elf::`): `OwnedElf::image` is the one
   way to cut an image's fetch and ROM region sets.
 - `IRViewer` loses the builders' operand checks: `require_value_type`,
   `require_value_kind`, `require_bool_value`, `require_phi_token_kind`,
   `require_control_kind`, `require_memory_kind`, `require_integer_value`,
   `require_float_value`, `require_integer_type`, `require_float_type` and
-  `validate_value_inputs` are crate-private. A `build_*` call still runs
-  every one.
+  `validate_value_inputs` are crate-private; each still runs inside the
+  builder that needs it.
 - `ReturnTargets::new(function)` and `classify_target(function, branch,
   rom, ranges)` lose their `AssumptionOptions` argument: both read
   `Function::assumptions`, the claims the function was optimized under.
+- Claims accumulate per `Function`: `OptimizerPipeline::run` (and
+  `run_one` / `run_post`) merges `OptCtx`'s `assumptions` into
+  `Function::assumptions`, and every pass reads the merged set, so a run
+  under `AssumptionOptions::none()` keeps every claim an earlier run made;
+  analyse again for a function without one. `OptCtx::new` carries the three
+  default claims, so a run under it adds them.
 
 ### Changed, Python
 
@@ -252,8 +255,8 @@
   reason.
 - A post-pass that rewrites the graph drops the stack-slot stamps it may have
   invalidated.
-- An unknown op name in `int_cmp`, `int_binary`, `bool_binary` or
-  `float_binary` lists the accepted names in its error.
+- An unknown op name in `int_cmp`, `int_binary`, `bool_binary`,
+  `float_binary` or `int_extend` lists the accepted names in its error.
 - A pass added from Python carries its own type name in Rust panics and debug
   output.
 - An unknown type name passed to `value_ty()` / `of_type()` raises
@@ -358,10 +361,6 @@
   (not `DecodeEngine::new`) an unpaired `ISAModeSwitch`. Before, only a debug
   build asserted it. A debug build also asserts that `DecodeEngine::new`'s
   `Sleigh` was built from its arch's sla and pspec.
-- `OwnedElf::image` keeps one region per start: where a writable mapping
-  cuts two overlapping read-only ones, the pieces left over that share a
-  start collapse to the later, as `MemRegionsLookupTable` collapses them, so
-  a crafted image can return fewer regions.
 - A relocated image no longer fails to load with "patch budget": every
   region shares one patch list, so a site any number of overlapping
   mappings cover is patched in all of them at no extra cost.
@@ -410,12 +409,6 @@
   `frame_address_in_call_register` line after `default_cc` when a call's
   clobbered register held a stack address (the fact that bars forwarding a
   load across a call); a function without it prints as before.
-- Claims accumulate per `Function`: `OptimizerPipeline::run` (and
-  `run_one` / `run_post`) merges `OptCtx`'s `assumptions` into
-  `Function::assumptions`, and every pass reads the merged set, so a run
-  under `AssumptionOptions::none()` keeps every claim an earlier run made;
-  analyse again for a function without one. `OptCtx::new` carries the three
-  default claims, so a run under it adds them.
 
 ### Fixed
 
@@ -471,7 +464,7 @@
   `False` in the abi3 wheel.
 - A pattern dropped from a thread-local destructor after strider-pattern's
   drop pit was torn down aborted the process; it is dropped in place.
-- `Lifter.optimize(f)` with default options no longer drops the
+- Python: `Lifter.optimize(f)` with default options no longer drops the
   `noalias_allocators` `analyze` ran under, and with them every
   `heap_only()` match: a run merges its claims into the function's instead
   of replacing them.
@@ -541,7 +534,10 @@
   holds a whole range in O(log n).
 - `OwnedElf::image(source, mode)` returns an `elf::ElfImage`: the fetch and ROM
   region sets and the writable `AddressSet` a `RelocationMode` picks, from one
-  parse. `RelocationMode::Applied { got_is_rom }` also builds a relocated
+  parse. Each set keeps one region per start: where a writable mapping cuts
+  two overlapping read-only ones, the pieces left that share a start collapse
+  to the later, as `MemRegionsLookupTable` collapses them.
+  `RelocationMode::Applied { got_is_rom }` also builds a relocated
   `ElfFileMemReader`.
 - `MatchPat::compile_ordered`, the lowering `.ordered()` uses: the root
   pinned, unless a shape names another node. `typed::value_ops::Negated`, the
