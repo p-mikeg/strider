@@ -260,9 +260,9 @@
   `None` for every default.
 - `Function.to_text()` prints a `frame_address_in_call_register` line after
   `default_cc` when a call's clobbered register held a stack address.
-- `CfgOptions(call_other_abis=...)` is resolved once per arch and borrowed by
-  every later `analyze` and `build_cfg` through it, where each call rebuilt
-  it.
+- `CfgOptions(call_other_abis=...)` is resolved on first use, rebuilt only
+  when the arch changes, and borrowed by every later `analyze` and
+  `build_cfg` through it, where each call rebuilt it.
 
 ### Added, Python
 
@@ -305,7 +305,8 @@
 - `Lifter::new`, `Strider::new` and `DecodeEngine::new` return `Err` when the
   arch and sla disagree on the ISA mode: a mode var the sla does not flow, or
   (not `DecodeEngine::new`) an unpaired `ISAModeSwitch`. Before, only a debug
-  build asserted it.
+  build asserted it. A debug build also asserts that `DecodeEngine::new`'s
+  `Sleigh` was built from its arch's sla and pspec.
 - `OwnedElf::regions` keeps one region per start: where a writable mapping
   cuts two overlapping read-only ones, the pieces left over that share a
   start collapse to the later, as `MemRegionsLookupTable` collapses them, so
@@ -467,8 +468,9 @@
 - `strider_cfg::direct_call_target`: a direct `Call`'s target address, read
   only from a code-space operand; the one rule the CFG and the lift select by.
 - `Dominators::intervals` / `Dominators::tree_preorder` and
-  `DomIntervals::{span, preorder}`: the dominator tree's one numbering, and its
-  preorder with siblings ascending by vertex.
+  `DomIntervals::{span, preorder}`: the dominator tree's one numbering; its
+  `preorder` takes siblings in discovery order, `tree_preorder` ascending by
+  vertex.
 - `FunctionBuilder::record_register_arg_carriers` outside `test-util`.
 - `elf::RelocationMode` (`Unapplied`, `Applied { got_is_rom }`),
   `ElfFileMemReader::new(&OwnedElf, elf::RelocationMode)` and
