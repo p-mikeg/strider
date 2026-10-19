@@ -4,6 +4,7 @@ use cranelift_entity::{SecondaryMap, entity_impl};
 
 use crate::IRViewer;
 use crate::builder::FunctionBuilder;
+use crate::builder::checks::{require_control_kind, require_memory_kind};
 use crate::error::Result;
 use crate::node::InitialVnId;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
@@ -37,8 +38,8 @@ impl FunctionBuilder {
     /// Errors unless `res`'s control and memory edges both have their expected
     /// kind.
     pub(crate) fn require_terminator_kinds(&self, res: &TerminatedRegion) -> Result<()> {
-        self.require_control_kind(res.control)?;
-        self.require_memory_kind(res.memory)
+        require_control_kind(self.function(), res.control)?;
+        require_memory_kind(self.function(), res.memory)
     }
 
     /// Errors if no region is set or the region is already terminated.
@@ -62,14 +63,14 @@ impl FunctionBuilder {
     }
 
     pub(crate) fn advance_cur_region_ctrl(&mut self, ctrl: ValueId) -> Result<()> {
-        self.require_control_kind(ctrl)?;
+        require_control_kind(self.function(), ctrl)?;
         let region_id = self.require_cur_region()?;
         self.regions[region_id].cur_ctrl = ctrl;
         Ok(())
     }
 
     pub fn advance_cur_region_memory(&mut self, memory: ValueId) -> Result<()> {
-        self.require_memory_kind(memory)?;
+        require_memory_kind(self.function(), memory)?;
         let region_id = self.require_cur_region()?;
         self.regions[region_id].cur_memory = memory;
         Ok(())
@@ -180,8 +181,8 @@ impl FunctionBuilder {
             variables[vn_id] = value.into();
         }
 
-        self.require_memory_kind(memory)?;
-        self.require_control_kind(control)?;
+        require_memory_kind(self.function(), memory)?;
+        require_control_kind(self.function(), control)?;
         Ok(self.regions.push(Region {
             terminated: false,
             control_node,
@@ -252,7 +253,7 @@ impl FunctionBuilder {
         region: RegionId,
         control: ValueId,
     ) -> Result<()> {
-        self.require_control_kind(control)?;
+        require_control_kind(self.function(), control)?;
         let control_node = self.regions[region].control_node;
         self.function_mut()
             .graph_mut()
@@ -261,7 +262,7 @@ impl FunctionBuilder {
     }
 
     pub(crate) fn link_memory_regions(&mut self, region: RegionId, memory: ValueId) -> Result<()> {
-        self.require_memory_kind(memory)?;
+        require_memory_kind(self.function(), memory)?;
         let memory_node = self.regions[region].memory_node;
         self.function_mut()
             .graph_mut()
