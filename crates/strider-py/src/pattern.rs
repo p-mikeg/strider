@@ -14,6 +14,7 @@ use strider_ir::node::ValueType as T;
 
 use strider_pattern as sp;
 use strider_pattern::matcher::{MatcherBuilder, PatValueRef};
+use strider_pattern::node_builders::defer_drop;
 use strider_pattern::template::{TemplateBuilder, TmplValueRef};
 use strider_pattern::{
     Capture, CaptureExt, JoinConstraint, MatchPat, MemPat, Pattern, Template, TemplatePat,
@@ -348,52 +349,13 @@ impl PyPat {
     }
 }
 
+// An operand slot holds another wrapper, so a plain drop descends one native
+// frame per link while the chain that built it went through a Python `for`
+// loop and hit no interpreter limit. PyO3 0.22 has no `Py_TRASHCAN`, so a
+// long enough chain overflows the stack.
 impl Drop for PyPat {
     fn drop(&mut self) {
         defer_drop(std::mem::replace(&mut self.repr, Arc::new(PatRepr::Any)));
-    }
-}
-
-thread_local! {
-    /// Operand state taken off dropping pattern wrappers, drained by whichever
-    /// drop opened the loop.
-    static DROP_QUEUE: std::cell::RefCell<Vec<Box<dyn std::any::Any>>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-    static DRAINING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// Clears `DRAINING` even if a drop below unwinds.
-struct DrainGuard;
-
-impl Drop for DrainGuard {
-    fn drop(&mut self) {
-        DRAINING.with(|d| d.set(false));
-    }
-}
-
-/// Drops `value` without recursing through the operand chain hanging off it.
-///
-/// An operand slot holds another wrapper, so a plain drop descends one native
-/// frame per link while the chain that built it went through a Python `for`
-/// loop and hit no interpreter limit. PyO3 0.22 has no `Py_TRASHCAN`, so a
-/// long enough chain overflows the stack. Queueing holds the depth at the
-/// three frames from here back to here: the drain drops one handle, its
-/// wrapper's `Drop` enqueues that wrapper's own state, and control returns
-/// here.
-pub(crate) fn defer_drop<T: 'static>(value: T) {
-    let mut boxed: Option<Box<dyn std::any::Any>> = Some(Box::new(value));
-    let queued = DROP_QUEUE
-        .try_with(|q| q.borrow_mut().push(boxed.take().expect("not yet queued")))
-        .is_ok();
-    // Only when thread-local teardown has already taken the queue away, and
-    // then the recursive drop is the sole option left.
-    drop(boxed);
-    if !queued || DRAINING.with(|d| d.replace(true)) {
-        return;
-    }
-    let _guard = DrainGuard;
-    while let Some(next) = DROP_QUEUE.with(|q| q.borrow_mut().pop()) {
-        drop(next);
     }
 }
 
