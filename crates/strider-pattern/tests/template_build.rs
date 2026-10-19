@@ -4,7 +4,7 @@ use strider_ir_test_utils::make_empty_fn;
 
 use strider_ir::Function;
 use strider_ir::node::{NodeId, ValueId, ValueType};
-use strider_pattern::matcher::{KindSpec, Pattern};
+use strider_pattern::matcher::Pattern;
 use strider_pattern::template::{self, Template, TemplateBuilder, instantiate};
 use strider_pattern::{
     Bindings, Capture, CaptureExt, MatchPat, Matcher, TemplatePat, int_add, int_const,
@@ -217,27 +217,20 @@ fn template_wires_multi_output_interior_memory_node() {
     // needs the raw builder.
     let mut b = TemplateBuilder::new();
 
-    let mem0_node = b.node(KindSpec::Exact(NodeKind::InitialMemory));
+    let mem0_node = b.node(NodeKind::InitialMemory);
     let mem0 = b.memory_output(mem0_node, 0);
 
     // FnIntConst interns real values into the target function at instantiation.
-    // A raw `Exact(IntConst(ConstId::from_u32(..)))` leaf would stamp a dangling
-    // ConstId into the fixture, passing only because this test never validates.
-    let addr = b.leaf(KindSpec::Any);
-    b.set_template_kind(
-        addr,
-        template::TemplateKind::FnIntConst(Box::new(|_| Ok(0x100u128))),
-    );
+    // A raw `IntConst` leaf is refused: its ConstId is another function's.
+    let addr = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(0x100u128)
+    })));
     b.set_value_ty(addr, T::int(64));
-    let data = b.leaf(KindSpec::Any);
-    b.set_template_kind(
-        data,
-        template::TemplateKind::FnIntConst(Box::new(|_| Ok(42u128))),
-    );
+    let data = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| Ok(42u128))));
     b.set_value_ty(data, T::int(64));
 
     // Store inputs are [mem, addr, data]; its lone output is the memory token.
-    let store = b.node(KindSpec::Exact(NodeKind::Store(space)));
+    let store = b.node(NodeKind::Store(space));
     b.input(store, 0, mem0);
     b.input(store, 1, addr);
     b.input(store, 2, data);
@@ -245,7 +238,7 @@ fn template_wires_multi_output_interior_memory_node() {
 
     // Load inputs are [mem, addr]. It consumes the Store's memory output, which
     // is what proves the slot wiring.
-    let load = b.node(KindSpec::Exact(NodeKind::Load(space)));
+    let load = b.node(NodeKind::Load(space));
     b.input(load, 0, store_mem);
     b.input(load, 1, addr);
     let _load_out = b.value_output(load, 0);
@@ -352,9 +345,9 @@ fn int_const_any_width_negative_i128_template_rhs() {
 /// the resulting error's message.
 fn instantiate_add_with_rhs_slot_err(r_slot: usize) -> String {
     let mut b = TemplateBuilder::new();
-    let l = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(5))));
-    let r = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(7))));
-    let add_node = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
+    let l = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| Ok(5))));
+    let r = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| Ok(7))));
+    let add_node = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
     b.input(add_node, 0, l);
     b.input(add_node, r_slot, r);
     let _out = b.value_output(add_node, 0);
@@ -391,6 +384,24 @@ fn instantiate_duplicate_raw_template_slot_errors() {
         msg.contains("slot"),
         "error should name the duplicate-slot violation; got: {msg}"
     );
+}
+
+/// A `ConstId` indexes one function's interner, so an `IntConst` carried in
+/// from a `NodeKind` names whatever that id is in the rewritten function.
+#[test]
+fn a_raw_int_const_leaf_is_refused() {
+    let mut b = TemplateBuilder::new();
+    let _ = b.leaf(NodeKind::IntConst(ConstId::from_u32(5)));
+    let tpl = b.finish();
+
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
+    let lhs_root = fx.walk().next().unwrap();
+    let bindings = Bindings::default();
+    let mut ef = EditFunction::new(&mut fx);
+    let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::int(64))
+        .expect_err("a raw IntConst leaf must be refused")
+        .to_string();
+    assert!(err.contains("ConstId"), "{err}");
 }
 
 /// A template that references a capture the LHS never bound must fail
@@ -545,7 +556,7 @@ fn instantiate_rejects_an_output_kind_the_node_signature_forbids() {
     // A `Store` declaring a value output at slot 0, where its signature
     // admits only the memory token.
     let mut tb = TemplateBuilder::default();
-    let store = tb.node(KindSpec::Exact(NodeKind::Store(rsleigh::VnSpace::RAM)));
+    let store = tb.node(NodeKind::Store(rsleigh::VnSpace::RAM));
     let _ = tb.value_output(store, 0);
     let rhs = tb.finish();
 
@@ -586,7 +597,7 @@ fn int_const_template_rhs_on_a_float_root_skips() {
 #[test]
 fn a_gapped_template_output_slot_is_refused() {
     let mut b = TemplateBuilder::new();
-    let mem = b.node(KindSpec::Exact(NodeKind::InitialMemory));
+    let mem = b.node(NodeKind::InitialMemory);
     let _slot_1_only = b.memory_output(mem, 1);
     let tpl = b.finish();
 
@@ -660,18 +671,16 @@ fn store_then_load(
 ) -> Template {
     let space = rsleigh::VnSpace::RAM;
     let mut b = TemplateBuilder::new();
-    let mem_node = b.node(KindSpec::Exact(NodeKind::InitialMemory));
+    let mem_node = b.node(NodeKind::InitialMemory);
     let mem = b.memory_output(mem_node, 0);
-    let addr = b.leaf(KindSpec::Any);
-    b.set_template_kind(
-        addr,
-        template::TemplateKind::FnIntConst(Box::new(|_| Ok(0x100u128))),
-    );
+    let addr = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(0x100u128)
+    })));
     b.set_value_ty(addr, T::int(64));
-    let store = b.node(KindSpec::Exact(NodeKind::Store(space)));
+    let store = b.node(NodeKind::Store(space));
     wire(&mut b, store, [mem, addr]);
     let store_mem = b.memory_output(store, 0);
-    let load = b.node(KindSpec::Exact(NodeKind::Load(space)));
+    let load = b.node(NodeKind::Load(space));
     b.input(load, 0, store_mem);
     b.input(load, 1, addr);
     let _value = b.value_output(load, 0);
@@ -682,9 +691,9 @@ fn store_then_load(
 fn load_with_memory_as_address() -> Template {
     let space = rsleigh::VnSpace::RAM;
     let mut b = TemplateBuilder::new();
-    let mem_node = b.node(KindSpec::Exact(NodeKind::InitialMemory));
+    let mem_node = b.node(NodeKind::InitialMemory);
     let mem = b.memory_output(mem_node, 0);
-    let load = b.node(KindSpec::Exact(NodeKind::Load(space)));
+    let load = b.node(NodeKind::Load(space));
     b.input(load, 0, mem);
     b.input(load, 1, mem);
     let _value = b.value_output(load, 0);
@@ -694,7 +703,7 @@ fn load_with_memory_as_address() -> Template {
 /// A `Phi` with no inputs, not even its region's phi token.
 fn phi_without_inputs() -> Template {
     let mut b = TemplateBuilder::new();
-    let phi = b.node(KindSpec::Exact(NodeKind::Phi));
+    let phi = b.node(NodeKind::Phi);
     let value = b.value_output(phi, 0);
     b.set_value_ty(value, T::int(64));
     b.finish()
@@ -704,7 +713,7 @@ fn phi_without_inputs() -> Template {
 /// a control output, so no `Call` template gets past its outputs.
 fn call_without_control_output() -> Template {
     let mut b = TemplateBuilder::new();
-    let call = b.node(KindSpec::Exact(NodeKind::Call { cc: None }));
+    let call = b.node(NodeKind::Call { cc: None });
     let _mem = b.memory_output(call, 0);
     b.finish()
 }
