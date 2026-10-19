@@ -5,6 +5,24 @@ use crate::cache::NodeCacheable;
 use crate::graph::Graph;
 use crate::ids::{NodeId, UseId, ValueId};
 
+#[cfg(feature = "edge-read-count")]
+std::thread_local! {
+    static EDGE_READS: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+/// `Inputs` / `InputIter` reads, `Graph::nth_input` calls and
+/// `Graph::value_uses` steps on this thread so far.
+#[cfg(feature = "edge-read-count")]
+pub fn edge_reads() -> u64 {
+    EDGE_READS.with(core::cell::Cell::get)
+}
+
+#[inline]
+pub(crate) fn count_edge_read() {
+    #[cfg(feature = "edge-read-count")]
+    EDGE_READS.with(|n| n.set(n.get() + 1));
+}
+
 pub struct Inputs<'a, N, V, C: NodeCacheable<N, V>> {
     pub(crate) graph: &'a Graph<N, V, C>,
     pub(crate) use_list: &'a [UseId],
@@ -28,15 +46,17 @@ impl<'a, N, V, C: NodeCacheable<N, V>> Inputs<'a, N, V, C> {
     }
 
     pub fn get(&self, index: usize) -> Option<&ValueId> {
+        count_edge_read();
         Some(&self.graph.store.inputs[*self.use_list.get(index)?].value_id)
     }
 
     /// Same yield as `into_iter()`, borrowing instead of consuming.
     pub fn iter(&self) -> impl Iterator<Item = ValueId> + Clone + 'a {
         let graph = self.graph;
-        self.use_list
-            .iter()
-            .map(move |id| graph.store.inputs[*id].value_id)
+        self.use_list.iter().map(move |id| {
+            count_edge_read();
+            graph.store.inputs[*id].value_id
+        })
     }
 }
 
@@ -59,6 +79,7 @@ impl<N, V, C: NodeCacheable<N, V>> Index<usize> for Inputs<'_, N, V, C> {
     ///
     /// On out-of-bounds. Prefer the fallible `get(idx)` for opaque-arity nodes.
     fn index(&self, index: usize) -> &Self::Output {
+        count_edge_read();
         &self.graph.store.inputs[self.use_list[index]].value_id
     }
 }
@@ -81,6 +102,7 @@ impl<N, V, C: NodeCacheable<N, V>> Iterator for InputIter<'_, N, V, C> {
     type Item = ValueId;
 
     fn next(&mut self) -> Option<Self::Item> {
+        count_edge_read();
         Some(self.graph.store.inputs[*self.iter.next()?].value_id)
     }
 
@@ -90,6 +112,7 @@ impl<N, V, C: NodeCacheable<N, V>> Iterator for InputIter<'_, N, V, C> {
 
     /// The default walks `n` edges one at a time; the use-list is a slice.
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
+        count_edge_read();
         Some(self.graph.store.inputs[*self.iter.nth(n)?].value_id)
     }
 }
