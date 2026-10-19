@@ -1160,9 +1160,9 @@ fn incoming_args_survive_calls_toggle_gates_arg_across_call() -> Result<()> {
 }
 
 /// `assume_incoming_args_survive_calls` governs which loads count as incoming
-/// arguments, not what the memory edges say. Narrowing a load's memory input
-/// past a `Call` outlives the pass, so a later pipeline run with the relaxation
-/// off would inherit an answer it never opted into.
+/// arguments, not what the memory edges say. A load's narrowed memory input is
+/// read afterwards by walks that block at every call, so narrowing it past a
+/// `Call` would hand them a relaxation they do not honour.
 #[test]
 fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
     let sp = sp32_vn();
@@ -1286,9 +1286,10 @@ fn rerunning_the_default_pipeline_keeps_one_carrier_per_stack_arg() -> Result<()
     Ok(())
 }
 
-/// The narrowing is permanent, so it may rest on nothing a later run can
-/// disclaim: even a run claiming `stack_global_disjoint` must leave the global
-/// store on the argument load's memory chain, where a floor run also finds it.
+/// The narrowing names only what holds with every claim off, since the walks
+/// that read the edge afterwards honour fewer claims than detection does: even
+/// a run claiming `stack_global_disjoint` must leave the global store on the
+/// argument load's memory chain, where a floor run also finds it.
 #[test]
 fn narrowing_does_not_bake_in_stack_global_disjoint() -> Result<()> {
     let sp = stack_vn();
@@ -1307,8 +1308,8 @@ fn narrowing_does_not_bake_in_stack_global_disjoint() -> Result<()> {
     let mut fg = b.build()?;
     cf_rp_pipeline().run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
-    // The claim this rewire must not inherit, made explicitly: `Default` is
-    // the floor, so a run that could bake it in has to opt in first.
+    // The claim this rewire must not use, made explicitly: `at_floor` claims
+    // nothing, so the run opts in first.
     let mut claiming_run = crate::OptCtx::at_floor(None);
     claiming_run.options.assumptions.stack_global_disjoint = true;
     crate::pipeline::run_post(&FunctionArgDetect, &mut fg, &mut claiming_run)?;

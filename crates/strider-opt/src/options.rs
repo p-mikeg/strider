@@ -9,7 +9,9 @@ pub struct OptOptions {
     /// shape when a resolution looks wrong.  Caller-supplied targets still
     /// seat: they are read by the CFG builder, not the classifier.
     pub resolve_indirect_branches: bool,
-    /// Claims about the program under analysis.
+    /// The claims this run adds to the function's
+    /// ([`strider_ir::Function::assumptions`]); every pass reads the merged
+    /// set, and no run withdraws a claim.
     pub assumptions: AssumptionOptions,
 }
 
