@@ -16,6 +16,7 @@ test-util = []
 [dependencies]
 strider-ir = { workspace = true }
 strider-graph = { workspace = true }
+graph-algorithms = { workspace = true }
 rsleigh = { workspace = true }
 vn-container = { workspace = true }
 petgraph = { workspace = true }

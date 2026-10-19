@@ -5,6 +5,8 @@
 //! [`consumed_inputs`] zips the two back together.
 
 use anyhow::anyhow;
+#[cfg(any(test, feature = "test-util"))]
+use graph_algorithms::walk::{GraphRef, PreOrder, acyclic_postorder};
 use petgraph::visit::{DfsPostOrder, Reversed, Walker};
 use rustc_hash::FxHashSet;
 use strider_graph::{Graph, NeverCacheable, NodeId, ValueId, Vertex};
@@ -27,6 +29,40 @@ pub(crate) fn consumed_inputs<N: HasInputSlots, V>(
         .enumerate()
         .map(|(i, value)| (slots[i], value))
         .collect()
+}
+
+/// A node's consumers: outputs by slot, each output's uses newest first. A
+/// node reading one value twice is listed twice, adjacently, which the walk
+/// pops as one.
+#[cfg(any(test, feature = "test-util"))]
+pub(crate) struct Consumers<'a, N, V>(pub(crate) &'a Graph<N, V, NeverCacheable>);
+
+#[cfg(any(test, feature = "test-util"))]
+impl<N, V> GraphRef for Consumers<'_, N, V> {
+    type NodeId = NodeId;
+
+    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
+        for &out in self.0.node_outputs(node) {
+            for (consumer, _) in self.0.value_uses(out) {
+                f(consumer);
+            }
+        }
+    }
+}
+
+/// A node's input producers.
+#[cfg(any(test, feature = "test-util"))]
+pub(crate) struct Producers<'a, N, V>(pub(crate) &'a Graph<N, V, NeverCacheable>);
+
+#[cfg(any(test, feature = "test-util"))]
+impl<N, V> GraphRef for Producers<'_, N, V> {
+    type NodeId = NodeId;
+
+    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
+        for value in self.0.node_inputs(node) {
+            f(self.0.producer(value));
+        }
+    }
 }
 
 /// The root is the unique sink, derived structurally rather than stored. A
@@ -80,12 +116,58 @@ pub(crate) fn reachable_topo<N, V>(
         .collect())
 }
 
+/// Every node, producers first: the reverse of a post-order over consumers
+/// from each node in id order. Errors on a cycle anywhere.
+#[cfg(any(test, feature = "test-util"))]
+fn walked_topo_order<N, V>(graph: &Graph<N, V, NeverCacheable>) -> anyhow::Result<Vec<NodeId>> {
+    let ids: Vec<NodeId> = graph.all_node_ids().collect();
+    // The walk pops its roots last first.
+    let mut order = acyclic_postorder(Consumers(graph), ids.into_iter().rev())
+        .map_err(|node| anyhow!("pattern graph cycle at {node:?}"))?;
+    order.reverse();
+    Ok(order)
+}
+
+/// [`reachable_topo`]'s order from the walk, until the walk replaces the sort.
+#[cfg(any(test, feature = "test-util"))]
+pub(crate) fn walked_reachable_topo<N, V>(
+    graph: &Graph<N, V, NeverCacheable>,
+    root: NodeId,
+) -> anyhow::Result<Vec<NodeId>> {
+    let order = walked_topo_order(graph)?;
+    let mut cone = PreOrder::new(Producers(graph), [root]);
+    while cone.next().is_some() {}
+    let cone = cone.into_visited();
+    Ok(order.into_iter().filter(|&n| cone.contains(n)).collect())
+}
+
+/// # Panics
+/// Unless the walk orders a rooted `template` as `instantiate` does today. A
+/// rootless one never instantiates, so it is not checked.
+#[cfg(any(test, feature = "test-util"))]
+pub fn assert_instantiation_order_kept(template: &crate::Template) {
+    let Ok(root) = template.root() else {
+        return;
+    };
+    let sorted = reachable_topo(&template.graph, root).expect("a sealed template is acyclic");
+    let walked =
+        walked_reachable_topo(&template.graph, root).expect("a sealed template is acyclic");
+    assert_eq!(walked, sorted, "template instantiation order moved");
+}
+
 #[cfg(test)]
 mod tests {
+    use petgraph::graph::{DiGraph, NodeIndex};
+    use rustc_hash::{FxHashMap, FxHashSet};
     use strider_graph::{Graph, NeverCacheable, NodeId, ValueId};
+    use strider_ir::node::NodeKind;
+    use strider_ir::{ConstId, IntBinaryOp, IntUnaryOp};
     use strider_ir_test_utils::{Rng, graph_oracle};
 
     use super::reachable_topo;
+    use crate::Capture;
+    use crate::matcher::{KindSpec, OutputKindSpec};
+    use crate::template::{Template, TemplateBuilder, TmplNodeRef, TmplValue, TmplValueRef};
 
     type G = Graph<u8, u8, NeverCacheable>;
 
@@ -235,5 +317,314 @@ mod tests {
             prev = g.create_node(0, [v], [0]);
         }
         assert_eq!(reachable_topo(&g, prev).unwrap().len(), 100_000);
+    }
+
+    /// `root`'s cone in the order of petgraph's `toposort` over the bipartite
+    /// view (each node, then its outputs, as vertices in id order; a node's
+    /// edges to its outputs by slot, an output's to its distinct consumers in
+    /// use-list order), rebuilt on a `DiGraph`. Each vertex's edges go in last
+    /// to first, as a `DiGraph` lists the newest edge first.
+    fn petgraph_order<N, V>(g: &Graph<N, V, NeverCacheable>, root: NodeId) -> Vec<NodeId> {
+        let mut pg: DiGraph<Option<NodeId>, ()> = DiGraph::new();
+        let mut node_ix: FxHashMap<NodeId, NodeIndex> = FxHashMap::default();
+        let mut value_ix: FxHashMap<ValueId, NodeIndex> = FxHashMap::default();
+        for n in g.all_node_ids() {
+            node_ix.insert(n, pg.add_node(Some(n)));
+            for &out in g.node_outputs(n) {
+                value_ix.insert(out, pg.add_node(None));
+            }
+        }
+        for n in g.all_node_ids() {
+            for &out in g.node_outputs(n).iter().rev() {
+                pg.add_edge(node_ix[&n], value_ix[&out], ());
+            }
+            for &out in g.node_outputs(n) {
+                let mut consumers: Vec<NodeId> = Vec::new();
+                for (c, _) in g.value_uses(out) {
+                    if !consumers.contains(&c) {
+                        consumers.push(c);
+                    }
+                }
+                for &c in consumers.iter().rev() {
+                    pg.add_edge(value_ix[&out], node_ix[&c], ());
+                }
+            }
+        }
+        let mut cone: FxHashSet<NodeId> = FxHashSet::default();
+        let mut stack = vec![root];
+        while let Some(n) = stack.pop() {
+            if cone.insert(n) {
+                stack.extend(g.node_inputs(n).into_iter().map(|v| g.producer(v)));
+            }
+        }
+        let sorted = petgraph::algo::toposort(&pg, None).expect("an acyclic graph");
+        sorted
+            .into_iter()
+            .filter_map(|ix| pg[ix])
+            .filter(|n| cone.contains(n))
+            .collect()
+    }
+
+    /// Whether `t` has a root, and if so that the walk orders it as the
+    /// whole-graph sort does, which the rebuilt sort reproduces.
+    fn check_order(t: &Template) -> bool {
+        let Ok(root) = t.root() else {
+            return false;
+        };
+        let sorted = reachable_topo(&t.graph, root).unwrap();
+        assert_eq!(petgraph_order(&t.graph, root), sorted, "the rebuilt sort");
+        crate::assert_instantiation_order_kept(t);
+        uses_by_one_consumer_sit_together(&t.graph);
+        true
+    }
+
+    /// Sealing links a node's inputs one after another, so a consumer's uses
+    /// of one value are adjacent in its use list. That is why the consumer
+    /// walk needs no dedup where petgraph's sort keeps the first of each.
+    fn uses_by_one_consumer_sit_together<N, V>(g: &Graph<N, V, NeverCacheable>) {
+        for v in g.all_value_ids() {
+            let mut users: Vec<NodeId> = g.value_uses(v).map(|(c, _)| c).collect();
+            users.dedup();
+            let runs = users.len();
+            users.sort_by_key(|n| n.as_u32());
+            users.dedup();
+            assert_eq!(users.len(), runs, "{v:?}'s uses by one consumer are split");
+        }
+    }
+
+    /// `root`'s cone in its walked order, which is `want` and petgraph's.
+    fn check_named(g: &G, root: NodeId, want: &[u32]) {
+        let sorted = reachable_topo(g, root).unwrap();
+        assert_eq!(
+            super::walked_reachable_topo(g, root).unwrap(),
+            sorted,
+            "the walk"
+        );
+        assert_eq!(petgraph_order(g, root), sorted, "the rebuilt sort");
+        let got: Vec<u32> = sorted.iter().map(|n| n.as_u32()).collect();
+        assert_eq!(got, want);
+    }
+
+    /// Three orders no post-order over input producers from the root gives,
+    /// under any order of each node's producers: two leaves under one node,
+    /// the right one first; a leaf ordered between two of another node's
+    /// cone; a two-output root over a value read twice.
+    #[test]
+    fn named_graphs_keep_their_instantiation_order() {
+        let leaf = |g: &mut G| {
+            let n = g.create_node(0, [], [0]);
+            g.node_outputs(n)[0]
+        };
+
+        let mut g = G::new();
+        let (l, r) = (leaf(&mut g), leaf(&mut g));
+        let root = g.create_node(0, [l, r], [0]);
+        check_named(&g, root, &[1, 0, 2]);
+
+        let mut g = G::new();
+        let (v0, v1, v2) = (leaf(&mut g), leaf(&mut g), leaf(&mut g));
+        let n3 = g.create_node(0, [v0, v2], [0]);
+        let v3 = g.node_outputs(n3)[0];
+        let root = g.create_node(0, [v1, v3], [0]);
+        check_named(&g, root, &[2, 1, 0, 3, 4]);
+
+        let mut g = G::new();
+        let (v0, v1) = (leaf(&mut g), leaf(&mut g));
+        let n2 = g.create_node(0, [v0, v1, v1], [0]);
+        let n3 = g.create_node(0, [v0, v0], [0]);
+        let (v2, v3) = (g.node_outputs(n2)[0], g.node_outputs(n3)[0]);
+        let root = g.create_node(0, [v0, v3, v2], [0, 0]);
+        check_named(&g, root, &[1, 0, 3, 2, 4]);
+    }
+
+    /// A random tree in the builders' two staging orders: operands before the
+    /// node (`binary`, `unary`, as the typed unary and int-binary verbs do) or
+    /// the node first (`node` then `input`, as the two-input verbs do). Leaves
+    /// are built constants or captures.
+    fn stage(b: &mut TemplateBuilder, rng: &mut Rng, depth: u32) -> TmplValueRef {
+        if depth == 0 || rng.below(3) == 0 {
+            return match rng.below(2) {
+                0 => b.capture(Capture::new()),
+                _ => b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(
+                    rng.below(4) as u32,
+                )))),
+            };
+        }
+        match rng.below(3) {
+            0 => {
+                let x = stage(b, rng, depth - 1);
+                b.unary(KindSpec::Exact(NodeKind::IntUnaryOp(IntUnaryOp::Neg)), x)
+            }
+            1 => {
+                let l = stage(b, rng, depth - 1);
+                let r = stage(b, rng, depth - 1);
+                b.binary(IntBinaryOp::Add, l, r)
+            }
+            _ => {
+                let n = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Mul)));
+                let l = stage(b, rng, depth - 1);
+                let r = stage(b, rng, depth - 1);
+                b.input(n, 0, l);
+                b.input(n, 1, r);
+                b.value_output(n, 0)
+            }
+        }
+    }
+
+    /// Every tree the builders can stage keeps its instantiation order.
+    #[test]
+    fn staged_trees_keep_their_instantiation_order() {
+        let mut rng = Rng(0x5851_F42D_4C95_7F2D);
+        let mut multi_leaf = 0u64;
+        for _ in 0..CASES {
+            let mut b = TemplateBuilder::new();
+            let depth = 1 + rng.below(5) as u32;
+            stage(&mut b, &mut rng, depth);
+            let t = b.finish();
+            multi_leaf += u64::from(t.graph.all_node_ids().count() >= 4);
+            assert!(check_order(&t), "a staged tree has one root");
+        }
+        assert!(
+            multi_leaf >= CASES / 4,
+            "too few multi-leaf trees: {multi_leaf}"
+        );
+    }
+
+    /// A raw-builder template of up to ten nodes, created in a random order
+    /// under a hidden topological rank: one in five a capture leaf, the rest
+    /// with up to three value or memory outputs at random slots and up to
+    /// three inputs read off random outputs of lower-ranked nodes, one
+    /// consumer in six reading one of its values again at another slot. The
+    /// wires go in in a random order, so a node's slots are wired out of
+    /// order; `true` beside the template when some node's were.
+    ///
+    /// Python templates compile through the typed verbs into this same sealed
+    /// graph, whose order reads only its structure (creation order, inputs in
+    /// wire order, outputs, use lists) and never a kind, so these cover them.
+    fn raw_dag(rng: &mut Rng) -> (Template, bool) {
+        let mut b = TemplateBuilder::new();
+        let n = 1 + rng.below(10);
+        let mut rank: Vec<usize> = (0..n).collect();
+        for i in (1..n).rev() {
+            rank.swap(i, rng.below(i + 1));
+        }
+        let mut nodes: Vec<Option<TmplNodeRef>> = Vec::with_capacity(n);
+        let mut outs: Vec<Vec<TmplValueRef>> = Vec::with_capacity(n);
+        for _ in 0..n {
+            if rng.below(5) == 0 {
+                nodes.push(None);
+                outs.push(vec![b.capture(Capture::new())]);
+                continue;
+            }
+            let node = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
+            let mut own = Vec::new();
+            for _ in 0..rng.below(4) {
+                let slot = rng.below(3);
+                own.push(match rng.below(4) {
+                    0 => b.memory_output(node, slot),
+                    _ => b.value_output(node, slot),
+                });
+            }
+            nodes.push(Some(node));
+            outs.push(own);
+        }
+        // Each consumer's reads, as (producer, output) positions.
+        let mut reads: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n];
+        for c in 0..n {
+            if nodes[c].is_none() {
+                continue;
+            }
+            let feeds: Vec<(usize, usize)> = (0..n)
+                .filter(|&p| rank[p] < rank[c])
+                .flat_map(|p| (0..outs[p].len()).map(move |k| (p, k)))
+                .collect();
+            if feeds.is_empty() {
+                continue;
+            }
+            for _ in 0..rng.below(4) {
+                reads[c].push(feeds[rng.below(feeds.len())]);
+            }
+        }
+        // A node no one reads is a second sink: one higher-ranked built node
+        // reads it, so most templates keep a single root.
+        for p in 0..n {
+            let read = reads.iter().flatten().any(|&(q, _)| q == p);
+            let above: Vec<usize> = (0..n)
+                .filter(|&c| rank[c] > rank[p] && nodes[c].is_some())
+                .collect();
+            if !read && !outs[p].is_empty() && !above.is_empty() {
+                let k = rng.below(outs[p].len());
+                reads[above[rng.below(above.len())]].push((p, k));
+            }
+        }
+        let mut wires: Vec<(usize, usize, TmplValueRef)> = Vec::new();
+        for (c, mut read) in reads.into_iter().enumerate() {
+            if !read.is_empty() && rng.below(6) == 0 {
+                read.push(read[rng.below(read.len())]);
+            }
+            for (slot, (p, k)) in read.into_iter().enumerate() {
+                wires.push((c, slot, outs[p][k]));
+            }
+        }
+        for i in (1..wires.len()).rev() {
+            wires.swap(i, rng.below(i + 1));
+        }
+        let mut last_slot: Vec<Option<usize>> = vec![None; n];
+        let mut out_of_order = false;
+        for (c, slot, v) in wires {
+            out_of_order |= last_slot[c].is_some_and(|s| s > slot);
+            last_slot[c] = Some(slot);
+            b.input(nodes[c].expect("a consumer is a built node"), slot, v);
+        }
+        (b.finish(), out_of_order)
+    }
+
+    /// Every raw-builder DAG with a root keeps its instantiation order.
+    #[test]
+    fn raw_dags_keep_their_instantiation_order() {
+        let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+        // Rooted; DAG-shaped (a value read twice or a node with two read
+        // outputs); one value read twice by one node; two read outputs of one
+        // node; slots wired out of order; a read memory output.
+        let mut shapes = [0u64; 6];
+        for _ in 0..CASES {
+            let (t, out_of_order) = raw_dag(&mut rng);
+            if !check_order(&t) {
+                continue;
+            }
+            let g = &t.graph;
+            let read_twice = g.all_value_ids().any(|v| g.value_uses(v).count() >= 2);
+            let two_read_outputs = g.all_node_ids().any(|n| {
+                let outs = g.node_outputs(n);
+                outs.iter()
+                    .filter(|&&o| g.value_uses(o).next().is_some())
+                    .count()
+                    >= 2
+            });
+            let double_read = g.all_node_ids().any(|n| {
+                let ins: Vec<ValueId> = g.node_inputs(n).into_iter().collect();
+                (1..ins.len()).any(|i| ins[..i].contains(&ins[i]))
+            });
+            let memory_read = g.all_value_ids().any(|v| {
+                matches!(
+                    g.value_kind_ref(v),
+                    TmplValue::TmplOutput(o) if matches!(o.kind, OutputKindSpec::Memory)
+                ) && g.value_uses(v).next().is_some()
+            });
+            shapes[0] += 1;
+            shapes[1] += u64::from(read_twice || two_read_outputs);
+            shapes[2] += u64::from(double_read);
+            shapes[3] += u64::from(two_read_outputs);
+            shapes[4] += u64::from(out_of_order);
+            shapes[5] += u64::from(memory_read);
+        }
+        let kept = shapes[0];
+        assert!(kept >= CASES / 4, "too few rooted templates: {shapes:?}");
+        assert!(shapes[1] >= kept / 4, "too few DAGs: {shapes:?}");
+        assert!(
+            shapes[2..].iter().all(|&c| c >= kept / 80),
+            "too few of a shape, floor {}: {shapes:?}",
+            kept / 80
+        );
     }
 }
