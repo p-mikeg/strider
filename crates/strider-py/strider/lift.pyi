@@ -219,7 +219,9 @@ class Lifter:
         """The `SleighArch` this handle decodes with.
 
         Enough, with `reader()` and `rom()`, to build a second handle over the
-        same memory, which is how two threads analyse in parallel."""
+        same memory, which is how two threads analyse in parallel; read all
+        three before an `analyze` on this handle is in flight, since they
+        raise while one is."""
         ...
     def reader(self) -> MemLike:
         """The code source (`BufferReader` or `MemReader`) this handle was
