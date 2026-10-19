@@ -72,6 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     dot.dump_as_dot(format!("{prefix}graph.dot"))?;
 
     let pipeline = strider_orchestrator::opt::default_pipeline();
+    function.assume(&strider_orchestrator::opt::AssumptionOptions::default());
     pipeline.run(
         &mut function,
         &mut strider_orchestrator::opt::OptCtx::new(Some(&rom)),

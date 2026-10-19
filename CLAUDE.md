@@ -366,10 +366,10 @@ when both IR slots hold the same value.
   (`RegionBuilder::note_stepped_over_region_starts`): those bytes have two
   owners with two different instruction streams, so overlapping code is
   reported rather than silently double-owned.
-- SP-alias precision is tuned by `OptOptions` (`resolve_indirect_branches`,
-  `assumptions`). `OptCtx` carries the claims a run ADDS: they merge into
-  `Function::assumptions`, which every SP-aware pass and classifier reads, and
-  no run withdraws one (`analyze` lifts a fresh `Function` every round).
+- SP-alias precision rests on the claims a `Function` holds
+  (`Function::assumptions`), which every SP-aware pass and classifier reads:
+  `AnalyzeOptions.assumptions` seeds each round's fresh lift, and
+  `Function::assume` adds claims, withdrawing none.
   `assumptions` is an `AssumptionOptions` of seven claims about the code being
   analysed that the IR cannot prove, so a wrong one miscompiles; every field's
   risky value is the positive one, three default ON, and
@@ -381,9 +381,9 @@ when both IR slots hold the same value.
   `alias` one is `MemPurpose::Forward` over `assumptions`, the `narrow` one
   `MemPurpose::Structural`, which claims nothing, because the edge
   `narrow_load_to` rewires is read afterwards by walks that honour fewer claims
-  (the table walk and stack-argument collection no call relaxation,
-  return-target verification with its claim off no `stack_global_disjoint` or
-  heap identity).
+  (the table walk honours no call relaxation and stack-argument collection no
+  escape analysis; return-target verification with its claim off honours
+  neither `stack_global_disjoint` nor heap identity).
 
 ## strider-py
 

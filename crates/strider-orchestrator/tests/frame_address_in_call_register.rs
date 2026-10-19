@@ -21,7 +21,7 @@ fn returned_constant(arch: common::Arch, words: &[u32], callee_ret: u32) -> Opti
     let bytes = common::words_image(&image, strider_target::Endianness::Little);
     let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
     let mut opts = AnalyzeOptions::default();
-    opts.opt.assumptions.escape_analysis = true;
+    opts.assumptions.escape_analysis = true;
     let r = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
     let f = &r.function;
     f.int_const_u128(common::returned(f)[0])

@@ -107,8 +107,8 @@ fn omitted_by_compares_allocator_sets_by_inclusion() {
     );
 }
 
-/// No claim holds another, and each holds the floor and itself, which does
-/// not hold it: exactly when `omitted_by` comes back empty.
+/// No claim holds another; each holds itself and the floor, and the floor
+/// holds none: exactly when `omitted_by` comes back empty.
 #[test]
 fn holds_all_checks_each_claim() {
     let floor = AssumptionOptions::none();
