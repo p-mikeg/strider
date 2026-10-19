@@ -153,4 +153,5 @@ def int_zero_extend(operand: TemplateLike) -> Template:
 def int_sign_extend(operand: TemplateLike) -> Template:
     """Build a widening that replicates the sign bit."""
 def int_extend(op: ExtendOpName, operand: TemplateLike) -> Template:
-    """Build a widening of the kind named by `op`."""
+    """Build a widening of the kind named by `op`: `"ZeroExtend"` or
+    `"SignExtend"`."""
