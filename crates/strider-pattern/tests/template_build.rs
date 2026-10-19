@@ -78,6 +78,32 @@ fn instantiate_add_const_builds_fresh_node() {
     assert!(has_two, "RHS should materialise IntConst(2)");
 }
 
+/// A template builds its operands first to last, so `int_add(3, 4)` mints the
+/// `3` before the `4` and fresh NodeIds follow the written order.
+#[test]
+fn instantiate_builds_operands_in_written_order() {
+    let x = Capture::new();
+    let mut fx = make_empty_fn(|b| {
+        let a = b.build_int_const(5u64, T::int(64))?;
+        let k = b.build_int_const(1u64, T::int(64))?;
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
+    })
+    .unwrap();
+    let lhs = int_add(var(x), int_const(1u128)).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
+    let rhs = template::int_add(int_const(3u128), int_const(4u128)).into_template();
+    let sum = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
+    let [l, r] = fx.node_inputs_exact::<2>(fx.producer(sum)).unwrap();
+    assert_eq!(
+        (fx.int_const_u128(l), fx.int_const_u128(r)),
+        (Some(3), Some(4))
+    );
+    assert!(
+        fx.producer(l).as_u32() < fx.producer(r).as_u32(),
+        "the left operand is built first"
+    );
+}
+
 /// `instantiate` must attribute the full proof-node set to every node it
 /// creates, interior nodes included. The multi-node RHS is built with a
 /// two-node proof set carrying distinct addrs; the intermediate IntConst must

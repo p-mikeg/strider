@@ -61,6 +61,11 @@ fn rewrite_rule_impl(
     lhs: Pattern,
     rhs: Template,
 ) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
+    #[cfg(test)]
+    {
+        strider_pattern::assert_instantiation_order_kept(&rhs);
+        TEMPLATES_CHECKED.with(|c| c.set(c.get() + 1));
+    }
     move |edit: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
         // The root check before anything is allocated. A fold table tries
         // every rule at every candidate node, and `Matcher::new` plus
@@ -235,6 +240,13 @@ where
 
 /// The common trait-object type both rule constructors box into.
 pub type BoxedRule = Box<dyn for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>>;
+
+#[cfg(test)]
+thread_local! {
+    /// Templates `rewrite_rule_impl` checked for their instantiation order.
+    pub(crate) static TEMPLATES_CHECKED: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
 
 #[cfg(test)]
 mod tests {
