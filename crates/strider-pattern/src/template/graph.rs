@@ -23,6 +23,7 @@ pub struct TmplNode {
 }
 
 impl HasInputSlots for TmplNode {
+    type Slot = usize;
     fn input_slots(&self) -> &[usize] {
         &self.input_slots
     }

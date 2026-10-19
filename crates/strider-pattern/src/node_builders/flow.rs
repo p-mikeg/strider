@@ -461,8 +461,8 @@ delegate_node_pat!(SwitchPat, 0, [capture, build, input, any_input]);
 pub struct IfPat {
     cond: Option<crate::node_builders::SubCompiler>,
     ctrl: Option<crate::node_builders::SubCompiler>,
-    /// Sparse raw input slots, `ANY_INPUT_SLOT` for the existentials.
-    inputs: Vec<(usize, crate::node_builders::SubCompiler)>,
+    /// Sparse raw input slots, `InputSlot::Any` for the existentials.
+    inputs: Vec<(crate::matcher::InputSlot, crate::node_builders::SubCompiler)>,
     outputs: Vec<super::node_pat::OutputSpec>,
     true_branch: Option<BranchWalk>,
     false_branch: Option<BranchWalk>,
@@ -500,7 +500,7 @@ impl IfPat {
     /// intended surface and this is the escape hatch beneath them.
     pub fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
         self.inputs.push((
-            slot,
+            crate::matcher::InputSlot::At(slot),
             crate::node_builders::SubCompiler::new(move |b| p.compile(b)),
         ));
         self
@@ -510,7 +510,7 @@ impl IfPat {
     /// predecessor and the condition.
     pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.inputs.push((
-            crate::matcher::ANY_INPUT_SLOT,
+            crate::matcher::InputSlot::Any,
             crate::node_builders::SubCompiler::new(move |b| p.compile(b)),
         ));
         self
@@ -659,7 +659,7 @@ impl IfPat {
         }
         for (slot, compile) in inputs {
             let o = compile.call(&mut *b);
-            b.input(node, slot, o);
+            b.wire(node, slot, o);
         }
         super::node_pat::lower_outputs(b, node, outputs);
         // The forward-walks bind into the enclosing match, so they ride the
