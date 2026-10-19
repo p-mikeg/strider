@@ -534,9 +534,11 @@ class OrderedPat(Protocol):
         """Stop the matcher retrying this op with its operands swapped; a
         no-op where the op's operands are ordered already, as on `int_le` or
         `int_shl`. Pins this node alone, so `int_add(int_mul(a, b),
-        c).ordered()` leaves the inner `int_mul` commuting. On a finished `Pat`
-        a shape with no operands to order (a wildcard, a constant, a `one_of`)
-        raises; the typed binary builders set a flag and cannot."""
+        c).ordered()` leaves the inner `int_mul` commuting; on the lowered
+        `int_ne` / `float_ne` that node is the `Equal` under the `Xor`. On a
+        finished `Pat` a shape with no operands to order (a wildcard, a
+        constant, a `one_of`) raises; the typed binary builders set a flag and
+        cannot."""
         ...
 
 @runtime_checkable
@@ -997,7 +999,8 @@ def int_cmp(op: IntCmpOpName, l: ValueLike, r: ValueLike) -> Pat:
 def int_eq(l: ValueLike, r: ValueLike) -> Pat:
     """Match an integer equality test. Commutative."""
 def int_ne(l: ValueLike, r: ValueLike) -> Pat:
-    """Match an integer inequality test, the lifter's `Xor(Equal(l, r), 1)`."""
+    """Match an integer inequality test, the lifter's `Xor(Equal(l, r), 1)`.
+    `.ordered()` pins the `Equal`."""
 def int_lt(l: ValueLike, r: ValueLike) -> Pat:
     """Match an unsigned less-than test."""
 def int_le(l: ValueLike, r: ValueLike) -> Pat:
@@ -1054,7 +1057,7 @@ def float_eq(l: ValueLike, r: ValueLike) -> Pat:
     """Match a float equality test. Commutative."""
 def float_ne(l: ValueLike, r: ValueLike) -> Pat:
     """Match a float inequality test, the lifter's
-    `Xor(FloatEqual(l, r), 1)`."""
+    `Xor(FloatEqual(l, r), 1)`. `.ordered()` pins the `FloatEqual`."""
 def float_lt(l: ValueLike, r: ValueLike) -> Pat:
     """Match a float less-than test."""
 def float_le(l: ValueLike, r: ValueLike) -> Pat:

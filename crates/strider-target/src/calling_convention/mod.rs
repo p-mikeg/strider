@@ -13,7 +13,8 @@ pub fn vn_for_name(sleigh_regs: &rsleigh::SleighRegs, name: &str) -> Result<rsle
         .ok_or_else(|| anyhow!("unknown sleigh register name {name:?}"))
 }
 
-/// Order-preserving; short-circuits on the first unknown name.
+/// The registers `reg_names` names in `sleigh_regs`, in order; stops at the
+/// first unknown name.
 ///
 /// # Errors
 ///
