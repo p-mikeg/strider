@@ -4,7 +4,7 @@
 use crate::node::{NodeKind, ValueKind, ValueType};
 
 /// A slot's admissible value kinds, coarser than the concrete
-/// [`ValueKind`](crate::node::ValueKind) stored on real outputs.
+/// [`ValueKind`] stored on real outputs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpectedValueKind {
     Control,

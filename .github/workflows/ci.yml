@@ -33,6 +33,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
+      # The workspace run unifies strider-opt's `test-util` in from the
+      # orchestrator's dev-dependency, so an item only its tests use would
+      # warn in the plain build alone.
+      - run: cargo clippy -p strider-opt --lib -- -D warnings
       - run: cargo test --workspace
       # Release too: a `debug_assert` that fires only in debug, and a test that
       # depends on one, both hide from the debug run alone.
@@ -55,6 +59,8 @@ jobs:
           git status --porcelain
           test -z "$(git status --porcelain)"
       - run: cargo doc --workspace --no-deps
+      # The `test-util`-gated items, which the workspace doc build leaves out.
+      - run: cargo doc -p strider-opt --no-deps --features test-util
 
   # The floor `Cargo.toml` declares. Without a job on it the declaration rots:
   # a dependency or a syntax feature can raise the real minimum silently.
