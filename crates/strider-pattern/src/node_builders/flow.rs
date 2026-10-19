@@ -463,7 +463,7 @@ pub struct IfPat {
     ctrl: Option<crate::node_builders::SubCompiler>,
     /// Sparse raw input slots, `ANY_INPUT_SLOT` for the existentials.
     inputs: Vec<(usize, crate::node_builders::SubCompiler)>,
-    outputs: Vec<(Option<usize>, IfOutput)>,
+    outputs: Vec<super::node_pat::OutputSpec>,
     true_branch: Option<BranchWalk>,
     false_branch: Option<BranchWalk>,
     captures: Vec<Capture>,
@@ -478,13 +478,6 @@ pub struct IfPat {
     /// replayed onto the builder at `lower`. Per slot so replacing a branch
     /// drops it with the pattern it refused.
     branch_refusal: [Option<String>; 2],
-}
-
-/// The one aspect a single `.output(slot)` / `.any_output()` call commits.
-enum IfOutput {
-    Capture(Capture),
-    Width(u32),
-    Ty(ValueType),
 }
 
 impl IfPat {
@@ -668,23 +661,7 @@ impl IfPat {
             let o = compile.call(&mut *b);
             b.input(node, slot, o);
         }
-        for (slot, aspect) in outputs {
-            let out = match slot {
-                Some(slot) => b.value_output(node, slot),
-                None => b.any_slot_value_output(node),
-            };
-            match aspect {
-                IfOutput::Capture(c) => {
-                    b.set_output_any(out);
-                    b.capture_output(out, c);
-                }
-                IfOutput::Width(bits) => {
-                    b.set_output_any(out);
-                    b.set_value_width(out, bits);
-                }
-                IfOutput::Ty(ty) => b.set_value_ty(out, ty),
-            }
-        }
+        super::node_pat::lower_outputs(b, node, outputs);
         // The forward-walks bind into the enclosing match, so they ride the
         // binding walk rather than the node predicate, which runs before the
         // condition's own captures exist.
@@ -721,15 +698,17 @@ fn merged_branch_captures([t, f]: [WalkCaptures; 2]) -> WalkCaptures {
 
 impl WithOutput for IfPat {
     fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
-        self.outputs.push((slot, IfOutput::Capture(c)));
+        self.outputs
+            .push(super::node_pat::OutputSpec::capture(slot, c));
         self
     }
     fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
-        self.outputs.push((slot, IfOutput::Width(bits)));
+        self.outputs
+            .push(super::node_pat::OutputSpec::width(slot, bits));
         self
     }
     fn output_ty(mut self, slot: Option<usize>, ty: ValueType) -> Self {
-        self.outputs.push((slot, IfOutput::Ty(ty)));
+        self.outputs.push(super::node_pat::OutputSpec::ty(slot, ty));
         self
     }
 }
