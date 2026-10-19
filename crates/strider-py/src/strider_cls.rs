@@ -870,6 +870,11 @@ impl PyLifter {
         // A mapping shortened under us takes a SIGBUS on the read, which no
         // Python `except` can catch.
         crate::reader::check_mem_unchanged(py, &this.mem_obj)?;
+        if addr < entry {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "pcode_at: addr {addr:#x} is before entry {entry:#x}"
+            )));
+        }
         // `Sleigh::lift_one` carries context-register state across calls, so
         // sweeping through the persistent Sleigh would dirty it for a later
         // `analyze`/`build_cfg`. The clone is that one-way isolation; it is not
