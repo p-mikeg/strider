@@ -218,6 +218,29 @@ impl AssumptionOptions {
         .filter_map(|(name, omitted)| omitted.then_some(name))
         .collect()
     }
+
+    /// Whether `self` holds every claim `other` holds: `other.omitted_by(self)`
+    /// is empty.
+    #[must_use]
+    pub fn holds_all(&self, other: &Self) -> bool {
+        let Self {
+            stack_global_disjoint,
+            assume_incoming_args_survive_calls,
+            distinct_sp_bases_disjoint,
+            callee_preserves_stack_args,
+            noalias_allocators,
+            escape_analysis,
+            return_slots_survive_untracked_writes,
+        } = other;
+        (!stack_global_disjoint || self.stack_global_disjoint)
+            && (!assume_incoming_args_survive_calls || self.assume_incoming_args_survive_calls)
+            && (!distinct_sp_bases_disjoint || self.distinct_sp_bases_disjoint)
+            && (!callee_preserves_stack_args || self.callee_preserves_stack_args)
+            && noalias_allocators.is_subset(&self.noalias_allocators)
+            && (!escape_analysis || self.escape_analysis)
+            && (!return_slots_survive_untracked_writes
+                || self.return_slots_survive_untracked_writes)
+    }
 }
 
 impl Default for AssumptionOptions {

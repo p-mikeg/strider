@@ -28,8 +28,12 @@ fn classify_target_with_rom(
     rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>,
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let mut view = view.clone();
-    view.side_tables_mut()
-        .assume(&strider_orchestrator::opt::AssumptionOptions::default());
+    if view
+        .side_tables_mut()
+        .assume(&strider_orchestrator::opt::AssumptionOptions::default())
+    {
+        view.side_tables().invalidate_analyses();
+    }
     let mut ranges = RangeMap::new(&view)?;
     let branch = view
         .walk()
