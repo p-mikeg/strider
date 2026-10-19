@@ -15,6 +15,9 @@ pub enum WalkPhase {
 pub trait GraphRef {
     type NodeId: Copy;
 
+    /// Calls `f` once per successor of `node`, in the order the walks push
+    /// them. Implement it with a `for` loop: `for_each` over an adapter chain
+    /// runs slower here.
     fn successors(&self, node: Self::NodeId, f: impl FnMut(Self::NodeId));
 }
 
