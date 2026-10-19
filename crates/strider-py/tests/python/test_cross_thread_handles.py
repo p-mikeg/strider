@@ -22,9 +22,10 @@ def _analyze():
 
 
 def _drop_on_new_thread(box):
-    t = threading.Thread(target=lambda: (box.clear(), gc.collect()))
+    t = threading.Thread(target=lambda: (box.clear(), gc.collect()), daemon=True)
     t.start()
-    t.join()
+    t.join(60)
+    assert not t.is_alive(), "drop thread hung"
 
 
 @pytest.mark.skipif(not os.path.exists("/proc/self/statm"), reason="needs procfs")
@@ -53,10 +54,11 @@ def test_a_render_runs_off_the_thread_that_built_the_lifter():
     """A render reads the arch's name table, not the decoder, so a worker
     thread renders exactly what the building thread does."""
     _el, cfg, fn = _analyze()
-    here = {"pretty": fn.to_dot(pretty=True), "cfg_dot": cfg.to_dot()}
+    here = {"dot": fn.to_dot(), "pretty": fn.to_dot(pretty=True), "cfg_dot": cfg.to_dot()}
     there = {}
 
     def body():
+        there["dot"] = fn.to_dot()
         there["pretty"] = fn.to_dot(pretty=True)
         there["cfg_dot"] = cfg.to_dot()
 
@@ -65,22 +67,6 @@ def test_a_render_runs_off_the_thread_that_built_the_lifter():
     t.join(60)
     assert not t.is_alive(), "render thread hung"
     assert there == here
-
-
-def test_work_that_needs_no_sleigh_still_runs_off_thread():
-    _el, cfg, fn = _analyze()
-    out = {}
-
-    def body():
-        dot = fn.to_dot()
-        out["dot"] = len(dot) if dot is not None else 0
-        out["entry"] = cfg.entry
-
-    t = threading.Thread(target=body)
-    t.start()
-    t.join()
-    assert out["dot"] > 0
-    assert out["entry"] is not None
 
 
 def _off_thread(thunk):

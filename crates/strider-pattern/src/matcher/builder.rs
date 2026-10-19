@@ -454,3 +454,44 @@ fn valueless_kind(spec: &KindSpec) -> bool {
         .any(|k| std::mem::discriminant(k) == d)
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::MatcherBuilder;
+
+    /// One lowering level whose frame alone is 16 KiB, so the stack budget
+    /// trips well inside the level cap.
+    #[inline(never)]
+    fn descend(b: &mut MatcherBuilder, levels: &mut usize) {
+        let pad = std::hint::black_box([0u8; 16 * 1024]);
+        if b.enter_nesting() {
+            *levels += 1;
+            descend(b, levels);
+            b.leave_nesting();
+        }
+        std::hint::black_box(&pad);
+    }
+
+    #[test]
+    fn a_fat_frame_per_level_trips_the_stack_budget_inside_the_level_cap() {
+        let (levels, refusals) = std::thread::Builder::new()
+            .stack_size(64 << 20)
+            .spawn(|| {
+                let mut b = MatcherBuilder::new();
+                let mut levels = 0;
+                descend(&mut b, &mut levels);
+                (levels, b.refusals)
+            })
+            .expect("spawn")
+            .join()
+            .expect("join");
+        assert!(
+            levels < crate::matcher::graph::MAX_PATTERN_NODES,
+            "{levels} levels"
+        );
+        assert!(
+            refusals[0].contains("of a 1024 KiB lowering budget"),
+            "{refusals:?}"
+        );
+    }
+}
