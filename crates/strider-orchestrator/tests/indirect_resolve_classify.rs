@@ -23,8 +23,12 @@ fn sole_branch(f: &strider_ir::Function) -> strider_ir::node::NodeId {
 /// optimized at the floor, so a copy claims them first.
 fn classify_target_bare(view: &strider_ir::Function) -> anyhow::Result<Option<ResolvedTargets>> {
     let mut view = view.clone();
-    view.side_tables_mut()
-        .assume(&strider_orchestrator::opt::AssumptionOptions::default());
+    if view
+        .side_tables_mut()
+        .assume(&strider_orchestrator::opt::AssumptionOptions::default())
+    {
+        view.side_tables().invalidate_analyses();
+    }
     let mut ranges = RangeMap::new(&view)?;
     Ok(classify_target(
         &view,
