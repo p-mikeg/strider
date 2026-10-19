@@ -207,6 +207,20 @@ the positive one:
 is the sound floor of these fields for any input whose memory behaves as RAM:
 a load reads back the last value the analysed code stored at its address, so a
 memory-mapped register polled after a write still reads as the value written.
+`AssumptionOptions.none(...)` takes the same keywords as the constructor and
+sets only the claims named, where each one the constructor leaves out takes its
+default: `AssumptionOptions(escape_analysis=True)` holds four claims,
+`AssumptionOptions.none(escape_analysis=True)` one.
+
+Claims accumulate per `Function`. `analyze` starts a fresh one from the claims
+it is given, and `function.assumptions` reads back the ones in force.
+`prog.optimize(function, opts=...)` adds the claims `opts` names and withdraws
+none: `opts=None`, or a `LifterOptions` built without `assumptions=`, adds
+nothing, and a set that leaves out a claim already in force raises
+`StriderError`. Add one with
+`function.assumptions | strider.lift.AssumptionOptions.none(escape_analysis=True)`
+(`a.union(b)` is the same); to drop one, analyse again without it. A claim a
+run used has shaped the graph for good, so a withdrawal could not be honoured.
 
 `call_other_abis` reclassifies a Sleigh user-op by name ahead of the built-in
 table. Each value is a `strider.sleigh.CallOtherAbi`: one of the four
@@ -307,6 +321,7 @@ function.entry_node()          # id of the Entry node
 function.node_ids()            # every id
 function.count_regions()       # Region nodes reachable from entry
 function.cfg                   # the Cfg it was lifted from
+function.assumptions           # the AssumptionOptions in force (section 2)
 function.clone()               # an independent copy, sharing the Cfg
 function.compact()             # drop nodes unreachable from entry; renumbers ids
 function.validate()            # None, or a message naming the broken invariant
@@ -951,7 +966,7 @@ incomplete?":
   lands, since the seat decided a CFG edge. A return the classifier derived is
   re-checked each round and is not listed once
   `assumptions.return_slots_survive_untracked_writes` (default `True`) carries
-  its proof; clearing that claim and re-running is how you audit one. So a
+  its proof; analysing again with that claim cleared is how you audit one. So a
   `False` `is_complete()` over this reason alone means "complete but
   unverified", except for a failed `"return"` seat. One shape here is no
   dispatch you seeded: an arm a mode-less re-derivation found at a site whose

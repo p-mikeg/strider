@@ -561,6 +561,7 @@ _ZERO_ARG_RETURNS = {
         ("Node", "call_other_name"): "Optional[str]",
         ("Function", "cfg"): "Cfg",
         ("Function", "clone"): "Function",
+        ("Function", "assumptions"): "AssumptionOptions",
         ("Function", "compact"): "None",
         ("Function", "entry_node"): "int",
         ("Function", "node_count"): "int",
