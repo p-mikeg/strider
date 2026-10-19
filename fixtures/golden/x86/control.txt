@@ -128,6 +128,7 @@ cfg
   0x8049144 63 ops goto -> [0x804916c]
   0x804916c 1 ops goto -> [0x804916c]
 tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x87300:4, u:0x87b00:4]
+frame_address_in_call_register
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[ESP]

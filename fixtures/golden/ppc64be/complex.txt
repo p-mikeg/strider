@@ -502,6 +502,7 @@ cfg
   0x10010444 8 ops goto -> [0x10010458]
   0x10010458 10 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, r31, xer_so, cr0, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x17300:1, u:0x1b500:8, u:0x1bd00:8, u:0x1c300:8, u:0x1c500:8, u:0x23900:8, u:0x2ba00:8, u:0x2bb00:8, u:0x2bc00:1, u:0x2bd00:1, u:0x2be00:1, u:0x2bf00:1, u:0x2c000:1, u:0x2c100:1, u:0x2c200:1, u:0x2c300:1, u:0x2c400:1, u:0x58b00:4, u:0x5ab00:4]
+frame_address_in_call_register
 arg 0 [%v1]
 arg 2 [%v41]
 arg 3 [%v42]
@@ -1211,6 +1212,7 @@ cfg
   0x10010af8 18 ops goto -> [0x10010b18]
   0x10010b18 25 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, r31, xer_so, cr0, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x16d00:1, u:0x16f00:1, u:0x17000:1, u:0x17300:1, u:0x1b500:8, u:0x1b700:8, u:0x1b900:8, u:0x1bb00:8, u:0x1bd00:8, u:0x1c300:8, u:0x1c500:8, u:0x23900:8, u:0x23d00:8, u:0x2a200:8, u:0x2a300:8, u:0x2a400:1, u:0x2a500:1, u:0x2a600:1, u:0x2a700:1, u:0x2a800:1, u:0x2a900:1, u:0x2aa00:1, u:0x2ab00:1, u:0x2ac00:1, u:0x2ba00:8, u:0x2bb00:8, u:0x2bc00:1, u:0x2bd00:1, u:0x2be00:1, u:0x2bf00:1, u:0x2c000:1, u:0x2c100:1, u:0x2c200:1, u:0x2c300:1, u:0x2c400:1, u:0x2d200:8, u:0x2d300:8, u:0x2d400:1, u:0x2d500:1, u:0x2d600:1, u:0x2d700:1, u:0x2d800:1, u:0x2d900:1, u:0x2da00:1, u:0x2db00:1, u:0x2dc00:1, u:0x52400:1, u:0x54b00:2, u:0x58b00:4, u:0x5ab00:4, u:0x5b400:8, u:0x5b500:4, u:0x7ae00:4, u:0x7af00:8, u:0x7b000:4, u:0x7b100:8, u:0x7b300:8, u:0x7b400:8, u:0x7be00:4, u:0x7bf00:8, u:0x7c000:4, u:0x7c100:8, u:0x7c300:8, u:0x7c400:4, u:0x7c500:8, u:0x80000:1, u:0x80100:8, u:0x80200:8, u:0x80400:8, u:0x80500:8, u:0x80600:1, u:0x80700:8, u:0x80900:8, u:0x83300:4, u:0x83500:4]
+frame_address_in_call_register
 arg 0 [%v31]
 arg 1 [%v1]
 arg 2 [%v27]
@@ -2080,6 +2082,7 @@ return %v98, %v99, %v137, %v101, %v102, %v103, %v104, %v105, %v106, %v107, %v108
 cfg
   0x10010bc0 203 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1bd00:8, u:0x1c300:8, u:0x1c500:8, u:0x23900:8, u:0x23d00:8, u:0x5ab00:4, u:0x7ae00:4, u:0x7af00:8, u:0x7b000:4, u:0x7b100:8, u:0x7b300:8, u:0x7b400:8]
+frame_address_in_call_register
 arg 3 [%v46]
 arg 4 [%v47]
 arg 5 [%v48]

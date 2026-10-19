@@ -31,6 +31,7 @@ cfg
   0x8049074 63 ops goto -> [0x804909c]
   0x804909c 1 ops goto -> [0x804909c]
 tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x87300:4, u:0x87b00:4]
+frame_address_in_call_register
 arg 0 [%v9]
 arg 1 [%v16]
 %v0:ctrl = entry
