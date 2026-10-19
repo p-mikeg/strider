@@ -58,10 +58,6 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
     /// the sla does not flow the arch's ISA-mode var, or it does not declare a
     /// var the arch re-derives.
     pub fn new(arch: strider_target::SleighArch, sleigh: rsleigh::Sleigh<R>) -> Result<Self> {
-        debug_assert!(
-            sleigh.sla_spec() == arch.sla_spec(),
-            "{arch:?}: the Sleigh was built from another sla"
-        );
         // Not `unwrap_or_default`: with an empty table the CFG classifies every
         // `CallOther` as returning, so a no-return one decodes on into whatever
         // follows it, and the lift rejects every one as an unknown user-op.
@@ -96,6 +92,11 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
             .iter()
             .filter_map(|name| Some((*name, sleigh.get_context_at(0, name).ok()?)))
             .collect();
+        // After the checks above, which report the mismatches they can see.
+        debug_assert!(
+            sleigh.sla_spec() == arch.sla_spec(),
+            "{arch:?}: the Sleigh was built from another sla"
+        );
         Ok(Self {
             sleigh,
             arch,
