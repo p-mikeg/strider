@@ -11,7 +11,6 @@ from .pattern import (
     CaptureKey,
     CastMask,
     Match,
-    Pat as _Pat,
     PatLike as _PatLike,
 )
 from .pattern.constraints import ConstraintLike
@@ -20,9 +19,9 @@ from .template import Template as _Template
 
 __all__: list[str]
 
-#: What `rewrite` accepts as a right-hand side: a `Template`, a build-valid
-#: `Pat`, a `Capture`, or a capture name.
-_ReplaceLike = Union[_Template, _Pat, Capture, str]
+#: What `rewrite` accepts as a right-hand side: a `Template`, a `Capture`, or a
+#: capture name.
+_ReplaceLike = Union[_Template, Capture, str]
 
 class Node:
     """A handle on a single node in the IR graph.
@@ -322,10 +321,11 @@ class Function:
         ...
     def rewrite(self, find: _PatLike, replace: _ReplaceLike) -> int:
         """Apply one `find` to `replace` rewrite across the graph, returning
-        how many times it fired. `replace` is a `strider.template.Template`;
-        a bare `strider.pattern.Pat` is accepted until 0.3.0 removes it, but
-        only its build-valid subset compiles. A `.when()` guard on `find`
-        raises: select the sites with `find_all` instead.
+        how many times it fired. `replace` is a `strider.template.Template`,
+        a `Capture` or a capture name; a `strider.pattern.Pat` raises
+        `TypeError`, and one nested in a `Template` raises `StriderError`
+        naming its constructor. A `.when()` guard on `find` raises: select the
+        sites with `find_all` instead.
 
         One walk of the reachable nodes, not a fixed point, so a rule whose
         output its own `find` matches needs the caller to loop.

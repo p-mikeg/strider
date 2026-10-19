@@ -7,6 +7,7 @@ from __future__ import annotations
 import pytest
 
 import strider
+from strider import template as tpl
 from strider.pattern import Capture, anything, int_add, int_const, var
 
 from .conftest import built_function, fixture_path
@@ -206,7 +207,7 @@ def _stale_and_fresh():
     g = built_function("x86", "memory", "array_sum", optimize=False)
     x, y = Capture(), Capture()
     stale = g.node(g.entry_node())
-    assert g.rewrite(find=int_add(var(x), var(y)), replace=var(x)) > 0
+    assert g.rewrite(find=int_add(var(x), var(y)), replace=tpl.var(x)) > 0
     return stale, g.node(g.entry_node())
 
 
