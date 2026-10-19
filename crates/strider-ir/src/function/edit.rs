@@ -68,6 +68,9 @@ pub struct EditFunction<'g> {
     /// Maybe-dead queue pops, the unit the clean-cost test counts.
     #[cfg(test)]
     queue_pops: u64,
+    /// Use edges redirected, the unit the rewrite-cost tests count.
+    #[cfg(any(test, feature = "test-util"))]
+    uses_moved: u64,
 }
 
 impl<'g> EditFunction<'g> {
@@ -84,6 +87,8 @@ impl<'g> EditFunction<'g> {
             postorder_walks: std::cell::Cell::new(0),
             #[cfg(test)]
             queue_pops: 0,
+            #[cfg(any(test, feature = "test-util"))]
+            uses_moved: 0,
         }
     }
 
@@ -92,6 +97,12 @@ impl<'g> EditFunction<'g> {
     /// write through [`Self::function_mut`] such as an asm-fingerprint union.
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Use edges [`Self::update_input`] and [`Self::replace_value`] redirected.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn uses_moved(&self) -> u64 {
+        self.uses_moved
     }
 
     /// [`Self::generation`] plus every node entering the live set, so two equal
@@ -489,6 +500,10 @@ impl<'g> EditFunction<'g> {
         self.will_detach_value(displaced);
         self.will_attach_value(output_id);
         self.function.graph_mut().update_input(input_id, output_id);
+        #[cfg(any(test, feature = "test-util"))]
+        {
+            self.uses_moved += 1;
+        }
         self.enqueue_for_recanon(consumer);
         self.generation += 1;
     }
@@ -534,6 +549,10 @@ impl<'g> EditFunction<'g> {
             self.will_attach_value(new);
         }
         let changed = self.function.graph_mut().replace_all_uses(old, new);
+        #[cfg(any(test, feature = "test-util"))]
+        {
+            self.uses_moved += consumers.len() as u64;
+        }
         for consumer in consumers {
             self.enqueue_for_recanon(consumer);
         }
