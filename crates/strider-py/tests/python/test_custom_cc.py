@@ -47,7 +47,9 @@ def test_custom_cc_rejects_unknown_register_name():
     mem, _ = _mem_with_func_bytes()
     arch = strider.sleigh.SleighArch.x86_64()
     sleigh = strider.sleigh.Sleigh(arch, mem)
-    with pytest.raises(strider.StriderError, match=r"unknown sleigh register name"):
+    with pytest.raises(
+        strider.StriderError, match=r"arg_passing_regs: unknown sleigh register name"
+    ):
         strider.sleigh.CallingConvention.custom(
             sleigh=sleigh,
             arg_passing_regs=["DEFINITELY_NOT_A_REG"],

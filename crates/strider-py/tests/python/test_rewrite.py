@@ -191,8 +191,11 @@ def test_capture_over_another_var_rhs_is_the_captured_value():
         (lambda: strider.pattern.float_le(var(Capture()), var(Capture())), "float_le()"),
         (lambda: var(Capture()).when(lambda m: True), ".when()"),
         (lambda: tpl.int_add(anything(), 1), "anything()"),
+        (lambda: strider.pattern.first_of([int_const(0), int_const(1)]), "first_of()"),
+        (lambda: strider.pattern.any_int_binary(Capture(), anything(), anything()), "any_int_binary()"),
+        (lambda: strider.pattern.ret().into_pat(), "a control / variadic builder"),
     ],
-    ids=["anything", "one_of", "float_le", "when", "nested"],
+    ids=["anything", "one_of", "float_le", "when", "nested", "first_of", "any_int_binary", "control"],
 )
 def test_a_match_only_rhs_is_refused_by_its_constructor(replace, name):
     """A match-only `Pat` as a RHS, at the top or nested in a `Template`, is
