@@ -44,7 +44,12 @@ def test_to_text_names_a_stack_address_a_call_clobbers():
     code = bytes([0x48, 0x8D, 0x7C, 0x24, 0x08, 0xE8, 0xF6, 0x0F, 0x00, 0x00, 0xC3])
     lift = strider.lift.lifter(SleighArch.x86_64(), BufferReader(0x1000, code))
     function = lift.analyze(0x1000, CallingConvention.x86_64_systemv()).function
-    lines = function.to_text().splitlines()
+    text = function.to_text()
+    lines = text.splitlines()
     assert lines[2].startswith("default_cc ")
     assert lines[3] == "frame_address_in_call_register"
     assert "frame_address_in_call_register" not in _mov_rax_42_ret().to_text()
+    # The flag survives a clone and a compaction.
+    assert function.clone().to_text() == text
+    function.compact()
+    assert function.to_text() == text
