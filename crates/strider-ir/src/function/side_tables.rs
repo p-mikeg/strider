@@ -4,6 +4,7 @@ use cranelift_entity::{SecondaryMap, entity_impl};
 use entity_utils::{EntityInterner, UnionDag};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use crate::AssumptionOptions;
 use crate::graph::NodeIdRemap;
 use crate::node::{NodeId, ValueId};
 
@@ -58,7 +59,7 @@ where
 
 /// Per-function data keyed by arena ids (or the CC arg index) that is not part
 /// of the graph's structural identity.
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub struct SideTables {
     /// Machine-instruction addresses whose lifting or rewrite contributed to
     /// each node's value.
@@ -87,9 +88,27 @@ pub struct SideTables {
     /// clobbers.  The call node carries no such value, so this is the only
     /// record that a callee may have received it.
     frame_address_in_call_register: bool,
-    /// The allocator set every `memory_offsets` entry and the frame-escape
-    /// verdict were computed under.
-    memory_allocators: FxHashSet<u64>,
+    /// The claims in force: every optimizer run's merged, none before the
+    /// first.  The memory classes and the frame-escape verdict were computed
+    /// under them.
+    assumptions: AssumptionOptions,
+}
+
+impl Default for SideTables {
+    fn default() -> Self {
+        Self {
+            asm_fingerprints: UnionDag::default(),
+            value_vn: FxHashMap::default(),
+            arg_index_to_values: FxHashMap::default(),
+            memory_offsets: RefCell::default(),
+            memory_interner: RefCell::default(),
+            initial_var_index: FxHashMap::default(),
+            frame_escape: Cell::default(),
+            frame_address_in_call_register: false,
+            // A function claims nothing until a run adds its claims.
+            assumptions: AssumptionOptions::none(),
+        }
+    }
 }
 
 impl SideTables {
@@ -214,7 +233,7 @@ impl SideTables {
     }
 
     /// Drops every graph-derived memo (the memory classes, invalidating all
-    /// [`MemoryId`]s, and the frame-escape verdict), keeping the allocator set.
+    /// [`MemoryId`]s, and the frame-escape verdict), keeping the claims.
     /// A caller that rewires an address value's producers owes the call.
     #[inline]
     pub fn invalidate_analyses(&self) {
@@ -223,19 +242,22 @@ impl SideTables {
         self.frame_escape.set(None);
     }
 
-    /// The allocator set every memoized decomposition and the frame-escape
-    /// verdict were computed under.
+    /// The claims in force; see [`Self::assume`].
     #[inline]
-    pub fn memory_allocators(&self) -> &FxHashSet<u64> {
-        &self.memory_allocators
+    pub fn assumptions(&self) -> &AssumptionOptions {
+        &self.assumptions
     }
 
-    /// Starts a fresh memory analysis under `allocators`: drops every
-    /// graph-derived memo and records the set the new entries are computed
-    /// under.
-    pub fn reset_analyses(&mut self, allocators: &FxHashSet<u64>) {
-        self.invalidate_analyses();
-        self.memory_allocators.clone_from(allocators);
+    /// Merges `claims` into the claims in force; none is withdrawn.  A claim
+    /// stays in force once stated, even one inert on its own
+    /// (`callee_preserves_stack_args`).  A claim not already in force also
+    /// drops every graph-derived memo: a decomposition made without an
+    /// allocator reads its return as not-memory.
+    pub fn assume(&mut self, claims: &AssumptionOptions) {
+        if !claims.omitted_by(&self.assumptions).is_empty() {
+            self.assumptions.union_with(claims);
+            self.invalidate_analyses();
+        }
     }
 
     /// Memoized frame-escape verdict, or `None` when not yet computed.
@@ -312,8 +334,8 @@ impl SideTables {
             frame_escape,
             // Holds no id: a fact about the lifted calls.
             frame_address_in_call_register: _,
-            // The set the kept `memory_offsets` were computed under.
-            memory_allocators: _,
+            // Holds no id: what every run so far claimed.
+            assumptions: _,
         } = self;
         asm_fingerprints.remap(|old| remap.node_old_to_new(old));
         // Both the slot key and its interned base are ValueIds, so the map and
@@ -420,35 +442,62 @@ mod tests {
         assert_eq!(st.frame_escape(), None, "clear invalidates the memo");
     }
 
+    /// A fresh table claims nothing; a merge that adds a claim drops the
+    /// memos, and one that adds nothing keeps them.
     #[test]
-    fn reset_analyses_records_the_set_and_drops_the_memos() {
+    fn assume_merges_and_drops_the_memos_only_when_it_adds() {
         let mut st = SideTables::default();
         assert!(
-            st.memory_allocators().is_empty(),
-            "a fresh table holds the empty set"
+            st.assumptions()
+                .omitted_by(&AssumptionOptions::none())
+                .is_empty(),
+            "a fresh table holds no claim"
         );
         let (base, v) = (ValueId::new(0), ValueId::new(1));
         st.set_stack_slot(v, base, -8);
+        st.assume(&AssumptionOptions::none());
+        assert!(
+            st.memory_decomp(v).1.is_some(),
+            "nothing added, the memo stands"
+        );
+        let listed = AssumptionOptions {
+            noalias_allocators: [0x1000].into_iter().collect(),
+            ..AssumptionOptions::none()
+        };
         st.set_frame_escape(true);
-        let set: FxHashSet<u64> = [0x1000].into_iter().collect();
-        st.reset_analyses(&set);
-        assert_eq!(st.memory_allocators(), &set);
+        st.assume(&listed);
+        assert_eq!(st.assumptions(), &listed);
         assert_eq!(st.memory_decomp(v), (MemDecomp::Unknown, None));
         assert_eq!(st.frame_escape(), None);
+        st.set_stack_slot(v, base, -8);
+        st.assume(&listed);
+        assert!(
+            st.memory_decomp(v).1.is_some(),
+            "a claim in force adds nothing"
+        );
+        st.assume(&AssumptionOptions::none());
+        assert_eq!(
+            st.assumptions(),
+            &listed,
+            "a narrower set withdraws nothing"
+        );
     }
 
     #[test]
-    fn invalidate_analyses_drops_the_memos_and_keeps_the_set() {
+    fn invalidate_analyses_drops_the_memos_and_keeps_the_claims() {
         let mut st = SideTables::default();
-        let set: FxHashSet<u64> = [0x1000].into_iter().collect();
-        st.reset_analyses(&set);
+        let listed = AssumptionOptions {
+            noalias_allocators: [0x1000].into_iter().collect(),
+            ..AssumptionOptions::none()
+        };
+        st.assume(&listed);
         let (base, v) = (ValueId::new(0), ValueId::new(1));
         st.set_stack_slot(v, base, -8);
         st.set_frame_escape(true);
         st.invalidate_analyses();
         assert_eq!(st.memory_decomp(v), (MemDecomp::Unknown, None));
         assert_eq!(st.frame_escape(), None);
-        assert_eq!(st.memory_allocators(), &set, "the set survives");
+        assert_eq!(st.assumptions(), &listed, "the claims survive");
     }
 
     // The union is order-independent, deduplicating and never dropping an entry.

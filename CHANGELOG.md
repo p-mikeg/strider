@@ -105,12 +105,9 @@
   no arm and defers its site. `arms()`, `successors()` and `narrows_to()`
   read any variant.
 - `strider_opt::apply_rules_count_with` is gone: `apply_rules_count`
-  re-derives the memory classes under the allocator set the function was last
-  optimized with, where it used none and dropped every heap class.
-- `StackOffsetDetect` stamps under that recorded set, not `OptCtx`'s;
-  `run_post`, `classify_sites`, `classify_target` and `ReturnTargets::new`
-  debug-assert that the allocator set they are handed is the recorded one,
-  as does a built-in pass's `apply` called outside `run`.
+  re-derives the memory classes under the claims the function holds, where
+  it used none and dropped every heap class.
+- `StackOffsetDetect` stamps under those claims too, not `OptCtx`'s.
 - `SideTables::clear_memory_slots` is gone: `invalidate_analyses` drops the
   memory classes and the frame-escape verdict together.
 - `default_pipeline()` drops `StackOffsetDetect`: a post-pass appended to it
@@ -394,6 +391,12 @@
   `frame_address_in_call_register` line after `default_cc` when a call's
   clobbered register held a stack address (the fact that bars forwarding a
   load across a call); a function without it prints as before.
+- Claims accumulate per `Function`: `OptimizerPipeline::run` (and
+  `run_one` / `run_post`) merges `OptCtx`'s `assumptions` into
+  `Function::assumptions`, and every pass reads the merged set, so a run
+  under `AssumptionOptions::none()` keeps every claim an earlier run made;
+  analyse again for a function without one. `OptCtx::new` carries the three
+  default claims, so a run under it adds them.
 
 ### Fixed
 
@@ -447,6 +450,10 @@
   was dropped, so the operand matched every argument its builder named.
 - A pattern dropped from a thread-local destructor after strider-pattern's
   drop pit was torn down aborted the process; it is dropped in place.
+- `Lifter.optimize(f)` with default options no longer drops the
+  `noalias_allocators` `analyze` ran under, and with them every
+  `heap_only()` match: a run merges its claims into the function's instead
+  of replacing them.
 
 ### Added, Rust
 
@@ -466,9 +473,9 @@
   and per node output.
 - `OptimizerPipeline` is `Clone`, and `add_boxed` / `add_post_boxed` take a
   pass already boxed.
-- `SideTables::memory_allocators` / `reset_analyses`: the allocator set the
-  memory classes were computed under, and the one verb that starts a new
-  analysis.
+- `Function::assumptions` and `SideTables::assumptions` / `assume`: the
+  claims in force, which every pass reads, and the one verb that adds to
+  them.
 - `strider_opt::refresh_memory_classes`: re-derives what `stack_only()` /
   `heap_only()` read after an edit made outside a pipeline.
 - `EditFunction::absorb_node_fingerprint` (the node-keyed

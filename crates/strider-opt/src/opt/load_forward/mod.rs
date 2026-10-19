@@ -42,8 +42,8 @@ pub struct LoadForward;
 /// forwarded value only makes an address the window scan could not place
 /// placeable, which ends a prefix sooner than the memo says.
 ///
-/// `alias` carries the run's claims and decides whether to forward; `narrow`
-/// carries none, and is the only one a permanent rewire may name.
+/// `alias` carries the function's claims and decides whether to forward;
+/// `narrow` carries none, and is the only one a permanent rewire may name.
 pub(crate) struct Analyzers {
     alias: MemAnalyzer,
     narrow: MemAnalyzer,
@@ -63,15 +63,17 @@ impl crate::peephole::PeepholePass for LoadForward {
         &self,
         analyzers: &mut Option<Analyzers>,
         edit: &mut crate::EditFunction<'_>,
-        opt_ctx: &mut crate::pipeline::OptCtx<'_>,
+        _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<crate::peephole::PeepholeRewrite> {
         let cfgs = analyzers.get_or_insert_with(|| {
-            let assumptions = &opt_ctx.options.assumptions;
+            let assumptions = edit.function().assumptions();
             Analyzers {
                 alias: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::Forward, assumptions)),
-                // `narrow_load_to` rewires for good, so every claim is off:
-                // the edge outlives the run that made it.
+                // `narrow_load_to` rewires for good, and the walks that read
+                // the edge afterwards honour fewer claims than forwarding does
+                // (the jump-table walk no call relaxation, stack-argument
+                // collection no escape analysis), so the narrowing claims none.
                 narrow: MemAnalyzer::new(MemOptions::for_purpose(
                     MemPurpose::Structural,
                     assumptions,
@@ -102,8 +104,8 @@ fn try_forward_load(
     let clobber_node = alias_cfg.nearest_clobber(edit.function(), load, mem);
     // Shorten the load's memory edge onto the clobber `narrow_cfg` proves so
     // future walks skip the proven-disjoint run.  Never `alias_cfg`'s: the
-    // rewire outlives this run, and a later run with the relaxations off would
-    // inherit an edge that only holds with them on.
+    // stricter walks that read the edge afterwards would inherit a relaxation
+    // they do not honour.
     let sound_clobber = narrow_cfg.nearest_clobber(edit.function(), load, mem);
     // A moved edge is a change: the load may now be a structural twin of
     // another, and the fixed point must not exit before that merge is seen.

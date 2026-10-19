@@ -1,7 +1,7 @@
 //! `MemAnalyzer`, the per-function memo the alias queries run through, and
 //! its options.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
@@ -52,10 +52,6 @@ pub(crate) struct MemOptions {
     /// Whether a heap class may be claimed at all; off, a heap address is an
     /// [`AddrClass::Anchor`].
     pub(super) heap_claims: bool,
-    /// Callee addresses whose return is a fresh heap base: always the run's
-    /// [`crate::AssumptionOptions::noalias_allocators`], whatever the policy,
-    /// since [`decompose`] memoises under it.
-    pub(super) noalias_allocators: FxHashSet<u64>,
 }
 
 impl MemOptions {
@@ -72,7 +68,6 @@ impl MemOptions {
             callee_preserves_stack_args: purpose == Forward && a.callee_preserves_stack_args,
             call_relaxations: !matches!(purpose, TableWalk | Structural),
             heap_claims: purpose != Structural,
-            noalias_allocators: a.noalias_allocators.clone(),
         }
     }
 
@@ -274,10 +269,6 @@ impl MemAnalyzer {
         &self.options
     }
 
-    pub(crate) fn noalias_allocators(&self) -> &FxHashSet<u64> {
-        &self.options.noalias_allocators
-    }
-
     fn load_sized(&self, function: &Function, load: NodeId) -> SizedAddr {
         let class = classify_addr(function, function.load_addr(load), &self.options);
         let (_, ty) = function
@@ -301,7 +292,7 @@ impl MemAnalyzer {
 
     /// See the free [`decompose`].
     pub(crate) fn decompose(&self, function: &Function, value: ValueId) -> Option<MemExpr> {
-        decompose(function, value, &self.options.noalias_allocators)
+        decompose(function, value)
     }
 
     /// The node-based counterpart of the class-based [`alias_verdict`].
@@ -418,11 +409,7 @@ impl MemAnalyzer {
             base: store_base,
             offset: store_offset,
             ..
-        } = decompose(
-            function,
-            function.store_addr(clobber),
-            &self.options.noalias_allocators,
-        )?;
+        } = decompose(function, function.store_addr(clobber))?;
         (store_base == base).then_some(ReachingSpStore {
             node: clobber,
             store_offset,
