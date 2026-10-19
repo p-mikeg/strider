@@ -221,6 +221,12 @@
   `test-util` feature, and `strider_reader::elf::sections` is private (its
   public items stay re-exported under `elf::`): `OwnedElf::image` is the one
   way to cut an image's fetch and ROM region sets.
+- `IRViewer` loses the builders' operand checks: `require_value_type`,
+  `require_value_kind`, `require_bool_value`, `require_phi_token_kind`,
+  `require_control_kind`, `require_memory_kind`, `require_integer_value`,
+  `require_float_value`, `require_integer_type`, `require_float_type` and
+  `validate_value_inputs` are crate-private. A `build_*` call still runs
+  every one.
 
 ### Changed, Python
 
@@ -480,8 +486,6 @@
   `OperandWidth` and `Conversion`: a node's input arity, and each input
   slot's kind and width, from the node signature. `validate` reads the
   width, the template all three, the builders the kind.
-- `IRViewer::{require_slot, require_output_type}`: a value or output type
-  checked against a node's signature.
 - `IRViewer::access_address` and the `NodeKind::*_SLOT` input-slot constants.
 - `ValueKind` implements `Display`: a typed value prints as its type (`f64`),
   as the builder and template signature errors print it.

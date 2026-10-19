@@ -11,6 +11,7 @@ pub use build_trait::IRBuilder;
 mod builder_ext;
 pub use builder_ext::IRBuilderExt;
 mod call;
+pub(crate) mod checks;
 mod nodes;
 #[cfg(any(test, feature = "test-util"))]
 mod test_support;
