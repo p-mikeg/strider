@@ -29,7 +29,7 @@ impl PyTemplate {
 
 impl Drop for PyTemplate {
     fn drop(&mut self) {
-        crate::pattern::defer_drop(std::mem::replace(
+        strider_pattern::node_builders::defer_drop(std::mem::replace(
             &mut self.repr,
             std::sync::Arc::new(TmplRepr::BoolConst(false)),
         ));
