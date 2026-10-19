@@ -466,20 +466,16 @@ struct ValueInputSuccs<'a> {
 impl graph_algorithms::walk::GraphRef for ValueInputSuccs<'_> {
     type NodeId = ValueId;
 
-    fn try_successors(
-        &self,
-        value: ValueId,
-        f: impl FnMut(ValueId) -> std::ops::ControlFlow<()>,
-    ) -> std::ops::ControlFlow<()> {
-        self.function
-            .value_inputs(self.function.producer(value))
-            .try_for_each(f)
+    fn successors(&self, value: ValueId, mut f: impl FnMut(ValueId)) {
+        for succ in self.function.value_inputs(self.function.producer(value)) {
+            f(succ);
+        }
     }
 }
 
 #[cfg(test)]
 pub(crate) fn cone_order(function: &strider_ir::Function, root: ValueId) -> Vec<ValueId> {
-    graph_algorithms::walk::entity_postorder(ValueInputSuccs { function }, [root]).collect()
+    graph_algorithms::walk::PostOrder::new(ValueInputSuccs { function }, [root]).collect()
 }
 
 /// Treats `stop` as a leaf, so its own producers are never followed.
@@ -491,17 +487,13 @@ struct ValueInputSuccsPruned<'a> {
 impl graph_algorithms::walk::GraphRef for ValueInputSuccsPruned<'_> {
     type NodeId = ValueId;
 
-    fn try_successors(
-        &self,
-        value: ValueId,
-        f: impl FnMut(ValueId) -> std::ops::ControlFlow<()>,
-    ) -> std::ops::ControlFlow<()> {
+    fn successors(&self, value: ValueId, mut f: impl FnMut(ValueId)) {
         if value == self.stop {
-            return std::ops::ControlFlow::Continue(());
+            return;
         }
-        self.function
-            .value_inputs(self.function.producer(value))
-            .try_for_each(f)
+        for succ in self.function.value_inputs(self.function.producer(value)) {
+            f(succ);
+        }
     }
 }
 
@@ -514,7 +506,7 @@ pub(crate) fn cone_order_pruned(
     root: ValueId,
     stop: ValueId,
 ) -> Vec<ValueId> {
-    graph_algorithms::walk::entity_postorder(ValueInputSuccsPruned { function, stop }, [root])
+    graph_algorithms::walk::PostOrder::new(ValueInputSuccsPruned { function, stop }, [root])
         .collect()
 }
 

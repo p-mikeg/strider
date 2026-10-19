@@ -107,7 +107,7 @@ fn multi_root_disjoint_subgraphs_visits_both() {
 #[test]
 fn repeated_successor_is_visited_once() {
     // `b` is listed twice as a successor of `a`, so it reaches the stack twice.
-    // Exercises the skip-if-visited loop in PreOrderContext::next.
+    // Exercises the skip-if-visited loop in PreOrder::next.
     let g = common::graph(
         "a -> b, b
          b -> c",
@@ -122,7 +122,7 @@ fn repeated_successor_is_visited_once() {
 
 #[test]
 fn multi_root_visited_in_reverse_iteration_order() {
-    // Pins the LIFO root order PreOrderContext::reset documents: roots [a, x]
+    // Pins the LIFO root order PreOrder::new documents: roots [a, x]
     // over disjoint chains must visit x's chain first (opposite of post-order).
     let g = common::graph(
         "a -> b
