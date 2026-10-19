@@ -199,6 +199,19 @@ pub struct PyCfgOptions {
     /// nor a copy is charged per call. Shared with every clone, as the table
     /// it is built from is.
     pub(crate) seated: Arc<SeatedTargets>,
+    /// `call_other_abis` as `strider_cfg` borrows it, built on first use for
+    /// an arch. Shared with every clone, as the table it is built from is.
+    overrides: Arc<std::sync::Mutex<OverridesMemo>>,
+}
+
+/// The last `call_other_abis` resolution and how many were made.
+#[derive(Default)]
+struct OverridesMemo {
+    built: Option<(
+        strider_target::SleighArch,
+        Arc<strider_target::call_other_abi::CallOtherOverrides>,
+    )>,
+    builds: usize,
 }
 
 /// The set beside its `frozenset` face, so the two cannot be split apart.
@@ -211,6 +224,32 @@ pub(crate) struct NoReturnTargets {
 /// `known_targets` as `strider_cfg::CfgOptions` borrows it.
 pub(crate) type SeatedTargets =
     rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>;
+
+impl PyCfgOptions {
+    /// `call_other_abis` checked against and built for `target`, once per
+    /// arch rather than once per analyse.
+    pub(crate) fn call_other_overrides(
+        &self,
+        target: strider_target::SleighArch,
+    ) -> PyResult<Arc<strider_target::call_other_abi::CallOtherOverrides>> {
+        let mut memo = self
+            .overrides
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((arch, built)) = &memo.built
+            && *arch == target
+        {
+            return Ok(Arc::clone(built));
+        }
+        let built = Arc::new(crate::strider_cls::overrides_from(
+            &self.call_other_abis,
+            target,
+        )?);
+        memo.builds += 1;
+        memo.built = Some((target, Arc::clone(&built)));
+        Ok(built)
+    }
+}
 
 #[pymethods]
 impl PyCfgOptions {
@@ -250,6 +289,7 @@ impl PyCfgOptions {
             known_targets_view: Arc::default(),
             call_other_abis_view: Arc::default(),
             seated: Arc::new(seated),
+            overrides: Arc::default(),
         })
     }
 
@@ -331,6 +371,15 @@ impl PyCfgOptions {
             }
         };
         Ok(set.bind(py).clone())
+    }
+
+    /// How many times `call_other_abis` was resolved for an analyse, by this
+    /// object and every one derived from it.
+    fn _call_other_override_builds(&self) -> usize {
+        self.overrides
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .builds
     }
 
     /// This object bounded to `function_max_size`, sharing its tables rather
