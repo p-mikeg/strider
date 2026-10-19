@@ -771,17 +771,20 @@ impl PatRepr {
     }
 }
 
-/// The shape below the chainable wrappers, which decorate the same root node
-/// they wrap and so leave what `.ordered()` pins unchanged.
+/// The shape below the chainable wrappers and `inputs_of_width`, which
+/// constrain the same root node they wrap and so leave what `.ordered()` pins
+/// unchanged.
 fn unwrapped_repr(pat: &Bound<'_, PyPat>) -> Arc<PatRepr> {
     let py = pat.py();
     let mut cur = Arc::clone(&pat.borrow().repr);
     for _ in 0..MAX_PATTERN_NESTING {
         let next = match &*cur {
-            PatRepr::Wrapped(inner, _) => match inner.bind(py).downcast::<PyPat>() {
-                Ok(p) => Arc::clone(&p.borrow().repr),
-                Err(_) => return cur,
-            },
+            PatRepr::Wrapped(inner, _) | PatRepr::InputsOfWidth(_, inner) => {
+                match inner.bind(py).downcast::<PyPat>() {
+                    Ok(p) => Arc::clone(&p.borrow().repr),
+                    Err(_) => return cur,
+                }
+            }
             _ => return cur,
         };
         cur = next;
