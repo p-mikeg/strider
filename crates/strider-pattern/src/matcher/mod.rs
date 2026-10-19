@@ -11,7 +11,7 @@ pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
 pub use vertex::{
     BindingWalkFn, InputSlot, KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue,
-    PostMatchFn, WalkCaptures,
+    PostMatchFn, SlotMode, WalkCaptures,
 };
 
 use std::cell::OnceCell;

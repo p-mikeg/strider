@@ -79,7 +79,7 @@ pub(crate) struct NodePat {
     /// `(slot, bits)`.
     input_widths: Vec<(usize, u32)>,
     /// Requires the matched value to be produced at exactly the anchor slot
-    /// (see [`crate::matcher::PatValue::match_slot`]).
+    /// ([`crate::matcher::SlotMode::Pinned`]).
     pin_anchor_slot: bool,
     outputs: Vec<OutputSpec>,
 }
@@ -133,7 +133,7 @@ impl NodePat {
     }
 
     /// No-op unless the anchor is [`AnchorKind::Value`]. See
-    /// [`crate::matcher::PatValue::match_slot`].
+    /// [`crate::matcher::SlotMode::Pinned`].
     pub(crate) fn pin_anchor_slot(mut self) -> Self {
         self.pin_anchor_slot = true;
         self
@@ -243,7 +243,7 @@ impl NodePat {
             AnchorKind::Value(slot) => {
                 let out = b.value_output(node, slot);
                 if pin_anchor_slot {
-                    b.set_value_out_slot(out, slot);
+                    b.pin_value_out_slot(out);
                 }
                 Some(out)
             }
@@ -311,7 +311,7 @@ pub(crate) fn lower_outputs(b: &mut MatcherBuilder, node: PatNodeRef, outputs: V
             // one and the slot would go unchecked.
             Some(slot) => {
                 let out = b.value_output(node, slot);
-                b.set_value_out_slot(out, slot);
+                b.pin_value_out_slot(out);
                 out
             }
             None => b.any_slot_value_output(node),
