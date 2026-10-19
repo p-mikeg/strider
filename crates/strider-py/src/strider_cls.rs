@@ -157,7 +157,7 @@ pub(crate) fn function_bound(
     Ok(strider_cfg::FunctionBound::Size(size))
 }
 
-pub(crate) fn build_orch_sleigh(
+fn build_orch_sleigh(
     arch: &PySleighArch,
     reader: AnyMemReader,
 ) -> PyResult<rsleigh::Sleigh<AnyMemReader>> {
