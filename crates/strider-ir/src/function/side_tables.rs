@@ -300,13 +300,27 @@ impl SideTables {
     /// Remaps every arena-id key / value after a compaction; an entry whose
     /// node or value did not survive is dropped.
     pub(crate) fn remap(&mut self, remap: &NodeIdRemap) {
-        self.asm_fingerprints
-            .remap(|old| remap.node_old_to_new(old));
+        // Every field named, so one added later states what compaction does
+        // to it.
+        let Self {
+            asm_fingerprints,
+            value_vn,
+            arg_index_to_values,
+            memory_offsets,
+            memory_interner,
+            initial_var_index,
+            frame_escape,
+            // A fact about the lifted calls, keyed by nothing.
+            frame_address_in_call_register: _,
+            // The set the kept `memory_offsets` were computed under.
+            memory_allocators: _,
+        } = self;
+        asm_fingerprints.remap(|old| remap.node_old_to_new(old));
         // Both the slot key and its interned base are ValueIds, so the map and
         // the interner have to be rebuilt together.
         let (new_slots, new_interner) = {
-            let old_slots = self.memory_offsets.borrow();
-            let old_interner = self.memory_interner.borrow();
+            let old_slots = memory_offsets.borrow();
+            let old_interner = memory_interner.borrow();
             let mut new_interner: EntityInterner<MemoryId, (ValueId, i128)> = EntityInterner::new();
             let mut new_slots: SecondaryMap<ValueId, MemDecomp> = SecondaryMap::new();
             for (old_value, slot) in old_slots.iter() {
@@ -335,29 +349,28 @@ impl SideTables {
             }
             (new_slots, new_interner)
         };
-        *self.memory_offsets.get_mut() = new_slots;
-        *self.memory_interner.get_mut() = new_interner;
+        *memory_offsets.get_mut() = new_slots;
+        *memory_interner.get_mut() = new_interner;
         // `InitialVnId`s are stable across compaction, so only the arena-id
         // coordinate of the next two maps needs translating.
-        self.value_vn = remap_hashmap(&mut self.value_vn, |old_value, vn_id| {
+        *value_vn = remap_hashmap(value_vn, |old_value, vn_id| {
             remap
                 .value_old_to_new(old_value)
                 .map(|new_value| (new_value, vn_id))
         });
-        self.initial_var_index = remap_hashmap(&mut self.initial_var_index, |vn_id, old_id| {
+        *initial_var_index = remap_hashmap(initial_var_index, |vn_id, old_id| {
             remap.node_old_to_new(old_id).map(|new_id| (vn_id, new_id))
         });
         // Recomputed off the compacted graph on next demand.
-        self.frame_escape.set(None);
+        frame_escape.set(None);
         // An index whose carriers all vanish is dropped.
-        self.arg_index_to_values =
-            remap_hashmap(&mut self.arg_index_to_values, |key, old_values| {
-                let mapped: Vec<ValueId> = old_values
-                    .into_iter()
-                    .filter_map(|old_value| remap.value_old_to_new(old_value))
-                    .collect();
-                (!mapped.is_empty()).then_some((key, mapped))
-            });
+        *arg_index_to_values = remap_hashmap(arg_index_to_values, |key, old_values| {
+            let mapped: Vec<ValueId> = old_values
+                .into_iter()
+                .filter_map(|old_value| remap.value_old_to_new(old_value))
+                .collect();
+            (!mapped.is_empty()).then_some((key, mapped))
+        });
     }
 }
 
