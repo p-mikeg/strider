@@ -89,8 +89,7 @@ impl PyCallingConvention {
     /// construction rather than at first use.
     ///
     /// Args:
-    ///     sleigh: The `SleighArch` to resolve register names against, or a
-    ///         `Sleigh` built for one.
+    ///     sleigh: The `SleighArch` to resolve register names against.
     ///     arg_passing_regs: Register names passing positional args, in ABI order.
     ///     callee_saved_regs: Registers the callee must preserve.  When
     ///         `link_register` is set, it MUST appear here.
@@ -139,8 +138,7 @@ impl PyCallingConvention {
     #[allow(clippy::too_many_arguments)]
     fn custom(
         _cls: &Bound<'_, PyType>,
-        py: Python<'_>,
-        sleigh: crate::arch::ArchArg,
+        sleigh: crate::arch::PySleighArch,
         arg_passing_regs: Vec<String>,
         callee_saved_regs: Vec<String>,
         ret_val_regs: Vec<String>,
@@ -153,7 +151,7 @@ impl PyCallingConvention {
         preserves_memory: bool,
         arg_passing_regs_float: Vec<String>,
     ) -> PyResult<Self> {
-        let source_arch = sleigh.arch(py);
+        let source_arch = sleigh.inner;
         let regs = source_arch.names().regs();
         let in_field = |field: &str, e: anyhow::Error| {
             crate::errors::into_strider_err(e.context(format!("CallingConvention.custom: {field}")))

@@ -49,37 +49,6 @@ impl PySleighArch {
     }
 }
 
-/// What `custom(...)` resolves register names against: a `SleighArch`, or a
-/// `Sleigh` built for one.
-pub(crate) enum ArchArg {
-    Arch(PySleighArch),
-    Sleigh(Py<crate::sleigh::PySleigh>),
-}
-
-impl<'py> FromPyObject<'py> for ArchArg {
-    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        if let Ok(arch) = ob.downcast::<PySleighArch>() {
-            return Ok(Self::Arch(arch.borrow().clone()));
-        }
-        if let Ok(sleigh) = ob.downcast::<crate::sleigh::PySleigh>() {
-            return Ok(Self::Sleigh(sleigh.clone().unbind()));
-        }
-        Err(pyo3::exceptions::PyTypeError::new_err(format!(
-            "expected a SleighArch or a Sleigh, got {}",
-            ob.get_type().name()?
-        )))
-    }
-}
-
-impl ArchArg {
-    pub(crate) fn arch(&self, py: Python<'_>) -> strider_target::SleighArch {
-        match self {
-            ArchArg::Arch(arch) => arch.inner,
-            ArchArg::Sleigh(sleigh) => sleigh.borrow(py).arch,
-        }
-    }
-}
-
 #[rustfmt::skip]
 forall_preset!(
     PySleighArch,
