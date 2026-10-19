@@ -13,15 +13,15 @@ use rustc_hash::FxHashMap;
 use anyhow::{Result, anyhow};
 
 use strider_cfg::MachineInsnAddr;
-use strider_opt::{OptOptions, ReadOnlyMemory};
+use strider_opt::{AssumptionOptions, ReadOnlyMemory};
 
 /// What `Default` lends: a `&'a` cannot borrow a temporary.
 static NO_PER_ADDRESS_CCS: FxHashMap<u64, strider_target::BuiltCallingConvention> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
 
 /// [`Strider::analyze`]'s options. `Default` decodes an unbounded function
-/// with no seeds and no CC overrides, optimises under
-/// [`OptOptions::default`], compacts, and refuses an incomplete result.
+/// with no seeds and no CC overrides, resolves indirect branches under
+/// [`AssumptionOptions::default`], compacts, and refuses an incomplete result.
 #[derive(Clone, Debug)]
 pub struct AnalyzeOptions<'a> {
     pub cfg: strider_cfg::CfgOptions<'a>,
@@ -30,7 +30,15 @@ pub struct AnalyzeOptions<'a> {
     /// must ([`Lifter::build_ir_with`]); borrowed, as
     /// [`strider_cfg::CfgOptions::known_targets`] is.
     pub per_address_ccs: &'a FxHashMap<u64, strider_target::BuiltCallingConvention>,
-    pub opt: OptOptions,
+    /// Run the indirect-branch classifier.  Off leaves every unseeded site an
+    /// `IndirectBranch` placeholder, so a caller can hand its own answers in
+    /// through `CfgOptions::known_targets` instead, or see the raw dispatch
+    /// shape when a resolution looks wrong.  Caller-supplied targets still
+    /// seat: they are read by the CFG builder, not the classifier.
+    pub resolve_indirect_branches: bool,
+    /// The claims each round's fresh lift is optimized under
+    /// ([`strider_ir::Function::assume`]).
+    pub assumptions: AssumptionOptions,
     /// Drops unreachable nodes once the loop settles.
     pub compact: bool,
     /// Whether an incomplete result is returned or refused.
@@ -42,7 +50,8 @@ impl Default for AnalyzeOptions<'_> {
         Self {
             cfg: strider_cfg::CfgOptions::default(),
             per_address_ccs: &NO_PER_ADDRESS_CCS,
-            opt: OptOptions::default(),
+            resolve_indirect_branches: true,
+            assumptions: AssumptionOptions::default(),
             compact: true,
             on_incomplete: OnIncomplete::default(),
         }
@@ -223,9 +232,10 @@ where
     /// applies once, after the loop.
     ///
     /// `pipeline` defaults to [`strider_opt::default_pipeline`]. Every round
-    /// classifies the function's dispatch sites with
-    /// [`strider_opt::classify_sites`] after the pipeline, whatever pipeline
-    /// it is.
+    /// optimizes a fresh lift under `opts.assumptions` and classifies its
+    /// dispatch sites with [`strider_opt::classify_sites`] after the pipeline,
+    /// whatever pipeline it is; with `opts.resolve_indirect_branches` off it
+    /// lists them unresolved instead ([`strider_opt::ClassifiedSites::unresolved`]).
     ///
     /// # Errors
     ///

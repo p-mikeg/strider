@@ -5,8 +5,8 @@
 /// on can make the answer wrong on valid input; the miscompile is then the
 /// caller's.  [`AssumptionOptions::none`] is the sound floor of THESE fields
 /// under any input program whose memory behaves as RAM (see there);
-/// strider-opt's `OptOptions::resolve_indirect_branches` defaults on and is
-/// outside it.
+/// strider-orchestrator's `AnalyzeOptions::resolve_indirect_branches` defaults
+/// on and is outside it.
 ///
 /// Three default ON, each of which every compiler whose output this analyses
 /// honours: [`stack_global_disjoint`](Self::stack_global_disjoint), without
@@ -15,13 +15,13 @@
 /// [`assume_incoming_args_survive_calls`](Self::assume_incoming_args_survive_calls),
 /// without which a stack argument read after a call is not detected as one, and
 /// [`return_slots_survive_untracked_writes`](Self::return_slots_survive_untracked_writes),
-/// without which a return after any call is reported as unverified.  A test
-/// takes the floor instead, through strider-opt's `OptCtx::at_floor`.
+/// without which a return after any call is reported as unverified.  A fresh
+/// lift holds none, so a test runs at the floor unless it claims one.
 ///
-/// Claims accumulate per [`Function`](crate::Function): every optimizer run
-/// merges its own into [`Function::assumptions`](crate::Function::assumptions),
-/// which every pass reads, and none withdraws one, so only a fresh lift drops
-/// one.
+/// Claims accumulate per [`Function`](crate::Function):
+/// [`Function::assume`](crate::Function::assume) merges a set into
+/// [`Function::assumptions`](crate::Function::assumptions), which every pass
+/// reads, and nothing withdraws one, so only a fresh lift drops one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssumptionOptions {
     /// The stack and the global / constant-address regions (`.data`,

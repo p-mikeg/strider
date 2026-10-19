@@ -35,13 +35,13 @@ impl PostOptimizer for FunctionArgDetect {
         edit.clear_arg_values_from(first_stack_arg as u32);
         let alias_cfg = MemAnalyzer::new(MemOptions::for_purpose(
             MemPurpose::IncomingArgs,
-            edit.function().assumptions(),
+            edit.function(),
         ));
         // Detection reads `alias_cfg`; only the rewire reads this one (see
         // `mem_chain_is_dirty`).
         let narrow_cfg = MemAnalyzer::new(MemOptions::for_purpose(
             MemPurpose::Structural,
-            edit.function().assumptions(),
+            edit.function(),
         ));
         detect_stack_args(edit, &alias_cfg, &narrow_cfg, stack_args, first_stack_arg);
         Ok(())

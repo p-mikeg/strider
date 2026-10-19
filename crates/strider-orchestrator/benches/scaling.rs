@@ -102,6 +102,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     )
     .expect("rom reader (opt)");
     let p = strider_orchestrator::opt::default_pipeline();
+    function.assume(&strider_orchestrator::opt::AssumptionOptions::default());
     p.run(
         &mut function,
         &mut strider_orchestrator::opt::OptCtx::new(Some(&rom_for_opt)),
@@ -217,6 +218,7 @@ mod synthetic {
         p.add(ConstantFold::new());
         p.add(PhiCollapse);
         p.add(RegionCollapse);
+        fg.assume(&strider_orchestrator::opt::AssumptionOptions::default());
         p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();
         fg
@@ -278,6 +280,7 @@ mod synthetic {
         p.add(ConstantFold::new());
         p.add(PhiCollapse);
         p.add(RegionCollapse);
+        fg.assume(&strider_orchestrator::opt::AssumptionOptions::default());
         p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();
         fg
@@ -362,6 +365,7 @@ mod synthetic {
         let mut fg = b.build().unwrap();
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
+        fg.assume(&strider_orchestrator::opt::AssumptionOptions::default());
         p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();
         fg
@@ -393,6 +397,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
     // clean, so the guard is worth its one extra pass run.
     {
         let mut fg = synthetic::build_stack_store_chain(32);
+        fg.assume(&strider_orchestrator::opt::AssumptionOptions::default());
         let pass = LoadForward;
         strider_orchestrator::opt::run_one(
             &pass,
@@ -411,7 +416,11 @@ fn bench_stack_store_chain(c: &mut Criterion) {
     for n in [100usize, 500, 1_000] {
         group.bench_function(format!("n_{n}"), |b| {
             b.iter_batched(
-                || synthetic::build_stack_store_chain(n),
+                || {
+                    let mut fg = synthetic::build_stack_store_chain(n);
+                    fg.assume(&strider_orchestrator::opt::AssumptionOptions::default());
+                    fg
+                },
                 |mut fg| {
                     let pass = LoadForward;
                     let _ = strider_orchestrator::opt::run_one_unvalidated(

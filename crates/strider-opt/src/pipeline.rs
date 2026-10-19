@@ -25,40 +25,18 @@ impl OptimizationResult {
 }
 
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
-/// call. `options.assumptions` are the claims the run adds to the function's;
-/// a pass reads the merged set off the function.
+/// call. It carries no claim: a pass reads the function's
+/// ([`strider_ir::Function::assume`] adds them).
 pub struct OptCtx<'mem> {
     /// `None` cuts off every read of the image: `LoadReadOnly` bails, and a
     /// jump table stored in the image does not decode.
     pub rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>,
-    pub options: crate::OptOptions,
 }
 
 impl<'mem> OptCtx<'mem> {
-    /// The production defaults, so a run under it adds the three default-on
-    /// claims to whatever the function holds.
     #[must_use]
     pub fn new(rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>) -> Self {
-        Self {
-            rom,
-            options: crate::OptOptions::default(),
-        }
-    }
-
-    /// [`Self::new`] with every claim cleared
-    /// ([`crate::AssumptionOptions::none`]), adding no claim, which is what a
-    /// test wants: a case that needs a claim states it, so no test rests on a
-    /// claim by inheriting one. `new` keeps the production defaults.
-    #[cfg(any(test, feature = "test-util"))]
-    #[must_use]
-    pub fn at_floor(rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>) -> Self {
-        Self {
-            options: crate::OptOptions {
-                assumptions: crate::AssumptionOptions::none(),
-                ..crate::OptOptions::default()
-            },
-            ..Self::new(rom)
-        }
+        Self { rom }
     }
 }
 
@@ -105,9 +83,8 @@ pub trait Optimizer: OptimizerClone {
     }
 }
 
-/// Runs one pass through a throwaway `EditFunction`: merges `octx`'s claims
-/// into the function's, drops the memory analysis, culls dead nodes before and
-/// drains after.
+/// Runs one pass through a throwaway `EditFunction`: drops the memory
+/// analysis, culls dead nodes before and drains after.
 ///
 /// `function` must be built (`function.entry()` is a valid `NodeId`).
 ///
@@ -147,11 +124,9 @@ pub fn run_one_unvalidated(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<OptimizationResult> {
-    // As `run` starts: this run's claims join the ones in force, and a memo an
-    // edit since the last run can have outdated is dropped.
-    let st = function.side_tables_mut();
-    st.assume(&octx.options.assumptions);
-    st.invalidate_analyses();
+    // As `run` starts: a memo an edit since the last run can have outdated is
+    // dropped.
+    function.side_tables().invalidate_analyses();
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     let result = apply_checked(pass, &mut edit, octx)?;
@@ -176,9 +151,8 @@ fn apply_checked(
     Ok(result)
 }
 
-/// Post-pass sibling of [`run_one`]: merges `octx`'s claims into the
-/// function's; a claim it adds drops the memory classes, which
-/// [`crate::refresh_memory_classes`] restamps.
+/// Post-pass sibling of [`run_one`]: the memory classes survive, as between
+/// `run`'s post-passes.
 ///
 /// # Errors
 ///
@@ -189,10 +163,6 @@ pub fn run_post(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<()> {
-    let st = function.side_tables_mut();
-    if st.assume(&octx.options.assumptions) {
-        st.invalidate_analyses();
-    }
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     pass.apply(&mut edit, octx)?;
@@ -343,21 +313,17 @@ impl OptimizerPipeline {
     /// shape every other exit hands it back in, and a validation failure there
     /// is reported ahead of the non-convergence.  The post-passes do not run.
     ///
-    /// `ctx.options.assumptions` are the claims this run adds: they merge into
-    /// [`strider_ir::Function::assumptions`], which every pass reads, and none
-    /// already in force is withdrawn.
+    /// Every pass reads [`strider_ir::Function::assumptions`]; a caller adds
+    /// claims with [`strider_ir::Function::assume`] before the run.
     pub fn run(
         &self,
         function: &mut strider_ir::Function,
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
-        // This run's claims join the ones in force, and a memo left by an
-        // earlier run or an edit since is dropped: a rewrite can move the
-        // address it names.
-        let st = function.side_tables_mut();
-        st.assume(&ctx.options.assumptions);
-        st.invalidate_analyses();
+        // A memo left by an earlier run or an edit since is dropped: a rewrite
+        // can move the address it names.
+        function.side_tables().invalidate_analyses();
         // Scoped so the borrow of `function` ends before validation.
         let converged = {
             let mut edit = crate::EditFunction::new(function);
@@ -486,8 +452,8 @@ mod tests {
         );
 
         let (mut a, mut b) = (folding_fn(), folding_fn());
-        pipeline.run(&mut a, &mut OptCtx::at_floor(None))?;
-        clone.run(&mut b, &mut OptCtx::at_floor(None))?;
+        pipeline.run(&mut a, &mut OptCtx::new(None))?;
+        clone.run(&mut b, &mut OptCtx::new(None))?;
         assert!(
             !a.walk()
                 .any(|n| matches!(a.node_kind(n), strider_ir::node::NodeKind::IntBinaryOp(_))),
@@ -503,7 +469,7 @@ mod tests {
         let mut function = one_const_fn(3);
         let pipeline = crate::default_pipeline();
         let before = function.walk().count();
-        pipeline.run(&mut function, &mut OptCtx::at_floor(None))?;
+        pipeline.run(&mut function, &mut OptCtx::new(None))?;
         let after = function.walk().count();
         // An already-folded constant cannot fold further, so the reachable
         // count is stable. Pins that `run` does not mutate the graph beyond
@@ -536,7 +502,7 @@ mod tests {
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(AlwaysChanged);
         let err = pipeline
-            .run(&mut function, &mut OptCtx::at_floor(None))
+            .run(&mut function, &mut OptCtx::new(None))
             .expect_err("pipeline must bail out on a non-monotone pass");
         assert!(
             err.to_string().contains("did not converge"),
@@ -580,7 +546,7 @@ mod tests {
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(AlwaysChangedUnattributed);
         let err = pipeline
-            .run(&mut function, &mut OptCtx::at_floor(None))
+            .run(&mut function, &mut OptCtx::new(None))
             .expect_err("the pass never converges");
         assert!(
             err.to_string().contains("asm-fingerprint"),
@@ -614,7 +580,7 @@ mod tests {
             function.side_tables().memory_decomp(returned).1.is_some(),
             "the memo is installed"
         );
-        crate::pipeline::run_one(&NoOp, &mut function, &mut OptCtx::at_floor(None))?;
+        crate::pipeline::run_one(&NoOp, &mut function, &mut OptCtx::new(None))?;
         assert!(
             function.side_tables().memory_decomp(returned).1.is_none(),
             "run_one must drop a memo an earlier edit left"
@@ -630,7 +596,7 @@ mod tests {
         function
             .side_tables()
             .set_stack_slot(returned, returned, 16);
-        super::OptimizerPipeline::new().run(&mut function, &mut OptCtx::at_floor(None))?;
+        super::OptimizerPipeline::new().run(&mut function, &mut OptCtx::new(None))?;
         assert!(
             function.side_tables().memory_decomp(returned).1.is_none(),
             "run must drop a memo an earlier edit left"
@@ -638,36 +604,35 @@ mod tests {
         Ok(())
     }
 
-    /// `run`, `run_one_unvalidated` and `run_post` each merge their claims,
-    /// and a run claiming nothing withdraws none.
+    /// `run`, `run_one_unvalidated` and `run_post` each keep the claims the
+    /// function holds, the run folding a node.
     #[test]
-    fn every_run_merges_its_claims_and_none_withdraws() -> crate::Result<()> {
-        let mut function = one_const_fn(5);
-        let mut listed = OptCtx::at_floor(None);
-        listed.options.assumptions.noalias_allocators = [0x1000].into_iter().collect();
-        super::OptimizerPipeline::new().run(&mut function, &mut listed)?;
-        let mut disjoint = OptCtx::at_floor(None);
-        disjoint.options.assumptions.stack_global_disjoint = true;
-        let pass = CountsRuns(std::sync::Arc::default());
-        super::run_one_unvalidated(&pass, &mut function, &mut disjoint)?;
-        let mut escaping = OptCtx::at_floor(None);
-        escaping.options.assumptions.escape_analysis = true;
-        super::run_post(&crate::StackOffsetDetect, &mut function, &mut escaping)?;
-        super::OptimizerPipeline::new().run(&mut function, &mut OptCtx::at_floor(None))?;
-        let expected = crate::AssumptionOptions {
+    fn no_run_withdraws_a_claim() -> crate::Result<()> {
+        let mut function = folding_fn();
+        let claims = crate::AssumptionOptions {
             noalias_allocators: [0x1000].into_iter().collect(),
             stack_global_disjoint: true,
             escape_analysis: true,
             ..crate::AssumptionOptions::none()
         };
-        assert_eq!(function.assumptions(), &expected);
+        function.assume(&claims);
+        let mut folding = super::OptimizerPipeline::new();
+        folding.add(crate::ConstantFold::new());
+        folding.run(&mut function, &mut OptCtx::new(None))?;
+        let pass = CountsRuns(std::sync::Arc::default());
+        super::run_one_unvalidated(&pass, &mut function, &mut OptCtx::new(None))?;
+        super::run_post(
+            &crate::StackOffsetDetect,
+            &mut function,
+            &mut OptCtx::new(None),
+        )?;
+        assert_eq!(function.assumptions(), &claims);
         Ok(())
     }
 
-    /// `run_post` keeps a memo when it adds no claim and drops it when it
-    /// adds one.
+    /// `run_post` keeps a memo, as `run` does between its post-passes.
     #[test]
-    fn run_post_drops_the_memos_only_when_it_adds_a_claim() -> crate::Result<()> {
+    fn run_post_keeps_the_memos() -> crate::Result<()> {
         #[derive(Clone)]
         struct NoOpPost;
         impl super::PostOptimizer for NoOpPost {
@@ -685,18 +650,8 @@ mod tests {
         function
             .side_tables()
             .set_stack_slot(returned, returned, 16);
-        super::run_post(&NoOpPost, &mut function, &mut OptCtx::at_floor(None))?;
-        assert!(
-            function.side_tables().memory_decomp(returned).1.is_some(),
-            "no claim added, the memo stands"
-        );
-        let mut escaping = OptCtx::at_floor(None);
-        escaping.options.assumptions.escape_analysis = true;
-        super::run_post(&NoOpPost, &mut function, &mut escaping)?;
-        assert!(
-            function.side_tables().memory_decomp(returned).1.is_none(),
-            "a claim run_post adds drops the memo"
-        );
+        super::run_post(&NoOpPost, &mut function, &mut OptCtx::new(None))?;
+        assert!(function.side_tables().memory_decomp(returned).1.is_some());
         Ok(())
     }
 
@@ -760,7 +715,7 @@ mod tests {
             runs: Arc::clone(&rewrites),
         });
         pipeline.add(CountsRuns(Arc::clone(&counted)));
-        pipeline.run(&mut one_const_fn(1), &mut OptCtx::at_floor(None))?;
+        pipeline.run(&mut one_const_fn(1), &mut OptCtx::new(None))?;
         assert_eq!(rewrites.load(Ordering::Relaxed), 4);
         assert_eq!(counted.load(Ordering::Relaxed), 3);
         Ok(())
@@ -795,7 +750,7 @@ mod tests {
         let mut function = one_const_fn(1);
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(HidesAnEdit);
-        let _ = pipeline.run(&mut function, &mut OptCtx::at_floor(None));
+        let _ = pipeline.run(&mut function, &mut OptCtx::new(None));
     }
 
     /// A pipeline carrying a post-pass must still produce a graph that
@@ -824,7 +779,7 @@ mod tests {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
         p.add_post_pass(CallStackArgCollect);
-        p.run(&mut function, &mut OptCtx::at_floor(None))?;
+        p.run(&mut function, &mut OptCtx::new(None))?;
         Ok(())
     }
 
@@ -873,7 +828,7 @@ mod tests {
         p.add(RegionCollapse);
         p.add(DeadBranchElimination);
         p.add(LoadForward);
-        p.run(&mut function, &mut OptCtx::at_floor(None))?;
+        p.run(&mut function, &mut OptCtx::new(None))?;
 
         let val = crate::test_support::return_value(function.graph())?;
         let kind = *function.kind_of_value(val);
@@ -899,7 +854,7 @@ mod tests {
             }
             Ok(acc)
         })?;
-        crate::default_pipeline().run(&mut function, &mut OptCtx::at_floor(None))?;
+        crate::default_pipeline().run(&mut function, &mut OptCtx::new(None))?;
         // The chain folds to a single `IntConst(50)`.
         assert!(
             function.walk().count() < 20,
