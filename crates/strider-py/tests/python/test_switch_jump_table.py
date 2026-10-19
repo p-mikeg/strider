@@ -11,6 +11,7 @@ case, which the tests below query and rewrite against.
 from __future__ import annotations
 
 import strider
+from strider import template as tpl
 from strider.pattern import Capture, var, int_add, call, int_const, load
 
 
@@ -62,7 +63,7 @@ def test_rewrite_collapses_add_zero_then_reoptimize(x86_switch_elf):
     # still works on the post-rewrite graph.
     lift, g = _run(x86_switch_elf)
     x = Capture()
-    n = g.rewrite(find=int_add(var(x), int_const(0)), replace=var(x))
+    n = g.rewrite(find=int_add(var(x), int_const(0)), replace=tpl.var(x))
     assert isinstance(n, int) and n >= 0
     lift.optimize(g)
     assert g.node_count() > 0
@@ -74,7 +75,7 @@ def test_rewrite_collapses_add_one_to_marker(x86_switch_elf):
     lift, g = _run(x86_switch_elf)
     n_before_const_1 = len(g.find_all(int_const(1), ignore_casts=True))
     x = Capture()
-    fired = g.rewrite(find=int_add(var(x), int_const(1)), replace=var(x))
+    fired = g.rewrite(find=int_add(var(x), int_const(1)), replace=tpl.var(x))
     lift.optimize(g)
     n_after_const_1 = len(g.find_all(int_const(1), ignore_casts=True))
     # Either the rule fired and the node-removing passes pruned the freed

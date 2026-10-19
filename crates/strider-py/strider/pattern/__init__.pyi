@@ -2,13 +2,9 @@
 
 `Pat` is the left-hand side of a `find` or `rewrite` query, with the
 match-only affordances `.when()`, commutativity, `.of_width()`,
-`.value_ty()` and the wildcards. For a rewrite right-hand side (`replace=`)
-use `strider.template` and its `Template` type instead. A bare `Pat` is
-still accepted there until 0.3.0 removes it, but only its build-valid subset
-compiles: a capture reference such as `var(c)`, or a constant, carries over,
-while `.when()`, `.of_width()`, `.value_ty()` and `anything()` are refused by
-name, and so is `.capture(c)` over anything but `var()` / `anything()`: on a
-RHS it stands for the value `c` matched, so it would replace what it wraps.
+`.value_ty()` and the wildcards. A rewrite right-hand side (`replace=`) is a
+`strider.template.Template`: a `Pat` there raises `TypeError`, and one nested
+in a `Template` operand raises `StriderError` naming its constructor.
 
 Compiling and matching a pattern is native recursion, so a query refuses
 a pattern the thread running it cannot recurse through: one of more than 256

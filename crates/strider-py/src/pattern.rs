@@ -476,9 +476,9 @@ pub(crate) fn compile_operand_template(ob: &Bound<'_, PyAny>) -> PyResult<DynTem
     if let Ok(t) = ob.downcast::<crate::template::PyTemplate>() {
         return t.borrow().repr.compile_template(py);
     }
-    // A bare `Pat` nests as a RHS operand until 0.3.0 removes it.
+    // A `Pat` only matches; one nested here is named by its constructor.
     if let Ok(p) = ob.downcast::<PyPat>() {
-        return pat_as_template(&p.borrow().repr, py);
+        return Err(rhs_error(p.borrow().repr.name()));
     }
     // A raw int builds an `int_const(value)` on the RHS too.
     if let Some(v) = extract_int_operand(ob)? {
@@ -490,8 +490,8 @@ pub(crate) fn compile_operand_template(ob: &Bound<'_, PyAny>) -> PyResult<DynTem
     }
     Err(into_strider_err(anyhow::anyhow!(
         "cannot use {} as a nested rewrite RHS operand: expected a Template, a \
-         build-valid Pat, a Capture or an int. A bare string names a capture \
-         only as the whole RHS; nested, use Capture(\"name\")",
+         Capture or an int. A bare string names a capture only as the whole \
+         RHS; nested, use Capture(\"name\")",
         operand_kind_name(ob)
     )))
 }
@@ -1366,37 +1366,6 @@ fn compile_tmpl_template(t: &TmplRepr, py: Python<'_>) -> PyResult<DynTemplate> 
     }
 }
 
-/// A `Pat` where a rewrite builds, accepted until 0.3.0 removes it: a
-/// build-valid shape compiles as its `Template` twin, a `.capture(c)` over a
-/// `var()` / `anything()` leaf stands for the value `c` matched, and anything
-/// else is refused by its constructor's name.
-fn pat_as_template(repr: &PatRepr, py: Python<'_>) -> PyResult<DynTemplate> {
-    let _depth = DepthGuard::enter()?;
-    match repr {
-        PatRepr::Build(t) => compile_tmpl_template(t, py),
-        PatRepr::Wrapped(inner, Wrap::Capture(c)) => {
-            // A RHS capture replaces what it wraps, so only a leaf that
-            // builds nothing itself may be wrapped.
-            let leaf = inner.bind(py).downcast::<PyPat>().is_ok_and(|p| {
-                matches!(
-                    &*p.borrow().repr,
-                    PatRepr::Build(TmplRepr::Var(_)) | PatRepr::Any
-                )
-            });
-            if !leaf {
-                return Err(into_strider_err(anyhow::anyhow!(
-                    "cannot use .capture() over anything but var() / anything() as a \
-                     rewrite RHS: a RHS capture stands for the value it matched and \
-                     would replace what it wraps; capture a var() instead"
-                )));
-            }
-            let c = *c;
-            Ok(DynTemplate(Box::new(move |b| b.capture(c))))
-        }
-        other => Err(rhs_error(other.name())),
-    }
-}
-
 fn cast_tpl(kind: CastKind, x: DynTemplate, b: &mut TemplateBuilder) -> TmplValueRef {
     match kind {
         CastKind::Truncate => tc(tpl::int_truncate(x), b),
@@ -1430,10 +1399,6 @@ impl PatRepr {
             return Ok(pattern);
         }
         Ok(self.compile_match(py)?.into_pattern())
-    }
-
-    pub(crate) fn to_template(&self, py: Python<'_>) -> PyResult<Template> {
-        Ok(pat_as_template(self, py)?.into_template())
     }
 }
 
@@ -1541,12 +1506,10 @@ impl PatLike<'_> {
 
 /// Rewrite-RHS input, separate from the match-side `PatLike` so
 /// `Function.rewrite` / `rewrite_all` type `replace` against the build-valid
-/// `Template`. A bare `Pat` is accepted until 0.3.0 removes it, through
-/// [`pat_as_template`].
+/// `Template`.
 #[derive(FromPyObject)]
 pub enum TemplateLike<'py> {
     Template(Bound<'py, crate::template::PyTemplate>),
-    Pat(Bound<'py, PyPat>),
     Capture(Bound<'py, PyCapture>),
     Str(Bound<'py, PyString>),
 }
@@ -1555,7 +1518,6 @@ impl TemplateLike<'_> {
     pub(crate) fn to_template(&self, py: Python<'_>) -> PyResult<Template> {
         match self {
             TemplateLike::Template(t) => t.borrow().to_template(py),
-            TemplateLike::Pat(p) => p.borrow().repr.to_template(py),
             TemplateLike::Capture(c) => Ok(DynTemplate(Box::new({
                 let cap = c.borrow().inner;
                 move |b| template_var(b, cap)

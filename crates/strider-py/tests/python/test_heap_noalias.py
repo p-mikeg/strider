@@ -5,6 +5,7 @@ covered by the Rust suite; this pins the Python API."""
 from __future__ import annotations
 
 import strider
+from strider import template as tpl
 from strider.pattern import Capture, int_mul, load, store, var
 
 from .conftest import built_function
@@ -64,7 +65,7 @@ def test_rewrite_keeps_the_allocator_set_analyze_ran_under():
     _lift, g = _heap_function()
     assert len(g.find_all(store().heap_only())) == 1
     x, y = Capture(), Capture()
-    assert g.rewrite(find=int_mul(var(x), var(y)), replace=var(x)) == 0
+    assert g.rewrite(find=int_mul(var(x), var(y)), replace=tpl.var(x)) == 0
     assert len(g.find_all(store().heap_only())) == 1, (
         "a rewrite that fires nothing must not drop the store's heap class"
     )
@@ -74,7 +75,7 @@ def test_clone_keeps_the_allocator_set_for_rewrite():
     _lift, g = _heap_function()
     clone = g.clone()
     x, y = Capture(), Capture()
-    clone.rewrite(find=int_mul(var(x), var(y)), replace=var(x))
+    clone.rewrite(find=int_mul(var(x), var(y)), replace=tpl.var(x))
     assert len(clone.find_all(store().heap_only())) == 1
 
 
@@ -94,7 +95,7 @@ def test_optimize_updates_the_allocator_set_rewrite_uses():
     )
     assert len(g.find_all(store().heap_only())) == 1
     x, y = Capture(), Capture()
-    g.rewrite(find=int_mul(var(x), var(y)), replace=var(x))
+    g.rewrite(find=int_mul(var(x), var(y)), replace=tpl.var(x))
     assert len(g.find_all(store().heap_only())) == 1
 
 
