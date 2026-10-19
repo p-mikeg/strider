@@ -95,7 +95,8 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
         // After the checks above, which report the mismatches they can see.
         debug_assert!(
             sleigh.sla_spec() == arch.sla_spec(),
-            "{arch:?}: the Sleigh was built from another sla"
+            "{:?}: the Sleigh was built from another sla",
+            arch.preset()
         );
         Ok(Self {
             sleigh,
