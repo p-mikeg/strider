@@ -22,8 +22,9 @@ smallvec.workspace = true
 test-injectors = []
 # `edge_reads`: `Inputs` / `InputIter` reads, `nth_input` calls and
 # `value_uses` steps on the current thread, the unit strider-ir's
-# validate-cost test counts. Enabled only by strider-ir's dev-dependency, so a
-# per-package bench, an example and the wheel never pay for it.
+# validate-cost test counts. Enabled only by strider-ir's dev-dependency, which
+# a workspace-wide test or bench build unifies in; a per-package bench or
+# example, and the wheel, never pay for it.
 edge-read-count = []
 
 [dev-dependencies]
