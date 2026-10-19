@@ -171,6 +171,10 @@
   `call_other().user_op_id(v)` pin `KindSpec::Exact`, the same test on
   kinds whose payload is that one field, so two such operands of a
   commutative node now count as interchangeable.
+- `TemplateBuilder::{leaf, unary, node}` take a `NodeKind` instead of a
+  `KindSpec`, and `set_template_kind` is gone: `dynamic_leaf(TemplateKind)`
+  builds a leaf whose kind or constant a closure computes. A non-exact spec
+  became an `IntConst` with the target function's constant id 0.
 
 ### Changed, Python
 
@@ -325,6 +329,9 @@
   struct literal; every built one is validated already). Per-address
   overrides keep the stack-geometry check alone. Convention errors say
   "stack pointer" where they said `stack_vn`.
+- `instantiate` refuses a template `IntConst` built from a `NodeKind`: its
+  `ConstId` belongs to another function's interner, so it named whatever
+  constant held that id in the rewritten one.
 
 ### Fixed
 

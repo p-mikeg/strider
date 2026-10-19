@@ -1,11 +1,10 @@
-//! Construction verbs for a [`Template`]. A [`TmplNodeKind::Build`] node's
-//! [`TemplateKind`] is exact by default and overwritable at rewrite time via
-//! [`set_template_kind`](TemplateBuilder::set_template_kind).
+//! Construction verbs for a [`Template`]. A [`TmplNodeKind::Build`] node is
+//! built from an exact `NodeKind`, or from a rewrite-time closure through
+//! [`dynamic_leaf`](TemplateBuilder::dynamic_leaf).
 
+use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{ConstId, IntBinaryOp};
 
-use crate::matcher::KindSpec;
 use crate::staging::{SealNode, StagedGraph};
 use crate::template::graph::{Template, TmplNode, TmplNodeKind, TmplOutput, TmplValue};
 use crate::template::{TemplateKind, TemplateTy};
@@ -66,15 +65,28 @@ impl TemplateBuilder {
         self.declared_captures.push(c);
     }
 
-    /// One value output at slot 0.
-    pub fn leaf(&mut self, kind: KindSpec) -> TmplValueRef {
-        let n = self.add_buildable(kind);
+    /// One value output at slot 0. A template node is built, so it names a
+    /// kind, not a match spec:
+    ///
+    /// ```compile_fail
+    /// use strider_pattern::matcher::KindSpec;
+    /// use strider_pattern::template::TemplateBuilder;
+    /// TemplateBuilder::new().leaf(KindSpec::Any);
+    /// ```
+    pub fn leaf(&mut self, kind: NodeKind) -> TmplValueRef {
+        let n = self.node(kind);
+        self.add_built_output(n, TmplOutput::value(0))
+    }
+
+    /// A leaf whose kind or constant a closure computes at rewrite time.
+    pub fn dynamic_leaf(&mut self, kind: TemplateKind) -> TmplValueRef {
+        let n = TmplNodeRef(self.core.add_node(TmplNodeKind::Build(kind)));
         self.add_built_output(n, TmplOutput::value(0))
     }
 
     /// Consumes `inner` at input slot 0, with one value output at slot 0.
-    pub fn unary(&mut self, kind: KindSpec, inner: TmplValueRef) -> TmplValueRef {
-        let n = self.add_buildable(kind);
+    pub fn unary(&mut self, kind: NodeKind, inner: TmplValueRef) -> TmplValueRef {
+        let n = self.node(kind);
         self.input(n, 0, inner);
         self.add_built_output(n, TmplOutput::value(0))
     }
@@ -82,15 +94,18 @@ impl TemplateBuilder {
     /// Consumes `l` at input slot 0 and `r` at slot 1, with one value output
     /// at slot 0.
     pub fn binary(&mut self, op: IntBinaryOp, l: TmplValueRef, r: TmplValueRef) -> TmplValueRef {
-        let n = self.add_buildable(KindSpec::Exact(NodeKind::IntBinaryOp(op)));
+        let n = self.node(NodeKind::IntBinaryOp(op));
         self.input(n, 0, l);
         self.input(n, 1, r);
         self.add_built_output(n, TmplOutput::value(0))
     }
 
     /// Bare: no inputs or outputs yet.
-    pub fn node(&mut self, kind: KindSpec) -> TmplNodeRef {
-        self.add_buildable(kind)
+    pub fn node(&mut self, kind: NodeKind) -> TmplNodeRef {
+        TmplNodeRef(
+            self.core
+                .add_node(TmplNodeKind::Build(TemplateKind::Exact(kind))),
+        )
     }
 
     pub fn input(&mut self, node: TmplNodeRef, slot: usize, prod: TmplValueRef) {
@@ -113,11 +128,6 @@ impl TemplateBuilder {
     /// Types `out` from the width of a bound LHS capture.
     pub fn set_value_ty_of_binding(&mut self, out: TmplValueRef, cap: crate::Capture) {
         self.out_data_of(out).ty = TemplateTy::InheritBinding(cap);
-    }
-
-    /// Replaces the producing node's build spec with a dynamic-kind closure.
-    pub fn set_template_kind(&mut self, out: TmplValueRef, kind: TemplateKind) {
-        *self.core.kind_mut(out.node) = TmplNodeKind::Build(kind);
     }
 
     /// Adds a payload-less [`TmplNodeKind::Capture`] marker producing a
@@ -152,19 +162,6 @@ impl TemplateBuilder {
         }
     }
 
-    /// A non-exact spec (`Variant`, `Any`, `VariantWith`) has no concrete
-    /// `NodeKind` and MUST be overwritten via
-    /// [`set_template_kind`](Self::set_template_kind) before sealing.
-    fn add_buildable(&mut self, kind: KindSpec) -> TmplNodeRef {
-        // A template only ever passes `Exact`, stamped directly, or a
-        // `Variant`-shaped placeholder from `node()`.
-        let spec = match kind {
-            KindSpec::Exact(k) => TemplateKind::Exact(k),
-            _ => TemplateKind::Exact(NodeKind::IntConst(ConstId::from_u32(0))),
-        };
-        TmplNodeRef(self.core.add_node(TmplNodeKind::Build(spec)))
-    }
-
     fn out_data_of(&mut self, out: TmplValueRef) -> &mut TmplOutput {
         match self.core.output_mut(out.node, out.output) {
             TmplValue::TmplOutput(o) => o,
@@ -179,13 +176,12 @@ impl TemplateBuilder {
 mod tests {
     use super::*;
     use strider_ir::IntBinaryOp;
-    use strider_ir::node::NodeKind;
 
     #[test]
     fn binary_builder_wires_two_inputs_and_one_output() {
         let mut b = TemplateBuilder::new();
-        let x = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(5))));
-        let k = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(1))));
+        let x = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| Ok(5))));
+        let k = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| Ok(1))));
         let _sum = b.binary(IntBinaryOp::Add, x, k);
         let t = b.finish();
         assert_eq!(t.graph.all_node_ids().count(), 3);
@@ -200,7 +196,7 @@ mod tests {
         // buildable node stays `Build(_)` producing a `TmplOutput(_)`.
         let c = crate::capture::Capture::new();
         let mut b = TemplateBuilder::new();
-        let _built = b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(5))));
+        let _built = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| Ok(5))));
         let _cap = b.capture(c);
         let t = b.finish();
 

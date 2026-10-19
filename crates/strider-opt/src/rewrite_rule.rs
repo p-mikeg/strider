@@ -818,7 +818,6 @@ mod tests {
         use super::rewrite_rule_runtime;
         use strider_ir::node::ValueType as VT;
         use strider_pattern::load;
-        use strider_pattern::matcher::KindSpec;
         use strider_pattern::template::{TemplateBuilder, TemplateKind};
 
         // Rewrites `Load(mem, addr)` into
@@ -845,21 +844,20 @@ mod tests {
         let rhs = {
             let mut tb = TemplateBuilder::new();
             let a = tb.capture(addr_cap);
-            let data = tb.leaf(KindSpec::Any);
-            tb.set_template_kind(data, TemplateKind::FnIntConst(Box::new(|_| Ok(7u128))));
+            let data = tb.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| Ok(7u128))));
             tb.set_value_ty(data, VT::int(64));
             // The store needs an incoming memory token; this leaf is
             // input-less, so it becomes a root.
-            let init_mem_node = tb.node(KindSpec::Exact(NodeKind::InitialMemory));
+            let init_mem_node = tb.node(NodeKind::InitialMemory);
             let init_mem = tb.memory_output(init_mem_node, 0);
             // Store(RAM): inputs [mem, addr, data], output [mem_out].
-            let store_node = tb.node(KindSpec::Exact(NodeKind::Store(rsleigh::VnSpace::RAM)));
+            let store_node = tb.node(NodeKind::Store(rsleigh::VnSpace::RAM));
             tb.input(store_node, 0, init_mem);
             tb.input(store_node, 1, a);
             tb.input(store_node, 2, data);
             let store_mem = tb.memory_output(store_node, 0);
             // Load(RAM): inputs [mem, addr], output [value].
-            let load_n = tb.node(KindSpec::Exact(NodeKind::Load(rsleigh::VnSpace::RAM)));
+            let load_n = tb.node(NodeKind::Load(rsleigh::VnSpace::RAM));
             let a2 = tb.capture(addr_cap);
             tb.input(load_n, 0, store_mem);
             tb.input(load_n, 1, a2);

@@ -4,7 +4,7 @@
 //! is what keeps the compile-time wildcard-in-RHS guard.
 
 use strider_ir::IntBinaryOp;
-use strider_ir::node::ValueType;
+use strider_ir::node::{NodeKind, ValueType};
 
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, MatcherBuilder, PatNodeRef, PatValueRef};
@@ -59,13 +59,13 @@ impl BuilderLike for TemplateBuilder {
     type NodeRef = TmplNodeRef;
 
     fn unary(&mut self, kind: KindSpec, inner: Self::OutRef) -> Self::OutRef {
-        TemplateBuilder::unary(self, kind, inner)
+        TemplateBuilder::unary(self, exact(kind), inner)
     }
     fn binary(&mut self, op: IntBinaryOp, l: Self::OutRef, r: Self::OutRef) -> Self::OutRef {
         TemplateBuilder::binary(self, op, l, r)
     }
     fn node(&mut self, kind: KindSpec) -> Self::NodeRef {
-        TemplateBuilder::node(self, kind)
+        TemplateBuilder::node(self, exact(kind))
     }
     fn input(&mut self, node: Self::NodeRef, slot: usize, prod: Self::OutRef) {
         TemplateBuilder::input(self, node, slot, prod);
@@ -77,8 +77,17 @@ impl BuilderLike for TemplateBuilder {
         TemplateBuilder::set_value_ty(self, out, ty);
     }
     fn leaf(&mut self, kind: KindSpec) -> Self::OutRef {
-        TemplateBuilder::leaf(self, kind)
+        TemplateBuilder::leaf(self, exact(kind))
     }
+}
+
+/// A `TemplatePat` names an exact kind: the variant and wildcard specs come
+/// only from the match-only builders.
+fn exact(kind: KindSpec) -> NodeKind {
+    let KindSpec::Exact(k) = kind else {
+        unreachable!("a template node is built from an exact kind")
+    };
+    k
 }
 
 /// Blanket-implemented for every [`MatchPat`] over [`MatcherBuilder`] and every
