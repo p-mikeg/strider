@@ -8,6 +8,7 @@
     )
 )]
 
+mod assumptions;
 mod builder;
 mod control_flow_view;
 pub use control_flow_view::{
@@ -36,6 +37,7 @@ mod test_cfgs;
 
 pub use crate::error::Result;
 pub use crate::node::const_value::ConstId;
+pub use assumptions::AssumptionOptions;
 pub use builder::{FunctionBuilder, IRBuilder, IRBuilderExt};
 pub use node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, VnTypeExt,

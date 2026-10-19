@@ -543,6 +543,10 @@
 - `matcher::InputSlot { At, Any }` and `MatcherBuilder::input_any(node,
   prod)`, the raw existential input.
 - `matcher::KindSpec` implements `PartialEq` and `Eq`.
+- `strider_ir::AssumptionOptions`, still re-exported as
+  `strider_opt::AssumptionOptions`: `union_with` adds every claim another
+  set holds, `omitted_by` names the claims another set lacks, and it derives
+  `PartialEq` / `Eq`.
 
 ## 0.2.0
 
