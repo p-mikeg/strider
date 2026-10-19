@@ -47,7 +47,7 @@ use strider_ir::node::{NodeId, ValueId, ValueKind};
 
 use crate::bindings::{Binding, Bindings};
 use crate::matcher::{
-    InputSlot, KindSpec, Matcher, OutputKindSpec, PatNode, PatValue, Pattern, SlotMode, cast_levels,
+    InputSlot, Matcher, OutputKindSpec, PatNode, PatValue, Pattern, SlotMode, cast_levels,
 };
 
 struct Ctx<'a> {
@@ -375,16 +375,16 @@ fn try_match_at(
     let ext_slots: Vec<usize> = if n_fixed == inputs.len() {
         Vec::new()
     } else {
-        // Commutative only on a raw kind-`Any` node matched at a commutative
-        // kind: no builder puts an existential on one.
+        // Commutative only on a raw `MatcherBuilder` node whose spec admits a
+        // commutative kind: no typed builder puts an existential on one.
         let pinned: Vec<usize> = if commutative {
             Vec::new()
         } else {
             inputs[..n_fixed]
                 .iter()
-                .filter_map(|e| match e.consumer_slot {
-                    InputSlot::At(s) => Some(s),
-                    InputSlot::Any => None,
+                .map(|e| match e.consumer_slot {
+                    InputSlot::At(s) => s,
+                    InputSlot::Any => unreachable!("an existential in the fixed prefix"),
                 })
                 .collect()
         };
@@ -822,7 +822,7 @@ fn node_interchangeable(
         && na.alternation == nb.alternation
         && na.first_match == nb.first_match
         && na.input_slots == nb.input_slots
-        && kind_spec_interchangeable(&na.kind, &nb.kind))
+        && na.kind == nb.kind)
     {
         return false;
     }
@@ -869,15 +869,6 @@ fn output_kind_eq(a: &OutputKindSpec, b: &OutputKindSpec) -> bool {
         | (OutputKindSpec::Memory, OutputKindSpec::Memory)
         | (OutputKindSpec::PhiToken, OutputKindSpec::PhiToken) => true,
         (OutputKindSpec::Value(x), OutputKindSpec::Value(y)) => x == y,
-        _ => false,
-    }
-}
-
-fn kind_spec_interchangeable(a: &KindSpec, b: &KindSpec) -> bool {
-    match (a, b) {
-        (KindSpec::Any, KindSpec::Any) => true,
-        (KindSpec::Variant(x), KindSpec::Variant(y)) => x == y,
-        (KindSpec::Exact(x), KindSpec::Exact(y)) => x == y,
         _ => false,
     }
 }

@@ -503,6 +503,7 @@
 - `strider_pattern::node_builders::defer_drop`, the drop pit that frees a
   deep operand tower without recursing; strider-py's own copy is gone.
 - `MatcherBuilder::input_any(node, prod)`, the raw existential input.
+- `matcher::KindSpec` implements `PartialEq` and `Eq`.
 
 ## 0.2.0
 
