@@ -80,13 +80,7 @@ pub(crate) fn classify_dispatch_value(
         index: idx_value,
         range,
         rebase,
-    } = decompose_index(
-        function,
-        ranges,
-        target_value,
-        site,
-        &assumptions.noalias_allocators,
-    )?;
+    } = decompose_index(function, ranges, target_value, site)?;
     let idx_mask = function
         .value_type_opt(idx_value)
         .and_then(ValueType::int_mask_u128)?;
@@ -162,7 +156,6 @@ fn decompose_index(
     ranges: &mut crate::value_range::RangeMap<'_>,
     target: ValueId,
     site: NodeId,
-    noalias_allocators: &rustc_hash::FxHashSet<u64>,
 ) -> Option<PinnedIndex> {
     // Vertex 0 is the virtual ENTRY; `value[i]` is vertex `i`'s cone value,
     // `None` for the ENTRY.
@@ -191,9 +184,7 @@ fn decompose_index(
         // The addressing arithmetic, a foldable load's address, or nothing for
         // an opaque source.
         let inputs: Vec<ValueId> = match function.node_kind(function.producer(v)) {
-            NodeKind::Load(_) => foldable_load_address(function, v, noalias_allocators)
-                .into_iter()
-                .collect(),
+            NodeKind::Load(_) => foldable_load_address(function, v).into_iter().collect(),
             NodeKind::InitialVar(_)
             | NodeKind::Phi
             | NodeKind::Call { .. }
@@ -210,7 +201,7 @@ fn decompose_index(
             // `sp + const` and alignment masks but rejects `sp & 0xF`, which is
             // a bounded VALUE and must stay a candidate index.
             if function.int_const_u128(p).is_some()
-                || crate::mem_analysis::decompose(function, p, noalias_allocators).is_some()
+                || crate::mem_analysis::decompose(function, p).is_some()
             {
                 continue;
             }
@@ -252,7 +243,7 @@ fn decompose_index(
     // `bounded_index`.  Where the chain carries a bounded value BELOW that
     // load, inside its address, that one is the index; a second mask on the
     // cell itself is not, so the depth comparison is against the load.
-    let (depth, hit) = foldable_cell_load(function, shallowest.1.index, noalias_allocators)
+    let (depth, hit) = foldable_cell_load(function, shallowest.1.index)
         .and_then(|cell| chain.iter().position(|&v| v == cell))
         .and_then(|at| hits.iter().copied().find(|&(depth, _)| depth > at))
         .unwrap_or(shallowest);
@@ -262,16 +253,12 @@ fn decompose_index(
 /// The cell `v` reduces to, through the width changes, masks and constant
 /// scalings between a load and the address arithmetic, when that is a load of
 /// a table the evaluator can fold.
-fn foldable_cell_load(
-    function: &strider_ir::Function,
-    v: ValueId,
-    noalias_allocators: &rustc_hash::FxHashSet<u64>,
-) -> Option<ValueId> {
+fn foldable_cell_load(function: &strider_ir::Function, v: ValueId) -> Option<ValueId> {
     let mut base = v;
     for _ in 0..MAX_SCALE_STRIP {
         let inner = match *function.node_kind(function.producer(base)) {
             NodeKind::Load(_) => {
-                return foldable_load_address(function, base, noalias_allocators).map(|_| base);
+                return foldable_load_address(function, base).map(|_| base);
             }
             NodeKind::Extend(ExtendOp::ZeroExtend) | NodeKind::Truncate => {
                 function.int_inputs(base).next()
@@ -359,28 +346,19 @@ fn offsets_keep_range(
 /// The check is operand-level because a stack table load
 /// `Load[(sp+base) + idx*stride]` has an INDEX-DEPENDENT address that never
 /// decomposes as a whole, though its `sp+base` operand does.
-fn foldable_load_address(
-    function: &strider_ir::Function,
-    load: ValueId,
-    noalias_allocators: &rustc_hash::FxHashSet<u64>,
-) -> Option<ValueId> {
+fn foldable_load_address(function: &strider_ir::Function, load: ValueId) -> Option<ValueId> {
     let addr = function.int_inputs(load).next()?;
-    let foldable = is_base_operand(function, addr, noalias_allocators)
+    let foldable = is_base_operand(function, addr)
         || function
             .int_inputs(addr)
-            .any(|op| is_base_operand(function, op, noalias_allocators));
+            .any(|op| is_base_operand(function, op));
     foldable.then_some(addr)
 }
 
 /// The two bases the evaluator can fold a `Load` through: a const rodata base
 /// or an SP-rooted stack base.
-fn is_base_operand(
-    function: &strider_ir::Function,
-    v: ValueId,
-    noalias_allocators: &rustc_hash::FxHashSet<u64>,
-) -> bool {
-    function.int_const_u128(v).is_some()
-        || crate::mem_analysis::decompose(function, v, noalias_allocators).is_some()
+fn is_base_operand(function: &strider_ir::Function, v: ValueId) -> bool {
+    function.int_const_u128(v).is_some() || crate::mem_analysis::decompose(function, v).is_some()
 }
 
 /// A genuinely-bounded non-constant integer whose bound is a real narrowing,

@@ -79,6 +79,14 @@ def test_clone_keeps_the_allocator_set_for_rewrite():
     assert len(clone.find_all(store().heap_only())) == 1
 
 
+def test_optimize_keeps_the_allocator_set_analyze_ran_under():
+    """`optimize` with default options adds claims to the ones `analyze` ran
+    under; it does not replace them, so the store stays `heap_only`."""
+    lift, g = _heap_function()
+    lift.optimize(g)
+    assert len(g.find_all(store().heap_only())) == 1
+
+
 def test_optimize_updates_the_allocator_set_rewrite_uses():
     """`optimize` is the other writer of the recorded allocator set: a set
     handed to it must reach a later `rewrite`, even though `analyze` ran

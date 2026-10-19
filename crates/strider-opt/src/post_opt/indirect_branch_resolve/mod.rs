@@ -45,10 +45,6 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 /// (`MemPurpose::TableWalk`): this walk decides a decoded branch target,
 /// so a relaxation that is wrong produces a wrong edge rather than a wrong
 /// fold.
-///
-/// `assumptions.noalias_allocators` must be the set `function` was last
-/// optimized under ([`strider_ir::SideTables::memory_allocators`]); another
-/// set debug-panics.
 #[must_use]
 pub fn classify_target(
     function: &strider_ir::Function,
@@ -164,10 +160,8 @@ pub struct ClassifiedSites {
 /// Classifies every live `IndirectBranch` placeholder, and re-derives every
 /// live `Switch` from its retained selector. Reads `f` only.
 ///
-/// `options` are the ones `f` was optimized under: the table walk reads the
-/// memory-class memo, so `options.assumptions.noalias_allocators` must be the
-/// set it was computed under ([`strider_ir::SideTables::memory_allocators`]);
-/// another set debug-panics. With `!options.resolve_indirect_branches`,
+/// `options` are the ones `f` was optimized under; the table walk reads the
+/// allocator set off `f`. With `!options.resolve_indirect_branches`,
 /// `resolved` is empty.
 ///
 /// A dispatch value only becomes classifiable once the optimizer has folded

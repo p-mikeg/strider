@@ -1920,11 +1920,11 @@ fn nested_loop_exit_merge_never_forwards_the_store_after_phi_collapse() -> Resul
     Ok(())
 }
 
-/// A rewire outlives the run that made it, so it may only name a clobber that
-/// holds with the assumption knobs off: re-optimising under
-/// `AssumptionOptions::none()` must not inherit an edge past the `Call`.
+/// The narrowed edge is read afterwards by walks that honour fewer claims than
+/// forwarding does, so it may only name a clobber that holds with every claim
+/// off: under `escape_analysis` the edge still stops at the `Call`.
 #[test]
-fn narrowing_across_a_call_never_outlives_escape_analysis() -> Result<()> {
+fn narrowing_across_a_call_ignores_escape_analysis() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let frame = b.build_int_const((-32i64) as u64, ValueType::int(32))?;
@@ -1946,10 +1946,6 @@ fn narrowing_across_a_call_never_outlives_escape_analysis() -> Result<()> {
     relaxed.options.assumptions.escape_analysis = true;
     crate::test_support::standard_test().run(&mut fg, &mut relaxed)?;
 
-    let mut sound = crate::OptCtx::at_floor(None);
-    sound.options.assumptions = crate::AssumptionOptions::none();
-    crate::test_support::standard_test().run(&mut fg, &mut sound)?;
-
     let load = fg
         .walk_kind(|k| matches!(k, NodeKind::Load(_)))
         .next()
@@ -1963,11 +1959,11 @@ fn narrowing_across_a_call_never_outlives_escape_analysis() -> Result<()> {
     Ok(())
 }
 
-/// `stack_global_disjoint` is a claim about the program, so an edge narrowed
-/// under it may not survive into a run without it: re-optimising under
-/// `AssumptionOptions::none()` must not inherit an edge past the global store.
+/// `stack_global_disjoint` is a claim about the program, and the narrowed edge
+/// serves walks that may not honour it: under the claim the edge still stops
+/// at the global store.
 #[test]
-fn narrowing_past_a_global_store_never_outlives_stack_global_disjoint() -> Result<()> {
+fn narrowing_past_a_global_store_ignores_stack_global_disjoint() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
@@ -1984,14 +1980,10 @@ fn narrowing_past_a_global_store_never_outlives_stack_global_disjoint() -> Resul
 
     // Granted, so the alias analyzer calls the global store disjoint and
     // narrowing is possible at all. At the floor both analyzers agree and
-    // there is nothing for the rewire to outlive.
+    // there is nothing for the narrowing to ignore.
     let mut relaxed = crate::OptCtx::at_floor(None);
     relaxed.options.assumptions.stack_global_disjoint = true;
     crate::test_support::standard_test().run(&mut fg, &mut relaxed)?;
-
-    let mut sound = crate::OptCtx::at_floor(None);
-    sound.options.assumptions = crate::AssumptionOptions::none();
-    crate::test_support::standard_test().run(&mut fg, &mut sound)?;
 
     let load = fg
         .walk_kind(|k| matches!(k, NodeKind::Load(_)))
@@ -2007,10 +1999,10 @@ fn narrowing_past_a_global_store_never_outlives_stack_global_disjoint() -> Resul
 }
 
 /// `noalias_allocators` is a claim too: a listed callee steps a stack load past
-/// itself only while the claim holds, so the narrowed edge may not carry it
-/// into a run under `AssumptionOptions::none()`.
+/// itself for forwarding, while the narrowed edge, which the jump-table walk
+/// reads with no call relaxation, still stops at the call.
 #[test]
-fn narrowing_across_an_allocator_never_outlives_noalias_allocators() -> Result<()> {
+fn narrowing_across_an_allocator_ignores_noalias_allocators() -> Result<()> {
     const ALLOCATOR: u64 = 0x1000;
     let sp = sp32_vn();
     // A return register, without which the call has no fresh heap base and
@@ -2049,10 +2041,6 @@ fn narrowing_across_an_allocator_never_outlives_noalias_allocators() -> Result<(
     let mut relaxed = crate::OptCtx::at_floor(None);
     relaxed.options.assumptions.noalias_allocators = [ALLOCATOR].into_iter().collect();
     crate::test_support::standard_test().run(&mut fg, &mut relaxed)?;
-
-    let mut sound = crate::OptCtx::at_floor(None);
-    sound.options.assumptions = crate::AssumptionOptions::none();
-    crate::test_support::standard_test().run(&mut fg, &mut sound)?;
 
     let load = fg
         .walk_kind(|k| matches!(k, NodeKind::Load(_)))

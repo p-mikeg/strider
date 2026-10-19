@@ -86,10 +86,6 @@ enum StoreEffect {
 impl<'f> ReturnTargets<'f> {
     /// The verifier for `function`'s return sites under `assumptions`, with no
     /// claim decided yet; each query reuses the claims earlier ones settled.
-    ///
-    /// `assumptions.noalias_allocators` must be the set `function` was last
-    /// optimized under ([`strider_ir::SideTables::memory_allocators`]);
-    /// another set debug-panics.
     #[must_use]
     pub fn new(function: &'f Function, assumptions: &'f crate::AssumptionOptions) -> Self {
         Self {
@@ -405,7 +401,7 @@ impl<'f> ReturnTargets<'f> {
             base,
             offset,
             kind: MemKind::Stack,
-        } = decompose(function, addr, &self.assumptions.noalias_allocators)?
+        } = decompose(function, addr)?
         else {
             return None;
         };

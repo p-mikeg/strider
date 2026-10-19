@@ -1,7 +1,6 @@
 //! Stamps the side-table memory class with the slot `(base, K)` for every Store
 //! / Load whose address decomposes to a single `base + K` terminal.  `base` is
-//! SP-derived, or the return of an allocator in the set the function was last
-//! optimized under.
+//! SP-derived, or the return of an allocator the function's claims list.
 //!
 //! `K` is only comparable against another access sharing the same `base`.
 

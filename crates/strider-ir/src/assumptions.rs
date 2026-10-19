@@ -17,6 +17,11 @@
 /// [`return_slots_survive_untracked_writes`](Self::return_slots_survive_untracked_writes),
 /// without which a return after any call is reported as unverified.  A test
 /// takes the floor instead, through strider-opt's `OptCtx::at_floor`.
+///
+/// Claims accumulate per [`Function`](crate::Function): every optimizer run
+/// merges its own into [`Function::assumptions`](crate::Function::assumptions),
+/// which every pass reads, and none withdraws one.  A function without a
+/// claim is a fresh lift.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssumptionOptions {
     /// The stack and the global / constant-address regions (`.data`,
@@ -28,11 +33,12 @@ pub struct AssumptionOptions {
     pub stack_global_disjoint: bool,
     /// A `Call` on an incoming stack-argument slot's memory chain leaves the
     /// slot as it found it, so the argument is still detectable after the
-    /// call.  Reaches which loads count as incoming arguments, never the
-    /// memory edges: a narrowed edge outlives the pass, so narrowing uses what
-    /// a call-blocking walk proves.  It holds for a conforming callee that was
-    /// not handed a pointer into the area, since those slots sit above the
-    /// entry SP.  A memory-clobbering `CallOther` is outside it entirely.
+    /// call.  Reaches which loads count as incoming arguments, never the memory
+    /// edges: a narrowed edge is read afterwards by walks that block at every
+    /// call, so narrowing uses what a call-blocking walk proves.  It holds for
+    /// a conforming callee that was not handed a pointer into the area, since
+    /// those slots sit above the entry SP.  A memory-clobbering `CallOther` is
+    /// outside it entirely.
     /// Default ON.
     pub assume_incoming_args_survive_calls: bool,
     /// A `Store` rooted at a *different* SP base than the entry SP (e.g. an
@@ -55,10 +61,10 @@ pub struct AssumptionOptions {
     ///
     /// Honoured by `LoadForward` alone.  Stack-argument collection,
     /// incoming-argument detection, the jump-table walk and `LoadForward`'s
-    /// permanent narrowing pin it off, keeping the full window: each settles
-    /// something that outlives the run (a call's arguments, the function's, a
-    /// CFG edge, a memory edge), where a wrong narrowing is not a lost fold but
-    /// a wrong answer.
+    /// narrowing pin it off, keeping the full window: each decides something a
+    /// later reader takes as settled (a call's arguments, the function's, a
+    /// CFG edge, a memory edge the stricter walks then read), where a wrong
+    /// narrowing is not a lost fold but a wrong answer.
     pub callee_preserves_stack_args: bool,
     /// Callee addresses of pure `noalias` heap allocators (`malloc`/`calloc`-like:
     /// a size in, a fresh non-overlapping pointer out, no pointer arguments).

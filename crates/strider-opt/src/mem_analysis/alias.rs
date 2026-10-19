@@ -10,8 +10,8 @@ use super::ring::comparable_distance;
 use super::{AddrClass, AliasVerdict, MemExpr, MemKind};
 
 pub(super) fn classify_addr(function: &Function, addr: ValueId, options: &MemOptions) -> AddrClass {
-    let decomposed = decompose(function, addr, &options.noalias_allocators)
-        .filter(|e| e.kind == MemKind::Stack || options.heap_claims);
+    let decomposed =
+        decompose(function, addr).filter(|e| e.kind == MemKind::Stack || options.heap_claims);
     match decomposed {
         Some(MemExpr { base, offset, kind }) => match kind {
             MemKind::Heap => AddrClass::HeapRooted { base, offset },

@@ -25,7 +25,8 @@ impl OptimizationResult {
 }
 
 /// Per-run, cross-pass context threaded through every [`Optimizer::apply`]
-/// call.
+/// call. `options.assumptions` are the claims the run adds to the function's;
+/// a pass reads the merged set off the function.
 pub struct OptCtx<'mem> {
     /// `None` cuts off every read of the image: `LoadReadOnly` bails, and a
     /// jump table stored in the image does not decode.
@@ -34,6 +35,8 @@ pub struct OptCtx<'mem> {
 }
 
 impl<'mem> OptCtx<'mem> {
+    /// The production defaults, so a run under it adds the three default-on
+    /// claims to whatever the function holds.
     #[must_use]
     pub fn new(rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>) -> Self {
         Self {
@@ -43,9 +46,9 @@ impl<'mem> OptCtx<'mem> {
     }
 
     /// [`Self::new`] with every claim cleared
-    /// ([`crate::AssumptionOptions::none`]), which is what a test wants: a
-    /// case that needs a claim states it, so no test rests on a claim by
-    /// inheriting one. `new` keeps the production defaults.
+    /// ([`crate::AssumptionOptions::none`]), adding no claim, which is what a
+    /// test wants: a case that needs a claim states it, so no test rests on a
+    /// claim by inheriting one. `new` keeps the production defaults.
     #[cfg(any(test, feature = "test-util"))]
     #[must_use]
     pub fn at_floor(rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>) -> Self {
@@ -102,8 +105,8 @@ pub trait Optimizer: OptimizerClone {
     }
 }
 
-/// Runs one pass through a throwaway `EditFunction`: resets the memory analysis
-/// under `octx`'s allocator set, recording it, culls dead nodes before and
+/// Runs one pass through a throwaway `EditFunction`: merges `octx`'s claims
+/// into the function's, drops the memory analysis, culls dead nodes before and
 /// drains after.
 ///
 /// `function` must be built (`function.entry()` is a valid `NodeId`).
@@ -144,11 +147,11 @@ pub fn run_one_unvalidated(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<OptimizationResult> {
-    // As `run` starts: a memo left by an earlier run was derived under that
-    // run's allocator set.
-    function
-        .side_tables_mut()
-        .reset_analyses(&octx.options.assumptions.noalias_allocators);
+    // As `run` starts: this run's claims join the ones in force, and a memo an
+    // edit since the last run can have outdated is dropped.
+    let st = function.side_tables_mut();
+    st.assume(&octx.options.assumptions);
+    st.invalidate_analyses();
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     let result = apply_checked(pass, &mut edit, octx)?;
@@ -173,11 +176,10 @@ fn apply_checked(
     Ok(result)
 }
 
-/// Post-pass sibling of [`run_one`].
-///
-/// `octx`'s allocator set must be the one `function` was last optimized under
-/// ([`strider_ir::SideTables::memory_allocators`]); the post-pass stamps under
-/// that one.
+/// Post-pass sibling of [`run_one`]: merges `octx`'s claims into the
+/// function's, keeping the memory classes unless a claim it adds outdates
+/// them.  A claim it adds drops the classes;
+/// [`crate::refresh_memory_classes`] restamps them.
 ///
 /// # Errors
 ///
@@ -188,11 +190,7 @@ pub fn run_post(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<()> {
-    debug_assert_eq!(
-        function.side_tables().memory_allocators(),
-        &octx.options.assumptions.noalias_allocators,
-        "run_post under an allocator set the function was not optimized with"
-    );
+    function.side_tables_mut().assume(&octx.options.assumptions);
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     pass.apply(&mut edit, octx)?;
@@ -342,17 +340,22 @@ impl OptimizerPipeline {
     /// and validated: the caller keeps the graph, so it is handed back in the
     /// shape every other exit hands it back in, and a validation failure there
     /// is reported ahead of the non-convergence.  The post-passes do not run.
+    ///
+    /// `ctx.options.assumptions` are the claims this run adds: they merge into
+    /// [`strider_ir::Function::assumptions`], which every pass reads, and none
+    /// already in force is withdrawn.
     pub fn run(
         &self,
         function: &mut strider_ir::Function,
         ctx: &mut OptCtx<'_>,
     ) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
-        // A memo left by an earlier run was derived under that run's
-        // allocator set.
-        function
-            .side_tables_mut()
-            .reset_analyses(&ctx.options.assumptions.noalias_allocators);
+        // This run's claims join the ones in force, and a memo left by an
+        // earlier run or an edit since is dropped: a rewrite can move the
+        // address it names.
+        let st = function.side_tables_mut();
+        st.assume(&ctx.options.assumptions);
+        st.invalidate_analyses();
         // Scoped so the borrow of `function` ends before validation.
         let converged = {
             let mut edit = crate::EditFunction::new(function);
@@ -584,8 +587,7 @@ mod tests {
     }
 
     /// `run_one` stands in for one pass of `run`'s fixed-point loop, which
-    /// clears the assumption-derived memos: a decomposition cached under one
-    /// configuration must not be read back under another.
+    /// drops the memos an edit since the last run can have outdated.
     #[test]
     fn run_one_resets_the_memory_analysis() -> crate::Result<()> {
         use super::{OptimizationResult, Optimizer};
@@ -613,37 +615,50 @@ mod tests {
         crate::pipeline::run_one(&NoOp, &mut function, &mut OptCtx::at_floor(None))?;
         assert!(
             function.side_tables().memory_decomp(returned).1.is_none(),
-            "run_one must clear a memo derived under another configuration"
+            "run_one must drop a memo an earlier edit left"
         );
         Ok(())
     }
 
-    /// The memo records the allocator set of the run that last reset it.
+    /// `run` drops a memo an outside edit left, even when it adds no claim.
     #[test]
-    fn run_records_the_allocator_set() -> crate::Result<()> {
+    fn run_resets_the_memory_analysis() -> crate::Result<()> {
         let mut function = one_const_fn(5);
-        let mut ctx = OptCtx::at_floor(None);
-        ctx.options.assumptions.noalias_allocators = [0x1000].into_iter().collect();
-        super::OptimizerPipeline::new().run(&mut function, &mut ctx)?;
-        assert_eq!(
-            function.side_tables().memory_allocators(),
-            &ctx.options.assumptions.noalias_allocators
+        let returned = crate::test_support::return_value(function.graph())?;
+        function
+            .side_tables()
+            .set_stack_slot(returned, returned, 16);
+        super::OptimizerPipeline::new().run(&mut function, &mut OptCtx::at_floor(None))?;
+        assert!(
+            function.side_tables().memory_decomp(returned).1.is_none(),
+            "run must drop a memo an earlier edit left"
         );
         Ok(())
     }
 
-    /// `run_one_unvalidated` resets the memo as `run` does, set included.
+    /// `run`, `run_one_unvalidated` and `run_post` each merge their claims,
+    /// and a run claiming nothing withdraws none.
     #[test]
-    fn run_one_unvalidated_records_the_allocator_set() -> crate::Result<()> {
+    fn every_run_merges_its_claims_and_none_withdraws() -> crate::Result<()> {
         let mut function = one_const_fn(5);
-        let mut ctx = OptCtx::at_floor(None);
-        ctx.options.assumptions.noalias_allocators = [0x1000].into_iter().collect();
+        let mut listed = OptCtx::at_floor(None);
+        listed.options.assumptions.noalias_allocators = [0x1000].into_iter().collect();
+        super::OptimizerPipeline::new().run(&mut function, &mut listed)?;
+        let mut disjoint = OptCtx::at_floor(None);
+        disjoint.options.assumptions.stack_global_disjoint = true;
         let pass = CountsRuns(std::sync::Arc::default());
-        super::run_one_unvalidated(&pass, &mut function, &mut ctx)?;
-        assert_eq!(
-            function.side_tables().memory_allocators(),
-            &ctx.options.assumptions.noalias_allocators
-        );
+        super::run_one_unvalidated(&pass, &mut function, &mut disjoint)?;
+        let mut escaping = OptCtx::at_floor(None);
+        escaping.options.assumptions.escape_analysis = true;
+        super::run_post(&crate::StackOffsetDetect, &mut function, &mut escaping)?;
+        super::OptimizerPipeline::new().run(&mut function, &mut OptCtx::at_floor(None))?;
+        let expected = crate::AssumptionOptions {
+            noalias_allocators: [0x1000].into_iter().collect(),
+            stack_global_disjoint: true,
+            escape_analysis: true,
+            ..crate::AssumptionOptions::none()
+        };
+        assert_eq!(function.assumptions(), &expected);
         Ok(())
     }
 

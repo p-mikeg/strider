@@ -412,13 +412,7 @@ fn decompose_index_picks_shallowest_narrowed_index() {
     let branch = sole_indirect_branch(&g);
     let target_value = g.indirect_branch_target(branch);
     let mut ranges = crate::value_range::RangeMap::new(&g).unwrap();
-    match decompose_index(
-        &g,
-        &mut ranges,
-        target_value,
-        branch,
-        &rustc_hash::FxHashSet::default(),
-    ) {
+    match decompose_index(&g, &mut ranges, target_value, branch) {
         Some(hit) => assert_eq!(
             (hit.range.lo(), hit.range.hi(), hit.rebase),
             (0, 7, 0),
@@ -2184,21 +2178,20 @@ fn stack_array_behind_a_heap_store(allocator: u64, targets: &[u64]) -> Function 
     b.build().unwrap()
 }
 
-/// The `decompose` memo a run under a listed allocator leaves behind does not
-/// answer a later run over the same function without one: there the store
-/// through the allocation is an opaque pointer that may overwrite a label.
+/// A heap verdict rests on the allocator claim: without it the store through
+/// the allocation is an opaque pointer that may overwrite a label, and once the
+/// claim is in force a later run that omits it keeps it.
 #[test]
-fn a_heap_verdict_from_an_earlier_run_does_not_open_the_slot_map() {
+fn a_heap_verdict_opens_the_slot_map_only_under_its_claim() {
     const MALLOC: u64 = 0x1000;
     let targets = [0x401190u64, 0x401180u64];
-    let mut fg = stack_array_behind_a_heap_store(MALLOC, &targets);
     let mut p = OptimizerPipeline::new();
     p.add(ConstantFold::new());
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    let site = sole_indirect_branch(&fg);
     let resolve = |fg: &mut Function, allocators: &[u64]| {
+        let site = sole_indirect_branch(fg);
         let mut ctx = crate::OptCtx::at_floor(None);
         ctx.options.assumptions.noalias_allocators = allocators.iter().copied().collect();
         p.run(fg, &mut ctx).unwrap();
@@ -2208,13 +2201,24 @@ fn a_heap_verdict_from_an_earlier_run_does_not_open_the_slot_map() {
             .get(&site)
             .cloned()
     };
+    let table = Some(ResolvedTargets::table(vec![
+        0x401180u64.into(),
+        0x401190u64.into(),
+    ]));
+    assert_eq!(
+        resolve(&mut stack_array_behind_a_heap_store(MALLOC, &targets), &[]),
+        None,
+        "without the claim the store may overwrite a label"
+    );
+    let mut fg = stack_array_behind_a_heap_store(MALLOC, &targets);
     assert_eq!(
         resolve(&mut fg, &[MALLOC]),
-        Some(ResolvedTargets::table(vec![
-            0x401180u64.into(),
-            0x401190u64.into()
-        ])),
+        table,
         "a listed allocator's store is disjoint from the labels"
     );
-    assert_eq!(resolve(&mut fg, &[]), None);
+    assert_eq!(
+        resolve(&mut fg, &[]),
+        table,
+        "a later run without the claim keeps it"
+    );
 }
