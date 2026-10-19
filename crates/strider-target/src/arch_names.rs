@@ -214,13 +214,25 @@ mod tests {
             ArchPreset::ALL.iter().map(|p| p.name()).collect();
         assert_eq!(names.len(), ArchPreset::ALL.len());
         assert_eq!(
+            ArchPreset::ALL.iter().map(|p| p.name()).collect::<Vec<_>>(),
             [
-                ArchPreset::X86_64,
-                ArchPreset::MipsBe32,
-                ArchPreset::Aarch64Be
+                "x86",
+                "x86_64",
+                "arm",
+                "arm_be",
+                "arm_be_kernel",
+                "arm_thumb",
+                "aarch64",
+                "aarch64be",
+                "mipsbe32",
+                "mipsle32",
+                "mipsbe64",
+                "mipsle64",
+                "ppc32be",
+                "ppc32le",
+                "ppc64be",
+                "ppc64le",
             ]
-            .map(ArchPreset::name),
-            ["x86_64", "mipsbe32", "aarch64be"]
         );
     }
 }
