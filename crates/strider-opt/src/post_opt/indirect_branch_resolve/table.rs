@@ -45,19 +45,10 @@ pub(crate) fn classify_table_dispatch(
     branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
     ranges: &mut crate::value_range::RangeMap<'_>,
-    assumptions: &crate::AssumptionOptions,
     mode_value: Option<ValueId>,
 ) -> Option<ResolvedTargets> {
     let target_value = function.indirect_branch_target(branch);
-    classify_dispatch_value(
-        function,
-        branch,
-        target_value,
-        rom,
-        ranges,
-        assumptions,
-        mode_value,
-    )
+    classify_dispatch_value(function, branch, target_value, rom, ranges, mode_value)
 }
 
 /// `classify_table_dispatch` against an explicit dispatch value, so an
@@ -72,7 +63,6 @@ pub(crate) fn classify_dispatch_value(
     target_value: ValueId,
     rom: Option<&dyn ReadOnlyMemory>,
     ranges: &mut crate::value_range::RangeMap<'_>,
-    assumptions: &crate::AssumptionOptions,
     mode_value: Option<ValueId>,
 ) -> Option<ResolvedTargets> {
     // A `Load[reg]` function pointer has no bounded dominator and defers here.
@@ -85,7 +75,7 @@ pub(crate) fn classify_dispatch_value(
         .value_type_opt(idx_value)
         .and_then(ValueType::int_mask_u128)?;
 
-    let mut ev = super::eval::Evaluator::new(function, rom, assumptions);
+    let mut ev = super::eval::Evaluator::new(function, rom);
     let pruned = super::eval::cone_order_pruned(function, target_value, idx_value);
     // The branch's committed ISA mode (an interworking `bx`/`jr`-dispatch),
     // `(entry & 1)`, evaluated per index so each arm carries its own mode.

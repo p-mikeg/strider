@@ -224,6 +224,9 @@
   `require_float_value`, `require_integer_type`, `require_float_type` and
   `validate_value_inputs` are crate-private. A `build_*` call still runs
   every one.
+- `ReturnTargets::new(function)` and `classify_target(function, branch,
+  rom, ranges)` lose their `AssumptionOptions` argument: both read
+  `Function::assumptions`, the claims the function was optimized under.
 
 ### Changed, Python
 

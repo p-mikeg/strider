@@ -19,14 +19,18 @@ fn sole_branch(f: &strider_ir::Function) -> strider_ir::node::NodeId {
         .expect("fixture has an IndirectBranch placeholder")
 }
 
+/// The verdicts below were pinned under the default claims; the fixtures are
+/// optimized at the floor, so a copy claims them first.
 fn classify_target_bare(view: &strider_ir::Function) -> anyhow::Result<Option<ResolvedTargets>> {
-    let mut ranges = RangeMap::new(view)?;
+    let mut view = view.clone();
+    view.side_tables_mut()
+        .assume(&strider_orchestrator::opt::AssumptionOptions::default());
+    let mut ranges = RangeMap::new(&view)?;
     Ok(classify_target(
-        view,
-        sole_branch(view),
+        &view,
+        sole_branch(&view),
         None,
         &mut ranges,
-        &strider_orchestrator::opt::AssumptionOptions::default(),
     ))
 }
 
