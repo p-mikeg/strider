@@ -605,7 +605,6 @@ _ZERO_ARG_RETURNS = {
         ("CallingConvention", "preserves_all"): "CallingConvention",
         ("CallingConvention", "preserves_regs"): "CallingConvention",
         ("CallingConvention", "name"): "str",
-        ("Sleigh", "arch_name"): "str",
         ("Vn", "space"): "VnSpace",
         ("Vn", "off"): "int",
         ("Vn", "size"): "int",

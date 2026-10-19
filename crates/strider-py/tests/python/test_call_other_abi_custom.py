@@ -1,13 +1,13 @@
 """`CallOtherAbi` carries a full user-op footprint from Python.
 
-The register names are resolved against a `Sleigh` at construction, the
-way `CallingConvention.custom` resolves its own.
+The register names are resolved against the arch's register table at
+construction, the way `CallingConvention.custom` resolves its own.
 """
 
 import pytest
 
 import strider
-from strider.sleigh import CallOtherAbi, CallingConvention, Sleigh, SleighArch
+from strider.sleigh import CallOtherAbi, CallingConvention, SleighArch
 
 # rdtsc; ret
 RDTSC_RET = b"\x0f\x31\xc3"
@@ -18,11 +18,6 @@ RDTSC_MOV_RET = b"\x0f\x31\x48\x89\xd8\xc3"
 def _lifter(code=RDTSC_RET):
     mem = strider.reader.BufferReader(0x1000, code)
     return strider.lift.lifter(SleighArch.x86_64(), mem)
-
-
-def _sleigh():
-    mem = strider.reader.BufferReader(0x1000, RDTSC_RET)
-    return Sleigh(SleighArch.x86_64(), mem)
 
 
 def _analyze(code, abis):
@@ -55,7 +50,7 @@ def _initial_var_names(fn, sleigh):
 
 def test_custom_resolves_register_names():
     abi = CallOtherAbi.custom(
-        _sleigh(),
+        SleighArch.x86_64(),
         implicit_reads=["RCX"],
         implicit_writes=["RBX"],
         clobbers_memory=True,
@@ -70,13 +65,13 @@ def test_custom_unknown_register_raises_at_construction():
     with pytest.raises(
         strider.StriderError, match='implicit_reads: unknown sleigh register name "NOSUCHREG"'
     ):
-        CallOtherAbi.custom(_sleigh(), implicit_reads=["NOSUCHREG"])
+        CallOtherAbi.custom(SleighArch.x86_64(), implicit_reads=["NOSUCHREG"])
 
 
 def test_implicit_read_reaches_the_lifted_graph():
     """The override's read register must appear as an argument of the
     user-op node, not merely be accepted by the constructor."""
-    sleigh = _sleigh()
+    sleigh = SleighArch.x86_64()
     plain = _analyze(RDTSC_RET, {})
     plain_node = _call_other(plain, "rdtsc")
     assert plain_node is not None
@@ -99,7 +94,7 @@ def test_implicit_write_replaces_the_entry_value():
     """`mov rax, rbx` reads RBX's entry value; declaring the user-op a
     writer of RBX makes it read the user-op's output instead, so the
     entry value goes dead."""
-    sleigh = _sleigh()
+    sleigh = SleighArch.x86_64()
     plain = _analyze(RDTSC_MOV_RET, {})
     assert "RBX" in _initial_var_names(plain, sleigh)
 
@@ -152,7 +147,7 @@ def test_classification_reads_back():
     assert builtin.is_no_return is False
     assert lift.call_other_abi("no_such_user_op") is None
 
-    custom = CallOtherAbi.custom(_sleigh(), implicit_reads=["RCX"])
+    custom = CallOtherAbi.custom(SleighArch.x86_64(), implicit_reads=["RCX"])
     opts = strider.cfg.CfgOptions(call_other_abis={"rdtsc": custom})
     assert lift.call_other_abi("rdtsc", opts) == custom
     assert lift.call_other_abi("rdtsc", opts) != builtin
@@ -166,7 +161,7 @@ def test_syscall_lifts_with_its_full_implicit_footprint():
     """`syscall` names no register in its p-code, so only its ABI row puts
     R10 (read) and R11 (write) in the tracked universe: neither is a SysV
     argument register nor callee-saved."""
-    sleigh = _sleigh()
+    sleigh = SleighArch.x86_64()
     fn = _analyze(SYSCALL_RET, {})
     node = _call_other(fn, "syscall")
     assert node is not None
@@ -185,7 +180,7 @@ def test_custom_reads_a_register_with_no_calling_convention_role():
     footprint is the only thing that can track it."""
     mem = strider.reader.BufferReader(0x1000, RDTSC_RET)
     lift = strider.lift.lifter(SleighArch.x86(), mem)
-    sleigh = Sleigh(SleighArch.x86(), mem)
+    sleigh = SleighArch.x86()
     abi = CallOtherAbi.custom(sleigh, implicit_reads=["ECX"], implicit_writes=["EDI"])
     opts = strider.lift.LifterOptions(
         cfg=strider.cfg.CfgOptions(call_other_abis={"rdtsc": abi})
@@ -196,14 +191,6 @@ def test_custom_reads_a_register_with_no_calling_convention_role():
     assert [
         sleigh.reg_name(vn) for i in node.inputs() if (vn := i.vn()) is not None
     ] == ["ECX"]
-
-
-def test_custom_takes_an_arch_and_resolves_as_a_sleigh_does():
-    by_arch = CallOtherAbi.custom(SleighArch.x86_64(), implicit_writes=["EAX", "EDX"])
-    by_sleigh = CallOtherAbi.custom(_sleigh(), implicit_writes=["EAX", "EDX"])
-    assert by_arch == by_sleigh
-    texts = [_analyze(RDTSC_RET, {"rdtsc": abi}).to_text() for abi in (by_arch, by_sleigh)]
-    assert texts[0] == texts[1]
 
 
 @pytest.mark.parametrize(
@@ -217,5 +204,5 @@ def test_custom_takes_an_arch_and_resolves_as_a_sleigh_does():
     ids=["CallOtherAbi", "CallingConvention"],
 )
 def test_custom_names_what_it_takes_for_a_wrong_type(custom):
-    with pytest.raises(TypeError, match="expected a SleighArch or a Sleigh, got str"):
+    with pytest.raises(TypeError, match="argument 'sleigh': 'str' object cannot be converted to 'SleighArch'"):
         custom("x86")

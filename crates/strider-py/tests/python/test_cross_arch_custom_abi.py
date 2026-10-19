@@ -10,7 +10,7 @@ are not there.
 import pytest
 
 import strider
-from strider.sleigh import CallOtherAbi, CallingConvention, Sleigh, SleighArch
+from strider.sleigh import CallOtherAbi, CallingConvention, SleighArch
 
 # mov eax, edi ; ret
 MOV_EAX_EDI_RET = b"\x89\xf8\xc3"
@@ -24,9 +24,9 @@ def _mem(code=MOV_EAX_EDI_RET):
     return strider.reader.BufferReader(0x1000, code)
 
 
-def _custom_cc(arch, code=MOV_EAX_EDI_RET):
+def _custom_cc(arch):
     return CallingConvention.custom(
-        sleigh=Sleigh(arch, _mem(code)),
+        sleigh=arch,
         arg_passing_regs=X86_64_ARGS,
         callee_saved_regs=[],
         ret_val_regs=["EAX"],
@@ -75,7 +75,7 @@ def test_custom_per_address_cc_from_another_arch_is_rejected():
 def test_custom_call_other_abi_from_another_arch_is_rejected():
     lift = strider.lift.lifter(SleighArch.x86_64(), _mem(RDTSC_RET))
     foreign = CallOtherAbi.custom(
-        sleigh=Sleigh(SleighArch.x86(), _mem(RDTSC_RET)),
+        sleigh=SleighArch.x86(),
         implicit_writes=["EAX", "EDX"],
     )
     opts = strider.lift.LifterOptions(
@@ -88,7 +88,7 @@ def test_custom_call_other_abi_from_another_arch_is_rejected():
 def test_custom_call_other_abi_from_the_same_arch_is_accepted():
     lift = strider.lift.lifter(SleighArch.x86_64(), _mem(RDTSC_RET))
     abi = CallOtherAbi.custom(
-        sleigh=Sleigh(SleighArch.x86_64(), _mem(RDTSC_RET)),
+        sleigh=SleighArch.x86_64(),
         implicit_writes=["EAX", "EDX"],
     )
     opts = strider.lift.LifterOptions(
@@ -104,7 +104,7 @@ def test_a_call_other_abi_accepted_on_one_arch_is_checked_again_on_another():
     """The resolved table is kept per arch, so one options object reused on a
     second `Lifter` is checked against that one's register table."""
     abi = CallOtherAbi.custom(
-        sleigh=Sleigh(SleighArch.x86_64(), _mem(RDTSC_RET)),
+        sleigh=SleighArch.x86_64(),
         implicit_writes=["EAX", "EDX"],
     )
     opts = strider.lift.LifterOptions(
@@ -132,7 +132,7 @@ def test_an_empty_custom_abi_does_not_repr_as_a_preset():
     """`__repr__` is "the constructor call that produces this ABI", and
     `__eq__` keys on `source_arch`, so an empty `custom` must not print as
     the preset it is unequal to."""
-    empty = CallOtherAbi.custom(sleigh=Sleigh(SleighArch.x86_64(), _mem(RDTSC_RET)))
+    empty = CallOtherAbi.custom(sleigh=SleighArch.x86_64())
     assert empty != CallOtherAbi.pure()
     assert repr(empty) != repr(CallOtherAbi.pure())
     assert repr(empty).startswith("CallOtherAbi.custom(")

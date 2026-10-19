@@ -10,8 +10,8 @@ class BufferReader:
     """Raw byte reader for firmware or custom sources.
 
     Serves both roles: the `mem` (instruction fetch) and `rom` (read-only
-    memory) arguments of `strider.lift.lifter`, and the `mem` argument of
-    `strider.sleigh.Sleigh`. Cheap to copy; copies share one backing state.
+    memory) arguments of `strider.lift.lifter`. Cheap to copy; copies share
+    one backing state.
     """
     def __init__(self, base_addr: int, data: Union[bytes, bytearray, Sequence[int]]) -> None:
         """Serve `data` as the bytes mapped starting at `base_addr`. Raises

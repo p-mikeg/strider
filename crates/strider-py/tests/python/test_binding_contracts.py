@@ -22,7 +22,7 @@ import pytest
 import strider
 from strider import template as tpl
 from strider.pattern import Capture, anything, int_add, ret, var
-from strider.sleigh import CallingConvention, Sleigh, SleighArch
+from strider.sleigh import CallingConvention, SleighArch
 
 from .conftest import fixture_path
 
@@ -283,9 +283,8 @@ def test_errors_still_carry_a_backtrace():
 
 
 def _custom_cc(arch) -> CallingConvention:
-    sleigh = Sleigh(arch, strider.reader.BufferReader(_BASE, b"\x00" * 4))
     return CallingConvention.custom(
-        sleigh=sleigh,
+        sleigh=arch,
         arg_passing_regs=["r0", "r1"],
         callee_saved_regs=["r4", "lr"],
         ret_val_regs=["r0"],

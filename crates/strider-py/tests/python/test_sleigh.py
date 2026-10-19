@@ -1,25 +1,13 @@
 import strider
 
 
-def test_sleigh_construct_with_buffer_reader():
-    arch = strider.sleigh.SleighArch.x86_64()
-    mem = strider.reader.BufferReader(0x1000, b"\x90\x90\x90\x90")  # 4 NOPs
-    sleigh = strider.sleigh.Sleigh(arch, mem)
-    assert sleigh is not None
-    assert sleigh.arch_name() == "x86_64"
-    assert "Sleigh" in repr(sleigh)
-
-
 # `Vn.__repr__` delegates to rsleigh's own formatter, so a formatter change
 # upstream lands here directly and these expectations move with it.
 
 
 def test_vn_repr_for_register_uses_rsleigh_display():
     # Sleigh always assigns x86_64 RSP to REGISTER:0x20, size 8.
-    arch = strider.sleigh.SleighArch.x86_64()
-    mem = strider.reader.BufferReader(0x1000, b"\x00")
-    sleigh = strider.sleigh.Sleigh(arch, mem)
-    rsp = sleigh.reg("RSP")
+    rsp = strider.sleigh.SleighArch.x86_64().reg("RSP")
     assert rsp is not None
     # Registers format as `<space-shortcut>[0x<off>]:<size>`; REGISTER's
     # shortcut character is `%`.
@@ -84,13 +72,11 @@ def test_vn_hash_includes_addr_space():
     )
 
 
-def test_sleigh_arch_resolves_registers_as_a_sleigh_does():
+def test_sleigh_arch_resolves_register_names_both_ways():
     arch = strider.sleigh.SleighArch.x86_64()
-    sleigh = strider.sleigh.Sleigh(arch, strider.reader.BufferReader(0x1000, b"\x00"))
     for name in ("RSP", "EAX", "XMM0"):
         vn = arch.reg(name)
         assert vn is not None
-        assert vn == sleigh.reg(name)
         assert arch.reg_name(vn) == name
     assert arch.reg("NOT_A_REGISTER") is None
     assert arch.reg_name(strider.sleigh.Vn(strider.sleigh.VnSpace.RAM, 0, 8)) is None
