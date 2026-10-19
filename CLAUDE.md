@@ -127,7 +127,9 @@ Strider:
   `rewrite_rule` facade over `strider-pattern`, and the
   `indirect_branch_resolve` classifiers (`classify_sites`, which `analyze`
   calls after the pipeline). Pure graph->graph; the classifier reports targets
-  and the orchestrator rebuilds the CFG from them.
+  and the orchestrator rebuilds the CFG from them. What the classifiers read
+  (`value_range`, the known-bits facts, `classify_target`) is public only
+  under `test-util`.
 - `strider-orchestrator`: `Strider::analyze` and its `AnalyzeOptions`, plus the
   re-exported lift engine (`Lifter` / `LiftOutcome` at the crate root) and
   `strider-opt` re-exported as `opt`.
