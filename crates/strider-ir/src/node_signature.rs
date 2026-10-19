@@ -902,6 +902,28 @@ mod tests {
         for kind in ctrl_then_mem {
             assert_eq!(name(kind, NodeKind::CTRL_MEM_SLOT), Some("mem"), "{kind:?}");
         }
+        // And no kind outside those lists has a fixed `ctrl` at the head, or a
+        // `mem` after it.
+        let listed = |kinds: &[NodeKind], k: NodeKind| {
+            kinds
+                .iter()
+                .any(|l| std::mem::discriminant(l) == std::mem::discriminant(&k))
+        };
+        for kind in every_node_kind() {
+            // A repeating tail (`Region`'s predecessors) holds no fixed slot.
+            let tail_repeats = *kind.input_arity().end() == usize::MAX;
+            let fixed = |slot: usize| {
+                (slot < kind.input_head_len() || !tail_repeats).then(|| name(kind, slot))
+            };
+            let ctrl = fixed(NodeKind::CTRL_SLOT) == Some(Some("ctrl"));
+            let ctrl_mem = ctrl && fixed(NodeKind::CTRL_MEM_SLOT) == Some(Some("mem"));
+            assert_eq!(
+                ctrl,
+                listed(&ctrl_then_mem, kind) || listed(&[NodeKind::If, switch], kind),
+                "{kind:?}"
+            );
+            assert_eq!(ctrl_mem, listed(&ctrl_then_mem, kind), "{kind:?}");
+        }
         for kind in [NodeKind::Load(space), NodeKind::Store(space)] {
             assert_eq!(
                 name(kind, NodeKind::ACCESS_MEM_SLOT),
