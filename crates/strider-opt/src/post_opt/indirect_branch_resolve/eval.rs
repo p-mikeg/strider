@@ -9,7 +9,7 @@
 //! whose arms agree.  Any unresolved value, a non-const dispatch result, or a
 //! cycle yields `None`.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
@@ -194,7 +194,7 @@ impl<'a> Evaluator<'a> {
         let map = self
             .slot_maps
             .entry((mem, base))
-            .or_insert_with(|| SlotMap::build(f, mem, base, self.off_segment.noalias_allocators()));
+            .or_insert_with(|| SlotMap::build(f, mem, base));
         let reaching = map.reaching(offset, size);
         match reaching {
             Reaching::Store(store) => Some(f.store_data(store)),
@@ -315,14 +315,9 @@ enum Reaching {
 }
 
 impl SlotMap {
-    fn build(
-        function: &strider_ir::Function,
-        mem: ValueId,
-        base: ValueId,
-        noalias_allocators: &FxHashSet<u64>,
-    ) -> Self {
+    fn build(function: &strider_ir::Function, mem: ValueId, base: ValueId) -> Self {
         let mut budget = SLOT_MAP_BUDGET;
-        Self::build_within(function, mem, base, &mut budget, 0, noalias_allocators)
+        Self::build_within(function, mem, base, &mut budget, 0)
     }
 
     fn build_within(
@@ -331,7 +326,6 @@ impl SlotMap {
         base: ValueId,
         budget: &mut u32,
         depth: u32,
-        noalias_allocators: &FxHashSet<u64>,
     ) -> Self {
         let mut claims: FxHashMap<i128, Claim> = FxHashMap::default();
         let addr_ty = function.value_type_opt(base);
@@ -359,25 +353,12 @@ impl SlotMap {
                         .phi_data_inputs(node)
                         .collect::<SmallVec<[ValueId; 4]>>()
                         .into_iter()
-                        .map(|arm| {
-                            Self::build_within(
-                                function,
-                                arm,
-                                base,
-                                budget,
-                                depth + 1,
-                                noalias_allocators,
-                            )
-                        })
+                        .map(|arm| Self::build_within(function, arm, base, budget, depth + 1))
                         .collect();
                     break;
                 }
                 NodeKind::Store(space) if space == rsleigh::VnSpace::RAM => {
-                    match crate::mem_analysis::decompose(
-                        function,
-                        function.store_addr(node),
-                        noalias_allocators,
-                    ) {
+                    match crate::mem_analysis::decompose(function, function.store_addr(node)) {
                         Some(MemExpr {
                             base: store_base,
                             offset,

@@ -113,6 +113,15 @@ impl Function {
         &mut self.side_tables
     }
 
+    /// The claims in force: the union of every optimizer run's
+    /// `AssumptionOptions` over this function, none before the first.  A run
+    /// adds claims and withdraws none, so a function without one is a fresh
+    /// lift.
+    #[inline]
+    pub fn assumptions(&self) -> &crate::AssumptionOptions {
+        self.side_tables.assumptions()
+    }
+
     /// Interns `value` masked to `ty`'s width.
     ///
     /// `ty` must be an integer type; a float one masks to zero, so every value
@@ -654,17 +663,20 @@ mod compact_tests {
             .create_node(NodeKind::IntConst(id), [], [ValueKind::Typed(ty)])
     }
 
-    /// The two facts about the lifted calls name no id, and survive as they
+    /// The call fact and the claims in force name no id, and survive as they
     /// are.
     #[test]
-    fn compact_keeps_the_call_facts() {
+    fn compact_keeps_the_call_fact_and_the_claims() {
         let mut f = test_function();
-        let allocators: rustc_hash::FxHashSet<u64> = [0x4000].into_iter().collect();
-        f.side_tables_mut().reset_analyses(&allocators);
+        let listed = crate::AssumptionOptions {
+            noalias_allocators: [0x4000].into_iter().collect(),
+            ..crate::AssumptionOptions::none()
+        };
+        f.side_tables_mut().assume(&listed);
         f.side_tables_mut().set_frame_address_in_call_register();
         f.compact().expect("compact succeeds on a valid function");
         assert!(f.side_tables().frame_address_in_call_register());
-        assert_eq!(f.side_tables().memory_allocators(), &allocators);
+        assert_eq!(f.assumptions(), &listed);
     }
 
     #[test]
