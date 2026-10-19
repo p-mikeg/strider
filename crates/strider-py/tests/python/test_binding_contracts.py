@@ -165,8 +165,8 @@ def test_an_add_elf_off_thread_merges_into_every_view():
     def off_thread():
         try:
             prog.add_elf(other)
-        except strider.StriderError as e:
-            failure.append(str(e))
+        except Exception as e:
+            failure.append(repr(e))
 
     t = threading.Thread(target=off_thread, daemon=True)
     t.start()

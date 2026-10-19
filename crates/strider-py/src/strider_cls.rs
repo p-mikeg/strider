@@ -101,11 +101,11 @@ fn try_borrow_lifter_mut<'py>(
     slf.try_borrow_mut().map_err(|_| reentrant_lifter_err())
 }
 
-pub(crate) fn reentrant_lifter_err() -> PyErr {
+fn reentrant_lifter_err() -> PyErr {
     into_strider_err(anyhow::anyhow!(
-        "this Lifter is already in use by an in-progress analyze/build_cfg, on \
-         this thread (a `read()` callback cannot re-enter it) or another; build \
-         a separate Lifter for concurrent work"
+        "this Lifter is already in use by another call (analyze, build_cfg and \
+         add_elf exclude every other call, from any thread or a `read()` \
+         callback); build a separate Lifter for concurrent work"
     ))
 }
 
@@ -534,8 +534,8 @@ impl PyLifter {
         self.rom_obj = None;
     }
 
-    /// INTERNAL. Rebuild this handle's Sleigh and orchestrator state from
-    /// `arch`/`mem`/`rom`.
+    /// INTERNAL, for tests. Rebuild this handle's Sleigh and orchestrator
+    /// state from `arch`/`mem`/`rom`.
     #[pyo3(name = "_rebuild", signature = (arch, mem, rom = None))]
     fn rebuild(
         slf: &Bound<'_, Self>,
@@ -552,7 +552,9 @@ impl PyLifter {
     /// INTERNAL. Merge the ELF at `path` into `elf` and rebuild over the
     /// merged image, under one exclusive borrow: a handle in use refuses
     /// before anything is merged, so `symbol` and `read` never see an ELF
-    /// the decoder does not.
+    /// the decoder does not. The rebuild follows the merge because an engine
+    /// reads a snapshot of the regions; it rebuilds an arch that already
+    /// built over the same readers, so only allocation can fail it.
     #[pyo3(name = "_merge_elf")]
     fn merge_elf(
         slf: &Bound<'_, Self>,
@@ -644,7 +646,7 @@ impl PyLifter {
                 )
                 .map_err(crate::errors::from_analyze_err)
         })?;
-        Ok(PyCfg::new(py, inner, slf))
+        Ok(PyCfg::new(inner, slf, target))
     }
 
     /// Lift, optimise and resolve the function at `entry`, returning an
@@ -761,7 +763,7 @@ impl PyLifter {
         // released.
         check_pending_control_flow()?;
 
-        let cfg_obj = Py::new(py, PyCfg::new(py, cfg, slf.clone_ref(py)))?;
+        let cfg_obj = Py::new(py, PyCfg::new(cfg, slf.clone_ref(py), target))?;
 
         let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
         let result = analyze_result_type(py)?

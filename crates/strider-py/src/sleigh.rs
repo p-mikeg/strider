@@ -12,7 +12,7 @@ pub struct PySleigh {
     /// table it froze its varnodes against.
     pub(crate) arch: strider_target::SleighArch,
     /// Probed once at construction.
-    pub(crate) regs: rsleigh::SleighRegs,
+    regs: rsleigh::SleighRegs,
 }
 
 impl PySleigh {
