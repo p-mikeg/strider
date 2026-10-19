@@ -19,7 +19,7 @@ fn match_lhs_once(fx: &Function, lhs: &Pattern) -> (NodeId, Bindings, ValueType)
     let hits = m.find_all(lhs).unwrap();
     assert_eq!(hits.len(), 1, "LHS must match exactly once");
     let root_node = hits[0].root();
-    let bindings = hits[0].bindings_clone();
+    let bindings = hits[0].bindings().clone();
     let [root_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
     let root_ty = fx.value_kind(root_value).as_value().unwrap();
     (root_node, bindings, root_ty)

@@ -703,7 +703,7 @@ mod tests {
         let root = hits[0].root();
         let [root_value] = fx.node_outputs_exact::<1>(root).unwrap();
         let root_ty = fx.value_kind(root_value).as_value().unwrap();
-        (root, hits[0].bindings_clone(), root_ty)
+        (root, hits[0].bindings().clone(), root_ty)
     }
 
     /// Instantiates `rhs` over the one match of `lhs` and splices it in, so

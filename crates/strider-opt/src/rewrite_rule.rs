@@ -79,7 +79,7 @@ fn rewrite_rule_impl(
         let (bindings, matched_nodes) = {
             let matcher = Matcher::new(edit.function());
             match matcher.match_at(node, &lhs)? {
-                Some(m) => (m.bindings_clone(), m.matched_nodes().to_vec()),
+                Some(m) => (m.bindings().clone(), m.matched_nodes().to_vec()),
                 None => return Ok(None),
             }
         };

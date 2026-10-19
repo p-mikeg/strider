@@ -646,7 +646,7 @@ impl<'f> Matcher<'f> {
             });
         }
 
-        dedup_on_shared_captures(&mut out, self.function().graph());
+        dedup_on_shared_captures(&mut out);
         Ok(out)
     }
 }
@@ -1182,18 +1182,11 @@ impl<'f> ConstraintEval<'f> {
     }
 }
 
-/// One capture's identity within a tuple, at the granularity [`row_agrees`]
-/// compares: a value binding is its own value, so two rows binding one capture
-/// to distinct outputs of one node are distinct rows rather than duplicates.
-#[derive(PartialEq, Eq, Hash)]
-enum CaptureKey {
-    Value(ValueId),
-    Node(NodeId),
-}
-
 /// Deduplicate joined tuples by capture binding signature: every capture bound
-/// anywhere in the tuple, sorted. Of equal signatures only the first is kept,
-/// order-preserving. An empty signature is always kept.
+/// anywhere in the tuple, sorted. Keyed on the `Binding` itself, the
+/// granularity [`row_agrees`] compares: two rows binding one capture to
+/// distinct outputs of one node are distinct rows. Of equal signatures only
+/// the first is kept, order-preserving. An empty signature is always kept.
 ///
 /// A pattern that binds NOTHING is identified by its root instead. Its matches
 /// are otherwise indistinguishable, so every tuple differing only in which one
@@ -1207,10 +1200,10 @@ enum CaptureKey {
 /// `row_agrees` already made each tuple internally consistent, so a capture
 /// bound as a value anywhere in the tuple has the same value everywhere and the
 /// first one seen identifies it.
-fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>, graph: &Graph) {
-    let mut seen: FxHashSet<Vec<(u32, CaptureKey)>> = FxHashSet::default();
+fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>) {
+    let mut seen: FxHashSet<Vec<(u32, Binding)>> = FxHashSet::default();
     acc.retain(|tuple| {
-        let mut sig: Vec<(u32, CaptureKey)> = Vec::new();
+        let mut sig: Vec<(u32, Binding)> = Vec::new();
         let mut sig_ids: FxHashSet<u32> = FxHashSet::default();
         for (slot, m) in tuple.iter().enumerate() {
             if m.bindings.iter().next().is_none() {
@@ -1219,19 +1212,12 @@ fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>, graph: &Graph) {
                 // ids count up from 0, so counting down from `u32::MAX` cannot
                 // collide with one for any tuple that fits in memory.
                 let slot_id = u32::MAX - u32::try_from(slot).unwrap_or(0);
-                sig.push((slot_id, CaptureKey::Node(m.root())));
+                sig.push((slot_id, Binding::Node(m.root())));
                 continue;
             }
             for (cap, binding) in m.bindings.iter() {
-                let key = match binding {
-                    Binding::Value(v) => CaptureKey::Value(v),
-                    Binding::Node(_) => match m.bindings.get_node(cap, graph) {
-                        Some(node) => CaptureKey::Node(node),
-                        None => continue,
-                    },
-                };
                 if sig_ids.insert(cap.id()) {
-                    sig.push((cap.id(), key));
+                    sig.push((cap.id(), binding));
                 }
             }
         }
