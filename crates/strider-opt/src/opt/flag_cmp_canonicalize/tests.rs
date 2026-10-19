@@ -1553,10 +1553,9 @@ fn a_chain_of_flag_tests_collapses_in_linear_use_moves() -> Result<()> {
         edit.clean();
         let moved = edit.uses_moved();
         drop(edit);
-        assert!(
-            strider_ir::validate::validate(&fg).is_ok(),
-            "the collapse leaves valid IR"
-        );
+        if let Err(errors) = strider_ir::validate::validate(&fg) {
+            panic!("the collapse left invalid IR: {}", errors.report(&fg));
+        }
         let xors = fg
             .walk_kind(|k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Xor)))
             .count();
