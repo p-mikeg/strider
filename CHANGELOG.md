@@ -217,6 +217,10 @@
   `pin_value_out_slot(out)`, which pins the vertex's own slot; create the
   vertex at the slot you pinned.
 - `Match::bindings_clone` is gone: it was `m.bindings().clone()`.
+- `OwnedElf::regions` and `strider_reader::elf::LoadFilter` need the new
+  `test-util` feature, and `strider_reader::elf::sections` is private (its
+  public items stay re-exported under `elf::`): `OwnedElf::image` is the one
+  way to cut an image's fetch and ROM region sets.
 
 ### Changed, Python
 
@@ -332,7 +336,7 @@
   (not `DecodeEngine::new`) an unpaired `ISAModeSwitch`. Before, only a debug
   build asserted it. A debug build also asserts that `DecodeEngine::new`'s
   `Sleigh` was built from its arch's sla and pspec.
-- `OwnedElf::regions` keeps one region per start: where a writable mapping
+- `OwnedElf::image` keeps one region per start: where a writable mapping
   cuts two overlapping read-only ones, the pieces left over that share a
   start collapse to the later, as `MemRegionsLookupTable` collapses them, so
   a crafted image can return fewer regions.
@@ -360,8 +364,8 @@
   mapped", or "spans past mapped memory" for a read running into one), where
   it said "is in a writable mapping". Two crafted shapes serve other bytes:
   where a writable mapping cuts two overlapping read-only mappings into
-  pieces at one start, the ROM view serves the later piece's bytes, as
-  `OwnedElf::regions` does; and on an image the section walk serves without
+  pieces at one start, the ROM view serves the later piece's bytes, as the
+  fetch set does; and on an image the section walk serves without
   a rebase (ET_CORE, an unknown `e_type`), a read-only section that shares
   its address with an earlier writable-and-executable one answers ROM reads
   past that one's end, where fetch keeps only the earlier section.

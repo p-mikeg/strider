@@ -233,8 +233,8 @@ impl Fixture {
     }
 
     /// [`Self::strider`] whose ROM also serves the relocated GOT
-    /// (`LoadFilter::ImmutableAndRelocatedGot`), the opt-in a PIC dispatch
-    /// whose table base is loaded through the GOT needs.
+    /// (`RelocationMode::Applied { got_is_rom: true }`), the opt-in a PIC
+    /// dispatch whose table base is loaded through the GOT needs.
     pub fn strider_serving_got(&self) -> (Strider<ElfFileMemReader>, BuiltCallingConvention) {
         let rom = ElfFileMemReader::new(
             &self.elf,
