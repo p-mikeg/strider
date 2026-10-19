@@ -232,6 +232,8 @@
   as their first (`sleigh=`) argument, as well as a `Sleigh`; names resolve
   through one table per arch per process. `SleighArch.reg(name)` and
   `SleighArch.reg_name(vn)` look registers up without a `Sleigh`.
+- `.ordered()` on `inputs_of_width(n, x)` and `bool_inputs(x)` pins what it
+  pins on `x`, as in Rust; it raised.
 
 ### Changed, Rust
 
