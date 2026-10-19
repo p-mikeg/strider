@@ -540,9 +540,10 @@ mod tests {
     fn raw_dags_keep_their_instantiation_order() {
         let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
         // Rooted; DAG-shaped (a value read twice or a node with two read
-        // outputs); one value read twice by one node; two read outputs of one
-        // node; slots wired out of order; a read memory output.
-        let mut shapes = [0u64; 6];
+        // outputs); one value read by two nodes; one value read twice by one
+        // node; two read outputs of one node; slots wired out of order; a read
+        // memory output.
+        let mut shapes = [0u64; 7];
         for _ in 0..CASES {
             let (t, out_of_order) = raw_dag(&mut rng);
             if !check_order(&t) {
@@ -550,6 +551,12 @@ mod tests {
             }
             let g = &t.graph;
             let read_twice = g.all_value_ids().any(|v| g.value_uses(v).count() >= 2);
+            let shared = g.all_value_ids().any(|v| {
+                let mut readers = g.value_uses(v).map(|(n, _)| n);
+                readers
+                    .next()
+                    .is_some_and(|first| readers.any(|n| n != first))
+            });
             let two_read_outputs = g.all_node_ids().any(|n| {
                 let outs = g.node_outputs(n);
                 outs.iter()
@@ -569,10 +576,11 @@ mod tests {
             });
             shapes[0] += 1;
             shapes[1] += u64::from(read_twice || two_read_outputs);
-            shapes[2] += u64::from(double_read);
-            shapes[3] += u64::from(two_read_outputs);
-            shapes[4] += u64::from(out_of_order);
-            shapes[5] += u64::from(memory_read);
+            shapes[2] += u64::from(shared);
+            shapes[3] += u64::from(double_read);
+            shapes[4] += u64::from(two_read_outputs);
+            shapes[5] += u64::from(out_of_order);
+            shapes[6] += u64::from(memory_read);
         }
         let kept = shapes[0];
         assert!(kept >= CASES / 4, "too few rooted templates: {shapes:?}");

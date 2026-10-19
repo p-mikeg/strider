@@ -1179,3 +1179,20 @@ fn an_existential_beside_a_commutative_operand_takes_the_other_slot() {
     let _out = b.value_output(node, 0);
     a::matches(&function, b.finish(), 1);
 }
+
+/// The slot the roaming operand took is claimed, so a wildcard existential
+/// beside it takes only the other one: one configuration, not one per slot.
+#[test]
+fn an_existential_wildcard_skips_the_slot_the_roaming_operand_took() {
+    let function = shapes::int_bin(3, 5, IntBinaryOp::Add);
+    let k = Capture::new();
+    let mut b = MatcherBuilder::new();
+    let node = b.node(KindSpec::Any);
+    let five = MatchPat::compile(int_const(5u128), &mut b);
+    let rest = MatchPat::compile(anything().capture(k), &mut b);
+    b.input(node, 0, five);
+    b.input_any(node, rest);
+    let _out = b.value_output(node, 0);
+    let hits = a::matches(&function, b.finish(), 1);
+    assert_eq!(hits[0].bindings().get_uint(k, &function), Some(3));
+}
