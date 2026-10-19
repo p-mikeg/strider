@@ -614,7 +614,7 @@ fn a_call_other_override_outranks_the_unconditional_ppc_trap_rule() {
     assert_eq!(decoded, vec![0x1000, 0x1004, 0x1008, 0x100c]);
 
     let opts = CfgOptions {
-        call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+        call_other_overrides: &strider_target::call_other_abi::CallOtherOverrides::new(vec![(
             "trapWord".to_owned(),
             strider_target::call_other_abi::CallOtherClass::PURE.into(),
         )])

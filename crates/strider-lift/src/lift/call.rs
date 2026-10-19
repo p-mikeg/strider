@@ -292,7 +292,7 @@ mod tests {
             no_return: false,
         };
         let opts = strider_cfg::CfgOptions {
-            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+            call_other_overrides: &strider_target::call_other_abi::CallOtherOverrides::new(vec![(
                 "syscall".to_owned(),
                 strider_target::call_other_abi::CallOtherOverride::Built(abi),
             )])
@@ -360,7 +360,7 @@ mod tests {
         );
 
         let opts = strider_cfg::CfgOptions {
-            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+            call_other_overrides: &strider_target::call_other_abi::CallOtherOverrides::new(vec![(
                 "trapWord".to_owned(),
                 CallOtherClass::MEM_CLOBBER.into(),
             )])
@@ -399,7 +399,7 @@ mod tests {
             .expect("cc");
         let plain = strider_cfg::CfgOptions::default();
         let keep_returning = strider_cfg::CfgOptions {
-            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+            call_other_overrides: &strider_target::call_other_abi::CallOtherOverrides::new(vec![(
                 "trapWord".to_owned(),
                 CallOtherClass::MEM_CLOBBER.into(),
             )])
@@ -459,7 +459,7 @@ mod tests {
             .expect("cc");
         let plain = strider_cfg::CfgOptions::default();
         let keep_returning = strider_cfg::CfgOptions {
-            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+            call_other_overrides: &strider_target::call_other_abi::CallOtherOverrides::new(vec![(
                 "trapWord".to_owned(),
                 CallOtherClass::MEM_CLOBBER.into(),
             )])
@@ -489,19 +489,25 @@ mod tests {
             "the cfg ended the region at the trap, so the lift sinks there"
         );
 
-        let overriding = |class: CallOtherClass| strider_cfg::CfgOptions {
-            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+        let overrides = |class: CallOtherClass| {
+            strider_target::call_other_abi::CallOtherOverrides::new(vec![(
                 "trapWord".to_owned(),
                 class.into(),
             )])
-            .expect("unique override names"),
+            .expect("unique override names")
+        };
+        let (ends, noop) = (
+            overrides(CallOtherClass::NO_RETURN),
+            overrides(CallOtherClass::NoOp),
+        );
+        let overriding = |call_other_overrides| strider_cfg::CfgOptions {
+            call_other_overrides,
             ..Default::default()
         };
         let cfg = lifter
-            .build_cfg(0x1000u64.into(), &overriding(CallOtherClass::NO_RETURN))
+            .build_cfg(0x1000u64.into(), &overriding(&ends))
             .expect("cfg");
-        let Err(err) = lifter.build_ir_with(&cfg, cc, &overriding(CallOtherClass::NoOp), &no_ccs)
-        else {
+        let Err(err) = lifter.build_ir_with(&cfg, cc, &overriding(&noop), &no_ccs) else {
             panic!("a CallOther the cfg ended must not lift as a NoOp");
         };
         assert!(
@@ -529,7 +535,7 @@ mod tests {
         );
 
         let opts = strider_cfg::CfgOptions {
-            call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+            call_other_overrides: &strider_target::call_other_abi::CallOtherOverrides::new(vec![(
                 "syscall".to_owned(),
                 CallOtherClass::Call(CallOtherAbi {
                     implicit_reads: &["NONEXISTENT_REG_XYZZY"],
