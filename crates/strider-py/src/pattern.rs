@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
-use pyo3::types::{PyString, PyTuple};
+use pyo3::types::{PyBool, PyString, PyTuple};
 use strider_ir::node::ValueType as T;
 
 use strider_pattern as sp;
@@ -222,7 +222,6 @@ pub(crate) enum CastKind {
 pub(crate) enum TmplRepr {
     Var(Capture),
     IntConst(u128),
-    IntConstAnyWidth(i64),
     BoolConst(bool),
     FloatConst(u64),
     IntBinary(strider_ir::IntBinaryOp, Py<PyAny>, Py<PyAny>),
@@ -259,6 +258,7 @@ pub(crate) enum PatRepr {
     Any,
     ValueOfWidth(u32),
     InputsOfWidth(u32, Py<PyAny>),
+    IntConstAnyWidth(i64),
     IntConstAnyWidthAnyOf(Vec<i64>),
     IntConstAnyOf(Vec<u128>),
     AnyInt(Option<Capture>),
@@ -478,7 +478,7 @@ pub(crate) fn compile_operand_template(ob: &Bound<'_, PyAny>) -> PyResult<DynTem
     }
     if let Ok(p) = ob.downcast::<PyPat>() {
         return Err(into_strider_err(anyhow::anyhow!(pat_rhs_message(
-            p.borrow().repr.name()
+            &p.borrow().repr
         ))));
     }
     // A raw int builds an `int_const(value)` on the RHS too.
@@ -640,6 +640,7 @@ fn orderable(repr: &PatRepr) -> Result<(), &'static str> {
         PatRepr::Any
         | PatRepr::ValueOfWidth(_)
         | PatRepr::InputsOfWidth(..)
+        | PatRepr::IntConstAnyWidth(_)
         | PatRepr::IntConstAnyWidthAnyOf(_)
         | PatRepr::IntConstAnyOf(_)
         | PatRepr::AnyInt(_)
@@ -665,7 +666,6 @@ impl TmplRepr {
         match self {
             TmplRepr::Var(_) => "var()",
             TmplRepr::IntConst(_) => "int_const()",
-            TmplRepr::IntConstAnyWidth(_) => "int_const_any_width()",
             TmplRepr::BoolConst(_) => "bool_const()",
             TmplRepr::FloatConst(_) => "float_const()",
             TmplRepr::IntBinary(..) => "int_binary()",
@@ -698,6 +698,7 @@ impl PatRepr {
             PatRepr::Any => "anything()",
             PatRepr::ValueOfWidth(_) => "value_of_width()",
             PatRepr::InputsOfWidth(..) => "inputs_of_width()",
+            PatRepr::IntConstAnyWidth(_) => "int_const_any_width()",
             PatRepr::IntConstAnyWidthAnyOf(_) => "int_const_any_width([..])",
             PatRepr::IntConstAnyOf(_) => "int_const([..])",
             PatRepr::AnyInt(_) => "any_int()",
@@ -767,19 +768,32 @@ fn tc<P: TemplatePat>(p: P, b: &mut TemplateBuilder) -> TmplValueRef {
 }
 
 /// The refusal of a `Pat` on a rewrite RHS, at the top or nested.
-fn pat_rhs_message(name: &str) -> String {
-    format!(
-        "cannot use {name} as a rewrite RHS: a strider.pattern Pat only \
-         matches; build it with strider.template (e.g. template.var(c), \
-         template.int_const(v))"
-    )
-}
-
-fn rhs_error(kind: &str) -> PyErr {
-    into_strider_err(anyhow::anyhow!(
-        "cannot use {kind} as a rewrite RHS; the RHS must be a buildable \
-         value expression"
-    ))
+fn pat_rhs_message(repr: &PatRepr) -> String {
+    let name = repr.name();
+    // Every build-valid shape and every constant has a `strider.template`
+    // constructor.
+    let has_twin = matches!(
+        repr,
+        PatRepr::Build(_)
+            | PatRepr::IntConstAnyWidth(_)
+            | PatRepr::IntConstAnyWidthAnyOf(_)
+            | PatRepr::IntConstAnyOf(_)
+            | PatRepr::AnyIntConst(_)
+            | PatRepr::AnyBoolConst(_)
+            | PatRepr::AnyFloatConst(_)
+    );
+    if has_twin {
+        format!(
+            "cannot use {name} as a rewrite RHS: a strider.pattern Pat only \
+             matches; build it with strider.template (e.g. template.var(c), \
+             template.int_const(v))"
+        )
+    } else {
+        format!(
+            "cannot use {name} as a rewrite RHS: a strider.pattern Pat only \
+             matches, and {name} has no strider.template twin"
+        )
+    }
 }
 
 /// Case-insensitive: `"i1"` / `"I64"` / `"f32"`. A refusal names `name` as
@@ -834,6 +848,7 @@ impl PatRepr {
             // Hold no Python object.
             PatRepr::Any
             | PatRepr::ValueOfWidth(_)
+            | PatRepr::IntConstAnyWidth(_)
             | PatRepr::IntConstAnyWidthAnyOf(_)
             | PatRepr::IntConstAnyOf(_)
             | PatRepr::AnyInt(_)
@@ -880,7 +895,6 @@ impl TmplRepr {
             // Hold no Python object.
             TmplRepr::Var(_)
             | TmplRepr::IntConst(_)
-            | TmplRepr::IntConstAnyWidth(_)
             | TmplRepr::BoolConst(_)
             | TmplRepr::FloatConst(_) => {}
         }
@@ -1128,6 +1142,7 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let n = *n;
             un_match(py, inner, |i| sp::inputs_of_width(n, i))
         }
+        PatRepr::IntConstAnyWidth(v) => Ok(DynMatch::new(sp::int_const_any_width(*v))),
         PatRepr::IntConstAnyWidthAnyOf(vals) => {
             Ok(DynMatch::new(sp::int_const_any_width(vals.clone())))
         }
@@ -1240,7 +1255,6 @@ fn compile_tmpl_match(t: &TmplRepr, py: Python<'_>) -> PyResult<DynMatch> {
     match t {
         TmplRepr::Var(c) => Ok(DynMatch::new(sp::var(*c))),
         TmplRepr::IntConst(v) => Ok(DynMatch::new(sp::int_const(*v))),
-        TmplRepr::IntConstAnyWidth(v) => Ok(DynMatch::new(sp::int_const_any_width(*v))),
         TmplRepr::BoolConst(v) => Ok(DynMatch::new(sp::bool_const(*v))),
         TmplRepr::FloatConst(bits) => Ok(DynMatch::new(sp::float_const(*bits))),
         TmplRepr::IntBinary(op, l, r) => bin_match(py, l, r, |l, r| sp::int_binary(*op, l, r)),
@@ -1329,12 +1343,6 @@ fn compile_tmpl_template(t: &TmplRepr, py: Python<'_>) -> PyResult<DynTemplate> 
         TmplRepr::IntConst(v) => {
             let v = *v;
             Ok(DynTemplate(Box::new(move |b| tc(sp::int_const(v), b))))
-        }
-        TmplRepr::IntConstAnyWidth(v) => {
-            let v = *v;
-            Ok(DynTemplate(Box::new(move |b| {
-                tc(sp::int_const_any_width(v), b)
-            })))
         }
         TmplRepr::BoolConst(v) => {
             let v = *v;
@@ -1535,12 +1543,16 @@ impl<'py> FromPyObject<'py> for TemplateLike<'py> {
             return Ok(Self::Str(s.clone()));
         }
         let msg = match ob.downcast::<PyPat>() {
-            Ok(p) => pat_rhs_message(p.borrow().repr.name()),
+            Ok(p) => pat_rhs_message(&p.borrow().repr),
             Err(_) => format!(
                 "cannot use {} as a rewrite RHS: expected a strider.template \
-                 Template, a Capture or a capture name (an int constant is \
-                 template.int_const(v))",
-                operand_kind_name(ob)
+                 Template, a Capture or a capture name ({})",
+                operand_kind_name(ob),
+                if ob.is_instance_of::<PyBool>() {
+                    "a bool constant is template.bool_const(b)"
+                } else {
+                    "an int constant is template.int_const(v)"
+                }
             ),
         };
         Err(pyo3::exceptions::PyTypeError::new_err(msg))
@@ -1559,7 +1571,10 @@ impl TemplateLike<'_> {
             TemplateLike::Str(s) => {
                 let name = s.to_string();
                 if name == "_" || name == "any_" {
-                    Err(rhs_error("any_"))
+                    Err(into_strider_err(anyhow::anyhow!(
+                        "cannot use {name:?} as a rewrite RHS: it is the \
+                         wildcard, not a capture name"
+                    )))
                 } else {
                     let cap = intern_str(&name)?;
                     Ok(DynTemplate(Box::new(move |b| template_var(b, cap))).into_template())
@@ -2104,9 +2119,7 @@ pub enum IntConstAnyWidthArg {
 #[pyfunction]
 pub fn int_const_any_width(value: IntConstAnyWidthArg) -> PyResult<PyPat> {
     Ok(PyPat::from_repr(match value {
-        IntConstAnyWidthArg::One(v) => {
-            PatRepr::Build(TmplRepr::IntConstAnyWidth(checked_signed_i64(v)?))
-        }
+        IntConstAnyWidthArg::One(v) => PatRepr::IntConstAnyWidth(checked_signed_i64(v)?),
         IntConstAnyWidthArg::Set(vs) => PatRepr::IntConstAnyWidthAnyOf(
             vs.into_iter()
                 .map(checked_signed_i64)
