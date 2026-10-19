@@ -32,10 +32,10 @@ def _wide_const_function():
 def test_wide_const_node_is_minted_by_load_readonly_fold():
     f = _wide_const_function()
     # Wideness shows up via `wide_const_bytes`, not the kind string, which
-    # is a plain `IntConst(constN)` for every interned constant.
+    # is a plain `IntConst` for every interned constant.
     wide_ids = [n for n in f.node_ids() if f.node(n).wide_const_bytes() is not None]
     assert wide_ids, "expected a wide IntConst node from the 16-byte fold"
-    assert all(f.node(n).kind().startswith("IntConst") for n in wide_ids)
+    assert all(f.node(n).kind() == "IntConst" for n in wide_ids)
 
 
 def test_wide_const_match_uint_returns_full_u128():

@@ -77,16 +77,16 @@ def test_node_inputs_map_to_real_producers():
 
 
 def test_node_sint_on_int_const():
-    a = _analyze_add()
+    # `add` holds no constant; `shl` masks its count with one.
+    shl = strider.lift.load_elf(str(fixture_path("x64", "arithmetic"))).analyze("shl").function
     c = Capture()
-    const_hits = a.find_all(int_const(c))
-    if const_hits:
-        cnode = const_hits[0].node(c)
-        assert cnode is not None
-        assert cnode.kind() == "IntConst"
-        v = cnode.sint()
-        assert v is None or isinstance(v, int)
+    const_hits = shl.find_all(int_const(c))
+    assert const_hits
+    cnode = const_hits[0].node(c)
+    assert cnode.kind() == "IntConst"
+    assert isinstance(cnode.sint(), int)
 
+    a = _analyze_add()
     add_hits = a.find_all(int_add(anything(), anything()))
     assert add_hits
     add_node = a.node(add_hits[0].root)

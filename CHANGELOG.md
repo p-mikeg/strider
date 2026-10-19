@@ -29,6 +29,18 @@
   supplied handle matched the graph's arch: a render reads the arch's name
   table, not a decoder, so it runs on any thread and while the owning
   `Lifter` is mid-`analyze`, where both raised.
+- `strider.pattern.{int_cmp, int_binary, bool_binary, float_binary,
+  int_extend}` and `strider.template.{int_cmp, int_extend}` take the op's own
+  name only, the string `Match.op` and `Node.op()` read back: the aliases
+  `"eq"`, `"lt"`, `"slt"`, `"shl"`, `"shr"`, `"sshr"`, any other case
+  (`"add"`, `"EQUAL"`) and `int_extend`'s `"zero"` / `"sign"` /
+  `"zero_extend"` / `"sign_extend"` raise `StriderError`, which lists the
+  names; `int_extend` takes `"ZeroExtend"` / `"SignExtend"`. The `*OpName`
+  Literals list those names alone.
+- `Node.kind()`, and so `repr(Node)`, renders `IntConst`, `InitialVar` and
+  `CallOther` bare, without the interner handle (`"IntConst(const12)"`,
+  `"InitialVar(InitialVnId(6))"`, `"CallOther { user_op_id: 120 }"`); read
+  the payload through `uint()` / `sint()`, `vn()` and `call_other_name()`.
 
 ### Breaking, Rust
 
