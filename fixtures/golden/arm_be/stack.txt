@@ -49,6 +49,7 @@ return %v0, %v21, %v20, %v17, %v22, %v23, %v24, %v25
 cfg
   0x10118 53 ops return -> []
 tracked [r0, r1, r2, r3, r11, sp, lr, pc, CY, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d7, d6, d5, d4, d3, d2, d1, d0, u:0x0:4, u:0x5d00:4, u:0x5e00:1, u:0x5f00:1, u:0x6000:1, u:0x6100:1, u:0x6200:1, u:0x6500:4, u:0x6600:4, u:0x6800:4, u:0x6b00:4, u:0x10500:4]
+frame_address_in_call_register
 arg 0 [%v13]
 arg 1 [%v21]
 arg 2 [%v22]
@@ -454,6 +455,7 @@ return %v141, %v143, %v151, %v144, %v145, %v146, %v147, %v148
 cfg
   0x103a8 207 ops return -> []
 tracked [r0, r1, r2, r3, r11, sp, lr, pc, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d7, d6, d5, d4, d3, d2, d1, d0, u:0x0:4, u:0x5d00:4, u:0x5e00:1, u:0x5f00:1, u:0x6000:1, u:0x6100:1, u:0x6200:1, u:0x10500:4, u:0x10700:4]
+frame_address_in_call_register
 arg 2 [%v20]
 arg 3 [%v21]
 float_arg 0 [%v22]

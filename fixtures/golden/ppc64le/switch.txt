@@ -261,6 +261,7 @@ cfg
   0x100103dc 26 ops goto -> [0x100103d0]
   0x10010414 11 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, r31, xer_so, cr0, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x17000:1, u:0x1b500:8, u:0x1bd00:8, u:0x1c300:8, u:0x1c500:8, u:0x23900:8, u:0x23d00:8, u:0x2ba00:8, u:0x2bb00:8, u:0x2bc00:1, u:0x2bd00:1, u:0x2be00:1, u:0x2bf00:1, u:0x2c000:1, u:0x2c100:1, u:0x2c200:1, u:0x2c300:1, u:0x2c400:1, u:0x58b00:4, u:0x5ab00:4]
+frame_address_in_call_register
 arg 3 [%v22]
 arg 4 [%v23]
 arg 5 [%v24]

@@ -6,6 +6,7 @@ default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2,
 cfg
   0x3dc 258 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r12, sp, lr, pc, NG, ZR, CY, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x12e700:4, u:0x12ef00:4, u:0x12f000:4, u:0x12f800:4, u:0x143e00:4, u:0x145200:4, u:0x145600:4, u:0x145f00:4, u:0x1a6600:4]
+frame_address_in_call_register
 float_arg 0 [%v60]
 float_arg 1 [%v61]
 float_arg 2 [%v62]
@@ -332,6 +333,7 @@ cfg
   0x5ca 22 ops return -> []
   0x5d8 22 ops return -> []
 tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x12ef00:4, u:0x12f000:4, u:0x12f800:4, u:0x145f00:4, u:0x14ce00:1, u:0x164f00:4]
+frame_address_in_call_register
 arg 0 [%v1]
 arg 1 [%v20]
 arg 2 [%v21]
@@ -633,6 +635,7 @@ cfg
   0x7aa 11 ops cbranch 0x6e4 -> [0x6e4, 0x7ae]
   0x7ae 6 ops goto -> [0x6e4]
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x700:1, u:0xd00:1, u:0x1d00:1, u:0x1e00:1, u:0x1f00:1, u:0x2100:1, u:0x2600:1, u:0x2700:1, u:0x127d00:1, u:0x127f00:1, u:0x128500:1, u:0x128700:1, u:0x129600:1, u:0x129700:1, u:0x129900:1, u:0x129a00:1, u:0x129c00:1, u:0x12bb00:1, u:0x12bd00:1, u:0x12c100:1, u:0x12c700:1, u:0x12d700:1, u:0x12d800:1, u:0x12d900:1, u:0x12db00:1, u:0x12e700:4, u:0x12ef00:4, u:0x12f000:4, u:0x12f800:4, u:0x130800:4, u:0x130900:4, u:0x130b00:4, u:0x130e00:4, u:0x143e00:4, u:0x144400:4, u:0x145200:4, u:0x145600:4, u:0x145f00:4, u:0x148100:4, u:0x14e300:4, u:0x14e500:4, u:0x14eb00:4, u:0x153b00:4, u:0x158900:4, u:0x158a00:4, u:0x158c00:4, u:0x158d00:1, u:0x158e00:1, u:0x158f00:1, u:0x159000:1, u:0x159100:1, u:0x159700:4, u:0x159800:4, u:0x159a00:4, u:0x159b00:1, u:0x159c00:1, u:0x159d00:1, u:0x159e00:1, u:0x159f00:1, u:0x15ae00:4, u:0x1b0b00:2, u:0x1b3400:4, u:0x1cc200:1]
+frame_address_in_call_register
 arg 0 [%v91]
 arg 1 [%v1]
 arg 2 [%v273]

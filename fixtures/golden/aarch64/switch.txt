@@ -163,6 +163,7 @@ cfg
   0x700 1 ops tailcall 0x5e0 -> []
   0x704 2 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x29, x30, q0, q1, q2, q3, q4, q5, q6, q7, u:0xc200:8, u:0xc800:8, u:0x23400:8, u:0x23600:8, u:0x31500:1]
+frame_address_in_call_register
 arg 0 [%v10]
 arg 7 [%v11]
 arg 8 [%v6]

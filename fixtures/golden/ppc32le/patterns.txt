@@ -293,6 +293,7 @@ return %v91, %v93, %v100, %v94, %v95, %v96, %v97
 cfg
   0x10010294 85 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x19c00:4, u:0x19e00:4]
+frame_address_in_call_register
 arg 3 [%v24]
 arg 4 [%v25]
 arg 5 [%v26]

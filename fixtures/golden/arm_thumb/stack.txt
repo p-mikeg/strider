@@ -11,6 +11,7 @@ default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2,
 cfg
   0x3dc 127 ops return -> []
 tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, tmpNG, tmpZR, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x12ef00:4, u:0x12f000:4, u:0x145200:4, u:0x145f00:4, u:0x164f00:4, u:0x1a6600:4]
+frame_address_in_call_register
 arg 2 [%v15]
 float_arg 0 [%v16]
 float_arg 1 [%v17]
@@ -373,6 +374,7 @@ return %v0, %v1, %v2, %v3, %v4, %v5, %v6, %v7
 cfg
   0x5fc 39 ops return -> []
 tracked [r0, r1, r2, r3, sp, lr, pc, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x12ef00:4, u:0x12f000:4, u:0x130800:4, u:0x130900:4, u:0x130b00:4, u:0x130e00:4, u:0x145f00:4, u:0x148100:4, u:0x164f00:4]
+frame_address_in_call_register
 arg 0 [%v9]
 arg 1 [%v16]
 arg 2 [%v17]

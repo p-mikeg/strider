@@ -6,6 +6,7 @@ default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2,
 cfg
   0x3dc 158 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x12ef00:4, u:0x12f000:4, u:0x12fb00:4, u:0x145f00:4, u:0x15bd00:4, u:0x15be00:4, u:0x15bf00:4]
+frame_address_in_call_register
 arg 3 [%v23]
 float_arg 0 [%v24]
 float_arg 1 [%v25]
