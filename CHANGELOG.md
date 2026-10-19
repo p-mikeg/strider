@@ -41,6 +41,10 @@
   `CallOther` bare, without the interner handle (`"IntConst(const12)"`,
   `"InitialVar(InitialVnId(6))"`, `"CallOther { user_op_id: 120 }"`); read
   the payload through `uint()` / `sint()`, `vn()` and `call_other_name()`.
+- `BoundCapture` (`m[c]`) keeps `has`, `int()`, `==` and its repr, and loses
+  its reader properties: read a capture through the `Match`, `m.uint(c)`,
+  `m.node(c)`, `m.op_opt(c)` and the rest. `m[c].uint` raises
+  `AttributeError`.
 
 ### Breaking, Rust
 

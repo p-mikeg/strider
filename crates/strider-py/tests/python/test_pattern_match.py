@@ -2,6 +2,8 @@
 `Load(addr = base + offset)` that any working matcher finds at least once.
 """
 
+import operator
+
 import pytest
 
 import strider
@@ -96,43 +98,62 @@ def test_match_readers_align_with_node():
         assert not hasattr(m, gone), f"{gone} must not exist after the rename"
 
 
-def test_bound_capture_view_delegates_and_guards():
-    """`m[c]` mirrors the match readers; `_opt` returns None and the plain
-    reader raises for an unbound capture."""
-    import pytest
+_MATCH_READERS = (
+    "uint", "uint_opt", "sint", "sint_opt", "boolean", "boolean_opt",
+    "float_bits", "float_bits_opt", "op", "op_opt", "value_type",
+    "value_type_opt", "vn", "vn_opt", "node", "node_opt", "asm_fingerprint",
+)
+
+
+@pytest.mark.parametrize("reader", _MATCH_READERS)
+def test_a_bound_capture_has_no_reader_of_its_own(reader):
+    """Every reader is a `Match` method taking the capture, so reading one off
+    the bound capture raises `AttributeError` instead of answering beside it."""
     g = _build_graph()
     c = Capture()
-    hits = g.find_all(int_const(c))
-    assert hits
-    m = hits[0]
-    assert m[c].has is True
-    assert m[c].uint == m.uint(c)
-    assert m[c].node is not None
+    m = g.find_all(int_const(c))[0]
+    assert callable(getattr(m, reader))
+    assert not hasattr(m[c], reader)
 
-    unbound = Capture()
-    assert m[unbound].has is False
-    assert m[unbound].uint_opt is None
-    with pytest.raises(strider.StriderError):
-        m[unbound].uint
+
+def test_bound_capture_has_tells_bound_from_unbound():
+    g = _build_graph()
+    c = Capture()
+    m = g.find_all(int_const(c))[0]
+    assert m[c].has is True
+    assert m[Capture()].has is False
+
+
+def test_bound_capture_repr_and_index():
+    """The repr names a constant in hex, a non-constant node as `<node>` and
+    an unbound capture as `unbound`; `operator.index` reads the unsigned value."""
+    g = _build_graph()
+    c = Capture()
+    m = next(m for m in g.find_all(int_const(c)) if m.uint(c) == 0xFFFFFFFF)
+    assert repr(m[c]) == "BoundCapture(0xffffffff)"
+    assert operator.index(m[c]) == 0xFFFFFFFF
+    assert repr(m[Capture()]) == "BoundCapture(unbound)"
+    n = Capture()
+    hit = g.find_all(load().capture(n))[0]
+    assert repr(hit[n]) == "BoundCapture(<node>)"
 
 
 def test_match_getitem_view_agrees_with_uint():
-    """`m[c]` is a `BoundCapture`; its `uint` (and `int(m[c])`) agree
-    with `m.uint(c)`, stay unsigned, and compare numerically."""
+    """`m[c]` is a `BoundCapture`: `int(m[c])` agrees with `m.uint(c)`, stays
+    unsigned, and `m[c]` compares numerically."""
     g = _build_graph()
     c = Capture()
     hits = g.find_all(int_const(c))
     assert 0xFFFFFFFF in {m.uint(c) for m in hits}, "a high-bit constant to read"
     for m in hits:
         uint_val = m.uint(c)
-        assert m[c].uint == uint_val
         assert int(m[c]) == uint_val
         assert m[c] == uint_val  # numeric __eq__
-        assert m[c].uint >= 0
+        assert int(m[c]) >= 0
 
 
 def test_partial_and_post_match_boolean_is_bool_type():
-    """`m[c].boolean` for an I1 constant is a Python `bool` from both the
+    """`m.boolean(c)` for an I1 constant is a Python `bool` from both the
     post-match Match and the in-`.when()` one. `bool` subclasses `int`, hence
     the exact `type(...) is bool` assertions rather than `isinstance`.
     """
@@ -148,22 +169,22 @@ def test_partial_and_post_match_boolean_is_bool_type():
     post = g.find_all(int_const(c).bool_valued())
     assert post, "expect_branch must carry a surviving I1 IntConst to test"
     for m in post:
-        assert type(m[c].boolean) is bool, (
-            f"m[c].boolean for an I1 const must be bool, got "
-            f"{type(m[c].boolean).__name__}"
+        assert type(m.boolean(c)) is bool, (
+            f"m.boolean(c) for an I1 const must be bool, got "
+            f"{type(m.boolean(c)).__name__}"
         )
 
     seen_types: list[type] = []
 
     def predicate(m):
-        seen_types.append(type(m[c].boolean))
+        seen_types.append(type(m.boolean(c)))
         return True
 
     hits = g.find_all(int_const(c).bool_valued().when(predicate))
     assert hits, "predicate-guarded match must still fire"
     assert seen_types, "predicate must have been invoked"
     assert all(t is bool for t in seen_types), (
-        "in-.when() m[c].boolean for an I1 const must be bool (not int), "
+        "in-.when() m.boolean(c) for an I1 const must be bool (not int), "
         f"matching the post-match Match; got {[t.__name__ for t in seen_types]}"
     )
 
