@@ -157,6 +157,11 @@
   `successors(node, f: impl FnMut(NodeId))`: `try_successors` and its
   `ControlFlow` early exit are gone, as is `walk::entity_postorder` (call
   `PostOrder::new`).
+- `strider_graph::Vertex` and the petgraph traits on `strider_graph::Graph`
+  (`GraphBase`, `IntoNeighbors`, `IntoNeighborsDirected`,
+  `IntoNodeIdentifiers`, `Visitable`) are gone, and strider-graph no longer
+  depends on petgraph: walk a graph with `graph_algorithms::walk` over a
+  `GraphRef`.
 
 ### Changed, Python
 

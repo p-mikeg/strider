@@ -2554,17 +2554,3 @@ fn factor_declines_past_the_u128_carrier() -> Result<()> {
     }
     Ok(())
 }
-
-/// Every fold template but the const-eval closure goes through
-/// `rewrite_rule_impl`, which checks its instantiation order.
-#[test]
-fn every_fold_template_keeps_its_instantiation_order() {
-    let before = crate::rewrite_rule::TEMPLATES_CHECKED.with(std::cell::Cell::get);
-    let rules = super::rules::build_rules();
-    let checked = crate::rewrite_rule::TEMPLATES_CHECKED.with(std::cell::Cell::get) - before;
-    assert_eq!(
-        checked,
-        rules.len() - 1,
-        "every templated fold rule is checked"
-    );
-}

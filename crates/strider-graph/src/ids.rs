@@ -21,11 +21,3 @@ entity_impl!(UseId, "use");
 pub(crate) type UseIdList = EntityList<UseId>;
 
 pub(crate) type ValueIdList = EntityList<ValueId>;
-
-/// A vertex of the bipartite graph: nodes never connect directly to nodes, and
-/// values never directly to values.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Vertex {
-    Node(NodeId),
-    Value(ValueId),
-}

@@ -164,6 +164,19 @@ fn reachable_from<N, V, C: NodeCacheable<N, V>>(
     seen
 }
 
+/// A node's input producers, for `graph_algorithms::walk`.
+struct Producers<'a>(&'a TestGraph);
+
+impl graph_algorithms::walk::GraphRef for Producers<'_> {
+    type NodeId = NodeId;
+
+    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
+        for value in self.0.node_inputs(node) {
+            f(self.0.producer(value));
+        }
+    }
+}
+
 fn region_node(g: &mut TestGraph) -> NodeId {
     g.create_node(TestKind::Region, [], [TestVal::Ctrl])
 }
@@ -359,19 +372,17 @@ proptest! {
             }
         }
 
-        // Toposort yields each producer before its consumers.
-        if let Ok(order) = petgraph::algo::toposort(&g, None) {
-            let pos: HashMap<strider_graph::Vertex, usize> =
-                order.iter().enumerate().map(|(i, &v)| (v, i)).collect();
+        // An order built from the inputs puts every use-list consumer after
+        // its producer.
+        if let Ok(order) = graph_algorithms::walk::acyclic_postorder(Producers(&g), g.all_node_ids()) {
+            let pos: HashMap<NodeId, usize> =
+                order.iter().enumerate().map(|(i, &n)| (n, i)).collect();
+            prop_assert_eq!(pos.len(), g.all_node_ids().count());
             for node in g.all_node_ids() {
-                let node_v = strider_graph::Vertex::Node(node);
                 for &out in g.node_outputs(node) {
-                    let val_v = strider_graph::Vertex::Value(out);
-                    prop_assert!(pos[&node_v] < pos[&val_v]);
                     for (consumer, _) in g.value_uses(out) {
-                        let cons_v = strider_graph::Vertex::Node(consumer);
-                        prop_assert!(pos[&val_v] < pos[&cons_v],
-                            "value {:?} must precede consumer {:?} in toposort", out, consumer);
+                        prop_assert!(pos[&node] < pos[&consumer],
+                            "{:?} must precede its consumer {:?}", node, consumer);
                     }
                 }
             }
@@ -753,8 +764,9 @@ fn stress_10k_nodes_dedup_bounded() {
         "4 consts + 1 deduped Add despite 1000 create calls",
     );
 
-    let order = petgraph::algo::toposort(&g, None).expect("acyclic");
-    assert!(!order.is_empty());
+    let order = graph_algorithms::walk::acyclic_postorder(Producers(&g), g.all_node_ids())
+        .expect("acyclic");
+    assert_eq!(order.len(), 5);
 }
 
 #[test]
@@ -854,21 +866,18 @@ fn reachable_by_inputs_high_fanin_traversal_unchanged() {
 }
 
 #[test]
-fn dfs_post_order_runs_on_graph() {
-    use petgraph::visit::{DfsPostOrder, Walker};
+fn producer_post_order_puts_the_root_last() {
     let mut g = TestGraph::new();
     let x = const_node(&mut g, 1);
     let y = const_node(&mut g, 2);
     let sum = add_node(&mut g, x, y);
-    let root = strider_graph::Vertex::Node(g.producer(sum));
-
-    let visited: Vec<_> = DfsPostOrder::new(&g, root).iter(&g).collect();
-    // Ordering against the produced value is not required here (post-order
-    // over outgoing edges), but the root must come last.
-    assert!(visited.contains(&root));
+    let root = g.producer(sum);
+    let order: Vec<NodeId> =
+        graph_algorithms::walk::PostOrder::new(Producers(&g), [root]).collect();
+    assert_eq!(order.len(), 3);
     assert_eq!(
-        *visited.last().unwrap(),
-        root,
+        order.last(),
+        Some(&root),
         "root last in post-order from root"
     );
 }
