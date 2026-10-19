@@ -18,7 +18,7 @@ from .conftest import fixture_path
 
 _ENTRIES = 20_000
 #: An analyse's Python allocations may differ by this much across table sizes;
-#: one copied 20,000-entry table is about 3.5 MB.
+#: a dict copy of the 20,000-entry table is about 1 MB.
 _SLACK = 16 * 1024
 
 
@@ -55,8 +55,8 @@ def test_analyzing_by_symbol_does_not_copy_the_seeded_tables():
 
 
 def test_a_seeded_table_costs_nothing_per_analyse():
-    """The table is borrowed, not copied, so what an analysis allocates does
-    not depend on how large the seeded table is."""
+    """The table is borrowed, not copied, so what an analysis allocates on
+    the Python heap does not depend on how large the seeded table is."""
     prog = _program()
     addr = prog.symbol("add").address
     empty = _python_peak(prog, addr, strider.lift.LifterOptions())
