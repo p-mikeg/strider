@@ -67,7 +67,9 @@ def test_custom_resolves_register_names():
 
 
 def test_custom_unknown_register_raises_at_construction():
-    with pytest.raises(strider.StriderError, match="NOSUCHREG"):
+    with pytest.raises(
+        strider.StriderError, match='implicit_reads: unknown sleigh register name "NOSUCHREG"'
+    ):
         CallOtherAbi.custom(_sleigh(), implicit_reads=["NOSUCHREG"])
 
 

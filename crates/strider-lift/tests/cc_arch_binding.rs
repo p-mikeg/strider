@@ -182,8 +182,7 @@ fn a_default_convention_that_fails_validate_is_refused() {
     };
     let err = lift_built_at(Sa::x86_64(), X86_RET, arg_also_saved, None)
         .expect_err("a register both passed and preserved must be refused");
-    assert!(
-        format!("{err:#}").contains("callee_saved_regs"),
-        "got: {err:#}"
-    );
+    let err = format!("{err:#}");
+    assert!(err.contains("default convention: "), "got: {err}");
+    assert!(err.contains("callee_saved_regs"), "got: {err}");
 }
