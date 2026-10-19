@@ -108,27 +108,19 @@ _p.ValueTy = _t.Literal[  # type: ignore[attr-defined]
 ]
 _p.IntCmpOpName = _t.Literal[  # type: ignore[attr-defined]
     "Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow",
-    "equal", "less", "sless", "carry", "scarry", "sborrow",
-    "EQUAL", "LESS", "SLESS", "CARRY", "SCARRY", "SBORROW",
-    "eq", "lt", "slt", "EQ", "LT", "SLT", "Eq", "Lt", "Slt",
 ]
 _p.IntBinaryOpName = _t.Literal[  # type: ignore[attr-defined]
     "Add", "And", "Or", "Xor", "Div", "Sdiv", "Rem", "Srem",
     "ShiftRight", "SShiftRight", "ShiftLeft", "Mul",
-    "add", "and", "or", "xor", "div", "sdiv", "rem", "srem",
-    "shiftright", "sshiftright", "shiftleft", "mul",
-    "ADD", "AND", "OR", "XOR", "DIV", "SDIV", "REM", "SREM",
-    "SHIFTRIGHT", "SSHIFTRIGHT", "SHIFTLEFT", "MUL",
-    "shl", "shr", "sshr", "SHL", "SHR", "SSHR", "Shl", "Shr", "Sshr",
 ]
 _p.BoolBinaryOpName = _t.Literal[  # type: ignore[attr-defined]
-    "And", "Or", "Xor", "and", "or", "xor", "AND", "OR", "XOR",
+    "And", "Or", "Xor",
 ]
 _p.FloatBinaryOpName = _t.Literal[  # type: ignore[attr-defined]
-    "Add", "Mul", "Div", "add", "mul", "div", "ADD", "MUL", "DIV",
+    "Add", "Mul", "Div",
 ]
 _p.ExtendOpName = _t.Literal[  # type: ignore[attr-defined]
-    "zero", "zero_extend", "ZeroExtend", "sign", "sign_extend", "SignExtend",
+    "ZeroExtend", "SignExtend",
 ]
 _export(
     _p, "PatLike", "ValueLike", "MemLike", "CaptureKey", "ValueTy",
