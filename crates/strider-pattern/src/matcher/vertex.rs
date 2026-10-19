@@ -157,20 +157,26 @@ pub enum OutputKindSpec {
     PhiToken,
 }
 
+/// How a value vertex reads its `slot`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotMode {
+    /// An anchor position only: as a root's sole vertex it takes the output
+    /// being matched, whatever its slot; as a sibling it sits at `slot`.
+    Loose,
+    /// The matched output must be produced at `slot`.
+    Pinned,
+    /// `any_output()`: each of the node's outputs in turn.
+    Enumerated,
+}
+
 pub struct PatValue {
-    /// Structural anchor position only, NOT a match filter; see `match_slot`.
     pub slot: usize,
+    /// What `slot` means. Sibling `Enumerated` vertices on one node are NOT
+    /// injective, unlike an existential input: each enumerates every output
+    /// independently, so two of them can settle on the same one.
+    pub slot_mode: SlotMode,
     pub kind: OutputKindSpec,
     pub width: Option<u32>,
-    /// Enforced producer output-slot constraint. `None` leaves the slot
-    /// unchecked, so any output kind-ok against `kind` matches; `Some(s)` pins
-    /// the slot.
-    pub match_slot: Option<usize>,
-    /// `any_output()`: satisfied by ANY of the node's outputs, enumerated
-    /// rather than pinned to `slot`. Unlike an existential input, sibling
-    /// `any_slot` vertices on one node are NOT injective: each enumerates every
-    /// output independently, so two of them can settle on the same one.
-    pub any_slot: bool,
     /// Where value captures live: `int_add(var(x), ..)` binds `x` here.
     /// Repeatable: `var(x).capture(y)` binds both to the matched value.
     pub captures: Vec<crate::capture::Capture>,
@@ -194,8 +200,7 @@ impl PatValue {
             slot,
             kind,
             width: None,
-            match_slot: None,
-            any_slot: false,
+            slot_mode: SlotMode::Loose,
             captures: Vec::new(),
             token_fallback: false,
             identity: None,

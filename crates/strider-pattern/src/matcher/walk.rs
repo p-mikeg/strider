@@ -47,7 +47,7 @@ use strider_ir::node::{NodeId, ValueId, ValueKind};
 
 use crate::bindings::{Binding, Bindings};
 use crate::matcher::{
-    InputSlot, KindSpec, Matcher, OutputKindSpec, PatNode, PatValue, Pattern, cast_levels,
+    InputSlot, KindSpec, Matcher, OutputKindSpec, PatNode, PatValue, Pattern, SlotMode, cast_levels,
 };
 
 struct Ctx<'a> {
@@ -216,10 +216,9 @@ fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
 ///
 /// A sole output vertex is taken whatever slot `root_value` sits at: its
 /// constraint applies to the output being matched, not to a fixed slot. A
-/// vertex that does mean a fixed slot says so through
-/// [`PatValue::match_slot`], which [`output_ok`] then enforces. With several
-/// vertices (`if_else`, `call`, `region`, `entry`, `load`, `phi`, ...) the
-/// slots pick between them.
+/// vertex that does mean a fixed slot is [`SlotMode::Pinned`], which
+/// [`output_ok`] then enforces. With several vertices (`if_else`, `call`,
+/// `region`, `entry`, `load`, `phi`, ...) the slots pick between them.
 pub(crate) fn root_output_vertex_for(
     pat: &Pattern,
     root: PatNodeId,
@@ -246,9 +245,9 @@ pub(crate) fn root_output_vertex_for(
 /// them anchors: the anchoring vertex is checked against its own output and
 /// carries its captures there, and [`bind_sibling_outputs`] checks every other
 /// at its own slot, so the two attempts differ only in the order they bind.
-/// A vertex shared between the outputs, an `any_slot` one (pinned as an anchor,
-/// enumerated as a sibling), and a differing anchor value type (which a
-/// post-match guard reads) each tell them apart.
+/// A vertex shared between the outputs, a [`SlotMode::Enumerated`] one
+/// (pinned as an anchor, enumerated as a sibling), and a differing anchor
+/// value type (which a post-match guard reads) each tell them apart.
 pub(crate) fn anchor_repeats(
     matcher: &Matcher,
     pat: &Pattern,
@@ -263,8 +262,8 @@ pub(crate) fn anchor_repeats(
         return false;
     };
     if prev == cur
-        || pat.graph.value_kind_ref(prev).any_slot
-        || pat.graph.value_kind_ref(cur).any_slot
+        || pat.graph.value_kind_ref(prev).slot_mode == SlotMode::Enumerated
+        || pat.graph.value_kind_ref(cur).slot_mode == SlotMode::Enumerated
     {
         return false;
     }
@@ -513,9 +512,10 @@ fn finish_node(
 }
 
 /// The output vertices from `idx` on other than `anchor`, then `nd`'s
-/// post-match predicate, then `k`. An `any_slot` vertex enumerates the node's
-/// outputs, so a capture on it binds each in turn and a rejection anywhere
-/// above re-drives it; every other vertex is checked at its own slot.
+/// post-match predicate, then `k`. A [`SlotMode::Enumerated`] vertex
+/// enumerates the node's outputs, so a capture on it binds each in turn and a
+/// rejection anywhere above re-drives it; every other vertex is checked at its
+/// own slot.
 // The continuation-passing frame, not a refactorable cluster.
 #[allow(clippy::too_many_arguments)]
 fn bind_sibling_outputs(
@@ -545,7 +545,7 @@ fn bind_sibling_outputs(
     let outs = ctx.function().node_outputs(ir_node);
     let pinned = [ov.slot];
     let enumerated: Vec<usize>;
-    let slots: &[usize] = if ov.any_slot {
+    let slots: &[usize] = if ov.slot_mode == SlotMode::Enumerated {
         enumerated = (0..outs.len()).collect();
         &enumerated
     } else {
@@ -842,8 +842,7 @@ fn value_interchangeable(a: &PatValue, b: &PatValue) -> bool {
         && b.identity.is_none()
         && a.slot == b.slot
         && a.width == b.width
-        && a.match_slot == b.match_slot
-        && a.any_slot == b.any_slot
+        && a.slot_mode == b.slot_mode
         && a.token_fallback == b.token_fallback
         && output_kind_eq(&a.kind, &b.kind)
 }
@@ -1028,7 +1027,7 @@ fn vertex_imposes_requirement(o: &PatValue) -> bool {
     !o.captures.is_empty()
         || o.identity.is_some()
         || o.width.is_some()
-        || o.match_slot.is_some()
+        || o.slot_mode == SlotMode::Pinned
         || !matches!(o.kind, OutputKindSpec::Any)
 }
 
@@ -1057,6 +1056,5 @@ fn output_ok(o: &PatValue, f: &strider_ir::Function, value: ValueId) -> bool {
     kind_ok
         && o.width
             .is_none_or(|w| val.is_some_and(|t| t.bit_width() == w as usize))
-        && o.match_slot
-            .is_none_or(|s| f.value_definition(value).1 as usize == s)
+        && (o.slot_mode != SlotMode::Pinned || f.value_definition(value).1 as usize == o.slot)
 }
