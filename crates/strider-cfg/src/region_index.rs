@@ -201,4 +201,37 @@ mod tests {
         assert_eq!(index.get(addr(0x2000, 0)), None);
         assert_eq!(index.get(addr(0x1000, 0)), Some(kept));
     }
+
+    /// A hit at the greatest start and a miss past every region each probe one
+    /// region however many precede the address: the chain `strider-py`'s
+    /// `region_at` was timed over, one four-byte region per branch.
+    #[test]
+    fn region_containing_probes_one_region_however_many_precede() {
+        for regions in [10u64, 1_500] {
+            let mut g = RegionGraph::new();
+            let mut ids = Vec::new();
+            for i in 0..regions {
+                let base = 0x1000 + 4 * i;
+                let mut region = make_region(&[(base, 0), (base + 2, 0)]);
+                region.insns[0].len = 2;
+                region.insns[1].len = 2;
+                ids.push(g.add_node(region));
+            }
+            let cfg = make_cfg(g, ids[0]);
+            let end = 0x1000 + 4 * regions;
+            for (query, owner) in [(end - 4, ids.last().copied()), (end + 0x10000, None)] {
+                REGION_PROBES.with(|n| n.set(0));
+                assert_eq!(
+                    cfg.region_containing(addr(query, 0)),
+                    owner,
+                    "{regions} regions"
+                );
+                assert_eq!(
+                    REGION_PROBES.with(std::cell::Cell::get),
+                    1,
+                    "{regions} regions, {query:#x}"
+                );
+            }
+        }
+    }
 }
