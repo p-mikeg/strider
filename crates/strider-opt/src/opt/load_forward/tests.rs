@@ -1960,8 +1960,8 @@ fn narrowing_across_a_call_ignores_escape_analysis() -> Result<()> {
 }
 
 /// `stack_global_disjoint` is a claim about the program, and the narrowed edge
-/// serves walks that may not honour it: under the claim the edge still stops
-/// at the global store.
+/// serves return-target verification, which with its claim off does not
+/// honour it: under the claim the edge still stops at the global store.
 #[test]
 fn narrowing_past_a_global_store_ignores_stack_global_disjoint() -> Result<()> {
     let sp = sp32_vn();

@@ -1,4 +1,15 @@
 //! The checks a builder runs on its operands before it creates a node.
+//!
+//! Free functions over `&Function`, not `IRViewer` methods:
+//!
+//! ```compile_fail,E0599
+//! use strider_ir::node::ValueId;
+//! use strider_ir::{Function, IRViewer};
+//!
+//! fn check(f: &Function, v: ValueId) -> strider_ir::Result<()> {
+//!     f.require_value_kind(v)
+//! }
+//! ```
 
 use anyhow::anyhow;
 
