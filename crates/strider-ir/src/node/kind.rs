@@ -172,6 +172,19 @@ impl NodeKind {
     pub const CALL_SP_SLOT: usize = 3;
     /// Input slot of an `If`'s condition.
     pub const IF_COND_SLOT: usize = 1;
+    /// Input slot of the control predecessor on every kind with a fixed one
+    /// (`If`, `Switch`, `Call`, `CallOther`, `Return`, `IndirectBranch`,
+    /// `Unreachable`).
+    pub const CTRL_SLOT: usize = 0;
+    /// Input slot of the memory token after the control predecessor
+    /// (`Call`, `CallOther`, `Return`, `IndirectBranch`, `Unreachable`).
+    pub const CTRL_MEM_SLOT: usize = 1;
+    /// Input slot of a `Load` / `Store`'s memory token.
+    pub const ACCESS_MEM_SLOT: usize = 0;
+    /// Input slot of an `IndirectBranch`'s target.
+    pub const INDIRECT_BRANCH_TARGET_SLOT: usize = 2;
+    /// Input slot of a `Switch`'s selector.
+    pub const SWITCH_SELECTOR_SLOT: usize = 1;
 
     #[inline]
     pub fn is_const(self) -> bool {

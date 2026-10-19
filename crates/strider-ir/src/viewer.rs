@@ -206,8 +206,12 @@ pub trait IRViewer {
     fn memory_input_of(&self, node: NodeId) -> Option<ValueId> {
         let inputs = self.node_inputs(node);
         match *self.node_kind(node) {
-            NodeKind::Store(_) | NodeKind::Load(_) => inputs.into_iter().next(),
-            NodeKind::Call { .. } | NodeKind::CallOther { .. } => inputs.into_iter().nth(1),
+            NodeKind::Store(_) | NodeKind::Load(_) => {
+                inputs.get(NodeKind::ACCESS_MEM_SLOT).copied()
+            }
+            NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
+                inputs.get(NodeKind::CTRL_MEM_SLOT).copied()
+            }
             _ => None,
         }
     }
@@ -240,7 +244,8 @@ pub trait IRViewer {
             .copied()
     }
 
-    /// `IndirectBranch` dispatch value, slot 2 of `[control, memory, target,
+    /// `IndirectBranch` dispatch value, input
+    /// [`NodeKind::INDIRECT_BRANCH_TARGET_SLOT`] of `[control, memory, target,
     /// isa_mode?]` (arity 3 or 4).
     fn indirect_branch_target(&self, node: NodeId) -> ValueId {
         assert!(
@@ -248,42 +253,48 @@ pub trait IRViewer {
             "indirect_branch_target on a non-IndirectBranch node"
         );
         self.node_inputs(node)
-            .get(2)
+            .get(NodeKind::INDIRECT_BRANCH_TARGET_SLOT)
             .copied()
             .expect("IndirectBranch has a [control, memory, target] head")
     }
 
     /// The interworking ISA-mode value the `IndirectBranch`'s instruction
-    /// commits for its target(s) (slot 3), or `None` for a non-switching branch.
-    /// Carried as a live input so the optimizer maintains its cone; the resolver
-    /// mode-tags each resolved target off it, arch-agnostically.
+    /// commits for its target(s) (the optional input past the head), or `None`
+    /// for a non-switching branch. Carried as a live input so the optimizer
+    /// maintains its cone; the resolver mode-tags each resolved target off it,
+    /// arch-agnostically.
     fn indirect_branch_isa_mode(&self, node: NodeId) -> Option<ValueId> {
         assert!(
             matches!(self.node_kind(node), NodeKind::IndirectBranch),
             "indirect_branch_isa_mode on a non-IndirectBranch node"
         );
-        self.node_inputs(node).get(3).copied()
+        self.node_inputs(node)
+            .get(NodeKind::IndirectBranch.input_head_len())
+            .copied()
     }
 
-    /// The ISA-mode value a `Switch`'s instruction commits for its arms (slot
-    /// 2), as [`Self::indirect_branch_isa_mode`] is for the placeholder it
-    /// replaced.
+    /// The ISA-mode value a `Switch`'s instruction commits for its arms (the
+    /// optional input past the head), as [`Self::indirect_branch_isa_mode`] is
+    /// for the placeholder it replaced.
     fn switch_isa_mode(&self, node: NodeId) -> Option<ValueId> {
         assert!(
             matches!(self.node_kind(node), NodeKind::Switch(_)),
             "switch_isa_mode on a non-Switch node"
         );
-        self.node_inputs(node).get(2).copied()
+        self.node_inputs(node)
+            .get(self.node_kind(node).input_head_len())
+            .copied()
     }
 
-    /// `Switch` dispatch value, slot 1 of `[control, selector, isa_mode?]`.
+    /// `Switch` dispatch value, input [`NodeKind::SWITCH_SELECTOR_SLOT`] of
+    /// `[control, selector, isa_mode?]`.
     fn switch_selector(&self, node: NodeId) -> ValueId {
         assert!(
             matches!(self.node_kind(node), NodeKind::Switch(_)),
             "switch_selector on a non-Switch node"
         );
         self.node_inputs(node)
-            .get(1)
+            .get(NodeKind::SWITCH_SELECTOR_SLOT)
             .copied()
             .expect("Switch has a [control, selector] head")
     }

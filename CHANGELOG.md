@@ -460,6 +460,10 @@
 - `graph_algorithms::walk::acyclic_postorder(graph, roots)`: the post-order
   of what the roots reach, every node after its successors, or `Err(node)`
   for a node with a successor on the DFS path, which is on a cycle.
+- `NodeKind::{CTRL_SLOT, CTRL_MEM_SLOT, ACCESS_MEM_SLOT,
+  INDIRECT_BRANCH_TARGET_SLOT, SWITCH_SELECTOR_SLOT}`: the input slots of the
+  control predecessor, the memory token after it, a `Load` / `Store`'s memory
+  token, an `IndirectBranch`'s target and a `Switch`'s selector.
 
 ## 0.2.0
 

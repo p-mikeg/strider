@@ -171,9 +171,9 @@ impl LoadPat {
         self
     }
 
-    /// `inputs[0]`, taking a `store` / `mem_phi` / `call`.
+    /// Input [`NodeKind::ACCESS_MEM_SLOT`], taking a `store` / `mem_phi` / `call`.
     pub fn mem<M: MemPat + 'static>(mut self, p: M) -> Self {
-        self.inner = self.inner.input_mem(0, p);
+        self.inner = self.inner.input_mem(NodeKind::ACCESS_MEM_SLOT, p);
         self
     }
 
@@ -254,9 +254,9 @@ impl StorePat {
         self
     }
 
-    /// `inputs[0]`, taking a `store` / `mem_phi` / `call`.
+    /// Input [`NodeKind::ACCESS_MEM_SLOT`], taking a `store` / `mem_phi` / `call`.
     pub fn mem<M: MemPat + 'static>(mut self, p: M) -> Self {
-        self.inner = self.inner.input_mem(0, p);
+        self.inner = self.inner.input_mem(NodeKind::ACCESS_MEM_SLOT, p);
         self
     }
 
