@@ -376,9 +376,9 @@ fn shared_alternation(arms: usize, k: usize) -> Pattern {
     b.finish()
 }
 
-/// `try_match_at` runs an alternation's arms one at a time and unwinds between
-/// them, so the arms do not stack: the cap must charge the deepest arm, not
-/// their sum, or it refuses a pattern the engine runs.
+/// `try_alternation` runs an alternation's arms one at a time and unwinds
+/// between them, so the arms do not stack: the cap must charge the deepest arm,
+/// not their sum, or it refuses a pattern the engine runs.
 #[test]
 fn an_alternations_arms_are_charged_at_their_deepest_not_their_sum() {
     // Accepted AND run on a 2 MiB spawned-thread stack, which is what the cap
@@ -397,4 +397,30 @@ fn an_alternations_arms_are_charged_at_their_deepest_not_their_sum() {
     }
     // The deepest arm alone still has to fit.
     assert!(error_of(&shared_alternation(2, 300)).contains("nodes"));
+}
+
+/// `levels` alternations, each the one arm of the next, over a wildcard leaf:
+/// one node per level plus the leaf, and every match recurses through each.
+fn nested_alternations(levels: usize) -> Pattern {
+    let mut b = MatcherBuilder::new();
+    let mut o = b.leaf(KindSpec::Any);
+    b.set_output_any(o);
+    for _ in 0..levels {
+        o = b.one_of(&[o]);
+    }
+    b.finish()
+}
+
+/// 255 nested alternations and their leaf are 256 nodes, exactly the budget,
+/// and match on the 2 MiB stack a spawned thread gets by default.
+#[test]
+fn nested_alternations_at_the_node_cap_match() {
+    assert!(error_of(&nested_alternations(256)).contains("nodes"));
+    std::thread::spawn(|| {
+        let function = add_5_3();
+        let pat = nested_alternations(255);
+        assert!(!Matcher::new(&function).find_all(&pat).unwrap().is_empty());
+    })
+    .join()
+    .unwrap();
 }
