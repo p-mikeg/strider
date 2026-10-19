@@ -1163,3 +1163,19 @@ fn ordered_is_a_no_op_on_int_le_and_int_sle() {
     check(IntCmpOp::Less, |l, r| int_le(int_const(l), int_const(r)));
     check(IntCmpOp::Sless, |l, r| int_sle(int_const(l), int_const(r)));
 }
+
+/// A raw kind-`Any` node can hold an existential beside one fixed operand.
+/// Matched at an `Add`, the fixed operand roams both slots, so neither is
+/// pinned away from the existential, which takes whichever one is left.
+#[test]
+fn an_existential_beside_a_commutative_operand_takes_the_other_slot() {
+    let function = shapes::int_bin(3, 5, IntBinaryOp::Add);
+    let mut b = MatcherBuilder::new();
+    let node = b.node(KindSpec::Any);
+    let five = MatchPat::compile(int_const(5u128), &mut b);
+    let three = MatchPat::compile(int_const(3u128), &mut b);
+    b.input(node, 0, five);
+    b.input_any(node, three);
+    let _out = b.value_output(node, 0);
+    a::matches(&function, b.finish(), 1);
+}

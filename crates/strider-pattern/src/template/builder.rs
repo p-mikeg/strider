@@ -22,6 +22,7 @@ pub struct TmplNodeRef(pub(crate) usize);
 
 impl SealNode for TmplNodeKind {
     type Sealed = TmplNode;
+    type Slot = usize;
     fn seal(self, input_slots: Vec<usize>) -> TmplNode {
         TmplNode {
             kind: self,
