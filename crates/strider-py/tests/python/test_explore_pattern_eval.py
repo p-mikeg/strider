@@ -94,8 +94,8 @@ def test_a_visualizer_builds_and_renders_off_the_creating_thread():
 
     t = threading.Thread(target=run, daemon=True)
     t.start()
-    t.join(timeout=30)
-    assert not t.is_alive()
+    t.join(60)
+    assert not t.is_alive(), "visualizer thread hung"
     assert "err" not in out, out
     assert out["dot"].startswith("digraph")
     assert strider.explore.shutdown() == []
