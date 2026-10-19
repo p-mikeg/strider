@@ -886,5 +886,36 @@ mod tests {
         assert_eq!(name(call, NodeKind::CALL_TARGET_SLOT), Some("target"));
         assert_eq!(name(call, NodeKind::CALL_SP_SLOT), Some("sp"));
         assert_eq!(name(NodeKind::If, NodeKind::IF_COND_SLOT), Some("cond"));
+
+        let switch = NodeKind::Switch(crate::node::SwitchTableId::from_u32(0));
+        let call_other = NodeKind::CallOther { user_op_id: 0 };
+        let ctrl_then_mem = [
+            call,
+            call_other,
+            NodeKind::Return,
+            NodeKind::IndirectBranch,
+            NodeKind::Unreachable,
+        ];
+        for kind in ctrl_then_mem.into_iter().chain([NodeKind::If, switch]) {
+            assert_eq!(name(kind, NodeKind::CTRL_SLOT), Some("ctrl"), "{kind:?}");
+        }
+        for kind in ctrl_then_mem {
+            assert_eq!(name(kind, NodeKind::CTRL_MEM_SLOT), Some("mem"), "{kind:?}");
+        }
+        for kind in [NodeKind::Load(space), NodeKind::Store(space)] {
+            assert_eq!(
+                name(kind, NodeKind::ACCESS_MEM_SLOT),
+                Some("mem"),
+                "{kind:?}"
+            );
+        }
+        assert_eq!(
+            name(
+                NodeKind::IndirectBranch,
+                NodeKind::INDIRECT_BRANCH_TARGET_SLOT
+            ),
+            Some("target")
+        );
+        assert_eq!(name(switch, NodeKind::SWITCH_SELECTOR_SLOT), Some("val"));
     }
 }
