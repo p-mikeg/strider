@@ -468,8 +468,9 @@ fn build_lifter(
 impl PyLifter {
     /// The `SleighArch` this handle decodes with. Enough, with `reader()` and
     /// `rom()`, to build a second handle over the same memory, which is how
-    /// two threads analyse in parallel; read all three before an `analyze` on
-    /// this handle is in flight, since they raise while one is.
+    /// two threads analyse in parallel; read all three before an `analyze`,
+    /// `build_cfg` or `add_elf` on this handle is in flight, since they raise
+    /// while one is.
     #[getter]
     fn arch(slf: &Bound<'_, Self>) -> PyResult<crate::arch::PySleighArch> {
         let inner = try_borrow_lifter(slf)?.arch;

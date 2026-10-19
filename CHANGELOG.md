@@ -202,8 +202,8 @@
   stack-argument stride other than that width, or with no link register a
   `ret_stack_pop` below it (the first two raised at `analyze`). These take
   the Rust wording (see Changed, Rust): "stack pointer" where they said
-  `stack_vn`, and `BuiltCallingConvention: ret_stack_pop N is less than the
-  M-byte return address a `call` pushes with no link register` where the
+  `stack_vn`, and ``BuiltCallingConvention: ret_stack_pop N is less than the
+  M-byte return address a `call` pushes with no link register`` where the
   message spelled out x86's 4 and x86-64's 8 and that a link-register arch
   (ARM, MIPS, PPC) pops 0 but sets `link_register`. An unknown register name
   in either `custom` names its list: `CallingConvention.custom:
@@ -240,7 +240,8 @@
   `SleighArch.reg_name(vn)` look registers up without a `Sleigh`;
   `strider.sleigh.Sleigh` stays until 0.3.0 removes it.
 - `.ordered()` on `inputs_of_width(n, x)` and `bool_inputs(x)` pins what it
-  pins on `x`, as in Rust; it raised.
+  pins on `x`, as in Rust, when `x` is a pattern; it raised. Over a typed
+  builder (`int_binary`, `bool_binary`, `float_binary`) it still raises.
 
 ### Changed, Rust
 
