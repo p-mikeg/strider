@@ -43,9 +43,11 @@ pub enum RelocationMode {
     /// link-time value rather than its target.
     Unapplied,
     /// Applied by this loader, which then also maps every writable section for
-    /// fetch. `got_is_rom` serves `.got` and `.data.rel.ro` as ROM too, an
-    /// unchecked claim about the runtime; see
-    /// [`LoadFilter::ImmutableAndRelocatedGot`].
+    /// fetch. `got_is_rom` serves `.got` and `.data.rel.ro` as ROM too: an
+    /// unchecked claim that the dynamic loader fills those slots before the
+    /// program runs and nothing writes them afterwards (a full-RELRO link maps
+    /// them read-only). `.got.plt` is never served, since lazy binding rewrites
+    /// it.
     Applied { got_is_rom: bool },
 }
 
@@ -179,6 +181,7 @@ impl OwnedElf {
     /// Also when [`LoadFilter::ImmutableAndRelocatedGot`] meets
     /// `relocate == false`: the filter's claim is that the loader has
     /// relocated those slots, which `relocate == false` denies.
+    #[cfg(feature = "test-util")]
     pub fn regions(
         &self,
         source: RegionSource,
@@ -198,7 +201,9 @@ impl OwnedElf {
     ///
     /// # Errors
     ///
-    /// Anything [`regions`](Self::regions) reports.
+    /// When a mapping's data can't be read, or its `address + length` would
+    /// exceed `u64::MAX`, plus anything [`checked_file`](Self::checked_file)
+    /// reports.
     pub fn image(&self, source: RegionSource, mode: RelocationMode) -> Result<ElfImage> {
         let obj = self.checked_file()?;
         let layout = ElfSectionLayout::new(&obj);
@@ -228,9 +233,10 @@ impl OwnedElf {
         })
     }
 
-    /// [`regions`](Self::regions) over a parse and a layout the caller already
-    /// holds, both of which must be of these bytes. The layout is a pure
-    /// function of them, so one built from any parse serves every later parse.
+    /// The mappings `source` and `filter` select, over a parse and a layout the
+    /// caller already holds, both of which must be of these bytes. The layout is
+    /// a pure function of them, so one built from any parse serves every later
+    /// parse.
     ///
     /// Takes the parse rather than making its own, so the
     /// [`checked_file`](Self::checked_file) guard is the caller's and cannot
@@ -238,7 +244,8 @@ impl OwnedElf {
     ///
     /// # Errors
     ///
-    /// Same as [`regions`](Self::regions).
+    /// Same as [`image`](Self::image), and when `filter` is
+    /// `ImmutableAndRelocatedGot` with `relocate == false`.
     pub(crate) fn regions_with(
         &self,
         obj: &object::File<'_>,
