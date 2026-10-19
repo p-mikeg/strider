@@ -1239,10 +1239,9 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "cranelift-entity",
+ "graph-algorithms",
  "hashbrown 0.16.1",
- "petgraph",
  "proptest",
- "rustc-hash 2.1.2",
  "smallvec",
  "strider-graph",
 ]
