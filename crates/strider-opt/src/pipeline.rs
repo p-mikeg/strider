@@ -670,7 +670,7 @@ mod tests {
                 .next()
                 .expect("the fixture returns");
             let value = edit.build_int_const(100 + run as u64, ValueType::int(64))?;
-            let old = edit.node_inputs(ret)[2];
+            let old = edit.node_inputs(ret)[strider_ir::node::NodeKind::Return.input_head_len()];
             edit.absorb_fingerprint(value, old);
             edit.replace_value(old, value);
             Ok(super::OptimizationResult::Changed)

@@ -881,8 +881,7 @@ mod tests {
         assert!(matches!(edit.node_kind(new_load), NodeKind::Load(_)));
         assert!(edit.is_live(new_load), "fresh Load is live");
 
-        // `Load` inputs are [mem, addr].
-        let mem_in = edit.node_inputs(new_load)[0];
+        let mem_in = edit.node_inputs(new_load)[NodeKind::ACCESS_MEM_SLOT];
         let store_node = edit.producer(mem_in);
         assert!(
             matches!(edit.node_kind(store_node), NodeKind::Store(_)),
@@ -893,8 +892,7 @@ mod tests {
             "fresh interior Store is tracked live"
         );
 
-        // `Store` inputs are [mem, addr, data].
-        let init_mem_in = edit.node_inputs(store_node)[0];
+        let init_mem_in = edit.node_inputs(store_node)[NodeKind::ACCESS_MEM_SLOT];
         let init_mem_node = edit.producer(init_mem_in);
         assert!(
             edit.is_root(init_mem_node),
