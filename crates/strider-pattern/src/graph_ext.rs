@@ -123,7 +123,7 @@ mod tests {
 
     use super::reachable_topo;
     use crate::Capture;
-    use crate::matcher::{KindSpec, OutputKindSpec};
+    use crate::matcher::OutputKindSpec;
     use crate::template::{Template, TemplateBuilder, TmplNodeRef, TmplValue, TmplValueRef};
 
     type G = Graph<u8, u8, NeverCacheable>;
@@ -400,15 +400,13 @@ mod tests {
         if depth == 0 || rng.below(3) == 0 {
             return match rng.below(2) {
                 0 => b.capture(Capture::new()),
-                _ => b.leaf(KindSpec::Exact(NodeKind::IntConst(ConstId::from_u32(
-                    rng.below(4) as u32,
-                )))),
+                _ => b.leaf(NodeKind::IntConst(ConstId::from_u32(rng.below(4) as u32))),
             };
         }
         match rng.below(3) {
             0 => {
                 let x = stage(b, rng, depth - 1);
-                b.unary(KindSpec::Exact(NodeKind::IntUnaryOp(IntUnaryOp::Neg)), x)
+                b.unary(NodeKind::IntUnaryOp(IntUnaryOp::Neg), x)
             }
             1 => {
                 let l = stage(b, rng, depth - 1);
@@ -416,7 +414,7 @@ mod tests {
                 b.binary(IntBinaryOp::Add, l, r)
             }
             _ => {
-                let n = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Mul)));
+                let n = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Mul));
                 let l = stage(b, rng, depth - 1);
                 let r = stage(b, rng, depth - 1);
                 b.input(n, 0, l);
@@ -471,7 +469,7 @@ mod tests {
                 outs.push(vec![b.capture(Capture::new())]);
                 continue;
             }
-            let node = b.node(KindSpec::Exact(NodeKind::IntBinaryOp(IntBinaryOp::Add)));
+            let node = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
             let mut own = Vec::new();
             for _ in 0..rng.below(4) {
                 let slot = rng.below(3);
