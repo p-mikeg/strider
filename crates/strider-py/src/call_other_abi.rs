@@ -117,9 +117,9 @@ impl PyCallOtherAbi {
     ///         barriers, port I/O, syscalls); `False` for pure compute.
     ///     no_return: `True` when control does not pass the op.
     ///
-    /// The frozen varnodes belong to `sleigh`'s architecture, so the result is
-    /// usable only with a `Lifter` for that same arch; any other raises
-    /// `StriderError`.
+    /// The frozen varnodes belong to `sleigh`'s sla, so the result is usable
+    /// only with a `Lifter` over the same sla (`arm`, `arm_thumb` and
+    /// `arm_be_kernel` share one); any other raises `StriderError`.
     #[classmethod]
     #[pyo3(signature = (
         sleigh,

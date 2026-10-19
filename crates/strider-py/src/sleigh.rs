@@ -4,7 +4,8 @@ use crate::arch::PySleighArch;
 use crate::errors::into_strider_err;
 use crate::reader::{AnyMemReader, MemInput};
 
-/// Register-table lookup for an arch, independent of any `Lifter`.
+/// Register-table lookup for an arch, independent of any `Lifter`, kept until
+/// 0.3.0 removes it: `SleighArch.reg` / `reg_name` do the same lookups.
 /// Construct via `strider.sleigh.Sleigh(arch, mem)`.
 #[pyclass(name = "Sleigh", module = "strider.sleigh")]
 pub struct PySleigh {
@@ -145,7 +146,8 @@ impl PyVnSpace {
 /// A Sleigh varnode: `(space, offset, size_in_bytes)`.
 ///
 /// Construct via:
-/// * `Sleigh.reg("RAX")`, or `None` if the name isn't a register.
+/// * `SleighArch.reg("RAX")` or `Sleigh.reg("RAX")`, or `None` if the name
+///   isn't a register.
 /// * `Vn(space, off, size)`, for stack varnodes and custom spaces.
 #[pyclass(name = "Vn", module = "strider.sleigh", frozen)]
 #[derive(Clone, Copy)]

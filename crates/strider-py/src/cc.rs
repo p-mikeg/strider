@@ -112,12 +112,15 @@ impl PyCallingConvention {
     ///         order.  Appended after `arg_passing_regs` in a `Call`'s
     ///         argument list, so the first one is `arg(len(arg_passing_regs))`.
     ///
-    /// The frozen varnodes belong to `sleigh`'s architecture, so the result is
-    /// usable only with a `Lifter` for that same arch; any other raises
-    /// `StriderError` at `analyze` time. A `stack_pointer` not as wide as the
-    /// arch's addresses, with `stack_arg_base` set a `stack_arg_increment` other
-    /// than that width, and with `link_register=None` a `ret_stack_pop` below it
-    /// raise here.
+    /// Raises `StriderError` here when `stack_pointer` is not as wide as the
+    /// arch's addresses, when `stack_arg_base` is set and `stack_arg_increment`
+    /// is not that width, or when `link_register=None` and `ret_stack_pop` is
+    /// below it.
+    ///
+    /// The frozen varnodes belong to `sleigh`'s sla, so the result is usable
+    /// only with a `Lifter` over the same sla (`arm`, `arm_thumb` and
+    /// `arm_be_kernel` share one); any other raises `StriderError` at
+    /// `analyze` time.
     #[classmethod]
     #[pyo3(signature = (
         sleigh,

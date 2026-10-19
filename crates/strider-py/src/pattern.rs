@@ -214,9 +214,10 @@ pub(crate) enum CastKind {
     FloatToFloat,
 }
 
-/// A build-valid shape: what a `Template` holds, and what a `Pat` built by a
-/// constructor `strider.template` shares holds under [`PatRepr::Build`].
-/// Every variant compiles on both sides.
+/// A build-valid shape: what a `Template` holds, and what a `Pat` holds under
+/// [`PatRepr::Build`] when built by a constructor `strider.template` shares.
+/// Every variant compiles on both sides, though a nested operand can still be
+/// refused.
 pub(crate) enum TmplRepr {
     Var(Capture),
     IntConst(u128),
@@ -921,7 +922,7 @@ impl TmplRepr {
     }
 
     /// The build side, at a compile level of its own. Total over its own
-    /// shape; a nested `Pat` operand can still be refused.
+    /// shape; a nested operand can still be refused.
     pub(crate) fn compile_template(&self, py: Python<'_>) -> PyResult<DynTemplate> {
         let _depth = DepthGuard::enter()?;
         compile_tmpl_template(self, py)
@@ -953,7 +954,7 @@ const MAX_PATTERN_NESTING: u32 = 512;
 ///
 /// Depth alone does not bound the work: a `Pat` used in two operands
 /// (`q = int_add(q, q)`) lowers once per use, so each level of reuse doubles
-/// the matcher closures, and every one of them is built before anything is
+/// the boxed sub-patterns, and every one of them is built before anything is
 /// staged for the matcher's own node cap to refuse. Well past that cap (256
 /// nodes), so no pattern a query can run is refused here.
 const MAX_COMPILE_STEPS: u64 = 4096;
@@ -1122,7 +1123,7 @@ fn op_match(py: Python<'_>, ob: &Py<PyAny>) -> PyResult<DynMatch> {
 }
 
 // Operands compile eagerly while the GIL and the `Bound`s are held, so the
-// box owns only child shims and outlives those borrows.
+// box owns only child `DynMatch`es / `DynTemplate`s and outlives those borrows.
 
 fn bin_match<P: MatchPat + 'static>(
     py: Python<'_>,
@@ -1345,7 +1346,7 @@ fn un_tpl<P: TemplatePat + Send + 'static>(
 }
 
 /// The build side of a build-valid shape, total over the shape itself; a
-/// nested `Pat` operand can still be refused. The caller holds this level's
+/// nested operand can still be refused. The caller holds this level's
 /// [`DepthGuard`].
 fn compile_tmpl_template(t: &TmplRepr, py: Python<'_>) -> PyResult<DynTemplate> {
     match t {
@@ -2036,8 +2037,9 @@ impl PyPat {
 
     /// Stop the matcher retrying this op with its operands swapped; a no-op
     /// where the op's operands are ordered already. Pins this node alone, so
-    /// a nested op still commutes unless itself `.ordered()`. A shape with no
-    /// operands to order raises. Match-only.
+    /// a nested op still commutes unless itself `.ordered()`; on the lowered
+    /// `int_ne` / `float_ne` that node is the `Equal` under the `Xor`. A shape
+    /// with no operands to order raises. Match-only.
     fn ordered(slf: &Bound<'_, Self>) -> PyResult<PyPat> {
         if let Err(kind) = orderable(&unwrapped_repr(slf)) {
             return Err(into_strider_err(anyhow::anyhow!(
