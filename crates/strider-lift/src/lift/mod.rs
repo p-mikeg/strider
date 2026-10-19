@@ -141,8 +141,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     }
 
     /// [`strider_target::BuiltCallingConvention::check_addr_size`] against this
-    /// engine's `ram`: what a per-address override gets, since one comes from a
-    /// validated preset or Python's validated `custom`.
+    /// engine's `ram`: all a per-address override gets. A preset or Python
+    /// `custom` is validated already; a Rust struct literal is not.
     pub(crate) fn check_cc(&self, cc: &strider_target::BuiltCallingConvention) -> Result<()> {
         cc.check_addr_size(self.ram_addr_size)
             .map_err(|e| anyhow!("{:?}: {e}", self.arch().preset()))

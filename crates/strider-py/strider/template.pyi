@@ -3,8 +3,8 @@
 `strider.pattern.Pat` is the match side (the `find`); `Template` is the build
 side (the `replace`): the node, op and constant constructors plus
 `var(capture)`. `Function.rewrite(find, replace)` and `rewrite_all` take a
-`TemplateLike`: a `Template`, a `Pat`, a `Capture`, or a capture's name as a
-`str`.
+`TemplateLike`: a `Template`, a `Capture`, a capture's name as a `str`, or a
+`Pat`, accepted until 0.3.0 removes it.
 """
 
 from __future__ import annotations
@@ -23,8 +23,9 @@ class Template:
     """
     ...
 
-#: A build-side operand accepts a `Template`, a build-valid `Pat`, a raw `int`
-#: (an `int_const`), or a bare `Capture` (sugar for `var(c)`).
+#: A build-side operand accepts a `Template`, a raw `int` (an `int_const`), a
+#: bare `Capture` (sugar for `var(c)`), or a build-valid `Pat` until 0.3.0
+#: removes it.
 TemplateLike = Union[Template, Pat, Capture, int]
 
 def var(c: Capture) -> Template:

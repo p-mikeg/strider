@@ -126,15 +126,19 @@ A plain `Lifter` needs an address and a calling convention:
 _cfg, fn, _u = lft.analyze(0x1000, sleigh.CallingConvention.x86_64_systemv())
 ```
 
-A handle works on any thread, one call at a time. `analyze`, `build_cfg`,
-`optimize`, `pcode_at`, `reg`, `reg_name`, `call_other_abi`, `user_op_names`,
-`add_elf`, and a plain `Lifter`'s `arch`, `reader()` and `rom()`, called while
-another call is in flight on the same handle, from a `read()` callback or
-another thread, raise `StriderError: this Lifter is already in use`; such an
-`add_elf` merges nothing. To analyse in parallel, a worker thread builds its
-own over the same `prog.arch`, `prog.reader()` and `prog.rom()`; since
-`analyze` drops the GIL the two run in parallel. `optimize` holds the GIL for
-its whole run.
+A handle works on any thread. `analyze`, `build_cfg` and `add_elf` hold it
+alone: while one is in flight, from a `read()` callback or another thread,
+`analyze`, `build_cfg`, `optimize`, `pcode_at`, `reg`, `reg_name`,
+`call_other_abi`, `user_op_names`, `add_elf`, a plain `Lifter`'s `arch` and
+`reader()`, and `rom()` on any `Lifter` raise `StriderError: this Lifter is
+already in use`, and those three raise while any of these is in flight. The
+others may overlap each other. Such an `add_elf` merges nothing. To analyse in
+parallel, a worker thread builds its own handle over the same `prog.arch`,
+`prog.reader()` and `prog.rom()`, gathered before any analysis on `prog` is in
+flight; since `analyze` drops the GIL the two run in parallel. A handle
+decodes the image as it stood when it was built, so an `add_elf` on `prog`
+after a worker's handle exists never reaches that worker: merge every ELF
+first. `optimize` holds the GIL for its whole run.
 
 ### `lift.LifterOptions`, per-call tuning
 
@@ -848,11 +852,12 @@ arch = sleigh.SleighArch.x86_64()      # a preset; also x86(), arm(), arm_thumb(
                                        # aarch64(), mipsbe32(), ppc64le(), ...
 arch.name()                            # "x86_64"
 arch.endianness()                      # "little" / "big"
-
-lft.reg("RAX")                         # the Vn for a register name, or None
+arch.reg("RAX")                        # the Vn for a register name, or None
                                        # matched exactly: x86 spells them upper,
                                        # every other arch lower ("r0", "x0", "r3")
-lft.reg_name(vn)                       # the name for a Vn, or None
+arch.reg_name(vn)                      # the name for a Vn, or None
+
+lft.reg("RAX"), lft.reg_name(vn)       # the same lookups through a lifter
 lft.pcode_at(entry, addr)              # decode one instruction's p-code as text
 
 lft.user_op_names()                    # every Sleigh user-op name this arch emits
@@ -868,7 +873,8 @@ of a convention for a per-address override; a callee that never returns goes
 in `CfgOptions(no_return_targets=...)` instead. `CallOtherAbi`
 describes one Sleigh user-op, for `CfgOptions(call_other_abis=...)`. Both
 `custom` constructors resolve register names against a `SleighArch`, whose
-`reg` / `reg_name` look registers up without a lifter.
+`reg` / `reg_name` look registers up without a lifter. `Sleigh`, the older
+handle for both, stays until 0.3.0 removes it.
 `crates/strider-py/examples/python/17_custom_abis.py` uses each of them.
 
 Analysis stays inside the function being lifted: a call is modelled by the

@@ -75,9 +75,10 @@ strider.pattern   # the query DSL, plus .pattern.constraints for joins
 strider.template  # the build side of a rewrite
 strider.opt       # OptimizerPipeline and the passes it runs
 strider.reader    # BufferReader, Symbol, and the memory interfaces
-strider.sleigh    # SleighArch, Sleigh, CallingConvention, CallOtherAbi, Vn,
-                  # VnSpace; CallingConvention.custom(sleigh, ...) builds an
-                  # ABI of your own out of register names
+strider.sleigh    # SleighArch, CallingConvention, CallOtherAbi, Vn, VnSpace;
+                  # CallingConvention.custom(arch, ...) builds an ABI of your
+                  # own out of register names (Sleigh, which SleighArch
+                  # replaces, stays until 0.3.0 removes it)
 strider.StriderError    # the one top-level name
 ```
 
@@ -86,11 +87,13 @@ and is the quickest way to see the shape a pattern has to match;
 [python-api.md](python-api.md#10-visualizing) has the view it opens on, the
 keys and the toolbar.
 
-A lift handle serves one call at a time, from any thread; to analyse in
-parallel, a worker builds its own over the same `arch` / `reader()` / `rom()`
-and calls `analyze(addr, cc)`, since a plain handle stores no default
-convention and carries no symbols. `analyze` releases the GIL, so the two run
-in parallel.
+A lift handle works from any thread, and `analyze`, `build_cfg` and `add_elf`
+hold it alone. To analyse in parallel, a worker builds its own over the same
+`arch` / `reader()` / `rom()`, gathered before any analysis on the first
+handle is in flight, and calls `analyze(addr, cc)`, since a plain handle
+stores no default convention and carries no symbols. `analyze` releases the
+GIL, so the two run in parallel. A handle decodes the image as it stood when
+it was built, so `add_elf` every ELF first.
 
 An analysis failure is a `strider.StriderError`, and its `.backtrace` carries
 the message followed by the Rust backtrace; `STRIDER_BACKTRACE=1` folds that

@@ -37,7 +37,7 @@ the one top-level name.
 | `strider.lift` | `load_elf`, `lifter`, `Lifter` / `ElfLifter`, `LifterOptions`, `AssumptionOptions`, `AnalyzeResult` |
 | `strider.ir` | `Function`, `Node` |
 | `strider.cfg` | `Cfg`, `CfgOptions`, `DotStyle` |
-| `strider.sleigh` | `SleighArch`, `Sleigh`, `CallingConvention`, `CallOtherAbi`, `Vn`, `VnSpace` |
+| `strider.sleigh` | `SleighArch` (with `reg` / `reg_name`), `CallingConvention`, `CallOtherAbi`, `Vn`, `VnSpace`; `Sleigh`, which `SleighArch` replaces, until 0.3.0 removes it |
 | `strider.reader` | `BufferReader`, `MemReader`, `ReadOnlyMemory`, `Symbol`, `SymbolIter` |
 | `strider.pattern` | the match DSL: `Pat`, `Capture`, `Match`, the builders, `.constraints` |
 | `strider.template` | the build side of a rewrite: `Template` |

@@ -200,17 +200,19 @@ class CallingConvention:
         `sleigh` is the `SleighArch`, or a `Sleigh` built for one.
 
         Names are resolved and most ABI invariants checked here, so a bad one
-        raises `StriderError` at construction. Among them, a `link_register`
-        must also appear in `callee_saved_regs`, and `link_register=None`
-        needs `ret_stack_pop` at least the pointer size for the return
-        address `call` pushes.
+        raises `StriderError` at construction. Among them:
 
-        The resolved varnodes are frozen against `sleigh`'s architecture, so
-        the result is usable only with a `Lifter` for that same arch; any
-        other raises `StriderError` at `analyze` time. A `stack_pointer` not
-        as wide as the arch's addresses, with `stack_arg_base` set a
-        `stack_arg_increment` other than that width, and with
-        `link_register=None` a `ret_stack_pop` below it raise here.
+        - a `link_register` must also appear in `callee_saved_regs`;
+        - `stack_pointer` must be as wide as the arch's addresses, and so
+          must `stack_arg_increment` when `stack_arg_base` is set;
+        - with `link_register=None`, `ret_stack_pop` must cover the return
+          address `call` pushes (x86: 4, x86-64: 8). A link-register arch
+          (ARM, MIPS, PPC) pops 0 and sets `link_register`.
+
+        The resolved varnodes are frozen against `sleigh`'s sla, so the
+        result is usable only with a `Lifter` over the same sla (`arm`,
+        `arm_thumb` and `arm_be_kernel` share one); any other raises
+        `StriderError` at `analyze` time.
         """
         ...
     def preserves_all(self) -> CallingConvention:
@@ -274,9 +276,10 @@ class Vn:
 class Sleigh:
     """One architecture's register table, independent of any `Lifter`.
 
-    The handle `CallingConvention.custom` and `CallOtherAbi.custom` resolve
-    register names against. Most workflows never build one: `Lifter` owns a
-    `Sleigh` and forwards `reg` / `reg_name`.
+    Kept until 0.3.0 removes it: a `SleighArch` does the same, as the
+    `sleigh=` argument of `CallingConvention.custom` and `CallOtherAbi.custom`
+    and through `SleighArch.reg` / `reg_name`. A `Lifter` forwards `reg` /
+    `reg_name` too.
     """
     def __init__(
         self, arch: SleighArch, mem: Union[MemReader, BufferReader]
@@ -344,8 +347,10 @@ class CallOtherAbi:
         lead the lifted call's argument list; `implicit_writes` are written
         beyond the p-code-explicit result.
 
-        The resolved varnodes are frozen against `sleigh`'s architecture, so
-        the result is usable only with a `Lifter` for that same arch.
+        The resolved varnodes are frozen against `sleigh`'s sla, so the
+        result is usable only with a `Lifter` over the same sla (`arm`,
+        `arm_thumb` and `arm_be_kernel` share one); any other raises
+        `StriderError` at `analyze` time.
         """
         ...
     @property
