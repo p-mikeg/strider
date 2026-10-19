@@ -20,8 +20,8 @@
 ///
 /// Claims accumulate per [`Function`](crate::Function): every optimizer run
 /// merges its own into [`Function::assumptions`](crate::Function::assumptions),
-/// which every pass reads, and none withdraws one.  A function without a
-/// claim is a fresh lift.
+/// which every pass reads, and none withdraws one, so only a fresh lift drops
+/// one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AssumptionOptions {
     /// The stack and the global / constant-address regions (`.data`,

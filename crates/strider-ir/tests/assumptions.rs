@@ -73,8 +73,8 @@ fn none_clears_every_claim() {
     assert!(a.noalias_allocators.is_empty());
 }
 
-/// Each claim alone is omitted by the floor under its own name, and the
-/// floor omits nothing a claim holds.
+/// Each claim alone is omitted by the floor under its own name, and a claim
+/// omits nothing the floor holds.
 #[test]
 fn omitted_by_names_each_claim() {
     let floor = AssumptionOptions::none();

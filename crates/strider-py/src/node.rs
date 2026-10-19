@@ -124,8 +124,9 @@ impl PyNode {
         self.with_node(py, |_, _| self.id)
     }
 
-    /// The node's kind as a string. An op or a memory space renders as its
-    /// payload (`"IntBinaryOp(Add)"`, `"Load(RAM)"`); an interned or opaque
+    /// The node's kind as a string. An op or a memory space renders with its
+    /// payload (`"IntBinaryOp(Add)"`, `"Load(RAM)"`), and a float constant
+    /// with its raw bits (`"FloatConst(<bits>)"`); an interned or opaque
     /// handle does not (`"IntConst"`, `"InitialVar"`, `"CallOther"`), nor does
     /// a kind with none (`"Region"`, `"Phi"`).
     fn kind(&self, py: Python<'_>) -> PyResult<String> {

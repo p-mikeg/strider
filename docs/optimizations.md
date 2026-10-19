@@ -98,8 +98,8 @@ definitions that cannot overwrite it. That move uses none of the
 `AssumptionOptions`: the passes that read the edge afterwards honour fewer
 claims than forwarding does. Claims accumulate on a function: re-optimising
 adds the claims it names to the ones already in force and withdraws none, and
-a value forwarded under a claim stays forwarded, so a function without a claim
-is one analysed again without it.
+a value forwarded under a claim stays forwarded: to drop a claim, analyse the
+function again without it.
 
 With `AssumptionOptions(escape_analysis=True)` it also forwards across a call,
 when no stack address escapes the frame anywhere in the function (as a call

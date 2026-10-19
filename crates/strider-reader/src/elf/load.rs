@@ -195,9 +195,9 @@ impl OwnedElf {
     }
 
     /// The fetch and ROM region sets `mode` picks, and the writable addresses,
-    /// from one parse: fetch is `CodeAndReadOnly` unrelocated and
-    /// `AllAllocatable` relocated; ROM is `ImmutableOnly`, or
-    /// `ImmutableAndRelocatedGot` under `got_is_rom`.
+    /// from one parse: fetch is the code and read-only mappings unrelocated,
+    /// every allocatable one relocated; ROM is the immutable mappings, plus
+    /// `.got` / `.data.rel.ro` under `got_is_rom`.
     ///
     /// # Errors
     ///
@@ -244,8 +244,9 @@ impl OwnedElf {
     ///
     /// # Errors
     ///
-    /// Same as [`image`](Self::image), and when `filter` is
-    /// `ImmutableAndRelocatedGot` with `relocate == false`.
+    /// When a mapping's data can't be read or its `address + length` would
+    /// exceed `u64::MAX`, and when `filter` is `ImmutableAndRelocatedGot` with
+    /// `relocate == false`.
     pub(crate) fn regions_with(
         &self,
         obj: &object::File<'_>,
