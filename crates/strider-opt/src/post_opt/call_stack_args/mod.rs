@@ -110,9 +110,8 @@ impl PostOptimizer for CallStackArgCollect {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        opt_ctx: &mut crate::OptCtx<'_>,
+        _opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
-        let assumptions = &opt_ctx.options.assumptions;
         // The owned `Vec` lets the immutable borrow end before the mutation loop
         // takes `edit` mutably.
         let calls: Vec<NodeId> = edit
@@ -120,7 +119,7 @@ impl PostOptimizer for CallStackArgCollect {
             .collect();
         let alias_cfg = MemAnalyzer::new(MemOptions::for_purpose(
             MemPurpose::CallStackArgs,
-            assumptions,
+            edit.function().assumptions(),
         ));
         // `float_arg_slots` scans the tracked set per float register, so the
         // unoverridden calls share one scan.

@@ -101,7 +101,9 @@ Strider:
 
 - `strider-ir`: the sea-of-nodes IR. `strider_ir::eval` is the one integer
   evaluator, `ExpectedValueKind::admits` the one slot-kind check and
-  `NodeKind::operand_width` the one operand-width rule.
+  `NodeKind::operand_width` the one operand-width rule. `AssumptionOptions`
+  lives here (strider-opt re-exports it) because a `Function` holds the claims
+  in force.
 - `strider-target`: target descriptions (`SleighArch`,
   `CallingConvention` / `BuiltCallingConvention`, the `CallOther` ABI table)
   and `ArchNames`, each preset's register and space names, read off a Sleigh
@@ -365,7 +367,9 @@ when both IR slots hold the same value.
   owners with two different instruction streams, so overlapping code is
   reported rather than silently double-owned.
 - SP-alias precision is tuned by `OptOptions` (`resolve_indirect_branches`,
-  `assumptions`), threaded through `OptCtx` into every SP-aware pass.
+  `assumptions`). `OptCtx` carries the claims a run ADDS: they merge into
+  `Function::assumptions`, which every SP-aware pass and classifier reads, and
+  no run withdraws one (`analyze` lifts a fresh `Function` every round).
   `assumptions` is an `AssumptionOptions` of seven claims about the code being
   analysed that the IR cannot prove, so a wrong one miscompiles; every field's
   risky value is the positive one, three default ON, and
@@ -375,8 +379,9 @@ when both IR slots hold the same value.
   `escape_analysis` or a listed allocator. Per-field detail is on the struct
   (`crates/strider-ir/src/assumptions.rs`). `LoadForward` is two analyzers: the
   `alias` one is `MemPurpose::Forward` over `assumptions`, the `narrow` one
-  `MemPurpose::Structural`, which claims nothing, because `narrow_load_to`
-  rewires for good and the edge outlives the run that made it.
+  `MemPurpose::Structural`, which claims nothing, because the edge
+  `narrow_load_to` rewires is read afterwards by walks that honour fewer claims
+  (the table walk, stack-argument collection).
 
 ## strider-py
 

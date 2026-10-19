@@ -206,7 +206,7 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
 /// needs the caller to loop to a fixed point.
 ///
 /// Ends by re-deriving the memory classes `stack_only()` / `heap_only()`
-/// read, under the allocator set the function was last optimized with.
+/// read, under the claims the function holds.
 ///
 /// # Errors
 ///

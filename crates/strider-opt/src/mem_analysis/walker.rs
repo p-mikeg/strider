@@ -110,10 +110,7 @@ impl MemWalker<'_> {
             AddrClass::StackRooted { base, offset } => {
                 self.options.call_relaxations
                     && in_own_frame(function, base, offset, self.load.size)
-                    && !frame_escape::frame_address_escapes_cached(
-                        function,
-                        &self.options.noalias_allocators,
-                    )
+                    && !frame_escape::frame_address_escapes_cached(function)
             }
             _ => false,
         };
@@ -238,9 +235,7 @@ impl MemWalker<'_> {
         if !self.options.call_relaxations {
             return false;
         }
-        let Some(ret_base) =
-            allocator_return_base(function, call, &self.options.noalias_allocators)
-        else {
+        let Some(ret_base) = allocator_return_base(function, call) else {
             return false;
         };
         match self.load.class {

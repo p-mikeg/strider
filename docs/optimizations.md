@@ -95,8 +95,11 @@ folds to the value written.
 
 Each load it examines also has its memory edge moved past the memory
 definitions that cannot overwrite it. That move uses none of the
-`AssumptionOptions`, so re-optimising under `AssumptionOptions.none()` inherits
-no assumption from an earlier run.
+`AssumptionOptions`: the passes that read the edge afterwards honour fewer
+claims than forwarding does. Claims accumulate on a function: re-optimising
+adds the claims it names to the ones already in force and withdraws none, and
+a value forwarded under a claim stays forwarded, so a function without a claim
+is one analysed again without it.
 
 With `AssumptionOptions(escape_analysis=True)` it also forwards across a call,
 when no stack address escapes the frame anywhere in the function (as a call
