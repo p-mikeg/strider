@@ -1184,9 +1184,10 @@ impl<'f> ConstraintEval<'f> {
 
 /// Deduplicate joined tuples by capture binding signature: every capture bound
 /// anywhere in the tuple, sorted. Keyed on the `Binding` itself, the
-/// granularity [`row_agrees`] compares: two rows binding one capture to
-/// distinct outputs of one node are distinct rows. Of equal signatures only
-/// the first is kept, order-preserving. An empty signature is always kept.
+/// granularity [`row_agrees`] compares: two rows whose first binder of a
+/// capture binds distinct outputs of one node are distinct rows. Of equal
+/// signatures only the first is kept, order-preserving. An empty signature is
+/// always kept.
 ///
 /// A pattern that binds NOTHING is identified by its root instead. Its matches
 /// are otherwise indistinguishable, so every tuple differing only in which one
@@ -1199,7 +1200,8 @@ impl<'f> ConstraintEval<'f> {
 ///
 /// `row_agrees` already made each tuple internally consistent, so a capture
 /// bound as a value anywhere in the tuple has the same value everywhere and the
-/// first one seen identifies it.
+/// first one seen identifies it. Where that first binder binds the node, rows
+/// differing only in which of its outputs a later one bound collapse.
 fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>) {
     let mut seen: FxHashSet<Vec<(u32, Binding)>> = FxHashSet::default();
     acc.retain(|tuple| {

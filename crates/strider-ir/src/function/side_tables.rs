@@ -310,7 +310,7 @@ impl SideTables {
             memory_interner,
             initial_var_index,
             frame_escape,
-            // A fact about the lifted calls, keyed by nothing.
+            // Holds no id: a fact about the lifted calls.
             frame_address_in_call_register: _,
             // The set the kept `memory_offsets` were computed under.
             memory_allocators: _,

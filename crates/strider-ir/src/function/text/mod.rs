@@ -19,9 +19,9 @@ impl Function {
     /// named `%vN` in print order. With `fingerprints`, each line ends in its
     /// sorted asm address set `  @{..}`; those sets can dwarf the rest on large
     /// functions, and each one costs a walk of that node's whole fingerprint
-    /// union closure, so a chain of unions is quadratic in its length while
-    /// the text stays linear
-    /// (see [`UnionDag::for_each`](entity_utils::UnionDag::for_each)).
+    /// union closure, so a chain of unions is quadratic in its length while the
+    /// text stays linear (see
+    /// [`UnionDag::for_each`](entity_utils::UnionDag::for_each)).
     ///
     /// Control nodes print in reverse postorder of the control graph, taking
     /// successors in output-index order. Each is preceded by its unprinted

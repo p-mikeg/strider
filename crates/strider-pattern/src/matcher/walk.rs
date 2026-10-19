@@ -246,8 +246,9 @@ pub(crate) fn root_output_vertex_for(
 /// carries its captures there, and [`bind_sibling_outputs`] checks every other
 /// at its own slot, so the two attempts differ only in the order they bind.
 /// A vertex shared between the outputs, a [`SlotMode::Enumerated`] one
-/// (pinned as an anchor, enumerated as a sibling), and a differing anchor
-/// value type (which a post-match guard reads) each tell them apart.
+/// (fixed to the anchored output as an anchor, enumerated as a sibling), and a
+/// differing anchor value type (which a post-match guard reads) each tell them
+/// apart.
 pub(crate) fn anchor_repeats(
     matcher: &Matcher,
     pat: &Pattern,

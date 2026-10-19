@@ -163,8 +163,9 @@ pub enum OutputKindSpec {
 /// How a value vertex reads its `slot`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SlotMode {
-    /// An anchor position only: as a root's sole vertex it takes the output
-    /// being matched, whatever its slot; as a sibling it sits at `slot`.
+    /// An anchor position only: as an anchor (a root's sole vertex, or an
+    /// operand's producer) it takes the output being matched, whatever its
+    /// slot; as a sibling it sits at `slot`.
     Loose,
     /// The matched output must be produced at `slot`.
     Pinned,
