@@ -412,14 +412,18 @@ fn nested_alternations(levels: usize) -> Pattern {
 }
 
 /// 255 nested alternations and their leaf are 256 nodes, exactly the budget,
-/// and match on the 2 MiB stack a spawned thread gets by default.
+/// and match on the 2 MiB stack a spawned thread gets by default, as often as
+/// the leaf alone.
 #[test]
 fn nested_alternations_at_the_node_cap_match() {
     assert!(error_of(&nested_alternations(256)).contains("nodes"));
     std::thread::spawn(|| {
         let function = add_5_3();
+        let matcher = Matcher::new(&function);
+        let bare = matcher.find_all(&nested_alternations(0)).unwrap().len();
+        assert!(bare > 0);
         let pat = nested_alternations(255);
-        assert!(!Matcher::new(&function).find_all(&pat).unwrap().is_empty());
+        assert_eq!(matcher.find_all(&pat).unwrap().len(), bare);
     })
     .join()
     .unwrap();
