@@ -822,6 +822,57 @@ fn sibling_output_capture_joins_like_the_anchor() {
     );
 }
 
+/// `load().space(s)` pins the kind exactly, so two of them are one operand
+/// shape and the swapped ordering is cut, as it is for two bare `load()`s.
+#[test]
+fn space_pinned_operands_are_cut_like_bare_ones() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let function = add_of_two_loads();
+    let counted = |pat: Pattern| -> (usize, usize) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let pat = pat.with_root_post_match(Box::new(move |_, _, _, _| {
+            counter.fetch_add(1, Ordering::Relaxed);
+            true
+        }));
+        let hits = Matcher::new(&function).find_all(&pat).unwrap().len();
+        (hits, calls.load(Ordering::Relaxed))
+    };
+    let ram = || load().space(rsleigh::VnSpace::RAM);
+    // The root capture keeps `find_all` enumerating, so the count is the
+    // number of orderings driven.
+    let r = Capture::new();
+    assert_eq!(
+        counted(int_add(load(), load()).capture(r).into_pattern()),
+        (1, 1)
+    );
+    let r = Capture::new();
+    assert_eq!(
+        counted(int_add(ram(), ram()).capture(r).into_pattern()),
+        (1, 1)
+    );
+}
+
+/// A capture on one of two space-pinned loads still tells the orderings
+/// apart, so the cut leaves both bindings.
+#[test]
+fn space_pinned_capture_keeps_both_orders() {
+    let function = add_of_two_loads();
+    let ram = || load().space(rsleigh::VnSpace::RAM);
+    let k = Capture::new();
+    let vs: Vec<_> = a::matches(
+        &function,
+        int_add(ram().capture(k), ram()).into_pattern(),
+        2,
+    )
+    .iter()
+    .map(|m| m.bindings().get_value(k).expect("bound"))
+    .collect();
+    assert_ne!(vs[0], vs[1], "the two bindings must be DISTINCT");
+}
+
 /// `v_{i+1} = v_i + v_i`: both slots of every add hold one value, so the
 /// swapped ordering assigns every operand what the natural one did. Retrying
 /// it anyway doubles the work per nested level for a single match.

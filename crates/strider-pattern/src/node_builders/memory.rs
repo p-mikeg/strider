@@ -16,7 +16,7 @@ use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
 
 use super::MemPat;
-use super::node_pat::{KindCheck, NodePat, variant_kind};
+use super::node_pat::NodePat;
 
 /// The address-region filter of a `Load`/`Store` pattern: a mutually-exclusive
 /// choice, so the state can hold only one at a time and the last builder call
@@ -129,22 +129,6 @@ macro_rules! delegate_region_filter {
     };
 }
 
-/// Variant-agnostic without a space constraint; with one, pins the exact
-/// `VnSpace`.
-fn load_store_kind(exemplar: NodeKind, space: Option<rsleigh::VnSpace>) -> KindSpec {
-    let discriminant = std::mem::discriminant(&exemplar);
-    let is_load = matches!(exemplar, NodeKind::Load(_));
-    let check = space.map(|s| {
-        let check: KindCheck = Box::new(move |k| {
-            matches!((is_load, k),
-                (true, NodeKind::Load(actual)) | (false, NodeKind::Store(actual))
-                    if *actual == s)
-        });
-        check
-    });
-    variant_kind(discriminant, check)
-}
-
 /// Inputs `[mem(0), addr(1)]`, single output the loaded value.
 ///
 /// Holds its `NodePat` eagerly. `space` re-narrows the kind in place rather
@@ -158,10 +142,7 @@ pub struct LoadPat {
 
 impl LoadPat {
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
-        self.inner = self.inner.with_kind(load_store_kind(
-            NodeKind::Load(rsleigh::VnSpace::RAM),
-            Some(s),
-        ));
+        self.inner = self.inner.with_kind(KindSpec::Exact(NodeKind::Load(s)));
         self
     }
 
@@ -210,7 +191,7 @@ impl MatchPat for LoadPat {
 pub fn load() -> LoadPat {
     LoadPat {
         inner: NodePat::value(
-            load_store_kind(NodeKind::Load(rsleigh::VnSpace::RAM), None),
+            KindSpec::variant_of(&NodeKind::Load(rsleigh::VnSpace::RAM)),
             0,
         ),
         bit_width: None,
@@ -234,10 +215,7 @@ pub struct StorePat {
 
 impl StorePat {
     pub fn space(mut self, s: rsleigh::VnSpace) -> Self {
-        self.inner = self.inner.with_kind(load_store_kind(
-            NodeKind::Store(rsleigh::VnSpace::RAM),
-            Some(s),
-        ));
+        self.inner = self.inner.with_kind(KindSpec::Exact(NodeKind::Store(s)));
         self
     }
 
@@ -303,10 +281,9 @@ impl MemPat for StorePat {}
 
 pub fn store() -> StorePat {
     StorePat {
-        inner: NodePat::node(load_store_kind(
-            NodeKind::Store(rsleigh::VnSpace::RAM),
-            None,
-        ))
+        inner: NodePat::node(KindSpec::variant_of(&NodeKind::Store(
+            rsleigh::VnSpace::RAM,
+        )))
         .with_mem_value(0),
         has_data: false,
         bit_width: None,

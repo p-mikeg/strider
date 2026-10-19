@@ -1,6 +1,4 @@
-use std::mem::Discriminant;
-
-use strider_ir::node::{NodeKind, ValueType};
+use strider_ir::node::ValueType;
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
@@ -84,7 +82,7 @@ impl NodePat {
         s
     }
 
-    /// Narrows the kind, e.g. to a `VariantWith` payload check.
+    /// Narrows the kind, e.g. `call_other()` to one `user_op_id`.
     pub(crate) fn with_kind(mut self, kind: KindSpec) -> Self {
         self.kind = kind;
         self
@@ -325,24 +323,6 @@ pub(crate) fn control_compiler<P: MatchPat + 'static>(p: P) -> SubCompiler {
     })
 }
 
-/// Narrows a [`KindSpec::VariantWith`] beyond its discriminant: `CallOther`
-/// `user_op_id`, `Load` / `Store` `space`.
-pub(crate) type KindCheck = Box<dyn Fn(&NodeKind) -> bool + Send>;
-
-/// Pins a discriminant, plus the exact payload when `check` is `Some`.
-pub(crate) fn variant_kind(
-    discriminant: Discriminant<NodeKind>,
-    check: Option<KindCheck>,
-) -> KindSpec {
-    match check {
-        None => KindSpec::Variant(discriminant),
-        Some(check) => KindSpec::VariantWith {
-            discriminant,
-            check,
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     //! `input_any` on a `Call`, whose inputs include control and memory, pins
@@ -351,7 +331,7 @@ mod tests {
 
     use super::*;
     use crate::{Matcher, int_const};
-    use strider_ir::node::ValueType;
+    use strider_ir::node::{NodeKind, ValueType};
     use strider_ir::{IRBuilderExt, IRViewer};
     use strider_ir_test_utils::RegisterSet;
 

@@ -167,6 +167,10 @@
   `test-util` feature: nothing outside the crate's tests read them.
   `classify_sites`, `ClassifiedSites`, `ReturnTargets` and the `KnownBits`
   pass stay public.
+- `KindSpec::VariantWith` is gone. `load().space(s)`, `store().space(s)` and
+  `call_other().user_op_id(v)` pin `KindSpec::Exact`, the same test on
+  kinds whose payload is that one field, so two such operands of a
+  commutative node now count as interchangeable.
 
 ### Changed, Python
 
