@@ -905,10 +905,10 @@ fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    // `octx_structural_only` clears `stack_global_disjoint`; at its default
-    // the global write is assumed disjoint and the Load would be promoted.
+    // At the floor `stack_global_disjoint` is off; at its default the global
+    // write is assumed disjoint and the Load would be promoted.
     pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(

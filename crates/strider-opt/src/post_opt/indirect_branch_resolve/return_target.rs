@@ -24,12 +24,11 @@ use crate::mem_analysis::{
 /// A RAM store the address spine does not place on the entry stack, and any
 /// callee or user-op, rest on one claim,
 /// [`AssumptionOptions::return_slots_survive_untracked_writes`](crate::AssumptionOptions::return_slots_survive_untracked_writes):
-/// code that breaks it smashes its own stack. `AssumptionOptions::none` clears
-/// it: such a store's address is then located the way a load's is, and a store
-/// no location is reached for is taken to clobber the slot.
+/// code that breaks it smashes its own stack. Without it, such a store's
+/// address is located the way a load's is, and a store no location is reached
+/// for is taken to clobber the slot.
 pub struct ReturnTargets<'f> {
     function: &'f Function,
-    assumptions: &'f crate::AssumptionOptions,
     /// Every claim a query has decided. Return sites mostly share their
     /// claims, and each is explored once.
     settled: FxHashMap<(Path, Claim), bool>,
@@ -90,7 +89,6 @@ impl<'f> ReturnTargets<'f> {
     pub fn new(function: &'f Function) -> Self {
         Self {
             function,
-            assumptions: function.assumptions(),
             settled: FxHashMap::default(),
             doms: None,
             feasible: FxHashMap::default(),
@@ -262,7 +260,11 @@ impl<'f> ReturnTargets<'f> {
                         }
                     }
                     NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
-                        if !self.assumptions.return_slots_survive_untracked_writes {
+                        if !self
+                            .function
+                            .assumptions()
+                            .return_slots_survive_untracked_writes
+                        {
                             return false;
                         }
                         out.extend(function.memory_input_of(node).map(below));
@@ -565,7 +567,10 @@ impl<'f> ReturnTargets<'f> {
         let addr = function.store_addr(store);
         let data = function.store_data(store);
         let len = store_value_byte_size(function, data);
-        let optimistic = self.assumptions.return_slots_survive_untracked_writes;
+        let optimistic = self
+            .function
+            .assumptions()
+            .return_slots_survive_untracked_writes;
         let (written, guessed) = match (self.spine(addr), prove.is_some() && !optimistic) {
             (Some(written), _) => (written, false),
             (None, false) => return StoreEffect::Passes,
