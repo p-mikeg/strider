@@ -14,6 +14,10 @@ _PAT_HINT = (
 )
 
 
+def _match_only_hint(name):
+    return f"a strider.pattern Pat only matches, and {name} has no strider.template twin"
+
+
 def _build_graph(symbol="array_sum"):
     return built_function("x86", "memory", symbol, optimize=False)
 
@@ -93,25 +97,54 @@ def test_template_is_a_distinct_type_from_pat():
 
 
 @pytest.mark.parametrize(
-    ("replace", "name"),
+    ("replace", "name", "hint"),
     [
-        (lambda: anything(), "anything()"),
-        (lambda: var(Capture()), "var()"),
-        (lambda: int_const(0), "int_const()"),
+        (lambda: anything(), "anything()", _match_only_hint("anything()")),
+        (lambda: var(Capture()), "var()", _PAT_HINT),
+        (lambda: int_const(0), "int_const()", _PAT_HINT),
     ],
     ids=["anything", "var", "int_const"],
 )
-def test_a_pat_is_not_a_replacement(replace, name):
+def test_a_pat_is_not_a_replacement(replace, name, hint):
     """A `strider.pattern.Pat` matches and never builds, so `replace` refuses
     one at conversion, a build-valid one included, pointing at
-    `strider.template`."""
+    `strider.template` when it has a twin there."""
     g = _build_graph()
     x = Capture()
-    text = re.escape(f"cannot use {name} as a rewrite RHS: {_PAT_HINT}")
+    text = re.escape(f"cannot use {name} as a rewrite RHS: {hint}")
     with pytest.raises(TypeError, match=f"^argument 'replace': {text}$"):
         g.rewrite(find=int_add(var(x), int_const(0)), replace=replace())  # type: ignore[arg-type]
     with pytest.raises(TypeError, match=f"^argument 'pairs': {text}$"):
         g.rewrite_all([(int_add(var(x), int_const(0)), replace())])  # type: ignore[list-item]
+
+
+def test_a_bool_replacement_points_at_bool_const():
+    g = _build_graph()
+    x = Capture()
+    with pytest.raises(
+        TypeError,
+        match=re.escape(
+            "argument 'replace': cannot use bool as a rewrite RHS: "
+            "expected a strider.template Template, a Capture or a capture name "
+            "(a bool constant is template.bool_const(b))"
+        ),
+    ):
+        g.rewrite(find=int_add(var(x), int_const(0)), replace=True)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("name", ["_", "any_"])
+def test_the_wildcard_name_is_not_a_replacement(name):
+    g = _build_graph()
+    x = Capture()
+    with pytest.raises(
+        strider.StriderError,
+        match="^"
+        + re.escape(
+            f'cannot use "{name}" as a rewrite RHS: it is the wildcard, not a capture name'
+        )
+        + "$",
+    ):
+        g.rewrite(find=int_add(var(x), int_const(0)), replace=name)
 
 
 @pytest.mark.parametrize("replace", [4, 1.5, None], ids=["int", "float", "none"])
@@ -213,12 +246,43 @@ def test_a_pat_nested_in_a_template_is_refused_by_its_constructor(operand, name)
 
 @pytest.mark.parametrize(
     ("operand", "name"),
-    [(lambda: var(Capture()), "var()"), (lambda: int_const(0), "int_const()")],
-    ids=["var", "int_const"],
+    [
+        (lambda: anything(), "anything()"),
+        (lambda: strider.pattern.one_of([int_const(0), int_const(1)]), "one_of()"),
+        (lambda: strider.pattern.float_le(var(Capture()), var(Capture())), "float_le()"),
+        (lambda: var(Capture()).when(lambda m: True), ".when()"),
+        (lambda: strider.pattern.ret().into_pat(), "a control / variadic builder"),
+    ],
+    ids=["anything", "one_of", "float_le", "when", "control"],
+)
+def test_a_match_only_pat_says_it_has_no_template_twin(operand, name):
+    g = _build_graph()
+    x = Capture()
+    with pytest.raises(
+        strider.StriderError,
+        match="^"
+        + re.escape(f"cannot use {name} as a rewrite RHS: {_match_only_hint(name)}")
+        + "$",
+    ):
+        g.rewrite(
+            find=int_add(var(x), int_const(0)),
+            replace=tpl.int_add(operand(), 1),  # type: ignore[arg-type]
+        )
+
+
+@pytest.mark.parametrize(
+    ("operand", "name"),
+    [
+        (lambda: var(Capture()), "var()"),
+        (lambda: int_const(0), "int_const()"),
+        (lambda: strider.pattern.int_const_any_width(5), "int_const_any_width()"),
+    ],
+    ids=["var", "int_const", "int_const_any_width"],
 )
 def test_a_build_valid_pat_nested_in_a_template_points_at_its_template_twin(operand, name):
     """`var()` and `int_const()` are the shapes a half-migrated RHS keeps; the
-    refusal names `strider.template`, where both have a twin."""
+    refusal names `strider.template`, where each of these has a twin
+    (`template.int_const` takes the whole signed range)."""
     g = _build_graph()
     x = Capture()
     with pytest.raises(
