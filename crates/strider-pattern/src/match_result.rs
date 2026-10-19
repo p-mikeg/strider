@@ -129,11 +129,6 @@ impl Match {
         }
     }
 
-    /// Drops the `Matcher` borrow, e.g. before mutating the graph.
-    pub fn bindings_clone(&self) -> Bindings {
-        self.bindings.clone()
-    }
-
     /// Every IR node that matched a pat node: root, interior and captured
     /// leaves. May hold duplicates when a DAG sub-pattern matched along two
     /// paths. Not generation-checked; see the type's own docs.
