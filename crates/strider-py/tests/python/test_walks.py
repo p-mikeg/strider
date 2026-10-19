@@ -32,8 +32,8 @@ def test_mem_walk_returns_memory_touching_nodes():
     assert mem
     kinds = {n.kind() for n in mem}
     assert "InitialMemory" in kinds
-    # kind() renders the full repr (e.g. "Load(VnSpace { shortcut: 'r' })"),
-    # so match on the variant prefix rather than an exact string.
+    # kind() names the space ("Load(RAM)"), so match on the variant prefix
+    # rather than an exact string.
     assert any(k.startswith(("Load", "Store")) for k in kinds)
     assert not any(k.startswith(("IntBinaryOp", "IntConst")) for k in kinds)
 

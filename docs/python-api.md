@@ -319,7 +319,7 @@ A `Node`:
 ```python
 n.id                           # node id; the handle goes stale after
                                # optimize / rewrite / rewrite_all / compact
-n.kind()                       # "IntBinaryOp(Add)", "Region", "Load(RAM)"
+n.kind()                       # "IntBinaryOp(Add)", "IntConst", "Load(RAM)"
 n.op()                         # "Add" / "Less" / ... or None for op-less kinds
 n.value_type()                 # "I64" / "I1" / "F64" / ... or None
 n.inputs(), n.outputs()        # neighbouring nodes (Node handles, not ids)
