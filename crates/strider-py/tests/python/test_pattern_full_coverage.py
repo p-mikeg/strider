@@ -97,8 +97,8 @@ def test_zero_and_sign_extend_return_pat():
 
 
 def test_extend_with_op_string():
-    assert isinstance(int_extend("zero", var(Capture())), Pat)
-    assert isinstance(int_extend("sign", var(Capture())), Pat)
+    assert isinstance(int_extend("ZeroExtend", var(Capture())), Pat)
+    assert isinstance(int_extend("SignExtend", var(Capture())), Pat)
 
 
 def test_extend_with_invalid_op_raises():

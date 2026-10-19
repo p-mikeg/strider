@@ -2251,54 +2251,42 @@ pub fn predicate(py: Python<'_>, f: PyObject) -> PyResult<PyPat> {
     Ok(PyPat::from_repr(PatRepr::Wrapped(any, Wrap::When(f))))
 }
 
-// The canonical spelling each parser accepts is the op variant's `Debug`
-// output, the same string `Match.op` reads back. Canonical names come from an
+// The one spelling each parser accepts is the op variant's `Debug` output, the
+// same string `Match.op` and `Node.op()` read back. Names come from an
 // exhaustive `match`, so adding a variant in strider-ir is a compile error
 // here instead of a silent desync.
 
-/// Tries exact, then alias, then case-insensitive on both.
 fn lookup_op<Op: Copy>(
     variants: &[Op],
     canonical: impl Fn(Op) -> &'static str,
-    aliases: &[(&str, Op)],
     name: &str,
     op_kind: &str,
 ) -> PyResult<Op> {
-    if let Some(&op) = variants.iter().find(|&&op| canonical(op) == name) {
-        return Ok(op);
-    }
-    if let Some(&(_, op)) = aliases.iter().find(|(n, _)| *n == name) {
-        return Ok(op);
-    }
-    if let Some(&op) = variants
+    variants
         .iter()
-        .find(|&&op| canonical(op).eq_ignore_ascii_case(name))
-    {
-        return Ok(op);
-    }
-    if let Some(&(_, op)) = aliases.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
-        return Ok(op);
-    }
-    Err(into_strider_err(anyhow::anyhow!(
-        "unknown {op_kind} variant {name:?}: expected one of {}",
-        variants
-            .iter()
-            .map(|&op| canonical(op))
-            .collect::<Vec<_>>()
-            .join(", ")
-    )))
+        .copied()
+        .find(|&op| canonical(op) == name)
+        .ok_or_else(|| {
+            into_strider_err(anyhow::anyhow!(
+                "unknown {op_kind} variant {name:?}: expected one of {}",
+                variants
+                    .iter()
+                    .map(|&op| canonical(op))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
+        })
 }
 
 // The optional `_ => unreachable` arm lets a curated subset (the boolean ops)
 // list only the variants it accepts and still match exhaustively. The leading
-// `$vis` token sets per-invocation visibility; only `parse_int_cmp_op` has a
-// consumer outside this module.
+// `$vis` token sets per-invocation visibility; `parse_int_cmp_op` and
+// `parse_extend_op` have consumers outside this module.
 macro_rules! op_parser {
     (
         $vis:vis $fn:ident, $ty:ty, $op_kind:literal,
-        variants = [$($variant:ident),+ $(,)?],
-        $(rest_unreachable = $msg:literal,)?
-        aliases = [$(($alias:literal, $aop:ident)),* $(,)?] $(,)?
+        variants = [$($variant:ident),+ $(,)?]
+        $(, rest_unreachable = $msg:literal)? $(,)?
     ) => {
         $vis fn $fn(name: &str) -> PyResult<$ty> {
             use $ty as Op;
@@ -2309,8 +2297,7 @@ macro_rules! op_parser {
                     $(_ => unreachable!($msg, ),)?
                 }
             }
-            static ALIASES: &[(&str, $ty)] = &[$(($alias, Op::$aop)),*];
-            lookup_op(VARIANTS, canonical, ALIASES, name, $op_kind)
+            lookup_op(VARIANTS, canonical, name, $op_kind)
         }
     };
 }
@@ -2319,8 +2306,7 @@ op_parser!(
     pub(crate) parse_int_cmp_op,
     strider_ir::IntCmpOp,
     "IntCmpOp",
-    variants = [Equal, Less, Sless, Carry, Scarry, Sborrow],
-    aliases = [("eq", Equal), ("lt", Less), ("slt", Sless)]
+    variants = [Equal, Less, Sless, Carry, Scarry, Sborrow]
 );
 
 op_parser!(
@@ -2340,11 +2326,6 @@ op_parser!(
         SShiftRight,
         ShiftLeft,
         Mul
-    ],
-    aliases = [
-        ("shl", ShiftLeft),
-        ("shr", ShiftRight),
-        ("sshr", SShiftRight)
     ]
 );
 
@@ -2353,34 +2334,22 @@ op_parser!(
     strider_ir::IntBinaryOp,
     "boolean binary op",
     variants = [And, Or, Xor],
-    rest_unreachable = "non-boolean IntBinaryOp in bool table",
-    aliases = []
+    rest_unreachable = "non-boolean IntBinaryOp in bool table"
 );
 
 op_parser!(
     parse_float_binary_op,
     strider_ir::FloatBinaryOp,
     "FloatBinaryOp",
-    variants = [Add, Mul, Div],
-    aliases = []
+    variants = [Add, Mul, Div]
 );
 
-pub(crate) fn parse_extend_op(op: &str) -> PyResult<strider_ir::ExtendOp> {
-    // Hand-rolled rather than `op_parser!` because the two spellings do not
-    // follow that macro's naming. The exhaustive match below is what couples it
-    // to the enum: a third `ExtendOp` variant is a build error here, not a
-    // variant silently unnameable from Python.
-    const _: fn(strider_ir::ExtendOp) = |op| match op {
-        strider_ir::ExtendOp::ZeroExtend | strider_ir::ExtendOp::SignExtend => {}
-    };
-    match op {
-        "zero" | "zero_extend" | "ZeroExtend" => Ok(strider_ir::ExtendOp::ZeroExtend),
-        "sign" | "sign_extend" | "SignExtend" => Ok(strider_ir::ExtendOp::SignExtend),
-        other => Err(into_strider_err(anyhow::anyhow!(
-            "unknown extend op {other:?} (expected 'zero' or 'sign')"
-        ))),
-    }
-}
+op_parser!(
+    pub(crate) parse_extend_op,
+    strider_ir::ExtendOp,
+    "ExtendOp",
+    variants = [ZeroExtend, SignExtend]
+);
 
 pub(crate) fn checked_signed_i64(value: i128) -> PyResult<i64> {
     i64::try_from(value).map_err(|_| {

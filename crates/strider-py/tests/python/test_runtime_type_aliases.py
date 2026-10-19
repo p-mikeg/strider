@@ -57,33 +57,48 @@ def test_an_unknown_value_type_is_named_as_the_caller_spelled_it():
         p.anything().value_ty("I7")  # pyright: ignore[reportArgumentType]
 
 
-#: Each op-name parser and the `Literal` its argument is typed with.
+#: Each op-name parser, the `Literal` its argument is typed with, and how many
+#: operands follow the name.
 _OP_NAME_LITERALS = {
-    "int_cmp": "IntCmpOpName",
-    "int_binary": "IntBinaryOpName",
-    "bool_binary": "BoolBinaryOpName",
-    "float_binary": "FloatBinaryOpName",
+    "int_cmp": ("IntCmpOpName", 2),
+    "int_binary": ("IntBinaryOpName", 2),
+    "bool_binary": ("BoolBinaryOpName", 2),
+    "float_binary": ("FloatBinaryOpName", 2),
+    "int_extend": ("ExtendOpName", 1),
 }
 
 
 @pytest.mark.parametrize("fn_name", sorted(_OP_NAME_LITERALS))
-def test_op_name_literals_cover_the_rust_names(fn_name):
+def test_op_name_literals_are_the_rust_names(fn_name):
     """The `*OpName` Literals are hand-written against Rust op enums. The
-    rejection message lists the parser's canonical names, so the message is
-    the Rust side; an exhaustive Rust `match` keeps it complete for the full
-    parsers, and the boolean subset is curated. Every name a Literal admits
-    must also parse."""
+    rejection message lists the one name each variant has, so the message is
+    the Rust side and the Literal must be exactly it; an exhaustive Rust
+    `match` keeps it complete for the full parsers, and the boolean subset is
+    curated."""
     fn = getattr(p, fn_name)
-    literal = set(typing.get_args(getattr(p, _OP_NAME_LITERALS[fn_name])))
+    literal_name, arity = _OP_NAME_LITERALS[fn_name]
+    literal = set(typing.get_args(getattr(p, literal_name)))
+    operands = [p.anything()] * arity
     try:
-        fn("not-an-op", p.anything(), p.anything())
+        fn("not-an-op", *operands)
     except strider.StriderError as exc:
         listed = str(exc).split("expected one of ", 1)[1]
     else:
         raise AssertionError("an unknown op name must be rejected")
-    assert {n.strip() for n in listed.split(",")} <= literal
+    assert {n.strip() for n in listed.split(",")} == literal
     for name in literal:
-        fn(name, p.anything(), p.anything())
+        fn(name, *operands)
+
+
+@pytest.mark.parametrize("literal_name", sorted(n for n, _ in _OP_NAME_LITERALS.values()))
+def test_the_op_name_stubs_match_the_runtime_aliases(literal_name):
+    """pyright checks callers against the stub's copy of each Literal."""
+    import pathlib
+    import re
+
+    src = (pathlib.Path(strider.__file__).parent / "pattern" / "__init__.pyi").read_text()
+    body = src.split(f"{literal_name} = Literal[", 1)[1].split("]", 1)[0]
+    assert set(re.findall(r'"([^"]+)"', body)) == set(typing.get_args(getattr(p, literal_name)))
 
 
 def test_the_valuety_stub_matches_the_runtime_alias():

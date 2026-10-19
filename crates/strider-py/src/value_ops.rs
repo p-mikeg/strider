@@ -182,7 +182,7 @@ macro_rules! value_ops {
             [unary int_sign_extend, Cast, CastKind::SignExtend,
                 "`Extend(SignExtend)`."]
             [unary_named int_extend, Extend, crate::pattern::parse_extend_op,
-                "the `Extend` variant `op` names: `\"zero\"` or `\"sign\"`."]
+                "the `Extend` variant `op` names: `\"ZeroExtend\"` or `\"SignExtend\"`."]
         }
     };
 }

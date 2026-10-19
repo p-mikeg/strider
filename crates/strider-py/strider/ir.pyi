@@ -40,14 +40,14 @@ class Node:
         is stale."""
         ...
     def kind(self) -> str:
-        """The node's kind as a string, including any payload:
-        `"IntBinaryOp(Add)"`, `"IntCmpOp(Less)"`, `"Load(RAM)"`. A memory
-        kind names its space as `VnSpace` does (`"RAM"`, `"REGISTER"`,
-        `"CONST"`, `"UNIQUE"`, `"OTHER"`). Payload-free kinds render bare:
-        `"Region"`, `"Phi"`, `"Entry"`. An interned or opaque payload renders
-        its internal handle, not a value: `"IntConst(const12)"`,
-        `"InitialVar(InitialVnId(6))"`, `"CallOther { user_op_id: 120 }"`. Read
-        a constant with `uint()` / `sint()` and a user-op with
+        """The node's kind as a string. An op or a memory space renders as
+        its payload: `"IntBinaryOp(Add)"`, `"IntCmpOp(Less)"`, `"Load(RAM)"`,
+        a memory kind naming its space as `VnSpace` does (`"RAM"`,
+        `"REGISTER"`, `"CONST"`, `"UNIQUE"`, `"OTHER"`). An interned or opaque
+        handle is not rendered: `"IntConst"`, `"InitialVar"`, `"CallOther"`;
+        a kind with no payload renders bare: `"Region"`, `"Phi"`, `"Entry"`;
+        `"FloatConst(<bits>)"` carries its raw bits. Read a constant with
+        `uint()` / `sint()`, a varnode with `vn()` and a user-op with
         `call_other_name()`. See `op()` for the operation variant alone."""
         ...
     def inputs(self) -> list[Node]:
