@@ -20,6 +20,7 @@ import time
 import pytest
 
 import strider
+from strider import template as tpl
 from strider.pattern import Capture, anything, int_add, ret, var
 from strider.sleigh import CallingConvention, Sleigh, SleighArch
 
@@ -231,7 +232,7 @@ def test_a_bad_replacement_leaves_the_find_pattern_usable():
     fn = _analyzed_function()
     lhs = ret().into_pat()
     with pytest.raises(strider.StriderError):
-        fn.rewrite(lhs, anything())
+        fn.rewrite(lhs, tpl.int_add(anything(), 1))  # type: ignore[arg-type]
     assert len(fn.find_all(lhs)) == 1
 
 
@@ -239,7 +240,7 @@ def test_a_bad_replacement_in_rewrite_all_leaves_them_usable():
     fn = _analyzed_function()
     lhs = ret().into_pat()
     with pytest.raises(strider.StriderError):
-        fn.rewrite_all([(lhs, anything())])
+        fn.rewrite_all([(lhs, tpl.int_add(anything(), 1))])  # type: ignore[arg-type]
     assert len(fn.find_all(lhs)) == 1
 
 

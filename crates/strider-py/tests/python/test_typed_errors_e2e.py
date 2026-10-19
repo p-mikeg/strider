@@ -84,10 +84,11 @@ def test_rewrite_error_via_multi_output_lhs_root():
         0x1000, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=0x100))
     )
 
-    from strider.pattern import call, int_const
+    from strider import template as tpl
+    from strider.pattern import call
 
     with pytest.raises(strider.StriderError):
-        g.rewrite(find=call(), replace=int_const(0))
+        g.rewrite(find=call(), replace=tpl.int_const(0))
 
 
 def test_unknown_call_other_via_x86_clflushopt_instruction():

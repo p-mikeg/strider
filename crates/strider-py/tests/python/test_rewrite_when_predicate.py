@@ -9,6 +9,7 @@ error on stderr per candidate node and nothing rewritten.
 import pytest
 
 import strider
+from strider import template as tpl
 from strider.pattern import Capture, int_add, load, var
 
 from .conftest import built_function
@@ -24,14 +25,14 @@ def _find_pat(x, y):
 
 def test_unguarded_rewrite_still_fires():
     x, y = Capture(), Capture()
-    assert _build_graph().rewrite(find=_find_pat(x, y), replace=var(x)) > 0
+    assert _build_graph().rewrite(find=_find_pat(x, y), replace=tpl.var(x)) > 0
 
 
 def test_guarded_find_is_rejected():
     x, y = Capture(), Capture()
     with pytest.raises(strider.StriderError, match="find_all"):
         _build_graph().rewrite(
-            find=_find_pat(x, y).when(lambda m: True), replace=var(x)
+            find=_find_pat(x, y).when(lambda m: True), replace=tpl.var(x)
         )
 
 
@@ -41,7 +42,7 @@ def test_guarded_nested_operand_is_rejected():
     x, y = Capture(), Capture()
     with pytest.raises(strider.StriderError, match="find_all"):
         _build_graph().rewrite(
-            find=int_add(var(x).when(lambda m: True), var(y)), replace=var(y)
+            find=int_add(var(x).when(lambda m: True), var(y)), replace=tpl.var(y)
         )
 
 
@@ -50,13 +51,13 @@ def test_guarded_builder_is_rejected():
     path from `Pat.when`."""
     c = Capture()
     with pytest.raises(strider.StriderError, match="find_all"):
-        _build_graph().rewrite(find=load().capture(c).when(lambda m: True), replace=var(c))
+        _build_graph().rewrite(find=load().capture(c).when(lambda m: True), replace=tpl.var(c))
 
 
 def test_guarded_rewrite_all_pair_is_rejected():
     x, y = Capture(), Capture()
     with pytest.raises(strider.StriderError, match="find_all"):
-        _build_graph().rewrite_all([(_find_pat(x, y).when(lambda m: True), var(x))])
+        _build_graph().rewrite_all([(_find_pat(x, y).when(lambda m: True), tpl.var(x))])
 
 
 def test_rejection_does_not_leak_into_the_next_rewrite():
@@ -65,8 +66,8 @@ def test_rejection_does_not_leak_into_the_next_rewrite():
     g = _build_graph()
     x, y = Capture(), Capture()
     with pytest.raises(strider.StriderError):
-        g.rewrite(find=_find_pat(x, y).when(lambda m: True), replace=var(x))
-    assert g.rewrite(find=_find_pat(x, y), replace=var(x)) > 0
+        g.rewrite(find=_find_pat(x, y).when(lambda m: True), replace=tpl.var(x))
+    assert g.rewrite(find=_find_pat(x, y), replace=tpl.var(x)) > 0
 
 
 def test_when_still_runs_in_find_all():
@@ -85,7 +86,7 @@ def test_guarded_into_pat_is_rejected():
     c = Capture()
     with pytest.raises(strider.StriderError, match="find_all"):
         _build_graph().rewrite(
-            find=load().capture(c).when(lambda m: True).into_pat(), replace=var(c)
+            find=load().capture(c).when(lambda m: True).into_pat(), replace=tpl.var(c)
         )
 
 
@@ -94,5 +95,5 @@ def test_guarded_operand_of_into_pat_is_rejected():
     c = Capture()
     with pytest.raises(strider.StriderError, match="find_all"):
         _build_graph().rewrite(
-            find=load().addr(var(c).when(lambda m: True)).into_pat(), replace=var(c)
+            find=load().addr(var(c).when(lambda m: True)).into_pat(), replace=tpl.var(c)
         )
