@@ -126,6 +126,10 @@ class AssumptionOptions:
         is the same."""
         ...
     def __or__(self, other: AssumptionOptions) -> AssumptionOptions: ...
+    def __eq__(self, other: object) -> bool:
+        """Equal when both hold the same claims and list the same
+        allocators."""
+        ...
 
 class OnIncomplete:
     """What `analyze` and `build_cfg` do when `Cfg.incomplete` names anything:

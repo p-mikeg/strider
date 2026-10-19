@@ -107,8 +107,8 @@ _MATCH_READERS = (
 
 @pytest.mark.parametrize("reader", _MATCH_READERS)
 def test_a_bound_capture_has_no_reader_of_its_own(reader):
-    """Every reader is a `Match` method taking the capture, so reading one off
-    the bound capture raises `AttributeError` instead of answering beside it."""
+    """Every reader is a `Match` method taking the capture: reading one off
+    the bound capture raises `AttributeError`."""
     g = _build_graph()
     c = Capture()
     m = g.find_all(int_const(c))[0]
@@ -122,6 +122,9 @@ def test_bound_capture_has_tells_bound_from_unbound():
     m = g.find_all(int_const(c))[0]
     assert m[c].has is True
     assert m[Capture()].has is False
+    with pytest.raises(strider.StriderError):
+        int(m[Capture()])
+    assert not m[Capture()] == 0
 
 
 def test_bound_capture_repr_and_index():
