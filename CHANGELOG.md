@@ -346,6 +346,8 @@
 - A relocation whose value reads the symbol is a hole against STN_UNDEF
   (`r_sym` 0): an instruction relocation such as `R_AARCH64_CALL26` was
   computed with the symbol taken as 0.
+- Python: `.when()` on a `function_arg(..)` nested as an operand runs; it
+  was dropped, so the operand matched every argument its builder named.
 
 ### Added, Rust
 
