@@ -12,10 +12,10 @@ use strider_graph::{Graph, NeverCacheable, ValueId};
 
 /// `outputs` is in slot-add order; `inputs` is
 /// `(consumer_slot, producer_node, producer_output)` in wire order.
-struct StagedNode<N, V> {
+struct StagedNode<N: SealNode, V> {
     kind: N,
     outputs: Vec<V>,
-    inputs: Vec<(usize, usize, usize)>,
+    inputs: Vec<(N::Slot, usize, usize)>,
 }
 
 /// Bridges a staged node payload to its sealed-graph payload, stamping on the
@@ -26,22 +26,24 @@ struct StagedNode<N, V> {
 /// `TmplNode { kind, input_slots }`.
 pub(crate) trait SealNode {
     type Sealed;
-    fn seal(self, input_slots: Vec<usize>) -> Self::Sealed;
+    /// A staged input's consumer slot, recorded on the sealed payload.
+    type Slot: Copy;
+    fn seal(self, input_slots: Vec<Self::Slot>) -> Self::Sealed;
 }
 
 /// Node identity is a plain `usize`, interchangeable with a petgraph
 /// [`NodeIndex`] because staging never removes nodes.
-pub(crate) struct StagedGraph<N, V> {
+pub(crate) struct StagedGraph<N: SealNode, V> {
     g: DiGraph<StagedNode<N, V>, ()>,
 }
 
-impl<N, V> Default for StagedGraph<N, V> {
+impl<N: SealNode, V> Default for StagedGraph<N, V> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<N, V> StagedGraph<N, V> {
+impl<N: SealNode, V> StagedGraph<N, V> {
     pub(crate) fn new() -> Self {
         Self { g: DiGraph::new() }
     }
@@ -68,7 +70,7 @@ impl<N, V> StagedGraph<N, V> {
     pub(crate) fn add_input(
         &mut self,
         consumer: usize,
-        slot: usize,
+        slot: N::Slot,
         prod_node: usize,
         prod_output: usize,
     ) {
@@ -103,10 +105,7 @@ impl<N, V> StagedGraph<N, V> {
     /// # Errors
     /// On a cyclic staged graph, which is a builder bug: pattern and template
     /// graphs are always DAGs.
-    pub(crate) fn seal(self) -> anyhow::Result<Graph<N::Sealed, V, NeverCacheable>>
-    where
-        N: SealNode,
-    {
+    pub(crate) fn seal(self) -> anyhow::Result<Graph<N::Sealed, V, NeverCacheable>> {
         let order = toposort(&self.g, None).map_err(|c| {
             anyhow!(
                 "cycle in staged pattern/template graph at {:?}",
@@ -131,7 +130,7 @@ impl<N, V> StagedGraph<N, V> {
                 inputs,
             } = weights[i].take().expect("each node materialised once");
             let mut input_values: Vec<ValueId> = Vec::with_capacity(inputs.len());
-            let mut input_slots: Vec<usize> = Vec::with_capacity(inputs.len());
+            let mut input_slots: Vec<N::Slot> = Vec::with_capacity(inputs.len());
             for (slot, prod_node, prod_output) in inputs {
                 input_values.push(materialised[prod_node][prod_output]);
                 input_slots.push(slot);

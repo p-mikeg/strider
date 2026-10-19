@@ -10,16 +10,9 @@ pub(crate) use cast_walk_through::cast_levels;
 pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
 pub use vertex::{
-    BindingWalkFn, KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue, PostMatchFn,
-    WalkCaptures,
+    BindingWalkFn, InputSlot, KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue,
+    PostMatchFn, WalkCaptures,
 };
-
-/// Sentinel consumer slot marking an existential (`any_input`) input edge: the
-/// sub-pattern is matched against some input slot of the consumer rather than a
-/// fixed one. A sub reaches the slots of its own output kind (a value sub value
-/// edges, a memory sub memory edges); a wildcard reaches any input, control /
-/// memory / `PhiToken` slots included.
-pub(crate) const ANY_INPUT_SLOT: usize = usize::MAX;
 
 use std::cell::OnceCell;
 use std::mem::Discriminant;

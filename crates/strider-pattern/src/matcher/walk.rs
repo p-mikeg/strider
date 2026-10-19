@@ -46,7 +46,9 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId, ValueKind};
 
 use crate::bindings::{Binding, Bindings};
-use crate::matcher::{KindSpec, Matcher, OutputKindSpec, PatNode, PatValue, Pattern, cast_levels};
+use crate::matcher::{
+    InputSlot, KindSpec, Matcher, OutputKindSpec, PatNode, PatValue, Pattern, cast_levels,
+};
 
 struct Ctx<'a> {
     matcher: &'a Matcher<'a>,
@@ -405,7 +407,7 @@ fn try_match_at(
         && !node_inputs.interchangeable
         && inputs[..n_fixed]
             .iter()
-            .all(|e| e.consumer_slot < COMM_ORDER.len())
+            .all(|e| matches!(e.consumer_slot, InputSlot::At(s) if s < COMM_ORDER.len()))
         && ctx.function().node_kind(ir_node).is_commutative()
         && input_at(ctx, ir_node, 0) != input_at(ctx, ir_node, 1);
 
@@ -426,10 +428,18 @@ fn try_match_at(
     let ext_slots: Vec<usize> = if n_fixed == inputs.len() {
         Vec::new()
     } else {
+        // Commutative only on a raw kind-`Any` node matched at a commutative
+        // kind: no builder puts an existential on one.
         let pinned: Vec<usize> = if commutative {
             Vec::new()
         } else {
-            inputs[..n_fixed].iter().map(|e| e.consumer_slot).collect()
+            inputs[..n_fixed]
+                .iter()
+                .filter_map(|e| match e.consumer_slot {
+                    InputSlot::At(s) => Some(s),
+                    InputSlot::Any => None,
+                })
+                .collect()
         };
         (0..ctx.function().node_inputs(ir_node).len())
             .filter(|s| !pinned.contains(s))
@@ -692,7 +702,7 @@ fn try_operand(
 }
 
 pub(crate) struct InputEdge {
-    consumer_slot: usize,
+    consumer_slot: InputSlot,
     out_vertex: PatValueId,
     producer: PatNodeId,
 }
@@ -728,10 +738,10 @@ pub(crate) fn collect_node_inputs(
                 })
                 .collect();
             // Stable, so each group keeps its relative order.
-            edges.sort_by_key(|e| e.consumer_slot == crate::matcher::ANY_INPUT_SLOT);
+            edges.sort_by_key(|e| e.consumer_slot == InputSlot::Any);
             let fixed = edges
                 .iter()
-                .filter(|e| e.consumer_slot != crate::matcher::ANY_INPUT_SLOT)
+                .filter(|e| e.consumer_slot != InputSlot::Any)
                 .count();
             let interchangeable = compare_operands
                 && fixed == 2
@@ -886,12 +896,10 @@ struct Assignment<'a> {
 
 impl Assignment<'_> {
     fn candidates(&self, edge: &InputEdge) -> Candidates<'_> {
-        if edge.consumer_slot == crate::matcher::ANY_INPUT_SLOT {
-            Candidates::OneOf(self.ext_slots)
-        } else if self.commutative {
-            Candidates::OneOf(&COMM_ORDER[edge.consumer_slot])
-        } else {
-            Candidates::Only(edge.consumer_slot)
+        match edge.consumer_slot {
+            InputSlot::Any => Candidates::OneOf(self.ext_slots),
+            InputSlot::At(slot) if self.commutative => Candidates::OneOf(&COMM_ORDER[slot]),
+            InputSlot::At(slot) => Candidates::Only(slot),
         }
     }
 }
