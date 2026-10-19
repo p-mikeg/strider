@@ -19,8 +19,8 @@ x = Capture()
 before = len(function.find_all(int_mul(var(x), int_const(4))))
 print(f"before rewrite: {before} `x * 4` site(s), {len(function.find_all(load()))} loads")
 
-# `replace` takes a strider.template Template; a Pat works only for its
-# build-valid subset. Share a Capture so both sides agree.
+# `replace` takes a strider.template Template. Share a Capture so both
+# sides agree.
 # The pipeline runs before the graph is handed over, so pick an idiom it
 # leaves standing: `x + 0` is already folded by the time analyze() returns.
 n = function.rewrite(

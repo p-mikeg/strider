@@ -13,6 +13,7 @@ import pytest
 
 import strider
 from strider import pattern as p
+from strider import template as tpl
 from strider.pattern import Capture, int_add, var
 
 from .conftest import built_function
@@ -50,7 +51,7 @@ def test_guarded_mem_rewrite_is_rejected():
     with pytest.raises(strider.StriderError, match="find_all"):
         g.rewrite(
             find=p.load().capture(c).mem(p.store().when(lambda m: True)),
-            replace=var(c),
+            replace=tpl.var(c),
         )
 
 

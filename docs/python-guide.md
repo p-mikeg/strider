@@ -323,9 +323,6 @@ graph, so the algebraic identities are the one thing that is guaranteed absent:
 `find=int_add(var(x), int_const(0))` reports 0 sites because `ConstantFold`
 removed every one before you saw the function.
 
-A bare `strider.pattern.Pat` is accepted on the `replace` side until 0.3.0
-removes it, but only its build-valid subset compiles.
-
 Both the `find` and `replace` sides use `Capture` objects. A rewrite can expose
 fresh simplifications, so re-run the optimizer afterwards to tidy up:
 

@@ -262,7 +262,7 @@ reader.MemLike = _t.Union[reader.MemReader, reader.BufferReader]  # type: ignore
 reader.RomLike = _t.Union[reader.ReadOnlyMemory, reader.BufferReader]  # type: ignore[attr-defined]
 _export(reader, "MemLike", "RomLike")
 template.TemplateLike = _t.Union[  # type: ignore[attr-defined]
-    template.Template, _p.Pat, _p.Capture, int
+    template.Template, _p.Capture, int
 ]
 _export(template, "TemplateLike")
 cfg.DotStyle = _t.Literal["dark", "dark_cfg", "empty"]  # type: ignore[attr-defined]
