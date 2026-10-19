@@ -1536,31 +1536,40 @@ fn flag_test_chain(n: usize) -> Result<strider_ir::Function> {
     b.build()
 }
 
+/// Outermost-first, a redirect onto an inner flag test carries every consumer
+/// earlier redirects moved there unless each rewrite is cleaned before the
+/// next; counted in use edges moved, which is what the collapse costs.
 #[test]
-fn a_chain_of_flag_tests_collapses_in_linear_time() -> Result<()> {
-    fn collapse(n: usize) -> Result<std::time::Duration> {
+fn a_chain_of_flag_tests_collapses_in_linear_use_moves() -> Result<()> {
+    fn collapse(n: usize) -> Result<u64> {
         let mut fg = flag_test_chain(n)?;
-        let start = std::time::Instant::now();
-        crate::pipeline::run_one(
+        let mut edit = crate::EditFunction::new(&mut fg);
+        edit.cull_dead();
+        crate::peephole::run_peephole(
             &FlagCmpCanonicalize::new(),
-            &mut fg,
+            &mut edit,
             &mut crate::OptCtx::at_floor(None),
         )?;
-        let elapsed = start.elapsed();
+        edit.clean();
+        let moved = edit.uses_moved();
+        drop(edit);
+        assert!(
+            strider_ir::validate::validate(&fg).is_ok(),
+            "the collapse leaves valid IR"
+        );
         let xors = fg
             .walk_kind(|k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Xor)))
             .count();
         assert_eq!(xors, 1, "the chain collapses onto its innermost test");
-        Ok(elapsed)
+        Ok(moved)
     }
-    collapse(100)?;
     let small = collapse(500)?;
     let large = collapse(4_000)?;
-    // Linear would be 8x; quadratic 64x.
+    // 8x the chain: linear is 8x, quadratic 64x.
     assert!(
-        large.as_secs_f64() < small.as_secs_f64() * 24.0,
-        "8x the chain cost {:.1}x the collapse ({small:?} -> {large:?})",
-        large.as_secs_f64() / small.as_secs_f64(),
+        large <= small * 12,
+        "8x the chain moved {:.1}x the uses ({small} -> {large})",
+        large as f64 / small as f64,
     );
     Ok(())
 }
