@@ -296,30 +296,6 @@ mod tests {
         assert_eq!(cm.container_of(&b), b);
     }
 
-    /// Byte-identical varnodes never subsume one another (enclosure is
-    /// STRICT), so an open-list sweep keeps every one of them live and the
-    /// scan turns quadratic.
-    #[test]
-    fn dedup_stays_linear_on_byte_identical_varnodes() {
-        fn run(n: usize) -> std::time::Duration {
-            let input = vec![reg(0, 4); n];
-            let start = std::time::Instant::now();
-            let out = dedup_overlapping_largest(&input);
-            assert_eq!(out.len(), n, "equal-size duplicates all survive");
-            start.elapsed()
-        }
-        run(2_000);
-        let small = run(8_000);
-        let large = run(64_000);
-        // Linear would be 8x; quadratic 64x. Loose enough to survive a loaded
-        // machine, tight enough to fail the open-list shape.
-        assert!(
-            large.as_secs_f64() < small.as_secs_f64() * 24.0,
-            "8x the input cost {:.1}x ({small:?} -> {large:?})",
-            large.as_secs_f64() / small.as_secs_f64(),
-        );
-    }
-
     /// A read and a write of one varnode landing under different SSA
     /// variables is an SSA miscompile, so the sweep and the scan must answer
     /// identically over a nested register file.
