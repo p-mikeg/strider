@@ -6,7 +6,7 @@ use strider_target::ArchNames;
 /// `insn` in rsleigh's contextual spelling (`Store ram, RSP, RAX`), a LOAD /
 /// STORE space id rendered as its space's name rather than the host address of
 /// the engine's `AddrSpace`. `space_ids` must come from the engine that decoded
-/// `insn`; `names` only names things.
+/// `insn`, and `names` must be the decoding arch's.
 pub fn insn_text<'a>(
     insn: &'a Insn,
     space_ids: &'a SpaceIds,

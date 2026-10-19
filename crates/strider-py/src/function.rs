@@ -394,8 +394,8 @@ impl PyFunction {
     /// Apply one find/replace rewrite rule across the graph, returning the
     /// number of times it fired. `find` takes any pattern-like value;
     /// `replace` is a `strider.template.Template` built from the
-    /// `strider.template` free functions (a build-valid `strider.pattern.Pat`,
-    /// a `Capture` or a capture-name string are accepted for back-compat).
+    /// `strider.template` free functions, a `Capture` or a capture's name; a
+    /// build-valid `strider.pattern.Pat` is accepted until 0.3.0 removes it.
     ///
     /// The RHS is validated up front: every node must be a concrete builder or
     /// a capture bound by the LHS. A `.when()` predicate on the LHS is

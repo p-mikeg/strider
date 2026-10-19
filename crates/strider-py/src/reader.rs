@@ -11,10 +11,13 @@ use strider_reader::elf::{
 };
 use strider_reader::{MemRegion, MemRegionsLookupTable, ReadOnlyMemory, RegionIndex};
 
-/// The GIL already serialises every access; `Mutex` is here so a wrapper
-/// holding one is `Send`, which is what lets a `Function` outlive the thread
-/// that built it. Poisoning is recovered from rather than propagated: the
-/// guarded data is plain and no panic can leave it half-written.
+/// Every access holds the GIL: an `analyze` without it reads a `reader_view`
+/// snapshot, which takes no lock. The `Mutex` makes a wrapper holding one
+/// `Send`, which is what lets a `Function` outlive the thread that built it,
+/// and serialises any access made without the GIL; never hold a guard across
+/// a call that can release it. Poisoning is recovered from rather than
+/// propagated: the guarded data is plain and no panic can leave it
+/// half-written.
 trait LockShared<T> {
     fn lock_shared(&self) -> MutexGuard<'_, T>;
 }

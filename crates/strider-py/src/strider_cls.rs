@@ -85,8 +85,9 @@ pub(crate) fn build_per_address_ccs(
         .collect::<PyResult<_>>()
 }
 
-/// Borrow the handle, raising the re-entrant `StriderError` when a call is
-/// already in flight on it, from this thread or another.
+/// Borrow the handle, raising the re-entrant `StriderError` when the borrow
+/// conflicts with a call in flight on it, from this thread or another:
+/// `analyze`, `build_cfg` and `add_elf` borrow exclusively, the rest shared.
 ///
 /// Every method borrows through this: a `&self` receiver's failed borrow is
 /// PyO3's bare `RuntimeError`, and `Py::borrow` panics, which surfaces as
@@ -351,11 +352,12 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
 pub struct PyLifter {
     /// Owns the Sleigh, cached register table and optional rom; `None` once
     /// `__clear__` has released it. A call borrows the handle for its whole
-    /// run, so a second call while one is in flight, on this thread or
-    /// another, raises rather than interleaving.
+    /// run: `analyze`, `build_cfg` and `add_elf` exclusively, so any other
+    /// call while one is in flight, on this thread or another, raises; the
+    /// rest share it and may overlap each other.
     inner: Option<strider_orchestrator::Strider<AnyMemReader>>,
-    /// The arch this handle was built for: what `arch` hands back, and what a
-    /// `custom(...)` CC / `CallOtherAbi` must have frozen its varnodes on.
+    /// The arch this handle was built for: what `arch` hands back, and whose
+    /// sla a `custom(...)` CC / `CallOtherAbi` must share.
     pub(crate) arch: strider_target::SleighArch,
     /// The same Python reader/rom callback objects the adapters hold, so
     /// `__traverse__` can make the otherwise-buried lifter to reader edge
@@ -466,7 +468,8 @@ fn build_lifter(
 impl PyLifter {
     /// The `SleighArch` this handle decodes with. Enough, with `reader()` and
     /// `rom()`, to build a second handle over the same memory, which is how
-    /// two threads analyse in parallel.
+    /// two threads analyse in parallel; read all three before an `analyze` on
+    /// this handle is in flight, since they raise while one is.
     #[getter]
     fn arch(slf: &Bound<'_, Self>) -> PyResult<crate::arch::PySleighArch> {
         let inner = try_borrow_lifter(slf)?.arch;
