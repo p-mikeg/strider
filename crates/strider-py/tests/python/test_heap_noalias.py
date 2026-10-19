@@ -80,8 +80,8 @@ def test_clone_keeps_the_allocator_set_for_rewrite():
 
 
 def test_optimize_keeps_the_allocator_set_analyze_ran_under():
-    """`optimize` with default options adds claims to the ones `analyze` ran
-    under; it does not replace them, so the store stays `heap_only`."""
+    """`optimize` without options adds no claim and keeps the ones `analyze`
+    ran under, so the store stays `heap_only`."""
     lift, g = _heap_function()
     lift.optimize(g)
     assert len(g.find_all(store().heap_only())) == 1
