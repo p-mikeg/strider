@@ -77,8 +77,7 @@ strider.opt       # OptimizerPipeline and the passes it runs
 strider.reader    # BufferReader, Symbol, and the memory interfaces
 strider.sleigh    # SleighArch, CallingConvention, CallOtherAbi, Vn, VnSpace;
                   # CallingConvention.custom(arch, ...) builds an ABI of your
-                  # own out of register names (Sleigh, which SleighArch
-                  # replaces, stays until 0.3.0 removes it)
+                  # own out of register names
 strider.StriderError    # the one top-level name
 ```
 

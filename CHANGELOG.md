@@ -52,6 +52,11 @@
   included. Spell the RHS with `strider.template` (`template.var(c)`, or the
   bare `Capture`); the RHS `.capture(c)` goes with it, as a `Template` has
   none.
+- `strider.sleigh.Sleigh` is gone. `SleighArch.reg(name)` and
+  `SleighArch.reg_name(vn)` look registers up, and `CallingConvention.custom`
+  / `CallOtherAbi.custom` take the `SleighArch` as `sleigh=`; anything else
+  there raises `TypeError: argument 'sleigh': ... cannot be converted to
+  'SleighArch'`; `Sleigh(..).arch_name()` is `SleighArch.name()`.
 
 ### Breaking, Rust
 
@@ -294,11 +299,9 @@
   lifter's `Xor(Equal(l, r), 1)`, `Xor(Less(r, l), 1)`, `Xor(Sless(r, l), 1)`
   and `Xor(FloatEqual(l, r), 1)`.
 - `CallingConvention.custom` and `CallOtherAbi.custom` take a `SleighArch`
-  as their first (`sleigh=`) argument, as well as a `Sleigh` (anything else
-  raises `TypeError: expected a SleighArch or a Sleigh`); names resolve
-  through one table per arch per process. `SleighArch.reg(name)` and
-  `SleighArch.reg_name(vn)` look registers up without a `Sleigh`;
-  `strider.sleigh.Sleigh` stays until 0.3.0 removes it.
+  as their first (`sleigh=`) argument; names resolve through one table per
+  arch per process. `SleighArch.reg(name)` and `SleighArch.reg_name(vn)`
+  look registers up without a lifter.
 - `.ordered()` on `inputs_of_width(n, x)` and `bool_inputs(x)` pins what it
   pins on `x`, as in Rust, when `x` is a pattern; it raised. Over a typed
   builder (`int_binary`, `bool_binary`, `float_binary`) it still raises.
