@@ -82,3 +82,19 @@ def test_a_non_bool_return_propagates():
     with pytest.raises(Exception):
         # Deliberate: the binding extracts a real bool, nothing looser.
         g.find_all(int_add(var(x), var(y)).when(lambda m: object()))  # type: ignore[arg-type,return-value]
+
+
+def test_when_on_a_nested_function_arg_runs():
+    g = built_function("x64", "arithmetic", "add")
+
+    def nested(guard=None):
+        arg = p.function_arg(0) if guard is None else p.function_arg(0).when(guard)
+        return int_add(arg, p.anything())
+
+    assert len(g.find_all(nested())) == 1, "the unguarded shape must exist"
+    assert len(g.find_all(nested(lambda m: True))) == 1
+    seen = []
+    assert not g.find_all(nested(lambda m: seen.append(m) or False)), (
+        "a False predicate on a nested function_arg must reject the site"
+    )
+    assert seen, "the predicate on a nested function_arg never ran"
