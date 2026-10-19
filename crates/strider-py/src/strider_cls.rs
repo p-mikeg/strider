@@ -165,17 +165,16 @@ pub(crate) fn build_orch_sleigh(
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:#}")))
 }
 
-/// `opts` as `analyze` reads it. `optimize` replaces the claims with
-/// [`claims_to_add`]'s.
+/// `opts` under `assumptions`: the stored set for `analyze`,
+/// [`claims_to_add`]'s for `optimize`.
 fn opt_options_from(
-    py: Python<'_>,
     opts: &PyLifterOptions,
-) -> PyResult<strider_orchestrator::opt::OptOptions> {
-    let assumptions = opts.assumptions.borrow(py).inner.clone();
-    Ok(strider_orchestrator::opt::OptOptions {
+    assumptions: strider_orchestrator::opt::AssumptionOptions,
+) -> strider_orchestrator::opt::OptOptions {
+    strider_orchestrator::opt::OptOptions {
         assumptions,
         resolve_indirect_branches: opts.resolve_indirect_branches,
-    })
+    }
 }
 
 /// The claims an `optimize` adds to `function`'s: none unless `opts` was
@@ -191,8 +190,8 @@ fn claims_to_add(
     }
     let given = opts.assumptions.borrow(py).inner.clone();
     let omitted: Vec<String> = {
-        let function = function.read_inner().map_err(into_strider_err)?;
-        let in_force = function.assumptions();
+        let read = function.read_inner().map_err(into_strider_err)?;
+        let in_force = read.assumptions();
         in_force
             .omitted_by(&given)
             .into_iter()
@@ -216,9 +215,8 @@ fn claims_to_add(
     }
     Err(into_strider_err(anyhow::anyhow!(
         "optimize: opts.assumptions leaves out claims in force on this \
-         Function: {}. Add a claim with \
-         `f.assumptions | AssumptionOptions.none(escape_analysis=True)`, or \
-         analyse again to drop one",
+         Function: {}. Pass `function.assumptions | <your set>` to add \
+         claims, or analyse again to drop one",
         omitted.join(", ")
     )))
 }
@@ -744,7 +742,7 @@ impl PyLifter {
         };
         let opts_ref = opts.borrow(py);
         let compact = opts_ref.compact;
-        let opt_opts = opt_options_from(py, &opts_ref)?;
+        let opt_opts = opt_options_from(&opts_ref, opts_ref.assumptions.borrow(py).inner.clone());
         // Materialise the pipeline override BEFORE dropping the GIL below.
         let custom_pipeline = opts_ref
             .pipeline
@@ -870,10 +868,7 @@ impl PyLifter {
         };
         let options = {
             let opts = opts.borrow(py);
-            strider_orchestrator::opt::OptOptions {
-                assumptions: claims_to_add(py, function, &opts)?,
-                ..opt_options_from(py, &opts)?
-            }
+            opt_options_from(&opts, claims_to_add(py, function, &opts)?)
         };
         let rom = this.strider()?.rom();
         with_pending_control_flow(|| match pipeline {

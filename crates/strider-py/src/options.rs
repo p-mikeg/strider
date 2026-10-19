@@ -517,11 +517,11 @@ macro_rules! assumption_fields {
                 Self::with_fields(AssumptionOptions::default(), $($name),*)
             }
 
-            /// Every claim cleared, then the ones named set: the sound floor
-            /// of these fields under any input program whose memory behaves
-            /// as RAM, forwarding solely what the IR structurally proves. A
-            /// memory-mapped register polled after a write still reads as the
-            /// value written.
+            /// Every claim cleared, then the ones named set. With none named,
+            /// the sound floor of these fields under any input program whose
+            /// memory behaves as RAM, forwarding solely what the IR
+            /// structurally proves. A memory-mapped register polled after a
+            /// write still reads as the value written.
             #[staticmethod]
             #[pyo3(signature = (*, $($name = None),*))]
             fn none($($name: Option<$py>),*) -> Self {

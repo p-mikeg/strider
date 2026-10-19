@@ -111,8 +111,8 @@ class AssumptionOptions:
         Three of the seven default `True`, so this is not
         `AssumptionOptions()`, and `AssumptionOptions(escape_analysis=True)`
         holds four claims where `none(escape_analysis=True)` holds one. Add
-        one claim to a function's with
-        `f.assumptions | AssumptionOptions.none(escape_analysis=True)`.
+        one claim to a function's claims with
+        `function.assumptions | AssumptionOptions.none(escape_analysis=True)`.
 
         Memory is still taken to be RAM: a load reads back the last value the
         analysed code stored at its address, with nothing outside that code
