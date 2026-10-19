@@ -28,15 +28,12 @@ pub(crate) const MAX_PATTERN_NODES: usize = 256;
 /// and may not exist.
 fn unfolded_nodes(graph: &PatGraph) -> usize {
     let raw = graph.all_node_ids().count();
-    let Ok(order) = petgraph::algo::toposort(graph, None) else {
+    let Ok(order) = crate::graph_ext::topo_order(graph) else {
         return raw;
     };
     let mut size: FxHashMap<NodeId, usize> = FxHashMap::default();
     let mut deepest = 0;
-    for vertex in order {
-        let strider_graph::Vertex::Node(node) = vertex else {
-            continue;
-        };
+    for node in order {
         let inputs = graph
             .node_inputs(node)
             .into_iter()

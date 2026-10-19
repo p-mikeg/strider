@@ -149,7 +149,7 @@ strider-ir         -> strider-graph, strider-target, read-only-memory, dot,
 strider-reader     -> read-only-memory
 strider-lift       -> strider-cfg, strider-ir, strider-target,
                       graph-algorithms, vn-container
-strider-pattern    -> strider-ir, strider-graph, vn-container
+strider-pattern    -> strider-ir, strider-graph, graph-algorithms, vn-container
 strider-opt        -> strider-cfg, strider-ir, strider-pattern, strider-target,
                       entity-utils, graph-algorithms, vn-container
 strider-orchestrator -> strider-cfg, strider-ir, strider-lift, strider-opt,
@@ -168,9 +168,8 @@ Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 `strider-cfg` is IR-free, `strider-reader` depends only on `read-only-memory`,
 and the orchestrator reaches `strider-pattern` and `dot` only from its tests
 and examples. External `petgraph` is a production dependency of `strider-cfg`,
-`strider-graph`, `strider-lift` and `strider-pattern`, and a dev-dependency of
-`graph-algorithms` and `strider-ir`, whose dominance tests check against
-`simple_fast`.
+`strider-lift` and `strider-pattern`, and a dev-dependency of `graph-algorithms`
+and `strider-ir`, whose dominance tests check against `simple_fast`.
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.

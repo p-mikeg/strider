@@ -5,11 +5,8 @@
 //! [`consumed_inputs`] zips the two back together.
 
 use anyhow::anyhow;
-#[cfg(any(test, feature = "test-util"))]
 use graph_algorithms::walk::{GraphRef, PreOrder, acyclic_postorder};
-use petgraph::visit::{DfsPostOrder, Reversed, Walker};
-use rustc_hash::FxHashSet;
-use strider_graph::{Graph, NeverCacheable, NodeId, ValueId, Vertex};
+use strider_graph::{Graph, NeverCacheable, NodeId, ValueId};
 
 pub(crate) trait HasInputSlots {
     /// Consumer slots, one per input, parallel to the generic graph's input
@@ -34,10 +31,8 @@ pub(crate) fn consumed_inputs<N: HasInputSlots, V>(
 /// A node's consumers: outputs by slot, each output's uses newest first. A
 /// node reading one value twice is listed twice, adjacently, which the walk
 /// pops as one.
-#[cfg(any(test, feature = "test-util"))]
 pub(crate) struct Consumers<'a, N, V>(pub(crate) &'a Graph<N, V, NeverCacheable>);
 
-#[cfg(any(test, feature = "test-util"))]
 impl<N, V> GraphRef for Consumers<'_, N, V> {
     type NodeId = NodeId;
 
@@ -51,10 +46,8 @@ impl<N, V> GraphRef for Consumers<'_, N, V> {
 }
 
 /// A node's input producers.
-#[cfg(any(test, feature = "test-util"))]
 pub(crate) struct Producers<'a, N, V>(pub(crate) &'a Graph<N, V, NeverCacheable>);
 
-#[cfg(any(test, feature = "test-util"))]
 impl<N, V> GraphRef for Producers<'_, N, V> {
     type NodeId = NodeId;
 
@@ -94,32 +87,9 @@ pub(crate) fn derive_root<N, V>(graph: &Graph<N, V, NeverCacheable>) -> anyhow::
     }
 }
 
-/// `root` plus its transitive input cone, in producer-before-consumer order.
-/// Errors on a cycle.
-pub(crate) fn reachable_topo<N, V>(
-    graph: &Graph<N, V, NeverCacheable>,
-    root: NodeId,
-) -> anyhow::Result<Vec<NodeId>> {
-    let root_vtx = Vertex::Node(root);
-    let reachable: FxHashSet<Vertex> = DfsPostOrder::new(Reversed(graph), root_vtx)
-        .iter(Reversed(graph))
-        .collect();
-    let sorted = petgraph::algo::toposort(graph, None)
-        .map_err(|c| anyhow!("pattern graph cycle at {:?}", c.node_id()))?;
-    Ok(sorted
-        .into_iter()
-        .filter(|v| reachable.contains(v))
-        .filter_map(|v| match v {
-            Vertex::Node(n) => Some(n),
-            Vertex::Value(_) => None,
-        })
-        .collect())
-}
-
 /// Every node, producers first: the reverse of a post-order over consumers
 /// from each node in id order. Errors on a cycle anywhere.
-#[cfg(any(test, feature = "test-util"))]
-fn walked_topo_order<N, V>(graph: &Graph<N, V, NeverCacheable>) -> anyhow::Result<Vec<NodeId>> {
+pub(crate) fn topo_order<N, V>(graph: &Graph<N, V, NeverCacheable>) -> anyhow::Result<Vec<NodeId>> {
     let ids: Vec<NodeId> = graph.all_node_ids().collect();
     // The walk pops its roots last first.
     let mut order = acyclic_postorder(Consumers(graph), ids.into_iter().rev())
@@ -128,31 +98,18 @@ fn walked_topo_order<N, V>(graph: &Graph<N, V, NeverCacheable>) -> anyhow::Resul
     Ok(order)
 }
 
-/// [`reachable_topo`]'s order from the walk, until the walk replaces the sort.
-#[cfg(any(test, feature = "test-util"))]
-pub(crate) fn walked_reachable_topo<N, V>(
+/// `root` plus its transitive input cone, in [`topo_order`]. Errors on a
+/// cycle anywhere in the graph. This order fixes an instantiated template's
+/// fresh NodeIds.
+pub(crate) fn reachable_topo<N, V>(
     graph: &Graph<N, V, NeverCacheable>,
     root: NodeId,
 ) -> anyhow::Result<Vec<NodeId>> {
-    let order = walked_topo_order(graph)?;
+    let order = topo_order(graph)?;
     let mut cone = PreOrder::new(Producers(graph), [root]);
     while cone.next().is_some() {}
     let cone = cone.into_visited();
     Ok(order.into_iter().filter(|&n| cone.contains(n)).collect())
-}
-
-/// # Panics
-/// Unless the walk orders a rooted `template` as `instantiate` does today. A
-/// rootless one never instantiates, so it is not checked.
-#[cfg(any(test, feature = "test-util"))]
-pub fn assert_instantiation_order_kept(template: &crate::Template) {
-    let Ok(root) = template.root() else {
-        return;
-    };
-    let sorted = reachable_topo(&template.graph, root).expect("a sealed template is acyclic");
-    let walked =
-        walked_reachable_topo(&template.graph, root).expect("a sealed template is acyclic");
-    assert_eq!(walked, sorted, "template instantiation order moved");
 }
 
 #[cfg(test)]
@@ -319,11 +276,12 @@ mod tests {
         assert_eq!(reachable_topo(&g, prev).unwrap().len(), 100_000);
     }
 
-    /// `root`'s cone in the order of petgraph's `toposort` over the bipartite
-    /// view (each node, then its outputs, as vertices in id order; a node's
-    /// edges to its outputs by slot, an output's to its distinct consumers in
-    /// use-list order), rebuilt on a `DiGraph`. Each vertex's edges go in last
-    /// to first, as a `DiGraph` lists the newest edge first.
+    /// `root`'s cone in petgraph's `toposort` order over the bipartite graph
+    /// (each node, then its outputs, as vertices in id order; a node's edges
+    /// to its outputs by slot, an output's to its distinct consumers in
+    /// use-list order): the instantiation order these tests pin. Each
+    /// vertex's edges go in last to first, as a `DiGraph` lists the newest
+    /// edge first.
     fn petgraph_order<N, V>(g: &Graph<N, V, NeverCacheable>, root: NodeId) -> Vec<NodeId> {
         let mut pg: DiGraph<Option<NodeId>, ()> = DiGraph::new();
         let mut node_ix: FxHashMap<NodeId, NodeIndex> = FxHashMap::default();
@@ -365,15 +323,17 @@ mod tests {
             .collect()
     }
 
-    /// Whether `t` has a root, and if so that the walk orders it as the
-    /// whole-graph sort does, which the rebuilt sort reproduces.
+    /// Whether `t` has a root, and if so that it instantiates in petgraph's
+    /// order.
     fn check_order(t: &Template) -> bool {
         let Ok(root) = t.root() else {
             return false;
         };
-        let sorted = reachable_topo(&t.graph, root).unwrap();
-        assert_eq!(petgraph_order(&t.graph, root), sorted, "the rebuilt sort");
-        crate::assert_instantiation_order_kept(t);
+        assert_eq!(
+            reachable_topo(&t.graph, root).unwrap(),
+            petgraph_order(&t.graph, root),
+            "template instantiation order moved"
+        );
         uses_by_one_consumer_sit_together(&t.graph);
         true
     }
@@ -395,11 +355,6 @@ mod tests {
     /// `root`'s cone in its walked order, which is `want` and petgraph's.
     fn check_named(g: &G, root: NodeId, want: &[u32]) {
         let sorted = reachable_topo(g, root).unwrap();
-        assert_eq!(
-            super::walked_reachable_topo(g, root).unwrap(),
-            sorted,
-            "the walk"
-        );
         assert_eq!(petgraph_order(g, root), sorted, "the rebuilt sort");
         let got: Vec<u32> = sorted.iter().map(|n| n.as_u32()).collect();
         assert_eq!(got, want);
