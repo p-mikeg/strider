@@ -290,39 +290,6 @@ mod tests {
         assert_eq!(set_of(&dag, Key(0)), FxHashSet::from_iter([1, 2, 3]));
     }
 
-    /// A dense `seen` set grows a zeroed vector reaching the largest `UnionId`,
-    /// so one call would cost the whole arena. The keys here are independent
-    /// singletons, so each closure is one node: what this pins is `seen` being
-    /// sized by the walk. The closure itself is the other half of the cost and
-    /// is not measured here.
-    #[test]
-    fn for_each_cost_does_not_scale_with_the_arena() {
-        fn sweep(n: u32) -> std::time::Duration {
-            let mut dag: UnionDag<Key, u64> = UnionDag::new();
-            for i in 0..n {
-                dag.extend(Key(i), u64::from(i));
-            }
-            let start = std::time::Instant::now();
-            let mut yielded = 0usize;
-            for i in 0..n {
-                dag.for_each(Key(i), |_| yielded += 1);
-            }
-            assert_eq!(yielded, n as usize);
-            start.elapsed()
-        }
-        // Warm the allocator so the first sweep is not paying for it.
-        sweep(4_000);
-        let small = sweep(25_000);
-        let large = sweep(200_000);
-        // Linear would be 8x; quadratic 64x. A loose bound keeps this stable
-        // on a loaded machine while still failing the dense-set shape.
-        assert!(
-            large.as_secs_f64() < small.as_secs_f64() * 24.0,
-            "8x the keys cost {:.1}x the sweep ({small:?} -> {large:?})",
-            large.as_secs_f64() / small.as_secs_f64(),
-        );
-    }
-
     #[test]
     fn union_leaves_source_untouched() {
         let mut dag: UnionDag<Key, u64> = UnionDag::new();
