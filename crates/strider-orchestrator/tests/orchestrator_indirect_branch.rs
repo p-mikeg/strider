@@ -303,10 +303,8 @@ fn analyze_claiming(
             known_targets: &known,
             ..Default::default()
         },
-        opt: strider_orchestrator::opt::OptOptions {
-            resolve_indirect_branches: resolve,
-            assumptions,
-        },
+        resolve_indirect_branches: resolve,
+        assumptions,
         ..common::ignoring()
     };
     Ok(strider.analyze(addr, &cc, &opts, None)?)
@@ -492,4 +490,51 @@ fn the_same_loop_switch_without_a_mask_resolves() {
             .is_none(),
         "an unmasked guarded switch must still resolve every arm",
     );
+}
+
+/// Resolution off never calls the classifier and reports its site
+/// unresolved; on, the classifier's answer resolves it. Mutation: classify
+/// whatever `resolve_indirect_branches` says.
+#[test]
+fn resolution_off_skips_the_classifier_and_reports_the_site() {
+    const BASE: u64 = 0x1000;
+    let mut bytes = vec![0xc3u8; 0x40];
+    bytes[..2].copy_from_slice(&[0xff, 0xe0]); // 0x1000: jmp rax
+    for resolve in [false, true] {
+        let calls = std::cell::Cell::new(0usize);
+        let classify = |f: &strider_ir::Function,
+                        _rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>|
+         -> anyhow::Result<strider_orchestrator::opt::ClassifiedSites> {
+            calls.set(calls.get() + 1);
+            let mut found = strider_orchestrator::opt::ClassifiedSites::unresolved(f);
+            found.resolved = found
+                .sites
+                .iter()
+                .map(|&site| {
+                    let ret = strider_cfg::ResolvedTarget::new(BASE + 0x10, None);
+                    (site, strider_cfg::ResolvedTargets::Single(ret))
+                })
+                .collect();
+            Ok(found)
+        };
+        let (mut strider, cc) =
+            common::strider_over_bytes(common::Arch::X64, bytes.clone(), BASE, None);
+        let opts = strider_orchestrator::AnalyzeOptions {
+            resolve_indirect_branches: resolve,
+            ..common::ignoring()
+        };
+        let result = strider
+            .analyze_with_classifier(BASE, &cc, &opts, None, &classify)
+            .expect("analyze");
+        let reported = result
+            .incomplete()
+            .of(strider_orchestrator::Reason::UnresolvedBranch)
+            .any(|a| a.machine_addr.addr == BASE);
+        assert_eq!(
+            (calls.get() > 0, reported),
+            (resolve, !resolve),
+            "resolution {resolve}: (classified, reported) under {}",
+            result.incomplete()
+        );
+    }
 }

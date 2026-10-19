@@ -151,12 +151,23 @@ pub struct ClassifiedSites {
     pub resolved: rustc_hash::FxHashMap<NodeId, ResolvedTargets>,
 }
 
+impl ClassifiedSites {
+    /// Every live dispatch site of `f`, none resolved: what a caller that does
+    /// not classify reports.
+    #[must_use]
+    pub fn unresolved(f: &strider_ir::Function) -> Self {
+        Self {
+            sites: f
+                .walk_kind(|k| matches!(k, NodeKind::IndirectBranch | NodeKind::Switch(_)))
+                .collect(),
+            resolved: rustc_hash::FxHashMap::default(),
+        }
+    }
+}
+
 /// Classifies every live `IndirectBranch` placeholder, and re-derives every
-/// live `Switch` from its retained selector. Reads `f` only.
-///
-/// Only `options.resolve_indirect_branches` is read; the claims are `f`'s,
-/// and `options.assumptions` goes unread. With
-/// `!options.resolve_indirect_branches`, `resolved` is empty.
+/// live `Switch` from its retained selector, under the claims `f` holds.
+/// Reads `f` only.
 ///
 /// A dispatch value only becomes classifiable once the optimizer has folded
 /// it into a recognizable shape, so `f` is the converged function.
@@ -167,14 +178,13 @@ pub struct ClassifiedSites {
 pub fn classify_sites(
     f: &strider_ir::Function,
     rom: Option<&dyn ReadOnlyMemory>,
-    options: &crate::OptOptions,
 ) -> crate::Result<ClassifiedSites> {
-    let sites: Vec<NodeId> = f
-        .walk_kind(|k| matches!(k, NodeKind::IndirectBranch | NodeKind::Switch(_)))
-        .collect();
-    let mut resolved = rustc_hash::FxHashMap::default();
+    let ClassifiedSites {
+        sites,
+        mut resolved,
+    } = ClassifiedSites::unresolved(f);
     // Most functions have neither kind, so the setup below is skipped then.
-    if !options.resolve_indirect_branches || sites.is_empty() {
+    if sites.is_empty() {
         return Ok(ClassifiedSites { sites, resolved });
     }
     // Computed once, since the graph does not change here.
@@ -421,22 +431,19 @@ mod tests {
         assert_eq!(result, None);
     }
 
-    /// Resolution off first: there a mutation listing every node
-    /// (`f.walk().collect()`) reaches the assertion, where with it on the
-    /// classifier panics on the first non-dispatch node.
+    /// `unresolved` first: there a mutation listing every node
+    /// (`f.walk().collect()`) reaches the assertion, where `classify_sites`
+    /// panics on the first non-dispatch node.
     #[test]
     fn classify_sites_lists_nothing_on_a_site_free_function() {
         let (function, _target) =
             empty_graph_returning(|fb| fb.build_int_const(0x1234u64, ValueType::int(64)).unwrap());
-        for resolve_indirect_branches in [false, true] {
-            let options = crate::OptOptions {
-                resolve_indirect_branches,
-                ..Default::default()
-            };
-            let found = classify_sites(&function, None, &options).expect("classify");
+        let unresolved = ClassifiedSites::unresolved(&function);
+        let classified = classify_sites(&function, None).expect("classify");
+        for (name, found) in [("unresolved", unresolved), ("classified", classified)] {
             assert!(
                 found.sites.is_empty() && found.resolved.is_empty(),
-                "resolution {resolve_indirect_branches}"
+                "{name}"
             );
         }
     }
@@ -456,17 +463,16 @@ mod tests {
         b.set_lift_addr(None);
         let function = b.build().expect("build");
 
-        let found =
-            classify_sites(&function, None, &crate::OptOptions::default()).expect("classify");
+        let found = classify_sites(&function, None).expect("classify");
         assert_eq!(found.sites, vec![branch]);
         assert!(found.resolved.is_empty());
     }
 
-    /// With resolution off every site is still listed, so the orchestrator
-    /// still reports it, and nothing is recovered. Mutation: drop the
-    /// `!options.resolve_indirect_branches ||` guard.
+    /// `unresolved` still lists every site, so the orchestrator still reports
+    /// it, and recovers nothing where `classify_sites` does. Mutation:
+    /// `unresolved` lists no site.
     #[test]
-    fn classify_sites_resolves_nothing_with_resolution_off() {
+    fn unresolved_lists_the_sites_classify_sites_resolves() {
         let mut b = strider_ir_test_utils::empty_builder().expect("empty_builder");
         let region = b.create_region_all().expect("create_region");
         b.set_entry_region_all(region).expect("set_entry");
@@ -477,20 +483,12 @@ mod tests {
         b.set_lift_addr(None);
         let function = b.build().expect("build");
 
-        let on = classify_sites(&function, None, &crate::OptOptions::default()).expect("on");
+        let on = classify_sites(&function, None).expect("on");
         assert_eq!(
             on.resolved.get(&branch),
             Some(&ResolvedTargets::Single(0x8000.into()))
         );
-        let off = classify_sites(
-            &function,
-            None,
-            &crate::OptOptions {
-                resolve_indirect_branches: false,
-                ..crate::OptOptions::default()
-            },
-        )
-        .expect("off");
+        let off = ClassifiedSites::unresolved(&function);
         assert_eq!(off.sites, vec![branch]);
         assert!(off.resolved.is_empty());
     }
@@ -567,7 +565,7 @@ mod tests {
         let mut prep = crate::OptimizerPipeline::new();
         prep.add(crate::PhiCollapse);
         prep.add(crate::RegionCollapse);
-        prep.run(&mut function, &mut crate::OptCtx::at_floor(None))
+        prep.run(&mut function, &mut crate::OptCtx::new(None))
             .expect("prep");
         (function, branch, target)
     }
@@ -631,7 +629,7 @@ mod tests {
         let mut prep = crate::OptimizerPipeline::new();
         prep.add(crate::PhiCollapse);
         prep.add(crate::RegionCollapse);
-        prep.run(&mut function, &mut crate::OptCtx::at_floor(None))
+        prep.run(&mut function, &mut crate::OptCtx::new(None))
             .expect("prep");
         (function, branch, target)
     }
@@ -696,7 +694,7 @@ mod tests {
         let mut prep = crate::OptimizerPipeline::new();
         prep.add(crate::PhiCollapse);
         prep.add(crate::RegionCollapse);
-        prep.run(&mut function, &mut crate::OptCtx::at_floor(None))
+        prep.run(&mut function, &mut crate::OptCtx::new(None))
             .expect("prep");
         (function, branch, target)
     }

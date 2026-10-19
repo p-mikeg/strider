@@ -170,7 +170,7 @@ fn switch_with_const_index_collapses_through_default_pipeline() {
     pipeline
         .run(
             &mut function,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
+            &mut strider_orchestrator::opt::OptCtx::new(None),
         )
         .expect("optimizer pipeline");
 

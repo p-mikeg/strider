@@ -28,20 +28,17 @@ fn analyze(arch: Arch, bytes: Vec<u8>) -> strider_orchestrator::AnalyzeResult {
     analyze_with(arch, bytes, &claiming_return_slots())
 }
 
-fn claiming_return_slots() -> strider_opt::OptOptions {
-    strider_opt::OptOptions {
-        assumptions: strider_opt::AssumptionOptions {
-            return_slots_survive_untracked_writes: true,
-            ..strider_opt::AssumptionOptions::none()
-        },
-        ..Default::default()
+fn claiming_return_slots() -> strider_opt::AssumptionOptions {
+    strider_opt::AssumptionOptions {
+        return_slots_survive_untracked_writes: true,
+        ..strider_opt::AssumptionOptions::none()
     }
 }
 
 fn analyze_with(
     arch: Arch,
     bytes: Vec<u8>,
-    opt_opts: &strider_opt::OptOptions,
+    assumptions: &strider_opt::AssumptionOptions,
 ) -> strider_orchestrator::AnalyzeResult {
     let size = bytes.len() as u64;
     // The entry's low bit selects Thumb.
@@ -56,18 +53,15 @@ fn analyze_with(
             bound: strider_cfg::FunctionBound::size(size),
             ..Default::default()
         },
-        opt: opt_opts.clone(),
+        assumptions: assumptions.clone(),
         ..common::ignoring()
     };
     strider.analyze(entry, &cc, &opts, None).expect("analyze")
 }
 
 /// The sound floor: every claim about the program cleared.
-fn no_assumptions() -> strider_opt::OptOptions {
-    strider_opt::OptOptions {
-        assumptions: strider_opt::AssumptionOptions::none(),
-        ..Default::default()
-    }
+fn no_assumptions() -> strider_opt::AssumptionOptions {
+    strider_opt::AssumptionOptions::none()
 }
 
 /// The return at `BASE + ret_offset` is reported under
@@ -693,7 +687,7 @@ fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
             known_targets: &known,
             ..Default::default()
         },
-        opt: claiming_return_slots(),
+        assumptions: claiming_return_slots(),
         ..common::ignoring()
     };
     let seeded_result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
@@ -750,7 +744,7 @@ fn an_empty_seed_leaves_a_derived_return_verified() {
                 known_targets: &known,
                 ..Default::default()
             },
-            opt: claiming_return_slots(),
+            assumptions: claiming_return_slots(),
             ..common::ignoring()
         };
         let seeded_result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");

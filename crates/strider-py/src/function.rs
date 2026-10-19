@@ -70,18 +70,17 @@ impl PyFunction {
         Ok(f(&function))
     }
 
-    /// Run `pipeline` over this graph in place; `label` names the operation in
-    /// the surfaced error.
+    /// Run `pipeline` over this graph in place, adding `claims` first; `label`
+    /// names the operation in the surfaced error.
     ///
-    /// `rom` and `options` are what `analyze` builds its `OptCtx` from, so a
-    /// hand-built pipeline folds read-only loads and honours the memory
-    /// precision knobs the same way.
+    /// `rom` is what `analyze` builds its `OptCtx` from, so a hand-built
+    /// pipeline folds read-only loads the same way.
     pub(crate) fn run_pipeline_in_place(
         &self,
         pipeline: strider_orchestrator::opt::OptimizerPipeline,
         label: &str,
         rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>,
-        options: strider_orchestrator::opt::OptOptions,
+        claims: &strider_orchestrator::opt::AssumptionOptions,
     ) -> PyResult<()> {
         let mut function = self
             .try_write_inner()
@@ -89,8 +88,8 @@ impl PyFunction {
         // Bump BEFORE running: a pass that errors mid-run leaves the arena
         // partially rewritten, and a bump after the `?` never happens.
         function.graph_mut().bump_generation();
+        function.assume(claims);
         let mut ctx = strider_orchestrator::opt::OptCtx::new(rom);
-        ctx.options = options;
         pipeline.run(&mut function, &mut ctx).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("{label} failed: {e:#}"))
         })?;

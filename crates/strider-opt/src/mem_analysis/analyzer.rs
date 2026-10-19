@@ -55,11 +55,11 @@ pub(crate) struct MemOptions {
 }
 
 impl MemOptions {
-    /// The options `purpose` runs under: which of `assumptions` it honours, one
-    /// line per field.
-    pub(crate) fn for_purpose(purpose: MemPurpose, assumptions: &crate::AssumptionOptions) -> Self {
+    /// The options `purpose` runs under: which of `function`'s claims it
+    /// honours, one line per field.
+    pub(crate) fn for_purpose(purpose: MemPurpose, function: &Function) -> Self {
         use MemPurpose::*;
-        let a = assumptions;
+        let a = function.assumptions();
         Self {
             stack_global_disjoint: a.stack_global_disjoint && purpose != Structural,
             calls_block: !(purpose == IncomingArgs && a.assume_incoming_args_survive_calls),

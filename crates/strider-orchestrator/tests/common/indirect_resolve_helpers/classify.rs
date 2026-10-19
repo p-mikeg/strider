@@ -170,10 +170,7 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
     pipeline.add(strider_orchestrator::opt::PhiCollapse);
     pipeline.add(strider_orchestrator::opt::RegionCollapse);
     pipeline
-        .run(
-            &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-        )
+        .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
     let mut found: Option<strider_ir::Value> = None;
@@ -253,10 +250,7 @@ pub(crate) fn build_push_target_pop_pc_scenario(
     pipeline.add(ConstantFold::new());
     pipeline.add(LoadForward);
     pipeline
-        .run(
-            &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-        )
+        .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
     let mut found: Option<strider_ir::Value> = None;
@@ -346,10 +340,7 @@ pub(crate) fn build_jump_table_known_bits_scenario(
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
     pipeline
-        .run(
-            &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-        )
+        .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
     let target = target_value_input(&fg).expect("target");
@@ -436,10 +427,7 @@ pub(crate) fn build_jump_table_predecessor_if_scenario(
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
     pipeline
-        .run(
-            &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-        )
+        .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
     let target = target_value_input(&fg).expect("target");
@@ -489,10 +477,7 @@ pub(crate) fn build_jump_table_unbounded_scenario(
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
     pipeline
-        .run(
-            &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-        )
+        .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
     let target = target_value_input(&fg).expect("target");
@@ -525,10 +510,7 @@ pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Val
     let mut pipeline = OptimizerPipeline::new();
     pipeline.add(ConstantFold::new());
     pipeline
-        .run(
-            &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-        )
+        .run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
     let target = target_value_input(&fg).expect("target");
@@ -679,11 +661,8 @@ pub(crate) fn build_stack_array_dispatch_scenario(
     p.add(PhiCollapse);
     p.add(RegionCollapse);
     // LoadForward stays out of this pipeline; see the doc comment above.
-    p.run(
-        &mut fg,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
-    )
-    .expect("opt pipeline");
+    p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
+        .expect("opt pipeline");
 
     // After the partial pipeline, the placeholder's target IS the surviving
     // Load: `target_value_input` returns inputs[2], the Load output.
@@ -738,7 +717,7 @@ pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::V
     let p = strider_orchestrator::opt::default_pipeline();
     p.run(
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
+        &mut strider_orchestrator::opt::OptCtx::new(None),
     )
     .expect("optimizer pipeline");
 

@@ -808,7 +808,7 @@ fn the_pipeline_preserves_dag_semantics() {
                 "flag" => p.add(crate::FlagCmpCanonicalize::new()),
                 _ => p = crate::default_pipeline(),
             }
-            p.run(f, &mut crate::OptCtx::at_floor(None))
+            p.run(f, &mut crate::OptCtx::new(None))
         };
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             check_seed(seed, steps, &run)
@@ -1097,7 +1097,7 @@ fn the_pipeline_preserves_cfg_semantics() {
                     outcomes.push(want);
                 }
                 crate::default_pipeline()
-                    .run(&mut f, &mut crate::OptCtx::at_floor(None))
+                    .run(&mut f, &mut crate::OptCtx::new(None))
                     .map_err(|e| format!("seed {seed}: pipeline error {e:#}\n{before_text}"))?;
                 let mut cmp = 0;
                 for (vec, want) in vecs.iter().zip(&outcomes) {
@@ -1217,7 +1217,7 @@ fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
         b.set_lift_addr(None);
         let mut f = b.build().unwrap();
         crate::default_pipeline()
-            .run(&mut f, &mut crate::OptCtx::at_floor(None))
+            .run(&mut f, &mut crate::OptCtx::new(None))
             .unwrap_or_else(|e| panic!("{op:?}: {e:#}"));
         let ret = return_values(&f);
         assert_eq!(ret.len(), 1, "{op:?}: return arity");
@@ -1262,7 +1262,7 @@ fn a_range_contains_every_runtime_value() {
             continue;
         };
         if crate::default_pipeline()
-            .run(&mut f, &mut crate::OptCtx::at_floor(None))
+            .run(&mut f, &mut crate::OptCtx::new(None))
             .is_err()
         {
             continue;

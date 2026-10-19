@@ -77,9 +77,10 @@ fn compact_preserves_reachable_pattern_matches() {
 fn default_analyze_options_compact_and_share_their_empty_tables() {
     let (a, b) = (AnalyzeOptions::default(), AnalyzeOptions::default());
     assert!(a.compact);
+    assert!(a.resolve_indirect_branches);
     assert_eq!(
-        format!("{:?}", a.opt),
-        format!("{:?}", strider_orchestrator::opt::OptOptions::default()),
+        a.assumptions,
+        strider_orchestrator::opt::AssumptionOptions::default()
     );
     assert_eq!(a.on_incomplete, strider_orchestrator::OnIncomplete::Error);
     assert_eq!(

@@ -21,7 +21,6 @@ pub(super) type Resolutions = FxHashMap<NodeId, ResolvedTargets>;
 pub type Classifier<'c> = &'c dyn Fn(
     &strider_ir::Function,
     Option<&dyn ReadOnlyMemory>,
-    &strider_opt::OptOptions,
 ) -> Result<strider_opt::ClassifiedSites>;
 
 /// One round's cfg, the function lifted and optimised from it, and what the
@@ -109,13 +108,15 @@ where
                 edit.add_node_input(ret, target);
             }
         }
-        let mut ctx = OptCtx::new(rom_ref);
-        ctx.options = opts.opt.clone();
-        pipeline.run(&mut function, &mut ctx)?;
+        function.assume(&opts.assumptions);
+        pipeline.run(&mut function, &mut OptCtx::new(rom_ref))?;
         // Before `settle_return_sites` truncates the `Return`s and cleans, so
         // the classifier reads the IR the pipeline settled on.
-        let strider_opt::ClassifiedSites { sites, resolved } =
-            classify(&function, rom_ref, &opts.opt)?;
+        let strider_opt::ClassifiedSites { sites, resolved } = if opts.resolve_indirect_branches {
+            classify(&function, rom_ref)?
+        } else {
+            strider_opt::ClassifiedSites::unresolved(&function)
+        };
         let unverified_returns = settle_return_sites(&mut function, &return_sites);
         // The truncation drops only a data input, never a dispatch node, so
         // the sites listed before it are the live ones after it.
@@ -170,7 +171,7 @@ pub(super) fn flowing_isa_bits(
 /// Each target is taken back off the `Return` [`Strider::build_round`] anchored
 /// it on.
 ///
-/// Verification reads the claims the round's pipeline merged into `function`:
+/// Verification reads the claims the round's lift was optimized under:
 /// a claim that holds keeps the verdict right, and a claim that does not is
 /// the caller's. There is no second, claim-cleared run to measure what a claim
 /// bought, because nothing downstream would act on the difference.

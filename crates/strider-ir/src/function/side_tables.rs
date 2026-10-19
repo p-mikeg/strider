@@ -242,7 +242,7 @@ impl SideTables {
         self.frame_escape.set(None);
     }
 
-    /// The claims in force; see [`Self::assume`].
+    /// The claims in force; see [`crate::Function::assume`].
     #[inline]
     pub fn assumptions(&self) -> &AssumptionOptions {
         &self.assumptions
@@ -251,10 +251,10 @@ impl SideTables {
     /// Merges `claims` into the claims in force; none is withdrawn.  A claim
     /// stays in force once stated, even one inert on its own
     /// (`callee_preserves_stack_args`).  Returns whether it added one, in
-    /// which case the caller owes [`Self::invalidate_analyses`]: a
-    /// decomposition made without an allocator reads its return as
-    /// not-memory.
-    pub fn assume(&mut self, claims: &AssumptionOptions) -> bool {
+    /// which case the caller owes [`Self::invalidate_analyses`], as
+    /// [`crate::Function::assume`] pays it.
+    #[must_use]
+    pub(crate) fn assume(&mut self, claims: &AssumptionOptions) -> bool {
         if self.assumptions.holds_all(claims) {
             return false;
         }
@@ -485,7 +485,7 @@ mod tests {
             noalias_allocators: [0x1000].into_iter().collect(),
             ..AssumptionOptions::none()
         };
-        st.assume(&listed);
+        assert!(st.assume(&listed));
         let (base, v) = (ValueId::new(0), ValueId::new(1));
         st.set_stack_slot(v, base, -8);
         st.set_frame_escape(true);

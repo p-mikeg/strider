@@ -113,12 +113,21 @@ impl Function {
         &mut self.side_tables
     }
 
-    /// The claims in force: the union of every optimizer run's
-    /// `AssumptionOptions` over this function, none before the first.  A run
-    /// adds claims and withdraws none, so only a fresh lift drops one.
+    /// The claims in force: the union of every [`Self::assume`], none before
+    /// the first.  Nothing withdraws one, so only a fresh lift drops one.
     #[inline]
     pub fn assumptions(&self) -> &crate::AssumptionOptions {
         self.side_tables.assumptions()
+    }
+
+    /// Adds `claims` to the claims in force, withdrawing none, and drops the
+    /// graph-derived memos when one is new: a decomposition made without an
+    /// allocator reads its return as not-memory.  A function never given a
+    /// claim is optimized at the sound floor.
+    pub fn assume(&mut self, claims: &crate::AssumptionOptions) {
+        if self.side_tables.assume(claims) {
+            self.side_tables.invalidate_analyses();
+        }
     }
 
     /// Interns `value` masked to `ty`'s width.
@@ -646,6 +655,33 @@ mod function_skeleton_tests {
         let f = test_function_tracking(vec![reg(4, 8), reg(0, 8), reg(4, 8)]);
         assert_eq!(f.all_vns(), [reg(0, 8), reg(4, 8)]);
     }
+
+    /// A claim in force keeps the memos; a new one drops them and joins the
+    /// claims.
+    #[test]
+    fn assume_drops_the_memos_only_when_it_adds_a_claim() {
+        let mut f = test_function();
+        let v = f.node_outputs(f.entry())[0];
+        let memoized = |f: &super::Function| {
+            f.side_tables().memory_decomp(v).1.is_some() && f.side_tables().frame_escape().is_some()
+        };
+        f.side_tables().set_stack_slot(v, v, 16);
+        f.side_tables().set_frame_escape(true);
+        f.assume(&crate::AssumptionOptions::none());
+        assert!(memoized(&f), "nothing added, the memos stand");
+        let listed = crate::AssumptionOptions {
+            noalias_allocators: [0x1000].into_iter().collect(),
+            ..crate::AssumptionOptions::none()
+        };
+        f.assume(&listed);
+        assert!(f.side_tables().memory_decomp(v).1.is_none());
+        assert_eq!(f.side_tables().frame_escape(), None);
+        assert_eq!(f.assumptions(), &listed);
+        f.side_tables().set_stack_slot(v, v, 16);
+        f.side_tables().set_frame_escape(true);
+        f.assume(&listed);
+        assert!(memoized(&f), "a claim in force adds nothing");
+    }
 }
 
 #[cfg(test)]
@@ -671,7 +707,7 @@ mod compact_tests {
             noalias_allocators: [0x4000].into_iter().collect(),
             ..crate::AssumptionOptions::none()
         };
-        f.side_tables_mut().assume(&listed);
+        f.assume(&listed);
         f.side_tables_mut().set_frame_address_in_call_register();
         f.compact().expect("compact succeeds on a valid function");
         assert!(f.side_tables().frame_address_in_call_register());

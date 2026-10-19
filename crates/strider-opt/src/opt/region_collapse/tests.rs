@@ -34,7 +34,7 @@ fn single_input_region_collapses() -> crate::Result<()> {
         .expect("Return node");
 
     let changed =
-        crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::at_floor(None))?
+        crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::new(None))?
             .changed();
     assert!(changed, "single-input Region must collapse");
 
@@ -83,7 +83,7 @@ fn empty_entry_region_collapses_through_entry_node() -> crate::Result<()> {
         "entry Region's sole control input is the Entry node"
     );
 
-    crate::default_pipeline().run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+    crate::default_pipeline().run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     // The pipeline splices Entry's control past the empty region but does not
     // sweep the arena (the orchestrator's `retain_reachable` does that), so the
@@ -165,7 +165,7 @@ fn empty_entry_region_with_nontrivial_phi_survives() -> crate::Result<()> {
         "loop-header entry region is a genuine multi-predecessor join"
     );
 
-    crate::default_pipeline().run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+    crate::default_pipeline().run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let reachable: std::collections::HashSet<_> = fg.walk().collect();
     assert!(
@@ -219,7 +219,7 @@ fn multi_input_region_unchanged() -> crate::Result<()> {
 
     // Not asserting on the pass result: the entry/branch single-input Regions
     // do collapse, so `Changed` is expected regardless of the join.
-    crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::at_floor(None))?;
+    crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
 
     let consumer_after = fg
         .graph()
@@ -285,7 +285,7 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
     let mut p = OptimizerPipeline::new();
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+    p.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     assert!(
         !fg.walk().any(|n| n == orphan_phi),
@@ -318,7 +318,7 @@ fn collapse_with_phi_collapse_validates() -> crate::Result<()> {
     p.add(PhiCollapse);
     p.add(RegionCollapse);
     // `run` validates at the end, so reaching here is the assertion.
-    p.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+    p.run(&mut fg, &mut crate::OptCtx::new(None))?;
     Ok(())
 }
 
@@ -366,11 +366,7 @@ fn chained_phis_over_one_region_do_not_dangle() -> crate::Result<()> {
     fg.graph_mut().update_input(slot, read2);
 
     // Malformed on purpose, so the runner's own validation is skipped.
-    crate::pipeline::run_one_unvalidated(
-        &RegionCollapse,
-        &mut fg,
-        &mut crate::OptCtx::at_floor(None),
-    )?;
+    crate::pipeline::run_one_unvalidated(&RegionCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
 
     // The hand-chained phi input is unavailable on its edge before the pass
     // runs; what the pass must not add is anything else, a dangling input first.
@@ -467,6 +463,6 @@ fn an_unreachable_self_loop_region_is_left_alone() -> crate::Result<()> {
     strider_ir::validate::validate(&fg).expect("the input validates");
 
     // `run_one` panics on invalid output.
-    crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::at_floor(None))?;
+    crate::pipeline::run_one(&RegionCollapse, &mut fg, &mut crate::OptCtx::new(None))?;
     Ok(())
 }

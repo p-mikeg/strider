@@ -20,13 +20,13 @@ fn collapse_phis(function: &mut Function) {
     strider_orchestrator::opt::run_one(
         &PhiCollapse,
         function,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
+        &mut strider_orchestrator::opt::OptCtx::new(None),
     )
     .expect("PhiCollapse");
     strider_orchestrator::opt::run_one(
         &RegionCollapse,
         function,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
+        &mut strider_orchestrator::opt::OptCtx::new(None),
     )
     .expect("RegionCollapse");
 }
