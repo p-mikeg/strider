@@ -182,6 +182,7 @@
   `MatcherBuilder::set_value_out_slot(out, slot)` becomes
   `pin_value_out_slot(out)`, which pins the vertex's own slot: a pin to
   another slot was representable and meant nothing.
+- `Match::bindings_clone` is gone: it was `m.bindings().clone()`.
 
 ### Changed, Python
 
