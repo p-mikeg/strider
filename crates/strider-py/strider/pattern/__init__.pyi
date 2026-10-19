@@ -55,44 +55,34 @@ ValueTy = Literal[
     "F128",
 ]
 
-#: Integer-comparison names accepted by `int_cmp`. The short aliases `"eq"`,
-#: `"lt"` and `"slt"` are equivalent to `"Equal"`, `"Less"` and `"Sless"`.
-#: Matched case-insensitively at runtime.
+#: Integer-comparison names accepted by `int_cmp`: the `IntCmpOp` variants, the
+#: strings `Match.op` reads back.
 IntCmpOpName = Literal[
     "Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow",
-    "equal", "less", "sless", "carry", "scarry", "sborrow",
-    "EQUAL", "LESS", "SLESS", "CARRY", "SCARRY", "SBORROW",
-    "eq", "lt", "slt", "EQ", "LT", "SLT", "Eq", "Lt", "Slt",
 ]
 
-#: Integer binary-op names accepted by `int_binary`. The short aliases
-#: `"shl"`, `"shr"` and `"sshr"` are equivalent to `"ShiftLeft"`,
-#: `"ShiftRight"` and `"SShiftRight"`. Matched case-insensitively at runtime.
+#: Integer binary-op names accepted by `int_binary`: the `IntBinaryOp`
+#: variants.
 IntBinaryOpName = Literal[
     "Add", "And", "Or", "Xor", "Div", "Sdiv", "Rem", "Srem",
     "ShiftRight", "SShiftRight", "ShiftLeft", "Mul",
-    "add", "and", "or", "xor", "div", "sdiv", "rem", "srem",
-    "shiftright", "sshiftright", "shiftleft", "mul",
-    "ADD", "AND", "OR", "XOR", "DIV", "SDIV", "REM", "SREM",
-    "SHIFTRIGHT", "SSHIFTRIGHT", "SHIFTLEFT", "MUL",
-    "shl", "shr", "sshr", "SHL", "SHR", "SSHR", "Shl", "Shr", "Sshr",
 ]
 
 #: Boolean binary-op names accepted by `bool_binary`, the `I1` subset of
-#: `IntBinaryOpName`. Matched case-insensitively at runtime.
+#: `IntBinaryOpName`.
 BoolBinaryOpName = Literal[
-    "And", "Or", "Xor", "and", "or", "xor", "AND", "OR", "XOR",
+    "And", "Or", "Xor",
 ]
 
-#: Float binary-op names accepted by `float_binary`. Matched
-#: case-insensitively at runtime.
+#: Float binary-op names accepted by `float_binary`: the `FloatBinaryOp`
+#: variants.
 FloatBinaryOpName = Literal[
-    "Add", "Mul", "Div", "add", "mul", "div", "ADD", "MUL", "DIV",
+    "Add", "Mul", "Div",
 ]
 
-#: Widening-operation names accepted by `int_extend`.
+#: Widening-operation names accepted by `int_extend`: the `ExtendOp` variants.
 ExtendOpName = Literal[
-    "zero", "zero_extend", "ZeroExtend", "sign", "sign_extend", "SignExtend",
+    "ZeroExtend", "SignExtend",
 ]
 
 class Match:
@@ -1085,7 +1075,8 @@ def int_zero_extend(operand: ValueLike) -> Pat:
 def int_sign_extend(operand: ValueLike) -> Pat:
     """Match a widening that replicates the sign bit."""
 def int_extend(op: ExtendOpName, operand: ValueLike) -> Pat:
-    """Match a widening of the kind named by `op`."""
+    """Match a widening of the kind named by `op`: `"ZeroExtend"` or
+    `"SignExtend"`."""
 
 def load(addr: ValueLike | None = ...) -> LoadPat:
     """Start a `Load` pattern builder, optionally pinning the address."""
@@ -1104,7 +1095,7 @@ def if_else(cond: ValueLike | None = ...) -> IfPat:
     condition."""
 
 def int_binary(op: IntBinaryOpName, l: ValueLike, r: ValueLike) -> IntBinaryPat:
-    """Match a named integer binary op (`"Add"`, `"Shl"`, `"And"`),
+    """Match a named integer binary op (`"Add"`, `"ShiftLeft"`, `"And"`),
     returning a chainable builder."""
 def bool_binary(op: BoolBinaryOpName, l: ValueLike, r: ValueLike) -> BoolBinaryPat:
     """Match a named boolean binary op (`"And"`, `"Or"`, `"Xor"`).

@@ -124,9 +124,10 @@ impl PyNode {
         self.with_node(py, |_, _| self.id)
     }
 
-    /// The node's kind as a string. Payload-carrying kinds render with their
-    /// payload (`"IntBinaryOp(Add)"`, `"Load(RAM)"`), others render bare
-    /// (`"Region"`, `"Phi"`).
+    /// The node's kind as a string. An op or a memory space renders as its
+    /// payload (`"IntBinaryOp(Add)"`, `"Load(RAM)"`); an interned or opaque
+    /// handle does not (`"IntConst"`, `"InitialVar"`, `"CallOther"`), nor does
+    /// a kind with none (`"Region"`, `"Phi"`).
     fn kind(&self, py: Python<'_>) -> PyResult<String> {
         // `Load` / `Store` carry an `rsleigh::VnSpace`, whose `Debug` is its
         // internal shortcut byte. Render the space by the name `VnSpace`
@@ -144,6 +145,9 @@ impl PyNode {
                     crate::sleigh::PyVnSpace { inner: *space }.name()
                 )
             }
+            NodeKind::IntConst(_) => "IntConst".to_string(),
+            NodeKind::InitialVar(_) => "InitialVar".to_string(),
+            NodeKind::CallOther { .. } => "CallOther".to_string(),
             NodeKind::Switch(_) => "Switch".to_string(),
             NodeKind::Call { .. } => "Call".to_string(),
             other => format!("{other:?}"),
