@@ -250,14 +250,16 @@ impl SideTables {
 
     /// Merges `claims` into the claims in force; none is withdrawn.  A claim
     /// stays in force once stated, even one inert on its own
-    /// (`callee_preserves_stack_args`).  A claim not already in force also
-    /// drops every graph-derived memo: a decomposition made without an
-    /// allocator reads its return as not-memory.
-    pub fn assume(&mut self, claims: &AssumptionOptions) {
-        if !claims.omitted_by(&self.assumptions).is_empty() {
-            self.assumptions.union_with(claims);
-            self.invalidate_analyses();
+    /// (`callee_preserves_stack_args`).  Returns whether it added one, in
+    /// which case the caller owes [`Self::invalidate_analyses`]: a
+    /// decomposition made without an allocator reads its return as
+    /// not-memory.
+    pub fn assume(&mut self, claims: &AssumptionOptions) -> bool {
+        if self.assumptions.holds_all(claims) {
+            return false;
         }
+        self.assumptions.union_with(claims);
+        true
     }
 
     /// Memoized frame-escape verdict, or `None` when not yet computed.
@@ -442,40 +444,33 @@ mod tests {
         assert_eq!(st.frame_escape(), None, "clear invalidates the memo");
     }
 
-    /// A fresh table claims nothing; a merge that adds a claim drops the
-    /// memos, and one that adds nothing keeps them.
+    /// A fresh table claims nothing; a merge says whether it added a claim,
+    /// and leaves the memos to the caller.
     #[test]
-    fn assume_merges_and_drops_the_memos_only_when_it_adds() {
+    fn assume_merges_and_says_whether_it_added() {
         let mut st = SideTables::default();
-        assert!(
-            st.assumptions()
-                .omitted_by(&AssumptionOptions::none())
-                .is_empty(),
+        assert_eq!(
+            st.assumptions(),
+            &AssumptionOptions::none(),
             "a fresh table holds no claim"
         );
         let (base, v) = (ValueId::new(0), ValueId::new(1));
         st.set_stack_slot(v, base, -8);
-        st.assume(&AssumptionOptions::none());
         assert!(
-            st.memory_decomp(v).1.is_some(),
-            "nothing added, the memo stands"
+            !st.assume(&AssumptionOptions::none()),
+            "the floor adds nothing"
         );
         let listed = AssumptionOptions {
             noalias_allocators: [0x1000].into_iter().collect(),
             ..AssumptionOptions::none()
         };
         st.set_frame_escape(true);
-        st.assume(&listed);
+        assert!(st.assume(&listed));
         assert_eq!(st.assumptions(), &listed);
-        assert_eq!(st.memory_decomp(v), (MemDecomp::Unknown, None));
-        assert_eq!(st.frame_escape(), None);
-        st.set_stack_slot(v, base, -8);
-        st.assume(&listed);
-        assert!(
-            st.memory_decomp(v).1.is_some(),
-            "a claim in force adds nothing"
-        );
-        st.assume(&AssumptionOptions::none());
+        assert!(st.memory_decomp(v).1.is_some(), "the memo is the caller's");
+        assert_eq!(st.frame_escape(), Some(true));
+        assert!(!st.assume(&listed), "a claim in force adds nothing");
+        assert!(!st.assume(&AssumptionOptions::none()));
         assert_eq!(
             st.assumptions(),
             &listed,

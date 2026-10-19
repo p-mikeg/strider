@@ -57,14 +57,6 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
     pipeline
 }
 
-/// An [`crate::OptCtx`] with `stack_global_disjoint` cleared. The other
-/// default-on claim, `assume_incoming_args_survive_calls`, stays set.
-pub(crate) fn octx_structural_only() -> crate::OptCtx<'static> {
-    let mut ctx = crate::OptCtx::at_floor(None);
-    ctx.options.assumptions.stack_global_disjoint = false;
-    ctx
-}
-
 /// An [`crate::OptCtx`] at the pipeline default, `stack_global_disjoint` set.
 pub(crate) fn octx_stack_global_disjoint() -> crate::OptCtx<'static> {
     let mut ctx = crate::OptCtx::at_floor(None);

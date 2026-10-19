@@ -571,10 +571,10 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    // `octx_structural_only` clears `stack_global_disjoint`, whose default
-    // would step through the global write instead.
+    // At the floor `stack_global_disjoint` is off; its default would step
+    // through the global write instead.
     pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
@@ -627,9 +627,9 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
     let mut fg = b.build()?;
 
     let mut pipeline = cf_rp_pipeline();
-    // `octx_structural_only` clears the default `stack_global_disjoint`.
+    // At the floor the default `stack_global_disjoint` is off.
     pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::test_support::octx_structural_only())?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
