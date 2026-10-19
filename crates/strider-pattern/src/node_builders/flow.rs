@@ -24,7 +24,7 @@ use crate::matcher::{KindSpec, MatcherBuilder, PatNodeRef, PatValueRef, Pattern,
 use crate::typed::int_const;
 
 use super::MemPat;
-use super::node_pat::{NodePat, variant_kind};
+use super::node_pat::NodePat;
 
 /// Walks from a matched If to a control output's single consumer and matches
 /// a sub-pattern there.
@@ -189,14 +189,9 @@ pub struct CallOtherPat {
 
 impl CallOtherPat {
     pub fn user_op_id(mut self, v: u64) -> Self {
-        let exemplar = NodeKind::CallOther { user_op_id: 0 };
-        let kind = variant_kind(
-            std::mem::discriminant(&exemplar),
-            Some(Box::new(
-                move |k| matches!(k, NodeKind::CallOther { user_op_id } if *user_op_id == v),
-            )),
-        );
-        self.inner = self.inner.with_kind(kind);
+        self.inner = self
+            .inner
+            .with_kind(KindSpec::Exact(NodeKind::CallOther { user_op_id: v }));
         self
     }
 
@@ -270,8 +265,7 @@ impl MatchPat for CallOtherPat {
 impl MemPat for CallOtherPat {}
 
 pub fn call_other() -> CallOtherPat {
-    let exemplar = NodeKind::CallOther { user_op_id: 0 };
-    let kind = variant_kind(std::mem::discriminant(&exemplar), None);
+    let kind = KindSpec::variant_of(&NodeKind::CallOther { user_op_id: 0 });
     CallOtherPat {
         inner: NodePat::node(kind).with_mem_value(1),
         name_filter: None,
