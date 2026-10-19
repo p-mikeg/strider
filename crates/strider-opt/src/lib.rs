@@ -20,8 +20,13 @@ mod opt;
 mod post_opt;
 #[cfg(test)]
 mod test_support;
+// Public only for tests: `classify_sites` is the production entry.
+#[cfg(any(test, feature = "test-util"))]
 pub mod value_range;
+#[cfg(not(any(test, feature = "test-util")))]
+pub(crate) mod value_range;
 
+#[cfg(any(test, feature = "test-util"))]
 pub use post_opt::indirect_branch_resolve;
 
 pub use opt::cfg_detach::CfgDetach;
@@ -29,7 +34,9 @@ pub use opt::constant_fold::ConstantFold;
 pub use opt::dead_branch::DeadBranchElimination;
 pub use opt::flag_cmp_canonicalize::FlagCmpCanonicalize;
 pub use opt::if_cond_inversion::IfCondInversion;
-pub use opt::known_bits::{KnownBits, KnownBitsFacts, KnownBitsMap, analyze as analyze_known_bits};
+pub use opt::known_bits::KnownBits;
+#[cfg(any(test, feature = "test-util"))]
+pub use opt::known_bits::{KnownBitsFacts, KnownBitsMap, analyze as analyze_known_bits};
 pub use opt::load_forward::LoadForward;
 pub use opt::load_readonly::LoadReadOnly;
 pub use opt::phi_collapse::PhiCollapse;
@@ -45,9 +52,9 @@ pub use pipeline::{OptimizerClone, PostOptimizerClone};
 pub use pipeline::{run_one, run_one_unvalidated, run_post};
 pub use post_opt::call_stack_args::CallStackArgCollect;
 pub use post_opt::function_args::FunctionArgDetect;
-pub use post_opt::indirect_branch_resolve::{
-    ClassifiedSites, ReturnTargets, classify_sites, classify_target,
-};
+#[cfg(any(test, feature = "test-util"))]
+pub use post_opt::indirect_branch_resolve::classify_target;
+pub use post_opt::indirect_branch_resolve::{ClassifiedSites, ReturnTargets, classify_sites};
 pub use post_opt::stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;
 
