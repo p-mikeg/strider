@@ -127,8 +127,8 @@ Strider:
   `rewrite_rule` facade over `strider-pattern`, and the
   `indirect_branch_resolve` classifiers (`classify_sites`, which `analyze`
   calls after the pipeline). Pure graph->graph; the classifier reports targets
-  and the orchestrator rebuilds the CFG from them. What the classifiers read
-  (`value_range`, the known-bits facts, `classify_target`) is public only
+  and the orchestrator rebuilds the CFG from them. `classify_target` and what
+  the classifiers read (`value_range`, the known-bits facts) are public only
   under `test-util`.
 - `strider-orchestrator`: `Strider::analyze` and its `AnalyzeOptions`, plus the
   re-exported lift engine (`Lifter` / `LiftOutcome` at the crate root) and
@@ -164,8 +164,9 @@ strider-ir-test-utils -> strider-ir, strider-target, graph-algorithms
 `[dependencies]` of it, so a workspace-wide build resolves `strider-ir` with its
 `test-util` feature on. It also depends on `graph-algorithms` with `test-util`
 (the std-only `oracle` module), which a workspace-wide build likewise unifies.
-A workspace-wide build also turns on strider-graph's `edge-read-count` through
-strider-ir's dev-dependency, so a bench runs per package (`-p`).
+A workspace-wide test or bench build also turns on strider-graph's
+`edge-read-count` through strider-ir's dev-dependency, so a bench runs per
+package (`-p`).
 
 Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 `entity-utils`, `read-only-memory`, `strider-graph`, `vn-container`. Notably
