@@ -2,8 +2,7 @@
 
 Stub parity proves both spellings exist and agree on signature. The pairing
 they exist for is a runtime property: `x_opt` yields `None` in exactly the
-case `x` raises, and the identical value everywhere else, on `Match` and on
-the `BoundCapture` behind `m[c]` alike.
+case `x` raises, and the identical value everywhere else.
 """
 
 from __future__ import annotations
@@ -31,31 +30,22 @@ from strider.pattern import (
 
 from .conftest import built_function, built_lifter_and_function
 
-# Each reader as four callables: raising and `_opt`, on `Match` and on
-# `BoundCapture`.
+# Each reader as two callables: raising and `_opt`.
 SINT = (
     lambda m, c: m.sint(c),
     lambda m, c: m.sint_opt(c),
-    lambda m, c: m[c].sint,
-    lambda m, c: m[c].sint_opt,
 )
 FLOAT_BITS = (
     lambda m, c: m.float_bits(c),
     lambda m, c: m.float_bits_opt(c),
-    lambda m, c: m[c].float_bits,
-    lambda m, c: m[c].float_bits_opt,
 )
 VALUE_TYPE = (
     lambda m, c: m.value_type(c),
     lambda m, c: m.value_type_opt(c),
-    lambda m, c: m[c].value_type,
-    lambda m, c: m[c].value_type_opt,
 )
 VN = (
     lambda m, c: m.vn(c),
     lambda m, c: m.vn_opt(c),
-    lambda m, c: m[c].vn,
-    lambda m, c: m[c].vn_opt,
 )
 
 READERS = (SINT, FLOAT_BITS, VALUE_TYPE, VN)
@@ -120,28 +110,23 @@ ABSENT = [
 
 @pytest.mark.parametrize(("reader", "make"), PRESENT)
 def test_a_present_aspect_reads_the_same_through_the_opt_spelling(reader, make):
-    plain, opt, bound_plain, bound_opt = reader
+    plain, opt = reader
     m, c = make()
     value = plain(m, c)
     assert value is not None
     assert opt(m, c) == value
-    assert bound_plain(m, c) == value
-    assert bound_opt(m, c) == value
 
 
 @pytest.mark.parametrize(("reader", "make"), ABSENT)
 def test_an_aspect_the_bound_node_lacks_reads_none_where_the_plain_reader_raises(
     reader, make
 ):
-    plain, opt, bound_plain, bound_opt = reader
+    plain, opt = reader
     m, c = make()
     assert m.has(c)
     with pytest.raises(strider.StriderError):
         plain(m, c)
     assert opt(m, c) is None
-    with pytest.raises(strider.StriderError):
-        bound_plain(m, c)
-    assert bound_opt(m, c) is None
 
 
 def test_a_capture_under_an_alternative_that_did_not_fire_reads_none_everywhere():
@@ -161,10 +146,7 @@ def test_a_capture_under_an_alternative_that_did_not_fire_reads_none_everywhere(
     ]
     assert hits, "no match left the multiplication arm unbound"
     m = hits[0]
-    for plain, opt, bound_plain, bound_opt in READERS:
+    for plain, opt in READERS:
         with pytest.raises(strider.StriderError):
             plain(m, skipped)
         assert opt(m, skipped) is None
-        with pytest.raises(strider.StriderError):
-            bound_plain(m, skipped)
-        assert bound_opt(m, skipped) is None

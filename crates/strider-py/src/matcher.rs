@@ -193,9 +193,8 @@ impl PyMatch {
     }
 
     /// `m[c]` / `m["name"]`: capture `c` bound to THIS match, a `BoundCapture`
-    /// carrying every reader (`.uint`, `.node`, `.op`, ... and their
-    /// `_opt` forms) without repeating the capture. A numeric capture also
-    /// converts and compares directly (`int(m[c])`, `m[c] == 0x10`).
+    /// that says whether it bound and converts and compares a numeric capture
+    /// (`int(m[c])`, `m[c] == 0x10`). The readers are this match's methods.
     fn __getitem__(slf: Bound<'_, Self>, key: CaptureKey<'_>) -> PyResult<PyBoundCapture> {
         let py = slf.py();
         let cap = key.resolve()?;
@@ -346,73 +345,22 @@ match_getters! {
     "vn_opt" vn_opt : crate::sleigh::PyVn = vn;
 }
 
-/// Capture `cap` bound to a specific `PyMatch`: `m[c]`. Every reader delegates
-/// to the owning match, so the capture is named once.
+/// Capture `cap` bound to a specific `PyMatch`: `m[c]`. It says whether the
+/// capture bound and converts a numeric one; the readers are the match's.
 #[pyclass(name = "BoundCapture", module = "strider.pattern")]
 pub struct PyBoundCapture {
     match_: Py<PyMatch>,
     cap: Py<PyCapture>,
 }
 
-/// Each `BoundCapture` reader forwards to the same-named (or `$delegate`)
-/// `PyMatch` method with this capture's key: `self.match_.borrow(py).$delegate(
-/// py, self.key(py))`.  Stamped as its own `#[pymethods]` block
-/// (multiple-pymethods), so `has` and the dunders stay hand-written below.
-macro_rules! bound_getters {
-    ($( #[doc = $doc:literal] $name:ident -> $ret:ty = $delegate:ident );+ $(;)?) => {
-        #[pymethods]
-        impl PyBoundCapture {
-            $(
-                #[doc = $doc]
-                #[getter]
-                fn $name(&self, py: Python<'_>) -> PyResult<$ret> {
-                    self.match_.borrow(py).$delegate(py, self.key(py))
-                }
-            )+
-        }
-    };
-}
-
-bound_getters! {
-    #[doc = "The unsigned integer constant (raises if unbound or not one)."]
-    uint -> u128 = uint;
-    #[doc = "The unsigned integer constant, or `None` instead of raising."]
-    uint_opt -> Option<u128> = uint_opt;
-    #[doc = "The signed integer constant (raises if unbound or not one)."]
-    sint -> i128 = int_;
-    #[doc = "The signed integer constant, or `None` instead of raising."]
-    sint_opt -> Option<i128> = int_opt;
-    #[doc = "The boolean constant (raises if unbound or not one)."]
-    boolean -> bool = bool_;
-    #[doc = "The boolean constant, or `None` instead of raising."]
-    boolean_opt -> Option<bool> = bool_opt;
-    #[doc = "The raw float bits (raises if unbound or not a float node)."]
-    float_bits -> u64 = float_bits;
-    #[doc = "The raw float bits, or `None` instead of raising."]
-    float_bits_opt -> Option<u64> = float_bits_opt;
-    #[doc = "The operation variant (raises if unbound or the node carries none)."]
-    op -> String = op;
-    #[doc = "The operation variant, or `None` instead of raising."]
-    op_opt -> Option<String> = op_opt;
-    #[doc = "The value-output type (raises if unbound or the node has none)."]
-    value_type -> String = value_type;
-    #[doc = "The value-output type, or `None` instead of raising."]
-    value_type_opt -> Option<String> = value_type_opt;
-    #[doc = "The varnode (raises if the capture binds none)."]
-    vn -> crate::sleigh::PyVn = vn;
-    #[doc = "The varnode, or `None` instead of raising."]
-    vn_opt -> Option<crate::sleigh::PyVn> = vn_opt;
-    #[doc = "The matched `Node` (raises if the capture is unbound)."]
-    node -> crate::node::PyNode = node;
-    #[doc = "The matched `Node`, or `None` instead of raising."]
-    node_opt -> Option<crate::node::PyNode> = node_opt;
-    #[doc = "The machine addresses that produced the bound node (`[]` if unbound)."]
-    asm_fingerprint -> Vec<u64> = asm_fingerprint;
-}
-
 impl PyBoundCapture {
     fn key<'py>(&self, py: Python<'py>) -> CaptureKey<'py> {
         CaptureKey::Capture(self.cap.bind(py).clone())
+    }
+
+    /// The match's `uint_opt` for this capture.
+    fn unsigned(&self, py: Python<'_>) -> PyResult<Option<u128>> {
+        self.match_.borrow(py).uint_opt(py, self.key(py))
     }
 }
 
@@ -432,10 +380,10 @@ impl PyBoundCapture {
     }
 
     fn __int__(&self, py: Python<'_>) -> PyResult<u128> {
-        self.uint(py)
+        self.match_.borrow(py).uint(py, self.key(py))
     }
     fn __index__(&self, py: Python<'_>) -> PyResult<u128> {
-        self.uint(py)
+        self.__int__(py)
     }
     /// Equal to an int matching the captured constant at its width, in either
     /// signed or unsigned spelling (so `-8` and `0xFFFFFFF8` both match a
@@ -447,10 +395,12 @@ impl PyBoundCapture {
         op: CompareOp,
     ) -> PyResult<PyObject> {
         let equal = self
-            .uint_opt(py)?
+            .unsigned(py)?
             .is_some_and(|u| other.extract::<u128>().is_ok_and(|o| o == u))
             || self
-                .sint_opt(py)?
+                .match_
+                .borrow(py)
+                .int_opt(py, self.key(py))?
                 .is_some_and(|s| other.extract::<i128>().is_ok_and(|o| o == s));
         Ok(match op {
             CompareOp::Eq => equal.into_py(py),
@@ -459,7 +409,7 @@ impl PyBoundCapture {
         })
     }
     fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
-        Ok(match self.uint_opt(py)? {
+        Ok(match self.unsigned(py)? {
             Some(v) => format!("BoundCapture({v:#x})"),
             None if self.has(py)? => "BoundCapture(<node>)".to_string(),
             None => "BoundCapture(unbound)".to_string(),

@@ -176,6 +176,6 @@ shape. A `constraints=` entry narrows which pairings count: `dominates(a, b)`
 keeps only those where every control path from entry to `b` passes through `a`
 (see **Dominator**), and a `JoinPredicate` runs your own test over the pair.
 
-**Match.** One result of a query. It carries every capture's value: index it
-with the capture and read the aspect you want, `hit[off].uint`,
-`hit[base].node`, `hit[base].asm_fingerprint`.
+**Match.** One result of a query. It carries every capture's value: pass the
+capture to the reader you want, `hit.uint(off)`, `hit.node(base)`,
+`hit.asm_fingerprint(base)`.

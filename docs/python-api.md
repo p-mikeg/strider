@@ -654,24 +654,24 @@ for hit in function.find_all(pat):
     hit.has("off")               # did this capture bind?
 ```
 
-Index the match with the capture to get a `BoundCapture`, which carries the
-readers as properties. Each reader **raises** when the capture is unbound or
-its node lacks that aspect; the `_opt` form returns `None` instead.
+Each reader takes the capture, or its name, and **raises** when the capture
+is unbound or its node lacks that aspect; the `_opt` form returns `None`
+instead.
 
 ```python
-hit[off].uint                    # unsigned int (raises if not one)
-hit[off].uint_opt                # ... or None
-hit[off].sint                    # signed
-hit[flag].boolean                # bool
-hit[f].float_bits                # raw float bits
-hit[node].op                     # "Add" / ...
-hit[node].value_type             # "I64" / ...
-hit[base].node                   # a Node handle
-hit[reg].vn                      # a varnode
-hit[node].asm_fingerprint        # machine addresses (a list; [] if unbound)
+hit.uint(off)                    # unsigned int (raises if not one)
+hit.uint_opt(off)                # ... or None
+hit.sint(off)                    # signed
+hit.boolean(flag)                # bool
+hit.float_bits(f)                # raw float bits
+hit.op(node)                     # "Add" / ...
+hit.value_type(node)             # "I64" / ...
+hit.node(base)                   # a Node handle
+hit.vn(reg)                      # a varnode
+hit.asm_fingerprint(node)        # machine addresses (a list; [] if unbound)
 
-hit["off"]                       # by name, when the capture has one
-int(hit[off]); hit[off] == 8     # a numeric capture converts and compares directly
+hit.uint("off")                  # by name, when the capture has one
+int(hit[off]); hit[off] == 8     # hit[c] converts and compares a numeric capture
 ```
 
 An anonymous capture needs no name, which suits a hole you read back once:
@@ -680,13 +680,12 @@ An anonymous capture needs no name, which suits a hole you read back once:
 off = p.Capture()                                  # no name
 for hit in function.find_all(p.load(addr=p.int_add(p.anything(), p.int_const(off))),
                              ignore_casts=True):
-    print("constant addend", hit[off].uint)
+    print("constant addend", hit.uint(off))
 ```
 
-Every reader also exists as a `Match` method taking the capture
-(`hit.uint(off)`, `hit.node(base)`), which reads better when the capture is used
-once inline. `pattern.CaptureKey` is the type alias for that argument, a
-`Capture` or its name, and `.capture()` takes it too.
+`pattern.CaptureKey` is the type alias for the capture argument, a `Capture`
+or its name, and `.capture()` takes it too. `hit[c]` is a `BoundCapture`,
+which carries `has` and the numeric conversions alone.
 
 ---
 
