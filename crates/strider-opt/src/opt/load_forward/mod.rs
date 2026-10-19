@@ -67,19 +67,16 @@ impl crate::peephole::PeepholePass for LoadForward {
         root: NodeId,
     ) -> Result<crate::peephole::PeepholeRewrite> {
         let cfgs = analyzers.get_or_insert_with(|| {
-            let assumptions = edit.function().assumptions();
+            let function = edit.function();
             Analyzers {
-                alias: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::Forward, assumptions)),
+                alias: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::Forward, function)),
                 // `narrow_load_to` rewires for good, and the walks that read
                 // the edge afterwards honour fewer claims than forwarding does
                 // (the jump-table walk no call relaxation, stack-argument
                 // collection no escape analysis, return-target verification
                 // with its claim off no `stack_global_disjoint` or heap
                 // identity), so the narrowing claims none.
-                narrow: MemAnalyzer::new(MemOptions::for_purpose(
-                    MemPurpose::Structural,
-                    assumptions,
-                )),
+                narrow: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::Structural, function)),
             }
         });
         Ok(crate::peephole::PeepholeRewrite::from_changed(

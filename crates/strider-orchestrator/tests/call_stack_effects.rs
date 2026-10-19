@@ -16,12 +16,9 @@ const BASE: u64 = 0x1000;
 fn analyze(arch: Arch, bytes: Vec<u8>) -> strider_ir::Function {
     let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
     let opts = strider_orchestrator::AnalyzeOptions {
-        opt: strider_opt::OptOptions {
-            assumptions: strider_opt::AssumptionOptions {
-                return_slots_survive_untracked_writes: true,
-                ..strider_opt::AssumptionOptions::none()
-            },
-            ..Default::default()
+        assumptions: strider_opt::AssumptionOptions {
+            return_slots_survive_untracked_writes: true,
+            ..strider_opt::AssumptionOptions::none()
         },
         ..common::ignoring()
     };

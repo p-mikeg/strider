@@ -165,18 +165,6 @@ fn build_orch_sleigh(
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:#}")))
 }
 
-/// `opts` under `assumptions`: the stored set for `analyze`,
-/// [`claims_to_add`]'s for `optimize`.
-fn opt_options_from(
-    opts: &PyLifterOptions,
-    assumptions: strider_orchestrator::opt::AssumptionOptions,
-) -> strider_orchestrator::opt::OptOptions {
-    strider_orchestrator::opt::OptOptions {
-        assumptions,
-        resolve_indirect_branches: opts.resolve_indirect_branches,
-    }
-}
-
 /// The claims an `optimize` adds to `function`'s: none unless `opts` was
 /// built with `assumptions=`, and then that set, which must hold every claim
 /// already in force.
@@ -742,7 +730,8 @@ impl PyLifter {
         };
         let opts_ref = opts.borrow(py);
         let compact = opts_ref.compact;
-        let opt_opts = opt_options_from(&opts_ref, opts_ref.assumptions.borrow(py).inner.clone());
+        let resolve_indirect_branches = opts_ref.resolve_indirect_branches;
+        let assumptions = opts_ref.assumptions.borrow(py).inner.clone();
         // Materialise the pipeline override BEFORE dropping the GIL below.
         let custom_pipeline = opts_ref
             .pipeline
@@ -774,7 +763,8 @@ impl PyLifter {
         let analyze_opts = strider_orchestrator::AnalyzeOptions {
             cfg: cfg_options_from(&cfg_ref, &overrides),
             per_address_ccs: &per_address_built,
-            opt: opt_opts,
+            resolve_indirect_branches,
+            assumptions,
             compact,
             on_incomplete: opts_ref.on_incomplete,
         };
@@ -869,16 +859,13 @@ impl PyLifter {
             Some(o) => o,
             None => Py::new(py, PyLifterOptions::new_default(py)?)?,
         };
-        let options = {
-            let opts = opts.borrow(py);
-            opt_options_from(&opts, claims_to_add(py, function, &opts)?)
-        };
+        let claims = claims_to_add(py, function, &opts.borrow(py))?;
         let rom = this.strider()?.rom();
         with_pending_control_flow(|| match pipeline {
-            Some(p) => function.run_pipeline_in_place(p.build_pipeline(), "optimize", rom, options),
+            Some(p) => function.run_pipeline_in_place(p.build_pipeline(), "optimize", rom, &claims),
             None => {
                 let pipe = strider_orchestrator::opt::default_pipeline();
-                function.run_pipeline_in_place(pipe, "optimize", rom, options)
+                function.run_pipeline_in_place(pipe, "optimize", rom, &claims)
             }
         })
     }

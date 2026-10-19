@@ -119,7 +119,7 @@ impl PostOptimizer for CallStackArgCollect {
             .collect();
         let alias_cfg = MemAnalyzer::new(MemOptions::for_purpose(
             MemPurpose::CallStackArgs,
-            edit.function().assumptions(),
+            edit.function(),
         ));
         // `float_arg_slots` scans the tracked set per float register, so the
         // unoverridden calls share one scan.

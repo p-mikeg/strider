@@ -100,9 +100,7 @@ fn classify_with(
     mode_value: Option<ValueId>,
 ) -> Option<ResolvedTargets> {
     let mut f = f.clone();
-    if f.side_tables_mut().assume(assumptions) {
-        f.side_tables().invalidate_analyses();
-    }
+    f.assume(assumptions);
     let mut ranges = crate::value_range::RangeMap::new(&f).unwrap();
     classify_table_dispatch(&f, sole_indirect_branch(&f), rom, &mut ranges, mode_value)
 }
@@ -352,7 +350,7 @@ fn classify_table_dispatch_resolves_guarded_shift_narrowed_loaded_index() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut g, &mut crate::OptCtx::at_floor(None)).unwrap();
+        p.run(&mut g, &mut crate::OptCtx::new(None)).unwrap();
     }
 
     let rom = MockRom::strided(
@@ -606,8 +604,7 @@ fn classify_table_dispatch_resolves_a_bound_held_by_a_guarded_sibling() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::at_floor(None))
-            .unwrap();
+        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
     }
 
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
@@ -692,8 +689,7 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::at_floor(None))
-            .unwrap();
+        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
     }
 
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
@@ -889,8 +885,7 @@ fn classify_table_dispatch_guarded_direct_load_target() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::at_floor(None))
-            .unwrap();
+        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
     }
     let result = classify(&function, None);
     assert_eq!(
@@ -954,8 +949,7 @@ fn classify_table_dispatch_decoy_offpath_value_not_enumerated() {
         p.add(crate::KnownBits);
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::at_floor(None))
-            .unwrap();
+        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
     }
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let result = classify(&function, Some(&rom));
@@ -980,7 +974,7 @@ fn finish_stack_array(mut fg: strider_ir::Function) -> (strider_ir::Function, Va
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::at_floor(None)).unwrap();
+    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
     let load = fg
         .graph()
         .all_node_ids()
@@ -1595,7 +1589,7 @@ fn stack_table_built_in_two_hops() -> Function {
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::at_floor(None)).unwrap();
+    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
     fg
 }
 
@@ -1640,7 +1634,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
     pipeline.add_post_pass(StackOffsetDetect);
     pipeline.add(LoadForward);
 
-    pipeline.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -1767,7 +1761,7 @@ fn classify_table_dispatch_resolves_a_bitfield_index_under_its_guard() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut g, &mut crate::OptCtx::at_floor(None)).unwrap();
+        p.run(&mut g, &mut crate::OptCtx::new(None)).unwrap();
     }
 
     let rom = MockRom::strided(0x4000, 4, (0..32).map(|i| 0x5000 + 0x10 * i).collect(), 4);
@@ -1850,10 +1844,6 @@ fn classify_table_dispatch_carries_each_arms_own_isa_mode() {
     }
 }
 
-fn floor() -> crate::OptOptions {
-    crate::OptCtx::at_floor(None).options
-}
-
 /// A seated `Switch` is re-derived from its retained selector, reporting no
 /// per-arm ISA mode: the node carries no mode input to fold.
 #[test]
@@ -1878,7 +1868,7 @@ fn classify_sites_rederives_a_seated_switch_from_its_selector() {
     let g = b.build().unwrap();
 
     let rom = MockRom::strided(0x4000, 4, vec![0x1000, 0x2000], 4);
-    let found = super::super::classify_sites(&g, Some(&rom), &floor()).expect("classify");
+    let found = super::super::classify_sites(&g, Some(&rom)).expect("classify");
 
     assert_eq!(
         found.resolved.get(&switch),
@@ -1944,12 +1934,7 @@ mod stack_table_cost {
     ) -> (Vec<u64>, u64) {
         let targets: Vec<u64> = (0..entries as u64).map(|i| 0x401000 + i * 0x10).collect();
         let (mut fg, _load) = build(&targets, -8 * entries as i64, 8);
-        if fg
-            .side_tables_mut()
-            .assume(&crate::AssumptionOptions::default())
-        {
-            fg.side_tables().invalidate_analyses();
-        }
+        fg.assume(&crate::AssumptionOptions::default());
         let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         super::super::super::eval::SLOT_MAP_STEPS.with(|c| c.set(0));
@@ -1988,12 +1973,7 @@ mod stack_table_cost {
         wire_stack_stores(&vec![0u64; filler], -0x10000, 8, sp_val, &mut b);
         wire_stack_dispatch(targets.len(), -32, 8, sp_val, &mut b, arg_vn);
         let (mut fg, _load) = finish_stack_array(b.build().unwrap());
-        if fg
-            .side_tables_mut()
-            .assume(&crate::AssumptionOptions::default())
-        {
-            fg.side_tables().invalidate_analyses();
-        }
+        fg.assume(&crate::AssumptionOptions::default());
         let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         super::super::super::eval::SLOT_MAP_STEPS.with(|c| c.set(0));
@@ -2106,9 +2086,9 @@ fn rederive_seated_switch(mut g: Function, switch: NodeId) -> Option<ResolvedTar
     prep.add(PhiCollapse);
     prep.add(ConstantFold::new());
     prep.add(RegionCollapse);
-    prep.run(&mut g, &mut crate::OptCtx::at_floor(Some(&rom)))
+    prep.run(&mut g, &mut crate::OptCtx::new(Some(&rom)))
         .expect("prep");
-    let found = super::super::classify_sites(&g, Some(&rom), &floor()).expect("classify");
+    let found = super::super::classify_sites(&g, Some(&rom)).expect("classify");
     assert!(
         found.sites.contains(&switch),
         "the seated switch is reported"
@@ -2188,10 +2168,12 @@ fn a_heap_verdict_opens_the_slot_map_only_under_its_claim() {
     p.add(RegionCollapse);
     let resolve = |fg: &mut Function, allocators: &[u64]| {
         let site = sole_indirect_branch(fg);
-        let mut ctx = crate::OptCtx::at_floor(None);
-        ctx.options.assumptions.noalias_allocators = allocators.iter().copied().collect();
-        p.run(fg, &mut ctx).unwrap();
-        super::super::classify_sites(fg, None, &ctx.options)
+        fg.assume(&crate::AssumptionOptions {
+            noalias_allocators: allocators.iter().copied().collect(),
+            ..crate::AssumptionOptions::none()
+        });
+        p.run(fg, &mut crate::OptCtx::new(None)).unwrap();
+        super::super::classify_sites(fg, None)
             .unwrap()
             .resolved
             .get(&site)

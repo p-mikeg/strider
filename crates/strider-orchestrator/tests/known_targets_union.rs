@@ -194,10 +194,7 @@ fn a_seeded_site_is_still_reported_unverified_with_resolution_off() {
             known_targets: &known,
             ..Default::default()
         },
-        opt: strider_orchestrator::opt::OptOptions {
-            resolve_indirect_branches: false,
-            ..Default::default()
-        },
+        resolve_indirect_branches: false,
         ..common::ignoring()
     };
     let r = strider.analyze(addr, &cc, &opts, None).expect("analyze");

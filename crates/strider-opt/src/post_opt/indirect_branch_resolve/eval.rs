@@ -58,7 +58,7 @@ impl<'a> Evaluator<'a> {
             slot_maps: FxHashMap::default(),
             off_segment: MemAnalyzer::walking(MemOptions::for_purpose(
                 MemPurpose::TableWalk,
-                function.assumptions(),
+                function,
             )),
         }
     }

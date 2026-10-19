@@ -29,12 +29,9 @@ fn analyze(arch: common::Arch, case: &str, fn_name: &str) -> Report {
             // it and the controls below could not tell "nothing reported" from
             // "the return check reported".
             &strider_orchestrator::AnalyzeOptions {
-                opt: strider_orchestrator::opt::OptOptions {
-                    assumptions: strider_opt::AssumptionOptions {
-                        return_slots_survive_untracked_writes: true,
-                        ..strider_opt::AssumptionOptions::none()
-                    },
-                    ..Default::default()
+                assumptions: strider_opt::AssumptionOptions {
+                    return_slots_survive_untracked_writes: true,
+                    ..strider_opt::AssumptionOptions::none()
                 },
                 ..common::ignoring()
             },
