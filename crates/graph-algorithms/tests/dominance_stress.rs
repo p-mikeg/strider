@@ -606,7 +606,7 @@ fn check_large(c: &Case) {
 /// The tree numberings against the idoms, in one pass each: `tree_preorder`
 /// is a preorder of the tree with siblings ascending, every span nests in its
 /// idom's, and `intervals().preorder()` is the order of `enter`, with sibling
-/// spans disjoint.
+/// spans disjoint and siblings ascending by position, which is discovery order.
 fn check_tree_numbering(doms: &Dominators<u32>, n: u32) {
     let order = doms.tree_preorder();
     assert_eq!(order.len(), doms.vertices().len(), "preorder length, n {n}");
@@ -653,7 +653,9 @@ fn check_tree_numbering(doms: &Dominators<u32>, n: u32) {
     // of the stack is its idom and strictly encloses it. So every earlier
     // sibling has closed before a later one enters: sibling spans are
     // disjoint, and the numbering is a DFS interval numbering of the tree.
+    // Siblings enter at ascending positions.
     let mut open: Vec<(u32, u32, u32)> = Vec::new();
+    let mut last_sibling = vec![None::<u32>; doms.vertices().len()];
     for &pos in iv.preorder() {
         let (e, x) = iv.span(pos);
         assert!(e < x, "span of position {pos} is ({e}, {x}), n {n}");
@@ -680,6 +682,13 @@ fn check_tree_numbering(doms: &Dominators<u32>, n: u32) {
                     top_e < e && x < top_x,
                     "span ({e}, {x}) of {v} overlaps its idom's ({top_e}, {top_x}), n {n}"
                 );
+                if let Some(prev) = last_sibling[top as usize] {
+                    assert!(
+                        prev < pos,
+                        "siblings at positions {prev} then {pos} under {idom}, n {n}"
+                    );
+                }
+                last_sibling[top as usize] = Some(pos);
             }
         }
         open.push((pos, e, x));
@@ -715,6 +724,25 @@ fn dominance_matches_its_definitions_on_every_named_shape() {
             println!("shape {name}");
             check_dominance(&c);
         }
+    }
+}
+
+/// The numbering checks past the cubic oracle: a wide star discovered in
+/// reverse vertex order, so discovery and vertex order disagree for every
+/// sibling pair, and deep random graphs. Debug builds otherwise check the
+/// numbering at 200 vertices at most.
+#[test]
+fn tree_numbering_holds_past_the_oracle() {
+    const N: u32 = 1_000;
+    let star: Vec<(u32, u32)> = (1..N).rev().map(|v| (0, v)).collect();
+    let succs = Case::new(N, &star, &[0]).succs();
+    let doms = dominators(0u32, |v| succs[v as usize].clone());
+    check_tree_numbering(&doms, N);
+    for seed in 1..=8 {
+        let c = cases::large_case(1_500, seed);
+        let succs = c.succs();
+        let doms = dominators(0u32, |v| succs[v as usize].clone());
+        check_tree_numbering(&doms, c.n);
     }
 }
 
