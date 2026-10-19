@@ -301,11 +301,6 @@
 - `CfgOptions(call_other_abis=...)` is resolved on first use, rebuilt only
   when the arch changes, and borrowed by every later `analyze` and
   `build_cfg` through it, where each call rebuilt it.
-- `Lifter.pcode_at(entry, addr)` with `addr` below `entry` raises the sweep's
-  own "stepped past target" `StriderError` (it said "is before entry"). With
-  no sweep cached for `entry` it first builds one, replacing the one cached
-  for another entry, and past the decode-mode limit raises "pinned more
-  decode modes" instead, as every uncached `pcode_at` on that `Lifter` does.
 
 ### Added, Python
 
