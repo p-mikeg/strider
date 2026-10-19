@@ -8,6 +8,11 @@ from strider import template as tpl
 
 from .conftest import built_function, built_lifter_and_function
 
+_PAT_HINT = (
+    "a strider.pattern Pat only matches; build it with strider.template "
+    "(e.g. template.var(c), template.int_const(v))"
+)
+
 
 def _build_graph(symbol="array_sum"):
     return built_function("x86", "memory", symbol, optimize=False)
@@ -88,21 +93,40 @@ def test_template_is_a_distinct_type_from_pat():
 
 
 @pytest.mark.parametrize(
-    "replace",
-    [lambda: anything(), lambda: var(Capture()), lambda: int_const(0)],
+    ("replace", "name"),
+    [
+        (lambda: anything(), "anything()"),
+        (lambda: var(Capture()), "var()"),
+        (lambda: int_const(0), "int_const()"),
+    ],
     ids=["anything", "var", "int_const"],
 )
-def test_a_pat_is_not_a_replacement(replace):
+def test_a_pat_is_not_a_replacement(replace, name):
     """A `strider.pattern.Pat` matches and never builds, so `replace` refuses
-    one at conversion, a build-valid one included."""
+    one at conversion, a build-valid one included, pointing at
+    `strider.template`."""
+    g = _build_graph()
+    x = Capture()
+    text = re.escape(f"cannot use {name} as a rewrite RHS: {_PAT_HINT}")
+    with pytest.raises(TypeError, match=f"^argument 'replace': {text}$"):
+        g.rewrite(find=int_add(var(x), int_const(0)), replace=replace())  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match=f"^argument 'pairs': {text}$"):
+        g.rewrite_all([(int_add(var(x), int_const(0)), replace())])  # type: ignore[list-item]
+
+
+@pytest.mark.parametrize("replace", [4, 1.5, None], ids=["int", "float", "none"])
+def test_a_non_template_replacement_names_what_is_accepted(replace):
     g = _build_graph()
     x = Capture()
     with pytest.raises(
-        TypeError, match=r"(?s)argument 'replace'.*'Pat' object cannot be converted to 'Template'"
+        TypeError,
+        match=re.escape(
+            f"argument 'replace': cannot use {type(replace).__name__} as a rewrite RHS: "
+            "expected a strider.template Template, a Capture or a capture name "
+            "(an int constant is template.int_const(v))"
+        ),
     ):
-        g.rewrite(find=int_add(var(x), int_const(0)), replace=replace())  # type: ignore[arg-type]
-    with pytest.raises(TypeError, match=r"argument 'pairs'"):
-        g.rewrite_all([(int_add(var(x), int_const(0)), replace())])  # type: ignore[list-item]
+        g.rewrite(find=int_add(var(x), int_const(0)), replace=replace)  # type: ignore[arg-type]
 
 
 def test_template_takes_the_same_wide_constants_as_the_match_side():
@@ -127,14 +151,28 @@ def test_nested_template_string_operand_names_what_was_passed():
         )
 
 
+def _input_edges(g):
+    return {
+        (user, slot): producer.id
+        for user in g.node_ids()
+        for slot, producer in enumerate(g.node(user).inputs())
+    }
+
+
 def test_var_rhs_is_the_captured_value():
     """`array_sum` scales its index by 4 at three sites; `x * 4 -> x` leaves
-    none."""
+    none, and every input that read a product reads that site's `x`."""
     g = _build_graph()
-    x = Capture()
-    assert len(g.find_all(int_mul(var(x), int_const(4)))) == 3
-    assert g.rewrite(find=int_mul(var(x), int_const(4)), replace=tpl.var(x)) == 3
-    assert g.find_all(int_mul(var(x), int_const(4))) == []
+    x, product = Capture(), Capture()
+    site = int_mul(var(x), int_const(4))
+    x_of = {m.node(product).id: m.node(x).id for m in g.find_all(site.capture(product))}
+    assert len(x_of) == 3
+    rewired = {edge: x_of[p] for edge, p in _input_edges(g).items() if p in x_of}
+    assert rewired
+    assert g.rewrite(find=site, replace=tpl.var(x)) == 3
+    assert g.find_all(site) == []
+    after = _input_edges(g)
+    assert {edge: after[edge] for edge in rewired} == rewired
 
 
 @pytest.mark.parametrize(
@@ -171,3 +209,23 @@ def test_a_pat_nested_in_a_template_is_refused_by_its_constructor(operand, name)
             replace=tpl.int_add(operand(), 1),  # type: ignore[arg-type]
         )
     assert g.to_text() == before
+
+
+@pytest.mark.parametrize(
+    ("operand", "name"),
+    [(lambda: var(Capture()), "var()"), (lambda: int_const(0), "int_const()")],
+    ids=["var", "int_const"],
+)
+def test_a_build_valid_pat_nested_in_a_template_points_at_its_template_twin(operand, name):
+    """`var()` and `int_const()` are the shapes a half-migrated RHS keeps; the
+    refusal names `strider.template`, where both have a twin."""
+    g = _build_graph()
+    x = Capture()
+    with pytest.raises(
+        strider.StriderError,
+        match="^" + re.escape(f"cannot use {name} as a rewrite RHS: {_PAT_HINT}") + "$",
+    ):
+        g.rewrite(
+            find=int_add(var(x), int_const(0)),
+            replace=tpl.int_add(operand(), 1),  # type: ignore[arg-type]
+        )
