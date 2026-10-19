@@ -210,9 +210,9 @@ footprint-free classes `CallOtherAbi.noop()` / `.pure()` / `.mem_clobber()` /
 `.no_return()`, or one naming implicit registers:
 
 ```python
-sl = sleigh.SleighArch.x86_64()
+arch = sleigh.SleighArch.x86_64()
 strider.sleigh.CallOtherAbi.custom(
-    sl,                              # resolves the register names here and now
+    arch,                            # resolves the register names here and now
     implicit_reads=["RAX", "RDI"],   # read beyond the p-code operands
     implicit_writes=["RAX"],         # written beyond the p-code result
     clobbers_memory=True,

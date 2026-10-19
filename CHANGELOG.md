@@ -229,7 +229,8 @@
   and `Xor(FloatEqual(l, r), 1)`; the `strider.pattern` four used as a
   rewrite RHS build the same shape instead of raising.
 - `CallingConvention.custom` and `CallOtherAbi.custom` take a `SleighArch`
-  as their first (`sleigh=`) argument, as well as a `Sleigh`; names resolve
+  as their first (`sleigh=`) argument, as well as a `Sleigh` (anything else
+  raises `TypeError: expected a SleighArch or a Sleigh`); names resolve
   through one table per arch per process. `SleighArch.reg(name)` and
   `SleighArch.reg_name(vn)` look registers up without a `Sleigh`.
 - `.ordered()` on `inputs_of_width(n, x)` and `bool_inputs(x)` pins what it

@@ -90,11 +90,11 @@ class SleighArch:
     def endianness(self) -> str:
         """Byte order of this architecture: `"little"` or `"big"`."""
         ...
-    def reg(self, name: str) -> Optional["Vn"]:
+    def reg(self, name: str) -> Optional[Vn]:
         """The varnode for the register called `name`, or `None` when the
         name is not a register of this arch."""
         ...
-    def reg_name(self, vn: "Vn") -> Optional[str]:
+    def reg_name(self, vn: Vn) -> Optional[str]:
         """The register name for `vn`, or `None` when it names no register
         (a non-register space, or an offset and size absent from this
         arch's table)."""
@@ -173,7 +173,7 @@ class CallingConvention:
     @classmethod
     def custom(
         cls,
-        sleigh: Union[SleighArch, "Sleigh"],
+        sleigh: Union[SleighArch, Sleigh],
         arg_passing_regs: list[str],
         callee_saved_regs: list[str],
         ret_val_regs: list[str],
@@ -329,7 +329,7 @@ class CallOtherAbi:
     @classmethod
     def custom(
         cls,
-        sleigh: Union[SleighArch, "Sleigh"],
+        sleigh: Union[SleighArch, Sleigh],
         implicit_reads: list[str] = ...,
         implicit_writes: list[str] = ...,
         clobbers_memory: bool = ...,
