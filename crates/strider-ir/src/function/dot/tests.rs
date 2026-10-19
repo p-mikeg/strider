@@ -12,7 +12,6 @@ fn int_const_node(f: &mut Function, v: u128, ty: ValueType) -> NodeId {
         .create_node(NodeKind::IntConst(id), [], [ValueKind::Typed(ty)])
 }
 
-/// These tests decode no instructions.
 fn make_dumper(function: &Function, entry: NodeId) -> FunctionDotDumper<'_> {
     FunctionDotDumper {
         entry,
