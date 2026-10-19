@@ -93,12 +93,12 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
             .filter_map(|name| Some((*name, sleigh.get_context_at(0, name).ok()?)))
             .collect();
         // After the checks above, which report the mismatches they can see.
-        // The pspec separates presets that share an sla (`arm`, `arm_thumb`).
         debug_assert!(
             sleigh.sla_spec() == arch.sla_spec(),
             "{:?}: the Sleigh was built from another sla",
             arch.preset()
         );
+        // The pspec separates presets that share an sla (`arm`, `arm_thumb`).
         debug_assert!(
             sleigh.pspec() == arch.pspec(),
             "{:?}: the Sleigh was built from another pspec",

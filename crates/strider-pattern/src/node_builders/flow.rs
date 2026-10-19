@@ -81,13 +81,14 @@ impl CallPat {
         )
     }
 
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a control edge, not a
-    /// value.
+    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
+    /// control edge, not a value.
     pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
     }
 
-    /// Input [`NodeKind::CTRL_MEM_SLOT`], taking a `store` / `mem_phi` / prior `call`.
+    /// Input [`NodeKind::CTRL_MEM_SLOT`], taking a `store` / `mem_phi` / prior
+    /// `call`.
     pub fn mem<M: MemPat + 'static>(self, p: M) -> Self {
         Self(self.0.input_mem(NodeKind::CTRL_MEM_SLOT, p))
     }
@@ -208,8 +209,8 @@ impl CallOtherPat {
         self
     }
 
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a control edge, not a
-    /// value.
+    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
+    /// control edge, not a value.
     pub fn ctrl<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.inner = self.inner.input_control(NodeKind::CTRL_SLOT, p);
         self
@@ -277,7 +278,8 @@ pub fn call_other() -> CallOtherPat {
 pub struct RetPat(NodePat);
 
 impl RetPat {
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a control edge.
+    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
+    /// control edge.
     pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
     }
@@ -302,8 +304,8 @@ pub fn ret() -> RetPat {
     RetPat(NodePat::node(KindSpec::Exact(NodeKind::Return)))
 }
 
-/// Inputs `[ctrl(0), mem(1), target(2)]` plus the optional interworking ISA
-/// mode at `3`, reached through [`input`](Self::input) and present only on a
+/// Inputs `[ctrl, mem, target]` plus the optional interworking ISA mode after
+/// them, reached through [`input`](Self::input) and present only on a
 /// mode-switching branch. No outputs, so the pattern is rooted on the node
 /// itself; [`any_input`](Self::any_input) reaches the mode input too.
 pub struct IndirectBranchPat(NodePat);
@@ -314,7 +316,8 @@ impl IndirectBranchPat {
         Self(self.0.input(NodeKind::INDIRECT_BRANCH_TARGET_SLOT, p))
     }
 
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a control edge.
+    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
+    /// control edge.
     pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
     }
@@ -339,12 +342,13 @@ pub fn indirect_branch() -> IndirectBranchPat {
     IndirectBranchPat(NodePat::node(KindSpec::Exact(NodeKind::IndirectBranch)))
 }
 
-/// Inputs `[ctrl(0)]` plus the optional memory slot 1 an exit-free-cycle
-/// sink carries; no outputs.
+/// Inputs `[ctrl]` plus the optional memory token an exit-free-cycle sink
+/// carries; no outputs.
 pub struct UnreachablePat(NodePat);
 
 impl UnreachablePat {
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a control edge.
+    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
+    /// control edge.
     pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
     }
@@ -416,19 +420,21 @@ pub fn region() -> RegionPat {
 delegate_with_output!(RegionPat, 0);
 delegate_node_pat!(RegionPat, 0, [capture, build, any_input]);
 
-/// Inputs `[ctrl(0), selector(1)]`, one control output per arm. No anchor
+/// Inputs `[ctrl, selector]`, one control output per arm. No anchor
 /// output, so the pattern is rooted on the node itself; `output` /
 /// `any_output` reach the arm edges.
 pub struct SwitchPat(NodePat);
 
 impl SwitchPat {
-    /// Input [`NodeKind::SWITCH_SELECTOR_SLOT`], the value the switch dispatches on. The arms'
-    /// addresses are the control outputs, not this slot.
+    /// Input [`NodeKind::SWITCH_SELECTOR_SLOT`], the value the switch
+    /// dispatches on. The arms' addresses are the control outputs, not this
+    /// slot.
     pub fn selector<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input(NodeKind::SWITCH_SELECTOR_SLOT, p))
     }
 
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a control edge.
+    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
+    /// control edge.
     pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
     }
@@ -481,7 +487,8 @@ pub struct IfPat {
 }
 
 impl IfPat {
-    /// Input [`NodeKind::IF_COND_SLOT`]; [`NodeKind::CTRL_SLOT`] is the ctrl predecessor.
+    /// Input [`NodeKind::IF_COND_SLOT`]; [`NodeKind::CTRL_SLOT`] is the ctrl
+    /// predecessor.
     pub fn cond<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.cond = Some(crate::node_builders::SubCompiler::new(move |b| {
             p.compile(b)
@@ -489,7 +496,8 @@ impl IfPat {
         self
     }
 
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a control edge.
+    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
+    /// control edge.
     pub fn ctrl<P: MatchPat + 'static>(mut self, p: P) -> Self {
         self.ctrl = Some(control_compiler(p));
         self

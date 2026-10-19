@@ -68,7 +68,7 @@ pub struct EditFunction<'g> {
     /// Maybe-dead queue pops, the unit the clean-cost test counts.
     #[cfg(test)]
     queue_pops: u64,
-    /// Use edges redirected, the unit the flag-test chain test counts.
+    /// Use edges [`Self::update_input`] and [`Self::replace_value`] redirected.
     #[cfg(any(test, feature = "test-util"))]
     uses_moved: u64,
 }
