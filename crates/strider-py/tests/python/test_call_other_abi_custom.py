@@ -204,5 +204,8 @@ def test_custom_reads_a_register_with_no_calling_convention_role():
     ids=["CallOtherAbi", "CallingConvention"],
 )
 def test_custom_names_what_it_takes_for_a_wrong_type(custom):
-    with pytest.raises(TypeError, match="argument 'sleigh': 'str' object cannot be converted to 'SleighArch'"):
+    with pytest.raises(
+        TypeError,
+        match="argument 'sleigh': 'str' object cannot be converted to 'SleighArch'",
+    ):
         custom("x86")
