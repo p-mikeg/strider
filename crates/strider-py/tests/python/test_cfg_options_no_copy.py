@@ -1,22 +1,25 @@
-"""A large `known_targets` / `call_other_abis` table costs its build, and
-nothing per analyse: it is seated once, at construction, and every analyse
-borrows that one table.
+"""A large `known_targets` table costs its build, and nothing per analyse: it
+is seated once, at construction, and every analyse borrows that one table.
 
 The kernel-sweep shape seeds tens of thousands of answers once and then
 analyses thousands of functions through the same `LifterOptions`; a table
-rebuilt, re-seated or copied per call makes each of those analyses O(table).
+copied through Python per call makes each of those analyses O(table).
+Counted, not timed: such a copy shows in `tracemalloc`'s peak, and the views
+are memoized, so every read hands back one object.
 """
 
 from __future__ import annotations
 
-import time
+import tracemalloc
 
 import strider
 
 from .conftest import fixture_path
 
 _ENTRIES = 20_000
-_RUNS = 7
+#: An analyse's Python allocations may differ by this much across table sizes;
+#: one copied 20,000-entry table is about 3.5 MB.
+_SLACK = 16 * 1024
 
 
 def _opts(entries: int):
@@ -24,73 +27,60 @@ def _opts(entries: int):
     return strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(known_targets=targets))
 
 
-def _seeded():
-    prog = strider.lift.load_elf(str(fixture_path("x86", "arithmetic")))
-    return prog, _opts(_ENTRIES)
+def _program():
+    return strider.lift.load_elf(str(fixture_path("x86", "arithmetic")))
 
 
-def _fastest_analyze_ms(prog, target, opts) -> float:
-    """The FASTEST of `_RUNS`, not the median. An analyse here costs about as
-    much as the margins below allow, so a median taken while the rest of the
-    suite runs fails on load rather than on an O(table) cost. Scheduling can
-    only inflate a sample, so the floor still rises if the table is copied per
-    call."""
-    times = []
-    for _ in range(_RUNS):
-        t = time.perf_counter()
+def _python_peak(prog, target, opts) -> int:
+    """Peak Python-heap bytes of one analyse, after one that warms caches."""
+    prog.analyze(target, opts=opts)
+    tracemalloc.start()
+    try:
         prog.analyze(target, opts=opts)
-        times.append((time.perf_counter() - t) * 1000.0)
-    return min(times)
+        return tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
 
 
 def test_analyzing_by_symbol_does_not_copy_the_seeded_tables():
     """The symbol path derives a `function_max_size` from the symbol; doing
-    that through Python attributes rebuilt both tables on the way. Analysing
-    by address never touches them, so the two must cost about the same."""
-    prog, opts = _seeded()
-    addr = prog.symbol("add").address
-
-    by_address = _fastest_analyze_ms(prog, addr, opts)
-    by_symbol = _fastest_analyze_ms(prog, "add", opts)
-    assert by_symbol < by_address + 6.0, (
-        f"analyze('add') costs {by_symbol:.2f} ms against {by_address:.2f} ms "
-        f"by address with {_ENTRIES} known_targets"
+    that through Python attributes rebuilt the tables on the way."""
+    prog = _program()
+    empty = _python_peak(prog, "add", strider.lift.LifterOptions())
+    seeded = _python_peak(prog, "add", _opts(_ENTRIES))
+    assert seeded <= empty + _SLACK, (
+        f"analyze('add') with {_ENTRIES} known_targets peaked at {seeded} Python "
+        f"bytes against {empty} with none"
     )
 
 
 def test_a_seeded_table_costs_nothing_per_analyse():
-    """The table is borrowed, not copied or re-seated, so the cost of an
-    analysis does not depend on how large the seeded table is."""
-    prog, seeded = _seeded()
+    """The table is borrowed, not copied, so what an analysis allocates does
+    not depend on how large the seeded table is."""
+    prog = _program()
     addr = prog.symbol("add").address
-    empty = _fastest_analyze_ms(prog, addr, strider.lift.LifterOptions())
-    with_table = _fastest_analyze_ms(prog, addr, seeded)
-    assert with_table < empty + 0.4, (
-        f"{_ENTRIES} known_targets cost {with_table:.2f} ms an analysis "
-        f"against {empty:.2f} ms with no table"
-    )
-
-    ten_times = _opts(_ENTRIES * 10)
-    bigger = _fastest_analyze_ms(prog, addr, ten_times)
-    assert bigger < with_table + 0.4, (
-        f"a {_ENTRIES * 10}-entry table costs {bigger:.2f} ms an analysis "
-        f"against {with_table:.2f} ms for {_ENTRIES} entries, so the table is "
-        f"being copied per call"
-    )
+    empty = _python_peak(prog, addr, strider.lift.LifterOptions())
+    for entries in (_ENTRIES, _ENTRIES * 10):
+        seeded = _python_peak(prog, addr, _opts(entries))
+        assert seeded <= empty + _SLACK, (
+            f"a {entries}-entry table peaked an analysis at {seeded} Python "
+            f"bytes against {empty} with no table"
+        )
 
 
-def test_known_targets_attribute_reads_are_cheap():
+def test_known_targets_reads_back_one_memoized_view():
+    """The view is built on the first read and shared by every options object
+    derived from this one, so a read costs nothing per call."""
     opts = strider.cfg.CfgOptions(
-        known_targets={0x800000 + i * 4: [0x900000 + i * 4] for i in range(_ENTRIES)}
+        known_targets={0x800000 + i * 4: [0x900000 + i * 4] for i in range(_ENTRIES)},
+        no_return_targets=[0x2000],
     )
-    opts.known_targets  # the one build
-    t = time.perf_counter()
-    for _ in range(50):
-        opts.known_targets
-    elapsed_ms = (time.perf_counter() - t) * 1000.0
-    assert elapsed_ms < 10.0, (
-        f"50 reads of a {_ENTRIES}-entry table took {elapsed_ms:.1f} ms"
-    )
+    view = opts.known_targets
+    assert opts.known_targets is view
+    assert opts.no_return_targets is opts.no_return_targets
+    narrowed = opts._with_function_max_size(0x40)
+    assert narrowed.known_targets is view
+    assert strider.lift.LifterOptions(cfg=opts).cfg.known_targets is view
 
 
 def test_known_targets_still_reads_back():
