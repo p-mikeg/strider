@@ -165,7 +165,8 @@ pub(crate) fn build_orch_sleigh(
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:#}")))
 }
 
-/// Shared so `optimize` and `analyze` agree about every assumption knob.
+/// `opts` as `analyze` reads it. `optimize` replaces the claims with
+/// [`claims_to_add`]'s.
 fn opt_options_from(
     py: Python<'_>,
     opts: &PyLifterOptions,
@@ -175,6 +176,51 @@ fn opt_options_from(
         assumptions,
         resolve_indirect_branches: opts.resolve_indirect_branches,
     })
+}
+
+/// The claims an `optimize` adds to `function`'s: none unless `opts` was
+/// built with `assumptions=`, and then that set, which must hold every claim
+/// already in force.
+fn claims_to_add(
+    py: Python<'_>,
+    function: &PyFunction,
+    opts: &PyLifterOptions,
+) -> PyResult<strider_orchestrator::opt::AssumptionOptions> {
+    if !opts.assumptions_given {
+        return Ok(strider_orchestrator::opt::AssumptionOptions::none());
+    }
+    let given = opts.assumptions.borrow(py).inner.clone();
+    let omitted: Vec<String> = {
+        let function = function.read_inner().map_err(into_strider_err)?;
+        let in_force = function.assumptions();
+        in_force
+            .omitted_by(&given)
+            .into_iter()
+            .map(|name| {
+                if name != "noalias_allocators" {
+                    return name.to_owned();
+                }
+                let mut missing: Vec<u64> = in_force
+                    .noalias_allocators
+                    .difference(&given.noalias_allocators)
+                    .copied()
+                    .collect();
+                missing.sort_unstable();
+                let missing: Vec<String> = missing.iter().map(|a| format!("{a:#x}")).collect();
+                format!("{name} ({})", missing.join(", "))
+            })
+            .collect()
+    };
+    if omitted.is_empty() {
+        return Ok(given);
+    }
+    Err(into_strider_err(anyhow::anyhow!(
+        "optimize: opts.assumptions leaves out claims in force on this \
+         Function: {}. Add a claim with \
+         `f.assumptions | AssumptionOptions.none(escape_analysis=True)`, or \
+         analyse again to drop one",
+        omitted.join(", ")
+    )))
 }
 
 pub(crate) fn build_strider(
@@ -785,7 +831,11 @@ impl PyLifter {
 
     /// Run an optimizer pipeline over `function` in place.  `pipeline=None`
     /// runs the default pipeline; a given `OptimizerPipeline` is copied, so it
-    /// stays usable.  `opts=None` takes the `LifterOptions` defaults.
+    /// stays usable.  The claims `opts.assumptions` names join
+    /// `function.assumptions` and none is withdrawn: `opts=None`, or options
+    /// built without `assumptions=`, add nothing, and a set that leaves out a
+    /// claim already in force raises `StriderError`.  Add one with
+    /// `function.assumptions | AssumptionOptions.none(escape_analysis=True)`.
     ///
     /// Runs against this handle's rom, so `LoadReadOnly` folds here exactly as
     /// it does inside `analyze`.  Raises `StriderError` for a `function` some
@@ -818,7 +868,13 @@ impl PyLifter {
             Some(o) => o,
             None => Py::new(py, PyLifterOptions::new_default(py)?)?,
         };
-        let options = opt_options_from(py, &opts.borrow(py))?;
+        let options = {
+            let opts = opts.borrow(py);
+            strider_orchestrator::opt::OptOptions {
+                assumptions: claims_to_add(py, function, &opts)?,
+                ..opt_options_from(py, &opts)?
+            }
+        };
         let rom = this.strider()?.rom();
         with_pending_control_flow(|| match pipeline {
             Some(p) => function.run_pipeline_in_place(p.build_pipeline(), "optimize", rom, options),
