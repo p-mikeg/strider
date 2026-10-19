@@ -20,7 +20,7 @@ from strider.pattern import (
     phi_for,
 )
 
-from .conftest import built_function, fixture_path
+from .conftest import built_function
 
 RAM = strider.sleigh.VnSpace.RAM
 
@@ -31,9 +31,8 @@ _ARCH = {
 }
 
 
-def _reg(arch, case, name):
-    mem = strider.lift.load_elf(str(fixture_path(arch, case))).reader()
-    vn = strider.sleigh.Sleigh(_ARCH[arch](), mem).reg(name)
+def _reg(arch, name):
+    vn = _ARCH[arch]().reg(name)
     assert vn is not None, f"{arch} has no register {name}"
     return vn
 
@@ -41,21 +40,21 @@ def _reg(arch, case, name):
 def test_a_phi_is_selected_by_the_varnode_it_is_tagged_with():
     g = built_function("x64", "memory", "array_sum")
     assert g.find_all(phi())
-    assert len(g.find_all(phi().for_vn(_reg("x64", "memory", "RAX")))) == 1
-    assert not g.find_all(phi().for_vn(_reg("x64", "memory", "RCX")))
+    assert len(g.find_all(phi().for_vn(_reg("x64", "RAX")))) == 1
+    assert not g.find_all(phi().for_vn(_reg("x64", "RCX")))
 
 
 def test_a_sub_register_selects_the_phi_tagged_with_its_container():
     g = built_function("x64", "memory", "array_sum")
-    whole = g.find_all(phi().for_vn(_reg("x64", "memory", "RAX")))
+    whole = g.find_all(phi().for_vn(_reg("x64", "RAX")))
     assert [m.root for m in whole] == [
-        m.root for m in g.find_all(phi().for_vn(_reg("x64", "memory", "AL")))
+        m.root for m in g.find_all(phi().for_vn(_reg("x64", "AL")))
     ]
 
 
 def test_the_chained_phi_varnode_constraint_matches_the_standalone_helper():
     g = built_function("x64", "memory", "array_sum")
-    rax = _reg("x64", "memory", "RAX")
+    rax = _reg("x64", "RAX")
     assert [m.root for m in g.find_all(phi().for_vn(rax))] == [
         m.root for m in g.find_all(phi_for(rax))
     ]
@@ -65,10 +64,10 @@ def test_a_register_passed_argument_is_selected_by_its_register():
     """x86-64 SysV seats the first six integer arguments in registers, so
     `eight_int_args` has one per register and nothing on the stack."""
     g = built_function("x64", "abi", "eight_int_args", optimize=False)
-    rdi = _reg("x64", "abi", "RDI")
+    rdi = _reg("x64", "RDI")
     assert len(g.find_all(any_function_arg().source_register(rdi))) == 1
     assert not g.find_all(
-        any_function_arg().source_register(_reg("x64", "abi", "RAX"))
+        any_function_arg().source_register(_reg("x64", "RAX"))
     )
     assert [m.root for m in g.find_all(any_function_arg().source_register(rdi))] == [
         m.root for m in g.find_all(function_arg_reg(rdi))
@@ -77,7 +76,7 @@ def test_a_register_passed_argument_is_selected_by_its_register():
 
 def test_the_register_an_argument_arrives_in_pins_its_index():
     g = built_function("x64", "abi", "eight_int_args", optimize=False)
-    rdi = _reg("x64", "abi", "RDI")
+    rdi = _reg("x64", "RDI")
     assert len(g.find_all(function_arg(0).source_register(rdi))) == 1
     assert not g.find_all(function_arg(1).source_register(rdi))
 
@@ -107,7 +106,7 @@ def test_the_two_argument_sources_do_not_answer_for_each_other():
     c = Capture()
     assert len(stack_args.find_all(any_function_arg().capture(c))) == 8
     assert not stack_args.find_all(
-        any_function_arg().source_register(_reg("x86", "abi", "EAX"))
+        any_function_arg().source_register(_reg("x86", "EAX"))
     )
     assert register_args.find_all(any_function_arg().capture(c))
     assert not [
@@ -122,10 +121,10 @@ def test_a_sub_register_selects_the_argument_its_container_carries():
     spelling of it (`EDI`, the `double` lane `XMM0_Qa`) selects the same
     argument."""
     g = built_function("x64", "abi", "eight_int_args", optimize=False)
-    whole = [m.root for m in g.find_all(function_arg_reg(_reg("x64", "abi", "RDI")))]
+    whole = [m.root for m in g.find_all(function_arg_reg(_reg("x64", "RDI")))]
     assert len(whole) == 1
     for name in ("EDI", "DI", "DIL"):
-        vn = _reg("x64", "abi", name)
+        vn = _reg("x64", name)
         assert [m.root for m in g.find_all(function_arg_reg(vn))] == whole
         assert [
             m.root for m in g.find_all(any_function_arg().source_register(vn))
@@ -134,10 +133,10 @@ def test_a_sub_register_selects_the_argument_its_container_carries():
     floats = built_function("x64", "floats", "f64_arith")
     xmm0 = [
         m.root
-        for m in floats.find_all(function_arg_reg(_reg("x64", "floats", "XMM0")))
+        for m in floats.find_all(function_arg_reg(_reg("x64", "XMM0")))
     ]
     assert len(xmm0) == 1
     assert [
         m.root
-        for m in floats.find_all(function_arg_reg(_reg("x64", "floats", "XMM0_Qa")))
+        for m in floats.find_all(function_arg_reg(_reg("x64", "XMM0_Qa")))
     ] == xmm0

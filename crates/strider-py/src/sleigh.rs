@@ -1,69 +1,5 @@
 use pyo3::prelude::*;
 
-use crate::arch::PySleighArch;
-use crate::errors::into_strider_err;
-use crate::reader::{AnyMemReader, MemInput};
-
-/// Register-table lookup for an arch, independent of any `Lifter`, kept until
-/// 0.3.0 removes it: `SleighArch.reg` / `reg_name` do the same lookups.
-/// Construct via `strider.sleigh.Sleigh(arch, mem)`.
-#[pyclass(name = "Sleigh", module = "strider.sleigh")]
-pub struct PySleigh {
-    /// What a `custom(...)` convention or user-op ABI records as the register
-    /// table it froze its varnodes against.
-    pub(crate) arch: strider_target::SleighArch,
-    /// Probed once at construction.
-    regs: rsleigh::SleighRegs,
-}
-
-impl PySleigh {
-    /// Probe the register table for `arch`, keeping only the table.
-    pub(crate) fn new_internal(arch: PySleighArch, reader: AnyMemReader) -> PyResult<Self> {
-        let sleigh = crate::strider_cls::build_orch_sleigh(&arch, reader)?;
-        let regs = sleigh
-            .regs()
-            .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::regs failed: {e:#}")))?;
-        Ok(Self {
-            arch: arch.inner,
-            regs,
-        })
-    }
-}
-
-#[pymethods]
-impl PySleigh {
-    /// Construct a Sleigh for `arch` reading from `mem` (a `BufferReader`
-    /// or `MemReader` subclass).  Raises `StriderError` if Sleigh
-    /// initialisation fails.
-    #[new]
-    fn new(arch: PySleighArch, mem: MemInput) -> PyResult<Self> {
-        let reader = mem.into_any();
-        Self::new_internal(arch, reader)
-    }
-
-    /// The arch preset name this Sleigh was built for (e.g. `"x86_64"`).
-    fn arch_name(&self) -> &'static str {
-        self.arch.preset().name()
-    }
-
-    /// Look up a register's varnode by Sleigh name, or `None` if this arch's
-    /// table has no such name.
-    fn reg(&self, name: &str) -> Option<PyVn> {
-        self.regs.name_to_vn(name).map(PyVn::from_inner)
-    }
-
-    /// Reverse of `reg(...)`.  `None` for a non-REGISTER space, or a
-    /// REGISTER offset/size pair absent from this arch's table; never raises.
-    fn reg_name(&self, vn: &PyVn) -> Option<&str> {
-        self.regs.vn_to_name(vn.inner)
-    }
-
-    /// `Sleigh(arch=<preset>)`.
-    fn __repr__(&self) -> String {
-        format!("Sleigh(arch={})", self.arch.preset().name())
-    }
-}
-
 /// A Sleigh address space, exposed as the `RAM` / `REGISTER` / `CONST` /
 /// `UNIQUE` class constants (instances, not callables).
 #[pyclass(name = "VnSpace", module = "strider.sleigh", frozen)]
@@ -146,8 +82,7 @@ impl PyVnSpace {
 /// A Sleigh varnode: `(space, offset, size_in_bytes)`.
 ///
 /// Construct via:
-/// * `SleighArch.reg("RAX")` or `Sleigh.reg("RAX")`, or `None` if the name
-///   isn't a register.
+/// * `SleighArch.reg("RAX")`, or `None` if the name isn't a register.
 /// * `Vn(space, off, size)`, for stack varnodes and custom spaces.
 #[pyclass(name = "Vn", module = "strider.sleigh", frozen)]
 #[derive(Clone, Copy)]
@@ -215,7 +150,6 @@ impl PyVn {
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PySleigh>()?;
     m.add_class::<PyVnSpace>()?;
     m.add_class::<PyVn>()?;
     Ok(())
