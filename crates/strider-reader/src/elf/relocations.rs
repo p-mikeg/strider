@@ -930,7 +930,7 @@ mod tests {
     /// Re-applying over one region set overwrites the patch list rather than
     /// appending to it, so the bytes a second pass serves are the first pass's.
     /// Only reachable from inside the crate: a caller gets its relocations
-    /// through [`crate::OwnedElf::regions`], which loads a fresh set each time.
+    /// through [`crate::OwnedElf::image`], which loads a fresh set each time.
     #[test]
     fn applying_twice_serves_what_applying_once_served() {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))

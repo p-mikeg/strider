@@ -181,10 +181,10 @@ template-order oracle.
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
-`graph-algorithms`, `strider-graph`, `strider-orchestrator`, `strider-pattern`
-and `strider-target` also dev-depend on THEMSELVES, which is how their `tests/`
-integration targets get a feature (`test-util`, `test-injectors`) that
-`cfg(test)` cannot reach.
+`graph-algorithms`, `strider-graph`, `strider-orchestrator`, `strider-pattern`,
+`strider-reader` and `strider-target` also dev-depend on THEMSELVES, which is
+how their `tests/` integration targets get a feature (`test-util`,
+`test-injectors`) that `cfg(test)` cannot reach.
 
 ## IR node model
 
