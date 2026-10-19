@@ -197,3 +197,7 @@ class CfgOptions:
         """These options with `elf`'s mapping-symbol data ranges, unless
         `data_ranges` already names some."""
         ...
+    def _call_other_override_builds(self) -> int:
+        """How many times `call_other_abis` was resolved for an analyse, by
+        this object and every one derived from it."""
+        ...

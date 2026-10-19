@@ -63,6 +63,9 @@
 - `CfgOptions` gains `derived_targets`, a resolver's own answers, which
   beat `known_targets` at their exact key; a literal naming every field
   passes `&strider_cfg::NO_TARGETS` for none.
+- `CfgOptions::call_other_overrides` is borrowed, as `known_targets` is, so
+  the resolve loop's per-round clone no longer copies it; a literal naming
+  every field passes `&strider_target::call_other_abi::NO_OVERRIDES` for none.
 - `IndirectBranchClassify`, `OptCtx::indirect_resolutions` and
   `OptimizerPipeline::has_post_pass` are gone, and `PostOptimizer` no longer
   requires `Any`: `analyze` classifies every round after its pipeline,
@@ -254,6 +257,9 @@
   `None` for every default.
 - `Function.to_text()` prints a `frame_address_in_call_register` line after
   `default_cc` when a call's clobbered register held a stack address.
+- `CfgOptions(call_other_abis=...)` is resolved once per arch and borrowed by
+  every later `analyze` and `build_cfg` through it, where each call rebuilt
+  it.
 
 ### Added, Python
 

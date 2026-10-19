@@ -83,6 +83,21 @@ def test_known_targets_reads_back_one_memoized_view():
     assert strider.lift.LifterOptions(cfg=opts).cfg.known_targets is view
 
 
+def test_call_other_abis_resolve_once_per_arch():
+    """The table is resolved on the first analyse and borrowed by every later
+    one, through the options an `ElfLifter` derives per call as well."""
+    cfg = strider.cfg.CfgOptions(
+        call_other_abis={"trap": strider.sleigh.CallOtherAbi.no_return()}
+    )
+    opts = strider.lift.LifterOptions(cfg=cfg)
+    prog = _program()
+    for _ in range(3):
+        prog.analyze("add", opts=opts)
+    assert cfg._call_other_override_builds() == 1
+    prog.build_cfg(prog.symbol("add").address, cfg)
+    assert cfg._call_other_override_builds() == 1
+
+
 def test_known_targets_still_reads_back():
     opts = strider.cfg.CfgOptions(known_targets={0x1000: [0x2000], 0x1010: "return"})
     assert opts.known_targets[0x1000] == (0x2000,)

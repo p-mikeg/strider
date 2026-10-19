@@ -100,6 +100,23 @@ def test_custom_call_other_abi_from_the_same_arch_is_accepted():
     assert fn.node_count() > 0
 
 
+def test_a_call_other_abi_accepted_on_one_arch_is_checked_again_on_another():
+    """The resolved table is kept per arch, so one options object reused on a
+    second `Lifter` is checked against that one's register table."""
+    abi = CallOtherAbi.custom(
+        sleigh=Sleigh(SleighArch.x86_64(), _mem(RDTSC_RET)),
+        implicit_writes=["EAX", "EDX"],
+    )
+    opts = strider.lift.LifterOptions(
+        cfg=strider.cfg.CfgOptions(call_other_abis={"rdtsc": abi})
+    )
+    lift = strider.lift.lifter(SleighArch.x86_64(), _mem(RDTSC_RET))
+    lift.analyze(0x1000, CallingConvention.x86_64_systemv(), opts)
+    other = strider.lift.lifter(SleighArch.x86(), _mem(RDTSC_RET))
+    with pytest.raises(strider.StriderError, match=r'"rdtsc".*"x86_64".*"x86"'):
+        other.analyze(0x1000, CallingConvention.x86_cdecl(), opts)
+
+
 def test_a_preset_call_other_abi_is_not_arch_locked():
     lift = strider.lift.lifter(SleighArch.x86_64(), _mem(RDTSC_RET))
     opts = strider.lift.LifterOptions(
