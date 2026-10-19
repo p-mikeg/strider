@@ -193,9 +193,10 @@ class Match:
 
 class BoundCapture:
     """A capture bound to one `Match`, from `m[c]` / `m["name"]`. `has` says
-    whether it bound, and a numeric capture converts and compares directly
-    (`int(m[c])`, `m[c] == 0x10`). Every reader is a `Match` method:
-    `m.uint(c)`, `m.node(c)`, `m.op_opt(c)`."""
+    whether it bound, and a numeric capture converts and compares directly,
+    with an int or with another `BoundCapture` (`int(m[c])`, `m[c] == 0x10`,
+    `m[a] == m[b]`). Every reader is a `Match` method: `m.uint(c)`,
+    `m.node(c)`, `m.op_opt(c)`."""
 
     # Read-only: a getter with no setter, so a plain attribute declaration
     # would let a type checker accept `x.has = ...`, which raises at runtime.
