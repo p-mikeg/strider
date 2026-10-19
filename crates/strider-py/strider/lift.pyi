@@ -331,8 +331,11 @@ class Lifter:
         usable. The claims `opts.assumptions` names join
         `function.assumptions` and none is withdrawn: `opts=None`, or options
         built without `assumptions=`, add nothing, and a set that leaves out
-        a claim already in force raises `StriderError`. Add one with
-        `function.assumptions | AssumptionOptions.none(escape_analysis=True)`.
+        a claim already in force raises `StriderError`. Add one with::
+
+            prog.optimize(function, opts=LifterOptions(
+                assumptions=function.assumptions
+                | AssumptionOptions.none(escape_analysis=True)))
 
         Runs against this handle's `rom`, so `LoadReadOnly` folds here exactly
         as it does inside `analyze`. Invalidates outstanding `Node` / `Match`

@@ -115,8 +115,7 @@ impl Function {
 
     /// The claims in force: the union of every optimizer run's
     /// `AssumptionOptions` over this function, none before the first.  A run
-    /// adds claims and withdraws none, so a function without one is a fresh
-    /// lift.
+    /// adds claims and withdraws none, so only a fresh lift drops one.
     #[inline]
     pub fn assumptions(&self) -> &crate::AssumptionOptions {
         self.side_tables.assumptions()

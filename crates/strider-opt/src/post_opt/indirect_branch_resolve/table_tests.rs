@@ -107,9 +107,9 @@ fn classify_with(
     classify_table_dispatch(&f, sole_indirect_branch(&f), rom, &mut ranges, mode_value)
 }
 
-/// [`classify_with`] under the default assumptions and no ISA mode.
-/// At the sound floor: a case that needs a claim passes it through
-/// [`classify_with`] instead of inheriting one here.
+/// [`classify_with`] adding no claim, with no ISA mode: at the sound floor, so
+/// a case that needs a claim passes it through [`classify_with`] instead of
+/// inheriting one here.
 fn classify(f: &Function, rom: Option<&dyn ReadOnlyMemory>) -> Option<ResolvedTargets> {
     classify_with(f, rom, &crate::AssumptionOptions::none(), None)
 }

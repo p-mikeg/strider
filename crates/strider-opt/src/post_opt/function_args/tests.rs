@@ -1286,10 +1286,11 @@ fn rerunning_the_default_pipeline_keeps_one_carrier_per_stack_arg() -> Result<()
     Ok(())
 }
 
-/// The narrowing names only what holds with every claim off, since the walks
-/// that read the edge afterwards honour fewer claims than detection does: even
-/// a run claiming `stack_global_disjoint` must leave the global store on the
-/// argument load's memory chain, where a floor run also finds it.
+/// The narrowing names only what holds with every claim off, since
+/// return-target verification, reading the edge afterwards with its claim off,
+/// does not honour `stack_global_disjoint`: even a run claiming it must leave
+/// the global store on the argument load's memory chain, where a floor run
+/// also finds it.
 #[test]
 fn narrowing_does_not_bake_in_stack_global_disjoint() -> Result<()> {
     let sp = stack_vn();

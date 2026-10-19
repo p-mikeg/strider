@@ -15,17 +15,6 @@ macro_rules! semantic_slot_accessors {
 }
 
 /// Point reads over a [`Function`].
-///
-/// The checks a builder runs on its operands are its own, not reads:
-///
-/// ```compile_fail,E0599
-/// use strider_ir::node::ValueId;
-/// use strider_ir::{Function, IRViewer};
-///
-/// fn check(f: &Function, v: ValueId) -> strider_ir::Result<()> {
-///     f.require_value_kind(v)
-/// }
-/// ```
 pub trait IRViewer {
     fn function(&self) -> &Function;
 

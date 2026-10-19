@@ -23,8 +23,8 @@ _SUBMODULE_DOCS = {
     "lift": "Lift, optimise and resolve: the `Lifter` handle, its options, "
             "and the ELF loaders.",
     "cfg": "The control-flow graph and its options.",
-    "sleigh": "Architecture, calling convention, and the low-level "
-              "disassembler and varnode surface.",
+    "sleigh": "Architecture, calling convention, user-op ABI and varnode "
+              "surface.",
     "reader": "The code and read-only-memory readers, and the ELF symbol "
               "table they come with.",
     "opt": "The optimizer pipeline and its passes.",

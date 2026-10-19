@@ -217,9 +217,16 @@ it is given, and `function.assumptions` reads back the ones in force.
 `prog.optimize(function, opts=...)` adds the claims `opts` names and withdraws
 none: `opts=None`, or a `LifterOptions` built without `assumptions=`, adds
 nothing, and a set that leaves out a claim already in force raises
-`StriderError`. Add one with
-`function.assumptions | strider.lift.AssumptionOptions.none(escape_analysis=True)`
-(`a.union(b)` is the same); to drop one, analyse again without it. A claim a
+`StriderError`. Add one by naming the union (`a.union(b)` is the same):
+
+```python
+from strider.lift import AssumptionOptions, LifterOptions
+
+prog.optimize(function, opts=LifterOptions(
+    assumptions=function.assumptions | AssumptionOptions.none(escape_analysis=True)))
+```
+
+To drop one, analyse again without it. A claim a
 run used has shaped the graph for good, so a withdrawal could not be honoured.
 
 `call_other_abis` reclassifies a Sleigh user-op by name ahead of the built-in

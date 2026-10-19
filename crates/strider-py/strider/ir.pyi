@@ -40,7 +40,7 @@ class Node:
         is stale."""
         ...
     def kind(self) -> str:
-        """The node's kind as a string. An op or a memory space renders as
+        """The node's kind as a string. An op or a memory space renders with
         its payload: `"IntBinaryOp(Add)"`, `"IntCmpOp(Less)"`, `"Load(RAM)"`,
         a memory kind naming its space as `VnSpace` does (`"RAM"`,
         `"REGISTER"`, `"CONST"`, `"UNIQUE"`, `"OTHER"`). An interned or opaque

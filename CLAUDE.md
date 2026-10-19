@@ -381,7 +381,9 @@ when both IR slots hold the same value.
   `alias` one is `MemPurpose::Forward` over `assumptions`, the `narrow` one
   `MemPurpose::Structural`, which claims nothing, because the edge
   `narrow_load_to` rewires is read afterwards by walks that honour fewer claims
-  (the table walk, stack-argument collection).
+  (the table walk and stack-argument collection no call relaxation,
+  return-target verification with its claim off no `stack_global_disjoint` or
+  heap identity).
 
 ## strider-py
 

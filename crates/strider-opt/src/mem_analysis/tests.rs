@@ -1816,11 +1816,11 @@ mod heap_tests {
         Ok(fg)
     }
 
-    /// SOUNDNESS: the memory-edge rewire serves walks that honour fewer claims
-    /// than forwarding does, so it may name only what holds with the allocator
-    /// set empty.  Two allocations are disjoint under the set and both opaque
-    /// without it, so the edge stops at the store to the OTHER object, not past
-    /// it.
+    /// SOUNDNESS: the memory-edge rewire serves return-target verification,
+    /// which with its claim off honours no heap identity, so it may name only
+    /// what holds with the allocator set empty.  Two allocations are disjoint
+    /// under the set and both opaque without it, so the edge stops at the
+    /// store to the OTHER object, not past it.
     #[test]
     fn narrowing_never_carries_the_allocator_set() -> crate::Result<()> {
         let mut b = builder()?;
@@ -1874,7 +1874,7 @@ mod heap_tests {
 
     /// The structural analyzer reaching both allocations first must not cost
     /// the configured one its heap disjointness: both decompose under the
-    /// run's set, and only the policy differs.
+    /// function's allocator set, and only the policy differs.
     #[test]
     fn a_structural_query_first_keeps_heap_disjointness() -> crate::Result<()> {
         let mut b = builder()?;
@@ -1911,8 +1911,8 @@ mod heap_tests {
     }
 
     /// A heap phi read structurally first keeps its class for the configured
-    /// analyzer: both decompose under the run's set, and only the structural
-    /// one drops the heap class.
+    /// analyzer: both decompose under the function's allocator set, and only
+    /// the structural one drops the heap class.
     #[test]
     fn a_heap_phi_read_structurally_first_stays_heap_opaque() -> crate::Result<()> {
         let (fg, phi) = walking_pointer()?;
@@ -1954,9 +1954,9 @@ mod heap_tests {
             .len()
     }
 
-    /// `apply_rules_count` re-derives the memory classes under the set the
-    /// function was optimized with, so a heap store stays `heap_only`, also
-    /// after the compaction `analyze` ends with and a clone.
+    /// `apply_rules_count` re-derives the memory classes under the function's
+    /// allocator set, so a heap store stays `heap_only`, also after the
+    /// compaction `analyze` ends with and a clone.
     #[test]
     fn a_rewrite_keeps_the_runs_heap_classes() -> crate::Result<()> {
         let mut fg = one_heap_store()?;
@@ -1971,7 +1971,7 @@ mod heap_tests {
         assert_eq!(
             heap_stores(&fg),
             1,
-            "a rewrite keeps the run's allocator set"
+            "a rewrite keeps the function's allocator set"
         );
         Ok(())
     }
