@@ -164,7 +164,7 @@ pub(crate) fn is_register_space_access(insn: &rsleigh::Insn) -> bool {
 /// The slice itself is returned, not its container, because the width is the
 /// access width. [`enclosing_register`] is what the tracked set is seeded
 /// with, and `write_vn` reaches it from the slice through the container map.
-fn register_slot(
+pub(super) fn register_slot(
     insn: &rsleigh::Insn,
     consts: &PcodeConsts,
     declared: &[rsleigh::Vn],
