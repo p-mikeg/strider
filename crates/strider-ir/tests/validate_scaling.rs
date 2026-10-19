@@ -1,11 +1,10 @@
-//! `validate` on a join with thousands of predecessors.
+//! `validate` on a join with hundreds of predecessors, counted in graph edges
+//! read rather than timed.
 //!
 //! A wide `goto out` join (an error ladder, a switch fall-in) gives one Region
 //! k control inputs and one k-armed `Phi` / `MemPhi` pair. Every stage of
-//! `validate` must stay near-linear in k; a per-arm walk of the Region's
+//! `validate` must stay linear in k; a per-arm walk of the Region's
 //! predecessor list is quadratic.
-
-use std::time::{Duration, Instant};
 
 use strider_ir::{Function, FunctionBuilder, IRBuilderExt};
 use strider_ir_test_utils::RegisterSet;
@@ -35,28 +34,22 @@ fn error_ladder(n: usize) -> Function {
     b.build().expect("ladder builds")
 }
 
-fn time_validate(n: usize) -> Duration {
+fn edges_read_by_validate(n: usize) -> u64 {
     let f = error_ladder(n);
-    let start = Instant::now();
+    let before = strider_graph::edge_reads();
     strider_ir::validate::validate(&f).expect("a lifted-shape ladder validates");
-    let elapsed = start.elapsed();
-    std::hint::black_box(&f);
-    elapsed
+    strider_graph::edge_reads() - before
 }
 
 #[test]
-fn validate_is_near_linear_in_a_joins_predecessor_count() {
-    time_validate(1_000);
-    let small = time_validate(2_000);
-    let large = time_validate(32_000);
-    // 16x the predecessors: linear is 16x, quadratic 256x. The measured
-    // quadratic walk was 104x and the linear one 44x, so a bound of 80 fails
-    // outright on a return to the per-arm walk while the linear walk's own
-    // per-node drift does not reach it.
+fn validate_reads_edges_linearly_in_a_joins_predecessor_count() {
+    let small = edges_read_by_validate(500);
+    let large = edges_read_by_validate(4_000);
+    // 8x the predecessors: linear is 8x, a per-arm walk 64x.
     assert!(
-        large.as_secs_f64() < small.as_secs_f64() * 80.0,
-        "16x the predecessors cost {:.1}x the validate ({small:?} -> {large:?}): \
+        large <= small * 12,
+        "8x the predecessors read {:.1}x the edges ({small} -> {large}): \
          a validate stage is scaling with the join's width",
-        large.as_secs_f64() / small.as_secs_f64(),
+        large as f64 / small as f64,
     );
 }
