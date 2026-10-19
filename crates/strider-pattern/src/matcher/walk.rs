@@ -329,60 +329,8 @@ fn try_match_at(
     // Carries this node's own captures; see `bind_all_captures`.
     let out_weight = out_vertex.map(|ov| ctx.pat.graph.value_kind_ref(ov));
 
-    // Alternation (`one_of` / `first_of`): `inputs` are independent alternative
-    // sub-patterns, not operands, all tried against the SAME `ir_node`. `one_of`
-    // enumerates every matching arm; `first_of` cuts to the first.
     if nd.alternation {
-        let mark = bindings.mark();
-        // Bound before any arm runs, where every other kind binds in
-        // `finalize` once its inputs have matched, so an arm rebinding this
-        // node's capture conflicts rather than shadows.
-        if !bind_all_captures(bindings, nd, out_weight, ir_node, root_value) {
-            return false;
-        }
-        let cut = ctx.cut_arm(pat_node, ir_node);
-        for (arm, alt) in inputs.iter().enumerate() {
-            // An arm past the one that already matched in this attempt is not
-            // re-offered just because a sibling operand moved on.
-            if nd.first_match && cut.is_some_and(|c| arm > c) {
-                break;
-            }
-            let before = ctx.satisfied.get();
-            let accepted = try_match_at(
-                ctx,
-                alt.producer,
-                ir_node,
-                root_value,
-                Some(alt.out_vertex),
-                bindings,
-                // The arm's own `try_match_at` restores on every `false`
-                // return, so a rejected configuration needs no cleanup here.
-                &mut |b| {
-                    finish_node(
-                        ctx,
-                        nd,
-                        pat_node,
-                        ir_node,
-                        root_value,
-                        out_vertex,
-                        b,
-                        &mut |b| continue_node(ctx, nd, ir_node, b, k),
-                    )
-                },
-            );
-            if accepted {
-                return true;
-            }
-            // The cut is on a produced match, not on structural arm shape: an
-            // arm reaching `k` but rejected by a guard above falls through to
-            // the next arm.
-            if nd.first_match && ctx.satisfied.get() > before {
-                ctx.record_cut_arm(pat_node, ir_node, arm);
-                break;
-            }
-        }
-        bindings.restore(mark);
-        return false;
+        return try_alternation(ctx, pat_node, ir_node, root_value, out_vertex, bindings, k);
     }
 
     // Commutativity needs one or two fixed operands at slots {0,1} (the shape
@@ -481,6 +429,72 @@ fn try_match_at(
         };
         if match_assignments(ctx, &assignment, 0, ir_node, None, bindings, &mut finalize) {
             return true;
+        }
+    }
+    bindings.restore(mark);
+    false
+}
+
+/// `one_of` / `first_of`: the inputs are independent alternative sub-patterns,
+/// not operands, all tried against the SAME `ir_node`. `one_of` enumerates
+/// every matching arm; `first_of` cuts to the first.
+fn try_alternation(
+    ctx: &Ctx,
+    pat_node: PatNodeId,
+    ir_node: NodeId,
+    root_value: Option<ValueId>,
+    out_vertex: Option<PatValueId>,
+    bindings: &mut Bindings,
+    k: &mut dyn FnMut(&mut Bindings) -> bool,
+) -> bool {
+    let nd = ctx.pat.graph.node_kind(pat_node);
+    let out_weight = out_vertex.map(|ov| ctx.pat.graph.value_kind_ref(ov));
+    let mark = bindings.mark();
+    // Bound before any arm runs, where every other kind binds in `finalize`
+    // once its inputs have matched, so an arm rebinding this node's capture
+    // conflicts rather than shadows.
+    if !bind_all_captures(bindings, nd, out_weight, ir_node, root_value) {
+        return false;
+    }
+    let cut = ctx.cut_arm(pat_node, ir_node);
+    for (arm, alt) in ctx.pat.inputs_of(pat_node).edges.iter().enumerate() {
+        // An arm past the one that already matched in this attempt is not
+        // re-offered just because a sibling operand moved on.
+        if nd.first_match && cut.is_some_and(|c| arm > c) {
+            break;
+        }
+        let before = ctx.satisfied.get();
+        let accepted = try_match_at(
+            ctx,
+            alt.producer,
+            ir_node,
+            root_value,
+            Some(alt.out_vertex),
+            bindings,
+            // The arm's own `try_match_at` restores on every `false` return,
+            // so a rejected configuration needs no cleanup here.
+            &mut |b| {
+                finish_node(
+                    ctx,
+                    nd,
+                    pat_node,
+                    ir_node,
+                    root_value,
+                    out_vertex,
+                    b,
+                    &mut |b| continue_node(ctx, nd, ir_node, b, k),
+                )
+            },
+        );
+        if accepted {
+            return true;
+        }
+        // The cut is on a produced match, not on structural arm shape: an arm
+        // reaching `k` but rejected by a guard above falls through to the next
+        // arm.
+        if nd.first_match && ctx.satisfied.get() > before {
+            ctx.record_cut_arm(pat_node, ir_node, arm);
+            break;
         }
     }
     bindings.restore(mark);
