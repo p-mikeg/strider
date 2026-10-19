@@ -5,13 +5,11 @@
 //! of its floating data producers, so a caller can place it from its inputs'
 //! positions.
 
-use core::ops::ControlFlow;
-
 use crate::DominatorTree;
 use crate::function::Function;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, ValueKind};
-use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
+use crate::walk::{NodeIdSet, PostOrder};
 
 /// A node with a control input or output, or a phi: its position is fixed by
 /// the control flow rather than chosen from its inputs.
@@ -133,12 +131,10 @@ impl UnpinnedDataPreds<'_> {
 impl graph_algorithms::walk::GraphRef for UnpinnedDataPreds<'_> {
     type NodeId = NodeId;
 
-    fn try_successors(
-        &self,
-        node: NodeId,
-        f: impl FnMut(NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        self.of(node).try_for_each(f)
+    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
+        for succ in self.of(node) {
+            f(succ);
+        }
     }
 }
 
@@ -150,10 +146,7 @@ pub(crate) fn schedule_early(ctx: &ScheduleContext<'_>, mut schedule: impl FnMut
         live: &ctx.live,
     };
     let roots: Vec<NodeId> = ctx.pinned_nodes().flat_map(|p| preds.of(p)).collect();
-    let mut walk = PostOrder::new(preds, roots);
-    while let Some((phase, node)) = walk.next_event() {
-        if matches!(phase, WalkPhase::Post) {
-            schedule(node);
-        }
+    for node in PostOrder::new(preds, roots) {
+        schedule(node);
     }
 }
