@@ -320,7 +320,8 @@ impl DomIntervals {
         (self.enter[v as usize], self.exit[v as usize])
     }
 
-    /// Every vertex in tree preorder, siblings ascending by index.
+    /// Every vertex in tree preorder, siblings in ascending discovery
+    /// position.
     #[must_use]
     pub fn preorder(&self) -> &[u32] {
         &self.preorder

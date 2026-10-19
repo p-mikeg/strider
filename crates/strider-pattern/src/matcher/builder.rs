@@ -306,6 +306,8 @@ impl MatcherBuilder {
     }
 
     /// Pins `out` to its own slot: the matched output must be produced there.
+    /// On an [`Self::any_slot_value_output`] vertex the pin replaces the
+    /// enumeration.
     pub fn pin_value_out_slot(&mut self, out: PatValueRef) {
         self.out_of(out).slot_mode = SlotMode::Pinned;
     }

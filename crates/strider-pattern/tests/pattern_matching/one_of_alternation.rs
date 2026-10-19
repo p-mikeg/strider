@@ -106,9 +106,8 @@ fn one_of_nests_recursively() {
 
 /// A `when_match` guard attached to the alternation itself must run.
 ///
-/// `try_alternation` never reaches `try_match_at`'s `finalize`, so the guard
-/// has to be consulted on the alternation path of its own; skipping it reports
-/// every arm match.
+/// `try_alternation` has no `finalize` of its own, so the guard has to be
+/// consulted on the alternation path; skipping it reports every arm match.
 #[test]
 fn when_match_on_the_alternation_itself_is_honoured() {
     let mut t = Tb::empty();

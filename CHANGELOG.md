@@ -164,10 +164,11 @@
   (`GraphBase`, `IntoNeighbors`, `IntoNeighborsDirected`,
   `IntoNodeIdentifiers`, `Visitable`) are gone, and strider-graph no longer
   depends on petgraph: walk a graph with `graph_algorithms::walk` over a
-  `GraphRef`.
+  `GraphRef` adapter of your own (`Graph` implements none) whose `successors`
+  lists a node's input producers or its outputs' consumers.
 - `strider_opt::{value_range, indirect_branch_resolve, KnownBitsFacts,
   KnownBitsMap, analyze_known_bits, classify_target}` exist only with the
-  `test-util` feature: nothing outside the crate's tests read them.
+  `test-util` feature: only tests read them.
   `classify_sites`, `ClassifiedSites`, `ReturnTargets` and the `KnownBits`
   pass stay public.
 - `KindSpec::VariantWith` is gone. `load().space(s)`, `store().space(s)` and
@@ -176,15 +177,17 @@
   commutative node now count as interchangeable.
 - `TemplateBuilder::{leaf, unary, node}` take a `NodeKind` instead of a
   `KindSpec`, and `set_template_kind` is gone: `dynamic_leaf(TemplateKind)`
-  builds a leaf whose kind or constant a closure computes. A non-exact spec
-  became an `IntConst` with the target function's constant id 0.
+  builds an input-less leaf whose kind or constant a closure computes, so a
+  closure-kinded node can no longer take inputs. A non-exact spec became an
+  `IntConst` with the target function's constant id 0; `TemplateBuilder`'s
+  `typed::builder_like::BuilderLike` methods now panic on one.
 - `PatNode::input_slots` holds `matcher::InputSlot` (`At(slot)` or `Any`)
   instead of a `usize` with `usize::MAX` marking an existential.
 - `PatValue::{match_slot, any_slot}` become `slot_mode: matcher::SlotMode`
   (`Loose`, `Pinned`, `Enumerated`), and
   `MatcherBuilder::set_value_out_slot(out, slot)` becomes
-  `pin_value_out_slot(out)`, which pins the vertex's own slot: a pin to
-  another slot was representable and meant nothing.
+  `pin_value_out_slot(out)`, which pins the vertex's own slot; create the
+  vertex at the slot you pinned.
 - `Match::bindings_clone` is gone: it was `m.bindings().clone()`.
 
 ### Changed, Python
@@ -353,8 +356,8 @@
   `any_input`.
 - `Function::to_text` and `to_text_named` print a
   `frame_address_in_call_register` line after `default_cc` when a call's
-  clobbered register held a stack address, which bars forwarding a load
-  across a call; a function without it prints as before.
+  clobbered register held a stack address (the fact that bars forwarding a
+  load across a call); a function without it prints as before.
 
 ### Fixed
 
@@ -501,8 +504,9 @@
   control predecessor, the memory token after it, a `Load` / `Store`'s memory
   token, an `IndirectBranch`'s target and a `Switch`'s selector.
 - `strider_pattern::node_builders::defer_drop`, the drop pit that frees a
-  deep operand tower without recursing; strider-py's own copy is gone.
-- `MatcherBuilder::input_any(node, prod)`, the raw existential input.
+  deep operand tower without recursing.
+- `matcher::InputSlot { At, Any }` and `MatcherBuilder::input_any(node,
+  prod)`, the raw existential input.
 - `matcher::KindSpec` implements `PartialEq` and `Eq`.
 
 ## 0.2.0

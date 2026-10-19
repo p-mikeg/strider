@@ -203,8 +203,8 @@ mod tests {
     }
 
     /// A hit at the greatest start and a miss past every region each probe one
-    /// region however many precede the address: the chain `strider-py`'s
-    /// `region_at` was timed over, one four-byte region per branch.
+    /// region however many precede the address, over a chain of four-byte
+    /// regions.
     #[test]
     fn region_containing_probes_one_region_however_many_precede() {
         for regions in [10u64, 1_500] {
