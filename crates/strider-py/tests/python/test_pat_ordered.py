@@ -234,8 +234,10 @@ def _float_ne_sites(fn):
         if "IntBinaryOp(Xor)" not in fn.node(i).kind():
             continue
         for inp in fn.node(i).inputs():
-            l, r = inp.inputs() if "FloatCmpOp(Equal)" in inp.kind() else (None, None)
-            if l is not None and l != r:
+            if "FloatCmpOp(Equal)" not in inp.kind():
+                continue
+            l, r = inp.inputs()
+            if l != r:
                 sites.add((i, l.id, r.id))
     return sites
 
