@@ -27,6 +27,8 @@ use strider_ir::node::ValueKind;
 pub use bindings::Bindings;
 pub use capture::Capture;
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
+#[cfg(any(test, feature = "test-util"))]
+pub use graph_ext::assert_instantiation_order_kept;
 pub use match_result::Match;
 pub use matcher::match_pat::{
     CaptureExt, Captured, Guarded, Limited, MatchPat, OfWidth, Ordered, ValueTy,
