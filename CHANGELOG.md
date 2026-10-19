@@ -252,6 +252,8 @@
   reads back sorted and deduplicated, `repr` included (it kept the order and
   duplicates given), and on Python 3.10+ the constructor's signature shows
   `None` for every default.
+- `Function.to_text()` prints a `frame_address_in_call_register` line after
+  `default_cc` when a call's clobbered register held a stack address.
 
 ### Added, Python
 
@@ -343,6 +345,10 @@
 - A raw `.input(usize::MAX, p)` (`MatcherBuilder::input` and the builders'
   `input`) names slot `usize::MAX`, so it matches nothing; it meant
   `any_input`.
+- `Function::to_text` and `to_text_named` print a
+  `frame_address_in_call_register` line after `default_cc` when a call's
+  clobbered register held a stack address, which bars forwarding a load
+  across a call; a function without it prints as before.
 
 ### Fixed
 

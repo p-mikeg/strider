@@ -13,12 +13,14 @@ use crate::node::{
 
 impl Function {
     /// The canonical text form: a header (endianness, tracked varnodes, default
-    /// convention, argument carriers), then one line per node reachable from
-    /// [`Self::entry`] as `outs = op[payload] ins`, values named `%vN` in print
-    /// order. With `fingerprints`, each line ends in its sorted asm address set
-    /// `  @{..}`; those sets can dwarf the rest on large functions, and each
-    /// one costs a walk of that node's whole fingerprint union closure, so a
-    /// chain of unions is quadratic in its length while the text stays linear
+    /// convention, `frame_address_in_call_register` when a call's clobbered
+    /// register held a stack address, argument carriers), then one line per
+    /// node reachable from [`Self::entry`] as `outs = op[payload] ins`, values
+    /// named `%vN` in print order. With `fingerprints`, each line ends in its
+    /// sorted asm address set `  @{..}`; those sets can dwarf the rest on large
+    /// functions, and each one costs a walk of that node's whole fingerprint
+    /// union closure, so a chain of unions is quadratic in its length while
+    /// the text stays linear
     /// (see [`UnionDag::for_each`](entity_utils::UnionDag::for_each)).
     ///
     /// Control nodes print in reverse postorder of the control graph, taking
@@ -306,6 +308,9 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool, vn_name: VnName<'_
     }
     out.push('\n');
     let st = f.side_tables();
+    if st.frame_address_in_call_register() {
+        out.push_str("frame_address_in_call_register\n");
+    }
     render_args(&mut out, &names, "arg", st.iter_arg_indices(), |i| {
         st.arg_index_to_values(i)
     });

@@ -13,6 +13,7 @@ default_cc arg_passing_regs=[a0, a1, a2, a3] arg_passing_regs_float=[f12, f14] c
 cfg
   0x400510 101 ops return -> []
 tracked [v0, v1, a0, a1, a2, a3, t0, t1, sp, ra, pc, f0_1, f2_3, f12, f14, ISAModeSwitch, u:0x200:4, u:0x300:4, u:0x1900:4, u:0x1c00:4]
+frame_address_in_call_register
 arg 3 [%v31]
 float_arg 0 [%v32]
 float_arg 1 [%v33]

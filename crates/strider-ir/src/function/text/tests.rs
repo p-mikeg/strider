@@ -627,3 +627,27 @@ fn named_text_respells_each_register_varnode_and_nothing_else() {
             .replace("%:0x0:8", "RAX")
     );
 }
+
+/// A call that received a stack address in a clobbered register is a fact
+/// no node carries, so the header names it, right after `default_cc`.
+#[test]
+fn a_frame_address_in_a_call_register_prints_in_the_header() {
+    let mut f = Function::new(
+        strider_target::BuiltCallingConvention::default(),
+        strider_target::Endianness::Little,
+        Vec::new(),
+    );
+    let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
+    f.graph_mut().create_node(NodeKind::Return, [ctrl], []);
+    let plain = f.to_text(false);
+    assert!(!plain.contains("frame_address_in_call_register"), "{plain}");
+    f.side_tables_mut().set_frame_address_in_call_register();
+    let flagged = f.to_text(false);
+    let lines: Vec<&str> = flagged.lines().collect();
+    assert!(lines[2].starts_with("default_cc "), "{flagged}");
+    assert_eq!(lines[3], "frame_address_in_call_register", "{flagged}");
+    assert_eq!(
+        flagged.replacen("frame_address_in_call_register\n", "", 1),
+        plain
+    );
+}
