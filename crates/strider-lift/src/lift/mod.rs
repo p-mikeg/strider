@@ -404,7 +404,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // convention, so it must be seeded before the universe is frozen.  Set
         // membership, not a scan: the Vec is the SSoT for order only.
         let mut seen: rustc_hash::FxHashSet<rsleigh::Vn> = all_vns.iter().copied().collect();
-        for vn in self.call_other_footprint_vns(cfg, &cfg_opts.call_other_overrides) {
+        for vn in self.call_other_footprint_vns(cfg, cfg_opts.call_other_overrides) {
             if seen.insert(vn) {
                 all_vns.push(vn);
             }
@@ -423,7 +423,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             cfg,
             all_vns,
             per_address_ccs,
-            &cfg_opts.call_other_overrides,
+            cfg_opts.call_other_overrides,
         )?;
 
         // Semi-pruned SSA phi placement: iterated dominance frontier of each

@@ -192,7 +192,7 @@ pub(crate) fn build_strider(
 /// Python dict keys are unique, so the duplicate-name rejection cannot fire
 /// from this surface; it is surfaced rather than unwrapped so a future caller
 /// that is not a dict gets the message instead of a panic.
-fn overrides_from(
+pub(crate) fn overrides_from(
     call_other_abis: &std::collections::HashMap<String, crate::call_other_abi::PyCallOtherAbi>,
     target: strider_target::SleighArch,
 ) -> PyResult<strider_target::call_other_abi::CallOtherOverrides> {
@@ -238,19 +238,21 @@ pub(crate) fn seat_known_targets(
 /// Every `CfgOptions` field, spelled out. No `..default()` here: a field added
 /// later has to be handled rather than silently dropped, which is how
 /// `build_cfg` came to ignore `known_targets` entirely.
-pub(crate) fn cfg_options_from(
-    opts: &PyCfgOptions,
-    target: strider_target::SleighArch,
-) -> PyResult<strider_cfg::CfgOptions<'_>> {
-    Ok(strider_cfg::CfgOptions {
+/// `call_other_overrides` is `opts`' own, from
+/// [`PyCfgOptions::call_other_overrides`].
+pub(crate) fn cfg_options_from<'a>(
+    opts: &'a PyCfgOptions,
+    call_other_overrides: &'a strider_target::call_other_abi::CallOtherOverrides,
+) -> strider_cfg::CfgOptions<'a> {
+    strider_cfg::CfgOptions {
         bound: opts.bound,
         known_targets: &opts.seated,
         // Only the resolve loop derives answers of its own.
         derived_targets: &strider_cfg::NO_TARGETS,
         no_return_targets: &opts.no_return_targets.set,
-        call_other_overrides: overrides_from(&opts.call_other_abis, target)?,
+        call_other_overrides,
         data_ranges: opts.data_ranges.clone(),
-    })
+    }
 }
 
 /// `addr` is not a machine-instruction boundary on the linear path from
@@ -634,9 +636,13 @@ impl PyLifter {
         // The borrow outlives `cfg_opts`, which holds the seeded table rather
         // than a copy of it.
         let opts_ref = opts.as_ref().map(|o| o.borrow(py));
-        let cfg_opts = match &opts_ref {
-            Some(o) => cfg_options_from(o, target)?,
-            None => strider_cfg::CfgOptions::default(),
+        let overrides = match &opts_ref {
+            Some(o) => Some(o.call_other_overrides(target)?),
+            None => None,
+        };
+        let cfg_opts = match (&opts_ref, &overrides) {
+            (Some(o), Some(overrides)) => cfg_options_from(o, overrides),
+            _ => strider_cfg::CfgOptions::default(),
         };
         let inner = with_pending_control_flow(|| {
             let mut lifter = try_borrow_lifter_mut(bound)?;
@@ -720,8 +726,9 @@ impl PyLifter {
         // get-only, so nothing can take them `&mut` meanwhile.
         let opts_ref = opts.borrow(py);
         let cfg_ref = opts_ref.cfg.borrow(py);
+        let overrides = cfg_ref.call_other_overrides(target)?;
         let analyze_opts = strider_orchestrator::AnalyzeOptions {
-            cfg: cfg_options_from(&cfg_ref, target)?,
+            cfg: cfg_options_from(&cfg_ref, &overrides),
             per_address_ccs: &per_address_built,
             opt: opt_opts,
             compact,
