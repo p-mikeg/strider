@@ -729,8 +729,8 @@ fn dominance_matches_its_definitions_on_every_named_shape() {
 
 /// The numbering checks past the cubic oracle: a wide star discovered in
 /// reverse vertex order, so discovery and vertex order disagree for every
-/// sibling pair, and deep random graphs. Debug builds otherwise check the
-/// numbering at 200 vertices at most.
+/// sibling pair, and deep random graphs. Debug builds otherwise check it on
+/// ten-vertex graphs and the named shapes.
 #[test]
 fn tree_numbering_holds_past_the_oracle() {
     const N: u32 = 1_000;
