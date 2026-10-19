@@ -110,7 +110,7 @@ fn call_other_override_restores_the_fall_through() {
     let reader = BufMemReader::new(bytes, entry);
     let (mut strider, _cc) = common::driver_for_reader(common::Arch::Mips32le, reader);
     let opts = strider_cfg::CfgOptions {
-        call_other_overrides: strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+        call_other_overrides: &strider_target::call_other_abi::CallOtherOverrides::new(vec![(
             "trap".to_owned(),
             strider_target::call_other_abi::CallOtherClass::MEM_CLOBBER.into(),
         )])
