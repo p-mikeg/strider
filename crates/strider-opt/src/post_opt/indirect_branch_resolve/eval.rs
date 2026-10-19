@@ -50,7 +50,6 @@ impl<'a> Evaluator<'a> {
     pub(crate) fn new(
         function: &'a strider_ir::Function,
         rom: Option<&'a dyn ReadOnlyMemory>,
-        assumptions: &crate::AssumptionOptions,
     ) -> Self {
         Self {
             function,
@@ -59,7 +58,7 @@ impl<'a> Evaluator<'a> {
             slot_maps: FxHashMap::default(),
             off_segment: MemAnalyzer::walking(MemOptions::for_purpose(
                 MemPurpose::TableWalk,
-                assumptions,
+                function.assumptions(),
             )),
         }
     }
@@ -536,7 +535,7 @@ mod tests {
         assert!(pruned.contains(&idx), "pruned cone includes the stop node");
         assert!(pruned.contains(&dispatch), "pruned cone includes the root");
 
-        let mut ev = Evaluator::new(&function, None, &crate::AssumptionOptions::default());
+        let mut ev = Evaluator::new(&function, None);
         ev.begin_index(idx, 7);
         assert_eq!(ev.eval_root(&pruned, dispatch), Some(107));
         ev.begin_index(idx, 8);
@@ -575,7 +574,7 @@ mod tests {
         // The bail-on-first-failure contract requires `order` to be the cone
         // pruned at the index.
         let order = cone_order_pruned(&function, sum, idx);
-        let mut ev = Evaluator::new(&function, None, &crate::AssumptionOptions::default());
+        let mut ev = Evaluator::new(&function, None);
         ev.begin_index(idx, 5);
         assert_eq!(ev.eval_root(&order, sum), Some(105));
         ev.begin_index(idx, 7); // fresh map
@@ -585,7 +584,7 @@ mod tests {
     #[test]
     fn unseeded_index_is_none() {
         let (function, _idx, sum) = build_add_idx_100();
-        let mut ev = Evaluator::new(&function, None, &crate::AssumptionOptions::default());
+        let mut ev = Evaluator::new(&function, None);
         // Pruning at `sum` itself leaves a cone of only `[sum]`.
         let order_sum = cone_order_pruned(&function, sum, sum);
         ev.begin_index(sum, 5);

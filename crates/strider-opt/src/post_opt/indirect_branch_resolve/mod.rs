@@ -36,22 +36,21 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 /// call-boundary relaxation reaches a decoded target, and it is the orchestrator
 /// that keeps the answer honest: the seated `Return` carries a return site, so
 /// every round re-checks the seat against its own IR. A verdict that rests on
-/// `return_slots_survive_untracked_writes` is not reported; clearing the claim
-/// and re-running is how a caller audits one.
+/// `return_slots_survive_untracked_writes` is not reported; analysing again
+/// with the claim cleared is how a caller audits one.
 ///
-/// Of `assumptions` the table walk honours `stack_global_disjoint` and the
-/// allocation identity `noalias_allocators` gives `decompose`.  The
-/// call-boundary relaxations are deliberately not among them
-/// (`MemPurpose::TableWalk`): this walk decides a decoded branch target,
-/// so a relaxation that is wrong produces a wrong edge rather than a wrong
-/// fold.
+/// Of the function's claims ([`strider_ir::Function::assumptions`]) the table
+/// walk honours `stack_global_disjoint` and the allocation identity
+/// `noalias_allocators` gives `decompose`.  The call-boundary relaxations are
+/// deliberately not among them (`MemPurpose::TableWalk`): this walk decides a
+/// decoded branch target, so a relaxation that is wrong produces a wrong edge
+/// rather than a wrong fold.
 #[must_use]
 pub fn classify_target(
     function: &strider_ir::Function,
     branch: NodeId,
     rom: Option<&dyn ReadOnlyMemory>,
     ranges: &mut crate::value_range::RangeMap<'_>,
-    assumptions: &crate::AssumptionOptions,
 ) -> Option<ResolvedTargets> {
     let target_value = function.indirect_branch_target(branch);
     // The ISA mode this branch's instruction committed for its target(s), when
@@ -59,10 +58,8 @@ pub fn classify_target(
     // evaluated per resolved target below.
     let mode_value = function.indirect_branch_isa_mode(branch);
     single_const_target(function, target_value, mode_value)
-        .or_else(|| link_register_return(function, branch, target_value, assumptions))
-        .or_else(|| {
-            table::classify_table_dispatch(function, branch, rom, ranges, assumptions, mode_value)
-        })
+        .or_else(|| link_register_return(function, branch, target_value))
+        .or_else(|| table::classify_table_dispatch(function, branch, rom, ranges, mode_value))
 }
 
 /// The literal target of an `IntConst` dispatch value.  A literal is always a
@@ -132,18 +129,15 @@ fn link_register_return(
     function: &strider_ir::Function,
     branch: NodeId,
     target_value: ValueId,
-    assumptions: &crate::AssumptionOptions,
 ) -> Option<ResolvedTargets> {
     let lr = function.default_cc().link_register_vn?;
     match *function.kind_of_value(strip_isa_mode_mask(function, target_value)) {
         NodeKind::InitialVar(id) if function.initial_vn(id) == lr => {
             Some(ResolvedTargets::LinkRegister)
         }
-        NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => {
-            ReturnTargets::new(function, assumptions)
-                .returns_to_caller(branch, target_value)
-                .then_some(ResolvedTargets::LinkRegister)
-        }
+        NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => ReturnTargets::new(function)
+            .returns_to_caller(branch, target_value)
+            .then_some(ResolvedTargets::LinkRegister),
         _ => None,
     }
 }
@@ -160,8 +154,8 @@ pub struct ClassifiedSites {
 /// Classifies every live `IndirectBranch` placeholder, and re-derives every
 /// live `Switch` from its retained selector. Reads `f` only.
 ///
-/// `options` are the ones `f` was optimized under; the table walk reads the
-/// allocator set off `f`. With `!options.resolve_indirect_branches`,
+/// `options` are the ones `f` was optimized under; the classifiers read the
+/// claims off `f`. With `!options.resolve_indirect_branches`,
 /// `resolved` is empty.
 ///
 /// A dispatch value only becomes classifiable once the optimizer has folded
@@ -197,11 +191,10 @@ pub fn classify_sites(
                 f.switch_selector(node),
                 rom,
                 &mut ranges,
-                &options.assumptions,
                 f.switch_isa_mode(node),
             )
         } else {
-            classify_target(f, node, rom, &mut ranges, &options.assumptions)
+            classify_target(f, node, rom, &mut ranges)
         };
         if let Some(targets) = targets {
             resolved.insert(node, targets);
@@ -228,14 +221,8 @@ mod tests {
         function: &strider_ir::Function,
         target_value: ValueId,
     ) -> Option<ResolvedTargets> {
-        single_const_target(function, target_value, None).or_else(|| {
-            link_register_return(
-                function,
-                function.entry(),
-                target_value,
-                &crate::AssumptionOptions::default(),
-            )
-        })
+        single_const_target(function, target_value, None)
+            .or_else(|| link_register_return(function, function.entry(), target_value))
     }
 
     /// An empty region terminated by a Return over the caller-supplied value,
@@ -587,22 +574,21 @@ mod tests {
 
     #[test]
     fn a_store_wrapping_onto_the_saved_return_slot_clobbers_it() {
-        let none = crate::AssumptionOptions::none();
         for aligned in [false, true] {
             let (f, branch, target) = lr_saved_across_the_wrap(aligned, None);
             assert!(
-                ReturnTargets::new(&f, &none).returns_to_caller(branch, target),
+                ReturnTargets::new(&f).returns_to_caller(branch, target),
                 "control, aligned={aligned}: the untouched slot holds lr"
             );
             let (f, branch, target) = lr_saved_across_the_wrap(aligned, Some(0x7FFF_FFFE));
             assert!(
-                !ReturnTargets::new(&f, &none).returns_to_caller(branch, target),
+                !ReturnTargets::new(&f).returns_to_caller(branch, target),
                 "aligned={aligned}: sp+0x7FFF_FFFE overwrites the slot's low half mod 2^32"
             );
         }
         let (f, branch, target) = lr_saved_across_the_wrap(false, Some(0x7FFF_FFFC));
         assert!(
-            ReturnTargets::new(&f, &none).returns_to_caller(branch, target),
+            ReturnTargets::new(&f).returns_to_caller(branch, target),
             "sp+0x7FFF_FFFC ends where the slot starts"
         );
     }
@@ -654,14 +640,13 @@ mod tests {
     /// carrier, which fails closed.
     #[test]
     fn a_slot_at_the_carrier_limit_fails_closed() {
-        let none = crate::AssumptionOptions::none();
         let (f, branch, target) = lr_saved_at_the_carrier_limit(false);
         assert!(
-            ReturnTargets::new(&f, &none).returns_to_caller(branch, target),
+            ReturnTargets::new(&f).returns_to_caller(branch, target),
             "control: the untouched slot holds lr"
         );
         let (f, branch, target) = lr_saved_at_the_carrier_limit(true);
-        assert!(!ReturnTargets::new(&f, &none).returns_to_caller(branch, target));
+        assert!(!ReturnTargets::new(&f).returns_to_caller(branch, target));
     }
 
     /// A 128-bit frame saving `sp + saved` at `sp + 0x40` and `lr` at
@@ -721,10 +706,9 @@ mod tests {
     /// same edge without crossing it.
     #[test]
     fn an_offset_guessed_past_the_carrier_fails_closed() {
-        let none = crate::AssumptionOptions::none();
         let verified = |saved, addends: &[i128], junk| {
             let (f, branch, target) = lr_saved_off_a_reloaded_sp(saved, addends, junk);
-            ReturnTargets::new(&f, &none).returns_to_caller(branch, target)
+            ReturnTargets::new(&f).returns_to_caller(branch, target)
         };
         assert!(verified(16, &[8, 8], Some(-64)), "control");
         assert!(
