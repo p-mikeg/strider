@@ -1394,6 +1394,7 @@ dependencies = [
  "proptest",
  "read-only-memory",
  "rsleigh",
+ "strider-reader",
  "tempfile",
 ]
 

@@ -9,6 +9,12 @@ rust-version.workspace = true
 publish.workspace = true
 readme = "README.md"
 
+[features]
+# Exposes `OwnedElf::regions` and `elf::LoadFilter`, the per-filter region sets
+# `OwnedElf::image` is cut from, to this crate's tests and bench. Off in
+# production, where `image` is the one way to cut an image's fetch and ROM.
+test-util = []
+
 [dependencies]
 object.workspace = true
 memmap2.workspace = true
@@ -24,6 +30,9 @@ criterion.workspace = true
 object = { workspace = true, features = ["write"] }
 proptest.workspace = true
 tempfile = "3.10"
+# Self dev-dependency: turns `test-util` on for the `tests/` and `benches/`
+# targets only.
+strider-reader = { workspace = true, features = ["test-util"] }
 
 [[bench]]
 name = "read"
