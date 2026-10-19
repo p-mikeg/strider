@@ -31,10 +31,7 @@ impl PySleighArch {
     fn __repr__(&self) -> String {
         format!("SleighArch.{}()", self.name())
     }
-}
 
-#[pymethods]
-impl PySleighArch {
     /// Look up a register's varnode by Sleigh name, or `None` if this arch's
     /// table has no such name.
     fn reg(&self, name: &str) -> Option<crate::sleigh::PyVn> {
@@ -54,12 +51,24 @@ impl PySleighArch {
 
 /// What `custom(...)` resolves register names against: a `SleighArch`, or a
 /// `Sleigh` built for one.
-#[derive(FromPyObject)]
 pub(crate) enum ArchArg {
-    #[pyo3(annotation = "SleighArch")]
     Arch(PySleighArch),
-    #[pyo3(annotation = "Sleigh")]
     Sleigh(Py<crate::sleigh::PySleigh>),
+}
+
+impl<'py> FromPyObject<'py> for ArchArg {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if let Ok(arch) = ob.downcast::<PySleighArch>() {
+            return Ok(Self::Arch(arch.borrow().clone()));
+        }
+        if let Ok(sleigh) = ob.downcast::<crate::sleigh::PySleigh>() {
+            return Ok(Self::Sleigh(sleigh.clone().unbind()));
+        }
+        Err(pyo3::exceptions::PyTypeError::new_err(format!(
+            "expected a SleighArch or a Sleigh, got {}",
+            ob.get_type().name()?
+        )))
+    }
 }
 
 impl ArchArg {

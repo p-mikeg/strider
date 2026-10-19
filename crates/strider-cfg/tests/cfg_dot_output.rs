@@ -29,7 +29,7 @@ fn dot_source(cfg: &Cfg) -> String {
 #[test]
 fn dot_output_non_empty_for_linear_function() {
     // `add eax, ebx; ret`: a linear single-region body.
-    let (cfg, _engine) = build_from_bytes(vec![0x01, 0xd8, 0xc3], 0x1000);
+    let (cfg, _) = build_from_bytes(vec![0x01, 0xd8, 0xc3], 0x1000);
     let s = dot_source(&cfg);
     assert!(!s.is_empty(), "DOT output must not be empty");
     assert!(
@@ -46,7 +46,7 @@ fn dot_output_for_conditional_function_contains_if_case_edges_and_dashed_style()
     //   0x1004: xor eax, eax   (2 bytes; fall-through path)
     //   0x1006: ret            (1 byte; taken target)
     let bytes = vec![0x31, 0xc0, 0x74, 0x02, 0x31, 0xc0, 0xc3];
-    let (cfg, _engine) = build_from_bytes(bytes, 0x1000);
+    let (cfg, _) = build_from_bytes(bytes, 0x1000);
     let s = dot_source(&cfg);
     assert!(
         s.contains("if-true") || s.contains("if-false"),
@@ -63,7 +63,7 @@ fn dot_output_for_loop_contains_solid_unconditional_edges() {
     // `xor eax, eax; xor eax, eax; jmp -4`: two regions, the second
     // branching back to itself as a loop back-edge.
     let bytes = vec![0x31, 0xc0, 0x31, 0xc0, 0xeb, 0xfc];
-    let (cfg, _engine) = build_from_bytes(bytes, 0x1000);
+    let (cfg, _) = build_from_bytes(bytes, 0x1000);
     let s = dot_source(&cfg);
     assert!(
         s.contains("solid"),
@@ -75,7 +75,7 @@ fn dot_output_for_loop_contains_solid_unconditional_edges() {
 fn dot_output_mentions_every_region() {
     // Every region must emit exactly one `Instruction(addr=...)` header.
     let bytes = vec![0x31, 0xc0, 0x74, 0x02, 0x31, 0xc0, 0xc3];
-    let (cfg, _engine) = build_from_bytes(bytes, 0x1000);
+    let (cfg, _) = build_from_bytes(bytes, 0x1000);
     let s = dot_source(&cfg);
     let expected = cfg.region_graph().node_count();
     let actual = s.matches("Instruction(addr=").count();
@@ -92,7 +92,7 @@ fn dot_output_mentions_every_region() {
 fn dot_output_uses_rsleigh_insn_ctx_fmt() {
     // `add eax, ebx; ret`: an `IntAdd` with a register operand.
     let bytes = vec![0x01, 0xd8, 0xc3];
-    let (cfg, _engine) = build_from_bytes(bytes, 0x1000);
+    let (cfg, _) = build_from_bytes(bytes, 0x1000);
     let s = dot_source(&cfg);
     assert!(
         s.contains("IntAdd R") || s.contains("IntAdd E"),
@@ -126,7 +126,7 @@ fn dot_output_names_load_store_space_and_is_identical_across_engines() {
 
 #[test]
 fn insn_text_spells_load_store_space_without_a_host_address() {
-    let (cfg, _engine) = build_from_bytes(LOAD_STORE.to_vec(), 0x1000);
+    let (cfg, _) = build_from_bytes(LOAD_STORE.to_vec(), 0x1000);
     let insns: Vec<_> = cfg.regions().flat_map(|r| &r.insns).collect();
     let text = |f: &dyn Fn(&rsleigh::Insn) -> String| {
         insns
