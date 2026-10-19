@@ -336,6 +336,7 @@ return %v0, %v10, %v14, %v15, %v16, %v17, %v18, %v19
 cfg
   0x102ec 369 ops return -> []
 tracked [r0, r1, r2, r3, r11, r12, sp, lr, pc, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x5d00:4, u:0x5e00:1, u:0x5f00:1, u:0x6000:1, u:0x6100:1, u:0x6200:1, u:0x10700:4, u:0xa2400:4, u:0xa2500:4]
+frame_address_in_call_register
 float_arg 0 [%v32]
 float_arg 1 [%v33]
 float_arg 2 [%v34]
