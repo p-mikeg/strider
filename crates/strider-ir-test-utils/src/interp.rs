@@ -203,7 +203,8 @@ pub fn run_observed(
                 ctrl = f.node_outputs(node)[usize::from(c == 0)];
             }
             NodeKind::Switch(_) => {
-                let Some(selector) = m.int(f.node_inputs(node)[1])? else {
+                let Some(selector) = m.int(f.node_inputs(node)[NodeKind::SWITCH_SELECTOR_SLOT])?
+                else {
                     return Ok(Outcome::Diverge(Divergence::UndefinedBranch));
                 };
                 ctrl = f.node_outputs(node)[m.switch_arm(node, selector)?];
@@ -374,7 +375,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 if space != rsleigh::VnSpace::RAM {
                     return unsupported(format!("a load from {space:?}"));
                 }
-                let mem = self.mem(ins[0])?;
+                let mem = self.mem(ins[NodeKind::ACCESS_MEM_SLOT])?;
                 let Some(at) = self.int(ins[NodeKind::ACCESS_ADDR_SLOT])? else {
                     return unsupported("a load from an undefined address");
                 };
@@ -403,7 +404,8 @@ impl<'a, 'e> Machine<'a, 'e> {
                     return unsupported(format!("a store to {space:?}"));
                 }
                 let ins: Vec<ValueId> = f.node_inputs(node).into_iter().collect();
-                let prev = self.mem(ins[0])?;
+                let prev_in = ins[NodeKind::ACCESS_MEM_SLOT];
+                let prev = self.mem(prev_in)?;
                 let Some(at) = self.int(ins[NodeKind::ACCESS_ADDR_SLOT])? else {
                     return unsupported("a store to an undefined address");
                 };
@@ -414,8 +416,8 @@ impl<'a, 'e> Machine<'a, 'e> {
                 let size = int_type(f, data_in)?.bit_width().div_ceil(8);
                 // A state only this store reads leaves the cache and is
                 // updated in place; one with other readers is copied.
-                if f.value_has_one_use(ins[0]) && self.mem_now[ins[0]].is_none() {
-                    self.mems[ins[0]] = None;
+                if f.value_has_one_use(prev_in) && self.mem_now[prev_in].is_none() {
+                    self.mems[prev_in] = None;
                 }
                 let mut mem = Rc::unwrap_or_clone(prev);
                 // Little-endian value bytes, then into address order.
@@ -497,11 +499,11 @@ impl<'a, 'e> Machine<'a, 'e> {
         };
         // The callee reads none of them, so an unsupported one does not stop
         // the run.
-        let args = ins[4..]
+        let args = ins[NodeKind::Call { cc: None }.input_head_len()..]
             .iter()
             .map(|&arg| Slot::of(self.int(arg)))
             .collect();
-        let before = self.mem(ins[1])?;
+        let before = self.mem(ins[NodeKind::CTRL_MEM_SLOT])?;
         let writes = self.snapshot(&before);
         self.calls.push(CallRecord {
             target,
@@ -547,15 +549,16 @@ impl<'a, 'e> Machine<'a, 'e> {
     ) -> Eval<Outcome> {
         let f = self.f;
         let ins: Vec<ValueId> = f.node_inputs(node).into_iter().collect();
-        let mut values = Vec::with_capacity(ins.len() - 2);
-        for &v in &ins[2..] {
+        let head = NodeKind::Return.input_head_len();
+        let mut values = Vec::with_capacity(ins.len() - head);
+        for &v in &ins[head..] {
             let value = Slot::of(self.int(v));
             if let Slot::Known(x) = value {
                 observe(node, v, x);
             }
             values.push(value);
         }
-        let mem = self.mem(ins[1])?;
+        let mem = self.mem(ins[NodeKind::CTRL_MEM_SLOT])?;
         Ok(Outcome::Return {
             values,
             writes: self.snapshot(&mem),
@@ -565,7 +568,12 @@ impl<'a, 'e> Machine<'a, 'e> {
 
     fn trap(&mut self, node: NodeId) -> Eval<Outcome> {
         // The memory input is optional.
-        let writes = match self.f.node_inputs(node).get(1).copied() {
+        let writes = match self
+            .f
+            .node_inputs(node)
+            .get(NodeKind::CTRL_MEM_SLOT)
+            .copied()
+        {
             Some(input) => {
                 let mem = self.mem(input)?;
                 self.snapshot(&mem)
