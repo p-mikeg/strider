@@ -92,22 +92,17 @@ fn masked_table_target(
 }
 
 /// `classify_table_dispatch` on the sole `IndirectBranch`, over freshly
-/// computed ranges.
+/// computed ranges, on a copy of `f` claiming `assumptions` as well.
 fn classify_with(
     f: &Function,
     rom: Option<&dyn ReadOnlyMemory>,
     assumptions: &crate::AssumptionOptions,
     mode_value: Option<ValueId>,
 ) -> Option<ResolvedTargets> {
-    let mut ranges = crate::value_range::RangeMap::new(f).unwrap();
-    classify_table_dispatch(
-        f,
-        sole_indirect_branch(f),
-        rom,
-        &mut ranges,
-        assumptions,
-        mode_value,
-    )
+    let mut f = f.clone();
+    f.side_tables_mut().assume(assumptions);
+    let mut ranges = crate::value_range::RangeMap::new(&f).unwrap();
+    classify_table_dispatch(&f, sole_indirect_branch(&f), rom, &mut ranges, mode_value)
 }
 
 /// [`classify_with`] under the default assumptions and no ISA mode.
@@ -1265,7 +1260,7 @@ fn classify_table_dispatch_aligned_stack_resolves() {
 /// governs: set, it proves the store disjoint from the SP-rooted array and
 /// resolves; clear, it cannot and defers.
 ///
-/// Both assertions run on the SAME graph.
+/// Both assertions run on copies of the SAME graph.
 #[test]
 fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
     let sp = sp64();
@@ -1947,17 +1942,14 @@ mod stack_table_cost {
     ) -> (Vec<u64>, u64) {
         let targets: Vec<u64> = (0..entries as u64).map(|i| 0x401000 + i * 0x10).collect();
         let (fg, _load) = build(&targets, -8 * entries as i64, 8);
+        let mut fg = fg;
+        fg.side_tables_mut()
+            .assume(&crate::AssumptionOptions::default());
         let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         super::super::super::eval::SLOT_MAP_STEPS.with(|c| c.set(0));
-        let result = classify_table_dispatch(
-            &fg,
-            sole_indirect_branch(&fg),
-            None,
-            &mut ranges,
-            &crate::AssumptionOptions::default(),
-            None,
-        );
+        let result =
+            classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, None);
         let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
             + super::super::super::eval::SLOT_MAP_STEPS.with(std::cell::Cell::get);
         let Some(ResolvedTargets::Multiple(ts)) = result else {
@@ -1992,17 +1984,14 @@ mod stack_table_cost {
         wire_stack_dispatch(targets.len(), -32, 8, sp_val, &mut b, arg_vn);
         let (fg, _load) = finish_stack_array(b.build().unwrap());
 
+        let mut fg = fg;
+        fg.side_tables_mut()
+            .assume(&crate::AssumptionOptions::default());
         let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         super::super::super::eval::SLOT_MAP_STEPS.with(|c| c.set(0));
-        let result = classify_table_dispatch(
-            &fg,
-            sole_indirect_branch(&fg),
-            None,
-            &mut ranges,
-            &crate::AssumptionOptions::default(),
-            None,
-        );
+        let result =
+            classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, None);
         let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
             + super::super::super::eval::SLOT_MAP_STEPS.with(std::cell::Cell::get);
         assert_eq!(
