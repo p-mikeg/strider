@@ -5,6 +5,10 @@ use anyhow::anyhow;
 
 use crate::IRViewer;
 use crate::builder::IRBuilder;
+use crate::builder::checks::{
+    require_float_type, require_float_value, require_integer_type, require_integer_value,
+    require_output_type, require_slot, require_value_type,
+};
 use crate::error::Result;
 use crate::eval;
 use crate::node::{
@@ -166,8 +170,8 @@ pub trait IRBuilderExt: IRBuilder {
         op: IntBinaryOp,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let lhs_id = self.require_value_type(lhs_id, output_type)?;
-        let rhs_id = self.require_value_type(rhs_id, output_type)?;
+        let lhs_id = require_value_type(self.function(), lhs_id, output_type)?;
+        let rhs_id = require_value_type(self.function(), rhs_id, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::IntBinaryOp(op), [lhs_id, rhs_id], output_type))
     }
 
@@ -204,7 +208,7 @@ pub trait IRBuilderExt: IRBuilder {
         op: IntUnaryOp,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let value = self.require_value_type(input_id, output_type)?;
+        let value = require_value_type(self.function(), input_id, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::IntUnaryOp(op), [value], output_type))
     }
 
@@ -212,15 +216,15 @@ pub trait IRBuilderExt: IRBuilder {
     /// the two are independent. Coercing the input would shift the count by the
     /// width difference.
     fn build_popcount(&mut self, input_id: ValueId, output_type: ValueType) -> Result<ValueId> {
-        Self::require_integer_type(self.value_type(input_id)?)?;
-        Self::require_integer_type(output_type)?;
+        require_integer_type(self.value_type(input_id)?)?;
+        require_integer_type(output_type)?;
         Ok(self.build_single_output_pure(NodeKind::Popcount, [input_id], output_type))
     }
 
     /// Counts leading zeros over the INPUT's width; see [`Self::build_popcount`].
     fn build_lzcount(&mut self, input_id: ValueId, output_type: ValueType) -> Result<ValueId> {
-        Self::require_integer_type(self.value_type(input_id)?)?;
-        Self::require_integer_type(output_type)?;
+        require_integer_type(self.value_type(input_id)?)?;
+        require_integer_type(output_type)?;
         Ok(self.build_single_output_pure(NodeKind::Lzcount, [input_id], output_type))
     }
 
@@ -233,8 +237,8 @@ pub trait IRBuilderExt: IRBuilder {
         kind: IntCmpOp,
         operand_type: ValueType,
     ) -> Result<ValueId> {
-        let lhs_id = self.require_value_type(lhs_id, operand_type)?;
-        let rhs_id = self.require_value_type(rhs_id, operand_type)?;
+        let lhs_id = require_value_type(self.function(), lhs_id, operand_type)?;
+        let rhs_id = require_value_type(self.function(), rhs_id, operand_type)?;
         Ok(
             self.build_single_output_pure(
                 NodeKind::IntCmpOp(kind),
@@ -268,8 +272,8 @@ pub trait IRBuilderExt: IRBuilder {
         op: FloatBinaryOp,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let lhs = self.require_value_type(lhs, output_type)?;
-        let rhs = self.require_value_type(rhs, output_type)?;
+        let lhs = require_value_type(self.function(), lhs, output_type)?;
+        let rhs = require_value_type(self.function(), rhs, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::FloatBinaryOp(op), [lhs, rhs], output_type))
     }
 
@@ -280,7 +284,7 @@ pub trait IRBuilderExt: IRBuilder {
         op: FloatUnaryOp,
         output_type: ValueType,
     ) -> Result<ValueId> {
-        let coerced = self.require_value_type(value, output_type)?;
+        let coerced = require_value_type(self.function(), value, output_type)?;
         Ok(self.build_single_output_pure(NodeKind::FloatUnaryOp(op), [coerced], output_type))
     }
 
@@ -297,25 +301,25 @@ pub trait IRBuilderExt: IRBuilder {
                 "build_float_cmp_op: lhs {lhs:?} has type {float_ty}, expected a float"
             ));
         }
-        let rhs = self.require_value_type(rhs, float_ty)?;
+        let rhs = require_value_type(self.function(), rhs, float_ty)?;
         Ok(self.build_single_output_pure(NodeKind::FloatCmpOp(op), [lhs, rhs], ValueType::I1))
     }
 
     fn build_int_to_float(&mut self, value: ValueId, float_type: ValueType) -> Result<ValueId> {
-        self.require_integer_value(value)?;
-        Self::require_float_type(float_type)?;
+        require_integer_value(self.function(), value)?;
+        require_float_type(float_type)?;
         Ok(self.build_single_output_pure(NodeKind::IntToFloat, [value], float_type))
     }
 
     fn build_float_to_int(&mut self, value: ValueId, int_type: ValueType) -> Result<ValueId> {
-        self.require_float_value(value)?;
-        Self::require_integer_type(int_type)?;
+        require_float_value(self.function(), value)?;
+        require_integer_type(int_type)?;
         Ok(self.build_single_output_pure(NodeKind::FloatToInt, [value], int_type))
     }
 
     fn build_float_to_float(&mut self, value: ValueId, float_type: ValueType) -> Result<ValueId> {
-        self.require_float_value(value)?;
-        Self::require_float_type(float_type)?;
+        require_float_value(self.function(), value)?;
+        require_float_type(float_type)?;
         Ok(self.build_single_output_pure(NodeKind::FloatToFloat, [value], float_type))
     }
 
@@ -327,8 +331,8 @@ pub trait IRBuilderExt: IRBuilder {
         value: ValueId,
         float_type: ValueType,
     ) -> Result<ValueId> {
-        self.require_integer_value(value)?;
-        Self::require_float_type(float_type)?;
+        require_integer_value(self.function(), value)?;
+        require_float_type(float_type)?;
         let input_ty = self.value_type(value)?;
         if input_ty.byte_size() != float_type.byte_size() {
             return Err(anyhow!(
@@ -352,8 +356,8 @@ pub trait IRBuilderExt: IRBuilder {
     /// A `FloatConst` input up to 8 bytes folds to an `IntConst` with the same
     /// bits. Anything else builds the conversion node.
     fn build_float_bits_to_int(&mut self, value: ValueId, int_type: ValueType) -> Result<ValueId> {
-        self.require_float_value(value)?;
-        Self::require_integer_type(int_type)?;
+        require_float_value(self.function(), value)?;
+        require_integer_type(int_type)?;
         let input_ty = self.value_type(value)?;
         if input_ty.byte_size() != int_type.byte_size() {
             return Err(anyhow!(
@@ -379,9 +383,9 @@ pub trait IRBuilderExt: IRBuilder {
         output_type: ValueType,
     ) -> Result<ValueId> {
         for (slot, &value) in inputs.iter().enumerate() {
-            self.require_slot(&kind, slot, value)?;
+            require_slot(self.function(), &kind, slot, value)?;
         }
-        Self::require_output_type(&kind, output_type)?;
+        require_output_type(&kind, output_type)?;
         let node = self.create_node(
             kind,
             inputs.iter().copied(),

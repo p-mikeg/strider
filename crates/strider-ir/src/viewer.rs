@@ -1,23 +1,7 @@
 use anyhow::anyhow;
 
 use crate::function::Function;
-use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
-
-/// Each generated method errors unless `value_id`'s kind satisfies the named
-/// predicate.
-macro_rules! value_kind_requirements {
-    ($($(#[$m:meta])* $name:ident => $pred:ident, $noun:literal;)+) => { $(
-        $(#[$m])*
-        fn $name(&self, value_id: ValueId) -> crate::Result<()> {
-            let kind = self.function().graph().value_kind(value_id);
-            if kind.$pred() {
-                Ok(())
-            } else {
-                Err(anyhow!("output {value_id:?} is not {} (got {kind:?})", $noun))
-            }
-        }
-    )+ };
-}
+use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
 /// Each generated method reads a fixed input slot, panicking on the arity the
 /// validator already guarantees.
@@ -31,6 +15,17 @@ macro_rules! semantic_slot_accessors {
 }
 
 /// Point reads over a [`Function`].
+///
+/// The checks a builder runs on its operands are its own, not reads:
+///
+/// ```compile_fail,E0599
+/// use strider_ir::node::ValueId;
+/// use strider_ir::{Function, IRViewer};
+///
+/// fn check(f: &Function, v: ValueId) -> strider_ir::Result<()> {
+///     f.require_value_kind(v)
+/// }
+/// ```
 pub trait IRViewer {
     fn function(&self) -> &Function;
 
@@ -316,92 +311,6 @@ pub trait IRViewer {
             .ok_or_else(|| anyhow!("output {value_id:?} is not a value edge (got {kind:?})"))
     }
 
-    /// Errors unless `value_id`'s type is exactly `expected`; never coerces.
-    fn require_value_type(&self, value_id: ValueId, expected: ValueType) -> crate::Result<ValueId> {
-        let actual = self.value_type(value_id)?;
-        if actual != expected {
-            return Err(anyhow!(
-                "operand {value_id:?} has type {actual} but the operation \
-                 requires {expected}; the caller must insert the truncate / \
-                 extend / bitcast fix-up (builders no longer auto-coerce)"
-            ));
-        }
-        Ok(value_id)
-    }
-
-    value_kind_requirements! {
-        require_value_kind => is_value, "a value edge";
-        require_bool_value => is_bool, "a bool value";
-        require_phi_token_kind => is_phi_token, "a phi-token edge";
-        require_control_kind => is_control, "a control edge";
-        require_memory_kind => is_memory, "a memory edge";
-    }
-
-    fn require_integer_value(&self, value_id: ValueId) -> crate::Result<()> {
-        ensure_value_type(
-            value_id,
-            self.value_type(value_id)?.is_integer(),
-            "an integer value",
-        )
-    }
-
-    fn require_float_value(&self, value_id: ValueId) -> crate::Result<()> {
-        ensure_value_type(
-            value_id,
-            self.value_type(value_id)?.is_float(),
-            "a float value",
-        )
-    }
-
-    fn require_integer_type(ty: ValueType) -> crate::Result<()> {
-        if !ty.is_integer() {
-            return Err(anyhow!("type {ty:?} is not an integer type"));
-        }
-        Ok(())
-    }
-
-    fn require_float_type(ty: ValueType) -> crate::Result<()> {
-        if !ty.is_float() {
-            return Err(anyhow!("type {ty:?} is not a float type"));
-        }
-        Ok(())
-    }
-
-    fn validate_value_inputs(&self, inputs: &[ValueId]) -> crate::Result<()> {
-        for &v in inputs {
-            self.require_value_kind(v)?;
-        }
-        Ok(())
-    }
-
-    /// Errors unless `value` may fill input `slot` of a `kind` node.
-    fn require_slot(&self, kind: &NodeKind, slot: usize, value: ValueId) -> crate::Result<()> {
-        let actual = self.function().graph().value_kind(value);
-        let want = kind
-            .expected_input_kind(slot)
-            .ok_or_else(|| anyhow!("{kind:?} has no input slot {slot}"))?;
-        if !want.admits(actual) {
-            return Err(anyhow!(
-                "operand {value:?} at {kind:?} input slot {slot} is {actual}, \
-                 where its node signature expects {want:?}"
-            ));
-        }
-        Ok(())
-    }
-
-    /// Errors unless a `kind` node may output `ty` at slot 0.
-    fn require_output_type(kind: &NodeKind, ty: ValueType) -> crate::Result<()> {
-        let want = kind
-            .expected_output_kind(0)
-            .ok_or_else(|| anyhow!("{kind:?} has no output slot 0"))?;
-        if !want.admits(ValueKind::Typed(ty)) {
-            return Err(anyhow!(
-                "a {kind:?} cannot output {ty}: its node signature expects {want:?}"
-            ));
-        }
-        Ok(())
-    }
-
     /// Float values keep their type; integers map to the float of the same
     /// byte size, so the result is always bitcastable from `value`. Errors on a
     /// byte size with no float counterpart.
@@ -486,14 +395,6 @@ pub trait IRWalker: IRViewer {
 }
 
 impl<T: IRViewer + ?Sized> IRWalker for T {}
-
-fn ensure_value_type(value_id: ValueId, ok: bool, noun: &str) -> crate::Result<()> {
-    if ok {
-        Ok(())
-    } else {
-        Err(anyhow!("output {value_id:?} is not {noun}"))
-    }
-}
 
 #[cfg(test)]
 mod tests {

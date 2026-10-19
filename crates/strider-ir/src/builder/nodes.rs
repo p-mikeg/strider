@@ -3,6 +3,10 @@ use smallvec::SmallVec;
 use super::FunctionBuilder;
 use crate::IRViewer;
 use crate::builder::IRBuilderExt;
+use crate::builder::checks::{
+    require_bool_value, require_control_kind, require_output_type, require_phi_token_kind,
+    require_slot, require_value_kind, validate_value_inputs,
+};
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::RegionId;
@@ -32,7 +36,7 @@ impl FunctionBuilder {
 
         let res = self.terminate_cur_region()?;
         self.require_terminator_kinds(&res)?;
-        self.validate_value_inputs(&ret_inputs)?;
+        validate_value_inputs(self.function(), &ret_inputs)?;
 
         self.create_node(
             NodeKind::Return,
@@ -74,7 +78,7 @@ impl FunctionBuilder {
 
         let res = self.terminate_cur_region()?;
         self.require_terminator_kinds(&res)?;
-        self.validate_value_inputs(&values)?;
+        validate_value_inputs(self.function(), &values)?;
 
         let node = self.create_node(
             NodeKind::IndirectBranch,
@@ -102,8 +106,8 @@ impl FunctionBuilder {
     ) -> Result<()> {
         let res = self.terminate_cur_region()?;
 
-        self.require_bool_value(cond)?;
-        self.require_control_kind(res.control)?;
+        require_bool_value(self.function(), cond)?;
+        require_control_kind(self.function(), res.control)?;
 
         let brcond = self.create_node(
             NodeKind::If,
@@ -135,11 +139,11 @@ impl FunctionBuilder {
     ) -> Result<NodeId> {
         debug_assert!(!arms.is_empty(), "build_switch requires at least one arm");
         let res = self.terminate_cur_region()?;
-        self.require_value_kind(address)?;
+        require_value_kind(self.function(), address)?;
         if let Some(mode) = isa_mode {
-            self.require_value_kind(mode)?;
+            require_value_kind(self.function(), mode)?;
         }
-        self.require_control_kind(res.control)?;
+        require_control_kind(self.function(), res.control)?;
 
         let targets: Vec<u64> = arms.iter().map(|&(_, a)| a).collect();
         let table = self.function_mut().add_switch_table(targets);
@@ -165,7 +169,7 @@ impl FunctionBuilder {
         let memory = self.cur_region_memory()?;
         let kind = NodeKind::Store(space);
         for (slot, value) in [memory, addr, data].into_iter().enumerate() {
-            self.require_slot(&kind, slot, value)?;
+            require_slot(self.function(), &kind, slot, value)?;
         }
         let node_id = self.create_node(kind, [memory, addr, data], [ValueKind::Memory]);
         let [new_mem] = self.function().node_outputs_exact(node_id)?;
@@ -181,9 +185,9 @@ impl FunctionBuilder {
         let memory = self.cur_region_memory()?;
         let kind = NodeKind::Load(space);
         for (slot, value) in [memory, addr].into_iter().enumerate() {
-            self.require_slot(&kind, slot, value)?;
+            require_slot(self.function(), &kind, slot, value)?;
         }
-        Self::require_output_type(&kind, output_type)?;
+        require_output_type(&kind, output_type)?;
         Ok(self.build_single_output_pure(kind, [memory, addr], output_type))
     }
 
@@ -196,8 +200,8 @@ impl FunctionBuilder {
         phi_token: ValueId,
         incoming_values: &[ValueId],
     ) -> Result<ValueId> {
-        self.require_phi_token_kind(phi_token)?;
-        self.validate_value_inputs(incoming_values)?;
+        require_phi_token_kind(self.function(), phi_token)?;
+        validate_value_inputs(self.function(), incoming_values)?;
         let output_type = ValueType::int_from_bytes(var.size)?;
         let phi_value = self.build_single_output_pure(
             NodeKind::Phi,
