@@ -47,11 +47,11 @@
   `AttributeError`.
 - A `strider.pattern.Pat` is no longer a rewrite right-hand side:
   `Function.rewrite(replace=)` and `rewrite_all` raise `TypeError` for one,
-  and one nested in a `strider.template` operand raises `StriderError`
-  naming its constructor, a build-valid one (`var()`, `int_const()`)
-  included. Spell the RHS with `strider.template` (`template.var(c)`, or the
-  bare `Capture`); the RHS `.capture(c)` goes with it, as a `Template` has
-  none.
+  and one nested in a `strider.template` operand raises `StriderError`, a
+  build-valid one (`var()`, `int_const()`) included. Both name its
+  constructor and point at `strider.template`. Spell the RHS with
+  `strider.template` (`template.var(c)`, or the bare `Capture`); the RHS
+  `.capture(c)` goes with it, as a `Template` has none.
 - `strider.sleigh.Sleigh` is gone. `SleighArch.reg(name)` and
   `SleighArch.reg_name(vn)` look registers up, and `CallingConvention.custom`
   / `CallOtherAbi.custom` take the `SleighArch` as `sleigh=`; anything else
@@ -254,10 +254,13 @@
   to the later, and with `apply_relocations=True` no image fails with "patch
   budget", a GOT-base or TOC-pointer word no longer needs its symbol, and an
   image-relative word whose addend does not fit it is a hole or wrapped.
-- A `Pat` nested in a `Template` is refused naming its constructor: `any`
-  became `anything()`, every other bare name gains `()` (`cannot use
-  one_of() as a rewrite RHS`), and a finished control builder reads `a
-  control / variadic builder`.
+- A nested `Pat`'s refusal spells its constructor: `any` became
+  `anything()`, every other bare name gains `()` (`cannot use one_of() as a
+  rewrite RHS`), and a finished control builder reads `a control / variadic
+  builder`.
+- `rewrite` / `rewrite_all` refuse a `replace` of any other type with a
+  `TypeError` naming what they take, where PyO3's text listed the binding's
+  internal variants.
 - `CallingConvention.custom` raises at construction for stack geometry that
   does not fit its arch: a stack pointer not as wide as its addresses, a
   stack-argument stride other than that width, or with no link register a
