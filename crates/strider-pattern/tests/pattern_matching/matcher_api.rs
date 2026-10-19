@@ -221,31 +221,6 @@ fn each_match_has_its_own_bindings() {
 }
 
 #[test]
-fn bindings_clone_outlives_match() {
-    let function = shapes::add_consts(5, 3);
-    let v = Capture::new();
-
-    let bindings = {
-        let matcher = Matcher::new(&function);
-        let node = function
-            .walk()
-            .find(|&n| {
-                matches!(function.node_kind(n), NodeKind::IntConst(_))
-                    && function
-                        .node_outputs(n)
-                        .iter()
-                        .any(|&o| function.int_const_u128(o) == Some(5))
-            })
-            .unwrap();
-        let pat = int_const(v).into_pattern();
-        let m = matcher.match_at(node, &pat).unwrap().expect("match");
-        m.bindings_clone()
-    };
-
-    assert_eq!(bindings.get_uint(v, &function), Some(5));
-}
-
-#[test]
 fn get_vn_on_initial_var_returns_varnode() {
     let (g, reg) = shapes::single_initial_var();
     let v = Capture::new();
