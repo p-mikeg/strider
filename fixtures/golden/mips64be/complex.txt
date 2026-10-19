@@ -6,6 +6,7 @@ default_cc arg_passing_regs=[a0, a1, a2, a3, t0, t1, t2, t3] arg_passing_regs_fl
 cfg
   0x120000b70 250 ops return -> []
 tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x7200:4, u:0x13600:4, u:0x121900:4]
+frame_address_in_call_register
 arg 3 [%v49]
 arg 4 [%v50]
 arg 5 [%v51]
@@ -296,6 +297,7 @@ cfg
   0x120000f50 23 ops return -> []
   0x120000f70 19 ops return -> []
 tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x3400:1, u:0x13600:4]
+frame_address_in_call_register
 arg 0 [%v1]
 arg 1 [%v23]
 arg 2 [%v24]
@@ -649,6 +651,7 @@ cfg
   0x120001398 15 ops goto -> [0x120001150]
   0x1200013b0 17 ops goto -> [0x120001140]
 tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t4, t5, t6, t7, t9, gp, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0x2c00:1, u:0x2e00:1, u:0x3000:1, u:0x3400:1, u:0x7200:4, u:0xad00:1, u:0xaf00:1, u:0xbe00:4, u:0x13600:4]
+frame_address_in_call_register
 arg 0 [%v55]
 arg 1 [%v1]
 arg 2 [%v59]

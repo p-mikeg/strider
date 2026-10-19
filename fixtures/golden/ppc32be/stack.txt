@@ -74,6 +74,7 @@ return %v0, %v28, %v12, %v16, %v29, %v30, %v31
 cfg
   0x10000510 32 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x19c00:4, u:0x19e00:4]
+frame_address_in_call_register
 arg 0 [%v16]
 arg 1 [%v24]
 arg 2 [%v25]
@@ -505,6 +506,7 @@ return %v0, %v13, %v12, %v14, %v15, %v16, %v17
 cfg
   0x100007f4 79 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x19c00:4, u:0x19e00:4]
+frame_address_in_call_register
 arg 2 [%v20]
 arg 3 [%v21]
 arg 4 [%v22]

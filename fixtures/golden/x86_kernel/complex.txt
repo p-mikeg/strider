@@ -164,6 +164,7 @@ cfg
   0x4011d2 18 ops return -> []
   0x4011e4 18 ops return -> []
 tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0xae400:4]
+frame_address_in_call_register
 arg 0 [%v1]
 arg 1 [%v18]
 arg 2 [%v19]
@@ -397,6 +398,7 @@ cfg
   0x40157f 1 ops goto -> [0x401582]
   0x401582 58 ops return -> []
 tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6600:4, u:0x6a00:4, u:0x6c00:4, u:0x7100:4, u:0x7200:4, u:0x7400:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x17a00:1, u:0x17c00:1, u:0x18a00:1, u:0x18c00:1, u:0x18d00:1, u:0x18e00:1, u:0x19000:1, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x49d00:1, u:0x49f00:1, u:0x4a000:1, u:0x4a100:1, u:0x4a200:1, u:0x4a500:1, u:0x4a600:1, u:0x4a700:1, u:0x4a800:1, u:0x4aa00:1, u:0x4ab00:1, u:0x4ac00:1, u:0x4ae00:1, u:0x4af00:1, u:0x4b000:1, u:0x4b100:1, u:0x50200:1, u:0x50300:4, u:0x50400:1, u:0x50500:1, u:0x50700:1, u:0x50800:1, u:0x50900:1, u:0x50a00:1, u:0x50d00:1, u:0x50f00:1, u:0x51000:1, u:0x51100:1, u:0x51200:1, u:0x64d00:4, u:0x64e00:1, u:0x66100:4, u:0x66300:4, u:0x66a00:4, u:0x66c00:4, u:0x87300:4, u:0xaa300:4, u:0xaa400:1, u:0xada00:1, u:0xae400:4]
+frame_address_in_call_register
 arg 0 [%v32]
 arg 1 [%v1]
 arg 2 [%v77]
@@ -955,6 +957,7 @@ return %v28, %v29, %v30, %v31, %v32, %v33, %v34
 cfg
   0x4015c0 226 ops return -> []
 tracked [EAX, ECX, EDX, ESP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x87300:4]
+frame_address_in_call_register
 arg 1 [%v41]
 arg 2 [%v42]
 %v0:ctrl = entry

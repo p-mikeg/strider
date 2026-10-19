@@ -174,8 +174,9 @@ impl PyFunction {
         }
     }
 
-    /// The canonical text form: one line per node reachable from entry, values
-    /// named in print order, so equal graphs print equal text.
+    /// The canonical text form: a header, then one line per node reachable
+    /// from entry, values named in print order, so equal graphs print equal
+    /// text.
     #[pyo3(signature = (fingerprints = false))]
     fn to_text(&self, fingerprints: bool) -> PyResult<String> {
         self.with_read_value(|f| f.to_text(fingerprints))
