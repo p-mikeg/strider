@@ -26,9 +26,9 @@ REG_ABI_ADD = bytes.fromhex("89d801c8c3")
 IMAGE = SYSCALL_STUB.ljust(ADD_ENTRY - BASE, b"\x00") + REG_ABI_ADD + bytes(16)
 
 mem = reader.BufferReader(BASE, IMAGE)
-lft = strider.lift.lifter(sleigh.SleighArch.x86(), mem)
 # Register names resolve against the arch, which both `custom` constructors take.
-sl = sleigh.SleighArch.x86()
+x86 = sleigh.SleighArch.x86()
+lft = strider.lift.lifter(x86, mem)
 cdecl = sleigh.CallingConvention.x86_cdecl()
 
 
@@ -98,7 +98,7 @@ default = syscall_stub({})
 # The Linux i386 convention: EAX = syscall number, EBX/ECX/EDX = arguments,
 # EAX = result. Stated per analysis, the way a calling convention is.
 int80 = sleigh.CallOtherAbi.custom(
-    sl,
+    x86,
     implicit_reads=["EAX", "EBX", "ECX", "EDX"],
     implicit_writes=["EAX"],
     clobbers_memory=True,
@@ -129,7 +129,7 @@ assert setup_constants(overridden) == 4
 # return address x86's `call` pushed. An unknown register name, or a link
 # register missing from callee_saved_regs, raises StriderError here.
 reg_abi = sleigh.CallingConvention.custom(
-    sleigh=sl,
+    sleigh=x86,
     arg_passing_regs=["EBX", "ECX"],
     callee_saved_regs=["EBP", "ESI", "EDI"],
     ret_val_regs=["EAX"],

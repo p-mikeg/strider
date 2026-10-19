@@ -46,8 +46,11 @@ pub(crate) fn incomplete_list(
 }
 
 impl PyCfg {
-    pub(crate) fn new(py: Python<'_>, inner: strider_cfg::Cfg, lifter: Py<PyLifter>) -> Self {
-        let arch = lifter.borrow(py).arch;
+    pub(crate) fn new(
+        inner: strider_cfg::Cfg,
+        lifter: Py<PyLifter>,
+        arch: strider_target::SleighArch,
+    ) -> Self {
         Self {
             inner,
             lifter,

@@ -200,7 +200,8 @@ class Lifter:
     def _rebuild(
         self, arch: SleighArch, mem: MemLike, rom: Optional[RomLike] = ...
     ) -> None:
-        """INTERNAL. Rebuild the handle's Sleigh and orchestrator state."""
+        """INTERNAL, for tests. Rebuild the handle's Sleigh and orchestrator
+        state."""
         ...
     def _merge_elf(
         self,

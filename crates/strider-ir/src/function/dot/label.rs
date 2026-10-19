@@ -248,7 +248,6 @@ mod tests {
     use super::vn_to_display_name;
     use rsleigh::{Vn, VnSpace};
 
-    /// These tests decode no instructions.
     fn names() -> &'static strider_target::ArchNames {
         strider_target::SleighArch::x86_64().names()
     }
