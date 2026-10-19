@@ -4,6 +4,7 @@ use smallvec::SmallVec;
 use super::FunctionBuilder;
 use crate::IRViewer;
 use crate::builder::IRBuilderExt;
+use crate::builder::checks::{require_value_kind, validate_value_inputs};
 use crate::error::Result;
 use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, VnTypeExt};
 
@@ -46,8 +47,8 @@ impl FunctionBuilder {
         output_vns: &[rsleigh::Vn],
         ret_stack_pop: i64,
     ) -> Result<(NodeId, Vec<ValueId>)> {
-        self.require_value_kind(call_address)?;
-        self.validate_value_inputs(args)?;
+        require_value_kind(self.function(), call_address)?;
+        validate_value_inputs(self.function(), args)?;
         self.validate_call_output_vns(output_vns)?;
 
         let sp_vn = self.function.stack_vn();
@@ -120,7 +121,7 @@ impl FunctionBuilder {
         terminate: bool,
     ) -> Result<(NodeId, Vec<ValueId>)> {
         self.validate_call_output_vns(output_vns)?;
-        self.validate_value_inputs(args)?;
+        validate_value_inputs(self.function(), args)?;
 
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
