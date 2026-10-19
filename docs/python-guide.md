@@ -119,7 +119,7 @@ you read a capture back by the object or by its name string:
 # Every load of the form `base + offset`; read the offset back.
 base, off = Capture("base"), Capture("off")
 for hit in function.find_all(load(addr=int_add(base, off)), ignore_casts=True):
-    print("offset =", hit[off].uint_opt)   # None if it is not constant
+    print("offset =", hit.uint_opt(off))   # None if it is not constant
 ```
 
 `ignore_casts=True` is `CastMask.all()`: the matcher walks through zero-extends,
@@ -137,15 +137,15 @@ unbound or its node has no value of that kind; the `_opt` form returns `None`
 there instead. Guard with `hit.has("off")` when a capture may be absent.
 
 ```python
-hit[off].uint                # unsigned integer constant (raises if not one)
-hit[off].uint_opt            # ... or None instead of raising
-hit[off].sint                # signed version
-hit[base].node               # the matched Node, for deeper inspection
-hit[base].asm_fingerprint    # machine addresses that produced it
-hit[base].op_opt             # operation name, e.g. "Add", or None
+hit.uint(off)                # unsigned integer constant (raises if not one)
+hit.uint_opt(off)            # ... or None instead of raising
+hit.sint(off)                # signed version
+hit.node(base)               # the matched Node, for deeper inspection
+hit.asm_fingerprint(base)    # machine addresses that produced it
+hit.op_opt(base)             # operation name, e.g. "Add", or None
 ```
 
-Index by the `Capture` object, or by its name when it has one (`hit["off"]`).
+Pass the `Capture` object, or its name when it has one (`hit.uint("off")`).
 [python-api.md](python-api.md#6-reading-a-match) lists every reader.
 
 A capture can land on a node with no operation, such as an `InitialVar` (a
