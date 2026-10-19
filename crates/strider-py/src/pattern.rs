@@ -301,16 +301,6 @@ pub(crate) enum Wrap {
 }
 
 impl Wrap {
-    /// Every Python object this verb holds, for the cyclic GC.
-    fn traverse(&self, visit: &pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        match self {
-            Wrap::When(f) => visit.call(f)?,
-            // Hold no Python object.
-            Wrap::Capture(_) | Wrap::Ordered | Wrap::OfWidth(_) | Wrap::ValueTy(_) => {}
-        }
-        Ok(())
-    }
-
     /// The method that applies this verb, as an error names it.
     fn name(&self) -> &'static str {
         match self {
@@ -853,7 +843,11 @@ impl PatRepr {
             }
             PatRepr::Wrapped(inner, wrap) => {
                 visit.call(inner)?;
-                wrap.traverse(visit)?;
+                match wrap {
+                    Wrap::When(f) => visit.call(f)?,
+                    // Hold no Python object.
+                    Wrap::Capture(_) | Wrap::Ordered | Wrap::OfWidth(_) | Wrap::ValueTy(_) => {}
+                }
             }
             // Held only briefly and never across Python code; a skipped
             // report keeps the predicate alive rather than freeing it.
@@ -1276,10 +1270,7 @@ fn compile_tmpl_match(t: &TmplRepr, py: Python<'_>) -> PyResult<DynMatch> {
         TmplRepr::IntConstAnyWidth(v) => Ok(DynMatch::new(sp::int_const_any_width(*v))),
         TmplRepr::BoolConst(v) => Ok(DynMatch::new(sp::bool_const(*v))),
         TmplRepr::FloatConst(bits) => Ok(DynMatch::new(sp::float_const(*bits))),
-        TmplRepr::IntBinary(op, l, r) => {
-            let op = *op;
-            bin_match(py, l, r, |l, r| sp::int_binary(op, l, r))
-        }
+        TmplRepr::IntBinary(op, l, r) => bin_match(py, l, r, |l, r| sp::int_binary(*op, l, r)),
         TmplRepr::Sub(l, r) => bin_match(py, l, r, sp::int_sub),
         TmplRepr::BitNot(x) => un_match(py, x, sp::int_not),
         TmplRepr::IntUnary(kind, x) => {
@@ -1296,35 +1287,17 @@ fn compile_tmpl_match(t: &TmplRepr, py: Python<'_>) -> PyResult<DynMatch> {
             let x = op_match(py, x)?;
             Ok(DynMatch::from_fn(move |b| cast_match(kind, x, b)))
         }
-        TmplRepr::Extend(op, x) => {
-            let op = *op;
-            un_match(py, x, |x| sp::int_extend(op, x))
-        }
-        TmplRepr::IntCmp(op, l, r) => {
-            let op = *op;
-            bin_match(py, l, r, |l, r| sp::int_cmp(op, l, r))
-        }
+        TmplRepr::Extend(op, x) => un_match(py, x, |x| sp::int_extend(*op, x)),
+        TmplRepr::IntCmp(op, l, r) => bin_match(py, l, r, |l, r| sp::int_cmp(*op, l, r)),
         TmplRepr::IntNe(l, r) => bin_match(py, l, r, sp::int_ne),
         TmplRepr::IntLe(l, r) => bin_match(py, l, r, sp::int_le),
         TmplRepr::IntSle(l, r) => bin_match(py, l, r, sp::int_sle),
-        TmplRepr::FloatBinary(op, l, r) => {
-            let op = *op;
-            bin_match(py, l, r, |l, r| sp::float_binary(op, l, r))
-        }
+        TmplRepr::FloatBinary(op, l, r) => bin_match(py, l, r, |l, r| sp::float_binary(*op, l, r)),
         TmplRepr::FloatSub(l, r) => bin_match(py, l, r, sp::float_sub),
-        TmplRepr::FloatUnary(op, x) => {
-            let op = *op;
-            un_match(py, x, |x| sp::float_unary(op, x))
-        }
-        TmplRepr::FloatCmp(op, l, r) => {
-            let op = *op;
-            bin_match(py, l, r, |l, r| sp::float_cmp(op, l, r))
-        }
+        TmplRepr::FloatUnary(op, x) => un_match(py, x, |x| sp::float_unary(*op, x)),
+        TmplRepr::FloatCmp(op, l, r) => bin_match(py, l, r, |l, r| sp::float_cmp(*op, l, r)),
         TmplRepr::FloatNe(l, r) => bin_match(py, l, r, sp::float_ne),
-        TmplRepr::BoolBinary(op, l, r) => {
-            let op = *op;
-            bin_match(py, l, r, |l, r| sp::bool_binary(op, l, r))
-        }
+        TmplRepr::BoolBinary(op, l, r) => bin_match(py, l, r, |l, r| sp::bool_binary(*op, l, r)),
         TmplRepr::BoolNot(x) => un_match(py, x, sp::bool_not),
     }
 }
@@ -1398,10 +1371,7 @@ fn compile_tmpl_template(t: &TmplRepr, py: Python<'_>) -> PyResult<DynTemplate> 
             let bits = *bits;
             Ok(DynTemplate(Box::new(move |b| tc(sp::float_const(bits), b))))
         }
-        TmplRepr::IntBinary(op, l, r) => {
-            let op = *op;
-            bin_tpl(py, l, r, |l, r| tpl::int_binary(op, l, r))
-        }
+        TmplRepr::IntBinary(op, l, r) => bin_tpl(py, l, r, |l, r| tpl::int_binary(*op, l, r)),
         TmplRepr::Sub(l, r) => bin_tpl(py, l, r, tpl::int_sub),
         TmplRepr::BitNot(x) => un_tpl(py, x, tpl::int_not),
         TmplRepr::IntUnary(kind, x) => {
@@ -1418,35 +1388,17 @@ fn compile_tmpl_template(t: &TmplRepr, py: Python<'_>) -> PyResult<DynTemplate> 
             let x = op_tpl(py, x)?;
             Ok(DynTemplate(Box::new(move |b| cast_tpl(kind, x, b))))
         }
-        TmplRepr::Extend(op, x) => {
-            let op = *op;
-            un_tpl(py, x, |x| tpl::int_extend(op, x))
-        }
-        TmplRepr::IntCmp(op, l, r) => {
-            let op = *op;
-            bin_tpl(py, l, r, |l, r| tpl::int_cmp(op, l, r))
-        }
+        TmplRepr::Extend(op, x) => un_tpl(py, x, |x| tpl::int_extend(*op, x)),
+        TmplRepr::IntCmp(op, l, r) => bin_tpl(py, l, r, |l, r| tpl::int_cmp(*op, l, r)),
         TmplRepr::IntNe(l, r) => bin_tpl(py, l, r, tpl::int_ne),
         TmplRepr::IntLe(l, r) => bin_tpl(py, l, r, tpl::int_le),
         TmplRepr::IntSle(l, r) => bin_tpl(py, l, r, tpl::int_sle),
-        TmplRepr::FloatBinary(op, l, r) => {
-            let op = *op;
-            bin_tpl(py, l, r, |l, r| tpl::float_binary(op, l, r))
-        }
+        TmplRepr::FloatBinary(op, l, r) => bin_tpl(py, l, r, |l, r| tpl::float_binary(*op, l, r)),
         TmplRepr::FloatSub(l, r) => bin_tpl(py, l, r, tpl::float_sub),
-        TmplRepr::FloatUnary(op, x) => {
-            let op = *op;
-            un_tpl(py, x, |x| tpl::float_unary(op, x))
-        }
-        TmplRepr::FloatCmp(op, l, r) => {
-            let op = *op;
-            bin_tpl(py, l, r, |l, r| tpl::float_cmp(op, l, r))
-        }
+        TmplRepr::FloatUnary(op, x) => un_tpl(py, x, |x| tpl::float_unary(*op, x)),
+        TmplRepr::FloatCmp(op, l, r) => bin_tpl(py, l, r, |l, r| tpl::float_cmp(*op, l, r)),
         TmplRepr::FloatNe(l, r) => bin_tpl(py, l, r, tpl::float_ne),
-        TmplRepr::BoolBinary(op, l, r) => {
-            let op = *op;
-            bin_tpl(py, l, r, |l, r| tpl::bool_binary(op, l, r))
-        }
+        TmplRepr::BoolBinary(op, l, r) => bin_tpl(py, l, r, |l, r| tpl::bool_binary(*op, l, r)),
         TmplRepr::BoolNot(x) => un_tpl(py, x, tpl::bool_not),
     }
 }

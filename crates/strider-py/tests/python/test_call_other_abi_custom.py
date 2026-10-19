@@ -204,3 +204,18 @@ def test_custom_takes_an_arch_and_resolves_as_a_sleigh_does():
     assert by_arch == by_sleigh
     texts = [_analyze(RDTSC_RET, {"rdtsc": abi}).to_text() for abi in (by_arch, by_sleigh)]
     assert texts[0] == texts[1]
+
+
+@pytest.mark.parametrize(
+    "custom",
+    [
+        lambda arg: CallOtherAbi.custom(arg, implicit_reads=["EAX"]),
+        lambda arg: CallingConvention.custom(
+            arg, ["EAX"], [], ["EAX"], [], "ESP", None, 4, 4
+        ),
+    ],
+    ids=["CallOtherAbi", "CallingConvention"],
+)
+def test_custom_names_what_it_takes_for_a_wrong_type(custom):
+    with pytest.raises(TypeError, match="expected a SleighArch or a Sleigh, got str"):
+        custom("x86")

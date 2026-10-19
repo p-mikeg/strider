@@ -157,9 +157,7 @@ impl ArchPreset {
             Self::Ppc64Le => SleighArch::ppc64le(),
         }
     }
-}
 
-impl ArchPreset {
     /// The [`SleighArch`] constructor's name, e.g. `"x86_64"` or
     /// `"arm_be_kernel"`.
     #[must_use]
@@ -618,6 +616,10 @@ impl SleighArch {
     }
 
     /// This arch's register table, a copy of [`SleighArch::names`]'s.
+    ///
+    /// # Errors
+    ///
+    /// None: an sla that does not load panics in [`SleighArch::names`].
     #[cfg(any(test, feature = "test-util"))]
     pub fn probe_regs(self) -> anyhow::Result<rsleigh::SleighRegs> {
         Ok(self.names().regs().clone())

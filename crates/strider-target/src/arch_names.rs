@@ -95,8 +95,8 @@ struct SpaceName<'a> {
 impl fmt::Display for SpaceName<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.names.space_name(self.space) {
-            Some(name) => f.write_str(name),
-            None => write!(f, "{}", self.space),
+            Some(name) => f.pad(name),
+            None => fmt::Display::fmt(&self.space, f),
         }
     }
 }
