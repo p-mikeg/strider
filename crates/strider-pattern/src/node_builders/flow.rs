@@ -24,7 +24,7 @@ use crate::matcher::{KindSpec, MatcherBuilder, PatNodeRef, PatValueRef, Pattern,
 use crate::typed::int_const;
 
 use super::MemPat;
-use super::node_pat::NodePat;
+use super::node_pat::{NodePat, OutputSpec, control_compiler, lower_outputs};
 
 /// Walks from a matched If to a control output's single consumer and matches
 /// a sub-pattern there.
@@ -463,7 +463,7 @@ pub struct IfPat {
     ctrl: Option<crate::node_builders::SubCompiler>,
     /// Sparse raw input slots, `InputSlot::Any` for the existentials.
     inputs: Vec<(crate::matcher::InputSlot, crate::node_builders::SubCompiler)>,
-    outputs: Vec<super::node_pat::OutputSpec>,
+    outputs: Vec<OutputSpec>,
     true_branch: Option<BranchWalk>,
     false_branch: Option<BranchWalk>,
     captures: Vec<Capture>,
@@ -491,7 +491,7 @@ impl IfPat {
 
     /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a control edge.
     pub fn ctrl<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.ctrl = Some(super::node_pat::control_compiler(p));
+        self.ctrl = Some(control_compiler(p));
         self
     }
 
@@ -661,7 +661,7 @@ impl IfPat {
             let o = compile.call(&mut *b);
             b.wire(node, slot, o);
         }
-        super::node_pat::lower_outputs(b, node, outputs);
+        lower_outputs(b, node, outputs);
         // The forward-walks bind into the enclosing match, so they ride the
         // binding walk rather than the node predicate, which runs before the
         // condition's own captures exist.
@@ -698,17 +698,15 @@ fn merged_branch_captures([t, f]: [WalkCaptures; 2]) -> WalkCaptures {
 
 impl WithOutput for IfPat {
     fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
-        self.outputs
-            .push(super::node_pat::OutputSpec::capture(slot, c));
+        self.outputs.push(OutputSpec::capture(slot, c));
         self
     }
     fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
-        self.outputs
-            .push(super::node_pat::OutputSpec::width(slot, bits));
+        self.outputs.push(OutputSpec::width(slot, bits));
         self
     }
     fn output_ty(mut self, slot: Option<usize>, ty: ValueType) -> Self {
-        self.outputs.push(super::node_pat::OutputSpec::ty(slot, ty));
+        self.outputs.push(OutputSpec::ty(slot, ty));
         self
     }
 }

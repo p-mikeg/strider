@@ -26,7 +26,7 @@ use strider_ir::node::{Conversion, NodeId, NodeKind, OperandWidth, ValueId, Valu
 use strider_ir::{Function, IRBuilder, IRViewer};
 
 use crate::bindings::Bindings;
-use crate::graph_ext::{consumed_inputs, reachable_topo};
+use crate::graph_ext::{consumed_inputs, topo_order};
 use crate::matcher::OutputKindSpec;
 
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind> + Send>;
@@ -89,7 +89,9 @@ pub enum TemplateTy {
 /// [`TemplateKind::Fn`] closure that itself errors, has gapped or duplicate
 /// input slots, has an `IntConst` built from a `NodeKind`, has a node no width
 /// reaches, gives a node an input count, an output or an operand its node
-/// signature refuses, or if node creation yields no value output.
+/// signature refuses, or if node creation yields no value output. Most of
+/// these are found mid-build, so the nodes created before the refusal stay in
+/// `builder`'s function, dead.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
@@ -99,7 +101,7 @@ pub fn instantiate<B: IRBuilder>(
     root_ty: ValueType,
 ) -> anyhow::Result<ValueId> {
     let root = template.root()?;
-    let order = reachable_topo(&template.graph, root)?;
+    let order = topo_order(&template.graph)?;
 
     // Scanned before the mutating build loop, which is what the immutable
     // `function` borrow requires.
