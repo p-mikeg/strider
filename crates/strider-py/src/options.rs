@@ -687,7 +687,7 @@ impl PyLifterOptions {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some((cached, built)) = slot.as_ref()
-            && *cached == target
+            && cached.preset() == target.preset()
         {
             return Ok(std::sync::Arc::clone(built));
         }

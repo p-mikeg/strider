@@ -125,3 +125,31 @@ def test_an_empty_custom_abi_does_not_repr_as_a_preset():
 def test_a_custom_cc_repr_names_its_arch():
     assert repr(_custom_cc(SleighArch.x86_64())) == "<CallingConvention custom for x86_64>"
     assert repr(CallingConvention.x86_64_systemv()) == "CallingConvention.x86_64_systemv()"
+
+
+def test_custom_abis_equal_and_hash_alike_on_one_preset_only():
+    """x86 and x86-64 `EAX` are one varnode, and `arm` / `arm_thumb` share an
+    sla, so only the arch tells these apart."""
+    x64 = [CallOtherAbi.custom(SleighArch.x86_64(), implicit_writes=["EAX"]) for _ in range(2)]
+    x86 = CallOtherAbi.custom(SleighArch.x86(), implicit_writes=["EAX"])
+    arm, thumb = (
+        CallOtherAbi.custom(arch, implicit_writes=["r0"])
+        for arch in (SleighArch.arm(), SleighArch.arm_thumb())
+    )
+    assert x64[0] == x64[1]
+    assert hash(x64[0]) == hash(x64[1])
+    assert x64[0] != x86
+    assert arm != thumb
+    assert len({x64[0], x64[1], x86, arm, thumb}) == 4
+
+
+def test_one_per_address_table_resolves_against_each_lifters_arch():
+    opts = strider.lift.LifterOptions(
+        per_address_ccs={0x2000: CallingConvention.x86_64_systemv()}
+    )
+    x64 = strider.lift.lifter(SleighArch.x86_64(), _mem(b"\xc3"))
+    x86 = strider.lift.lifter(SleighArch.x86(), _mem(b"\xc3"))
+    x64.analyze(0x1000, CallingConvention.x86_64_systemv(), opts)
+    with pytest.raises(strider.StriderError, match='unknown sleigh register name "RDI"'):
+        x86.analyze(0x1000, CallingConvention.x86_cdecl(), opts)
+    x64.analyze(0x1000, CallingConvention.x86_64_systemv(), opts)
