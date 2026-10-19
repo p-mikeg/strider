@@ -177,6 +177,11 @@
   became an `IntConst` with the target function's constant id 0.
 - `PatNode::input_slots` holds `matcher::InputSlot` (`At(slot)` or `Any`)
   instead of a `usize` with `usize::MAX` marking an existential.
+- `PatValue::{match_slot, any_slot}` become `slot_mode: matcher::SlotMode`
+  (`Loose`, `Pinned`, `Enumerated`), and
+  `MatcherBuilder::set_value_out_slot(out, slot)` becomes
+  `pin_value_out_slot(out)`, which pins the vertex's own slot: a pin to
+  another slot was representable and meant nothing.
 
 ### Changed, Python
 

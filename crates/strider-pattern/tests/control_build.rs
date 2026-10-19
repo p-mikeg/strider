@@ -8,6 +8,7 @@ use support::{assertions as a, shapes};
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker};
 use strider_ir_test_utils::{RegisterSet, mem_phi_with_two_stores};
+use strider_pattern::matcher::{KindSpec, MatcherBuilder};
 use strider_pattern::{
     Capture, CaptureExt, CastMask, MatchPat, Matcher, WithOutput, any_int_const, anything, call,
     call_other, entry, if_else, indirect_branch, int_add, int_const, load, mem_phi, phi, region,
@@ -226,6 +227,31 @@ fn switch_output_slot_pins_one_arm() {
     a::none(
         &function,
         switch().output(2).capture(Capture::new()).build(),
+    );
+}
+
+/// A sole vertex pinned to slot 1 binds the output at slot 1 only, where an
+/// unpinned sole vertex takes whichever output is being matched.
+#[test]
+fn a_pinned_sole_vertex_binds_its_own_slot() {
+    let function = switch_fn(0x1000);
+    let switch_node = function
+        .walk()
+        .find(|&n| matches!(function.node_kind(n), NodeKind::Switch(_)))
+        .expect("the fixture's switch");
+    let c = Capture::new();
+    let mut b = MatcherBuilder::new();
+    let node = b.node(KindSpec::variant_of(&NodeKind::Switch(
+        strider_ir::node::SwitchTableId::from_u32(0),
+    )));
+    let out = b.value_output(node, 1);
+    b.set_output_any(out);
+    b.pin_value_out_slot(out);
+    b.capture_output(out, c);
+    let hits = a::matches(&function, b.finish(), 1);
+    assert_eq!(
+        hits[0].value(c),
+        Some(function.node_outputs(switch_node)[1])
     );
 }
 

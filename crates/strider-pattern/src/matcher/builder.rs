@@ -9,7 +9,7 @@
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
-use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern};
+use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern, SlotMode};
 use crate::staging::{SealNode, StagedGraph};
 
 /// Names a staged node's output by position.
@@ -285,7 +285,7 @@ impl MatcherBuilder {
     /// counterpart is injective.
     pub fn any_slot_value_output(&mut self, node: PatNodeRef) -> PatValueRef {
         let out = self.any_value_output(node);
-        self.out_of(out).any_slot = true;
+        self.out_of(out).slot_mode = SlotMode::Enumerated;
         out
     }
 
@@ -305,10 +305,9 @@ impl MatcherBuilder {
         self.out_of(out).width = Some(bits);
     }
 
-    /// See [`PatValue::match_slot`]. Pins the value operand to a specific
-    /// output slot.
-    pub fn set_value_out_slot(&mut self, out: PatValueRef, slot: usize) {
-        self.out_of(out).match_slot = Some(slot);
+    /// Pins `out` to its own slot: the matched output must be produced there.
+    pub fn pin_value_out_slot(&mut self, out: PatValueRef) {
+        self.out_of(out).slot_mode = SlotMode::Pinned;
     }
 
     /// Binds the matched output's value (`Binding::Value`), e.g.
