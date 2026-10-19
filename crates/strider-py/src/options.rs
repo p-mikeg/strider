@@ -397,7 +397,7 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 /// `return_slots_survive_untracked_writes`, each of which every compiler this
 /// analyses honours.
 ///
-/// An omitted or `None` field takes the analysis default, as listed below.
+/// An omitted or `None` field takes the analysis default, as listed above.
 #[pyclass(name = "AssumptionOptions", module = "strider.lift")]
 #[derive(Clone, Default)]
 pub struct PyAssumptionOptions {

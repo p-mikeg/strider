@@ -263,9 +263,11 @@ when both IR slots hold the same value.
 ## Cross-cutting invariants
 
 - The workspace is single-threaded: prefer `Box` / moves / `&`-borrows, and
-  opt into `Rc` at a call site only if needed. No Rust crate spawns a thread
-  and no handle ever runs concurrently with itself, so a `Send` bound buys the
-  right to MOVE a value between threads, not concurrency inside one handle.
+  opt into `Rc` at a call site only if needed. No Rust crate spawns a thread,
+  so beyond read-only calls on one `strider-py` handle, which may interleave
+  across threads at a GIL switch (never with the `analyze`, `build_cfg` or
+  `add_elf` that hold it alone), a `Send` bound buys the right to MOVE a value
+  between threads, not concurrency inside one handle.
   That move is what lets `strider-py` drop the GIL around `analyze`, so
   separate handles on separate Python threads DO run in parallel.
   - `read-only-memory`: `ReadOnlyMemory: Send` so `strider-py` can drop the GIL
@@ -279,10 +281,11 @@ when both IR slots hold the same value.
     shared rather than duplicated.
   - `strider-py`: no `#[pyclass(unsendable)]` remains. `OptimizerPipeline`
     was the last, and holds a `Mutex<OptimizerPipeline>` instead.
-    `Lifter` moves, drops and runs anywhere, one call at a time: the `PyCell`
-    borrow flag `analyze` / `build_cfg` hold across the GIL release and across
-    a `read()` callback makes a second call, on any thread, raise the
-    re-entrant `StriderError`. `BufferReader` is an
+    `Lifter` moves, drops and runs anywhere. Every method that reads the
+    handle borrows its `PyCell`; `analyze`, `build_cfg` and `add_elf` borrow
+    exclusively, across the GIL release and any `read()` callback, so a
+    concurrent call, on any thread, raises the re-entrant `StriderError`,
+    while read-only calls may overlap each other. `BufferReader` is an
     `Arc<Mutex<_>>`, so a clone shares the region memo and the wrapper is
     still `Send`; `_LoadedElf` holds two of those and a `Mutex` symbol table.
     Everything else moves, so a REPL or notebook that introspects off-thread
@@ -397,8 +400,8 @@ construction and every `analyze` BORROWS those tables
 (`strider_cfg::CfgOptions.known_targets` and
 `strider_orchestrator::AnalyzeOptions.per_address_ccs` are `&FxHashMap`,
 `strider_cfg::CfgOptions.no_return_targets` a `&FxHashSet`), so a seeded
-table costs a sweep nothing per function. `per_address_ccs` needs the lift's
-`SleighRegs` to resolve, so it cannot be seated at construction: the built
-table is memoized behind the shared `PerAddressCcs`, which is where it has to
-live because `ElfLifter.analyze` derives fresh options per call through
-`_with_cfg`. The first `analyze` pays the build, the rest borrow it.
+table costs a sweep nothing per function. `per_address_ccs` needs the
+analysing handle's arch to resolve, so it cannot be seated at construction:
+the built table is memoized behind the shared `PerAddressCcs`, which is where
+it has to live because `ElfLifter.analyze` derives fresh options per call
+through `_with_cfg`. The first `analyze` pays the build, the rest borrow it.

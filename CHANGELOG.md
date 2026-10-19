@@ -150,9 +150,9 @@
   relocates too, so it can fail where `writable_ranges` did not.
 - `Function::dot_dumper`, `Cfg::dot_dumper`, `Cfg::neighborhood_dot` and
   `strider_cfg::insn_text` take `&ArchNames` (`arch.names()`) instead of a
-  `Sleigh` and its register table; `FunctionDotDumper` and `CfgDotDumper`
-  lose their reader parameter, and `Function::dot_dumper` no longer returns
-  a `Result`.
+  `Sleigh` (and, for `insn_text`, its register table); `FunctionDotDumper`
+  and `CfgDotDumper` lose their reader parameter, and `Function::dot_dumper`
+  no longer returns a `Result`.
 
 ### Changed, Python
 
@@ -194,24 +194,29 @@
   budget", a GOT-base or TOC-pointer word no longer needs its symbol, and an
   image-relative word whose addend does not fit it is a hole or wrapped.
 - A match-only `Pat` refused as a rewrite RHS, at the top or nested in a
-  `Template`, is named by its constructor: `cannot use anything() as a
-  rewrite RHS` (was `any`), `one_of()`, `float_le()`, `.when()`, the
-  spellings `.ordered()`'s refusal uses.
+  `Template`, is named by its constructor: `any` became `anything()`, every
+  other bare name gains `()` (`cannot use one_of() as a rewrite RHS`), and a
+  finished control builder reads `a control / variadic builder`.
 - `CallingConvention.custom` raises at construction for stack geometry that
   does not fit its arch: a stack pointer not as wide as its addresses, a
   stack-argument stride other than that width, or with no link register a
-  `ret_stack_pop` below it (the first two raised at `analyze`). An unknown
-  register name in either `custom` names its list:
-  `CallingConvention.custom: arg_passing_regs: unknown sleigh register name
-  "X"`.
+  `ret_stack_pop` below it (the first two raised at `analyze`). These take
+  the Rust wording (see Changed, Rust): "stack pointer" where they said
+  `stack_vn`, and `BuiltCallingConvention: ret_stack_pop N is less than the
+  M-byte return address a `call` pushes with no link register` where the
+  message spelled out x86's 4 and x86-64's 8 and that a link-register arch
+  (ARM, MIPS, PPC) pops 0 but sets `link_register`. An unknown register name
+  in either `custom` names its list: `CallingConvention.custom:
+  arg_passing_regs: unknown sleigh register name "X"`.
 - A `Lifter` works on any thread: `analyze`, `build_cfg`, `optimize`,
   `pcode_at`, `reg`, `reg_name`, `call_other_abi`, `user_op_names` and
-  `add_elf` no longer raise off the thread that built it, reversing 0.2.0. A
-  handle still serves one call at a time: those, and a plain `Lifter`'s
-  `arch`, `reader()` and `rom()`, called while another call is in flight, from
-  a `read()` callback or another thread, raise `StriderError` ("already in
-  use"), where all but `analyze`, `build_cfg` and `optimize` raised PyO3's
-  `RuntimeError`. Such an `add_elf` merges nothing.
+  `add_elf` no longer raise off the thread that built it, reversing 0.2.0.
+  Each of them, a plain `Lifter`'s `arch` and `reader()`, and `rom()` on any
+  `Lifter` raises `StriderError` ("already in use") while an `analyze`,
+  `build_cfg` or `add_elf` is in flight on the handle, from a `read()`
+  callback or another thread, and those three raise while any of these calls
+  is; the others may overlap each other. All but `analyze`, `build_cfg` and
+  `optimize` raised PyO3's `RuntimeError`. Such an `add_elf` merges nothing.
 - `AssumptionOptions(...)` takes its defaults from Rust: a field passed
   `None` takes its default (it raised `TypeError`), `noalias_allocators`
   reads back sorted and deduplicated, `repr` included (it kept the order and
@@ -232,7 +237,8 @@
   as their first (`sleigh=`) argument, as well as a `Sleigh` (anything else
   raises `TypeError: expected a SleighArch or a Sleigh`); names resolve
   through one table per arch per process. `SleighArch.reg(name)` and
-  `SleighArch.reg_name(vn)` look registers up without a `Sleigh`.
+  `SleighArch.reg_name(vn)` look registers up without a `Sleigh`;
+  `strider.sleigh.Sleigh` stays until 0.3.0 removes it.
 - `.ordered()` on `inputs_of_width(n, x)` and `bool_inputs(x)` pins what it
   pins on `x`, as in Rust; it raised.
 
@@ -430,8 +436,8 @@
   code space and `ram` address width, which is all a render reads;
   `SleighArch::names()` builds it once per preset per process.
   `ArchPreset::name()` is the preset's constructor name.
-- `calling_convention::{vn_for_name, regs_to_vns}` are public, the latter
-  over any iterator of names.
+- `strider_target::calling_convention::{vn_for_name, regs_to_vns}` are
+  public, the latter over any iterator of names.
 
 ## 0.2.0
 
