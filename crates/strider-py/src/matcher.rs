@@ -362,6 +362,11 @@ impl PyBoundCapture {
     fn unsigned(&self, py: Python<'_>) -> PyResult<Option<u128>> {
         self.match_.borrow(py).uint_opt(py, self.key(py))
     }
+
+    /// The match's `sint_opt` for this capture.
+    fn signed(&self, py: Python<'_>) -> PyResult<Option<i128>> {
+        self.match_.borrow(py).int_opt(py, self.key(py))
+    }
 }
 
 #[pymethods]
@@ -387,21 +392,24 @@ impl PyBoundCapture {
     }
     /// Equal to an int matching the captured constant at its width, in either
     /// signed or unsigned spelling (so `-8` and `0xFFFFFFF8` both match a
-    /// 32-bit -8). Value-comparing, hence `BoundCapture` is unhashable.
+    /// 32-bit -8), or to another `BoundCapture` whose constant agrees in
+    /// either spelling. Value-comparing, hence `BoundCapture` is unhashable.
     fn __richcmp__(
         &self,
         py: Python<'_>,
         other: Bound<'_, PyAny>,
         op: CompareOp,
     ) -> PyResult<PyObject> {
-        let equal = self
-            .unsigned(py)?
-            .is_some_and(|u| other.extract::<u128>().is_ok_and(|o| o == u))
-            || self
-                .match_
-                .borrow(py)
-                .int_opt(py, self.key(py))?
-                .is_some_and(|s| other.extract::<i128>().is_ok_and(|o| o == s));
+        let (u, s) = (self.unsigned(py)?, self.signed(py)?);
+        // Ahead of the int path: under abi3 a `u128` extract shifts its
+        // operand, and a `BoundCapture` has no `__rshift__`.
+        let equal = if let Ok(o) = other.downcast::<PyBoundCapture>() {
+            let o = o.borrow();
+            (u.is_some() && u == o.unsigned(py)?) || (s.is_some() && s == o.signed(py)?)
+        } else {
+            u.is_some_and(|u| other.extract::<u128>().is_ok_and(|o| o == u))
+                || s.is_some_and(|s| other.extract::<i128>().is_ok_and(|o| o == s))
+        };
         Ok(match op {
             CompareOp::Eq => equal.into_py(py),
             CompareOp::Ne => (!equal).into_py(py),

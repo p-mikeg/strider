@@ -65,9 +65,7 @@ def _spill_at_floor():
 
 def test_analyze_records_the_claims_it_ran_under():
     _lift, g = _heap()
-    assert _claims(g.assumptions) == _claims(
-        AssumptionOptions(noalias_allocators=[_ALLOCATOR])
-    )
+    assert g.assumptions == AssumptionOptions(noalias_allocators=[_ALLOCATOR])
 
 
 def test_each_analyze_starts_from_its_own_claims():
@@ -75,14 +73,14 @@ def test_each_analyze_starts_from_its_own_claims():
     inherits nothing from an earlier one."""
     lift, first = _heap()
     _lift, second = _analyzed(_HEAP_CODE, AssumptionOptions.none(), lift=lift)
-    assert _claims(second.assumptions) == _claims(AssumptionOptions.none())
+    assert second.assumptions == AssumptionOptions.none()
     assert first.assumptions.noalias_allocators == [_ALLOCATOR]
 
 
 def test_optimize_without_opts_adds_no_claim():
     lift, g = _spill_at_floor()
     lift.optimize(g)
-    assert _claims(g.assumptions) == _claims(AssumptionOptions.none())
+    assert g.assumptions == AssumptionOptions.none()
     assert len(g.find_all(load())) == 1, "optimize turned stack_global_disjoint on"
 
 
@@ -121,11 +119,11 @@ def test_a_refused_optimize_runs_nothing():
     """Had it run, the defaults it names would forward the reload."""
     lift, g = _analyzed(_SPILL_CODE, AssumptionOptions.none(noalias_allocators=[_ALLOCATOR]))
     assert len(g.find_all(load())) == 1, "the reload stays without the claim"
-    before = _claims(g.assumptions)
+    before = g.assumptions
     with pytest.raises(strider.StriderError, match="noalias_allocators"):
         lift.optimize(g, opts=LifterOptions(assumptions=AssumptionOptions()))
     assert len(g.find_all(load())) == 1, "a refused optimize ran"
-    assert _claims(g.assumptions) == before
+    assert g.assumptions == before
 
 
 def test_the_omission_names_only_the_missing_allocators():
@@ -151,9 +149,7 @@ def test_none_with_a_keyword_adds_exactly_that_claim():
     lift, g = _spill_at_floor()
     wider = g.assumptions | AssumptionOptions.none(escape_analysis=True)
     lift.optimize(g, opts=LifterOptions(assumptions=wider))
-    want = _claims(AssumptionOptions.none())
-    want["escape_analysis"] = True
-    assert _claims(g.assumptions) == want
+    assert g.assumptions == AssumptionOptions.none(escape_analysis=True)
 
 
 def test_none_takes_each_claim_as_a_keyword():
@@ -162,9 +158,7 @@ def test_none_takes_each_claim_as_a_keyword():
     want["distinct_sp_bases_disjoint"] = True
     want["noalias_allocators"] = [5]
     assert _claims(a) == want
-    assert _claims(AssumptionOptions.none(escape_analysis=None)) == _claims(
-        AssumptionOptions.none()
-    )
+    assert AssumptionOptions.none(escape_analysis=None) == AssumptionOptions.none()
 
 
 def test_an_unknown_claim_raises_in_none_as_in_the_constructor():
@@ -178,13 +172,12 @@ def test_a_keyword_set_carries_its_defaults_into_the_union():
     """`AssumptionOptions(x=True)` fills every other claim with its default,
     three of them on, so on a `none()` function it adds four. Pinned so that
     changing it is a decision."""
-    want = _claims(AssumptionOptions())
-    want["escape_analysis"] = True
-    assert _claims(AssumptionOptions(escape_analysis=True)) == want
+    want = AssumptionOptions() | AssumptionOptions.none(escape_analysis=True)
+    assert AssumptionOptions(escape_analysis=True) == want
     lift, g = _spill_at_floor()
     wider = g.assumptions | AssumptionOptions(escape_analysis=True)
     lift.optimize(g, opts=LifterOptions(assumptions=wider))
-    assert _claims(g.assumptions) == want
+    assert g.assumptions == want
     assert len(g.find_all(load())) == 0, "stack_global_disjoint did not forward"
 
 
@@ -212,10 +205,21 @@ def test_union_holds_every_claim_of_both():
         "escape_analysis": True,
         "return_slots_survive_untracked_writes": True,
     }
-    assert repr(a | b) == repr(both)
+    assert a | b == both
     assert a.noalias_allocators == [3], "union copies; the operands stay"
 
 
 def test_clone_carries_the_claims():
     _lift, g = _heap()
-    assert repr(g.clone().assumptions) == repr(g.assumptions)
+    assert g.clone().assumptions == g.assumptions
+
+
+def test_assumption_options_compare_by_value():
+    _lift, g = _heap()
+    assert g.assumptions == g.assumptions and not g.assumptions != g.assumptions
+    one = AssumptionOptions.none(escape_analysis=True)
+    assert one == AssumptionOptions.none(escape_analysis=True)
+    assert one != AssumptionOptions.none() and not one == AssumptionOptions.none()
+    assert AssumptionOptions(noalias_allocators=[1, 2]) == AssumptionOptions(
+        noalias_allocators=[2, 1]
+    )

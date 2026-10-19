@@ -41,7 +41,8 @@
   `CallOther` bare, without the interner handle (`"IntConst(const12)"`,
   `"InitialVar(InitialVnId(6))"`, `"CallOther { user_op_id: 120 }"`); read
   the payload through `uint()` / `sint()`, `vn()` and `call_other_name()`.
-- `BoundCapture` (`m[c]`) keeps `has`, `int()`, `==` and its repr, and loses
+- `BoundCapture` (`m[c]`) keeps `has`, `int()` / `operator.index`, `==` and
+  its repr, and loses
   its reader properties: read a capture through the `Match`, `m.uint(c)`,
   `m.node(c)`, `m.op_opt(c)` and the rest. `m[c].uint` raises
   `AttributeError`.
@@ -303,6 +304,8 @@
   reads back sorted and deduplicated, `repr` included (it kept the order and
   duplicates given), and on Python 3.10+ the constructor's signature shows
   `None` for every default.
+- `AssumptionOptions` compares by value (`function.assumptions ==
+  AssumptionOptions.none()`) and is unhashable; it compared by identity.
 - `Function.to_text()` prints a `frame_address_in_call_register` line after
   `default_cc` when a call's clobbered register held a stack address.
 - `CfgOptions(call_other_abis=...)` is resolved on first use, rebuilt only
@@ -465,6 +468,8 @@
   computed with the symbol taken as 0.
 - Python: `.when()` on a `function_arg(..)` nested as an operand runs; it
   was dropped, so the operand matched every argument its builder named.
+- Python: `m[a] == m[b]` compares the two captured constants; it was always
+  `False` in the abi3 wheel.
 - A pattern dropped from a thread-local destructor after strider-pattern's
   drop pit was torn down aborted the process; it is dropped in place.
 - `Lifter.optimize(f)` with default options no longer drops the
