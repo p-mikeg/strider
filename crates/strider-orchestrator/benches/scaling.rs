@@ -3,8 +3,8 @@
 //! scaling curves for individual passes and the pattern matcher.
 //!
 //! ```text
-//! cargo bench --bench scaling -- --save-baseline before
-//! cargo bench --bench scaling -- --baseline before
+//! cargo bench -p strider-orchestrator --bench scaling -- --save-baseline before
+//! cargo bench -p strider-orchestrator --bench scaling -- --baseline before
 //! ```
 
 #![allow(clippy::useless_conversion)]
