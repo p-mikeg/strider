@@ -493,21 +493,39 @@ impl PyField<Vec<u64>> for rustc_hash::FxHashSet<u64> {
 }
 
 /// The getters, the keyword-only constructor (an omitted or `None` field
-/// takes `AssumptionOptions::default`'s) and `__repr__`, from one row per
-/// field.
+/// takes `AssumptionOptions::default`'s), `none` (the same keywords over
+/// `AssumptionOptions::none`) and `__repr__`, from one row per field.
 macro_rules! assumption_fields {
     ($($(#[$doc:meta])* $name:ident: $py:ty),* $(,)?) => {
+        impl PyAssumptionOptions {
+            /// `base` with each given field replaced.
+            #[allow(clippy::too_many_arguments)]
+            fn with_fields(base: AssumptionOptions, $($name: Option<$py>),*) -> Self {
+                Self {
+                    inner: AssumptionOptions {
+                        $($name: $name.map_or(base.$name, PyField::from_py)),*
+                    },
+                }
+            }
+        }
+
         #[pymethods]
         impl PyAssumptionOptions {
             #[new]
             #[pyo3(signature = (*, $($name = None),*))]
             fn new($($name: Option<$py>),*) -> Self {
-                let d = AssumptionOptions::default();
-                Self {
-                    inner: AssumptionOptions {
-                        $($name: $name.map_or(d.$name, PyField::from_py)),*
-                    },
-                }
+                Self::with_fields(AssumptionOptions::default(), $($name),*)
+            }
+
+            /// Every claim cleared, then the ones named set: the sound floor
+            /// of these fields under any input program whose memory behaves
+            /// as RAM, forwarding solely what the IR structurally proves. A
+            /// memory-mapped register polled after a write still reads as the
+            /// value written.
+            #[staticmethod]
+            #[pyo3(signature = (*, $($name = None),*))]
+            fn none($($name: Option<$py>),*) -> Self {
+                Self::with_fields(AssumptionOptions::none(), $($name),*)
             }
 
             $(
@@ -589,15 +607,16 @@ assumption_fields! {
 
 #[pymethods]
 impl PyAssumptionOptions {
-    /// Every claim cleared: the sound floor of these fields under any input
-    /// program whose memory behaves as RAM, forwarding solely what the IR
-    /// structurally proves. A memory-mapped register polled after a write still reads as
-    /// the value written.
-    #[staticmethod]
-    fn none() -> Self {
-        Self {
-            inner: AssumptionOptions::none(),
-        }
+    /// Every claim either holds, and every allocator either lists.
+    fn union(&self, other: &Self) -> Self {
+        let mut inner = self.inner.clone();
+        inner.union_with(&other.inner);
+        Self { inner }
+    }
+
+    /// `a | b` is `a.union(b)`.
+    fn __or__(&self, other: &Self) -> Self {
+        self.union(other)
     }
 }
 
@@ -688,9 +707,13 @@ pub struct PyLifterOptions {
     /// Nested CFG-shape knobs.
     #[pyo3(get)]
     pub cfg: Py<PyCfgOptions>,
-    /// Nested claims about the analysed code, each one unchecked.
+    /// Nested claims about the analysed code, each one unchecked. The
+    /// defaults when not passed, which `analyze` reads and `Lifter.optimize`
+    /// does not add.
     #[pyo3(get)]
     pub assumptions: Py<PyAssumptionOptions>,
+    /// Whether the caller passed `assumptions`.
+    pub(crate) assumptions_given: bool,
     /// Drop unreachable IR nodes after analysis (default `True`).
     #[pyo3(get)]
     pub compact: bool,
@@ -788,6 +811,7 @@ impl PyLifterOptions {
             Some(c) => c,
             None => Py::new(py, PyCfgOptions::default())?,
         };
+        let assumptions_given = assumptions.is_some();
         let assumptions = match assumptions {
             Some(a) => a,
             None => Py::new(py, PyAssumptionOptions::default())?,
@@ -795,6 +819,7 @@ impl PyLifterOptions {
         Ok(Self {
             cfg,
             assumptions,
+            assumptions_given,
             compact,
             per_address_ccs: per_address_ccs.map(|t| std::sync::Arc::new(PerAddressCcs::new(t.0))),
             resolve_indirect_branches,
@@ -831,6 +856,7 @@ impl PyLifterOptions {
         Self {
             cfg,
             assumptions: self.assumptions.clone_ref(py),
+            assumptions_given: self.assumptions_given,
             compact: self.compact,
             per_address_ccs: self.per_address_ccs.clone(),
             resolve_indirect_branches: self.resolve_indirect_branches,
