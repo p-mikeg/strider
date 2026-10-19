@@ -850,8 +850,6 @@ fn output_kind_eq(a: &OutputKindSpec, b: &OutputKindSpec) -> bool {
     }
 }
 
-/// [`KindSpec::VariantWith`] carries a closure, so two of them are never known
-/// to agree.
 fn kind_spec_interchangeable(a: &KindSpec, b: &KindSpec) -> bool {
     match (a, b) {
         (KindSpec::Any, KindSpec::Any) => true,
