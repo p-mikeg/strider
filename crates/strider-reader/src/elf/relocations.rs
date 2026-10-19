@@ -61,8 +61,9 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 /// STN_UNDEF is not computed.
 ///
 /// On an ET_REL an undefined or `SHN_COMMON` symbol resolves to its
-/// [`ElfSectionLayout::extern_address`], outside every mapping. An undefined
-/// `STB_WEAK` one is the exception: see `Target::weak_undefined`.
+/// [`ElfSectionLayout::extern_address`](super::sections::ElfSectionLayout::extern_address),
+/// outside every mapping. An undefined `STB_WEAK` one is the exception: see
+/// `Target::weak_undefined`.
 ///
 /// An instruction field is read and written in the instruction byte order,
 /// which on AArch64 is little-endian whatever `EI_DATA` says; a data field
