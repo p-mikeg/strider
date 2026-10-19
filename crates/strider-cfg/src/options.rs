@@ -66,8 +66,8 @@ pub struct CfgOptions<'a> {
     pub no_return_targets: &'a FxHashSet<u64>,
     /// Caller classifications for user-op names, consulted before the built-in
     /// tables.  One override governs both the region terminator and the
-    /// emitted node.
-    pub call_other_overrides: strider_target::call_other_abi::CallOtherOverrides,
+    /// emitted node. Borrowed, as `known_targets` is.
+    pub call_other_overrides: &'a strider_target::call_other_abi::CallOtherOverrides,
     /// Bytes the image marks as data (ELF `$d` mapping symbols), which the
     /// builder decodes only for the instruction at the start address; see
     /// [`crate::Reason::UndecodableTarget`].
@@ -113,7 +113,7 @@ impl Default for CfgOptions<'_> {
             known_targets: &NO_TARGETS,
             derived_targets: &NO_TARGETS,
             no_return_targets: &NO_NO_RETURN_TARGETS,
-            call_other_overrides: Default::default(),
+            call_other_overrides: &strider_target::call_other_abi::NO_OVERRIDES,
             data_ranges: DataRanges::default(),
         }
     }
@@ -211,6 +211,10 @@ mod tests {
         assert!(std::ptr::eq(a.known_targets, b.known_targets));
         assert!(std::ptr::eq(a.known_targets, &NO_TARGETS));
         assert!(std::ptr::eq(a.derived_targets, &NO_TARGETS));
+        assert!(std::ptr::eq(
+            a.call_other_overrides,
+            &strider_target::call_other_abi::NO_OVERRIDES
+        ));
     }
 
     #[test]

@@ -366,8 +366,8 @@ mod tests {
         }
     }
 
-    /// The cfg borrows the caller's table and the loop's own, however many
-    /// folds and freezes ran: the loop never copies the seeds.
+    /// The cfg borrows the caller's tables and the loop's own, however many
+    /// folds and freezes ran: the loop never copies the seeds or overrides.
     #[test]
     fn the_cfg_borrows_the_callers_table_after_folds_and_freezes() {
         let (_function, node) = fn_with_live_indirect_branch();
@@ -380,8 +380,14 @@ mod tests {
                 )
             })
             .collect();
+        let overrides = strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+            "trap".to_owned(),
+            strider_target::call_other_abi::CallOtherClass::NO_RETURN.into(),
+        )])
+        .expect("unique override names");
         let base = CfgOptions {
             known_targets: &seeds,
+            call_other_overrides: &overrides,
             ..CfgOptions::default()
         };
         let mut sites = SiteTable::new(&seeds);
@@ -397,6 +403,7 @@ mod tests {
         let opts = sites.cfg_options(&base);
         assert!(std::ptr::eq(opts.known_targets, &seeds));
         assert!(std::ptr::eq(opts.derived_targets, &sites.seats));
+        assert!(std::ptr::eq(opts.call_other_overrides, &overrides));
         assert_eq!(sites.seats.len(), 1, "the loop holds its own answers only");
     }
 
