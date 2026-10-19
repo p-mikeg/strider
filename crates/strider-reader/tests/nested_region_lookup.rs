@@ -1,64 +1,7 @@
-//! A read costs O(log regions), not O(regions below the address).
-//!
-//! Resolution used to walk candidates from the highest `start <= addr`
-//! downward, stopping once no earlier region could still reach the address.
-//! That bound is a PREFIX MAXIMUM, so one region spanning the image holds it
-//! above every interior address and the walk never stopped early. Section
-//! count is attacker-chosen (`SHN_XINDEX` lifts the 65535 header cap), so a
-//! crafted image made every read linear in it.
-//!
-//! Both halves of the answer now come from the max-end tree: the region fully
-//! covering the request, which is every instruction fetch, and the widest
-//! region at the address, which is every read no single region can serve.
+//! Which region a read resolves to where regions nest; the descent count is
+//! pinned by the lookup table's own unit tests.
 
-use std::time::Instant;
 use strider_reader::{MemRegion, MemRegionsLookupTable};
-
-/// One region spanning everything, plus `n` eight-byte regions tiling it.
-fn nested(n: u64) -> MemRegionsLookupTable {
-    // The outer region starts BELOW the first inner one: two regions sharing a
-    // start collapse to the later, which would drop the span this is about.
-    let mut regions = vec![MemRegion::new(0xFF8, vec![0x90; (n * 8 + 8) as usize]).expect("outer")];
-    for i in 0..n {
-        regions.push(MemRegion::new(0x1000 + i * 8, vec![0x90; 8]).expect("inner"));
-    }
-    MemRegionsLookupTable::new(regions)
-}
-
-fn micros_per_read(table: &MemRegionsLookupTable, addr: u64) -> f64 {
-    let mut buf = [0u8; 16];
-    for _ in 0..50 {
-        table.read(addr, &mut buf);
-    }
-    let iters = 500;
-    let t = Instant::now();
-    for _ in 0..iters {
-        std::hint::black_box(table.read(std::hint::black_box(addr), &mut buf));
-    }
-    t.elapsed().as_secs_f64() * 1e6 / f64::from(iters)
-}
-
-#[test]
-fn a_read_under_many_nested_regions_does_not_scale_with_their_count() {
-    // Near the TOP of each table, so the number of regions below the address
-    // (what the old walk visited) scales with the region count.
-    let small = nested(1_000);
-    let large = nested(64_000);
-    // Far enough from the top that the outer region still fully covers the
-    // request: that is the case an instruction fetch makes, and the one the
-    // max-end tree answers. Everything below it used to be walked first.
-    let t_small = micros_per_read(&small, 0x1000 + 990 * 8);
-    let t_large = micros_per_read(&large, 0x1000 + 63_900 * 8);
-
-    // 64x the regions. Linear would be ~64x the time; log is ~1x. A loose
-    // bound keeps this from flaking on a shared machine while still failing
-    // outright on a return to the linear walk.
-    assert!(
-        t_large < t_small * 8.0 + 5.0,
-        "64x the regions cost {t_large:.2}us/read against {t_small:.2}us: \
-         the lookup is scaling with region count"
-    );
-}
 
 /// The fast path must not change which bytes come back.
 #[test]
@@ -80,24 +23,4 @@ fn the_covering_region_still_wins_over_a_shorter_inner_one() {
 
     // Unmapped stays unmapped.
     assert_eq!(table.read(0x900, &mut [0u8; 4]), None);
-}
-
-/// The partial-read fallback: a request no region covers in full. It used to
-/// be the linear walk, since the prefix maximum never falls below an interior
-/// address while an outer region spans the image.
-#[test]
-fn a_partial_read_under_many_nested_regions_does_not_scale_with_their_count() {
-    // The last eight bytes of the outer region: every region starting at or
-    // below it reaches past it, and none of them holds sixteen bytes.
-    let partial_read_addr = |n: u64| 0xFF8 + n * 8;
-    let small = nested(1_000);
-    let large = nested(64_000);
-    let t_small = micros_per_read(&small, partial_read_addr(1_000));
-    let t_large = micros_per_read(&large, partial_read_addr(64_000));
-
-    assert!(
-        t_large < t_small * 8.0 + 5.0,
-        "64x the regions cost {t_large:.2}us/read against {t_small:.2}us: \
-         the partial-read fallback is scaling with region count"
-    );
 }
