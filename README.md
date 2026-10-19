@@ -38,7 +38,7 @@ cfg, function, unresolved = prog.analyze("array_sum")
 base, off = Capture("base"), Capture("off")
 pattern = load(addr=int_add(base, int_const(off)))
 for hit in function.find_all(pattern, ignore_casts=True):
-    print("offset =", hit[off].uint)   # 4 and 8: the two stack arguments
+    print("offset =", hit.uint(off))   # 4 and 8: the two stack arguments
 
 # The explorer draws the whole graph, pannable and zoomable;
 # visualize(whole=False) opens on the neighborhood around the entry instead,
