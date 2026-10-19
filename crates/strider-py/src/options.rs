@@ -447,8 +447,8 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 /// analyses honours.
 ///
 /// An omitted or `None` field takes the analysis default, as listed above.
-#[pyclass(name = "AssumptionOptions", module = "strider.lift")]
-#[derive(Clone, Default)]
+#[pyclass(eq, name = "AssumptionOptions", module = "strider.lift")]
+#[derive(Clone, Default, PartialEq)]
 pub struct PyAssumptionOptions {
     pub(crate) inner: AssumptionOptions,
 }
