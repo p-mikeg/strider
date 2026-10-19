@@ -476,9 +476,10 @@ pub(crate) fn compile_operand_template(ob: &Bound<'_, PyAny>) -> PyResult<DynTem
     if let Ok(t) = ob.downcast::<crate::template::PyTemplate>() {
         return t.borrow().repr.compile_template(py);
     }
-    // A `Pat` only matches; one nested here is named by its constructor.
     if let Ok(p) = ob.downcast::<PyPat>() {
-        return Err(rhs_error(p.borrow().repr.name()));
+        return Err(into_strider_err(anyhow::anyhow!(pat_rhs_message(
+            p.borrow().repr.name()
+        ))));
     }
     // A raw int builds an `int_const(value)` on the RHS too.
     if let Some(v) = extract_int_operand(ob)? {
@@ -763,6 +764,15 @@ fn mc<P: MatchPat>(p: P, b: &mut MatcherBuilder) -> PatValueRef {
 
 fn tc<P: TemplatePat>(p: P, b: &mut TemplateBuilder) -> TmplValueRef {
     p.compile(b)
+}
+
+/// The refusal of a `Pat` on a rewrite RHS, at the top or nested.
+fn pat_rhs_message(name: &str) -> String {
+    format!(
+        "cannot use {name} as a rewrite RHS: a strider.pattern Pat only \
+         matches; build it with strider.template (e.g. template.var(c), \
+         template.int_const(v))"
+    )
 }
 
 fn rhs_error(kind: &str) -> PyErr {
@@ -1507,11 +1517,34 @@ impl PatLike<'_> {
 /// Rewrite-RHS input, separate from the match-side `PatLike` so
 /// `Function.rewrite` / `rewrite_all` type `replace` against the build-valid
 /// `Template`.
-#[derive(FromPyObject)]
 pub enum TemplateLike<'py> {
     Template(Bound<'py, crate::template::PyTemplate>),
     Capture(Bound<'py, PyCapture>),
     Str(Bound<'py, PyString>),
+}
+
+impl<'py> FromPyObject<'py> for TemplateLike<'py> {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        if let Ok(t) = ob.downcast::<crate::template::PyTemplate>() {
+            return Ok(Self::Template(t.clone()));
+        }
+        if let Ok(c) = ob.downcast::<PyCapture>() {
+            return Ok(Self::Capture(c.clone()));
+        }
+        if let Ok(s) = ob.downcast::<PyString>() {
+            return Ok(Self::Str(s.clone()));
+        }
+        let msg = match ob.downcast::<PyPat>() {
+            Ok(p) => pat_rhs_message(p.borrow().repr.name()),
+            Err(_) => format!(
+                "cannot use {} as a rewrite RHS: expected a strider.template \
+                 Template, a Capture or a capture name (an int constant is \
+                 template.int_const(v))",
+                operand_kind_name(ob)
+            ),
+        };
+        Err(pyo3::exceptions::PyTypeError::new_err(msg))
+    }
 }
 
 impl TemplateLike<'_> {
