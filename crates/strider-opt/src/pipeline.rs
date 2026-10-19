@@ -177,9 +177,8 @@ fn apply_checked(
 }
 
 /// Post-pass sibling of [`run_one`]: merges `octx`'s claims into the
-/// function's, keeping the memory classes unless a claim it adds outdates
-/// them.  A claim it adds drops the classes;
-/// [`crate::refresh_memory_classes`] restamps them.
+/// function's; a claim it adds drops the memory classes, which
+/// [`crate::refresh_memory_classes`] restamps.
 ///
 /// # Errors
 ///
@@ -190,7 +189,10 @@ pub fn run_post(
     function: &mut strider_ir::Function,
     octx: &mut OptCtx<'_>,
 ) -> crate::Result<()> {
-    function.side_tables_mut().assume(&octx.options.assumptions);
+    let st = function.side_tables_mut();
+    if st.assume(&octx.options.assumptions) {
+        st.invalidate_analyses();
+    }
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     pass.apply(&mut edit, octx)?;
@@ -659,6 +661,42 @@ mod tests {
             ..crate::AssumptionOptions::none()
         };
         assert_eq!(function.assumptions(), &expected);
+        Ok(())
+    }
+
+    /// `run_post` keeps a memo when it adds no claim and drops it when it
+    /// adds one.
+    #[test]
+    fn run_post_drops_the_memos_only_when_it_adds_a_claim() -> crate::Result<()> {
+        #[derive(Clone)]
+        struct NoOpPost;
+        impl super::PostOptimizer for NoOpPost {
+            fn apply(
+                &self,
+                _edit: &mut crate::EditFunction<'_>,
+                _ctx: &mut OptCtx<'_>,
+            ) -> crate::Result<()> {
+                Ok(())
+            }
+        }
+
+        let mut function = one_const_fn(5);
+        let returned = crate::test_support::return_value(function.graph())?;
+        function
+            .side_tables()
+            .set_stack_slot(returned, returned, 16);
+        super::run_post(&NoOpPost, &mut function, &mut OptCtx::at_floor(None))?;
+        assert!(
+            function.side_tables().memory_decomp(returned).1.is_some(),
+            "no claim added, the memo stands"
+        );
+        let mut escaping = OptCtx::at_floor(None);
+        escaping.options.assumptions.escape_analysis = true;
+        super::run_post(&NoOpPost, &mut function, &mut escaping)?;
+        assert!(
+            function.side_tables().memory_decomp(returned).1.is_none(),
+            "a claim run_post adds drops the memo"
+        );
         Ok(())
     }
 

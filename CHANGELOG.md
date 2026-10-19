@@ -496,7 +496,7 @@
   pass already boxed.
 - `Function::assumptions` and `SideTables::assumptions` / `assume`: the
   claims in force, which every pass reads, and the one verb that adds to
-  them.
+  them, returning whether it added one.
 - `strider_opt::refresh_memory_classes`: re-derives what `stack_only()` /
   `heap_only()` read after an edit made outside a pipeline.
 - `EditFunction::absorb_node_fingerprint` (the node-keyed
@@ -573,7 +573,8 @@
 - `matcher::KindSpec` implements `PartialEq` and `Eq`.
 - `strider_ir::AssumptionOptions`, still re-exported as
   `strider_opt::AssumptionOptions`: `union_with` adds every claim another
-  set holds, `omitted_by` names the claims another set lacks, and it derives
+  set holds, `omitted_by` names the claims another set lacks, `holds_all`
+  answers whether it holds every claim of another, and it derives
   `PartialEq` / `Eq`.
 
 ## 0.2.0
