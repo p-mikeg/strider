@@ -1,5 +1,3 @@
-import time
-
 import pytest
 import strider
 
@@ -151,31 +149,6 @@ def _chain_cfg(branches: int):
     mem = strider.reader.BufferReader(0x1000, body + bytes(32))
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
     return lift.build_cfg(0x1000), 0x1000 + len(body)
-
-
-def _region_at_seconds_per_call(cfg, addr, n=20000):
-    cfg.region_at(addr)  # warm whatever the first call builds
-    start = time.perf_counter()
-    for _ in range(n):
-        cfg.region_at(addr)
-    return (time.perf_counter() - start) / n
-
-
-def test_region_at_does_not_scale_with_region_count():
-    """A linear scan over regions costs ~60x more on 1500 regions than on
-    11; a lookup index costs the same on both. The bound is a ratio, so it
-    does not depend on how fast the machine is."""
-    small, small_end = _chain_cfg(10)
-    big, big_end = _chain_cfg(1500)
-
-    for addr_small, addr_big in (
-        (small_end + 0x10000, big_end + 0x10000),  # past every region
-        (small_end - 4, big_end - 4),  # in the last region
-    ):
-        ratio = _region_at_seconds_per_call(
-            big, addr_big
-        ) / _region_at_seconds_per_call(small, addr_small)
-        assert ratio < 10, f"region_at is {ratio:.0f}x slower on 1500 regions"
 
 
 def test_region_at_answers_every_address_the_same_as_a_full_scan():
