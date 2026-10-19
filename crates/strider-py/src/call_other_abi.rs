@@ -66,6 +66,11 @@ impl PyCallOtherAbi {
             _ => None,
         }
     }
+
+    /// `source_arch`'s preset, which identifies it without reading the sla.
+    fn source_preset(&self) -> Option<strider_target::ArchPreset> {
+        self.source_arch.map(|a| a.preset())
+    }
 }
 
 #[pymethods]
@@ -219,10 +224,10 @@ impl PyCallOtherAbi {
 
     /// Equality on the footprint, memory effect, no-return flag and the arch a
     /// `custom` froze its varnodes against.  A `custom` never equals a preset,
-    /// and two `custom`s frozen on different arches never equal each other,
-    /// since neither is usable where the other is.
+    /// and two `custom`s frozen on different presets never equal each other,
+    /// even over one sla.
     fn __eq__(&self, other: &Self) -> bool {
-        self.source_arch == other.source_arch
+        self.source_preset() == other.source_preset()
             && self.is_noop() == other.is_noop()
             && self.reads == other.reads
             && self.writes == other.writes
@@ -234,7 +239,7 @@ impl PyCallOtherAbi {
     fn __hash__(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut h = rustc_hash::FxHasher::default();
-        self.source_arch.hash(&mut h);
+        self.source_preset().hash(&mut h);
         self.is_noop().hash(&mut h);
         self.reads.hash(&mut h);
         self.writes.hash(&mut h);
