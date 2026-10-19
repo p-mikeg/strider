@@ -42,6 +42,28 @@ impl OutputSpec {
             width: None,
         }
     }
+
+    pub(crate) fn capture(slot: Option<usize>, c: Capture) -> Self {
+        Self {
+            capture: Some(c),
+            ..Self::at(slot)
+        }
+    }
+
+    /// Implies a value output of that width.
+    pub(crate) fn width(slot: Option<usize>, bits: u32) -> Self {
+        Self {
+            width: Some(bits),
+            ..Self::at(slot)
+        }
+    }
+
+    pub(crate) fn ty(slot: Option<usize>, ty: ValueType) -> Self {
+        Self {
+            ty: Some(ty),
+            ..Self::at(slot)
+        }
+    }
 }
 
 pub(crate) struct NodePat {
@@ -184,27 +206,18 @@ impl NodePat {
     /// Binds a *sibling* output of the anchor. A leaf: it captures the output
     /// value itself and does not recurse into what that output feeds.
     pub(crate) fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
-        self.outputs.push(OutputSpec {
-            capture: Some(c),
-            ..OutputSpec::at(slot)
-        });
+        self.outputs.push(OutputSpec::capture(slot, c));
         self
     }
 
     /// Implies a value output of that width.
     pub(crate) fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
-        self.outputs.push(OutputSpec {
-            width: Some(bits),
-            ..OutputSpec::at(slot)
-        });
+        self.outputs.push(OutputSpec::width(slot, bits));
         self
     }
 
     pub(crate) fn output_ty(mut self, slot: Option<usize>, ty: ValueType) -> Self {
-        self.outputs.push(OutputSpec {
-            ty: Some(ty),
-            ..OutputSpec::at(slot)
-        });
+        self.outputs.push(OutputSpec::ty(slot, ty));
         self
     }
 
@@ -248,34 +261,7 @@ impl NodePat {
             }
             b.input(node, slot, o);
         }
-        // Sibling-output vertices: at a pinned slot, or enumerated over every
-        // slot for `any_output()`.
-        for spec in outputs {
-            let out = match spec.slot {
-                // The pin is what a single-vertex node (`switch`) needs: with
-                // no second vertex to pick between, the root lookup takes the
-                // only one and the slot would go unchecked.
-                Some(slot) => {
-                    let out = b.value_output(node, slot);
-                    b.set_value_out_slot(out, slot);
-                    out
-                }
-                None => b.any_slot_value_output(node),
-            };
-            match (spec.ty, spec.width) {
-                (Some(ty), _) => b.set_value_ty(out, ty),
-                // Without a type pin, relax to the wildcard so a control or
-                // memory sibling output can still bind. A width pin below
-                // still narrows it to a value of that width.
-                (None, _) => b.set_output_any(out),
-            }
-            if let Some(bits) = spec.width {
-                b.set_value_width(out, bits);
-            }
-            if let Some(c) = spec.capture {
-                b.capture_output(out, c);
-            }
-        }
+        lower_outputs(b, node, outputs);
         if let Some(factory) = node_predicate {
             b.set_node_predicate_at(node, factory());
         }
@@ -310,6 +296,37 @@ impl NodePat {
     pub(crate) fn compile_alt_arm(self, b: &mut MatcherBuilder) -> PatValueRef {
         let (node, anchor) = self.lower(b);
         anchor.unwrap_or_else(|| b.any_value_output(node))
+    }
+}
+
+/// Sibling-output vertices on `node`: at a pinned slot, or enumerated over
+/// every slot for `any_output()`.
+pub(crate) fn lower_outputs(b: &mut MatcherBuilder, node: PatNodeRef, outputs: Vec<OutputSpec>) {
+    for spec in outputs {
+        let out = match spec.slot {
+            // The pin is what a single-vertex node (`switch`) needs: with no
+            // second vertex to pick between, the root lookup takes the only
+            // one and the slot would go unchecked.
+            Some(slot) => {
+                let out = b.value_output(node, slot);
+                b.set_value_out_slot(out, slot);
+                out
+            }
+            None => b.any_slot_value_output(node),
+        };
+        match (spec.ty, spec.width) {
+            (Some(ty), _) => b.set_value_ty(out, ty),
+            // Without a type pin, relax to the wildcard so a control or memory
+            // sibling output can still bind. A width pin below still narrows it
+            // to a value of that width.
+            (None, _) => b.set_output_any(out),
+        }
+        if let Some(bits) = spec.width {
+            b.set_value_width(out, bits);
+        }
+        if let Some(c) = spec.capture {
+            b.capture_output(out, c);
+        }
     }
 }
 
