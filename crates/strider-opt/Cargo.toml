@@ -39,6 +39,8 @@ strider-ir = { workspace = true, features = ["test-util"] }
 strider-graph = { workspace = true, features = ["test-injectors"] }
 strider-ir-test-utils = { workspace = true }
 criterion.workspace = true
+# The instantiation-order check on every built-in rule template.
+strider-pattern = { workspace = true, features = ["test-util"] }
 
 [[bench]]
 name = "pipeline"
