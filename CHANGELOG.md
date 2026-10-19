@@ -383,6 +383,8 @@
   computed with the symbol taken as 0.
 - Python: `.when()` on a `function_arg(..)` nested as an operand runs; it
   was dropped, so the operand matched every argument its builder named.
+- A pattern dropped from a thread-local destructor after strider-pattern's
+  drop pit was torn down aborted the process; it is dropped in place.
 
 ### Added, Rust
 
@@ -475,6 +477,8 @@
   INDIRECT_BRANCH_TARGET_SLOT, SWITCH_SELECTOR_SLOT}`: the input slots of the
   control predecessor, the memory token after it, a `Load` / `Store`'s memory
   token, an `IndirectBranch`'s target and a `Switch`'s selector.
+- `strider_pattern::node_builders::defer_drop`, the drop pit that frees a
+  deep operand tower without recursing; strider-py's own copy is gone.
 
 ## 0.2.0
 
