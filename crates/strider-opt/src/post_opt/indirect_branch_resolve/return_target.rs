@@ -84,13 +84,13 @@ enum StoreEffect {
 }
 
 impl<'f> ReturnTargets<'f> {
-    /// The verifier for `function`'s return sites under `assumptions`, with no
+    /// The verifier for `function`'s return sites under its claims, with no
     /// claim decided yet; each query reuses the claims earlier ones settled.
     #[must_use]
-    pub fn new(function: &'f Function, assumptions: &'f crate::AssumptionOptions) -> Self {
+    pub fn new(function: &'f Function) -> Self {
         Self {
             function,
-            assumptions,
+            assumptions: function.assumptions(),
             settled: FxHashMap::default(),
             doms: None,
             feasible: FxHashMap::default(),

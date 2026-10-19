@@ -116,8 +116,7 @@ where
         // the classifier reads the IR the pipeline settled on.
         let strider_opt::ClassifiedSites { sites, resolved } =
             classify(&function, rom_ref, &opts.opt)?;
-        let unverified_returns =
-            settle_return_sites(&mut function, &return_sites, &opts.opt.assumptions);
+        let unverified_returns = settle_return_sites(&mut function, &return_sites);
         // The truncation drops only a data input, never a dispatch node, so
         // the sites listed before it are the live ones after it.
         let live: FxHashSet<NodeId> = sites.into_iter().collect();
@@ -171,22 +170,21 @@ pub(super) fn flowing_isa_bits(
 /// Each target is taken back off the `Return` [`Strider::build_round`] anchored
 /// it on.
 ///
-/// Verification reads the assumption set the caller gave: a claim that holds
-/// keeps the verdict right, and a claim that does not is the caller's. There
-/// is no second, claim-cleared run to measure what a claim bought, because
-/// nothing downstream would act on the difference.
+/// Verification reads the claims the round's pipeline merged into `function`:
+/// a claim that holds keeps the verdict right, and a claim that does not is
+/// the caller's. There is no second, claim-cleared run to measure what a claim
+/// bought, because nothing downstream would act on the difference.
 ///
 /// A site the pipeline culled took its `Return` with it.
 pub(super) fn settle_return_sites(
     function: &mut strider_ir::Function,
     sites: &[strider_lift::lift::ReturnSite],
-    assumptions: &strider_opt::AssumptionOptions,
 ) -> Vec<PcodeInsnAddr> {
     let mut unverified = Vec::new();
     let mut live = Vec::with_capacity(sites.len());
     let mut edit = strider_opt::EditFunction::new(function);
     {
-        let mut targets = strider_opt::ReturnTargets::new(edit.function(), assumptions);
+        let mut targets = strider_opt::ReturnTargets::new(edit.function());
         for &(addr, ret, _) in sites {
             if !edit.is_live(ret) {
                 continue;
