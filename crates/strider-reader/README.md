@@ -23,13 +23,12 @@ image's writable addresses, from one parse.
   `RelocationMode::Applied { got_is_rom }` serves the fields this loader
   relocates, and with `got_is_rom` its `.got` / `.data.rel.ro` as ROM.
 - `load_elf(path)`: memory-map an ELF into an `OwnedElf`; `OwnedElf::parse`
-  takes bytes already in memory. `OwnedElf::regions(source, filter, relocate)`:
-  one region set cut from those bytes; several sets (a fetch image and its ROM
-  subset) share the one buffer.
-- Section helpers under `elf::`: `RegionSource` / `LoadFilter` pick what a
-  region set is cut from; `ImmutableAndRelocatedGot` requires `relocate`, that
-  being the claim it makes, and serves only a `.got` / `.data.rel.ro` the
-  loader really maps writable. `ElfSectionLayout` lays out an ET_REL's
+  takes bytes already in memory. `OwnedElf::image(source, mode)`: the fetch
+  and ROM region sets and the writable addresses `mode` picks, from one parse;
+  the sets share the one buffer. (`OwnedElf::regions` and `elf::LoadFilter`,
+  the per-filter sets `image` is cut from, need the `test-util` feature.)
+- Section helpers under `elf::`: `RegionSource` picks what a region set is cut
+  from. `ElfSectionLayout` lays out an ET_REL's
   colliding sections and mints each undefined symbol's `extern_address`,
   `OpdTable` resolves a ppc64 ELFv1 function symbol through its `.opd`
   descriptor, and
@@ -51,7 +50,7 @@ The file must not change on disk while it is mapped. `load_elf` stats the file
 it just mapped and holds the fd, so the check follows that inode rather than the
 path.
 
-Checked at the top of an operation, one `stat` each: `OwnedElf::regions` and
+Checked at the top of an operation, one `stat` each: `OwnedElf::image` and
 `OwnedElf::checked_file` run it themselves, and `check_unchanged` on
 `OwnedElf`, `ElfFileMemReader`, `MemRegion` and `MemRegionsLookupTable` runs
 it on demand, one `stat` per mapping rather than per region. A binary rebuilt
