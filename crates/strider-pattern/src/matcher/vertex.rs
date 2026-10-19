@@ -74,6 +74,15 @@ pub struct WalkCaptures {
     pub guaranteed: Vec<crate::capture::Capture>,
 }
 
+/// Where a pattern input sits on its consumer: one IR input slot, or any of
+/// them (`any_input`). A sub reaches the slots of its own output kind; a
+/// wildcard reaches any input, control / memory / `PhiToken` slots included.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum InputSlot {
+    At(usize),
+    Any,
+}
+
 pub struct PatNode {
     pub kind: KindSpec,
     /// Binds the matched *node* (`Binding::Node`). Only for value-less roots
@@ -103,11 +112,12 @@ pub struct PatNode {
     /// Consumer input slot per input, parallel to the generic graph's input
     /// order. A pattern's inputs are sparse (`call().arg(0, ..)` wires only
     /// raw slot 4), so the original slot is recorded here.
-    pub input_slots: Vec<usize>,
+    pub input_slots: Vec<InputSlot>,
 }
 
 impl crate::graph_ext::HasInputSlots for PatNode {
-    fn input_slots(&self) -> &[usize] {
+    type Slot = InputSlot;
+    fn input_slots(&self) -> &[InputSlot] {
         &self.input_slots
     }
 }

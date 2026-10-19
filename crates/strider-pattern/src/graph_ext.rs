@@ -9,16 +9,19 @@ use graph_algorithms::walk::{GraphRef, PreOrder, acyclic_postorder};
 use strider_graph::{Graph, NeverCacheable, NodeId, ValueId};
 
 pub(crate) trait HasInputSlots {
+    /// A plain index on the build side; on the match side an existential
+    /// names no index.
+    type Slot: Copy;
     /// Consumer slots, one per input, parallel to the generic graph's input
     /// order.
-    fn input_slots(&self) -> &[usize];
+    fn input_slots(&self) -> &[Self::Slot];
 }
 
 /// Recovers each input's sparse consumer slot from the node payload.
 pub(crate) fn consumed_inputs<N: HasInputSlots, V>(
     graph: &Graph<N, V, NeverCacheable>,
     node: NodeId,
-) -> Vec<(usize, ValueId)> {
+) -> Vec<(N::Slot, ValueId)> {
     let slots = graph.node_kind(node).input_slots();
     graph
         .node_inputs(node)

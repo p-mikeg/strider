@@ -26,7 +26,8 @@ pub struct PatNodeRef(pub(crate) usize);
 // The match side seals into the same `PatNode` type it stages.
 impl SealNode for PatNode {
     type Sealed = PatNode;
-    fn seal(mut self, input_slots: Vec<usize>) -> PatNode {
+    type Slot = crate::matcher::InputSlot;
+    fn seal(mut self, input_slots: Vec<crate::matcher::InputSlot>) -> PatNode {
         self.input_slots = input_slots;
         self
     }
@@ -202,6 +203,21 @@ impl MatcherBuilder {
     }
 
     pub fn input(&mut self, node: PatNodeRef, slot: usize, prod: PatValueRef) {
+        self.wire(node, crate::matcher::InputSlot::At(slot), prod);
+    }
+
+    /// Existential: `prod` matches *some* input of the node rather than a
+    /// fixed one; see [`InputSlot::Any`](crate::matcher::InputSlot::Any).
+    pub fn input_any(&mut self, node: PatNodeRef, prod: PatValueRef) {
+        self.wire(node, crate::matcher::InputSlot::Any, prod);
+    }
+
+    pub(crate) fn wire(
+        &mut self,
+        node: PatNodeRef,
+        slot: crate::matcher::InputSlot,
+        prod: PatValueRef,
+    ) {
         self.core.add_input(node.0, slot, prod.node, prod.output);
     }
 

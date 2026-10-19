@@ -175,6 +175,8 @@
   `KindSpec`, and `set_template_kind` is gone: `dynamic_leaf(TemplateKind)`
   builds a leaf whose kind or constant a closure computes. A non-exact spec
   became an `IntConst` with the target function's constant id 0.
+- `PatNode::input_slots` holds `matcher::InputSlot` (`At(slot)` or `Any`)
+  instead of a `usize` with `usize::MAX` marking an existential.
 
 ### Changed, Python
 
@@ -332,6 +334,9 @@
 - `instantiate` refuses a template `IntConst` built from a `NodeKind`: its
   `ConstId` belongs to another function's interner, so it named whatever
   constant held that id in the rewritten one.
+- A raw `.input(usize::MAX, p)` (`MatcherBuilder::input` and the builders'
+  `input`) names slot `usize::MAX`, so it matches nothing; it meant
+  `any_input`.
 
 ### Fixed
 
@@ -479,6 +484,7 @@
   token, an `IndirectBranch`'s target and a `Switch`'s selector.
 - `strider_pattern::node_builders::defer_drop`, the drop pit that frees a
   deep operand tower without recursing; strider-py's own copy is gone.
+- `MatcherBuilder::input_any(node, prod)`, the raw existential input.
 
 ## 0.2.0
 
