@@ -1,6 +1,6 @@
 use alloc::vec::Vec;
 
-use cranelift_entity::EntityRef;
+use cranelift_entity::{EntityRef, SecondaryMap};
 
 use entity_utils::set::DenseEntitySet;
 
@@ -166,4 +166,38 @@ where
             }
         }
     }
+}
+
+/// [`PostOrder`] of what `roots` reach, every node after its successors, or
+/// `Err(node)` for the first node found with a successor on the current DFS
+/// path, which puts it on a cycle. Asks each reached node for its successors
+/// twice.
+pub fn acyclic_postorder<G: GraphRef>(
+    graph: G,
+    roots: impl IntoIterator<Item = G::NodeId>,
+) -> Result<Vec<G::NodeId>, G::NodeId>
+where
+    G::NodeId: EntityRef,
+{
+    let mut walk = PostOrder::new(&graph, roots);
+    // Not a `DenseEntitySet`: dropping its maximum costs O(max_index / 64).
+    let mut on_path: SecondaryMap<G::NodeId, bool> = SecondaryMap::new();
+    let mut order = Vec::new();
+    while let Some((phase, node)) = walk.next_event() {
+        match phase {
+            WalkPhase::Pre => {
+                on_path[node] = true;
+                let mut back = false;
+                graph.successors(node, |succ| back |= on_path[succ]);
+                if back {
+                    return Err(node);
+                }
+            }
+            WalkPhase::Post => {
+                on_path[node] = false;
+                order.push(node);
+            }
+        }
+    }
+    Ok(order)
 }

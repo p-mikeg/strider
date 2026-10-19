@@ -447,6 +447,9 @@
   `edge-read-count` feature, and `strider_ir::EditFunction::uses_moved()`
   behind `test-util`. The scaling tests count edges read, uses moved, bytes
   allocated and tree descents instead of timing a ratio.
+- `graph_algorithms::walk::acyclic_postorder(graph, roots)`: the post-order
+  of what the roots reach, every node after its successors, or `Err(node)`
+  for a node with a successor on the DFS path, which is on a cycle.
 
 ## 0.2.0
 
