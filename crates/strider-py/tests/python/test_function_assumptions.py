@@ -10,7 +10,7 @@ import pytest
 
 import strider
 from strider.lift import AssumptionOptions, LifterOptions
-from strider.pattern import load, store
+from strider.pattern import load
 
 _BASE = 0x1000
 _IGNORE = strider.lift.OnIncomplete.IGNORE  # under `none()` the return is unverified
@@ -114,10 +114,18 @@ def test_a_named_set_that_omits_a_claim_in_force_raises():
         ),
     ) as raised:
         lift.optimize(g, opts=narrower)
-    assert "f.assumptions | AssumptionOptions.none(escape_analysis=True)" in str(
-        raised.value
-    )
-    assert len(g.find_all(store().heap_only())) == 1, "a refused optimize ran"
+    assert "function.assumptions | <your set>" in str(raised.value)
+
+
+def test_a_refused_optimize_runs_nothing():
+    """Had it run, the defaults it names would forward the reload."""
+    lift, g = _analyzed(_SPILL_CODE, AssumptionOptions.none(noalias_allocators=[_ALLOCATOR]))
+    assert len(g.find_all(load())) == 1, "the reload stays without the claim"
+    before = _claims(g.assumptions)
+    with pytest.raises(strider.StriderError, match="noalias_allocators"):
+        lift.optimize(g, opts=LifterOptions(assumptions=AssumptionOptions()))
+    assert len(g.find_all(load())) == 1, "a refused optimize ran"
+    assert _claims(g.assumptions) == before
 
 
 def test_the_omission_names_only_the_missing_allocators():

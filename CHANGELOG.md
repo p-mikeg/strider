@@ -57,6 +57,13 @@
   / `CallOtherAbi.custom` take the `SleighArch` as `sleigh=`; anything else
   there raises `TypeError: argument 'sleigh': ... cannot be converted to
   'SleighArch'`; `Sleigh(..).arch_name()` is `SleighArch.name()`.
+- `Lifter.optimize` adds the claims `opts.assumptions` names to the function's
+  and withdraws none. `opts=None`, or a `LifterOptions` built without
+  `assumptions=`, adds nothing, where it applied the three default claims; a
+  set that leaves out a claim already in force raises `StriderError` naming
+  it, and each missing allocator address. Pass
+  `function.assumptions | AssumptionOptions.none(escape_analysis=True)` to add
+  one; analyse again to drop one.
 
 ### Breaking, Rust
 
@@ -301,13 +308,6 @@
 - `CfgOptions(call_other_abis=...)` is resolved on first use, rebuilt only
   when the arch changes, and borrowed by every later `analyze` and
   `build_cfg` through it, where each call rebuilt it.
-- `Lifter.optimize` adds the claims `opts.assumptions` names to the function's
-  and withdraws none. `opts=None`, or a `LifterOptions` built without
-  `assumptions=`, adds nothing, where it applied the three default claims; a
-  set that leaves out a claim already in force raises `StriderError` naming
-  it, and each missing allocator address. Pass
-  `function.assumptions | AssumptionOptions.none(escape_analysis=True)` to add
-  one; analyse again to drop one.
 
 ### Added, Python
 
