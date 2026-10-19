@@ -118,6 +118,15 @@ impl PyFunction {
         self.cfg.clone_ref(py)
     }
 
+    /// The claims in force: the ones `analyze` ran under, plus every set
+    /// `Lifter.optimize` added since. A copy; no optimize withdraws a claim.
+    #[getter]
+    fn assumptions(&self) -> PyResult<crate::options::PyAssumptionOptions> {
+        self.with_read_value(|f| crate::options::PyAssumptionOptions {
+            inner: f.assumptions().clone(),
+        })
+    }
+
     /// Render the IR graph to Graphviz DOT. Returns the string when `path` is
     /// `None`, else writes it to `path` and returns `None`.
     ///

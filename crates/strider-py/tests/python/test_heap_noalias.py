@@ -88,9 +88,9 @@ def test_optimize_keeps_the_allocator_set_analyze_ran_under():
 
 
 def test_optimize_updates_the_allocator_set_rewrite_uses():
-    """`optimize` is the other writer of the recorded allocator set: a set
-    handed to it must reach a later `rewrite`, even though `analyze` ran
-    without one."""
+    """`optimize` merges the set its options name into the function's: an
+    allocator it adds reaches a later `rewrite`, though `analyze` ran without
+    one."""
     lift, g = _heap_function(allocators=())
     assert g.find_all(store().heap_only()) == []
     lift.optimize(

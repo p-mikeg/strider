@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Optional, Sequence, Union
 
 from .cfg import Cfg, DotStyle
+from .lift import AssumptionOptions
 from .pattern import (
     Capture,
     CaptureKey,
@@ -134,6 +135,12 @@ class Function:
     @property
     def cfg(self) -> "Cfg":
         """The `Cfg` this function was lifted from."""
+        ...
+    @property
+    def assumptions(self) -> AssumptionOptions:
+        """The claims in force: the ones `analyze` ran under, plus every set
+        `Lifter.optimize` added since. A copy; no optimize withdraws a claim,
+        so dropping one means analysing again without it."""
         ...
     def entry_node(self) -> int:
         """The node id of the function's `Entry` node."""

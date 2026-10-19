@@ -301,6 +301,13 @@
 - `CfgOptions(call_other_abis=...)` is resolved on first use, rebuilt only
   when the arch changes, and borrowed by every later `analyze` and
   `build_cfg` through it, where each call rebuilt it.
+- `Lifter.optimize` adds the claims `opts.assumptions` names to the function's
+  and withdraws none. `opts=None`, or a `LifterOptions` built without
+  `assumptions=`, adds nothing, where it applied the three default claims; a
+  set that leaves out a claim already in force raises `StriderError` naming
+  it, and each missing allocator address. Pass
+  `function.assumptions | AssumptionOptions.none(escape_analysis=True)` to add
+  one; analyse again to drop one.
 
 ### Added, Python
 
@@ -318,6 +325,13 @@
 - `.ordered()` on `inputs_of_width(n, x)` and `bool_inputs(x)` pins what it
   pins on `x`, as in Rust, when `x` is a pattern; it raised. Over a typed
   builder (`int_binary`, `bool_binary`, `float_binary`) it still raises.
+- `Function.assumptions` reads the claims in force on a function, as an
+  `AssumptionOptions`: the ones `analyze` ran under plus every set an
+  `optimize` added. `AssumptionOptions.union(other)`, or `a | b`, holds every
+  claim of both.
+- `AssumptionOptions.none(...)` takes the constructor's keywords and sets
+  only the claims named, so `none(escape_analysis=True)` is one claim where
+  `AssumptionOptions(escape_analysis=True)` is four.
 
 ### Changed, Rust
 
