@@ -87,9 +87,9 @@ pub enum TemplateTy {
 ///
 /// If the template is rootless, references an unbound capture, has a
 /// [`TemplateKind::Fn`] closure that itself errors, has gapped or duplicate
-/// input slots, has a node no width reaches, gives a node an input count, an
-/// output or an operand its node signature refuses, or if node creation yields
-/// no value output.
+/// input slots, has an `IntConst` built from a `NodeKind`, has a node no width
+/// reaches, gives a node an input count, an output or an operand its node
+/// signature refuses, or if node creation yields no value output.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
@@ -144,6 +144,12 @@ pub fn instantiate<B: IRBuilder>(
                 }
                 continue;
             }
+            // A `ConstId` indexes one function's interner; the constant has to
+            // be interned here, at the node's resolved width.
+            TmplNodeKind::Build(TemplateKind::Exact(NodeKind::IntConst(_))) => anyhow::bail!(
+                "template IntConst built from a NodeKind carries another function's \
+                 ConstId; build it with int_const or dynamic_leaf"
+            ),
             TmplNodeKind::Build(TemplateKind::Exact(k)) => *k,
             TmplNodeKind::Build(TemplateKind::Fn(f)) => {
                 // The closure computes its constant against this node's own
