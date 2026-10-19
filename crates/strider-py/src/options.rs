@@ -199,8 +199,8 @@ pub struct PyCfgOptions {
     /// nor a copy is charged per call. Shared with every clone, as the table
     /// it is built from is.
     pub(crate) seated: Arc<SeatedTargets>,
-    /// `call_other_abis` as `strider_cfg` borrows it, built on first use for
-    /// an arch. Shared with every clone, as the table it is built from is.
+    /// `call_other_abis` as `strider_cfg` borrows it, built on first use and
+    /// rebuilt when the arch changes. Shared with every clone, as the table it is built from is.
     overrides: Arc<std::sync::Mutex<OverridesMemo>>,
 }
 
@@ -226,8 +226,8 @@ pub(crate) type SeatedTargets =
     rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>;
 
 impl PyCfgOptions {
-    /// `call_other_abis` checked against and built for `target`, once per
-    /// arch rather than once per analyse.
+    /// `call_other_abis` checked against and built for `target`, rebuilt only
+    /// when the arch changes, not per analyse.
     pub(crate) fn call_other_overrides(
         &self,
         target: strider_target::SleighArch,
