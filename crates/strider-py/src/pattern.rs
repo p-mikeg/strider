@@ -2600,9 +2600,6 @@ macro_rules! builder_slot_methods {
             /// `expected_signature` (`strider-ir/src/node_signature.rs`) is
             /// the source of truth. This is the escape hatch beneath the named
             /// accessors, not a replacement for them.
-            ///
-            /// `usize::MAX` is the matcher's own "some input" sentinel, so an
-            /// index anywhere near it is rejected rather than read as one.
             fn input<'py>(
                 slf: PyRef<'py, Self>,
                 idx: usize,
