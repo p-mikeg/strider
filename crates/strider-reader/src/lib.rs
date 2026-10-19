@@ -770,7 +770,8 @@ mod tests {
         visits
     }
 
-    /// 64,001 regions make a 17-level tree; the walk down every lower start
+    /// 64,001 regions make a 17-level tree. A read walks a few root-to-leaf
+    /// paths, well under 16 nodes a level; the walk down every lower start
     /// this replaced visited them all.
     const DESCENT_BUDGET: u64 = 16 * 17;
 
@@ -778,7 +779,8 @@ mod tests {
     /// downward until no earlier region could reach the address, a bound one
     /// image-spanning region held above every interior address. Near the top
     /// of the table, where the outer region still covers the request: every
-    /// instruction fetch.
+    /// instruction fetch. Section count is attacker-chosen (`SHN_XINDEX` lifts
+    /// the 65535 cap), so that walk made a crafted image's every read linear.
     #[test]
     fn a_read_under_many_nested_regions_descends_one_path() {
         let table = nested(64_000);
@@ -791,14 +793,22 @@ mod tests {
 
     /// The outer region's last eight bytes: every region starting at or below
     /// reaches past them and none holds sixteen, so the covering descent
-    /// misses and the widest-serving fallback answers.
+    /// misses and the widest-serving fallback answers. The fallback is
+    /// counted on its own as well, since the miss alone meets the read's floor.
     #[test]
     fn a_partial_read_under_many_nested_regions_descends_one_path() {
         let table = nested(64_000);
-        let visits = descents_of_a_read(&table, 0xFF8 + 64_000 * 8, 8);
+        let addr = 0xFF8 + 64_000 * 8;
+        let visits = descents_of_a_read(&table, addr, 8);
         assert!(
             visits <= DESCENT_BUDGET,
             "a partial read visited {visits} tree nodes over 64001 regions"
+        );
+        DESCENTS.with(|n| n.set(0));
+        assert!(table.index.widest_at(addr).is_some());
+        assert!(
+            DESCENTS.with(std::cell::Cell::get) >= 1,
+            "the widest-serving fallback bypassed the max-end tree"
         );
     }
 }
