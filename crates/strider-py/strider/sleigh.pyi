@@ -1,11 +1,9 @@
-"""Type stubs for strider.sleigh: architecture, calling convention, and the
-low-level disassembler and varnode surface."""
+"""Type stubs for strider.sleigh: architecture, calling convention, user-op
+ABI and varnode surface."""
 
 from __future__ import annotations
 
-from typing import Optional, Union
-
-from .reader import BufferReader, MemReader
+from typing import Optional
 
 __all__: list[str]
 
@@ -173,7 +171,7 @@ class CallingConvention:
     @classmethod
     def custom(
         cls,
-        sleigh: Union[SleighArch, Sleigh],
+        sleigh: SleighArch,
         arg_passing_regs: list[str],
         callee_saved_regs: list[str],
         ret_val_regs: list[str],
@@ -196,8 +194,6 @@ class CallingConvention:
         `arg_passing_regs_float` names the float/vector argument registers;
         they are appended after `arg_passing_regs`, so the first one is
         `arg(len(arg_passing_regs))` in a `call()` pattern.
-
-        `sleigh` is the `SleighArch`, or a `Sleigh` built for one.
 
         Names are resolved and most ABI invariants checked here, so a bad one
         raises `StriderError` at construction. Among them:
@@ -273,33 +269,6 @@ class Vn:
     def __eq__(self, other) -> bool: ...
     def __hash__(self) -> int: ...
 
-class Sleigh:
-    """One architecture's register table, independent of any `Lifter`.
-
-    Kept until 0.3.0 removes it: a `SleighArch` does the same, as the
-    `sleigh=` argument of `CallingConvention.custom` and `CallOtherAbi.custom`
-    and through `SleighArch.reg` / `reg_name`. A `Lifter` forwards `reg` /
-    `reg_name` too.
-    """
-    def __init__(
-        self, arch: SleighArch, mem: Union[MemReader, BufferReader]
-    ) -> None:
-        """Probe `arch`'s register table, reading bytes from `mem`. Raises
-        `StriderError` when Sleigh initialisation fails."""
-        ...
-    def arch_name(self) -> str:
-        """The architecture's short name."""
-        ...
-    def reg(self, name: str) -> Optional[Vn]:
-        """The varnode for the register called `name`, or `None` when the
-        name is not a register."""
-        ...
-    def reg_name(self, vn: Vn) -> Optional[str]:
-        """The register name for `vn`, or `None` when it names no register
-        (a non-register space, or an offset and size absent from this
-        architecture's table)."""
-        ...
-
 class CallOtherAbi:
     """How one Sleigh user-op is lifted: the implicit register footprint,
     the memory effect, and whether control returns.
@@ -332,7 +301,7 @@ class CallOtherAbi:
     @classmethod
     def custom(
         cls,
-        sleigh: Union[SleighArch, Sleigh],
+        sleigh: SleighArch,
         implicit_reads: list[str] = ...,
         implicit_writes: list[str] = ...,
         clobbers_memory: bool = ...,
@@ -340,8 +309,6 @@ class CallOtherAbi:
     ) -> CallOtherAbi:
         """An ABI naming implicit registers, resolved against `sleigh` here,
         so an unknown name raises `StriderError` at construction.
-
-        `sleigh` is the `SleighArch`, or a `Sleigh` built for one.
 
         `implicit_reads` are read beyond the p-code-explicit operands and
         lead the lifted call's argument list; `implicit_writes` are written

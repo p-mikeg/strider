@@ -4,7 +4,7 @@ EXPECTED = {
     "ir": ["Function", "Node"],
     "lift": ["Lifter", "ElfLifter", "LifterOptions", "AnalyzeResult", "load_elf"],
     "cfg": ["Cfg", "CfgOptions"],
-    "sleigh": ["SleighArch", "CallingConvention", "Sleigh", "Vn", "VnSpace"],
+    "sleigh": ["SleighArch", "CallingConvention", "Vn", "VnSpace"],
     "reader": ["BufferReader", "MemReader", "ReadOnlyMemory"],
     "opt": ["OptimizerPipeline"],
     "pattern": ["Pat", "Capture", "Match"],
@@ -46,3 +46,9 @@ def test_viz_standalone_js_is_private():
     import strider._strider as _ext
     assert hasattr(_ext, "_viz_standalone_js")
     assert not hasattr(_ext, "viz_standalone_js")
+
+
+def test_the_register_table_lives_on_the_arch():
+    """`SleighArch.reg` / `reg_name` are the one lookup: no separate handle
+    is built from an arch and a reader."""
+    assert not hasattr(strider.sleigh, "Sleigh")
