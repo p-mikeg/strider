@@ -78,8 +78,9 @@
   which panics on 0) or `Open { code_before_start }`. `Some(0)` used to read
   as unbounded, and the flag was ignored beside a size.
 - `LiftOptions` is gone. `Strider::analyze(entry, cc, &AnalyzeOptions,
-  pipeline)` takes `AnalyzeOptions { cfg, per_address_ccs, opt, compact,
-  on_incomplete }` in place of `LiftOptions` and `OptOptions`, and
+  pipeline)` takes `AnalyzeOptions { cfg, per_address_ccs,
+  resolve_indirect_branches, assumptions, compact, on_incomplete }` in place
+  of `LiftOptions` and `OptOptions`, and
   `Lifter::build_ir_with(cfg, cc, &cfg_opts, &per_address_ccs)` takes the
   `CfgOptions` the cfg was built with.
 - `AnalyzeResult`'s six report fields and `Cfg::{isa_mode_conflicts,
@@ -103,8 +104,10 @@
 - `IndirectBranchClassify`, `OptCtx::indirect_resolutions` and
   `OptimizerPipeline::has_post_pass` are gone, and `PostOptimizer` no longer
   requires `Any`: `analyze` classifies every round after its pipeline,
-  whatever the pipeline, with `strider_opt::classify_sites(&function, rom,
-  &options)`, which returns a `ClassifiedSites`.
+  whatever the pipeline, with `strider_opt::classify_sites(&function, rom)`,
+  which returns a `ClassifiedSites` and reads the claims off `function`.
+  With `resolve_indirect_branches` off it calls no classifier and lists the
+  sites unresolved (`ClassifiedSites::unresolved(&function)`).
 - `ResolvedTargets::Multiple` holds `Arms`, non-empty and sorted by
   `(addr, isa_bit)` with no exact duplicate, built by
   `ResolvedTargets::table`; `table([])` is the new `Withdrawn`, which seats
@@ -233,12 +236,15 @@
 - `ReturnTargets::new(function)` and `classify_target(function, branch,
   rom, ranges)` lose their `AssumptionOptions` argument: both read
   `Function::assumptions`, the claims the function was optimized under.
-- Claims accumulate per `Function`: `OptimizerPipeline::run` (and
-  `run_one` / `run_post`) merges `OptCtx`'s `assumptions` into
-  `Function::assumptions`, and every pass reads the merged set, so a run
-  under `AssumptionOptions::none()` keeps every claim an earlier run made;
-  analyse again for a function without one. `OptCtx::new` carries the three
-  default claims, so a run under it adds them.
+- `OptOptions` is gone: `resolve_indirect_branches` and `assumptions` are
+  `AnalyzeOptions` fields, with the same defaults, and each round claims
+  `assumptions` on its fresh lift before the pipeline runs.
+- `OptCtx` is `{ rom }`, built by `OptCtx::new(rom)`, and carries no claim.
+  Claims accumulate per `Function`: `Function::assume(&claims)` adds to
+  `Function::assumptions`, which every pass reads, and nothing withdraws
+  one; analyse again for a function without one. A function never given a
+  claim, a fresh lift included, is optimized at the sound floor, where a
+  run under `OptCtx::new` used the three default claims.
 
 ### Changed, Python
 
@@ -487,9 +493,9 @@
   and per node output.
 - `OptimizerPipeline` is `Clone`, and `add_boxed` / `add_post_boxed` take a
   pass already boxed.
-- `Function::assumptions` and `SideTables::assumptions` / `assume`: the
+- `Function::assumptions` / `assume` and `SideTables::assumptions`: the
   claims in force, which every pass reads, and the one verb that adds to
-  them, returning whether it added one.
+  them, dropping the memos a new claim can change.
 - `strider_opt::refresh_memory_classes`: re-derives what `stack_only()` /
   `heap_only()` read after an edit made outside a pipeline.
 - `EditFunction::absorb_node_fingerprint` (the node-keyed
