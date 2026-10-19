@@ -69,7 +69,7 @@ impl TemplateBuilder {
     /// One value output at slot 0. A template node is built, so it names a
     /// kind, not a match spec:
     ///
-    /// ```compile_fail
+    /// ```compile_fail,E0308
     /// use strider_pattern::matcher::KindSpec;
     /// use strider_pattern::template::TemplateBuilder;
     /// TemplateBuilder::new().leaf(KindSpec::Any);
@@ -79,7 +79,9 @@ impl TemplateBuilder {
         self.add_built_output(n, TmplOutput::value(0))
     }
 
-    /// A leaf whose kind or constant a closure computes at rewrite time.
+    /// A leaf whose kind or constant a closure computes at rewrite time, from
+    /// [`TemplateKind::Fn`] or [`TemplateKind::FnIntConst`];
+    /// `TemplateKind::Exact(k)` builds what [`leaf`](Self::leaf)`(k)` does.
     pub fn dynamic_leaf(&mut self, kind: TemplateKind) -> TmplValueRef {
         let n = TmplNodeRef(self.core.add_node(TmplNodeKind::Build(kind)));
         self.add_built_output(n, TmplOutput::value(0))

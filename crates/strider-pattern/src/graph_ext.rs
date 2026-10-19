@@ -5,7 +5,7 @@
 //! [`consumed_inputs`] zips the two back together.
 
 use anyhow::anyhow;
-use graph_algorithms::walk::{GraphRef, PreOrder, acyclic_postorder};
+use graph_algorithms::walk::{GraphRef, acyclic_postorder};
 use strider_graph::{Graph, NeverCacheable, NodeId, ValueId};
 
 pub(crate) trait HasInputSlots {
@@ -32,8 +32,8 @@ pub(crate) fn consumed_inputs<N: HasInputSlots, V>(
 }
 
 /// A node's consumers: outputs by slot, each output's uses newest first. A
-/// node reading one value twice is listed twice, adjacently, which the walk
-/// pops as one.
+/// node reading one value twice is listed twice, on a sealed graph
+/// adjacently, which the walk pops as one.
 pub(crate) struct Consumers<'a, N, V>(pub(crate) &'a Graph<N, V, NeverCacheable>);
 
 impl<N, V> GraphRef for Consumers<'_, N, V> {
@@ -49,8 +49,10 @@ impl<N, V> GraphRef for Consumers<'_, N, V> {
 }
 
 /// A node's input producers.
+#[cfg(test)]
 pub(crate) struct Producers<'a, N, V>(pub(crate) &'a Graph<N, V, NeverCacheable>);
 
+#[cfg(test)]
 impl<N, V> GraphRef for Producers<'_, N, V> {
     type NodeId = NodeId;
 
@@ -91,7 +93,9 @@ pub(crate) fn derive_root<N, V>(graph: &Graph<N, V, NeverCacheable>) -> anyhow::
 }
 
 /// Every node, producers first: the reverse of a post-order over consumers
-/// from each node in id order. Errors on a cycle anywhere.
+/// from each node in id order. Errors on a cycle anywhere. On a template,
+/// whose root is the unique sink and so reached from every node, this order
+/// fixes an instantiation's fresh NodeIds.
 pub(crate) fn topo_order<N, V>(graph: &Graph<N, V, NeverCacheable>) -> anyhow::Result<Vec<NodeId>> {
     let ids: Vec<NodeId> = graph.all_node_ids().collect();
     // The walk pops its roots last first.
@@ -102,14 +106,14 @@ pub(crate) fn topo_order<N, V>(graph: &Graph<N, V, NeverCacheable>) -> anyhow::R
 }
 
 /// `root` plus its transitive input cone, in [`topo_order`]. Errors on a
-/// cycle anywhere in the graph. This order fixes an instantiated template's
-/// fresh NodeIds.
+/// cycle anywhere in the graph.
+#[cfg(test)]
 pub(crate) fn reachable_topo<N, V>(
     graph: &Graph<N, V, NeverCacheable>,
     root: NodeId,
 ) -> anyhow::Result<Vec<NodeId>> {
     let order = topo_order(graph)?;
-    let mut cone = PreOrder::new(Producers(graph), [root]);
+    let mut cone = graph_algorithms::walk::PreOrder::new(Producers(graph), [root]);
     while cone.next().is_some() {}
     let cone = cone.into_visited();
     Ok(order.into_iter().filter(|&n| cone.contains(n)).collect())
@@ -121,13 +125,15 @@ mod tests {
     use rustc_hash::{FxHashMap, FxHashSet};
     use strider_graph::{Graph, NeverCacheable, NodeId, ValueId};
     use strider_ir::node::NodeKind;
-    use strider_ir::{ConstId, IntBinaryOp, IntUnaryOp};
+    use strider_ir::{IntBinaryOp, IntUnaryOp};
     use strider_ir_test_utils::{Rng, graph_oracle};
 
-    use super::reachable_topo;
+    use super::{reachable_topo, topo_order};
     use crate::Capture;
     use crate::matcher::OutputKindSpec;
-    use crate::template::{Template, TemplateBuilder, TmplNodeRef, TmplValue, TmplValueRef};
+    use crate::template::{
+        Template, TemplateBuilder, TemplateKind, TmplNodeRef, TmplValue, TmplValueRef,
+    };
 
     type G = Graph<u8, u8, NeverCacheable>;
 
@@ -327,13 +333,13 @@ mod tests {
     }
 
     /// Whether `t` has a root, and if so that it instantiates in petgraph's
-    /// order.
+    /// order, which also shows the root's cone is the whole graph.
     fn check_order(t: &Template) -> bool {
         let Ok(root) = t.root() else {
             return false;
         };
         assert_eq!(
-            reachable_topo(&t.graph, root).unwrap(),
+            topo_order(&t.graph).unwrap(),
             petgraph_order(&t.graph, root),
             "template instantiation order moved"
         );
@@ -403,7 +409,10 @@ mod tests {
         if depth == 0 || rng.below(3) == 0 {
             return match rng.below(2) {
                 0 => b.capture(Capture::new()),
-                _ => b.leaf(NodeKind::IntConst(ConstId::from_u32(rng.below(4) as u32))),
+                _ => {
+                    let v = rng.below(4) as u128;
+                    b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(move |_| Ok(v))))
+                }
             };
         }
         match rng.below(3) {

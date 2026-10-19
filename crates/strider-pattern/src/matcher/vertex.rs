@@ -4,6 +4,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueType};
 
 use crate::matcher::Matcher;
 
+#[derive(PartialEq, Eq)]
 pub enum KindSpec {
     Any,
     /// Variant-agnostic: any node sharing the discriminant, e.g. "any
@@ -74,12 +75,14 @@ pub struct WalkCaptures {
     pub guaranteed: Vec<crate::capture::Capture>,
 }
 
-/// Where a pattern input sits on its consumer: one IR input slot, or any of
-/// them (`any_input`). A sub reaches the slots of its own output kind; a
-/// wildcard reaches any input, control / memory / `PhiToken` slots included.
+/// Where a pattern input sits on its consumer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InputSlot {
+    /// One IR input slot.
     At(usize),
+    /// Any input not taken by a fixed operand (`any_input`). A sub reaches the
+    /// slots of its own output kind; a wildcard reaches any input, control /
+    /// memory / `PhiToken` slots included.
     Any,
 }
 
