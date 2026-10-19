@@ -2,7 +2,7 @@
 //! When none does, every spill slot is private, so a `Load` may forward across
 //! a `Call`.
 //!
-//! `U` is the set of frame addresses: the values [`decompose`] reduces to
+//! `U` is the set of frame addresses: the values [`decompose()`] reduces to
 //! `sp + k`.
 //!
 //! The frame is contaminated iff some member of `U` is consumed at any position
