@@ -2,7 +2,9 @@ use strider_ir::node::ValueType;
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatNodeRef, PatValueRef, Pattern};
+use crate::matcher::{
+    InputSlot, KindSpec, MatcherBuilder, NodePredicate, PatNodeRef, PatValueRef, Pattern,
+};
 
 use super::{MemPat, SubCompiler};
 
@@ -69,7 +71,7 @@ impl OutputSpec {
 pub(crate) struct NodePat {
     kind: KindSpec,
     /// Sparse: raw input slot to compiler.
-    inputs: Vec<(usize, SubCompiler)>,
+    inputs: Vec<(InputSlot, SubCompiler)>,
     node_predicate: Option<NodePredicateFactory>,
     captures: Vec<Capture>,
     anchor: AnchorKind,
@@ -140,29 +142,29 @@ impl NodePat {
     /// Wires `p` into raw input `slot`.
     pub(crate) fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
         self.inputs
-            .push((slot, SubCompiler::new(move |b| p.compile(b))));
+            .push((InputSlot::At(slot), SubCompiler::new(move |b| p.compile(b))));
         self
     }
 
     /// Existential: matches *some* input of the node rather than a fixed slot.
     pub(crate) fn input_any<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inputs.push((
-            crate::matcher::ANY_INPUT_SLOT,
-            SubCompiler::new(move |b| p.compile(b)),
-        ));
+        self.inputs
+            .push((InputSlot::Any, SubCompiler::new(move |b| p.compile(b))));
         self
     }
 
     /// Relaxes the sub-pattern's root output to a control edge.
     pub(crate) fn input_control<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
-        self.inputs.push((slot, control_compiler(p)));
+        self.inputs.push((InputSlot::At(slot), control_compiler(p)));
         self
     }
 
     /// The sub-pattern's memory-token output feeds the slot.
     pub(crate) fn input_mem<M: MemPat + 'static>(mut self, slot: usize, p: M) -> Self {
-        self.inputs
-            .push((slot, SubCompiler::new(move |b| p.compile_mem(b))));
+        self.inputs.push((
+            InputSlot::At(slot),
+            SubCompiler::new(move |b| p.compile_mem(b)),
+        ));
         self
     }
 
@@ -256,10 +258,10 @@ impl NodePat {
         }
         for (slot, compile) in inputs {
             let o = compile.call(b);
-            if let Some((_, bits)) = input_widths.iter().find(|(s, _)| *s == slot) {
+            if let Some((_, bits)) = input_widths.iter().find(|(s, _)| slot == InputSlot::At(*s)) {
                 b.set_value_width(o, *bits);
             }
-            b.input(node, slot, o);
+            b.wire(node, slot, o);
         }
         lower_outputs(b, node, outputs);
         if let Some(factory) = node_predicate {
@@ -440,6 +442,32 @@ mod tests {
                 .any(|k| matches!(k, strider_ir::node::ValueKind::Memory)),
             "wildcard any_input binds the memory input",
         );
+    }
+
+    /// A raw slot is a slot: `usize::MAX` names no input of the `Call`, so it
+    /// matches nothing rather than standing for `any_input`.
+    #[test]
+    fn a_raw_input_at_usize_max_names_no_slot() {
+        let function = call_with_arg();
+        let matcher = Matcher::new(&function);
+        let raw = NodePat::node(KindSpec::variant_of(&NodeKind::Call { cc: None }))
+            .with_mem_value(1)
+            .input(usize::MAX, int_const(42u128))
+            .build();
+        assert!(matcher.find_all(&raw).unwrap().is_empty());
+    }
+
+    /// The same through the raw builder's `input`.
+    #[test]
+    fn a_raw_builder_input_at_usize_max_names_no_slot() {
+        let function = call_with_arg();
+        let mut b = MatcherBuilder::new();
+        let node = b.node(KindSpec::variant_of(&NodeKind::Call { cc: None }));
+        let arg = MatchPat::compile(int_const(42u128), &mut b);
+        b.input(node, usize::MAX, arg);
+        b.memory_output(node, 1);
+        let raw = b.finish();
+        assert!(Matcher::new(&function).find_all(&raw).unwrap().is_empty());
     }
 
     /// A second predicate narrows the first, mirroring
