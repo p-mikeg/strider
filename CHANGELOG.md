@@ -440,9 +440,9 @@
 - `strider_target::calling_convention::{vn_for_name, regs_to_vns}` are
   public, the latter over any iterator of names.
 - Test-only counters: `strider_graph::edge_reads()` behind the new
-  `edge-read-count` feature, and `EditFunction::uses_moved()` behind
-  `test-util`. The scaling tests count edges read, uses moved and bytes
-  allocated instead of timing a ratio.
+  `edge-read-count` feature, and `strider_ir::EditFunction::uses_moved()`
+  behind `test-util`. The scaling tests count edges read, uses moved, bytes
+  allocated and tree descents instead of timing a ratio.
 
 ## 0.2.0
 
