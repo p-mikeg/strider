@@ -478,7 +478,7 @@ pub(crate) fn compile_operand_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch>
         return b.borrow().compile_value(py);
     }
     if let Ok(b) = ob.downcast::<PyFunctionArgPat>() {
-        return Ok(b.borrow().compile_value());
+        return Ok(b.borrow().compile_value(py));
     }
     if let Ok(b) = ob.downcast::<PyPhiPat>() {
         return b.borrow().compile_value(py);
@@ -4264,9 +4264,12 @@ impl PyFunctionArgPat {
         b
     }
 
-    fn compile_value(&self) -> DynMatch {
+    fn compile_value(&self, py: Python<'_>) -> DynMatch {
         let b = self.core_builder();
-        DynMatch::new(b)
+        match self.common.borrow().when.as_ref() {
+            Some(f) => DynMatch::new(wrap_when(b, f.clone_ref(py))),
+            None => DynMatch::new(b),
+        }
     }
 
     fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
