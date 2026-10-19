@@ -13,7 +13,7 @@
 use std::cell::Cell;
 
 use strider_cfg::{CfgOptions, PcodeInsnAddr, RegionTerminator, ResolvedTarget, ResolvedTargets};
-use strider_orchestrator::opt::{ClassifiedSites, OptOptions, ReadOnlyMemory, classify_sites};
+use strider_orchestrator::opt::{ClassifiedSites, ReadOnlyMemory, classify_sites};
 use strider_orchestrator::{AnalyzeOptions, AnalyzeResult, Reason};
 
 mod common;
@@ -28,10 +28,9 @@ const FLAPPING_ARM: u64 = 0x1020;
 fn analyze_flapping(bytes: Vec<u8>, opts: &AnalyzeOptions<'_>) -> (AnalyzeResult, usize) {
     let round = Cell::new(0usize);
     let flapping = |f: &strider_ir::Function,
-                    rom: Option<&dyn ReadOnlyMemory>,
-                    o: &OptOptions|
+                    rom: Option<&dyn ReadOnlyMemory>|
      -> anyhow::Result<ClassifiedSites> {
-        let mut found = classify_sites(f, rom, o)?;
+        let mut found = classify_sites(f, rom)?;
         let n = round.get();
         round.set(n + 1);
         let targets = if n.is_multiple_of(2) {

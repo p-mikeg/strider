@@ -12,11 +12,12 @@ re-run the whole thing until the control-flow graph stops changing.
   both).
 - `Strider::analyze(entry, cc, opts, pipeline)` ->
   `Result<AnalyzeResult, AnalyzeError>`: the loop below. `opts` is an
-  `AnalyzeOptions` (`cfg`, `per_address_ccs`, `opt`, `compact`,
-  `on_incomplete`); `compact` applies once after the loop. `pipeline`
-  defaults to `strider_opt::default_pipeline`; every round classifies the
-  dispatch sites with `strider_opt::classify_sites` after it, whatever the
-  pipeline. Under `on_incomplete: OnIncomplete::Error`, the default, a result
+  `AnalyzeOptions` (`cfg`, `per_address_ccs`, `resolve_indirect_branches`,
+  `assumptions`, `compact`, `on_incomplete`); `compact` applies once after
+  the loop. `pipeline` defaults to `strider_opt::default_pipeline`; every
+  round runs it over a fresh lift claiming `assumptions`, then classifies the
+  dispatch sites with `strider_opt::classify_sites`, whatever the pipeline,
+  or with resolution off lists them unresolved. Under `on_incomplete: OnIncomplete::Error`, the default, a result
   that is not complete comes back as `AnalyzeError::Incomplete`.
 - `Strider::build_cfg(entry, cfg_opts, on_incomplete)` ->
   `Result<Cfg, AnalyzeError>`: a structural decode only, no lift, no

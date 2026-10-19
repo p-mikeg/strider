@@ -23,12 +23,7 @@ fn sole_branch(f: &strider_ir::Function) -> strider_ir::node::NodeId {
 /// optimized at the floor, so a copy claims them first.
 fn classify_target_bare(view: &strider_ir::Function) -> anyhow::Result<Option<ResolvedTargets>> {
     let mut view = view.clone();
-    if view
-        .side_tables_mut()
-        .assume(&strider_orchestrator::opt::AssumptionOptions::default())
-    {
-        view.side_tables().invalidate_analyses();
-    }
+    view.assume(&strider_orchestrator::opt::AssumptionOptions::default());
     let mut ranges = RangeMap::new(&view)?;
     Ok(classify_target(
         &view,
@@ -221,7 +216,7 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
     let p = strider_orchestrator::opt::default_pipeline();
     p.run(
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
+        &mut strider_orchestrator::opt::OptCtx::new(None),
     )
     .expect("optimizer pipeline");
 

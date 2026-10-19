@@ -76,7 +76,7 @@ pub(crate) fn run_pipeline_x86_64(
     let p = strider_orchestrator::opt::default_pipeline();
     p.run(
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::at_floor(None),
+        &mut strider_orchestrator::opt::OptCtx::new(None),
     )
     .expect("optimizer pipeline");
 

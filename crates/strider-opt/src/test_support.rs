@@ -15,7 +15,7 @@ pub(crate) fn run_to_fixed_point(
     fg: &mut strider_ir::Function,
 ) -> crate::Result<usize> {
     let mut iterations = 0;
-    while crate::run_one(pass, fg, &mut crate::OptCtx::at_floor(None))?.changed() {
+    while crate::run_one(pass, fg, &mut crate::OptCtx::new(None))?.changed() {
         iterations += 1;
     }
     Ok(iterations)
@@ -55,13 +55,6 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
     pipeline.add(RegionCollapse);
     pipeline.add(LoadForward);
     pipeline
-}
-
-/// An [`crate::OptCtx`] at the pipeline default, `stack_global_disjoint` set.
-pub(crate) fn octx_stack_global_disjoint() -> crate::OptCtx<'static> {
-    let mut ctx = crate::OptCtx::at_floor(None);
-    ctx.options.assumptions.stack_global_disjoint = true;
-    ctx
 }
 
 /// Input[2] of the first `Return`, after ctrl and mem.
@@ -361,7 +354,7 @@ pub(crate) mod memory_shapes {
         let mut collapse = crate::OptimizerPipeline::new();
         collapse.add(crate::PhiCollapse);
         collapse.add(crate::RegionCollapse);
-        collapse.run(&mut fg, &mut crate::OptCtx::at_floor(None))?;
+        collapse.run(&mut fg, &mut crate::OptCtx::new(None))?;
         Ok(fg)
     }
 

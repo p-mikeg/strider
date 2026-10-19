@@ -29,8 +29,8 @@ fn pipeline_benches(c: &mut Criterion) {
         b.iter_batched(
             build_foldable_chain,
             |mut function| {
-                let mut ctx = OptCtx::new(None);
-                pipeline.run(&mut function, &mut ctx).unwrap();
+                function.assume(&strider_opt::AssumptionOptions::default());
+                pipeline.run(&mut function, &mut OptCtx::new(None)).unwrap();
                 black_box(function)
             },
             BatchSize::LargeInput,
