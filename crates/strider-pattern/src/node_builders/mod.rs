@@ -158,17 +158,22 @@ thread_local! {
     static DRAINING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Drops a deferred sub-pattern iteratively. The tower under one is a chain of
-/// boxed closures one link per nesting level, so dropping it in place unwinds a
-/// frame per level; a nested link's own drop lands back here and is popped by
-/// the outermost call instead.
-pub(crate) fn defer_drop<T: Send + 'static>(tower: T) {
-    DROP_PIT.with_borrow_mut(|pit| pit.push(Box::new(tower)));
-    if DRAINING.replace(true) {
+/// Drops `value` without recursing through the tower hanging off it: a chain
+/// of boxed operands one link per nesting level, which dropped in place
+/// unwinds a frame per level. A nested link's own drop lands back here and is
+/// popped by the outermost call instead. Once thread-local teardown has taken
+/// the pit away, `value` is dropped in place, the one option left.
+pub fn defer_drop<T: Send + 'static>(value: T) {
+    let mut boxed: Option<Box<dyn Send>> = Some(Box::new(value));
+    let queued = DROP_PIT
+        .try_with(|pit| pit.borrow_mut().push(boxed.take().expect("not yet queued")))
+        .is_ok();
+    drop(boxed);
+    if !queued || DRAINING.replace(true) {
         return;
     }
-    // A panicking drop must not leave the thread's flag set, or every later
-    // call parks its tower in the pit and nothing drains it again.
+    // A panicking drop must not leave the flag set, or every later call parks
+    // its value in the pit and nothing drains it again.
     struct Draining;
     impl Drop for Draining {
         fn drop(&mut self) {
