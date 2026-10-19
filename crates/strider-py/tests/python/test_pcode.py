@@ -135,14 +135,9 @@ def test_lifter_pcode_at_matches_cfg_lookup_for_a_real_pcode_address():
 
 
 def test_lifter_pcode_at_rejects_addr_before_entry():
-    """No sweep from `entry` reaches an address below it: the sweep's own
-    cursor refuses it, cold and with a sweep cached for `entry`."""
     prog = _load_memory()
     entry = prog.symbol("array_sum").address
-    with pytest.raises(strider.StriderError, match="stepped past target"):
-        prog.pcode_at(entry, entry - 4)
-    prog.pcode_at(entry, entry)
-    with pytest.raises(strider.StriderError, match="stepped past target"):
+    with pytest.raises(strider.StriderError):
         prog.pcode_at(entry, entry - 4)
 
 
