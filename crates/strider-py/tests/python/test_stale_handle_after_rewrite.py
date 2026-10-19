@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 import strider
+from strider import template as tpl
 from strider.pattern import Capture, int_add, var
 
 from .conftest import built_function
@@ -28,7 +29,7 @@ def test_match_handle_stale_after_rewrite():
     assert hits, "fixture must contain at least one int_add(a, b) to rewrite"
     stale_match = hits[0]
 
-    fired = g.rewrite(find=int_add(var(x), var(y)), replace=var(x))
+    fired = g.rewrite(find=int_add(var(x), var(y)), replace=tpl.var(x))
     assert fired > 0, "the rewrite must actually mutate the graph"
 
     with pytest.raises(strider.StriderError):
@@ -45,7 +46,7 @@ def test_node_handle_stale_after_rewrite():
     stale_node = hits[0].node(x)
     assert stale_node is not None
 
-    fired = g.rewrite(find=int_add(var(x), var(y)), replace=var(x))
+    fired = g.rewrite(find=int_add(var(x), var(y)), replace=tpl.var(x))
     assert fired > 0
 
     with pytest.raises(strider.StriderError):
@@ -60,7 +61,7 @@ def test_node_handle_stale_after_rewrite_all():
     stale_node = hits[0].node(x)
     assert stale_node is not None
 
-    fired = g.rewrite_all([(int_add(var(x), var(y)), var(x))])
+    fired = g.rewrite_all([(int_add(var(x), var(y)), tpl.var(x))])
     assert fired > 0
 
     with pytest.raises(strider.StriderError):
@@ -70,7 +71,7 @@ def test_node_handle_stale_after_rewrite_all():
 def test_handle_obtained_after_rewrite_still_works():
     g = _build_graph()
     x, y = Capture(), Capture()
-    g.rewrite(find=int_add(var(x), var(y)), replace=var(x))
+    g.rewrite(find=int_add(var(x), var(y)), replace=tpl.var(x))
 
     # A fresh query samples the post-rewrite generation, so its handles
     # read the mutated graph without tripping the staleness guard.

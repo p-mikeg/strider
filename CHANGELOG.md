@@ -45,6 +45,13 @@
   its reader properties: read a capture through the `Match`, `m.uint(c)`,
   `m.node(c)`, `m.op_opt(c)` and the rest. `m[c].uint` raises
   `AttributeError`.
+- A `strider.pattern.Pat` is no longer a rewrite right-hand side:
+  `Function.rewrite(replace=)` and `rewrite_all` raise `TypeError` for one,
+  and one nested in a `strider.template` operand raises `StriderError`
+  naming its constructor, a build-valid one (`var()`, `int_const()`)
+  included. Spell the RHS with `strider.template` (`template.var(c)`, or the
+  bare `Capture`); the RHS `.capture(c)` goes with it, as a `Template` has
+  none.
 
 ### Breaking, Rust
 
@@ -208,9 +215,6 @@
 
 ### Changed, Python
 
-- A `.capture(c)` over a composite on a rewrite RHS raises: on a RHS it stands
-  for the value `c` matched, so it silently replaced the composite with it.
-  Over `var()` or `anything()` it is still that value.
 - `build_cfg` reports a seed seated past p-code op 0 (a memory-indirect `jmp`)
   as `"unverified_seed"`; it went unreported.
 - `load()` / `store()` region filters apply in call order, the last winning:
@@ -245,10 +249,10 @@
   to the later, and with `apply_relocations=True` no image fails with "patch
   budget", a GOT-base or TOC-pointer word no longer needs its symbol, and an
   image-relative word whose addend does not fit it is a hole or wrapped.
-- A match-only `Pat` refused as a rewrite RHS, at the top or nested in a
-  `Template`, is named by its constructor: `any` became `anything()`, every
-  other bare name gains `()` (`cannot use one_of() as a rewrite RHS`), and a
-  finished control builder reads `a control / variadic builder`.
+- A `Pat` nested in a `Template` is refused naming its constructor: `any`
+  became `anything()`, every other bare name gains `()` (`cannot use
+  one_of() as a rewrite RHS`), and a finished control builder reads `a
+  control / variadic builder`.
 - `CallingConvention.custom` raises at construction for stack geometry that
   does not fit its arch: a stack pointer not as wide as its addresses, a
   stack-argument stride other than that width, or with no link register a
@@ -288,8 +292,7 @@
   every `(address, reason)` as `Cfg.incomplete` does.
 - `strider.template.int_ne`, `int_le`, `int_sle` and `float_ne` build the
   lifter's `Xor(Equal(l, r), 1)`, `Xor(Less(r, l), 1)`, `Xor(Sless(r, l), 1)`
-  and `Xor(FloatEqual(l, r), 1)`; the `strider.pattern` four used as a
-  rewrite RHS build the same shape instead of raising.
+  and `Xor(FloatEqual(l, r), 1)`.
 - `CallingConvention.custom` and `CallOtherAbi.custom` take a `SleighArch`
   as their first (`sleigh=`) argument, as well as a `Sleigh` (anything else
   raises `TypeError: expected a SleighArch or a Sleigh`); names resolve
