@@ -153,6 +153,10 @@
   `Sleigh` (and, for `insn_text`, its register table); `FunctionDotDumper`
   and `CfgDotDumper` lose their reader parameter, and `Function::dot_dumper`
   no longer returns a `Result`.
+- `graph_algorithms::walk::GraphRef` has one method,
+  `successors(node, f: impl FnMut(NodeId))`: `try_successors` and its
+  `ControlFlow` early exit are gone, as is `walk::entity_postorder` (call
+  `PostOrder::new`).
 
 ### Changed, Python
 

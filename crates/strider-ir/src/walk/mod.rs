@@ -1,5 +1,4 @@
 use core::iter;
-use core::ops::ControlFlow;
 
 pub use entity_utils::set::DenseEntitySet;
 
@@ -130,12 +129,10 @@ fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + 
 impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
 
-    fn try_successors(
-        &self,
-        node: NodeId,
-        f: impl FnMut(NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        graph_walk_succs(self.0, node).try_for_each(f)
+    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
+        for succ in graph_walk_succs(self.0, node) {
+            f(succ);
+        }
     }
 }
 
@@ -146,12 +143,10 @@ struct CfgSuccs<'a>(&'a Graph);
 impl graph_algorithms::walk::GraphRef for CfgSuccs<'_> {
     type NodeId = NodeId;
 
-    fn try_successors(
-        &self,
-        node: NodeId,
-        f: impl FnMut(NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        cfg_succs(self.0, node).try_for_each(f)
+    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
+        for succ in cfg_succs(self.0, node) {
+            f(succ);
+        }
     }
 }
 
@@ -180,12 +175,10 @@ impl<'a> RawDefUseSuccs<'a> {
 impl graph_algorithms::walk::GraphRef for RawDefUseSuccs<'_> {
     type NodeId = NodeId;
 
-    fn try_successors(
-        &self,
-        node: NodeId,
-        f: impl FnMut(NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        def_use_succs(self.0, node).try_for_each(f)
+    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
+        for succ in def_use_succs(self.0, node) {
+            f(succ);
+        }
     }
 }
 
@@ -206,14 +199,11 @@ impl<'a> DefUseSuccs<'a> {
 impl graph_algorithms::walk::GraphRef for DefUseSuccs<'_> {
     type NodeId = NodeId;
 
-    fn try_successors(
-        &self,
-        node: NodeId,
-        f: impl FnMut(NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        def_use_succs(self.graph, node)
-            .filter(|&succ| self.live_nodes.contains(succ))
-            .try_for_each(f)
+    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
+        let live = def_use_succs(self.graph, node).filter(|&succ| self.live_nodes.contains(succ));
+        for succ in live {
+            f(succ);
+        }
     }
 }
 
@@ -292,12 +282,10 @@ struct MemorySuccs<'a>(&'a Function);
 impl graph_algorithms::walk::GraphRef for MemorySuccs<'_> {
     type NodeId = NodeId;
 
-    fn try_successors(
-        &self,
-        node: NodeId,
-        f: impl FnMut(NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        mem_succs(self.0, node).try_for_each(f)
+    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
+        for succ in mem_succs(self.0, node) {
+            f(succ);
+        }
     }
 }
 

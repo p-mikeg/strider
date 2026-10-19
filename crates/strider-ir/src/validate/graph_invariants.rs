@@ -1,5 +1,3 @@
-use core::ops::ControlFlow;
-
 use cranelift_entity::SecondaryMap;
 
 use crate::DominatorTree;
@@ -36,12 +34,10 @@ impl DataProducers<'_> {
 impl graph_algorithms::walk::GraphRef for DataProducers<'_> {
     type NodeId = NodeId;
 
-    fn try_successors(
-        &self,
-        node: NodeId,
-        f: impl FnMut(NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
-        self.of(node).try_for_each(f)
+    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
+        for succ in self.of(node) {
+            f(succ);
+        }
     }
 }
 

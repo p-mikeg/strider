@@ -9,7 +9,6 @@
 pub mod cases;
 
 use std::cell::Cell;
-use std::ops::ControlFlow;
 
 use cranelift_entity::{PrimaryMap, entity_impl};
 use graph_algorithms::walk::GraphRef;
@@ -26,7 +25,7 @@ struct Node {
 pub struct Graph {
     nodes: PrimaryMap<NodeId, Node>,
     nodes_by_name: std::collections::HashMap<String, NodeId>,
-    /// Calls to `try_successors`, the unit the scale tests count.
+    /// Calls to `successors`, the unit the scale tests count.
     succ_calls: Cell<u64>,
     /// The call that would exceed this panics.
     succ_budget: Cell<u64>,
@@ -146,17 +145,15 @@ pub(crate) fn graph(input: &str) -> Graph {
 impl GraphRef for &'_ Graph {
     type NodeId = NodeId;
 
-    fn try_successors(
-        &self,
-        node: Self::NodeId,
-        f: impl FnMut(Self::NodeId) -> ControlFlow<()>,
-    ) -> ControlFlow<()> {
+    fn successors(&self, node: Self::NodeId, mut f: impl FnMut(Self::NodeId)) {
         let calls = self.succ_calls.get() + 1;
         assert!(
             calls <= self.succ_budget.get(),
             "{calls} successor calls exceed the budget"
         );
         self.succ_calls.set(calls);
-        self.nodes[node].succs.iter().copied().try_for_each(f)
+        for succ in self.nodes[node].succs.iter().copied() {
+            f(succ);
+        }
     }
 }

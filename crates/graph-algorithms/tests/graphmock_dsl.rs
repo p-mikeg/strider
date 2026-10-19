@@ -2,14 +2,10 @@ mod common;
 
 use common::graph;
 use graph_algorithms::walk::GraphRef;
-use std::ops::ControlFlow;
 
 fn succs(g: &common::Graph, node: common::NodeId) -> Vec<String> {
     let mut out = Vec::new();
-    let _ = g.try_successors(node, |s| {
-        out.push(g.name(s).to_owned());
-        ControlFlow::Continue(())
-    });
+    g.successors(node, |s| out.push(g.name(s).to_owned()));
     out
 }
 
