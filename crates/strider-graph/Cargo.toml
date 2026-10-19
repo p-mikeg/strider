@@ -22,6 +22,11 @@ rustc-hash.workspace = true
 # `Graph::next_node_id`, the arena's next unallocated key, and
 # `Graph::remove_node_input`, the single-slot removal.
 test-injectors = []
+# `edge_reads`: `Inputs` / `InputIter` reads, `nth_input` calls and
+# `value_uses` steps on the current thread, the unit strider-ir's
+# validate-cost test counts. Enabled only by strider-ir's dev-dependency, so a
+# per-package bench, an example and the wheel never pay for it.
+edge-read-count = []
 
 [dev-dependencies]
 proptest.workspace = true
