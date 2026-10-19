@@ -1572,3 +1572,11 @@ fn a_chain_of_flag_tests_collapses_in_linear_use_moves() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn every_flag_template_keeps_its_instantiation_order() {
+    let before = crate::rewrite_rule::TEMPLATES_CHECKED.with(std::cell::Cell::get);
+    let rules = super::build_rules();
+    let checked = crate::rewrite_rule::TEMPLATES_CHECKED.with(std::cell::Cell::get) - before;
+    assert_eq!(checked, rules.len(), "every flag rule is checked");
+}
