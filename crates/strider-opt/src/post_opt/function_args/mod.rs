@@ -22,7 +22,7 @@ impl PostOptimizer for FunctionArgDetect {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        opt_ctx: &mut crate::OptCtx<'_>,
+        _opt_ctx: &mut crate::OptCtx<'_>,
     ) -> Result<()> {
         let cc = edit.function().default_cc();
         let first_stack_arg = cc.arg_passing_regs.len();
@@ -35,13 +35,13 @@ impl PostOptimizer for FunctionArgDetect {
         edit.clear_arg_values_from(first_stack_arg as u32);
         let alias_cfg = MemAnalyzer::new(MemOptions::for_purpose(
             MemPurpose::IncomingArgs,
-            &opt_ctx.options.assumptions,
+            edit.function().assumptions(),
         ));
         // Detection reads `alias_cfg`; only the rewire reads this one (see
         // `mem_chain_is_dirty`).
         let narrow_cfg = MemAnalyzer::new(MemOptions::for_purpose(
             MemPurpose::Structural,
-            &opt_ctx.options.assumptions,
+            edit.function().assumptions(),
         ));
         detect_stack_args(edit, &alias_cfg, &narrow_cfg, stack_args, first_stack_arg);
         Ok(())
@@ -169,10 +169,10 @@ fn detect_stack_args(
 /// nearest clobber is anything but the clean `InitialMemory` root.
 ///
 /// Narrows to `narrow_cfg`'s clobber, never `alias_cfg`'s, which piles the
-/// incoming-arg relaxations on top.  The rewire outlives the run that made it,
-/// so `narrow_cfg` claims nothing at all (`MemPurpose::Structural`): an edge
-/// justified by an assumption would be inherited by a later
-/// [`crate::AssumptionOptions::none`] run that disclaims it.
+/// incoming-arg relaxations on top.  The rewired edge is read afterwards by
+/// walks that block at every call, so `narrow_cfg` claims nothing at all
+/// (`MemPurpose::Structural`): an edge resting on a relaxation would hand it to
+/// a walk that does not honour it.
 fn mem_chain_is_dirty(
     edit: &mut crate::EditFunction<'_>,
     alias_cfg: &MemAnalyzer,

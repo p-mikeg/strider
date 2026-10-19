@@ -8,7 +8,7 @@
 //! ([`MemKind::HeapOpaque`]), and otherwise it decomposes to `None`, read
 //! conservatively as "not a provable terminal".
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId, low_bits_mask_u128};
 use strider_ir::{Function, IRViewer, IntBinaryOp, MemDecomp};
 
@@ -16,28 +16,20 @@ use super::ring::wrap_to_addr_width;
 use super::{MemExpr, MemKind};
 
 /// Memoized: a hit is O(1), a miss walks the address spine and caches the result.
-/// [`super::stamp`] states when the memo is drained and under which set.
+/// [`super::stamp`] states when the memo is drained.
 ///
-/// The memo is keyed by `ValueId` alone, so every walk over one `function`
-/// passes the run's `noalias_allocators`.  A policy that claims no heap class
-/// still sees one here; [`super::alias::classify_addr`] drops it.  The memo is
-/// also the verdict `strider-pattern`'s region filters read.  The set must be
-/// the one [`strider_ir::SideTables::memory_allocators`] records.
-pub(crate) fn decompose(
-    function: &Function,
-    value: ValueId,
-    noalias_allocators: &FxHashSet<u64>,
-) -> Option<MemExpr> {
-    debug_assert!(
-        noalias_allocators == function.side_tables().memory_allocators(),
-        "decompose under an allocator set the memo was not reset for"
-    );
+/// The memo is keyed by `ValueId` alone, so every walk reads the one
+/// allocator set the function holds ([`Function::assumptions`]), which only
+/// grows.  A policy that claims no heap class still sees one here;
+/// [`super::alias::classify_addr`] drops it.  The memo is also the verdict
+/// `strider-pattern`'s region filters read.
+pub(crate) fn decompose(function: &Function, value: ValueId) -> Option<MemExpr> {
     match function.side_tables().memory_class(value) {
         MemDecomp::Stack(_) | MemDecomp::Heap(_) => return resolve_slot(function, value),
         MemDecomp::NotMemory => return None,
         MemDecomp::Unknown => {}
     }
-    let result = spine_walk(function, value, noalias_allocators);
+    let result = spine_walk(function, value);
     match result {
         Some(e) => {
             let st = function.side_tables();
@@ -72,23 +64,15 @@ enum SpineEnd {
 /// the root's offset less what accrued getting there.  Committing only the root
 /// would make a consumer-first sweep re-walk the whole spine per query,
 /// O(depth^2) over the chain.
-fn spine_walk(
-    function: &Function,
-    value: ValueId,
-    noalias_allocators: &FxHashSet<u64>,
-) -> Option<MemExpr> {
+fn spine_walk(function: &Function, value: ValueId) -> Option<MemExpr> {
     let mut trail: Vec<(ValueId, i128)> = Vec::new();
-    let result = match spine_walk_trailed(function, value, &mut trail, noalias_allocators) {
+    let result = match spine_walk_trailed(function, value, &mut trail) {
         SpineEnd::Rooted(root) => Some(root),
-        SpineEnd::Phi { phi, offset }
-            if phi_names_an_allocation(function, phi, noalias_allocators) =>
-        {
-            Some(MemExpr {
-                base: phi,
-                offset,
-                kind: MemKind::HeapOpaque,
-            })
-        }
+        SpineEnd::Phi { phi, offset } if phi_names_an_allocation(function, phi) => Some(MemExpr {
+            base: phi,
+            offset,
+            kind: MemKind::HeapOpaque,
+        }),
         SpineEnd::Phi { .. } | SpineEnd::Opaque => None,
     };
     commit_trail(function, &trail, result);
@@ -136,11 +120,7 @@ fn commit_trail(function: &Function, trail: &[(ValueId, i128)], root: Option<Mem
 /// A verdict is exact per frontier node (each decides on the terminals IT
 /// reaches, propagated along the arm edges) and is committed for all of them,
 /// so a nested chain costs one frontier walk in total, not one per query.
-fn phi_names_an_allocation(
-    function: &Function,
-    root: ValueId,
-    noalias_allocators: &FxHashSet<u64>,
-) -> bool {
+fn phi_names_an_allocation(function: &Function, root: ValueId) -> bool {
     let mut nodes = vec![root];
     let mut index: FxHashMap<ValueId, usize> = FxHashMap::default();
     index.insert(root, 0);
@@ -158,7 +138,7 @@ fn phi_names_an_allocation(
             .collect();
         for arm in arms {
             let mut trail: Vec<(ValueId, i128)> = Vec::new();
-            match spine_walk_trailed(function, arm, &mut trail, noalias_allocators) {
+            match spine_walk_trailed(function, arm, &mut trail) {
                 SpineEnd::Phi { phi, .. } => {
                     let j = match index.get(&phi) {
                         Some(&j) => j,
@@ -225,7 +205,6 @@ fn spine_walk_trailed(
     function: &Function,
     value: ValueId,
     trail: &mut Vec<(ValueId, i128)>,
-    noalias_allocators: &FxHashSet<u64>,
 ) -> SpineEnd {
     let mut cur = value;
     let mut acc: i128 = 0;
@@ -287,9 +266,7 @@ fn spine_walk_trailed(
             }
             // A pure allocator's return pointer is a fresh heap base, bottomed
             // out exactly like the SP terminal.
-            NodeKind::Call { .. }
-                if is_allocator_return(function, cur, node, noalias_allocators) =>
-            {
+            NodeKind::Call { .. } if is_allocator_return(function, cur, node) => {
                 // An alignment mask above a heap base leaves the masked pointer's
                 // offset to the raw base unknown, and heap disjointness is exact,
                 // so returning the Stack-kinded anchor would call an aligned heap
@@ -361,12 +338,7 @@ fn spine_walk_trailed(
 /// heap base. `build_call` emits ret-vals before clobbers, so the return
 /// pointer is the first `Call` value output (`outputs[2]`, after control and
 /// memory); only that output is a base, never a clobbered register.
-fn is_allocator_return(
-    function: &Function,
-    value: ValueId,
-    call: NodeId,
-    noalias_allocators: &FxHashSet<u64>,
-) -> bool {
+fn is_allocator_return(function: &Function, value: ValueId, call: NodeId) -> bool {
     if function.node_outputs(call).get(2) != Some(&value) {
         return false;
     }
@@ -374,7 +346,7 @@ fn is_allocator_return(
     let is_alloc = function
         .int_const_u128(target)
         .and_then(|a| u64::try_from(a).ok())
-        .is_some_and(|a| noalias_allocators.contains(&a));
+        .is_some_and(|a| function.assumptions().noalias_allocators.contains(&a));
     // A cheap gate before the tracked-varnode scan below: the allocator set is
     // empty by default.
     if !is_alloc {
@@ -469,14 +441,10 @@ pub(crate) fn alignment_masked_operand(function: &Function, node: NodeId) -> Opt
 }
 
 /// The heap base a `Call` returns if it is a known pure allocator, else `None`.
-pub(super) fn allocator_return_base(
-    function: &Function,
-    call: NodeId,
-    noalias_allocators: &FxHashSet<u64>,
-) -> Option<ValueId> {
+pub(super) fn allocator_return_base(function: &Function, call: NodeId) -> Option<ValueId> {
     if !matches!(function.node_kind(call), NodeKind::Call { .. }) {
         return None;
     }
     let ret = *function.node_outputs(call).get(2)?;
-    is_allocator_return(function, ret, call, noalias_allocators).then_some(ret)
+    is_allocator_return(function, ret, call).then_some(ret)
 }
