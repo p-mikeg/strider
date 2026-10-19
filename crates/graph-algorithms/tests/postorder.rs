@@ -9,7 +9,7 @@ mod common;
 
 use common::Graph;
 use expect_test::expect;
-use graph_algorithms::walk::{WalkPhase, entity_postorder};
+use graph_algorithms::walk::{PostOrder, WalkPhase};
 use itertools::Itertools;
 use std::fmt::Write;
 
@@ -26,7 +26,7 @@ macro_rules! test_postorder {
 }
 
 fn collect_postorder(g: &Graph) -> (String, String) {
-    let mut postorder = entity_postorder(g, [g.entry()]);
+    let mut postorder = PostOrder::new(g, [g.entry()]);
 
     let mut full = String::new();
     let mut indent = 0;
@@ -45,7 +45,7 @@ fn collect_postorder(g: &Graph) -> (String, String) {
         writeln!(full, "{:indent$}{phase}:{}", "", g.name(node)).unwrap();
     }
 
-    let mut rpo: Vec<_> = entity_postorder(g, [g.entry()]).collect();
+    let mut rpo: Vec<_> = PostOrder::new(g, [g.entry()]).collect();
     rpo.reverse();
     let rpo = rpo.iter().map(|&node| g.name(node)).format(" ").to_string();
 
@@ -152,7 +152,7 @@ test_postorder! {
 #[test]
 fn empty_roots_yields_nothing() {
     let g = common::graph("a -> b");
-    let mut po = entity_postorder(&g, core::iter::empty());
+    let mut po = PostOrder::new(&g, core::iter::empty());
     assert!(po.next().is_none());
     assert!(po.next_event().is_none());
 }
@@ -160,7 +160,7 @@ fn empty_roots_yields_nothing() {
 #[test]
 fn self_loop_emits_pre_and_post_once() {
     let g = common::graph("a -> a");
-    let mut po = entity_postorder(&g, [g.entry()]);
+    let mut po = PostOrder::new(&g, [g.entry()]);
     let events: Vec<_> = core::iter::from_fn(|| po.next_event()).collect();
     assert_eq!(events.len(), 2);
     assert!(matches!(events[0].0, WalkPhase::Pre));
@@ -170,7 +170,7 @@ fn self_loop_emits_pre_and_post_once() {
 
 #[test]
 fn multi_root_preserves_root_order_in_rpo() {
-    // Pins the RPO root order PostOrderContext::reset documents: roots [a, x]
+    // Pins the RPO root order PostOrder::new documents: roots [a, x]
     // over disjoint chains must keep a before x in the reversed post-order.
     let g = common::graph(
         "a -> b
@@ -178,7 +178,7 @@ fn multi_root_preserves_root_order_in_rpo() {
     );
     let a = g.node("a");
     let x = g.node("x");
-    let mut po: Vec<_> = entity_postorder(&g, [a, x]).collect();
+    let mut po: Vec<_> = PostOrder::new(&g, [a, x]).collect();
     po.reverse(); // RPO
     let names: Vec<_> = po.iter().map(|&n| g.name(n).to_owned()).collect();
     let pos_a = names.iter().position(|s| s == "a").unwrap();
@@ -195,7 +195,7 @@ fn duplicate_root_visited_once() {
     // what makes duplicate-tolerant root lists safe to pass.
     let g = common::graph("a -> b");
     let a = g.node("a");
-    let mut po = entity_postorder(&g, [a, a]);
+    let mut po = PostOrder::new(&g, [a, a]);
     let events: Vec<_> = core::iter::from_fn(|| po.next_event()).collect();
     let pre_a = events
         .iter()
