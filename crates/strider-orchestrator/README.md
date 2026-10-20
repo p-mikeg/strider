@@ -95,7 +95,9 @@ a listed address may be missing.
   lone out-of-function target became a `TailCall` (for a caller-seeded
   `Return` also where a FAILED re-check lands; a `Return` the CLASSIFIER
   derived is not listed once `return_slots_survive_untracked_writes` carries
-  its proof); and an arm seated on the mode a caller seed gave its siblings.
+  its proof); a p-code `RETURN` whose target is not provably the caller's,
+  where the caller seeded `LinkRegister`; and an arm seated on the mode a
+  caller seed gave its siblings.
 - `IsaModeConflict`, `InteriorTarget`, `UnmappedTarget`, `UndecodableTarget`:
   losses no indirect site owns, since a direct edge produces them too. They
   are absorbed from every round's `Cfg` rather than read off the final one:
