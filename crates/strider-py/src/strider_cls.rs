@@ -244,6 +244,9 @@ pub(crate) fn overrides_from(
 
 /// Seat caller-supplied indirect-branch answers at the CFG level, so they apply
 /// whether or not the classifier runs.
+///
+/// One target is the caller's own dispatch, not a table read: a `Single`,
+/// which out of range is a tail call where a table's arm defers the site.
 pub(crate) fn seat_known_targets(
     known_targets: &std::collections::HashMap<u64, crate::options::KnownTarget>,
 ) -> crate::options::SeatedTargets {
@@ -253,11 +256,16 @@ pub(crate) fn seat_known_targets(
             let seated = match answer {
                 crate::options::KnownTarget::Return => strider_cfg::ResolvedTargets::LinkRegister,
                 crate::options::KnownTarget::Targets(targets) => {
-                    strider_cfg::ResolvedTargets::table(
+                    let table = strider_cfg::ResolvedTargets::table(
                         targets
                             .iter()
                             .map(|&t| strider_cfg::ResolvedTarget::new(t, None)),
-                    )
+                    );
+                    let only = match table.arms() {
+                        [only] => Some(*only),
+                        _ => None,
+                    };
+                    only.map_or(table, strider_cfg::ResolvedTargets::Single)
                 }
             };
             (strider_cfg::PcodeInsnAddr::at_machine_start(addr), seated)

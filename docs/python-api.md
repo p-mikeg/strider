@@ -1017,7 +1017,9 @@ both raises `ValueError`.
 `known_targets` seats indirect-branch answers in the CFG builder and seeds the
 resolution loop, which unions its own findings on top, so it composes with
 `resolve_indirect_branches=False`. A seeded site drops out of `unresolved`
-even when the classifier could not read it. A wrong seed can stop the
+even when the classifier could not read it; one target outside the function
+is seated as a tail call, but a list of several with one outside defers the
+site, as an over-read jump table would. A wrong seed can stop the
 classifier deriving the site's real arms; `cfg.incomplete` names the sites
 where that cannot be ruled out as `"unverified_seed"`.
 
