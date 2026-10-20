@@ -210,7 +210,8 @@ impl From<ElfRegionSource> for RegionSource {
 /// What `apply_relocations` and `relocated_got_is_rom` claim about the image.
 /// Relocated, fetch maps every writable section too; `relocated_got_is_rom`
 /// takes `.got` and `.data.rel.ro` into the ROM on the caller's claim that
-/// nothing rewrites them once the loader has run (never `.got.plt`).
+/// nothing rewrites them once the loader has run (never `.got.plt`), less the
+/// slots only the loader computes, which stay unmapped.
 ///
 /// Refuses `relocated_got_is_rom` without `apply_relocations`, which denies
 /// that same claim.
