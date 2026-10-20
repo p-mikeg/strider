@@ -63,12 +63,11 @@ strider.explore.shutdown(port)
   `endianness` and `is_arm_be8` read what an image carries. Images are memory-mapped; `STRIDER_NO_MMAP=1`
   reads them instead. `load_elf(relocated_got_is_rom=True)` serves `.got` and
   `.data.rel.ro` as read-only, so a load through a GOT slot folds.
-- **Completeness you can check.** `cfg.incomplete` lists every reason a
-  result can be incomplete: an unresolved indirect branch (a return whose
-  target is not provably the caller's lands there too), a site settled only by
-  your own seed, an address reached in two ISA modes, and a branch target off
-  an instruction boundary, outside the image, or on bytes that hold no
-  instruction.
+- **Completeness you can check.** `cfg.is_complete()` reads six channels: an
+  unresolved indirect branch (a return whose target is not provably the
+  caller's rides there too), a site settled only by your own seed, an address
+  reached in two ISA modes, and a branch target off an instruction boundary,
+  outside the image, or on bytes that hold no instruction.
   `function.validate()` reports three more shapes: a memory read that skips a
   memory effect on its path, an `InitialVar` naming a varnode the function
   never minted or typed against it wrongly, and a `Store` only a `Load` takes.
@@ -88,11 +87,9 @@ strider.explore.shutdown(port)
   per callee through
   `LifterOptions(per_address_ccs=...)`. Analysis never reads a callee, so a
   callee that pops its caller's stack (`ret $imm16`) or an i386 PC thunk needs
-  such an entry. A callee that never returns goes in
-  `CfgOptions(no_return_targets=...)` instead, at its decoded address
-  (`addr & ~1` for a Thumb or MIPS16 symbol). `CfgOptions(call_other_abis=...)`
-  classifies a Sleigh user-op strider has no ABI for; `prog.user_op_names()`
-  lists the ones the architecture can emit.
+  such an entry. `CfgOptions(call_other_abis=...)` classifies a Sleigh user-op
+  strider has no ABI for; `prog.user_op_names()` lists the ones the
+  architecture can emit.
 - **Smaller graphs.** A `Call` carries an output per clobbered REGISTER rather
   than per tracked Sleigh varnode, and a Sleigh temporary gets a phi only
   where one is live across a region boundary. On the 24 largest x86-64
@@ -126,9 +123,8 @@ strider.explore.shutdown(port)
   pan-and-zoom explorer while you keep querying. `StriderError.backtrace`
   carries the Rust trace.
 - **Threads.** `analyze` drops the GIL, so one lift handle per thread analyses
-  in parallel. A handle works on any thread; `analyze`, `build_cfg` and
-  `add_elf` hold it alone, and a call that meets one of them raises rather
-  than waiting.
+  in parallel. A handle decodes only on the thread that built it and says so
+  rather than misbehaving.
 - **Failing safely.** A pattern too large or too deep for the thread's stack
   and an out-of-range operand index raise `StriderError` instead of crashing
   the interpreter, and the wheel is built with overflow checks.
@@ -137,7 +133,12 @@ strider.explore.shutdown(port)
 
 `cfg.is_complete()` is gone: `not cfg.incomplete` is the same test. The
 per-reason `Cfg` getters are gone: `cfg.incomplete` lists every
-`(address, reason)`. [CHANGELOG.md](CHANGELOG.md) has the rest.
+`(address, reason)`. A callee that never returns goes in
+`CfgOptions(no_return_targets=...)`, at its decoded address (`addr & ~1` for a
+Thumb or MIPS16 symbol), not in a `CallingConvention.no_return()`. A handle
+works on any thread; `analyze`, `build_cfg` and `add_elf` hold it alone, and a
+call that meets one of them raises rather than waiting.
+[CHANGELOG.md](CHANGELOG.md) has the rest, breaking changes first.
 
 ## Upgrading from 0.1.0
 
@@ -184,7 +185,8 @@ The guides in [`docs/`](docs/):
   runnable examples.
 - [Optimizations](docs/optimizations.md): what each pass does, which is usually
   why a pattern's shape differs from the source.
-- [Changelog](CHANGELOG.md): what 0.2.0 changed, breaking entries first.
+- [Changelog](CHANGELOG.md): what changed since 0.2.0, then what 0.2.0
+  changed, breaking entries first in each.
 
 [`crates/strider-py/examples/python/`](crates/strider-py/examples/python/) has
 seventeen runnable scripts, from a quickstart to custom target ABIs.
