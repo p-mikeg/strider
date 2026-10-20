@@ -375,63 +375,84 @@ fn cond_branches_to_same_oob_target_share_one_stub() {
     );
 }
 
+/// Every entry of `cfg.incomplete()`, as `(machine address, reason)`.
+fn incomplete_of(cfg: &Cfg) -> Vec<(u64, strider_cfg::Reason)> {
+    cfg.incomplete()
+        .iter()
+        .map(|(addr, reason)| (addr.machine_addr.addr, reason))
+        .collect()
+}
+
+/// The start addresses of the regions the region at `from` edges to.
+fn successor_starts(cfg: &Cfg, from: u64) -> Vec<u64> {
+    let graph = cfg.region_graph();
+    let id = cfg
+        .region_ids()
+        .find(|&id| graph[id].start_addr == PcodeInsnAddr::at_machine_start(from))
+        .unwrap_or_else(|| panic!("no region at {from:#x}"));
+    graph
+        .neighbors(id)
+        .map(|succ| graph[succ].start_addr.machine_addr.addr)
+        .collect()
+}
+
 #[test]
-fn fall_through_past_size_bound_is_function_boundary_error() {
-    // A `lock cmpxchg` is multi-pcode-op with intra-insn CONST branches.
-    // Running off a size bound of 2 with no explicit terminator opcode is a
-    // function-boundary error, not a tail call.
+fn fall_through_past_size_bound_tail_calls_the_end() {
+    // 0x1000 `xor eax, eax`, then a `lock cmpxchg` (multi-pcode-op, with
+    // intra-insn CONST branches) at the 2-byte bound, never decoded: the
+    // fall-through is a tail call to 0x1002.
     let mut bytes = vec![0x31u8, 0xc0];
     bytes.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::size(2),
         ..CfgOptions::default()
     };
-    let arch = SleighArch::x86_64();
-    let sleigh = make_sleigh_x86_64(bytes, 0x1000);
-    let err = DecodeEngine::new(arch, sleigh)
-        .expect("decode engine")
-        .build_cfg(0x1000u64.into(), &opts)
-        .expect_err(
-            "sequential fall-through past the size bound must error, not classify as tail call",
-        );
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("function-boundary error"),
-        "expected function-boundary error message; got {msg}"
-    );
-    assert!(
-        msg.contains("sequential decoding overflowed"),
-        "expected overflow detail in error message; got {msg}"
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+
+    assert_tail_call_stub_at(&cfg, 0x1002);
+    assert_eq!(successor_starts(&cfg, 0x1000), [0x1002]);
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1002, strider_cfg::Reason::PastFunctionEnd)]
     );
 }
 
 #[test]
-fn fall_through_single_insn_past_size_bound_is_function_boundary_error() {
-    // `mov eax, 5` starts inside a size bound of 3 but falls through to 0x1005,
-    // past the 0x1003 bound, with no terminator opcode.  Must be a
-    // function-boundary error, not a synthetic tail call.  This is the
-    // `tzcount.o` shape: a small function with no terminator inside its
-    // recorded bound.
+fn fall_through_past_a_straddled_bound_leaves_after_the_instruction() {
+    // `mov eax, 5` starts inside a 3-byte bound and decodes whole, so the
+    // fall-through leaves at 0x1005, not at the bound.
     let bytes = vec![0xB8, 0x05, 0x00, 0x00, 0x00, 0x90, 0x90, 0x90];
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::size(3),
         ..CfgOptions::default()
     };
-    let arch = SleighArch::x86_64();
-    let sleigh = make_sleigh_x86_64(bytes, 0x1000);
-    let err = DecodeEngine::new(arch, sleigh)
-        .expect("decode engine")
-        .build_cfg(0x1000u64.into(), &opts)
-        .expect_err("single-insn fall-through past the size bound must error");
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("function-boundary error"),
-        "expected function-boundary error message; got {msg}"
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+
+    assert_tail_call_stub_at(&cfg, 0x1005);
+    assert_eq!(successor_starts(&cfg, 0x1000), [0x1005]);
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1005, strider_cfg::Reason::PastFunctionEnd)]
     );
-    assert!(
-        msg.contains("sequential decoding overflowed"),
-        "expected overflow detail in error message; got {msg}"
-    );
+}
+
+/// Under an open bound only an address below the entry is out of range, and
+/// a fall-through only moves up.
+#[test]
+fn an_open_bound_never_ends_past_the_function() {
+    // xor eax, eax; nop; ret
+    for code_before_start in [false, true] {
+        let opts = CfgOptions {
+            bound: strider_cfg::FunctionBound::Open { code_before_start },
+            ..CfgOptions::default()
+        };
+        let cfg = build_from_bytes_opts(vec![0x31, 0xc0, 0x90, 0xc3], 0x1000, &opts);
+        assert_eq!(
+            incomplete_of(&cfg),
+            [],
+            "code_before_start {code_before_start}"
+        );
+    }
 }
 
 #[test]
@@ -449,36 +470,28 @@ fn probe_x86_nop_lifts_to_zero_pcode_ops() {
 }
 
 #[test]
-fn zero_pcode_prefix_crossing_size_bound_is_function_boundary_error() {
-    // Zero-pcode nops run across the bound with a real `ret` past it.  Since
-    // they produce no pcode ops, `insns` stays empty while decode walks
-    // machine-by-machine past `start + size`, so the boundary check
-    // must fire on the first past-bound instruction rather than absorb the
-    // next function's `ret`.
-    //
-    // The bound is 0x1002; three nops carry decode to 0x1003 with `insns`
-    // still empty, and the `ret` there belongs to the next function.
+fn zero_pcode_prefix_crossing_size_bound_tail_calls_the_end() {
+    // Three nops, then the next function's `ret` at 0x1003. The nops append
+    // no pcode op, so `insns` stays empty while decode walks past the 2-byte
+    // bound; the fall-through must still stop at 0x1002 rather than absorb
+    // the `ret`.
     let bytes = vec![0x90u8, 0x90, 0x90, 0xc3];
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::size(2),
         ..CfgOptions::default()
     };
-    let arch = SleighArch::x86_64();
-    let sleigh = make_sleigh_x86_64(bytes, 0x1000);
-    let err = DecodeEngine::new(arch, sleigh)
-        .expect("decode engine")
-        .build_cfg(0x1000u64.into(), &opts)
-        .expect_err(
-            "zero-pcode prefix crossing the size bound must error, not absorb the next function",
-        );
-    let msg = format!("{err:#}");
+    let cfg = build_from_bytes_opts(bytes, 0x1000, &opts);
+
+    assert_tail_call_stub_at(&cfg, 0x1002);
+    assert_eq!(successor_starts(&cfg, 0x1001), [0x1002]);
     assert!(
-        msg.contains("function-boundary error"),
-        "expected function-boundary error message; got {msg}"
+        cfg.regions()
+            .all(|r| r.terminator != RegionTerminator::Return),
+        "the next function's ret was absorbed"
     );
-    assert!(
-        msg.contains("sequential decoding overflowed"),
-        "expected overflow detail in error message; got {msg}"
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1002, strider_cfg::Reason::PastFunctionEnd)]
     );
 }
 
@@ -487,7 +500,7 @@ fn size_bound_smaller_than_first_terminator_insn_still_builds_tail_call() {
     // A 2-byte `jmp +0x10` under a size bound of 1 starts in range but its
     // encoding crosses the bound.  Decoding is NOT length-bounded: the
     // instruction decodes fully and its OOB target is a tail call.  Contrast
-    // the erroring cases above; the bound trips only on sequential
+    // the past-end cases above; the bound trips only on sequential
     // fall-through, never mid-instruction.
     let bytes = vec![0xebu8, 0x10]; // jmp +0x10 -> target 0x1012
     let opts = CfgOptions {

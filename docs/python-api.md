@@ -954,7 +954,7 @@ cfg.incomplete                         # [(address, reason)], empty when complet
 ```
 
 A converged CFG is never silently incomplete. `cfg.incomplete` lists every
-machine address it cannot vouch for, with one of six reasons
+machine address it cannot vouch for, with one of seven reasons
 (`strider.cfg.INCOMPLETE_REASONS`):
 
 - `"unresolved_branch"`: an indirect branch with no complete answer, such as a
@@ -990,8 +990,15 @@ machine address it cannot vouch for, with one of six reasons
   tail-call stub; the call ends as no-return. Such bytes reached off a seeded
   arm are named with no stub, and the arm is dropped. So is an arm whose
   decode fails for any other reason, named at its own start.
+- `"past_function_end"`: where code falls through past `function_max_size`
+  with no branch, at the first address after the last instruction decoded
+  (the end itself unless that instruction straddles it). The region
+  tail-calls that address through an empty stub, as a branch out of range
+  does. An entry point falling into the next symbol, a slot patched at run
+  time, or a size too short. Off a seeded arm the arm is dropped instead, as
+  `"undecodable_target"` says.
 
-The four target reasons, which a direct edge also produces, accumulate across
+The five target reasons, which a direct edge also produces, accumulate across
 resolution rounds, so a loss in an early round stays listed. The two site
 reasons are read off the final round instead, the mode-less arms excepted:
 those accumulate and are then filtered to the sites still seated.
@@ -1011,10 +1018,10 @@ strider.cfg.CfgOptions(
 ```
 
 `function_max_size` bounds the decode to `[entry, entry + size)`; omit it for
-an unbounded lift (`0` raises `ValueError`). A fall-through past the end fails
-the whole build with a `StriderError`. `allow_code_before_start_addr`
-follows branches below the entry, which a size already rules out, so passing
-both raises `ValueError`.
+an unbounded lift (`0` raises `ValueError`). A fall-through past the end is a
+tail call there, reported as `"past_function_end"`.
+`allow_code_before_start_addr` follows branches below the entry, which a size
+already rules out, so passing both raises `ValueError`.
 
 `known_targets` seats indirect-branch answers in the CFG builder and seeds the
 resolution loop, which unions its own findings on top, so it composes with

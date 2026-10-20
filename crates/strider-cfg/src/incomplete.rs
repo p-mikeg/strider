@@ -9,7 +9,7 @@ use crate::PcodeInsnAddr;
 ///
 /// The first two name a dispatch SITE, the key
 /// [`CfgOptions::known_targets`](crate::CfgOptions::known_targets) seeds; the
-/// other four a branch TARGET, which a direct edge reaches too.
+/// other five a branch TARGET, which a direct edge reaches too.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Reason {
     /// An indirect branch with no complete successor set. A CFG build names
@@ -58,17 +58,29 @@ pub enum Reason {
     /// names it. So is the start of an arm, or of a region off one, whose
     /// decode fails for any other reason (a fall-through past the bound).
     UndecodableTarget,
+    /// Where a fall-through ran off a
+    /// [`FunctionBound::Size`](crate::FunctionBound::Size) end, at the first
+    /// address after the last instruction decoded: the end itself unless that
+    /// instruction straddles it. The region leaves through an empty `TailCall`
+    /// stub there, as a branch out of range does. An entry point falling into
+    /// the next symbol, a slot patched at run time, or a size too short. Off a
+    /// seeded arm the arm is dropped instead, as [`Self::UndecodableTarget`]
+    /// says. Never under [`FunctionBound::Open`](crate::FunctionBound::Open):
+    /// only an address below the entry is out of range there, and a
+    /// fall-through moves up.
+    PastFunctionEnd,
 }
 
 impl Reason {
     /// Every reason, in the order one address's entries sort.
-    pub const ALL: [Reason; 6] = [
+    pub const ALL: [Reason; 7] = [
         Reason::UnresolvedBranch,
         Reason::UnverifiedSeed,
         Reason::IsaModeConflict,
         Reason::InteriorTarget,
         Reason::UnmappedTarget,
         Reason::UndecodableTarget,
+        Reason::PastFunctionEnd,
     ];
 
     /// The spelling Python and the golden files use.
@@ -81,6 +93,7 @@ impl Reason {
             Reason::InteriorTarget => "interior_target",
             Reason::UnmappedTarget => "unmapped_target",
             Reason::UndecodableTarget => "undecodable_target",
+            Reason::PastFunctionEnd => "past_function_end",
         }
     }
 

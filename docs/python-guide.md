@@ -50,7 +50,7 @@ The result unpacks into three things:
 - `cfg`: the control flow graph the function was lifted from.
 - `function`: the lifted, optimized IR. This is what you query.
 - `unresolved`: addresses of indirect branches Strider could not resolve.
-  An unresolved branch is one of six reasons a result can be incomplete:
+  An unresolved branch is one of seven reasons a result can be incomplete:
   `cfg.incomplete` lists all of them, and
   [python-api.md](python-api.md#12-the-cfg-stridercfg) says what each means.
 

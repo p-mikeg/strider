@@ -155,10 +155,11 @@ _REASONS = (
     "interior_target",
     "unmapped_target",
     "undecodable_target",
+    "past_function_end",
 )
 
 
-def test_incomplete_reasons_are_the_six_in_order() -> None:
+def test_incomplete_reasons_are_the_seven_in_order() -> None:
     assert strider.cfg.INCOMPLETE_REASONS == _REASONS
 
 
@@ -180,6 +181,21 @@ def test_build_cfg_incomplete_names_the_dispatch_it_left() -> None:
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
     cfg = lift.build_cfg(BASE)
     assert cfg.incomplete == [(0x1003, "unresolved_branch")]
+
+
+def test_a_fall_through_past_the_size_is_a_reported_tail_call() -> None:
+    # xor eax, eax; then a lock cmpxchg past the 2-byte size, never decoded
+    code = bytes([0x31, 0xC0, 0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58])
+    mem = strider.reader.BufferReader(BASE, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    opts = strider.cfg.CfgOptions(function_max_size=2)
+    result = lift.analyze(
+        BASE,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        strider.lift.LifterOptions(cfg=opts),
+    )
+    assert result.cfg.incomplete == [(BASE + 2, "past_function_end")]
+    assert lift.build_cfg(BASE, opts).incomplete == [(BASE + 2, "past_function_end")]
 
 
 def test_incomplete_sorts_by_address_across_reasons() -> None:
