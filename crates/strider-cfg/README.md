@@ -71,11 +71,11 @@ of a split, or a fall-through onto bytes that hold no instruction or past a
 `FunctionBound::Size` end, which edges to a `TailCall` stub), `CondBranch`
 carrying the taken target, `Return`, `NoReturn` (a CallOther classified as a
 `BUG()`-class trap, a call whose target is in `no_return_targets`, a call whose
-return address is out of range, or a call whose fall-through reaches bytes that
-hold no instruction, which also DROPS everything after the call), `TailCall`
-carrying the callee, `Switch` carrying a jump table's arms and the dispatch
-address, and `UnresolvedIndirectBranch`. Only `Unconditional`, `CondBranch` and
-`Switch` ever have an outgoing edge.
+return address is out of range (reported as `PastFunctionEnd`), or a call whose
+fall-through reaches bytes that hold no instruction, which also DROPS everything
+after the call), `TailCall` carrying the callee, `Switch` carrying a jump
+table's arms and the dispatch address, and `UnresolvedIndirectBranch`. Only
+`Unconditional`, `CondBranch` and `Switch` ever have an outgoing edge.
 
 Classifying a `BranchIndirect` needs the IR, which sits above this crate, so a
 site is either seated from `derived_targets` or `known_targets` or deferred
@@ -127,13 +127,14 @@ seat `UnverifiedSeed`. The five target reasons:
   build. The instruction at the start address decodes even inside a data
   range.
 - `PastFunctionEnd`: a sequential fall-through, or a conditional branch's
-  not-taken path, past a `FunctionBound::Size` end, at the first address
-  after the last instruction decoded (the end itself unless that instruction
-  straddles it). It leaves through an empty `TailCall` stub, as a branch out
-  of range does. A run of zero-pcode-op instructions stops there too, never
-  absorbing the next function's first instruction. Code off a seeded arm is
-  named with no stub, and the arm is dropped, as below. An open bound never
-  yields it.
+  not-taken path, past a `FunctionBound::Size` end, at the first address after
+  the last instruction decoded (the end itself unless that instruction straddles
+  it). It leaves through an empty `TailCall` stub, as a branch out of range
+  does. A call whose return address is there ends `NoReturn` and is reported
+  too, unless its target is in `no_return_targets`. A run of zero-pcode-op
+  instructions stops there too, never absorbing the next function's first
+  instruction. Code off a seeded arm is named with no stub, and the arm is
+  dropped, as below. An open bound never yields it.
 - `IsaModeConflict`: two edges reached an address carrying different ISA
   modes, and the losing path decodes in the winner's. The mode only: a
   disagreement on another committed var, such as `condit` into an IT block, is

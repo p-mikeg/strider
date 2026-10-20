@@ -62,7 +62,10 @@ pub enum Reason {
     /// a [`FunctionBound::Size`](crate::FunctionBound::Size) end, at the first
     /// address after the last instruction decoded: the end itself unless that
     /// instruction straddles it. The region leaves through an empty `TailCall`
-    /// stub there, as a branch out of range does. Typical causes: an entry
+    /// stub there, as a branch out of range does. A call returning there ends
+    /// its region `NoReturn` instead, unless its target is in
+    /// [`CfgOptions::no_return_targets`](crate::CfgOptions::no_return_targets),
+    /// which is not reported. Typical causes: an entry
     /// point falling into the next symbol, a slot patched at run time, or a
     /// size too short. Code reached off a seeded arm is named here with no
     /// stub: the arm is dropped instead, and
