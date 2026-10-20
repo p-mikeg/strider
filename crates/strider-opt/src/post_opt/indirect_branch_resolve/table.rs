@@ -27,7 +27,9 @@
 //! Over-approximating the bound never drops a real edge, but a surplus arm is a
 //! live edge whose bytes are decoded like any other, so the range enumerated
 //! must be one proven for the index the address scales.  Under-approximating
-//! is unsound.
+//! is unsound.  A KnownBits field bound beside a guard on the same bits that
+//! no hop connects is not taken: the guard may size the table, and the field
+//! then reaches the next one.
 
 use super::MAX_TABLE_ENTRIES;
 use crate::ReadOnlyMemory;
@@ -360,6 +362,10 @@ fn is_base_operand(function: &strider_ir::Function, v: ValueId) -> bool {
 /// ConstantFold has merged `k` into the table base.  `Add` is modular at one
 /// width, so a bound on the sibling is a bound on `v` pinned `k` lower, and the
 /// tightest such sibling is taken.
+///
+/// A range [`RangeMap::guard_left_unconnected`] flags is not one.
+///
+/// [`RangeMap::guard_left_unconnected`]: crate::value_range::RangeMap::guard_left_unconnected
 fn bounded_index(
     function: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
@@ -369,8 +375,13 @@ fn bounded_index(
     let ty = function
         .value_type_opt(v)
         .filter(|t| t.is_integer() && function.int_const_u128(v).is_none())?;
+    let enumerable = |ranges: &crate::value_range::RangeMap<'_>, value: ValueId, iv: Interval| {
+        index_bound_ok(ty, iv)
+            && !is_width_only(function, ranges, value, iv)
+            && !ranges.guard_left_unconnected(value, site, iv)
+    };
     let iv = ranges.range_of(v, site);
-    if index_bound_ok(ty, iv) && !is_width_only(function, ranges, v, iv) {
+    if enumerable(ranges, v, iv) {
         return Some(PinnedIndex {
             index: v,
             range: iv,
@@ -395,13 +406,11 @@ fn bounded_index(
         .into_iter()
         .filter_map(|(sum, addend)| {
             let iv = ranges.range_of(sum, site);
-            (index_bound_ok(ty, iv) && !is_width_only(function, ranges, sum, iv)).then_some(
-                PinnedIndex {
-                    index: v,
-                    range: iv,
-                    rebase: addend,
-                },
-            )
+            enumerable(ranges, sum, iv).then_some(PinnedIndex {
+                index: v,
+                range: iv,
+                rebase: addend,
+            })
         })
         .min_by_key(|hit| hit.range.count())
 }
