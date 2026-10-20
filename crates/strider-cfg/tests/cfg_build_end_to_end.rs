@@ -466,6 +466,54 @@ fn an_open_bound_never_ends_past_the_function() {
     }
 }
 
+/// A call whose return address is past the end still ends its region
+/// `NoReturn`, and the return address is reported: the callee returning would
+/// fall out of the function. A listed no-return callee never returns, so its
+/// call is not reported.
+#[test]
+fn a_call_returning_past_size_bound_is_reported() {
+    let opts = |no_return| CfgOptions {
+        bound: strider_cfg::FunctionBound::size(5),
+        no_return_targets: no_return,
+        ..CfgOptions::default()
+    };
+    let none = FxHashSet::default();
+    // 0x1000 call 0x2005
+    let call = vec![0xe8, 0x00, 0x10, 0x00, 0x00, 0xc3];
+    let cfg = build_from_bytes_opts(call.clone(), 0x1000, &opts(&none));
+    assert_eq!(
+        cfg.region_graph()[cfg.entry()].terminator,
+        RegionTerminator::NoReturn
+    );
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1005, strider_cfg::Reason::PastFunctionEnd)]
+    );
+
+    let exit: FxHashSet<u64> = [0x2005].into_iter().collect();
+    let cfg = build_from_bytes_opts(call, 0x1000, &opts(&exit));
+    assert_eq!(
+        cfg.region_graph()[cfg.entry()].terminator,
+        RegionTerminator::NoReturn
+    );
+    assert_eq!(incomplete_of(&cfg), []);
+
+    // 0x1000 call rax, under a 2-byte bound
+    let indirect = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(2),
+        ..CfgOptions::default()
+    };
+    let cfg = build_from_bytes_opts(vec![0xff, 0xd0, 0xc3], 0x1000, &indirect);
+    assert_eq!(
+        cfg.region_graph()[cfg.entry()].terminator,
+        RegionTerminator::NoReturn
+    );
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1002, strider_cfg::Reason::PastFunctionEnd)]
+    );
+}
+
 #[test]
 fn probe_x86_nop_lifts_to_zero_pcode_ops() {
     // Precondition for the zero-pcode-prefix test below: x86 `nop` lifts to
