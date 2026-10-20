@@ -24,6 +24,8 @@ static NO_PER_ADDRESS_CCS: FxHashMap<u64, strider_target::BuiltCallingConvention
 /// [`AssumptionOptions::default`], resolves indirect branches and compacts.
 #[derive(Clone, Debug)]
 pub struct AnalyzeOptions<'a> {
+    /// Its `derived_targets` must be empty: [`Strider::analyze`] fills that
+    /// layer with its own answers.
     pub cfg: strider_cfg::CfgOptions<'a>,
     /// Keyed by direct-call target address, read by the lift only. Built
     /// against this engine's registers and fitting its arch, as the default CC
@@ -170,8 +172,10 @@ where
     /// on is withdrawn there, which defers it over the caller's seed. A seed
     /// suppresses the unresolved report of an unclassifiable seated `Switch` at
     /// its address only while the settled answer names nothing the seed did
-    /// not; it never suppresses what the classifier derives. `opts.compact`
-    /// applies once, after the loop.
+    /// not, and a `LinkRegister` seed reports a p-code `RETURN` it covers whose
+    /// target is unproven as [`Reason::UnverifiedSeed`] instead; it never
+    /// suppresses what the classifier derives. `opts.compact` applies once,
+    /// after the loop.
     ///
     /// `pipeline` defaults to [`strider_opt::default_pipeline`]. Every round
     /// optimizes a fresh lift under `opts.assumptions` and classifies its
@@ -181,8 +185,8 @@ where
     ///
     /// # Errors
     ///
-    /// Lift / cfg / opt / validation failures only, never an incomplete
-    /// result.
+    /// A non-empty `opts.cfg.derived_targets`, which is the loop's own layer;
+    /// lift / cfg / opt / validation failures; never an incomplete result.
     pub fn analyze(
         &mut self,
         entry: u64,
@@ -219,6 +223,11 @@ where
         pipeline: Option<strider_opt::OptimizerPipeline>,
         classify: resolve::Classifier<'_>,
     ) -> Result<AnalyzeResult> {
+        anyhow::ensure!(
+            opts.cfg.derived_targets.is_empty(),
+            "analyze keeps its own answers in derived_targets; seed through \
+             known_targets instead"
+        );
         let pipeline = pipeline.unwrap_or_else(strider_opt::default_pipeline);
         let mut result =
             self.resolve(MachineInsnAddr::from(entry), cc, opts, &pipeline, classify)?;
