@@ -882,7 +882,6 @@ arch.reg("RAX")                        # the Vn for a register name, or None
                                        # every other arch lower ("r0", "x0", "r3")
 arch.reg_name(vn)                      # the name for a Vn, or None
 
-lft.reg("RAX"), lft.reg_name(vn)       # the same lookups through a lifter
 lft.pcode_at(entry, addr)              # decode one instruction's p-code as text
 
 lft.user_op_names()                    # every Sleigh user-op name this arch emits
@@ -980,7 +979,8 @@ machine address it cannot vouch for, with one of six reasons
 - `"isa_mode_conflict"`: an address two paths reached in different ISA modes.
   Never listed outside the four 32-bit ARM and four MIPS presets.
 - `"interior_target"`: a branch target off every instruction boundary, whose
-  edge is seated on the region owning the bytes and is therefore not exact.
+  edge is seated on the region owning the bytes and is therefore not exact, or
+  a region start a later decode stepped over (overlapping code).
 - `"unmapped_target"`: a direct-branch target or fall-through no byte of the
   image backs, seated as an empty tail-call stub.
 - `"undecodable_target"`: an address a direct branch or a fall-through past a
@@ -1042,7 +1042,11 @@ at its decoded, even address, so mask the ISA bit off a symbol value
 Failures inside an analysis are a `strider.StriderError`. A wrongly TYPED
 argument raises the usual builtin (`TypeError`, `OverflowError`), and
 `load_elf` raises `FileNotFoundError` for a missing path and `ValueError` for a
-file that is not a supported ELF. Every other bad VALUE is a `StriderError`,
+file that is not a supported ELF. A range-checked constructor argument raises
+`ValueError`: `CfgOptions(function_max_size=0)`, a size beside
+`allow_code_before_start_addr=True`, a `known_targets` string other than
+`"return"`, a string `call_other_abis` value and a `call_other_abis` name
+given twice. Every other bad VALUE is a `StriderError`,
 including `add_elf` / `add_symbol_file` on the same bad paths, an unknown
 `style=`, a reserved capture name and a node id the function does not hold.
 Match readers raise

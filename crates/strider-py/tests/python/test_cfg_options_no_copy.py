@@ -5,7 +5,10 @@ The kernel-sweep shape seeds tens of thousands of answers once and then
 analyses thousands of functions through the same `LifterOptions`; a table
 copied through Python per call makes each of those analyses O(table).
 Counted, not timed: such a copy shows in `tracemalloc`'s peak, and the views
-are memoized, so every read hands back one object.
+are memoized, so every read hands back one object. A copy on the Rust side
+allocates nothing Python sees, so the derived options are checked to share
+the seated table by identity; what an analyse passes down is a borrow of that
+table, which the Rust types hold to.
 """
 
 from __future__ import annotations
@@ -81,6 +84,16 @@ def test_known_targets_reads_back_one_memoized_view():
     narrowed = opts._with_function_max_size(0x40)
     assert narrowed.known_targets is view
     assert strider.lift.LifterOptions(cfg=opts).cfg.known_targets is view
+
+
+def test_derived_options_share_the_seated_table():
+    """Every options object an `ElfLifter` derives per call seats nothing anew."""
+    opts = strider.cfg.CfgOptions(known_targets={0x1000: [0x2000]})
+    seated = opts._seated_table_id()
+    assert opts._with_function_max_size(0x40)._seated_table_id() == seated
+    assert opts._with_elf_data_ranges(_program()._elf)._seated_table_id() == seated
+    lifter_opts = strider.lift.LifterOptions(cfg=opts)
+    assert lifter_opts._with_cfg(opts).cfg._seated_table_id() == seated
 
 
 def test_call_other_abis_resolve_once_per_arch():

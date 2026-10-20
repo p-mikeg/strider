@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import (
     Any,
+    ClassVar,
     Literal,
     Mapping,
     NamedTuple,
@@ -127,6 +128,7 @@ class AssumptionOptions:
         """Equal when both hold the same claims and list the same
         allocators."""
         ...
+    __hash__: ClassVar[None]  # type: ignore[assignment]
 
 class LifterOptions:
     """Per-call options for `Lifter.analyze`.
@@ -308,13 +310,6 @@ class Lifter:
 
         Holds the GIL for the whole run, unlike `analyze`: the run borrows the
         function for mutation."""
-        ...
-    def reg(self, name: str) -> Optional[Vn]:
-        """The varnode for the register called `name`, or `None` when the
-        name is not a register."""
-        ...
-    def reg_name(self, vn: Vn) -> Optional[str]:
-        """The register name for `vn`, or `None` when it names no register."""
         ...
     def pcode_at(self, entry: int, addr: int) -> str:
         """Decode from `entry` one instruction at a time until `addr`, and
@@ -515,9 +510,11 @@ class ElfLifter(Lifter):
         opts: Optional[LifterOptions] = ...,
     ) -> AnalyzeResult:
         """Lift the function at `entry`, a symbol name or an address. `cc`
-        defaults to this handle's convention. Unless `opts.cfg.data_ranges` names
-        some, the ELF's `$d` mapping symbols supply them, so a literal pool is
-        never decoded as code.
+        defaults to this handle's convention. A name with an ELF size bounds
+        the lift to that size unless `opts.cfg.function_max_size` is set, and
+        the bound drops `allow_code_before_start_addr`. Unless `opts.cfg.data_ranges`
+        names some, the ELF's `$d` mapping symbols supply them, so a literal
+        pool is never decoded as code.
 
         Releases the GIL as `Lifter.analyze` does, with the same consequence
         for a daemon thread parked inside it at interpreter finalization."""
