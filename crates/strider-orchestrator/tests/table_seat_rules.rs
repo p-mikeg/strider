@@ -105,3 +105,23 @@ fn a_constant_dispatch_past_the_function_is_an_unverified_tail_call() {
         )],
     );
 }
+
+/// Seeding the classifier's own answer as a one-arm table ends no worse than
+/// not seeding: the round that defers the table is not the answer.
+#[test]
+fn a_one_arm_table_seed_of_a_constant_dispatch_is_its_tail_call() {
+    let unseeded = analyze(constant_dispatch(), None, None);
+    let seed = ResolvedTargets::table(vec![ResolvedTarget::new(OUTSIDE, None)]);
+    let seeded = analyze(constant_dispatch(), Some(seed), None);
+    assert!(
+        seeded.cfg.regions().any(|r| matches!(
+            &r.terminator,
+            RegionTerminator::TailCall { target } if target.addr == OUTSIDE
+        )),
+        "the constant leaves the function",
+    );
+    assert_eq!(
+        seeded.incomplete().iter().collect::<Vec<_>>(),
+        unseeded.incomplete().iter().collect::<Vec<_>>(),
+    );
+}

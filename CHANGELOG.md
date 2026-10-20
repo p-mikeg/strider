@@ -422,6 +422,9 @@
 
 ### Fixed
 
+- Seeding a one-arm table at a dispatch the classifier reads as a constant
+  past the function seats that tail call, as an unseeded run does; the loop
+  stopped on the round that deferred the table and reported it unresolved.
 - A stack-held jump-table slot, a return slot and a stack-arg slot each see
   a store whose bytes wrap onto it around the address width.
 - A one-arm jump-table answer stays an arm through a merge, and a merge

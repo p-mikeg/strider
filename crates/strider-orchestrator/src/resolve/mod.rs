@@ -156,7 +156,7 @@ impl<'s> LoopState<'s> {
     }
 
     /// Folds `round`'s classifications into the seats, withdrawing a site on
-    /// its second narrowing. Returns whether any site's successors changed.
+    /// its second narrowing. Returns whether any site's seat changed.
     ///
     /// # Errors
     ///
