@@ -62,7 +62,9 @@ strider.explore.shutdown(port)
   `prog.symbol_at(addr)`, `symbol_opt(name)`, `iter_symbols()`,
   `endianness` and `is_arm_be8` read what an image carries. Images are memory-mapped; `STRIDER_NO_MMAP=1`
   reads them instead. `load_elf(relocated_got_is_rom=True)` serves `.got` and
-  `.data.rel.ro` as read-only, so a load through a GOT slot folds.
+  `.data.rel.ro` as read-only, so a load through a GOT slot folds, except one
+  only the loader computes, such as an IFUNC's or a MIPS global entry for an
+  imported symbol.
 - **Completeness you can check.** `cfg.is_complete()` reads six channels: an
   unresolved indirect branch (a return whose target is not provably the
   caller's rides there too), a site settled only by your own seed, an address
