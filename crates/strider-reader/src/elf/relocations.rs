@@ -1064,8 +1064,9 @@ fn is_ifunc(st_info: u8) -> bool {
 ///
 /// The local entries hold `B + value`, `B` modelled 0, and stay as the file
 /// has them. Without `.dynsym` no symbol can be checked, so every global
-/// entry is a hole. A hole names `R_MIPS_GLOB_DAT`, the relocation that
-/// covers the same kind of entry outside the primary GOT.
+/// entry is a hole, and a dynamic image missing one of the tags that place
+/// the GOT makes every `.got` word one. A hole names `R_MIPS_GLOB_DAT`, the
+/// relocation that covers the same kind of entry outside the primary GOT.
 fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
     let obj = ctx.obj;
     if !matches!(obj.architecture(), A::Mips | A::Mips64)
@@ -1076,11 +1077,25 @@ fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
     {
         return;
     }
-    let Some(tags) = mips_got_tags(obj) else {
-        return;
-    };
     let word: u64 = if obj.is_64() { 8 } else { 4 };
     let width = word as usize;
+    let tags = match mips_got_tags(obj) {
+        None => return,
+        Some(Some(tags)) => tags,
+        // The loader reads every one of the tags, so an image missing one says
+        // nothing about which words it writes: every `.got` word is a hole.
+        Some(None) => {
+            for sec in obj.sections().filter(|s| s.name() == Ok(".got")) {
+                let base = ctx.layout.section_base(&sec);
+                for i in 0..sec.size() / word {
+                    let addr = base.saturating_add(i * word);
+                    let holder = ctx.holding(addr, width);
+                    ctx.unmodelled(holder, addr, width, object::elf::R_MIPS_GLOB_DAT);
+                }
+            }
+            return;
+        }
+    };
     let slot = |i: u64| {
         i.checked_mul(word)
             .and_then(|off| tags.base.checked_add(off))
@@ -1144,15 +1159,15 @@ struct MipsGotTags {
     /// global ones.
     local_gotno: u64,
     /// `DT_MIPS_GOTSYM`, the `.dynsym` index of the first global entry's
-    /// symbol; with no global entries, `DT_MIPS_SYMTABNO`.
+    /// symbol; `DT_MIPS_SYMTABNO` with no global entries.
     gotsym: u64,
     /// `DT_MIPS_SYMTABNO`, the `.dynsym` count.
     symtabno: u64,
 }
 
-/// [`MipsGotTags`] from the `PT_DYNAMIC` segment, `None` without one or
-/// without `DT_PLTGOT` / `DT_MIPS_LOCAL_GOTNO`.
-fn mips_got_tags(obj: &object::File<'_>) -> Option<MipsGotTags> {
+/// [`MipsGotTags`] from the `PT_DYNAMIC` segment: `None` without one,
+/// `Some(None)` when it lacks any of the four tags.
+fn mips_got_tags(obj: &object::File<'_>) -> Option<Option<MipsGotTags>> {
     match obj {
         object::File::Elf32(f) => mips_got_tags_of(f),
         object::File::Elf64(f) => mips_got_tags_of(f),
@@ -1162,7 +1177,7 @@ fn mips_got_tags(obj: &object::File<'_>) -> Option<MipsGotTags> {
 
 fn mips_got_tags_of<Elf: object::read::elf::FileHeader>(
     f: &object::read::elf::ElfFile<'_, Elf>,
-) -> Option<MipsGotTags> {
+) -> Option<Option<MipsGotTags>> {
     use object::read::elf::{Dyn as _, ProgramHeader as _};
     let endian = f.endian();
     let entries = f
@@ -1177,13 +1192,20 @@ fn mips_got_tags_of<Elf: object::read::elf::FileHeader>(
             .find(|&(t, _)| t == u64::from(want))
             .map(|(_, v)| v)
     };
-    let symtabno = tag(object::elf::DT_MIPS_SYMTABNO).unwrap_or(0);
-    Some(MipsGotTags {
-        base: tag(object::elf::DT_PLTGOT)?,
-        local_gotno: tag(object::elf::DT_MIPS_LOCAL_GOTNO)?,
-        gotsym: tag(object::elf::DT_MIPS_GOTSYM).unwrap_or(symtabno),
+    let (Some(base), Some(local_gotno), Some(gotsym), Some(symtabno)) = (
+        tag(object::elf::DT_PLTGOT),
+        tag(object::elf::DT_MIPS_LOCAL_GOTNO),
+        tag(object::elf::DT_MIPS_GOTSYM),
+        tag(object::elf::DT_MIPS_SYMTABNO),
+    ) else {
+        return Some(None);
+    };
+    Some(Some(MipsGotTags {
+        base,
+        local_gotno,
+        gotsym,
         symtabno,
-    })
+    }))
 }
 
 #[cfg(test)]

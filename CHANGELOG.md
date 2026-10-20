@@ -557,7 +557,8 @@
   lazy-resolver and module-pointer words, and every global entry but one for
   a symbol the image defines that already holds its address. An imported
   symbol's entry was served as the 0 or lazy-binding stub the file holds, so
-  `&ext_var` folded to NULL.
+  `&ext_var` folded to NULL. A dynamic MIPS image missing one of the tags
+  that place its GOT leaves the whole `.got` unmapped.
 - Python: under `relocated_got_is_rom=True` an IFUNC's slot is unmapped: an
   `R_*_IRELATIVE` one, and one relocated against a defined `STT_GNU_IFUNC`
   symbol, whose `st_value` is the resolver. Both served the resolver's
