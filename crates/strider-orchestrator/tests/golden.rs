@@ -379,7 +379,7 @@ fn golden_text(fixture: &Fixture) -> String {
         body.push_str(&rest);
     }
     let mut out = format!(
-        "# {}/{}: Strider::analyze, default options except on_incomplete=Ignore\n",
+        "# {}/{}: Strider::analyze, default options\n",
         fixture.arch.dir, fixture.case
     );
     for (_, function, any) in INTENT.iter().filter(|i| i.0 == fixture.case) {

@@ -1,4 +1,4 @@
-# x86/control: Strider::analyze, default options except on_incomplete=Ignore
+# x86/control: Strider::analyze, default options
 # abs_val: if
 # clamp: 2 if
 # count_bits: cfg.back_edge and int.shift_right

@@ -1,4 +1,4 @@
-# arm_thumb/arithmetic: Strider::analyze, default options except on_incomplete=Ignore
+# arm_thumb/arithmetic: Strider::analyze, default options
 # add: int.add
 # ashr: int.sshift_right
 # bit_and: int.and
