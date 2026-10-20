@@ -422,6 +422,10 @@
 
 ### Fixed
 
+- Python: a `known_targets` seed of one target outside the function, an
+  indirect tail call, is seated as that tail call and reported
+  `"unverified_seed"`; it was read as a one-arm jump table, which defers, so
+  the site stayed in `unresolved`.
 - Seeding a one-arm table at a dispatch the classifier reads as a constant
   past the function seats that tail call, as an unseeded run does; the loop
   stopped on the round that deferred the table and reported it unresolved.
