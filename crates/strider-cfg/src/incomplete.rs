@@ -17,13 +17,14 @@ pub enum Reason {
     /// placeholder, a seated `Switch` whose selector stopped deriving, a site
     /// still growing at the round cap, one whose answer lost a proved
     /// successor, narrowed or was withdrawn, and a return whose target is not
-    /// provably the caller's.
+    /// provably the caller's and the caller did not seed.
     UnresolvedBranch,
     /// A seated answer nothing verified. A CFG build names every seat. An
     /// analysis names a `Switch` holding exactly the caller's seed, every
     /// `TailCall` seat, a `Return` seat the caller made (where a failed
-    /// re-check of it lands too), and an arm seated on a mode only its
-    /// siblings' seed proved.
+    /// re-check of it lands too), a p-code `RETURN` the caller seeded whose
+    /// target is not provably the caller's, and an arm seated on a mode only
+    /// its siblings' seed proved.
     UnverifiedSeed,
     /// Reached in two ISA modes: one region owns the bytes, so the losing
     /// edge's path decodes in the other mode. Held per p-code index, so a

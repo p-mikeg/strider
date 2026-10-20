@@ -100,8 +100,8 @@ class Cfg:
           set, among them a return whose target is not provably the caller's.
         - `"unverified_seed"`: a seated answer nothing verified, such as a site
           seated with only your `known_targets`, every tail call the CFG
-          consumed, and your own `"return"` seat (where a failed re-check of it
-          lands too).
+          consumed, your own `"return"` seat, and a return your `"return"`
+          seed covers whose target is not provably the caller's.
         - `"isa_mode_conflict"`: reached in two ISA modes; the losing path
           decodes in the other.
         - `"interior_target"`: off every instruction boundary, or a region
