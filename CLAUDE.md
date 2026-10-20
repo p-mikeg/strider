@@ -357,7 +357,7 @@ when both IR slots hold the same value.
   entry (see `CallingConvention::x86_cdecl`).
 - A converged CFG is never silently incomplete: `AnalyzeResult::incomplete()`
   (the returned `Cfg`'s own `incomplete()`) is one `Incompleteness` set of
-  `(PcodeInsnAddr, Reason)`, six reasons, and `is_empty()` is "complete".
+  `(PcodeInsnAddr, Reason)`, seven reasons, and `is_empty()` is "complete".
   Target reasons accumulate over the rounds; site reasons are the final
   round's. Each reason's contract is on `strider_cfg::Reason`.
   `InteriorTarget` also carries a region start a later decode stepped over
