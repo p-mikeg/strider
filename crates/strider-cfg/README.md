@@ -126,15 +126,17 @@ seat `UnverifiedSeed`. The five target reasons:
   other fall-through into bytes Sleigh rejects is still an `Err` on the whole
   build. The instruction at the start address decodes even inside a data
   range.
-- `PastFunctionEnd`: a sequential fall-through, or a conditional branch's
-  not-taken path, past a `FunctionBound::Size` end, at the first address after
-  the last instruction decoded (the end itself unless that instruction straddles
-  it). It leaves through an empty `TailCall` stub, as a branch out of range
-  does. A call whose return address is there ends `NoReturn` and is reported
-  too, unless its target is in `no_return_targets`. A run of zero-pcode-op
-  instructions stops there too, never absorbing the next function's first
-  instruction. Code off a seeded arm is named with no stub, and the arm is
-  dropped, as below. An open bound never yields it.
+- `PastFunctionEnd`: a sequential fall-through, a conditional branch's not-taken
+  path, or a conditional instruction's skip of itself (`if (!cc) goto
+  inst_next`: ARM, Thumb IT, MIPS branch-likely, x86 `rep`), past a
+  `FunctionBound::Size` end, at the first address after the last instruction
+  decoded (the end itself unless that instruction straddles it). It leaves
+  through an empty `TailCall` stub, as a branch out of range does. A call whose
+  return address is there ends `NoReturn` and is reported too, unless its target
+  is in `no_return_targets`. A run of zero-pcode-op instructions stops there
+  too, never absorbing the next function's first instruction. A sequential
+  fall-through off a seeded arm is named with no stub, and the arm is dropped,
+  as below. An open bound never yields it.
 - `IsaModeConflict`: two edges reached an address carrying different ISA
   modes, and the losing path decodes in the winner's. The mode only: a
   disagreement on another committed var, such as `condit` into an IT block, is
