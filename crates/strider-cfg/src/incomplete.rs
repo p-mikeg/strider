@@ -56,16 +56,18 @@ pub enum Reason {
     /// arm is dropped instead, and
     /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets)
     /// names it. So is the start of an arm, or of a region off one, whose
-    /// decode fails for any other reason (a fall-through past the bound).
+    /// decode fails for a reason no other variant names.
     UndecodableTarget,
-    /// Where a fall-through ran off a
-    /// [`FunctionBound::Size`](crate::FunctionBound::Size) end, at the first
+    /// Where a fall-through, or a conditional branch's not-taken path, ran off
+    /// a [`FunctionBound::Size`](crate::FunctionBound::Size) end, at the first
     /// address after the last instruction decoded: the end itself unless that
     /// instruction straddles it. The region leaves through an empty `TailCall`
-    /// stub there, as a branch out of range does. An entry point falling into
-    /// the next symbol, a slot patched at run time, or a size too short. Off a
-    /// seeded arm the arm is dropped instead, as [`Self::UndecodableTarget`]
-    /// says. Never under [`FunctionBound::Open`](crate::FunctionBound::Open):
+    /// stub there, as a branch out of range does. Typical causes: an entry
+    /// point falling into the next symbol, a slot patched at run time, or a
+    /// size too short. Code reached off a seeded arm is named here with no
+    /// stub: the arm is dropped instead, and
+    /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets)
+    /// names it. Never under [`FunctionBound::Open`](crate::FunctionBound::Open):
     /// only an address below the entry is out of range there, and a
     /// fall-through moves up.
     PastFunctionEnd,
