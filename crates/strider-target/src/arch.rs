@@ -220,6 +220,8 @@ struct DecodeFacts {
     internal_registers: &'static [&'static str],
     /// Volatile registers the pspec does not mark.
     volatile_registers: &'static [&'static str],
+    /// Registers inside a pspec volatile range that are not volatile.
+    non_volatile_registers: &'static [&'static str],
 }
 
 impl ArchFamily {
@@ -242,6 +244,7 @@ static X86_FACTS: DecodeFacts = DecodeFacts {
     callother_output_exact: true,
     internal_registers: &["xmmTmp1", "xmmTmp2"],
     volatile_registers: &[],
+    non_volatile_registers: &[],
 };
 
 static ARM32_FACTS: DecodeFacts = DecodeFacts {
@@ -264,6 +267,7 @@ static ARM32_FACTS: DecodeFacts = DecodeFacts {
         "tmpOV",
     ],
     volatile_registers: &[],
+    non_volatile_registers: &[],
 };
 
 static AARCH64_FACTS: DecodeFacts = DecodeFacts {
@@ -294,6 +298,9 @@ static AARCH64_FACTS: DecodeFacts = DecodeFacts {
         "tmpZR",
     ],
     volatile_registers: &[],
+    // The kernel's `current`: only a context switch writes it, and a task
+    // resumes with its own, so two reads in one function are one value.
+    non_volatile_registers: &["sp_el0"],
 };
 
 static MIPS_FACTS: DecodeFacts = DecodeFacts {
@@ -325,6 +332,7 @@ static MIPS_FACTS: DecodeFacts = DecodeFacts {
         "PerfCnt.7",
         "cop0_reg9.6",
     ],
+    non_volatile_registers: &[],
 };
 
 static PPC_FACTS: DecodeFacts = DecodeFacts {
@@ -347,6 +355,7 @@ static PPC_FACTS: DecodeFacts = DecodeFacts {
         "spr3aa", "spr3ad", "spr3ae", "spr3b1", "spr3b2", "spr3b9", "spr3ba", "spr3bd", "spr3be",
         "spr3db", "spr3dc", "spr3dd",
     ],
+    non_volatile_registers: &[],
 };
 
 /// The Sleigh configuration describing one target architecture.
@@ -555,7 +564,7 @@ impl SleighArch {
     ///
     /// The pspec's `<volatile>` ranges and `volatile` registers, which make
     /// every AArch64 system register volatile, plus the family's own
-    /// additions.
+    /// additions, less the family's exclusions (AArch64 `sp_el0`).
     ///
     /// # Errors
     ///
@@ -582,6 +591,16 @@ impl SleighArch {
             .chain(self.facts().volatile_registers);
         for vn in crate::calling_convention::regs_to_vns(regs, names)? {
             ranges.push(vn.addr_off..vn.addr_off + u64::from(vn.size));
+        }
+        let excluded =
+            crate::calling_convention::regs_to_vns(regs, self.facts().non_volatile_registers)?;
+        for vn in excluded {
+            let (lo, hi) = (vn.addr_off, vn.addr_off + u64::from(vn.size));
+            ranges = ranges
+                .into_iter()
+                .flat_map(|r| [r.start..r.end.min(lo), r.start.max(hi)..r.end])
+                .filter(|r| !r.is_empty())
+                .collect();
         }
         Ok(ranges)
     }
@@ -803,8 +822,17 @@ mod tests {
             let (counters, plain): (&[&str], &[&str]) = match preset.family() {
                 ArchFamily::X86 | ArchFamily::Arm32 => (&[], &[]),
                 ArchFamily::Aarch64 => (
-                    &["cntvct_el0", "cntpct_el0", "pmccntr_el0", "tpidr_el1"],
-                    &["x0", "sp", "NG"],
+                    &[
+                        "cntvct_el0",
+                        "cntpct_el0",
+                        "pmccntr_el0",
+                        "tpidr_el1",
+                        "tpidr_el2",
+                        // Either side of the excluded `sp_el0`.
+                        "elr_el1",
+                        "spsel",
+                    ],
+                    &["x0", "sp", "NG", "sp_el0"],
                 ),
                 ArchFamily::Mips => (
                     &["Count", "Random", "Cause", "PerfCnt.1", "cop0_reg9.6"],
