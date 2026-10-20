@@ -19,9 +19,14 @@ fn only_store(f: &Function) -> NodeId {
 }
 
 /// What `CallStackArgCollect` runs under over `f`, claiming
-/// `stack_global_disjoint` on it when asked.
+/// `stack_global_disjoint` on it when asked.  Adds to `f`'s claims, so call it
+/// before installing a stand-in memo, which a new claim drops.
 #[cfg(test)]
 fn call_blocking(f: &mut Function, stack_global_disjoint: bool) -> MemOptions {
+    debug_assert!(
+        stack_global_disjoint || !f.assumptions().stack_global_disjoint,
+        "the fixture already claims what this call leaves off"
+    );
     f.assume(&crate::AssumptionOptions {
         stack_global_disjoint,
         ..crate::AssumptionOptions::none()
@@ -31,8 +36,13 @@ fn call_blocking(f: &mut Function, stack_global_disjoint: bool) -> MemOptions {
 
 /// What `LoadForward` runs under over `f`, claiming `stack_global_disjoint`
 /// and `escape_analysis` on it, and `callee_preserves_stack_args` when asked.
+/// Adds to `f`'s claims, so call it before installing a stand-in memo.
 #[cfg(test)]
 fn escaping(f: &mut Function, callee_preserves_stack_args: bool) -> MemOptions {
+    debug_assert!(
+        callee_preserves_stack_args || !f.assumptions().callee_preserves_stack_args,
+        "the fixture already claims what this call leaves off"
+    );
     f.assume(&crate::AssumptionOptions {
         stack_global_disjoint: true,
         escape_analysis: true,
@@ -1987,7 +1997,7 @@ mod heap_tests {
             "the listed run classifies the store as heap"
         );
         crate::default_pipeline().run(&mut fg, &mut crate::OptCtx::new(None))?;
-        assert_eq!(heap_stores(&fg), 1, "a run adds claims and withdraws none");
+        assert_eq!(heap_stores(&fg), 1, "a later run withdraws no claim");
         assert!(
             fg.assumptions().noalias_allocators.contains(&MALLOC),
             "the allocator stays listed"

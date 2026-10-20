@@ -17,8 +17,9 @@ re-run the whole thing until the control-flow graph stops changing.
   the loop. `pipeline` defaults to `strider_opt::default_pipeline`; every
   round runs it over a fresh lift claiming `assumptions`, then classifies the
   dispatch sites with `strider_opt::classify_sites`, whatever the pipeline,
-  or with resolution off lists them unresolved. Under `on_incomplete: OnIncomplete::Error`, the default, a result
-  that is not complete comes back as `AnalyzeError::Incomplete`.
+  or with resolution off lists them unresolved. Under
+  `on_incomplete: OnIncomplete::Error`, the default, a result that is not
+  complete comes back as `AnalyzeError::Incomplete`.
 - `Strider::build_cfg(entry, cfg_opts, on_incomplete)` ->
   `Result<Cfg, AnalyzeError>`: a structural decode only, no lift, no
   optimisation, no resolution.
