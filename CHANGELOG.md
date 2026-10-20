@@ -264,6 +264,10 @@
 
 ### Changed, Python
 
+- `analyze` and `build_cfg` no longer fail when decoding falls through past
+  `function_max_size`: the fall-through is a tail call to the address there,
+  which `cfg.incomplete` names `"past_function_end"`. Off a seeded jump-table
+  arm the arm is dropped instead.
 - Two `BoundCapture`s with no integer value (any binding but an integer
   constant of at most 128 bits) bound to the same value of one function
   compare equal; every such pair compared unequal before, `m[c] == m[c]`
@@ -346,6 +350,8 @@
 
 ### Added, Python
 
+- `"past_function_end"` in `strider.cfg.INCOMPLETE_REASONS`: where code fell
+  through past `function_max_size`.
 - `strider.template.int_ne`, `int_le`, `int_sle` and `float_ne` build the
   lifter's `Xor(Equal(l, r), 1)`, `Xor(Less(r, l), 1)`, `Xor(Sless(r, l), 1)`
   and `Xor(FloatEqual(l, r), 1)`.
@@ -366,6 +372,10 @@
 
 ### Changed, Rust
 
+- `DecodeEngine::build_cfg`, and so `Strider::analyze`, no longer fail when
+  decoding falls through past a `FunctionBound::Size` end: the region
+  tail-calls the address there, reported as `Reason::PastFunctionEnd`. Off a
+  seeded arm the arm is dropped instead.
 - `FunctionArgPat::source` matches a sub-register of the carrier, as
   `function_arg_reg` does in Python.
 - `Lifter` refuses a calling convention whose stack geometry belongs to
@@ -518,6 +528,8 @@
 
 ### Added, Rust
 
+- `Reason::PastFunctionEnd`: where code fell through past a
+  `FunctionBound::Size` end.
 - `Function::to_text_named(fingerprints, &ArchNames)`: `to_text` with
   registers spelled by name.
 - `IRViewer::switch_selector`: a `Switch`'s dispatch value.

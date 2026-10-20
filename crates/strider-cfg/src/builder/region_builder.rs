@@ -612,9 +612,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
         let next_insn_addr = next_pcode_addr(addr, lift_res)?;
 
-        // Classify before lifting: decoding an OOB successor would run past
-        // the size bound, where `detect_fallthrough_oob_tail_call` fails
-        // the whole function.
+        // Classify before lifting: an OOB successor is never decoded.
         let true_oob = self.classify_branch_target(target_addr)?;
         let false_oob = self.is_branch_tail_call_nocheck(next_insn_addr);
 
@@ -997,7 +995,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 }
             }
             cur_addr = next_pcode_addr(cur_addr, &lift_res)?;
-            self.detect_fallthrough_oob_tail_call(cur_addr)?;
+            if self.seal_past_function_end(cur_addr)? {
+                return Ok(());
+            }
         }
     }
 
@@ -1164,35 +1164,36 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(())
     }
 
-    /// Sequential decoding running off the recorded function extent is a
-    /// function-boundary error, NOT a tail call: a real tail call has an
-    /// explicit `jmp`/`je` opcode, so reaching the bound by falling through
-    /// means the size bound is too small or the function is unterminated.
+    /// Sequential decoding running off the recorded function extent: the
+    /// region leaves through a [`Builder::tail_call_stub`] at `cur_addr`, the
+    /// tail call a branch out of range gets, reported as
+    /// [`crate::Reason::PastFunctionEnd`]. Returns whether it sealed.
     ///
     /// Gated on `cur_addr` having advanced past the region start: a run of
     /// zero-pcode-op instructions (x86 `nop`, AArch64 `paciasp` / `autiasp`,
     /// AArch64 `bti`) advances `cur_addr` without ever appending to `self.insns`,
     /// so a gate on `insns.is_empty()` would let such a prefix walk past the
     /// bound and absorb the next function's first real instruction.
-    fn detect_fallthrough_oob_tail_call(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
+    ///
+    /// Only a [`crate::FunctionBound::Size`] end gets here. An open bound puts
+    /// only addresses below the entry out of range, no region it decodes
+    /// starts there, and a fall-through only moves up. Off a seeded arm it is
+    /// an `Err`, which drops the arm: a real arm stays inside the function.
+    fn seal_past_function_end(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
         let advanced_past_start = cur_addr.machine_addr.addr != self.start_addr.machine_addr.addr;
         if !advanced_past_start || !self.is_branch_tail_call_nocheck(cur_addr) {
-            return Ok(());
+            return Ok(false);
         }
-        let start = self.builder.start_addr.addr;
-        // No upper bound applies on an unbounded function or one whose bound
-        // overflows u64; both reach here from an address BELOW `start`.
-        let end = match self.builder.options.bound {
-            crate::FunctionBound::Size(size) => start.checked_add(size.get()),
-            crate::FunctionBound::Open { .. } => None,
+        if self.builder.descent.is_some() {
+            anyhow::bail!(
+                "a seeded arm's code falls through past the function's end at {cur_addr:?}"
+            );
         }
-        .map_or_else(|| "unbounded".to_owned(), |end| format!("{end:#x}"));
-        anyhow::bail!(
-            "function-boundary error at {cur_addr:?}: sequential decoding overflowed past \
-             [start={start:#x}, end={end}); function is unterminated \
-             within its recorded extent (likely cause: the size bound is too small for the \
-             function, OR the binary ends mid-function)"
-        );
+        self.seal_at_fallthrough_stub(cur_addr)?;
+        self.builder
+            .incomplete
+            .insert(cur_addr, crate::Reason::PastFunctionEnd);
+        Ok(true)
     }
 }
 

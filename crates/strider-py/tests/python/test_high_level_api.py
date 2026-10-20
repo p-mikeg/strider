@@ -283,15 +283,16 @@ def test_analyze_many_reuse():
 
 
 def test_analyze_function_max_size_clips_mid_function():
-    """A bound that cuts mid-function must be a function-boundary error, not
-    silently reinterpreted as a tail call."""
+    """A bound that cuts mid-function is a tail call there, and reported."""
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
-    _cfg, function, _unresolved = s.analyze("add")
+    cfg, function, _unresolved = s.analyze("add")
     assert function.node_count() > 0
-    with pytest.raises(strider.StriderError) as exc:
-        s.analyze("add", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4)))
-    assert "function-boundary error" in str(exc.value)
+    assert "past_function_end" not in [r for _, r in cfg.incomplete]
+    cfg, _function, _unresolved = s.analyze(
+        "add", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4))
+    )
+    assert "past_function_end" in [r for _, r in cfg.incomplete]
 
 
 def test_analyze_explicit_none_lifts_whole_function():
@@ -301,13 +302,15 @@ def test_analyze_explicit_none_lifts_whole_function():
     elf = fixture_path("x64", "arithmetic")
     s = strider.lift.load_elf(str(elf))
     addr = s.symbol("add").address
-    with pytest.raises(strider.StriderError) as exc:
-        s.analyze(addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4)))
-    assert "function-boundary error" in str(exc.value)
-    _cfg, full_function, _unresolved = s.analyze(
+    cfg, _function, _unresolved = s.analyze(
+        addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4))
+    )
+    assert "past_function_end" in [r for _, r in cfg.incomplete]
+    cfg, full_function, _unresolved = s.analyze(
         addr, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=None))
     )
     assert full_function.node_count() > 0
+    assert "past_function_end" not in [r for _, r in cfg.incomplete]
 
 
 def test_analyze_allow_code_before_start_addr():
