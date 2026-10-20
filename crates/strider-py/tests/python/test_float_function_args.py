@@ -30,7 +30,7 @@ def test_function_arg_float_binds_the_xmm_registers():
     for i, name in enumerate(("XMM0", "XMM1")):
         hits = function.find_all(function_arg_float(i).capture(CARRIER))
         assert len(hits) == 1, f"function_arg_float({i}) must bind one carrier"
-        assert hits[0].vn(CARRIER) == lift.reg(name)
+        assert hits[0].vn(CARRIER) == lift.arch.reg(name)
 
 
 def test_integer_and_float_indices_are_separate():

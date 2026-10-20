@@ -17,9 +17,7 @@ print(f"array_sum @ {addr:#x}")
 # analyze does CFG build, lift, optimize, and the indirect-branch fixed-point in
 # one call. The returned cfg is the final resolved one; `cfg.incomplete` lists
 # every address it cannot vouch for, and is empty here.
-cfg, function, _unresolved = prog.analyze(
-    "array_sum", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
-)
+cfg, function, _unresolved = prog.analyze("array_sum")
 print(f"lifted array_sum: {function.node_count()} nodes, incomplete={cfg.incomplete}")
 
 # Bare load() matches every load site; narrow with addr=...

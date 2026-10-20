@@ -163,8 +163,6 @@ def test_a_second_call_while_one_is_in_flight_raises_the_reentrant_error():
 
 
 _METHODS = {
-    "reg": lambda lift, fn, vn: lift.reg("RAX"),
-    "reg_name": lambda lift, fn, vn: lift.reg_name(vn),
     "user_op_names": lambda lift, fn, vn: lift.user_op_names(),
     "call_other_abi": lambda lift, fn, vn: lift.call_other_abi("in"),
     "pcode_at": lambda lift, fn, vn: lift.pcode_at(0x1000, 0x1000),
@@ -183,7 +181,7 @@ _METHODS = {
 def test_a_method_called_while_analyze_is_in_flight_raises_strider_error(method):
     """Every method that reads the handle raises the same catchable error a
     second `analyze` does, from whichever thread it is called."""
-    vn = _x86_64(strider.reader.BufferReader(0x1000, _ADD_RET)).reg("RAX")
+    vn = strider.sleigh.SleighArch.x86_64().reg("RAX")
     with _plain_in_flight() as (lift, fn):
         with pytest.raises(strider.StriderError, match="already in use"):
             _METHODS[method](lift, fn, vn)
