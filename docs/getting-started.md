@@ -127,8 +127,28 @@ that change what existing code sees, rather than adding to it:
 ## Coming from 0.2.0
 
 [CHANGELOG.md](../CHANGELOG.md) lists the unreleased changes, breaking entries
-first. The two that change what existing code sees:
+first; its "Breaking, Python" section says how to port each of these:
 
 - `cfg.is_complete()` is gone: `not cfg.incomplete` is the same test.
 - The per-reason `Cfg` getters (`isa_mode_conflicts()` and the rest) are
   gone: `cfg.incomplete` lists every `(address, reason)`.
+- `CallingConvention.no_return()` is gone: list the callee in
+  `CfgOptions(no_return_targets=...)`.
+- `CfgOptions(function_max_size=n, allow_code_before_start_addr=True)` raises
+  `ValueError`.
+- `CfgOptions.with_function_max_size`, `with_data_ranges` and
+  `LifterOptions.with_cfg` are gone: pass the fields to the constructors.
+- `OptimizerPipeline.default().post_passes` no longer lists
+  `StackOffsetDetect`.
+- `Lifter.reg` / `reg_name` are gone: use `lifter.arch.reg` / `reg_name`.
+- `strider.sleigh.Sleigh` is gone: its lookups are on `SleighArch`.
+- `lifter=` is gone from the `to_dot` / `neighborhood_dot` renderers.
+- The op-name aliases (`"eq"`, `"shl"`, `"add"`, ...) raise: pass the op's own
+  name (`"Equal"`, `"ShiftLeft"`, `"Add"`).
+- `Node.kind()` and `repr(Node)` render `IntConst`, `InitialVar` and
+  `CallOther` without the interner handle.
+- `BoundCapture` loses its reader properties: `m[c].uint` is `m.uint(c)`.
+- A `strider.pattern` pattern is no longer a rewrite right-hand side: spell
+  it with `strider.template`.
+- `Lifter.optimize` takes `assumptions=` in place of `opts=`.
+- `AssumptionOptions` is unhashable and compares by value.
