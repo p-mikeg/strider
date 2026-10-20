@@ -115,3 +115,61 @@ fn mips_cp0_status_reads_are_one_value() {
         assert_difference_folds(arch, &words);
     }
 }
+
+#[test]
+fn powerpc_decrementer_reads_differ() {
+    // mfdec r10; mfdec r9; subf r3, r10, r9; blr
+    let words = [0x7d56_02a6, 0x7d36_02a6, 0x7c6a_4850, 0x4e80_0020];
+    for arch in PPC {
+        assert_elapsed_is_opaque(arch, &words);
+    }
+}
+
+#[test]
+fn powerpc_pmc1_reads_differ() {
+    // mfspr r10, 787; mfspr r9, 787; subf r3, r10, r9; blr
+    let words = [0x7d53_c2a6, 0x7d33_c2a6, 0x7c6a_4850, 0x4e80_0020];
+    for arch in PPC {
+        assert_elapsed_is_opaque(arch, &words);
+    }
+}
+
+#[test]
+fn powerpc_purr_reads_differ() {
+    // mfspr r10, 309; mfspr r9, 309; subf r3, r10, r9; blr
+    let words = [0x7d55_4aa6, 0x7d35_4aa6, 0x7c6a_4850, 0x4e80_0020];
+    for arch in PPC {
+        assert_elapsed_is_opaque(arch, &words);
+    }
+}
+
+#[test]
+fn mips_performance_counter_reads_differ() {
+    // mfc0 t0, $25, 1; mfc0 t1, $25, 1; subu v0, t1, t0; jr ra; nop
+    let words = [0x4008_c801, 0x4009_c801, 0x0128_1023, 0x03e0_0008, 0];
+    for arch in MIPS {
+        assert_elapsed_is_opaque(arch, &words);
+    }
+}
+
+#[test]
+fn mips_performance_control_reads_are_one_value() {
+    // mfc0 t0, $25, 0; mfc0 t1, $25, 0; subu v0, t1, t0; jr ra; nop
+    let words = [0x4008_c800, 0x4009_c800, 0x0128_1023, 0x03e0_0008, 0];
+    for arch in MIPS {
+        assert_difference_folds(arch, &words);
+    }
+}
+
+/// ARM reads the generic timer through `mrrc`, which the sla lifts as a
+/// `CallOther`, so two reads are two nodes without any volatile list.
+#[test]
+fn arm_generic_timer_reads_differ() {
+    // mrrc p15, 1, r0, r1, c14; mrrc p15, 1, r2, r3, c14; subs r0, r2, r0; bx lr
+    let f = analyze(
+        Arch::Arm,
+        &[0xec51_0f1e, 0xec53_2f1e, 0xe052_0000, 0xe12f_ff1e],
+    );
+    assert_eq!(f.int_const_u128(returned(&f)[0]), None);
+    assert_eq!(volatile_reads(&f), 0);
+}

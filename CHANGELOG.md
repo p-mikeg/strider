@@ -546,9 +546,11 @@
   store's value as if every path passed it.
 - Python: each read of a register that changes with nothing writing it is
   its own value, a `CallOther` named `read_volatile`: every AArch64 system
-  register and the PowerPC timebase, which their pspecs mark volatile, and
-  MIPS CP0 `Count` and `Random`. Two reads were one value, so `t1 - t0`
-  folded to 0 and a timing loop's exit test never changed.
+  register and the PowerPC timebase, which their pspecs mark volatile, the
+  PowerPC decrementers, PMCs, PURR/SPURR, VTB, ATB, IC and 4xx/8xx timers,
+  and the MIPS CP0 `Count`, `Random`, performance counters and Octeon
+  `CvmCount`. Two reads were one value, so `t1 - t0` folded to 0 and a
+  timing loop's exit test never changed.
 
 ### Added, Rust
 
