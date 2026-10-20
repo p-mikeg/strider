@@ -16,9 +16,7 @@ use strider_target::ArchPreset;
 fn isa_mode_switch_resolves_exactly_where_the_arch_carries_a_mode() {
     for &preset in ArchPreset::ALL {
         let arch = preset.arch();
-        let regs = arch
-            .probe_regs()
-            .unwrap_or_else(|e| panic!("{preset:?}: probe_regs failed: {e}"));
+        let regs = arch.probe_regs();
         assert_eq!(
             regs.name_to_vn("ISAModeSwitch").is_some(),
             arch.isa_mode_var().is_some(),
