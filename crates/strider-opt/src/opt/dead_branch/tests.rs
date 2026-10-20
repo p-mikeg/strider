@@ -837,3 +837,66 @@ fn dead_branch_alone_leaves_a_joined_diamond_valid() -> Result<()> {
     );
     Ok(())
 }
+
+/// Half-wired mid-pipeline: `r1: If(true) -> a / x`, `a -> h`,
+/// `h: If(true) -> b / dangling`, `b -> h`.  The inner branch's dead arm has no
+/// consumer, so the loop's only way out is an arm the inner fold removes.
+/// Both walks treat that dangling dead arm alike, so neither branch folds.
+#[test]
+fn a_dangling_dead_arm_is_no_escape() -> Result<()> {
+    let mut b = strider_ir_test_utils::empty_builder()?;
+    let entry = b.create_region_all()?;
+    let r1 = b.create_region_all()?;
+    let a = b.create_region_all()?;
+    let x = b.create_region_all()?;
+    let h = b.create_region_all()?;
+    let body = b.create_region_all()?;
+    let mid = b.create_region_all()?;
+    let exit = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    b.set_region(entry);
+    b.build_branch(r1)?;
+    b.set_region(r1);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, a, x)?;
+    b.set_region(a);
+    b.build_branch(h)?;
+    b.set_region(x);
+    b.build_branch(exit)?;
+    b.set_region(h);
+    let cond = b.build_boolean_const(true);
+    b.build_if(cond, body, mid)?;
+    b.set_region(body);
+    b.build_branch(h)?;
+    b.set_region(mid);
+    b.build_branch(exit)?;
+    b.set_region(exit);
+    b.build_return(None, &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    // Built second, so the later id.
+    let inner = fg
+        .graph()
+        .all_node_ids()
+        .filter(|&n| matches!(fg.node_kind(n), NodeKind::If))
+        .last()
+        .expect("h ends in an If");
+    // cond = true, so output 1 (the false arm) is dead.
+    let dead_ctrl = fg.node_outputs(inner)[1];
+    let (dead_region, slot) = fg
+        .graph()
+        .value_uses(dead_ctrl)
+        .next()
+        .expect("the dead arm feeds mid");
+    fg.graph_mut().remove_node_input(dead_region, slot);
+
+    let result = crate::pipeline::run_one_unvalidated(
+        &DeadBranchElimination,
+        &mut fg,
+        &mut OptCtx::new(None),
+    )?;
+    assert!(!result.changed());
+    Ok(())
+}
