@@ -45,22 +45,22 @@ resolve: one round seats one level of discovery.
 `SiteTable::fold` folds a round's classifications into the loop's own seats
 and reports what changed. The CFG reads those seats as
 `CfgOptions::derived_targets`, which beat the caller's `known_targets` at
-their exact key, so `analyze` refuses a caller's own `derived_targets`; the
-caller's table is borrowed, never copied or edited, so a
-binary-wide seed table costs a function nothing. Two anchors sharing one pcode
-address merge within the round; across rounds the staged set replaces the
-previous seat. The caller's own seed is unioned back in by address every
+their exact key. `analyze` owns that layer, so it refuses a caller's own
+`derived_targets`. The caller's table is borrowed, never copied or edited, so
+a binary-wide seed table costs a function nothing. Two anchors sharing one
+pcode address merge within the round; across rounds the staged set replaces
+the previous seat. The caller's own seed is unioned back in by address every
 round. A seated `Switch` keeps the ISA mode its instruction commits, so a
 widened arm is evaluated in its own mode; a re-derivation reporting no mode
 adopts the mode already proved for that address, rather than re-decoding proved
 arms in whatever mode flows into the branch.
 
 The loop converges when no anchor is left, or when a round changes no address's
-seat (its successors, or whether a lone target is a `Single`) and refuses none. `MAX_RESOLUTION_ITERATIONS` (256) is the one other thing that
-stops it, and not as a failure: one iteration seats one level of discovery, so
-the cap is also the discovery-depth limit, and exhausting it while sites are
-still growing is that limit being hit, not an oscillation. Those sites are
-reported.
+seat (its successors, or whether a lone target is a `Single`) and refuses none.
+`MAX_RESOLUTION_ITERATIONS` (256) is the one other thing that stops it, and not
+as a failure: one iteration seats one level of discovery, so the cap is also
+the discovery-depth limit, and exhausting it while sites are still growing is
+that limit being hit, not an oscillation. Those sites are reported.
 
 Two verdicts freeze a single site, leaving the loop to run on without it:
 
