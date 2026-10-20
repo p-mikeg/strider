@@ -4,7 +4,8 @@ use anyhow::anyhow;
 
 use crate::error::Result;
 use crate::node::{
-    ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp, NodeKind, ValueKind, ValueType,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeKind,
+    ValueKind, ValueType,
 };
 use cranelift_entity::EntityRef;
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, reg_vn};
@@ -1185,6 +1186,55 @@ fn memory_and_opaque_builders_refuse_what_the_signature_rejects() -> Result<()> 
     b.build_new(&[float], i64_)?;
     b.build_store(int, int, ram)?;
     b.build_load(int, ram, i64_)?;
+    Ok(())
+}
+
+/// The arithmetic builders hold their kind to the node signature too: an int
+/// op over floats, or a float op over ints, is refused at build time.
+#[test]
+fn arithmetic_builders_refuse_what_the_signature_rejects() -> Result<()> {
+    let (i64_, f64_) = (ValueType::int(64), ValueType::float(64));
+    let mut b = builder_with_region()?;
+    let int = b.build_int_const(1u64, i64_)?;
+    let float = b.build_float_const(0, f64_);
+    let refused = [
+        (
+            "int binary over floats",
+            b.build_int_binary_operation(float, float, IntBinaryOp::Add, f64_)
+                .is_err(),
+        ),
+        (
+            "int unary over a float",
+            b.build_int_unary_operation(float, IntUnaryOp::Neg, f64_)
+                .is_err(),
+        ),
+        (
+            "int compare over floats",
+            b.build_int_cmp_operation(float, float, IntCmpOp::Equal, f64_)
+                .is_err(),
+        ),
+        (
+            "float binary over ints",
+            b.build_float_binary_op(int, int, FloatBinaryOp::Add, i64_)
+                .is_err(),
+        ),
+        (
+            "float unary over an int",
+            b.build_float_unary_op(int, FloatUnaryOp::Neg, i64_)
+                .is_err(),
+        ),
+    ];
+    let accepted: Vec<&str> = refused
+        .iter()
+        .filter(|(_, err)| !err)
+        .map(|(what, _)| *what)
+        .collect();
+    assert!(accepted.is_empty(), "accepted: {accepted:?}");
+    b.build_int_binary_operation(int, int, IntBinaryOp::Add, i64_)?;
+    b.build_int_unary_operation(int, IntUnaryOp::Neg, i64_)?;
+    b.build_int_cmp_operation(int, int, IntCmpOp::Equal, i64_)?;
+    b.build_float_binary_op(float, float, FloatBinaryOp::Add, f64_)?;
+    b.build_float_unary_op(float, FloatUnaryOp::Neg, f64_)?;
     Ok(())
 }
 

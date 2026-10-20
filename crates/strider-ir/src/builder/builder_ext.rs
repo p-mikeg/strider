@@ -170,9 +170,11 @@ pub trait IRBuilderExt: IRBuilder {
         op: IntBinaryOp,
         output_type: ValueType,
     ) -> Result<ValueId> {
+        let kind = NodeKind::IntBinaryOp(op);
+        require_output_type(&kind, output_type)?;
         let lhs_id = require_value_type(self.function(), lhs_id, output_type)?;
         let rhs_id = require_value_type(self.function(), rhs_id, output_type)?;
-        Ok(self.build_single_output_pure(NodeKind::IntBinaryOp(op), [lhs_id, rhs_id], output_type))
+        Ok(self.build_single_output_pure(kind, [lhs_id, rhs_id], output_type))
     }
 
     /// Builds `x <op> IntConst(k):ty`; the constant lands on the right.
@@ -208,8 +210,10 @@ pub trait IRBuilderExt: IRBuilder {
         op: IntUnaryOp,
         output_type: ValueType,
     ) -> Result<ValueId> {
+        let kind = NodeKind::IntUnaryOp(op);
+        require_output_type(&kind, output_type)?;
         let value = require_value_type(self.function(), input_id, output_type)?;
-        Ok(self.build_single_output_pure(NodeKind::IntUnaryOp(op), [value], output_type))
+        Ok(self.build_single_output_pure(kind, [value], output_type))
     }
 
     /// Counts over the INPUT's width; `output_type` only sizes the result, so
@@ -237,15 +241,12 @@ pub trait IRBuilderExt: IRBuilder {
         kind: IntCmpOp,
         operand_type: ValueType,
     ) -> Result<ValueId> {
+        let kind = NodeKind::IntCmpOp(kind);
         let lhs_id = require_value_type(self.function(), lhs_id, operand_type)?;
         let rhs_id = require_value_type(self.function(), rhs_id, operand_type)?;
-        Ok(
-            self.build_single_output_pure(
-                NodeKind::IntCmpOp(kind),
-                [lhs_id, rhs_id],
-                ValueType::I1,
-            ),
-        )
+        require_slot(self.function(), &kind, 0, lhs_id)?;
+        require_slot(self.function(), &kind, 1, rhs_id)?;
+        Ok(self.build_single_output_pure(kind, [lhs_id, rhs_id], ValueType::I1))
     }
 
     /// `bits` is the raw IEEE 754 pattern, masked to `output_type`'s width so
@@ -272,9 +273,11 @@ pub trait IRBuilderExt: IRBuilder {
         op: FloatBinaryOp,
         output_type: ValueType,
     ) -> Result<ValueId> {
+        let kind = NodeKind::FloatBinaryOp(op);
+        require_output_type(&kind, output_type)?;
         let lhs = require_value_type(self.function(), lhs, output_type)?;
         let rhs = require_value_type(self.function(), rhs, output_type)?;
-        Ok(self.build_single_output_pure(NodeKind::FloatBinaryOp(op), [lhs, rhs], output_type))
+        Ok(self.build_single_output_pure(kind, [lhs, rhs], output_type))
     }
 
     /// Strict: the operand must already carry `output_type`.
@@ -284,8 +287,10 @@ pub trait IRBuilderExt: IRBuilder {
         op: FloatUnaryOp,
         output_type: ValueType,
     ) -> Result<ValueId> {
+        let kind = NodeKind::FloatUnaryOp(op);
+        require_output_type(&kind, output_type)?;
         let coerced = require_value_type(self.function(), value, output_type)?;
-        Ok(self.build_single_output_pure(NodeKind::FloatUnaryOp(op), [coerced], output_type))
+        Ok(self.build_single_output_pure(kind, [coerced], output_type))
     }
 
     /// Outputs `I1`. Strict: both operands must already share one float type.
