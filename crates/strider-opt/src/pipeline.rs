@@ -34,6 +34,7 @@ pub struct OptCtx<'mem> {
 }
 
 impl<'mem> OptCtx<'mem> {
+    /// A context over `rom`, `None` for no image.
     #[must_use]
     pub fn new(rom: Option<&'mem dyn strider_ir::ReadOnlyMemory>) -> Self {
         Self { rom }

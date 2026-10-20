@@ -20,8 +20,9 @@ static NO_PER_ADDRESS_CCS: FxHashMap<u64, strider_target::BuiltCallingConvention
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
 
 /// [`Strider::analyze`]'s options. `Default` decodes an unbounded function
-/// with no seeds and no CC overrides, resolves indirect branches under
-/// [`AssumptionOptions::default`], compacts, and refuses an incomplete result.
+/// with no seeds and no CC overrides, optimises under
+/// [`AssumptionOptions::default`], resolves indirect branches, compacts, and
+/// refuses an incomplete result.
 #[derive(Clone, Debug)]
 pub struct AnalyzeOptions<'a> {
     pub cfg: strider_cfg::CfgOptions<'a>,
