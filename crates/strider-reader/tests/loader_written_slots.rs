@@ -296,3 +296,28 @@ fn an_instruction_relocated_against_a_defined_ifunc_names_the_symbol() {
         "f_ptr",
     );
 }
+
+/// An unstripped static executable links `.rela.plt` to `.symtab`, there
+/// being no `.dynsym`, and its IRELATIVE slots sit in `.got` under `-z now`:
+/// they are holes as a dynamic image's are.
+#[test]
+fn a_static_executables_irelative_slot_is_a_hole() {
+    let elf = open("x64_ifunc_static.elf");
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    let obj = elf.checked_file().unwrap();
+    assert!(obj.dynamic_symbol_table().is_none(), "no .dynsym");
+    let irelative = object::elf::R_X86_64_IRELATIVE;
+    // `.rela.plt`'s `sh_info` names `.got`, so `object` lists its entries
+    // there, the `.data.rel.ro` one included.
+    let sites: Vec<u64> = obj
+        .section_by_name(".got")
+        .expect(".got")
+        .relocations()
+        .filter(|(_, r)| r.flags() == RelocationFlags::Elf { r_type: irelative })
+        .map(|(site, _)| site)
+        .collect();
+    assert_eq!(sites.len(), 2, "f's slot and f_ptr");
+    for slot in sites {
+        assert_hole(rom_word(&reader, slot, 8, true), irelative, "static");
+    }
+}
