@@ -347,11 +347,10 @@ when both IR slots hold the same value.
   Exhausting `MAX_RESOLUTION_ITERATIONS` while every site still grows is the
   discovery depth limit, and those sites come back as unresolved too. A
   `Return` whose folded target is not provably the entry return address is
-  reported there as well
-  (`strider_opt::ReturnTargets`), unless the caller seeded `LinkRegister`
-  there, in which case it is `UnverifiedSeed` instead, whether the CFG seated
-  that seed at a `BranchIndirect` (`Cfg::link_register_seated`) or the p-code
-  `RETURN` op ended the region.
+  reported as well (`strider_opt::ReturnTargets`), unless the caller seeded
+  `LinkRegister` at that site, in which case it is `UnverifiedSeed` instead,
+  whether the CFG seated that seed at a `BranchIndirect`
+  (`Cfg::link_register_seated`) or the p-code `RETURN` op ended the region.
 - Analysis stays inside the function being lifted: nothing reads a callee's
   code. A callee's stack pop and clobbers come from its calling convention, so
   a callee-cleanup `ret $imm16` or an i386 PC thunk needs a `per_address_ccs`

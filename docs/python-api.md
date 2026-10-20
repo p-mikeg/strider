@@ -961,16 +961,17 @@ machine address it cannot vouch for, with one of six reasons
 - `"unresolved_branch"`: an indirect branch with no complete answer, such as a
   site that lost a successor, one whose answer oscillated or narrowed, one
   still growing at the iteration cap, and a return whose target is not
-  provably the caller's return address (`push rsi; ret`). The `unresolved`
-  field of the result `analyze` returns holds exactly these addresses.
+  provably the caller's return address (`push rsi; ret`) and that you did not
+  seed `"return"`. The `unresolved` field of the result `analyze` returns
+  holds exactly these addresses.
 - `"unverified_seed"`: a site nothing verified. A site seated with only your
   `known_targets`, every site the CFG consumed as a tail call, and a site
   consumed as a return because your own `"return"` seat consumed it, so a
   seeded ARM `pop {pc}` epilogue lands here and not under
   `"unresolved_branch"`. That is also where a FAILED re-check of your own seat
-  lands, since the seat decided a CFG edge, and a `ret` you seeded
-  `"return"` whose target is not provably the caller's. A return the classifier derived is
-  re-checked each round and is not listed once
+  lands, since the seat decided a CFG edge, and where a `ret` you seeded
+  `"return"` lands when its target is not provably the caller's. A return the
+  classifier derived is re-checked each round and is not listed once
   `assumptions.return_slots_survive_untracked_writes` (default `True`) carries
   its proof; analysing again with that claim cleared is how you audit one. One
   shape here is no dispatch you seeded: an arm a mode-less re-derivation found

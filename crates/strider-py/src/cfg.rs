@@ -137,7 +137,8 @@ impl PyCfg {
     /// target, which a direct edge reaches too:
     ///
     /// - `"unresolved_branch"`: an indirect branch with no complete successor
-    ///   set, among them a return whose target is not provably the caller's.
+    ///   set, among them a return whose target is not provably the caller's
+    ///   and that you did not seed `"return"`.
     /// - `"unverified_seed"`: a seated answer nothing verified, such as a site
     ///   seated with only your `known_targets`, every tail call the CFG
     ///   consumed, your own `"return"` seat, and a return your `"return"`
