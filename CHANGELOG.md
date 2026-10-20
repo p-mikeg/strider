@@ -568,6 +568,11 @@
   may be an instruction, such a relocation keeps the symbol's address.
   `ElfLifter.read` of an `IRELATIVE` slot serves the file's bytes rather
   than the resolver's address.
+- Python: under `relocated_got_is_rom=True` an unstripped static
+  executable's `IRELATIVE` slots are unmapped too. Its `.rela.plt` links to
+  `.symtab`, there being no `.dynsym`, and was never walked, so a jump
+  through one of those slots went to the word the file holds, busybox's PLT
+  stub looping back to itself.
 
 ### Added, Rust
 

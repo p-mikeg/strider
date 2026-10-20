@@ -49,12 +49,16 @@ def test_a_mips_lazy_stub_is_not_the_call_target():
 
 
 @pytest.mark.parametrize(
-    "image", ["x64_ifunc_pie.elf", "x64_ifunc_lib.elf"], ids=["irelative", "glob_dat"]
+    "image",
+    ["x64_ifunc_pie.elf", "x64_ifunc_lib.elf", "x64_ifunc_static.elf"],
+    ids=["irelative", "glob_dat", "static"],
 )
 def test_a_tail_call_through_an_ifunc_slot_is_unresolved(image):
     """`call_f` is `jmp *slot`, the slot an IFUNC's: an `R_X86_64_IRELATIVE`
-    in the PIE, a `GLOB_DAT` against the IFUNC symbol in the library. The
-    file names the resolver there; the loader stores what it returns."""
+    in the PIE and in the unstripped static executable, whose `.rela.plt`
+    links to `.symtab`, and a `GLOB_DAT` against the IFUNC symbol in the
+    library. The file names the resolver there, or in the static executable
+    holds 0; the loader stores what the resolver returns."""
     elf = strider.lift.load_elf(_image(image), relocated_got_is_rom=True)
     resolver = elf.symbol("f").address
     result = elf.analyze("call_f")
