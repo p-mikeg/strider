@@ -30,7 +30,7 @@ MIPS64 := mips64el-linux-gnuabi64-gcc
 IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           mips64le_got_lib.elf mips64le_got.elf \
           x64_ifunc_pie.elf x64_ifunc_lib.elf x86_ifunc_pie.elf x64_ifunc.o \
-          x64_ifunc_nopic.o
+          x64_ifunc_nopic.o x64_ifunc_static.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -57,6 +57,10 @@ $(OUTDIR)/x86_ifunc_pie.elf: src/ifunc.c | $(OUTDIR)
 	$(X86) $(CFLAGS) -fno-plt -pie -Wl,-z,now -Wl,-e,call_f $< -o $@
 $(OUTDIR)/x64_ifunc.o: src/ifunc.c | $(OUTDIR)
 	$(X64) $(filter-out -Wl% -nostdlib,$(CFLAGS)) -fno-plt -c $< -o $@
+# Static and unstripped: `.rela.plt` holds the IRELATIVE slots and links to
+# `.symtab`, there being no `.dynsym`.
+$(OUTDIR)/x64_ifunc_static.elf: src/ifunc.c | $(OUTDIR)
+	$(X64) $(CFLAGS) -fno-plt -static -no-pie -Wl,-z,now -Wl,-e,call_f $< -o $@
 # Non-PIC, the call and the address-of carry their relocations in .text,
 # as a kernel's do.
 $(OUTDIR)/x64_ifunc_nopic.o: src/ifunc.c | $(OUTDIR)

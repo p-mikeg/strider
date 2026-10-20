@@ -143,6 +143,7 @@ pub(crate) fn apply_elf_relocations_with(
             pair,
         );
     });
+    symtab_linked_relocations(&mut ctx);
     mips_implicit_got(&mut ctx);
     let got = got_regions(&ctx.got, ctx.endian_le)?;
     let mut patches = ctx.patches;
@@ -372,7 +373,8 @@ fn has_crel(obj: &object::File<'_>) -> bool {
 ///   only relocation sections whose `sh_link` is the dynamic symbol table's
 ///   index, which is 0 when there is no `.dynsym`. A static binary's
 ///   `.rela.plt` links to `.symtab`, so it walks no sites; `strip` rewrites
-///   that link to 0, and the same binary then walks its IRELATIVE slots.
+///   that link to 0, and the same binary then walks its IRELATIVE slots;
+///   unstripped, [`symtab_linked_relocations`] walks them.
 fn for_each_reloc_site<F>(
     obj: &object::File<'_>,
     owners: &std::collections::BTreeSet<usize>,
@@ -956,6 +958,90 @@ fn mips_half_field_skew(r: &RelocInfo, arch: A, endian_le: bool) -> u64 {
     } else {
         0
     }
+}
+
+/// A linked image without `.dynsym` whose allocated relocation sections link
+/// to `.symtab`: an unstripped static executable's `.rela.plt`, which
+/// `object`'s `dynamic_relocations()` skips, its `sh_link` naming no dynamic
+/// symbol table. Its `r_sym == 0` entries, the IRELATIVE slots, are applied
+/// as the dynamic table's are. An entry naming a symbol is not computed: no
+/// loader binds it.
+///
+/// Not on MIPS, which has no IRELATIVE and whose ELF64 type word this does
+/// not decode.
+fn symtab_linked_relocations(ctx: &mut Ctx<'_, '_>) {
+    let obj = ctx.obj;
+    if matches!(obj.kind(), object::ObjectKind::Relocatable)
+        || matches!(obj.architecture(), A::Mips | A::Mips64)
+        || obj.dynamic_symbol_table().is_some()
+    {
+        return;
+    }
+    let entries = match obj {
+        object::File::Elf32(f) => symtab_linked_entries(f),
+        object::File::Elf64(f) => symtab_linked_entries(f),
+        _ => return,
+    };
+    for (addr, r) in entries {
+        let site = RelocSite {
+            addr,
+            avail: u64::MAX,
+        };
+        if r.sym.is_none() {
+            apply_one_relocation(ctx, site, &r, None);
+            continue;
+        }
+        let width = match classify(obj.architecture(), &r) {
+            Some(Kind::Marker) => continue,
+            Some(Kind::Compute(_, field)) => field.width(),
+            None => UNKNOWN_FIELD_BYTES,
+        };
+        let holder = ctx.holder(site, addr, width);
+        ctx.unmodelled(holder, addr, width, r.type_word());
+    }
+}
+
+/// `(r_offset, entry)` of every `SHT_REL` / `SHT_RELA` entry in an
+/// allocated section linked to a symbol table other than none.
+fn symtab_linked_entries<Elf: object::read::elf::FileHeader>(
+    f: &object::read::elf::ElfFile<'_, Elf>,
+) -> Vec<(u64, RelocInfo)> {
+    use object::read::elf::{Rel as _, Rela as _, SectionHeader as _};
+    let endian = f.endian();
+    let mut out = Vec::new();
+    for sh in f.elf_section_table().iter() {
+        if sh.sh_flags(endian).into() & u64::from(object::elf::SHF_ALLOC) == 0
+            || sh.link(endian).0 == 0
+        {
+            continue;
+        }
+        let info = |r_type: u32, sym: u32, rela_addend: Option<i64>| RelocInfo {
+            r_type,
+            r_type2: object::elf::R_MIPS_NONE,
+            r_type3: object::elf::R_MIPS_NONE,
+            sym: (sym != 0).then_some(object::SymbolIndex(sym as usize)),
+            rela_addend,
+            generic: None,
+        };
+        if let Ok(Some((rela, _))) = sh.rela(endian, f.data()) {
+            for e in rela {
+                let r = info(
+                    e.r_type(endian, false),
+                    e.r_sym(endian, false),
+                    Some(e.r_addend(endian).into()),
+                );
+                out.push((e.r_offset(endian).into(), r));
+            }
+        } else if let Ok(Some((rel, _))) = sh.rel(endian, f.data()) {
+            for e in rel {
+                out.push((
+                    e.r_offset(endian).into(),
+                    info(e.r_type(endian), e.r_sym(endian), None),
+                ));
+            }
+        }
+    }
+    out
 }
 
 /// `STT_GNU_IFUNC`, from `st_info`'s low nibble.
