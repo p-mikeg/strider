@@ -39,6 +39,21 @@ def _bound_neg_const_64():
     return _neg8_hit(lift.analyze(0x1000, cc).function, c)[c]
 
 
+def _bound_wide_unsigned():
+    """A `BoundCapture` holding the 64-bit constant 0xFFFFFFF8, positive at that
+    width: `movabs rax, 0xFFFFFFF8; ret`."""
+    code = bytes.fromhex("48b8f8ffffff00000000" "c3")
+    lift = strider.lift.lifter(
+        strider.sleigh.SleighArch.x86_64(), strider.reader.BufferReader(0x1000, code)
+    )
+    g = lift.analyze(0x1000, strider.sleigh.CallingConvention.x86_64_systemv()).function
+    c = Capture()
+    for hit in g.find_all(int_const(c)):
+        if hit.sint(c) == 0xFFFFFFF8:
+            return hit[c]
+    raise AssertionError("the fixture must carry a 64-bit 0xFFFFFFF8")
+
+
 def test_bound_capture_eq_matches_signed_and_unsigned():
     bc = _bound_neg_const()
     assert bc == -8, "the signed spelling of the value must compare equal"
@@ -60,6 +75,12 @@ def test_bound_captures_compare_by_their_constants():
 def test_bound_captures_of_two_widths_agree_through_the_signed_value():
     narrow, wide = _bound_neg_const(), _bound_neg_const_64()
     assert int(narrow) != int(wide), "the unsigned values differ"
+    assert narrow == wide and not narrow != wide
+
+
+def test_bound_captures_of_two_widths_agree_through_the_unsigned_value():
+    narrow, wide = _bound_neg_const(), _bound_wide_unsigned()
+    assert narrow == -8 and wide != -8, "the signed values differ"
     assert narrow == wide and not narrow != wide
 
 
