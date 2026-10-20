@@ -69,6 +69,7 @@ return %v0, %v1, %v4, %v5, %v6, %v7, %v8, %v9
 
 == masked_loop_switch @0x4f5
 unresolved_branch [0x510.9]
+unmapped_target [0x6f4]
 cfg
   0x4f4 64 ops goto -> [0x50a]
   0x50a 21 ops cbranch 0x540 -> [0x510, 0x540]
