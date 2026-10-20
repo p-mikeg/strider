@@ -574,7 +574,6 @@ _ZERO_ARG_RETURNS = {
     "strider.cfg": {
         ("Cfg", "entry"): "int",
         ("Cfg", "incomplete"): "list[tuple[int, IncompleteReason]]",
-        ("Cfg", "is_complete"): "bool",
     },
     "strider.lift": {
         ("Lifter", "reader"): "MemLike",
@@ -585,7 +584,6 @@ _ZERO_ARG_RETURNS = {
         ("ElfLifter", "entry_point"): "int",
         ("ElfLifter", "reader"): "BufferReader",
         ("LifterOptions", "pipeline"): "Optional[OptimizerPipeline]",
-        ("LifterOptions", "on_incomplete"): "OnIncomplete",
     },
     "strider.opt": {
         ("OptimizerPipeline", "empty"): "OptimizerPipeline",

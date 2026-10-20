@@ -22,14 +22,10 @@ def _lifter() -> strider.lift.Lifter:
 def test_analyze_reports_the_unmapped_target() -> None:
     result = _lifter().analyze(
         BASE, strider.sleigh.CallingConvention.x86_64_systemv(),
-        opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
     )
     assert result.cfg.incomplete == [(TARGET, "unmapped_target")]
-    assert not result.cfg.is_complete()
 
 
 def test_build_cfg_reports_the_unmapped_target() -> None:
-    """The only reason here, so `is_complete` answers on it alone."""
-    cfg = _lifter().build_cfg(BASE, on_incomplete=strider.lift.OnIncomplete.IGNORE)
+    cfg = _lifter().build_cfg(BASE)
     assert cfg.incomplete == [(TARGET, "unmapped_target")]
-    assert not cfg.is_complete()

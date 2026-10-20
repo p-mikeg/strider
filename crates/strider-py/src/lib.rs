@@ -107,7 +107,6 @@ fn _strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     let lift = PyModule::new_bound(py, "lift")?;
     strider_cls::register(py, &lift)?;
     options::register_lift(py, &lift)?;
-    errors::register_lift(py, &lift)?;
     m.add_submodule(&lift)?;
 
     let opt = PyModule::new_bound(py, "opt")?;

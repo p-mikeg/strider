@@ -17,31 +17,12 @@ create_exception!(
      missing file (`FileNotFoundError`)."
 );
 
-create_exception!(
-    strider,
-    IncompleteAnalysis,
-    StriderError,
-    "Raised by `analyze` and `build_cfg` under `OnIncomplete.ERROR` when the \
-     result cannot vouch for some addresses. `.incomplete` lists every one \
-     as `Cfg.incomplete` would, while the message spells p-code indices and \
-     shows the first eight. `.backtrace` is the message: nothing failed. \
-     `on_incomplete=OnIncomplete.IGNORE` returns the result instead."
-);
-
-/// `e` as the Python exception it stands for: `IncompleteAnalysis` carrying
-/// `.incomplete`, or `StriderError`.
+/// `e` as the `StriderError` it stands for.
 pub fn from_analyze_err(e: strider_orchestrator::AnalyzeError) -> PyErr {
-    let message = e.to_string();
     match e {
         strider_orchestrator::AnalyzeError::Failed(e) => into_strider_err(e),
-        strider_orchestrator::AnalyzeError::Incomplete(incomplete) => {
-            let err = IncompleteAnalysis::new_err(message.clone());
-            Python::with_gil(|py| {
-                let value = err.value_bound(py);
-                let _ = value.setattr("incomplete", crate::cfg::incomplete_list(&incomplete));
-                let _ = value.setattr("backtrace", message);
-            });
-            err
+        strider_orchestrator::AnalyzeError::Incomplete(_) => {
+            into_strider_err(anyhow::anyhow!("{e}"))
         }
     }
 }
@@ -110,15 +91,5 @@ pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     // the caller's own exception and never sets one.
     ty.setattr("backtrace", "")?;
     parent.add("StriderError", ty)?;
-    Ok(())
-}
-
-pub fn register_lift(py: Python<'_>, lift: &Bound<'_, PyModule>) -> PyResult<()> {
-    let ty = py.get_type_bound::<IncompleteAnalysis>();
-    ty.setattr("__module__", "strider.lift")?;
-    // Class-level default so `.incomplete` always reads; a tuple, so no
-    // instance can grow it.
-    ty.setattr("incomplete", pyo3::types::PyTuple::empty_bound(py))?;
-    lift.add("IncompleteAnalysis", ty)?;
     Ok(())
 }

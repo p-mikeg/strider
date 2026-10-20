@@ -123,7 +123,6 @@ def test_unresolved_indirect_branch_via_jmp_rax():
     _cfg, _function, unresolved = strider.lift.lifter(arch, mem).analyze(
         0x1000,
         cc,
-        opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
     )
     assert unresolved, (
         "expected the unresolvable jmp rax to be reported in unresolved"

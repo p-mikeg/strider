@@ -50,13 +50,9 @@ The result unpacks into three things:
 - `cfg`: the control flow graph the function was lifted from.
 - `function`: the lifted, optimized IR. This is what you query.
 - `unresolved`: addresses of indirect branches Strider could not resolve.
-  By default an incomplete result raises `IncompleteAnalysis` instead, so the
-  list is empty unless you pass
-  `LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE)`.
   An unresolved branch is one of six reasons a result can be incomplete:
-  `cfg.incomplete` lists all of them, `cfg.is_complete()` tests that list,
-  and [python-api.md](python-api.md#12-the-cfg-stridercfg) says what each
-  means.
+  `cfg.incomplete` lists all of them, and
+  [python-api.md](python-api.md#12-the-cfg-stridercfg) says what each means.
 
 You can also keep the result whole and use `result.cfg` / `result.function` /
 `result.unresolved`.
@@ -85,11 +81,8 @@ convention; `pipeline=` replaces the optimizer pass list outright.
 **One handle analyzes many functions.** The handle is the fixed setup:
 
 ```python
-keep = strider.lift.LifterOptions(
-    on_incomplete=strider.lift.OnIncomplete.IGNORE  # return, don't raise
-)
 for sym in prog.functions():
-    result = prog.analyze(sym.address, opts=keep)
+    result = prog.analyze(sym.address)
     ...
 ```
 

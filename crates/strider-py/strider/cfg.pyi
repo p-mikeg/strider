@@ -88,7 +88,9 @@ class Cfg:
     @property
     def incomplete(self) -> list[tuple[int, IncompleteReason]]:
         """Every machine address this CFG cannot vouch for, with why, sorted
-        and deduplicated. Empty is complete.
+        and deduplicated. Empty is complete. `analyze` and `build_cfg` return
+        whatever this names, so check it before trusting an absence ("no
+        store to X"): code behind a listed address may be missing.
 
         `"unresolved_branch"` and `"unverified_seed"` name a dispatch site, the
         address `CfgOptions(known_targets=...)` seeds; the other four a branch
@@ -113,11 +115,6 @@ class Cfg:
         accumulate over the resolver's rounds and the site reasons are the
         final round's.
         """
-        ...
-    def is_complete(self) -> bool:
-        """Whether `incomplete` is empty. `False` over `"unverified_seed"`
-        alone reads "complete but unverified", except for a `"return"` seat
-        whose re-check failed."""
         ...
     def region_at(self, addr: int) -> Optional[int]:
         """The index of the region whose instruction range contains `addr`,

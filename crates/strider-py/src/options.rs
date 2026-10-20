@@ -646,61 +646,6 @@ type BuiltPerAddressCcs = (
     std::sync::Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
 );
 
-/// What `analyze` and `build_cfg` do when `Cfg.incomplete` names anything,
-/// as the class constants `ERROR` (raise `IncompleteAnalysis`) and `IGNORE`
-/// (return the result).
-#[pyclass(name = "OnIncomplete", module = "strider.lift", frozen)]
-#[derive(Clone, Copy)]
-pub struct PyOnIncomplete {
-    pub(crate) inner: strider_orchestrator::OnIncomplete,
-}
-
-#[pymethods]
-impl PyOnIncomplete {
-    // Python class constants, hence the `non_snake_case` allows.
-    /// Raise `IncompleteAnalysis`, naming what is incomplete.
-    #[classattr]
-    #[allow(non_snake_case)]
-    fn ERROR() -> Self {
-        Self {
-            inner: strider_orchestrator::OnIncomplete::Error,
-        }
-    }
-    /// Return the result; `Cfg.incomplete` names what is incomplete.
-    #[classattr]
-    #[allow(non_snake_case)]
-    fn IGNORE() -> Self {
-        Self {
-            inner: strider_orchestrator::OnIncomplete::Ignore,
-        }
-    }
-
-    fn __repr__(&self) -> &'static str {
-        match self.inner {
-            strider_orchestrator::OnIncomplete::Error => "OnIncomplete.ERROR",
-            strider_orchestrator::OnIncomplete::Ignore => "OnIncomplete.IGNORE",
-        }
-    }
-
-    fn __eq__(&self, other: &Self) -> bool {
-        self.inner == other.inner
-    }
-
-    fn __hash__(&self) -> u64 {
-        match self.inner {
-            strider_orchestrator::OnIncomplete::Error => 0,
-            strider_orchestrator::OnIncomplete::Ignore => 1,
-        }
-    }
-}
-
-/// `None` as the Rust default, the one place it is decided.
-pub(crate) fn on_incomplete_or_default(
-    arg: Option<PyOnIncomplete>,
-) -> strider_orchestrator::OnIncomplete {
-    arg.map_or_else(strider_orchestrator::OnIncomplete::default, |o| o.inner)
-}
-
 /// Lift, optimize, and CFG knobs for one `analyze` call.
 #[pyclass(name = "LifterOptions", module = "strider.lift")]
 pub struct PyLifterOptions {
@@ -729,8 +674,6 @@ pub struct PyLifterOptions {
     /// default, for this call only.
     #[pyo3(get)]
     pub pipeline: Option<Py<PyOptimizerPipeline>>,
-    /// What `analyze` does when `Cfg.incomplete` names anything.
-    pub on_incomplete: strider_orchestrator::OnIncomplete,
     /// `per_address_ccs`' Python face.
     per_address_ccs_view: MappingView,
 }
@@ -738,7 +681,7 @@ pub struct PyLifterOptions {
 impl PyLifterOptions {
     /// All-defaults fallback for `opts=None`.
     pub(crate) fn new_default(py: Python<'_>) -> PyResult<Self> {
-        Self::new(py, None, None, true, None, true, None, None)
+        Self::new(py, None, None, true, None, true, None)
     }
 
     /// The overrides resolved against `regs`, built once per arch.
@@ -790,9 +733,7 @@ impl PyLifterOptions {
         per_address_ccs = None,
         resolve_indirect_branches = true,
         pipeline = None,
-        on_incomplete = None,
     ))]
-    #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
         cfg: Option<Py<PyCfgOptions>>,
@@ -801,7 +742,6 @@ impl PyLifterOptions {
         per_address_ccs: Option<MapArg<HashMap<u64, PyCallingConvention>>>,
         resolve_indirect_branches: bool,
         pipeline: Option<Py<PyOptimizerPipeline>>,
-        on_incomplete: Option<PyOnIncomplete>,
     ) -> PyResult<Self> {
         // Fresh nested defaults, never a shared instance.
         let cfg = match cfg {
@@ -819,7 +759,6 @@ impl PyLifterOptions {
             per_address_ccs: per_address_ccs.map(|t| std::sync::Arc::new(PerAddressCcs::new(t.0))),
             resolve_indirect_branches,
             pipeline,
-            on_incomplete: on_incomplete_or_default(on_incomplete),
             per_address_ccs_view: MappingView::default(),
         })
     }
@@ -834,18 +773,6 @@ impl PyLifterOptions {
         }
     }
 
-    /// `OnIncomplete.ERROR` raises `IncompleteAnalysis`; `IGNORE` returns the
-    /// result.
-    #[getter]
-    fn on_incomplete<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        // The class constant itself, so `is` holds.
-        let name = match self.on_incomplete {
-            strider_orchestrator::OnIncomplete::Error => "ERROR",
-            strider_orchestrator::OnIncomplete::Ignore => "IGNORE",
-        };
-        py.get_type_bound::<PyOnIncomplete>().getattr(name)
-    }
-
     /// These options with `cfg` replaced and every other field carried over.
     fn _with_cfg(&self, py: Python<'_>, cfg: Py<PyCfgOptions>) -> Self {
         Self {
@@ -855,7 +782,6 @@ impl PyLifterOptions {
             per_address_ccs: self.per_address_ccs.clone(),
             resolve_indirect_branches: self.resolve_indirect_branches,
             pipeline: self.pipeline.as_ref().map(|p| p.clone_ref(py)),
-            on_incomplete: self.on_incomplete,
             per_address_ccs_view: MappingView::default(),
         }
     }
@@ -865,8 +791,7 @@ impl PyLifterOptions {
         let assumptions_repr = self.assumptions.borrow(py).__repr__();
         Ok(format!(
             "LifterOptions(cfg={}, compact={}, per_address_ccs={}, \
-             resolve_indirect_branches={}, assumptions={}, pipeline={}, \
-             on_incomplete={})",
+             resolve_indirect_branches={}, assumptions={}, pipeline={})",
             cfg_repr,
             py_bool(self.compact),
             if self.per_address_ccs.is_some() {
@@ -881,10 +806,6 @@ impl PyLifterOptions {
             } else {
                 "None"
             },
-            PyOnIncomplete {
-                inner: self.on_incomplete
-            }
-            .__repr__(),
         ))
     }
 }
@@ -897,6 +818,5 @@ pub fn register_cfg(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 pub fn register_lift(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyLifterOptions>()?;
     m.add_class::<PyAssumptionOptions>()?;
-    m.add_class::<PyOnIncomplete>()?;
     Ok(())
 }

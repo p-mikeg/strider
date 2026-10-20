@@ -120,7 +120,7 @@ def test_a_sweep_past_the_context_commit_limit_refuses_rather_than_guesses():
     for i in range(_ENTRIES):
         for entry in (spare + 4 * i, spare + 4 * i + 1):
             try:
-                lift.build_cfg(entry, on_incomplete=strider.lift.OnIncomplete.IGNORE)
+                lift.build_cfg(entry)
             except strider.StriderError:
                 pass  # a mode this address does not decode in still pins one
         if (i + 1) % 200:

@@ -83,7 +83,6 @@ def test_optimize_on_lifter_mutates(x86_memory_elf):
         opts=strider.lift.LifterOptions(
             cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True),
             pipeline=strider.opt.OptimizerPipeline.empty(),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     assert g.node_count() >= 1
@@ -228,7 +227,6 @@ def test_a_rewriting_post_pass_restamps_stack_offsets():
         strider.sleigh.CallingConvention.x86_64_systemv(),
         opts=strider.lift.LifterOptions(
             pipeline=strider.opt.OptimizerPipeline.empty(),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     pipe = strider.opt.OptimizerPipeline.empty()
