@@ -33,7 +33,7 @@ fn build_cfg_phantom_span_asserts_hold_for_every_fixture_function() {
             for (addr, _name) in fixture.functions() {
                 total += 1;
                 if let Err(e) = strider.build_cfg(addr, &cfg_opts) {
-                    failed.push(format!("{}@{addr:#x}: {e}", fixture.path.display()));
+                    failed.push(format!("{}@{addr:#x}: {e:#}", fixture.path.display()));
                 }
             }
         }
