@@ -1,6 +1,6 @@
 """The claims in force accumulate per `Function`: `analyze` starts a fresh one
-under the claims it is given, every `optimize` merges in the set its options
-name, and none withdraws one."""
+under the claims it is given, every `optimize` merges in the set it is given,
+and none withdraws one."""
 
 from __future__ import annotations
 
@@ -77,23 +77,24 @@ def test_each_analyze_starts_from_its_own_claims():
     assert first.assumptions.noalias_allocators == [_ALLOCATOR]
 
 
-def test_optimize_without_opts_adds_no_claim():
+def test_optimize_without_assumptions_adds_no_claim():
     lift, g = _spill_at_floor()
     lift.optimize(g)
     assert g.assumptions == AssumptionOptions.none()
     assert len(g.find_all(load())) == 1, "optimize turned stack_global_disjoint on"
 
 
-def test_options_that_name_no_claims_add_none():
+def test_the_floor_as_a_set_adds_no_claim():
     lift, g = _spill_at_floor()
-    lift.optimize(g, opts=LifterOptions())
-    assert len(g.find_all(load())) == 1, "LifterOptions() added the default claims"
+    lift.optimize(g, assumptions=AssumptionOptions.none())
+    assert g.assumptions == AssumptionOptions.none()
+    assert len(g.find_all(load())) == 1, "none() added a claim"
 
 
-def test_a_copy_keeps_whether_claims_were_named():
+def test_optimize_takes_no_options():
     lift, g = _spill_at_floor()
-    lift.optimize(g, opts=LifterOptions()._with_cfg(strider.cfg.CfgOptions()))
-    assert len(g.find_all(load())) == 1, "_with_cfg turned the defaults into a named set"
+    with pytest.raises(TypeError, match="opts"):
+        lift.optimize(g, opts=LifterOptions())  # type: ignore[call-arg]
 
 
 def test_optimize_keeps_the_allocator_in_force():
@@ -104,14 +105,14 @@ def test_optimize_keeps_the_allocator_in_force():
 
 def test_a_named_set_that_omits_a_claim_in_force_raises():
     lift, g = _heap()
-    narrower = LifterOptions(assumptions=AssumptionOptions(stack_global_disjoint=False))
+    narrower = AssumptionOptions(stack_global_disjoint=False)
     with pytest.raises(
         strider.StriderError,
         match=re.escape(
             "in force on this Function: stack_global_disjoint, noalias_allocators (0x1100). "
         ),
     ) as raised:
-        lift.optimize(g, opts=narrower)
+        lift.optimize(g, assumptions=narrower)
     assert "function.assumptions | <your set>" in str(raised.value)
 
 
@@ -121,25 +122,25 @@ def test_a_refused_optimize_runs_nothing():
     assert len(g.find_all(load())) == 1, "the reload stays without the claim"
     before = g.assumptions
     with pytest.raises(strider.StriderError, match="noalias_allocators"):
-        lift.optimize(g, opts=LifterOptions(assumptions=AssumptionOptions()))
+        lift.optimize(g, assumptions=AssumptionOptions())
     assert len(g.find_all(load())) == 1, "a refused optimize ran"
     assert g.assumptions == before
 
 
 def test_the_omission_names_only_the_missing_allocators():
     lift, g = _heap(allocators=(0x1300, _ALLOCATOR, 0x1200))
-    partial = LifterOptions(assumptions=AssumptionOptions(noalias_allocators=[0x1200]))
+    partial = AssumptionOptions(noalias_allocators=[0x1200])
     with pytest.raises(
         strider.StriderError,
         match=re.escape("in force on this Function: noalias_allocators (0x1100, 0x1300). "),
     ):
-        lift.optimize(g, opts=partial)
+        lift.optimize(g, assumptions=partial)
 
 
 def test_the_union_of_the_claims_in_force_adds_one():
     lift, g = _heap()
     wider = g.assumptions | AssumptionOptions.none(escape_analysis=True)
-    lift.optimize(g, opts=LifterOptions(assumptions=wider))
+    lift.optimize(g, assumptions=wider)
     assert g.assumptions.escape_analysis is True
     assert g.assumptions.noalias_allocators == [_ALLOCATOR]
     assert g.assumptions.stack_global_disjoint is True
@@ -148,7 +149,7 @@ def test_the_union_of_the_claims_in_force_adds_one():
 def test_none_with_a_keyword_adds_exactly_that_claim():
     lift, g = _spill_at_floor()
     wider = g.assumptions | AssumptionOptions.none(escape_analysis=True)
-    lift.optimize(g, opts=LifterOptions(assumptions=wider))
+    lift.optimize(g, assumptions=wider)
     assert g.assumptions == AssumptionOptions.none(escape_analysis=True)
 
 
@@ -176,7 +177,7 @@ def test_a_keyword_set_carries_its_defaults_into_the_union():
     assert AssumptionOptions(escape_analysis=True) == want
     lift, g = _spill_at_floor()
     wider = g.assumptions | AssumptionOptions(escape_analysis=True)
-    lift.optimize(g, opts=LifterOptions(assumptions=wider))
+    lift.optimize(g, assumptions=wider)
     assert g.assumptions == want
     assert len(g.find_all(load())) == 0, "stack_global_disjoint did not forward"
 

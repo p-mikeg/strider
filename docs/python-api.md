@@ -214,16 +214,16 @@ default: `AssumptionOptions(escape_analysis=True)` holds four claims,
 
 Claims accumulate per `Function`. `analyze` starts a fresh one from the claims
 it is given, and `function.assumptions` reads back the ones in force.
-`prog.optimize(function, opts=...)` adds the claims `opts` names and withdraws
-none: `opts=None`, or a `LifterOptions` built without `assumptions=`, adds
-nothing, and a set that leaves out a claim already in force raises
-`StriderError`. Add one by naming the union (`a.union(b)` is the same):
+`prog.optimize(function, assumptions=...)` adds the claims the set holds and
+withdraws none: `assumptions=None` adds nothing, and a set that leaves out a
+claim already in force raises `StriderError`. Add one by naming the union
+(`a.union(b)` is the same):
 
 ```python
-from strider.lift import AssumptionOptions, LifterOptions
+from strider.lift import AssumptionOptions
 
-prog.optimize(function, opts=LifterOptions(
-    assumptions=function.assumptions | AssumptionOptions.none(escape_analysis=True)))
+prog.optimize(function,
+              assumptions=function.assumptions | AssumptionOptions.none(escape_analysis=True))
 ```
 
 To drop one, analyse again without it. A claim a

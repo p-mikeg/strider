@@ -165,18 +165,16 @@ fn build_orch_sleigh(
         .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:#}")))
 }
 
-/// The claims an `optimize` adds to `function`'s: none unless `opts` was
-/// built with `assumptions=`, and then that set, which must hold every claim
-/// already in force.
+/// The claims an `optimize` adds to `function`'s: none without `given`, and
+/// otherwise `given`, which must hold every claim already in force.
 fn claims_to_add(
-    py: Python<'_>,
     function: &PyFunction,
-    opts: &PyLifterOptions,
+    given: Option<&crate::options::PyAssumptionOptions>,
 ) -> PyResult<strider_orchestrator::opt::AssumptionOptions> {
-    if !opts.assumptions_given {
+    let Some(given) = given else {
         return Ok(strider_orchestrator::opt::AssumptionOptions::none());
-    }
-    let given = opts.assumptions.borrow(py).inner.clone();
+    };
+    let given = given.inner.clone();
     let omitted: Vec<String> = {
         let read = function.read_inner().map_err(into_strider_err)?;
         let in_force = read.assumptions();
@@ -202,7 +200,7 @@ fn claims_to_add(
         return Ok(given);
     }
     Err(into_strider_err(anyhow::anyhow!(
-        "optimize: opts.assumptions leaves out claims in force on this \
+        "optimize: `assumptions` leaves out claims in force on this \
          Function: {}. Pass `function.assumptions | <your set>` to add \
          claims, or analyse again to drop one",
         omitted.join(", ")
@@ -819,14 +817,13 @@ impl PyLifter {
 
     /// Run an optimizer pipeline over `function` in place.  `pipeline=None`
     /// runs the default pipeline; a given `OptimizerPipeline` is copied, so it
-    /// stays usable.  The claims `opts.assumptions` names join
-    /// `function.assumptions` and none is withdrawn: `opts=None`, or options
-    /// built without `assumptions=`, add nothing, and a set that leaves out a
-    /// claim already in force raises `StriderError`.  Add one with::
+    /// stays usable.  The claims `assumptions` holds join
+    /// `function.assumptions` and none is withdrawn: `assumptions=None` adds
+    /// nothing, and a set that leaves out a claim already in force raises
+    /// `StriderError` before anything runs.  Add one with::
     ///
-    ///     prog.optimize(function, opts=LifterOptions(
-    ///         assumptions=function.assumptions
-    ///         | AssumptionOptions.none(escape_analysis=True)))
+    ///     prog.optimize(function, assumptions=function.assumptions
+    ///                   | AssumptionOptions.none(escape_analysis=True))
     ///
     /// Runs against this handle's rom, so `LoadReadOnly` folds here exactly as
     /// it does inside `analyze`.  Raises `StriderError` for a `function` some
@@ -835,13 +832,13 @@ impl PyLifter {
     /// `Node` / `Match` handles for `function`.
     ///
     /// Holds the GIL for the whole run, unlike `analyze`.
-    #[pyo3(signature = (function, pipeline=None, opts=None))]
+    #[pyo3(signature = (function, pipeline=None, assumptions=None))]
     fn optimize(
         slf: &Bound<'_, Self>,
         py: Python<'_>,
         function: &PyFunction,
         pipeline: Option<&crate::opt::PyOptimizerPipeline>,
-        opts: Option<Py<PyLifterOptions>>,
+        assumptions: Option<PyRef<'_, crate::options::PyAssumptionOptions>>,
     ) -> PyResult<()> {
         if !function.cfg.bind(py).try_borrow()?.lifter.bind(py).is(slf) {
             return Err(into_strider_err(anyhow::anyhow!(
@@ -855,11 +852,7 @@ impl PyLifter {
         // a SIGBUS there, which no Python `except` can catch.
         crate::reader::check_mem_unchanged(py, &this.mem_obj)?;
         crate::reader::check_mem_unchanged(py, &this.rom_obj)?;
-        let opts = match opts {
-            Some(o) => o,
-            None => Py::new(py, PyLifterOptions::new_default(py)?)?,
-        };
-        let claims = claims_to_add(py, function, &opts.borrow(py))?;
+        let claims = claims_to_add(function, assumptions.as_deref())?;
         let rom = this.strider()?.rom();
         with_pending_control_flow(|| match pipeline {
             Some(p) => function.run_pipeline_in_place(p.build_pipeline(), "optimize", rom, &claims),

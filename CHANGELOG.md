@@ -56,13 +56,18 @@
   are `SleighArch.reg` / `reg_name` / `name()`, and a `sleigh=` other than a
   `SleighArch` raises `TypeError: argument 'sleigh': ... cannot be converted
   to 'SleighArch'`.
-- `Lifter.optimize` adds the claims `opts.assumptions` names to the function's
-  and withdraws none. `opts=None`, or a `LifterOptions` built without
-  `assumptions=`, adds nothing, where it applied the three default claims; a
-  set that leaves out a claim already in force raises `StriderError` naming
-  it, and each missing allocator address. Pass
-  `function.assumptions | AssumptionOptions.none(escape_analysis=True)` to add
-  one; analyse again to drop one.
+- `Lifter.optimize(function, pipeline=None, assumptions=None)` takes the
+  claims to add as `assumptions=`, an `AssumptionOptions`, in place of
+  `opts=`, whose other fields it ignored. It adds them to the function's and
+  withdraws none. `assumptions=None` adds nothing, where `opts=None` applied
+  the three default claims; a set that leaves out a claim already in force
+  raises `StriderError` naming it, and each missing allocator address, before
+  anything runs. Pass
+  `assumptions=function.assumptions | AssumptionOptions.none(escape_analysis=True)`
+  to add one; analyse again to drop one.
+- `AssumptionOptions` is unhashable: `hash()`, set membership and dict keys
+  raise `TypeError`. It compares by value (`function.assumptions ==
+  AssumptionOptions.none()`), where it compared by identity.
 
 ### Breaking, Rust
 
@@ -312,8 +317,6 @@
   reads back sorted and deduplicated, `repr` included (it kept the order and
   duplicates given), and on Python 3.10+ the constructor's signature shows
   `None` for every default.
-- `AssumptionOptions` compares by value (`function.assumptions ==
-  AssumptionOptions.none()`) and is unhashable; it compared by identity.
 - `Function.to_text()` prints a `frame_address_in_call_register` line after
   `default_cc` when a call's clobbered register held a stack address.
 - `CfgOptions(call_other_abis=...)` is resolved on first use, rebuilt only
