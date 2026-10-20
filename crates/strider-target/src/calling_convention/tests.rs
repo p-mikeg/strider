@@ -1,7 +1,7 @@
 use super::*;
 
 fn regs_for(arch: crate::arch::SleighArch) -> rsleigh::SleighRegs {
-    arch.probe_regs().unwrap()
+    arch.probe_regs()
 }
 
 /// Float / vector register lists shared by the rows below, each cited where

@@ -2159,7 +2159,7 @@ mod build_call_with_cc {
     use strider_target::{BuiltCallingConvention, CallingConvention, SleighArch};
 
     fn x86_64_regs() -> rsleigh::SleighRegs {
-        SleighArch::x86_64().probe_regs().unwrap()
+        SleighArch::x86_64().probe_regs()
     }
 
     fn x86_64_built_cc() -> BuiltCallingConvention {

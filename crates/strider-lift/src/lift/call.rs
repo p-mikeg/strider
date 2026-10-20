@@ -197,7 +197,6 @@ mod tests {
     fn x86_64_sleigh_regs() -> rsleigh::SleighRegs {
         let arch = strider_target::SleighArch::x86_64();
         arch.probe_regs()
-            .expect("probe_regs must succeed for x86_64")
     }
 
     /// Helper: lifts `code` at 0x1000 under the x86-64 SysV convention.

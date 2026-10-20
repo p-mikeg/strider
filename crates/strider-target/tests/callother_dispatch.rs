@@ -340,7 +340,7 @@ fn arm_mode_switch_rows_are_scoped_to_arm32() {
 }
 
 fn regs_for(preset: ArchPreset) -> rsleigh::SleighRegs {
-    preset.arch().probe_regs().expect("probe_regs")
+    preset.arch().probe_regs()
 }
 
 const ARM32_PRESETS: [ArchPreset; 4] = [

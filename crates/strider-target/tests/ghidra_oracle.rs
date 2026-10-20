@@ -600,9 +600,7 @@ fn every_calling_convention_preset_agrees_with_its_ghidra_cspec() {
         let proto = prototype(pairing.cspec, pairing.prototype);
         for arch in pairing.arches {
             let arch = arch();
-            let regs = tables
-                .entry(arch)
-                .or_insert_with(|| arch.probe_regs().expect("a register table"));
+            let regs = tables.entry(arch).or_insert_with(|| arch.probe_regs());
             check(pairing, regs, &proto, &mut seen, &mut killed_and_saved);
         }
     }
