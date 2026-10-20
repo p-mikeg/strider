@@ -235,6 +235,12 @@ impl<'a> Ctx<'a, '_> {
     /// the symbol's own address: a hole would stop the decoder, and the
     /// symbol is how the image names the function a `call` reaches (a
     /// FreeBSD kernel's `call memcpy`, which its linker binds at boot).
+    ///
+    /// A PC-relative call and a PC-relative `lea` look alike, so two limits
+    /// follow: an address taken in code (`lea f(%rip)`, `mov $f`) and a data
+    /// word in an executable mapping (FreeBSD 12's `.rodata`) take the
+    /// symbol's address too, where at run time they hold the resolver's
+    /// result.
     fn in_code(&self, addr: u64, width: usize) -> bool {
         self.executable.touches(addr, width)
     }
@@ -1087,10 +1093,16 @@ fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
         Some(None) => {
             for sec in obj.sections().filter(|s| s.name() == Ok(".got")) {
                 let base = ctx.layout.section_base(&sec);
+                // Up to the end of the mapping holding it, whatever `sh_size`
+                // claims.
                 for i in 0..sec.size() / word {
-                    let addr = base.saturating_add(i * word);
-                    let holder = ctx.holding(addr, width);
-                    ctx.unmodelled(holder, addr, width, object::elf::R_MIPS_GLOB_DAT);
+                    let Some(addr) = i.checked_mul(word).and_then(|o| base.checked_add(o)) else {
+                        break;
+                    };
+                    let Some(holder) = ctx.holding(addr, width) else {
+                        break;
+                    };
+                    ctx.unmodelled(Some(holder), addr, width, object::elf::R_MIPS_GLOB_DAT);
                 }
             }
             return;
