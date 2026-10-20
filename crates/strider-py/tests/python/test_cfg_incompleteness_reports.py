@@ -129,6 +129,25 @@ def test_a_return_seed_answers_the_dispatch_unverified() -> None:
     assert result.cfg.incomplete == [(dispatch, "unverified_seed")]
 
 
+def test_a_return_seed_vouches_for_an_unproven_ret() -> None:
+    """A `"return"` seed over a `ret` whose target is not the caller's moves
+    it from `"unresolved_branch"` to `"unverified_seed"`."""
+    code = bytes([0x50, 0xC3])  # push rax ; ret
+    mem = strider.reader.BufferReader(BASE, code)
+    lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+    cc = strider.sleigh.CallingConvention.x86_64_systemv()
+    assert lift.analyze(BASE, cc).cfg.incomplete == [(0x1001, "unresolved_branch")]
+    seeded = lift.analyze(
+        BASE,
+        cc,
+        strider.lift.LifterOptions(
+            cfg=strider.cfg.CfgOptions(known_targets={0x1001: "return"}),
+        ),
+    )
+    assert seeded.unresolved == []
+    assert seeded.cfg.incomplete == [(0x1001, "unverified_seed")]
+
+
 _REASONS = (
     "unresolved_branch",
     "unverified_seed",
