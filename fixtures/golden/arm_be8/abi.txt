@@ -1,4 +1,4 @@
-# arm_be8/abi: Strider::analyze, default options except on_incomplete=Ignore
+# arm_be8/abi: Strider::analyze, default options
 # eight_int_args: 7 int.add
 # make_pair: return
 # mixed_args: 2 load and 5 int.add
