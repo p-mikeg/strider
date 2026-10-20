@@ -18,7 +18,12 @@ fn a_branch_into_an_instruction_interior_is_reported() {
     let (mut strider, cc) =
         common::strider_over_bytes(common::Arch::X64, bytes.clone(), base, None);
     let out = strider
-        .analyze(base, &cc, &common::ignoring(), None)
+        .analyze(
+            base,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        )
         .expect("analyze");
 
     assert_eq!(

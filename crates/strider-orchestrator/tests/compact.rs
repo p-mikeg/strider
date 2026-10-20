@@ -82,7 +82,6 @@ fn default_analyze_options_compact_and_share_their_empty_tables() {
         a.assumptions,
         strider_orchestrator::opt::AssumptionOptions::default()
     );
-    assert_eq!(a.on_incomplete, strider_orchestrator::OnIncomplete::Error);
     assert_eq!(
         a.cfg.bound,
         strider_cfg::FunctionBound::Open {

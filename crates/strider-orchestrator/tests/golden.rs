@@ -1,6 +1,5 @@
 //! Pins what `Strider::analyze` makes of every function of the committed
-//! fixtures under production defaults, an incomplete result returned rather
-//! than refused (`common::ignoring()`), one file per image:
+//! fixtures under production defaults, one file per image:
 //! `fixtures/golden/<arch>/<case>.txt`. A function's section is
 //! `== <symbol> @<addr>`, each incompleteness reason held, the CFG one region
 //! per line (start, p-code op count, terminator, successors) and the
@@ -355,7 +354,12 @@ fn golden_text(fixture: &Fixture) -> String {
     let mut body = String::new();
     for (addr, name) in fixture.functions() {
         let _ = writeln!(body, "\n== {name} @{addr:#x}");
-        let result = match strider.analyze(addr, &cc, &common::ignoring(), None) {
+        let result = match strider.analyze(
+            addr,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        ) {
             Ok(result) => result,
             Err(e) => {
                 let _ = writeln!(body, "error: {e:#}");
