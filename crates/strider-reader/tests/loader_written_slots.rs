@@ -321,3 +321,85 @@ fn a_static_executables_irelative_slot_is_a_hole() {
         assert_hole(rom_word(&reader, slot, 8, true), irelative, "static");
     }
 }
+
+/// `name`'s bytes with `edit` applied, parsed as an image.
+fn patched(name: &str, edit: impl FnOnce(&mut Vec<u8>, &object::File<'_>)) -> OwnedElf {
+    let original = open(name);
+    let obj = original.checked_file().unwrap();
+    let mut bytes = std::fs::read(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/loader/out")
+            .join(name),
+    )
+    .unwrap();
+    edit(&mut bytes, &obj);
+    OwnedElf::parse(bytes).unwrap()
+}
+
+/// The file offset of `.got` word `i` of a big-endian o32 image.
+fn got_word_offset(obj: &object::File<'_>, i: u64) -> usize {
+    let (off, _) = obj.section_by_name(".got").unwrap().file_range().unwrap();
+    (off + 4 * i) as usize
+}
+
+/// A defined symbol's global entry holding anything but its `st_value` is
+/// one the loader rewrites: glibc keeps such a word under lazy binding and
+/// resolves it under BIND_NOW.
+#[test]
+fn a_mips_global_entry_off_its_st_value_is_a_hole() {
+    let ext_var = dynsym_value(&open("mips32be_got_lib.elf"), "ext_var");
+    let elf = patched("mips32be_got_lib.elf", |bytes, obj| {
+        let at = got_word_offset(obj, 2);
+        bytes[at..at + 4].copy_from_slice(&(ext_var as u32 + 4).to_be_bytes());
+    });
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    let (slot, _) = got_word(&elf, 2);
+    assert_hole(
+        rom_word(&reader, slot, 4, false),
+        object::elf::R_MIPS_GLOB_DAT,
+        "ext_var + 4",
+    );
+}
+
+/// Without the GNU top bit, `got[1]` is no module pointer and the loader
+/// leaves it alone.
+#[test]
+fn a_mips_second_got_word_without_the_gnu_bit_is_served() {
+    let elf = patched("mips32be_got.elf", |bytes, obj| {
+        let at = got_word_offset(obj, 1);
+        bytes[at..at + 4].copy_from_slice(&0u32.to_be_bytes());
+    });
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    let (slot, _) = got_word(&elf, 1);
+    assert_eq!(rom_word(&reader, slot, 4, false), Ok(0));
+}
+
+/// A dynamic MIPS image missing a tag that places its GOT says nothing about
+/// which words the loader writes, so every `.got` word is a hole.
+#[test]
+fn a_mips_got_without_its_dynamic_tags_is_all_holes() {
+    let elf = patched("mips32be_got_lib.elf", |bytes, obj| {
+        let (off, size) = obj
+            .section_by_name(".dynamic")
+            .unwrap()
+            .file_range()
+            .unwrap();
+        let entries = &mut bytes[off as usize..(off + size) as usize];
+        let gotsym = entries
+            .chunks_exact_mut(8)
+            .find(|d| d[..4] == object::elf::DT_MIPS_GOTSYM.to_be_bytes())
+            .expect("DT_MIPS_GOTSYM");
+        gotsym[..4].copy_from_slice(&object::elf::DT_MIPS_RLD_VERSION.to_be_bytes());
+    });
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    let obj = elf.checked_file().unwrap();
+    let words = obj.section_by_name(".got").unwrap().size() / 4;
+    for i in 0..words {
+        let (slot, _) = got_word(&elf, i);
+        assert_hole(
+            rom_word(&reader, slot, 4, false),
+            object::elf::R_MIPS_GLOB_DAT,
+            &format!(".got word {i}"),
+        );
+    }
+}
