@@ -1,4 +1,4 @@
-# ppc64le/arithmetic: Strider::analyze, default options except on_incomplete=Ignore
+# ppc64le/arithmetic: Strider::analyze, default options
 # add: int.add
 # ashr: int.sshift_right
 # bit_and: int.and

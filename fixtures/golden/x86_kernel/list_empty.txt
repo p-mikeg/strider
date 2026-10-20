@@ -1,4 +1,4 @@
-# x86_kernel/list_empty: Strider::analyze, default options except on_incomplete=Ignore
+# x86_kernel/list_empty: Strider::analyze, default options
 endian little
 default_cc arg_passing_regs=[EAX, EDX, ECX] arg_passing_regs_float=[] callee_saved_regs=[EBX, ESI, EDI, EBP] ret_val_regs=[EAX, EDX] ret_val_regs_float=[ST0, ST1, XMM0] stack_vn=ESP stack_args=4+4n ret_stack_pop=4 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
 
