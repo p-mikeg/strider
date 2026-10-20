@@ -99,6 +99,27 @@ pub(super) fn not_code_addr(err: &anyhow::Error) -> Option<u64> {
     err.downcast_ref::<NotCode>().map(|n| n.addr)
 }
 
+/// A seeded arm's code fell through past the function's end, at this address.
+#[derive(Debug)]
+pub(super) struct PastEnd(pub(super) PcodeInsnAddr);
+
+impl std::fmt::Display for PastEnd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "a seeded arm's code falls through past the function's end at {:#x}",
+            self.0.machine_addr.addr
+        )
+    }
+}
+
+impl std::error::Error for PastEnd {}
+
+/// Where `err` ran past the function's end, if that is why it failed.
+pub(super) fn past_end_addr(err: &anyhow::Error) -> Option<PcodeInsnAddr> {
+    err.downcast_ref::<PastEnd>().map(|p| p.0)
+}
+
 /// Whether `err` is a decode the reader could not supply the bytes for, at
 /// `addr` or partway into the instruction there.
 ///
@@ -633,6 +654,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         // address this adds two parallel edges to one stub, mirroring the
         // in-range degenerate case: `region_if` reads the second edge as the
         // fall-through side.
+        // The not-taken path past the end is a fall-through, reported as one.
+        if false_oob {
+            self.builder
+                .incomplete
+                .insert(next_insn_addr, crate::Reason::PastFunctionEnd);
+        }
         for (oob, successor) in [(true_oob, target_addr), (false_oob, next_insn_addr)] {
             if oob {
                 let stub = self.builder.tail_call_stub(successor)?;
@@ -1178,16 +1205,15 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Only a [`crate::FunctionBound::Size`] end gets here. An open bound puts
     /// only addresses below the entry out of range, no region it decodes
     /// starts there, and a fall-through only moves up. Off a seeded arm it is
-    /// an `Err`, which drops the arm: a real arm stays inside the function.
+    /// a [`PastEnd`] `Err`, which drops the arm: a real arm stays inside the
+    /// function.
     fn seal_past_function_end(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
         let advanced_past_start = cur_addr.machine_addr.addr != self.start_addr.machine_addr.addr;
         if !advanced_past_start || !self.is_branch_tail_call_nocheck(cur_addr) {
             return Ok(false);
         }
         if self.builder.descent.is_some() {
-            anyhow::bail!(
-                "a seeded arm's code falls through past the function's end at {cur_addr:?}"
-            );
+            return Err(PastEnd(cur_addr).into());
         }
         self.seal_at_fallthrough_stub(cur_addr)?;
         self.builder
