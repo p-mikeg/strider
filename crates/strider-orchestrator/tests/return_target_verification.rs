@@ -54,7 +54,7 @@ fn analyze_with(
             ..Default::default()
         },
         assumptions: assumptions.clone(),
-        ..common::ignoring()
+        ..Default::default()
     };
     strider.analyze(entry, &cc, &opts, None).expect("analyze")
 }
@@ -79,9 +79,9 @@ fn assert_reported_only_without_assumptions(
         vec![BASE + ret_offset],
         "{what}: the return rests on a cleared claim"
     );
-    assert!(!floor.is_complete(), "{what}");
+    assert!(!floor.incomplete().is_empty(), "{what}");
     assert!(
-        analyze(arch, bytes).is_complete(),
+        analyze(arch, bytes).incomplete().is_empty(),
         "{what}: the claim is what lets it pass"
     );
 }
@@ -110,13 +110,13 @@ fn assert_reported(arch: Arch, bytes: Vec<u8>, ret_offset: u64, what: &str) {
         vec![BASE + ret_offset],
         "{what}: the return is an indirect branch"
     );
-    assert!(!result.is_complete(), "{what}");
+    assert!(!result.incomplete().is_empty(), "{what}");
 }
 
 fn assert_complete(arch: Arch, bytes: Vec<u8>, what: &str) {
     let result = analyze(arch, bytes);
     assert!(
-        result.is_complete(),
+        result.incomplete().is_empty(),
         "{what}: a genuine return is complete; unresolved {:x?}",
         unresolved(&result)
     );
@@ -212,11 +212,11 @@ fn a_return_verified_under_a_claim_is_not_reported() {
         let result = analyze(Arch::Arm, bytes.clone());
         assert_eq!(seeded(&result), Vec::<u64>::new());
         assert_eq!(unresolved(&result), Vec::<u64>::new());
-        assert!(result.is_complete());
+        assert!(result.incomplete().is_empty());
 
         let floor = analyze_with(Arch::Arm, bytes, &no_assumptions());
         assert!(
-            !floor.is_complete(),
+            !floor.incomplete().is_empty(),
             "the floor cannot walk the slot back through the call",
         );
     }
@@ -657,7 +657,7 @@ fn x86_64_a_realigned_frame_whose_saved_stack_pointer_may_be_overwritten_is_repo
 /// `UnverifiedSeed` reads. A site whose terminator came from the
 /// p-code `RETURN` op is never in that list, so a seed over one used to drop
 /// it from `unresolved` while nothing else named it: no reason listed
-/// and `is_complete()` true over a CFG missing the edge control takes.
+/// over a CFG missing the edge control takes.
 #[test]
 fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
     // push rax ; ret -- the `ret` goes to rax, not to the caller.
@@ -688,11 +688,11 @@ fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
             ..Default::default()
         },
         assumptions: claiming_return_slots(),
-        ..common::ignoring()
+        ..Default::default()
     };
     let seeded_result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
     assert!(
-        !seeded_result.is_complete(),
+        !seeded_result.incomplete().is_empty(),
         "a seed the CFG never consumed cannot vouch for the return",
     );
     assert!(
@@ -720,7 +720,7 @@ fn an_empty_seed_leaves_a_derived_return_verified() {
         let size = bytes.len() as u64;
         let site = BASE + size - 4;
         let unseeded = analyze(Arch::Arm, bytes.clone());
-        assert!(unseeded.is_complete(), "{words:x?}: unseeded");
+        assert!(unseeded.incomplete().is_empty(), "{words:x?}: unseeded");
         assert!(
             unseeded
                 .cfg
@@ -745,11 +745,11 @@ fn an_empty_seed_leaves_a_derived_return_verified() {
                 ..Default::default()
             },
             assumptions: claiming_return_slots(),
-            ..common::ignoring()
+            ..Default::default()
         };
         let seeded_result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
         assert!(
-            seeded_result.is_complete(),
+            seeded_result.incomplete().is_empty(),
             "{words:x?}: unresolved {:x?} seeded {:x?}",
             unresolved(&seeded_result),
             seeded(&seeded_result),

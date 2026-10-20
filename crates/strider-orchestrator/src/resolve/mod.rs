@@ -26,9 +26,9 @@ use sites::SiteTable;
 /// Doubles as a DEPTH limit: one iteration seats one LEVEL of indirect-branch
 /// discovery, so a chain of trampolines each jumping to the next needs one
 /// round per link. [`SiteTable::fold`] reporting no change is the terminator
-/// for everything shallower. Exhausting the cap is never
-/// [`crate::AnalyzeError::Failed`]: the sites still growing are reported, and
-/// a site whose answer never settles is withdrawn and reported the same way.
+/// for everything shallower. Exhausting the cap is never an `Err`: the sites
+/// still growing are reported, and a site whose answer never settles is
+/// withdrawn and reported the same way.
 const MAX_RESOLUTION_ITERATIONS: usize = 256;
 
 /// `items`, counting each read in tests: the unit the fold's cost bounds are
@@ -72,8 +72,7 @@ impl<R> Strider<R>
 where
     R: rsleigh::MemReader,
 {
-    /// The resolve loop behind [`Strider::analyze`], before its incomplete
-    /// policy and compaction.
+    /// The resolve loop behind [`Strider::analyze`], before compaction.
     ///
     /// # Errors
     ///
@@ -230,8 +229,7 @@ impl<'s> LoopState<'s> {
         // CFG build actually CONSUMED, which is what `link_register_seated`
         // records. A site whose terminator came from the p-code `RETURN` op is
         // never in it, so dropping one here on the strength of a seed left it
-        // under no reason and `is_complete()` true over a CFG missing the edge
-        // control takes.
+        // under no reason over a CFG missing the edge control takes.
         // Hashed: both lists are bounded by the region count and at the sound
         // floor they can be the same set, so a slice scan per element is
         // quadratic.

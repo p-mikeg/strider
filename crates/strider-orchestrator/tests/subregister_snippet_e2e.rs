@@ -73,7 +73,12 @@ fn narrow_alias_write_folds_to_zero_in_ret_val_register() {
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
     let result = strider
-        .analyze(BASE, &cc, &common::ignoring(), None)
+        .analyze(
+            BASE,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        )
         .expect("analyze");
     assert!(
         result

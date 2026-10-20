@@ -10,19 +10,15 @@ re-run the whole thing until the control-flow graph stops changing.
   `rsleigh::Sleigh` and an optional read-only image (what `LoadReadOnly` folds
   against and what the jump-table classifier reads tables from; `None` disables
   both).
-- `Strider::analyze(entry, cc, opts, pipeline)` ->
-  `Result<AnalyzeResult, AnalyzeError>`: the loop below. `opts` is an
-  `AnalyzeOptions` (`cfg`, `per_address_ccs`, `resolve_indirect_branches`,
-  `assumptions`, `compact`, `on_incomplete`); `compact` applies once after
-  the loop. `pipeline` defaults to `strider_opt::default_pipeline`; every
-  round runs it over a fresh lift claiming `assumptions`, then classifies the
-  dispatch sites with `strider_opt::classify_sites`, whatever the pipeline,
-  or with resolution off lists them unresolved. Under
-  `on_incomplete: OnIncomplete::Error`, the default, a result that is not
-  complete comes back as `AnalyzeError::Incomplete`.
-- `Strider::build_cfg(entry, cfg_opts, on_incomplete)` ->
-  `Result<Cfg, AnalyzeError>`: a structural decode only, no lift, no
-  optimisation, no resolution.
+- `Strider::analyze(entry, cc, opts, pipeline)` -> `Result<AnalyzeResult>`:
+  the loop below. `opts` is an `AnalyzeOptions` (`cfg`, `per_address_ccs`,
+  `resolve_indirect_branches`, `assumptions`, `compact`); `compact` applies
+  once after the loop. `pipeline` defaults to `strider_opt::default_pipeline`;
+  every round runs it over a fresh lift claiming `assumptions`, then
+  classifies the dispatch sites with `strider_opt::classify_sites`, whatever
+  the pipeline, or with resolution off lists them unresolved.
+- `Strider::build_cfg(entry, cfg_opts)` -> `Result<Cfg>`: a structural decode
+  only, no lift, no optimisation, no resolution.
 - Accessors that let a caller run its own pipeline against the same state:
   `arch`, `sleigh`, `sleigh_regs`, `user_op_names`, `rom`.
 - Re-exports, so a caller needs one dependency: `strider_opt` as `opt`, and
@@ -84,11 +80,9 @@ Two verdicts freeze a single site, leaving the loop to run on without it:
 
 A converged CFG may be incomplete, and `AnalyzeResult::incomplete()` says
 where and why: one `Incompleteness` of `(PcodeInsnAddr, Reason)`, stored in
-the returned `Cfg`. `is_complete()` is the question "may this be
-incomplete?". `false` over `UnverifiedSeed` alone usually reads "complete but
-unverified": a `Switch` holding exactly the caller's seed is the plain case,
-except for a caller-seeded `Return` whose re-check failed, which lands there
-too.
+the returned `Cfg`. `analyze` and `build_cfg` return even when it is not
+empty, so check it before trusting an absence ("no store to X"): code behind
+a listed address may be missing.
 
 - `UnresolvedBranch`: a live `IndirectBranch` placeholder, a seated `Switch`
   whose selector no longer derives, a site still growing when the cap ran out,

@@ -305,9 +305,9 @@ fn analyze_claiming(
         },
         resolve_indirect_branches: resolve,
         assumptions,
-        ..common::ignoring()
+        ..Default::default()
     };
-    Ok(strider.analyze(addr, &cc, &opts, None)?)
+    strider.analyze(addr, &cc, &opts, None)
 }
 
 #[test]
@@ -521,7 +521,7 @@ fn resolution_off_skips_the_classifier_and_reports_the_site() {
             common::strider_over_bytes(common::Arch::X64, bytes.clone(), BASE, None);
         let opts = strider_orchestrator::AnalyzeOptions {
             resolve_indirect_branches: resolve,
-            ..common::ignoring()
+            ..Default::default()
         };
         let result = strider
             .analyze_with_classifier(BASE, &cc, &opts, None, &classify)

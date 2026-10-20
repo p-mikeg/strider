@@ -19,14 +19,19 @@ fn machine(set: &strider_orchestrator::Incompleteness) -> Vec<(u64, Reason)> {
 fn analyze_reports_an_unresolved_dispatch_through_its_cfg() {
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, jmp_rax(), BASE, None);
     let r = strider
-        .analyze(BASE, &cc, &common::ignoring(), None)
+        .analyze(
+            BASE,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        )
         .expect("analyze");
     assert_eq!(
         machine(r.incomplete()),
         [(0x1003, Reason::UnresolvedBranch)]
     );
     assert!(std::ptr::eq(r.incomplete(), r.cfg.incomplete()));
-    assert!(!r.is_complete());
+    assert!(!r.incomplete().is_empty());
 }
 
 /// The final round's own build calls every classifier-derived seat an
@@ -36,7 +41,12 @@ fn a_resolved_table_leaves_the_returned_cfg_complete() {
     let (mut strider, cc, addr) =
         common::fixture_strider(common::Arch::X64, "switch", "dispatch_value");
     let r = strider
-        .analyze(addr, &cc, &common::ignoring(), None)
+        .analyze(
+            addr,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        )
         .expect("analyze");
     assert!(
         r.cfg.regions().any(|region| matches!(
@@ -45,18 +55,14 @@ fn a_resolved_table_leaves_the_returned_cfg_complete() {
         )),
         "precondition: the table is seated"
     );
-    assert!(r.cfg.incomplete().is_complete(), "{}", r.cfg.incomplete());
+    assert!(r.cfg.incomplete().is_empty(), "{}", r.cfg.incomplete());
 }
 
 #[test]
 fn build_cfg_names_each_dispatch_it_leaves_and_each_seed_it_seats() {
     let (mut strider, _cc) = common::strider_over_bytes(common::Arch::X64, jmp_rax(), BASE, None);
     let cfg = strider
-        .build_cfg(
-            BASE,
-            &strider_cfg::CfgOptions::default(),
-            strider_orchestrator::OnIncomplete::Ignore,
-        )
+        .build_cfg(BASE, &strider_cfg::CfgOptions::default())
         .expect("build_cfg");
     assert_eq!(
         machine(cfg.incomplete()),
@@ -75,7 +81,6 @@ fn build_cfg_names_each_dispatch_it_leaves_and_each_seed_it_seats() {
                 known_targets: &known,
                 ..Default::default()
             },
-            strider_orchestrator::OnIncomplete::Ignore,
         )
         .expect("build_cfg");
     assert_eq!(
