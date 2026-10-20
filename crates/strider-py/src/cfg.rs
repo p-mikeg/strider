@@ -128,7 +128,9 @@ impl PyCfg {
     }
 
     /// Every machine address this CFG cannot vouch for, with why, sorted and
-    /// deduplicated. Empty is complete.
+    /// deduplicated. Empty is complete. `analyze` and `build_cfg` return
+    /// whatever this names, so check it before trusting an absence ("no store
+    /// to X"): code behind a listed address may be missing.
     ///
     /// `"unresolved_branch"` and `"unverified_seed"` name a dispatch site, the
     /// address `CfgOptions(known_targets=...)` seeds; the other four a branch
@@ -155,13 +157,6 @@ impl PyCfg {
     #[getter]
     fn incomplete(&self) -> Vec<(u64, &'static str)> {
         incomplete_list(self.inner.incomplete())
-    }
-
-    /// Whether `incomplete` is empty. `False` over `"unverified_seed"` alone
-    /// reads "complete but unverified", except for a `"return"` seat whose
-    /// re-check failed.
-    fn is_complete(&self) -> bool {
-        self.inner.incomplete().is_complete()
     }
 
     /// Exposes the strong `lifter` back-reference so the cyclic GC can see a

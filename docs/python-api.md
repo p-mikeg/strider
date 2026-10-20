@@ -116,9 +116,12 @@ argument accepts.
 result = prog.analyze("dispatch_value")     # by symbol name (ElfLifter) or address
 cfg, function, unresolved = result           # an AnalyzeResult, a named 3-tuple
 result.cfg, result.function, result.unresolved   # or read the fields
-# unresolved: machine addresses of indirect branches that stayed unresolved;
-# by default any incompleteness raises IncompleteAnalysis instead
+# unresolved: machine addresses of indirect branches that stayed unresolved
 ```
+
+`analyze` returns even when it cannot vouch for every path: `cfg.incomplete`
+lists each address it cannot, with why. Check it before trusting an absence
+("no store to X"), since code behind a listed address may be missing.
 
 A plain `Lifter` needs an address and a calling convention:
 
@@ -161,12 +164,10 @@ opts = strider.lift.LifterOptions(
     ),
     compact=True,                      # drop unreachable nodes at the end
     resolve_indirect_branches=True,    # False leaves every site an IndirectBranch
-                                       # placeholder; pair it with IGNORE
+                                       # placeholder
     per_address_ccs=None,              # {callee_addr: CallingConvention}; keyed by
                                        # the direct-call TARGET, not the call site
     pipeline=None,                      # replace the optimizer pipeline for this call
-    on_incomplete=None,                # OnIncomplete.ERROR raises IncompleteAnalysis,
-                                       # IGNORE returns the result; None: ERROR
 )
 prog.analyze("dispatch_value", opts=opts)
 ```
@@ -951,20 +952,17 @@ cfg.pcode_at(addr)                     # one instruction's p-code as text, or No
                                        # when this CFG stored no decode for addr
 cfg.fingerprint_pcode(n)               # [(address, p-code)] for a Node's fingerprint
 cfg.incomplete                         # [(address, reason)], empty when complete
-cfg.is_complete()                      # whether incomplete is empty
 ```
 
 A converged CFG is never silently incomplete. `cfg.incomplete` lists every
 machine address it cannot vouch for, with one of six reasons
-(`strider.cfg.INCOMPLETE_REASONS`), and `cfg.is_complete()` is "may this be
-incomplete?":
+(`strider.cfg.INCOMPLETE_REASONS`):
 
 - `"unresolved_branch"`: an indirect branch with no complete answer, such as a
   site that lost a successor, one whose answer oscillated or narrowed, one
   still growing at the iteration cap, and a return whose target is not
   provably the caller's return address (`push rsi; ret`). The `unresolved`
-  field of the result `analyze` returns (under `IGNORE`) holds exactly these
-  addresses.
+  field of the result `analyze` returns holds exactly these addresses.
 - `"unverified_seed"`: a site nothing verified. A site seated with only your
   `known_targets`, every site the CFG consumed as a tail call, and a site
   consumed as a return because your own `"return"` seat consumed it, so a
@@ -973,12 +971,10 @@ incomplete?":
   lands, since the seat decided a CFG edge. A return the classifier derived is
   re-checked each round and is not listed once
   `assumptions.return_slots_survive_untracked_writes` (default `True`) carries
-  its proof; analysing again with that claim cleared is how you audit one. So a
-  `False` `is_complete()` over this reason alone means "complete but
-  unverified", except for a failed `"return"` seat. One shape here is no
-  dispatch you seeded: an arm a mode-less re-derivation found at a site whose
-  other arms all carry the flowing ISA mode is seated on the mode a caller's
-  seed gave its siblings, and nobody evaluated that arm's own.
+  its proof; analysing again with that claim cleared is how you audit one. One
+  shape here is no dispatch you seeded: an arm a mode-less re-derivation found
+  at a site whose other arms all carry the flowing ISA mode is seated on the
+  mode a caller's seed gave its siblings, and nobody evaluated that arm's own.
 - `"isa_mode_conflict"`: an address two paths reached in different ISA modes.
   Never listed outside the four 32-bit ARM and four MIPS presets.
 - `"interior_target"`: a branch target off every instruction boundary, whose
@@ -1047,20 +1043,8 @@ Match readers raise
 `StriderError` for an unbound capture (use `has()` or the `_opt` readers to
 avoid that), and for a `Match` used after the function was reoptimized.
 
-By default `analyze` and `build_cfg` raise `strider.lift.IncompleteAnalysis`, a
-`StriderError`, when `cfg.incomplete` would name anything: an
-unresolvable site, a site whose answer oscillates or shrank between rounds, a
-target chain deeper than the iteration cap, and every other reason. Its
-`.incomplete` is that list, every (machine address, reason); the message
-spells p-code indices and shows the first eight.
-`LifterOptions(on_incomplete=OnIncomplete.IGNORE)` (or
-`build_cfg(..., on_incomplete=OnIncomplete.IGNORE)`) returns the result
-instead. A site you seed with `known_targets` is then `"unverified_seed"`,
-which raises too, so a seeded re-run that must succeed passes `IGNORE`.
-
 The message is the error and its causes; `.backtrace` holds the message and the
-Rust backtrace (only the message on `IncompleteAnalysis`, where nothing failed),
-so a sweep can log it without re-running:
+Rust backtrace, so a sweep can log it without re-running:
 
 ```python
 import logging

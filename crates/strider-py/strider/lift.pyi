@@ -9,15 +9,13 @@ from typing import (
     Mapping,
     NamedTuple,
     Optional,
-    Sequence,
     TypeVar,
     Union,
 )
 
 import os
 
-from . import StriderError
-from .cfg import Cfg, CfgOptions, IncompleteReason
+from .cfg import Cfg, CfgOptions
 from .ir import Function
 from .opt import OptimizerPipeline
 from .reader import BufferReader, MemLike, RomLike, Symbol, SymbolIter
@@ -37,10 +35,8 @@ class AnalyzeResult(NamedTuple):
     compares equal to the plain tuple.
 
     `unresolved` holds the machine addresses `cfg.incomplete` names
-    `"unresolved_branch"`; a non-empty list reaches the caller only under
-    `OnIncomplete.IGNORE`. Empty means fully resolved, NOT that the answer is
-    complete: `cfg.incomplete` lists every reason, and `cfg.is_complete()`
-    tests it.
+    `"unresolved_branch"`. Empty means fully resolved, NOT that the answer is
+    complete: `cfg.incomplete` lists every reason.
     """
 
     cfg: Cfg
@@ -132,25 +128,6 @@ class AssumptionOptions:
         allocators."""
         ...
 
-class OnIncomplete:
-    """What `analyze` and `build_cfg` do when `Cfg.incomplete` names anything:
-    `ERROR` raises `IncompleteAnalysis`, `IGNORE` returns the result."""
-
-    ERROR: OnIncomplete
-    IGNORE: OnIncomplete
-    def __eq__(self, other: object) -> bool: ...
-    def __hash__(self) -> int: ...
-
-class IncompleteAnalysis(StriderError):
-    """Raised under `OnIncomplete.ERROR` when the result cannot vouch for some
-    addresses. The message spells p-code indices and shows the first eight;
-    `.incomplete` lists every one. `.backtrace` is the message: nothing
-    failed. `on_incomplete=OnIncomplete.IGNORE` returns the result instead."""
-
-    incomplete: Sequence[tuple[int, IncompleteReason]]
-    """Every (machine address, reason), as `Cfg.incomplete` lists them: a
-    list on every instance strider raises, `()` on one built by hand."""
-
 class LifterOptions:
     """Per-call options for `Lifter.analyze`.
 
@@ -161,9 +138,6 @@ class LifterOptions:
     the calling convention for a callee, keyed by the direct-call target
     address rather than the call site. `pipeline`, when set,
     replaces the default optimizer pipeline for the calls these options drive.
-    `on_incomplete` decides what happens when `cfg.incomplete` names
-    anything: `OnIncomplete.ERROR`, the default (`None`), raises
-    `IncompleteAnalysis`; `IGNORE` returns the result.
     """
 
     # Read-only: these are getters with no setter, so a plain attribute
@@ -183,8 +157,6 @@ class LifterOptions:
     def resolve_indirect_branches(self) -> bool: ...
     @property
     def pipeline(self) -> Optional[OptimizerPipeline]: ...
-    @property
-    def on_incomplete(self) -> OnIncomplete: ...
     def __init__(
         self,
         *,
@@ -194,7 +166,6 @@ class LifterOptions:
         per_address_ccs: Optional[Mapping[int, CallingConvention]] = ...,
         resolve_indirect_branches: bool = ...,
         pipeline: Optional[OptimizerPipeline] = ...,
-        on_incomplete: Optional[OnIncomplete] = ...,
     ) -> None:
         """Build the options; every field defaults."""
         ...
@@ -274,13 +245,9 @@ class Lifter:
         self,
         entry: int,
         opts: Optional[CfgOptions] = ...,
-        *,
-        on_incomplete: Optional[OnIncomplete] = ...,
     ) -> Cfg:
         """Build the control-flow graph of the function at `entry`, without
-        lifting or optimising. Raises `IncompleteAnalysis` when
-        `Cfg.incomplete` names anything and `on_incomplete` is `ERROR` (the
-        default, `None`).
+        lifting or optimising.
 
         Holds the GIL for the whole build, unlike `analyze`: decoding is short
         next to a full analysis."""
@@ -299,9 +266,10 @@ class Lifter:
         A bad `entry` raises a `StriderError` naming the cause, as `build_cfg`
         does for the same argument.
 
-        An empty `unresolved` is not a complete answer: `Cfg.incomplete` lists
-        every reason, and `Cfg.is_complete` tests it. Raises
-        `IncompleteAnalysis` when `opts.on_incomplete` refuses the result.
+        Returns even when it cannot vouch for every path: `Cfg.incomplete`
+        lists every address it cannot, and an empty `unresolved` is not a
+        complete answer. Check `Cfg.incomplete` before trusting an absence
+        ("no store to X"): code behind a listed address may be missing.
 
         Runs the fixed-point loop with the GIL released, so other Python
         threads keep running -- except where `mem` or `rom` is a Python object,
