@@ -414,18 +414,7 @@ fn the_comparison_can_tell_two_functions_apart() {
 
 /// `analyze` refusals the fixtures produce, as `arch/case::function` and a
 /// fragment of the error.
-const KNOWN_ANALYZE_ERRORS: &[(&str, &str)] = &[
-    // The symbol's recorded size ends before the hand-written `_start` does,
-    // so the size-bounded lift runs off it.
-    (
-        "aarch64/zero_pcode_holes::_start",
-        "sequential decoding overflowed",
-    ),
-    (
-        "aarch64be/zero_pcode_holes::_start",
-        "sequential decoding overflowed",
-    ),
-];
+const KNOWN_ANALYZE_ERRORS: &[(&str, &str)] = &[];
 
 #[derive(Default)]
 struct Tally {
