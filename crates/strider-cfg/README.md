@@ -67,8 +67,8 @@ ISA-mode bit into the context it hands the target.
 
 `Unconditional` (an explicit branch, a fall-through into an already-discovered
 region, a zero-pcode-op instruction such as `nop` or `endbr64`, the first half
-of a split, or a fall-through onto bytes that hold no instruction, which edges
-to a `TailCall` stub), `CondBranch` carrying the taken target, `Return`,
+of a split, or a fall-through onto bytes that hold no instruction or past a
+`FunctionBound::Size` end, which edges to a `TailCall` stub), `CondBranch` carrying the taken target, `Return`,
 `NoReturn` (a CallOther classified as a `BUG()`-class trap, a call whose target
 is in `no_return_targets`, a call whose return address is out of range, or a
 call whose fall-through reaches bytes that hold no instruction, which also
@@ -109,7 +109,7 @@ decode keeps the bytes, the edge is wired, and the clash is reported.
 A completed `Cfg` may be incomplete, and `incomplete()` says where and
 why: one sorted set of `(PcodeInsnAddr, Reason)`. A build resolves nothing,
 so every dispatch it left without an edge is `UnresolvedBranch` and every
-seat `UnverifiedSeed`. The four target reasons:
+seat `UnverifiedSeed`. The five target reasons:
 
 - `UnmappedTarget`: a DIRECT branch or a sequential fall-through to an address
   the reader has no bytes for. It leaves through an empty `TailCall` stub, so
@@ -124,8 +124,16 @@ seat `UnverifiedSeed`. The four target reasons:
   instructions between it and the bytes. A literal pool never decodes as code,
   and a traceback table or an `abort` word no longer fails the build. Any
   other fall-through into bytes Sleigh rejects is still an `Err` on the whole
-  build, and so is a fall-through past a `FunctionBound::Size` end. The
-  instruction at the start address decodes even inside a data range.
+  build. The instruction at the start address decodes even inside a data
+  range.
+- `PastFunctionEnd`: a sequential fall-through past a `FunctionBound::Size`
+  end, at the first address after the last instruction decoded (the end
+  itself unless that instruction straddles it). It leaves through an empty
+  `TailCall` stub, as a branch out of range does: an entry point falling into
+  the next symbol, a slot patched at run time, or a size too short. A run of
+  zero-pcode-op instructions stops there too, never absorbing the next
+  function's first instruction. Off a seeded arm the arm is dropped instead,
+  as below. An open bound never yields it.
 - `IsaModeConflict`: two edges reached an address carrying different ISA
   modes, and the losing path decodes in the winner's. The mode only: a
   disagreement on another committed var, such as `condit` into an IT block, is

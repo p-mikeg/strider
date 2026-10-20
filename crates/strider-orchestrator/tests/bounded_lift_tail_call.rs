@@ -120,29 +120,22 @@ fn bounded_lift_backward_jmp_with_size_bound_classifies_as_tail_call() {
     );
 }
 
-/// A function whose body has no explicit terminator inside the bound and
-/// whose fall-through crosses `start + size` is a
-/// **function-boundary error**, not a tail call: a legitimate tail call
-/// has an explicit `jmp <oob>` / `je <oob>` opcode, reaching
-/// `is_branch_tail_call_nocheck` via `process_branch` /
-/// `process_cond_branch`. Sequential fall-through past the bound means
-/// the size bound is too small or the function is unterminated; silently
-/// treating that as a tail call hides the bug (the user-reported
-/// `tzcount.o` reproducer). The cfg builder must instead surface a clear
-/// "function-boundary error" / "sequential decoding overflowed" message.
+/// A fall-through past `start + size` is a tail call to the end, reported
+/// as `PastFunctionEnd`, and `analyze` returns the function as usual.
 #[test]
-fn bounded_lift_fall_through_past_size_bound_is_function_boundary_error() {
-    // 0x1000..0x1002: `xor eax, eax` (2 bytes, >=1 pcode op).
-    // 0x1002..0x1008: `lock cmpxchg %r14, 0x58(%rbx)` (multi-pcode-op,
-    //   intra-insn CONST branches).
-    const BASE: u64 = 0x1000;
+fn bounded_lift_fall_through_past_size_bound_tail_calls_the_end() {
+    // 0x1000..0x1002: `xor eax, eax`, then a `lock cmpxchg %r14, 0x58(%rbx)`
+    // past the bound.
     let mut bs = vec![0x31u8, 0xc0];
     bs.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
 
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bs, BASE);
     let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
-
+    let regs = sleigh.regs().expect("regs");
+    let cc = CallingConvention::x86_64_systemv()
+        .build(&regs)
+        .expect("build cc");
     let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(2),
@@ -150,20 +143,22 @@ fn bounded_lift_fall_through_past_size_bound_is_function_boundary_error() {
         },
         ..AnalyzeOptions::default()
     };
-    let err = match run_at(sleigh, BASE, &opts) {
-        Ok(_) => panic!(
-            "fall-through past the size bound must surface as a function-boundary error, not Ok"
-        ),
-        Err(e) => e,
-    };
-    let msg = format!("{err:#}");
-    assert!(
-        msg.contains("function-boundary error"),
-        "expected function-boundary error message; got {msg}"
+    let result = Strider::new(arch, sleigh, None)
+        .expect("Strider::new")
+        .analyze(BASE, &cc, &opts, None)
+        .expect("a fall-through past the bound is no error");
+
+    assert_eq!(
+        result.incomplete().iter().collect::<Vec<_>>(),
+        [(
+            strider_cfg::PcodeInsnAddr::at_machine_start(0x1002),
+            strider_orchestrator::Reason::PastFunctionEnd
+        )]
     );
     assert!(
-        msg.contains("sequential decoding overflowed"),
-        "expected overflow detail in error message; got {msg}"
+        common::find_call_to(&result.function, 0x1002).is_some()
+            && result.function.has_kind(|k| matches!(k, NodeKind::Return)),
+        "expected Call(IntConst(0x1002)) + Return from the fall-through"
     );
 }
 

@@ -132,14 +132,11 @@ def test_analyze_bounds_a_named_target_by_the_recorded_size():
 
 def test_an_explicit_bound_wins_over_the_recorded_size():
     lift = _switch()
-    with pytest.raises(strider.StriderError) as exc:
-        lift.analyze(
-            "dispatch_value",
-            opts=strider.lift.LifterOptions(
-                cfg=strider.cfg.CfgOptions(function_max_size=4)
-            ),
-        )
-    assert "function-boundary error" in str(exc.value)
+    cfg, _function, _unresolved = lift.analyze(
+        "dispatch_value",
+        opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(function_max_size=4)),
+    )
+    assert "past_function_end" in [r for _, r in cfg.incomplete]
 
 
 def test_symbol_at_sees_past_a_sizeless_symbol_inside_a_function():

@@ -15,8 +15,9 @@ static NO_NO_RETURN_TARGETS: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash:
 /// it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FunctionBound {
-    /// `[start, start + n)`: a branch outside it is a tail call, and a
-    /// sequential fall-through past its end fails the whole build.
+    /// `[start, start + n)`: a branch outside it is a tail call, and so is a
+    /// sequential fall-through past its end, reported as
+    /// [`crate::Reason::PastFunctionEnd`].
     Size(std::num::NonZeroU64),
     /// No extent: a branch below the start is a tail call unless
     /// `code_before_start`.
@@ -48,8 +49,8 @@ impl FunctionBound {
 
 #[derive(Clone, Debug)]
 pub struct CfgOptions<'a> {
-    /// How far the function extends; a branch leaving it is a tail call. A
-    /// fall-through past a [`FunctionBound::Size`] end is an `Err`.
+    /// How far the function extends; a branch or fall-through leaving it is a
+    /// tail call.
     pub bound: FunctionBound,
     /// A `BranchIndirect` listed here seats its cached terminator directly;
     /// every other site defers via `UnresolvedIndirectBranch`.  Read through
