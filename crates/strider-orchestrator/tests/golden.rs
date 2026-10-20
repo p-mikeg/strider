@@ -369,7 +369,7 @@ fn golden_text(fixture: &Fixture) -> String {
         report(&result, &mut body);
         body.push_str("cfg\n");
         cfg_lines(&result.cfg, &mut body);
-        let text = result.function.to_text_named(false, strider.sleigh_regs());
+        let text = result.function.to_text_named(false, strider.arch().names());
         let (head, rest) = split_shared(&text);
         if shared.is_none() {
             shared = Some(head);
