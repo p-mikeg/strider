@@ -126,6 +126,10 @@
 - `StackOffsetDetect` stamps under those claims too, not `OptCtx`'s.
 - `SideTables::clear_memory_slots` is gone: `invalidate_analyses` drops the
   memory classes and the frame-escape verdict together.
+- `SideTables` is no longer `Default`: only a `Function` builds one, so
+  nothing can reset its claims to `none()`.
+- `SleighArch::probe_regs` (`test-util`) returns `SleighRegs`, not a
+  `Result`: it copies the table `SleighArch::names` holds.
 - `default_pipeline()` drops `StackOffsetDetect`: a post-pass appended to it
   is no longer guaranteed to find the memory classes filled; it calls
   `refresh_memory_classes`.
@@ -260,10 +264,11 @@
 
 ### Changed, Python
 
-- Two `BoundCapture`s bound to the same non-constant value of one function
+- Two `BoundCapture`s with no integer value (any binding but an integer
+  constant of at most 128 bits) bound to the same value of one function
   compare equal; every such pair compared unequal before, `m[c] == m[c]`
-  included. A constant still compares by its value in either spelling, and
-  an unbound capture equals nothing.
+  included. An integer constant still compares by its value in either
+  spelling, and an unbound capture equals nothing.
 
 - `build_cfg` reports a seed seated past p-code op 0 (a memory-indirect `jmp`)
   as `"unverified_seed"`; it went unreported.
@@ -320,8 +325,8 @@
   in either `custom` names its list: `CallingConvention.custom:
   arg_passing_regs: unknown sleigh register name "X"`.
 - A `Lifter` works on any thread: `analyze`, `build_cfg`, `optimize`,
-  `pcode_at`, `reg`, `reg_name`, `call_other_abi`, `user_op_names` and
-  `add_elf` no longer raise off the thread that built it, reversing 0.2.0.
+  `pcode_at`, `call_other_abi`, `user_op_names` and `add_elf` no longer raise
+  off the thread that built it, reversing 0.2.0.
   Each of them, a plain `Lifter`'s `arch` and `reader()`, and `rom()` on any
   `Lifter` raises `StriderError` ("already in use") while an `analyze`,
   `build_cfg` or `add_elf` is in flight on the handle, from a `read()`
@@ -427,6 +432,11 @@
 - A raw `.input(usize::MAX, p)` (`MatcherBuilder::input` and the builders'
   `input`) names slot `usize::MAX`, so it matches nothing; it meant
   `any_input`.
+- A `PostOptimizer` that changes the graph, under `OptimizerPipeline::run`
+  or `run_post`, drops the memory classes, which the stamp after the
+  post-passes re-derives; one that changes nothing keeps them. Every
+  post-pass still drops the frame-escape verdict. `run_one` drops the
+  classes after a changing pass too.
 - `Function::to_text` and `to_text_named` print a
   `frame_address_in_call_register` line after `default_cc` when a call's
   clobbered register held a stack address (the fact that bars forwarding a

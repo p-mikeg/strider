@@ -147,9 +147,11 @@ impl PyCfg {
     ///   decodes in the other.
     /// - `"interior_target"`: off every instruction boundary, or a region
     ///   start a later decode stepped over.
-    /// - `"unmapped_target"`: no byte of the image backs it.
+    /// - `"unmapped_target"`: no byte of the image backs it. An unmapped
+    ///   seeded arm is named here and dropped.
     /// - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
-    ///   it as data.
+    ///   it as data. A seeded arm leading to such bytes is dropped, and so is
+    ///   one whose decode fails for any other reason, named here at its start.
     ///
     /// From `build_cfg` this is that one build: every dispatch it left without
     /// an edge and every seed it seated. From `analyze` the target reasons

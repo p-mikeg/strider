@@ -131,11 +131,11 @@ _cfg, fn, _u = lft.analyze(0x1000, sleigh.CallingConvention.x86_64_systemv())
 
 A handle works on any thread. `analyze`, `build_cfg` and `add_elf` hold it
 alone: while one is in flight, from a `read()` callback or another thread,
-`analyze`, `build_cfg`, `optimize`, `pcode_at`, `reg`, `reg_name`,
-`call_other_abi`, `user_op_names`, `add_elf`, a plain `Lifter`'s `arch` and
-`reader()`, and `rom()` on any `Lifter` raise `StriderError: this Lifter is
-already in use`, and those three raise while any of these is in flight. The
-others may overlap each other. Such an `add_elf` merges nothing. To analyse in
+`analyze`, `build_cfg`, `optimize`, `pcode_at`, `call_other_abi`,
+`user_op_names`, `add_elf`, a plain `Lifter`'s `arch` and `reader()`, and
+`rom()` on any `Lifter` raise `StriderError: this Lifter is already in use`,
+and those three raise while any of these is in flight. The others may overlap
+each other. Such an `add_elf` merges nothing. To analyse in
 parallel, a worker thread builds its own handle over the same `prog.arch`,
 `prog.reader()` and `prog.rom()`, gathered before any analysis on `prog` is in
 flight; since `analyze` drops the GIL the two run in parallel. A handle
@@ -982,11 +982,14 @@ machine address it cannot vouch for, with one of six reasons
   edge is seated on the region owning the bytes and is therefore not exact, or
   a region start a later decode stepped over (overlapping code).
 - `"unmapped_target"`: a direct-branch target or fall-through no byte of the
-  image backs, seated as an empty tail-call stub.
+  image backs, seated as an empty tail-call stub. An unmapped seeded arm is
+  named here with no stub: the arm is dropped.
 - `"undecodable_target"`: an address a direct branch or a fall-through past a
   call reached that holds no instruction, either bytes Sleigh rejects or a
   range `data_ranges` marks as data. The branch leaves through an empty
-  tail-call stub; the call ends as no-return.
+  tail-call stub; the call ends as no-return. Such bytes reached off a seeded
+  arm are named with no stub, and the arm is dropped. So is an arm whose
+  decode fails for any other reason, named at its own start.
 
 The four target reasons, which a direct edge also produces, accumulate across
 resolution rounds, so a loss in an early round stays listed. The two site

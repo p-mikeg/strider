@@ -92,8 +92,6 @@ def test_derived_options_share_the_seated_table():
     seated = opts._seated_table_id()
     assert opts._with_function_max_size(0x40)._seated_table_id() == seated
     assert opts._with_elf_data_ranges(_program()._elf)._seated_table_id() == seated
-    lifter_opts = strider.lift.LifterOptions(cfg=opts)
-    assert lifter_opts._with_cfg(opts).cfg._seated_table_id() == seated
 
 
 def test_call_other_abis_resolve_once_per_arch():

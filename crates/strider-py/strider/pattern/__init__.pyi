@@ -196,9 +196,11 @@ class BoundCapture:
     """A capture bound to one `Match`, from `m[c]` / `m["name"]`. `has` says
     whether it bound, and a numeric capture converts and compares directly,
     with an int or with another `BoundCapture` (`int(m[c])`, `m[c] == 0x10`,
-    `m[a] == m[b]`). Two non-constant captures are equal when they bound the
-    same value of the same function; an unbound one equals nothing. Every
-    reader is a `Match` method: `m.uint(c)`, `m.node(c)`, `m.op_opt(c)`."""
+    `m[a] == m[b]`). Two captures with no integer value (any binding but an
+    integer constant of at most 128 bits, so a float constant too) are equal
+    when they bound the same value of the same function; an unbound one
+    equals nothing. Every reader is a `Match` method: `m.uint(c)`,
+    `m.node(c)`, `m.op_opt(c)`."""
 
     # Read-only: a getter with no setter, so a plain attribute declaration
     # would let a type checker accept `x.has = ...`, which raises at runtime.
