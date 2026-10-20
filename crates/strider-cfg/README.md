@@ -114,7 +114,8 @@ seat `UnverifiedSeed`. The four target reasons:
 - `UnmappedTarget`: a DIRECT branch or a sequential fall-through to an address
   the reader has no bytes for. It leaves through an empty `TailCall` stub, so
   the regions that did decode survive. A MIPS branch whose delay slot is
-  unmapped reports the branch's own address. An unmapped ENTRY is still an
+  unmapped reports the branch's own address. An unmapped seeded arm is named
+  too, with no stub, and the arm is dropped. An unmapped ENTRY is still an
   `Err` on the whole build.
 - `UndecodableTarget`: a direct branch, or a fall-through past a call, to bytes
   that hold no instruction: Sleigh rejects them, or `CfgOptions::data_ranges`
@@ -138,7 +139,9 @@ seat `UnverifiedSeed`. The four target reasons:
 Three lists stay beside it as resolver inputs. `undecodable_seeded_targets`:
 a seeded target that would not decode, or that leads to code that would not,
 with the dispatch site it was an arm of; the bytes themselves are
-`UndecodableTarget`. "Leads to" stops at the next dispatch. And
+`UndecodableTarget` (`UnmappedTarget` for an unmapped arm), and an arm whose
+decode failed for another reason, such as running past the bound, is
+`UndecodableTarget` at its start. "Leads to" stops at the next dispatch. And
 `link_register_seated` / `tail_call_seated`: sites a seated answer consumed
 at build time, which leave no placeholder and no `Switch` anchor.
 

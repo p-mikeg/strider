@@ -43,8 +43,9 @@ pub enum Reason {
     InteriorTarget,
     /// No bytes back it: the edge leaves through an empty `TailCall` stub. The
     /// address is the instruction that could not be read whole, so a MIPS
-    /// branch whose delay slot is unmapped names itself. An unmapped ENTRY
-    /// fails the whole build instead.
+    /// branch whose delay slot is unmapped names itself. An unmapped seeded
+    /// arm is named with no stub: the arm is dropped. An unmapped ENTRY fails
+    /// the whole build instead.
     UnmappedTarget,
     /// Holds no instruction: bytes Sleigh rejects, or
     /// [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges) marks. A
@@ -54,7 +55,8 @@ pub enum Reason {
     /// build. Bytes reached off a seeded arm are named here with no stub: the
     /// arm is dropped instead, and
     /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets)
-    /// names it.
+    /// names it. So is the start of an arm, or of a region off one, whose
+    /// decode fails for any other reason (a fall-through past the bound).
     UndecodableTarget,
 }
 
