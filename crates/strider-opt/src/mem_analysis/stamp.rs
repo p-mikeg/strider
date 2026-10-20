@@ -1,9 +1,9 @@
 //! The per-access memory classes `strider-pattern`'s region filters read, and
 //! the lifecycle of the memo that holds them:
 //!
-//! 1. A run starts with [`SideTables::assume`], which merges the run's claims
-//!    into the function's, and [`SideTables::invalidate_analyses`], which drops
-//!    the classes and the frame-escape verdict.
+//! 1. Claims join the function's through [`Function::assume`], which drops the
+//!    classes and the frame-escape verdict when one is new; a run starts with
+//!    [`SideTables::invalidate_analyses`], which drops both.
 //! 2. Everything decomposes under the function's claims
 //!    ([`strider_ir::Function::assumptions`]), which only grow.
 //! 3. [`SideTables::invalidate_analyses`] drops both and keeps the claims:
@@ -17,7 +17,7 @@
 //! 5. A raw reader (a region filter, `Function::stack_offset`) reads the table
 //!    as it is, so a post-pass or an outside edit refreshes it first.
 //!
-//! [`SideTables::assume`]: strider_ir::SideTables::assume
+//! [`Function::assume`]: strider_ir::Function::assume
 //! [`SideTables::invalidate_analyses`]: strider_ir::SideTables::invalidate_analyses
 
 use strider_ir::IRViewer;
