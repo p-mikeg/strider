@@ -100,7 +100,9 @@
   added since 0.2.0 are gone too, and both return `anyhow::Result`.
 - `CfgOptions` gains `derived_targets`, a resolver's own answers, which
   beat `known_targets` at their exact key; a literal naming every field
-  passes `&strider_cfg::NO_TARGETS` for none.
+  passes `&strider_cfg::NO_TARGETS` for none. `build_cfg` seats them;
+  `Strider::analyze` fills that layer itself and returns `Err` on a
+  caller's non-empty one.
 - `CfgOptions::call_other_overrides` is borrowed, as `known_targets` is, so
   the resolve loop's per-round clone no longer copies it; a literal naming
   every field passes `&strider_target::call_other_abi::NO_OVERRIDES` for none.
