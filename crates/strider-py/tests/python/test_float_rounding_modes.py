@@ -95,7 +95,6 @@ def test_the_round_pattern_matches_the_x87_lift_that_emits_it():
         "float_to_int",
         opts=strider.lift.LifterOptions(
             pipeline=strider.opt.OptimizerPipeline.empty(),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     ).function
     assert len(g.find_all(float_round(anything()))) == 1

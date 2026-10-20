@@ -42,7 +42,6 @@ def _indirect_branch_fn():
         strider.sleigh.CallingConvention.x86_64_systemv(),
         opts=strider.lift.LifterOptions(
             cfg=strider.cfg.CfgOptions(function_max_size=2),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     assert unresolved == [0x2000]

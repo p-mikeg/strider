@@ -65,7 +65,6 @@ def test_the_opt_in_resolves_a_dispatch_through_a_data_rel_ro_table():
 
     unresolved = strider.lift.load_elf(path).analyze(
         "indirect_branch_resolved",
-        opts=strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE),
     )
     assert unresolved.unresolved, "without the GOT the table base is unmapped"
 
