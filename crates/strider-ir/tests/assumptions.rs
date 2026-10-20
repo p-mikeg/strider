@@ -196,3 +196,16 @@ fn union_is_monotone_and_idempotent() {
     });
     assert_eq!(allocators.noalias_allocators, [1, 2].into_iter().collect());
 }
+
+/// The defaults: three claims on, which are not the floor.
+#[test]
+fn default_turns_on_the_three_default_claims() {
+    let d = AssumptionOptions::default();
+    assert!(d.stack_global_disjoint);
+    assert!(d.assume_incoming_args_survive_calls);
+    assert!(d.return_slots_survive_untracked_writes);
+    assert!(!d.distinct_sp_bases_disjoint);
+    assert!(!d.callee_preserves_stack_args);
+    assert!(!d.escape_analysis);
+    assert!(d.noalias_allocators.is_empty());
+}

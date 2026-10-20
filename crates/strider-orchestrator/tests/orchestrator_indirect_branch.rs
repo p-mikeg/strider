@@ -494,7 +494,7 @@ fn the_same_loop_switch_without_a_mask_resolves() {
 
 /// Resolution off never calls the classifier and reports its site
 /// unresolved; on, the classifier's answer resolves it. Mutation: classify
-/// whatever `resolve_indirect_branches` says.
+/// regardless of `resolve_indirect_branches`.
 #[test]
 fn resolution_off_skips_the_classifier_and_reports_the_site() {
     const BASE: u64 = 0x1000;
