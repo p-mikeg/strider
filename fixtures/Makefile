@@ -133,11 +133,14 @@ $(OUTDIR)/$(ARCH)/%.o: cases/%.c | $(OUTDIR)/$(ARCH)
 # specific (instructions only assemble for one ISA); for non-matching
 # arches the assembler errors out, the build fails for that single
 # case, and tests skip cleanly because the fixture won't exist.
+# `-fdebug-prefix-map` is what reaches the assembler's line info, which
+# `-ffile-prefix-map` does not.
 $(OUTDIR)/$(ARCH)/%.elf: cases/%.S | $(OUTDIR)/$(ARCH)
 	@if [ "$(CC)" = "false" ]; then \
 		$(NO_CC); \
 	else \
-		$(CC) $(CFLAGS) -nostdlib -static $< -o $@ && echo "  Built $@ (asm)" \
+		$(CC) $(CFLAGS) -fdebug-prefix-map=$(CURDIR)=/strider/fixtures \
+			-nostdlib -static $< -o $@ && echo "  Built $@ (asm)" \
 			|| echo "  Skipped $@ (asm doesn't build for $(ARCH))"; \
 	fi
 
