@@ -59,7 +59,12 @@ fn an_operand_below_an_offset_is_not_enumerated_as_the_index() {
     let (mut s, cc) =
         common::strider_over_bytes(common::Arch::X64, bytes, TEXT_BASE, Some(Box::new(Rom)));
     let r = s
-        .analyze(0x40100d, &cc, &common::ignoring(), None)
+        .analyze(
+            0x40100d,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        )
         .expect("analyze");
     let arms: Vec<u64> = r
         .cfg

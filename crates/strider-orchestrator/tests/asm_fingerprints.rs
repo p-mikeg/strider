@@ -56,7 +56,12 @@ fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
         .expect("build cc");
     let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
     let result = strider
-        .analyze(base, &cc, &common::ignoring(), None)
+        .analyze(
+            base,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        )
         .expect("analyze");
     assert!(
         result

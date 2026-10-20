@@ -21,8 +21,7 @@ static NO_PER_ADDRESS_CCS: FxHashMap<u64, strider_target::BuiltCallingConvention
 
 /// [`Strider::analyze`]'s options. `Default` decodes an unbounded function
 /// with no seeds and no CC overrides, optimises under
-/// [`AssumptionOptions::default`], resolves indirect branches, compacts, and
-/// refuses an incomplete result.
+/// [`AssumptionOptions::default`], resolves indirect branches and compacts.
 #[derive(Clone, Debug)]
 pub struct AnalyzeOptions<'a> {
     pub cfg: strider_cfg::CfgOptions<'a>,
@@ -42,8 +41,6 @@ pub struct AnalyzeOptions<'a> {
     pub assumptions: AssumptionOptions,
     /// Drops unreachable nodes once the loop settles.
     pub compact: bool,
-    /// Whether an incomplete result is returned or refused.
-    pub on_incomplete: OnIncomplete,
 }
 
 impl Default for AnalyzeOptions<'_> {
@@ -54,57 +51,7 @@ impl Default for AnalyzeOptions<'_> {
             resolve_indirect_branches: true,
             assumptions: AssumptionOptions::default(),
             compact: true,
-            on_incomplete: OnIncomplete::default(),
         }
-    }
-}
-
-/// What [`Strider::analyze`] and [`Strider::build_cfg`] do with a result that
-/// is not complete.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum OnIncomplete {
-    /// Refuse it: [`AnalyzeError::Incomplete`] names the incomplete set.
-    #[default]
-    Error,
-    /// Return it: its [`Incompleteness`] names the incomplete set.
-    Ignore,
-}
-
-impl OnIncomplete {
-    /// `Err` naming `incomplete` when this policy refuses it.
-    fn check(self, incomplete: &Incompleteness) -> std::result::Result<(), AnalyzeError> {
-        if self == OnIncomplete::Error && !incomplete.is_complete() {
-            return Err(AnalyzeError::Incomplete(incomplete.clone()));
-        }
-        Ok(())
-    }
-}
-
-/// Why [`Strider::analyze`] or [`Strider::build_cfg`] returned no result.
-#[derive(Debug)]
-pub enum AnalyzeError {
-    /// The analysis finished but cannot vouch for this incomplete set, and
-    /// [`OnIncomplete::Error`] refused it.
-    Incomplete(Incompleteness),
-    /// Decode, lift, optimisation or validation failed.
-    Failed(anyhow::Error),
-}
-
-impl std::fmt::Display for AnalyzeError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            AnalyzeError::Incomplete(incomplete) => write!(f, "incomplete analysis: {incomplete}"),
-            // The whole chain: this error offers no `source()` to walk.
-            AnalyzeError::Failed(e) => write!(f, "{e:#}"),
-        }
-    }
-}
-
-impl std::error::Error for AnalyzeError {}
-
-impl From<anyhow::Error> for AnalyzeError {
-    fn from(e: anyhow::Error) -> Self {
-        AnalyzeError::Failed(e)
     }
 }
 
@@ -186,20 +133,14 @@ where
     ///
     /// # Errors
     ///
-    /// [`AnalyzeError::Incomplete`] when `on_incomplete` refuses
-    /// [`strider_cfg::Cfg::incomplete`]; [`AnalyzeError::Failed`] for a
-    /// build failure (see [`Lifter::build_cfg`]).
+    /// Propagates CFG-build failures (see [`Lifter::build_cfg`]).
     pub fn build_cfg(
         &mut self,
         entry: u64,
         cfg_opts: &strider_cfg::CfgOptions,
-        on_incomplete: OnIncomplete,
-    ) -> std::result::Result<strider_cfg::Cfg, AnalyzeError> {
-        let cfg = self
-            .lifter
-            .build_cfg(MachineInsnAddr::from(entry), cfg_opts)?;
-        on_incomplete.check(cfg.incomplete())?;
-        Ok(cfg)
+    ) -> Result<strider_cfg::Cfg> {
+        self.lifter
+            .build_cfg(MachineInsnAddr::from(entry), cfg_opts)
     }
 
     /// Lift, optimise, and resolve indirect branches at `entry`.
@@ -213,11 +154,11 @@ where
     /// Every narrowing is reported, and a site that narrows twice has an
     /// unstable answer: it is withdrawn.
     ///
-    /// What the loop cannot settle is reported: in
-    /// [`AnalyzeError::Incomplete`] under the default [`OnIncomplete::Error`],
-    /// or in [`AnalyzeResult::incomplete`] under [`OnIncomplete::Ignore`], an
-    /// unresolved site with its placeholder still in the function. A site the
-    /// CFG consumed as a `Return` or `TailCall` leaves no placeholder, so it is
+    /// Returns even when it cannot vouch for every path: check
+    /// [`AnalyzeResult::incomplete`] before trusting an absence ("no store to
+    /// X"), since code behind a listed address may be missing. An unresolved
+    /// site keeps its placeholder in the function. A site the CFG consumed as
+    /// a `Return` or `TailCall` leaves no placeholder, so it is
     /// [`Reason::UnverifiedSeed`] (a `TailCall` whichever source derived it, a
     /// `Return` only where the CALLER seeded it), and also
     /// [`Reason::UnresolvedBranch`] if it grew before narrowing to
@@ -240,16 +181,15 @@ where
     ///
     /// # Errors
     ///
-    /// [`AnalyzeError::Incomplete`] when `opts.on_incomplete` refuses the
-    /// result; [`AnalyzeError::Failed`] for a lift / cfg / opt / validation
-    /// failure, never for an indirect branch.
+    /// Lift / cfg / opt / validation failures only, never an incomplete
+    /// result.
     pub fn analyze(
         &mut self,
         entry: u64,
         cc: &strider_target::BuiltCallingConvention,
         opts: &AnalyzeOptions<'_>,
         pipeline: Option<strider_opt::OptimizerPipeline>,
-    ) -> std::result::Result<AnalyzeResult, AnalyzeError> {
+    ) -> Result<AnalyzeResult> {
         self.analyze_with(entry, cc, opts, pipeline, &strider_opt::classify_sites)
     }
 
@@ -267,7 +207,7 @@ where
         opts: &AnalyzeOptions<'_>,
         pipeline: Option<strider_opt::OptimizerPipeline>,
         classify: Classifier<'_>,
-    ) -> std::result::Result<AnalyzeResult, AnalyzeError> {
+    ) -> Result<AnalyzeResult> {
         self.analyze_with(entry, cc, opts, pipeline, classify)
     }
 
@@ -278,11 +218,10 @@ where
         opts: &AnalyzeOptions<'_>,
         pipeline: Option<strider_opt::OptimizerPipeline>,
         classify: resolve::Classifier<'_>,
-    ) -> std::result::Result<AnalyzeResult, AnalyzeError> {
+    ) -> Result<AnalyzeResult> {
         let pipeline = pipeline.unwrap_or_else(strider_opt::default_pipeline);
         let mut result =
             self.resolve(MachineInsnAddr::from(entry), cc, opts, &pipeline, classify)?;
-        opts.on_incomplete.check(result.incomplete())?;
         if opts.compact {
             result.function.compact()?;
         }
@@ -308,27 +247,5 @@ impl AnalyzeResult {
     #[must_use]
     pub fn incomplete(&self) -> &Incompleteness {
         self.cfg.incomplete()
-    }
-
-    /// Whether [`Self::incomplete`] is empty. `false` over
-    /// [`Reason::UnverifiedSeed`] alone reads "complete but unverified",
-    /// except for a caller-seeded `Return` whose re-check failed.
-    #[must_use]
-    pub fn is_complete(&self) -> bool {
-        self.incomplete().is_complete()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// The cause chain, as `{:#}` prints it: callers format this error, and it
-    /// offers no `source()` to walk.
-    #[test]
-    fn a_failure_displays_its_whole_chain() {
-        let e = AnalyzeError::from(anyhow!("inner").context("outer"));
-        assert_eq!(e.to_string(), "outer: inner");
-        assert!(std::error::Error::source(&e).is_none());
     }
 }

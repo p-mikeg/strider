@@ -52,7 +52,7 @@ fn analyze(
             known_targets: &known,
             ..CfgOptions::default()
         },
-        ..common::ignoring()
+        ..Default::default()
     };
     let rom = table.map(|t| {
         Box::new(MockRom::strided(TABLE, 8, t.to_vec(), 8))

@@ -149,15 +149,6 @@ pub(crate) fn strider_over_bytes(
     (strider, cc)
 }
 
-/// [`strider_orchestrator::AnalyzeOptions::default`] returning an incomplete
-/// result rather than refusing it.
-pub(crate) fn ignoring() -> strider_orchestrator::AnalyzeOptions<'static> {
-    strider_orchestrator::AnalyzeOptions {
-        on_incomplete: strider_orchestrator::OnIncomplete::Ignore,
-        ..Default::default()
-    }
-}
-
 /// Build a synthetic x86-64 binary: `jmp rax` (2 bytes at `0x1000`)
 /// followed by `n_targets` x `ret` (0xc3), padded with 16 x `int3`
 /// (0xcc) so speculative look-ahead past the last `ret` doesn't fault

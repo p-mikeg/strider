@@ -51,7 +51,12 @@ fn widened_thumb_arms_keep_their_mode() {
     let (mut s, cc) =
         common::strider_over_bytes(common::Arch::Arm, bytes, BASE, Some(Box::new(Rom)));
     let r = s
-        .analyze(0x10058, &cc, &common::ignoring(), None)
+        .analyze(
+            0x10058,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        )
         .expect("analyze");
     let mut arms: Vec<(u64, Option<bool>)> = r
         .cfg

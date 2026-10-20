@@ -33,7 +33,7 @@ fn analyze(arch: common::Arch, case: &str, fn_name: &str) -> Report {
                     return_slots_survive_untracked_writes: true,
                     ..strider_opt::AssumptionOptions::none()
                 },
-                ..common::ignoring()
+                ..Default::default()
             },
             None,
         )

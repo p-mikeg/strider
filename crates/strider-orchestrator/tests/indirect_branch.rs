@@ -56,7 +56,12 @@ fn resolves_to_both_labels(
     ),
 ) {
     let result = strider
-        .analyze(entry, &cc, &common::ignoring(), None)
+        .analyze(
+            entry,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        )
         .unwrap_or_else(|e| panic!("analyze on {}: {e:?}", arch.name()));
 
     assert!(
