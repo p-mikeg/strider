@@ -989,14 +989,13 @@ machine address it cannot vouch for, with one of seven reasons
   range `data_ranges` marks as data. The branch leaves through an empty
   tail-call stub; the call ends as no-return. Such bytes reached off a seeded
   arm are named with no stub, and the arm is dropped. So is an arm whose
-  decode fails for any other reason, named at its own start.
-- `"past_function_end"`: where code falls through past `function_max_size`
-  with no branch, at the first address after the last instruction decoded
-  (the end itself unless that instruction straddles it). The region
-  tail-calls that address through an empty stub, as a branch out of range
-  does. An entry point falling into the next symbol, a slot patched at run
-  time, or a size too short. Off a seeded arm the arm is dropped instead, as
-  `"undecodable_target"` says.
+  decode fails for a reason no other entry names, at its own start.
+- `"past_function_end"`: where code falls through past `function_max_size`,
+  sequentially or on a conditional branch's not-taken path, at the first
+  address after the last instruction decoded (the end itself unless that
+  instruction straddles it). The region tail-calls that address through an
+  empty stub, as a branch out of range does. Code reached off a seeded arm is
+  named with no stub, and the arm is dropped.
 
 The five target reasons, which a direct edge also produces, accumulate across
 resolution rounds, so a loss in an early round stays listed. The two site

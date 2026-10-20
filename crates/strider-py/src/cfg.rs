@@ -151,10 +151,11 @@ impl PyCfg {
     ///   seeded arm is named here and dropped.
     /// - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
     ///   it as data. A seeded arm leading to such bytes is dropped, and so is
-    ///   one whose decode fails for any other reason, named here at its start.
+    ///   one whose decode fails for a reason no other entry names, named here
+    ///   at its start.
     /// - `"past_function_end"`: where code falls through past
-    ///   `function_max_size`, and so tail-calls this address; off a seeded arm
-    ///   the arm is dropped instead.
+    ///   `function_max_size`, and so tail-calls this address; a seeded arm
+    ///   whose code does is dropped and named here.
     ///
     /// From `build_cfg` this is that one build: every dispatch it left without
     /// an edge and every seed it seated. From `analyze` the target reasons
