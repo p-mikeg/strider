@@ -77,6 +77,9 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 /// be decoded or folded: [`Ctx::unmodelled`] says which fields become holes,
 /// through which decoding or folding fails.
 ///
+/// A MIPS image's primary GOT holds entries no relocation record covers:
+/// [`mips_implicit_got`] holes the ones the loader writes.
+///
 /// Any patch list the regions already carry is replaced, so re-applying over
 /// one region set is idempotent.
 ///
@@ -133,6 +136,7 @@ pub(crate) fn apply_elf_relocations_with(
             pair,
         );
     });
+    mips_implicit_got(&mut ctx);
     let got = got_regions(&ctx.got, ctx.endian_le)?;
     let mut patches = ctx.patches;
     // Stable, so the last patch recorded at a site is the one a read applies.
@@ -921,6 +925,148 @@ fn mips_half_field_skew(r: &RelocInfo, arch: A, endian_le: bool) -> u64 {
     } else {
         0
     }
+}
+
+/// `STT_GNU_IFUNC`, from `st_info`'s low nibble.
+fn is_ifunc(st_info: u8) -> bool {
+    st_info & 0xf == object::elf::STT_GNU_IFUNC
+}
+
+/// Holes over the MIPS primary GOT entries the dynamic loader writes, which
+/// no relocation record covers (MIPS psABI, "Global Offset Table"; glibc's
+/// `elf_machine_runtime_setup` and `elf_machine_got_rel`):
+///
+/// * the lazy resolver's word, and the module pointer's when the top bit of
+///   the second word asks for one;
+/// * every global entry, `DT_MIPS_GOTSYM .. DT_MIPS_SYMTABNO`, except one
+///   whose `.dynsym` symbol is defined in a section or absolute, is no IFUNC,
+///   and is already held at its `st_value`. That is the address the loader's
+///   lookup finds for a symbol the image defines, as a `GLOB_DAT` is taken to
+///   resolve. An imported symbol's entry holds 0, or its lazy-binding stub,
+///   which the loader replaces before the program runs or on the first call.
+///
+/// The local entries hold `B + value`, `B` modelled 0, and stay as the file
+/// has them. Without `.dynsym` no symbol can be checked, so every global
+/// entry is a hole. A hole names `R_MIPS_GLOB_DAT`, the relocation that
+/// covers the same kind of entry outside the primary GOT.
+fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
+    let obj = ctx.obj;
+    if !matches!(obj.architecture(), A::Mips | A::Mips64)
+        || !matches!(
+            obj.kind(),
+            object::ObjectKind::Executable | object::ObjectKind::Dynamic
+        )
+    {
+        return;
+    }
+    let Some(tags) = mips_got_tags(obj) else {
+        return;
+    };
+    let word: u64 = if obj.is_64() { 8 } else { 4 };
+    let width = word as usize;
+    let slot = |i: u64| {
+        i.checked_mul(word)
+            .and_then(|off| tags.base.checked_add(off))
+    };
+    let hole = |ctx: &mut Ctx<'_, '_>, addr: u64| {
+        let holder = ctx.holding(addr, width);
+        ctx.unmodelled(holder, addr, width, object::elf::R_MIPS_GLOB_DAT);
+    };
+
+    if tags.local_gotno >= 1
+        && let Some(addr) = slot(0)
+    {
+        hole(ctx, addr);
+    }
+    if tags.local_gotno >= 2
+        && let Some(addr) = slot(1)
+        && let Some(region) = ctx.holding(addr, width)
+        && read_field(region, addr, width, ctx.endian_le) >> (word * 8 - 1) != 0
+    {
+        hole(ctx, addr);
+    }
+
+    let dynsym = obj.dynamic_symbol_table();
+    let globals = tags.symtabno.saturating_sub(tags.gotsym);
+    for i in 0..globals {
+        let Some(addr) = tags.local_gotno.checked_add(i).and_then(slot) else {
+            break;
+        };
+        // Past the mapping holding the GOT nothing is served, so a count
+        // running past it stops here.
+        let Some(region) = ctx.holding(addr, width) else {
+            break;
+        };
+        let held = read_field(region, addr, width, ctx.endian_le);
+        let index = object::SymbolIndex((tags.gotsym + i) as usize);
+        let served = dynsym
+            .as_ref()
+            .and_then(|table| table.symbol_by_index(index).ok())
+            .is_some_and(|sym| {
+                let st_info = match sym.flags() {
+                    object::SymbolFlags::Elf { st_info, .. } => st_info,
+                    _ => 0,
+                };
+                matches!(
+                    sym.section(),
+                    object::SymbolSection::Section(_) | object::SymbolSection::Absolute
+                ) && !is_ifunc(st_info)
+                    && held == sym.address()
+            });
+        if !served {
+            hole(ctx, addr);
+        }
+    }
+}
+
+/// The dynamic tags that place a MIPS primary GOT.
+struct MipsGotTags {
+    /// `DT_PLTGOT`, the GOT's start.
+    base: u64,
+    /// `DT_MIPS_LOCAL_GOTNO`, the reserved and local entries before the
+    /// global ones.
+    local_gotno: u64,
+    /// `DT_MIPS_GOTSYM`, the `.dynsym` index of the first global entry's
+    /// symbol; with no global entries, `DT_MIPS_SYMTABNO`.
+    gotsym: u64,
+    /// `DT_MIPS_SYMTABNO`, the `.dynsym` count.
+    symtabno: u64,
+}
+
+/// [`MipsGotTags`] from the `PT_DYNAMIC` segment, `None` without one or
+/// without `DT_PLTGOT` / `DT_MIPS_LOCAL_GOTNO`.
+fn mips_got_tags(obj: &object::File<'_>) -> Option<MipsGotTags> {
+    match obj {
+        object::File::Elf32(f) => mips_got_tags_of(f),
+        object::File::Elf64(f) => mips_got_tags_of(f),
+        _ => None,
+    }
+}
+
+fn mips_got_tags_of<Elf: object::read::elf::FileHeader>(
+    f: &object::read::elf::ElfFile<'_, Elf>,
+) -> Option<MipsGotTags> {
+    use object::read::elf::{Dyn as _, ProgramHeader as _};
+    let endian = f.endian();
+    let entries = f
+        .elf_program_headers()
+        .iter()
+        .find_map(|ph| ph.dynamic(endian, f.data()).ok().flatten())?;
+    let tag = |want: u32| -> Option<u64> {
+        entries
+            .iter()
+            .map(|d| -> (u64, u64) { (d.d_tag(endian).into(), d.d_val(endian).into()) })
+            .take_while(|&(t, _)| t != u64::from(object::elf::DT_NULL))
+            .find(|&(t, _)| t == u64::from(want))
+            .map(|(_, v)| v)
+    };
+    let symtabno = tag(object::elf::DT_MIPS_SYMTABNO).unwrap_or(0);
+    Some(MipsGotTags {
+        base: tag(object::elf::DT_PLTGOT)?,
+        local_gotno: tag(object::elf::DT_MIPS_LOCAL_GOTNO)?,
+        gotsym: tag(object::elf::DT_MIPS_GOTSYM).unwrap_or(symtabno),
+        symtabno,
+    })
 }
 
 #[cfg(test)]
