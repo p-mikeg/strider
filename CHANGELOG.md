@@ -434,6 +434,10 @@
 
 ### Fixed
 
+- A seeded jump-table arm dropped because it is unmapped is named in
+  `cfg.incomplete` as `unmapped_target`, and one whose decode fails for any
+  reason but bytes Sleigh rejects (a fall-through past `function_max_size`)
+  as `undecodable_target`; only its site was named before.
 - Python: a `known_targets` seed of one target outside the function, an
   indirect tail call, is seated as that tail call and reported
   `"unverified_seed"`; it was read as a one-arm jump table, which defers, so
