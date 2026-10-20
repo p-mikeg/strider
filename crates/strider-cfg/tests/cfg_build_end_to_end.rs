@@ -278,6 +278,11 @@ fn cond_branch_with_oob_fallthrough_keeps_cond_branch_with_tail_call_stub() {
     // the self-loop and the stub edge.
     assert_eq!(cfg.region_graph().node_count(), 2);
     assert_eq!(cfg.region_graph().edge_count(), 2);
+    // The not-taken path falls past the end, as a sequential one does.
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1004, strider_cfg::Reason::PastFunctionEnd)]
+    );
 }
 
 #[test]
@@ -308,6 +313,8 @@ fn cond_branch_with_oob_taken_target_keeps_cond_branch_with_tail_call_stub() {
         .find(|r| r.start_addr.machine_addr.addr == 0x1004)
         .expect("fall-through region at 0x1004 must be decoded");
     assert_eq!(fallthrough.terminator, RegionTerminator::Return);
+    // A branch out of range is a tail call, not a fall-through.
+    assert_eq!(incomplete_of(&cfg), []);
 }
 
 #[test]
@@ -333,6 +340,10 @@ fn cond_branch_with_both_targets_oob_keeps_cond_branch_with_two_stubs() {
     assert_tail_call_stub_at(&cfg, 0x1002);
     assert_eq!(cfg.region_graph().node_count(), 3);
     assert_eq!(cfg.region_graph().edge_count(), 2);
+    assert_eq!(
+        incomplete_of(&cfg),
+        [(0x1002, strider_cfg::Reason::PastFunctionEnd)]
+    );
 }
 
 #[test]
