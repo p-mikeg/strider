@@ -994,8 +994,10 @@ machine address it cannot vouch for, with one of seven reasons
   sequentially or on a conditional branch's not-taken path, at the first
   address after the last instruction decoded (the end itself unless that
   instruction straddles it). The region tail-calls that address through an
-  empty stub, as a branch out of range does. Code reached off a seeded arm is
-  named with no stub, and the arm is dropped.
+  empty stub, as a branch out of range does. A call whose return address is
+  there ends the path after the call, and is reported too unless its target
+  is in `no_return_targets`. Code reached off a seeded arm is named with no
+  stub, and the arm is dropped.
 
 The five target reasons, which a direct edge also produces, accumulate across
 resolution rounds, so a loss in an early round stays listed. The two site
