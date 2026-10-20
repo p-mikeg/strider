@@ -648,3 +648,31 @@ fn a_frame_address_in_a_call_register_prints_in_the_header() {
         plain
     );
 }
+
+/// The claims in force are no node either: the header names the ones that
+/// are on, after `default_cc`, the allocators as sorted hex.
+#[test]
+fn the_claims_in_force_print_in_the_header() {
+    let mut f = Function::new(
+        strider_target::BuiltCallingConvention::default(),
+        strider_target::Endianness::Little,
+        Vec::new(),
+    );
+    let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
+    f.graph_mut().create_node(NodeKind::Return, [ctrl], []);
+    let plain = f.to_text(false);
+    assert!(!plain.contains("assumptions"), "{plain}");
+    f.assume(&crate::AssumptionOptions {
+        noalias_allocators: [0x2000, 0x1000].into_iter().collect(),
+        escape_analysis: true,
+        ..crate::AssumptionOptions::default()
+    });
+    let claimed = f.to_text(false);
+    let lines: Vec<&str> = claimed.lines().collect();
+    assert!(lines[2].starts_with("default_cc "), "{claimed}");
+    let line = "assumptions stack_global_disjoint assume_incoming_args_survive_calls \
+                noalias_allocators=[0x1000, 0x2000] escape_analysis \
+                return_slots_survive_untracked_writes";
+    assert_eq!(lines[3], line, "{claimed}");
+    assert_eq!(claimed.replacen(&format!("{line}\n"), "", 1), plain);
+}
