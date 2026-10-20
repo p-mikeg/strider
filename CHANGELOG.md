@@ -17,10 +17,10 @@
   undecodable_branch_targets, unverified_seeded_sites}()` are gone:
   `Cfg.incomplete` lists every `(address, reason)`, with the reasons in
   `strider.cfg.INCOMPLETE_REASONS`. `AnalyzeResult.unresolved` is unchanged.
-- `analyze` and `build_cfg` raise `strider.lift.IncompleteAnalysis` (a
-  `StriderError`) when `Cfg.incomplete` would name anything, a seeded site
-  included; pass `on_incomplete=OnIncomplete.IGNORE` for the old behaviour.
-  Code that catches `StriderError` to skip a function now skips these too.
+- `Cfg.is_complete()` is gone: test `not cfg.incomplete`. `analyze` and
+  `build_cfg` return whatever it names and never raise over it, so the
+  `OnIncomplete`, `IncompleteAnalysis` and `on_incomplete=` added since 0.2.0
+  are gone too.
 - `OptimizerPipeline.default().post_passes` no longer lists
   `StackOffsetDetect`; every run still records the stack and heap slots after
   its post-passes.
@@ -326,10 +326,6 @@
 
 ### Added, Python
 
-- `LifterOptions(on_incomplete=)` and `Lifter.build_cfg(on_incomplete=)` take a
-  `strider.lift.OnIncomplete`; `OnIncomplete.ERROR`, the default, raises
-  `strider.lift.IncompleteAnalysis`, a `StriderError` whose `.incomplete` lists
-  every `(address, reason)` as `Cfg.incomplete` does.
 - `strider.template.int_ne`, `int_le`, `int_sle` and `float_ne` build the
   lifter's `Xor(Equal(l, r), 1)`, `Xor(Less(r, l), 1)`, `Xor(Sless(r, l), 1)`
   and `Xor(FloatEqual(l, r), 1)`.

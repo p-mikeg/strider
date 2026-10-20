@@ -21,7 +21,7 @@ ARMS = [0x401145, 0x40114C]
 
 def _resolution_off():
     return strider.lift.LifterOptions(
-        resolve_indirect_branches=False, on_incomplete=strider.lift.OnIncomplete.IGNORE
+        resolve_indirect_branches=False
     )
 
 
@@ -41,7 +41,6 @@ def test_seating_a_reported_site_as_a_return_resolves_it():
         opts=strider.lift.LifterOptions(
             resolve_indirect_branches=False,
             cfg=strider.cfg.CfgOptions(known_targets={DISPATCH: "return"}),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     assert unresolved == [], f"seating {DISPATCH:#x} as a return left it unresolved"
@@ -54,7 +53,6 @@ def test_seating_a_reported_site_with_targets_builds_those_edges():
         opts=strider.lift.LifterOptions(
             resolve_indirect_branches=False,
             cfg=strider.cfg.CfgOptions(known_targets={DISPATCH: ARMS}),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     assert unresolved == [], f"seating {DISPATCH:#x} with targets left it unresolved"
@@ -71,7 +69,6 @@ def test_seating_survives_the_symbol_name_entry_path():
         opts=strider.lift.LifterOptions(
             resolve_indirect_branches=False,
             cfg=strider.cfg.CfgOptions(known_targets={DISPATCH: "return"}),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     by_addr = prog.analyze(
@@ -79,7 +76,6 @@ def test_seating_survives_the_symbol_name_entry_path():
         opts=strider.lift.LifterOptions(
             resolve_indirect_branches=False,
             cfg=strider.cfg.CfgOptions(known_targets={DISPATCH: "return"}),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     assert by_name.unresolved == by_addr.unresolved == []
@@ -94,7 +90,6 @@ def test_seating_an_empty_target_set_defers_the_site():
         opts=strider.lift.LifterOptions(
             resolve_indirect_branches=False,
             cfg=strider.cfg.CfgOptions(known_targets={DISPATCH: []}),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     assert unresolved == [DISPATCH]
@@ -127,7 +122,6 @@ def test_a_seed_that_displaces_the_classifier_is_reported_unverified():
         "main",
         opts=strider.lift.LifterOptions(
             cfg=strider.cfg.CfgOptions(known_targets={dispatch: [dispatch]}),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     assert result.unresolved == []
@@ -158,7 +152,6 @@ def test_a_link_register_seed_is_reported_as_unverified():
             strider.sleigh.CallingConvention.x86_64_systemv(),
             strider.lift.LifterOptions(
                 cfg=strider.cfg.CfgOptions(known_targets=targets),
-                on_incomplete=strider.lift.OnIncomplete.IGNORE,
             ),
         )
 
@@ -193,11 +186,10 @@ def test_a_one_target_seed_outside_the_function_is_a_tail_call(
         strider.lift.LifterOptions(
             cfg=opts,
             resolve_indirect_branches=resolve,
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     assert result.unresolved == []
     assert result.cfg.incomplete == [(_TAIL_SITE, "unverified_seed")]
     assert result.cfg.region_at(_TAIL_BASE) is None, "the callee was decoded inline"
-    built = lift.build_cfg(_TAIL_SITE, opts, on_incomplete=strider.lift.OnIncomplete.IGNORE)
+    built = lift.build_cfg(_TAIL_SITE, opts)
     assert built.incomplete == [(_TAIL_SITE, "unverified_seed")]
