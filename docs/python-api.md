@@ -1014,9 +1014,12 @@ both raises `ValueError`.
 `known_targets` seats indirect-branch answers in the CFG builder and seeds the
 resolution loop, which unions its own findings on top, so it composes with
 `resolve_indirect_branches=False`. A seeded site drops out of `unresolved`
-even when the classifier could not read it; one target outside the function
-is seated as a tail call, but a list of several with one outside defers the
-site, as an over-read jump table would. A wrong seed can stop the
+even when the classifier could not read it, unless the CFG cannot seat it.
+One target outside the function is seated as a tail call; without
+`function_max_size`, only an address below the entry is outside (none with
+`allow_code_before_start_addr=True`). A list of several with one outside, or
+with one off an instruction boundary, defers the site as an over-read jump
+table would, and the site stays in `unresolved`. A wrong seed can stop the
 classifier deriving the site's real arms; `cfg.incomplete` names the sites
 where that cannot be ruled out as `"unverified_seed"`.
 
