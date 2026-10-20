@@ -3,7 +3,9 @@
 //! view rather than the bytes or the value the file suggests. The images are
 //! `fixtures/loader/out/*`, built by `make -C fixtures/loader`.
 
-use object::{Object, ObjectSection, ObjectSymbol, ObjectSymbolTable, RelocationFlags};
+use object::{
+    Object, ObjectSection, ObjectSegment, ObjectSymbol, ObjectSymbolTable, RelocationFlags,
+};
 use rsleigh::{MemReader, VnAddr, VnSpace};
 use strider_reader::elf::RelocationMode;
 use strider_reader::{ElfFileMemReader, OwnedElf, ReadOnlyMemory};
@@ -402,4 +404,46 @@ fn a_mips_got_without_its_dynamic_tags_is_all_holes() {
             &format!(".got word {i}"),
         );
     }
+}
+
+/// The same image with `.got`'s `sh_size` claiming most of the address
+/// space: the holes stop where the mapping holding the GOT ends, rather than
+/// walking every word the header claims.
+#[test]
+fn a_mips_got_hole_stops_at_its_mapping_whatever_sh_size_claims() {
+    let elf = patched("mips32be_got_lib.elf", |bytes, obj| {
+        let (off, size) = obj
+            .section_by_name(".dynamic")
+            .unwrap()
+            .file_range()
+            .unwrap();
+        let entries = &mut bytes[off as usize..(off + size) as usize];
+        let gotsym = entries
+            .chunks_exact_mut(8)
+            .find(|d| d[..4] == object::elf::DT_MIPS_GOTSYM.to_be_bytes())
+            .expect("DT_MIPS_GOTSYM");
+        gotsym[..4].copy_from_slice(&object::elf::DT_MIPS_RLD_VERSION.to_be_bytes());
+        // Elf32_Ehdr.e_shoff, then Elf32_Shdr.sh_size of `.got`.
+        let shoff = u32::from_be_bytes(bytes[0x20..0x24].try_into().unwrap()) as usize;
+        let got = obj.section_by_name(".got").unwrap().index().0;
+        let at = shoff + got * 40 + 0x14;
+        bytes[at..at + 4].copy_from_slice(&0xfff0_0000u32.to_be_bytes());
+    });
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    let obj = elf.checked_file().unwrap();
+    let got = obj.section_by_name(".got").unwrap().address();
+    assert_hole(
+        rom_word(&reader, got, 4, false),
+        object::elf::R_MIPS_GLOB_DAT,
+        ".got word 0",
+    );
+    // The writable PT_LOAD holding `.got` ends the mapping.
+    let end = obj
+        .segments()
+        .map(|s| (s.address(), s.address() + s.size()))
+        .find(|&(lo, hi)| lo <= got && got < hi)
+        .unwrap()
+        .1;
+    let past = rom_word(&reader, end, 4, false).expect_err("past the mapping");
+    assert!(past.contains("not mapped"), "{past}");
 }
