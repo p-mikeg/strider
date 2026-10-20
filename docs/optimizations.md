@@ -143,8 +143,9 @@ whose later post-pass reads them.
 ## Indirect-branch resolution
 
 Jump tables, computed jumps and returns are resolved after the pipeline, by a
-classifier `analyze` runs every round whatever pipeline it is given
-(`strider_opt::classify_sites`; `strider.opt` has no pass for it). After
+classifier `analyze` runs every round whatever pipeline it is given, unless
+`resolve_indirect_branches` is off (`strider_opt::classify_sites`;
+`strider.opt` has no pass for it). After
 optimizing, Strider classifies each unresolved indirect branch against the
 clean IR, feeds any newly discovered targets back in, and re-lifts, repeating
 until the set of edges stops changing. Whatever still cannot be resolved makes

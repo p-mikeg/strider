@@ -8,7 +8,7 @@ pub(crate) use strider_ir_test_utils::{Rng, make_empty_fn as make_fn, make_fn_wi
 use crate::{ConstantFold, LoadForward, Optimizer, OptimizerPipeline, PhiCollapse, RegionCollapse};
 
 /// Runs `pass` until a run reports no change, each iteration with a fresh
-/// default `OptCtx`. Returns the number of iterations that DID report a
+/// `OptCtx` over no rom. Returns the number of iterations that DID report a
 /// change, so `0` means the first run was already a no-op.
 pub(crate) fn run_to_fixed_point(
     pass: &dyn Optimizer,

@@ -244,7 +244,8 @@
 - `OptOptions` is gone: `resolve_indirect_branches` and `assumptions` are
   `AnalyzeOptions` fields, with the same defaults, and each round claims
   `assumptions` on its fresh lift before the pipeline runs.
-- `OptCtx` is `{ rom }`, built by `OptCtx::new(rom)`, and carries no claim.
+- `OptCtx` is `{ rom }`, built by `OptCtx::new(rom)`, and carries no claim;
+  `OptCtx::at_floor` is gone.
   Claims accumulate per `Function`: `Function::assume(&claims)` adds to
   `Function::assumptions`, which every pass reads, and nothing withdraws
   one; analyse again for a function without one. A function never given a
@@ -473,10 +474,9 @@
   `False` in the abi3 wheel.
 - A pattern dropped from a thread-local destructor after strider-pattern's
   drop pit was torn down aborted the process; it is dropped in place.
-- Python: `Lifter.optimize(f)` with default options no longer drops the
-  `noalias_allocators` `analyze` ran under, and with them every
-  `heap_only()` match: a run merges its claims into the function's instead
-  of replacing them.
+- Python: `Lifter.optimize(f)` no longer drops the `noalias_allocators`
+  `analyze` ran under, and with them every `heap_only()` match: claims
+  accumulate on the function instead of being replaced.
 
 ### Added, Rust
 
