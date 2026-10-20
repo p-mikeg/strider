@@ -21,6 +21,10 @@ pub(super) struct Progress {
     pub(super) grew: Vec<PcodeInsnAddr>,
     /// Addresses that LOST a successor, so the signal is not monotone there.
     pub(super) narrowed: Vec<PcodeInsnAddr>,
+    /// Addresses whose one target turned into or out of a `Single`: out of
+    /// range the cfg seats a `Single` as a tail call but defers a table's
+    /// arm, so an unchanged successor set is not an unchanged seat.
+    pub(super) reshaped: Vec<PcodeInsnAddr>,
     /// Addresses whose fold dropped a successor the CLASSIFIER proved this
     /// round, or whose answer stopped being a superset. A seed says nothing
     /// about what the classifier derives, so this list is never suppressed.
@@ -34,10 +38,10 @@ pub(super) struct Progress {
 }
 
 impl Progress {
-    /// Some address's successor set differs from the previous round's: the
-    /// loop's progress signal.
+    /// Some address's seat differs from the previous round's: the loop's
+    /// progress signal.
     pub(super) fn changed(&self) -> bool {
-        !self.grew.is_empty() || !self.narrowed.is_empty()
+        !self.grew.is_empty() || !self.narrowed.is_empty() || !self.reshaped.is_empty()
     }
 }
 
@@ -235,6 +239,11 @@ impl<'s> SiteTable<'s> {
                 } else {
                     progress.grew.push(addr);
                 }
+            } else if seat.is_some_and(|seat| is_single(seat) != is_single(&targets)) {
+                // Settles in one round: in range both shapes seat the same
+                // `Switch`, and out of range a `Single` is consumed as a tail
+                // call, which nothing classifies again.
+                progress.reshaped.push(addr);
             }
             if derived_dropped || narrowed {
                 progress.derived_incomplete.push(addr);
@@ -248,6 +257,10 @@ impl<'s> SiteTable<'s> {
         }
         Ok(progress)
     }
+}
+
+fn is_single(targets: &ResolvedTargets) -> bool {
+    matches!(targets, ResolvedTargets::Single(_))
 }
 
 #[cfg(test)]
@@ -610,6 +623,30 @@ mod tests {
         assert_eq!(progress.grew, vec![addr]);
         assert!(progress.narrowed.is_empty());
         assert_eq!(known[&addr], ResolvedTargets::Single(0x2000.into()));
+    }
+
+    /// A seeded one-arm table and a derived `Single` of the same target name
+    /// one successor, but the cfg defers the table out of range and seats the
+    /// `Single` as a tail call, so the change of shape is progress.
+    #[test]
+    fn a_table_turning_single_at_one_target_is_progress() {
+        let (_function, node) = fn_with_live_indirect_branch();
+        let addr = pcode_addr(0x1000);
+        let seeds: FxHashMap<_, _> = std::iter::once((addr, multiple(&[(0x9000, None)]))).collect();
+        let mut sites = SiteTable::new(&seeds);
+        let progress = sites
+            .fold(
+                &vec![(addr, node)],
+                &Vec::new(),
+                [(node, ResolvedTargets::Single(0x9000.into()))],
+                &FxHashMap::default(),
+            )
+            .expect("fold");
+        assert_eq!(
+            sites.seat(addr),
+            Some(&ResolvedTargets::Single(0x9000.into()))
+        );
+        assert!(progress.changed(), "the seat changed shape");
     }
 
     /// Scales ARMS at one site, where
