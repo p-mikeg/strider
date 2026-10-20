@@ -24,6 +24,8 @@
 - `OptimizerPipeline.default().post_passes` no longer lists
   `StackOffsetDetect`; every run still records the stack and heap slots after
   its post-passes.
+- `Lifter.reg` and `Lifter.reg_name` are gone: `lifter.arch.reg(name)` and
+  `lifter.arch.reg_name(vn)` answer from the same table.
 - `lifter=` is gone from `Function.to_dot`, `Function.neighborhood_dot`,
   `Cfg.to_dot` and `Cfg.neighborhood_dot`, and with it the check that a
   supplied handle matched the graph's arch: a render reads the arch's name
@@ -258,6 +260,11 @@
 
 ### Changed, Python
 
+- Two `BoundCapture`s bound to the same non-constant value of one function
+  compare equal; every such pair compared unequal before, `m[c] == m[c]`
+  included. A constant still compares by its value in either spelling, and
+  an unbound capture equals nothing.
+
 - `build_cfg` reports a seed seated past p-code op 0 (a memory-indirect `jmp`)
   as `"unverified_seed"`; it went unreported.
 - `load()` / `store()` region filters apply in call order, the last winning:
@@ -288,10 +295,14 @@
   not load, so an image whose dropped writable mapping cannot be read loads
   instead of raising; the `relocated_got_is_rom` refusal comes before any walk.
 - `load_elf` and `add_elf` see the region and relocation changes under
-  Changed, Rust: a crafted image's read-only pieces left at one start collapse
-  to the later, and with `apply_relocations=True` no image fails with "patch
-  budget", a GOT-base or TOC-pointer word no longer needs its symbol, and an
-  image-relative word whose addend does not fit it is a hole or wrapped.
+  Changed, Rust and Fixed: a crafted image's read-only pieces left at one
+  start collapse to the later, and with `apply_relocations=True` no image
+  fails with "patch budget", a GOT-base or TOC-pointer word no longer needs
+  its symbol, an image-relative word whose addend does not fit it is a hole
+  or wrapped, an `R_PPC64_REL32` past +-2 GiB is a hole, a mips64el
+  `SHT_REL` relocation is dispatched by its real type (so a mips64el PIE
+  serves bytes `[0,4)`), and a symbol-reading relocation against `STN_UNDEF`
+  is a hole.
 - `rewrite` / `rewrite_all` refuse a `replace` of any other type with a
   `TypeError` naming what they take, where PyO3's text listed the binding's
   internal variants.
