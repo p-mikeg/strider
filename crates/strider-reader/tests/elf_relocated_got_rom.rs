@@ -255,7 +255,25 @@ fn a_linked_mips_pic_image_serves_only_its_got_under_the_opt_in() {
 
     let (got_addr, got_len) = extent(".got");
     assert!(!serves(&default, got_addr, got_len), "default .got");
-    assert!(serves(&opted_in, got_addr, got_len), "opt-in .got");
+    // `readelf -A`: two reserved words, then the local entries up to
+    // `DT_MIPS_LOCAL_GOTNO` 14, then four global entries for imported
+    // symbols. The loader writes the reserved and the global ones.
+    let local = (got_addr + 2 * 8, got_addr + 14 * 8);
+    assert_eq!(got_len, 18 * 8);
+    assert!(
+        serves(&opted_in, local.0, (local.1 - local.0) as usize),
+        "opt-in .got local entries"
+    );
+    let holes = MemRegionsLookupTable::new(opted_in.clone());
+    for word in [0, 1, 14, 15, 16, 17] {
+        let addr = got_addr + word * 8;
+        assert!(!serves(&opted_in, addr, 8), "opt-in .got word {word}");
+        assert_eq!(
+            holes.unmodelled_relocation_at(addr),
+            Some(object::elf::R_MIPS_GLOB_DAT),
+            ".got word {word}"
+        );
+    }
 
     for name in [".ctors", ".dtors", ".data", ".rld_map", ".sdata", ".bss"] {
         let (addr, len) = extent(name);
