@@ -313,7 +313,7 @@ impl PyNode {
         Ok(raw.map(|b| pyo3::types::PyBytes::new_bound(py, &b)))
     }
 
-    /// Sleigh user-op name on a `CallOther` node, else `None`.
+    /// The user-op name attached to a `CallOther` node, else `None`.
     fn call_other_name(&self, py: Python<'_>) -> PyResult<Option<String>> {
         self.with_node(py, |function, nid| {
             function.call_other_name(nid).map(str::to_owned)
