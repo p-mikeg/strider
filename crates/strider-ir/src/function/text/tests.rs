@@ -605,10 +605,7 @@ fn named_text_respells_each_register_varnode_and_nothing_else() {
     );
     net.value_vns.push(((call, 2), reg(0)));
     let (f, _) = net.build(false);
-    let regs = strider_target::SleighArch::x86_64()
-        .probe_regs()
-        .expect("x86-64 registers");
-    let named = f.to_text_named(true, &regs);
+    let named = f.to_text_named(true, strider_target::SleighArch::x86_64().names());
     assert!(named.contains("tracked [RAX, RDI]\n"), "{named}");
     assert!(named.contains(" = initial_var[RDI]"), "{named}");
     assert!(named.contains(" link_register_vn=RDI "), "{named}");
