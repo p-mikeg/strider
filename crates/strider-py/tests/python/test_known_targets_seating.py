@@ -166,19 +166,23 @@ _TAIL_SITE = 0x1000
 _TAIL_CODE = bytes([0xC3]) + bytes([0x90] * 15) + bytes([0xFF, 0xE0])
 
 
+@pytest.mark.parametrize(
+    "seed", [[_TAIL_BASE], [_TAIL_BASE, _TAIL_BASE]], ids=["one", "twice"]
+)
 @pytest.mark.parametrize("resolve", [True, False])
 @pytest.mark.parametrize("bound", [None, 2])
 def test_a_one_target_seed_outside_the_function_is_a_tail_call(
-    bound: Optional[int], resolve: bool
+    bound: Optional[int], resolve: bool, seed: List[int]
 ):
     """One target is the caller's declared dispatch, not a table read: out of
-    range it leaves the function, unverified, rather than deferring."""
+    range it leaves the function, unverified, rather than deferring. A target
+    listed twice is still one."""
     lift = strider.lift.lifter(
         strider.sleigh.SleighArch.x86_64(),
         strider.reader.BufferReader(_TAIL_BASE, _TAIL_CODE),
     )
     opts = strider.cfg.CfgOptions(
-        known_targets={_TAIL_SITE: [_TAIL_BASE]}, function_max_size=bound
+        known_targets={_TAIL_SITE: seed}, function_max_size=bound
     )
     result = lift.analyze(
         _TAIL_SITE,
