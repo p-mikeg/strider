@@ -13,10 +13,7 @@ def analyze(elf: str, name: str):
     prog = strider.lift.load_elf(
         str(WORKSPACE / "fixtures" / "out" / "x86" / f"{elf}.elf")
     )
-    opts = strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
-    )
-    return prog.analyze(name, opts=opts)[1]
+    return prog.analyze(name)[1]
 
 
 # --- 1. Producer -> consumer: one value, two patterns, one shared capture ---
