@@ -126,9 +126,12 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let (_, outputs) =
             self.builder
                 .build_call_other(READ_VOLATILE_USER_OP_ID, &[], &[*vn], false, false)?;
-        self.builder
-            .function_mut()
-            .set_call_other_name(READ_VOLATILE_USER_OP_ID, "read_volatile");
+        if !self.read_volatile_named {
+            self.builder
+                .function_mut()
+                .set_call_other_name(READ_VOLATILE_USER_OP_ID, "read_volatile");
+            self.read_volatile_named = true;
+        }
         Ok(outputs[0])
     }
 
