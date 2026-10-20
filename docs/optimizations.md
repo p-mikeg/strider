@@ -181,7 +181,8 @@ does not carry:
 - MIPS64 GOT-indirect dispatch: the entries lift as `Add(Load[GOT], const)`
   rather than constants. The abicalls ABI puts the function's own entry address
   in `t9`, which a convention names, and `load_elf(relocated_got_is_rom=True)`
-  serves the GOT slots the entry load reads.
+  serves the GOT slots the entry load reads. Those are local entries; a global
+  entry the loader fills, one for an imported symbol, stays unmapped.
 - PowerPC stack-array dispatch on ppc32le, ppc64be and ppc64le, whose label
   table sits in `.data.rel.ro`, which the immutable-only image leaves out:
   `load_elf(relocated_got_is_rom=True)` serves it.

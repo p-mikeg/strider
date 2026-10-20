@@ -51,12 +51,23 @@ pub enum LoadFilter {
     /// writable mappings that the dynamic loader fills before the program runs
     /// and that a full-RELRO link then maps read-only.
     ///
-    /// An UNCHECKED claim about the runtime, which the image cannot prove: a
-    /// `.got` slot rewritten later (a traditional MIPS lazy-binding stub, a
-    /// `dlopen`ed interposition, a program that writes its own GOT) folds to
-    /// its load-time value here. What it buys is the PIC table base: on
-    /// `-mabicalls` MIPS the jump-table base is loaded through the GOT, so
-    /// nothing in the dispatch folds while those slots are unmapped.
+    /// A slot whose load-time value only the loader computes is a hole, not
+    /// its file bytes: one under a relocation the applier does not compute,
+    /// an IFUNC's among them (it holds what the resolver returns), and on
+    /// MIPS each primary GOT entry the loader writes without a relocation
+    /// record: the lazy-resolver and module-pointer words, and every global
+    /// entry but one for a symbol the image defines that already holds its
+    /// address.
+    ///
+    /// The rest is an UNCHECKED claim about the runtime, which the image
+    /// cannot prove: that nothing rewrites a slot after the loader has run (a
+    /// program that writes its own GOT), and that a symbol the image defines
+    /// binds to that definition (a copy relocation, `LD_PRELOAD` or a
+    /// `dlopen`ed library interposes another). Where it is false, a load
+    /// through the slot folds to the wrong value. What it buys is the PIC
+    /// table base: on `-mabicalls` MIPS the jump-table base is loaded through
+    /// the GOT, so nothing in the dispatch folds while those slots are
+    /// unmapped.
     ///
     /// `.got.plt` is NOT included. Lazy binding rewrites those slots on the
     /// first call through each one, so their load-time contents are the PLT

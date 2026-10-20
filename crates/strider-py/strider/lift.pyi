@@ -547,13 +547,26 @@ def load_elf(
 
     `relocated_got_is_rom` (default `False`) additionally serves `.got` and
     `.data.rel.ro` as READ-ONLY memory, so a load through a GOT slot folds to
-    the address the slot holds. That is an unchecked claim about the runtime:
-    it is wrong wherever a slot is rewritten after the loader has run, and the
-    fold is then wrong too. It is what resolves a PIC jump table whose base
-    comes out of the GOT. `.got.plt` is never served, lazy binding rewriting
-    those slots on the first call through each one. It contradicts
-    `apply_relocations=False`, which says the loader has NOT run, and the pair
-    raises `StriderError`.
+    the address the slot holds. It is what resolves a PIC jump table whose
+    base comes out of the GOT.
+
+    A slot whose load-time value only the dynamic loader computes stays
+    unmapped, and a load through it does not fold: one under a relocation
+    strider does not compute, such as one against an imported symbol the
+    image gives no address; an IFUNC's (`R_*_IRELATIVE`, or a relocation
+    against a defined `STT_GNU_IFUNC` symbol), which holds what the resolver
+    returns; and on MIPS, whose primary GOT no relocation covers, the
+    lazy-resolver and module-pointer words and every global entry but one for
+    a symbol the image defines that already holds its address. `.got.plt` is
+    never served, lazy binding rewriting those slots on the first call
+    through each one.
+
+    The rest is an unchecked claim about the runtime: that nothing rewrites a
+    slot after the loader has run, and that a symbol the image defines binds
+    to that definition. Where either is false (a program writing its own GOT;
+    a copy relocation, `LD_PRELOAD` or a `dlopen`ed library interposing the
+    symbol) the fold is wrong too. It contradicts `apply_relocations=False`,
+    which says the loader has NOT run, and the pair raises `StriderError`.
 
     Raises `FileNotFoundError` when `path` does not exist, and `ValueError`
     when the file is not an ELF, or its architecture or ABI is unsupported.
