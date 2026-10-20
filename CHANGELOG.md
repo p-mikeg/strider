@@ -540,7 +540,7 @@
 - Python: `Lifter.optimize(f)` no longer drops the `noalias_allocators`
   `analyze` ran under, and with them every `heap_only()` match: claims
   accumulate on the function instead of being replaced.
-- Python: `CallStackArgCollect` no longer attaches a stack argument that one
+- `CallStackArgCollect` no longer attaches a stack argument that one
   path into the call overwrites in part past its first byte, such as an i386
   `double` whose upper dword one branch zeroes; it attached the original
   store's value as if every path passed it.
