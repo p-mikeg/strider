@@ -3,7 +3,7 @@ mod region_builder;
 mod split;
 
 pub(crate) use flow::{FlowCommit, FlowContext, FlowVars};
-use region_builder::{RegionBuilder, is_unmapped_start, not_code_addr, not_code_at};
+use region_builder::{RegionBuilder, is_unmapped_start, not_code_addr, not_code_at, past_end_addr};
 
 use std::collections::BTreeMap;
 
@@ -875,11 +875,14 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // The bytes themselves, which `UndecodableTarget` cannot name: it
         // carries the ARM, and an arm that LED to the bytes decodes. Read
         // off the error rather than from `address`, the failure being able to
-        // sit several instructions into the region this item decoded. Any
-        // other failure names the item itself.
+        // sit several instructions into the region this item decoded. A
+        // fall-through past the end is named where it ran off; any other
+        // failure names the item itself.
         if seeded_by.is_some() {
             let (at, reason) = if is_unmapped_start(&e, address) {
                 (address, crate::Reason::UnmappedTarget)
+            } else if let Some(end) = past_end_addr(&e) {
+                (end, crate::Reason::PastFunctionEnd)
             } else if let Some(bad) = not_code_addr(&e) {
                 (
                     PcodeInsnAddr::at_machine_start(bad),
@@ -1600,8 +1603,8 @@ mod tests {
         assert_every_switch_target_has_an_arm(&cfg);
     }
 
-    /// An arm whose decode fails for another reason, here a fall-through past
-    /// the function's size, is named too.
+    /// An arm whose code falls through past the function's size is dropped,
+    /// and named where it ran off.
     ///
     /// ```text
     /// 1000  jmp rax
@@ -1636,12 +1639,12 @@ mod tests {
                 target: addr(0x1003, 0),
             }],
         );
-        assert!(
+        assert_eq!(
             cfg.incomplete()
                 .iter()
-                .any(|e| e == (addr(0x1003, 0), crate::Reason::UndecodableTarget)),
-            "{:?}",
-            cfg.incomplete()
+                .filter(|(_, reason)| !reason.is_site())
+                .collect::<Vec<_>>(),
+            [(addr(0x1004, 0), crate::Reason::PastFunctionEnd)],
         );
         assert_every_switch_target_has_an_arm(&cfg);
     }

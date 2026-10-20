@@ -266,8 +266,9 @@
 
 - `analyze` and `build_cfg` no longer fail when decoding falls through past
   `function_max_size`: the fall-through is a tail call to the address there,
-  which `cfg.incomplete` names `"past_function_end"`. Off a seeded jump-table
-  arm the arm is dropped instead.
+  which `cfg.incomplete` names `"past_function_end"`, as it does a
+  conditional branch's not-taken path past the end. A seeded jump-table arm
+  whose code does is dropped and named there.
 - Two `BoundCapture`s with no integer value (any binding but an integer
   constant of at most 128 bits) bound to the same value of one function
   compare equal; every such pair compared unequal before, `m[c] == m[c]`
@@ -377,8 +378,9 @@
 
 - `DecodeEngine::build_cfg`, and so `Strider::analyze`, no longer fail when
   decoding falls through past a `FunctionBound::Size` end: the region
-  tail-calls the address there, reported as `Reason::PastFunctionEnd`. Off a
-  seeded arm the arm is dropped instead.
+  tail-calls the address there, reported as `Reason::PastFunctionEnd`, as is
+  a conditional branch's not-taken path past the end. A seeded arm whose
+  code does is dropped and named there.
 - `FunctionArgPat::source` matches a sub-register of the carrier, as
   `function_arg_reg` does in Python.
 - `Lifter` refuses a calling convention whose stack geometry belongs to
@@ -463,9 +465,10 @@
 ### Fixed
 
 - A seeded jump-table arm dropped because it is unmapped is named in
-  `cfg.incomplete` as `unmapped_target`, and one whose decode fails for any
-  reason but bytes Sleigh rejects (a fall-through past `function_max_size`)
-  as `undecodable_target`; only its site was named before.
+  `cfg.incomplete` as `unmapped_target`, one whose code falls through past
+  `function_max_size` as `past_function_end`, and one whose decode fails for
+  any other reason but bytes Sleigh rejects as `undecodable_target`; only its
+  site was named before.
 - Python: a `known_targets` seed of one target outside the function, an
   indirect tail call, is seated as that tail call and reported
   `"unverified_seed"`; it was read as a one-arm jump table, which defers, so
