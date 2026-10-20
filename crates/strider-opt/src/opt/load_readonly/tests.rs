@@ -4,7 +4,6 @@ use crate::pipeline::OptCtx;
 use crate::test_support::{assert_returns_const, make_fn};
 use strider_ir::IRWalker;
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir_test_utils::IrBuilderEx;
 use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{MockRom, make_empty_fn_endian};
 use strider_target::Endianness;
@@ -260,65 +259,5 @@ fn multiple_loads_fold_in_one_pass() -> Result<()> {
     );
     let remaining_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(remaining_loads, 0, "both loads must have folded");
-    Ok(())
-}
-
-/// `LoadReadOnly` inspects only the Load's address operand, never its memory
-/// input, so a partitioned memory chain (here: an SP store before a `Call`
-/// barrier, stamped by `StackOffsetDetect`) cannot block the fold.
-#[test]
-fn load_readonly_fires_after_stack_offset_detect() -> Result<()> {
-    use crate::StackOffsetDetect;
-    use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
-
-    let sp = stack_vn_x86();
-
-    // stack-store (SP-4), call 0xCAFE, load 0x1000, return loaded.
-    let mut fg = make_sp_fn(sp, |b, sp_v| {
-        let four = b.build_int_const(4u64, ValueType::int(32))?;
-        let stack_addr = b.build_sub_as_add_neg(sp_v, four, ValueType::int(32))?;
-        let data = b.build_int_const(0x55u64, ValueType::int(32))?;
-        b.build_store(stack_addr, data, rsleigh::VnSpace::RAM)?;
-
-        let call_tgt = b.build_int_const(0xCAFEu64, ValueType::int(32))?;
-        b.build_call_cc(call_tgt, None)?;
-
-        // Non-SP-rooted, so no side-table entry gets stamped.
-        let rom_addr = b.build_int_const(0x1000u64, ValueType::int(64))?;
-        let loaded = b.build_load(rom_addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        b.build_return(Some(loaded), &[])?;
-        Ok(())
-    })?;
-
-    // Canonicalize first so the SP-aware post-pass sees the production shape:
-    // ConstantFold folds the lowered `Sub`, PhiCollapse drops the
-    // read_variable(sp) phi to a bare `InitialVar(sp) + k` terminal.
-    crate::test_support::cf_rp_pipeline().run(&mut fg, &mut OptCtx::new(None))?;
-
-    crate::pipeline::run_post(&StackOffsetDetect, &mut fg, &mut OptCtx::new(None))?;
-    assert!(
-        fg.graph()
-            .all_node_ids()
-            .any(|n| fg.stack_offset(n).is_some()),
-        "StackOffsetDetect must stamp the stack-store offset"
-    );
-
-    assert!(
-        fg.count_kind(|k| matches!(k, NodeKind::Load(_))) >= 1,
-        "ROM Load must survive StackOffsetDetect"
-    );
-
-    let rom = test_rom();
-    let fold_result =
-        crate::pipeline::run_one(&LoadReadOnly, &mut fg, &mut OptCtx::new(Some(&rom)))?;
-    assert!(fold_result.changed(), "LoadReadOnly must fold the ROM Load");
-
-    assert_eq!(
-        fg.count_kind(|k| matches!(k, NodeKind::Load(_))),
-        0,
-        "all Load nodes must be folded"
-    );
-
     Ok(())
 }

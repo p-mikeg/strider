@@ -143,7 +143,7 @@ fn link_register_return(
 }
 
 /// Every live dispatch site of a function, and what was recovered for each.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ClassifiedSites {
     /// Every reachable `IndirectBranch` placeholder and seated `Switch`.
     pub sites: Vec<NodeId>,

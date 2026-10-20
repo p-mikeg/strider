@@ -132,6 +132,9 @@ pub fn run_one_unvalidated(
     edit.cull_dead();
     let result = apply_checked(pass, &mut edit, octx)?;
     edit.clean();
+    if result.changed() {
+        edit.function().side_tables().invalidate_analyses();
+    }
     Ok(result)
 }
 
@@ -152,8 +155,8 @@ fn apply_checked(
     Ok(result)
 }
 
-/// Post-pass sibling of [`run_one`]: the memory classes survive, as between
-/// `run`'s post-passes.
+/// Post-pass sibling of [`run_one`]: the memory classes survive a pass that
+/// changed nothing, as between `run`'s post-passes.
 ///
 /// # Errors
 ///
@@ -166,14 +169,22 @@ pub fn run_post(
 ) -> crate::Result<()> {
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
-    pass.apply(&mut edit, octx)?;
+    apply_post(pass, &mut edit, octx)
+}
+
+/// One iteration of `run`'s post-pass loop: a pass that changed the graph
+/// drops the memos, since it may have rewired an address.
+fn apply_post(
+    pass: &dyn PostOptimizer,
+    edit: &mut crate::EditFunction<'_>,
+    ctx: &mut OptCtx<'_>,
+) -> crate::Result<()> {
+    let edits = edit.edits();
+    pass.apply(edit, ctx)?;
     edit.clean();
-    // One iteration of `run`'s post-pass loop: the memory classes survive,
-    // and only the frame-escape verdict, which `CallStackArgCollect`
-    // invalidates, is cleared. No built-in post-pass rewires an address;
-    // strider-py's `OptAsPostPass` invalidates the classes itself when its
-    // pass changes the graph.
-    edit.function().side_tables().clear_frame_escape();
+    if edit.edits() != edits {
+        edit.function().side_tables().invalidate_analyses();
+    }
     Ok(())
 }
 
@@ -206,7 +217,8 @@ clone_box_shim! {
 ///
 /// Assumes the optimizer has converged: may rely on any canonical shape the
 /// in-loop passes settle on (e.g. `Add(_, Neg(_))` for subtraction) rather
-/// than re-normalising.
+/// than re-normalising.  The memory classes survive a post-pass that changes
+/// nothing; one that changes the graph drops them.
 pub trait PostOptimizer: PostOptimizerClone {
     /// `edit` wraps the converged function.
     ///
@@ -233,7 +245,8 @@ clone_box_shim! {
 /// called once per iteration in registration order, repeating until no pass
 /// reports a change.  A pass whose last run changed nothing is skipped until
 /// some edit changes the live graph, so a pass must be a function of the graph,
-/// its options and the ROM.
+/// its options, the function's claims and the ROM; the claims cannot change
+/// during a run.
 pub struct OptimizerPipeline {
     passes: Vec<Box<dyn Optimizer + Send>>,
     post_passes: Vec<Box<dyn PostOptimizer + Send>>,
@@ -335,15 +348,7 @@ impl OptimizerPipeline {
             edit.clean();
             if converged {
                 for opt in &self.post_passes {
-                    // The memory classes survive between post-passes: no
-                    // built-in post-pass rewires an address, and strider-py's
-                    // `OptAsPostPass` invalidates them when its pass changes
-                    // the graph.
-                    opt.apply(&mut edit, ctx)?;
-                    edit.clean();
-                    // `CallStackArgCollect` rewrites `Call` inputs, which is
-                    // what the frame-escape walk reads.
-                    edit.function().side_tables().clear_frame_escape();
+                    apply_post(opt.as_ref(), &mut edit, ctx)?;
                 }
                 // What `pattern`'s region filters read; every changing pass
                 // above drained it.
@@ -631,6 +636,35 @@ mod tests {
         Ok(())
     }
 
+    /// `run_one` also drops the memos after a changing pass, as `run`'s
+    /// fixed-point loop does.
+    #[test]
+    fn run_one_drops_the_memos_after_a_changing_pass() -> crate::Result<()> {
+        /// Stamps the returned value, then replaces it.
+        #[derive(Clone)]
+        struct StampsThenRewrites;
+        impl super::Optimizer for StampsThenRewrites {
+            fn apply(
+                &self,
+                edit: &mut crate::EditFunction<'_>,
+                _ctx: &mut OptCtx<'_>,
+            ) -> crate::Result<super::OptimizationResult> {
+                let old = crate::test_support::return_value(edit.function().graph())?;
+                edit.function().side_tables().set_stack_slot(old, old, 16);
+                let value = edit.build_int_const(9u64, ValueType::int(64))?;
+                edit.absorb_fingerprint(value, old);
+                edit.replace_value(old, value);
+                Ok(super::OptimizationResult::Changed)
+            }
+        }
+
+        let mut function = one_const_fn(5);
+        let returned = crate::test_support::return_value(function.graph())?;
+        crate::pipeline::run_one(&StampsThenRewrites, &mut function, &mut OptCtx::new(None))?;
+        assert!(function.side_tables().memory_decomp(returned).1.is_none());
+        Ok(())
+    }
+
     /// `run_post` keeps a memo, as `run` does between its post-passes.
     #[test]
     fn run_post_keeps_the_memos() -> crate::Result<()> {
@@ -653,6 +687,67 @@ mod tests {
             .set_stack_slot(returned, returned, 16);
         super::run_post(&NoOpPost, &mut function, &mut OptCtx::new(None))?;
         assert!(function.side_tables().memory_decomp(returned).1.is_some());
+        Ok(())
+    }
+
+    /// Moves the stored address `sp + c` to `sp + c - 4` by rewiring the
+    /// `Add`'s constant, so the address value keeps its id.
+    #[derive(Clone)]
+    struct MovesStoreDown;
+
+    impl super::PostOptimizer for MovesStoreDown {
+        fn apply(
+            &self,
+            edit: &mut crate::EditFunction<'_>,
+            _ctx: &mut OptCtx<'_>,
+        ) -> crate::Result<()> {
+            let store = edit
+                .live_of_kind(|k| matches!(k, strider_ir::node::NodeKind::Store(_)))
+                .next()
+                .expect("the fixture stores");
+            let addr = edit.access_address(store).expect("a store has an address");
+            let add = edit.producer(addr);
+            let old = edit.nth_input(add, 1).expect("an Add has two operands");
+            let c = edit.int_const_u128(old).expect("the addend is constant");
+            let moved = edit.build_int_const(c.wrapping_sub(4) as u64, ValueType::int(32))?;
+            edit.absorb_fingerprint(moved, old);
+            let slot = edit.node_input_id_at(add, 1)?;
+            edit.update_input(slot, moved);
+            Ok(())
+        }
+    }
+
+    /// A post-pass that rewires an address's producers leaves no stale
+    /// class: the stamp after the post-passes reads the moved slot.
+    #[test]
+    fn a_post_pass_rewiring_an_address_restamps_its_class() -> crate::Result<()> {
+        let mut function =
+            strider_ir_test_utils::make_sp_fn(strider_ir_test_utils::stack_vn_x86(), |b, sp_v| {
+                let minus_four = b.build_int_const(0xFFFF_FFFCu64, ValueType::int(32))?;
+                let addr = b.build_int_binary_operation(
+                    sp_v,
+                    minus_four,
+                    strider_ir::IntBinaryOp::Add,
+                    ValueType::int(32),
+                )?;
+                let data = b.build_int_const(0x42u64, ValueType::int(32))?;
+                b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+                b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+                b.build_return(None, &[])?;
+                Ok(())
+            })?;
+
+        let mut p = super::OptimizerPipeline::new();
+        p.add(crate::PhiCollapse);
+        p.add_post_pass(crate::StackOffsetDetect);
+        p.add_post_pass(MovesStoreDown);
+        p.run(&mut function, &mut OptCtx::new(None))?;
+
+        let store = function
+            .walk()
+            .find(|&n| matches!(function.node_kind(n), strider_ir::node::NodeKind::Store(_)))
+            .expect("the store survives");
+        assert_eq!(function.stack_offset(store).map(|(_, k)| k), Some(-8));
         Ok(())
     }
 
