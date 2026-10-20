@@ -86,7 +86,16 @@ def test_elf_lifter_returns_by_name_too(x86_switch_elf) -> None:
         "dispatch_value",
         opts=strider.lift.LifterOptions(pipeline=strider.opt.OptimizerPipeline.empty()),
     )
-    assert result.unresolved
+    assert result.unresolved == [
+        0x40114B,
+        0x401152,
+        0x401159,
+        0x401160,
+        0x401167,
+        0x401179,
+        0x401180,
+        0x401187,
+    ]
     assert [(a, "unresolved_branch") for a in result.unresolved] == [
         e for e in result.cfg.incomplete if e[1] == "unresolved_branch"
     ]
