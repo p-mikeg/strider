@@ -558,6 +558,15 @@
   a symbol the image defines that already holds its address. An imported
   symbol's entry was served as the 0 or lazy-binding stub the file holds, so
   `&ext_var` folded to NULL.
+- Python: under `relocated_got_is_rom=True` an IFUNC's slot is unmapped: an
+  `R_*_IRELATIVE` one, and one relocated against a defined `STT_GNU_IFUNC`
+  symbol, whose `st_value` is the resolver. Both served the resolver's
+  address where the loader stores what it returns, so a call through one
+  called the resolver, or lifted its body into a PLT stub. An unlinked
+  object's GOT slot for such a symbol stays unmapped too, and any other
+  relocation against one is not computed. `ElfLifter.read` of an
+  `IRELATIVE` slot serves the file's bytes rather than the resolver's
+  address.
 
 ### Added, Rust
 

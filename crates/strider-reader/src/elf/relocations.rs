@@ -46,9 +46,9 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 ///
 /// Every row [`classify`] lists, which says what each `(arch, r_type)`
 /// computes and the field it is encoded into: instruction immediates, GOT and
-/// TOC references, `R_*_RELATIVE` / `IRELATIVE` (image base modelled 0; an
-/// `SHT_REL` one's field already holds the whole value and is served as
-/// assembled), GOT/PLT slots and PC-relative words. A GOT reference resolves
+/// TOC references, `R_*_RELATIVE` (image base modelled 0; an `SHT_REL` one's
+/// field already holds the whole value and is served as assembled), GOT/PLT
+/// slots and PC-relative words. A GOT reference resolves
 /// through a synthetic GOT slot holding the symbol's address, which exists
 /// only for an ET_REL.
 ///
@@ -73,9 +73,14 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 ///
 /// A relocation whose value is not computed (a kind not listed above, a symbol
 /// with no address or a weak undefined one, a value its field cannot hold, a
-/// branch needing a veneer) leaves no plausible bytes behind where they would
+/// branch needing a veneer, an IFUNC's) leaves no plausible bytes behind where they would
 /// be decoded or folded: [`Ctx::unmodelled`] says which fields become holes,
 /// through which decoding or folding fails.
+///
+/// An IFUNC's value is what its resolver returns, which only running it
+/// computes: `R_*_IRELATIVE`, and every value reading `S` of a defined
+/// `STT_GNU_IFUNC` symbol, whose `st_value` is the resolver. A GOT reference
+/// to one still addresses its slot, which is left unmapped.
 ///
 /// A MIPS image's primary GOT holds entries no relocation record covers:
 /// [`mips_implicit_got`] holes the ones the loader writes.
@@ -356,8 +361,7 @@ fn has_crel(obj: &object::File<'_>) -> bool {
 ///   only relocation sections whose `sh_link` is the dynamic symbol table's
 ///   index, which is 0 when there is no `.dynsym`. A static binary's
 ///   `.rela.plt` links to `.symtab`, so it walks no sites; `strip` rewrites
-///   that link to 0, and the same binary then walks its IRELATIVE slots and
-///   serves each resolver's address in place of the file bytes.
+///   that link to 0, and the same binary then walks its IRELATIVE slots.
 fn for_each_reloc_site<F>(
     obj: &object::File<'_>,
     owners: &std::collections::BTreeSet<usize>,
@@ -554,7 +558,9 @@ fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo) {
     // `PltRelative` is a call or jump, whose displacement hides the address it
     // was built from; every other plain field holds that address, see
     // `Target::weak_undefined`.
-    if target.weak_undefined && !matches!(generic.kind, RelocationKind::PltRelative) {
+    if target.ifunc
+        || (target.weak_undefined && !matches!(generic.kind, RelocationKind::PltRelative))
+    {
         ctx.unmodelled(holder, field_addr, size_bytes, r.type_word());
         return;
     }
@@ -668,6 +674,10 @@ fn compute_classified(
     {
         return None;
     }
+    // An IFUNC's `S` is its resolver: only its GOT slot's address is known.
+    if target.is_some_and(|t| t.ifunc) && !value_kind_through_got(value_kind) {
+        return None;
+    }
     let s = target.map_or(0, |t| t.addr);
 
     let mut a = match (value_kind, r.rela_addend) {
@@ -700,9 +710,10 @@ fn compute_classified(
         }
         let t = target?;
         let (slot, width) = layout.got_slot(t.index)?;
-        // A weak undefined symbol's slot holds 0 as readily as an address, so
-        // it is left unmapped and the load through it stays opaque.
-        if !t.weak_undefined {
+        // A weak undefined symbol's slot holds 0 as readily as an address,
+        // and an IFUNC's what its resolver returns, so either is left
+        // unmapped and the load through it stays opaque.
+        if !t.weak_undefined && !t.ifunc {
             ctx.got.insert(slot, (t.addr, width));
         }
         Some(slot)
@@ -729,6 +740,7 @@ fn compute_classified(
         Value::TocRelative => sa.wrapping_sub(layout.toc_base()?),
         Value::Toc => apply_addend(layout.toc_base()?, a),
         Value::ImageRelative => apply_addend(0, a),
+        Value::Indirect => return None,
         Value::PltCall => s.wrapping_sub(p),
         // A descriptor's entry is where `S + A` in `.opd` relocates to.
         Value::Ppc64Call { .. } if target?.in_opd => ctx.opd_entries.get(&sa)?.wrapping_sub(p),
@@ -802,6 +814,9 @@ struct Target {
     /// synthetic extern address stands in only where it cannot be observed,
     /// everything else being left uncomputed rather than folded one way.
     weak_undefined: bool,
+    /// A defined `STT_GNU_IFUNC`, so `S` is its resolver and not the function
+    /// the loader binds.
+    ifunc: bool,
     /// MIPS `_gp_disp`.
     gp_disp: bool,
     /// Defined in `.opd`, so `S` is a ppc64 ELFv1 descriptor.
@@ -875,9 +890,9 @@ fn resolve_symbol_target(
         }
         _ => Isa::Same,
     };
-    let st_other = match sym.flags() {
-        object::SymbolFlags::Elf { st_other, .. } => st_other,
-        _ => 0,
+    let (st_info, st_other) = match sym.flags() {
+        object::SymbolFlags::Elf { st_info, st_other } => (st_info, st_other),
+        _ => (0, 0),
     };
     Some(Target {
         addr,
@@ -885,6 +900,7 @@ fn resolve_symbol_target(
         isa,
         local: sym.is_local(),
         weak_undefined: sym.is_weak() && sym.is_undefined(),
+        ifunc: is_ifunc(st_info) && !sym.is_undefined(),
         gp_disp: matches!(arch, A::Mips | A::Mips64) && sym.name() == Ok("_gp_disp"),
         // ppc64 ELFv1 only, and the arch test comes first: the name lookup
         // below reads `.shstrtab` and this runs once per relocation, so on
@@ -1269,33 +1285,33 @@ mod tests {
 
     /// The word rows, a `None` symbol matching both.
     const WORD_ROWS: &[WordRow] = {
-        use Value::{Abs, ImageRelative as Ir, Pcrel, Slot};
+        use Value::{Abs, ImageRelative as Ir, Indirect as Ind, Pcrel, Slot};
         use object::elf as e;
         &[
             (A::X86_64, e::R_X86_64_RELATIVE, 0, None, Ir, D8),
-            (A::X86_64, e::R_X86_64_IRELATIVE, 0, None, Ir, D8),
+            (A::X86_64, e::R_X86_64_IRELATIVE, 0, None, Ind, D8),
             (A::X86_64, e::R_X86_64_GLOB_DAT, 0, None, Slot, D8),
             (A::X86_64, e::R_X86_64_JUMP_SLOT, 0, None, Slot, D8),
             (A::I386, e::R_386_RELATIVE, 0, None, Ir, D4),
-            (A::I386, e::R_386_IRELATIVE, 0, None, Ir, D4),
+            (A::I386, e::R_386_IRELATIVE, 0, None, Ind, D4),
             (A::I386, e::R_386_GLOB_DAT, 0, None, Slot, D4),
             (A::I386, e::R_386_JMP_SLOT, 0, None, Slot, D4),
             (A::Aarch64, e::R_AARCH64_RELATIVE, 0, None, Ir, D8),
-            (A::Aarch64, e::R_AARCH64_IRELATIVE, 0, None, Ir, D8),
+            (A::Aarch64, e::R_AARCH64_IRELATIVE, 0, None, Ind, D8),
             (A::Aarch64, e::R_AARCH64_GLOB_DAT, 0, None, Slot, D8),
             (A::Aarch64, e::R_AARCH64_JUMP_SLOT, 0, None, Slot, D8),
             (A::Arm, e::R_ARM_RELATIVE, 0, None, Ir, D4),
-            (A::Arm, e::R_ARM_IRELATIVE, 0, None, Ir, D4),
+            (A::Arm, e::R_ARM_IRELATIVE, 0, None, Ind, D4),
             (A::Arm, e::R_ARM_GLOB_DAT, 0, None, Slot, D4),
             (A::Arm, e::R_ARM_JUMP_SLOT, 0, None, Slot, D4),
             (A::Arm, e::R_ARM_REL32, 0, None, Pcrel, S4),
             (A::PowerPc, e::R_PPC_RELATIVE, 0, None, Ir, D4),
-            (A::PowerPc, e::R_PPC_IRELATIVE, 0, None, Ir, D4),
+            (A::PowerPc, e::R_PPC_IRELATIVE, 0, None, Ind, D4),
             (A::PowerPc, e::R_PPC_GLOB_DAT, 0, None, Slot, D4),
             (A::PowerPc, e::R_PPC_JMP_SLOT, 0, None, Slot, D4),
             (A::PowerPc, e::R_PPC_REL32, 0, None, Pcrel, S4),
             (A::PowerPc64, e::R_PPC64_RELATIVE, 0, None, Ir, D8),
-            (A::PowerPc64, e::R_PPC64_IRELATIVE, 0, None, Ir, D8),
+            (A::PowerPc64, e::R_PPC64_IRELATIVE, 0, None, Ind, D8),
             (A::PowerPc64, e::R_PPC64_GLOB_DAT, 0, None, Slot, D8),
             (A::PowerPc64, e::R_PPC64_JMP_SLOT, 0, None, Slot, D8),
             (A::PowerPc64, e::R_PPC64_REL32, 0, None, Pcrel, S4),
@@ -1368,7 +1384,7 @@ mod tests {
     }
 
     /// The word rows `classify` answers, over every type number they could
-    /// be; no other type takes an image-relative or slot row.
+    /// be; no other type takes an image-relative, indirect or slot row.
     #[test]
     fn classify_pins_the_word_rows() {
         let mut rows = 0;
@@ -1385,7 +1401,10 @@ mod tests {
                 None => assert!(
                     !matches!(
                         classify(arch, &r),
-                        Some(Kind::Compute(Value::ImageRelative | Value::Slot, _))
+                        Some(Kind::Compute(
+                            Value::ImageRelative | Value::Indirect | Value::Slot,
+                            _
+                        ))
                     ),
                     "{arch:?} {r:?} takes a word row WORD_ROWS lacks"
                 ),

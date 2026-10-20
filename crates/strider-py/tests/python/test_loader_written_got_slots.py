@@ -46,3 +46,26 @@ def test_a_mips_lazy_stub_is_not_the_call_target():
     stub = elf.symbol("ext_call").address
     text = elf.analyze("call_ext").function.to_text()
     assert f"iconst[{stub:#x}]" not in text, text
+
+
+@pytest.mark.parametrize(
+    "image", ["x64_ifunc_pie.elf", "x64_ifunc_lib.elf"], ids=["irelative", "glob_dat"]
+)
+def test_a_tail_call_through_an_ifunc_slot_is_unresolved(image):
+    """`call_f` is `jmp *slot`, the slot an IFUNC's: an `R_X86_64_IRELATIVE`
+    in the PIE, a `GLOB_DAT` against the IFUNC symbol in the library. The
+    file names the resolver there; the loader stores what it returns."""
+    elf = strider.lift.load_elf(_image(image), relocated_got_is_rom=True)
+    resolver = elf.symbol("f").address
+    result = elf.analyze("call_f")
+    assert result.unresolved, "the jump's target is the resolver's result"
+    assert f"iconst[{resolver:#x}]" not in result.function.to_text()
+
+
+def test_a_tail_call_through_a_plain_slot_still_folds():
+    """`call_h`'s `GLOB_DAT` names a plain function, whose slot is served."""
+    elf = strider.lift.load_elf(_image("x64_ifunc_lib.elf"), relocated_got_is_rom=True)
+    h = elf.symbol("h").address
+    result = elf.analyze("call_h")
+    assert not result.unresolved
+    assert f"iconst[{h:#x}]" in result.function.to_text()
