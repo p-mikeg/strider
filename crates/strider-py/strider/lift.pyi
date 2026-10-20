@@ -455,7 +455,9 @@ class ElfLifter(Lifter):
         """Up to `size` raw bytes at `addr`, or `None` when `addr` is unmapped or
         inside a relocation this loader does not compute. In writable,
         non-executable data such a field is not cut out but serves the file's
-        bytes, which the loader overwrites; `rom()` holds none of that data."""
+        bytes, which the loader overwrites. `rom()` serves no writable data,
+        except `.got` / `.data.rel.ro` under `relocated_got_is_rom`, where
+        such a field is unmapped."""
         ...
     def reader(self) -> BufferReader:
         """The `BufferReader` over the regions `load_elf` mapped: PT_LOAD segments
@@ -560,8 +562,14 @@ def load_elf(
     returns; and on MIPS, whose primary GOT no relocation covers, the
     lazy-resolver word, the module-pointer word when its top bit asks for
     one, and every global entry except those for symbols the image defines
-    that already hold their address. `.got.plt` is never served, lazy binding rewriting those slots on the first call
-    through each one.
+    that already hold their address. `.got.plt` is never served, lazy binding
+    rewriting those slots on the first call through each one.
+
+    Inside an executable mapping a relocation against a defined IFUNC takes
+    the symbol's own address instead, so the instruction still decodes. An
+    address taken in code (`lea f(%rip)`, `mov $f`), or a data word in an
+    executable mapping (FreeBSD 12's `.rodata`), then folds to the symbol,
+    where at run time it holds what the resolver returns.
 
     The rest is an unchecked claim about the runtime: that nothing rewrites a
     slot after the loader has run, and that a symbol the image defines binds
