@@ -2,8 +2,9 @@
 //! under a fixture directory (one per `fixtures/arch/*.mk`) and prints one
 //! line per function: `<arch>/<case>::<symbol>@<addr> <digest>`. The digest
 //! covers the final function's raw DOT, its asm-fingerprints, the CFG DOT, the
-//! sites of each of the six reasons, and the error of a failed analysis. Two
-//! builds diff line for line; the summed analyze wall time goes to stderr.
+//! sites of each reason (`past_function_end` only when it names one), and the
+//! error of a failed analysis. Two builds diff line for line; the summed
+//! analyze wall time goes to stderr.
 //!
 //! ```text
 //! cargo run --release -p strider-orchestrator --example opt_identity > digests.txt
@@ -92,6 +93,13 @@ fn digest_one(
                     .of(strider_orchestrator::Reason::UnverifiedSeed)
                     .collect::<Vec<_>>(),
             )?;
+            let past_end: Vec<_> = r
+                .incomplete()
+                .of(strider_orchestrator::Reason::PastFunctionEnd)
+                .collect();
+            if !past_end.is_empty() {
+                writeln!(text, "past_end {past_end:?}")?;
+            }
         }
     }
     let mut hasher = std::hash::DefaultHasher::new();

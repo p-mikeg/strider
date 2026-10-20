@@ -295,7 +295,7 @@ impl PyCfgOptions {
 
     /// When set, an unconditional branch targeting at or past
     /// `entry + function_max_size` is treated as a tail call, bounding the
-    /// lift; a fall-through past it fails the whole build.
+    /// lift; so is a fall-through past it, reported as `"past_function_end"`.
     #[getter]
     fn function_max_size(&self) -> Option<u64> {
         match self.bound {
