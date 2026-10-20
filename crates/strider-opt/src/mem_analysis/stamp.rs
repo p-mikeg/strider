@@ -8,8 +8,8 @@
 //!    ([`strider_ir::Function::assumptions`]), which only grow.
 //! 3. [`SideTables::invalidate_analyses`] drops both and keeps the claims:
 //!    after each pass or post-pass that changes the graph, and in
-//!    [`refresh_memory_classes`].  Compaction drops the frame-escape verdict
-//!    and remaps the classes.
+//!    [`refresh_memory_classes`].  Any other post-pass drops the frame-escape
+//!    verdict alone; compaction drops it too and remaps the classes.
 //! 4. A converged run stamps every live access after its post-passes, and
 //!    [`refresh_memory_classes`] restamps (`apply_rules_count` calls it). In
 //!    between the table fills lazily.
