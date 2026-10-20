@@ -875,14 +875,20 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // The bytes themselves, which `UndecodableTarget` cannot name: it
         // carries the ARM, and an arm that LED to the bytes decodes. Read
         // off the error rather than from `address`, the failure being able to
-        // sit several instructions into the region this item decoded.
-        if seeded_by.is_some()
-            && let Some(bad) = not_code_addr(&e)
-        {
-            self.incomplete.insert(
-                PcodeInsnAddr::at_machine_start(bad),
-                crate::Reason::UndecodableTarget,
-            );
+        // sit several instructions into the region this item decoded. Any
+        // other failure names the item itself.
+        if seeded_by.is_some() {
+            let (at, reason) = if is_unmapped_start(&e, address) {
+                (address, crate::Reason::UnmappedTarget)
+            } else if let Some(bad) = not_code_addr(&e) {
+                (
+                    PcodeInsnAddr::at_machine_start(bad),
+                    crate::Reason::UndecodableTarget,
+                )
+            } else {
+                (address, crate::Reason::UndecodableTarget)
+            };
+            self.incomplete.insert(at, reason);
         }
         // Under a seeded arm it is a misclassification, not a broken
         // function: drop the arm and report it against the site that named
@@ -1583,6 +1589,59 @@ mod tests {
                 site: branch,
                 target: addr(0x9000, 0),
             }],
+        );
+        assert!(
+            cfg.incomplete()
+                .iter()
+                .any(|e| e == (addr(0x9000, 0), crate::Reason::UnmappedTarget)),
+            "the dropped arm is named for what it is: {:?}",
+            cfg.incomplete()
+        );
+        assert_every_switch_target_has_an_arm(&cfg);
+    }
+
+    /// An arm whose decode fails for another reason, here a fall-through past
+    /// the function's size, is named too.
+    ///
+    /// ```text
+    /// 1000  jmp rax
+    /// 1002  ret
+    /// 1003  nop        ; falls through past the 4-byte bound
+    /// ```
+    #[test]
+    fn a_seeded_arm_failing_past_the_bound_is_named() {
+        let base = 0x1000u64;
+        let bytes = vec![0xff, 0xe0, 0xc3, 0x90, 0xc3];
+
+        let branch = PcodeInsnAddr {
+            machine_addr: base.into(),
+            insn_index: branch_indirect_index(&bytes, base, base),
+        };
+        let mut known_targets = rustc_hash::FxHashMap::default();
+        known_targets.insert(
+            branch,
+            crate::ResolvedTargets::table(vec![0x1002.into(), 0x1003.into()]),
+        );
+        let opts = crate::CfgOptions {
+            bound: crate::FunctionBound::size(4),
+            known_targets: &known_targets,
+            ..crate::CfgOptions::default()
+        };
+
+        let cfg = build_cfg(bytes, base, &opts).expect("build");
+        assert_eq!(
+            cfg.undecodable_seeded_targets(),
+            &[crate::UndecodableTarget {
+                site: branch,
+                target: addr(0x1003, 0),
+            }],
+        );
+        assert!(
+            cfg.incomplete()
+                .iter()
+                .any(|e| e == (addr(0x1003, 0), crate::Reason::UndecodableTarget)),
+            "{:?}",
+            cfg.incomplete()
         );
         assert_every_switch_target_has_an_arm(&cfg);
     }
