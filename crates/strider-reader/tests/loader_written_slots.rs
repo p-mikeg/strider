@@ -3,7 +3,7 @@
 //! view rather than the bytes or the value the file suggests. The images are
 //! `fixtures/loader/out/*`, built by `make -C fixtures/loader`.
 
-use object::{Object, ObjectSection, ObjectSymbol};
+use object::{Object, ObjectSection, ObjectSymbol, ObjectSymbolTable, RelocationFlags};
 use rsleigh::{MemReader, VnAddr, VnSpace};
 use strider_reader::elf::RelocationMode;
 use strider_reader::{ElfFileMemReader, OwnedElf, ReadOnlyMemory};
@@ -130,4 +130,137 @@ fn a_mips_global_got_entry_for_a_defined_symbol_is_served() {
         assert_eq!(held, ext_var, "{name}: the fixture's file word");
         assert_eq!(rom_word(&reader, slot, w, le), Ok(ext_var), "{name}");
     }
+}
+
+/// The sites of the dynamic relocations of type `r_type`, against `sym` when
+/// it is given.
+fn dynamic_sites(elf: &OwnedElf, r_type: u32, sym: Option<&str>) -> Vec<u64> {
+    let obj = elf.checked_file().unwrap();
+    let dynsym = obj.dynamic_symbol_table();
+    let sites: Vec<u64> = obj
+        .dynamic_relocations()
+        .expect("dynamic relocations")
+        .filter(|(_, r)| {
+            r.flags() == RelocationFlags::Elf { r_type }
+                && sym.is_none_or(|name| match r.target() {
+                    object::RelocationTarget::Symbol(i) => dynsym
+                        .as_ref()
+                        .and_then(|t| t.symbol_by_index(i).ok())
+                        .is_some_and(|s| s.name() == Ok(name)),
+                    _ => false,
+                })
+        })
+        .map(|(site, _)| site)
+        .collect();
+    assert!(
+        !sites.is_empty(),
+        "an r_type {r_type} relocation against {sym:?}"
+    );
+    sites
+}
+
+fn dynamic_site(elf: &OwnedElf, r_type: u32, sym: Option<&str>) -> u64 {
+    let sites = dynamic_sites(elf, r_type, sym);
+    assert_eq!(sites.len(), 1, "r_type {r_type} against {sym:?}");
+    sites[0]
+}
+
+/// `R_*_IRELATIVE` is `indirect(B + A)`: the loader stores what the resolver
+/// returns, so the slot is a hole, RELA (the field holds 0) and REL (the
+/// field holds the resolver's address) alike: f's `.got` slot and `f_ptr` in
+/// `.data.rel.ro`.
+#[test]
+fn an_irelative_slot_is_a_hole() {
+    for (name, r_type, w, file_word) in [
+        (
+            "x64_ifunc_pie.elf",
+            object::elf::R_X86_64_IRELATIVE,
+            8,
+            Some(0),
+        ),
+        ("x86_ifunc_pie.elf", object::elf::R_386_IRELATIVE, 4, None),
+    ] {
+        let elf = open(name);
+        let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+        let sites = dynamic_sites(&elf, r_type, None);
+        assert_eq!(sites.len(), 2, "{name}: f's slot and f_ptr");
+        for slot in sites {
+            assert_hole(rom_word(&reader, slot, w, true), r_type, name);
+            // The REL field's own `B + A` is the resolver's address.
+            let resolver = dynsym_or_symtab(&elf, "resolve_f");
+            assert_eq!(
+                fetch_word(&reader, slot, w, true),
+                file_word.unwrap_or(resolver),
+                "{name} {slot:#x}: the writable fetch view serves the file's word"
+            );
+        }
+    }
+}
+
+fn dynsym_or_symtab(elf: &OwnedElf, name: &str) -> u64 {
+    let obj = elf.checked_file().unwrap();
+    obj.symbols()
+        .chain(obj.dynamic_symbols())
+        .find(|s| s.name() == Ok(name))
+        .unwrap_or_else(|| panic!("{name}"))
+        .address()
+}
+
+/// A `GLOB_DAT` against a defined `STT_GNU_IFUNC` symbol, and the
+/// `R_X86_64_64` of `f_ptr`: `S` is the resolver, and the loader stores what
+/// it returns. A `GLOB_DAT` against a plain function beside them keeps its
+/// value.
+#[test]
+fn a_glob_dat_against_a_defined_ifunc_is_a_hole() {
+    let elf = open("x64_ifunc_lib.elf");
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    let glob_dat = object::elf::R_X86_64_GLOB_DAT;
+    assert_hole(
+        rom_word(&reader, dynamic_site(&elf, glob_dat, Some("f")), 8, true),
+        glob_dat,
+        "f",
+    );
+    let abs = object::elf::R_X86_64_64;
+    assert_hole(
+        rom_word(&reader, dynamic_site(&elf, abs, Some("f")), 8, true),
+        abs,
+        "f_ptr",
+    );
+    assert_eq!(
+        rom_word(&reader, dynamic_site(&elf, glob_dat, Some("h")), 8, true),
+        Ok(dynsym_value(&elf, "h")),
+        "h is no IFUNC"
+    );
+}
+
+/// An unlinked object's GOT reference to a defined IFUNC still addresses its
+/// synthetic slot, which is left unmapped as a weak undefined symbol's is:
+/// the symbol's address there would be the resolver's. `f_ptr`'s
+/// `R_X86_64_64` is not computed.
+#[test]
+fn an_et_rel_got_slot_for_a_defined_ifunc_is_unmapped() {
+    let elf = open("x64_ifunc.o");
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    let obj = elf.checked_file().unwrap();
+    let text = obj.section_by_name(".text").expect(".text");
+    let layout = strider_reader::elf::ElfSectionLayout::new(&obj);
+    let base = layout.section_base(&text);
+    // `jmp *slot(%rip)`, the displacement four bytes from the instruction end.
+    let slot_of = |func: &str| {
+        let sym = obj.symbol_by_name(func).expect(func);
+        let field = base + sym.address() + 4 + 2;
+        let disp = fetch_word(&reader, field, 4, true) as u32 as i32;
+        (field + 4).wrapping_add_signed(i64::from(disp))
+    };
+    let f_slot = slot_of("call_f");
+    let err = rom_word(&reader, f_slot, 8, true).expect_err("f's slot must be unmapped");
+    assert!(err.contains("not mapped"), "{err}");
+    let h = base + obj.symbol_by_name("h").expect("h").address();
+    assert_eq!(rom_word(&reader, slot_of("call_h"), 8, true), Ok(h));
+    let rel_ro = obj.section_by_name(".data.rel.ro").expect(".data.rel.ro");
+    assert_hole(
+        rom_word(&reader, layout.section_base(&rel_ro), 8, true),
+        object::elf::R_X86_64_64,
+        "f_ptr",
+    );
 }

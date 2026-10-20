@@ -16,10 +16,11 @@ Rebuilding is only needed when a case or an arch's flags change. See the header
 of `Makefile` for the `ARCH=` / `CASE=` selectors.
 
 `loader/out/` holds the images the ELF reader tests load for GOT slots the
-dynamic loader fills: MIPS executables and the libraries they import from.
-Each needs a link of its own, so they are built by `make -C loader` from
-`loader/src/`, not per arch, and the golden suite analyses none of them. They
-need `gcc-mips-linux-gnu` and `gcc-mips64el-linux-gnuabi64`.
+dynamic loader fills: MIPS executables and the libraries they import from,
+and x86 / x86-64 images with an IFUNC. Each needs a link of its own, so they
+are built by `make -C loader` from `loader/src/`, not per arch, and the golden
+suite analyses none of them. They need `gcc`, `gcc-i686-linux-gnu`,
+`gcc-mips-linux-gnu` and `gcc-mips64el-linux-gnuabi64`.
 
 Each `arch/<arch>.mk` is one row of `FIXTURE_ARCHES` in
 `crates/strider-orchestrator/tests/common/fixtures.rs`; `cargo test -p
