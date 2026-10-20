@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 
 import strider
-from strider.pattern import Capture, int_const
+from strider.pattern import Capture, anything, int_add, int_const
 
 from .conftest import built_function
 
@@ -92,6 +92,23 @@ def test_an_unbound_capture_equals_no_capture():
     assert m[c] != unbound and not m[c] == unbound
     assert unbound != m[c] and not unbound == m[c]
     assert unbound != m[Capture()] and not unbound == m[Capture()]
+
+
+def test_bound_captures_of_nodes_compare_by_identity():
+    g = built_function("x86", "memory", "array_sum")
+    a, b = Capture(), Capture()
+    adds = g.find_all(int_add(anything(), anything()).capture(a))
+    assert len(adds) >= 2, "the fixture must carry two adds"
+    first, second = adds[0], adds[1]
+    assert first[a] == first[a] and not first[a] != first[a]
+    assert first[a] != second[a] and not first[a] == second[a]
+    again = next(
+        h for h in g.find_all(int_add(anything(), anything()).capture(b)) if h.node(b) == first.node(a)
+    )
+    assert first[a] == again[b], "two captures bound to one node are equal"
+    other = built_function("x86", "memory", "array_sum")
+    twin = other.find_all(int_add(anything(), anything()).capture(a))[0]
+    assert first[a] != twin[a], "a node of another function is another node"
 
 
 def test_bound_capture_is_unhashable():
