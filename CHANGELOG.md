@@ -367,8 +367,8 @@
 - `Lifter::new`, `Strider::new` and `DecodeEngine::new` return `Err` when the
   arch and sla disagree on the ISA mode: a mode var the sla does not flow, or
   (not `DecodeEngine::new`) an unpaired `ISAModeSwitch`. Before, only a debug
-  build asserted it. A debug build also asserts that `DecodeEngine::new`'s
-  `Sleigh` was built from its arch's sla and pspec.
+  build asserted it. `DecodeEngine::new` also returns `Err` when its
+  `Sleigh` was not built from its arch's sla and pspec.
 - A relocated image no longer fails to load with "patch budget": every
   region shares one patch list, so a site any number of overlapping
   mappings cover is patched in all of them at no extra cost.

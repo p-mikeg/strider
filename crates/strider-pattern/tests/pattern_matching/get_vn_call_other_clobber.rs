@@ -8,7 +8,7 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
     // Every tracked variable is callee-saved in the override CC, so the
     // per-call clobber set is empty: no clobber output slots.
     let arch = SleighArch::x86_64();
-    let regs = arch.probe_regs().unwrap();
+    let regs = arch.probe_regs();
     let rax = regs.name_to_vn("RAX").unwrap();
     let rsp = regs.name_to_vn("RSP").unwrap();
 
