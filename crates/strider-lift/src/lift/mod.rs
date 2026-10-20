@@ -81,6 +81,8 @@ pub struct Lifter<R: rsleigh::MemReader> {
     /// `setISAMode` reads it, MIPS's `JXWritePC` writes it), `None` exactly
     /// where the arch has no ISA-mode var.
     isa_mode_switch_vn: Option<rsleigh::Vn>,
+    /// [`strider_target::SleighArch::volatile_register_ranges`].
+    volatile_ranges: Vec<core::ops::Range<u64>>,
 }
 
 impl<R: rsleigh::MemReader> Lifter<R> {
@@ -124,6 +126,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
                 arch.isa_mode_var(),
             ));
         }
+        let volatile_ranges = arch.volatile_register_ranges(&sleigh_regs)?;
         Ok(Self {
             engine: strider_cfg::DecodeEngine::new(arch, sleigh)?,
             sleigh_regs,
@@ -131,10 +134,11 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             space_ids,
             ram_addr_size,
             isa_mode_switch_vn,
+            volatile_ranges,
         })
     }
 
-    /// Indexed by `user_op_id`.
+    /// Indexed by `user_op_id`, which for `read_volatile` is past the table.
     #[must_use]
     pub fn user_op_names(&self) -> &[String] {
         self.engine.user_op_names()
@@ -172,6 +176,16 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     #[must_use]
     pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {
         &self.sleigh_regs
+    }
+
+    /// Whether `vn` shares a byte with a volatile register.
+    pub(crate) fn is_volatile(&self, vn: &rsleigh::Vn) -> bool {
+        let (start, end) = (vn.addr_off, vn.addr_off + u64::from(vn.size));
+        vn.addr_space == rsleigh::VnSpace::REGISTER
+            && self
+                .volatile_ranges
+                .iter()
+                .any(|r| r.start < end && start < r.end)
     }
 
     /// The declared register file, for containment queries against a computed

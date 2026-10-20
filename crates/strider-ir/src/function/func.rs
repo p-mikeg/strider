@@ -320,8 +320,8 @@ impl Function {
         self.switch_tables.push(targets)
     }
 
-    /// The Sleigh name of a `CallOther`'s user-op, `None` for any other node
-    /// or an unnamed op.
+    /// The name of a `CallOther`'s user-op, Sleigh's or `read_volatile`;
+    /// `None` for any other node or an unnamed op.
     #[inline]
     pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
         match *self.node_kind(node_id) {
