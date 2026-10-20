@@ -39,7 +39,7 @@ pub type TemplateKindFnIntConst = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result
 pub enum TemplateKind {
     Exact(NodeKind),
     /// The closure returns the `NodeKind` to materialise, given a
-    /// [`TemplateCtx`].
+    /// [`TemplateCtx`]; an `IntConst` is refused, as under `Exact`.
     Fn(TemplateKindFn),
     /// The closure computes a `u128` at rewrite time, interned at the
     /// resolved output width.
@@ -146,12 +146,9 @@ pub fn instantiate<B: IRBuilder>(
                 }
                 continue;
             }
-            // A `ConstId` indexes one function's interner; the constant has to
-            // be interned here, at the node's resolved width.
-            TmplNodeKind::Build(TemplateKind::Exact(NodeKind::IntConst(_))) => anyhow::bail!(
-                "template IntConst built from a NodeKind carries another function's \
-                 ConstId; build it with int_const or dynamic_leaf"
-            ),
+            TmplNodeKind::Build(TemplateKind::Exact(NodeKind::IntConst(_))) => {
+                return Err(raw_int_const());
+            }
             TmplNodeKind::Build(TemplateKind::Exact(k)) => *k,
             TmplNodeKind::Build(TemplateKind::Fn(f)) => {
                 // The closure computes its constant against this node's own
@@ -163,7 +160,10 @@ pub fn instantiate<B: IRBuilder>(
                     root: lhs_root,
                     root_ty: value_ty,
                 };
-                f(&ctx)?
+                match f(&ctx)? {
+                    NodeKind::IntConst(_) => return Err(raw_int_const()),
+                    kind => kind,
+                }
             }
             TmplNodeKind::Build(TemplateKind::FnIntConst(f)) => {
                 let value_ty = node_value_ty(template, vtx, &value_tys);
@@ -253,6 +253,15 @@ pub fn instantiate<B: IRBuilder>(
     root_value.ok_or_else(|| anyhow!("root template node never materialised"))
 }
 
+/// A `ConstId` indexes one function's interner at one width, so a template
+/// constant is interned at instantiation, at the node's resolved width.
+fn raw_int_const() -> anyhow::Error {
+    anyhow!(
+        "template IntConst built from a NodeKind carries a ConstId interned \
+         elsewhere; build it with int_const or TemplateKind::FnIntConst"
+    )
+}
+
 /// Every value output's type, keyed on the output vertex.
 struct ValueTys {
     by_vertex: FxHashMap<TmplValueId, ValueType>,
@@ -260,10 +269,9 @@ struct ValueTys {
 }
 
 impl ValueTys {
-    /// A vertex outside the root's cone never reaches the build loop, so the
-    /// root's type stands in for it.
+    /// Every value-output vertex is resolved, so `vtx` must be one.
     fn of(&self, vtx: TmplValueId) -> ValueType {
-        self.by_vertex.get(&vtx).copied().unwrap_or(self.root_ty)
+        self.by_vertex[&vtx]
     }
 }
 

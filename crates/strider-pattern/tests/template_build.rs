@@ -776,3 +776,31 @@ fn a_raw_node_off_its_signature_is_refused() {
         assert!(err.contains(detail), "{label}: {err}");
     }
 }
+
+/// A `Fn` closure's `IntConst` is refused as an `Exact` one is: its `ConstId`
+/// was interned at another width, or by another function.
+#[test]
+fn a_fn_leaf_returning_an_int_const_is_refused() {
+    let mut fx = make_empty_fn(|bld| bld.build_int_const(0x1_0000_0001u64, T::int(64))).unwrap();
+    let lhs_root = fx
+        .walk()
+        .find(|&n| matches!(fx.node_kind(n), NodeKind::IntConst(_)))
+        .unwrap();
+    let mut b = TemplateBuilder::new();
+    let leaf = b.dynamic_leaf(template::TemplateKind::Fn(Box::new(|ctx| {
+        Ok(*ctx.function.node_kind(ctx.root))
+    })));
+    b.set_value_ty(leaf, T::int(32));
+    let tpl = b.finish();
+    let mut ef = EditFunction::new(&mut fx);
+    let err = instantiate(
+        &tpl,
+        &mut ef,
+        &Bindings::default(),
+        lhs_root,
+        &[lhs_root],
+        T::int(32),
+    )
+    .expect_err("an IntConst from a Fn leaf");
+    assert!(err.to_string().contains("IntConst"), "{err}");
+}
