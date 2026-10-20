@@ -196,6 +196,10 @@ class CfgOptions:
         """These options with `elf`'s mapping-symbol data ranges, unless
         `data_ranges` already names some."""
         ...
+    def _seated_table_id(self) -> int:
+        """The address of the seated `known_targets` table every analyse
+        borrows, shared by every object derived from this one."""
+        ...
     def _call_other_override_builds(self) -> int:
         """How many times `call_other_abis` was resolved for an analyse, by
         this object and every one derived from it."""

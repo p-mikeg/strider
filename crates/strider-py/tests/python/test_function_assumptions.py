@@ -223,3 +223,8 @@ def test_assumption_options_compare_by_value():
     assert AssumptionOptions(noalias_allocators=[1, 2]) == AssumptionOptions(
         noalias_allocators=[2, 1]
     )
+
+
+def test_assumption_options_is_unhashable():
+    with pytest.raises(TypeError):
+        hash(AssumptionOptions())

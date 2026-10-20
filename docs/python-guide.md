@@ -63,8 +63,12 @@ You can also keep the result whole and use `result.cfg` / `result.function` /
 opts = strider.lift.LifterOptions(
     cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True)
 )
-cfg, function, unresolved = prog.analyze("array_sum", opts=opts)
+addr = prog.symbol("array_sum").address
+cfg, function, unresolved = prog.analyze(addr, opts=opts)
 ```
+
+A call by name bounds the lift by the symbol's size instead, which makes
+`allow_code_before_start_addr` moot, so this one passes the address.
 
 The other options worth knowing about, all covered in
 [python-api.md](python-api.md#2-analyzing-a-function):

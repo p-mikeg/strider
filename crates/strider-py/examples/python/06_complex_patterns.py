@@ -18,9 +18,7 @@ WORKSPACE = pathlib.Path(__file__).resolve().parents[4]
 FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 
 prog = strider.lift.load_elf(str(FIXTURE))
-_cfg, function, unresolved = prog.analyze(
-    "array_sum", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
-)
+_cfg, function, unresolved = prog.analyze("array_sum")
 
 
 # load(base + idx*stride) is the canonical indexed-array-load shape. uint_opt

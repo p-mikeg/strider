@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from typing import (
     Callable,
+    ClassVar,
     Generic,
     Literal,
     Optional,
@@ -195,8 +196,9 @@ class BoundCapture:
     """A capture bound to one `Match`, from `m[c]` / `m["name"]`. `has` says
     whether it bound, and a numeric capture converts and compares directly,
     with an int or with another `BoundCapture` (`int(m[c])`, `m[c] == 0x10`,
-    `m[a] == m[b]`). Every reader is a `Match` method: `m.uint(c)`,
-    `m.node(c)`, `m.op_opt(c)`."""
+    `m[a] == m[b]`). Two non-constant captures are equal when they bound the
+    same value of the same function; an unbound one equals nothing. Every
+    reader is a `Match` method: `m.uint(c)`, `m.node(c)`, `m.op_opt(c)`."""
 
     # Read-only: a getter with no setter, so a plain attribute declaration
     # would let a type checker accept `x.has = ...`, which raises at runtime.
@@ -205,6 +207,7 @@ class BoundCapture:
     def __int__(self) -> int: ...
     def __index__(self) -> int: ...
     def __eq__(self, other: object) -> bool: ...
+    __hash__: ClassVar[None]  # type: ignore[assignment]
     def __repr__(self) -> str: ...
 
 class Capture:

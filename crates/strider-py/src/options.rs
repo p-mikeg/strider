@@ -373,6 +373,12 @@ impl PyCfgOptions {
         Ok(set.bind(py).clone())
     }
 
+    /// The address of the seated `known_targets` table every analyse borrows,
+    /// shared by every object derived from this one.
+    fn _seated_table_id(&self) -> usize {
+        Arc::as_ptr(&self.seated) as usize
+    }
+
     /// How many times `call_other_abis` was resolved for an analyse, by this
     /// object and every one derived from it.
     fn _call_other_override_builds(&self) -> usize {
