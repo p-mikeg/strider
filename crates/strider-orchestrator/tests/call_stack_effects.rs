@@ -20,10 +20,13 @@ fn analyze(arch: Arch, bytes: Vec<u8>) -> strider_ir::Function {
             return_slots_survive_untracked_writes: true,
             ..strider_opt::AssumptionOptions::none()
         },
-        ..common::ignoring()
+        ..Default::default()
     };
     let result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
-    assert!(result.is_complete(), "no incompleteness is expected here");
+    assert!(
+        result.incomplete().is_empty(),
+        "no incompleteness is expected here"
+    );
     result.function
 }
 

@@ -108,10 +108,19 @@ fn a_chain_of_tables_seats_one_level_per_round() {
     let mut pipeline = strider_orchestrator::opt::default_pipeline();
     pipeline.add_post_pass(CountWideRuns(Arc::clone(&wide_runs)));
     let result = strider
-        .analyze(BASE, &cc, &common::ignoring(), Some(pipeline))
+        .analyze(
+            BASE,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            Some(pipeline),
+        )
         .expect("analyze");
 
-    assert!(result.is_complete(), "incomplete: {}", result.incomplete());
+    assert!(
+        result.incomplete().is_empty(),
+        "incomplete: {}",
+        result.incomplete()
+    );
     let seated = result
         .cfg
         .regions()
@@ -197,7 +206,12 @@ fn a_table_the_whole_function_bounds_tighter_seats_the_tighter_answer() {
         Some(Box::new(Rom { text, tables })),
     );
     let result = strider
-        .analyze(E, &cc, &common::ignoring(), None)
+        .analyze(
+            E,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        )
         .expect("analyze");
     let arms_at = |site: u64| -> Vec<u64> {
         let mut arms: Vec<u64> = result
@@ -224,5 +238,9 @@ fn a_table_the_whole_function_bounds_tighter_seats_the_tighter_answer() {
         arms_at(L1 + 5),
         (0..ARMS).map(|i| RETS + i).collect::<Vec<_>>()
     );
-    assert!(result.is_complete(), "incomplete: {}", result.incomplete());
+    assert!(
+        result.incomplete().is_empty(),
+        "incomplete: {}",
+        result.incomplete()
+    );
 }

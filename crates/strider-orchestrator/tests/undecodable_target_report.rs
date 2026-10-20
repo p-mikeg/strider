@@ -18,7 +18,7 @@ fn analyze(words: &[u32]) -> strider_orchestrator::AnalyzeResult {
             bound: strider_cfg::FunctionBound::size(u64::try_from(words.len() * 4).expect("size")),
             ..Default::default()
         },
-        ..common::ignoring()
+        ..Default::default()
     };
     strider
         .analyze(BASE, &cc, &opts, None)
@@ -38,7 +38,7 @@ fn a_branch_to_glibcs_ppc_abort_word_is_reported_not_failed() {
     // 0x1000 beq 0x1008 ; 0x1004 blr ; 0x1008 .long 0
     let result = analyze(&[0x4182_0008, 0x4e80_0020, 0]);
     assert_eq!(reported(&result), vec![0x1008]);
-    assert!(!result.is_complete());
+    assert!(!result.incomplete().is_empty());
 }
 
 #[test]
@@ -46,7 +46,7 @@ fn a_traceback_table_after_a_call_ends_the_call() {
     // 0x1000 bl 0x1100 ; 0x1004 li r3,0 (the TOC-restore slot) ; 0x1008 .long 0
     let result = analyze(&[0x4800_0101, 0x3860_0000, 0]);
     assert_eq!(reported(&result), vec![0x1008]);
-    assert!(!result.is_complete());
+    assert!(!result.incomplete().is_empty());
 }
 
 #[test]
@@ -60,7 +60,7 @@ fn data_after_a_nop_after_a_call_lifts() {
             data_ranges: strider_cfg::DataRanges::new(std::iter::once(0x1006..0x1007)),
             ..Default::default()
         },
-        ..common::ignoring()
+        ..Default::default()
     };
     let result = strider
         .analyze(BASE, &cc, &opts, None)

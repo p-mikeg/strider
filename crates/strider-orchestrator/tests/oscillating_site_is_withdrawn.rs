@@ -66,7 +66,8 @@ fn seats_a_switch(result: &AnalyzeResult) -> bool {
 fn a_site_that_narrows_twice_is_withdrawn_and_reported() {
     let mut bytes = vec![0xc3u8; 0x40];
     bytes[..2].copy_from_slice(&[0xff, 0xe0]); // 0x1000: jmp rax
-    let (result, rounds) = analyze_flapping(bytes, &common::ignoring());
+    let (result, rounds) =
+        analyze_flapping(bytes, &strider_orchestrator::AnalyzeOptions::default());
 
     assert!(
         result
@@ -107,7 +108,7 @@ fn a_seeded_site_that_narrows_twice_is_withdrawn_over_its_seed() {
             known_targets: &known,
             ..CfgOptions::default()
         },
-        ..common::ignoring()
+        ..Default::default()
     };
     let (result, rounds) = analyze_flapping(bytes, &opts);
 

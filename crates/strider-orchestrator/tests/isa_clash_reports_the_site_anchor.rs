@@ -82,7 +82,7 @@ fn analyze(
             known_targets: known,
             ..CfgOptions::default()
         },
-        ..common::ignoring()
+        ..Default::default()
     };
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, None);
     strider

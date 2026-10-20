@@ -341,13 +341,13 @@ when both IR slots hold the same value.
   sorts them, which is what fixes `InitialVnId` numbering.
 - Indirect-branch resolution is a re-lift fixed-point loop in `Strider::analyze`
   that converges on the induced edge set; unresolvable branches are reported
-  (`Reason::UnresolvedBranch`), and `analyze` refuses an incomplete result
-  unless `AnalyzeOptions::on_incomplete` is `Ignore`. Every narrowing is
-  reported there, and a site that NARROWS twice has an unstable answer: it is
-  withdrawn and reported, never an `Err`. Exhausting `MAX_RESOLUTION_ITERATIONS`
-  while every site still grows is the discovery depth limit, and those sites
-  come back as unresolved too. A `Return` whose folded target is not provably
-  the entry return address is reported there as well
+  (`Reason::UnresolvedBranch`), and `analyze` returns its result whatever is
+  reported. Every narrowing is reported there, and a site that NARROWS twice
+  has an unstable answer: it is withdrawn and reported, never an `Err`.
+  Exhausting `MAX_RESOLUTION_ITERATIONS` while every site still grows is the
+  discovery depth limit, and those sites come back as unresolved too. A
+  `Return` whose folded target is not provably the entry return address is
+  reported there as well
   (`strider_opt::ReturnTargets`), unless the CFG CONSUMED a caller's
   `LinkRegister` seat there (`Cfg::link_register_seated`), in which case it is
   `UnverifiedSeed` instead. A seat alone does not move it: a site whose
@@ -359,9 +359,9 @@ when both IR slots hold the same value.
   entry (see `CallingConvention::x86_cdecl`).
 - A converged CFG is never silently incomplete: `AnalyzeResult::incomplete()`
   (the returned `Cfg`'s own `incomplete()`) is one `Incompleteness` set of
-  `(PcodeInsnAddr, Reason)`, six reasons, and `is_complete()` is "may this be
-  incomplete?". Target reasons accumulate over the rounds; site reasons are
-  the final round's. Each reason's contract is on `strider_cfg::Reason`.
+  `(PcodeInsnAddr, Reason)`, six reasons, and `is_empty()` is "complete".
+  Target reasons accumulate over the rounds; site reasons are the final
+  round's. Each reason's contract is on `strider_cfg::Reason`.
   `InteriorTarget` also carries a region start a later decode stepped over
   (`RegionBuilder::note_stepped_over_region_starts`): those bytes have two
   owners with two different instruction streams, so overlapping code is

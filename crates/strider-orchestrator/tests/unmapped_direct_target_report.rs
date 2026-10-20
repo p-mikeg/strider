@@ -14,7 +14,12 @@ fn a_direct_branch_out_of_the_image_is_reported_not_failed() {
 
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let result = strider
-        .analyze(BASE, &cc, &common::ignoring(), None)
+        .analyze(
+            BASE,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        )
         .expect("an unmapped direct target must not fail the whole function");
 
     assert_eq!(
@@ -26,7 +31,7 @@ fn a_direct_branch_out_of_the_image_is_reported_not_failed() {
         vec![TARGET],
     );
     assert!(
-        !result.is_complete(),
+        !result.incomplete().is_empty(),
         "a CFG that stops at the edge of the image carries a caveat",
     );
 }

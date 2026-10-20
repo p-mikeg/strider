@@ -17,16 +17,6 @@ create_exception!(
      missing file (`FileNotFoundError`)."
 );
 
-/// `e` as the `StriderError` it stands for.
-pub fn from_analyze_err(e: strider_orchestrator::AnalyzeError) -> PyErr {
-    match e {
-        strider_orchestrator::AnalyzeError::Failed(e) => into_strider_err(e),
-        strider_orchestrator::AnalyzeError::Incomplete(_) => {
-            into_strider_err(anyhow::anyhow!("{e}"))
-        }
-    }
-}
-
 thread_local! {
     /// The Python exception a user callback raised, kept so the synthesized
     /// `StriderError` can chain it as `__cause__`.  Cleared on entry to every

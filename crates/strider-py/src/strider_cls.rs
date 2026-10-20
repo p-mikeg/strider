@@ -682,8 +682,8 @@ impl PyLifter {
             lifter.bump_context_gen();
             lifter
                 .strider_mut()?
-                .build_cfg(entry, &cfg_opts, strider_orchestrator::OnIncomplete::Ignore)
-                .map_err(crate::errors::from_analyze_err)
+                .build_cfg(entry, &cfg_opts)
+                .map_err(into_strider_err)
         })?;
         Ok(PyCfg::new(inner, slf, target))
     }
@@ -764,7 +764,6 @@ impl PyLifter {
             resolve_indirect_branches,
             assumptions,
             compact,
-            on_incomplete: strider_orchestrator::OnIncomplete::Ignore,
         };
         // The fixed-point loop runs without the GIL where it can: a pipeline's
         // boxed passes are `Send`, so a closure capturing one satisfies
@@ -793,7 +792,7 @@ impl PyLifter {
             } else {
                 py.allow_threads(|| inner.analyze(entry, &cc_built, &analyze_opts, custom_pipeline))
             };
-            prefer_pending_control_flow(outcome.map_err(crate::errors::from_analyze_err))?
+            prefer_pending_control_flow(outcome.map_err(into_strider_err))?
         };
         let unresolved = machine_addrs(
             result

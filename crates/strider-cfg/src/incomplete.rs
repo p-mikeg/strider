@@ -96,7 +96,7 @@ pub struct Incompleteness(BTreeSet<(PcodeInsnAddr, Reason)>);
 impl Incompleteness {
     /// Whether nothing is named.
     #[must_use]
-    pub fn is_complete(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
@@ -158,11 +158,11 @@ mod tests {
 
     #[test]
     fn any_one_reason_makes_a_set_incomplete() {
-        assert!(Incompleteness::default().is_complete());
+        assert!(Incompleteness::default().is_empty());
         for reason in Reason::ALL {
             let mut set = Incompleteness::default();
             set.insert(at(0x1000), reason);
-            assert!(!set.is_complete(), "{reason:?}");
+            assert!(!set.is_empty(), "{reason:?}");
             assert_eq!(set.of(reason).collect::<Vec<_>>(), [at(0x1000)]);
         }
     }
