@@ -3,7 +3,7 @@
 //! `.into_pattern()`.
 
 pub mod alternation;
-pub mod builder_like;
+pub(crate) mod builder_like;
 pub mod consts;
 pub mod value_ops;
 pub mod wildcards;
