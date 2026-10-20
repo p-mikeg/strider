@@ -162,7 +162,7 @@ fn mips_performance_control_reads_are_one_value() {
 }
 
 /// ARM reads the generic timer through `mrrc`, which the sla lifts as a
-/// `CallOther`, so two reads are two nodes without any volatile list.
+/// `CallOther` per read, so two reads are two nodes without any volatile list.
 #[test]
 fn arm_generic_timer_reads_differ() {
     // mrrc p15, 1, r0, r1, c14; mrrc p15, 1, r2, r3, c14; subs r0, r2, r0; bx lr
@@ -171,5 +171,118 @@ fn arm_generic_timer_reads_differ() {
         &[0xec51_0f1e, 0xec53_2f1e, 0xe052_0000, 0xe12f_ff1e],
     );
     assert_eq!(f.int_const_u128(returned(&f)[0]), None);
-    assert_eq!(volatile_reads(&f), 0);
+    let low_word_reads = f
+        .walk()
+        .filter(|&n| f.call_other_name(n) == Some("coprocessor_movefromRt"))
+        .count();
+    assert_eq!(low_word_reads, 2);
+}
+
+#[test]
+fn powerpc_vtb_reads_differ() {
+    // mfspr r10, 849; mfspr r9, 849; subf r3, r10, r9; blr
+    let words = [0x7d51_d2a6, 0x7d31_d2a6, 0x7c6a_4850, 0x4e80_0020];
+    for arch in PPC {
+        assert_elapsed_is_opaque(arch, &words);
+    }
+}
+
+#[test]
+fn powerpc_pmc7_reads_differ() {
+    // mfspr r10, 793; mfspr r9, 793; subf r3, r10, r9; blr
+    let words = [0x7d59_c2a6, 0x7d39_c2a6, 0x7c6a_4850, 0x4e80_0020];
+    for arch in PPC {
+        assert_elapsed_is_opaque(arch, &words);
+    }
+}
+
+#[test]
+fn mips_cp0_cause_reads_differ() {
+    // mfc0 t0, $13; mfc0 t1, $13; subu v0, t1, t0; jr ra; nop
+    let words = [0x4008_6800, 0x4009_6800, 0x0128_1023, 0x03e0_0008, 0];
+    for arch in MIPS {
+        assert_elapsed_is_opaque(arch, &words);
+    }
+}
+
+/// The region `n`'s control descends from, past straight-line control nodes.
+fn enclosing_region(
+    f: &strider_ir::Function,
+    n: strider_ir::node::NodeId,
+) -> strider_ir::node::NodeId {
+    let mut n = n;
+    while !matches!(f.node_kind(n), NodeKind::Region | NodeKind::Entry) {
+        n = f.producer(f.node_inputs(n)[0]);
+    }
+    n
+}
+
+/// A poll loop's exit test reads the counter afresh each iteration: some `If`
+/// tests a `read_volatile` taken in a region that the `If` itself loops back
+/// to. Phis are not followed, so a value carried around the loop does not
+/// count.
+fn assert_loop_exit_rereads(arch: Arch, words: &[u32]) {
+    let f = analyze(arch, words);
+    let found = f.walk().any(|i| {
+        if !matches!(f.node_kind(i), NodeKind::If) {
+            return false;
+        }
+        let exits: Vec<_> = f.node_outputs(i).to_vec();
+        let mut stack = vec![f.producer(f.node_inputs(i)[1])];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(n) = stack.pop() {
+            if !seen.insert(n) {
+                continue;
+            }
+            match f.node_kind(n) {
+                NodeKind::Phi => {}
+                NodeKind::CallOther { .. } if f.call_other_name(n) == Some("read_volatile") => {
+                    let header = enclosing_region(&f, n);
+                    if f.node_inputs(header)
+                        .into_iter()
+                        .any(|c| exits.contains(&c))
+                    {
+                        return true;
+                    }
+                }
+                _ => stack.extend(f.node_inputs(n).into_iter().map(|v| f.producer(v))),
+            }
+        }
+        false
+    });
+    assert!(found, "{arch:?}: no loop exit re-reads the counter");
+}
+
+#[test]
+fn mips_count_poll_loop_rereads_each_iteration() {
+    // 1: mfc0 t2, $9; sltu t3, t2, a0; bnez t3, 1b; nop; jr ra; move v0, t2
+    let words = [
+        0x400a_4800,
+        0x0144_582b,
+        0x1560_fffd,
+        0,
+        0x03e0_0008,
+        0x0140_1025,
+    ];
+    for arch in MIPS {
+        assert_loop_exit_rereads(arch, &words);
+    }
+}
+
+#[test]
+fn aarch64_cntvct_poll_loop_rereads_each_iteration() {
+    // mrs x1, cntvct_el0; 1: mrs x2, cntvct_el0; sub x3, x2, x1; cmp x3, x0;
+    // b.lo 1b; mov x0, x3; ret
+    let words = [
+        0xd53b_e041,
+        0xd53b_e042,
+        0xcb01_0043,
+        0xeb00_007f,
+        0x54ff_ffa3,
+        0xaa03_03e0,
+        0xd65f_03c0,
+    ];
+    for arch in AARCH64 {
+        assert_loop_exit_rereads(arch, &words);
+    }
 }
