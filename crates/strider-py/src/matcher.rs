@@ -421,8 +421,10 @@ impl PyBoundCapture {
     /// Equal to an int matching the captured constant at its width, in either
     /// signed or unsigned spelling (so `-8` and `0xFFFFFFF8` both match a
     /// 32-bit -8), or to another `BoundCapture` whose constant agrees in
-    /// either spelling. Two non-constant captures are equal when they bound
-    /// the same value of the same function; an unbound one equals nothing.
+    /// either spelling. Two captures with no integer value (any binding but an
+    /// integer constant of at most 128 bits, so a float constant too) are
+    /// equal when they bound the same value of the same function; an unbound
+    /// one equals nothing.
     /// Value-comparing, hence `BoundCapture` is unhashable.
     fn __richcmp__(
         &self,
