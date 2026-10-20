@@ -36,15 +36,13 @@ fn a_site_the_loop_withdrew_is_republished_without_its_seat() {
             known_targets: &known,
             ..CfgOptions::default()
         },
-        ..common::ignoring()
+        ..Default::default()
     };
 
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
 
     // The build the withdrawal is decided from still seats the arm that decoded.
-    let seeded = strider
-        .build_cfg(BASE, &opts.cfg, strider_orchestrator::OnIncomplete::Ignore)
-        .expect("build_cfg");
+    let seeded = strider.build_cfg(BASE, &opts.cfg).expect("build_cfg");
     assert!(
         seeded
             .regions()
@@ -72,9 +70,9 @@ fn a_site_the_loop_withdrew_is_republished_without_its_seat() {
         "the withdrawn site is reported unresolved; got {}",
         result.incomplete(),
     );
-    // The complement, which `is_complete` cannot see: the unresolved entry
-    // alone already makes it false, so only this pins that a withdrawn site
-    // holding no arms never also claims its answer is whole.
+    // The complement, which an emptiness check cannot see: the unresolved
+    // entry alone already makes the set non-empty, so only this pins that a
+    // withdrawn site holding no arms never also claims its answer is whole.
     assert!(
         !result
             .incomplete()
@@ -83,5 +81,5 @@ fn a_site_the_loop_withdrew_is_republished_without_its_seat() {
         "a withdrawn site holds no arms to be unverified; got {}",
         result.incomplete(),
     );
-    assert!(!result.is_complete());
+    assert!(!result.incomplete().is_empty());
 }

@@ -6,8 +6,8 @@ mod common;
 use common::fixtures::{Fixture, fixture_arch};
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IRWalker, MemDecomp};
+use strider_orchestrator::AnalyzeOptions;
 use strider_orchestrator::opt::{OptimizerPipeline, StackOffsetDetect, default_pipeline};
-use strider_orchestrator::{AnalyzeOptions, OnIncomplete};
 
 /// `default_pipeline()`, with `StackOffsetDetect` its first post-pass when
 /// `pre_stamp`.
@@ -50,10 +50,7 @@ fn classes(f: &strider_ir::Function) -> Vec<Class> {
 #[test]
 #[cfg_attr(debug_assertions, ignore)]
 fn a_pre_stamp_changes_no_memory_class() {
-    let opts = AnalyzeOptions {
-        on_incomplete: OnIncomplete::Ignore,
-        ..AnalyzeOptions::default()
-    };
+    let opts = AnalyzeOptions::default();
     let (mut compared, mut stack_slots) = (0, 0);
     for arch in ["x64", "aarch64"] {
         for fixture in Fixture::all(fixture_arch(arch)) {

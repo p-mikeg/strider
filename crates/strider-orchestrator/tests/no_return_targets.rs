@@ -32,14 +32,12 @@ fn a_no_return_callee_ends_the_region_in_build_cfg_and_analyze() {
     let (mut strider, cc) =
         common::strider_over_bytes(common::Arch::X64, call_then_jmp_rax(), BASE, None);
 
-    let built = strider
-        .build_cfg(BASE, &cfg_opts, strider_orchestrator::OnIncomplete::Ignore)
-        .expect("build_cfg");
+    let built = strider.build_cfg(BASE, &cfg_opts).expect("build_cfg");
     assert_eq!(*entry_terminator(&built), RegionTerminator::NoReturn);
 
     let opts = AnalyzeOptions {
         cfg: cfg_opts,
-        ..common::ignoring()
+        ..Default::default()
     };
     let result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
     assert_eq!(*entry_terminator(&result.cfg), RegionTerminator::NoReturn);
@@ -78,15 +76,13 @@ fn a_per_address_cc_on_a_no_return_callee_still_ends_the_region() {
     .into_iter()
     .collect();
 
-    let built = strider
-        .build_cfg(BASE, &cfg_opts, strider_orchestrator::OnIncomplete::Ignore)
-        .expect("build_cfg");
+    let built = strider.build_cfg(BASE, &cfg_opts).expect("build_cfg");
     assert_eq!(*entry_terminator(&built), RegionTerminator::NoReturn);
 
     let opts = AnalyzeOptions {
         cfg: cfg_opts,
         per_address_ccs: &overrides,
-        ..common::ignoring()
+        ..Default::default()
     };
     let result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
     assert_eq!(*entry_terminator(&result.cfg), RegionTerminator::NoReturn);

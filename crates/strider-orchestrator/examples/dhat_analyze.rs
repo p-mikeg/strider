@@ -50,10 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result = strider.analyze(
         addr,
         &cc,
-        &strider_orchestrator::AnalyzeOptions {
-            on_incomplete: strider_orchestrator::OnIncomplete::Ignore,
-            ..Default::default()
-        },
+        &strider_orchestrator::AnalyzeOptions::default(),
         None,
     )?;
     // Keep `result` observable so nothing is optimised away.

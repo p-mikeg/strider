@@ -4,8 +4,8 @@
 //! picks it rather than naming it outright: ARM's `vld1.N {dX[i]}, [addr]`
 //! writes lane `i` of `dX` that way, with the address built from constants the
 //! decoder substituted. Lifting it as an opaque memory store left the register
-//! never written and no phi placed for it, and `is_complete()` stayed true --
-//! the value simply vanished, with nothing reported.
+//! never written and no phi placed for it, and nothing was reported incomplete
+//! -- the value simply vanished.
 //!
 //! `sub sp,#16; str r0,[sp]; vld1.32 {d0[0]},[sp]; vmov.32 r0,d0[0]; add
 //! sp,#16; bx lr` is the round trip: it must return the `r0` it was given.
@@ -31,7 +31,12 @@ fn a_neon_lane_round_trip_returns_its_argument() {
     let (mut strider, cc) =
         common::strider_over_bytes(common::Arch::Arm, ROUND_TRIP.to_vec(), BASE, None);
     let result = strider
-        .analyze(BASE, &cc, &common::ignoring(), None)
+        .analyze(
+            BASE,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        )
         .expect("analyze");
     let f = &result.function;
 

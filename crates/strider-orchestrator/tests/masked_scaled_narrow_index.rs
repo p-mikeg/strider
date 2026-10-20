@@ -55,7 +55,12 @@ fn analyze(
     }
     let (mut s, cc) = common::strider_over_bytes(arch, bytes, base, Some(Box::new(Rom(sections))));
     let r = s
-        .analyze(entry, &cc, &common::ignoring(), None)
+        .analyze(
+            entry,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            None,
+        )
         .expect("analyze");
     let mut arms: Vec<u64> = r
         .cfg
