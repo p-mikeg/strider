@@ -2309,6 +2309,73 @@ fn guard_carries_up_through_a_mask() {
     assert!(iv.count() <= 21, "count {}", iv.count());
 }
 
+/// MIPS64 `ext i,w,26,6; andi i,i,0xff` on the sign-extended word `w`:
+/// `((sext64(w) << 32) >> 58) & 0xff`.
+fn ext_26_6(b: &mut FunctionBuilder, w: ValueId) -> ValueId {
+    let i64t = ValueType::int(64);
+    let wide = b.extend_if_needed(w, i64t, ExtendOp::SignExtend).unwrap();
+    let mut op = |x: ValueId, c: u64, op: IntBinaryOp| {
+        let c = b.build_int_const(c, i64t).unwrap();
+        b.build_int_binary_operation(x, c, op, i64t).unwrap()
+    };
+    let up = op(wide, 32, IntBinaryOp::ShiftLeft);
+    let field = op(up, 58, IntBinaryOp::ShiftRight);
+    op(field, 0xff, IntBinaryOp::And)
+}
+
+/// MIPS64 `srl t,w,lo; sltiu t,t,bound` on the `I32` word `w`:
+/// `sext64(w >> lo) < bound`.
+fn srl_sltiu(b: &mut FunctionBuilder, w: ValueId, lo: u64, bound: u64) -> ValueId {
+    let (i32t, i64t) = (ValueType::int(32), ValueType::int(64));
+    let k = b.build_int_const(lo, i32t).unwrap();
+    let field = b
+        .build_int_binary_operation(w, k, IntBinaryOp::ShiftRight, i32t)
+        .unwrap();
+    let wide = b
+        .extend_if_needed(field, i64t, ExtendOp::SignExtend)
+        .unwrap();
+    let n = b.build_int_const(bound, i64t).unwrap();
+    b.build_int_cmp_operation(wide, n, IntCmpOp::Less, i64t)
+        .unwrap()
+}
+
+/// `index(w)`'s range under `srl_sltiu(w, lo, bound)`, on its true edge.
+fn bit_field_guard_range(
+    lo: u64,
+    bound: u64,
+    index: fn(&mut FunctionBuilder, ValueId) -> ValueId,
+) -> Interval {
+    let g = guarded(ValueType::int(32), |b, w| srl_sltiu(b, w, lo, bound), index);
+    range_at(&g.f, g.ret, g.true_node)
+}
+
+/// MIPS64 guards a 62-entry table with `w >> 26 < 62` but indexes it with an
+/// `ext` of the same six bits, a different expression of one value.  The
+/// field's own KnownBits bound is 64 values, two past the table.
+#[test]
+fn a_guard_on_another_extract_of_the_same_bits_bounds_the_index() {
+    let iv = bit_field_guard_range(26, 62, ext_26_6);
+    assert_eq!((iv.lo, iv.hi), (0, 61));
+}
+
+/// Bits 27.. of `w` are not bits 26.. of it, and `sext64(w) >> 26` carries
+/// sign copies above the six bits: neither is the guarded value, so each keeps
+/// its own KnownBits bound.
+#[test]
+fn a_guard_on_other_bits_does_not_bound_the_index() {
+    let iv = bit_field_guard_range(27, 30, ext_26_6);
+    assert_eq!((iv.lo, iv.hi), (0, 63));
+    let sext_shr_26 = |b: &mut FunctionBuilder, w: ValueId| {
+        let i64t = ValueType::int(64);
+        let wide = b.extend_if_needed(w, i64t, ExtendOp::SignExtend).unwrap();
+        let k = b.build_int_const(26u64, i64t).unwrap();
+        b.build_int_binary_operation(wide, k, IntBinaryOp::ShiftRight, i64t)
+            .unwrap()
+    };
+    let iv = bit_field_guard_range(26, 62, sext_shr_26);
+    assert_eq!((iv.lo, iv.hi), (0, (1 << 38) - 1));
+}
+
 /// `x = 0` then `n` sequential `if (c < i) { x = i % 7; }` triangles, then
 /// `Return(x)`:
 /// `PhiCollapse` cannot remove the merge phis, so the returned value is a phi

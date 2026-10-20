@@ -7,7 +7,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 cfg
   0x120000150 8 ops cbranch 0x1200001a0 -> [0x120000160, 0x1200001a0]
   0x120000160 17 ops cbranch 0x120000268 -> [0x120000170, 0x120000268]
-  0x120000170 22 ops switch@0x120000198.5 [0x1200001e0/isa0, 0x1200001e8/isa0, 0x1200001f0/isa0, 0x1200001f8/isa0, 0x120000200/isa0, 0x120000208/isa0, 0x120000210/isa0, 0x120000218/isa0, 0x120000220/isa0, 0x120000228/isa0, 0x120000230/isa0, 0x120000238/isa0, 0x120000240/isa0, 0x120000248/isa0, 0x120000250/isa0, 0x120000258/isa0, 0x120000260/isa0, 0x120000268/isa0, 0x120000270/isa0, 0x1200002c0/isa0]
+  0x120000170 22 ops switch@0x120000198.5 [0x1200001e0/isa0, 0x1200001e8/isa0, 0x1200001f0/isa0, 0x1200001f8/isa0, 0x120000200/isa0, 0x120000208/isa0, 0x120000210/isa0, 0x120000218/isa0, 0x120000220/isa0, 0x120000228/isa0, 0x120000230/isa0, 0x120000238/isa0, 0x120000240/isa0, 0x120000248/isa0, 0x120000250/isa0, 0x120000258/isa0, 0x120000260/isa0, 0x120000268/isa0]
   0x1200001a0 26 ops cbranch 0x1200002c0 -> [0x1200001b0, 0x1200002c0]
   0x1200001b0 22 ops switch@0x1200001d8.5 [0x120000270/isa0, 0x120000278/isa0, 0x120000280/isa0, 0x120000288/isa0, 0x120000290/isa0, 0x120000298/isa0, 0x1200002a0/isa0, 0x1200002a8/isa0, 0x1200002b0/isa0, 0x1200002b8/isa0, 0x1200002c0/isa0]
   0x1200001e0 7 ops return -> []
@@ -77,91 +77,88 @@ arg 1 [%v1]
 %v34:i1 = iconst[0x1]
 %v35:i1 = int.xor %v33, %v34
 %v36:ctrl, %v37:ctrl, %v38:ctrl, %v39:ctrl, %v40:ctrl, %v41:ctrl, %v42:ctrl, %v43:ctrl, %v44:ctrl, %v45:ctrl, %v46:ctrl = switch[0x120000270, 0x120000278, 0x120000280, 0x120000288, 0x120000290, 0x120000298, 0x1200002a0, 0x1200002a8, 0x1200002b0, 0x1200002b8, 0x1200002c0] %v20, %v31, %v35
-%v47:i64 = iconst[0xcb]
+%v47:i64 = iconst[0xc8]
 %v48:i64 = initial_var[f0]
 %v49:i64 = initial_var[f2]
-return %v37, %v8, %v47, %v27, %v48, %v49
-%v50:i64 = iconst[0xce]
-return %v38, %v8, %v50, %v27, %v48, %v49
-%v51:i64 = iconst[0xd1]
-return %v39, %v8, %v51, %v27, %v48, %v49
-%v52:i64 = iconst[0xd4]
-return %v40, %v8, %v52, %v27, %v48, %v49
-%v53:i64 = iconst[0xd7]
-return %v41, %v8, %v53, %v27, %v48, %v49
-%v54:i64 = iconst[0xda]
-return %v42, %v8, %v54, %v27, %v48, %v49
-%v55:i64 = iconst[0xdd]
-return %v43, %v8, %v55, %v27, %v48, %v49
-%v56:i64 = iconst[0xe0]
-return %v44, %v8, %v56, %v27, %v48, %v49
-%v57:i64 = iconst[0xe3]
-return %v45, %v8, %v57, %v27, %v48, %v49
-%v58:i32 = iconst[0x1a]
-%v59:i32 = int.shift_right %v12, %v58
-%v60:i64 = extend.sign %v59
-%v61:i64 = iconst[0x3e]
-%v62:i1 = icmp.less %v60, %v61
-%v63:ctrl, %v64:ctrl = if %v7, %v62
-%v65:i64 = extend.zero %v62
-%v66:i64 = iconst[0x20]
-%v67:i64 = int.shift_left %v13, %v66
-%v68:i64 = iconst[0x3a]
-%v69:i64 = int.shift_right %v67, %v68
-%v70:i64 = int.and %v69, %v23
-%v71:i64 = int.shift_left %v70, %v25
-%v72:i64 = iconst[0x1200002d0]
-%v73:i64 = int.add %v71, %v72
-%v74:i64 = load[r] %v8, %v73
-%v75:i64 = int.and %v74, %v30
-%v76:i64 = int.and %v74, %v2
-%v77:i1 = icmp.equal %v76, %v4
-%v78:i1 = int.xor %v77, %v34
-%v79:ctrl, %v80:ctrl, %v81:ctrl, %v82:ctrl, %v83:ctrl, %v84:ctrl, %v85:ctrl, %v86:ctrl, %v87:ctrl, %v88:ctrl, %v89:ctrl, %v90:ctrl, %v91:ctrl, %v92:ctrl, %v93:ctrl, %v94:ctrl, %v95:ctrl, %v96:ctrl, %v97:ctrl, %v98:ctrl = switch[0x1200001e0, 0x1200001e8, 0x1200001f0, 0x1200001f8, 0x120000200, 0x120000208, 0x120000210, 0x120000218, 0x120000220, 0x120000228, 0x120000230, 0x120000238, 0x120000240, 0x120000248, 0x120000250, 0x120000258, 0x120000260, 0x120000268, 0x120000270, 0x1200002c0] %v63, %v75, %v78
-%v99:i64 = iconst[0x64]
-return %v79, %v8, %v99, %v72, %v48, %v49
-%v100:i64 = iconst[0x65]
-return %v80, %v8, %v100, %v72, %v48, %v49
-%v101:i64 = iconst[0x66]
-return %v81, %v8, %v101, %v72, %v48, %v49
-%v102:i64 = iconst[0x67]
-return %v82, %v8, %v102, %v72, %v48, %v49
-%v103:i64 = iconst[0x68]
-return %v83, %v8, %v103, %v72, %v48, %v49
-%v104:i64 = iconst[0x69]
-return %v84, %v8, %v104, %v72, %v48, %v49
-%v105:i64 = iconst[0x6a]
-return %v85, %v8, %v105, %v72, %v48, %v49
-%v106:i64 = iconst[0x6b]
-return %v86, %v8, %v106, %v72, %v48, %v49
-%v107:i64 = iconst[0x74]
-return %v87, %v8, %v107, %v72, %v48, %v49
-%v108:i64 = iconst[0x75]
-return %v88, %v8, %v108, %v72, %v48, %v49
-%v109:i64 = iconst[0x76]
-return %v89, %v8, %v109, %v72, %v48, %v49
-%v110:i64 = iconst[0x77]
-return %v90, %v8, %v110, %v72, %v48, %v49
-%v111:i64 = iconst[0x78]
-return %v91, %v8, %v111, %v72, %v48, %v49
-%v112:i64 = iconst[0x79]
-return %v92, %v8, %v112, %v72, %v48, %v49
-%v113:i64 = iconst[0x7a]
-return %v93, %v8, %v113, %v72, %v48, %v49
-%v114:i64 = iconst[0x7b]
-return %v94, %v8, %v114, %v72, %v48, %v49
-%v115:i64 = iconst[0xa1]
-return %v95, %v8, %v115, %v72, %v48, %v49
+return %v36, %v8, %v47, %v27, %v48, %v49
+%v50:i64 = iconst[0xcb]
+return %v37, %v8, %v50, %v27, %v48, %v49
+%v51:i64 = iconst[0xce]
+return %v38, %v8, %v51, %v27, %v48, %v49
+%v52:i64 = iconst[0xd1]
+return %v39, %v8, %v52, %v27, %v48, %v49
+%v53:i64 = iconst[0xd4]
+return %v40, %v8, %v53, %v27, %v48, %v49
+%v54:i64 = iconst[0xd7]
+return %v41, %v8, %v54, %v27, %v48, %v49
+%v55:i64 = iconst[0xda]
+return %v42, %v8, %v55, %v27, %v48, %v49
+%v56:i64 = iconst[0xdd]
+return %v43, %v8, %v56, %v27, %v48, %v49
+%v57:i64 = iconst[0xe0]
+return %v44, %v8, %v57, %v27, %v48, %v49
+%v58:i64 = iconst[0xe3]
+return %v45, %v8, %v58, %v27, %v48, %v49
 
-%v116:ctrl, %v117:token = region %v97, %v36
-%v118:i64<v1> = phi %v117, %v72, %v27
-%v119:i64 = iconst[0xc8]
-return %v116, %v8, %v119, %v118, %v48, %v49
+%v59:ctrl, %v60:token = region %v21, %v46
+%v61:i64<v1> = phi %v60, %v22, %v27
+return %v59, %v8, %v2, %v61, %v48, %v49
+%v62:i32 = iconst[0x1a]
+%v63:i32 = int.shift_right %v12, %v62
+%v64:i64 = extend.sign %v63
+%v65:i64 = iconst[0x3e]
+%v66:i1 = icmp.less %v64, %v65
+%v67:ctrl, %v68:ctrl = if %v7, %v66
+%v69:i64 = extend.zero %v66
+%v70:i64 = iconst[0x20]
+%v71:i64 = int.shift_left %v13, %v70
+%v72:i64 = iconst[0x3a]
+%v73:i64 = int.shift_right %v71, %v72
+%v74:i64 = int.and %v73, %v23
+%v75:i64 = int.shift_left %v74, %v25
+%v76:i64 = iconst[0x1200002d0]
+%v77:i64 = int.add %v75, %v76
+%v78:i64 = load[r] %v8, %v77
+%v79:i64 = int.and %v78, %v30
+%v80:i64 = int.and %v78, %v2
+%v81:i1 = icmp.equal %v80, %v4
+%v82:i1 = int.xor %v81, %v34
+%v83:ctrl, %v84:ctrl, %v85:ctrl, %v86:ctrl, %v87:ctrl, %v88:ctrl, %v89:ctrl, %v90:ctrl, %v91:ctrl, %v92:ctrl, %v93:ctrl, %v94:ctrl, %v95:ctrl, %v96:ctrl, %v97:ctrl, %v98:ctrl, %v99:ctrl, %v100:ctrl = switch[0x1200001e0, 0x1200001e8, 0x1200001f0, 0x1200001f8, 0x120000200, 0x120000208, 0x120000210, 0x120000218, 0x120000220, 0x120000228, 0x120000230, 0x120000238, 0x120000240, 0x120000248, 0x120000250, 0x120000258, 0x120000260, 0x120000268] %v67, %v79, %v82
+%v101:i64 = iconst[0x64]
+return %v83, %v8, %v101, %v76, %v48, %v49
+%v102:i64 = iconst[0x65]
+return %v84, %v8, %v102, %v76, %v48, %v49
+%v103:i64 = iconst[0x66]
+return %v85, %v8, %v103, %v76, %v48, %v49
+%v104:i64 = iconst[0x67]
+return %v86, %v8, %v104, %v76, %v48, %v49
+%v105:i64 = iconst[0x68]
+return %v87, %v8, %v105, %v76, %v48, %v49
+%v106:i64 = iconst[0x69]
+return %v88, %v8, %v106, %v76, %v48, %v49
+%v107:i64 = iconst[0x6a]
+return %v89, %v8, %v107, %v76, %v48, %v49
+%v108:i64 = iconst[0x6b]
+return %v90, %v8, %v108, %v76, %v48, %v49
+%v109:i64 = iconst[0x74]
+return %v91, %v8, %v109, %v76, %v48, %v49
+%v110:i64 = iconst[0x75]
+return %v92, %v8, %v110, %v76, %v48, %v49
+%v111:i64 = iconst[0x76]
+return %v93, %v8, %v111, %v76, %v48, %v49
+%v112:i64 = iconst[0x77]
+return %v94, %v8, %v112, %v76, %v48, %v49
+%v113:i64 = iconst[0x78]
+return %v95, %v8, %v113, %v76, %v48, %v49
+%v114:i64 = iconst[0x79]
+return %v96, %v8, %v114, %v76, %v48, %v49
+%v115:i64 = iconst[0x7a]
+return %v97, %v8, %v115, %v76, %v48, %v49
+%v116:i64 = iconst[0x7b]
+return %v98, %v8, %v116, %v76, %v48, %v49
+%v117:i64 = iconst[0xa1]
+return %v99, %v8, %v117, %v76, %v48, %v49
 
-%v120:ctrl, %v121:token = region %v98, %v21, %v46
-%v122:i64<v1> = phi %v121, %v72, %v22, %v27
-return %v120, %v8, %v2, %v122, %v48, %v49
-
-%v123:ctrl, %v124:token = region %v64, %v96
-%v125:i64<v1> = phi %v124, %v65, %v72
-return %v123, %v8, %v4, %v125, %v48, %v49
+%v118:ctrl, %v119:token = region %v68, %v100
+%v120:i64<v1> = phi %v119, %v69, %v76
+return %v118, %v8, %v4, %v120, %v48, %v49

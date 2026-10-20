@@ -468,6 +468,12 @@
 
 ### Fixed
 
+- A jump table indexed by a bit field no longer reads past a guard written as
+  another extract of the same bits (mips64 `srl; sltiu` beside `ext`): the
+  guard bounds the index, where the field's whole range seated the next
+  table's arms. A field bound beside a guard on shared bits that nothing
+  connects defers the site. A 32-bit compare now also bounds a
+  `clrldi` index on ppc64.
 - A seeded jump-table arm dropped because it is unmapped is named in
   `cfg.incomplete` as `unmapped_target`, one whose code falls through past
   `function_max_size` as `past_function_end`, and one whose decode fails for
