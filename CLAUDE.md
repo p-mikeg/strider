@@ -128,10 +128,10 @@ Strider:
 - `strider-opt`: optimization passes, the `OptimizerPipeline`, the
   `rewrite_rule` facade over `strider-pattern`, and the
   `indirect_branch_resolve` classifiers (`classify_sites`, which `analyze`
-  calls after the pipeline unless `resolve_indirect_branches` is off). Pure graph->graph; the classifier reports targets
-  and the orchestrator rebuilds the CFG from them. `classify_target` and what
-  the classifiers read (`value_range`, the known-bits facts) are public only
-  under `test-util`.
+  calls after the pipeline unless `resolve_indirect_branches` is off). Pure
+  graph->graph; the classifier reports targets and the orchestrator rebuilds
+  the CFG from them. `classify_target` and what the classifiers read
+  (`value_range`, the known-bits facts) are public only under `test-util`.
 - `strider-orchestrator`: `Strider::analyze` and its `AnalyzeOptions`, plus the
   re-exported lift engine (`Lifter` / `LiftOutcome` at the crate root) and
   `strider-opt` re-exported as `opt`.
