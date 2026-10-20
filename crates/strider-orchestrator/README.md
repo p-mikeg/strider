@@ -88,7 +88,8 @@ a listed address may be missing.
   whose selector no longer derives, a site still growing when the cap ran out,
   a site whose fold dropped a successor the classifier proved, a site whose
   answer narrowed in any round, a site the loop withdrew, and a return whose
-  folded target is not provably the entry return address.
+  folded target is not provably the entry return address and the caller did
+  not seed.
 - `UnverifiedSeed`: answers that are whole but that nothing verified. A
   `Switch` holding exactly the caller's seed and nothing derived; a site the
   CFG CONSUMED, where a caller's `LinkRegister` seat became a `Return` and a
