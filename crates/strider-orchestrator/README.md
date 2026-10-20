@@ -100,11 +100,11 @@ a listed address may be missing.
   its proof); a p-code `RETURN` whose target is not provably the caller's,
   where the caller seeded `LinkRegister`; and an arm seated on the mode a
   caller seed gave its siblings.
-- `IsaModeConflict`, `InteriorTarget`, `UnmappedTarget`, `UndecodableTarget`:
-  losses no indirect site owns, since a direct edge produces them too. They
-  are absorbed from every round's `Cfg` rather than read off the final one:
-  the round that decoded an address twice fed the classifier whether or not a
-  later rebuild still carries that edge.
+- `IsaModeConflict`, `InteriorTarget`, `UnmappedTarget`, `UndecodableTarget`,
+  `PastFunctionEnd`: losses no indirect site owns, since a direct edge produces
+  them too. They are absorbed from every round's `Cfg` rather than read off the
+  final one: the round that decoded an address twice fed the classifier whether
+  or not a later rebuild still carries that edge.
 
 A caller seed asserts the site is settled, which suppresses the unclassifiable
 seated `Switch` report until the site outgrows the seed, and a `LinkRegister`
