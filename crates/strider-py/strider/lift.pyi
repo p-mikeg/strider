@@ -48,7 +48,8 @@ class AnalyzeResult(NamedTuple):
     unresolved: list[int]
 
 class AssumptionOptions:
-    """Claims about the code being analysed, for `LifterOptions(assumptions=...)`.
+    """Claims about the code being analysed, for `LifterOptions(assumptions=...)`
+    and `Lifter.optimize(assumptions=...)`.
 
     None is checked, and each one's risky value is the positive one, so any of
     them can make the answer wrong on valid input. `stack_global_disjoint`,
@@ -155,10 +156,7 @@ class LifterOptions:
 
     `cfg` holds the CFG-building options. `assumptions` holds the unchecked
     claims about the analysed code, each of which can make the answer wrong;
-    when it is not passed, `analyze` takes the defaults and `Lifter.optimize`
-    adds no claim. An explicit `assumptions=`, `AssumptionOptions()` included,
-    is a set `optimize` adds and checks against the claims in force; `repr`
-    does not show the difference.
+    when it is not passed, `analyze` takes the defaults.
     `compact` drops unreachable nodes at the end. `per_address_ccs` overrides
     the calling convention for a callee, keyed by the direct-call target
     address rather than the call site. `pipeline`, when set,
@@ -324,18 +322,17 @@ class Lifter:
         self,
         function: Function,
         pipeline: Optional[OptimizerPipeline] = ...,
-        opts: Optional[LifterOptions] = ...,
+        assumptions: Optional[AssumptionOptions] = ...,
     ) -> None:
         """Run an optimizer pipeline over `function` in place. `pipeline=None`
         runs the default pipeline; a given pipeline is copied, so it stays
-        usable. The claims `opts.assumptions` names join
-        `function.assumptions` and none is withdrawn: `opts=None`, or options
-        built without `assumptions=`, add nothing, and a set that leaves out
-        a claim already in force raises `StriderError`. Add one with::
+        usable. The claims `assumptions` holds join `function.assumptions` and
+        none is withdrawn: `assumptions=None` adds nothing, and a set that
+        leaves out a claim already in force raises `StriderError` before
+        anything runs. Add one with::
 
-            prog.optimize(function, opts=LifterOptions(
-                assumptions=function.assumptions
-                | AssumptionOptions.none(escape_analysis=True)))
+            prog.optimize(function, assumptions=function.assumptions
+                          | AssumptionOptions.none(escape_analysis=True))
 
         Runs against this handle's `rom`, so `LoadReadOnly` folds here exactly
         as it does inside `analyze`. Invalidates outstanding `Node` / `Match`

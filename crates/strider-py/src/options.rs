@@ -707,13 +707,10 @@ pub struct PyLifterOptions {
     /// Nested CFG-shape knobs.
     #[pyo3(get)]
     pub cfg: Py<PyCfgOptions>,
-    /// Nested claims about the analysed code, each one unchecked. The
-    /// defaults when not passed, which `analyze` reads and `Lifter.optimize`
-    /// does not add.
+    /// Nested claims about the analysed code, each one unchecked; the
+    /// defaults when not passed.
     #[pyo3(get)]
     pub assumptions: Py<PyAssumptionOptions>,
-    /// Whether the caller passed `assumptions`.
-    pub(crate) assumptions_given: bool,
     /// Drop unreachable IR nodes after analysis (default `True`).
     #[pyo3(get)]
     pub compact: bool,
@@ -811,7 +808,6 @@ impl PyLifterOptions {
             Some(c) => c,
             None => Py::new(py, PyCfgOptions::default())?,
         };
-        let assumptions_given = assumptions.is_some();
         let assumptions = match assumptions {
             Some(a) => a,
             None => Py::new(py, PyAssumptionOptions::default())?,
@@ -819,7 +815,6 @@ impl PyLifterOptions {
         Ok(Self {
             cfg,
             assumptions,
-            assumptions_given,
             compact,
             per_address_ccs: per_address_ccs.map(|t| std::sync::Arc::new(PerAddressCcs::new(t.0))),
             resolve_indirect_branches,
@@ -856,7 +851,6 @@ impl PyLifterOptions {
         Self {
             cfg,
             assumptions: self.assumptions.clone_ref(py),
-            assumptions_given: self.assumptions_given,
             compact: self.compact,
             per_address_ccs: self.per_address_ccs.clone(),
             resolve_indirect_branches: self.resolve_indirect_branches,
