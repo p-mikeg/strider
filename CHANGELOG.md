@@ -222,8 +222,8 @@
   `KindSpec`, and `set_template_kind` is gone: `dynamic_leaf(TemplateKind)`
   builds an input-less leaf whose kind or constant a closure computes, so a
   closure-kinded node can no longer take inputs. A non-exact spec became an
-  `IntConst` with the target function's constant id 0; `TemplateBuilder`'s
-  `typed::builder_like::BuilderLike` methods now panic on one.
+  `IntConst` with the target function's constant id 0.
+- `typed::builder_like` (`BuilderLike`, `CompileInto`) is crate-private.
 - `PatNode::input_slots` holds `matcher::InputSlot` (`At(slot)` or `Any`)
   instead of a `usize` with `usize::MAX` marking an existential.
 - `PatValue::{match_slot, any_slot}` become `slot_mode: matcher::SlotMode`
@@ -409,9 +409,10 @@
   struct literal; every built one is validated already). Per-address
   overrides keep the stack-geometry check alone. Convention errors say
   "stack pointer" where they said `stack_vn`.
-- `instantiate` refuses a template `IntConst` built from a `NodeKind`: its
-  `ConstId` belongs to another function's interner, so it named whatever
-  constant held that id in the rewritten one.
+- `instantiate` refuses a template `IntConst` built from a `NodeKind`, or
+  returned by a `TemplateKind::Fn` closure: its `ConstId` belongs to another
+  function's interner, or another width, so it named whatever constant held
+  that id in the rewritten one.
 - A raw `.input(usize::MAX, p)` (`MatcherBuilder::input` and the builders'
   `input`) names slot `usize::MAX`, so it matches nothing; it meant
   `any_input`.
