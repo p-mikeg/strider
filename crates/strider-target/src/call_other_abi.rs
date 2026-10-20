@@ -2298,10 +2298,7 @@ mod tests {
     #[test]
     fn arch_scoped_footprints_resolve_on_their_own_register_tables() {
         for preset in crate::ArchPreset::ALL {
-            let regs = preset
-                .arch()
-                .probe_regs()
-                .unwrap_or_else(|e| panic!("{preset:?}: probe_regs: {e}"));
+            let regs = preset.arch().probe_regs();
             let arch_specific = ARCH_SPECIFIC_TABLE
                 .iter()
                 .filter(|row| row.scope.contains(*preset))
@@ -2451,7 +2448,6 @@ mod tests {
     fn x86_64_sleigh_regs() -> rsleigh::SleighRegs {
         let arch = crate::SleighArch::x86_64();
         arch.probe_regs()
-            .expect("probe_regs must succeed for x86_64")
     }
 
     #[test]

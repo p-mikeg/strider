@@ -6,7 +6,7 @@
 use strider_target::{CallingConvention, SleighArch};
 
 fn regs_for(arch: SleighArch) -> rsleigh::SleighRegs {
-    arch.probe_regs().expect("probe_regs")
+    arch.probe_regs()
 }
 
 /// `(arch, cc)` for every PowerPC preset, ELFv1 included (which no

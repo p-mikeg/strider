@@ -55,8 +55,9 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
     /// # Errors
     ///
     /// When the sla's user-op names or flowing context vars cannot be read,
-    /// the sla does not flow the arch's ISA-mode var, or it does not declare a
-    /// var the arch re-derives.
+    /// the sla does not flow the arch's ISA-mode var, it does not declare a
+    /// var the arch re-derives, or `sleigh` was built from another sla or
+    /// pspec than `arch`'s.
     pub fn new(arch: strider_target::SleighArch, sleigh: rsleigh::Sleigh<R>) -> Result<Self> {
         // Not `unwrap_or_default`: with an empty table the CFG classifies every
         // `CallOther` as returning, so a no-return one decodes on into whatever
@@ -93,14 +94,18 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
             .filter_map(|name| Some((*name, sleigh.get_context_at(0, name).ok()?)))
             .collect();
         // After the checks above, which report the mismatches they can see.
-        debug_assert!(
-            sleigh.sla_spec() == arch.sla_spec(),
+        // The right preset's specs are pointer-equal, costing no memcmp.
+        // `arm` and `arm_be_kernel` share both, so neither check parts them.
+        let (sla, want_sla) = (sleigh.sla_spec().0, arch.sla_spec().0);
+        anyhow::ensure!(
+            std::ptr::eq(sla, want_sla) || sla == want_sla,
             "{:?}: the Sleigh was built from another sla",
             arch.preset()
         );
         // The pspec separates presets that share an sla (`arm`, `arm_thumb`).
-        debug_assert!(
-            sleigh.pspec() == arch.pspec(),
+        let (pspec, want_pspec) = (sleigh.pspec().set_vars, arch.pspec().set_vars);
+        anyhow::ensure!(
+            std::ptr::eq(pspec, want_pspec) || pspec == want_pspec,
             "{:?}: the Sleigh was built from another pspec",
             arch.preset()
         );

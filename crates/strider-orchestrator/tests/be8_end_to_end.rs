@@ -95,7 +95,6 @@ fn analyze(case: &str, fn_name: &str, opt: Opt) -> Function {
 fn initial_value(function: &Function, reg: &str) -> ValueId {
     let vn = SleighArch::arm_be_kernel()
         .probe_regs()
-        .expect("probe regs")
         .name_to_vn(reg)
         .unwrap_or_else(|| panic!("no register named {reg:?}"));
     function

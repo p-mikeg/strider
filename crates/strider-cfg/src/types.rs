@@ -81,8 +81,8 @@ pub enum RegionTerminator {
     },
     Return,
     /// Emitted by a CallOther that classifies as noreturn (`BUG()`-class traps
-    /// such as x86 `ud2` or aarch64 `brk #imm`), a `call` whose target carries
-    /// a no-return calling convention, a `call` or `callind` whose return
+    /// such as x86 `ud2` or aarch64 `brk #imm`), a `call` whose target is in
+    /// [`crate::CfgOptions::no_return_targets`], a `call` or `callind` whose return
     /// address falls outside the function bound, and a fall-through past a
     /// call onto bytes that hold no instruction.
     ///

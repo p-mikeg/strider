@@ -4,7 +4,7 @@
 use strider_target::{CallingConvention, SleighArch};
 
 fn regs_for(arch: SleighArch) -> rsleigh::SleighRegs {
-    arch.probe_regs().expect("probe_regs")
+    arch.probe_regs()
 }
 
 fn float_ret_names(cc: CallingConvention, arch: SleighArch) -> Vec<String> {

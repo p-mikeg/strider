@@ -123,8 +123,8 @@ seat `UnverifiedSeed`. The four target reasons:
   instructions between it and the bytes. A literal pool never decodes as code,
   and a traceback table or an `abort` word no longer fails the build. Any
   other fall-through into bytes Sleigh rejects is still an `Err` on the whole
-  build. The instruction at the start address decodes even inside a data
-  range.
+  build, and so is a fall-through past a `FunctionBound::Size` end. The
+  instruction at the start address decodes even inside a data range.
 - `IsaModeConflict`: two edges reached an address carrying different ISA
   modes, and the losing path decodes in the winner's. The mode only: a
   disagreement on another committed var, such as `condit` into an IT block, is

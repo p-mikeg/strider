@@ -130,7 +130,8 @@ class CfgOptions:
     """Options controlling how the CFG is built.
 
     `function_max_size` bounds how far past the entry to decode; omit it for
-    unbounded (`0` raises `ValueError`). `allow_code_before_start_addr`
+    unbounded (`0` raises `ValueError`). Code that falls through past the
+    bound fails the whole build. `allow_code_before_start_addr`
     permits blocks below the entry address; it raises `ValueError` beside a
     size, which already fixes the extent.
 

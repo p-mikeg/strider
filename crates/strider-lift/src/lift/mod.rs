@@ -813,7 +813,7 @@ mod tests {
         use strider_ir_test_utils::IrWalkerEx;
 
         let arch = strider_target::SleighArch::aarch64();
-        let regs = arch.probe_regs().expect("probe regs");
+        let regs = arch.probe_regs();
         let cc = strider_target::CallingConvention::aarch64_aapcs64()
             .build(&regs)
             .expect("build cc");
@@ -850,7 +850,7 @@ mod tests {
         use strider_ir_test_utils::IrWalkerEx;
 
         let arch = strider_target::SleighArch::aarch64();
-        let regs = arch.probe_regs().expect("probe regs");
+        let regs = arch.probe_regs();
         let cc = strider_target::CallingConvention::aarch64_aapcs64()
             .build(&regs)
             .expect("build cc");
@@ -889,9 +889,7 @@ mod tests {
         use strider_ir_test_utils::IrWalkerEx;
 
         let arch = strider_target::SleighArch::arm_thumb();
-        let regs = strider_target::SleighArch::arm_thumb()
-            .probe_regs()
-            .expect("regs");
+        let regs = strider_target::SleighArch::arm_thumb().probe_regs();
         let cc = strider_target::CallingConvention::arm_aapcs()
             .build(&regs)
             .expect("cc");
@@ -956,9 +954,7 @@ mod tests {
         use strider_ir_test_utils::IrWalkerEx;
 
         let arch = strider_target::SleighArch::arm();
-        let regs = strider_target::SleighArch::arm()
-            .probe_regs()
-            .expect("regs");
+        let regs = strider_target::SleighArch::arm().probe_regs();
         let cc = strider_target::CallingConvention::arm_aapcs()
             .build(&regs)
             .expect("cc");
@@ -999,7 +995,7 @@ mod tests {
             strider_target::SleighArch::ppc64be(),
         ] {
             let preset = arch.preset();
-            let regs = arch.probe_regs().expect("probe regs");
+            let regs = arch.probe_regs();
             let unmappable: Vec<(&str, u32)> = regs
                 .iter()
                 .filter(|r| strider_ir::ValueType::int_from_bytes(r.vn.size).is_err())
@@ -1021,9 +1017,7 @@ mod tests {
         use strider_ir::{IRViewer, IRWalker};
 
         let arch = strider_target::SleighArch::x86_64();
-        let regs = strider_target::SleighArch::x86_64()
-            .probe_regs()
-            .expect("regs");
+        let regs = strider_target::SleighArch::x86_64().probe_regs();
         let cc = strider_target::CallingConvention::x86_64_systemv()
             .build(&regs)
             .expect("cc");
@@ -1121,9 +1115,7 @@ mod tests {
     #[test]
     fn a_cfg_from_another_engine_is_rejected_before_its_space_ids_are_read() {
         let arch = strider_target::SleighArch::x86_64();
-        let regs = strider_target::SleighArch::x86_64()
-            .probe_regs()
-            .expect("probe regs");
+        let regs = strider_target::SleighArch::x86_64().probe_regs();
         let cc = strider_target::CallingConvention::x86_64_systemv()
             .build(&regs)
             .expect("build cc");
