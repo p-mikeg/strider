@@ -81,7 +81,8 @@ pub struct SideTables {
     /// (`StaleInitialVarIndex`).
     pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
     /// Whole-function frame-escape verdict, or `None` when not computed.
-    /// Cleared by [`Self::invalidate_analyses`] and on compaction.
+    /// Cleared by [`Self::invalidate_analyses`], after every post-pass, and on
+    /// compaction.
     frame_escape: Cell<Option<bool>>,
     /// A stack address was held, at some `Call`, in a register the call
     /// clobbers.  The call node carries no such value, so this is the only
