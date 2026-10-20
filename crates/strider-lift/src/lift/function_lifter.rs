@@ -57,6 +57,8 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// see `vn_io::write_vn`. The region's terminating `IndirectBranch` takes it as
     /// its mode input iff they share that address.
     pub(crate) pending_isa_mode: Option<(strider_ir::node::ValueId, u64)>,
+    /// Whether the function names its `read_volatile` user-op yet.
+    pub(crate) read_volatile_named: bool,
     /// Each `Region` node's last machine address: the branch leaving it.
     pub(crate) region_last_addrs: rustc_hash::FxHashMap<strider_ir::node::NodeId, u64>,
     /// `ret_and_clobber_vns` under the function-default CC.  The tracked set
@@ -185,6 +187,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             container_map,
             pcode_consts: super::pcode_consts::PcodeConsts::default(),
             pending_isa_mode: None,
+            read_volatile_named: false,
             region_last_addrs: rustc_hash::FxHashMap::default(),
             default_ret_clobber_vns,
             default_float_arg_vns,
