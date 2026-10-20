@@ -35,12 +35,17 @@ fn claiming_return_slots() -> strider_opt::AssumptionOptions {
     }
 }
 
+/// `__stack_chk_fail` in `ARM_STACK_PROTECTED_UNLINK`, whose call ends it: a
+/// listed no-return callee, so its return address is not past the end.
+const STACK_CHK_FAIL: u64 = 0x1a_afcc;
+
 fn analyze_with(
     arch: Arch,
     bytes: Vec<u8>,
     assumptions: &strider_opt::AssumptionOptions,
 ) -> strider_orchestrator::AnalyzeResult {
     let size = bytes.len() as u64;
+    let no_return: rustc_hash::FxHashSet<u64> = [STACK_CHK_FAIL].into_iter().collect();
     // The entry's low bit selects Thumb.
     let entry = if matches!(arch, Arch::ArmThumb) {
         BASE | 1
@@ -51,6 +56,7 @@ fn analyze_with(
     let opts = strider_orchestrator::AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
             bound: strider_cfg::FunctionBound::size(size),
+            no_return_targets: &no_return,
             ..Default::default()
         },
         assumptions: assumptions.clone(),
