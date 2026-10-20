@@ -652,14 +652,34 @@ fn x86_64_a_realigned_frame_whose_saved_stack_pointer_may_be_overwritten_is_repo
     );
 }
 
-/// A caller's `"return"` seed silences a site only where the CFG build
-/// actually CONSUMED it, which `Cfg::link_register_seated` records and
-/// `UnverifiedSeed` reads. A site whose terminator came from the
-/// p-code `RETURN` op is never in that list, so a seed over one used to drop
-/// it from `unresolved` while nothing else named it: no reason listed
-/// over a CFG missing the edge control takes.
+/// `bytes` analysed with a caller's `LinkRegister` seed at `site`, keyed at
+/// p-code op 0, where an x86 `ret`'s `RETURN` op is not.
+fn analyze_return_seeded(bytes: Vec<u8>, site: u64) -> strider_orchestrator::AnalyzeResult {
+    let size = bytes.len() as u64;
+    let mut known: rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets> =
+        rustc_hash::FxHashMap::default();
+    known.insert(
+        strider_cfg::PcodeInsnAddr::at_machine_start(site),
+        strider_cfg::ResolvedTargets::LinkRegister,
+    );
+    let (mut strider, cc) = common::strider_over_bytes(Arch::X64, bytes, BASE, None);
+    let opts = strider_orchestrator::AnalyzeOptions {
+        cfg: strider_cfg::CfgOptions {
+            bound: strider_cfg::FunctionBound::size(size),
+            known_targets: &known,
+            ..Default::default()
+        },
+        assumptions: claiming_return_slots(),
+        ..Default::default()
+    };
+    strider.analyze(BASE, &cc, &opts, None).expect("analyze")
+}
+
+/// A caller's `"return"` seed vouches for a p-code `RETURN` whose target the
+/// IR cannot prove, as it does for a `BranchIndirect` the CFG seated as a
+/// `Return`: the site is `UnverifiedSeed`, not `UnresolvedBranch`.
 #[test]
-fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
+fn a_return_seed_over_an_unproven_pcode_return_is_unverified() {
     // push rax ; ret -- the `ret` goes to rax, not to the caller.
     let bytes = vec![0x50, 0xc3];
     let ret_site = BASE + 1;
@@ -671,37 +691,28 @@ fn a_return_seed_over_a_pcode_return_does_not_silence_it() {
         "unseeded, the return is reported",
     );
 
-    let mut known: rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets> =
-        rustc_hash::FxHashMap::default();
-    known.insert(
-        strider_cfg::PcodeInsnAddr {
-            machine_addr: strider_cfg::MachineInsnAddr::from(ret_site),
-            insn_index: 0,
-        },
-        strider_cfg::ResolvedTargets::LinkRegister,
-    );
-    let (mut strider, cc) = common::strider_over_bytes(Arch::X64, bytes, BASE, None);
-    let opts = strider_orchestrator::AnalyzeOptions {
-        cfg: strider_cfg::CfgOptions {
-            bound: strider_cfg::FunctionBound::size(2),
-            known_targets: &known,
-            ..Default::default()
-        },
-        assumptions: claiming_return_slots(),
-        ..Default::default()
-    };
-    let seeded_result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
-    assert!(
-        !seeded_result.incomplete().is_empty(),
-        "a seed the CFG never consumed cannot vouch for the return",
-    );
-    assert!(
-        unresolved(&seeded_result).contains(&ret_site)
-            || seeded(&seeded_result).contains(&ret_site),
-        "the site must be reported under one of the two reasons; unresolved {:x?} seeded {:x?}",
+    let seeded_result = analyze_return_seeded(bytes, ret_site);
+    assert_eq!(
         unresolved(&seeded_result),
-        seeded(&seeded_result),
+        Vec::<u64>::new(),
+        "the caller's seed answers the return",
     );
+    assert_eq!(
+        seeded(&seeded_result),
+        vec![ret_site],
+        "nothing verified the seed",
+    );
+}
+
+/// A seed over a `RETURN` the IR proves adds nothing: the return is the
+/// caller's either way. Mutation: make `settle_return_sites` call every
+/// return unverified.
+#[test]
+fn a_return_seed_over_a_proven_pcode_return_reports_nothing() {
+    // mov rax, 42 ; ret
+    let bytes = vec![0x48, 0xc7, 0xc0, 0x2a, 0x00, 0x00, 0x00, 0xc3];
+    let result = analyze_return_seeded(bytes, BASE + 7);
+    assert!(result.incomplete().is_empty(), "{}", result.incomplete());
 }
 
 /// A `[]` seed adds nothing to the classifier's answer: the verified
