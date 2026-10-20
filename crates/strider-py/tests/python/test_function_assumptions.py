@@ -67,6 +67,17 @@ def test_analyze_records_the_claims_it_ran_under():
     assert g.assumptions == AssumptionOptions(noalias_allocators=[_ALLOCATOR])
 
 
+def test_to_text_names_the_claims_in_force():
+    _lift, g = _heap()
+    claims = [ln for ln in g.to_text().splitlines() if ln.startswith("assumptions")]
+    assert claims == [
+        "assumptions stack_global_disjoint assume_incoming_args_survive_calls"
+        " noalias_allocators=[0x1100] return_slots_survive_untracked_writes"
+    ]
+    _lift, floor = _spill_at_floor()
+    assert "assumptions" not in floor.to_text()
+
+
 def test_each_analyze_starts_from_its_own_claims():
     """Per `Function`, not per `Lifter`: a later analysis on the same handle
     inherits nothing from an earlier one."""
