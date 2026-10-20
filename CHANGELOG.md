@@ -567,7 +567,9 @@
   called the resolver, or lifted its body into a PLT stub. An unlinked
   object's GOT slot for such a symbol stays unmapped too, and so does any
   other data word relocated against one; in an executable mapping, where it
-  may be an instruction, such a relocation keeps the symbol's address.
+  may be an instruction, such a relocation keeps the symbol's address, so an
+  address taken in code (`lea f(%rip)`) or a data word mapped executable
+  still folds to the symbol rather than to the resolver's result.
   `ElfLifter.read` of a RELA `IRELATIVE` slot serves the file's bytes rather
   than the resolver's address.
 - Python: under `relocated_got_is_rom=True` an unstripped static
