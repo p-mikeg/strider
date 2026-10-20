@@ -563,10 +563,11 @@
   symbol, whose `st_value` is the resolver. Both served the resolver's
   address where the loader stores what it returns, so a call through one
   called the resolver, or lifted its body into a PLT stub. An unlinked
-  object's GOT slot for such a symbol stays unmapped too, and any other
-  relocation against one is not computed. `ElfLifter.read` of an
-  `IRELATIVE` slot serves the file's bytes rather than the resolver's
-  address.
+  object's GOT slot for such a symbol stays unmapped too, and so does any
+  other data word relocated against one; in an executable mapping, where it
+  may be an instruction, such a relocation keeps the symbol's address.
+  `ElfLifter.read` of an `IRELATIVE` slot serves the file's bytes rather
+  than the resolver's address.
 
 ### Added, Rust
 
