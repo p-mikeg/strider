@@ -344,6 +344,9 @@
   `None` for every default.
 - `Function.to_text()` prints a `frame_address_in_call_register` line after
   `default_cc` when a call's clobbered register held a stack address.
+- `Function.to_text()` prints an `assumptions` line after `default_cc`
+  naming the claims in force that are on (`Function.assumptions`), the
+  allocators as sorted hex addresses.
 - `CfgOptions(call_other_abis=...)` is resolved on first use, rebuilt only
   when the arch changes, and borrowed by every later `analyze` and
   `build_cfg` through it, where each call rebuilt it.
@@ -451,6 +454,10 @@
   `frame_address_in_call_register` line after `default_cc` when a call's
   clobbered register held a stack address (the fact that bars forwarding a
   load across a call); a function without it prints as before.
+- `Function::to_text` and `to_text_named` print an `assumptions` line after
+  `default_cc` naming the claims in force that are on, in declaration order,
+  with `noalias_allocators=[..]` as sorted hex; a function claiming nothing
+  prints as before.
 
 ### Fixed
 

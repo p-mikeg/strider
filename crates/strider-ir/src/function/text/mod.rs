@@ -13,8 +13,9 @@ use crate::node::{
 
 impl Function {
     /// The canonical text form: a header (endianness, tracked varnodes, default
-    /// convention, `frame_address_in_call_register` when a call's clobbered
-    /// register held a stack address, argument carriers), then one line per
+    /// convention, the claims in force ([`Self::assumptions`]) when any is on,
+    /// `frame_address_in_call_register` when a call's clobbered register held
+    /// a stack address, argument carriers), then one line per
     /// node reachable from [`Self::entry`] as `outs = op[payload] ins`, values
     /// named `%vN` in print order. With `fingerprints`, each line ends in its
     /// sorted asm address set `  @{..}`; those sets can dwarf the rest on large
@@ -309,6 +310,7 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool, vn_name: VnName<'_
         let _ = write!(out, " {field}={value}");
     }
     out.push('\n');
+    render_claims(&mut out, f.assumptions());
     let st = f.side_tables();
     if st.frame_address_in_call_register() {
         out.push_str("frame_address_in_call_register\n");
@@ -626,6 +628,27 @@ fn const_str(value: &ConstValue) -> String {
             s
         }
     }
+}
+
+/// The claims that are on, in declaration order, as one `assumptions` line;
+/// nothing when none is.
+fn render_claims(out: &mut String, claims: &crate::AssumptionOptions) {
+    let held = claims.omitted_by(&crate::AssumptionOptions::none());
+    if held.is_empty() {
+        return;
+    }
+    out.push_str("assumptions");
+    for name in held {
+        if name == "noalias_allocators" {
+            let mut addrs: Vec<u64> = claims.noalias_allocators.iter().copied().collect();
+            addrs.sort_unstable();
+            let addrs: Vec<String> = addrs.iter().map(|a| format!("{a:#x}")).collect();
+            let _ = write!(out, " {name}=[{}]", addrs.join(", "));
+        } else {
+            let _ = write!(out, " {name}");
+        }
+    }
+    out.push('\n');
 }
 
 /// The printed fields, in declaration order.

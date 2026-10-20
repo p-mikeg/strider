@@ -104,10 +104,11 @@ fn report(result: &AnalyzeResult, out: &mut String) {
     }
 }
 
-/// `text`'s `endian` and `default_cc` lines, then the rest. `to_text` opens
-/// with `endian`, `tracked`, `default_cc`.
+/// `text`'s `endian`, `default_cc` and `assumptions` lines, then the rest.
+/// `to_text` opens with `endian`, `tracked`, `default_cc`, then
+/// `assumptions` when a claim is on.
 fn split_shared(text: &str) -> (String, String) {
-    let mut lines = text.split_inclusive('\n');
+    let mut lines = text.split_inclusive('\n').peekable();
     let endian = lines.next().unwrap_or_default();
     let tracked = lines.next().unwrap_or_default();
     let cc = lines.next().unwrap_or_default();
@@ -117,8 +118,11 @@ fn split_shared(text: &str) -> (String, String) {
             && cc.starts_with("default_cc "),
         "to_text's header moved:\n{text}"
     );
+    let claims = lines
+        .next_if(|line| line.starts_with("assumptions "))
+        .unwrap_or_default();
     (
-        format!("{endian}{cc}"),
+        format!("{endian}{cc}{claims}"),
         format!("{tracked}{}", lines.collect::<String>()),
     )
 }
