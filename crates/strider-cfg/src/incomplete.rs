@@ -58,17 +58,19 @@ pub enum Reason {
     /// names it. So is the start of an arm, or of a region off one, whose
     /// decode fails for a reason no other variant names.
     UndecodableTarget,
-    /// Where a fall-through, or a conditional branch's not-taken path, ran off
-    /// a [`FunctionBound::Size`](crate::FunctionBound::Size) end, at the first
+    /// Where a fall-through ran off a
+    /// [`FunctionBound::Size`](crate::FunctionBound::Size) end, at the first
     /// address after the last instruction decoded: the end itself unless that
-    /// instruction straddles it. The region leaves through an empty `TailCall`
+    /// instruction straddles it. That is a sequential fall-through, a
+    /// conditional branch's not-taken path, or a conditional instruction's
+    /// skip of itself (`if (!cc) goto inst_next`: ARM, Thumb IT, MIPS
+    /// branch-likely, x86 `rep`). The region leaves through an empty `TailCall`
     /// stub there, as a branch out of range does. A call returning there ends
-    /// its region `NoReturn` instead, unless its target is in
-    /// [`CfgOptions::no_return_targets`](crate::CfgOptions::no_return_targets),
-    /// which is not reported. Typical causes: an entry
-    /// point falling into the next symbol, a slot patched at run time, or a
-    /// size too short. Code reached off a seeded arm is named here with no
-    /// stub: the arm is dropped instead, and
+    /// its region `NoReturn` and is reported, unless its target is in
+    /// [`CfgOptions::no_return_targets`](crate::CfgOptions::no_return_targets).
+    /// Typical causes: an entry point falling into the next symbol, a slot
+    /// patched at run time, or a size too short. Off a seeded arm a sequential
+    /// fall-through is named here with no stub: the arm is dropped instead, and
     /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets)
     /// names it. Never under [`FunctionBound::Open`](crate::FunctionBound::Open):
     /// only an address below the entry is out of range there, and a

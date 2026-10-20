@@ -586,6 +586,24 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         self.end_at_call_returning_past_end(next_pcode_addr(addr, lift_res)?)
     }
 
+    /// Reports an out-of-range `target` that is the end of the instruction at
+    /// `addr` as [`crate::Reason::PastFunctionEnd`]: Sleigh skips a
+    /// conditional instruction (ARM, Thumb IT, MIPS branch-likely, x86 `rep`)
+    /// with `if (!cc) goto inst_next`, so that branch is its fall-through.
+    fn report_skip_past_end(
+        &mut self,
+        target: PcodeInsnAddr,
+        addr: PcodeInsnAddr,
+        lift_res: &rsleigh::LiftRes,
+    ) {
+        let own_end = (addr.machine_addr.addr).checked_add(lift_res.machine_insn_len as u64);
+        if target.insn_index == 0 && own_end == Some(target.machine_addr.addr) {
+            self.builder
+                .incomplete
+                .insert(target, crate::Reason::PastFunctionEnd);
+        }
+    }
+
     /// Ends the region `NoReturn` at a call whose return address `ret` is
     /// out of range, reporting `ret` as [`crate::Reason::PastFunctionEnd`]:
     /// a callee that returns would fall out of the function.
@@ -662,6 +680,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         // address this adds two parallel edges to one stub, mirroring the
         // in-range degenerate case: `region_if` reads the second edge as the
         // fall-through side.
+        if true_oob {
+            self.report_skip_past_end(target_addr, addr, lift_res);
+        }
         // The not-taken path past the end is a fall-through, reported as one.
         if false_oob {
             self.builder

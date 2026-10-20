@@ -514,6 +514,62 @@ fn a_call_returning_past_size_bound_is_reported() {
     );
 }
 
+/// `bytes` at `start` under `arch`, bounded to `size`.
+fn build_sized(arch: SleighArch, bytes: Vec<u8>, start: u64, size: u64) -> Cfg {
+    let reader = BufMemReader::new(bytes, start);
+    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+    let opts = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(size),
+        ..CfgOptions::default()
+    };
+    DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(start.into(), &opts)
+        .expect("build_cfg")
+}
+
+/// The entries of a build of `bytes` at 0x1000 bounded to their own length.
+fn skip_past_end(arch: SleighArch, bytes: Vec<u8>) -> Vec<(u64, strider_cfg::Reason)> {
+    let size = bytes.len() as u64;
+    incomplete_of(&build_sized(arch, bytes, 0x1000, size))
+}
+
+// A conditional instruction skips itself with `if (!cc) goto inst_next`, so its
+// not-executed path is a branch to its own end. Past the size end that is a
+// fall-through out of the function, reported where it lands.
+
+#[test]
+fn an_arm_conditional_return_last_reports_its_skip() {
+    let le = |words: &[u32]| -> Vec<u8> { words.iter().flat_map(|w| w.to_le_bytes()).collect() };
+    // cmp r0, #0; then the conditional return
+    for (what, last) in [("popne {pc}", 0x18bd_8000u32), ("bxne lr", 0x112f_ff1e)] {
+        assert_eq!(
+            skip_past_end(SleighArch::arm(), le(&[0xe350_0000, last])),
+            [(0x1008, strider_cfg::Reason::PastFunctionEnd)],
+            "{what}"
+        );
+    }
+}
+
+#[test]
+fn a_mips_branch_likely_last_reports_its_skip() {
+    // beql a0, zero, 0x1000; nop: not taken, it skips its delay slot to 0x1008.
+    let be = |words: &[u32]| -> Vec<u8> { words.iter().flat_map(|w| w.to_be_bytes()).collect() };
+    assert_eq!(
+        skip_past_end(SleighArch::mipsbe32(), be(&[0x5080_ffff, 0])),
+        [(0x1008, strider_cfg::Reason::PastFunctionEnd)]
+    );
+}
+
+#[test]
+fn an_x86_rep_last_reports_its_skip() {
+    // rep movsb
+    assert_eq!(
+        skip_past_end(SleighArch::x86_64(), vec![0xf3, 0xa4]),
+        [(0x1002, strider_cfg::Reason::PastFunctionEnd)]
+    );
+}
+
 #[test]
 fn probe_x86_nop_lifts_to_zero_pcode_ops() {
     // Precondition for the zero-pcode-prefix test below: x86 `nop` lifts to
