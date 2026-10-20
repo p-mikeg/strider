@@ -367,7 +367,8 @@ impl<'a, 'e> Machine<'a, 'e> {
             }
             NodeKind::Popcount => self.int(ins[0])?.map(|a| u128::from(a.count_ones()) & m),
             NodeKind::Lzcount => {
-                let bits = int_type(f, ins[0])?.bit_width() as u32;
+                // Over the input's bytes, as Sleigh counts: an `I1` counts 8.
+                let bits = (int_type(f, ins[0])?.byte_size() * 8) as u32;
                 self.int(ins[0])?
                     .map(|a| u128::from(a.leading_zeros() - (128 - bits)) & m)
             }
@@ -721,6 +722,20 @@ mod tests {
         })
         .expect("a shift with a wider count is valid IR");
         assert_eq!(returned(&f, &env(&|_| 0, None)), vec![Known(0)]);
+    }
+
+    /// Sleigh counts over the input's bytes, so an `I1` counts over 8 bits, as
+    /// `strider_ir::eval::lzcount` does.
+    #[test]
+    fn lzcount_of_an_i1_counts_over_a_byte() {
+        for (bit, zeros) in [(1u8, 7), (0, 8)] {
+            let f = make_empty_fn(|b| {
+                let v = b.build_int_const(bit, ValueType::I1)?;
+                b.build_lzcount(v, ValueType::int(8))
+            })
+            .unwrap();
+            assert_eq!(returned(&f, &env(&|_| 0, None)), vec![Known(zeros)]);
+        }
     }
 
     /// `i = start; do i += step while i != stop; return i`.

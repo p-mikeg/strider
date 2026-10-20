@@ -160,6 +160,10 @@
 - `build_store`, `build_load`, `build_cpool_ref` and `build_new` return `Err`
   on a float address, data or `CPoolRef` operand, and on a float output for
   `Load`, `CPoolRef` or `New`; each checks its node signature.
+  `build_int_binary_operation`, `build_int_unary_operation`,
+  `build_int_cmp_operation`, `build_float_binary_op` and
+  `build_float_unary_op` check theirs too: an int op over floats, or a float
+  op over ints, returns `Err` where `validate` used to reject it later.
 - `strider_target::FlowCommit` and `SleighArch::commits_flow_context` are
   gone, and `SleighArch::flow_commit_vars` lists names alone: each var's flow
   class is the sla's own `noflow` declaration, read off by the decoder.
@@ -486,7 +490,8 @@
 
 ### Added, Rust
 
-- `Function::to_text_named`: `to_text` with registers spelled by name.
+- `Function::to_text_named(fingerprints, &ArchNames)`: `to_text` with
+  registers spelled by name.
 - `IRViewer::switch_selector`: a `Switch`'s dispatch value.
 - `Strider::lifter()`, the engine `analyze` lifts with.
 - `strider_cfg::seated_in`: the `known_targets` entry for a site, by its exact
