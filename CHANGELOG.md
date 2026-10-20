@@ -267,8 +267,10 @@
 - `analyze` and `build_cfg` no longer fail when decoding falls through past
   `function_max_size`: the fall-through is a tail call to the address there,
   which `cfg.incomplete` names `"past_function_end"`, as it does a
-  conditional branch's not-taken path past the end. A seeded jump-table arm
-  whose code does is dropped and named there.
+  conditional branch's not-taken path past the end and the return address
+  of a call that still ends its path there (not one to a
+  `no_return_targets` entry). A seeded jump-table arm whose code falls
+  through past the end is dropped and named there.
 - Two `BoundCapture`s with no integer value (any binding but an integer
   constant of at most 128 bits) bound to the same value of one function
   compare equal; every such pair compared unequal before, `m[c] == m[c]`
@@ -378,9 +380,11 @@
 
 - `DecodeEngine::build_cfg`, and so `Strider::analyze`, no longer fail when
   decoding falls through past a `FunctionBound::Size` end: the region
-  tail-calls the address there, reported as `Reason::PastFunctionEnd`, as is
-  a conditional branch's not-taken path past the end. A seeded arm whose
-  code does is dropped and named there.
+  tail-calls the address there, reported as `Reason::PastFunctionEnd`, as are
+  a conditional branch's not-taken path past the end and the return address
+  of a call that still ends `NoReturn` there (not one to a
+  `no_return_targets` entry). A seeded arm whose code falls through past the
+  end is dropped and named there.
 - `FunctionArgPat::source` matches a sub-register of the carrier, as
   `function_arg_reg` does in Python.
 - `Lifter` refuses a calling convention whose stack geometry belongs to

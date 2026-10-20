@@ -553,12 +553,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             // address. The return address still decides whether any
             // in-function code follows.
             rsleigh::Opcode::CallIndirect => {
-                if self.is_branch_tail_call_nocheck(next_pcode_addr(addr, lift_res)?) {
-                    self.finish_current_region(RegionTerminator::NoReturn)?;
-                    Ok(InsnOutcome::RegionClosed)
-                } else {
-                    Ok(InsnOutcome::Continue)
-                }
+                self.end_at_call_returning_past_end(next_pcode_addr(addr, lift_res)?)
             }
             _ => Ok(InsnOutcome::Continue),
         }
@@ -573,7 +568,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ///    lands.
     /// 2. The return address is outside the function's bound, so no
     ///    in-function code follows: an unmarked no-return callee (FreeBSD
-    ///    `exit1`), or the function ends at the call.
+    ///    `exit1`), or the function ends at the call. The return address is
+    ///    reported as [`crate::Reason::PastFunctionEnd`].
     fn process_call(
         &mut self,
         insn: &rsleigh::Insn,
@@ -583,13 +579,25 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let target_no_return =
             crate::direct_call_target(insn, self.builder.sleigh.default_code_space())
                 .is_some_and(|target| self.builder.options.no_return_targets.contains(&target));
-        let return_oob = self.is_branch_tail_call_nocheck(next_pcode_addr(addr, lift_res)?);
-        if target_no_return || return_oob {
+        if target_no_return {
             self.finish_current_region(RegionTerminator::NoReturn)?;
-            Ok(InsnOutcome::RegionClosed)
-        } else {
-            Ok(InsnOutcome::Continue)
+            return Ok(InsnOutcome::RegionClosed);
         }
+        self.end_at_call_returning_past_end(next_pcode_addr(addr, lift_res)?)
+    }
+
+    /// Ends the region `NoReturn` at a call whose return address `ret` is
+    /// out of range, reporting `ret` as [`crate::Reason::PastFunctionEnd`]:
+    /// a callee that returns would fall out of the function.
+    fn end_at_call_returning_past_end(&mut self, ret: PcodeInsnAddr) -> Result<InsnOutcome> {
+        if !self.is_branch_tail_call_nocheck(ret) {
+            return Ok(InsnOutcome::Continue);
+        }
+        self.finish_current_region(RegionTerminator::NoReturn)?;
+        self.builder
+            .incomplete
+            .insert(ret, crate::Reason::PastFunctionEnd);
+        Ok(InsnOutcome::RegionClosed)
     }
 
     fn process_branch(

@@ -115,8 +115,9 @@ class Cfg:
           one whose decode fails for a reason no other entry names, named here
           at its start.
         - `"past_function_end"`: where code falls through past
-          `function_max_size`, and so tail-calls this address; a seeded arm
-          whose code does is dropped and named here.
+          `function_max_size`, and so tail-calls this address, or where a call
+          not to a `no_return_targets` entry would return; a seeded arm whose
+          code falls through here is dropped and named here.
 
         From `build_cfg` this is that one build: every dispatch it left without
         an edge and every seed it seated. From `analyze` the target reasons
