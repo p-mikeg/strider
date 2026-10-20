@@ -173,7 +173,9 @@ pub fn run_post(
 }
 
 /// One iteration of `run`'s post-pass loop: a pass that changed the graph
-/// drops the memos, since it may have rewired an address.
+/// drops the memos, since it may have rewired an address. The frame-escape
+/// verdict goes after every pass, since an edit through `function_mut` is
+/// not counted.
 fn apply_post(
     pass: &dyn PostOptimizer,
     edit: &mut crate::EditFunction<'_>,
@@ -182,7 +184,9 @@ fn apply_post(
     let edits = edit.edits();
     pass.apply(edit, ctx)?;
     edit.clean();
-    if edit.edits() != edits {
+    if edit.edits() == edits {
+        edit.function().side_tables().clear_frame_escape();
+    } else {
         edit.function().side_tables().invalidate_analyses();
     }
     Ok(())
@@ -687,6 +691,40 @@ mod tests {
             .set_stack_slot(returned, returned, 16);
         super::run_post(&NoOpPost, &mut function, &mut OptCtx::new(None))?;
         assert!(function.side_tables().memory_decomp(returned).1.is_some());
+        Ok(())
+    }
+
+    /// An edit through `function_mut` leaves the edit count alone, so the
+    /// frame-escape verdict is dropped after every post-pass all the same.
+    #[test]
+    fn run_post_drops_the_frame_escape_verdict() -> crate::Result<()> {
+        /// Returns `Add(1, 2)`'s first operand instead, through the raw graph.
+        #[derive(Clone)]
+        struct RewiresThroughFunctionMut;
+        impl super::PostOptimizer for RewiresThroughFunctionMut {
+            fn apply(
+                &self,
+                edit: &mut crate::EditFunction<'_>,
+                _ctx: &mut OptCtx<'_>,
+            ) -> crate::Result<()> {
+                let graph = edit.function_mut().graph_mut();
+                let sum = crate::test_support::return_value(graph)?;
+                let one = graph.nth_input(graph.producer(sum), 0).expect("Add(1, 2)");
+                let (ret, slot) = graph.value_uses(sum).next().expect("returned");
+                let slot = graph.node_input_id_at(ret, slot as usize)?;
+                graph.update_input(slot, one);
+                Ok(())
+            }
+        }
+
+        let mut function = folding_fn();
+        function.side_tables().set_frame_escape(true);
+        super::run_post(
+            &RewiresThroughFunctionMut,
+            &mut function,
+            &mut OptCtx::new(None),
+        )?;
+        assert_eq!(function.side_tables().frame_escape(), None);
         Ok(())
     }
 
