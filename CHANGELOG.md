@@ -552,6 +552,12 @@
   breakpoint counters, and MIPS CP0 `Count`, `Random`, `Cause`, the
   performance counters and Octeon `CvmCount`. Two reads were one value, so
   `t1 - t0` folded to 0 and a timing loop's exit test never changed.
+- Python: `load_elf(relocated_got_is_rom=True)` leaves unmapped the MIPS
+  primary GOT entries the loader writes without a relocation record: the
+  lazy-resolver and module-pointer words, and every global entry but one for
+  a symbol the image defines that already holds its address. An imported
+  symbol's entry was served as the 0 or lazy-binding stub the file holds, so
+  `&ext_var` folded to NULL.
 
 ### Added, Rust
 
