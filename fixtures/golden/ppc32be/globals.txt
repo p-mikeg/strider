@@ -1,4 +1,4 @@
-# ppc32be/globals: Strider::analyze, default options except on_incomplete=Ignore
+# ppc32be/globals: Strider::analyze, default options
 # branch_on_const_string: iconst[0x79] or no if
 # read_const_byte: iconst[0x61]
 # read_const_int: iconst[0x12345678]
