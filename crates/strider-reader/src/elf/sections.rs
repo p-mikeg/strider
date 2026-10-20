@@ -55,9 +55,9 @@ pub enum LoadFilter {
     /// its file bytes: one under a relocation the applier does not compute,
     /// an IFUNC's among them (it holds what the resolver returns), and on
     /// MIPS each primary GOT entry the loader writes without a relocation
-    /// record: the lazy-resolver and module-pointer words, and every global
-    /// entry but one for a symbol the image defines that already holds its
-    /// address.
+    /// record: the lazy-resolver word, the module-pointer word when its top
+    /// bit asks for one, and every global entry except those for symbols the
+    /// image defines that already hold their address.
     ///
     /// The rest is an UNCHECKED claim about the runtime, which the image
     /// cannot prove: that nothing rewrites a slot after the loader has run (a
