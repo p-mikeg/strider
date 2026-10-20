@@ -42,9 +42,12 @@ pub(crate) enum Value {
     TocRelative,
     /// `TOC + A`
     Toc,
-    /// `B + A`, the image base `B` modelled 0: `R_*_RELATIVE` / `IRELATIVE`
-    /// and an STN_UNDEF `R_MIPS_REL32`.
+    /// `B + A`, the image base `B` modelled 0: `R_*_RELATIVE` and an
+    /// STN_UNDEF `R_MIPS_REL32`.
     ImageRelative,
+    /// `indirect(B + A)`: what the IFUNC resolver at `B + A` returns, which
+    /// only running it computes: `R_*_IRELATIVE`.
+    Indirect,
     /// `S` plus the RELA addend: a GOT or PLT slot, whose `SHT_REL` field
     /// holds the PLT push address rather than an addend.
     Slot,
@@ -61,7 +64,7 @@ impl Value {
     pub(crate) fn reads_symbol(self) -> bool {
         !matches!(
             self,
-            Value::ImageRelative | Value::GotBasePcrel | Value::Toc
+            Value::ImageRelative | Value::Indirect | Value::GotBasePcrel | Value::Toc
         )
     }
 }
@@ -184,7 +187,8 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
     Some(match arch {
         A::X86_64 => match r_type {
             elf::R_X86_64_NONE | elf::R_X86_64_TLSDESC_CALL => Marker,
-            elf::R_X86_64_RELATIVE | elf::R_X86_64_IRELATIVE => C(V::ImageRelative, data(8, false)),
+            elf::R_X86_64_RELATIVE => C(V::ImageRelative, data(8, false)),
+            elf::R_X86_64_IRELATIVE => C(V::Indirect, data(8, false)),
             elf::R_X86_64_GLOB_DAT | elf::R_X86_64_JUMP_SLOT => C(V::Slot, data(8, false)),
             elf::R_X86_64_GOTPCREL | elf::R_X86_64_GOTPCRELX | elf::R_X86_64_REX_GOTPCRELX => {
                 C(V::GotPcrel, data(4, true))
@@ -201,7 +205,8 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
         },
         A::I386 => match r_type {
             elf::R_386_NONE | elf::R_386_TLS_DESC_CALL => Marker,
-            elf::R_386_RELATIVE | elf::R_386_IRELATIVE => C(V::ImageRelative, data(4, false)),
+            elf::R_386_RELATIVE => C(V::ImageRelative, data(4, false)),
+            elf::R_386_IRELATIVE => C(V::Indirect, data(4, false)),
             elf::R_386_GLOB_DAT | elf::R_386_JMP_SLOT => C(V::Slot, data(4, false)),
             elf::R_386_GOT32 | elf::R_386_GOT32X => C(V::GotOffset, data(4, false)),
             elf::R_386_GOTOFF => C(V::GotRelative, data(4, false)),
@@ -210,9 +215,8 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
         },
         A::Aarch64 => match r_type {
             elf::R_AARCH64_NONE | 256 | elf::R_AARCH64_TLSDESC_CALL => Marker,
-            elf::R_AARCH64_RELATIVE | elf::R_AARCH64_IRELATIVE => {
-                C(V::ImageRelative, data(8, false))
-            }
+            elf::R_AARCH64_RELATIVE => C(V::ImageRelative, data(8, false)),
+            elf::R_AARCH64_IRELATIVE => C(V::Indirect, data(8, false)),
             elf::R_AARCH64_GLOB_DAT | elf::R_AARCH64_JUMP_SLOT => C(V::Slot, data(8, false)),
             elf::R_AARCH64_CALL26 | elf::R_AARCH64_JUMP26 => C(V::Pcrel, F::A64Branch26),
             elf::R_AARCH64_CONDBR19 | elf::R_AARCH64_LD_PREL_LO19 => C(V::Pcrel, F::A64Imm19),
@@ -266,7 +270,8 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
         },
         A::Arm => match r_type {
             elf::R_ARM_NONE | elf::R_ARM_V4BX => Marker,
-            elf::R_ARM_RELATIVE | elf::R_ARM_IRELATIVE => C(V::ImageRelative, data(4, false)),
+            elf::R_ARM_RELATIVE => C(V::ImageRelative, data(4, false)),
+            elf::R_ARM_IRELATIVE => C(V::Indirect, data(4, false)),
             elf::R_ARM_GLOB_DAT | elf::R_ARM_JUMP_SLOT => C(V::Slot, data(4, false)),
             elf::R_ARM_REL32 => C(V::Pcrel, data(4, true)),
             elf::R_ARM_CALL => C(V::Pcrel, F::ArmBranch24 { call: true }),
@@ -299,9 +304,8 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
                 elf::R_PPC_NONE => Marker,
                 elf::R_PPC64_TLS | elf::R_PPC64_TOCSAVE | R_PPC64_ENTRY if ppc64 => Marker,
                 // `R_PPC64_*` shares these numbers with `R_PPC_*`.
-                elf::R_PPC_RELATIVE | elf::R_PPC_IRELATIVE => {
-                    C(V::ImageRelative, data(word, false))
-                }
+                elf::R_PPC_RELATIVE => C(V::ImageRelative, data(word, false)),
+                elf::R_PPC_IRELATIVE => C(V::Indirect, data(word, false)),
                 elf::R_PPC_GLOB_DAT | elf::R_PPC_JMP_SLOT => C(V::Slot, data(word, false)),
                 elf::R_PPC_REL32 => C(V::Pcrel, data(4, true)),
                 elf::R_PPC64_REL64 if ppc64 => C(V::Pcrel, data(8, true)),
