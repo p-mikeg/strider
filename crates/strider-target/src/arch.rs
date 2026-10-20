@@ -218,6 +218,8 @@ struct DecodeFacts {
     /// [`SleighArch::callother_output_is_exact_in`] short of its x87 rule.
     callother_output_exact: bool,
     internal_registers: &'static [&'static str],
+    /// Volatile registers the pspec does not mark.
+    volatile_registers: &'static [&'static str],
 }
 
 impl ArchFamily {
@@ -239,6 +241,7 @@ static X86_FACTS: DecodeFacts = DecodeFacts {
     has_delay_slots: false,
     callother_output_exact: true,
     internal_registers: &["xmmTmp1", "xmmTmp2"],
+    volatile_registers: &[],
 };
 
 static ARM32_FACTS: DecodeFacts = DecodeFacts {
@@ -260,6 +263,7 @@ static ARM32_FACTS: DecodeFacts = DecodeFacts {
         "tmpCY",
         "tmpOV",
     ],
+    volatile_registers: &[],
 };
 
 static AARCH64_FACTS: DecodeFacts = DecodeFacts {
@@ -289,6 +293,7 @@ static AARCH64_FACTS: DecodeFacts = DecodeFacts {
         "tmpNG",
         "tmpZR",
     ],
+    volatile_registers: &[],
 };
 
 static MIPS_FACTS: DecodeFacts = DecodeFacts {
@@ -305,6 +310,9 @@ static MIPS_FACTS: DecodeFacts = DecodeFacts {
     has_delay_slots: true,
     callother_output_exact: false,
     internal_registers: &["tsp"],
+    // CP0 `Count` is a cycle counter and `Random` a TLB index that steps
+    // every cycle. No MIPS pspec marks either.
+    volatile_registers: &["Count", "Random"],
 };
 
 static PPC_FACTS: DecodeFacts = DecodeFacts {
@@ -314,6 +322,7 @@ static PPC_FACTS: DecodeFacts = DecodeFacts {
     has_delay_slots: false,
     callother_output_exact: false,
     internal_registers: &["r2Save", "RESERVE_ADDRESS"],
+    volatile_registers: &[],
 };
 
 /// The Sleigh configuration describing one target architecture.
@@ -516,6 +525,43 @@ impl SleighArch {
         self.facts().internal_registers
     }
 
+    /// REGISTER-space byte ranges, `[start, end)`, whose value changes between
+    /// two reads with nothing writing it: a free-running counter such as
+    /// AArch64 `cntvct_el0`, the PowerPC timebase or MIPS CP0 `Count`.
+    ///
+    /// The pspec's `<volatile>` ranges and `volatile` registers, which make
+    /// every AArch64 system register volatile, plus the family's own
+    /// additions.
+    ///
+    /// # Errors
+    ///
+    /// A volatile range outside the REGISTER space, or a name `regs` does not
+    /// declare.
+    pub fn volatile_register_ranges(
+        &self,
+        regs: &rsleigh::SleighRegs,
+    ) -> crate::Result<Vec<core::ops::Range<u64>>> {
+        let pspec = self.pspec();
+        let mut ranges = Vec::new();
+        for range in pspec.volatile_ranges {
+            anyhow::ensure!(
+                range.space == "register",
+                "{:?}: a volatile range in space {:?}",
+                self.preset,
+                range.space
+            );
+            ranges.push(range.first..range.last.saturating_add(1));
+        }
+        let names = pspec
+            .volatile_registers
+            .iter()
+            .chain(self.facts().volatile_registers);
+        for vn in crate::calling_convention::regs_to_vns(regs, names)? {
+            ranges.push(vn.addr_off..vn.addr_off + u64::from(vn.size));
+        }
+        Ok(ranges)
+    }
+
     /// The ISA-mode context a cold entry at `entry_addr` decodes in, as
     /// `(context_var, value)`: the address low bit set means the alternate ISA
     /// (ARM Thumb, MIPS16e), clear means the base one. The instruction itself
@@ -712,6 +758,40 @@ mod tests {
                 !preset.arch().callother_output_is_exact_in(&st0),
                 "{preset:?} x87 container",
             );
+        }
+    }
+
+    /// Which registers each preset reads as volatile: the counters are in, a
+    /// general-purpose register is out, and only AArch64 covers its whole
+    /// system-register file (`tpidr_el1` included).
+    #[test]
+    fn volatile_registers_per_preset() {
+        use super::ArchFamily;
+        for preset in ArchPreset::ALL {
+            let arch = preset.arch();
+            let regs = arch.probe_regs();
+            let ranges = arch.volatile_register_ranges(&regs).expect("resolves");
+            let volatile = |name: &str| {
+                let vn = regs.name_to_vn(name).expect(name);
+                let end = vn.addr_off + u64::from(vn.size);
+                ranges.iter().any(|r| r.start < end && vn.addr_off < r.end)
+            };
+            let (counters, plain): (&[&str], &[&str]) = match preset.family() {
+                ArchFamily::X86 | ArchFamily::Arm32 => (&[], &[]),
+                ArchFamily::Aarch64 => (
+                    &["cntvct_el0", "cntpct_el0", "pmccntr_el0", "tpidr_el1"],
+                    &["x0", "sp", "NG"],
+                ),
+                ArchFamily::Mips => (&["Count", "Random"], &["v0", "Status", "Compare"]),
+                ArchFamily::Ppc => (&["TBLr", "TBUr"], &["r3", "LR", "spr110"]),
+            };
+            assert_eq!(ranges.is_empty(), counters.is_empty(), "{preset:?}");
+            for name in counters {
+                assert!(volatile(name), "{preset:?} {name}");
+            }
+            for name in plain {
+                assert!(!volatile(name), "{preset:?} {name}");
+            }
         }
     }
 
