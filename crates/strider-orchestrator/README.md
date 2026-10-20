@@ -20,7 +20,7 @@ re-run the whole thing until the control-flow graph stops changing.
 - `Strider::build_cfg(entry, cfg_opts)` -> `Result<Cfg>`: a structural decode
   only, no lift, no optimisation, no resolution.
 - Accessors that let a caller run its own pipeline against the same state:
-  `arch`, `sleigh`, `sleigh_regs`, `user_op_names`, `rom`.
+  `arch`, `lifter`, `sleigh`, `sleigh_regs`, `user_op_names`, `rom`.
 - Re-exports, so a caller needs one dependency: `strider_opt` as `opt`, and
   `Lifter` / `LiftOutcome` from `strider-lift`.
 
@@ -45,7 +45,8 @@ resolve: one round seats one level of discovery.
 `SiteTable::fold` folds a round's classifications into the loop's own seats
 and reports what changed. The CFG reads those seats as
 `CfgOptions::derived_targets`, which beat the caller's `known_targets` at
-their exact key; the caller's table is borrowed, never copied or edited, so a
+their exact key, so `analyze` refuses a caller's own `derived_targets`; the
+caller's table is borrowed, never copied or edited, so a
 binary-wide seed table costs a function nothing. Two anchors sharing one pcode
 address merge within the round; across rounds the staged set replaces the
 previous seat. The caller's own seed is unioned back in by address every
@@ -55,7 +56,7 @@ adopts the mode already proved for that address, rather than re-decoding proved
 arms in whatever mode flows into the branch.
 
 The loop converges when no anchor is left, or when a round changes no address's
-successor set. `MAX_RESOLUTION_ITERATIONS` (256) is the one other thing that
+seat (its successors, or whether a lone target is a `Single`) and refuses none. `MAX_RESOLUTION_ITERATIONS` (256) is the one other thing that
 stops it, and not as a failure: one iteration seats one level of discovery, so
 the cap is also the discovery-depth limit, and exhausting it while sites are
 still growing is that limit being hit, not an oscillation. Those sites are
@@ -106,9 +107,10 @@ a listed address may be missing.
   later rebuild still carries that edge.
 
 A caller seed asserts the site is settled, which suppresses the unclassifiable
-seated `Switch` report until the site outgrows the seed. It suppresses nothing
-else: not a live placeholder, and not a successor the classifier proved and the
-fold dropped.
+seated `Switch` report until the site outgrows the seed, and a `LinkRegister`
+seed moves a return it covers whose target is unproven from `UnresolvedBranch`
+to `UnverifiedSeed`. It suppresses nothing else: not a live placeholder, and
+not a successor the classifier proved and the fold dropped.
 
 Depends on `strider-cfg`, `strider-ir`, `strider-lift`, `strider-opt`,
 `strider-target`, `rsleigh`, `anyhow` and `rustc-hash`.

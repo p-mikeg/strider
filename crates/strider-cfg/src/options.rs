@@ -61,7 +61,8 @@ pub struct CfgOptions<'a> {
     /// A resolver's own answers, keyed by the `BranchIndirect`'s exact p-code
     /// address: one beats `known_targets` at that site, and
     /// [`ResolvedTargets::Withdrawn`] defers it. Borrowed, as `known_targets`
-    /// is.
+    /// is. The orchestrator's `analyze` owns this layer and refuses a
+    /// caller's.
     pub derived_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// Direct-call targets that never return (`exit`, `abort`); a call to one
     /// ends its region `NoReturn`. Borrowed, as `known_targets` is.
