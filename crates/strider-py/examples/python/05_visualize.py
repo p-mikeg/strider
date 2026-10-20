@@ -10,9 +10,7 @@ FIXTURE = WORKSPACE / "fixtures" / "out" / "x86" / "memory.elf"
 OUT_DIR = pathlib.Path(tempfile.gettempdir())
 
 prog = strider.lift.load_elf(str(FIXTURE))
-cfg, function, unresolved = prog.analyze(
-    "array_sum", opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
-)
+cfg, function, unresolved = prog.analyze("array_sum")
 
 # analyze returns the final resolved CFG.
 cfg_html = OUT_DIR / "array_sum-cfg.html"

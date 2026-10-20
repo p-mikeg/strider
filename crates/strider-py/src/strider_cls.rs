@@ -703,10 +703,13 @@ impl PyLifter {
     /// ("no store to X"): code behind a listed address may be missing.
     ///
     /// Runs the fixed-point loop with the GIL released, so other Python
-    /// threads keep running. One consequence: a DAEMON thread sitting inside
-    /// this call when the interpreter starts finalizing is killed while it
-    /// holds no GIL, and the forced unwind out of the released region aborts
-    /// the process. Analyse on non-daemon threads, and join them.
+    /// threads keep running, except where `mem` or `rom` is a Python object,
+    /// whose adapter takes the GIL back on every read anyway; there the GIL
+    /// is held. One consequence of the release: a DAEMON thread sitting
+    /// inside this call when the interpreter starts finalizing is killed
+    /// while it holds no GIL, and the forced unwind out of the released
+    /// region aborts the process. Analyse on non-daemon threads, and join
+    /// them.
     #[pyo3(signature = (entry, cc=None, opts=None))]
     fn analyze(
         slf: Py<Self>,
@@ -860,27 +863,6 @@ impl PyLifter {
                 function.run_pipeline_in_place(pipe, "optimize", rom, &claims)
             }
         })
-    }
-
-    /// Look up a register by Sleigh name, or `None` when the name is not
-    /// in this arch's table.
-    fn reg(slf: &Bound<'_, Self>, name: &str) -> PyResult<Option<crate::sleigh::PyVn>> {
-        Ok(try_borrow_lifter(slf)?
-            .strider()?
-            .sleigh_regs()
-            .name_to_vn(name)
-            .map(crate::sleigh::PyVn::from_inner))
-    }
-
-    /// The reverse of `reg`.  Returns `None` when `vn` names no register
-    /// (a non-REGISTER space, or an offset/size not in the table).
-    fn reg_name(slf: &Bound<'_, Self>, vn: &crate::sleigh::PyVn) -> PyResult<Option<String>> {
-        let this = try_borrow_lifter(slf)?;
-        Ok(this
-            .strider()?
-            .sleigh_regs()
-            .vn_to_name(vn.inner)
-            .map(str::to_owned))
     }
 
     /// Decode from `entry` one instruction at a time until `addr`, and

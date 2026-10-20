@@ -75,6 +75,24 @@ impl PyMatch {
         self.inner.iter().any(|m| m.is_bound(cap))
     }
 
+    /// What `cap` bound, as `(is a value, raw id)`, or `None` when unbound.
+    fn bound_identity(
+        &self,
+        py: Python<'_>,
+        cap: strider_pattern::Capture,
+    ) -> PyResult<Option<(bool, u32)>> {
+        let function = self.function.borrow(py);
+        let function = function.read_inner().map_err(into_strider_err)?;
+        self.assert_generation(&function)?;
+        let Some(m) = self.binding_for(cap) else {
+            return Ok(None);
+        };
+        Ok(match m.value(cap) {
+            Some(v) => Some((true, v.as_u32())),
+            None => m.node(cap, function.graph()).map(|n| (false, n.as_u32())),
+        })
+    }
+
     /// Resolve `cap` to a node id and read it under a single borrow, skipping
     /// the `PyNode` round trip's three resolutions and discarded incref.
     fn read_bound<R>(
@@ -367,6 +385,16 @@ impl PyBoundCapture {
     fn signed(&self, py: Python<'_>) -> PyResult<Option<i128>> {
         self.match_.borrow(py).int_opt(py, self.key(py))
     }
+
+    /// Whether both bound the same value of the same function.
+    fn same_binding(&self, py: Python<'_>, other: &Self) -> PyResult<bool> {
+        let (a, b) = (self.match_.borrow(py), other.match_.borrow(py));
+        if !a.function.is(&b.function) {
+            return Ok(false);
+        }
+        let mine = a.bound_identity(py, self.cap.borrow(py).inner)?;
+        Ok(mine.is_some() && mine == b.bound_identity(py, other.cap.borrow(py).inner)?)
+    }
 }
 
 #[pymethods]
@@ -393,7 +421,9 @@ impl PyBoundCapture {
     /// Equal to an int matching the captured constant at its width, in either
     /// signed or unsigned spelling (so `-8` and `0xFFFFFFF8` both match a
     /// 32-bit -8), or to another `BoundCapture` whose constant agrees in
-    /// either spelling. Value-comparing, hence `BoundCapture` is unhashable.
+    /// either spelling. Two non-constant captures are equal when they bound
+    /// the same value of the same function; an unbound one equals nothing.
+    /// Value-comparing, hence `BoundCapture` is unhashable.
     fn __richcmp__(
         &self,
         py: Python<'_>,
@@ -405,7 +435,12 @@ impl PyBoundCapture {
         // operand, and a `BoundCapture` has no `__rshift__`.
         let equal = if let Ok(o) = other.downcast::<PyBoundCapture>() {
             let o = o.borrow();
-            (u.is_some() && u == o.unsigned(py)?) || (s.is_some() && s == o.signed(py)?)
+            let (ou, os) = (o.unsigned(py)?, o.signed(py)?);
+            if u.is_none() && ou.is_none() {
+                self.same_binding(py, &o)?
+            } else {
+                (u.is_some() && u == ou) || (s.is_some() && s == os)
+            }
         } else {
             u.is_some_and(|u| other.extract::<u128>().is_ok_and(|o| o == u))
                 || s.is_some_and(|s| other.extract::<i128>().is_ok_and(|o| o == s))
