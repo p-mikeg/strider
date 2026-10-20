@@ -85,7 +85,7 @@ impl Function {
             default_cc,
             endianness,
             vn_interner,
-            side_tables: SideTables::default(),
+            side_tables: SideTables::new(),
             const_interner: entity_utils::EntityInterner::default(),
             switch_tables: cranelift_entity::PrimaryMap::new(),
             call_ccs: entity_utils::EntityInterner::default(),
@@ -122,8 +122,10 @@ impl Function {
 
     /// Adds `claims` to the claims in force, withdrawing none, and drops the
     /// graph-derived memos when one is new: a decomposition made without an
-    /// allocator reads its return as not-memory.  A function never given a
-    /// claim is optimized at the sound floor.
+    /// allocator reads its return as not-memory.  A region filter or
+    /// [`Self::stack_offset`] then reads nothing until a run or
+    /// `strider_opt::refresh_memory_classes`.  A function never given a claim
+    /// is optimized at the sound floor.
     pub fn assume(&mut self, claims: &crate::AssumptionOptions) {
         if self.side_tables.assume(claims) {
             self.side_tables.invalidate_analyses();

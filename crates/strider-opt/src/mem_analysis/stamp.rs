@@ -7,10 +7,9 @@
 //! 2. Everything decomposes under the function's claims
 //!    ([`strider_ir::Function::assumptions`]), which only grow.
 //! 3. [`SideTables::invalidate_analyses`] drops both and keeps the claims:
-//!    after each changing in-loop pass, in [`refresh_memory_classes`], and in
-//!    strider-py's in-loop pass run as a post-pass when it changes the graph.
-//!    After any other post-pass only the frame-escape verdict is dropped;
-//!    compaction drops it too and remaps the classes.
+//!    after each pass or post-pass that changes the graph, and in
+//!    [`refresh_memory_classes`].  Compaction drops the frame-escape verdict
+//!    and remaps the classes.
 //! 4. A converged run stamps every live access after its post-passes, and
 //!    [`refresh_memory_classes`] restamps (`apply_rules_count` calls it). In
 //!    between the table fills lazily.
@@ -42,8 +41,9 @@ pub(crate) fn stamp_all(edit: &mut crate::EditFunction<'_>) {
 
 /// Re-derives the per-access memory classes `stack_only()` / `heap_only()`
 /// read, under the claims the function holds
-/// ([`strider_ir::Function::assumptions`]): every run's merged, none if it
-/// never ran.  Call it after editing outside a pipeline.
+/// ([`strider_ir::Function::assumptions`]): every set
+/// [`strider_ir::Function::assume`] added.  Call it after editing outside a
+/// pipeline.
 pub fn refresh_memory_classes(edit: &mut crate::EditFunction<'_>) {
     edit.clean();
     edit.function().side_tables().invalidate_analyses();
