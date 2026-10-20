@@ -3,7 +3,8 @@
 //! Interval lattice with five seeds:
 //!
 //! - `If(IntCmp(v, const))` guards, edge-sensitive, propagated via the control
-//!   dominator tree, and back-propagated through an `Add(X, const)` spine.
+//!   dominator tree, back-propagated through an `Add(X, const)` spine, and
+//!   shared by every expression of exactly `v`'s bits of one value.
 //! - `KnownBits` upper bounds and strides.
 //! - Guard recovery at a `Region` every predecessor of which bounds the same
 //!   value.
@@ -356,6 +357,8 @@ pub struct RangeMap<'f> {
     /// Per `And(x, c)` output whose mask clears only bits KnownBits proves zero
     /// in `x`, that `x`: the two are the same value.
     identity_masks: SecondaryMap<ValueId, Option<ValueId>>,
+    /// Every guarded value with its [`BitField`], by the field's root.
+    guards_by_root: FxHashMap<ValueId, Vec<(ValueId, BitField)>>,
     /// Open `range_of` frames, against [`MAX_RANGE_DEPTH`].
     depth: u32,
 }
@@ -591,16 +594,66 @@ impl<'f> RangeMap<'f> {
         verdict
     }
 
-    /// What holds on `value` itself at `region`: the guards recorded on it, met
-    /// with what its incoming edges prove if it is a phi.
+    /// What holds on `value` itself at `region`: the guards recorded on it and
+    /// on every other expression of exactly its bits, met with what its
+    /// incoming edges prove if it is a phi.
+    ///
+    /// MIPS64 guards `w >> 26` with `srl` and indexes by an `ext` of the same
+    /// six bits, `(sext(w) << 32) >> 58`: two nodes, one value.
     fn bound_at(&self, value: ValueId, region: NodeId) -> Option<Interval> {
-        match (
+        let own = match (
             self.guard_at(value, region),
             self.phi_arm_bound(value, region),
         ) {
             (Some(a), Some(b)) => Some(a.intersect(b)),
             (hit, None) | (None, hit) => hit,
+        };
+        let Some(field) = self.bit_field(value).filter(|f| f.exact) else {
+            return own;
+        };
+        self.guards_by_root
+            .get(&field.root)
+            .into_iter()
+            .flatten()
+            .filter(|&&(guarded, of)| guarded != value && of == field)
+            .filter_map(|&(guarded, _)| self.guard_at(guarded, region))
+            .fold(own, |met, iv| Some(met.map_or(iv, |m| m.intersect(iv))))
+    }
+
+    /// Whether `iv`, `value`'s range at `region`, is only its KnownBits bound
+    /// while a guard dominating `region` bounds bits of the same root that
+    /// `value` shares but no hop connects to `value`.
+    ///
+    /// That guard may be the one sizing a table `value` indexes, in a shape
+    /// this module does not read, and the KnownBits bound of a bit field is
+    /// the whole field: enumerating it reads past the table into whatever
+    /// follows, such as the next switch's table.
+    pub(crate) fn guard_left_unconnected(
+        &self,
+        value: ValueId,
+        region: NodeId,
+        iv: Interval,
+    ) -> bool {
+        if self.dominating_guard(value, region).is_some()
+            || iv != self.resolve_leaf_guarded(value, None)
+        {
+            return false;
         }
+        let Some(field) = self.bit_field(value) else {
+            return false;
+        };
+        self.guards_by_root
+            .get(&field.root)
+            .into_iter()
+            .flatten()
+            .any(|&(guarded, of)| {
+                guarded != value && of.overlaps(field) && self.guard_at(guarded, region).is_some()
+            })
+    }
+
+    /// `value` as bits of the value it is extracted from; see [`BitField`].
+    fn bit_field(&self, value: ValueId) -> Option<BitField> {
+        bit_field(self.function, &self.identity_masks, value)
     }
 
     /// The union over a phi's arms of what reaching it by that arm's edge
@@ -1081,6 +1134,15 @@ fn build<'f>(
         .iter()
         .map(|(&value, by_node)| (value, GuardForest::new(&doms, by_node)))
         .collect();
+    let mut guards_by_root: FxHashMap<ValueId, Vec<(ValueId, BitField)>> = FxHashMap::default();
+    for &value in guards.keys() {
+        if let Some(field) = bit_field(function, &identity_masks, value) {
+            guards_by_root
+                .entry(field.root)
+                .or_default()
+                .push((value, field));
+        }
+    }
     RangeMap {
         function,
         doms,
@@ -1091,6 +1153,7 @@ fn build<'f>(
         memo: FxHashMap::default(),
         guard_memo: std::cell::RefCell::new(FxHashMap::default()),
         identity_masks,
+        guards_by_root,
         depth: 0,
     }
 }
@@ -1115,6 +1178,183 @@ fn identity_mask(
     let type_mask = function.value_type_opt(value)?.int_mask_u128()?;
     let cleared = !mask & type_mask;
     (cleared & !known[operand].zeros == 0).then_some((value, operand))
+}
+
+/// Producer steps [`bit_field`] takes below a value; past them the value
+/// reached is the root.
+const MAX_FIELD_STEPS: u32 = 16;
+
+/// A value read as a run of bits of `root`: its bits `shift..shift + width`
+/// are `root`'s bits `lo..lo + width`.  When `exact` every other bit is zero,
+/// so two values with one exact field are one unsigned value; otherwise the
+/// bits above the run are other bits of `root`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct BitField {
+    root: ValueId,
+    lo: u32,
+    width: u32,
+    shift: u32,
+    exact: bool,
+}
+
+impl BitField {
+    /// Whether the two may share a bit of `root`.
+    fn overlaps(self, other: BitField) -> bool {
+        self.root == other.root
+            && (!self.exact
+                || !other.exact
+                || (self.lo < other.lo + other.width && other.lo < self.lo + self.width))
+    }
+}
+
+/// One step of [`bit_field`]'s walk: how the value is built from `operand`.
+#[derive(Clone, Copy)]
+enum FieldOp {
+    /// The same unsigned value.
+    Same,
+    SignExtend,
+    Truncate,
+    ShiftLeft(u32),
+    ShiftRight(u32),
+    /// `& (2^m - 1)`.
+    LowMask(u32),
+}
+
+impl FieldOp {
+    /// The field of a value of width `w` built by this op from one whose field
+    /// is `f` and whose width is `w_in`; `None` when no bit of `root` is left.
+    fn apply(self, f: BitField, w: u32, w_in: u32) -> Option<BitField> {
+        Some(match self {
+            FieldOp::Same => f,
+            FieldOp::SignExtend => BitField {
+                exact: f.exact && f.shift + f.width < w_in,
+                ..f
+            },
+            FieldOp::Truncate => {
+                let room = w.checked_sub(f.shift).filter(|&r| r > 0)?;
+                BitField {
+                    width: f.width.min(room),
+                    exact: f.exact || f.width >= room,
+                    ..f
+                }
+            }
+            FieldOp::ShiftLeft(k) => {
+                let shift = f.shift.checked_add(k).filter(|&s| s < w)?;
+                BitField {
+                    width: f.width.min(w - shift),
+                    shift,
+                    exact: f.exact || shift + f.width >= w,
+                    ..f
+                }
+            }
+            FieldOp::ShiftRight(k) if k <= f.shift => BitField {
+                shift: f.shift - k,
+                ..f
+            },
+            FieldOp::ShiftRight(k) => {
+                let dropped = k - f.shift;
+                let width = f.width.checked_sub(dropped).filter(|&w| w > 0)?;
+                BitField {
+                    lo: f.lo + dropped,
+                    width,
+                    shift: 0,
+                    ..f
+                }
+            }
+            FieldOp::LowMask(m) => {
+                let room = m.checked_sub(f.shift).filter(|&r| r > 0)?;
+                BitField {
+                    width: f.width.min(room),
+                    exact: f.exact || f.width >= room,
+                    ..f
+                }
+            }
+        })
+    }
+}
+
+/// How `value` is built from one operand by an op [`bit_field`] reads.
+fn field_step(
+    function: &strider_ir::Function,
+    identity_masks: &SecondaryMap<ValueId, Option<ValueId>>,
+    value: ValueId,
+) -> Option<(ValueId, FieldOp)> {
+    let f = function;
+    let shift_by = || -> Option<(ValueId, u32)> {
+        let [x, k] = f.producer_inputs_exact::<2>(value).ok()?;
+        Some((x, u32::try_from(f.int_const_u128(k)?).ok()?))
+    };
+    match *f.node_kind(f.producer(value)) {
+        NodeKind::Extend(ExtendOp::ZeroExtend) => {
+            Some((f.int_inputs(value).next()?, FieldOp::Same))
+        }
+        NodeKind::Extend(ExtendOp::SignExtend) => {
+            Some((f.int_inputs(value).next()?, FieldOp::SignExtend))
+        }
+        NodeKind::Truncate => Some((f.int_inputs(value).next()?, FieldOp::Truncate)),
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
+            shift_by().map(|(x, k)| (x, FieldOp::ShiftLeft(k)))
+        }
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight) => {
+            shift_by().map(|(x, k)| (x, FieldOp::ShiftRight(k)))
+        }
+        NodeKind::IntBinaryOp(IntBinaryOp::Mul) => {
+            let (x, c) = crate::const_eval::var_and_const(f, f.producer(value))?;
+            c.is_power_of_two()
+                .then(|| (x, FieldOp::ShiftLeft(c.trailing_zeros())))
+        }
+        NodeKind::IntBinaryOp(IntBinaryOp::And) => {
+            if let Some(x) = identity_masks[value] {
+                return Some((x, FieldOp::Same));
+            }
+            let (x, c) = crate::const_eval::var_and_const(f, f.producer(value))?;
+            (c != 0 && c & c.wrapping_add(1) == 0)
+                .then(|| (x, FieldOp::LowMask(128 - c.leading_zeros())))
+        }
+        _ => None,
+    }
+}
+
+/// `value` as a [`BitField`] of the deepest value the shifts, masks and casts
+/// below it reach; `value` itself, all its bits, when they leave nothing exact
+/// to compare.  `None` for a non-integer.
+fn bit_field(
+    function: &strider_ir::Function,
+    identity_masks: &SecondaryMap<ValueId, Option<ValueId>>,
+    value: ValueId,
+) -> Option<BitField> {
+    let width = |v: ValueId| {
+        function
+            .value_type_opt(v)
+            .filter(|t| t.is_integer())
+            .and_then(|t| u32::try_from(t.bit_width()).ok())
+    };
+    let whole = |root: ValueId| {
+        Some(BitField {
+            root,
+            lo: 0,
+            width: width(root)?,
+            shift: 0,
+            exact: true,
+        })
+    };
+    let mut steps: Vec<(ValueId, ValueId, FieldOp)> = Vec::new();
+    let mut base = value;
+    for _ in 0..MAX_FIELD_STEPS {
+        let Some((operand, op)) = field_step(function, identity_masks, base) else {
+            break;
+        };
+        steps.push((base, operand, op));
+        base = operand;
+    }
+    let mut field = whole(base)?;
+    for &(out, operand, op) in steps.iter().rev() {
+        match op.apply(field, width(out)?, width(operand)?) {
+            Some(next) => field = next,
+            None => return whole(value),
+        }
+    }
+    Some(field)
 }
 
 /// The `(value, interval)` an `If`-controlled edge establishes on the value its

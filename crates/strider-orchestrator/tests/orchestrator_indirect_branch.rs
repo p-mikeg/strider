@@ -470,6 +470,35 @@ fn a_scaled_masked_loop_index_seats_only_the_real_slots() {
     );
 }
 
+/// `switch_bitfield_mips64.S`: the `op` switch is guarded by `srl; sltiu 62`
+/// and indexed by an `ext` of the same six bits, and the `rs` table follows
+/// its 62 entries directly.  The arms are read off the fixture's tables: 18
+/// for `op`, 11 for `rs`.  The field alone admits 64 slots, and seating them
+/// would add `rs` entries 0 and 1 to `op`.
+#[test]
+fn a_guard_on_another_extract_of_the_index_bits_sizes_the_table() {
+    let op: Vec<u64> = (0..18).map(|i| 0x1_2000_01e0 + 8 * i).collect();
+    let rs: Vec<u64> = (0..11).map(|i| 0x1_2000_0270 + 8 * i).collect();
+    for arch in [common::Arch::Mips64be, common::Arch::Mips64le] {
+        let result = analyze_with_opts(
+            arch,
+            "switch_bitfield_mips64",
+            "bitfield_dispatch",
+            Default::default(),
+            true,
+        )
+        .unwrap_or_else(|e| panic!("{arch:?}: must converge: {e:#}"));
+        let mut arms = switch_arms(&result.cfg);
+        arms.sort();
+        assert_eq!(arms, vec![op.clone(), rs.clone()], "{arch:?}: {arms:#x?}");
+        assert!(
+            result.incomplete().is_empty(),
+            "{arch:?}: {}",
+            result.incomplete()
+        );
+    }
+}
+
 /// The same shape WITHOUT the mask resolves completely, which is what isolates
 /// the bound as the cause rather than the loop or the phi.
 #[test]
