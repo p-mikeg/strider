@@ -40,7 +40,6 @@ def test_run_reports_single_unresolved_indirect_site_address():
         0x2000, strider.sleigh.CallingConvention.x86_64_systemv(),
         opts=strider.lift.LifterOptions(
             cfg=strider.cfg.CfgOptions(function_max_size=len(code)),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     # Unresolvable is not an error: the run completes and reports.
@@ -60,7 +59,6 @@ def test_run_reports_both_unresolved_indirect_site_addresses():
         0x1000, strider.sleigh.CallingConvention.x86_64_systemv(),
         opts=strider.lift.LifterOptions(
             cfg=strider.cfg.CfgOptions(function_max_size=len(code)),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     assert sorted(unresolved) == [0x1005, 0x1007]

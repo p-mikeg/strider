@@ -34,7 +34,6 @@ def test_x86_linux_kernel_constructs_strider(x86_indirect_branch_elf):
         strider.sleigh.CallingConvention.x86_linux_kernel(),
         opts=strider.lift.LifterOptions(
             cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True),
-            on_incomplete=strider.lift.OnIncomplete.IGNORE,
         ),
     )
     assert function is not None

@@ -7,7 +7,6 @@ import strider
 
 BASE = 0x1000
 CODE = b"\x48\x83\xc0\x01\xc3"  # add rax, 1 ; ret
-IGNORE = strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE)
 
 
 def test_a_read_callback_renders_a_function_of_its_own_lifter():
@@ -29,8 +28,8 @@ def test_a_read_callback_renders_a_function_of_its_own_lifter():
 
     lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), Rendering())
     cc = strider.sleigh.CallingConvention.x86_64_systemv()
-    holder["first"] = lift.analyze(BASE, cc, IGNORE)
-    lift.analyze(BASE, cc, IGNORE)
+    holder["first"] = lift.analyze(BASE, cc)
+    lift.analyze(BASE, cc)
     assert len(seen) == 2 and all(s.startswith("digraph") for s in seen), seen
 
 
@@ -48,6 +47,6 @@ def test_the_renderers_take_no_lifter(render):
     lift = strider.lift.lifter(
         strider.sleigh.SleighArch.x86_64(), strider.reader.BufferReader(BASE, CODE)
     )
-    result = lift.analyze(BASE, strider.sleigh.CallingConvention.x86_64_systemv(), IGNORE)
+    result = lift.analyze(BASE, strider.sleigh.CallingConvention.x86_64_systemv())
     with pytest.raises(TypeError, match="lifter"):
         render(result)

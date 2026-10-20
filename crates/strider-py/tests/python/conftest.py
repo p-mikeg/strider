@@ -86,18 +86,16 @@ def built_lifter_and_function(
     mem = loaded.reader()
     addr = loaded.symbol(symbol).address
     lift = strider.lift.lifter(arch, mem, rom=mem)
-    _cfg, function, _unresolved = lift.analyze(
+    cfg, function, _unresolved = lift.analyze(
         addr,
         cc,
         opts=strider.lift.LifterOptions(
             cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True),
             pipeline=None if optimize else strider.opt.OptimizerPipeline.empty(),
-            # An unoptimised lift proves no return.
-            on_incomplete=strider.lift.OnIncomplete.ERROR
-            if optimize
-            else strider.lift.OnIncomplete.IGNORE,
         ),
     )
+    # An unoptimised lift proves no return.
+    assert not optimize or not cfg.incomplete, cfg.incomplete
     return lift, function
 
 
