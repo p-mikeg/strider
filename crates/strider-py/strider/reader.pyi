@@ -20,7 +20,9 @@ class BufferReader:
     def read(self, addr: int, size: int) -> Optional[bytes]:
         """Up to `size` bytes at `addr` (fewer near a region edge, or before a
         relocation the ELF loader does not compute), or `None` when `addr`
-        itself is unmapped or inside such a relocation's field."""
+        itself is unmapped or inside such a relocation's field. In writable,
+        non-executable data such a field is not cut out: it serves the file's
+        bytes."""
         ...
 
 class MemReader:

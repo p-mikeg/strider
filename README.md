@@ -55,7 +55,8 @@ strider.explore.shutdown(port)
 
 - **More images.** Unlinked `ET_REL` objects analyse with their code
   relocations applied; an undefined symbol gets an address of its own, and a
-  relocation strider does not compute stops any read that reaches it. ppc64
+  relocation strider does not compute stops any read that reaches it, except
+  in writable data, where its field serves the file's bytes. ppc64
   ELFv1 symbols resolve through their `.opd` descriptors.
   `prog.add_symbol_file(path)` and `prog.add_symbols({name: addr})` name the
   functions of a stripped image, `prog.add_elf(path)` merges a second one, and

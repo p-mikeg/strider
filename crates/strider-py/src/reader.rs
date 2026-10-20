@@ -118,7 +118,8 @@ impl PyBufferReader {
     /// Read up to `size` bytes starting at `addr`.  Returns the bytes
     /// (possibly fewer than `size` near a region edge, or before a relocation
     /// this loader does not compute) or `None` when `addr` is unmapped or
-    /// inside such a relocation's field.
+    /// inside such a relocation's field. In writable, non-executable data
+    /// such a field is not cut out: it serves the file's bytes.
     fn read<'py>(
         &self,
         py: Python<'py>,
@@ -786,7 +787,9 @@ impl PyLoadedElf {
 
     /// Read up to `size` raw bytes at `addr`.  Returns fewer bytes near a
     /// region edge or before a relocation this loader does not compute, and
-    /// `None` when `addr` is unmapped or inside such a relocation's field.
+    /// `None` when `addr` is unmapped or inside such a relocation's field. In
+    /// writable, non-executable data such a field is not cut out: it serves
+    /// the file's bytes, which the loader overwrites.
     fn read<'py>(
         &self,
         py: Python<'py>,

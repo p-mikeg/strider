@@ -554,11 +554,12 @@
   `t1 - t0` folded to 0 and a timing loop's exit test never changed.
 - Python: `load_elf(relocated_got_is_rom=True)` leaves unmapped the MIPS
   primary GOT entries the loader writes without a relocation record: the
-  lazy-resolver and module-pointer words, and every global entry but one for
-  a symbol the image defines that already holds its address. An imported
-  symbol's entry was served as the 0 or lazy-binding stub the file holds, so
-  `&ext_var` folded to NULL. A dynamic MIPS image missing one of the tags
-  that place its GOT leaves the whole `.got` unmapped.
+  lazy-resolver word, the module-pointer word when its top bit asks for one,
+  and every global entry except those for symbols the image defines that
+  already hold their address. An imported symbol's entry was served as the 0
+  or lazy-binding stub the file holds, so `&ext_var` folded to NULL. A
+  dynamic MIPS image missing one of the tags that place its GOT leaves the
+  whole `.got` unmapped.
 - Python: under `relocated_got_is_rom=True` an IFUNC's slot is unmapped: an
   `R_*_IRELATIVE` one, and one relocated against a defined `STT_GNU_IFUNC`
   symbol, whose `st_value` is the resolver. Both served the resolver's
@@ -567,7 +568,7 @@
   object's GOT slot for such a symbol stays unmapped too, and so does any
   other data word relocated against one; in an executable mapping, where it
   may be an instruction, such a relocation keeps the symbol's address.
-  `ElfLifter.read` of an `IRELATIVE` slot serves the file's bytes rather
+  `ElfLifter.read` of a RELA `IRELATIVE` slot serves the file's bytes rather
   than the resolver's address.
 - Python: under `relocated_got_is_rom=True` an unstripped static
   executable's `IRELATIVE` slots are unmapped too. Its `.rela.plt` links to
