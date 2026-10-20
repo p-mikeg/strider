@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 import strider
+import strider.pattern as p
 
 from .conftest import WORKSPACE_ROOT
 
@@ -31,12 +32,9 @@ def test_a_mips_imported_symbols_address_is_not_folded_to_null(image):
     `.dynsym`. For an imported `ext_var` the file holds 0, which `&ext_var`
     folded to."""
     elf = strider.lift.load_elf(_image(image), relocated_got_is_rom=True)
-    text = elf.analyze("addr").function.to_text()
-    returned = [line for line in text.splitlines() if line.startswith("return ")]
-    assert returned, text
-    value = returned[0].split(", ")[2]
-    defined = next(line for line in text.splitlines() if line.startswith(f"{value}:"))
-    assert " = load[r] " in defined, f"{image}: &ext_var is {defined}"
+    function = elf.analyze("addr").function
+    assert not function.find_all(p.ret().ret_val(0, p.int_const())), function.to_text()
+    assert function.find_all(p.ret().ret_val(0, p.load())), function.to_text()
 
 
 def test_a_mips_lazy_stub_is_not_the_call_target():
