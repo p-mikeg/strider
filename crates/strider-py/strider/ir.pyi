@@ -95,7 +95,9 @@ class Node:
         `None`."""
         ...
     def call_other_name(self) -> Optional[str]:
-        """The user-op name attached to a `CallOther` node, else `None`."""
+        """The user-op name attached to a `CallOther` node, else `None`.
+        `"read_volatile"` is a read of a register that changes with nothing
+        writing it, such as a cycle counter."""
         ...
     def op(self) -> Optional[str]:
         """The operation variant of an op-carrying node (`"Add"`, `"Less"`,
