@@ -246,10 +246,10 @@ pub fn without_ranges(regions: Vec<MemRegion>, ranges: &AddressSet) -> Vec<MemRe
 pub struct AddressSet(Vec<(u64, u64)>);
 
 impl AddressSet {
-    /// `ranges` sorted, with everything that overlaps or touches merged. Each
-    /// range has `start <= end`.
+    /// `ranges` sorted, with everything that overlaps or touches merged. A
+    /// range with `start > end` holds no address and is dropped.
     pub fn merged(mut ranges: Vec<(u64, u64)>) -> Self {
-        debug_assert!(ranges.iter().all(|&(lo, hi)| lo <= hi), "an inverted range");
+        ranges.retain(|&(lo, hi)| lo <= hi);
         ranges.sort_unstable();
         let mut out: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
         for (lo, hi) in ranges {
@@ -1082,6 +1082,15 @@ mod tests {
                 prop_assert_eq!(set.covers(lo, hi), (lo..hi).all(|a| model.contains(&a)));
             }
         }
+    }
+
+    /// An inverted range holds no address, so it is dropped rather than left
+    /// to break the order the queries binary-search.
+    #[test]
+    fn an_inverted_range_is_dropped() {
+        let set = AddressSet::merged(vec![(7, 8), (10, 5)]);
+        assert_eq!(set.as_slice(), &[(7, 8)]);
+        assert!(!set.covers(5, 10));
     }
 
     /// An RWX PT_LOAD is the whole image on firmware / bare-metal / `ld -N`
