@@ -421,8 +421,10 @@
   `"unverified_seed"`; it was read as a one-arm jump table, which defers, so
   the site stayed in `unresolved`.
 - Seeding a one-arm table at a dispatch the classifier reads as a constant
-  past the function seats that tail call, as an unseeded run does; the loop
-  stopped on the round that deferred the table and reported it unresolved.
+  past the function seats that tail call, as an unseeded run does, and so
+  does a one-arm table the loop derived itself and a later round re-derives
+  as that constant (`UnverifiedSeed`); the loop stopped on the round that
+  deferred the table and reported it `UnresolvedBranch`.
 - A stack-held jump-table slot, a return slot and a stack-arg slot each see
   a store whose bytes wrap onto it around the address width.
 - A one-arm jump-table answer stays an arm through a merge, and a merge
