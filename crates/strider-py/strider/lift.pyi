@@ -453,7 +453,9 @@ class ElfLifter(Lifter):
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
         """Up to `size` raw bytes at `addr`, or `None` when `addr` is unmapped or
-        inside a relocation this loader does not compute."""
+        inside a relocation this loader does not compute. In writable,
+        non-executable data such a field is not cut out but serves the file's
+        bytes, which the loader overwrites; `rom()` holds none of that data."""
         ...
     def reader(self) -> BufferReader:
         """The `BufferReader` over the regions `load_elf` mapped: PT_LOAD segments
@@ -556,9 +558,9 @@ def load_elf(
     image gives no address; an IFUNC's (`R_*_IRELATIVE`, or a relocation
     against a defined `STT_GNU_IFUNC` symbol), which holds what the resolver
     returns; and on MIPS, whose primary GOT no relocation covers, the
-    lazy-resolver and module-pointer words and every global entry but one for
-    a symbol the image defines that already holds its address. `.got.plt` is
-    never served, lazy binding rewriting those slots on the first call
+    lazy-resolver word, the module-pointer word when its top bit asks for
+    one, and every global entry except those for symbols the image defines
+    that already hold their address. `.got.plt` is never served, lazy binding rewriting those slots on the first call
     through each one.
 
     The rest is an unchecked claim about the runtime: that nothing rewrites a
