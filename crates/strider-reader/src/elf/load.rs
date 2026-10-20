@@ -46,8 +46,10 @@ pub enum RelocationMode {
     /// fetch. `got_is_rom` serves `.got` and `.data.rel.ro` as ROM too: an
     /// unchecked claim that the dynamic loader fills those slots before the
     /// program runs and nothing writes them afterwards (a full-RELRO link maps
-    /// them read-only). `.got.plt` is never served, since lazy binding rewrites
-    /// it.
+    /// them read-only), and that a symbol the image defines binds to that
+    /// definition. A slot whose value only the loader computes stays a hole,
+    /// as `LoadFilter::ImmutableAndRelocatedGot` lists. `.got.plt` is never
+    /// served, since lazy binding rewrites it.
     Applied { got_is_rom: bool },
 }
 
