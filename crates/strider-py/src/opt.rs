@@ -12,8 +12,7 @@ pub(crate) type ErasedPass = Box<dyn strider_orchestrator::opt::Optimizer + Send
 pub(crate) type ErasedPostPass = Box<dyn strider_orchestrator::opt::PostOptimizer + Send>;
 
 /// Lets a Python caller register an ordinary fixed-point pass via
-/// `OptimizerPipeline.add_post(...)`: runs it once.  The post-pass loop keeps
-/// the memory classes across post-passes, so a change invalidates them.
+/// `OptimizerPipeline.add_post(...)`: runs it once.
 struct OptAsPostPass(ErasedPass);
 
 impl Clone for OptAsPostPass {
@@ -28,10 +27,7 @@ impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
         edit: &mut strider_opt::EditFunction<'_>,
         ctx: &mut strider_orchestrator::opt::OptCtx<'_>,
     ) -> strider_orchestrator::opt::Result<()> {
-        if self.0.apply(edit, ctx)?.changed() {
-            // A rewrite can move an address off the base its class names.
-            edit.function().side_tables().invalidate_analyses();
-        }
+        self.0.apply(edit, ctx)?;
         Ok(())
     }
 
