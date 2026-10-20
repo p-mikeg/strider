@@ -137,7 +137,8 @@ pub enum NodeKind {
     FloatBitsToInt,
 
     /// Sleigh `CallOther`: CPU intrinsics such as `cpuid`, `rdtsc`, `syscall`,
-    /// x87 transcendentals.
+    /// x87 transcendentals. Also the lifter's `read_volatile`, a read of a
+    /// register that changes with nothing writing it.
     ///
     /// Inputs: `[control, memory, arg0, arg1, ...]`. Outputs:
     /// `[Control, Memory]`, then a `Typed` slot for the result when the

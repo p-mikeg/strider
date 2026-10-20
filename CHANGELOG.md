@@ -544,6 +544,11 @@
   path into the call overwrites in part past its first byte, such as an i386
   `double` whose upper dword one branch zeroes; it attached the original
   store's value as if every path passed it.
+- Python: each read of a register that changes with nothing writing it is
+  its own value, a `CallOther` named `read_volatile`: every AArch64 system
+  register and the PowerPC timebase, which their pspecs mark volatile, and
+  MIPS CP0 `Count` and `Random`. Two reads were one value, so `t1 - t0`
+  folded to 0 and a timing loop's exit test never changed.
 
 ### Added, Rust
 

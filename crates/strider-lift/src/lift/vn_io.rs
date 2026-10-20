@@ -53,6 +53,9 @@ fn complement_limbs(limbs: &[u64], width_bits: u64) -> Vec<u64> {
         .collect()
 }
 
+/// Ghidra's `BUILTIN_VOLATILE_READ`, past any sla's own user-op ids.
+const READ_VOLATILE_USER_OP_ID: u64 = 0x1000_0001;
+
 enum SubRegOutcome {
     Direct { container_reg: rsleigh::Vn },
     SubReg(SubRegContext),
@@ -104,6 +107,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let space = vn.addr_space;
         match space {
             rsleigh::VnSpace::CONST => self.builder.build_int_const(vn.addr_off, vn.int_type()?),
+            rsleigh::VnSpace::REGISTER if self.lifter.is_volatile(vn) => self.read_volatile(vn),
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.read_reg_vn(vn),
             rsleigh::VnSpace::RAM => {
                 let addr = self.build_addr_const(space, vn.addr_off, "RAM space")?;
@@ -111,6 +115,21 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             }
             _ => Err(anyhow!("unsupported varnode space {space:?}")),
         }
+    }
+
+    /// A read of a register that changes with nothing writing it: a fresh
+    /// value each time, from a `CallOther` on the control chain, so no two
+    /// reads merge. Ghidra's decompiler lifts it the same way, as its builtin
+    /// `read_volatile` user-op. A write stays a plain register write: no read
+    /// observes it.
+    fn read_volatile(&mut self, vn: &rsleigh::Vn) -> Result<Value> {
+        let (_, outputs) =
+            self.builder
+                .build_call_other(READ_VOLATILE_USER_OP_ID, &[], &[*vn], false, false)?;
+        self.builder
+            .function_mut()
+            .set_call_other_name(READ_VOLATILE_USER_OP_ID, "read_volatile");
+        Ok(outputs[0])
     }
 
     pub(crate) fn write_vn(&mut self, vn: &rsleigh::Vn, val: strider_ir::Value) -> Result<()> {
