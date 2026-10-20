@@ -441,6 +441,9 @@
   sibling in the same instruction it gave up on.
 - A seed listing one address twice seats one arm, and a seed's `Switch` arms
   come out sorted.
+- A `LinkRegister` (Python `"return"`) seed over a p-code `RETURN` whose
+  target is not provably the caller's reports it `UnverifiedSeed`; the seed
+  was ignored there, and the site stayed `UnresolvedBranch`.
 - A `[]` seed no longer hides a return the classifier derives at that site,
   nor reports it `UnverifiedSeed`; a `LinkRegister` seed seats its `Return`
   where a round's classifications contradict every target they name.

@@ -9,7 +9,7 @@ mod sites;
 pub(crate) mod test_support;
 
 use anyhow::Result;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use strider_cfg::{Incompleteness, MachineInsnAddr, PcodeInsnAddr, Reason, ResolvedTargets};
 
 use crate::{AnalyzeOptions, AnalyzeResult, Strider};
@@ -187,7 +187,7 @@ impl<'s> LoopState<'s> {
             switches,
             live,
             unclassified,
-            unverified_returns: mut returns,
+            unverified_returns: returns,
         } = round;
         // The cap is spent on a round nothing has folded yet, so its own
         // verdict is only known by folding it. Into a COPY of the loop's own
@@ -224,20 +224,15 @@ impl<'s> LoopState<'s> {
                 incomplete_derived: &self.derived_incomplete,
             },
         );
-        // A caller that seeded `return` asserted the answer, and
-        // `UnverifiedSeed` names that seat -- but only for a seat the
-        // CFG build actually CONSUMED, which is what `link_register_seated`
-        // records. A site whose terminator came from the p-code `RETURN` op is
-        // never in it, so dropping one here on the strength of a seed left it
-        // under no reason over a CFG missing the edge control takes.
-        // Hashed: both lists are bounded by the region count and at the sound
-        // floor they can be the same set, so a slice scan per element is
-        // quadratic.
-        let seated_returns: FxHashSet<_> = cfg.link_register_seated().iter().copied().collect();
-        returns
-            .retain(|addr| !seated_returns.contains(addr) || !caller_seeded_return(settled, *addr));
+        // A caller that seeded `return` asserted the answer the IR could not
+        // prove, whether the CFG seated it at a `BranchIndirect` or a p-code
+        // `RETURN` op ended the region: `UnverifiedSeed`, not unresolved.
+        let (seeded_returns, mut returns): (Vec<_>, Vec<_>) = returns
+            .into_iter()
+            .partition(|addr| caller_seeded_return(settled, *addr));
         unresolved.append(&mut returns);
         let mut unverified = unverified_seeded_sites(&cfg, &switches, &unclassified, settled);
+        unverified.extend(seeded_returns);
         // Derived once from the final cfg, then extended with the rounds'
         // accumulated guesses, filtered to the ones still seated: a site whose
         // seat the loop withdrew carries no guessed arm any more, and

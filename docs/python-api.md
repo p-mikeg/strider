@@ -968,7 +968,8 @@ machine address it cannot vouch for, with one of six reasons
   consumed as a return because your own `"return"` seat consumed it, so a
   seeded ARM `pop {pc}` epilogue lands here and not under
   `"unresolved_branch"`. That is also where a FAILED re-check of your own seat
-  lands, since the seat decided a CFG edge. A return the classifier derived is
+  lands, since the seat decided a CFG edge, and a `ret` you seeded
+  `"return"` whose target is not provably the caller's. A return the classifier derived is
   re-checked each round and is not listed once
   `assumptions.return_slots_survive_untracked_writes` (default `True`) carries
   its proof; analysing again with that claim cleared is how you audit one. One
