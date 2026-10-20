@@ -229,10 +229,21 @@ impl<'a> ArgStoreScan<'a> {
             );
             return match self.analyzer.anchored_store(function, def, self.base) {
                 Some(hit) if hit.store_offset == slot_off => {
-                    let end = slot_off.saturating_add(hit.size(function));
+                    let size = hit.size(function);
+                    let end = slot_off.saturating_add(size);
+                    // The probe saw one byte: a path patching the rest of the
+                    // store shows only to a probe of its full width.
+                    let whole_reaches = self.analyzer.nearest_sp_clobber(
+                        function,
+                        &self.options,
+                        self.mem_start,
+                        self.base,
+                        slot_off,
+                        size,
+                    ) == def;
                     SlotReach::Anchored {
                         store: hit,
-                        whole: !self.overlaps_covered(slot_off, end),
+                        whole: whole_reaches && !self.overlaps_covered(slot_off, end),
                     }
                 }
                 // Anchored below the slot: it covers the slot without the
