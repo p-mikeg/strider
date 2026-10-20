@@ -6,7 +6,9 @@ because one machine instruction lifts to several p-code instructions and the
 address a caller reads out of `unresolved` has to be the address that seats.
 """
 
-from typing import Dict, List, Literal, Union
+from typing import Dict, List, Literal, Optional, Union
+
+import pytest
 
 import strider
 from .conftest import fixture_path
@@ -162,3 +164,40 @@ def test_a_link_register_seed_is_reported_as_unverified():
 
     assert [a for a, r in analyze(seed=False).cfg.incomplete if r == "unverified_seed"] == []
     assert [a for a, r in analyze(seed=True).cfg.incomplete if r == "unverified_seed"] == [dispatch]
+
+
+# 0x0ff0: c3     ret       (a function below the entry)
+# 0x1000: ff e0  jmp rax   (an indirect tail call to it)
+_TAIL_BASE = 0xFF0
+_TAIL_SITE = 0x1000
+_TAIL_CODE = bytes([0xC3]) + bytes([0x90] * 15) + bytes([0xFF, 0xE0])
+
+
+@pytest.mark.parametrize("resolve", [True, False])
+@pytest.mark.parametrize("bound", [None, 2])
+def test_a_one_target_seed_outside_the_function_is_a_tail_call(
+    bound: Optional[int], resolve: bool
+):
+    """One target is the caller's declared dispatch, not a table read: out of
+    range it leaves the function, unverified, rather than deferring."""
+    lift = strider.lift.lifter(
+        strider.sleigh.SleighArch.x86_64(),
+        strider.reader.BufferReader(_TAIL_BASE, _TAIL_CODE),
+    )
+    opts = strider.cfg.CfgOptions(
+        known_targets={_TAIL_SITE: [_TAIL_BASE]}, function_max_size=bound
+    )
+    result = lift.analyze(
+        _TAIL_SITE,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        strider.lift.LifterOptions(
+            cfg=opts,
+            resolve_indirect_branches=resolve,
+            on_incomplete=strider.lift.OnIncomplete.IGNORE,
+        ),
+    )
+    assert result.unresolved == []
+    assert result.cfg.incomplete == [(_TAIL_SITE, "unverified_seed")]
+    assert result.cfg.region_at(_TAIL_BASE) is None, "the callee was decoded inline"
+    built = lift.build_cfg(_TAIL_SITE, opts, on_incomplete=strider.lift.OnIncomplete.IGNORE)
+    assert built.incomplete == [(_TAIL_SITE, "unverified_seed")]
