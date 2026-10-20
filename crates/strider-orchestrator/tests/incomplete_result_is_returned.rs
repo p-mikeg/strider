@@ -68,3 +68,30 @@ fn an_unmapped_entry_fails() {
             .is_err()
     );
 }
+
+/// `derived_targets` is the loop's own layer, so a caller's would be dropped
+/// without a word: `analyze` refuses it, while `build_cfg` seats it.
+#[test]
+fn analyze_refuses_a_callers_derived_targets() {
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, jmp_rax(), BASE, None);
+    let mut derived = rustc_hash::FxHashMap::default();
+    derived.insert(
+        PcodeInsnAddr::at_machine_start(0x1003),
+        strider_cfg::ResolvedTargets::Withdrawn,
+    );
+    let opts = AnalyzeOptions {
+        cfg: strider_cfg::CfgOptions {
+            derived_targets: &derived,
+            ..strider_cfg::CfgOptions::default()
+        },
+        ..AnalyzeOptions::default()
+    };
+    let err = strider
+        .analyze(BASE, &cc, &opts, None)
+        .err()
+        .expect("a caller's derived_targets is refused");
+    assert!(err.to_string().contains("derived_targets"), "{err}");
+    strider
+        .build_cfg(BASE, &opts.cfg)
+        .expect("build_cfg seats derived_targets");
+}
