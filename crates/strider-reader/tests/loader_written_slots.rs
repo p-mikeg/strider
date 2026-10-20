@@ -264,3 +264,35 @@ fn an_et_rel_got_slot_for_a_defined_ifunc_is_unmapped() {
         "f_ptr",
     );
 }
+
+/// In code a relocation against a defined IFUNC keeps the symbol's address,
+/// as a FreeBSD kernel's `call memcpy` does: a hole there stops the decoder,
+/// and the symbol is how the image names the function it calls. A data word
+/// holding the IFUNC is still not computed, in the default view too.
+#[test]
+fn an_instruction_relocated_against_a_defined_ifunc_names_the_symbol() {
+    let elf = open("x64_ifunc_nopic.o");
+    let reader =
+        ElfFileMemReader::new(&elf, RelocationMode::Applied { got_is_rom: false }).unwrap();
+    let obj = elf.checked_file().unwrap();
+    let layout = strider_reader::elf::ElfSectionLayout::new(&obj);
+    let text = layout.section_base(&obj.section_by_name(".text").expect(".text"));
+    let at = |name: &str| text + obj.symbol_by_name(name).expect(name).address();
+    let f = at("f");
+    // `jmp f`: endbr64, then e9 and the rel32.
+    let field = at("call_f") + 5;
+    let rel32 = fetch_word(&reader, field, 4, true) as u32 as i32;
+    assert_eq!(
+        (field + 4).wrapping_add_signed(i64::from(rel32)),
+        f,
+        "call_f"
+    );
+    // `mov $f, %eax`: endbr64, then b8 and the imm32.
+    assert_eq!(fetch_word(&reader, at("addr_f") + 5, 4, true), f, "addr_f");
+    let rodata = layout.section_base(&obj.section_by_name(".rodata").expect(".rodata"));
+    assert_hole(
+        rom_word(&reader, rodata, 8, true),
+        object::elf::R_X86_64_64,
+        "f_ptr",
+    );
+}
