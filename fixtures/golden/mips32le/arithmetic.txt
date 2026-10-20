@@ -16,6 +16,7 @@
 # umod: int.rem or int.div or call
 endian little
 default_cc arg_passing_regs=[a0, a1, a2, a3] arg_passing_regs_float=[f12, f14] callee_saved_regs=[s0, s1, s2, s3, s4, s5, s6, s7, s8, gp, ra, f20, f21, f22, f23, f24, f25, f26, f27, f28, f29, f30, f31] ret_val_regs=[v0, v1] ret_val_regs_float=[f0_1, f2_3] stack_vn=sp stack_args=16+4n ret_stack_pop=0 link_register_vn=ra preserves_memory=false preserves_all_registers=false entry_address_vn=t9
+assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes
 
 == main @0x400510
 cfg
