@@ -552,9 +552,9 @@
 - `elf::RelocationMode` (`Unapplied`, `Applied { got_is_rom }`),
   `ElfFileMemReader::new(&OwnedElf, elf::RelocationMode)` and
   `ElfFileMemReader::check_unchanged`.
-- `elf::AddressSet`, the merged range set `AddressSet::merged` builds, read
-  through `AddressSet::as_slice`; `AddressSet::covers` answers whether it
-  holds a whole range in O(log n).
+- `elf::AddressSet`, the merged range set `AddressSet::merged` builds (an
+  inverted range is dropped), read through `AddressSet::as_slice`;
+  `AddressSet::covers` answers whether it holds a whole range in O(log n).
 - `OwnedElf::image(source, mode)` returns an `elf::ElfImage`: the fetch and ROM
   region sets and the writable `AddressSet` a `RelocationMode` picks, from one
   parse. Each set keeps one region per start: where a writable mapping cuts
