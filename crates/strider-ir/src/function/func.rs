@@ -1229,7 +1229,7 @@ mod compact_tests {
         use crate::node::ValueType;
 
         let arch = strider_target::SleighArch::x86_64();
-        let regs = arch.probe_regs().unwrap();
+        let regs = arch.probe_regs();
         let cc = strider_target::CallingConvention::x86_64_systemv()
             .build(&regs)
             .unwrap();

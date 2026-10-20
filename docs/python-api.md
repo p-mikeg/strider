@@ -1008,7 +1008,8 @@ strider.cfg.CfgOptions(
 ```
 
 `function_max_size` bounds the decode to `[entry, entry + size)`; omit it for
-an unbounded lift (`0` raises `ValueError`). `allow_code_before_start_addr`
+an unbounded lift (`0` raises `ValueError`). A fall-through past the end fails
+the whole build with a `StriderError`. `allow_code_before_start_addr`
 follows branches below the entry, which a size already rules out, so passing
 both raises `ValueError`.
 

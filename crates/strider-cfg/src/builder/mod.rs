@@ -1125,24 +1125,34 @@ mod tests {
     }
 
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "the Sleigh was built from another sla")]
     fn an_engine_whose_sleigh_is_another_archs_is_refused() {
         let sleigh = make_sleigh_over(vec![0xc3; 8], 0x1000);
-        let _ = crate::DecodeEngine::new(strider_target::SleighArch::x86(), sleigh);
+        let err = crate::DecodeEngine::new(strider_target::SleighArch::x86(), sleigh)
+            .err()
+            .expect("an x86-64 Sleigh under the x86 preset");
+        assert!(
+            err.to_string()
+                .contains("the Sleigh was built from another sla"),
+            "{err}"
+        );
     }
 
     /// `arm_thumb` shares the ARM sla and differs only in its pspec, whose
     /// defaults the engine snapshots as a cold entry's context.
     #[test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "the Sleigh was built from another pspec")]
     fn an_engine_whose_sleigh_has_another_pspec_is_refused() {
         let arm = strider_target::SleighArch::arm();
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 8], 0x1000);
         let sleigh =
             rsleigh::Sleigh::new(arm.sla_spec(), arm.pspec(), reader).expect("create Sleigh");
-        let _ = crate::DecodeEngine::new(strider_target::SleighArch::arm_thumb(), sleigh);
+        let err = crate::DecodeEngine::new(strider_target::SleighArch::arm_thumb(), sleigh)
+            .err()
+            .expect("an ARM-pspec Sleigh under the Thumb preset");
+        assert!(
+            err.to_string()
+                .contains("the Sleigh was built from another pspec"),
+            "{err}"
+        );
     }
 
     /// A function whose first byte is unmapped has nothing to analyse, so there
