@@ -47,7 +47,12 @@ fn analyze(bytes: Vec<u8>) -> (strider_orchestrator::AnalyzeResult, usize) {
     let mut pipeline = default_pipeline();
     pipeline.add_post_pass(CountRounds(Arc::clone(&rounds)));
     let result = strider
-        .analyze(BASE, &cc, &common::ignoring(), Some(pipeline))
+        .analyze(
+            BASE,
+            &cc,
+            &strider_orchestrator::AnalyzeOptions::default(),
+            Some(pipeline),
+        )
         .expect("a chain deeper than the cap is a result, not an error");
     (result, rounds.load(Ordering::Relaxed))
 }
@@ -56,7 +61,7 @@ fn analyze(bytes: Vec<u8>) -> (strider_orchestrator::AnalyzeResult, usize) {
 #[test]
 fn a_function_with_no_dispatch_is_built_once() {
     let (result, rounds) = analyze(chain(0));
-    assert!(result.is_complete(), "{}", result.incomplete());
+    assert!(result.incomplete().is_empty(), "{}", result.incomplete());
     assert_eq!(rounds, 1);
 }
 
@@ -93,7 +98,7 @@ fn a_site_its_first_fold_consumes_settles_on_the_next_round() {
 fn every_link_of_a_chain_within_the_cap_is_seated() {
     let links = 8;
     let (result, rounds) = analyze(chain(links));
-    assert!(result.is_complete(), "{}", result.incomplete());
+    assert!(result.incomplete().is_empty(), "{}", result.incomplete());
     for i in 0..=links {
         assert!(
             result
@@ -115,11 +120,11 @@ fn every_link_of_a_chain_within_the_cap_is_seated() {
 #[test]
 fn the_iteration_cap_is_the_chain_depth_it_seats() {
     let (fits, fits_rounds) = analyze(chain(256));
-    assert!(fits.is_complete(), "{}", fits.incomplete());
+    assert!(fits.incomplete().is_empty(), "{}", fits.incomplete());
     assert_eq!(fits_rounds, 257);
 
     let (over, over_rounds) = analyze(chain(257));
-    assert!(!over.is_complete());
+    assert!(!over.incomplete().is_empty());
     assert_eq!(
         over.incomplete()
             .of(strider_orchestrator::Reason::UnresolvedBranch)

@@ -84,22 +84,20 @@
   as unbounded, and the flag was ignored beside a size.
 - `LiftOptions` is gone. `Strider::analyze(entry, cc, &AnalyzeOptions,
   pipeline)` takes `AnalyzeOptions { cfg, per_address_ccs,
-  resolve_indirect_branches, assumptions, compact, on_incomplete }` in place
-  of `LiftOptions` and `OptOptions`, and
+  resolve_indirect_branches, assumptions, compact }` in place of
+  `LiftOptions` and `OptOptions`, and
   `Lifter::build_ir_with(cfg, cc, &cfg_opts, &per_address_ccs)` takes the
   `CfgOptions` the cfg was built with.
 - `AnalyzeResult`'s six report fields and `Cfg::{isa_mode_conflicts,
   interior_branch_targets, unmapped_branch_targets, undecodable_branch_targets}`
   are gone: `AnalyzeResult::incomplete()` and `Cfg::incomplete()` return
   one `Incompleteness` of `(PcodeInsnAddr, Reason)`, read per reason with
-  `of(reason)`. A `build_cfg` CFG also names its unresolved and seated sites.
-- `Strider::analyze` returns `Result<AnalyzeResult, AnalyzeError>`, the error
-  `Incomplete(Incompleteness)` or `Failed(anyhow::Error)`, and
-  `Strider::build_cfg` takes an `OnIncomplete` and returns
-  `Result<Cfg, AnalyzeError>`: under `OnIncomplete::Error` a result that is
-  not complete is refused.
-- `AnalyzeOptions::default()` refuses an incomplete result:
-  `on_incomplete` defaults to `OnIncomplete::Error`.
+  `of(reason)`; `is_empty()` is "complete". A `build_cfg` CFG also names its
+  unresolved and seated sites.
+- `AnalyzeResult::is_complete()` is gone: test `incomplete().is_empty()`.
+  `Strider::analyze` and `Strider::build_cfg` return whatever it names, so
+  the `AnalyzeError`, `OnIncomplete` and `AnalyzeOptions::on_incomplete`
+  added since 0.2.0 are gone too, and both return `anyhow::Result`.
 - `CfgOptions` gains `derived_targets`, a resolver's own answers, which
   beat `known_targets` at their exact key; a literal naming every field
   passes `&strider_cfg::NO_TARGETS` for none.

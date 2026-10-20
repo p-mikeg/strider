@@ -33,7 +33,7 @@ fn run_at(
             ..Default::default()
         },
         per_address_ccs: &per_address_ccs,
-        ..common::ignoring()
+        ..Default::default()
     };
     let mut strider = Strider::new(arch, sleigh, None).unwrap();
     strider.analyze(entry, &cc, &opts, None).unwrap().function

@@ -501,7 +501,7 @@ fn sweep_fixture(fixture: &Fixture, rom: Rom, tally: &mut Tally) {
                 data_ranges: data_ranges.clone(),
                 ..Default::default()
             },
-            ..common::ignoring()
+            ..Default::default()
         };
         let result = match strider.analyze(addr, &cc, &opts, None) {
             Ok(result) => result,
