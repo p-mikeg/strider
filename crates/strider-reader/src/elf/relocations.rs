@@ -73,14 +73,16 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 ///
 /// A relocation whose value is not computed (a kind not listed above, a symbol
 /// with no address or a weak undefined one, a value its field cannot hold, a
-/// branch needing a veneer, an IFUNC's) leaves no plausible bytes behind where they would
-/// be decoded or folded: [`Ctx::unmodelled`] says which fields become holes,
-/// through which decoding or folding fails.
+/// branch needing a veneer, an IFUNC's in data) leaves no plausible bytes
+/// behind where they would be decoded or folded: [`Ctx::unmodelled`] says
+/// which fields become holes, through which decoding or folding fails.
 ///
 /// An IFUNC's value is what its resolver returns, which only running it
 /// computes: `R_*_IRELATIVE`, and every value reading `S` of a defined
-/// `STT_GNU_IFUNC` symbol, whose `st_value` is the resolver. A GOT reference
-/// to one still addresses its slot, which is left unmapped.
+/// `STT_GNU_IFUNC` symbol, whose `st_value` is the resolver, outside an
+/// executable mapping. A GOT reference to one still addresses its slot, which
+/// is left unmapped; inside an executable mapping `S` is the symbol's address,
+/// as [`Ctx::in_code`] says.
 ///
 /// A MIPS image's primary GOT holds entries no relocation record covers:
 /// [`mips_implicit_got`] holes the ones the loader writes.
@@ -225,6 +227,15 @@ impl<'a> Ctx<'a, '_> {
         {
             self.patches.push(patch);
         }
+    }
+
+    /// Whether the field lies in an executable mapping, where it may be part
+    /// of an instruction. There a relocation against a defined IFUNC takes
+    /// the symbol's own address: a hole would stop the decoder, and the
+    /// symbol is how the image names the function a `call` reaches (a
+    /// FreeBSD kernel's `call memcpy`, which its linker binds at boot).
+    fn in_code(&self, addr: u64, width: usize) -> bool {
+        self.executable.touches(addr, width)
     }
 
     /// A relocation whose value is not computed: a hole over the field, when
@@ -558,7 +569,7 @@ fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo) {
     // `PltRelative` is a call or jump, whose displacement hides the address it
     // was built from; every other plain field holds that address, see
     // `Target::weak_undefined`.
-    if target.ifunc
+    if (target.ifunc && !ctx.in_code(field_addr, size_bytes))
         || (target.weak_undefined && !matches!(generic.kind, RelocationKind::PltRelative))
     {
         ctx.unmodelled(holder, field_addr, size_bytes, r.type_word());
@@ -674,8 +685,12 @@ fn compute_classified(
     {
         return None;
     }
-    // An IFUNC's `S` is its resolver: only its GOT slot's address is known.
-    if target.is_some_and(|t| t.ifunc) && !value_kind_through_got(value_kind) {
+    // An IFUNC's `S` is its resolver: a data word holding it is not known,
+    // and only its GOT slot's address is. See `Ctx::in_code`.
+    if target.is_some_and(|t| t.ifunc)
+        && !value_kind_through_got(value_kind)
+        && !ctx.in_code(p, field.width())
+    {
         return None;
     }
     let s = target.map_or(0, |t| t.addr);
