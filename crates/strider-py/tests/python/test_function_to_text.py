@@ -49,7 +49,8 @@ def _stack_address_to_a_call(opts=None):
 def test_to_text_names_a_stack_address_a_call_clobbers():
     lines = _stack_address_to_a_call().to_text().splitlines()
     assert lines[2].startswith("default_cc ")
-    assert lines[3] == "frame_address_in_call_register"
+    assert lines[3].startswith("assumptions ")
+    assert lines[4] == "frame_address_in_call_register"
     assert "frame_address_in_call_register" not in _mov_rax_42_ret().to_text()
 
 
