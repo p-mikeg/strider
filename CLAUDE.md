@@ -393,9 +393,8 @@ Domain-namespaced submodules (`strider.ir`, `.lift`, `.cfg`, `.sleigh`,
 `__all__`) plus the single top-level `strider.StriderError`.
 `strider.lift.lifter(arch, mem, rom=None)` builds the lift handle;
 `analyze(entry, cc, opts)` returns an `AnalyzeResult` with
-`.cfg` / `.function` / `.unresolved` (also unpackable as a 3-tuple), or raises
-`IncompleteAnalysis` (a `StriderError`, `.incomplete`) when `cfg.incomplete`
-would name anything, unless `LifterOptions(on_incomplete=OnIncomplete.IGNORE)`.
+`.cfg` / `.function` / `.unresolved` (also unpackable as a 3-tuple), whatever
+`cfg.incomplete` names: incompleteness is reported, never raised.
 Pattern queries (`find_all` / `find_unique`) and rendering
 (`Function.to_dot(pretty=)`) live on the returned objects. See the `.pyi` stubs
 for the typed surface.

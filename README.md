@@ -63,7 +63,7 @@ strider.explore.shutdown(port)
   `endianness` and `is_arm_be8` read what an image carries. Images are memory-mapped; `STRIDER_NO_MMAP=1`
   reads them instead. `load_elf(relocated_got_is_rom=True)` serves `.got` and
   `.data.rel.ro` as read-only, so a load through a GOT slot folds.
-- **Completeness you can check.** `cfg.is_complete()` checks every reason a
+- **Completeness you can check.** `cfg.incomplete` lists every reason a
   result can be incomplete: an unresolved indirect branch (a return whose
   target is not provably the caller's lands there too), a site settled only by
   your own seed, an address reached in two ISA modes, and a branch target off
@@ -135,10 +135,7 @@ strider.explore.shutdown(port)
 
 ## Upgrading from 0.2.0
 
-`analyze` and `build_cfg` raise `strider.lift.IncompleteAnalysis`, a
-`StriderError`, for any result `cfg.incomplete` would name an address in, a
-seeded site included; `LifterOptions(on_incomplete=OnIncomplete.IGNORE)` (or
-`build_cfg(..., on_incomplete=OnIncomplete.IGNORE)`) returns it as before. The
+`cfg.is_complete()` is gone: `not cfg.incomplete` is the same test. The
 per-reason `Cfg` getters are gone: `cfg.incomplete` lists every
 `(address, reason)`. [CHANGELOG.md](CHANGELOG.md) has the rest.
 

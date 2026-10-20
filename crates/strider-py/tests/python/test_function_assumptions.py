@@ -13,7 +13,6 @@ from strider.lift import AssumptionOptions, LifterOptions
 from strider.pattern import load
 
 _BASE = 0x1000
-_IGNORE = strider.lift.OnIncomplete.IGNORE  # under `none()` the return is unverified
 
 # `call 0x1100; mov qword [rax], 42; ret`: with 0x1100 a listed allocator the
 # store is heap-rooted.
@@ -48,7 +47,7 @@ def _lifter(code):
 
 def _analyzed(code, assumptions, lift=None):
     lift = lift or _lifter(code)
-    opts = LifterOptions(assumptions=assumptions, on_incomplete=_IGNORE)
+    opts = LifterOptions(assumptions=assumptions)
     cc = strider.sleigh.CallingConvention.x86_64_systemv()
     return lift, lift.analyze(_BASE, cc, opts).function
 

@@ -148,11 +148,10 @@ classifier `analyze` runs every round whatever pipeline it is given, unless
 `strider.opt` has no pass for it). After
 optimizing, Strider classifies each unresolved indirect branch against the
 clean IR, feeds any newly discovered targets back in, and re-lifts, repeating
-until the set of edges stops changing. Whatever still cannot be resolved makes
-`analyze` raise `IncompleteAnalysis` by default, or comes back as the
-`unresolved` list under `on_incomplete=OnIncomplete.IGNORE`. It is one of the
-six reasons [python-api.md](python-api.md#12-the-cfg-stridercfg) describes,
-which `cfg.incomplete` lists together.
+until the set of edges stops changing. Whatever still cannot be resolved comes
+back as the `unresolved` list. It is one of the six reasons
+[python-api.md](python-api.md#12-the-cfg-stridercfg) describes, which
+`cfg.incomplete` lists together.
 
 An indirect CALL is not resolved and not reported: its target stays the `Call`
 node's input value, for a query to read.
@@ -172,8 +171,7 @@ decode in that mode too.
 own, which the loop then grows from; a site that ends up holding nothing but
 your seed is listed in `cfg.incomplete` as `"unverified_seed"`, since seating
 can stop the classifier deriving. `LifterOptions(resolve_indirect_branches=False)`
-turns the classifier off and leaves every site for you to answer; pair it with
-`on_incomplete=OnIncomplete.IGNORE`, since every such site raises otherwise.
+turns the classifier off and leaves every site for you to answer.
 
 ### Dispatch shapes that need an opt-in
 
@@ -194,9 +192,8 @@ does not carry:
 
 ### Dispatch shapes that do not resolve
 
-These shapes are reported as `"unresolved_branch"`, so `analyze` raises
-`IncompleteAnalysis` for them; under `on_incomplete=OnIncomplete.IGNORE` they
-come back in `unresolved` and the rest of the function lifts:
+These shapes are reported as `"unresolved_branch"`: they come back in
+`unresolved` and the rest of the function lifts:
 
 - AArch64 big-endian stack-array dispatch whose table base is built through a
   `bfi` insert. Sleigh's lowering of `bfi` masks the SP-derived value, and the

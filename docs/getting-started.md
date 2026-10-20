@@ -49,12 +49,12 @@ binary -> CFG -> IR -> optimizations -> pattern queries
    `LifterOptions(pipeline=...)` replaces the pass list outright.
 6. **Resolve** the indirect branches: classify each one against the optimized
    IR, feed the targets back, re-lift, and repeat until the edge set stops
-   changing. What is left over, and a return whose target is not provably the
-   caller's, makes `analyze` raise `IncompleteAnalysis` naming it;
-   `on_incomplete=OnIncomplete.IGNORE` returns the result instead.
-   `cfg.incomplete` lists what is
-   left and `cfg.is_complete()` is the one-call question;
+   changing. `cfg.incomplete` lists what is left over, a return whose target
+   is not provably the caller's included;
    [python-api.md](python-api.md#12-the-cfg-stridercfg) describes each reason.
+   `analyze` returns even when it cannot vouch for every path, so check
+   `cfg.incomplete` before trusting an absence ("no store to X"): code behind
+   a listed address may be missing.
 7. **Query** it, or **rewrite** it if you want the graph changed rather than
    read. `field`, `code_ptr`, `first_of` and `PhiPat.input_from` cover common
    shapes, and `JoinPredicate` relates matches by your own rule.
@@ -119,8 +119,8 @@ that change what existing code sees, rather than adding to it:
   three of them default on. `AssumptionOptions.none()` is the floor.
 - A `Call`'s output slots are numbered per clobbered register now, so a query
   reading `.output(slot)` positionally has to follow.
-- `cfg.is_complete()` checks every reason a result can be incomplete; an
-  empty `unresolved` is not a complete answer on its own.
+- `cfg.incomplete` lists every reason a result can be incomplete; an empty
+  `unresolved` is not a complete answer on its own.
 - A `Match`/`Node` constant reads back as `uint` / `sint` / `boolean`, where
   0.1.0 spelled them `const_uint` / `const_int` / `const_bool`.
 
@@ -129,9 +129,6 @@ that change what existing code sees, rather than adding to it:
 [CHANGELOG.md](../CHANGELOG.md) lists the unreleased changes, breaking entries
 first. The two that change what existing code sees:
 
-- `analyze` and `build_cfg` raise `strider.lift.IncompleteAnalysis`, a
-  `StriderError`, when `cfg.incomplete` would name anything, a seeded site
-  included. Pass `on_incomplete=strider.lift.OnIncomplete.IGNORE` to get
-  the result back as before.
+- `cfg.is_complete()` is gone: `not cfg.incomplete` is the same test.
 - The per-reason `Cfg` getters (`isa_mode_conflicts()` and the rest) are
   gone: `cfg.incomplete` lists every `(address, reason)`.

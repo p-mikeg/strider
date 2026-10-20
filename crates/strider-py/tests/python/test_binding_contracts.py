@@ -76,19 +76,18 @@ def test_per_address_ccs_is_one_memoised_view():
 
 def test_a_seed_the_build_seated_nowhere_is_not_reported():
     """`build_cfg` reports only the seeds it seated, so a whole-binary answer
-    table leaves `is_complete()` True and names no address the function does
-    not dispatch from."""
+    table leaves `incomplete` empty and names no address the function does not
+    dispatch from."""
     opts = strider.cfg.CfgOptions(known_targets={0xDEAD0000: [0xDEAD1000]})
     cfg = _x86_64(_STRAIGHT).build_cfg(_BASE, opts)
-    assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == []
-    assert cfg.is_complete()
+    assert cfg.incomplete == []
     # `analyze` over the same options says the same.
     result = _x86_64(_STRAIGHT).analyze(
         _BASE,
         CallingConvention.x86_64_systemv(),
         strider.lift.LifterOptions(cfg=opts),
     )
-    assert result.cfg.is_complete()
+    assert result.cfg.incomplete == []
 
 
 def test_a_seed_the_build_did_seat_is_still_reported():
@@ -96,7 +95,6 @@ def test_a_seed_the_build_did_seat_is_still_reported():
     cfg = _x86_64(_INDIRECT + bytes(0x100) + _STRAIGHT).build_cfg(
         _BASE,
         opts,
-        on_incomplete=strider.lift.OnIncomplete.IGNORE,
     )
     assert [a for a, r in cfg.incomplete if r == "unverified_seed"] == [_DISPATCH]
 
@@ -188,10 +186,9 @@ def test_an_add_elf_off_thread_merges_into_every_view():
     assert not t.is_alive(), "add_elf hung"
     assert failure == []
     assert _image_state(prog) == _image_state(expected)
-    ignore = strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE)
     assert (
-        prog.analyze("helper_a", opts=ignore).function.to_text()
-        == expected.analyze("helper_a", opts=ignore).function.to_text()
+        prog.analyze("helper_a").function.to_text()
+        == expected.analyze("helper_a").function.to_text()
     )
 
 

@@ -375,10 +375,8 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
                 "__doc__",
                 "What Lifter.analyze returns: (cfg, function, unresolved). \
                  `unresolved` holds the machine addresses cfg.incomplete names \
-                 \"unresolved_branch\"; a non-empty list reaches the caller only \
-                 under OnIncomplete.IGNORE. \
-                 Empty means fully resolved, NOT that the answer is complete: \
-                 cfg.incomplete lists every reason and cfg.is_complete() tests it.",
+                 \"unresolved_branch\". Empty means fully resolved, NOT that \
+                 the answer is complete: cfg.incomplete lists every reason.",
             )?;
             PyResult::Ok(nt.unbind())
         })
@@ -650,19 +648,16 @@ impl PyLifter {
     }
 
     /// Build the control-flow graph of the function at `entry`, without
-    /// lifting or optimising.  Raises `StriderError` on a build failure, and
-    /// `IncompleteAnalysis` when `Cfg.incomplete` names anything and
-    /// `on_incomplete` is `ERROR` (the default, `None`).
+    /// lifting or optimising.  Raises `StriderError` on a build failure.
     ///
     /// Holds the GIL for the whole build, unlike `analyze`: decoding is short
     /// next to a full analysis.
-    #[pyo3(signature = (entry, opts=None, *, on_incomplete=None))]
+    #[pyo3(signature = (entry, opts=None))]
     fn build_cfg(
         slf: Py<Self>,
         py: Python<'_>,
         entry: &Bound<'_, PyAny>,
         opts: Option<Py<PyCfgOptions>>,
-        on_incomplete: Option<crate::options::PyOnIncomplete>,
     ) -> PyResult<PyCfg> {
         let entry = entry_addr(entry)?;
         let bound = slf.bind(py);
@@ -687,11 +682,7 @@ impl PyLifter {
             lifter.bump_context_gen();
             lifter
                 .strider_mut()?
-                .build_cfg(
-                    entry,
-                    &cfg_opts,
-                    crate::options::on_incomplete_or_default(on_incomplete),
-                )
+                .build_cfg(entry, &cfg_opts, strider_orchestrator::OnIncomplete::Ignore)
                 .map_err(crate::errors::from_analyze_err)
         })?;
         Ok(PyCfg::new(inner, slf, target))
@@ -706,9 +697,10 @@ impl PyLifter {
     /// accepts a symbol name and supplies a default `cc`), and on lift
     /// failure.
     ///
-    /// An empty `unresolved` is not a complete answer: `Cfg.incomplete` lists
-    /// every reason, and `Cfg.is_complete` tests it. Raises
-    /// `IncompleteAnalysis` when `opts.on_incomplete` refuses the result.
+    /// Returns even when it cannot vouch for every path: `Cfg.incomplete`
+    /// lists every address it cannot, and an empty `unresolved` is not a
+    /// complete answer. Check `Cfg.incomplete` before trusting an absence
+    /// ("no store to X"): code behind a listed address may be missing.
     ///
     /// Runs the fixed-point loop with the GIL released, so other Python
     /// threads keep running. One consequence: a DAEMON thread sitting inside
@@ -772,7 +764,7 @@ impl PyLifter {
             resolve_indirect_branches,
             assumptions,
             compact,
-            on_incomplete: opts_ref.on_incomplete,
+            on_incomplete: strider_orchestrator::OnIncomplete::Ignore,
         };
         // The fixed-point loop runs without the GIL where it can: a pipeline's
         // boxed passes are `Send`, so a closure capturing one satisfies

@@ -107,7 +107,6 @@ def test_add_elf_off_thread_merges_for_every_thread():
 
 _ADD_RET = b"\x48\x83\xc0\x01\xc3"  # add rax, 1 ; ret
 _CC = strider.sleigh.CallingConvention.x86_64_systemv()
-_IGNORE = strider.lift.LifterOptions(on_incomplete=strider.lift.OnIncomplete.IGNORE)
 
 
 @contextlib.contextmanager
@@ -124,12 +123,12 @@ def _analyze_in_flight(build, inner, entry, cc):
             return inner.read(addr, size)
 
     lift = build(Blocking())
-    earlier = lift.analyze(entry, cc, _IGNORE).function
+    earlier = lift.analyze(entry, cc).function
     first = {}
 
     def run():
         try:
-            first["fn"] = lift.analyze(entry, cc, _IGNORE).function
+            first["fn"] = lift.analyze(entry, cc).function
         except Exception as e:
             first["err"] = repr(e)
 
@@ -160,7 +159,7 @@ def test_a_second_call_while_one_is_in_flight_raises_the_reentrant_error():
     another thread meanwhile raises rather than interleaving."""
     with _plain_in_flight() as (lift, _earlier):
         with pytest.raises(strider.StriderError, match="already in use"):
-            lift.analyze(0x1000, _CC, _IGNORE)
+            lift.analyze(0x1000, _CC)
 
 
 _METHODS = {
