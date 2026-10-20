@@ -148,8 +148,9 @@ impl EscapeOracle {
     /// the narrow case of this the `If` fold's guard catches before the fold's
     /// other bookkeeping; here the exit can sit any number of `Region`s away.
     ///
-    /// Mirrors the validator: a dangling control output counts as an escape,
-    /// so a half-wired CFG mid-pipeline is not read as a stranded one.
+    /// Mirrors the validator: a dangling control output other than a dead arm
+    /// counts as an escape, so a half-wired CFG mid-pipeline is not read as a
+    /// stranded one.
     ///
     /// [`escaping_nodes`] answers `true` for most roots without a walk, and
     /// `no_escape` carries the previous walks' `false` verdicts forward; only a
@@ -246,7 +247,8 @@ fn exact_walk(
                 consumed = true;
                 stack.push((succ, Some((node, dead_arms.contains(out)))));
             }
-            if !consumed {
+            // A dangling dead arm goes with its fold, as in `escaping_nodes`.
+            if !consumed && !dead_arms.contains(out) {
                 witnesses.record(&came_from, node, None);
                 return true;
             }

@@ -81,21 +81,21 @@ pub struct SideTables {
     /// (`StaleInitialVarIndex`).
     pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
     /// Whole-function frame-escape verdict, or `None` when not computed.
-    /// Cleared by [`Self::invalidate_analyses`], after every post-pass, and on
-    /// compaction.
+    /// Cleared by [`Self::invalidate_analyses`] and on compaction.
     frame_escape: Cell<Option<bool>>,
     /// A stack address was held, at some `Call`, in a register the call
     /// clobbers.  The call node carries no such value, so this is the only
     /// record that a callee may have received it.
     frame_address_in_call_register: bool,
-    /// The claims in force: every optimizer run's merged, none before the
-    /// first.  The memory classes and the frame-escape verdict were computed
-    /// under them.
+    /// The claims in force: every set `Function::assume` added, none before
+    /// the first.  The memory classes and the frame-escape verdict were
+    /// computed under them.
     assumptions: AssumptionOptions,
 }
 
-impl Default for SideTables {
-    fn default() -> Self {
+impl SideTables {
+    /// Crate-private so no caller can reset the claims to `none()`.
+    pub(crate) fn new() -> Self {
         Self {
             asm_fingerprints: UnionDag::default(),
             value_vn: FxHashMap::default(),
@@ -105,13 +105,11 @@ impl Default for SideTables {
             initial_var_index: FxHashMap::default(),
             frame_escape: Cell::default(),
             frame_address_in_call_register: false,
-            // A function claims nothing until a run adds its claims.
+            // A function claims nothing until `Function::assume` adds some.
             assumptions: AssumptionOptions::none(),
         }
     }
-}
 
-impl SideTables {
     #[inline]
     fn class_values(&self, class: ArgClass, index: u32) -> &[ValueId] {
         self.arg_index_to_values
@@ -273,8 +271,7 @@ impl SideTables {
         self.frame_escape.set(Some(escapes));
     }
 
-    /// Invalidates the frame-escape verdict alone, after a post-pass, keeping
-    /// the memory classes.
+    /// Invalidates the frame-escape verdict alone, keeping the memory classes.
     #[inline]
     pub fn clear_frame_escape(&self) {
         self.frame_escape.set(None);
@@ -336,7 +333,7 @@ impl SideTables {
             frame_escape,
             // Holds no id: a fact about the lifted calls.
             frame_address_in_call_register: _,
-            // Holds no id: what every run so far claimed.
+            // Holds no id: every set `Function::assume` added.
             assumptions: _,
         } = self;
         asm_fingerprints.remap(|old| remap.node_old_to_new(old));
@@ -407,7 +404,7 @@ mod tests {
     /// state.
     #[test]
     fn memory_decomp_returns_class_and_slot_together() {
-        let st = SideTables::default();
+        let st = SideTables::new();
         let base = ValueId::new(0);
         let stack = ValueId::new(1);
         let heap = ValueId::new(2);
@@ -434,7 +431,7 @@ mod tests {
 
     #[test]
     fn frame_escape_round_trips_and_clears() {
-        let st = SideTables::default();
+        let st = SideTables::new();
         assert_eq!(st.frame_escape(), None, "cold: not yet computed");
         st.set_frame_escape(true);
         assert_eq!(st.frame_escape(), Some(true));
@@ -448,7 +445,7 @@ mod tests {
     /// and leaves the memos to the caller.
     #[test]
     fn assume_merges_and_says_whether_it_added() {
-        let mut st = SideTables::default();
+        let mut st = SideTables::new();
         assert_eq!(
             st.assumptions(),
             &AssumptionOptions::none(),
@@ -480,7 +477,7 @@ mod tests {
 
     #[test]
     fn invalidate_analyses_drops_the_memos_and_keeps_the_claims() {
-        let mut st = SideTables::default();
+        let mut st = SideTables::new();
         let listed = AssumptionOptions {
             noalias_allocators: [0x1000].into_iter().collect(),
             ..AssumptionOptions::none()
@@ -498,7 +495,7 @@ mod tests {
     // The union is order-independent, deduplicating and never dropping an entry.
     #[test]
     fn extend_asm_fingerprint_unions_deduped() {
-        let mut st = SideTables::default();
+        let mut st = SideTables::new();
         let n = NodeId::new(3);
 
         // Seed from empty; contributors may arrive unsorted.
