@@ -149,7 +149,7 @@ classifier `analyze` runs every round whatever pipeline it is given, unless
 optimizing, Strider classifies each unresolved indirect branch against the
 clean IR, feeds any newly discovered targets back in, and re-lifts, repeating
 until the set of edges stops changing. Whatever still cannot be resolved comes
-back as the `unresolved` list. It is one of the six reasons
+back as the `unresolved` list. It is one of the seven reasons
 [python-api.md](python-api.md#12-the-cfg-stridercfg) describes, which
 `cfg.incomplete` lists together.
 

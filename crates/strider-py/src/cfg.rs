@@ -133,7 +133,7 @@ impl PyCfg {
     /// to X"): code behind a listed address may be missing.
     ///
     /// `"unresolved_branch"` and `"unverified_seed"` name a dispatch site, the
-    /// address `CfgOptions(known_targets=...)` seeds; the other four a branch
+    /// address `CfgOptions(known_targets=...)` seeds; the other five a branch
     /// target, which a direct edge reaches too:
     ///
     /// - `"unresolved_branch"`: an indirect branch with no complete successor
@@ -152,6 +152,9 @@ impl PyCfg {
     /// - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
     ///   it as data. A seeded arm leading to such bytes is dropped, and so is
     ///   one whose decode fails for any other reason, named here at its start.
+    /// - `"past_function_end"`: where code falls through past
+    ///   `function_max_size`, and so tail-calls this address; off a seeded arm
+    ///   the arm is dropped instead.
     ///
     /// From `build_cfg` this is that one build: every dispatch it left without
     /// an edge and every seed it seated. From `analyze` the target reasons
