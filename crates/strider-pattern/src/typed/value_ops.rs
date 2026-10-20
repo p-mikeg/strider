@@ -577,7 +577,7 @@ macro_rules! value_op_factories {
         float_unary_factory!($bound, Round, float_round,
             concat!($verb, " a float round to nearest, ties away from zero."));
 
-        #[doc = concat!($verb, " a variant-agnostic float unary op `float_unary(op, x)`.")]
+        #[doc = concat!($verb, " a float unary op `float_unary(op, x)` of kind `op` only.")]
         pub fn float_unary<I: $bound>(op: FloatUnaryOp, inner: I) -> FloatUnaryFixed<I> {
             FloatUnaryFixed { op, inner }
         }
@@ -604,7 +604,7 @@ macro_rules! value_op_factories {
             BoolNot { inner: operand }
         }
 
-        #[doc = concat!($verb, " a variant-agnostic integer binary op `int_binary(op, l, r)`.")]
+        #[doc = concat!($verb, " an integer binary op `int_binary(op, l, r)` of kind `op` only.")]
         pub fn int_binary<L: $bound, R: $bound>(
             op: IntBinaryOp,
             lhs: L,
@@ -613,7 +613,7 @@ macro_rules! value_op_factories {
             IntBinaryFixed { op, lhs, rhs }
         }
 
-        #[doc = concat!($verb, " a variant-agnostic integer comparison `int_cmp(op, l, r)` (output `I1`).")]
+        #[doc = concat!($verb, " an integer comparison `int_cmp(op, l, r)` of kind `op` only (output `I1`).")]
         pub fn int_cmp<L: $bound, R: $bound>(
             op: IntCmpOp,
             lhs: L,
@@ -622,7 +622,7 @@ macro_rules! value_op_factories {
             IntCmpFixed { op, lhs, rhs }
         }
 
-        #[doc = concat!($verb, " a variant-agnostic float binary op `float_binary(op, l, r)`.")]
+        #[doc = concat!($verb, " a float binary op `float_binary(op, l, r)` of kind `op` only.")]
         pub fn float_binary<L: $bound, R: $bound>(
             op: FloatBinaryOp,
             lhs: L,
@@ -631,7 +631,7 @@ macro_rules! value_op_factories {
             FloatBinaryFixed { op, lhs, rhs }
         }
 
-        #[doc = concat!($verb, " a variant-agnostic float comparison `float_cmp(op, l, r)` (output `I1`).")]
+        #[doc = concat!($verb, " a float comparison `float_cmp(op, l, r)` of kind `op` only (output `I1`).")]
         pub fn float_cmp<L: $bound, R: $bound>(
             op: FloatCmpOp,
             lhs: L,
@@ -640,7 +640,7 @@ macro_rules! value_op_factories {
             FloatCmpFixed { op, lhs, rhs }
         }
 
-        #[doc = concat!($verb, " a variant-agnostic boolean binary op `bool_binary(op, l, r)` (`IntBinaryOp` at `I1`).")]
+        #[doc = concat!($verb, " a boolean binary op `bool_binary(op, l, r)` of kind `op` only (`IntBinaryOp` at `I1`).")]
         pub fn bool_binary<L: $bound, R: $bound>(
             op: IntBinaryOp,
             lhs: L,
