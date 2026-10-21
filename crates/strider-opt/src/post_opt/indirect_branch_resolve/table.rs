@@ -129,8 +129,10 @@ struct Domain {
 /// phi every input of the dispatch cone passes through across its constants.
 ///
 /// The phi's constants are the values it really takes, where its range is
-/// their hull: an index in `{0, 3, 5}` ranges over `0..=5`.  They are taken
-/// where the phi bounds no index too, as for a jump to a phi of labels.  Where
+/// their hull: an index in `{0, 3, 5}` ranges over `0..=5`.  One outside the
+/// phi's range at the site, or ruled out by an `== k` guard on the way, is
+/// dropped.  They are taken where the phi bounds no index too, as for a jump
+/// to a phi of labels.  Where
 /// a bounded index is found as well, a constant the index range excludes is
 /// dropped, since both bound the same runtime value; where the index does not
 /// fold under some constant, the range is enumerated as it is without them.
@@ -143,11 +145,18 @@ fn dispatch_domain(
 ) -> Option<Domain> {
     let chain = dominator_chain(function, target)?;
     let source = chain.last().copied().unwrap_or(target);
+    // A constant the site's range or an equality guard on the way excludes
+    // never reaches the branch.
     let constants = crate::value_range::phi_constants(
         function,
         source,
         usize::try_from(MAX_TABLE_ENTRIES).ok()?,
-    );
+    )
+    .map(|mut constants| {
+        let site_range = ranges.range_of(source, site);
+        constants.retain(|&k| site_range.contains(k) && !ranges.rules_out(source, k, site));
+        constants
+    });
     let hit = decompose_index(function, ranges, &chain, site);
     let (hit, constants) = match (hit, constants) {
         (None, None) => return None,
