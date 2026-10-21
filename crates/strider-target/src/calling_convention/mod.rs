@@ -82,6 +82,8 @@ pub struct CallingConvention {
     preserves_all_registers: bool,
     /// Resolved into [`BuiltCallingConvention::entry_address_vn`].
     entry_address_reg_name: Option<&'static str>,
+    /// See [`BuiltCallingConvention::reg_args_adjoin_stack_args`].
+    reg_args_adjoin_stack_args: bool,
 }
 
 /// A [`CallingConvention`] with its register names resolved to varnodes.
@@ -120,6 +122,13 @@ pub struct BuiltCallingConvention {
     /// included: there the analogue is the descriptor's TOC word, which is not
     /// a register contract.
     pub entry_address_vn: Option<rsleigh::Vn>,
+    /// The register arguments have stack homes just below the stack
+    /// arguments, one `stack_args` slot each in register order, so a
+    /// by-value argument the ABI splits between registers and the stack, and
+    /// a variadic tail, is one object across both: ARM AAPCS and MIPS N64,
+    /// whose callee pushes the registers there, and MIPS O32 and PowerPC64
+    /// ELF, whose caller reserves the space.
+    pub reg_args_adjoin_stack_args: bool,
 }
 
 /// The trivial convention for synthetic / mock graphs that have no real
@@ -143,6 +152,7 @@ impl Default for BuiltCallingConvention {
             preserves_memory: false,
             preserves_all_registers: false,
             entry_address_vn: None,
+            reg_args_adjoin_stack_args: false,
         }
     }
 }
@@ -281,6 +291,23 @@ impl BuiltCallingConvention {
                 Some(if shared { *reg } else { *container })
             })
             .collect()
+    }
+
+    /// Where the incoming arguments' memory starts, as an offset from the
+    /// entry SP: the first stack argument, or under
+    /// [`Self::reg_args_adjoin_stack_args`] the first register argument's
+    /// home.  `None` when no argument is passed on the stack.
+    #[must_use]
+    pub fn incoming_args_start(&self) -> Option<i128> {
+        let args = self.stack_args?;
+        if !self.reg_args_adjoin_stack_args {
+            return Some(args.base_offset);
+        }
+        let homes = self.arg_passing_regs.len() as i128;
+        Some(
+            args.base_offset
+                .saturating_sub(homes.saturating_mul(args.increment)),
+        )
     }
 
     /// The Vn-resolved [`CallingConvention::preserves_all`].
@@ -595,6 +622,7 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
     preserves_memory: false,
     preserves_all_registers: false,
     entry_address_reg_name: None,
+    reg_args_adjoin_stack_args: false,
 };
 
 /// The float windows without the AltiVec window the userland presets append
@@ -686,6 +714,7 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
     preserves_memory: false,
     preserves_all_registers: false,
     entry_address_reg_name: None,
+    reg_args_adjoin_stack_args: true,
 };
 
 /// Base for `arm_aapcs` and `arm_aapcs_soft`, which differ only in the VFP
@@ -746,6 +775,7 @@ const ARM_AAPCS_VFP_BASE: CallingConvention = CallingConvention {
     preserves_memory: false,
     preserves_all_registers: false,
     entry_address_reg_name: None,
+    reg_args_adjoin_stack_args: true,
 };
 
 /// Base for `mips_o32` and `mips_n64`; n64 widens both argument banks,
@@ -800,6 +830,7 @@ const MIPS_O32_BASE: CallingConvention = CallingConvention {
     // form `gp`.  `-mno-abicalls` code never reads t9 at entry, so the binding
     // is inert rather than wrong there.
     entry_address_reg_name: Some("t9"),
+    reg_args_adjoin_stack_args: true,
 };
 
 impl CallingConvention {
@@ -841,6 +872,7 @@ impl CallingConvention {
             preserves_memory: false,
             preserves_all_registers: false,
             entry_address_reg_name: None,
+            reg_args_adjoin_stack_args: false,
         }
     }
 
@@ -893,6 +925,7 @@ impl CallingConvention {
             preserves_memory: false,
             preserves_all_registers: false,
             entry_address_reg_name: None,
+            reg_args_adjoin_stack_args: false,
         }
     }
 
@@ -1015,6 +1048,7 @@ impl CallingConvention {
             preserves_memory: false,
             preserves_all_registers: false,
             entry_address_reg_name: None,
+            reg_args_adjoin_stack_args: false,
         }
     }
 
@@ -1116,6 +1150,7 @@ impl CallingConvention {
             preserves_memory: self.preserves_memory,
             preserves_all_registers: self.preserves_all_registers,
             entry_address_vn,
+            reg_args_adjoin_stack_args: self.reg_args_adjoin_stack_args,
         };
         built.validate()?;
         Ok(built)

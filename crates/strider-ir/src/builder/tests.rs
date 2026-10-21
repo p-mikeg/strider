@@ -514,6 +514,7 @@ fn build_call_cc_float_args_are_positional_slices() -> Result<()> {
         preserves_memory: false,
         preserves_all_registers: false,
         entry_address_vn: None,
+        reg_args_adjoin_stack_args: false,
     };
     let mut b = FunctionBuilder::new(vec![q0, r0, sp], cc, strider_target::Endianness::Little)?;
     let region = b.create_region_all()?;
@@ -2978,6 +2979,20 @@ fn a_stack_address_in_a_clobbered_register_at_a_call_is_recorded() -> Result<()>
         b.extend_if_needed(low, ValueType::int(64), ExtendOp::ZeroExtend)
     })?;
     // It has no constant offset from the entry SP.
+    assert_eq!(f.side_tables().call_register_frame_reach(), Some(i128::MAX));
+    Ok(())
+}
+
+/// `lea rax, [rsp + rcx*4]`: an index the arithmetic cannot place.
+#[test]
+fn a_held_stack_address_with_a_scaled_index_is_unplaced() -> Result<()> {
+    let f = call_with_register_holding(true, false, |b, sp| {
+        let ty = ValueType::int(64);
+        let idx = b.build_load(sp, rsleigh::VnSpace::RAM, ty)?;
+        let four = b.build_int_const(4u64, ty)?;
+        let scaled = b.build_int_binary_operation(idx, four, IntBinaryOp::Mul, ty)?;
+        b.build_int_binary_operation(sp, scaled, IntBinaryOp::Add, ty)
+    })?;
     assert_eq!(f.side_tables().call_register_frame_reach(), Some(i128::MAX));
     Ok(())
 }
