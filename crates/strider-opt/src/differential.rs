@@ -1238,6 +1238,147 @@ fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
     }
 }
 
+/// One random bit extract of the `I32` word `w`, in the shapes the lifters
+/// emit: `srl`, a low mask, MIPS64 `ext` on the sign-extended word, casts, a
+/// scaled field, and an arithmetic shift's sign copies.
+fn random_extract(b: &mut FunctionBuilder, rng: &mut Rng, w: ValueId) -> ValueId {
+    let (i32t, i64t) = (ValueType::int(32), ValueType::int(64));
+    let bin = |b: &mut FunctionBuilder, x: ValueId, c: u64, op: IntBinaryOp, ty: ValueType| {
+        let c = b.build_int_const(c, ty).unwrap();
+        b.build_int_binary_operation(x, c, op, ty).unwrap()
+    };
+    let k = 1 + rng.below(31) as u64;
+    let m = 1 + rng.below(8) as u64;
+    match rng.below(9) {
+        0 => w,
+        1 => bin(b, w, k, IntBinaryOp::ShiftRight, i32t),
+        2 => {
+            let up = bin(b, w, k, IntBinaryOp::ShiftRight, i32t);
+            bin(b, up, (1 << m) - 1, IntBinaryOp::And, i32t)
+        }
+        3 => {
+            let up = bin(b, w, k, IntBinaryOp::ShiftRight, i32t);
+            b.extend_if_needed(up, i64t, ExtendOp::SignExtend).unwrap()
+        }
+        4 => {
+            let wide = b.extend_if_needed(w, i64t, ExtendOp::SignExtend).unwrap();
+            let up = bin(b, wide, 32, IntBinaryOp::ShiftLeft, i64t);
+            let field = bin(b, up, 32 + k, IntBinaryOp::ShiftRight, i64t);
+            bin(b, field, 0xff, IntBinaryOp::And, i64t)
+        }
+        5 => {
+            let wide = b.extend_if_needed(w, i64t, ExtendOp::SignExtend).unwrap();
+            bin(b, wide, k, IntBinaryOp::ShiftRight, i64t)
+        }
+        6 => {
+            let up = bin(b, w, k, IntBinaryOp::ShiftRight, i32t);
+            b.truncate_if_needed(up, ValueType::int(8)).unwrap()
+        }
+        7 => {
+            let up = bin(b, w, k, IntBinaryOp::ShiftRight, i32t);
+            let field = bin(b, up, (1 << m) - 1, IntBinaryOp::And, i32t);
+            let wide = b
+                .extend_if_needed(field, i64t, ExtendOp::ZeroExtend)
+                .unwrap();
+            bin(b, wide, 1 << (m % 4), IntBinaryOp::Mul, i64t)
+        }
+        _ => {
+            let up = bin(b, w, k, IntBinaryOp::ShiftLeft, i32t);
+            bin(
+                b,
+                up,
+                k + rng.below(32 - k as usize) as u64,
+                IntBinaryOp::ShiftRight,
+                i32t,
+            )
+        }
+    }
+}
+
+/// `if (extract(w) < n) return [extracts of w]`, with every returned value
+/// inside the interval `range_of` claims at the `Return`: a guard on one bit
+/// extract carries to the others only where it bounds them.
+#[test]
+fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
+    let mut failures: Vec<String> = Vec::new();
+    let (mut checks, mut runs, mut nontop) = (0usize, 0usize, 0usize);
+    for seed in 0..400u64 {
+        let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
+        let vn = reg_vn(0x1000, 4);
+        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        let entry = b.create_region_all().unwrap();
+        let then_arm = b.create_region_all().unwrap();
+        let else_arm = b.create_region_all().unwrap();
+        b.set_entry_region_all(entry).unwrap();
+        b.set_region(entry);
+        let w = b.read_variable(&vn).unwrap();
+        let tested = random_extract(&mut b, &mut rng, w);
+        let ty = b.value_type_opt(tested).unwrap();
+        let n = 1 + (u128::from(rng.next_u64()) & mask(ty) >> rng.below(ty.bit_width()));
+        let n = b.build_int_const(n, ty).unwrap();
+        let cond = b
+            .build_int_cmp_operation(tested, n, IntCmpOp::Less, ty)
+            .unwrap();
+        b.build_if(cond, then_arm, else_arm).unwrap();
+        b.set_region(then_arm);
+        let values: Vec<ValueId> = (0..6)
+            .map(|_| random_extract(&mut b, &mut rng, w))
+            .collect();
+        b.build_return(None, &values).unwrap();
+        b.set_region(else_arm);
+        b.build_return(None, &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut f = b.build().unwrap();
+        {
+            let mut p = crate::OptimizerPipeline::new();
+            p.add(crate::PhiCollapse);
+            p.add(crate::RegionCollapse);
+            p.run(&mut f, &mut crate::OptCtx::new(None)).unwrap();
+        }
+        let ranges = std::cell::RefCell::new(crate::value_range::RangeMap::new(&f).unwrap());
+        for _ in 0..64 {
+            let word = u128::from(rng.next_u64() as u32) >> rng.below(32);
+            let mut bad: Option<String> = None;
+            interp::run_observed(&f, &reference_env(&|_| word), &mut |at, v, val| {
+                if !matches!(f.node_kind(at), NodeKind::Return)
+                    || f.value_type_opt(v).is_none_or(|t| !t.is_integer())
+                {
+                    return;
+                }
+                let iv = ranges.borrow_mut().range_of(v, at);
+                checks += 1;
+                if !iv.is_top(mask(f.value_type_opt(v).unwrap())) {
+                    nontop += 1;
+                }
+                let ok =
+                    iv.lo() <= val && val <= iv.hi() && (val - iv.lo()).is_multiple_of(iv.stride());
+                if !ok && bad.is_none() {
+                    bad = Some(format!(
+                        "seed {seed}: w={word:#x} {v:?}={val:#x} outside {iv:?}\n{}",
+                        f.to_text(false)
+                    ));
+                }
+            })
+            .unwrap_or_else(|why| panic!("seed {seed}: the reference interpreter: {why:?}"));
+            runs += 1;
+            if let Some(why) = bad {
+                failures.push(why);
+                break;
+            }
+        }
+        if failures.len() >= 3 {
+            break;
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n=====\n"));
+    eprintln!("checks {checks} runs {runs} nontop {nontop}");
+    assert!(
+        nontop * 4 >= checks,
+        "only {nontop} of {checks} ranges were narrower than top"
+    );
+}
+
 /// Seeds this test sweeps unless `FUZZ_N` overrides it, and the threshold the
 /// population floors below are asserted at.
 const DEFAULT_FUZZ_SEEDS: u64 = 300;
