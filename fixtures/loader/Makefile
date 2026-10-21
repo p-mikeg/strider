@@ -30,13 +30,14 @@ MIPS32 := mips-linux-gnu-gcc -EB -mips32
 MIPS64 := mips64el-linux-gnuabi64-gcc
 A64    := aarch64-linux-gnu-gcc
 PPC64LE := powerpc64le-linux-gnu-gcc
+PPC64LE_OBJCOPY := powerpc64le-linux-gnu-objcopy
 
 IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           mips64le_got_lib.elf mips64le_got.elf \
           x64_ifunc_pie.elf x64_ifunc_lib.elf x86_ifunc_pie.elf x64_ifunc.o \
           x64_ifunc_nopic.o x64_ifunc_static.elf \
           x86_got_call_nopic.o x86_got_call_pic.o aarch64_got_addend.o \
-          ppc64le_local_entry.elf
+          ppc64le_local_entry.elf ppc64le_local_entry_stripped.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -82,6 +83,9 @@ $(OUTDIR)/aarch64_got_addend.o: src/aarch64_got_addend.s | $(OUTDIR)
 
 $(OUTDIR)/ppc64le_local_entry.elf: src/ppc64le_local_entry.s | $(OUTDIR)
 	$(PPC64LE) $(CFLAGS) -no-pie -Wl,-e,noret_call $< -o $@
+# The same image without its symbols, which `add_symbol_file` takes back.
+$(OUTDIR)/ppc64le_local_entry_stripped.elf: $(OUTDIR)/ppc64le_local_entry.elf
+	$(PPC64LE_OBJCOPY) --strip-all $< $@
 
 clean:
 	rm -rf $(OUTDIR)
