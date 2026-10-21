@@ -505,46 +505,122 @@ fn x86_64_got64_and_gotpc64_address_the_slot_together() {
 }
 
 /// `-fno-pic -fno-plt` calls `call *ext_fn@GOT`, a bare disp32 (ModRM
-/// `mod = 0, rm = 5`) naming the slot's own address; through a base register,
-/// `call *ext_fn@GOT(%ebx)` or `(%ebp)` (`mod = 2, rm = 5`), the field is the
-/// slot's offset from the GOT. `SHT_REL`, so the `mov ext_fn@GOT+4, %eax`
-/// field holds its addend.
+/// `mod = 0, rm = 5`) naming the slot's own address. Through a base register
+/// the field is the slot's offset from the GOT: `call *ext_fn@GOT(%ebx)`,
+/// `(%ebp)` (`mod = 2, rm = 5`), and, the linkers reading the byte before the
+/// field as a ModRM whatever it is, an index-only SIB `(,%ecx,4)` and the
+/// disp8 of `movl $ext_fn@GOT, 4(%ebx)`. `SHT_REL`, so the
+/// `mov ext_fn@GOT+4, %eax` field holds its addend.
 #[test]
 fn i386_got32x_without_a_base_register_addresses_the_slot_itself() {
     let mut obj = Object::new(BinaryFormat::Elf, Architecture::I386, Endianness::Little);
     let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
-    // call *0 ; call *0(%ebx) ; call *0(%ebp) ; mov 4, %eax ; ret
-    let code = [
-        0xff, 0x15, 0, 0, 0, 0, 0xff, 0x93, 0, 0, 0, 0, 0xff, 0x95, 0, 0, 0, 0, 0x8b, 0x05, 4, 0,
-        0, 0, 0xc3,
+    // (the bytes before the field, its implicit addend, its type)
+    let insns: [(&[u8], u8, u32); 6] = [
+        (&[0xff, 0x15], 0, elf::R_386_GOT32X),
+        (&[0xff, 0x93], 0, elf::R_386_GOT32X),
+        (&[0xff, 0x95], 0, elf::R_386_GOT32X),
+        (&[0x8b, 0x05], 4, elf::R_386_GOT32),
+        (&[0xff, 0x14, 0x8d], 0, elf::R_386_GOT32),
+        (&[0xc7, 0x43, 0x04], 0, elf::R_386_GOT32),
     ];
+    let mut code = Vec::new();
+    let mut fields = Vec::new();
+    for (head, addend, _) in insns {
+        code.extend_from_slice(head);
+        fields.push(code.len() as u64);
+        code.extend_from_slice(&[addend, 0, 0, 0]);
+    }
+    code.push(0xc3);
     obj.append_section_data(text, &code, 1);
     defined(&mut obj, "f", text, 0);
     undefined(&mut obj, "_GLOBAL_OFFSET_TABLE_");
     let ext = undefined(&mut obj, "ext_fn");
-    reloc(&mut obj, text, 2, ext, 0, elf::R_386_GOT32X);
-    reloc(&mut obj, text, 8, ext, 0, elf::R_386_GOT32X);
-    reloc(&mut obj, text, 14, ext, 0, elf::R_386_GOT32X);
-    reloc(&mut obj, text, 20, ext, 0, elf::R_386_GOT32);
+    for (&field, (_, _, r_type)) in fields.iter().zip(insns) {
+        reloc(&mut obj, text, field, ext, 0, r_type);
+    }
     let bytes = obj.write().expect("write");
 
     let table = relocated(&bytes);
     let insn = common::section_base(&bytes, ".text");
-    let slot = u64::from(word(&table, insn + 2, false));
+    let at = |i: usize| u64::from(word(&table, insn + fields[i], false));
+    let slot = at(0);
     assert_eq!(
         u64::from(word(&table, slot, false)),
         symbol_address(&bytes, "ext_fn"),
         "the base-less field is the address of a slot holding ext_fn"
     );
+    assert_eq!(at(3), slot + 4);
     let got = symbol_address(&bytes, "_GLOBAL_OFFSET_TABLE_");
-    for field in [8, 14] {
+    for i in [1, 2, 4, 5] {
         assert_eq!(
-            got + u64::from(word(&table, insn + field, false)),
+            got + at(i),
             slot,
-            "+{field}: through a base register the field is the slot's offset from the GOT"
+            "{:x?}: through a base the field is the slot's offset from the GOT",
+            insns[i].0
         );
     }
-    assert_eq!(u64::from(word(&table, insn + 20, false)), slot + 4);
+}
+
+/// `lea ext_fn@GOT, %eax` passes the base-less test, and GNU ld gives it the
+/// slot's offset from the GOT where lld gives the slot's address: the field
+/// is a hole.
+#[test]
+fn an_i386_got_lea_is_a_hole() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::I386, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    obj.append_section_data(text, &[0x8d, 0x05, 0, 0, 0, 0, 0xc3], 1);
+    defined(&mut obj, "f", text, 0);
+    let ext = undefined(&mut obj, "ext_fn");
+    reloc(&mut obj, text, 2, ext, 0, elf::R_386_GOT32);
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    let insn = common::section_base(&bytes, ".text");
+    let err = table
+        .read_exact(insn + 2, &mut [0u8; 4])
+        .expect_err("a GOT lea is a hole")
+        .to_string();
+    assert!(
+        err.contains(&format!("relocation of type {} ", elf::R_386_GOT32)),
+        "{err}"
+    );
+}
+
+/// A field in the first two bytes of its section has no opcode and ModRM
+/// before it: the slot's offset from the GOT, whatever the byte before it.
+#[test]
+fn an_i386_got_field_at_a_sections_start_is_the_slots_offset() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::I386, Endianness::Little);
+    let at0 = obj.add_section(Vec::new(), b".rodata.a".to_vec(), SectionKind::ReadOnlyData);
+    obj.append_section_data(at0, &[0; 4], 4);
+    let at1 = obj.add_section(Vec::new(), b".rodata.b".to_vec(), SectionKind::ReadOnlyData);
+    obj.append_section_data(at1, &[0x05, 0, 0, 0, 0], 4);
+    undefined(&mut obj, "_GLOBAL_OFFSET_TABLE_");
+    let ext = undefined(&mut obj, "ext_fn");
+    reloc(&mut obj, at0, 0, ext, 0, elf::R_386_GOT32);
+    reloc(&mut obj, at1, 1, ext, 0, elf::R_386_GOT32);
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    let got = symbol_address(&bytes, "_GLOBAL_OFFSET_TABLE_");
+    let a = got
+        + u64::from(word(
+            &table,
+            common::section_base(&bytes, ".rodata.a"),
+            false,
+        ));
+    let b = got
+        + u64::from(word(
+            &table,
+            common::section_base(&bytes, ".rodata.b") + 1,
+            false,
+        ));
+    assert_eq!(a, b, "one slot");
+    assert_eq!(
+        u64::from(word(&table, a, false)),
+        symbol_address(&bytes, "ext_fn")
+    );
 }
 
 /// `ldr x0, :got:foo+16` asks for the slot holding `foo + 16`, which no slot
