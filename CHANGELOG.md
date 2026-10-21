@@ -271,6 +271,9 @@
 
 ### Changed, Python
 
+- `Function.to_text()` names a REGISTER-space byte order unlike the data
+  order: the header reads `endian big register=little` on `arm_be_kernel`, so
+  a parser of the header must accept the ` register=little` suffix.
 - `analyze` and `build_cfg` no longer fail when decoding falls through past
   `function_max_size`: the fall-through is a tail call to the address there,
   which `cfg.incomplete` names `"past_function_end"`, as it does a
@@ -484,8 +487,6 @@
   where the sla's register block is little-endian. A `Function` now carries
   the REGISTER space's byte order beside the data order, and a register-space
   load narrowed from a wider store takes it, so that load is forwarded again.
-- Python: `Function.to_text()` names a REGISTER-space byte order unlike the
-  data order, as `endian big register=little` on `arm_be_kernel`.
 - A rewrite template's fresh constant at a shift count is built at the
   shift's width; under an `I1` root it took the root's and was masked, so
   `int_truncate(int_shr(a, 31))` shifted by 1. A count too wide for the shift
