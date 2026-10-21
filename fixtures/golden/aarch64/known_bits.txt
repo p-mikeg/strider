@@ -1,7 +1,7 @@
 # aarch64/known_bits: Strider::analyze, default options
 endian little
 default_cc arg_passing_regs=[x0, x1, x2, x3, x4, x5, x6, x7] arg_passing_regs_float=[q0, q1, q2, q3, q4, q5, q6, q7] callee_saved_regs=[x19, x20, x21, x22, x23, x24, x25, x26, x27, x28, x29, x30, d8, d9, d10, d11, d12, d13, d14, d15] ret_val_regs=[x0, x1] ret_val_regs_float=[q0, q1, q2, q3] stack_vn=sp stack_args=0+8n ret_stack_pop=0 link_register_vn=x30 preserves_memory=false preserves_all_registers=false entry_address_vn=none
-assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes
+assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode
 
 == main @0x600
 cfg

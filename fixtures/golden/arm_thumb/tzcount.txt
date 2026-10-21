@@ -1,12 +1,12 @@
 # arm_thumb/tzcount: Strider::analyze, default options
 endian little
 default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none
-assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes
+assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode
 
 == main @0x3dd
 cfg
   0x3dc 30 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, tmpNG, tmpZR, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x131600:4, u:0x148500:4, u:0x169b00:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, tmpNG, tmpZR, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x131700:4, u:0x148600:4, u:0x169d00:4]
 arg 1 [%v11]
 arg 2 [%v12]
 arg 3 [%v13]
@@ -54,7 +54,7 @@ cfg
   0x4f8 42 ops cbranch 0x4f4 -> [0x4f4, 0x500]
   0x500 7 ops return -> []
   0x504 6 ops goto -> [0x500]
-tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x12a300:1, u:0x12ad00:1, u:0x131e00:4, u:0x150900:4, u:0x15c100:4, u:0x15c200:4, u:0x15c400:4, u:0x15c500:1, u:0x15c600:1, u:0x15c700:1, u:0x15c800:1, u:0x15c900:1, u:0x15cf00:4, u:0x15d000:4, u:0x15d200:4, u:0x15d300:1, u:0x15d400:1, u:0x15d500:1, u:0x15d600:1, u:0x15d700:1, u:0x15da00:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x12a400:1, u:0x12ae00:1, u:0x131f00:4, u:0x150a00:4, u:0x15c200:4, u:0x15c300:4, u:0x15c500:4, u:0x15c600:1, u:0x15c700:1, u:0x15c800:1, u:0x15c900:1, u:0x15ca00:1, u:0x15d000:4, u:0x15d100:4, u:0x15d300:4, u:0x15d400:1, u:0x15d500:1, u:0x15d600:1, u:0x15d700:1, u:0x15d800:1, u:0x15db00:4]
 arg 0 [%v1]
 arg 1 [%v26]
 float_arg 0 [%v27]
