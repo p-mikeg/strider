@@ -91,7 +91,7 @@ pub struct RegisterSet {
     ret_stack_pop: i64,
     stack_args: Option<strider_target::StackArgs>,
     /// `None` defaults to little-endian.
-    endianness: Option<strider_target::Endianness>,
+    endianness: Option<strider_target::ByteOrder>,
     /// `None` for an ISA with no architectural link register (x86).
     link_register: Option<rsleigh::Vn>,
 }
@@ -136,8 +136,9 @@ impl RegisterSet {
         self
     }
 
-    pub fn endianness(mut self, e: strider_target::Endianness) -> Self {
-        self.endianness = Some(e);
+    /// A bare `Endianness` is the order of every space.
+    pub fn endianness(mut self, e: impl Into<strider_target::ByteOrder>) -> Self {
+        self.endianness = Some(e.into());
         self
     }
 
@@ -177,9 +178,7 @@ impl RegisterSet {
             preserves_all_registers: false,
             entry_address_vn: None,
         };
-        let endianness = self
-            .endianness
-            .unwrap_or(strider_target::Endianness::Little);
+        let endianness = self.endianness.unwrap_or_default();
         let mut b = FunctionBuilder::new(tracked, cc, endianness)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         Ok(b)

@@ -207,8 +207,7 @@ impl FunctionBuilder {
     }
 
     /// The lifter's sub-register read: shift the slice out of its container
-    /// and truncate. Register endianness, which differs from the data
-    /// endianness only on ARM BE8, is not reachable through a mock convention.
+    /// and truncate, in the register byte order.
     #[cfg(any(test, feature = "test-util"))]
     fn read_arg_slice(&mut self, vn: &rsleigh::Vn) -> Result<ValueId> {
         let container = vn_container::largest_container_in(self.function().all_vns(), vn);
@@ -216,7 +215,7 @@ impl FunctionBuilder {
             return self.read_variable(&container);
         }
         let offset_bytes = vn.addr_off - container.addr_off;
-        let shift_bits = 8 * match self.function().endianness() {
+        let shift_bits = 8 * match self.function().byte_order().register {
             strider_target::Endianness::Little => offset_bytes,
             strider_target::Endianness::Big => {
                 u64::from(container.size) - u64::from(vn.size) - offset_bytes

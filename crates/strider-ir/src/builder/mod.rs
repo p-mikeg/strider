@@ -77,11 +77,11 @@ impl FunctionBuilder {
     }
 
     /// The sole constructor. `all_used_variables` is every varnode appearing
-    /// in the function.
+    /// in the function; a bare `Endianness` is the order of every space.
     pub fn new(
         mut all_used_variables: Vec<rsleigh::Vn>,
         cc: strider_target::BuiltCallingConvention,
-        endianness: strider_target::Endianness,
+        byte_order: impl Into<strider_target::ByteOrder>,
     ) -> Result<Self> {
         // Callers pass the stack vn in `all_used_variables` themselves.
         for v in cc
@@ -96,7 +96,7 @@ impl FunctionBuilder {
             }
         }
         let mut fb = FunctionBuilder {
-            function: Function::new(cc, endianness, all_used_variables),
+            function: Function::new(cc, byte_order, all_used_variables),
             entry_memory: ValueId::reserved_value(),
             regions: PrimaryMap::new(),
             cur_region: None,

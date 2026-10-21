@@ -429,7 +429,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 let mut mem = Rc::unwrap_or_clone(prev);
                 // Little-endian value bytes, then into address order.
                 let mut bytes = data.to_le_bytes()[..size].to_vec();
-                if f.endianness() == Endianness::Big {
+                if f.byte_order().of(space) == Endianness::Big {
                     bytes.reverse();
                 }
                 let space_bytes = if space == rsleigh::VnSpace::REGISTER {
@@ -460,7 +460,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 }
             })
             .collect();
-        if self.f.endianness() == Endianness::Big {
+        if self.f.byte_order().of(space) == Endianness::Big {
             bytes.reverse();
         }
         bytes.resize(16, 0);
