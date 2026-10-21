@@ -18,6 +18,8 @@ pub(crate) mod indirect_resolve_helpers;
 
 pub(crate) mod fixtures;
 
+pub(crate) mod cone;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Arch {
     X86,
