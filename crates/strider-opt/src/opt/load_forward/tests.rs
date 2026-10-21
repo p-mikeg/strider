@@ -2224,18 +2224,19 @@ fn no_assumption_lifts_the_ram_premise() -> Result<()> {
     Ok(())
 }
 
-/// `narrow` reshapes by the function's byte order, which is the DATA order.
-/// The REGISTER space has its own, and the two differ on ARM BE8, where the
-/// sla's register block is little-endian under big-endian data. Reshaping a
-/// mirrored register slot by the data order would take the wrong half, so a
-/// register-space load is not narrowed at all. The RAM twin of this graph
-/// forwards, which is what makes the space the discriminator.
+/// `narrow` reshapes in the load's space's byte order. The REGISTER space has
+/// its own, which differs from the data order on ARM BE8, where the sla's
+/// register block is little-endian under big-endian data: there a byte load
+/// of a register slot is the low byte, and of RAM the high one.
 #[test]
-fn a_register_space_load_is_not_narrowed_from_a_wider_store() -> Result<()> {
+fn a_narrowed_load_takes_its_spaces_byte_order() -> Result<()> {
     let build = |space: rsleigh::VnSpace| -> Result<strider_ir::Function> {
         let sp = sp32_vn();
         let mut b = sp_frame(sp)
-            .endianness(Endianness::Big)
+            .endianness(strider_target::ByteOrder {
+                data: Endianness::Big,
+                register: Endianness::Little,
+            })
             .build_fn_single_region()?;
         let addr = b.build_int_const(0x40u64, ValueType::int(32))?;
         let wide = b.build_int_const(0xDEAD_BEEFu64, ValueType::int(32))?;
@@ -2245,28 +2246,22 @@ fn a_register_space_load_is_not_narrowed_from_a_wider_store() -> Result<()> {
         b.set_lift_addr(None);
         b.build()
     };
-    let run = |fg: &mut strider_ir::Function| -> Result<usize> {
+    let run = |fg: &mut strider_ir::Function| -> Result<()> {
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(PhiCollapse);
         pipeline.add(RegionCollapse);
         pipeline.add(LoadForward);
+        pipeline.add(ConstantFold::new());
         pipeline.run(fg, &mut crate::OptCtx::new(None))?;
-        Ok(fg.count_kind(|k| matches!(k, NodeKind::Load(_))))
+        Ok(())
     };
 
     let mut ram = build(rsleigh::VnSpace::RAM)?;
-    assert_eq!(
-        run(&mut ram)?,
-        0,
-        "the RAM twin narrows: the data order is the function's"
-    );
+    run(&mut ram)?;
+    crate::test_support::assert_returns_const(&ram, 0xDE);
 
     let mut reg = build(rsleigh::VnSpace::REGISTER)?;
-    assert_eq!(
-        run(&mut reg)?,
-        1,
-        "the register space keeps its Load: its byte order is not the \
-         function's on BE8"
-    );
+    run(&mut reg)?;
+    crate::test_support::assert_returns_const(&reg, 0xEF);
     Ok(())
 }
