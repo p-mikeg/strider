@@ -1,7 +1,7 @@
 //! Evaluates a returned value's cone by each node kind's p-code meaning, for
 //! tests whose answer passes through a node the optimiser does not fold
 //! (`FloatToInt`, any F80 arithmetic). Float lanes are carried as `f64`,
-//! which is exact for the small values these tests use.
+//! which is exact for the values these tests use.
 
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{
@@ -39,6 +39,22 @@ fn f80_to_f64(bits: u128) -> f64 {
         return sign * 0.0;
     }
     sign * (mant as f64) * 2f64.powi(exp - 16383 - 63)
+}
+
+/// An `f64` as an x87 extended-precision bit pattern (no NaN payloads).
+fn f64_to_f80(x: f64) -> u128 {
+    let sign = u128::from(x.is_sign_negative()) << 79;
+    if x == 0.0 {
+        return sign;
+    }
+    if x.is_infinite() {
+        return sign | 0x7fff << 64 | 1 << 63;
+    }
+    assert!(x.is_normal(), "{x} has no exact F80 here");
+    let bits = x.to_bits();
+    let exp = (bits >> 52 & 0x7ff) as i64 - 1023 + 16383;
+    let mant = (bits & ((1 << 52) - 1) | 1 << 52) << 11;
+    sign | u128::try_from(exp).unwrap() << 64 | u128::from(mant)
 }
 
 /// Rounds an `f64` result to `ty`'s precision, F80 kept at `f64`.
@@ -81,6 +97,7 @@ pub(crate) fn eval(f: &Function, v: ValueId, init: u128) -> Val {
         NodeKind::FloatBitsToInt => Val::Int(match width(in_ty(0)) {
             32 => u128::from((float(0) as f32).to_bits()),
             64 => u128::from(float(0).to_bits()),
+            80 => f64_to_f80(float(0)),
             w => panic!("FloatBitsToInt of width {w}"),
         }),
         NodeKind::FloatToFloat => Val::Float(narrow(ty, float(0))),
@@ -89,7 +106,17 @@ pub(crate) fn eval(f: &Function, v: ValueId, init: u128) -> Val {
                 .expect("sign extend") as i128;
             Val::Float(narrow(ty, x as f64))
         }
-        NodeKind::FloatToInt => Val::Int((float(0).trunc() as i128) as u128 & mask(ty)),
+        NodeKind::FloatToInt => {
+            // Out of range or NaN gives the x86 integer indefinite, the sign
+            // bit alone.
+            let x = float(0).trunc();
+            let bound = 2f64.powi(i32::from(width(ty)) - 1);
+            Val::Int(if x.is_nan() || x < -bound || x >= bound {
+                1 << (width(ty) - 1)
+            } else {
+                (x as i128) as u128 & mask(ty)
+            })
+        }
         NodeKind::FloatUnaryOp(op) => {
             let x = float(0);
             Val::Float(narrow(
@@ -141,10 +168,9 @@ pub(crate) fn eval(f: &Function, v: ValueId, init: u128) -> Val {
     }
 }
 
-/// The `rax` an x86-64 function over `bytes` at `base` returns, evaluated.
-/// A partial register write leaves the destination's other bits masked in,
-/// so the value must not depend on the initial registers.
-pub(crate) fn returned_rax(bytes: Vec<u8>, base: u64) -> u64 {
+/// The `rax` an x86-64 function over `bytes` at `base` returns, with the
+/// function to evaluate it in.
+fn analyze_rax(bytes: Vec<u8>, base: u64) -> (Function, ValueId) {
     let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
         strider_ir_test_utils::MockRom::raw_bytes(base, bytes.clone()),
     );
@@ -158,10 +184,28 @@ pub(crate) fn returned_rax(bytes: Vec<u8>, base: u64) -> u64 {
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
         .expect("one Return");
     let v = f.node_inputs(ret).into_iter().nth(2).expect("rax slot");
-    let [zeros, ones] = [0, u128::MAX].map(|init| match eval(&f, v, init) {
+    (f, v)
+}
+
+fn as_rax(val: Val) -> u64 {
+    match val {
         Val::Int(x) => u64::try_from(x).expect("rax is 64 bits"),
         Val::Float(x) => panic!("rax holds the float {x}"),
-    });
+    }
+}
+
+/// The returned `rax`, evaluated. A partial register write leaves the
+/// destination's other bits masked in, so the value must not depend on the
+/// initial registers.
+pub(crate) fn returned_rax(bytes: Vec<u8>, base: u64) -> u64 {
+    let (f, v) = analyze_rax(bytes, base);
+    let [zeros, ones] = [0, u128::MAX].map(|init| as_rax(eval(&f, v, init)));
     assert_eq!(zeros, ones, "rax depends on an initial register");
     zeros
+}
+
+/// The returned `rax` with every initial register reading `init`.
+pub(crate) fn returned_rax_from(bytes: Vec<u8>, base: u64, init: u128) -> u64 {
+    let (f, v) = analyze_rax(bytes, base);
+    as_rax(eval(&f, v, init))
 }
