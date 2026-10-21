@@ -630,7 +630,7 @@ fn a_restore_writes_the_state_a_save_reads_it() {
 }
 
 /// `slbfee.` and `icswx.` are `Rc=1` forms the Power ISA defines as setting
-/// CR0, and the sla emits each as a bare void pcodeop with no `cr0flags(...)`
+/// CR0, and the sla emits each as a pcodeop with no `cr0flags(...)`
 /// (`ppc_isa.sinc:1587`, `ppc_a2.sinc:52`), so the table is the only model of
 /// it. `stwcx.` is the contrast: its sla body does emit `cr0flags`, which is
 /// why it correctly declares nothing here.
