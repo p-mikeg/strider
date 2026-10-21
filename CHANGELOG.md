@@ -613,6 +613,10 @@
   `.symtab`, there being no `.dynsym`, and was never walked, so a jump
   through one of those slots went to the word the file holds, busybox's PLT
   stub looping back to itself.
+- Python: an i386 object's `R_386_GOT32` / `R_386_GOT32X` with no base
+  register (`-fno-pic -fno-plt`'s `call *ext_fn@GOT`) names its GOT slot's
+  address; it was the slot's offset from the GOT, so the call loaded its
+  target from address 0x14.
 
 ### Added, Rust
 

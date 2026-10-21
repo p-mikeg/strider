@@ -504,6 +504,49 @@ fn x86_64_got64_and_gotpc64_address_the_slot_together() {
     assert_eq!(u64::from_le_bytes(held), symbol_address(&bytes, "g"));
 }
 
+/// `-fno-pic -fno-plt` calls `call *ext_fn@GOT`, a bare disp32 (ModRM
+/// `mod = 0, rm = 5`) naming the slot's own address; through a base register,
+/// `call *ext_fn@GOT(%ebx)` or `(%ebp)` (`mod = 2, rm = 5`), the field is the
+/// slot's offset from the GOT. `SHT_REL`, so the `mov ext_fn@GOT+4, %eax`
+/// field holds its addend.
+#[test]
+fn i386_got32x_without_a_base_register_addresses_the_slot_itself() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::I386, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    // call *0 ; call *0(%ebx) ; call *0(%ebp) ; mov 4, %eax ; ret
+    let code = [
+        0xff, 0x15, 0, 0, 0, 0, 0xff, 0x93, 0, 0, 0, 0, 0xff, 0x95, 0, 0, 0, 0, 0x8b, 0x05, 4, 0,
+        0, 0, 0xc3,
+    ];
+    obj.append_section_data(text, &code, 1);
+    defined(&mut obj, "f", text, 0);
+    undefined(&mut obj, "_GLOBAL_OFFSET_TABLE_");
+    let ext = undefined(&mut obj, "ext_fn");
+    reloc(&mut obj, text, 2, ext, 0, elf::R_386_GOT32X);
+    reloc(&mut obj, text, 8, ext, 0, elf::R_386_GOT32X);
+    reloc(&mut obj, text, 14, ext, 0, elf::R_386_GOT32X);
+    reloc(&mut obj, text, 20, ext, 0, elf::R_386_GOT32);
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    let insn = common::section_base(&bytes, ".text");
+    let slot = u64::from(word(&table, insn + 2, false));
+    assert_eq!(
+        u64::from(word(&table, slot, false)),
+        symbol_address(&bytes, "ext_fn"),
+        "the base-less field is the address of a slot holding ext_fn"
+    );
+    let got = symbol_address(&bytes, "_GLOBAL_OFFSET_TABLE_");
+    for field in [8, 14] {
+        assert_eq!(
+            got + u64::from(word(&table, insn + field, false)),
+            slot,
+            "+{field}: through a base register the field is the slot's offset from the GOT"
+        );
+    }
+    assert_eq!(u64::from(word(&table, insn + 20, false)), slot + 4);
+}
+
 /// A writable section is left alone because nothing folds data the program
 /// rewrites; a writable EXECUTABLE one is not data. `CodeAndReadOnly` keeps an
 /// RWX mapping on purpose (firmware, `ld -N`), so its bytes reach the decoder,

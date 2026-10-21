@@ -757,7 +757,10 @@ fn compute_classified(
         Value::GotPcrel => apply_addend(got_slot(ctx)?, a).wrapping_sub(p),
         Value::GotPagePcrel => page(got_slot(ctx)?).wrapping_sub(page(p)),
         Value::Got => got_slot(ctx)?,
-        Value::GotOffset => apply_addend(got_slot(ctx)?.wrapping_sub(got_base?), a),
+        Value::I386Got if i386_baseless(holder?, p) => apply_addend(got_slot(ctx)?, a),
+        Value::GotOffset | Value::I386Got => {
+            apply_addend(got_slot(ctx)?.wrapping_sub(got_base?), a)
+        }
         Value::GotRelative => sa.wrapping_sub(got_base?),
         Value::GotBasePcrel => apply_addend(got_base?, a).wrapping_sub(p),
         Value::TocRelative => sa.wrapping_sub(layout.toc_base()?),
@@ -794,8 +797,16 @@ fn value_kind_needs_zero(value: Value) -> bool {
 fn value_kind_through_got(value: Value) -> bool {
     matches!(
         value,
-        Value::GotPcrel | Value::GotPagePcrel | Value::Got | Value::GotOffset
+        Value::GotPcrel | Value::GotPagePcrel | Value::Got | Value::GotOffset | Value::I386Got
     )
+}
+
+/// Whether the i386 instruction whose disp32 starts at `p` addresses it with
+/// no base register: ModRM `mod = 0, rm = 5` just before it, with an opcode
+/// before that.
+fn i386_baseless(region: &MemRegion, p: u64) -> bool {
+    let off = (p - region.start_addr()) as usize;
+    off >= 2 && region.raw()[off - 1] & 0xc7 == 0x05
 }
 
 /// The file-initial `width`-byte field at `addr`, which `region` holds whole.
