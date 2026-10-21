@@ -38,7 +38,7 @@ pub(crate) enum Value {
     /// `G - GOT + A`
     GotOffset,
     /// i386 `GOT32` / `GOT32X`: `G + A` from a bare disp32 (ModRM
-    /// `mod = 0, rm = 5`), else `G - GOT + A`, as binutils tells them apart.
+    /// `mod = 0, rm = 5`), else `G - GOT + A`; see `i386_got_absolute`.
     I386Got,
     /// `S + A - GOT`
     GotRelative,

@@ -758,7 +758,7 @@ fn compute_classified(
         Value::GotSlotPcrel => got_slot(ctx)?.wrapping_sub(p),
         Value::GotPagePcrel => page(got_slot(ctx)?).wrapping_sub(page(p)),
         Value::Got => got_slot(ctx)?,
-        Value::I386Got if i386_baseless(holder?, p) => apply_addend(got_slot(ctx)?, a),
+        Value::I386Got if i386_got_absolute(holder?, p)? => apply_addend(got_slot(ctx)?, a),
         Value::GotOffset | Value::I386Got => {
             apply_addend(got_slot(ctx)?.wrapping_sub(got_base?), a)
         }
@@ -810,12 +810,17 @@ fn value_kind_through_got(value: Value) -> bool {
     )
 }
 
-/// Whether the i386 instruction whose disp32 starts at `p` addresses it with
-/// no base register: ModRM `mod = 0, rm = 5` just before it, with an opcode
-/// before that.
-fn i386_baseless(region: &MemRegion, p: u64) -> bool {
+/// Whether an i386 `GOT32` / `GOT32X` field at `p` is its slot's address
+/// rather than its offset from the GOT: lld's test, the byte before it read
+/// as a ModRM with `mod = 0, rm = 5`, though it may be a SIB or a disp8.
+/// `None` for a `lea` (`0x8d` before that byte), which GNU ld exempts. A
+/// field in its section's first two bytes is an offset.
+fn i386_got_absolute(region: &MemRegion, p: u64) -> Option<bool> {
     let off = (p - region.start_addr()) as usize;
-    off >= 2 && region.raw()[off - 1] & 0xc7 == 0x05
+    if off < 2 || region.raw()[off - 1] & 0xc7 != 0x05 {
+        return Some(false);
+    }
+    (region.raw()[off - 2] != 0x8d).then_some(true)
 }
 
 /// The file-initial `width`-byte field at `addr`, which `region` holds whole.
