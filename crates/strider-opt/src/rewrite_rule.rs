@@ -21,6 +21,8 @@ use strider_pattern::{
 /// success materialises the RHS and redirects the root's value output to
 /// it. Returns `Ok(Some(new_out))` when at least one use was redirected,
 /// `Ok(None)` for a failed match, a skipped RHS, or nothing to redirect.
+/// It errors, before building anything, when the RHS builds nodes and no
+/// matched node carries an asm-fingerprint (an `InitialVar` or `Phi` root).
 ///
 /// # Single-value-output constraint
 ///
@@ -61,6 +63,7 @@ fn rewrite_rule_impl(
     lhs: Pattern,
     rhs: Template,
 ) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
+    let builds_nodes = rhs.builds_nodes();
     move |edit: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
         // The root check before anything is allocated. A fold table tries
         // every rule at every candidate node, and `Matcher::new` plus
@@ -85,6 +88,23 @@ fn rewrite_rule_impl(
         };
 
         let (root_value, root_ty) = edit.function().single_value_output(node)?;
+
+        // A fresh node's fingerprint is the footprint's, so a footprint of
+        // exempt nodes only (an `InitialVar` or `Phi` root) would leave every
+        // built node with none, which `validate` rejects.
+        if builds_nodes {
+            let side = edit.function().side_tables();
+            if matched_nodes
+                .iter()
+                .all(|&n| side.asm_fingerprint_is_empty(n))
+            {
+                anyhow::bail!(
+                    "rewrite matched no node with an instruction address, so the \
+                     nodes its replacement builds would carry none; match a node \
+                     an instruction produced, or replace with a capture"
+                );
+            }
+        }
 
         // Threading the matched footprint as the proof-node set makes EVERY
         // fresh node, not just the root output, absorb the matched subgraph's
@@ -309,6 +329,56 @@ mod tests {
         assert!(
             msg.contains("I64") && msg.contains("I32"),
             "the error must name both widths, got: {msg}"
+        );
+    }
+
+    /// A match made only of fingerprint-exempt nodes has no instruction
+    /// address to stamp on a fresh node, so building one is refused before
+    /// anything is created; a bare-capture RHS builds nothing and still runs.
+    #[test]
+    fn a_rewrite_of_an_exempt_only_match_builds_nothing() {
+        use strider_pattern::initial_var_for;
+
+        let vn = reg_vn(0x1000, 8);
+        let mut b = RegisterSet::new().tracked(vn).build_fn().unwrap();
+        // Entry state carries no instruction address, as in a lift.
+        b.set_lift_addr(None);
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
+        b.set_region(region);
+        let xv = b.read_variable(&vn).unwrap();
+        b.set_lift_addr(Some(0x10));
+        b.build_return(Some(xv), &[]).unwrap();
+        let mut function = b.build().unwrap();
+        let root = match_root(&function, initial_var_for(vn));
+        assert!(matches!(function.node_kind(root), NodeKind::InitialVar(_)));
+        assert!(function.side_tables().asm_fingerprint_is_empty(root));
+        let nodes_before = function.graph().all_node_ids().count();
+
+        let rule = rewrite_rule(initial_var_for(vn), int_const_with!([] => 3u128));
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
+        let err = rule(&mut edit, root).expect_err("an unattributable build must be refused");
+        assert!(
+            format!("{err}").contains("instruction address"),
+            "the error must say why: {err}"
+        );
+        assert_eq!(
+            edit.function().graph().all_node_ids().count(),
+            nodes_before,
+            "the refusal creates no node"
+        );
+        drop(edit);
+        strider_ir::validate::validate(&function).expect("the graph stays valid");
+
+        let x = Capture::new();
+        let keep = rewrite_rule(initial_var_for(vn).capture(x), var(x));
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
+        assert_eq!(
+            keep(&mut edit, root).unwrap(),
+            None,
+            "a bare capture of the root itself is a no-op, not an error"
         );
     }
 
