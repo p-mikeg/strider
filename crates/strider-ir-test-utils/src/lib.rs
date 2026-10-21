@@ -91,7 +91,7 @@ pub struct RegisterSet {
     ret_stack_pop: i64,
     stack_args: Option<strider_target::StackArgs>,
     /// `None` defaults to little-endian.
-    endianness: Option<strider_target::ByteOrder>,
+    byte_order: Option<strider_target::ByteOrder>,
     /// `None` for an ISA with no architectural link register (x86).
     link_register: Option<rsleigh::Vn>,
 }
@@ -137,8 +137,8 @@ impl RegisterSet {
     }
 
     /// A bare `Endianness` is the order of every space.
-    pub fn endianness(mut self, e: impl Into<strider_target::ByteOrder>) -> Self {
-        self.endianness = Some(e.into());
+    pub fn byte_order(mut self, order: impl Into<strider_target::ByteOrder>) -> Self {
+        self.byte_order = Some(order.into());
         self
     }
 
@@ -178,8 +178,8 @@ impl RegisterSet {
             preserves_all_registers: false,
             entry_address_vn: None,
         };
-        let endianness = self.endianness.unwrap_or_default();
-        let mut b = FunctionBuilder::new(tracked, cc, endianness)?;
+        let byte_order = self.byte_order.unwrap_or_default();
+        let mut b = FunctionBuilder::new(tracked, cc, byte_order)?;
         b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         Ok(b)
     }
@@ -273,7 +273,7 @@ where
     // No declared registers, so the trivial convention: only the synthetic SP
     // is tracked, as an unreferenced `InitialVar`.
     let mut b = RegisterSet::new()
-        .endianness(endianness)
+        .byte_order(endianness)
         .build_fn_single_region()?;
     let val = f(&mut b)?;
     // Re-stamp so the trailing `build_return` is attributed even when `f`
@@ -334,7 +334,7 @@ pub fn builder(
         stack_vn,
         ret_stack_pop,
     )
-    .endianness(endianness)
+    .byte_order(endianness)
     .build_fn()
 }
 
