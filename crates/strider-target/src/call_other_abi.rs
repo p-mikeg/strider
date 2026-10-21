@@ -886,6 +886,9 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             "aeskeygenassist",
             // `Reg32 = crc32(Reg32, rm8|rm16|rm32)` (`ia.sinc:10315-10321`).
             "crc32",
+            // x87 FYL2X / FYL2XP1: `log2st0:10 = log2(ST0)` or
+            // `log2(ST0 f+ 1)`, the logarithm the following multiply scales.
+            "log2",
             // `XmmReg1 = pblendvb(XmmReg1, XmmReg2_m128, XMM0)`
             // (`ia.sinc:9996-9997`): the otherwise-implicit XMM0 is a listed
             // operand, like SHA256RNDS2.
