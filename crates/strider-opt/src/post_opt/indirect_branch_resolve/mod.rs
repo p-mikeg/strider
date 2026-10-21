@@ -32,19 +32,22 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 /// fails closed on a partial proof, never under-approximating.  `Load(sp)` for
 /// a `pop pc`-style return, which a `push X; pop pc` tail call shares the shape
 /// of, is classified only where [`ReturnTargets`] follows the slot back to a
-/// store of the entry link register.  That walk is the one place a
-/// call-boundary relaxation reaches a decoded target, and it is the orchestrator
-/// that keeps the answer honest: the seated `Return` carries a return site, so
-/// every round re-checks the seat against its own IR. A verdict that rests on
-/// `return_slots_survive_untracked_writes` is not reported; analysing again
-/// with the claim cleared is how a caller audits one.
+/// store of the entry link register.  That walk honours a call-boundary claim
+/// of its own (`return_slots_survive_untracked_writes`), and it is the
+/// orchestrator that keeps the answer honest: the seated `Return` carries a
+/// return site, so every round re-checks the seat against its own IR. A
+/// verdict that rests on that claim is not reported; analysing again with the
+/// claim cleared is how a caller audits one.
 ///
 /// Of the function's claims ([`strider_ir::Function::assumptions`]) the table
-/// walk honours `stack_global_disjoint` and the allocation identity
-/// `noalias_allocators` gives `decompose`.  The call-boundary relaxations are
-/// deliberately not among them (`MemPurpose::TableWalk`): this walk decides a
-/// decoded branch target, so a relaxation that is wrong produces a wrong edge
-/// rather than a wrong fold.
+/// walk's own memory queries honour `stack_global_disjoint` and the allocation
+/// identity `noalias_allocators` gives `decompose`, and no call-boundary
+/// relaxation (`MemPurpose::TableWalk`).  That keeps the relaxations out of
+/// the walk's own steps, not off the edge: every recogniser
+/// reads the IR the pipeline left, whose `LoadForward` forwards across a call
+/// under `escape_analysis`, `callee_preserves_stack_args` or a listed
+/// allocator.  A dispatch value forwarded that way arrives here folded, so a
+/// claim that is wrong for the input seats a wrong edge.
 #[must_use]
 pub fn classify_target(
     function: &strider_ir::Function,

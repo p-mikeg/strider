@@ -151,7 +151,11 @@ classifier `analyze` runs every round whatever pipeline it is given, unless
 `strider.opt` has no pass for it). After
 optimizing, Strider classifies each unresolved indirect branch against the
 clean IR, feeds any newly discovered targets back in, and re-lifts, repeating
-until the set of edges stops changing. Whatever still cannot be resolved comes
+until the set of edges stops changing. The classifier reads the IR the pipeline
+optimized under the function's claims, so a claim that is wrong for the input
+can seat a wrong edge: under `escape_analysis` and
+`callee_preserves_stack_args`, a branch target spilled to the stack forwards
+across a call that in fact overwrote it. Whatever still cannot be resolved comes
 back as the `unresolved` list. It is one of the seven reasons
 [python-api.md](python-api.md#12-the-cfg-stridercfg) describes, which
 `cfg.incomplete` lists together.
