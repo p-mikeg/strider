@@ -266,7 +266,13 @@ pub struct PyLoadedElf {
     /// The `$d` mapping-symbol spans of every ELF, built on first use and
     /// dropped whenever an ELF is added.
     data_ranges: Mutex<Option<strider_cfg::DataRanges>>,
+    /// [`LocalEntries`], built on first use and dropped with `symbol_table`.
+    local_entries: Mutex<Option<Arc<LocalEntries>>>,
 }
+
+/// Every symbol's `(address, local_entry)` where the two differ, sorted: the
+/// ppc64 ELFv2 functions a same-TOC call enters past their address.
+pub(crate) type LocalEntries = Vec<(u64, u64)>;
 
 fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
     let mut inner = reader.inner.lock_shared();
@@ -356,6 +362,10 @@ pub struct PySymbol {
     is_function: bool,
     /// An ARM Thumb function, whose `address` keeps the ISA bit.
     thumb: bool,
+    /// Where a call sharing the symbol's TOC enters: `address` plus the ppc64
+    /// ELFv2 local-entry offset `st_other` encodes, else `address` itself.
+    #[pyo3(get)]
+    local_entry: u64,
     region: Option<(u64, u64)>,
 }
 
@@ -511,6 +521,36 @@ impl PyLoadedElf {
         Ok(ranges)
     }
 
+    /// [`LocalEntries`] over every ELF and symbol file. Only a ppc64 image
+    /// can have any, so no other builds the symbol table for it.
+    pub(crate) fn local_entries(&self) -> PyResult<Arc<LocalEntries>> {
+        let mut cached = self.local_entries.lock_shared();
+        if let Some(entries) = cached.as_ref() {
+            return Ok(Arc::clone(entries));
+        }
+        let mut ppc64 = false;
+        for obj in self.elfs.iter().chain(&self.symbol_elfs) {
+            let file = obj.checked_file().map_err(into_strider_err)?;
+            ppc64 |= file.architecture() == object::Architecture::PowerPc64;
+        }
+        let mut entries = LocalEntries::new();
+        if ppc64 {
+            self.with_symbols(|t| {
+                entries.extend(
+                    t.syms
+                        .iter()
+                        .filter(|s| s.local_entry != s.address)
+                        .map(|s| (s.address, s.local_entry)),
+                );
+            })?;
+            entries.sort_unstable();
+            entries.dedup();
+        }
+        let entries = Arc::new(entries);
+        *cached = Some(Arc::clone(&entries));
+        Ok(entries)
+    }
+
     /// One name can have several symbols: FreeBSD's `model_name` is both an
     /// STT_FUNC in `.text` and an STT_OBJECT in `.rodata`, so a code symbol
     /// wins within an ELF, and the first ELF in load order wins across them.
@@ -584,6 +624,8 @@ impl PyLoadedElf {
                     size,
                     is_function,
                     thumb: arm && is_function && address & 1 == 1,
+                    local_entry: address
+                        .wrapping_add(strider_reader::elf::local_entry_offset(&file, &sym)),
                     region: None,
                 });
                 if matches!(place, SymbolPlace::Import(_)) {
@@ -875,6 +917,7 @@ impl PyLoadedElf {
         );
         self.elfs.push(elf);
         self.symbol_table.lock_shared().take();
+        self.local_entries.lock_shared().take();
         self.data_ranges.lock_shared().take();
         Ok(())
     }
@@ -894,6 +937,7 @@ impl PyLoadedElf {
         self.check_describes_a_loaded_image(&obj, path)?;
         self.symbol_elfs.push(obj);
         self.symbol_table.lock_shared().take();
+        self.local_entries.lock_shared().take();
         self.data_ranges.lock_shared().take();
         Ok(())
     }
@@ -935,11 +979,13 @@ impl PyLoadedElf {
                 size,
                 is_function,
                 thumb: false,
+                local_entry: address,
                 region: None,
             });
         }
         self.extra_symbols.append(&mut added);
         self.symbol_table.lock_shared().take();
+        self.local_entries.lock_shared().take();
         Ok(())
     }
 }
@@ -963,6 +1009,7 @@ fn load_elf_impl(
         source,
         symbol_table: Mutex::new(None),
         data_ranges: Mutex::new(None),
+        local_entries: Mutex::new(None),
     })
 }
 
