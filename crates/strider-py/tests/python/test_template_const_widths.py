@@ -70,3 +70,10 @@ def test_capture_typed_types_a_constant_at_the_capture_width():
 def test_capture_typed_reports_its_operand_to_the_collector():
     inner = t.int_const(1)
     assert inner in gc.get_referents(t.capture_typed(p.Capture(), inner))
+
+
+@pytest.mark.parametrize("inner", [lambda c: c, t.var], ids=["capture", "var"])
+def test_capture_typed_over_a_capture_is_refused(inner):
+    c = p.Capture()
+    with pytest.raises(strider.StriderError, match="over a capture"):
+        t.capture_typed(c, inner(c))

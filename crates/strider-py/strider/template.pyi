@@ -30,15 +30,17 @@ TemplateLike = Union[Template, Capture, int]
 def var(c: Capture) -> Template:
     """Substitute the node bound to `c` on the matched left-hand side. The
     only build-side wildcard."""
-def capture_typed(c: Capture, inner: TemplateLike) -> Template:
+def capture_typed(c: Capture, inner: Union[Template, int]) -> Template:
     """Build `inner` with its output at the width of the value bound to `c`,
     for an operand nothing else gives a width:
-    `int_popcount(capture_typed(a, int_const(0xff)))`."""
+    `int_popcount(capture_typed(a, int_const(0xff)))`. A `Capture` or `var()`
+    as `inner` raises `StriderError`: it keeps the type of the value it
+    bound."""
 def int_const(value: int) -> Template:
     """Build an integer constant whose stored value, masked to the output
     width, is `value`. Negatives take the sign-extended form. Its width is the
-    one it is evaluated at: an operand's width, a shift count's shift's, or
-    the root's. Where nothing gives one, as at a `Popcount` operand, the
+    one it is evaluated at: an operand's width, a shift count's shift's (a
+    count too wide for it saturates rather than wraps), or the root's. Where nothing gives one, as at a `Popcount` operand, the
     rewrite is refused; type it with `capture_typed`."""
 def bool_const(value: bool) -> Template:
     """Build a 1-bit boolean constant equal to `value`."""
