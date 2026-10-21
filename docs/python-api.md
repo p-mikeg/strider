@@ -182,8 +182,12 @@ the positive one:
 - `assume_incoming_args_survive_calls` (default on): a callee leaves an
   incoming stack-argument slot as it found it, so an argument read after a
   call is still found. A function that hands a callee a pointer into those
-  slots (`h(&a); return a;`) is caught, and there every call keeps the slot
-  unknown; a pointer to a local is taken to stay inside that local.
+  slots, or into the register arguments' homes a convention keeps just below
+  them (ARM, MIPS, PowerPC64: a by-value struct split between registers and
+  the stack), is caught (`h(&a); return a;`), and there every call keeps the
+  slots unknown. A pointer to a local is taken to stay inside that local; a
+  callee reading a pointer from a register its convention preserves is not
+  caught.
 - `return_slots_survive_untracked_writes` (default on): a RAM store whose
   address strider cannot place on the entry stack, and any callee or user-op,
   leave the slots the function saved its return address and entry stack

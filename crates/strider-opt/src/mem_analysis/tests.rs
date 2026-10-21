@@ -1426,6 +1426,7 @@ mod heap_tests {
                 preserves_memory,
                 preserves_all_registers: false,
                 entry_address_vn: None,
+                reg_args_adjoin_stack_args: false,
             };
             let mut b = FunctionBuilder::new(
                 vec![sp(), ret_reg()],
