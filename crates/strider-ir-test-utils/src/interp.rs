@@ -5,11 +5,11 @@
 //! with a pass is invisible. It is written apart from `strider-opt`'s constant
 //! folder so the two do not share one.
 //!
-//! It runs integer arithmetic, compares, casts, phis, RAM loads and stores,
-//! and `If` / `Switch` / `Region` control including loops; a run that outlasts
-//! [`Env::step_budget`] is [`Outcome::Diverge`]. Floats, `CallOther`,
-//! `IndirectBranch`, non-RAM spaces and values wider than 128 bits are
-//! [`Unsupported`].
+//! It runs integer arithmetic, compares, casts, phis, RAM and REGISTER-space
+//! loads and stores, and `If` / `Switch` / `Region` control including loops; a
+//! run that outlasts [`Env::step_budget`] is [`Outcome::Diverge`]. Floats,
+//! `CallOther`, `IndirectBranch`, other spaces and values wider than 128 bits
+//! are [`Unsupported`].
 //!
 //! A `Call` is an opaque callee. Call `k` of a run (from 1) puts
 //! `hash(seed, k, target, varnode)` in each register it clobbers and leaves
@@ -17,6 +17,10 @@
 //! convention preserves memory. No pass may forward a load across a call
 //! without an assumption, so a forward shows up as a divergence. Each call's
 //! target, arguments and the bytes written before it are recorded.
+//!
+//! The REGISTER space is a byte array of its own: the ROM does not back it,
+//! an unwritten byte is noise, and a call that clobbers memory clobbers it
+//! too. Only RAM bytes are reported in `writes`.
 
 use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
@@ -226,6 +230,8 @@ pub fn run_observed(
 #[derive(Clone, Debug, Default)]
 struct Mem {
     written: BTreeMap<u64, u8>,
+    /// The REGISTER space's bytes, likewise.
+    register: BTreeMap<u64, u8>,
     /// Calls before this point; 0 is the entry state.
     calls: u64,
 }
@@ -373,14 +379,14 @@ impl<'a, 'e> Machine<'a, 'e> {
                     .map(|a| u128::from(a.leading_zeros() - (128 - bits)) & m)
             }
             NodeKind::Load(space) => {
-                if space != rsleigh::VnSpace::RAM {
+                if !modelled(space) {
                     return unsupported(format!("a load from {space:?}"));
                 }
                 let mem = self.mem(ins[NodeKind::ACCESS_MEM_SLOT])?;
                 let Some(at) = self.int(ins[NodeKind::ACCESS_ADDR_SLOT])? else {
                     return unsupported("a load from an undefined address");
                 };
-                Some(self.load(&mem, at as u64, ty))
+                Some(self.load(&mem, space, at as u64, ty))
             }
             // A phi or call output not in `now` has not been produced yet.
             other => return unsupported(format!("{} as a value", label(&other))),
@@ -401,7 +407,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         let mem = match *f.node_kind(node) {
             NodeKind::InitialMemory => Rc::default(),
             NodeKind::Store(space) => {
-                if space != rsleigh::VnSpace::RAM {
+                if !modelled(space) {
                     return unsupported(format!("a store to {space:?}"));
                 }
                 let ins: Vec<ValueId> = f.node_inputs(node).into_iter().collect();
@@ -426,8 +432,13 @@ impl<'a, 'e> Machine<'a, 'e> {
                 if f.endianness() == Endianness::Big {
                     bytes.reverse();
                 }
+                let space_bytes = if space == rsleigh::VnSpace::REGISTER {
+                    &mut mem.register
+                } else {
+                    &mut mem.written
+                };
                 for (i, byte) in bytes.into_iter().enumerate() {
-                    mem.written.insert((at as u64).wrapping_add(i as u64), byte);
+                    space_bytes.insert((at as u64).wrapping_add(i as u64), byte);
                 }
                 Rc::new(mem)
             }
@@ -437,10 +448,17 @@ impl<'a, 'e> Machine<'a, 'e> {
         Ok(mem)
     }
 
-    fn load(&self, mem: &Mem, at: u64, ty: ValueType) -> u128 {
+    fn load(&self, mem: &Mem, space: rsleigh::VnSpace, at: u64, ty: ValueType) -> u128 {
         let size = ty.bit_width().div_ceil(8);
         let mut bytes: Vec<u8> = (0..size)
-            .map(|i| self.byte(mem, at.wrapping_add(i as u64)))
+            .map(|i| {
+                let addr = at.wrapping_add(i as u64);
+                if space == rsleigh::VnSpace::REGISTER {
+                    self.register_byte(mem, addr)
+                } else {
+                    self.byte(mem, addr)
+                }
+            })
             .collect();
         if self.f.endianness() == Endianness::Big {
             bytes.reverse();
@@ -460,6 +478,13 @@ impl<'a, 'e> Machine<'a, 'e> {
             }
         }
         noise(self.env.seed, addr, mem.calls) as u8
+    }
+
+    fn register_byte(&self, mem: &Mem, addr: u64) -> u8 {
+        if let Some(&byte) = mem.register.get(&addr) {
+            return byte;
+        }
+        noise(!self.env.seed, addr, mem.calls) as u8
     }
 
     fn snapshot(&self, mem: &Mem) -> BTreeMap<u64, u8> {
@@ -518,6 +543,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         } else {
             Rc::new(Mem {
                 written: BTreeMap::new(),
+                register: BTreeMap::new(),
                 calls: k,
             })
         };
@@ -586,6 +612,10 @@ impl<'a, 'e> Machine<'a, 'e> {
             calls: std::mem::take(&mut self.calls),
         })
     }
+}
+
+fn modelled(space: rsleigh::VnSpace) -> bool {
+    space == rsleigh::VnSpace::RAM || space == rsleigh::VnSpace::REGISTER
 }
 
 fn int_type(f: &Function, v: ValueId) -> Eval<ValueType> {
@@ -801,6 +831,21 @@ mod tests {
                 "{endianness:?}"
             );
         }
+    }
+
+    /// A RAM store at a register-space address leaves the register space alone.
+    #[test]
+    fn the_register_space_is_a_byte_array_of_its_own() {
+        let f = make_empty_fn_endian(Endianness::Little, |b| {
+            let at = b.build_int_const(0x300u64, ValueType::int(64))?;
+            let word = b.build_int_const(0x1122_3344u32, ValueType::int(32))?;
+            let other = b.build_int_const(0x5566_7788u32, ValueType::int(32))?;
+            b.build_store(at, word, rsleigh::VnSpace::REGISTER)?;
+            b.build_store(at, other, rsleigh::VnSpace::RAM)?;
+            b.build_load(at, rsleigh::VnSpace::REGISTER, ValueType::int(16))
+        })
+        .unwrap();
+        assert_eq!(returned(&f, &env(&|_| 0, None)), vec![Known(0x3344)]);
     }
 
     #[test]
