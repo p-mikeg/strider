@@ -162,7 +162,7 @@ const C_CLEAR: [u32; 2] = [0xe3a0_1000, 0xe351_0001];
 /// other `msr` keeps them.
 #[test]
 fn msr_writes_the_flags_only_through_the_flags_field() {
-    let cases: [(&str, [u32; 2], &[u32], u128); 5] = [
+    let cases: [(&str, [u32; 2], &[u32], u128); 7] = [
         (
             "mov r1, #0x20000000; msr cpsr_f, r1",
             C_CLEAR,
@@ -173,6 +173,14 @@ fn msr_writes_the_flags_only_through_the_flags_field() {
         ("msr cpsr_f, #0", C_SET, &[0xe328_f000], 0),
         ("msr cpsr_x, r1", C_SET, &[0xe122_f001], 1),
         ("msr cpsr_c, r1", C_SET, &[0xe121_f001], 1),
+        // The control and flags fields together, as a full restore writes them.
+        ("msr cpsr_fc, #0x20000003", C_CLEAR, &[0xe329_f232], 1),
+        (
+            "mov r1, #0x20000000; orr r1, r1, #0xd3; msr cpsr_fsxc, r1",
+            C_CLEAR,
+            &[0xe3a0_1202, 0xe381_10d3, 0xe12f_f001],
+            1,
+        ),
     ];
     let mut wrong = Vec::new();
     for (name, prime, msr, want) in cases {
@@ -191,6 +199,12 @@ fn msr_writes_the_flags_only_through_the_flags_field() {
             "mov.w r1, #0x20000000; msr apsr_nzcvq, r1",
             0x2b01,
             &[0xf04f, 0x5100, 0xf381, 0x8800][..],
+            1,
+        ),
+        (
+            "mov.w r1, #0x20000000; orr r1, r1, #0xd3; msr cpsr_fc, r1",
+            0x2b01,
+            &[0xf04f, 0x5100, 0xf041, 0x01d3, 0xf381, 0x8900][..],
             1,
         ),
         (
@@ -237,4 +251,12 @@ fn mrs_reads_the_mode_msr_wrote() {
         wrong.push(format!("thumb msr cpsr_c, r1: mode {got:x?}"));
     }
     assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// A Thumb-2 `cps` records the mode it enters, as the A32 one does.
+#[test]
+fn mrs_reads_the_mode_a_thumb_cps_entered() {
+    // cpsid i, #17; mrs r0, cpsr; and r0, r0, #0x1f
+    let f = thumb(&[0xf3af, 0x8751], &[0xf3ef, 0x8000, 0xf000, 0x001f]);
+    assert_eq!(r0(&f), Some(0x11));
 }
