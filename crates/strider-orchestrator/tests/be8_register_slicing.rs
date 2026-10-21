@@ -14,9 +14,10 @@
 //! `reg_shift_from_container` must therefore key the shift off the
 //! sla's register endianness: keying it off `arch.endianness()` puts `s0` at
 //! bit 32 of `d0` instead of bit 0, reading and writing the wrong half of
-//! every VFP/NEON sub-register.  `arm()` and `arm_be_kernel()` load the SAME
-//! sla, so the same bytes must slice registers identically; only the data byte
-//! order differs.
+//! every VFP/NEON sub-register.  `arm()` and `arm_be_kernel()` share one
+//! register layout (`ARM8_be8` differs from `ARM8_le` only in its data
+//! transfers), so the same bytes must slice registers identically; only the
+//! data byte order differs.
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, MachineInsnAddr};
@@ -88,7 +89,7 @@ fn be8_slices_sub_registers_like_its_little_endian_sla() {
     let be8 = preserve_masks(SleighArch::arm_be_kernel());
     assert_eq!(
         be8, le,
-        "arm_be_kernel loads the same sla as arm, so the same bytes must slice \
+        "arm_be_kernel has arm's register layout, so the same bytes must slice \
          registers identically; a differing preserve mask means the \
          sub-register is being read out of the wrong half of its container"
     );
