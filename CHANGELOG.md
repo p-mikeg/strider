@@ -720,6 +720,11 @@
   rests on: a listed call's result overlaps no stack slot and no global
   either, so an allocator carving from a static or caller-supplied arena does
   not qualify. They said only that it overlaps no other allocation.
+- The docs no longer say that call-boundary claims never reach a decoded
+  branch target. The jump-table walk leaves them out of its own steps, but
+  it reads the IR `LoadForward` optimized under them, so with
+  `escape_analysis` and `callee_preserves_stack_args` a branch target spilled
+  across a call that overwrites it seats the stale target.
 
 ### Added, Rust
 
