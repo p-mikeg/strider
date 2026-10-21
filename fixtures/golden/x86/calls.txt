@@ -15,7 +15,7 @@ cfg
   0x4010f0 24 ops cbranch 0x401118 -> [0x4010fc, 0x401118]
   0x4010fc 32 ops goto -> [0x401118]
   0x401118 21 ops return -> []
-tracked [EAX, EDX, ESP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6600:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x18700:1, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x67600:4, u:0x67800:4, u:0x88900:4]
+tracked [EAX, EDX, ESP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6600:4, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x18700:1, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x68e00:4, u:0x69000:4, u:0x8a100:4]
 arg 0 [%v5]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -78,7 +78,7 @@ cfg
   0x401120 24 ops cbranch 0x40113d -> [0x40112b, 0x40113d]
   0x40112b 35 ops return -> []
   0x40113d 21 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x18a00:1, u:0x18c00:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0xb7000:4]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x18a00:1, u:0x18c00:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0xb8800:4]
 arg 0 [%v6]
 %v0:ctrl = entry
 %v1:i32 = iconst[0x0]
@@ -114,7 +114,7 @@ cfg
   0x401150 24 ops cbranch 0x40116d -> [0x40115b, 0x40116d]
   0x40115b 35 ops return -> []
   0x40116d 21 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x18a00:1, u:0x18c00:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0xb7000:4]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x18a00:1, u:0x18c00:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0xb8800:4]
 arg 0 [%v6]
 %v0:ctrl = entry
 %v1:i32 = iconst[0x0]
@@ -236,7 +236,7 @@ return %v0, %v1, %v9, %v10, %v11, %v12, %v13
 == repeat_call_pair @0x4011e0
 cfg
   0x4011e0 94 ops return -> []
-tracked [EAX, EDX, EBX, ESP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x88900:4]
+tracked [EAX, EDX, EBX, ESP, ESI, EDI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8a100:4]
 arg 0 [%v25]
 arg 1 [%v19]
 %v0:ctrl = entry
@@ -305,7 +305,7 @@ return %v14, %v15, %v16, %v17, %v18, %v19, %v20
 == apply_indirect @0x401230
 cfg
   0x401230 32 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x64a00:4]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x66200:4]
 arg 0 [%v15]
 arg 1 [%v7]
 %v0:ctrl = entry

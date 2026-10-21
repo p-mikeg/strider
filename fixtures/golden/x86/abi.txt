@@ -203,7 +203,7 @@ return %v38, %v39, %v40, %v41, %v42, %v43, %v44
 unresolved_branch [0x401235.2]
 cfg
   0x401190 289 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x89100:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8a900:4]
 frame_address_in_call_register
 %v0:ctrl = entry
 %v1:mem = initial_memory
