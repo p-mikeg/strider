@@ -69,7 +69,7 @@ cfg
   0x401070 0 ops goto -> [0x401074]
   0x401074 56 ops goto -> [0x401095]
   0x401095 1 ops goto -> [0x401095]
-tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x79900:8, u:0xaa700:8]
+tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x7ae00:8, u:0xabd00:8]
 frame_address_in_call_register
 arg 2 [%v22]
 float_arg 0 [%v23]
