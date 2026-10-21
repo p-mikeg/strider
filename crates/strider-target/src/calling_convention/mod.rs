@@ -707,10 +707,29 @@ const ARM_AAPCS_VFP_BASE: CallingConvention = CallingConvention {
     // `function_arg_float` is a candidate rather than an answer past the first
     // position on this arch.
     arg_passing_regs_float: &["d0", "d1", "d2", "d3", "d4", "d5", "d6", "d7"],
+    // AAPCS 5.1.2.1: d8-d15 (= s16-s31) are callee-saved. `cpsr_mode` is
+    // CPSR.M, the fork's own register: a callee returns through the caller's
+    // banked `lr`, so it cannot come back in another mode. The flags and the
+    // interrupt masks stay clobbered.
     callee_saved_regs: &[
-        "r4", "r5", "r6", "r7", "r8", "r9", "r10", "r11", "lr",
-        // AAPCS 5.1.2.1: d8-d15 (= s16-s31) are callee-saved.
-        "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15",
+        "r4",
+        "r5",
+        "r6",
+        "r7",
+        "r8",
+        "r9",
+        "r10",
+        "r11",
+        "lr",
+        "d8",
+        "d9",
+        "d10",
+        "d11",
+        "d12",
+        "d13",
+        "d14",
+        "d15",
+        "cpsr_mode",
     ],
     ret_val_regs: &["r0", "r1"],
     // d0..d3, also accessed as s0..s7: a homogeneous float aggregate returns

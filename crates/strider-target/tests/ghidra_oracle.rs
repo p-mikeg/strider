@@ -305,6 +305,12 @@ const LEDGER: &[Divergence] = &[
                  even halves, which `float_arg_slots` projects onto the pair",
     },
     Divergence {
+        presets: &["arm_aapcs", "arm_aapcs_soft"],
+        items: &["callee-saved only in strider: cpsr_mode"],
+        reason: "CPSR.M, a register only the fork's ARM sla has: a callee returns through \
+                 its caller's banked `lr`, so it returns in its caller's mode",
+    },
+    Divergence {
         presets: &["arm_aapcs_soft"],
         items: &["callee-saved only in strider: lr"],
         reason: "the link-register tradeoff, which Ghidra's own VFP prototype makes",
