@@ -183,14 +183,23 @@ def test_an_unknown_claim_raises_in_none_as_in_the_constructor():
 
 def test_a_keyword_set_carries_its_defaults_into_the_union():
     """`AssumptionOptions(x=True)` fills every other claim with its default,
-    three of them on, so on a `none()` function it adds four. Pinned so that
-    changing it is a decision."""
+    four of them on. One is `msr_register_keeps_mode`, which only the lift
+    reads, so on a `none()` function `optimize` refuses the set rather than
+    record a claim the graph does not rest on. Pinned so that changing it is
+    a decision."""
     want = AssumptionOptions() | AssumptionOptions.none(escape_analysis=True)
     assert AssumptionOptions(escape_analysis=True) == want
     lift, g = _spill_at_floor()
-    wider = g.assumptions | AssumptionOptions(escape_analysis=True)
-    lift.optimize(g, assumptions=wider)
-    assert g.assumptions == want
+    with pytest.raises(
+        strider.StriderError,
+        match="msr_register_keeps_mode is read by the lift; analyse again with it",
+    ):
+        lift.optimize(g, assumptions=g.assumptions | AssumptionOptions(escape_analysis=True))
+    assert g.assumptions == AssumptionOptions.none(), "a refused set adds nothing"
+    assert len(g.find_all(load())) == 1, "a refused set runs nothing"
+    wider = AssumptionOptions(escape_analysis=True, msr_register_keeps_mode=False)
+    lift.optimize(g, assumptions=g.assumptions | wider)
+    assert g.assumptions == wider
     assert len(g.find_all(load())) == 0, "stack_global_disjoint did not forward"
 
 
