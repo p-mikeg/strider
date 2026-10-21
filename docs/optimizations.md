@@ -108,7 +108,10 @@ value in a register a call clobbers) and the slot is not one the call hands its
 callee as an argument. With `noalias_allocators=[addr, ...]` naming pure
 allocators, a load steps through a call to one when it reads a different
 allocation, or a slot of a frame no stack address escapes that lies outside
-that call's argument window; a load from a global does not. Under either of
+that call's argument window; a load from a global does not. A listed call's
+result is taken to overlap no stack slot and no global either, so a store
+through it does not block a stack or global load, and an allocator carving
+from a static or a caller-supplied arena does not qualify. Under either of
 those two, and only then, `callee_preserves_stack_args=True` empties the
 outgoing-argument window, so a spill at the stack top, indistinguishable from a
 pushed argument once lowered to memory, forwards too. Set on its own it changes
