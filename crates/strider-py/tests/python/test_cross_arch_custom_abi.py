@@ -68,7 +68,7 @@ def test_a_custom_cc_crosses_presets_with_one_register_table():
         cc = CallingConvention.custom(
             sleigh=built_on,
             arg_passing_regs=["r0", "r1"],
-            callee_saved_regs=[],
+            callee_saved_regs=["lr"],
             ret_val_regs=["r0"],
             ret_val_regs_float=[],
             stack_pointer="sp",
