@@ -489,9 +489,12 @@
 ### Fixed
 
 - ARM `msr` writing the CPSR control field (`cpsr_c`, `cpsr_fsxc`, ...),
-  A32 and Thumb-2, re-banks registers as `cps` does: it switched mode
-  silently, so `mov r8, #5` under FIQ read back 5 under SVC. A mode switch,
-  `cps` included, also re-banks the SPSR.
+  A32 and Thumb-2, re-banks registers as `cps` does when it writes a mode
+  other than the current one: it switched mode silently, so `mov r8, #5`
+  under FIQ read back 5 under SVC. An interrupt-mask restore, which writes
+  the current mode back, re-banks nothing. `mrs` reads CPSR.M, which it read
+  as zero, and `cps` records it. A mode switch, `cps` included, also
+  re-banks the SPSR.
 - ARM `vld3`, `vld4`, `vst3` and `vst4` (multiple structures) transferred
   from one register before their first, `{d4-d6}` writing d3-d5.
 - BE8 (`arm_be_kernel`) and BE32 (`arm_be`) `vld1` and `vst1` (multiple single
