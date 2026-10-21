@@ -488,12 +488,17 @@
 
 ### Fixed
 
-- x86 float-to-integer conversions that round (`cvtsd2si`, `cvtss2si` and
-  their VEX forms, `fist`, `fistp`, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`,
-  `cvtps2pi`) break a tie to even, the default MXCSR and x87 mode: 2.5
-  converted to 3. `vcvtsd2si r64` and `cvtps2pi` returned the rounded value's
-  float bits, and `cvtpd2dq`, `cvtps2dq` and `cvtpd2pi` truncated. A rounding
-  mode set at run time (`fldcw`, `ldmxcsr`) is still not modelled.
+- x86 SSE and VEX float-to-integer conversions that round (`cvtsd2si`,
+  `cvtss2si` and their VEX forms, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`,
+  `cvtps2pi`) break a tie to even, the default MXCSR mode: 2.5 converted to
+  3. `vcvtsd2si r64` and `cvtps2pi` returned the rounded value's float bits,
+  and `cvtpd2dq`, `cvtps2dq` and `cvtpd2pi` truncated. MXCSR.RC is not
+  modelled; the conversions assume its default.
+- x87 `fist`, `fistp` and `frndint` round by the control word's RC (nearest
+  even, down, up or toward zero) instead of always breaking a tie away from
+  zero. gcc's i386 `(int)x`, which sets RC to truncate around a `fistp`, now
+  folds to a plain truncation, where 2.7 converted to 3; with no `fldcw` the
+  conversion selects on the control word the function was entered with.
 - x86 `rcl` and `rcr` by a CL or imm8 count of one set OF; it was left stale.
 - The x86 fixes of upstream Ghidra b16f1556d2 are in the vendored spec:
   `fcmovnbe` moved when CF was set; a one-bit `shr` cleared OF rather than
@@ -503,8 +508,13 @@
   lane 1, `vmulps ymm` lane 7, and `vtestps ymm` read bits 160 and 224 as
   sign bits; `rdtscp` and `vmclear` did not decode outside 64-bit mode;
   `vfpclasssd`, `vfpclassss` and `vrangess` decoded without their imm8, and
-  `wrssq` and `wrussq` not at all. `fyl2x` and `fyl2xp1` call `log2`, which
-  the CallOther table classes as pure.
+  `wrssq` and `wrussq` not at all. EVEX `vmovhlps` and `vmovhpd` took the
+  wrong half of SRC1; EVEX `vucomisd` and `vucomiss` wrote the register
+  instead of the flags; masked `vandps ymm` and `vpsubsw zmm` dropped the
+  op's result; `fdecstp` cleared C0 rather than C1; `syscall` left RCX and
+  R11 unwritten in p-code and 64-bit `sysexit` returned to RCX; `maskmovdqu`
+  wrote XMM1; `pcmpestri` and `pcmpestrm` did not read EAX and EDX. `fyl2x`
+  and `fyl2xp1` call `log2`, which the CallOther table classes as pure.
 - Python: on ppc64 ELFv2, `ElfLifter.analyze` and `ElfLifter.build_cfg` add
   the local entry of every `no_return_targets` address that is a symbol's
   `address`, and `analyze` of every such `per_address_ccs` key. A `bl`
