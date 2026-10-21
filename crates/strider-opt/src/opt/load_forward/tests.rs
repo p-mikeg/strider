@@ -1139,7 +1139,7 @@ fn narrow_load_from_wider_store_forwards_via_truncate() -> Result<()> {
 fn narrow_load_from_wider_store_be_shifts_high_bytes() -> Result<()> {
     let sp = sp32_vn();
     let mut b = sp_frame(sp)
-        .endianness(Endianness::Big)
+        .byte_order(Endianness::Big)
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     let eight = b.build_int_const(8u64, ValueType::int(32))?;
@@ -2233,7 +2233,7 @@ fn a_narrowed_load_takes_its_spaces_byte_order() -> Result<()> {
     let build = |space: rsleigh::VnSpace| -> Result<strider_ir::Function> {
         let sp = sp32_vn();
         let mut b = sp_frame(sp)
-            .endianness(strider_target::ByteOrder {
+            .byte_order(strider_target::ByteOrder {
                 data: Endianness::Big,
                 register: Endianness::Little,
             })
