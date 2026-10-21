@@ -514,6 +514,10 @@
 
 ### Fixed
 
+- Python: in a linked image with no `.dynsym`, a dynamic relocation naming a
+  symbol is a hole, from `read()` and every view. It resolved through
+  `.symtab`, whose index means something else, and served an unrelated
+  symbol's address (four `R_AARCH64_ABS64` words of an arm64 5.14 kernel).
 - Python: `Function.rewrite` / `rewrite_all` (and a Rust `rewrite_rule`)
   of an `initial_var` or `phi` root to a replacement that builds nodes
   raises `StriderError`. It built nodes with no instruction address, which
