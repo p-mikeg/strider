@@ -492,9 +492,16 @@
   A32 and Thumb-2, re-banks registers as `cps` does when it writes a mode
   other than the current one: it switched mode silently, so `mov r8, #5`
   under FIQ read back 5 under SVC. An interrupt-mask restore, which writes
-  the current mode back, re-banks nothing. `mrs` reads CPSR.M, which it read
-  as zero, and `cps` records it. A mode switch, `cps` included, also
-  re-banks the SPSR.
+  the current mode back, re-banks nothing, and the mode survives a call
+  between the two (the ARM conventions keep the new `cpsr_mode` register
+  callee-saved). `mrs` reads CPSR.M and the A, I and F masks that `cps` and
+  `msr` set, which it read as zero, so `irqs_disabled_flags(flags)` no
+  longer folds to "enabled". A mode switch, `cps` included, also re-banks
+  the SPSR.
+- ARM `msr` sets N, Z, C, V and Q only through its flags field, from its
+  source: the A32 register form overwrote them for every mask, the
+  immediate form never set them, and Thumb `msr APSR_nzcvq, rN` read r0
+  and ORed the bits in. Thumb-2 `cpsie f, #mode` disabled FIQ.
 - ARM `vld3`, `vld4`, `vst3` and `vst4` (multiple structures) transferred
   from one register before their first, `{d4-d6}` writing d3-d5.
 - BE8 (`arm_be_kernel`) and BE32 (`arm_be`) `vld1` and `vst1` (multiple single
