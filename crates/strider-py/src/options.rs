@@ -531,13 +531,14 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 
 /// Claims about the code being analysed, keyword-only. None is checked, and
 /// each one's risky value is the positive one, so any of them can make the
-/// answer wrong on valid input. Clearing all seven leaves only what the IR
+/// answer wrong on valid input. Clearing all eight leaves only what the IR
 /// structurally proves, which still takes memory to be RAM.
 ///
-/// Three default `True`: `stack_global_disjoint`,
+/// Four default `True`: `stack_global_disjoint`,
 /// `assume_incoming_args_survive_calls` and
 /// `return_slots_survive_untracked_writes`, each of which every compiler this
-/// analyses honours.
+/// analyses honours, and `msr_register_keeps_mode`, which only ARM code
+/// switching mode through a register breaks.
 ///
 /// An omitted or `None` field takes the analysis default, as listed above.
 #[pyclass(eq, name = "AssumptionOptions", module = "strider.lift")]
@@ -696,6 +697,17 @@ assumption_fields! {
     /// only guess at is checked against the slot. A store its SP decomposition
     /// places is checked either way.
     return_slots_survive_untracked_writes: bool,
+
+    /// An ARM register-form `msr` writing the CPSR control field
+    /// (`msr cpsr_c, rN`) restores a mode saved earlier, so it changes
+    /// neither the mode nor the banked registers (default `True`); its masks
+    /// and flags still update, and the immediate form and `cps` still switch
+    /// mode. Off, it re-banks `sp`, `lr` and the rest unless its mode is
+    /// provably the current one. Wrong for code that builds a new mode in a
+    /// register, as Linux's boot-time `safe_svcmode_maskall` does. Read by the
+    /// lift, so `analyze` honours it and `Lifter.optimize` adding it changes
+    /// nothing.
+    msr_register_keeps_mode: bool,
 }
 
 #[pymethods]

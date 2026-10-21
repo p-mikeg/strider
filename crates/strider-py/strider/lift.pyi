@@ -50,14 +50,16 @@ class AssumptionOptions:
 
     None is checked, and each one's risky value is the positive one, so any of
     them can make the answer wrong on valid input. `stack_global_disjoint`,
-    `assume_incoming_args_survive_calls` and
-    `return_slots_survive_untracked_writes` default `True`, the other four off
-    or empty; clearing all seven is the sound floor under any input whose
-    memory behaves as RAM (see `none`). What each one claims is in
-    `docs/python-api.md` section 2.
+    `assume_incoming_args_survive_calls`,
+    `return_slots_survive_untracked_writes` and `msr_register_keeps_mode`
+    default `True`, the other four off or empty; clearing all eight is the
+    sound floor under any input whose memory behaves as RAM (see `none`). What
+    each one claims is in `docs/python-api.md` section 2.
 
     Claims accumulate on a `Function` (`Function.assumptions`): `analyze`
     starts from the ones it is given, `Lifter.optimize` adds, none withdraws.
+    The lift reads `msr_register_keeps_mode`, so `optimize` adding it changes
+    nothing.
     """
 
     # Read-only: these are getters with no setter, so a plain attribute
@@ -76,6 +78,8 @@ class AssumptionOptions:
     def escape_analysis(self) -> bool: ...
     @property
     def return_slots_survive_untracked_writes(self) -> bool: ...
+    @property
+    def msr_register_keeps_mode(self) -> bool: ...
     def __init__(
         self,
         *,
@@ -86,6 +90,7 @@ class AssumptionOptions:
         noalias_allocators: Optional[list[int]] = ...,
         escape_analysis: Optional[bool] = ...,
         return_slots_survive_untracked_writes: Optional[bool] = ...,
+        msr_register_keeps_mode: Optional[bool] = ...,
     ) -> None:
         """Build the claims; a field omitted or `None` takes its default, as
         documented above. `noalias_allocators` reads back sorted, without
@@ -101,14 +106,15 @@ class AssumptionOptions:
         noalias_allocators: Optional[list[int]] = ...,
         escape_analysis: Optional[bool] = ...,
         return_slots_survive_untracked_writes: Optional[bool] = ...,
+        msr_register_keeps_mode: Optional[bool] = ...,
     ) -> "AssumptionOptions":
         """Every claim cleared, then the ones named set: with no argument, the
         sound floor of these fields under any input, forwarding solely what
         the IR structurally proves.
 
-        Three of the seven default `True`, so this is not
+        Four of the eight default `True`, so this is not
         `AssumptionOptions()`, and `AssumptionOptions(escape_analysis=True)`
-        holds four claims where `none(escape_analysis=True)` holds one. Add
+        holds five claims where `none(escape_analysis=True)` holds one. Add
         one claim to a function's claims with
         `function.assumptions | AssumptionOptions.none(escape_analysis=True)`.
 

@@ -111,6 +111,7 @@ def test_assumptions_default_to_a_fresh_group_with_the_pipeline_claims_on():
         "stack_global_disjoint",
         "assume_incoming_args_survive_calls",
         "return_slots_survive_untracked_writes",
+        "msr_register_keeps_mode",
     ):
         assert getattr(a.assumptions, name) is True
     for name in (
@@ -184,6 +185,7 @@ def test_with_cfg_carries_over_every_other_field():
         noalias_allocators=[0x2000],
         escape_analysis=True,
         return_slots_survive_untracked_writes=False,
+        msr_register_keeps_mode=False,
     )
     opts = strider.lift.LifterOptions(
         cfg=strider.cfg.CfgOptions(function_max_size=64),
@@ -278,6 +280,7 @@ _ASSUMPTION_FIELDS = (
     "noalias_allocators",
     "escape_analysis",
     "return_slots_survive_untracked_writes",
+    "msr_register_keeps_mode",
 )
 
 
@@ -305,7 +308,8 @@ def test_assumption_options_repr():
         "AssumptionOptions(stack_global_disjoint=True, "
         "assume_incoming_args_survive_calls=True, distinct_sp_bases_disjoint=False, "
         "callee_preserves_stack_args=False, noalias_allocators=[], "
-        "escape_analysis=False, return_slots_survive_untracked_writes=True)"
+        "escape_analysis=False, return_slots_survive_untracked_writes=True, "
+        "msr_register_keeps_mode=True)"
     )
 
 
