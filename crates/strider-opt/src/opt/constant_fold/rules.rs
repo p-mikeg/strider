@@ -11,8 +11,9 @@ use strider_ir::{IRBuilderExt, IRViewer};
 use strider_pattern::{
     Capture, CaptureExt, any_float_binary, any_float_cmp, any_float_unary, bool_const_with,
     bool_not, float_bits_to_int, float_const, float_const_with, int_add, int_and,
-    int_bits_to_float, int_const, int_const_with, int_mul, int_neg, int_or, int_shl, int_shr,
-    int_sign_extend, int_sshr, int_sub, int_truncate, int_xor, int_zero_extend, template, var,
+    int_bits_to_float, int_const, int_const_with, int_mul, int_neg, int_or, int_sborrow,
+    int_scarry, int_shl, int_shr, int_sign_extend, int_sshr, int_sub, int_truncate, int_xor,
+    int_zero_extend, template, var,
 };
 
 /// Every constant-fold rule, in application order.
@@ -528,6 +529,9 @@ fn build_identity_rules() -> Vec<crate::BoxedRule> {
         rewrite_rule(int_shl(var(x), int_const(0u128)), var(x)),
         rewrite_rule(int_shr(var(x), int_const(0u128)), var(x)),
         rewrite_rule(int_sshr(var(x), int_const(0u128)), var(x)),
+        // Neither `x - 0` nor `x + 0` overflows.
+        rewrite_rule(int_sborrow(var(x), int_const(0u128)), int_const(0u128)),
+        rewrite_rule(int_scarry(var(x), int_const(0u128)), int_const(0u128)),
         all_ones_rule,
         or_all_ones_rule,
     ]
