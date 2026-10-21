@@ -6,6 +6,7 @@ The objects are `fixtures/loader/out/*`, built by `make -C fixtures/loader`.
 
 from __future__ import annotations
 
+import pytest
 import strider
 
 from .test_loader_written_got_slots import _image
@@ -39,3 +40,23 @@ def test_an_i386_got_call_through_a_base_register_reaches_the_import():
     for field in (0x1E, 0x2F):
         slot = (got + _word(elf, f + field)) & 0xFFFFFFFF
         assert _word(elf, slot) == elf.symbol("ext_fn").address, hex(field)
+
+
+@pytest.mark.parametrize(
+    "fn, r_type",
+    [("f", 309), ("g", 311)],
+    ids=["ld_prel19", "adr_got_page"],
+)
+def test_an_aarch64_got_reference_with_an_addend_is_a_hole(fn, r_type):
+    """`:got:foo+16` asks for the slot holding foo + 16, which strider does
+    not make; `G + A` is bar's slot, so the load folded to bar."""
+    elf = strider.lift.load_elf(_image("aarch64_got_addend.o"))
+    with pytest.raises(strider.StriderError, match=f"relocation of type {r_type} "):
+        elf.analyze(fn)
+
+
+def test_an_aarch64_got_reference_without_an_addend_still_folds():
+    elf = strider.lift.load_elf(_image("aarch64_got_addend.o"))
+    text = elf.analyze("h").function.to_text()
+    for sym in ("bar", "baz"):
+        assert f"iconst[{elf.symbol(sym).address:#x}]" in text, sym

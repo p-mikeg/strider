@@ -617,6 +617,9 @@
   register (`-fno-pic -fno-plt`'s `call *ext_fn@GOT`) names its GOT slot's
   address; it was the slot's offset from the GOT, so the call loaded its
   target from address 0x14.
+- Python: an AArch64 object's `R_AARCH64_GOT_LD_PREL19` with a non-zero
+  addend is a hole, as `ADR_GOT_PAGE` and `LD64_GOT_LO12_NC` already were;
+  `ldr x0, :got:foo+16` read the slot 16 bytes past foo's, another symbol's.
 
 ### Added, Rust
 

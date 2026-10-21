@@ -755,6 +755,7 @@ fn compute_classified(
         Value::Pcrel => sa.wrapping_sub(p),
         Value::PagePcrel => page(sa).wrapping_sub(page(p)),
         Value::GotPcrel => apply_addend(got_slot(ctx)?, a).wrapping_sub(p),
+        Value::GotSlotPcrel => got_slot(ctx)?.wrapping_sub(p),
         Value::GotPagePcrel => page(got_slot(ctx)?).wrapping_sub(page(p)),
         Value::Got => got_slot(ctx)?,
         Value::I386Got if i386_baseless(holder?, p) => apply_addend(got_slot(ctx)?, a),
@@ -787,9 +788,12 @@ fn compute_classified(
 }
 
 /// Whether a GOT value only holds for a zero addend: the slot is `S`, so a
-/// `Page(G)` or `G` cannot carry one.
+/// `Page(G)`, `G` or AArch64 `G - P` cannot carry one.
 fn value_kind_needs_zero(value: Value) -> bool {
-    matches!(value, Value::GotPagePcrel | Value::Got)
+    matches!(
+        value,
+        Value::GotPagePcrel | Value::Got | Value::GotSlotPcrel
+    )
 }
 
 /// Whether the value reaches the symbol only through its GOT slot, which is
@@ -797,7 +801,12 @@ fn value_kind_needs_zero(value: Value) -> bool {
 fn value_kind_through_got(value: Value) -> bool {
     matches!(
         value,
-        Value::GotPcrel | Value::GotPagePcrel | Value::Got | Value::GotOffset | Value::I386Got
+        Value::GotPcrel
+            | Value::GotSlotPcrel
+            | Value::GotPagePcrel
+            | Value::Got
+            | Value::GotOffset
+            | Value::I386Got
     )
 }
 

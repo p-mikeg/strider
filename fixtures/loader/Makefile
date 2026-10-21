@@ -27,12 +27,13 @@ X64    := gcc
 X86    := i686-linux-gnu-gcc
 MIPS32 := mips-linux-gnu-gcc -EB -mips32
 MIPS64 := mips64el-linux-gnuabi64-gcc
+A64    := aarch64-linux-gnu-gcc
 
 IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           mips64le_got_lib.elf mips64le_got.elf \
           x64_ifunc_pie.elf x64_ifunc_lib.elf x86_ifunc_pie.elf x64_ifunc.o \
           x64_ifunc_nopic.o x64_ifunc_static.elf \
-          x86_got_call_nopic.o x86_got_call_pic.o
+          x86_got_call_nopic.o x86_got_call_pic.o aarch64_got_addend.o
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -73,6 +74,8 @@ $(OUTDIR)/x86_got_call_pic.o: src/got_call.c | $(OUTDIR)
 	$(X86) $(filter-out -Wl% -nostdlib,$(CFLAGS)) -fno-plt -c $< -o $@
 $(OUTDIR)/x86_got_call_nopic.o: src/got_call.c | $(OUTDIR)
 	$(X86) $(filter-out -Wl% -nostdlib -fPIC,$(CFLAGS)) -fno-pic -fno-plt -c $< -o $@
+$(OUTDIR)/aarch64_got_addend.o: src/aarch64_got_addend.s | $(OUTDIR)
+	$(A64) -c $< -o $@
 
 clean:
 	rm -rf $(OUTDIR)
