@@ -84,6 +84,8 @@ pub struct Template {
     /// vertex, so only the declaration makes them visible to the coverage
     /// check.
     declared_captures: Vec<Capture>,
+    /// Why the builder refused the template, reported by [`Self::root`].
+    rejected: Option<String>,
 }
 
 impl Template {
@@ -92,10 +94,12 @@ impl Template {
     pub(crate) fn from_graph(
         graph: Graph<TmplNode, TmplValue, NeverCacheable>,
         declared_captures: Vec<Capture>,
+        rejected: Option<String>,
     ) -> Self {
         Self {
             graph,
             declared_captures,
+            rejected,
         }
     }
 
@@ -103,8 +107,11 @@ impl Template {
     ///
     /// # Errors
     /// Unless there is exactly one sink: zero means rootless or cyclic, more
-    /// than one means multi-rooted.
+    /// than one means multi-rooted. Also if the builder refused a verb.
     pub fn root(&self) -> anyhow::Result<NodeId> {
+        if let Some(why) = &self.rejected {
+            anyhow::bail!("{why}");
+        }
         crate::graph_ext::derive_root(&self.graph)
     }
 

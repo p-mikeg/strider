@@ -20,7 +20,7 @@ pub use crate::typed::value_ops::template::*;
 use std::collections::BTreeMap;
 
 use anyhow::anyhow;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::ValueId as TmplValueId;
 use strider_ir::node::{Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType};
 use strider_ir::{Function, IRBuilder, IRViewer};
@@ -52,8 +52,9 @@ pub enum TemplateKind {
 pub enum TemplateTy {
     /// No width of its own: the one the node is evaluated at, which is the
     /// rewrite root's output type unless an operand group pins another. A
-    /// shift count takes the shift's width; an operand at another slot that
-    /// owes its node no width must be typed.
+    /// shift count takes the shift's width, a constant that does not fit it
+    /// saturating; an operand at another slot that owes its node no width,
+    /// or an output no node consumes, must be typed.
     InheritRoot,
     /// The width of the value a bound LHS capture matched, for an interior
     /// node whose width comes from a captured operand the root does not
@@ -66,8 +67,7 @@ pub enum TemplateTy {
 
 /// Materialises `template` as an IR sub-graph rooted at the returned output.
 ///
-/// `root_ty` types the root's operand group, and a
-/// [`TemplateTy::InheritRoot`] value no template node consumes.
+/// `root_ty` types the root's operand group: the value it replaces.
 /// `lhs_root` reaches [`TemplateKind::Fn`] closures as [`TemplateCtx::root`];
 /// a pure-`Exact` template ignores it.
 ///
@@ -90,7 +90,9 @@ pub enum TemplateTy {
 /// If the template is rootless, references an unbound capture, has a
 /// [`TemplateKind::Fn`] closure that itself errors, has gapped or duplicate
 /// input slots, has an `IntConst` built from a `NodeKind`, has a node no width
-/// reaches, gives a node an input count, an output or an operand its node
+/// reaches (an untyped fresh operand at an input that owes its node no width,
+/// an untyped output no node consumes, an output typed from a capture that
+/// bound no typed value), gives a node an input count, an output or an operand its node
 /// signature refuses, or if node creation yields no value output. Most of
 /// these are found mid-build, so the nodes created before the refusal stay in
 /// `builder`'s function, dead.
@@ -175,7 +177,17 @@ pub fn instantiate<B: IRBuilder>(
                     root: lhs_root,
                     root_ty: value_ty,
                 };
-                let v = f(&ctx)?;
+                let mut v = f(&ctx)?;
+                // P-code tests the whole count against the width, so one that
+                // does not fit keeps every bit of the width set rather than
+                // wrapping back into range, as the lifter's count does.
+                if first_value_output_vtx(template, vtx)
+                    .is_some_and(|o| value_tys.saturated_counts.contains(&o))
+                    && value_ty.wrap_u128(v) != v
+                {
+                    let bits = u128::try_from(value_ty.bit_width()).expect("bit width fits u128");
+                    v = value_ty.wrap_u128(v) | bits;
+                }
                 intern_fn_int_const(builder, value_ty, v)?
             }
         };
@@ -267,6 +279,9 @@ fn raw_int_const() -> anyhow::Error {
 /// Every value output's type, keyed on the output vertex.
 struct ValueTys {
     by_vertex: FxHashMap<TmplValueId, ValueType>,
+    /// Shift counts whose width is their shift's, inferred: a constant there
+    /// that does not fit saturates rather than wraps.
+    saturated_counts: FxHashSet<TmplValueId>,
     root_ty: ValueType,
 }
 
@@ -384,12 +399,15 @@ fn resolve_value_tys(
             let head = match kind.operand_width(slot) {
                 OperandWidth::OfOutput => first_value_output_vtx(template, node_vtx),
                 OperandWidth::OfFirstOperand => first_operand,
-                // A conversion pins its input apart from its output, and a
-                // free slot pins it to nothing.
-                width @ (OperandWidth::Conversion(_) | OperandWidth::Free) => {
+                // A conversion pins its input apart from its output.
+                OperandWidth::Conversion(_) => {
                     tied_by.entry(producer).or_insert((kind, slot));
-                    if width == OperandWidth::Free
-                        && matches!(kind, NodeKind::IntBinaryOp(op) if op.is_shift())
+                    continue;
+                }
+                // A free slot pins it to nothing.
+                OperandWidth::Free => {
+                    tied_by.entry(producer).or_insert((kind, slot));
+                    if matches!(kind, NodeKind::IntBinaryOp(op) if op.is_shift())
                         && let Some(out) = first_value_output_vtx(template, node_vtx)
                     {
                         counts.push((producer, out));
@@ -441,6 +459,7 @@ fn resolve_value_tys(
     }
     // To a fixpoint: a count can be the output of another shift whose own
     // width comes from a count.
+    let mut inferred: FxHashSet<usize> = FxHashSet::default();
     let mut changed = true;
     while changed {
         changed = false;
@@ -451,10 +470,16 @@ fn resolve_value_tys(
             }
             if let Some(&t) = group_ty.get(&groups.find(out)) {
                 group_ty.insert(g, t);
+                inferred.insert(g);
                 changed = true;
             }
         }
     }
+    let saturated_counts: FxHashSet<TmplValueId> = counts
+        .iter()
+        .map(|&(count, _)| count)
+        .filter(|&count| inferred.contains(&groups.find(count)))
+        .collect();
 
     let mut by_vertex: FxHashMap<TmplValueId, ValueType> = FxHashMap::default();
     for &node_vtx in order {
@@ -467,26 +492,61 @@ fn resolve_value_tys(
             }
             let ty = match o.ty {
                 TemplateTy::Fixed(t) => t,
-                TemplateTy::InheritBinding(cap) => {
-                    binding_tys.get(&cap).copied().unwrap_or(root_ty)
-                }
+                TemplateTy::InheritBinding(cap) => match binding_tys.get(&cap) {
+                    Some(&t) => t,
+                    None => anyhow::bail!(
+                        "template node {} output {} takes its width from capture id={}, \
+                         which bound no typed value (it is unbound, or bound to memory or \
+                         control)",
+                        node_name(template, node_vtx),
+                        o.slot,
+                        cap.id()
+                    ),
+                },
                 TemplateTy::InheritRoot => match group_ty.get(&groups.find(vtx)).copied() {
                     Some(t) => t,
                     None => match tied_by.get(&vtx) {
+                        Some((kind, slot)) if kind.operand_width(*slot) == OperandWidth::Free => {
+                            anyhow::bail!(
+                                "template node feeding {kind:?} input {slot} has no width: it \
+                                 is built fresh with no declared type, and that input owes \
+                                 the node no width. Type it: capture_typed or set_value_ty \
+                                 (strider.template.capture_typed in Python)"
+                            )
+                        }
                         Some((kind, slot)) => anyhow::bail!(
                             "template node feeding {kind:?} input {slot} has no width: it is \
                              built fresh with no declared type, and nothing it is evaluated \
                              against carries one either. Type it, or type an operand it is \
                              evaluated against"
                         ),
-                        None => root_ty,
+                        None => anyhow::bail!(
+                            "template node {} output {} has no width: no template node \
+                             consumes it and it declares no type. Type it with set_value_ty",
+                            node_name(template, node_vtx),
+                            o.slot
+                        ),
                     },
                 },
             };
             by_vertex.insert(vtx, ty);
         }
     }
-    Ok(ValueTys { by_vertex, root_ty })
+    Ok(ValueTys {
+        by_vertex,
+        saturated_counts,
+        root_ty,
+    })
+}
+
+/// A template node as an error names it.
+fn node_name(template: &Template, node_vtx: NodeId) -> String {
+    match &template.graph.node_kind(node_vtx).kind {
+        TmplNodeKind::Build(TemplateKind::Exact(k)) => format!("{k:?}"),
+        TmplNodeKind::Build(TemplateKind::Fn(_)) => "built by a closure".to_string(),
+        TmplNodeKind::Build(TemplateKind::FnIntConst(_)) => "int_const".to_string(),
+        TmplNodeKind::Capture => "capture".to_string(),
+    }
 }
 
 /// Resolves every `InheritBinding(cap)` width, from the value each capture
@@ -944,6 +1004,115 @@ mod tests {
         assert_eq!(shift_count(&fx, node), (T::int(32), 5));
     }
 
+    /// `shl` and `sshr` count the same way as `shr`.
+    #[test]
+    fn a_fresh_shift_count_keeps_its_value_under_every_shift() {
+        let a = Capture::new();
+        let lhs = crate::int_slt(var(a), crate::int_const(0u128)).into_pattern();
+        for rhs in [
+            super::int_truncate(super::int_shl(var(a), crate::int_const(31u128))).into_template(),
+            super::int_truncate(super::int_sshr(var(a), crate::int_const(31u128))).into_template(),
+        ] {
+            let mut fx = sign_test_over_i32();
+            let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
+            assert_eq!(shift_count(&fx, node), (T::int(32), 31));
+        }
+    }
+
+    /// A count that is itself a shift: the outer shift types the inner one,
+    /// whose own count then takes that width.
+    #[test]
+    fn a_count_built_from_a_shift_takes_the_outer_shifts_width() {
+        let a = Capture::new();
+        let mut fx = sign_test_over_i32();
+        let lhs = crate::int_slt(var(a), crate::int_const(0u128)).into_pattern();
+        let rhs = super::int_truncate(super::int_shr(
+            var(a),
+            super::int_shl(crate::int_const(1u128), crate::int_const(2u128)),
+        ))
+        .into_template();
+
+        let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
+        let shr = fx.producer(fx.node_inputs(node)[0]);
+        let shl_out = fx.node_inputs(shr)[1];
+        assert_eq!(fx.value_type(shl_out).unwrap(), T::int(32));
+        let shl = fx.producer(shl_out);
+        assert_eq!(shift_count(&fx, shl), (T::int(32), 2));
+    }
+
+    /// A count that does not fit the shift's width saturates, as p-code tests
+    /// the whole count: masked, `2^32 + 3` would shift an `I32` by 3.
+    #[test]
+    fn a_fresh_shift_count_too_wide_for_the_shift_saturates() {
+        let a = Capture::new();
+        let mut fx = sign_test_over_i32();
+        let lhs = crate::int_slt(var(a), crate::int_const(0u128)).into_pattern();
+        let rhs = super::int_truncate(super::int_shr(var(a), crate::int_const(0x1_0000_0003u128)))
+            .into_template();
+
+        let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
+        assert_eq!(shift_count(&fx, node), (T::int(32), 3 | 32));
+    }
+
+    /// `capture_typed` over a capture is refused, not a panic: a capture keeps
+    /// the type of the value it bound.
+    #[test]
+    fn capture_typed_over_a_capture_is_refused() {
+        let x = Capture::new();
+        let mut fx = cmp_over_i64();
+        let lhs = crate::int_eq(var(x), crate::int_const(1u128)).into_pattern();
+        let rhs =
+            super::int_eq(crate::capture_typed(x, var(x)), crate::int_const(1u128)).into_template();
+
+        let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
+        assert!(err.contains("targets a capture"), "got: {err}");
+    }
+
+    /// An output no template node consumes has nothing to take a width from.
+    #[test]
+    fn an_untyped_output_no_node_consumes_is_refused() {
+        let x = Capture::new();
+        let mut fx = make_empty_fn(|b| {
+            let a = b.build_int_const(5u64, T::int(64))?;
+            let k = b.build_int_const(1u64, T::int(64))?;
+            b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
+        })
+        .unwrap();
+        let lhs = crate::int_add(var(x), crate::int_const(1u128)).into_pattern();
+        let mut b = super::TemplateBuilder::new();
+        let l = b.capture(x);
+        let r = b.dynamic_leaf(super::TemplateKind::FnIntConst(Box::new(|_| Ok(2))));
+        let add = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+        b.input(add, 0, l);
+        b.input(add, 1, r);
+        let _consumed = b.value_output(add, 0);
+        let _unconsumed = b.value_output(add, 0);
+        let rhs = b.finish();
+
+        let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
+        assert!(err.contains("no template node consumes it"), "got: {err}");
+    }
+
+    /// A width taken from a capture bound to memory has no width to take.
+    #[test]
+    fn a_width_from_a_capture_bound_to_memory_is_refused() {
+        let m = Capture::new();
+        let mut fx = make_empty_fn(|b| {
+            let a = b.build_int_const(0x10u64, T::int(64))?;
+            b.build_load(a, rsleigh::VnSpace::RAM, T::int(32))
+        })
+        .unwrap();
+        let lhs = crate::load().mem(var(m)).build();
+        let rhs = super::int_add(
+            crate::capture_typed(m, crate::int_const(1u128)),
+            crate::int_const(2u128),
+        )
+        .into_template();
+
+        let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
+        assert!(err.contains("bound no typed value"), "got: {err}");
+    }
+
     /// A `Popcount` operand owes its output no width, so a fresh constant
     /// there has none to take.
     #[test]
@@ -955,8 +1124,9 @@ mod tests {
             super::int_eq(var(x), super::int_popcount(crate::int_const(0xffu128))).into_template();
 
         let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
-        assert!(err.contains("Popcount"), "got: {err}");
+        assert!(err.contains("Popcount input 0"), "got: {err}");
         assert!(err.contains("has no width"), "got: {err}");
+        assert!(err.contains("capture_typed"), "got: {err}");
     }
 
     /// Typed through a capture, the same operand builds at that width.

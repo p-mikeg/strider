@@ -43,6 +43,8 @@ impl SealNode for TmplNodeKind {
 pub struct TemplateBuilder {
     core: StagedGraph<TmplNodeKind, TmplValue>,
     declared_captures: Vec<crate::Capture>,
+    /// The first refused verb, reported by [`Template::root`].
+    rejected: Option<String>,
 }
 
 impl Default for TemplateBuilder {
@@ -56,6 +58,7 @@ impl TemplateBuilder {
         Self {
             core: StagedGraph::new(),
             declared_captures: Vec::new(),
+            rejected: None,
         }
     }
 
@@ -123,14 +126,20 @@ impl TemplateBuilder {
         self.add_built_output(node, TmplOutput::memory(slot))
     }
 
-    /// Types the materialised node independently of the rewrite root.
+    /// Types the materialised node independently of the rewrite root. On a
+    /// capture, which keeps its binding's type, the template is refused.
     pub fn set_value_ty(&mut self, out: TmplValueRef, ty: ValueType) {
-        self.out_data_of(out).ty = TemplateTy::Fixed(ty);
+        if let Some(o) = self.out_data_of(out) {
+            o.ty = TemplateTy::Fixed(ty);
+        }
     }
 
-    /// Types `out` from the width of a bound LHS capture.
+    /// Types `out` from the width of a bound LHS capture. On a capture, which
+    /// keeps its binding's type, the template is refused.
     pub fn set_value_ty_of_binding(&mut self, out: TmplValueRef, cap: crate::Capture) {
-        self.out_data_of(out).ty = TemplateTy::InheritBinding(cap);
+        if let Some(o) = self.out_data_of(out) {
+            o.ty = TemplateTy::InheritBinding(cap);
+        }
     }
 
     /// Adds a payload-less [`TmplNodeKind::Capture`] marker producing a
@@ -150,7 +159,7 @@ impl TemplateBuilder {
     /// On a cyclic staged graph (a builder bug).
     pub fn finish(self) -> Template {
         let graph = self.core.seal().expect("cyclic staged template graph");
-        Template::from_graph(graph, self.declared_captures)
+        Template::from_graph(graph, self.declared_captures, self.rejected)
     }
 
     fn add_built_output(&mut self, node: TmplNodeRef, out: TmplOutput) -> TmplValueRef {
@@ -165,11 +174,17 @@ impl TemplateBuilder {
         }
     }
 
-    fn out_data_of(&mut self, out: TmplValueRef) -> &mut TmplOutput {
+    /// `None`, recording the refusal, when `out` is a capture.
+    fn out_data_of(&mut self, out: TmplValueRef) -> Option<&mut TmplOutput> {
         match self.core.output_mut(out.node, out.output) {
-            TmplValue::TmplOutput(o) => o,
+            TmplValue::TmplOutput(o) => Some(o),
             TmplValue::ValueCapture(_) => {
-                unreachable!("type setter targets a built output, not a capture")
+                self.rejected.get_or_insert_with(|| {
+                    "a template type setter (capture_typed, set_value_ty) targets a \
+                     capture, which keeps the type of the value it bound"
+                        .to_string()
+                });
+                None
             }
         }
     }
