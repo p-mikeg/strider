@@ -150,7 +150,14 @@ class CallingConvention:
         ...
     @classmethod
     def x86_linux_kernel(cls) -> CallingConvention:
-        """32-bit x86 Linux kernel-internal convention (`-mregparm=3`)."""
+        """32-bit x86 Linux kernel-internal convention (`-mregparm=3`).
+
+        A variadic callee (`printk`) and an `asmlinkage` one take every
+        argument on the stack, yet a call to one under this convention still
+        lists EAX, EDX and ECX as arguments 0-2, so its first argument reads
+        as `arg(3)`. Map such callees to `x86_cdecl()` in
+        `LifterOptions(per_address_ccs=...)`. To analyse one of them, pass
+        `cc=x86_cdecl()` and map its regparm callees to this convention."""
         ...
     @classmethod
     def powerpc_sysv32_linux_kernel(cls) -> CallingConvention:

@@ -725,6 +725,10 @@
   it reads the IR `LoadForward` optimized under them, so with
   `escape_analysis` and `callee_preserves_stack_args` a branch target spilled
   across a call that overwrites it seats the stale target.
+- Python: the `x86_linux_kernel` docs say that a variadic or `asmlinkage`
+  callee takes every argument on the stack, so under that convention its
+  first argument reads as `arg(3)`, and give the recipe:
+  `per_address_ccs={callee: CallingConvention.x86_cdecl()}`.
 
 ### Added, Rust
 
