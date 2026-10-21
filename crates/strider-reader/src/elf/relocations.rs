@@ -965,7 +965,7 @@ fn resolve_symbol_target(
 
 /// How far past `sym` a call sharing its TOC enters: on ppc64 ELFv2 the
 /// distance from a defined function's global entry to its local one, which
-/// is where a same-module `bl` lands. 0 on every other arch.
+/// is where a `bl` sharing its TOC lands. 0 on every other arch.
 pub fn local_entry_offset<'data>(
     obj: &object::File<'data>,
     sym: &impl object::ObjectSymbol<'data>,

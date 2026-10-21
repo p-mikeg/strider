@@ -78,10 +78,11 @@ analysis cannot check, and `AssumptionOptions.none()` makes none of them;
 `call_other_abis=` classifies a Sleigh user-op strider has no ABI for,
 `data_ranges=` marks bytes that are data, and `no_return_targets=` lists
 callees that never return (at their even, decoded address: `addr & ~1` for
-Thumb or MIPS16; at `Symbol.local_entry` on ppc64 ELFv2, which
-`ElfLifter.analyze` adds for a listed `address`); `function_max_size=` bounds the decode and raises beside
+Thumb or MIPS16); `function_max_size=` bounds the decode and raises beside
 `allow_code_before_start_addr=True`; `per_address_ccs=` names a callee's
-convention; `pipeline=` replaces the optimizer pass list outright.
+convention; `pipeline=` replaces the optimizer pass list outright. On ppc64
+ELFv2 a call sharing the callee's TOC lands at its `Symbol.local_entry`, which
+`ElfLifter` adds for a listed `address`.
 
 **One handle analyzes many functions.** The handle is the fixed setup:
 
