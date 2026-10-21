@@ -606,6 +606,7 @@ macro_rules! assumption_fields {
         #[pymethods]
         impl PyAssumptionOptions {
             #[new]
+            #[allow(clippy::too_many_arguments)]
             #[pyo3(signature = (*, $($name = None),*))]
             fn new($($name: Option<$py>),*) -> Self {
                 Self::with_fields(AssumptionOptions::default(), $($name),*)
@@ -617,6 +618,7 @@ macro_rules! assumption_fields {
             /// structurally proves. A memory-mapped register polled after a
             /// write still reads as the value written.
             #[staticmethod]
+            #[allow(clippy::too_many_arguments)]
             #[pyo3(signature = (*, $($name = None),*))]
             fn none($($name: Option<$py>),*) -> Self {
                 Self::with_fields(AssumptionOptions::none(), $($name),*)
