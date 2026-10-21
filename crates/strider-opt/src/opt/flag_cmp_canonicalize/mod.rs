@@ -30,7 +30,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{ExtendOp, IntBinaryOp, IntCmpOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_pattern::{
     Bindings, Capture, CaptureExt, bool_and, bool_not, bool_or, capture_typed, int_add, int_const,
-    int_const_with, int_eq, int_lt, int_neg, int_sborrow, int_shl, int_slt, int_xor,
+    int_const_with, int_eq, int_lt, int_neg, int_sborrow, int_scarry, int_shl, int_slt, int_xor,
     int_zero_extend, one_of, template, var,
 };
 
@@ -128,6 +128,23 @@ fn neg_relation(
         return false;
     };
     (m_val & width) == (n_val.wrapping_neg() & width)
+}
+
+/// `N` is not the signed minimum at `width_src`'s width, so `-N` is
+/// representable there.  `false` unless all bindings resolve.
+fn negation_fits(
+    binds: &Bindings,
+    func: &strider_ir::Function,
+    n: Capture,
+    width_src: Capture,
+) -> bool {
+    let (Some(n_val), Some(width)) = (
+        binds.get_uint(n, func),
+        carrier_mask(func, binds, width_src),
+    ) else {
+        return false;
+    };
+    n_val & width != width ^ (width >> 1)
 }
 
 /// `M == C1 - N` at `width_src`'s width.  `false` unless all bindings resolve.
@@ -307,6 +324,91 @@ fn build_rules() -> Vec<BoxedRule> {
         int_eq(int_add(var(a), int_const(m)), int_const(0u128)),
         move |edit, _ty, binds| neg_relation(binds, edit.function(), m, n, a),
         template::int_lt(var(n), var(a)),
+    ));
+    // Signed constant compare operand (`cmp a, N; jl`/`jge`), after
+    // ConstantFold collapsed `Add(a, Neg(N))` to `Add(a, M)`, `M = -N`:
+    //   GE:  Equal(ZeroExtend(Sless(Add(a, M), 0)), ZeroExtend(Sborrow(a, N)))         -> Xor(Sless(a, N), 1)
+    //   LT:  Xor(Equal(ZeroExtend(Sless(Add(a, M), 0)), ZeroExtend(Sborrow(a, N))), 1) -> Sless(a, N)
+    // The guard pins `M == -N` mod width. GT/LE follow through the decomposed
+    // rules once the EQ term has solved for `a`. `N = 0` is not this shape:
+    // `Add(a, 0)` folds to `a` and `Sborrow(a, 0)` to false.
+    let sborrow_nv = || {
+        int_eq(
+            int_zero_extend(int_slt(int_add(var(a), int_const(m)), int_const(0u128))),
+            int_zero_extend(int_sborrow(var(a), int_const(n))),
+        )
+        .when_match(move |edit, _ty, binds| neg_relation(binds, edit.function(), m, n, a))
+    };
+    rules.push(rewrite_rule(
+        sborrow_nv(),
+        template::bool_not(template::int_slt(var(a), var(n))),
+    ));
+    rules.push(rewrite_rule(
+        bool_not(sborrow_nv()),
+        template::int_slt(var(a), var(n)),
+    ));
+    // The `cmn a, N` sibling, a compare against `-N`:
+    //   GE:  Equal(ZeroExtend(Sless(Add(a, N), 0)), ZeroExtend(Scarry(a, N)))         -> Xor(Sless(a, -N), 1)
+    //   LT:  Xor(Equal(ZeroExtend(Sless(Add(a, N), 0)), ZeroExtend(Scarry(a, N))), 1) -> Sless(a, -N)
+    // Guarded to `N != INT_MIN`, whose negation `2^(W-1)` no `Sless` names.
+    let scarry_nv = || {
+        int_eq(
+            int_zero_extend(int_slt(int_add(var(a), int_const(n)), int_const(0u128))),
+            int_zero_extend(int_scarry(var(a), int_const(n))),
+        )
+        .when_match(move |edit, _ty, binds| negation_fits(binds, edit.function(), n, a))
+    };
+    let neg_n = || capture_typed(a, int_const_with!([n: uint] => n.wrapping_neg()));
+    rules.push(rewrite_rule(
+        scarry_nv(),
+        template::bool_not(template::int_slt(var(a), neg_n())),
+    ));
+    rules.push(rewrite_rule(
+        bool_not(scarry_nv()),
+        template::int_slt(var(a), neg_n()),
+    ));
+    // Offset-base sibling, `cmp X, N` on `X = Add(b, C1)` (a loop's `i + 1`),
+    // after ConstantFold reassociated the flag operand `Add(X, -N)` into
+    // `Add(b, C2)`:
+    //   GE:  Equal(ZeroExtend(Sless(Add(b, C2), 0)), ZeroExtend(Sborrow(X, N))) -> Xor(Sless(X, N), 1)
+    //   LT:  Xor(<the GE tree>, 1)                                              -> Sless(X, N)
+    // and, once the EQ term has solved for `b`:
+    //   LE:  Or(Equal(b, C3), Sless(X, N))                  -> Xor(Sless(N, X), 1)
+    //   GT:  And(Xor(Equal(b, C3), 1), Xor(Sless(X, N), 1)) -> Sless(N, X)
+    // The guards pin `C2 == C1 - N` and `C3 == N - C1`.
+    let offset_nv = || {
+        int_eq(
+            int_zero_extend(int_slt(int_add(var(b), int_const(m)), int_const(0u128))),
+            int_zero_extend(int_sborrow(
+                int_add(var(b), int_const(c1)).capture(x),
+                int_const(n),
+            )),
+        )
+        .when_match(move |edit, _ty, binds| sub_relation(binds, edit.function(), m, n, c1, b))
+    };
+    rules.push(rewrite_rule(
+        offset_nv(),
+        template::bool_not(template::int_slt(var(x), var(n))),
+    ));
+    rules.push(rewrite_rule(
+        bool_not(offset_nv()),
+        template::int_slt(var(x), var(n)),
+    ));
+    let offset_lt = || int_slt(int_add(var(b), int_const(c1)).capture(x), int_const(n));
+    let offset_eq_guard = move |edit: &strider_pattern::Matcher, _ty, binds: &Bindings| {
+        sub_relation(binds, edit.function(), m, c1, n, b)
+    };
+    rules.push(rewrite_rule(
+        bool_or(int_eq(var(b), int_const(m)), offset_lt()).when_match(offset_eq_guard),
+        template::bool_not(template::int_slt(var(n), var(x))),
+    ));
+    rules.push(rewrite_rule(
+        bool_and(
+            bool_not(int_eq(var(b), int_const(m))),
+            bool_not(offset_lt()),
+        )
+        .when_match(offset_eq_guard),
+        template::int_slt(var(n), var(x)),
     ));
     // Offset-base siblings, for a switch whose cases start at a nonzero base.
     // The Less operand `X = Add(b, C1)` and the Equal base `Add(b, C2)` are

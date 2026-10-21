@@ -434,32 +434,28 @@ cfg
   0x638 6 ops return -> []
 tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x4300:1, u:0x4500:1, u:0x4d00:1, u:0x5d00:4, u:0x5e00:1, u:0x5f00:1, u:0x6000:1, u:0x6100:1, u:0x6200:1, u:0x9ba00:4]
 arg 0 [%v1]
-arg 1 [%v20]
-float_arg 0 [%v21]
-float_arg 1 [%v22]
-float_arg 2 [%v23]
-float_arg 3 [%v24]
+arg 1 [%v16]
+float_arg 0 [%v17]
+float_arg 1 [%v18]
+float_arg 2 [%v19]
+float_arg 3 [%v20]
 %v0:ctrl = entry
 %v1:i32 = initial_var[r0]
 %v2:i32 = iconst[0x0]
 %v3:i1 = icmp.sless %v1, %v2
-%v4:i8 = extend.zero %v3
-%v5:i1 = icmp.sborrow %v1, %v2
-%v6:i8 = extend.zero %v5
-%v7:i1 = icmp.equal %v4, %v6
-%v8:ctrl, %v9:ctrl = if %v0, %v7
-%v10:i32 = iconst[0x1]
+%v4:ctrl, %v5:ctrl = if %v0, %v3
+%v6:i32 = iconst[0x1]
 
-%v11:ctrl, %v12:token = region %v8, %v9
-%v13:i32<r0> = phi %v12, %v1, %v10
-%v14:ctrl, %v15:ctrl = if %v11, %v7
+%v7:ctrl, %v8:token = region %v5, %v4
+%v9:i32<r0> = phi %v8, %v1, %v6
+%v10:ctrl, %v11:ctrl = if %v7, %v3
 
-%v16:ctrl, %v17:token = region %v15, %v14
-%v18:i32<r0> = phi %v17, %v13, %v2
-%v19:mem = initial_memory
-%v20:i32 = initial_var[r1]
-%v21:i64 = initial_var[d0]
-%v22:i64 = initial_var[d1]
-%v23:i64 = initial_var[d2]
-%v24:i64 = initial_var[d3]
-return %v16, %v19, %v18, %v20, %v21, %v22, %v23, %v24
+%v12:ctrl, %v13:token = region %v10, %v11
+%v14:i32<r0> = phi %v13, %v9, %v2
+%v15:mem = initial_memory
+%v16:i32 = initial_var[r1]
+%v17:i64 = initial_var[d0]
+%v18:i64 = initial_var[d1]
+%v19:i64 = initial_var[d2]
+%v20:i64 = initial_var[d3]
+return %v12, %v15, %v14, %v16, %v17, %v18, %v19, %v20

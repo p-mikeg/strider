@@ -402,40 +402,29 @@ cfg
   0x401239 6 ops return -> []
   0x401240 4 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8f00:8, u:0x26300:1, u:0x26400:1, u:0x26600:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x80100:4, u:0x80300:4]
-arg 0 [%v1]
-arg 2 [%v20]
-float_arg 0 [%v21]
-float_arg 1 [%v22]
+arg 0 [%v2]
+arg 2 [%v9]
+float_arg 0 [%v10]
+float_arg 1 [%v11]
 %v0:ctrl = entry
-%v1:i64 = initial_var[RDI]
-%v2:i32 = truncate %v1
-%v3:i32 = iconst[0x64]
-%v4:i1 = icmp.equal %v2, %v3
-%v5:i1 = iconst[0x1]
-%v6:i1 = int.xor %v4, %v5
-%v7:i1 = icmp.sborrow %v2, %v3
-%v8:i8 = extend.zero %v7
-%v9:i32 = iconst[0xffffff9c]
-%v10:i32 = int.add %v2, %v9
-%v11:i32 = iconst[0x0]
-%v12:i1 = icmp.sless %v10, %v11
-%v13:i8 = extend.zero %v12
-%v14:i1 = icmp.equal %v8, %v13
-%v15:i1 = int.and %v6, %v14
-%v16:ctrl, %v17:ctrl = if %v0, %v15
-%v18:mem = initial_memory
-%v19:i64 = iconst[0xffffffff]
-%v20:i64 = initial_var[RDX]
-%v21:i128 = initial_var[XMM0]
-%v22:i128 = initial_var[XMM1]
-%v23:i80 = initial_var[ST0]
-%v24:i80 = initial_var[ST1]
-return %v16, %v18, %v19, %v20, %v21, %v22, %v23, %v24
-%v25:i64 = iconst[0x1]
-%v26:i64 = int.add %v1, %v25
-%v27:i32 = truncate %v26
-%v28:i64 = extend.zero %v27
-return %v17, %v18, %v28, %v20, %v21, %v22, %v23, %v24
+%v1:i32 = iconst[0x64]
+%v2:i64 = initial_var[RDI]
+%v3:i32 = truncate %v2
+%v4:i1 = icmp.sless %v1, %v3
+%v5:ctrl, %v6:ctrl = if %v0, %v4
+%v7:mem = initial_memory
+%v8:i64 = iconst[0xffffffff]
+%v9:i64 = initial_var[RDX]
+%v10:i128 = initial_var[XMM0]
+%v11:i128 = initial_var[XMM1]
+%v12:i80 = initial_var[ST0]
+%v13:i80 = initial_var[ST1]
+return %v5, %v7, %v8, %v9, %v10, %v11, %v12, %v13
+%v14:i64 = iconst[0x1]
+%v15:i64 = int.add %v2, %v14
+%v16:i32 = truncate %v15
+%v17:i64 = extend.zero %v16
+return %v6, %v7, %v17, %v9, %v10, %v11, %v12, %v13
 
 == __popcountdi2 @0x401250
 cfg
