@@ -1,7 +1,8 @@
 //! End-to-end lift of `fixtures/out/arm_be8/*.elf` under
 //! [`SleighArch::arm_be_kernel`], the BE8 preset: `EF_ARM_BE8` is set,
 //! instructions are stored little-endian and data big-endian, so the preset
-//! pairs the little-endian `SLA_SPEC_ARM8_LE` with `Endianness::Big`.
+//! pairs `SLA_SPEC_ARM8_BE8`, the little-endian sla with big-endian data
+//! transfers, with `Endianness::Big`.
 //!
 //! The two byte orders are separable only in a real image, which is what these
 //! fixtures add: `ld --be8` reverses the code against the `$a` / `$d` mapping
@@ -183,7 +184,7 @@ fn load_nodes(function: &Function) -> Vec<NodeId> {
 /// ```
 ///
 /// `s0` is `d0`'s LOW half and `s1` its high half under the little-endian
-/// branch of `ARM.sinc`, which is the branch `SLA_SPEC_ARM8_LE` compiled. The
+/// branch of `ARM.sinc`, which is the branch `SLA_SPEC_ARM8_BE8` compiled. The
 /// divisor `a + 1.0f` names the first float argument unambiguously, so
 /// resolving it back through the container chain says which half the lifter
 /// read `s0` out of; keying the shift off the data order instead would answer
