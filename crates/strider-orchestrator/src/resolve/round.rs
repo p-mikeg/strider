@@ -98,7 +98,13 @@ where
             unresolved_branches: placeholders,
             switch_anchors: switches,
             return_sites,
-        } = lifter.build_ir_with(&cfg, cc.clone(), cfg_opts, opts.per_address_ccs)?;
+        } = lifter.build_ir_with(
+            &cfg,
+            cc.clone(),
+            cfg_opts,
+            opts.per_address_ccs,
+            &opts.assumptions,
+        )?;
 
         // A `Return` consumes no target, so the pipeline would drop the value
         // each return jumps to. It rides on its `Return` for the run.
@@ -108,7 +114,6 @@ where
                 edit.add_node_input(ret, target);
             }
         }
-        function.assume(&opts.assumptions);
         pipeline.run(&mut function, &mut OptCtx::new(rom_ref))?;
         // Before `settle_return_sites` truncates the `Return`s and cleans, so
         // the classifier reads the IR the pipeline settled on.

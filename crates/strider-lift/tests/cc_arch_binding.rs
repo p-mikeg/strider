@@ -37,6 +37,7 @@ fn lift_built_at(
         built,
         &strider_cfg::CfgOptions::default(),
         &per_address_ccs,
+        &strider_ir::AssumptionOptions::none(),
     )?;
     Ok(())
 }

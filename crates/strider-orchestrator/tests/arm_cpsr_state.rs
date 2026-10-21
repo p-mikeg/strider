@@ -9,7 +9,8 @@ mod common;
 
 use common::Arch;
 use strider_ir::node::NodeKind;
-use strider_ir::{Function, IRViewer, IRWalker};
+use strider_ir::{AssumptionOptions, Function, IRViewer, IRWalker};
+use strider_orchestrator::AnalyzeOptions;
 
 const BASE: u64 = 0x1000;
 /// `mov r4, lr`
@@ -17,16 +18,30 @@ const SAVE_LR: u32 = 0xe1a0_400e;
 /// `bx r4`
 const RETURN: u32 = 0xe12f_ff14;
 
-fn analyze(arch: Arch, bytes: Vec<u8>, entry: u64) -> Function {
+fn analyze(arch: Arch, bytes: Vec<u8>, entry: u64, opts: &AnalyzeOptions) -> Function {
     let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
-    let result = strider
-        .analyze(entry, &cc, &Default::default(), None)
-        .expect("analyze");
+    let result = strider.analyze(entry, &cc, opts, None).expect("analyze");
     assert!(result.incomplete().is_empty(), "{:?}", result.incomplete());
     result.function
 }
 
+/// The defaults less `msr_register_keeps_mode`, so a register-form `msr`
+/// writes the mode it names.
+fn mode_from_the_register() -> AnalyzeOptions<'static> {
+    AnalyzeOptions {
+        assumptions: AssumptionOptions {
+            msr_register_keeps_mode: false,
+            ..AssumptionOptions::default()
+        },
+        ..AnalyzeOptions::default()
+    }
+}
+
 fn a32(body: &[u32], tail: &[u32]) -> Function {
+    a32_with(body, tail, &AnalyzeOptions::default())
+}
+
+fn a32_with(body: &[u32], tail: &[u32], opts: &AnalyzeOptions) -> Function {
     let mut words = vec![SAVE_LR];
     words.extend_from_slice(body);
     words.extend_from_slice(tail);
@@ -36,17 +51,22 @@ fn a32(body: &[u32], tail: &[u32]) -> Function {
         Arch::Arm,
         common::words_image(&words, strider_target::Endianness::Little),
         BASE,
+        opts,
     )
 }
 
 fn thumb(body: &[u16], tail: &[u16]) -> Function {
+    thumb_with(body, tail, &AnalyzeOptions::default())
+}
+
+fn thumb_with(body: &[u16], tail: &[u16], opts: &AnalyzeOptions) -> Function {
     // mov r4, lr; <body>; <tail>; bx r4
     let mut halves = vec![0x4674];
     halves.extend_from_slice(body);
     halves.extend_from_slice(tail);
     halves.push(0x4720);
     let bytes = halves.iter().flat_map(|h| h.to_le_bytes()).collect();
-    analyze(Arch::ArmThumb, bytes, BASE | 1)
+    analyze(Arch::ArmThumb, bytes, BASE | 1, opts)
 }
 
 fn r0(f: &Function) -> Option<u128> {
@@ -224,9 +244,11 @@ fn msr_writes_the_flags_only_through_the_flags_field() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
-/// `mrs` reads back the mode an `msr` to the control field wrote.
+/// `mrs` reads back the mode an `msr` to the control field wrote, the
+/// register form's where the claim does not take it to keep the mode.
 #[test]
 fn mrs_reads_the_mode_msr_wrote() {
+    let opts = mode_from_the_register();
     // mrs r0, cpsr; and r0, r0, #0x1f
     let a32_tail = [0xe10f_0000, 0xe200_001f];
     let mut wrong = Vec::new();
@@ -237,15 +259,16 @@ fn mrs_reads_the_mode_msr_wrote() {
             &[0xe3a0_10d1, 0xe121_f001][..],
         ),
     ] {
-        let got = r0(&a32(body, &a32_tail));
+        let got = r0(&a32_with(body, &a32_tail, &opts));
         if got != Some(0x11) {
             wrong.push(format!("{name}: mode {got:x?}"));
         }
     }
     // movs r1, #0xd1; msr cpsr_c, r1; mrs r0, cpsr; and r0, r0, #0x1f
-    let got = r0(&thumb(
+    let got = r0(&thumb_with(
         &[0x21d1, 0xf381, 0x8100],
         &[0xf3ef, 0x8000, 0xf000, 0x001f],
+        &opts,
     ));
     if got != Some(0x11) {
         wrong.push(format!("thumb msr cpsr_c, r1: mode {got:x?}"));
