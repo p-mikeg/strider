@@ -547,6 +547,57 @@ fn i386_got32x_without_a_base_register_addresses_the_slot_itself() {
     assert_eq!(u64::from(word(&table, insn + 20, false)), slot + 4);
 }
 
+/// `ldr x0, :got:foo+16` asks for the slot holding `foo + 16`, which no slot
+/// holds; `G + A` lands in the next symbol's slot. Its siblings with an
+/// addend are holes too, and `ldr x1, :got:foo` reaches foo's slot.
+#[test]
+fn aarch64_a_got_reference_with_an_addend_is_a_hole() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::Aarch64, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    let mut code = Vec::new();
+    // ldr x0, 0 ; adrp x0, 0 ; ldr x0, [x0] ; ldr x1, 0 ; ret
+    for insn in [
+        0x5800_0000u32,
+        0x9000_0000,
+        0xf940_0000,
+        0x5800_0001,
+        0xd65f_03c0,
+    ] {
+        code.extend_from_slice(&insn.to_le_bytes());
+    }
+    obj.append_section_data(text, &code, 4);
+    let data = obj.add_section(Vec::new(), b".data".to_vec(), SectionKind::Data);
+    obj.append_section_data(data, &[0u8; 32], 8);
+    let foo = defined(&mut obj, "foo", data, 0);
+    reloc(&mut obj, text, 0, foo, 16, elf::R_AARCH64_GOT_LD_PREL19);
+    reloc(&mut obj, text, 4, foo, 16, elf::R_AARCH64_ADR_GOT_PAGE);
+    reloc(&mut obj, text, 8, foo, 16, elf::R_AARCH64_LD64_GOT_LO12_NC);
+    reloc(&mut obj, text, 12, foo, 0, elf::R_AARCH64_GOT_LD_PREL19);
+    let bytes = obj.write().expect("write");
+
+    let table = relocated(&bytes);
+    let p = common::section_base(&bytes, ".text");
+    for (off, r_type) in [
+        (0, elf::R_AARCH64_GOT_LD_PREL19),
+        (4, elf::R_AARCH64_ADR_GOT_PAGE),
+        (8, elf::R_AARCH64_LD64_GOT_LO12_NC),
+    ] {
+        let err = table
+            .read_exact(p + off, &mut [0u8; 4])
+            .expect_err("a GOT reference with an addend is a hole")
+            .to_string();
+        assert!(
+            err.contains(&format!("relocation of type {r_type} ")),
+            "+{off}: {err}"
+        );
+    }
+    let ldr = u64::from(word(&table, p + 12, false));
+    let slot = (p + 12).wrapping_add_signed(sext((ldr >> 5) & 0x7_ffff, 19) * 4);
+    let mut held = [0u8; 8];
+    table.read_exact(slot, &mut held).expect("foo's slot");
+    assert_eq!(u64::from_le_bytes(held), symbol_address(&bytes, "foo"));
+}
+
 /// A writable section is left alone because nothing folds data the program
 /// rewrites; a writable EXECUTABLE one is not data. `CodeAndReadOnly` keeps an
 /// RWX mapping on purpose (firmware, `ld -N`), so its bytes reach the decoder,
