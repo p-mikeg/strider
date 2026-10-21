@@ -204,16 +204,18 @@ the positive one:
 - `callee_preserves_stack_args` (off): a callee leaves the outgoing-argument
   slots unchanged, which the psABIs do not require. It changes nothing unless
   `escape_analysis` is on or `noalias_allocators` is non-empty.
-- `msr_register_keeps_mode` (default on): an ARM register-form `msr` writing
-  the CPSR control field (`msr cpsr_c, rN`) restores a mode saved earlier, so
-  it changes neither the mode nor the banked registers; its masks and flags
-  still update, and the immediate form and `cps` still switch mode. Off, it
-  re-banks `sp`, `lr` and the rest unless its mode is provably the current
-  one, which it is not when the restored flags merge from two saves, come back
-  from memory or arrive in an argument. It is wrong for code that builds a
-  new mode in a register, as Linux's boot-time `safe_svcmode_maskall` does.
-  The lift reads it: `analyze` honours it, and `Lifter.optimize` adding it to
-  a lifted function changes nothing.
+- `msr_register_keeps_mode` (default on): the mode an ARM register-form `msr`
+  writes to the CPSR control field (`msr cpsr_c, rN`) is the mode already in
+  force, so the write changes neither the mode nor the banked registers; its
+  masks and flags still update, and the immediate form and `cps` still switch
+  mode. Off, it re-banks `sp`, `lr` and the rest unless its mode is provably
+  the current one, which it is not when the restored flags merge from two
+  saves, come back from memory or arrive in an argument. It is wrong in two
+  cases: a new mode built in a register (Linux's boot-time
+  `safe_svcmode_maskall`, the switch into FIQ in `fiqasm.S`), and a saved
+  mode restored after a switch made since the save, by `cps` or either form
+  of `msr` (the return to SVC in `fiqasm.S`'s `__set_fiq_regs`). The lift
+  reads it: `analyze` honours it, and `Lifter.optimize` refuses to add it.
 
 `AssumptionOptions.none()` clears all eight; `AssumptionOptions()` does not. It
 is the sound floor of these fields for any input whose memory behaves as RAM:
@@ -228,7 +230,9 @@ Claims accumulate per `Function`. `analyze` starts a fresh one from the claims
 it is given, and `function.assumptions` reads back the ones in force.
 `prog.optimize(function, assumptions=...)` adds the claims the set holds and
 withdraws none: `assumptions=None` adds nothing, and a set that leaves out a
-claim already in force raises `StriderError`. Add one by naming the union
+claim already in force raises `StriderError`. So does a set that adds
+`msr_register_keeps_mode`: the lift reads it, so analyse again with it. Add
+one by naming the union
 (`a.union(b)` is the same):
 
 ```python
