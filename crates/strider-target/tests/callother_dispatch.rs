@@ -254,11 +254,12 @@ fn privileged_and_virtualisation_ops_stay_unclassified() {
     }
 }
 
-const ARM_MODE_SWITCH_OPS: [&str; 9] = [
+const ARM_MODE_SWITCH_OPS: [&str; 10] = [
     "setAbortMode",
     "setFIQMode",
     "setIRQMode",
     "setMonitorMode",
+    "setProcessorMode",
     "setStackMode",
     "setSupervisorMode",
     "setSystemMode",
@@ -291,11 +292,11 @@ fn arm_mode_switch_rows_resolve_their_banked_registers() {
     }
 }
 
-/// FIQ banks R8-R12 on top of the R13/R14 every other mode banks (ARM ARM
-/// DDI 0406C B1.3.2).  `ARM.sinc` models no banking at all, so an ARM-32
-/// processor-mode switch that named only `sp`/`lr` would let a read of `r8`
-/// after `cps #0x11` forward the pre-switch value.  The wide set applies to
-/// all eight mode ops because the switch OUT of FIQ un-banks the same
+/// FIQ banks R8-R12 on top of the R13, R14 and SPSR every exception mode
+/// banks (ARM ARM DDI 0406C B1.3.2).  `ARM.sinc` models no banking at all, so
+/// an ARM-32 processor-mode switch that named only `sp`/`lr` would let a read
+/// of `r8` after `cps #0x11` forward the pre-switch value.  The wide set
+/// applies to every mode op because the switch OUT of FIQ un-banks the same
 /// registers and the incoming mode is unknown; `setStackMode` is the Thumb
 /// MSP/PSP select, which re-banks `sp` alone.
 #[test]
@@ -309,7 +310,7 @@ fn arm_mode_switch_writes_the_fiq_banked_registers() {
             }
             assert_eq!(
                 abi.implicit_writes,
-                &["r8", "r9", "r10", "r11", "r12", "sp", "lr"],
+                &["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"],
                 "{preset:?}/{name}"
             );
             assert!(!abi.clobbers_memory, "{preset:?}/{name}");
