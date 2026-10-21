@@ -57,7 +57,8 @@ pub fn var(c: PyRef<'_, PyCapture>) -> PyTemplate {
 }
 
 /// Build an `IntConst` whose stored value, masked to the output width, is
-/// `value`. Bit-pattern equality; negatives use the sign-extended form.
+/// `value`. Bit-pattern equality; negatives use the sign-extended form. Where
+/// nothing gives it a width, type it with `capture_typed`.
 #[pyfunction]
 pub fn int_const(value: WideInt) -> PyTemplate {
     PyTemplate::from_tmpl(TmplRepr::IntConst(value.bits()))
@@ -80,6 +81,13 @@ impl WideInt {
             Self::Unsigned(v) => v,
         }
     }
+}
+
+/// Type `inner`'s output at the width of the value `c` bound on the matched
+/// LHS, for an operand nothing else gives a width (a `Popcount` operand).
+#[pyfunction]
+pub fn capture_typed(c: PyRef<'_, PyCapture>, inner: Py<PyAny>) -> PyTemplate {
+    PyTemplate::from_tmpl(TmplRepr::CaptureTyped(c.inner, inner))
 }
 
 /// Build an `I1` boolean constant equal to `value`.
@@ -108,6 +116,7 @@ pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     add_fn!(int_const);
     add_fn!(bool_const);
     add_fn!(float_const);
+    add_fn!(capture_typed);
     register_value_ops(m)?;
     Ok(())
 }

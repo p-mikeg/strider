@@ -375,6 +375,9 @@
 - `AssumptionOptions.none(...)` takes the constructor's keywords and sets
   only the claims named, so `none(escape_analysis=True)` is one claim where
   `AssumptionOptions(escape_analysis=True)` is four.
+- `strider.template.capture_typed(c, inner)` builds `inner` at the width of
+  the value `c` bound, as Rust's `capture_typed` does: the way to type a
+  constant nothing else gives a width.
 
 ### Changed, Rust
 
