@@ -56,7 +56,7 @@ cfg
   0x401130 15 ops cbranch 0x401143 -> [0x40113c, 0x401143]
   0x40113c 4 ops goto -> [0x401143]
   0x401143 3 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x17200:4, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x66100:4, u:0x66300:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x17200:4, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x67600:4, u:0x67800:4]
 arg 0 [%v2]
 arg 1 [%v16]
 %v0:ctrl = entry
