@@ -88,8 +88,8 @@ struct Case {
     args_float: &'static [&'static str],
     saved_float: &'static [&'static str],
     ret_float: &'static [&'static str],
-    /// Neither GPR nor float: PowerPC's non-volatile condition fields, which
-    /// are 1 byte each and sit after the floats.
+    /// Neither GPR nor float, after the floats: PowerPC's non-volatile
+    /// condition fields (1 byte each) and ARM's `cpsr_mode`.
     callee_saved_cond_count: usize,
     /// PowerPC's non-volatile vector registers, 16 bytes each, last in the
     /// list.
@@ -152,7 +152,7 @@ fn cases() -> Vec<Case> {
             args_float: D0_7,
             saved_float: D8_D15,
             ret_float: D0_3,
-            callee_saved_cond_count: 0,
+            callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
@@ -380,7 +380,7 @@ fn cases() -> Vec<Case> {
             args_float: D0_7,
             saved_float: D8_D15,
             ret_float: D0_3,
-            callee_saved_cond_count: 0,
+            callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
@@ -400,7 +400,7 @@ fn cases() -> Vec<Case> {
             args_float: D0_7,
             saved_float: D8_D15,
             ret_float: D0_3,
-            callee_saved_cond_count: 0,
+            callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
@@ -422,7 +422,7 @@ fn cases() -> Vec<Case> {
             args_float: D0_7,
             saved_float: D8_D15,
             ret_float: D0_3,
-            callee_saved_cond_count: 0,
+            callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
@@ -447,7 +447,7 @@ fn cases() -> Vec<Case> {
             args_float: NONE,
             saved_float: D8_D15,
             ret_float: NONE,
-            callee_saved_cond_count: 0,
+            callee_saved_cond_count: 1,
             callee_saved_vec_count: 0,
             ret_count: 2,
             reg_size_bytes: 4,
