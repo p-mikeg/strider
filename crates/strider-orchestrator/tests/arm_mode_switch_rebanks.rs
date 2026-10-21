@@ -105,9 +105,11 @@ fn an_msr_writing_the_control_field_switches_mode() {
 /// The Thumb-2 `msr` (register) forms, under the same rule.
 #[test]
 fn a_thumb_msr_writing_the_control_field_switches_mode() {
-    let cases: [(&str, [u16; 2], bool); 4] = [
+    let cases: [(&str, [u16; 2], bool); 6] = [
         ("msr cpsr_c, r1", [0xf381, 0x8100], true),
         ("msr cpsr_fc, r1", [0xf381, 0x8900], true),
+        ("msr cpsr_x, r1", [0xf381, 0x8200], false),
+        ("msr cpsr_fs, r1", [0xf381, 0x8c00], false),
         ("msr cpsr_f, r1", [0xf381, 0x8800], false),
         ("msr spsr_c, r1", [0xf391, 0x8100], false),
     ];
