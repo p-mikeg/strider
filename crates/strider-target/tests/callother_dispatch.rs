@@ -58,8 +58,9 @@ fn arch_independent_rows_resolve_on_every_preset() {
     }
 }
 
-/// x86 SIMD / crypto / bit-manipulation user-ops whose sla constructors list
-/// every operand: pure register compute, no memory edge, no implicit channel.
+/// x86 SIMD / crypto / bit-manipulation / x87 user-ops whose sla constructors
+/// list every operand: pure register compute, no memory edge, no implicit
+/// channel.
 #[test]
 fn x86_simd_crypto_ops_are_pure_with_empty_channels() {
     for name in [
@@ -70,6 +71,7 @@ fn x86_simd_crypto_ops_are_pure_with_empty_channels() {
         "aesimc",
         "aeskeygenassist",
         "crc32",
+        "log2",
         "movntdqa",
         "pblendvb",
         "psraw",
