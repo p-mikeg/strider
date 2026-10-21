@@ -241,6 +241,16 @@ pub fn trap_is_unconditional(name: &str, to_mask: Option<u128>) -> bool {
     })
 }
 
+/// Whether `name` is the ARM op through which a register-form `msr` to the
+/// CPSR control field yields the mode it writes: `msrRegisterMode(new,
+/// current)` is `new`, or `current` under the claim that such a write restores
+/// the mode in force. The lifter lowers it to one of its arguments, so it has
+/// no ABI row.
+#[must_use]
+pub fn is_msr_register_mode(preset: crate::ArchPreset, name: &str) -> bool {
+    preset.family() == crate::ArchFamily::Arm32 && name == "msrRegisterMode"
+}
+
 const PURE: CallOtherClass = CallOtherClass::PURE;
 const MEM_CLOBBER: CallOtherClass = CallOtherClass::MEM_CLOBBER;
 
@@ -362,7 +372,9 @@ const PPC_DOT_CR0_MEM: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
 /// values live across one are not the ones that came in.  `ARM.sinc` defines
 /// `r13_svc` / `r14_svc` and uses them nowhere, so no banking is modelled and
 /// this list is the model for every op that changes mode: `cps` and an `msr`
-/// writing the CPSR's control field (`setProcessorMode`).
+/// writing the CPSR's control field (`setProcessorMode`). The register form
+/// raises it only for a mode [`is_msr_register_mode`]'s op yields, which
+/// under the `msr_register_keeps_mode` claim is never a new one.
 ///
 /// The FIQ set is applied to every op, not to `setFIQMode` alone: the switch
 /// OUT of FIQ un-banks R8-R12 just as the switch in banks them, and the
