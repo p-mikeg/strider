@@ -124,8 +124,9 @@ class Symbol:
     def local_entry(self) -> int:
         """Where a call sharing the symbol's TOC enters: on ppc64 ELFv2,
         `address` plus the local-entry offset `st_other` encodes (usually 8,
-        past the TOC setup), which is the target of every same-module `bl`.
-        `address` itself everywhere else, and for a symbol with no offset."""
+        past the TOC setup), which is the target of every `bl` sharing its
+        TOC. `address` itself everywhere else, Thumb bit included, and for a
+        symbol with no offset."""
         ...
     def __repr__(self) -> str: ...
 

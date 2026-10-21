@@ -138,9 +138,9 @@ class LifterOptions:
     when it is not passed, `analyze` takes the defaults.
     `compact` drops unreachable nodes at the end. `per_address_ccs` overrides
     the calling convention for a callee, keyed by the direct-call target
-    address rather than the call site: on ppc64 ELFv2 a same-module call
-    targets `Symbol.local_entry`, which only `ElfLifter.analyze` adds for a
-    key at `Symbol.address`. `pipeline`, when set,
+    address rather than the call site: on ppc64 ELFv2 a call sharing the
+    callee's TOC targets `Symbol.local_entry`, which only `ElfLifter.analyze`
+    adds for a key at `Symbol.address`. `pipeline`, when set,
     replaces the default optimizer pipeline for the calls these options drive.
     """
 
@@ -175,6 +175,10 @@ class LifterOptions:
         ...
     def _with_cfg(self, cfg: CfgOptions) -> LifterOptions:
         """A copy of these options with `cfg` replaced."""
+        ...
+    def _per_address_ccs_table_id(self) -> Optional[int]:
+        """The address of the `per_address_ccs` table an analyse resolves,
+        or `None` without one."""
         ...
     def _with_elf(self, elf: object) -> LifterOptions:
         """These options as `ElfLifter.analyze` runs them on `elf`: its
@@ -515,6 +519,17 @@ class ElfLifter(Lifter):
         `symbol_at` resolve an interior address. An ELF already carrying a name
         keeps its own answer."""
         ...
+    def build_cfg(
+        self,
+        entry: int,
+        opts: Optional[CfgOptions] = ...,
+    ) -> Cfg:
+        """`Lifter.build_cfg`, with the options `analyze` derives from the
+        ELF: its `$d` mapping symbols as `data_ranges` unless `opts` names
+        some, and the local entry of every `no_return_targets` address that
+        is a ppc64 ELFv2 symbol's `address`. `entry` is an address, and no
+        symbol size bounds the build, as for `analyze(int)`."""
+        ...
     def analyze(
         self,
         entry: Union[int, str],
@@ -528,8 +543,7 @@ class ElfLifter(Lifter):
         names some, the ELF's `$d` mapping symbols supply them, so a literal
         pool is never decoded as code. A `no_return_targets` address or
         `per_address_ccs` key that is a ppc64 ELFv2 symbol's `address` also
-        covers its `Symbol.local_entry`, where a call from the same module
-        lands.
+        covers its `Symbol.local_entry`, where a call sharing its TOC lands.
 
         Releases the GIL as `Lifter.analyze` does, with the same consequence
         for a daemon thread parked inside it at interpreter finalization."""
