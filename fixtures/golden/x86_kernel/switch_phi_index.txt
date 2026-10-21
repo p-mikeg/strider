@@ -251,18 +251,15 @@ cfg
   0x8049232 1 ops goto -> [0x8049237]
   0x8049237 10 ops goto -> [0x8049244]
   0x8049244 0 ops goto -> [0x8049245]
-  0x8049245 1 ops switch@0x8049245 [0x8049247, 0x8049251, 0x804925e, 0x8049270, 0x804927d, 0x804928a]
+  0x8049245 1 ops switch@0x8049245 [0x8049247, 0x8049270, 0x804928a]
   0x8049247 7 ops goto -> [0x8049295]
-  0x8049251 16 ops goto -> [0x8049295]
-  0x804925e 27 ops goto -> [0x8049295]
   0x8049270 16 ops goto -> [0x8049295]
-  0x804927d 16 ops goto -> [0x8049295]
   0x804928a 15 ops goto -> [0x8049295]
   0x8049295 6 ops return -> []
 tracked [EAX, ECX, EDX, ESP, EBP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6600:4, u:0x6d00:4, u:0x6f00:4, u:0xa300:4, u:0x17200:4, u:0x18a00:1, u:0x18c00:1, u:0x18d00:1, u:0x18e00:1, u:0x19000:1, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x66100:4, u:0x66300:4]
 arg 0 [%v1]
 arg 1 [%v45]
-arg 2 [%v66]
+arg 2 [%v63]
 %v0:ctrl = entry
 %v1:i32 = initial_var[EAX]
 %v2:i32 = iconst[0xa]
@@ -316,51 +313,34 @@ arg 2 [%v66]
 %v52:i32 = iconst[0x804a008]
 %v53:i32 = int.add %v51, %v52
 %v54:i32 = load[r] %v49, %v53
-%v55:ctrl, %v56:ctrl, %v57:ctrl, %v58:ctrl, %v59:ctrl, %v60:ctrl = switch[0x8049247, 0x8049251, 0x804925e, 0x8049270, 0x804927d, 0x804928a] %v31, %v54
-%v61:i32 = iconst[0xffffffe0]
-%v62:i32 = int.add %v35, %v61
-%v63:i32 = iconst[0x804924f]
-%v64:mem = store[r] %v49, %v62, %v63
-%v65:i32 = iconst[0x80491a9]
-%v66:i32 = initial_var[ECX]
-%v67:ctrl, %v68:mem, %v69:i32<EAX>, %v70:i32<EDX>, %v71:i80<ST0>, %v72:i80<ST1>, %v73:i128<XMM0>, %v74:i32<ECX>, %v75:i8<CF>, %v76:i8<PF>, %v77:i8<ZF>, %v78:i8<SF>, %v79:i8<OF>, %v80:i32<EIP> = call %v55, %v64, %v65, %v62, %v45, %v45, %v66, %v45, %v1
-%v81:i32 = iconst[0x8049259]
-%v82:mem = store[r] %v49, %v62, %v81
-%v83:i32 = iconst[0x80491b7]
-%v84:ctrl, %v85:mem, %v86:i32<EAX>, %v87:i32<EDX>, %v88:i80<ST0>, %v89:i80<ST1>, %v90:i128<XMM0>, %v91:i32<ECX>, %v92:i8<CF>, %v93:i8<PF>, %v94:i8<ZF>, %v95:i8<SF>, %v96:i8<OF>, %v97:i32<EIP> = call %v56, %v82, %v83, %v62, %v45, %v45, %v66, %v45, %v1
-%v98:i32 = iconst[0x1]
-%v99:i32 = int.add %v86, %v98
-%v100:i32 = iconst[0x8049266]
-%v101:mem = store[r] %v49, %v62, %v100
-%v102:i32 = iconst[0x80491c8]
-%v103:ctrl, %v104:mem, %v105:i32<EAX>, %v106:i32<EDX>, %v107:i80<ST0>, %v108:i80<ST1>, %v109:i128<XMM0>, %v110:i32<ECX>, %v111:i8<CF>, %v112:i8<PF>, %v113:i8<ZF>, %v114:i8<SF>, %v115:i8<OF>, %v116:i32<EIP> = call %v57, %v101, %v102, %v62, %v45, %v45, %v66, %v45, %v1
-%v117:i32 = int.add %v105, %v105
-%v118:i32 = int.add %v117, %v105
-%v119:i32 = iconst[0x8049278]
-%v120:mem = store[r] %v49, %v62, %v119
-%v121:i32 = iconst[0x80491d9]
-%v122:ctrl, %v123:mem, %v124:i32<EAX>, %v125:i32<EDX>, %v126:i80<ST0>, %v127:i80<ST1>, %v128:i128<XMM0>, %v129:i32<ECX>, %v130:i8<CF>, %v131:i8<PF>, %v132:i8<ZF>, %v133:i8<SF>, %v134:i8<OF>, %v135:i32<EIP> = call %v58, %v120, %v121, %v62, %v45, %v45, %v66, %v45, %v1
-%v136:i32 = int.xor %v124, %v50
-%v137:i32 = iconst[0x8049285]
-%v138:mem = store[r] %v49, %v62, %v137
-%v139:i32 = iconst[0x80491ea]
-%v140:ctrl, %v141:mem, %v142:i32<EAX>, %v143:i32<EDX>, %v144:i80<ST0>, %v145:i80<ST1>, %v146:i128<XMM0>, %v147:i32<ECX>, %v148:i8<CF>, %v149:i8<PF>, %v150:i8<ZF>, %v151:i8<SF>, %v152:i8<OF>, %v153:i32<EIP> = call %v59, %v138, %v139, %v62, %v45, %v45, %v66, %v45, %v1
-%v154:i32 = int.add %v142, %v22
-%v155:i32 = iconst[0x8049292]
-%v156:mem = store[r] %v49, %v62, %v155
-%v157:i32 = iconst[0x80491fb]
-%v158:ctrl, %v159:mem, %v160:i32<EAX>, %v161:i32<EDX>, %v162:i80<ST0>, %v163:i80<ST1>, %v164:i128<XMM0>, %v165:i32<ECX>, %v166:i8<CF>, %v167:i8<PF>, %v168:i8<ZF>, %v169:i8<SF>, %v170:i8<OF>, %v171:i32<EIP> = call %v60, %v156, %v157, %v62, %v45, %v45, %v66, %v45, %v1
-%v172:i32 = iconst[0x6]
-%v173:i32 = int.or %v160, %v172
+%v55:ctrl, %v56:ctrl, %v57:ctrl = switch[0x8049247, 0x8049270, 0x804928a] %v31, %v54
+%v58:i32 = iconst[0xffffffe0]
+%v59:i32 = int.add %v35, %v58
+%v60:i32 = iconst[0x804924f]
+%v61:mem = store[r] %v49, %v59, %v60
+%v62:i32 = iconst[0x80491a9]
+%v63:i32 = initial_var[ECX]
+%v64:ctrl, %v65:mem, %v66:i32<EAX>, %v67:i32<EDX>, %v68:i80<ST0>, %v69:i80<ST1>, %v70:i128<XMM0>, %v71:i32<ECX>, %v72:i8<CF>, %v73:i8<PF>, %v74:i8<ZF>, %v75:i8<SF>, %v76:i8<OF>, %v77:i32<EIP> = call %v55, %v61, %v62, %v59, %v45, %v45, %v63, %v45, %v1
+%v78:i32 = iconst[0x8049278]
+%v79:mem = store[r] %v49, %v59, %v78
+%v80:i32 = iconst[0x80491d9]
+%v81:ctrl, %v82:mem, %v83:i32<EAX>, %v84:i32<EDX>, %v85:i80<ST0>, %v86:i80<ST1>, %v87:i128<XMM0>, %v88:i32<ECX>, %v89:i8<CF>, %v90:i8<PF>, %v91:i8<ZF>, %v92:i8<SF>, %v93:i8<OF>, %v94:i32<EIP> = call %v56, %v79, %v80, %v59, %v45, %v45, %v63, %v45, %v1
+%v95:i32 = int.xor %v83, %v50
+%v96:i32 = iconst[0x8049292]
+%v97:mem = store[r] %v49, %v59, %v96
+%v98:i32 = iconst[0x80491fb]
+%v99:ctrl, %v100:mem, %v101:i32<EAX>, %v102:i32<EDX>, %v103:i80<ST0>, %v104:i80<ST1>, %v105:i128<XMM0>, %v106:i32<ECX>, %v107:i8<CF>, %v108:i8<PF>, %v109:i8<ZF>, %v110:i8<SF>, %v111:i8<OF>, %v112:i32<EIP> = call %v57, %v97, %v98, %v59, %v45, %v45, %v63, %v45, %v1
+%v113:i32 = iconst[0x6]
+%v114:i32 = int.or %v101, %v113
 
-%v174:ctrl, %v175:token = region %v67, %v84, %v103, %v122, %v140, %v158
-%v176:mem = memphi %v175, %v68, %v85, %v104, %v123, %v141, %v159
-%v177:i32<EAX> = phi %v175, %v69, %v99, %v118, %v136, %v154, %v173
-%v178:i32<EDX> = phi %v175, %v70, %v87, %v105, %v125, %v143, %v161
-%v179:i80<ST0> = phi %v175, %v71, %v88, %v107, %v126, %v144, %v162
-%v180:i80<ST1> = phi %v175, %v72, %v89, %v108, %v127, %v145, %v163
-%v181:i128<XMM0> = phi %v175, %v73, %v90, %v109, %v128, %v146, %v164
-return %v174, %v176, %v177, %v178, %v179, %v180, %v181
+%v115:ctrl, %v116:token = region %v64, %v81, %v99
+%v117:mem = memphi %v116, %v65, %v82, %v100
+%v118:i32<EAX> = phi %v116, %v66, %v95, %v114
+%v119:i32<EDX> = phi %v116, %v67, %v84, %v102
+%v120:i80<ST0> = phi %v116, %v68, %v85, %v103
+%v121:i80<ST1> = phi %v116, %v69, %v86, %v104
+%v122:i128<XMM0> = phi %v116, %v70, %v87, %v105
+return %v115, %v117, %v118, %v119, %v120, %v121, %v122
 
 == main @0x8049297
 cfg

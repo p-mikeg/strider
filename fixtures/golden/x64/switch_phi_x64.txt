@@ -8,18 +8,16 @@ cfg
   0x401000 12 ops cbranch 0x40101d -> [0x40100b, 0x40101d]
   0x40100b 12 ops cbranch 0x40101d -> [0x401016, 0x40101d]
   0x401016 1 ops goto -> [0x40101d]
-  0x40101d 2 ops switch@0x40101d.1 [0x40101f, 0x401025, 0x40102b, 0x401031, 0x401037]
+  0x40101d 2 ops switch@0x40101d.1 [0x40101f, 0x401025, 0x401037]
   0x40101f 4 ops return -> []
   0x401025 4 ops return -> []
-  0x40102b 4 ops return -> []
-  0x401031 4 ops return -> []
   0x401037 4 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x24000:8, u:0x25200:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0xe0600:4]
 arg 0 [%v1]
 arg 1 [%v8]
-arg 2 [%v26]
-float_arg 0 [%v27]
-float_arg 1 [%v28]
+arg 2 [%v24]
+float_arg 0 [%v25]
+float_arg 1 [%v26]
 %v0:ctrl = entry
 %v1:i64 = initial_var[RDI]
 %v2:i32 = truncate %v1
@@ -38,31 +36,30 @@ float_arg 1 [%v28]
 %v17:i64<RAX> = phi %v16, %v7, %v13, %v14
 %v18:mem = initial_memory
 %v19:i64 = load[r] %v18, %v17
-%v20:ctrl, %v21:ctrl, %v22:ctrl, %v23:ctrl, %v24:ctrl = switch[0x40101f, 0x401025, 0x40102b, 0x401031, 0x401037] %v15, %v19
-%v25:i64 = iconst[0x1]
-%v26:i64 = initial_var[RDX]
-%v27:i128 = initial_var[XMM0]
-%v28:i128 = initial_var[XMM1]
-%v29:i80 = initial_var[ST0]
-%v30:i80 = initial_var[ST1]
-return %v20, %v18, %v25, %v26, %v27, %v28, %v29, %v30
-%v31:i64 = iconst[0x2]
-return %v21, %v18, %v31, %v26, %v27, %v28, %v29, %v30
-%v32:i64 = iconst[0x3]
-return %v22, %v18, %v32, %v26, %v27, %v28, %v29, %v30
-%v33:i64 = iconst[0x4]
-return %v23, %v18, %v33, %v26, %v27, %v28, %v29, %v30
-%v34:i64 = iconst[0x5]
-return %v24, %v18, %v34, %v26, %v27, %v28, %v29, %v30
+%v20:ctrl, %v21:ctrl, %v22:ctrl = switch[0x40101f, 0x401025, 0x401037] %v15, %v19
+%v23:i64 = iconst[0x1]
+%v24:i64 = initial_var[RDX]
+%v25:i128 = initial_var[XMM0]
+%v26:i128 = initial_var[XMM1]
+%v27:i80 = initial_var[ST0]
+%v28:i80 = initial_var[ST1]
+return %v20, %v18, %v23, %v24, %v25, %v26, %v27, %v28
+%v29:i64 = iconst[0x2]
+return %v21, %v18, %v29, %v24, %v25, %v26, %v27, %v28
+%v30:i64 = iconst[0x5]
+return %v22, %v18, %v30, %v24, %v25, %v26, %v27, %v28
 
 == phi_label @0x40103d
-unresolved_branch [0x40104d]
 cfg
   0x40103d 15 ops cbranch 0x40104d -> [0x401049.4, 0x40104d]
   0x401049.4 1 ops goto -> [0x40104d]
-  0x40104d 1 ops unresolved@0x40104d -> []
-tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x25200:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x7bb00:8, u:0x7bc00:1, u:0xe0600:4]
+  0x40104d 1 ops switch@0x40104d [0x40104f, 0x40105b]
+  0x40104f 4 ops return -> []
+  0x40105b 4 ops return -> []
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x25200:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x7bb00:8, u:0x7bc00:1, u:0xe0600:4]
 arg 0 [%v1]
+float_arg 0 [%v16]
+float_arg 1 [%v17]
 %v0:ctrl = entry
 %v1:i64 = initial_var[RDI]
 %v2:i32 = truncate %v1
@@ -74,5 +71,13 @@ arg 0 [%v1]
 
 %v9:ctrl, %v10:token = region %v5, %v6
 %v11:i64<RAX> = phi %v10, %v7, %v8
-%v12:mem = initial_memory
-indirect_branch %v9, %v12, %v11
+%v12:ctrl, %v13:ctrl = switch[0x40104f, 0x40105b] %v9, %v11
+%v14:mem = initial_memory
+%v15:i64 = iconst[0xa]
+%v16:i128 = initial_var[XMM0]
+%v17:i128 = initial_var[XMM1]
+%v18:i80 = initial_var[ST0]
+%v19:i80 = initial_var[ST1]
+return %v12, %v14, %v15, %v8, %v16, %v17, %v18, %v19
+%v20:i64 = iconst[0xc]
+return %v13, %v14, %v20, %v8, %v16, %v17, %v18, %v19

@@ -138,6 +138,11 @@ impl Interval {
         self.lo == 0 && self.hi >= width_mask && self.stride == 1
     }
 
+    /// Whether `x` is in the set.
+    pub fn contains(&self, x: u128) -> bool {
+        self.lo <= x && x <= self.hi && (x - self.lo).is_multiple_of(self.stride)
+    }
+
     /// Number of values in the set.  `0` if `hi < lo`.  Saturates: a full-width
     /// top spans `u128::MAX + 1` values.
     pub fn count(&self) -> u128 {
@@ -896,6 +901,51 @@ thread_local! {
 /// on [`ValueType::int_mask_u128`], which answers `None` in all three cases.
 fn type_mask_or_top(ty: Option<ValueType>) -> u128 {
     ty.and_then(ValueType::int_mask_u128).unwrap_or(u128::MAX)
+}
+
+/// The values the phi `value` can hold when each of its arms is a constant or
+/// a phi of the same kind, sorted; `None` for any other arm, or past `cap`
+/// values or `cap` phis.
+///
+/// Exact where [`RangeMap::range_of`] is a hull: the union of `{0, 3, 5}` is
+/// `[0, 5]`.  A value reaches a web of such phis only through one of its
+/// constant arms, so a cycle among them adds nothing.
+pub(crate) fn phi_constants(
+    function: &strider_ir::Function,
+    value: ValueId,
+    cap: usize,
+) -> Option<Vec<u128>> {
+    let f = function;
+    let first = f.producer(value);
+    if !matches!(f.node_kind(first), NodeKind::Phi) {
+        return None;
+    }
+    let mut values: std::collections::BTreeSet<u128> = std::collections::BTreeSet::new();
+    let mut seen: rustc_hash::FxHashSet<NodeId> = rustc_hash::FxHashSet::default();
+    seen.insert(first);
+    let mut stack = vec![first];
+    while let Some(phi) = stack.pop() {
+        for arm in f.phi_data_inputs(phi) {
+            if let Some(k) = f.int_const_u128(arm) {
+                values.insert(k);
+                if values.len() > cap {
+                    return None;
+                }
+                continue;
+            }
+            let producer = f.producer(arm);
+            if !matches!(f.node_kind(producer), NodeKind::Phi) {
+                return None;
+            }
+            if seen.insert(producer) {
+                if seen.len() > cap {
+                    return None;
+                }
+                stack.push(producer);
+            }
+        }
+    }
+    Some(values.into_iter().collect())
 }
 
 /// For `value = Add(X, IntConst(c))`, the bound `X` inherits from a guard on
