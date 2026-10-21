@@ -505,6 +505,8 @@
   r6; mr r3, r5` returned the incoming r5. `xscmpexpdp`, `xscmpexpqp`,
   `xscmpoqp`, `xscmpuqp`, `xststdcdp`, `xststdcqp` and `xststdcsp` write CR
   field BF, and a branch on it no longer folds on the field's earlier value.
+  They also set FPSCR.FPCC, and `xscmpoqp` / `xscmpuqp` the invalid-operation
+  bits, which an `mcrfs` or `mffs` after one read unchanged.
   `paste.` sets CR0 from the paste: it forced EQ, so the failure path of a
   `paste.; beq` was deleted.
 - ARM `msr` writing the CPSR control field (`cpsr_c`, `cpsr_fsxc`, ...),
