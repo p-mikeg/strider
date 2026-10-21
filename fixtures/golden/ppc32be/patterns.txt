@@ -65,7 +65,7 @@ return %v0, %v21, %v23, %v16, %v24, %v25, %v26
 == chained_xor_mask @0x100004fc
 cfg
   0x100004fc 34 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x19c00:4, u:0x19e00:4, u:0x73300:1, u:0x73400:4, u:0x73500:1, u:0x73600:4, u:0x73800:4, u:0x82000:4]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x19c00:4, u:0x19e00:4, u:0x73300:1, u:0x73400:4, u:0x73500:1, u:0x73600:4, u:0x73800:4, u:0x82200:4]
 arg 0 [%v12]
 arg 1 [%v24]
 float_arg 0 [%v25]
