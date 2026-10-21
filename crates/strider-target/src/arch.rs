@@ -741,7 +741,11 @@ impl SleighArch {
         /// **BE8** ARM 32-bit (GHIDRA's `ARM:LEBE:32`): little-endian
         /// instructions, big-endian data.  Every ARMv6+ big-endian Linux
         /// target, kernel and userland, is this.
-        arm_be_kernel => SLA_SPEC_ARM8_LE, PSPEC_ARMT, Big, ArmBeKernel
+        ///
+        /// `SLA_SPEC_ARM8_BE8` is `SLA_SPEC_ARM8_LE` with the transfers
+        /// whose bytes depend on the data order, the `vld1` / `vst1`
+        /// multiple-element forms, made one per element.
+        arm_be_kernel => SLA_SPEC_ARM8_BE8, PSPEC_ARMT, Big, ArmBeKernel
     }
 
     /// This arch's register table, a copy of [`SleighArch::names`]'s.
