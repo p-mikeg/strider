@@ -1541,8 +1541,16 @@ fn build_random_state_machine(seed: u64) -> Option<strider_ir::Function> {
 #[test]
 fn a_phi_of_constants_holds_only_its_constants() {
     let mut failures: Vec<String> = Vec::new();
+    let n: u64 = std::env::var("FUZZ_N")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_FUZZ_SEEDS);
+    let start: u64 = std::env::var("FUZZ_START")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let (mut checks, mut phis, mut functions) = (0usize, 0usize, 0usize);
-    for seed in 0..DEFAULT_FUZZ_SEEDS {
+    for seed in start..start + n {
         let Some(mut f) = build_random_state_machine(seed) else {
             continue;
         };
@@ -1596,10 +1604,13 @@ fn a_phi_of_constants_holds_only_its_constants() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n=====\n"));
-    // Measured: 106 functions, 154 phis.
+    // Measured: 106 functions, 154 phis.  A floor over the full seed range
+    // only, as in `a_range_contains_every_runtime_value`.
     eprintln!("functions {functions} phis {phis} checks {checks}");
-    assert!(
-        functions * 6 >= DEFAULT_FUZZ_SEEDS as usize && phis >= functions && checks > 0,
-        "functions {functions} phis {phis} checks {checks}"
-    );
+    if n >= DEFAULT_FUZZ_SEEDS {
+        assert!(
+            functions * 6 >= n as usize && phis >= functions && checks > 0,
+            "functions {functions} phis {phis} checks {checks}"
+        );
+    }
 }
