@@ -9,7 +9,8 @@
 mod common;
 
 use common::Arch;
-use strider_ir::node::{NodeKind, ValueId};
+use strider_ir::IntBinaryOp;
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, IRWalker};
 
 const BASE: u64 = 0x1000;
@@ -43,24 +44,53 @@ fn returned_r3s(f: &Function) -> Vec<Option<u128>> {
     r3s
 }
 
-/// The `CallOther` named `name` that `v` is computed from through integer
-/// slicing alone, if any.
-fn sliced_from_call_other(
-    f: &Function,
-    v: ValueId,
-    name: &str,
-) -> Option<strider_ir::node::NodeId> {
+/// The incoming value of the register `name`, if the function reads it.
+fn initial(arch: Arch, f: &Function, name: &str) -> Option<ValueId> {
+    let vn = arch
+        .sleigh()
+        .probe_regs()
+        .name_to_vn(name)
+        .unwrap_or_else(|| panic!("no register named {name:?}"));
+    f.initial_var_value(&vn)
+}
+
+/// The `CallOther` named `name` that `v` is a slice of (a truncation,
+/// extension, shift or constant mask of it), if any.
+fn sliced_from_call_other(f: &Function, v: ValueId, name: &str) -> Option<NodeId> {
     let producer = f.producer(v);
-    match f.node_kind(producer) {
+    let inputs = f.node_inputs(producer);
+    let sliced = match f.node_kind(producer) {
         NodeKind::CallOther { .. } => {
-            (f.call_other_name(producer) == Some(name)).then_some(producer)
+            return (f.call_other_name(producer) == Some(name)).then_some(producer);
         }
-        NodeKind::Truncate | NodeKind::Extend(_) | NodeKind::IntBinaryOp(_) => f
-            .node_inputs(producer)
-            .into_iter()
-            .find_map(|i| sliced_from_call_other(f, i, name)),
-        _ => None,
-    }
+        NodeKind::Truncate | NodeKind::Extend(_) => inputs[0],
+        NodeKind::IntBinaryOp(
+            IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight | IntBinaryOp::ShiftLeft,
+        ) => inputs[0],
+        NodeKind::IntBinaryOp(IntBinaryOp::And) => match (
+            f.int_const_u128(inputs[0]).is_some(),
+            f.int_const_u128(inputs[1]).is_some(),
+        ) {
+            (true, false) => inputs[1],
+            (false, true) => inputs[0],
+            _ => return None,
+        },
+        _ => return None,
+    };
+    sliced_from_call_other(f, sliced, name)
+}
+
+/// The `CallOther` named `name`, which the function holds once.
+fn the_call_other(f: &Function, name: &str) -> NodeId {
+    let mut ops = f.walk().filter(|&n| f.call_other_name(n) == Some(name));
+    let op = ops.next().unwrap_or_else(|| panic!("no {name}"));
+    assert!(ops.next().is_none(), "two {name}");
+    op
+}
+
+/// The operands of a `CallOther`, past its control and memory inputs.
+fn operands(f: &Function, op: NodeId) -> Vec<ValueId> {
+    f.node_inputs(op).into_iter().skip(2).collect()
 }
 
 /// `li r6, 0x123; slbmfe? r5, r6; mr r3, r5; blr`
@@ -109,45 +139,97 @@ fn xsiexpdp_writes_its_target() {
     }
 }
 
-/// `li r4, 0; cmpwi r4, 0; cmpwi cr6, r4, 0; <compare>; beq crN, 1f;
-/// li r3, 1; blr; 1: li r3, 2; blr`. Both `cmpwi` set EQ, so a `beq` on a
-/// field the compare does not write always branches.
-fn branch_on_a_compare(arch: Arch, compare: u32, beq_field: u32) -> Vec<Option<u128>> {
-    let beq = 0x4182_000c | (beq_field << 18);
-    let f = analyze(
-        arch,
-        &[
-            0x3880_0000,
-            0x2c04_0000,
-            0x2f04_0000,
-            compare,
-            beq,
-            LI_R3_1,
-            BLR,
-            LI_R3_2,
-            BLR,
-        ],
-    );
-    returned_r3s(&f)
+/// A user-op operand: an incoming register or an immediate.
+#[derive(Clone, Copy, Debug)]
+enum Operand {
+    Reg(&'static str),
+    Imm(u128),
 }
 
+/// The seven compares as `BF = cr0`, their user op and its operands.
+const COMPARES: [(&str, u32, &str, [Operand; 2]); 7] = {
+    use Operand::{Imm, Reg};
+    [
+        (
+            "xscmpexpdp cr0, vs1, vs2",
+            0xf001_11d8,
+            "vsx300_29",
+            [Reg("vs1"), Reg("vs2")],
+        ),
+        (
+            "xscmpexpqp cr0, v1, v2",
+            0xfc01_1148,
+            "vsx300_30",
+            [Reg("vs33"), Reg("vs34")],
+        ),
+        (
+            "xscmpoqp cr0, v1, v2",
+            0xfc01_1108,
+            "vsx300_34",
+            [Reg("vs33"), Reg("vs34")],
+        ),
+        (
+            "xscmpuqp cr0, v1, v2",
+            0xfc01_1508,
+            "vsx300_35",
+            [Reg("vs33"), Reg("vs34")],
+        ),
+        (
+            "xststdcdp cr0, vs1, 127",
+            0xf07f_0da8,
+            "vsx300_74",
+            [Reg("vs1"), Imm(127)],
+        ),
+        (
+            "xststdcqp cr0, v1, 127",
+            0xfc7f_0d88,
+            "vsx300_75",
+            [Reg("vs33"), Imm(127)],
+        ),
+        (
+            "xststdcsp cr0, vs1, 127",
+            0xf07f_0ca8,
+            "vsx300_76",
+            [Reg("vs1"), Imm(127)],
+        ),
+    ]
+};
+
+/// Whether `op`'s operands are `expected`.
+fn operands_are(arch: Arch, f: &Function, op: NodeId, expected: &[Operand]) -> bool {
+    let got = operands(f, op);
+    got.len() == expected.len()
+        && got.iter().zip(expected).all(|(&v, e)| match *e {
+            Operand::Reg(name) => Some(v) == initial(arch, f, name),
+            Operand::Imm(imm) => f.int_const_u128(v) == Some(imm),
+        })
+}
+
+/// `<prelude>; <body>; b<cond> 1f; li r3, 1; blr; 1: li r3, 2; blr`
+fn branch_after(arch: Arch, prelude: &[u32], body: u32, branch: u32) -> Function {
+    let mut words = prelude.to_vec();
+    words.extend([body, branch, LI_R3_1, BLR, LI_R3_2, BLR]);
+    analyze(arch, &words)
+}
+
+/// `li r4, 0; cmpwi r4, 0; cmpwi cr6, r4, 0`: EQ set in cr0 and cr6.
+const BOTH_EQ: [u32; 3] = [0x3880_0000, 0x2c04_0000, 0x2f04_0000];
+/// `beq crN, +12`
+const fn beq(field: u32) -> u32 {
+    0x4182_000c | (field << 18)
+}
+const BOTH: [Option<u128>; 2] = [Some(1), Some(2)];
+const TAKEN: [Option<u128>; 1] = [Some(2)];
+const NOT_TAKEN: [Option<u128>; 1] = [Some(1)];
+
 /// Each compare, as `cr0` and as `cr6` (`BF << 23`), sets the field it names
-/// and leaves the other.
+/// from its operands and leaves the other field. Both fields start with EQ
+/// set, so a `beq` on the field it does not write always branches.
 #[test]
 fn a_vsx_compare_writes_its_condition_register_field() {
-    const BOTH: [Option<u128>; 2] = [Some(1), Some(2)];
-    const TAKEN: [Option<u128>; 1] = [Some(2)];
     let mut wrong = Vec::new();
     for arch in [Arch::Ppc64be, Arch::Ppc64le] {
-        for (name, cr0_form) in [
-            ("xscmpexpdp cr0, vs1, vs2", 0xf001_11d8_u32),
-            ("xscmpexpqp cr0, v1, v2", 0xfc01_1148),
-            ("xscmpoqp cr0, v1, v2", 0xfc01_1108),
-            ("xscmpuqp cr0, v1, v2", 0xfc01_1508),
-            ("xststdcdp cr0, vs1, 127", 0xf07f_0da8),
-            ("xststdcqp cr0, v1, 127", 0xfc7f_0d88),
-            ("xststdcsp cr0, vs1, 127", 0xf07f_0ca8),
-        ] {
+        for (name, cr0_form, op, args) in COMPARES {
             let cr6_form = cr0_form | (6 << 23);
             for (bf, word, beq_field, expected) in [
                 (0, cr0_form, 0, &BOTH[..]),
@@ -155,11 +237,15 @@ fn a_vsx_compare_writes_its_condition_register_field() {
                 (6, cr6_form, 0, &TAKEN[..]),
                 (0, cr0_form, 6, &TAKEN[..]),
             ] {
-                let got = branch_on_a_compare(arch, word, beq_field);
+                let f = branch_after(arch, &BOTH_EQ, word, beq(beq_field));
+                let got = returned_r3s(&f);
                 if got != expected {
                     wrong.push(format!(
                         "{arch:?} {name} as cr{bf}, beq cr{beq_field}: {got:?}"
                     ));
+                }
+                if bf == beq_field && !operands_are(arch, &f, the_call_other(&f, op), &args) {
+                    wrong.push(format!("{arch:?} {name} as cr{bf}: operands of {op}"));
                 }
             }
         }
@@ -167,16 +253,57 @@ fn a_vsx_compare_writes_its_condition_register_field() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
-/// `paste. r3, r4; beq 1f; li r3, 1; blr; 1: li r3, 2; blr`: CR0 reports
-/// whether the paste succeeded.
+/// Each compare sets FPSCR.FPCC (field 4) as it sets CR field BF, and the
+/// quad-precision compares raise VXSNAN (field 1, bit 3), `xscmpoqp` VXVC too
+/// (field 3, bit 0): `mtfsfi F, 0; <compare>; mcrfs cr7, F; b<bit> cr7, 1f;
+/// li r3, 1; blr; 1: li r3, 2; blr` keeps both paths for a bit the compare
+/// may set, where the cleared field would never branch.
+#[test]
+fn a_vsx_compare_sets_the_fpscr_bits_it_writes() {
+    // (mtfsfi F,0, mcrfs cr7,F, the branch on the bit)
+    let fpcc = (0xfe00_010c, 0xff90_0080, 0x419e_000c, "FPCC.FE (beq)");
+    let vxsnan = (0xfc80_010c, 0xff84_0080, 0x419f_000c, "VXSNAN (bso)");
+    let vxvc = (0xfd80_010c, 0xff8c_0080, 0x419c_000c, "VXVC (blt)");
+    let mut wrong = Vec::new();
+    for arch in [Arch::Ppc64be, Arch::Ppc64le] {
+        for (name, word, _, _) in COMPARES {
+            let mut bits = vec![fpcc];
+            if name.starts_with("xscmpoqp") || name.starts_with("xscmpuqp") {
+                bits.push(vxsnan);
+            }
+            if name.starts_with("xscmpoqp") {
+                bits.push(vxvc);
+            }
+            for (clear, read, branch, bit) in bits {
+                let got = returned_r3s(&fpscr_branch(arch, clear, word, read, branch));
+                if got != BOTH {
+                    wrong.push(format!("{arch:?} {name}, {bit}: {got:?}"));
+                }
+            }
+        }
+        // The cleared field alone never branches.
+        let got = returned_r3s(&fpscr_branch(arch, fpcc.0, 0x6000_0000, fpcc.1, fpcc.2));
+        if got != NOT_TAKEN {
+            wrong.push(format!("{arch:?} nop, FPCC.FE: {got:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// `mtfsfi F, 0; <body>; mcrfs cr7, F; b<bit> cr7, 1f; li r3, 1; blr; 1: li
+/// r3, 2; blr`
+fn fpscr_branch(arch: Arch, clear: u32, body: u32, read: u32, branch: u32) -> Function {
+    branch_after(arch, &[clear, body], read, branch)
+}
+
+/// `li r5, 0; cmpwi r5, 0; paste. r3, r4; beq 1f; li r3, 1; blr; 1: li r3,
+/// 2; blr`: CR0 reports whether the paste succeeded, whatever the compare
+/// before it left there.
 #[test]
 fn paste_dot_sets_cr0_from_the_paste() {
     for arch in [Arch::Ppc64be, Arch::Ppc64le] {
-        let f = analyze(
-            arch,
-            &[0x7c23_270d, 0x4182_000c, LI_R3_1, BLR, LI_R3_2, BLR],
-        );
-        assert_eq!(returned_r3s(&f), [Some(1), Some(2)], "{arch:?}");
+        let f = branch_after(arch, &[0x38a0_0000, 0x2c05_0000], 0x7c23_270d, beq(0));
+        assert_eq!(returned_r3s(&f), BOTH, "{arch:?}");
     }
 }
 
@@ -210,10 +337,12 @@ fn vminud_writes_its_target() {
             .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
             .expect("one Store");
         let stored = f.node_inputs(store)[NodeKind::STORE_DATA_SLOT];
-        assert!(
-            sliced_from_call_other(&f, stored, "altv207_24").is_some(),
-            "{arch:?}: v2 is {:?}",
-            f.kind_of_value(stored)
+        let op = sliced_from_call_other(&f, stored, "altv207_24")
+            .unwrap_or_else(|| panic!("{arch:?}: v2 is {:?}", f.kind_of_value(stored)));
+        assert_eq!(
+            operands(&f, op).into_iter().map(Some).collect::<Vec<_>>(),
+            [initial(arch, &f, "vs35"), initial(arch, &f, "vs36")],
+            "{arch:?}: vminud reads v3 and v4"
         );
     }
 }
