@@ -318,3 +318,46 @@ def test_noalias_allocators_read_back_sorted_and_deduplicated():
     a = strider.lift.AssumptionOptions(noalias_allocators=[top, 3, 3, 1])
     assert a.noalias_allocators == [1, 3, top]
     assert f"noalias_allocators=[1, 3, {top}]" in repr(a)
+
+
+def test_msr_register_keeps_mode_defaults_true_and_round_trips():
+    A = strider.lift.AssumptionOptions
+    assert A().msr_register_keeps_mode is True
+    assert A.none().msr_register_keeps_mode is False
+    off = A(msr_register_keeps_mode=False)
+    assert off.msr_register_keeps_mode is False
+    assert "msr_register_keeps_mode=False" in repr(off)
+    assert eval(repr(off), {"AssumptionOptions": A}) == off
+    on = A.none(msr_register_keeps_mode=True)
+    assert on.msr_register_keeps_mode is True
+    assert (A.none() | on).msr_register_keeps_mode is True
+    assert A.none() != on
+
+
+#: dump_stack_lvl (arm 6.6-clang): mrs r5, cpsr; cpsid i around a retry loop
+#: that saves again on its back edge, then msr cpsr_c, r5; pop {.., pc}.
+_ARM_IRQ_RESTORE_LOOP = b"".join(
+    w.to_bytes(4, "little")
+    for w in (
+        0xE92D4830, 0xE1A04000, 0xE10F5000, 0xF10C0080,
+        0xEB00003A, 0xE3500000, 0x1A000004, 0xE121F005,
+        0xEB000036, 0xE10F5000, 0xF10C0080, 0xEAFFFFF7,
+        0xE1A00004, 0xEB000031, 0xE121F005, 0xE8BD8830,
+    )
+) + bytes(0x140)
+
+
+@pytest.mark.parametrize("keeps", [True, False])
+def test_msr_register_keeps_mode_reaches_the_lift(keeps):
+    arch = strider.sleigh.SleighArch.arm()
+    lift = strider.lift.lifter(
+        arch, strider.reader.BufferReader(0x1000, _ARM_IRQ_RESTORE_LOOP)
+    )
+    claims = strider.lift.AssumptionOptions(msr_register_keeps_mode=keeps)
+    cfg, function, unresolved = lift.analyze(
+        0x1000,
+        strider.sleigh.CallingConvention.arm_aapcs(),
+        strider.lift.LifterOptions(assumptions=claims),
+    )
+    assert function.assumptions.msr_register_keeps_mode is keeps
+    assert unresolved == ([] if keeps else [0x103C])
