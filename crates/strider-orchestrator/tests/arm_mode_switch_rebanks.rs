@@ -260,3 +260,151 @@ fn a_call_between_the_save_and_the_restore_keeps_the_mode() {
     words.resize(words.len() + 0x50, 0);
     assert_eq!(r0_at_return(&a32(&words)), Some(5));
 }
+
+/// `dump_stack_lvl` (arm 6.6-clang): an interrupt-mask save and restore
+/// around a retry loop. The loop saves again on its back edge, so the restore
+/// after it writes a phi of two `mrs` results, whose mode the analysis cannot
+/// place.
+///
+/// ```text
+///       push {r4, r5, fp, lr}; mov r4, r0; mrs r5, cpsr; cpsid i
+/// loop: bl a; cmp r0, #0; bne out
+///       msr cpsr_c, r5; bl b; mrs r5, cpsr; cpsid i; b loop
+/// out:  mov r0, r4; bl c; msr cpsr_c, r5; pop {r4, r5, fp, pc}
+/// ```
+fn dump_stack_lvl() -> Vec<u8> {
+    let mut words = vec![
+        0xe92d_4830,
+        0xe1a0_4000,
+        0xe10f_5000,
+        0xf10c_0080,
+        0xeb00_003a,
+        0xe350_0000,
+        0x1a00_0004,
+        0xe121_f005,
+        0xeb00_0036,
+        0xe10f_5000,
+        0xf10c_0080,
+        0xeaff_fff7,
+        0xe1a0_0004,
+        0xeb00_0031,
+        0xe121_f005,
+        0xe8bd_8830,
+    ];
+    words.resize(words.len() + 0x50, 0);
+    common::words_image(&words, strider_target::Endianness::Little)
+}
+
+/// The restore's mode is unplaced, so only the claim keeps `sp` and `lr`, and
+/// with them the return, from re-banking.
+#[test]
+fn an_unplaced_register_restore_returns_only_under_the_claim() {
+    let pop_pc = BASE + 0x3c;
+    for (name, opts, reported) in [
+        ("default", AnalyzeOptions::default(), false),
+        ("claim off", keeping_mode(false), true),
+        (
+            "none",
+            AnalyzeOptions {
+                assumptions: AssumptionOptions::none(),
+                ..AnalyzeOptions::default()
+            },
+            true,
+        ),
+    ] {
+        let (mut strider, cc) = common::strider_over_bytes(Arch::Arm, dump_stack_lvl(), BASE, None);
+        let result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
+        let unresolved: Vec<u64> = result
+            .incomplete()
+            .of(strider_cfg::Reason::UnresolvedBranch)
+            .map(|a| a.machine_addr.addr)
+            .collect();
+        if reported {
+            assert_eq!(unresolved, [pop_pc], "{name}");
+        } else {
+            assert!(
+                result.incomplete().is_empty(),
+                "{name}: {:?}",
+                result.incomplete()
+            );
+        }
+    }
+}
+
+/// Under the claim a register-form `msr` keeps `r8`; the immediate form and
+/// `cps` still switch.
+#[test]
+fn the_claim_spares_only_the_register_form() {
+    let on = keeping_mode(true);
+    let mut wrong = Vec::new();
+    for (name, msr, switches) in [
+        ("msr cpsr_c, r1", 0xe121_f001, false),
+        ("msr cpsr_fsxc, r1", 0xe12f_f001, false),
+        ("msr cpsr_c, #0xd2", 0xe321_f0d2, true),
+        ("cps #18", 0xf102_0012, true),
+    ] {
+        let f = a32_with(
+            &[
+                A32_SAVE_LR,
+                A32_R8_IS_5,
+                msr,
+                A32_RETURN_R8[0],
+                A32_RETURN_R8[1],
+            ],
+            &on,
+        );
+        let want = if switches { None } else { Some(5) };
+        let got = r0_at_return(&f);
+        if got != want {
+            wrong.push(format!("{name}: r8 after it is {got:?}, want {want:?}"));
+        }
+    }
+    for (name, msr) in [
+        ("msr cpsr_c, r1", [0xf381, 0x8100]),
+        ("msr cpsr_fc, r1", [0xf381, 0x8900]),
+    ] {
+        // mov r4, lr; mov.w r8, #5; <msr>; mov r0, r8; bx r4
+        let f = thumb_with(
+            &[0x4674, 0xf04f, 0x0805, msr[0], msr[1], 0x4640, 0x4720],
+            &on,
+        );
+        let got = r0_at_return(&f);
+        if got != Some(5) {
+            wrong.push(format!("thumb {name}: r8 after it is {got:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// Under the claim a register-form `msr` leaves CPSR.M as it was and still
+/// writes the masks: `mrs` after it reads the mode `cps` entered and the I
+/// bit the `msr` set.
+#[test]
+fn the_claim_keeps_the_mode_and_writes_the_masks() {
+    // mov r4, lr; cps #17; mov r1, #0xd3; msr cpsr_c, r1; mrs r0, cpsr;
+    // and r0, r0, #<mask>; bx r4
+    let body = |and: u32| {
+        [
+            A32_SAVE_LR,
+            0xf102_0011,
+            0xe3a0_10d3,
+            0xe121_f001,
+            0xe10f_0000,
+            and,
+            A32_RETURN_R8[1],
+        ]
+    };
+    let mut wrong = Vec::new();
+    for (name, and, keeps, want) in [
+        ("mode, claim on", 0xe200_001f, true, 0x11),
+        ("mode, claim off", 0xe200_001f, false, 0x13),
+        ("I bit, claim on", 0xe200_0080, true, 0x80),
+    ] {
+        let f = a32_with(&body(and), &keeping_mode(keeps));
+        let got = f.int_const_u128(common::returned(&f)[0]);
+        if got != Some(want) {
+            wrong.push(format!("{name}: {got:x?}, want {want:#x}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
