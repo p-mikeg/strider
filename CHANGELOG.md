@@ -73,9 +73,14 @@
 
 ### Breaking, Rust
 
-- `SideTables::set_frame_address_in_call_register` takes the stack address's
-  offset from the entry SP (`i128::MAX` for none), and
-  `SideTables::call_register_frame_reach` reads the highest recorded.
+- `SideTables::set_frame_address_in_call_register` is
+  `record_call_register_frame_reach`, taking the stack address's offset from
+  the entry SP (`i128::MAX` for none); `call_register_frame_reach` reads the
+  highest recorded.
+- `BuiltCallingConvention` has a `reg_args_adjoin_stack_args` field (on for
+  the ARM AAPCS, MIPS O32 / N64 and PowerPC64 ELF presets), so a struct
+  literal names it; `incoming_args_start` is where the incoming arguments'
+  memory starts, register homes included. The text header prints it when set.
 - `Lifter::build_ir_with` takes the claims the lifted function holds, which
   the lift reads (`msr_register_keeps_mode`); `build_ir` lifts under none.
 - `template::instantiate` refuses what it built at the root's width: a fresh
@@ -377,6 +382,9 @@
 
 ### Added, Python
 
+- `CallingConvention.custom(reg_args_adjoin_stack_args=True)` declares that
+  the argument registers have stack homes just below the stack arguments, as
+  the ARM, MIPS and PowerPC64 presets do.
 - `"past_function_end"` in `strider.cfg.INCOMPLETE_REASONS`: where code fell
   through past `function_max_size`.
 - `strider.template.int_ne`, `int_le`, `int_sle` and `float_ne` build the
@@ -725,9 +733,12 @@
   not qualify. They said only that it overlaps no other allocation.
 - Incoming-argument detection no longer takes the reload after `h(&a)` as
   the argument under the default `assume_incoming_args_survive_calls`: where
-  a stack address that may point into the incoming-argument area escapes, as
-  a call argument, a stored value or in a register the call clobbers, every
-  call keeps the slot unknown. A pointer to a local leaves the claim in force.
+  a stack address that may point into the incoming arguments' memory reaches
+  a callee, every call keeps those slots unknown. That memory includes the
+  register arguments' homes on ARM, MIPS and PowerPC64, so `h(&s)` on a
+  struct split between registers and the stack counts too, as does an
+  address built by arithmetic the analysis cannot place. A pointer to a
+  local leaves the claim in force.
 - The docs no longer say that call-boundary claims never reach a decoded
   branch target. The jump-table walk leaves them out of its own steps, but
   it reads the IR `LoadForward` optimized under them, so with

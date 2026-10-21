@@ -168,7 +168,7 @@ impl FunctionBuilder {
         if let Some(reach) = frame_reach(&self.function, &self.call_register_values) {
             self.function
                 .side_tables_mut()
-                .set_frame_address_in_call_register(reach);
+                .record_call_register_frame_reach(reach);
         }
         Ok(self.function)
     }
@@ -177,8 +177,9 @@ impl FunctionBuilder {
 /// What a value is, as an address: the entry stack pointer plus a constant,
 /// a constant, derived from the stack pointer some other way, or anything
 /// else.  `Top` is not yet known, the optimistic start a loop `Phi` needs.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Reach {
+    #[default]
     Top,
     Const(i128),
     Sp(i128),
@@ -202,14 +203,32 @@ impl Reach {
     }
 }
 
+/// The arithmetic an address is built from, which [`frame_reach`] follows.
+fn is_address_arithmetic(kind: &NodeKind) -> bool {
+    use crate::node::IntUnaryOp;
+    matches!(
+        kind,
+        NodeKind::IntBinaryOp(
+            IntBinaryOp::Add | IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor
+        ) | NodeKind::IntUnaryOp(IntUnaryOp::Neg)
+            | NodeKind::Extend(_)
+            | NodeKind::Truncate
+            | NodeKind::Phi
+    )
+}
+
 /// The highest offset from the entry stack pointer among `values` that are
 /// computed from it through the arithmetic an address is built from (`Add`,
-/// `And`, `Or`, `Xor`, a width change, a `Phi`): `i128::MAX` when one has no
-/// constant offset, `None` when none is.  A value reloaded from memory is
-/// left out, since storing the address was already an escape.
+/// `And`, `Or`, `Xor`, `Neg`, a width change, a `Phi`): `i128::MAX` when one
+/// has no constant offset, `None` when none is.  Any other operand (a
+/// product, a load, a call's result) leaves the offset unknown.  A value
+/// reloaded from memory is left out, since storing the address was already
+/// an escape.
 ///
 /// Solved optimistically to a fixed point, so a loop that leaves the stack
-/// pointer where it found it keeps the offset.
+/// pointer where it found it keeps the offset.  Not `decompose`'s answer:
+/// that runs on optimized IR in strider-opt, and these values, held only in
+/// registers, are gone from the graph by then.
 fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
     use crate::IRViewer;
     use crate::node::IntUnaryOp;
@@ -217,7 +236,8 @@ fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
     // The cone the arithmetic reaches, and each value's users within it.
     let mut cone = Vec::new();
     let mut seen = entity_utils::DenseEntitySet::new();
-    let mut users: rustc_hash::FxHashMap<ValueId, Vec<ValueId>> = rustc_hash::FxHashMap::default();
+    let mut users: cranelift_entity::SecondaryMap<ValueId, Vec<ValueId>> =
+        cranelift_entity::SecondaryMap::new();
     let mut work = values.to_vec();
     while let Some(v) = work.pop() {
         if !seen.insert(v) {
@@ -225,31 +245,22 @@ fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
         }
         cone.push(v);
         let node = function.producer(v);
-        if matches!(
-            function.node_kind(node),
-            NodeKind::IntBinaryOp(
-                IntBinaryOp::Add | IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor
-            ) | NodeKind::IntUnaryOp(IntUnaryOp::Neg)
-                | NodeKind::Extend(_)
-                | NodeKind::Truncate
-                | NodeKind::Phi
-        ) {
+        if is_address_arithmetic(function.node_kind(node)) {
             for input in function.value_inputs(node) {
-                users.entry(input).or_default().push(v);
+                users[input].push(v);
                 work.push(input);
             }
         }
     }
-    let mut reach: rustc_hash::FxHashMap<ValueId, Reach> = rustc_hash::FxHashMap::default();
-    let get =
-        |reach: &rustc_hash::FxHashMap<ValueId, Reach>, v| *reach.get(&v).unwrap_or(&Reach::Top);
-    let mut work = cone.clone();
-    while let Some(v) = work.pop() {
+    let mut reach: cranelift_entity::SecondaryMap<ValueId, Reach> =
+        cranelift_entity::SecondaryMap::new();
+    let mut work = entity_utils::Worklist::new();
+    for &v in &cone {
+        work.enqueue(v);
+    }
+    while let Some(v) = work.dequeue() {
         let node = function.producer(v);
-        let inputs: Vec<Reach> = function
-            .value_inputs(node)
-            .map(|i| get(&reach, i))
-            .collect();
+        let kind = *function.node_kind(node);
         // Offsets wrap at the value's width, as its arithmetic does.
         let bits = function
             .value_type_opt(v)
@@ -258,47 +269,47 @@ fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
             let shift = (128 - bits) as u32;
             x.wrapping_shl(shift).wrapping_shr(shift)
         };
-        let next = match *function.node_kind(node) {
-            NodeKind::InitialVar(id) if function.initial_vn(id) == sp => Reach::Sp(0),
-            NodeKind::IntConst(_) => function
-                .int_const_i128(v)
-                .map_or(Reach::Other, Reach::Const),
-            _ if inputs.contains(&Reach::Top)
-                && !matches!(function.node_kind(node), NodeKind::Phi) =>
-            {
-                Reach::Top
-            }
-            NodeKind::Phi => inputs.iter().fold(Reach::Top, |acc, &r| acc.meet(r)),
-            NodeKind::IntBinaryOp(IntBinaryOp::Add) => match inputs[..] {
-                [Reach::Sp(k), Reach::Const(c)] | [Reach::Const(c), Reach::Sp(k)] => {
-                    Reach::Sp(wrap(k.wrapping_add(c)))
-                }
-                [Reach::Const(a), Reach::Const(b)] => Reach::Const(wrap(a.wrapping_add(b))),
-                _ if inputs.iter().any(|r| r.is_stack()) => Reach::SpUnplaced,
+        let next = if !is_address_arithmetic(&kind) {
+            match kind {
+                NodeKind::InitialVar(id) if function.initial_vn(id) == sp => Reach::Sp(0),
+                NodeKind::IntConst(_) => function
+                    .int_const_i128(v)
+                    .map_or(Reach::Other, Reach::Const),
                 _ => Reach::Other,
-            },
-            NodeKind::IntUnaryOp(IntUnaryOp::Neg) => match inputs[..] {
-                [Reach::Const(c)] => Reach::Const(wrap(c.wrapping_neg())),
-                _ if inputs.iter().any(|r| r.is_stack()) => Reach::SpUnplaced,
-                _ => Reach::Other,
-            },
-            NodeKind::IntBinaryOp(IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor)
-            | NodeKind::Extend(_)
-            | NodeKind::Truncate
-                if inputs.iter().any(|r| r.is_stack()) =>
-            {
-                Reach::SpUnplaced
             }
-            _ => Reach::Other,
+        } else {
+            let inputs: Vec<Reach> = function.value_inputs(node).map(|i| reach[i]).collect();
+            let stack = inputs.iter().any(|r| r.is_stack());
+            match kind {
+                NodeKind::Phi => inputs.iter().fold(Reach::Top, |acc, &r| acc.meet(r)),
+                _ if inputs.contains(&Reach::Top) => Reach::Top,
+                NodeKind::IntBinaryOp(IntBinaryOp::Add) => match inputs[..] {
+                    [Reach::Sp(k), Reach::Const(c)] | [Reach::Const(c), Reach::Sp(k)] => {
+                        Reach::Sp(wrap(k.wrapping_add(c)))
+                    }
+                    [Reach::Const(a), Reach::Const(b)] => Reach::Const(wrap(a.wrapping_add(b))),
+                    _ if stack => Reach::SpUnplaced,
+                    _ => Reach::Other,
+                },
+                NodeKind::IntUnaryOp(IntUnaryOp::Neg) => match inputs[..] {
+                    [Reach::Const(c)] => Reach::Const(wrap(c.wrapping_neg())),
+                    _ if stack => Reach::SpUnplaced,
+                    _ => Reach::Other,
+                },
+                _ if stack => Reach::SpUnplaced,
+                _ => Reach::Other,
+            }
         };
-        if get(&reach, v) != next {
-            reach.insert(v, next);
-            work.extend(users.get(&v).into_iter().flatten().copied());
+        if reach[v] != next {
+            reach[v] = next;
+            for &user in &users[v] {
+                work.enqueue(user);
+            }
         }
     }
     values
         .iter()
-        .filter_map(|&v| match get(&reach, v) {
+        .filter_map(|&v| match reach[v] {
             Reach::Sp(k) => Some(k),
             Reach::SpUnplaced => Some(i128::MAX),
             Reach::Top | Reach::Const(_) | Reach::Other => None,

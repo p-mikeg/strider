@@ -9,7 +9,8 @@
 /// strider-orchestrator's `AnalyzeOptions::resolve_indirect_branches` defaults
 /// on and is outside it.
 ///
-/// Four default ON.  Three hold for every compiler whose output this analyses:
+/// Four default ON.  Three hold for every compiler whose output this
+/// analyses, on the premises their own docs state:
 /// [`stack_global_disjoint`](Self::stack_global_disjoint), without
 /// which no stack store is disjoint from a global load nor global store from a
 /// stack load,
@@ -42,13 +43,21 @@ pub struct AssumptionOptions {
     /// call.  Reaches which loads count as incoming arguments, never the memory
     /// edges: a narrowed edge is read afterwards by walks that block at every
     /// call, so narrowing uses what a call-blocking walk proves.  It holds for
-    /// a conforming callee that was not handed a pointer into the area, since
-    /// those slots sit above the entry SP, and the handing is checked: where a
-    /// stack address that may point into the area escapes (as a call
-    /// argument, a stored value, a return, an input to pointer arithmetic, or
-    /// in a register a call clobbers), every call blocks, as in
-    /// `h(&a); return a;`.  An address with a constant offset from the entry
-    /// SP below the area is taken to stay inside its own frame object.  A
+    /// a conforming callee that was not handed a pointer into the incoming
+    /// arguments' memory, which starts at the first stack argument, or at the
+    /// first register argument's home where the convention keeps the homes
+    /// just below
+    /// ([`incoming_args_start`](strider_target::BuiltCallingConvention::incoming_args_start)).
+    /// The handing is checked: where a stack address that may point there
+    /// reaches a callee, every call blocks, as in `h(&a); return a;`.  An
+    /// address handed over as a call argument, a stored value or a return,
+    /// or held in a register a call clobbers, counts unless it is the entry SP
+    /// plus a constant below that memory, which is taken to stay inside its
+    /// own frame object.  Any other use that exposes a stack address
+    /// (arithmetic the analysis cannot place, a `Phi`) counts wherever it
+    /// starts.  Like
+    /// [`escape_analysis`](Self::escape_analysis), the check misses a callee
+    /// reading an address from a register its convention preserves.  A
     /// memory-clobbering `CallOther` is outside it entirely.
     /// Default ON.
     pub assume_incoming_args_survive_calls: bool,

@@ -39,6 +39,15 @@
 //! since a leaked pointer can be stored to a global and reloaded by a later
 //! callee.
 //!
+//! [`incoming_area_escapes`] asks the narrower question of whether the
+//! incoming-argument memory may be reached.  It places an exposure only where
+//! the use hands over the address itself (a call argument, a stored value, a
+//! return) and counts it unless it is the entry SP plus a constant below the
+//! area, which names a frame object of its own; pointer arithmetic leaving the
+//! object to a callee is outside the C object model.  Every other exposing use
+//! (arithmetic leaving `U`, a `Phi`, a width change) counts whatever its
+//! input's offset, as above: its result is a pointer `decompose` cannot place.
+//!
 //! Sound modulo two claims the IR cannot check: a callee does not write the
 //! caller's frame outside the argument area except through a pointer it was
 //! handed in an argument, a clobbered register or memory, and no pointer is
@@ -71,10 +80,7 @@ fn frame_address_escapes(function: &Function) -> bool {
 }
 
 /// Whether a stack address that may point at or above `area_start` bytes past
-/// the entry SP (the incoming-argument area) escapes as
-/// [`frame_address_escapes`] counts it.  An address the entry SP plus a
-/// constant below `area_start` names its own frame object, and a callee
-/// handed it cannot reach an argument through it.
+/// the entry SP (the incoming-argument memory) escapes; see the module doc.
 pub(crate) fn incoming_area_escapes(function: &Function, area_start: i128) -> bool {
     if function
         .side_tables()
@@ -91,8 +97,9 @@ pub(crate) fn incoming_area_escapes(function: &Function, area_start: i128) -> bo
     })
 }
 
-/// Whether `counts` holds for some member of `U` consumed by a use that
-/// exposes it.
+/// Whether some member of `U` is consumed by a use that exposes it: one that
+/// hands it over (a call argument, a stored value, a return) when `counts`
+/// holds for it, any other always.
 fn any_exposed(function: &Function, mut counts: impl FnMut(ValueId) -> bool) -> bool {
     for node in function.walk() {
         let kind = *function.node_kind(node);
@@ -110,12 +117,25 @@ fn any_exposed(function: &Function, mut counts: impl FnMut(ValueId) -> bool) -> 
             if !is_frame_addr(function, v) {
                 continue;
             }
-            if !use_is_address_only(function, node, kind, idx) && counts(v) {
+            if !use_is_address_only(function, node, kind, idx)
+                && (!hands_over(kind, idx) || counts(v))
+            {
                 return true;
             }
         }
     }
     false
+}
+
+/// Whether input `idx` of a `kind` node passes the value itself on: a call's
+/// argument, a store's data, a returned value.
+fn hands_over(kind: NodeKind, idx: usize) -> bool {
+    match kind {
+        NodeKind::Call { .. } => idx > NodeKind::CALL_SP_SLOT,
+        NodeKind::CallOther { .. } | NodeKind::Return => idx > NodeKind::CTRL_MEM_SLOT,
+        NodeKind::Store(_) => idx == NodeKind::STORE_DATA_SLOT,
+        _ => false,
+    }
 }
 
 /// A member of `U` is benign here only as the address operand
