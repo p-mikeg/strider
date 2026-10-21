@@ -678,7 +678,10 @@ assumption_fields! {
     /// Callee addresses of pure `noalias` heap allocators (`malloc`/`calloc`-like:
     /// a size in, a fresh non-overlapping pointer out, no pointer arguments).
     /// Distinct allocations are treated as disjoint, and a load steps through
-    /// such a call. Disjointness holds among allocations live at once: nothing
+    /// such a call. An allocation also overlaps no stack slot and no global or
+    /// other constant address, so an allocator carving from a static or a
+    /// caller-supplied arena does not qualify. Disjointness among
+    /// allocations holds for those live at once: nothing
     /// models deallocation, so a stale pointer is taken as disjoint from the
     /// storage the allocator handed out again. Reads back sorted, without
     /// duplicates.

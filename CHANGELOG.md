@@ -716,6 +716,10 @@
 - Python: an AArch64 object's `R_AARCH64_GOT_LD_PREL19` with a non-zero
   addend is a hole, as `ADR_GOT_PAGE` and `LD64_GOT_LO12_NC` already were;
   `ldr x0, :got:foo+16` read the slot 16 bytes past foo's, another symbol's.
+- Python: the `noalias_allocators` docs state the whole claim the analysis
+  rests on: a listed call's result overlaps no stack slot and no global
+  either, so an allocator carving from a static or caller-supplied arena does
+  not qualify. They said only that it overlaps no other allocation.
 
 ### Added, Rust
 
