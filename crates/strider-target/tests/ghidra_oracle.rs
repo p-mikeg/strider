@@ -674,6 +674,7 @@ fn sla(file: &str) -> rsleigh::sla_spec::SlaSpec {
         "x86-64.sla" => SLA_SPEC_X86_64,
         "ARM8_le.sla" => SLA_SPEC_ARM8_LE,
         "ARM8_be.sla" => SLA_SPEC_ARM8_BE,
+        "ARM8_be8.sla" => SLA_SPEC_ARM8_BE8,
         "AARCH64.sla" => SLA_SPEC_AARCH64,
         "AARCH64BE.sla" => SLA_SPEC_AARCH64BE,
         "mips32be.sla" => SLA_SPEC_MIPS32BE,
