@@ -73,6 +73,8 @@
 
 ### Breaking, Rust
 
+- `Lifter::build_ir_with` takes the claims the lifted function holds, which
+  the lift reads (`msr_register_keeps_mode`); `build_ir` lifts under none.
 - `template::instantiate` refuses what it built at the root's width: a fresh
   untyped operand at a slot that owes its node no width (a `Popcount` /
   `Lzcount` operand, a `Load` / `Store` address or data, a `Phi`, `Call` or
@@ -275,6 +277,8 @@
   the `$d` mapping symbols seat `data_ranges` unless the options name some,
   and a ppc64 ELFv2 `no_return_targets` address also covers its
   `Symbol.local_entry`.
+- `Function.to_text()`'s `assumptions` header line ends in
+  `msr_register_keeps_mode` under the default claims.
 - `Function.to_text()` names a REGISTER-space byte order unlike the data
   order: the header reads `endian big register=little` on `arm_be_kernel`, so
   a parser of the header must accept the ` register=little` suffix.
@@ -388,7 +392,15 @@
   claim of both.
 - `AssumptionOptions.none(...)` takes the constructor's keywords and sets
   only the claims named, so `none(escape_analysis=True)` is one claim where
-  `AssumptionOptions(escape_analysis=True)` is four.
+  `AssumptionOptions(escape_analysis=True)` is five.
+- `AssumptionOptions.msr_register_keeps_mode`, default `True`: an ARM
+  register-form `msr` writing the CPSR control field (`msr cpsr_c, rN`)
+  restores a saved mode, so it re-banks nothing and leaves the mode alone;
+  its masks and flags still update, and immediate `msr` and `cps` still
+  switch. `AssumptionOptions.none()` clears it, which re-banks unless the
+  mode is provably the current one. Wrong for code building a new mode in a
+  register (Linux's boot-time `safe_svcmode_maskall`). The lift reads it, so
+  `Lifter.optimize` adding it changes nothing.
 - `strider.template.capture_typed(c, inner)` builds `inner` at the width of
   the value `c` bound, as Rust's `capture_typed` does: the way to type a
   constant nothing else gives a width.
@@ -505,7 +517,9 @@
   `msr` set, which it read as zero, so `irqs_disabled_flags(flags)` no
   longer folds to "enabled". Execution at PL1 or higher is assumed: a
   User-mode write to M, A, I or F, which the hardware ignores, is recorded.
-  A mode switch, `cps` included, also re-banks the SPSR.
+  A mode switch, `cps` included, also re-banks the SPSR. Under the default
+  `msr_register_keeps_mode` claim the register form restores the mode and
+  re-banks nothing; `AssumptionOptions::none()` keeps the re-bank.
 - ARM `msr` sets N, Z, C, V and Q only through its flags field, from its
   source: the A32 register form overwrote them for every mask, the
   immediate form never set them, and Thumb `msr APSR_nzcvq, rN` read r0
@@ -700,6 +714,11 @@
 
 ### Added, Rust
 
+- `AssumptionOptions::msr_register_keeps_mode` (default on), the claim the
+  Python field above carries, read by the lifter. The ARM sla yields a
+  register-form `msr`'s mode through the user op `msrRegisterMode(new,
+  current)`, which `strider_target::call_other_abi::is_msr_register_mode`
+  names and the lifter lowers to `current` under the claim, else `new`.
 - `strider_reader::elf::local_entry_offset`: how far past a ppc64 ELFv2
   symbol a same-TOC call enters.
 - `strider_target::ByteOrder`, the data and REGISTER-space byte orders, from

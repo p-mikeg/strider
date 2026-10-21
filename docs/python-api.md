@@ -161,6 +161,7 @@ opts = strider.lift.LifterOptions(
         noalias_allocators=[],            # callee addresses of malloc-like allocators
         distinct_sp_bases_disjoint=False,
         callee_preserves_stack_args=False,
+        msr_register_keeps_mode=True,
     ),
     compact=True,                      # drop unreachable nodes at the end
     resolve_indirect_branches=True,    # False leaves every site an IndirectBranch
@@ -203,14 +204,24 @@ the positive one:
 - `callee_preserves_stack_args` (off): a callee leaves the outgoing-argument
   slots unchanged, which the psABIs do not require. It changes nothing unless
   `escape_analysis` is on or `noalias_allocators` is non-empty.
+- `msr_register_keeps_mode` (default on): an ARM register-form `msr` writing
+  the CPSR control field (`msr cpsr_c, rN`) restores a mode saved earlier, so
+  it changes neither the mode nor the banked registers; its masks and flags
+  still update, and the immediate form and `cps` still switch mode. Off, it
+  re-banks `sp`, `lr` and the rest unless its mode is provably the current
+  one, which it is not when the restored flags merge from two saves, come back
+  from memory or arrive in an argument. It is wrong for code that builds a
+  new mode in a register, as Linux's boot-time `safe_svcmode_maskall` does.
+  The lift reads it: `analyze` honours it, and `Lifter.optimize` adding it to
+  a lifted function changes nothing.
 
-`AssumptionOptions.none()` clears all seven; `AssumptionOptions()` does not. It
+`AssumptionOptions.none()` clears all eight; `AssumptionOptions()` does not. It
 is the sound floor of these fields for any input whose memory behaves as RAM:
 a load reads back the last value the analysed code stored at its address, so a
 memory-mapped register polled after a write still reads as the value written.
 `AssumptionOptions.none(...)` takes the same keywords as the constructor and
 sets only the claims named, where each one the constructor leaves out takes its
-default: `AssumptionOptions(escape_analysis=True)` holds four claims,
+default: `AssumptionOptions(escape_analysis=True)` holds five claims,
 `AssumptionOptions.none(escape_analysis=True)` one.
 
 Claims accumulate per `Function`. `analyze` starts a fresh one from the claims

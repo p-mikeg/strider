@@ -130,10 +130,11 @@ stored as `a + (-b)`, so you never have to write both. The
 [python guide](python-guide.md) lists the ones that most often surprise people.
 
 **Assumption.** A claim about the code being analysed that the IR cannot
-prove, and that the optimizer needs before it can rule two memory accesses
-apart: that the stack and globals do not overlap, that a named allocator
-returns fresh storage, and five more. `AssumptionOptions` holds them, and a
-wrong one makes the answer wrong rather than imprecise.
+prove. Most are what the optimizer needs before it can rule two memory
+accesses apart: that the stack and globals do not overlap, that a named
+allocator returns fresh storage, and five more. One more says an ARM
+interrupt-mask restore keeps the processor mode. `AssumptionOptions` holds
+them, and a wrong one makes the answer wrong rather than imprecise.
 [python-api.md](python-api.md#2-analyzing-a-function) says what each buys and
 which values are sound.
 
