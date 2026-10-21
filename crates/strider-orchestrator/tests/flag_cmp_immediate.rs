@@ -117,6 +117,36 @@ fn x64_edi(n: i32, cond: Cond) -> Case {
     }
 }
 
+/// x86-64 `cmp rdi, imm32`, sign-extended.
+fn x64_rdi(n: i32, cond: Cond) -> Case {
+    let mut cmp = vec![0x48, 0x81, 0xff];
+    cmp.extend_from_slice(&n.to_le_bytes());
+    Case {
+        arch: Arch::X64,
+        bytes: x86_tail(&cmp, cond),
+        reg: "RDI",
+        width: 64,
+        n: i128::from(n),
+        cond,
+        pre_add: 0,
+    }
+}
+
+/// x86-64 `cmp di, imm16`.
+fn x64_di(n: i16, cond: Cond) -> Case {
+    let mut cmp = vec![0x66, 0x81, 0xff];
+    cmp.extend_from_slice(&n.to_le_bytes());
+    Case {
+        arch: Arch::X64,
+        bytes: x86_tail(&cmp, cond),
+        reg: "RDI",
+        width: 16,
+        n: i128::from(n),
+        cond,
+        pre_add: 0,
+    }
+}
+
 /// x86-64 `cmp edi, imm8`, sign-extended.
 fn x64_edi_imm8(n: i8, cond: Cond) -> Case {
     Case {
@@ -479,6 +509,12 @@ fn x64_cmp_edi_imm() {
         for n in [0, 5, -7, -128, 127] {
             cases.push(x64_edi_imm8(n, cond));
         }
+        for n in [0, -7, i32::MIN] {
+            cases.push(x64_rdi(n, cond));
+        }
+        for n in [0, 5, -7, 0x7fff, -0x8000] {
+            cases.push(x64_di(n, cond));
+        }
     }
     check_grid(&cases);
 }
@@ -501,7 +537,7 @@ fn arm_cmp_r0_imm() {
         for imm in [0, 5, 0xff, 0x8000_0000] {
             cases.push(arm(imm, false, cond));
         }
-        for imm in [5, 0xff, 0x8000_0000] {
+        for imm in [0, 5, 0xff, 0x8000_0000] {
             cases.push(arm(imm, true, cond));
         }
     }
@@ -529,7 +565,7 @@ fn aarch64_cmp_imm() {
             for imm in [0, 5, 4095] {
                 cases.push(a64(imm, wide, false, cond));
             }
-            for imm in [5, 4095] {
+            for imm in [0, 5, 4095] {
                 cases.push(a64(imm, wide, true, cond));
             }
         }
