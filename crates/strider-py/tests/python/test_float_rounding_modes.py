@@ -88,8 +88,9 @@ def test_the_ceiling_and_round_patterns_do_not_match_each_other():
 
 
 def test_the_round_pattern_matches_the_x87_lift_that_emits_it():
-    """`fistp` lowers to FLOAT_ROUND then a float-to-int conversion, the one
-    place in the fixture corpus a rounding op arrives from real bytes."""
+    """`fistp` lowers to a ties-to-even conversion built on one FLOAT_ROUND,
+    the one place in the fixture corpus a rounding op arrives from real
+    bytes."""
     prog = strider.lift.load_elf(str(fixture_path("x86", "floats")))
     g = prog.analyze(
         "float_to_int",
