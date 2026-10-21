@@ -133,16 +133,6 @@ fn try_forward_load(
         // materialises up to I128.  Bail on wider stores rather than fail; a
         // wide-store-to-narrow-load forward is exotic.
         && store_data_ty.byte_size() <= 16
-        // `narrow` reshapes by the FUNCTION's byte order, which is the data
-        // order.  The REGISTER space has its own: they differ on ARM BE8,
-        // where the sla's register block is little-endian under big-endian
-        // data (`SleighArch::register_endianness`).  Reshaping a mirrored
-        // register slot there would take the wrong half, so the opaque
-        // register path -- already the imprecise fallback -- does not reshape.
-        && !matches!(
-            edit.node_kind(load),
-            NodeKind::Load(rsleigh::VnSpace::REGISTER)
-        )
     {
         narrow(edit, store_data, load)?
     } else {
@@ -183,9 +173,9 @@ fn feeds_an_address(function: &strider_ir::Function, value: ValueId) -> bool {
     false
 }
 
-/// Reshapes a wider store's value down to the load width.  On BE the load's
-/// bytes are the high ones, so a `(store_size - load_size) * 8` shift precedes
-/// the truncate.
+/// Reshapes a wider store's value down to the load width, in the load's space's
+/// byte order.  On BE the load's bytes are the high ones, so a
+/// `(store_size - load_size) * 8` shift precedes the truncate.
 fn narrow(
     edit: &mut crate::EditFunction<'_>,
     store_data: ValueId,
@@ -193,7 +183,10 @@ fn narrow(
 ) -> Result<ValueId> {
     let store_data_ty = edit.value_type(store_data)?;
     let (_, load_ty) = edit.single_value_output(load)?;
-    let endianness = edit.function().endianness();
+    let NodeKind::Load(space) = *edit.node_kind(load) else {
+        unreachable!("narrow reshapes a load");
+    };
+    let endianness = edit.function().byte_order().of(space);
     let shifted = match endianness {
         Endianness::Little => store_data,
         Endianness::Big => {

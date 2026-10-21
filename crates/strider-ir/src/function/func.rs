@@ -32,7 +32,7 @@ pub struct Function {
 
     /// The convention this function was built under.
     default_cc: strider_target::BuiltCallingConvention,
-    endianness: strider_target::Endianness,
+    byte_order: strider_target::ByteOrder,
     /// Every tracked varnode, value-deduped, in `(space, offset, size)` order.
     vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 
@@ -58,10 +58,10 @@ impl Function {
     ///
     /// `tracked_vns` keeps only the largest of nested varnodes
     /// ([`vn_container::dedup_overlapping_largest`]), sorted by space shortcut,
-    /// offset and size.
+    /// offset and size. A bare `Endianness` is the order of every space.
     pub fn new(
         default_cc: strider_target::BuiltCallingConvention,
-        endianness: strider_target::Endianness,
+        byte_order: impl Into<strider_target::ByteOrder>,
         tracked_vns: Vec<rsleigh::Vn>,
     ) -> Self {
         let mut graph = Graph::default();
@@ -83,7 +83,7 @@ impl Function {
             graph,
             entry,
             default_cc,
-            endianness,
+            byte_order: byte_order.into(),
             vn_interner,
             side_tables: SideTables::new(),
             const_interner: entity_utils::EntityInterner::default(),
@@ -199,9 +199,17 @@ impl Function {
         &self.default_cc
     }
 
+    /// The data byte order. A REGISTER-space access follows
+    /// [`Self::byte_order`]'s instead.
     #[inline]
     pub fn endianness(&self) -> strider_target::Endianness {
-        self.endianness
+        self.byte_order.data
+    }
+
+    /// The byte order of each space's loads and stores.
+    #[inline]
+    pub fn byte_order(&self) -> strider_target::ByteOrder {
+        self.byte_order
     }
 
     /// The tracked varnodes in `InitialVnId` order.

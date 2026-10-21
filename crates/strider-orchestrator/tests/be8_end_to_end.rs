@@ -9,8 +9,8 @@
 //! instruction beside it are stored in opposite orders.
 //!
 //! What the split puts at risk, one test each: the register space follows the
-//! sla (`register_endianness`) while loads and stores follow the data order
-//! (`endianness`), and a sub-register landing in the wrong half of its
+//! sla (`register_endianness`) while loads and stores outside it follow the
+//! data order (`endianness`), and a sub-register landing in the wrong half of its
 //! container is a silent miscompile rather than a decode failure.
 
 use object::{Object, ObjectSymbol};

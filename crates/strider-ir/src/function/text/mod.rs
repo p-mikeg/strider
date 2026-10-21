@@ -295,14 +295,16 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool, vn_name: VnName<'_
     }
 
     let mut out = String::new();
-    let _ = writeln!(
-        out,
-        "endian {}",
-        match f.endianness() {
-            strider_target::Endianness::Little => "little",
-            strider_target::Endianness::Big => "big",
-        }
-    );
+    let name = |endianness| match endianness {
+        strider_target::Endianness::Little => "little",
+        strider_target::Endianness::Big => "big",
+    };
+    let bytes = f.byte_order();
+    let _ = write!(out, "endian {}", name(bytes.data));
+    if bytes.register != bytes.data {
+        let _ = write!(out, " register={}", name(bytes.register));
+    }
+    out.push('\n');
     let _ = writeln!(out, "tracked {}", vn_list(f.all_vns(), vn_name));
     let cc_fields = cc_fields(f.default_cc(), vn_name);
     out.push_str("default_cc");

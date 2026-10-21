@@ -73,7 +73,8 @@ tracked register is re-read out of it: a register the write misses reads back
 its own value, and one it may hit reads a value that depends on the store, so
 the optimizer forwards the old value only where it proves the address misses
 that slot. An unresolved LOAD reads the space, answering a register's current
-value when the address names one.
+value when the address names one. The space's loads and stores follow
+`register_endianness`, which `Function::byte_order` carries, not the data order.
 
 ## SSA construction
 
