@@ -63,8 +63,9 @@ fn sliced_from_call_other(f: &Function, v: ValueId, name: &str) -> Option<NodeId
         NodeKind::CallOther { .. } => {
             return (f.call_other_name(producer) == Some(name)).then_some(producer);
         }
-        NodeKind::Truncate | NodeKind::Extend(_) => inputs[0],
-        NodeKind::IntBinaryOp(
+        NodeKind::Truncate
+        | NodeKind::Extend(_)
+        | NodeKind::IntBinaryOp(
             IntBinaryOp::ShiftRight | IntBinaryOp::SShiftRight | IntBinaryOp::ShiftLeft,
         ) => inputs[0],
         NodeKind::IntBinaryOp(IntBinaryOp::And) => match (
