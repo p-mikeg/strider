@@ -478,6 +478,14 @@
 
 ### Fixed
 
+- On `arm_be_kernel` (BE8), a multi-structure `VLD2/3/4` or `VST2/3/4` put
+  each element in the wrong half of its D register: the lifter's
+  REGISTER-space loads and stores were read in the big-endian data order,
+  where the sla's register block is little-endian. A `Function` now carries
+  the REGISTER space's byte order beside the data order, and a register-space
+  load narrowed from a wider store takes it, so that load is forwarded again.
+- Python: `Function.to_text()` names a REGISTER-space byte order unlike the
+  data order, as `endian big register=little` on `arm_be_kernel`.
 - A rewrite template's fresh constant at a shift count is built at the
   shift's width; under an `I1` root it took the root's and was masked, so
   `int_truncate(int_shr(a, 31))` shifted by 1. A count too wide for the shift
@@ -607,6 +615,9 @@
 
 ### Added, Rust
 
+- `strider_target::ByteOrder`, the data and REGISTER-space byte orders, from
+  `SleighArch::byte_order` and `Function::byte_order`. `Function::new` and
+  `FunctionBuilder::new` take one, or a bare `Endianness` for every space.
 - `Reason::PastFunctionEnd`: where code fell through past a
   `FunctionBound::Size` end.
 - `Function::to_text_named(fingerprints, &ArchNames)`: `to_text` with

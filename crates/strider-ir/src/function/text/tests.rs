@@ -676,3 +676,27 @@ fn the_claims_in_force_print_in_the_header() {
     assert_eq!(lines[3], line, "{claimed}");
     assert_eq!(claimed.replacen(&format!("{line}\n"), "", 1), plain);
 }
+
+/// A REGISTER-space order that is not the data order is part of what a
+/// register-space load means, so the header names it; otherwise it is left out.
+#[test]
+fn a_register_order_unlike_the_data_order_prints_in_the_header() {
+    let header = |register| {
+        let mut f = Function::new(
+            strider_target::BuiltCallingConvention::default(),
+            strider_target::ByteOrder {
+                data: strider_target::Endianness::Big,
+                register,
+            },
+            Vec::new(),
+        );
+        let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
+        f.graph_mut().create_node(NodeKind::Return, [ctrl], []);
+        f.to_text(false).lines().next().unwrap().to_owned()
+    };
+    assert_eq!(
+        header(strider_target::Endianness::Little),
+        "endian big register=little"
+    );
+    assert_eq!(header(strider_target::Endianness::Big), "endian big");
+}
