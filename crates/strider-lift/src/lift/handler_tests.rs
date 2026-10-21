@@ -1640,7 +1640,13 @@ pub(super) fn lift_bytes_with_opts(
     let cfg = lifter.build_cfg(0x1000u64.into(), &opts)?;
     let built = cc.build(lifter.sleigh_regs())?;
     Ok(lifter
-        .build_ir_with(&cfg, built, &opts, &rustc_hash::FxHashMap::default())?
+        .build_ir_with(
+            &cfg,
+            built,
+            &opts,
+            &rustc_hash::FxHashMap::default(),
+            &strider_ir::AssumptionOptions::none(),
+        )?
         .function)
 }
 

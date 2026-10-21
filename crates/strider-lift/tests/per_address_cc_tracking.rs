@@ -27,7 +27,13 @@ fn per_address_cc_integer_arg_registers_are_seeded() {
     let opts = strider_cfg::CfgOptions::default();
     let cfg = lifter.build_cfg(0x1000u64.into(), &opts).expect("cfg");
     let f = lifter
-        .build_ir_with(&cfg, cc, &opts, &per_address_ccs)
+        .build_ir_with(
+            &cfg,
+            cc,
+            &opts,
+            &per_address_ccs,
+            &strider_ir::AssumptionOptions::none(),
+        )
         .expect("an override's integer argument register must be tracked")
         .function;
     assert!(
@@ -66,7 +72,13 @@ fn an_override_this_function_never_calls_seeds_nothing() {
     let opts = strider_cfg::CfgOptions::default();
     let cfg = lifter.build_cfg(0x1000u64.into(), &opts).expect("cfg");
     let f = lifter
-        .build_ir_with(&cfg, cc, &opts, &per_address_ccs)
+        .build_ir_with(
+            &cfg,
+            cc,
+            &opts,
+            &per_address_ccs,
+            &strider_ir::AssumptionOptions::none(),
+        )
         .expect("ir")
         .function;
     assert!(
@@ -114,7 +126,13 @@ fn a_tail_calls_override_argument_registers_are_seeded() {
         "premise: the jmp is a tail call to the overridden address"
     );
     let f = lifter
-        .build_ir_with(&cfg, cc, &opts, &per_address_ccs)
+        .build_ir_with(
+            &cfg,
+            cc,
+            &opts,
+            &per_address_ccs,
+            &strider_ir::AssumptionOptions::none(),
+        )
         .expect("a tail call's override argument register must be tracked")
         .function;
     assert!(

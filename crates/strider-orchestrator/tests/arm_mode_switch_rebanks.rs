@@ -6,12 +6,17 @@
 //! extension or status field alone, or to the SPSR, does not, and neither
 //! does one that rewrites the mode the CPU is already in, which is how an
 //! interrupt-mask restore reads (`mrs r2, cpsr; ...; msr cpsr_c, r2`).
+//!
+//! That is the sla's own model, which these tests run under unless they say
+//! otherwise: `msr_register_keeps_mode` off. The claim, on by default, takes a
+//! register-form `msr` to restore the mode in force.
 
 mod common;
 
 use common::Arch;
 use strider_ir::node::{NodeKind, ValueId};
-use strider_ir::{Function, IRViewer};
+use strider_ir::{AssumptionOptions, Function, IRViewer};
+use strider_orchestrator::AnalyzeOptions;
 
 const BASE: u64 = 0x1000;
 
@@ -23,26 +28,40 @@ const A32_R8_IS_5: u32 = 0xe3a0_8005;
 /// `mov r0, r8; bx r4`
 const A32_RETURN_R8: [u32; 2] = [0xe1a0_0008, 0xe12f_ff14];
 
-fn analyze(arch: Arch, bytes: Vec<u8>, entry: u64) -> Function {
+/// The defaults, with `msr_register_keeps_mode` as given.
+fn keeping_mode(keeps: bool) -> AnalyzeOptions<'static> {
+    AnalyzeOptions {
+        assumptions: AssumptionOptions {
+            msr_register_keeps_mode: keeps,
+            ..AssumptionOptions::default()
+        },
+        ..AnalyzeOptions::default()
+    }
+}
+
+fn analyze_with(arch: Arch, bytes: Vec<u8>, entry: u64, opts: &AnalyzeOptions) -> Function {
     let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, None);
-    let result = strider
-        .analyze(entry, &cc, &Default::default(), None)
-        .expect("analyze");
+    let result = strider.analyze(entry, &cc, opts, None).expect("analyze");
     assert!(result.incomplete().is_empty(), "{:?}", result.incomplete());
     result.function
 }
 
+fn a32_with(words: &[u32], opts: &AnalyzeOptions) -> Function {
+    let bytes = common::words_image(words, strider_target::Endianness::Little);
+    analyze_with(Arch::Arm, bytes, BASE, opts)
+}
+
+fn thumb_with(halves: &[u16], opts: &AnalyzeOptions) -> Function {
+    let bytes = halves.iter().flat_map(|h| h.to_le_bytes()).collect();
+    analyze_with(Arch::ArmThumb, bytes, BASE | 1, opts)
+}
+
 fn a32(words: &[u32]) -> Function {
-    analyze(
-        Arch::Arm,
-        common::words_image(words, strider_target::Endianness::Little),
-        BASE,
-    )
+    a32_with(words, &keeping_mode(false))
 }
 
 fn thumb(halves: &[u16]) -> Function {
-    let bytes = halves.iter().flat_map(|h| h.to_le_bytes()).collect();
-    analyze(Arch::ArmThumb, bytes, BASE | 1)
+    thumb_with(halves, &keeping_mode(false))
 }
 
 /// A mode switch's output, or a phi taking one where the switch is

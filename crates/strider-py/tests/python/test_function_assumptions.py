@@ -33,6 +33,7 @@ _FIELDS = (
     "noalias_allocators",
     "escape_analysis",
     "return_slots_survive_untracked_writes",
+    "msr_register_keeps_mode",
 )
 
 
@@ -73,6 +74,7 @@ def test_to_text_names_the_claims_in_force():
     assert claims == [
         "assumptions stack_global_disjoint assume_incoming_args_survive_calls"
         " noalias_allocators=[0x1100] return_slots_survive_untracked_writes"
+        " msr_register_keeps_mode"
     ]
     _lift, floor = _spill_at_floor()
     assert "assumptions" not in floor.to_text()
@@ -197,6 +199,7 @@ def test_union_holds_every_claim_of_both():
         stack_global_disjoint=False,
         assume_incoming_args_survive_calls=False,
         return_slots_survive_untracked_writes=False,
+        msr_register_keeps_mode=False,
         escape_analysis=True,
         noalias_allocators=[3],
     )
@@ -215,6 +218,7 @@ def test_union_holds_every_claim_of_both():
         "noalias_allocators": [1, 3],
         "escape_analysis": True,
         "return_slots_survive_untracked_writes": True,
+        "msr_register_keeps_mode": True,
     }
     assert a | b == both
     assert a.noalias_allocators == [3], "union copies; the operands stay"

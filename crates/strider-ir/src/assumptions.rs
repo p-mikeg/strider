@@ -8,15 +8,19 @@
 /// strider-orchestrator's `AnalyzeOptions::resolve_indirect_branches` defaults
 /// on and is outside it.
 ///
-/// Three default ON, each of which every compiler whose output this analyses
-/// honours: [`stack_global_disjoint`](Self::stack_global_disjoint), without
+/// Four default ON.  Three hold for every compiler whose output this analyses:
+/// [`stack_global_disjoint`](Self::stack_global_disjoint), without
 /// which no stack store is disjoint from a global load nor global store from a
 /// stack load,
 /// [`assume_incoming_args_survive_calls`](Self::assume_incoming_args_survive_calls),
 /// without which a stack argument read after a call is not detected as one, and
 /// [`return_slots_survive_untracked_writes`](Self::return_slots_survive_untracked_writes),
-/// without which a return after any call is reported as unverified.  A fresh
-/// lift holds none, so a test runs at the floor unless it claims one.
+/// without which a return after any call is reported as unverified.  The
+/// fourth, [`msr_register_keeps_mode`](Self::msr_register_keeps_mode), fails
+/// only for ARM code that switches mode through a register, and without it an
+/// interrupt-mask restore the analysis cannot place re-banks `sp` and `lr`.  A
+/// lift holds the claims it is given and `strider_lift`'s `build_ir` none, so
+/// a test runs at the floor unless it claims one.
 ///
 /// Claims accumulate per [`Function`](crate::Function):
 /// [`Function::assume`](crate::Function::assume) merges a set into
@@ -121,6 +125,23 @@ pub struct AssumptionOptions {
     /// return: the call in between writes memory the walk cannot place, and
     /// only this claim carries the walk back to the `lr` spill.
     pub return_slots_survive_untracked_writes: bool,
+    /// An ARM register-form `msr` writing the CPSR control field (`msr
+    /// cpsr_c, rN`) restores a mode saved earlier, so it changes neither the
+    /// mode nor the banked registers (`r8`-`r12` in and out of FIQ, `sp`,
+    /// `lr`, the SPSR); the masks and flags it writes still update.  The
+    /// immediate form and `cps` still switch mode.  Off, the write re-banks
+    /// unless its mode is provably the current one, which it is not where the
+    /// saved flags merge from two saves, come from memory or arrive in an
+    /// argument.
+    ///
+    /// Wrong for code that builds a new mode in a register and writes it, as
+    /// Linux's boot-time `safe_svcmode_maskall` does: the switch is missed and
+    /// the banked registers after it read as the old mode's.
+    ///
+    /// Read by the lifter, so it counts only when the lift is given it
+    /// (`AnalyzeOptions::assumptions`); added to a lifted function it changes
+    /// nothing.  Default ON.
+    pub msr_register_keeps_mode: bool,
 }
 
 impl AssumptionOptions {
@@ -144,6 +165,7 @@ impl AssumptionOptions {
             noalias_allocators: rustc_hash::FxHashSet::default(),
             escape_analysis: false,
             return_slots_survive_untracked_writes: false,
+            msr_register_keeps_mode: false,
         }
     }
 
@@ -159,6 +181,7 @@ impl AssumptionOptions {
             noalias_allocators,
             escape_analysis,
             return_slots_survive_untracked_writes,
+            msr_register_keeps_mode,
         } = other;
         self.stack_global_disjoint |= *stack_global_disjoint;
         self.assume_incoming_args_survive_calls |= *assume_incoming_args_survive_calls;
@@ -167,6 +190,7 @@ impl AssumptionOptions {
         self.noalias_allocators.extend(noalias_allocators);
         self.escape_analysis |= *escape_analysis;
         self.return_slots_survive_untracked_writes |= *return_slots_survive_untracked_writes;
+        self.msr_register_keeps_mode |= *msr_register_keeps_mode;
     }
 
     /// The claims `self` holds that `other` does not, by field name in
@@ -182,6 +206,7 @@ impl AssumptionOptions {
             noalias_allocators,
             escape_analysis,
             return_slots_survive_untracked_writes,
+            msr_register_keeps_mode,
         } = self;
         [
             (
@@ -213,6 +238,10 @@ impl AssumptionOptions {
                 *return_slots_survive_untracked_writes
                     && !other.return_slots_survive_untracked_writes,
             ),
+            (
+                "msr_register_keeps_mode",
+                *msr_register_keeps_mode && !other.msr_register_keeps_mode,
+            ),
         ]
         .into_iter()
         .filter_map(|(name, omitted)| omitted.then_some(name))
@@ -231,6 +260,7 @@ impl AssumptionOptions {
             noalias_allocators,
             escape_analysis,
             return_slots_survive_untracked_writes,
+            msr_register_keeps_mode,
         } = other;
         (!stack_global_disjoint || self.stack_global_disjoint)
             && (!assume_incoming_args_survive_calls || self.assume_incoming_args_survive_calls)
@@ -240,6 +270,7 @@ impl AssumptionOptions {
             && (!escape_analysis || self.escape_analysis)
             && (!return_slots_survive_untracked_writes
                 || self.return_slots_survive_untracked_writes)
+            && (!msr_register_keeps_mode || self.msr_register_keeps_mode)
     }
 }
 
@@ -253,6 +284,7 @@ impl Default for AssumptionOptions {
             noalias_allocators: rustc_hash::FxHashSet::default(),
             escape_analysis: false,
             return_slots_survive_untracked_writes: true,
+            msr_register_keeps_mode: true,
         }
     }
 }
