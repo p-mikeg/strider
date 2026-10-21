@@ -55,7 +55,13 @@ pub struct AssumptionOptions {
     /// plus a constant below that memory, which is taken to stay inside its
     /// own frame object.  Any other use that exposes a stack address
     /// (arithmetic the analysis cannot place, a `Phi`) counts wherever it
-    /// starts.  Like
+    /// starts.  A stored address is not followed through its reload, so a
+    /// base below that memory spilled and then offset into it is missed
+    /// (GCC and LLVM rematerialise such a base).  A custom convention whose
+    /// ABI homes or splits register arguments next to the stack ones (ARM,
+    /// MIPS, PPC64, riscv, Win64) must set
+    /// [`reg_args_adjoin_stack_args`](strider_target::BuiltCallingConvention::reg_args_adjoin_stack_args).
+    /// Like
     /// [`escape_analysis`](Self::escape_analysis), the check misses a callee
     /// reading an address from a register its convention preserves.  A
     /// memory-clobbering `CallOther` is outside it entirely.
