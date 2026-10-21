@@ -243,34 +243,23 @@ cfg
   0x4011e5 12 ops return -> []
   0x4011e9 4 ops return -> []
 tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x18d00:1, u:0x18e00:1, u:0x19000:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x68e00:4, u:0x69000:4]
-arg 0 [%v1]
-arg 1 [%v19]
+arg 0 [%v2]
+arg 1 [%v8]
 %v0:ctrl = entry
-%v1:i32 = initial_var[EAX]
-%v2:i32 = iconst[0x64]
-%v3:i1 = icmp.equal %v1, %v2
-%v4:i1 = iconst[0x1]
-%v5:i1 = int.xor %v3, %v4
-%v6:i1 = icmp.sborrow %v1, %v2
-%v7:i8 = extend.zero %v6
-%v8:i32 = iconst[0xffffff9c]
-%v9:i32 = int.add %v1, %v8
-%v10:i32 = iconst[0x0]
-%v11:i1 = icmp.sless %v9, %v10
-%v12:i8 = extend.zero %v11
-%v13:i1 = icmp.equal %v7, %v12
-%v14:i1 = int.and %v5, %v13
-%v15:ctrl, %v16:ctrl = if %v0, %v14
-%v17:mem = initial_memory
-%v18:i32 = iconst[0xffffffff]
-%v19:i32 = initial_var[EDX]
-%v20:i80 = initial_var[ST0]
-%v21:i80 = initial_var[ST1]
-%v22:i128 = initial_var[XMM0]
-return %v15, %v17, %v18, %v19, %v20, %v21, %v22
-%v23:i32 = iconst[0x1]
-%v24:i32 = int.add %v1, %v23
-return %v16, %v17, %v24, %v19, %v20, %v21, %v22
+%v1:i32 = iconst[0x64]
+%v2:i32 = initial_var[EAX]
+%v3:i1 = icmp.sless %v1, %v2
+%v4:ctrl, %v5:ctrl = if %v0, %v3
+%v6:mem = initial_memory
+%v7:i32 = iconst[0xffffffff]
+%v8:i32 = initial_var[EDX]
+%v9:i80 = initial_var[ST0]
+%v10:i80 = initial_var[ST1]
+%v11:i128 = initial_var[XMM0]
+return %v4, %v6, %v7, %v8, %v9, %v10, %v11
+%v12:i32 = iconst[0x1]
+%v13:i32 = int.add %v2, %v12
+return %v5, %v6, %v13, %v8, %v9, %v10, %v11
 
 == main @0x4011f0
 cfg
