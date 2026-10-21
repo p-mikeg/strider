@@ -51,7 +51,9 @@ pub enum TemplateKind {
 #[derive(Clone, Copy)]
 pub enum TemplateTy {
     /// No width of its own: the one the node is evaluated at, which is the
-    /// rewrite root's output type unless an operand group pins another.
+    /// rewrite root's output type unless an operand group pins another. A
+    /// shift count takes the shift's width; an operand at another slot that
+    /// owes its node no width must be typed.
     InheritRoot,
     /// The width of the value a bound LHS capture matched, for an interior
     /// node whose width comes from a captured operand the root does not
@@ -64,8 +66,8 @@ pub enum TemplateTy {
 
 /// Materialises `template` as an IR sub-graph rooted at the returned output.
 ///
-/// `root_ty` types any node whose [`TemplateTy`] is
-/// [`TemplateTy::InheritRoot`] and whose width no operand group pins.
+/// `root_ty` types the root's operand group, and a
+/// [`TemplateTy::InheritRoot`] value no template node consumes.
 /// `lhs_root` reaches [`TemplateKind::Fn`] closures as [`TemplateCtx::root`];
 /// a pure-`Exact` template ignores it.
 ///
@@ -340,13 +342,16 @@ fn exact_kind(template: &Template, node_vtx: NodeId) -> Option<NodeKind> {
 /// ([`TemplateTy::InheritRoot`]) takes the width of the group it is evaluated
 /// in, so a fresh constant in a comparison operand gets the OPERAND width and
 /// not the `I1` verdict the root carries. The rewrite root itself is what
-/// replaces the matched value, so its group takes `root_ty`.
+/// replaces the matched value, so its group takes `root_ty`. A shift count
+/// with no width of its own takes the shift's.
 ///
 /// # Errors
 ///
 /// If a group a node's width is tied to carries no width at all: every member
-/// is built fresh with no declared type, so any width picked here is arbitrary
-/// and the pick shows up as IR `strider_ir::validate` rejects.
+/// is built fresh with no declared type, so any width picked here is arbitrary.
+/// At a slot [`NodeKind::operand_width`] leaves free, such as a `Popcount`
+/// operand, `strider_ir::validate` would accept the pick and the constant
+/// would hold a different value.
 fn resolve_value_tys(
     template: &Template,
     order: &[NodeId],
@@ -365,6 +370,9 @@ fn resolve_value_tys(
     let mut groups = WidthGroups::new(len);
     // The consumer that ties each vertex to a group, for the error naming it.
     let mut tied_by: FxHashMap<TmplValueId, (NodeKind, usize)> = FxHashMap::default();
+    // `(count, shift output)`: a count with no width of its own takes the
+    // shift's, as the lifter emits it. Never the other way round.
+    let mut counts: Vec<(TmplValueId, TmplValueId)> = Vec::new();
 
     for &node_vtx in order {
         let Some(kind) = exact_kind(template, node_vtx) else {
@@ -376,12 +384,18 @@ fn resolve_value_tys(
             let head = match kind.operand_width(slot) {
                 OperandWidth::OfOutput => first_value_output_vtx(template, node_vtx),
                 OperandWidth::OfFirstOperand => first_operand,
-                // A conversion pins its input apart from its output.
-                OperandWidth::Conversion(_) => {
+                // A conversion pins its input apart from its output, and a
+                // free slot pins it to nothing.
+                width @ (OperandWidth::Conversion(_) | OperandWidth::Free) => {
                     tied_by.entry(producer).or_insert((kind, slot));
+                    if width == OperandWidth::Free
+                        && matches!(kind, NodeKind::IntBinaryOp(op) if op.is_shift())
+                        && let Some(out) = first_value_output_vtx(template, node_vtx)
+                    {
+                        counts.push((producer, out));
+                    }
                     continue;
                 }
-                OperandWidth::Free => continue,
             };
             let Some(head) = head.filter(|&h| h != producer) else {
                 continue;
@@ -424,6 +438,22 @@ fn resolve_value_tys(
     if let Some(vtx) = first_value_output_vtx(template, root) {
         let g = groups.find(vtx);
         group_ty.insert(g, root_ty);
+    }
+    // To a fixpoint: a count can be the output of another shift whose own
+    // width comes from a count.
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for &(count, out) in &counts {
+            let g = groups.find(count);
+            if group_ty.contains_key(&g) {
+                continue;
+            }
+            if let Some(&t) = group_ty.get(&groups.find(out)) {
+                group_ty.insert(g, t);
+                changed = true;
+            }
+        }
     }
 
     let mut by_vertex: FxHashMap<TmplValueId, ValueType> = FxHashMap::default();
@@ -848,5 +878,103 @@ mod tests {
             fx.node_kind(node),
             NodeKind::IntBinaryOp(IntBinaryOp::Add)
         ));
+    }
+
+    /// `Sless(5:I32, 0:I32):I1`; `int_slt(var(a), int_const(0))` binds `a` to
+    /// the `I32` `5`.
+    fn sign_test_over_i32() -> Function {
+        make_empty_fn(|b| {
+            let a = b.build_int_const(5u64, T::int(32))?;
+            let z = b.build_int_const(0u64, T::int(32))?;
+            b.build_int_cmp_operation(a, z, IntCmpOp::Sless, T::int(32))
+        })
+        .unwrap()
+    }
+
+    /// The type and value of the count of the one shift at or below `node`.
+    #[track_caller]
+    fn shift_count(fx: &Function, node: NodeId) -> (ValueType, u128) {
+        let mut stack = vec![node];
+        while let Some(n) = stack.pop() {
+            if let NodeKind::IntBinaryOp(op) = fx.node_kind(n)
+                && op.is_shift()
+            {
+                let count = fx.node_inputs(n)[1];
+                return (
+                    fx.value_type(count).unwrap(),
+                    fx.int_const_u128(count).unwrap(),
+                );
+            }
+            stack.extend(fx.node_inputs(n).into_iter().map(|v| fx.producer(v)));
+        }
+        panic!("the RHS builds a shift");
+    }
+
+    /// A shift count is evaluated at the shift's width, not at the `I1` the
+    /// root carries: masked to `I1`, 31 would test bit 1.
+    #[test]
+    fn a_fresh_shift_count_under_an_i1_root_keeps_its_value() {
+        let a = Capture::new();
+        let mut fx = sign_test_over_i32();
+        let lhs = crate::int_slt(var(a), crate::int_const(0u128)).into_pattern();
+        let rhs =
+            super::int_truncate(super::int_shr(var(a), crate::int_const(31u128))).into_template();
+
+        let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
+        assert_eq!(shift_count(&fx, node), (T::int(32), 31));
+    }
+
+    /// The same count inside a bit test, where the shift is two operands
+    /// below the `I1` root.
+    #[test]
+    fn a_fresh_shift_count_in_a_bit_test_keeps_its_value() {
+        let a = Capture::new();
+        let mut fx = sign_test_over_i32();
+        let lhs = crate::int_slt(var(a), crate::int_const(0u128)).into_pattern();
+        let rhs = super::int_eq(
+            super::int_and(
+                super::int_shr(var(a), crate::int_const(5u128)),
+                crate::int_const(1u128),
+            ),
+            crate::int_const(0u128),
+        )
+        .into_template();
+
+        let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
+        assert_eq!(shift_count(&fx, node), (T::int(32), 5));
+    }
+
+    /// A `Popcount` operand owes its output no width, so a fresh constant
+    /// there has none to take.
+    #[test]
+    fn a_fresh_popcount_operand_is_refused() {
+        let x = Capture::new();
+        let mut fx = cmp_over_i64();
+        let lhs = crate::int_eq(var(x), crate::int_const(1u128)).into_pattern();
+        let rhs =
+            super::int_eq(var(x), super::int_popcount(crate::int_const(0xffu128))).into_template();
+
+        let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
+        assert!(err.contains("Popcount"), "got: {err}");
+        assert!(err.contains("has no width"), "got: {err}");
+    }
+
+    /// Typed through a capture, the same operand builds at that width.
+    #[test]
+    fn a_capture_typed_popcount_operand_takes_the_capture_width() {
+        let x = Capture::new();
+        let mut fx = cmp_over_i64();
+        let lhs = crate::int_eq(var(x), crate::int_const(1u128)).into_pattern();
+        let rhs = super::int_eq(
+            var(x),
+            super::int_popcount(crate::capture_typed(x, crate::int_const(0xffu128))),
+        )
+        .into_template();
+
+        let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
+        let popcount = fx.producer(fx.node_inputs(node)[1]);
+        let operand = fx.node_inputs(popcount)[0];
+        assert_eq!(fx.value_type(operand).unwrap(), T::int(64));
+        assert_eq!(fx.int_const_u128(operand), Some(0xff));
     }
 }
