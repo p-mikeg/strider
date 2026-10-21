@@ -301,13 +301,16 @@ symbols are taken. `add_symbols` takes an address, or an `(address, size)` pair
 when the extent is known, which lets `symbol_at` resolve an address inside the
 symbol. A name an already-loaded ELF carries keeps its ELF answer.
 
-A `Symbol` carries `name`, `address`, `size`, `end`, `is_function`, `is_thumb`
-and `region`. `size` is `None` when the ELF records no extent (`st_size == 0`,
+A `Symbol` carries `name`, `address`, `size`, `end`, `is_function`, `is_thumb`,
+`local_entry` and `region`. `size` is `None` when the ELF records no extent (`st_size == 0`,
 as for a hand-written `.S` entry point with no `.size` directive); `end` is
 `None` there too. `region` is the `(start, end)` of the loaded region the
 symbol maps into, such as `.text`. A Thumb function's `address` keeps the ISA
 bit, which is what makes `analyze` enter it in Thumb mode; `end`, `region` and
-`symbol_at` measure it from `address & ~1`.
+`symbol_at` measure it from `address & ~1`. `local_entry` is where a call
+sharing the symbol's TOC enters it: on ppc64 ELFv2, `address` plus the
+local-entry offset `st_other` encodes (usually 8, past the TOC setup), and
+`address` everywhere else.
 
 `symbol(name)` resolves to a definition first, and otherwise to an undefined
 symbol that has an address: a PLT stub, or an object file's extern address.
@@ -1044,9 +1047,13 @@ symbols unless the options already name some.
 
 `no_return_targets` lists direct-call targets that never return (`exit`,
 `abort`): a call to one ends its region, under `build_cfg` and `analyze`
-alike, and it is the only way to mark one. A Thumb or MIPS16 callee is listed
-at its decoded, even address, so mask the ISA bit off a symbol value
-(`addr & ~1`).
+alike, and it is the only way to mark one. A target is the address the call
+instruction names. A Thumb or MIPS16 callee is listed at its decoded, even
+address, so mask the ISA bit off a symbol value (`addr & ~1`). A ppc64 ELFv2
+call from the same module lands at the callee's `Symbol.local_entry`, usually
+8 bytes past its `address`. `ElfLifter.analyze` adds that local entry for every
+listed `address`, and for every `per_address_ccs` key; `build_cfg` and a plain
+`Lifter` take both tables as given, so list `local_entry` there.
 
 ---
 

@@ -9,6 +9,7 @@ mod encodings_tests;
 
 pub use load::{ElfImage, OwnedElf, RelocationMode, load_elf};
 pub use reader::ElfFileMemReader;
+pub use relocations::local_entry_offset;
 #[cfg(feature = "test-util")]
 pub use sections::LoadFilter;
 pub use sections::{

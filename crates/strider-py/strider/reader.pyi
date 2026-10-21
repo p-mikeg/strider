@@ -120,6 +120,13 @@ class Symbol:
         symbol maps into, such as the `.text` mapping, or `None` when its
         address falls in no mapped region."""
         ...
+    @property
+    def local_entry(self) -> int:
+        """Where a call sharing the symbol's TOC enters: on ppc64 ELFv2,
+        `address` plus the local-entry offset `st_other` encodes (usually 8,
+        past the TOC setup), which is the target of every same-module `bl`.
+        `address` itself everywhere else, and for a symbol with no offset."""
+        ...
     def __repr__(self) -> str: ...
 
 class SymbolIter:
