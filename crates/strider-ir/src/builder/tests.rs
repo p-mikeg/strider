@@ -2977,7 +2977,23 @@ fn a_stack_address_in_a_clobbered_register_at_a_call_is_recorded() -> Result<()>
         let low = b.truncate_if_needed(slot, ValueType::int(32))?;
         b.extend_if_needed(low, ValueType::int(64), ExtendOp::ZeroExtend)
     })?;
-    assert!(f.side_tables().frame_address_in_call_register());
+    // It has no constant offset from the entry SP.
+    assert_eq!(f.side_tables().call_register_frame_reach(), Some(i128::MAX));
+    Ok(())
+}
+
+/// `sp - 24 + 8`, the way the lifter spells `sub rsp, 24; lea rax, [rsp+8]`.
+#[test]
+fn a_held_stack_address_records_its_offset_from_the_entry_sp() -> Result<()> {
+    let f = call_with_register_holding(true, false, |b, sp| {
+        let ty = ValueType::int(64);
+        let k = b.build_int_const(24u64, ty)?;
+        let neg = b.build_int_unary_operation(k, IntUnaryOp::Neg, ty)?;
+        let frame = b.build_int_binary_operation(sp, neg, IntBinaryOp::Add, ty)?;
+        let eight = b.build_int_const(8u64, ty)?;
+        b.build_int_binary_operation(frame, eight, IntBinaryOp::Add, ty)
+    })?;
+    assert_eq!(f.side_tables().call_register_frame_reach(), Some(-16));
     Ok(())
 }
 
