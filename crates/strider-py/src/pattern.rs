@@ -217,8 +217,8 @@ pub(crate) enum CastKind {
 
 /// A build-valid shape: what a `Template` holds, and what a `Pat` holds under
 /// [`PatRepr::Build`] when built by a constructor `strider.template` shares.
-/// Every variant compiles on both sides, though a nested operand can still be
-/// refused.
+/// Every variant but `CaptureTyped`, which only a `Template` holds, compiles on
+/// both sides, though a nested operand can still be refused.
 pub(crate) enum TmplRepr {
     Var(Capture),
     IntConst(u128),
@@ -249,6 +249,8 @@ pub(crate) enum TmplRepr {
     BoolBinary(strider_ir::IntBinaryOp, Py<PyAny>, Py<PyAny>),
     /// Lowers to `int_xor(x, 1)`.
     BoolNot(Py<PyAny>),
+    /// The operand, typed at the width of the value the capture bound.
+    CaptureTyped(Capture, Py<PyAny>),
 }
 
 /// The recursive shape of a `PyPat`; recompiled fresh on every query.
@@ -686,6 +688,7 @@ impl TmplRepr {
             TmplRepr::FloatNe(..) => "float_ne()",
             TmplRepr::BoolBinary(..) => "bool_binary()",
             TmplRepr::BoolNot(_) => "bool_not()",
+            TmplRepr::CaptureTyped(..) => "capture_typed()",
         }
     }
 }
@@ -877,7 +880,8 @@ impl TmplRepr {
             | TmplRepr::Cast(_, x)
             | TmplRepr::Extend(_, x)
             | TmplRepr::FloatUnary(_, x)
-            | TmplRepr::BoolNot(x) => visit.call(x)?,
+            | TmplRepr::BoolNot(x)
+            | TmplRepr::CaptureTyped(_, x) => visit.call(x)?,
             TmplRepr::IntBinary(_, l, r)
             | TmplRepr::Sub(l, r)
             | TmplRepr::IntCmp(_, l, r)
@@ -1286,6 +1290,9 @@ fn compile_tmpl_match(t: &TmplRepr, py: Python<'_>) -> PyResult<DynMatch> {
         TmplRepr::FloatNe(l, r) => bin_match(py, l, r, sp::float_ne),
         TmplRepr::BoolBinary(op, l, r) => bin_match(py, l, r, |l, r| sp::bool_binary(*op, l, r)),
         TmplRepr::BoolNot(x) => un_match(py, x, sp::bool_not),
+        TmplRepr::CaptureTyped(..) => Err(into_strider_err(anyhow::anyhow!(
+            "capture_typed() builds a rewrite RHS and matches nothing"
+        ))),
     }
 }
 
@@ -1381,6 +1388,10 @@ fn compile_tmpl_template(t: &TmplRepr, py: Python<'_>) -> PyResult<DynTemplate> 
         TmplRepr::FloatNe(l, r) => bin_tpl(py, l, r, tpl::float_ne),
         TmplRepr::BoolBinary(op, l, r) => bin_tpl(py, l, r, |l, r| tpl::bool_binary(*op, l, r)),
         TmplRepr::BoolNot(x) => un_tpl(py, x, tpl::bool_not),
+        TmplRepr::CaptureTyped(c, x) => {
+            let c = *c;
+            un_tpl(py, x, |x| sp::capture_typed(c, x))
+        }
     }
 }
 
