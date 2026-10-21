@@ -75,6 +75,9 @@ pub struct AssumptionOptions {
     /// Callee addresses of pure `noalias` heap allocators (`malloc`/`calloc`-like:
     /// a size in, a fresh non-overlapping pointer out, no pointer arguments).
     /// Distinct allocations are disjoint and a load steps through such a call.
+    /// An allocation also overlaps no stack slot and no constant address (a
+    /// global, `.rodata`, MMIO), so an allocator carving from a static or a
+    /// caller-supplied arena does not qualify.
     /// Empty (the default) leaves the feature off.
     ///
     /// Each address must genuinely satisfy that contract.  Listing one that can
