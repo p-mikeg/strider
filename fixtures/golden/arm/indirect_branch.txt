@@ -59,7 +59,7 @@ cfg
   0x51c 75 ops switch@0x540.7 [0x544/isa0, 0x550/isa0]
   0x544 30 ops return -> []
   0x550 30 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x2f00:4, u:0x5d00:4, u:0x5e00:1, u:0x5f00:1, u:0x6000:1, u:0x6100:1, u:0x6200:1, u:0x6500:4, u:0x6600:4, u:0x6800:4, u:0x6b00:4, u:0x10700:4, u:0x12300:4, u:0x9d000:4, u:0xf7500:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x2f00:4, u:0x5d00:4, u:0x5e00:1, u:0x5f00:1, u:0x6000:1, u:0x6100:1, u:0x6200:1, u:0x6500:4, u:0x6600:4, u:0x6800:4, u:0x6b00:4, u:0x10700:4, u:0x12300:4, u:0x9d000:4, u:0xf7600:4]
 arg 0 [%v11]
 arg 1 [%v28]
 float_arg 0 [%v29]
