@@ -116,7 +116,7 @@ backtrace into the message too.
 that change what existing code sees, rather than adding to it:
 
 - Every `AssumptionOptions` claim is a premise the analysis cannot check, and
-  three of them default on. `AssumptionOptions.none()` is the floor.
+  four of them default on. `AssumptionOptions.none()` is the floor.
 - A `Call`'s output slots are numbered per clobbered register now, so a query
   reading `.output(slot)` positionally has to follow.
 - `cfg.incomplete` lists every reason a result can be incomplete; an empty
