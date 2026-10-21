@@ -514,6 +514,10 @@
 
 ### Fixed
 
+- Python: `Function.rewrite` / `rewrite_all` (and a Rust `rewrite_rule`)
+  of an `initial_var` or `phi` root to a replacement that builds nodes
+  raises `StriderError`. It built nodes with no instruction address, which
+  `validate` rejected, and the next `optimize` failed.
 - A signed compare against an immediate (`cmp edi, 5; jl`, `cmp w0, #5;
   b.gt`, `cmn r0, #5; bge`, `cmp r0, #0; ble`, and a loop's `add w1, w1,
   #1; cmp w1, #15; b.le`) folds to one `Sless`, as a register compare does,
