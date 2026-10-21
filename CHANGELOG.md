@@ -488,6 +488,13 @@
 
 ### Fixed
 
+- PowerPC `slbmfee`, `slbmfev` and `slbfee.` write RT, `xsiexpdp` writes XT
+  and `vminud` writes vrD; each left the old value in place, so `slbmfev r5,
+  r6; mr r3, r5` returned the incoming r5. `xscmpexpdp`, `xscmpexpqp`,
+  `xscmpoqp`, `xscmpuqp`, `xststdcdp`, `xststdcqp` and `xststdcsp` write CR
+  field BF, and a branch on it no longer folds on the field's earlier value.
+  `paste.` sets CR0 from the paste: it forced EQ, so the failure path of a
+  `paste.; beq` was deleted.
 - ARM `msr` writing the CPSR control field (`cpsr_c`, `cpsr_fsxc`, ...),
   A32 and Thumb-2, re-banks registers as `cps` does when it writes a mode
   other than the current one: it switched mode silently, so `mov r8, #5`
