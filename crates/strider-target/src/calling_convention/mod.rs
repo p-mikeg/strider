@@ -1156,6 +1156,14 @@ impl CallingConvention {
     }
 
     /// Returns the Linux kernel-internal CC for x86 32-bit (`-mregparm=3`).
+    ///
+    /// A variadic callee (`printk`) and an `asmlinkage` one (`regparm(0)`)
+    /// take every argument on the stack, yet a call to one under this
+    /// convention still lists EAX, EDX and ECX as arguments 0-2, so its first
+    /// argument reads as `arg(3)`.  Map such callees to [`Self::x86_cdecl`] in
+    /// `AnalyzeOptions::per_address_ccs`.  To analyse one of them, pass
+    /// `x86_cdecl` as its own convention and map its regparm callees to this
+    /// one.
     #[must_use]
     pub const fn x86_linux_kernel() -> Self {
         // Kernel-internal presets exist for x86 32-bit and PowerPC; every
