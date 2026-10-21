@@ -3,7 +3,7 @@
 // MIPS kernel's `__mm_isBranchInstr`:
 //
 //     int bitfield_dispatch(struct { u64 pad, insn; } *d, int y) {
-//         u32 w = d->insn >> 32;
+//         u32 w = *(u32 *)((char *)d + 8);  /* insn's high half on mips64be */
 //         if (y & 1)
 //             switch (w >> 26) { /* 0..7, 16..23, 61 */ default: ... }
 //         switch ((w >> 21) & 0x1f) { /* 0, 3, .., 27 */ default: ... }
