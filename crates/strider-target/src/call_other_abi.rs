@@ -267,6 +267,34 @@ const PPC_MSR: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     no_return: false,
 });
 
+/// FPSCR.FPCC, which a VSX compare or data-class test sets as it sets CR
+/// field BF; `mcrfs` and `mffs` read it back.
+const PPC_FPCC: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &["fp_cc0", "fp_cc1", "fp_cc2", "fp_cc3"],
+    clobbers_memory: false,
+    no_return: false,
+});
+
+/// [`PPC_FPCC`] plus the invalid-operation bits and summaries a
+/// quad-precision compare raises (VXSNAN, and VXVC for `xscmpoqp`).
+const PPC_FPCC_VX: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &[
+        "fp_cc0",
+        "fp_cc1",
+        "fp_cc2",
+        "fp_cc3",
+        "fp_fx",
+        "fp_fex",
+        "fp_vx",
+        "fp_vxsnan",
+        "fp_vxvc",
+    ],
+    clobbers_memory: false,
+    no_return: false,
+});
+
 /// Every FPSCR bit `mtfsf` can rewrite (`FM=0xff`), which `setSummaryFPSCR`
 /// and `mcrfs` read back directly.
 const PPC_FPSCR: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
@@ -471,6 +499,16 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     ("vsx300_7", MEM_CLOBBER),  // lxvb16x
     ("vsx300_8", MEM_CLOBBER),  // lxvh8x
     ("vsx300_9", MEM_CLOBBER),  // lxvl
+    // The compares and data-class tests set FPSCR.FPCC alongside CR field BF,
+    // which the sla writes from the op; the quad-precision compares also
+    // raise VXSNAN, `xscmpoqp` VXVC.
+    ("vsx300_29", PPC_FPCC),    // xscmpexpdp
+    ("vsx300_30", PPC_FPCC),    // xscmpexpqp
+    ("vsx300_34", PPC_FPCC_VX), // xscmpoqp
+    ("vsx300_35", PPC_FPCC_VX), // xscmpuqp
+    ("vsx300_74", PPC_FPCC),    // xststdcdp
+    ("vsx300_75", PPC_FPCC),    // xststdcqp
+    ("vsx300_76", PPC_FPCC),    // xststdcsp
     // Store-conditional and byte-reverse stores write RAM; dcbz zeroes a
     // block; dcbf/dcbst/icbi and TLB/SLB management are ordering barriers;
     // icswx/copy-paste and doorbell messages have external memory effects.
@@ -559,11 +597,12 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
     // GHIDRA emits Altivec / VSX / named vector intrinsics as `altv207_<n>`,
     // `vsx<ver>_<n>`, and `vector<Op>`.  Reached only after `PPC_TABLE`, which
     // holds the nineteen `vsx*` forms whose memory access the sla leaves out of
-    // the p-code; everything else in the three families is register compute
-    // touching no RAM, its destination written from the op's output. The
-    // stock sla wrote some nowhere, and the fork patches them: `xsiexpdp`'s
-    // XT, `vminud`'s vrD, and CR field BF of the seven VSX exponent compares
-    // and data-class tests.
+    // the p-code and the seven compares that also set FPSCR bits; everything
+    // else in the three families is register compute touching no RAM, its
+    // destination written from the op's output. The stock sla wrote some
+    // nowhere, and the fork patches them: `xsiexpdp`'s XT, `vminud`'s vrD,
+    // and CR field BF of those seven compares. The FPSCR status bits the
+    // arithmetic forms set (FPRF, FX, OX, UX, XX, VX*) are not modelled.
     if name.starts_with("altv") || name.starts_with("vsx") || name.starts_with("vector") {
         return Some(PURE);
     }
