@@ -141,7 +141,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .copied()
             .collect();
         let mut builder =
-            strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch().endianness())?;
+            strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch().byte_order())?;
         builder.set_internal_registers(
             lifter
                 .arch()

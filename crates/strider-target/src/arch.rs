@@ -33,6 +33,37 @@ impl Endianness {
     }
 }
 
+/// The byte order of each address space: the data order, and the Sleigh
+/// REGISTER space's, which differ only on ARM BE8
+/// ([`SleighArch::register_endianness`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct ByteOrder {
+    pub data: Endianness,
+    pub register: Endianness,
+}
+
+impl ByteOrder {
+    /// The order of a load or store in `space`.
+    #[must_use]
+    pub fn of(self, space: rsleigh::VnSpace) -> Endianness {
+        if space == rsleigh::VnSpace::REGISTER {
+            self.register
+        } else {
+            self.data
+        }
+    }
+}
+
+/// One order for every space.
+impl From<Endianness> for ByteOrder {
+    fn from(order: Endianness) -> Self {
+        Self {
+            data: order,
+            register: order,
+        }
+    }
+}
+
 #[cfg(test)]
 mod endianness_tests {
     use super::Endianness;
@@ -399,12 +430,21 @@ impl SleighArch {
     /// encoding) with big-endian data, mirroring GHIDRA's `ARM:LEBE:32`. Its
     /// register block therefore took the `@if ENDIAN == "little"` branch of
     /// `ARM.sinc`, where `d0` is the LOW half of `q0`; the big-endian branch
-    /// reverses the name lists instead. Sub-register slicing must follow this,
-    /// while loads and stores follow [`Self::endianness`].
+    /// reverses the name lists instead. Sub-register slicing and REGISTER-space
+    /// loads and stores must follow this, while every other load and store
+    /// follows [`Self::endianness`].
     pub fn register_endianness(&self) -> Endianness {
         match self.preset {
             ArchPreset::ArmBeKernel => Endianness::Little,
             _ => self.endianness,
+        }
+    }
+
+    /// [`Self::endianness`] and [`Self::register_endianness`] together.
+    pub fn byte_order(&self) -> ByteOrder {
+        ByteOrder {
+            data: self.endianness(),
+            register: self.register_endianness(),
         }
     }
 
