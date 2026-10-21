@@ -17,9 +17,9 @@ fn cleared() -> PyErr {
 /// A `custom(...)` convention or user-op ABI froze varnodes resolved against
 /// one arch's register table; the same name denotes a different varnode under
 /// another sla (x86-64 `EDI` is `%[0x38]:4`, x86 `EDI` is `%[0x1c]:4`), so
-/// consuming it there silently mismatches every register. Two presets over
-/// one sla (`arm` / `arm_thumb` / `arm_be_kernel`) resolve alike. The
-/// preset compare comes first: an sla compare reads the whole blob.
+/// consuming it there silently mismatches every register. Two presets with
+/// one register table (`arm` / `arm_thumb` / `arm_be_kernel`) resolve alike.
+/// The preset compare comes first: the table compare walks every register.
 fn check_source_arch(
     source_arch: Option<strider_target::SleighArch>,
     target: strider_target::SleighArch,
@@ -27,7 +27,8 @@ fn check_source_arch(
 ) -> PyResult<()> {
     match source_arch {
         Some(source)
-            if source.preset() != target.preset() && source.sla_spec() != target.sla_spec() =>
+            if source.preset() != target.preset()
+                && source.names().regs() != target.names().regs() =>
         {
             let (source, target) = (source.preset().name(), target.preset().name());
             Err(into_strider_err(anyhow::anyhow!(
