@@ -847,7 +847,7 @@ return %v135, %v136, %v189, %v138, %v139, %v140, %v141, %v142
 == narrow_widths @0x106fc
 cfg
   0x106fc 143 ops return -> []
-tracked [r0, r1, r2, r3, r11, r12, sp, lr, pc, CY, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x5d00:4, u:0x5e00:1, u:0x5f00:1, u:0x6000:1, u:0x6100:1, u:0x6200:1, u:0x10500:4, u:0x10700:4, u:0x12500:4, u:0x9f600:1, u:0xa0600:2, u:0xa0a00:1, u:0xa0e00:2, u:0xf9400:1, u:0xf9800:2]
+tracked [r0, r1, r2, r3, r11, r12, sp, lr, pc, CY, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x5d00:4, u:0x5e00:1, u:0x5f00:1, u:0x6000:1, u:0x6100:1, u:0x6200:1, u:0x10500:4, u:0x10700:4, u:0x12500:4, u:0xa0600:1, u:0xa1600:2, u:0xa1a00:1, u:0xa1e00:2, u:0xfcb00:1, u:0xfcf00:2]
 arg 0 [%v13]
 arg 1 [%v18]
 arg 2 [%v23]
