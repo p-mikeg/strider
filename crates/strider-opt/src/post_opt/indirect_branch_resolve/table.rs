@@ -27,9 +27,10 @@
 //! Over-approximating the bound never drops a real edge, but a surplus arm is a
 //! live edge whose bytes are decoded like any other, so the range enumerated
 //! must be one proven for the index the address scales.  Under-approximating
-//! is unsound.  A KnownBits field bound beside a guard on the same bits that
-//! no hop connects is not taken: the guard may size the table, and the field
-//! then reaches the next one.
+//! is unsound.  A KnownBits field bound beside a guard on overlapping bits of
+//! the same value that neither encloses the field nor is connected to it is
+//! not taken: the guard may size the table, and the field then reaches the
+//! next one.
 
 use super::MAX_TABLE_ENTRIES;
 use crate::ReadOnlyMemory;
