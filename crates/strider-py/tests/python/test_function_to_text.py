@@ -26,6 +26,19 @@ def test_to_text_prints_the_header_and_the_returned_constant():
     assert "iconst[0x2a]  @{0x1000}" in function.to_text(fingerprints=True)
 
 
+def test_to_text_names_a_register_byte_order_unlike_the_data_order():
+    # bx lr, little-endian code on both
+    code = bytes([0x1E, 0xFF, 0x2F, 0xE1])
+    cc = CallingConvention.arm_aapcs()
+    for arch, header in (
+        (SleighArch.arm_be_kernel(), "endian big register=little\n"),
+        (SleighArch.arm(), "endian little\n"),
+    ):
+        lift = strider.lift.lifter(arch, BufferReader(0x1000, code))
+        _cfg, function, _unresolved = lift.analyze(0x1000, cc)
+        assert function.to_text().startswith(header)
+
+
 def test_to_text_is_the_same_for_two_analyses_a_clone_and_a_compacted_function():
     elf_path = str(fixture_path("x64", "arithmetic"))
     first = strider.lift.load_elf(elf_path).analyze("add").function
