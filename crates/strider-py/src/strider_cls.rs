@@ -167,7 +167,8 @@ fn build_orch_sleigh(
 }
 
 /// The claims an `optimize` adds to `function`'s: none without `given`, and
-/// otherwise `given`, which must hold every claim already in force.
+/// otherwise `given`, which must hold every claim already in force and may not
+/// add `msr_register_keeps_mode`, which only the lift reads.
 fn claims_to_add(
     function: &PyFunction,
     given: Option<&crate::options::PyAssumptionOptions>,
@@ -176,10 +177,11 @@ fn claims_to_add(
         return Ok(strider_orchestrator::opt::AssumptionOptions::none());
     };
     let given = given.inner.clone();
-    let omitted: Vec<String> = {
+    let (omitted, adds_lift_claim): (Vec<String>, bool) = {
         let read = function.read_inner().map_err(into_strider_err)?;
         let in_force = read.assumptions();
-        in_force
+        let adds_lift_claim = given.msr_register_keeps_mode && !in_force.msr_register_keeps_mode;
+        let omitted = in_force
             .omitted_by(&given)
             .into_iter()
             .map(|name| {
@@ -195,17 +197,24 @@ fn claims_to_add(
                 let missing: Vec<String> = missing.iter().map(|a| format!("{a:#x}")).collect();
                 format!("{name} ({})", missing.join(", "))
             })
-            .collect()
+            .collect();
+        (omitted, adds_lift_claim)
     };
-    if omitted.is_empty() {
-        return Ok(given);
+    if !omitted.is_empty() {
+        return Err(into_strider_err(anyhow::anyhow!(
+            "optimize: `assumptions` leaves out claims in force on this \
+             Function: {}. Pass `function.assumptions | <your set>` to add \
+             claims, or analyse again to drop one",
+            omitted.join(", ")
+        )));
     }
-    Err(into_strider_err(anyhow::anyhow!(
-        "optimize: `assumptions` leaves out claims in force on this \
-         Function: {}. Pass `function.assumptions | <your set>` to add \
-         claims, or analyse again to drop one",
-        omitted.join(", ")
-    )))
+    if adds_lift_claim {
+        return Err(into_strider_err(anyhow::anyhow!(
+            "optimize: msr_register_keeps_mode is read by the lift; analyse \
+             again with it"
+        )));
+    }
+    Ok(given)
 }
 
 pub(crate) fn build_strider(
@@ -822,8 +831,9 @@ impl PyLifter {
     /// runs the default pipeline; a given `OptimizerPipeline` is copied, so it
     /// stays usable.  The claims `assumptions` holds join
     /// `function.assumptions` and none is withdrawn: `assumptions=None` adds
-    /// nothing, and a set that leaves out a claim already in force raises
-    /// `StriderError` before anything runs.  Add one with::
+    /// nothing, and a set that leaves out a claim already in force, or adds
+    /// `msr_register_keeps_mode` (read by the lift, so analyse again with it),
+    /// raises `StriderError` before anything runs.  Add one with::
     ///
     ///     prog.optimize(function, assumptions=function.assumptions
     ///                   | AssumptionOptions.none(escape_analysis=True))
