@@ -130,7 +130,8 @@ impl<'a> Evaluator<'a> {
                     _ => self.eval_const_node(value),
                 }
             }
-            NodeKind::Load(_) => self.eval_load(node, value),
+            // Slot maps hold RAM stores and reshape in the data order.
+            NodeKind::Load(rsleigh::VnSpace::RAM) => self.eval_load(node, value),
             NodeKind::Phi => self.eval_phi(node),
             _ => self.eval_const_node(value),
         }
@@ -594,6 +595,53 @@ mod tests {
         let order = cone_order_pruned(&function, sum, const_100);
         ev.begin_index(const_100, 5);
         assert_eq!(ev.eval_root(&order, sum), None);
+    }
+
+    /// `Load(space)` at `sp` over a RAM store of `0x1234` at `sp`, evaluated
+    /// with an unrelated index pinned.
+    fn eval_load_over_a_ram_store_at_sp(space: rsleigh::VnSpace) -> Option<u64> {
+        let sp = reg_vn(0x2000, 8);
+        let idx_vn = reg_vn(0x1000, 8);
+        let mut b = strider_ir_test_utils::sp_frame(sp)
+            .tracked(idx_vn)
+            .arg(idx_vn)
+            .build_fn_single_region()
+            .expect("build_fn_single_region");
+        let idx = b.read_variable(&idx_vn).expect("idx");
+        let at = b.read_variable(&sp).expect("sp");
+        let word = b
+            .build_int_const(0x1234u64, ValueType::int(64))
+            .expect("word");
+        b.build_store(at, word, rsleigh::VnSpace::RAM)
+            .expect("build_store");
+        let loaded = b
+            .build_load(at, space, ValueType::int(64))
+            .expect("build_load");
+        b.build_return(Some(loaded), &[]).expect("build_return");
+        b.set_lift_addr(None);
+        let mut function = b.build().expect("build");
+        let mut p = crate::OptimizerPipeline::new();
+        p.add(crate::PhiCollapse);
+        p.add(crate::RegionCollapse);
+        p.run(&mut function, &mut crate::OptCtx::new(None))
+            .expect("pipeline");
+        let order = cone_order(&function, loaded);
+        let mut ev = Evaluator::new(&function, None);
+        ev.begin_index(idx, 0);
+        ev.eval_root(&order, loaded)
+    }
+
+    /// A stack slot map holds RAM stores, so only a RAM load reads it.
+    #[test]
+    fn a_non_ram_load_at_a_stack_address_does_not_read_the_slot_map() {
+        assert_eq!(
+            eval_load_over_a_ram_store_at_sp(rsleigh::VnSpace::RAM),
+            Some(0x1234)
+        );
+        assert_eq!(
+            eval_load_over_a_ram_store_at_sp(rsleigh::VnSpace::REGISTER),
+            None
+        );
     }
 
     /// The IntConst(100) value: in the cone of `sum` but not the idx leaf, so
