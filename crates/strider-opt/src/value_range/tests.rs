@@ -378,8 +378,8 @@ fn guard_propagates_through_shift_left() {
 
 /// PowerPC `slwi` lifts to `And(idx << 2, ~3)`. The mask clears only bits the
 /// shift already zeroed, so the guard on `idx` bounds it exactly as it bounds
-/// the bare shift; a mask that clears a bit the value can hold is not the same
-/// value and takes no such bound.
+/// the bare shift.  A mask that clears a bit the value can hold is not the
+/// same value: only `x & c <= x` carries, and KnownBits' stride of 8 with it.
 #[test]
 fn guard_propagates_through_a_mask_of_known_zero_bits() {
     let range = |mask: u64| {
@@ -402,9 +402,10 @@ fn guard_propagates_through_a_mask_of_known_zero_bits() {
     let iv = range(0xffff_fffc);
     assert_eq!((iv.lo, iv.hi, iv.stride), (0, 12, 4));
     let iv = range(0xffff_fff8);
-    assert!(
-        iv.hi > 12,
-        "a mask clearing bit 2 is not the guarded value, got {iv:?}"
+    assert_eq!(
+        (iv.lo, iv.hi, iv.stride),
+        (0, 12, 8),
+        "a mask clearing bit 2 is not the guarded value"
     );
 }
 
@@ -2374,6 +2375,39 @@ fn a_guard_on_other_bits_does_not_bound_the_index() {
     };
     let iv = bit_field_guard_range(26, 62, sext_shr_26);
     assert_eq!((iv.lo, iv.hi), (0, (1 << 38) - 1));
+}
+
+/// `(w >> lo) & mask` at `I32`.
+fn field_of(b: &mut FunctionBuilder, w: ValueId, lo: u64, mask: u64) -> ValueId {
+    let i32t = ValueType::int(32);
+    let k = b.build_int_const(lo, i32t).unwrap();
+    let up = b
+        .build_int_binary_operation(w, k, IntBinaryOp::ShiftRight, i32t)
+        .unwrap();
+    let m = b.build_int_const(mask, i32t).unwrap();
+    b.build_int_binary_operation(up, m, IntBinaryOp::And, i32t)
+        .unwrap()
+}
+
+/// A guard on a run of bits bounds a field inside it by the guard's bound
+/// shifted down to the field: `w < 20` puts `(w >> 4) & 7` at most 1, and
+/// `w >> 26 < 8` puts `(w >> 28) & 3` at most `7 >> 2`.
+#[test]
+fn a_guard_on_enclosing_bits_bounds_the_field_inside() {
+    let g = guarded(
+        ValueType::int(32),
+        |b, w| cmp_c(b, w, IntCmpOp::Less, 20),
+        |b, w| field_of(b, w, 4, 7),
+    );
+    let iv = range_at(&g.f, g.ret, g.true_node);
+    assert_eq!((iv.lo, iv.hi), (0, 1));
+    let g = guarded(
+        ValueType::int(32),
+        |b, w| srl_sltiu(b, w, 26, 8),
+        |b, w| field_of(b, w, 28, 3),
+    );
+    let iv = range_at(&g.f, g.ret, g.true_node);
+    assert_eq!((iv.lo, iv.hi), (0, 1));
 }
 
 /// `x = 0` then `n` sequential `if (c < i) { x = i % 7; }` triangles, then
