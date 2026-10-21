@@ -496,8 +496,9 @@
   between the two (the ARM conventions keep the new `cpsr_mode` register
   callee-saved). `mrs` reads CPSR.M and the A, I and F masks that `cps` and
   `msr` set, which it read as zero, so `irqs_disabled_flags(flags)` no
-  longer folds to "enabled". A mode switch, `cps` included, also re-banks
-  the SPSR.
+  longer folds to "enabled". Execution at PL1 or higher is assumed: a
+  User-mode write to M, A, I or F, which the hardware ignores, is recorded.
+  A mode switch, `cps` included, also re-banks the SPSR.
 - ARM `msr` sets N, Z, C, V and Q only through its flags field, from its
   source: the A32 register form overwrote them for every mask, the
   immediate form never set them, and Thumb `msr APSR_nzcvq, rN` read r0

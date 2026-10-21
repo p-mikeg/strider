@@ -95,7 +95,6 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
             .collect();
         // After the checks above, which report the mismatches they can see.
         // The right preset's specs are pointer-equal, costing no memcmp.
-        // `arm` and `arm_be_kernel` share both, so neither check parts them.
         let (sla, want_sla) = (sleigh.sla_spec().0, arch.sla_spec().0);
         anyhow::ensure!(
             std::ptr::eq(sla, want_sla) || sla == want_sla,
