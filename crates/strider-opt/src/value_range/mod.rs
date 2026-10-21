@@ -671,6 +671,42 @@ impl<'f> RangeMap<'f> {
         })
     }
 
+    /// Whether `region` is reached only by the false edge of an
+    /// `If(value == k)`, so `value` is not `k` there.
+    ///
+    /// The edge's sink must be no merge, as for any edge guard, or the fact
+    /// would hold for the merge's other predecessors too.
+    pub(crate) fn rules_out(&self, value: ValueId, k: u128, region: NodeId) -> bool {
+        let f = self.function;
+        f.value_uses(value).any(|(cmp, _)| {
+            if !matches!(f.node_kind(cmp), NodeKind::IntCmpOp(IntCmpOp::Equal)) {
+                return false;
+            }
+            let Some(eq) = f.first_value_output_of(cmp) else {
+                return false;
+            };
+            let Ok([a, b]) = f.producer_inputs_exact::<2>(eq) else {
+                return false;
+            };
+            let other = if a == value { b } else { a };
+            if f.int_const_u128(other) != Some(k) {
+                return false;
+            }
+            f.value_uses(eq).any(|(if_node, _)| {
+                if !matches!(f.node_kind(if_node), NodeKind::If) || f.if_cond(if_node) != eq {
+                    return false;
+                }
+                let outputs = f.node_outputs(if_node);
+                outputs.get(1).is_some_and(|&false_ctrl| {
+                    single_control_consumer(f, false_ctrl).is_some_and(|sink| {
+                        !matches!(f.node_kind(sink), NodeKind::Region)
+                            && self.dominates(sink, region)
+                    })
+                })
+            })
+        })
+    }
+
     /// The distinct fields of `root` some guarded value is.
     fn root_fields(&self, root: ValueId) -> &[BitField] {
         self.fields_by_root.get(&root).map_or(&[], Vec::as_slice)
@@ -915,9 +951,8 @@ pub(crate) fn phi_constants(
     value: ValueId,
     cap: usize,
 ) -> Option<Vec<u128>> {
-    let f = function;
-    let first = f.producer(value);
-    if !matches!(f.node_kind(first), NodeKind::Phi) {
+    let first = function.producer(value);
+    if !matches!(function.node_kind(first), NodeKind::Phi) {
         return None;
     }
     let mut values: std::collections::BTreeSet<u128> = std::collections::BTreeSet::new();
@@ -925,16 +960,16 @@ pub(crate) fn phi_constants(
     seen.insert(first);
     let mut stack = vec![first];
     while let Some(phi) = stack.pop() {
-        for arm in f.phi_data_inputs(phi) {
-            if let Some(k) = f.int_const_u128(arm) {
+        for arm in function.phi_data_inputs(phi) {
+            if let Some(k) = function.int_const_u128(arm) {
                 values.insert(k);
                 if values.len() > cap {
                     return None;
                 }
                 continue;
             }
-            let producer = f.producer(arm);
-            if !matches!(f.node_kind(producer), NodeKind::Phi) {
+            let producer = function.producer(arm);
+            if !matches!(function.node_kind(producer), NodeKind::Phi) {
                 return None;
             }
             if seen.insert(producer) {

@@ -7,7 +7,7 @@ use rsleigh::VnSpace;
 use std::sync::Mutex;
 use strider_ir::node::ValueType;
 use strider_ir::{
-    ExtendOp, Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
+    ExtendOp, Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntCmpOp,
 };
 use strider_ir_test_utils::IrBuilderEx;
 use strider_ir_test_utils::IrWalkerEx;
@@ -2075,15 +2075,14 @@ fn classify_table_dispatch_conflicting_isa_modes_on_one_addr_defers() {
 }
 
 /// `s = arg == 1 ? k0 : (arg == 2 ? k1 : k2)` over `ks`, then
-/// `dispatch(s)` in the join, under `if (s < bound)` where one is given.
-/// `dispatch` builds the branch target and, optionally, the ISA mode the
-/// branch commits.
+/// `dispatch(s)` in the join, under a guard `(op, c, taken)` where one is
+/// given: `s op c` on the edge `taken` names.  `dispatch` builds the branch
+/// target and, optionally, the ISA mode the branch commits.
 fn phi_of_constants_dispatch(
     ks: [u64; 3],
-    bound: Option<u64>,
+    guard: Option<(IntCmpOp, u64, bool)>,
     dispatch: impl FnOnce(&mut FunctionBuilder, ValueId) -> (ValueId, Option<ValueId>),
 ) -> Function {
-    use strider_ir::IntCmpOp;
     let s_vn = strider_ir_test_utils::reg_vn(0x10, 4);
     let arg_vn = strider_ir_test_utils::reg_vn(0x20, 4);
     let i32t = ValueType::int(32);
@@ -2116,14 +2115,13 @@ fn phi_of_constants_dispatch(
         b.build_branch(join).unwrap();
     }
     b.set_region(join);
-    match bound {
-        Some(bound) => {
+    match guard {
+        Some((op, c, taken)) => {
             let s = b.read_variable(&s_vn).unwrap();
-            let bound = b.build_int_const(bound, i32t).unwrap();
-            let cond = b
-                .build_int_cmp_operation(s, bound, IntCmpOp::Less, i32t)
-                .unwrap();
-            b.build_if(cond, at, exit).unwrap();
+            let c = b.build_int_const(c, i32t).unwrap();
+            let cond = b.build_int_cmp_operation(s, c, op, i32t).unwrap();
+            let (t, e) = if taken { (at, exit) } else { (exit, at) };
+            b.build_if(cond, t, e).unwrap();
         }
         None => b.build_branch(at).unwrap(),
     }
@@ -2144,7 +2142,8 @@ fn phi_of_constants_dispatch(
 
 /// The arms of a `t[s]` dispatch over a six-entry table at `0x4000`.
 fn phi_index_arms(bound: Option<u64>) -> Vec<u64> {
-    let f = phi_of_constants_dispatch([0, 3, 5], bound, |b, s| {
+    let guard = bound.map(|c| (IntCmpOp::Less, c, true));
+    let f = phi_of_constants_dispatch([0, 3, 5], guard, |b, s| {
         (table_target(b, s, 4, 0x4000), None)
     });
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60], 4);
@@ -2192,6 +2191,89 @@ fn classify_table_dispatch_falls_back_to_the_range_where_the_phi_does_not_fold()
             "expected the range's four slots; got {other:?}\n{}",
             f.to_text(false)
         ),
+    }
+}
+
+/// `s` in {0, 1, 5000} under `if (s < 4100)`: the guarded range holds more
+/// slots than a table may, so no index bounds `s`, and the phi's `5000` is
+/// one the guard rules out at the dispatch.  Mutation: drop the site-range
+/// filter on the phi's constants.
+#[test]
+fn classify_table_dispatch_drops_a_phi_constant_a_wide_guard_excludes() {
+    let f = phi_of_constants_dispatch([0, 1, 5000], Some((IntCmpOp::Less, 4100, true)), |b, s| {
+        (table_target(b, s, 4, 0x4000), None)
+    });
+    let rom = MockRom::strided(0x4000, 4, (0..=5000).map(|i| 0x10 + i).collect(), 4);
+    match classify(&f, Some(&rom)) {
+        Some(ResolvedTargets::Multiple(ts)) => {
+            assert_eq!(
+                ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
+                vec![0x10, 0x11]
+            );
+        }
+        other => panic!(
+            "expected t[0] and t[1]; got {other:?}\n{}",
+            f.to_text(false)
+        ),
+    }
+}
+
+/// `p = arg == 1 ? L1 : (arg == 2 ? L2 : 0); if (p) goto *p`: the branch
+/// is reached only with `p != 0`, so the phi's `0` is no target.
+/// Mutation: drop the excluded-constant filter on the phi's constants.
+#[test]
+fn classify_table_dispatch_drops_a_phi_constant_an_equality_guard_excludes() {
+    let f = phi_of_constants_dispatch(
+        [0x1000, 0x2000, 0],
+        Some((IntCmpOp::Equal, 0, false)),
+        |_, p| (p, None),
+    );
+    match classify(&f, None) {
+        Some(ResolvedTargets::Multiple(ts)) => {
+            assert_eq!(
+                ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
+                vec![0x1000, 0x2000]
+            );
+        }
+        other => panic!(
+            "expected the two labels; got {other:?}\n{}",
+            f.to_text(false)
+        ),
+    }
+}
+
+/// `t[s]` over interworking words with `s` in {0, 1, 3}: a bounded index
+/// and the phi's constants both, so the phi is pinned and each arm's mode
+/// folds off its own word; `t[2]` is never read.  Mutation: enumerate the
+/// range where the phi's constants are known.
+#[test]
+fn classify_table_dispatch_folds_each_mode_of_a_phi_indexed_table() {
+    let f = phi_of_constants_dispatch([0, 1, 3], None, |b, s| {
+        let i32t = ValueType::int(32);
+        let word = table_target(b, s, 4, 0x4000);
+        let one = b.build_int_const(1u64, i32t).unwrap();
+        let mode = b
+            .build_int_binary_operation(word, one, IntBinaryOp::And, i32t)
+            .unwrap();
+        let even = b.build_int_const(0xFFFF_FFFEu64, i32t).unwrap();
+        let target = b
+            .build_int_binary_operation(word, even, IntBinaryOp::And, i32t)
+            .unwrap();
+        (target, Some(mode))
+    });
+    let mode = f.indirect_branch_isa_mode(sole_indirect_branch(&f));
+    assert!(mode.is_some(), "the branch commits a mode");
+    let rom = MockRom::strided(0x4000, 4, vec![0x1000, 0x2001, 0x3000, 0x4001], 4);
+    match classify_with(&f, Some(&rom), &crate::AssumptionOptions::none(), mode) {
+        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
+            ts.iter().map(|t| (t.addr, t.isa_bit)).collect::<Vec<_>>(),
+            vec![
+                (0x1000, Some(false)),
+                (0x2000, Some(true)),
+                (0x4000, Some(true))
+            ],
+        ),
+        other => panic!("expected three arms; got {other:?}\n{}", f.to_text(false)),
     }
 }
 
