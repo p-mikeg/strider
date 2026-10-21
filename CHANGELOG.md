@@ -514,6 +514,12 @@
 
 ### Fixed
 
+- A signed compare against an immediate (`cmp edi, 5; jl`, `cmp w0, #5;
+  b.gt`, `cmn r0, #5; bge`, `cmp r0, #0; ble`, and a loop's `add w1, w1,
+  #1; cmp w1, #15; b.le`) folds to one `Sless`, as a register compare does,
+  on x86, ARM, Thumb and AArch64. Its flag tree survived, so a `Sless`
+  pattern query, from Rust or Python, missed the branch. `Sborrow(x, 0)` and
+  `Scarry(x, 0)` fold to false.
 - PowerPC `slbmfee`, `slbmfev` and `slbfee.` write RT, `xsiexpdp` writes XT
   and `vminud` writes vrD; each left the old value in place, so `slbmfev r5,
   r6; mr r3, r5` returned the incoming r5. `xscmpexpdp`, `xscmpexpqp`,

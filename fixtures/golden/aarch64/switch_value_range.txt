@@ -205,65 +205,56 @@ float_arg 3 [%v16]
 %v15:i128 = initial_var[q2]
 %v16:i128 = initial_var[q3]
 return %v5, %v7, %v12, %v8, %v13, %v14, %v15, %v16
-%v17:i1 = iconst[0x1]
-%v18:i1 = int.xor %v4, %v17
-%v19:i32 = iconst[0xfffffffc]
-%v20:i32 = int.add %v2, %v19
-%v21:i32 = iconst[0x0]
-%v22:i1 = icmp.sless %v20, %v21
-%v23:i8 = extend.zero %v22
-%v24:i1 = icmp.sborrow %v2, %v3
-%v25:i8 = extend.zero %v24
-%v26:i1 = icmp.equal %v23, %v25
-%v27:i1 = int.and %v18, %v26
-%v28:ctrl, %v29:ctrl = if %v6, %v27
-%v30:i32 = iconst[0x6]
-%v31:i1 = icmp.equal %v2, %v30
-%v32:ctrl, %v33:ctrl = if %v28, %v31
-%v34:i32 = int.add %v9, %v36
-%v35:i64 = extend.zero %v34
-%v36:i32 = iconst[0x7]
-%v37:i1 = icmp.equal %v2, %v36
-%v38:ctrl, %v39:ctrl = if %v33, %v37
-%v40:i32 = iconst[0x8]
-%v41:i32 = int.add %v9, %v40
-%v42:i64 = extend.zero %v41
-%v43:i1 = icmp.equal %v2, %v10
-%v44:ctrl, %v45:ctrl = if %v39, %v43
-%v46:i32 = int.add %v9, %v30
-%v47:i32 = iconst[0xffffffff]
+%v17:i1 = icmp.sless %v3, %v2
+%v18:ctrl, %v19:ctrl = if %v6, %v17
+%v20:i32 = iconst[0x6]
+%v21:i1 = icmp.equal %v2, %v20
+%v22:ctrl, %v23:ctrl = if %v18, %v21
+%v24:i32 = int.add %v9, %v26
+%v25:i64 = extend.zero %v24
+%v26:i32 = iconst[0x7]
+%v27:i1 = icmp.equal %v2, %v26
+%v28:ctrl, %v29:ctrl = if %v23, %v27
+%v30:i32 = iconst[0x8]
+%v31:i32 = int.add %v9, %v30
+%v32:i64 = extend.zero %v31
+%v33:i1 = icmp.equal %v2, %v10
+%v34:ctrl, %v35:ctrl = if %v29, %v33
+%v36:i32 = int.add %v9, %v20
+%v37:i32 = iconst[0xffffffff]
 
-%v48:ctrl, %v49:token = region %v44, %v45
-%v50:i32<u:0x3cb00:4> = phi %v49, %v46, %v47
-%v51:i64 = extend.zero %v50
-return %v48, %v7, %v51, %v8, %v13, %v14, %v15, %v16
-%v52:i32 = iconst[0x2]
-%v53:i1 = icmp.equal %v2, %v52
-%v54:ctrl, %v55:ctrl = if %v29, %v53
-%v56:i32 = int.add %v9, %v58
-%v57:i64 = extend.zero %v56
-%v58:i32 = iconst[0x3]
-%v59:i1 = icmp.equal %v2, %v58
-%v60:ctrl, %v61:ctrl = if %v55, %v59
-%v62:i32 = int.add %v9, %v3
-%v63:i64 = extend.zero %v62
-%v64:i1 = icmp.equal %v2, %v21
-%v65:ctrl, %v66:ctrl = if %v61, %v64
-%v67:i32 = iconst[0x1]
-%v68:i32 = int.add %v9, %v67
-%v69:i64 = extend.zero %v68
+%v38:ctrl, %v39:token = region %v34, %v35
+%v40:i32<u:0x3cb00:4> = phi %v39, %v36, %v37
+%v41:i64 = extend.zero %v40
+return %v38, %v7, %v41, %v8, %v13, %v14, %v15, %v16
+%v42:i32 = iconst[0x2]
+%v43:i1 = icmp.equal %v2, %v42
+%v44:ctrl, %v45:ctrl = if %v19, %v43
+%v46:i32 = int.add %v9, %v48
+%v47:i64 = extend.zero %v46
+%v48:i32 = iconst[0x3]
+%v49:i1 = icmp.equal %v2, %v48
+%v50:ctrl, %v51:ctrl = if %v45, %v49
+%v52:i32 = int.add %v9, %v3
+%v53:i64 = extend.zero %v52
+%v54:i32 = iconst[0x0]
+%v55:i1 = icmp.equal %v2, %v54
+%v56:ctrl, %v57:ctrl = if %v51, %v55
+%v58:i32 = iconst[0x1]
+%v59:i32 = int.add %v9, %v58
+%v60:i64 = extend.zero %v59
 
-%v70:ctrl, %v71:token = region %v54, %v60, %v65, %v32, %v38
-%v72:i64<x0> = phi %v71, %v57, %v63, %v69, %v35, %v42
-return %v70, %v7, %v72, %v8, %v13, %v14, %v15, %v16
-%v73:i1 = icmp.equal %v2, %v67
-%v74:ctrl, %v75:ctrl = if %v66, %v73
-%v76:i32 = int.add %v9, %v52
+%v61:ctrl, %v62:token = region %v44, %v50, %v56, %v22, %v28
+%v63:i64<x0> = phi %v62, %v47, %v53, %v60, %v25, %v32
+return %v61, %v7, %v63, %v8, %v13, %v14, %v15, %v16
+%v64:i1 = icmp.equal %v2, %v58
+%v65:ctrl, %v66:ctrl = if %v57, %v64
+%v67:i32 = int.add %v9, %v42
 
-%v77:ctrl, %v78:token = region %v74, %v75
-%v79:i32<u:0x3cb00:4> = phi %v78, %v76, %v47
-%v80:i64 = extend.zero %v79
-return %v77, %v7, %v80, %v8, %v13, %v14, %v15, %v16
+%v68:ctrl, %v69:token = region %v65, %v66
+%v70:i32<u:0x3cb00:4> = phi %v69, %v67, %v37
+%v71:i64 = extend.zero %v70
+return %v68, %v7, %v71, %v8, %v13, %v14, %v15, %v16
 
 == dispatch_offset @0x894
 cfg
@@ -306,70 +297,60 @@ float_arg 3 [%v16]
 %v15:i128 = initial_var[q2]
 %v16:i128 = initial_var[q3]
 return %v5, %v7, %v12, %v8, %v13, %v14, %v15, %v16
-%v17:i1 = iconst[0x1]
-%v18:i1 = int.xor %v4, %v17
-%v19:i32 = iconst[0xfffffff2]
-%v20:i32 = int.add %v2, %v19
-%v21:i32 = iconst[0x0]
-%v22:i1 = icmp.sless %v20, %v21
-%v23:i8 = extend.zero %v22
-%v24:i1 = icmp.sborrow %v2, %v3
-%v25:i8 = extend.zero %v24
-%v26:i1 = icmp.equal %v23, %v25
-%v27:i1 = int.and %v18, %v26
-%v28:ctrl, %v29:ctrl = if %v6, %v27
-%v30:i32 = iconst[0x10]
-%v31:i1 = icmp.equal %v2, %v30
-%v32:ctrl, %v33:ctrl = if %v28, %v31
-%v34:i32 = iconst[0x7]
-%v35:i32 = int.add %v9, %v34
-%v36:i64 = extend.zero %v35
-%v37:i32 = iconst[0x11]
-%v38:i1 = icmp.equal %v2, %v37
-%v39:ctrl, %v40:ctrl = if %v33, %v38
-%v41:i32 = iconst[0x8]
-%v42:i32 = int.add %v9, %v41
-%v43:i64 = extend.zero %v42
-%v44:i32 = iconst[0xf]
-%v45:i1 = icmp.equal %v2, %v44
-%v46:ctrl, %v47:ctrl = if %v40, %v45
-%v48:i32 = iconst[0x6]
-%v49:i32 = int.add %v9, %v48
-%v50:i32 = iconst[0xffffffff]
+%v17:i1 = icmp.sless %v3, %v2
+%v18:ctrl, %v19:ctrl = if %v6, %v17
+%v20:i32 = iconst[0x10]
+%v21:i1 = icmp.equal %v2, %v20
+%v22:ctrl, %v23:ctrl = if %v18, %v21
+%v24:i32 = iconst[0x7]
+%v25:i32 = int.add %v9, %v24
+%v26:i64 = extend.zero %v25
+%v27:i32 = iconst[0x11]
+%v28:i1 = icmp.equal %v2, %v27
+%v29:ctrl, %v30:ctrl = if %v23, %v28
+%v31:i32 = iconst[0x8]
+%v32:i32 = int.add %v9, %v31
+%v33:i64 = extend.zero %v32
+%v34:i32 = iconst[0xf]
+%v35:i1 = icmp.equal %v2, %v34
+%v36:ctrl, %v37:ctrl = if %v30, %v35
+%v38:i32 = iconst[0x6]
+%v39:i32 = int.add %v9, %v38
+%v40:i32 = iconst[0xffffffff]
 
-%v51:ctrl, %v52:token = region %v46, %v47
-%v53:i32<u:0x3cb00:4> = phi %v52, %v49, %v50
-%v54:i64 = extend.zero %v53
-return %v51, %v7, %v54, %v8, %v13, %v14, %v15, %v16
-%v55:i32 = iconst[0xc]
-%v56:i1 = icmp.equal %v2, %v55
-%v57:ctrl, %v58:ctrl = if %v29, %v56
-%v59:i32 = iconst[0x3]
-%v60:i32 = int.add %v9, %v59
-%v61:i64 = extend.zero %v60
-%v62:i32 = iconst[0xd]
-%v63:i1 = icmp.equal %v2, %v62
-%v64:ctrl, %v65:ctrl = if %v58, %v63
-%v66:i32 = iconst[0x4]
-%v67:i32 = int.add %v9, %v66
-%v68:i64 = extend.zero %v67
-%v69:i32 = iconst[0xa]
+%v41:ctrl, %v42:token = region %v36, %v37
+%v43:i32<u:0x3cb00:4> = phi %v42, %v39, %v40
+%v44:i64 = extend.zero %v43
+return %v41, %v7, %v44, %v8, %v13, %v14, %v15, %v16
+%v45:i32 = iconst[0xc]
+%v46:i1 = icmp.equal %v2, %v45
+%v47:ctrl, %v48:ctrl = if %v19, %v46
+%v49:i32 = iconst[0x3]
+%v50:i32 = int.add %v9, %v49
+%v51:i64 = extend.zero %v50
+%v52:i32 = iconst[0xd]
+%v53:i1 = icmp.equal %v2, %v52
+%v54:ctrl, %v55:ctrl = if %v48, %v53
+%v56:i32 = iconst[0x4]
+%v57:i32 = int.add %v9, %v56
+%v58:i64 = extend.zero %v57
+%v59:i32 = iconst[0xa]
+%v60:i1 = icmp.equal %v2, %v59
+%v61:ctrl, %v62:ctrl = if %v55, %v60
+%v63:i32 = iconst[0x1]
+%v64:i32 = int.add %v9, %v63
+%v65:i64 = extend.zero %v64
+
+%v66:ctrl, %v67:token = region %v47, %v54, %v61, %v22, %v29
+%v68:i64<x0> = phi %v67, %v51, %v58, %v65, %v26, %v33
+return %v66, %v7, %v68, %v8, %v13, %v14, %v15, %v16
+%v69:i32 = iconst[0xb]
 %v70:i1 = icmp.equal %v2, %v69
-%v71:ctrl, %v72:ctrl = if %v65, %v70
-%v73:i32 = iconst[0x1]
+%v71:ctrl, %v72:ctrl = if %v62, %v70
+%v73:i32 = iconst[0x2]
 %v74:i32 = int.add %v9, %v73
-%v75:i64 = extend.zero %v74
 
-%v76:ctrl, %v77:token = region %v57, %v64, %v71, %v32, %v39
-%v78:i64<x0> = phi %v77, %v61, %v68, %v75, %v36, %v43
-return %v76, %v7, %v78, %v8, %v13, %v14, %v15, %v16
-%v79:i32 = iconst[0xb]
-%v80:i1 = icmp.equal %v2, %v79
-%v81:ctrl, %v82:ctrl = if %v72, %v80
-%v83:i32 = iconst[0x2]
-%v84:i32 = int.add %v9, %v83
-
-%v85:ctrl, %v86:token = region %v81, %v82
-%v87:i32<u:0x3cb00:4> = phi %v86, %v84, %v50
-%v88:i64 = extend.zero %v87
-return %v85, %v7, %v88, %v8, %v13, %v14, %v15, %v16
+%v75:ctrl, %v76:token = region %v71, %v72
+%v77:i32<u:0x3cb00:4> = phi %v76, %v74, %v40
+%v78:i64 = extend.zero %v77
+return %v75, %v7, %v78, %v8, %v13, %v14, %v15, %v16
