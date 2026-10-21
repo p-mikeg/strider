@@ -2382,3 +2382,38 @@ fn factor_declines_past_the_u128_carrier() -> Result<()> {
     }
     Ok(())
 }
+
+/// `x - 0` and `x + 0` never overflow, whichever side `Scarry`'s `0` sits on;
+/// `0 - x` overflows at `x == INT_MIN`, so `Sborrow(0, x)` stays.
+#[test]
+fn overflow_flag_against_zero_folds_to_false() -> Result<()> {
+    let vn = reg_vn(0x1000, 4);
+    for (op, zero_left, folds) in [
+        (IntCmpOp::Sborrow, false, true),
+        (IntCmpOp::Scarry, false, true),
+        (IntCmpOp::Scarry, true, true),
+        (IntCmpOp::Sborrow, true, false),
+    ] {
+        let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
+            let zero = b.build_int_const(0u64, ValueType::int(32))?;
+            let (l, r) = if zero_left { (zero, x) } else { (x, zero) };
+            b.build_int_cmp_operation(l, r, op, ValueType::int(32))
+        })?;
+        run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+        let ret = return_value(fg.graph())?;
+        if folds {
+            assert_eq!(
+                (fg.int_const_u128(ret), fg.value_type_opt(ret)),
+                (Some(0), Some(ValueType::I1)),
+                "{op:?} zero_left={zero_left} must fold to false"
+            );
+        } else {
+            assert_eq!(
+                *fg.node_kind(fg.producer(ret)),
+                NodeKind::IntCmpOp(op),
+                "{op:?} zero_left={zero_left} must stay"
+            );
+        }
+    }
+    Ok(())
+}

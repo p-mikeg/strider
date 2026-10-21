@@ -79,15 +79,15 @@ def test_match_readers_align_with_node():
     shadowing `int` / `bool` name exists.
     """
 
-    # `aarch64/builtins::expect_branch` carries a surviving I1 IntConst under
+    # `aarch64/floats::f64_compare` carries a surviving I1 IntConst under
     # the default pipeline.
-    elf = fixture_path("aarch64", "builtins")
+    elf = fixture_path("aarch64", "floats")
     lift = strider.lift.load_elf(str(elf))
-    _cfg, g, _u = lift.analyze("expect_branch")
+    _cfg, g, _u = lift.analyze("f64_compare")
     c = Capture()
 
     hits = g.find_all(int_const(c).bool_valued())
-    assert hits, "expect_branch must carry a surviving I1 IntConst to test"
+    assert hits, "f64_compare must carry a surviving I1 IntConst to test"
     m = hits[0]
 
     assert m.boolean(c) is True or m.boolean(c) is False
@@ -161,16 +161,16 @@ def test_partial_and_post_match_boolean_is_bool_type():
     the exact `type(...) is bool` assertions rather than `isinstance`.
     """
 
-    # `aarch64/builtins::expect_branch` keeps a surviving I1 IntConst under
-    # the default pipeline, so this exercises the contract for real rather
-    # than skipping.
-    elf = fixture_path("aarch64", "builtins")
+    # `aarch64/floats::f64_compare` keeps a surviving I1 IntConst under the
+    # default pipeline, so this exercises the contract for real rather than
+    # skipping.
+    elf = fixture_path("aarch64", "floats")
     lift = strider.lift.load_elf(str(elf))
-    _cfg, g, _u = lift.analyze("expect_branch")
+    _cfg, g, _u = lift.analyze("f64_compare")
     c = Capture()
 
     post = g.find_all(int_const(c).bool_valued())
-    assert post, "expect_branch must carry a surviving I1 IntConst to test"
+    assert post, "f64_compare must carry a surviving I1 IntConst to test"
     for m in post:
         assert type(m.boolean(c)) is bool, (
             f"m.boolean(c) for an I1 const must be bool, got "

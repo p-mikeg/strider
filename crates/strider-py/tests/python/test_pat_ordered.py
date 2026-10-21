@@ -113,10 +113,13 @@ def test_ordered_pins_the_outer_op_only(mul_add_fn):
 
 @pytest.fixture(scope="module")
 def ne_fn():
-    """`control.c::factorial`: one `!=` over two distinct values."""
+    """`control.c::factorial` with its one `a < b` grafted into `a != b`: the
+    optimised x64 corpus keeps no int `!=` over two distinct values."""
     _cfg, fn, _unresolved = strider.lift.load_elf(
         str(fixture_path("x64", "control"))
     ).analyze("factorial")
+    x, y = p.Capture(), p.Capture()
+    assert fn.rewrite(find=p.int_slt(p.var(x), p.var(y)), replace=tpl.int_ne(x, y)) == 1
     return fn
 
 

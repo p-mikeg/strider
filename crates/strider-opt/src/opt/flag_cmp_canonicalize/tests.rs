@@ -1568,3 +1568,298 @@ fn a_chain_of_flag_tests_collapses_in_linear_use_moves() -> Result<()> {
     );
     Ok(())
 }
+
+// `cmp a, N` against a constant: ConstantFold has folded `Add(a, Neg(N))` to
+// `Add(a, M)`, so the signed rules see `Sless(Add(a, M), 0)` beside
+// `Sborrow(a, N)`.  `cmn a, N` sets the same flags from `Add(a, N)` and
+// `Scarry(a, N)`.
+
+/// Which overflow flag the tree carries: `cmp` (`Sborrow`) or `cmn`
+/// (`Scarry`).
+#[derive(Clone, Copy, Debug)]
+enum OverflowFlag {
+    Sborrow,
+    Scarry,
+}
+
+/// The GE tree `Equal(ZeroExtend(Sless(Add(a, add_c), 0)), ZeroExtend(flag(x,
+/// n)))` at `ty`, or its LT negation, as an `If` cond, where `x` is `a` or,
+/// given `offset`, `Add(a, offset)`.  Returns `x`.
+fn build_signed_imm_tree(
+    ty: ValueType,
+    flag: OverflowFlag,
+    offset: Option<u128>,
+    add_c: u128,
+    n: u128,
+    lt: bool,
+) -> Result<(strider_ir::Function, NodeId, ValueId)> {
+    let a_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
+    let (fg, if_node, x) = RegisterSet::new()
+        .tracked(a_vn)
+        .build_if_then_else_returns(|fb| {
+            let a = fb.read_variable(&a_vn)?;
+            let x = match offset {
+                Some(c1) => {
+                    let c1 = fb.build_int_const(c1, ty)?;
+                    fb.build_int_binary_operation(a, c1, IntBinaryOp::Add, ty)?
+                }
+                None => a,
+            };
+            let c = fb.build_int_const(add_c, ty)?;
+            let sum = fb.build_int_binary_operation(a, c, IntBinaryOp::Add, ty)?;
+            let zero = fb.build_int_const(0u128, ty)?;
+            let ng = fb.build_int_cmp_operation(sum, zero, IntCmpOp::Sless, ty)?;
+            let n_const = fb.build_int_const(n, ty)?;
+            let op = match flag {
+                OverflowFlag::Sborrow => IntCmpOp::Sborrow,
+                OverflowFlag::Scarry => IntCmpOp::Scarry,
+            };
+            let ov = fb.build_int_cmp_operation(x, n_const, op, ty)?;
+            let ng = fb.convert_to_int_if_needed(ng, ValueType::int(8))?;
+            let ov = fb.convert_to_int_if_needed(ov, ValueType::int(8))?;
+            let ge = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::int(8))?;
+            let cond = if lt {
+                build_i1_xor_with_one(fb, ge)?
+            } else {
+                ge
+            };
+            Ok((cond, x))
+        })?;
+    Ok((fg, if_node, x))
+}
+
+/// Runs the pass; the rewritten cond as `(negated, lhs, rhs)` for
+/// `[Xor(]Sless(lhs, rhs)[, 1)]`, or `None` when it left the tree alone.
+fn run_to_sless(
+    fg: &mut strider_ir::Function,
+    if_node: NodeId,
+) -> Result<Option<(bool, ValueId, ValueId)>> {
+    let r = crate::pipeline::run_one(
+        &FlagCmpCanonicalize::new(),
+        fg,
+        &mut crate::OptCtx::new(None),
+    )?;
+    if !r.changed() {
+        return Ok(None);
+    }
+    let mut cmp = fg.producer(if_cond_output(fg.graph(), if_node));
+    let negated = is_i1_xor_with_one(fg, cmp);
+    if negated {
+        let [l, r] = fg.graph().node_inputs_exact::<2>(cmp).expect("Xor");
+        cmp = fg.producer(if fg.int_const_u128(r) == Some(1) {
+            l
+        } else {
+            r
+        });
+    }
+    assert_eq!(*fg.node_kind(cmp), NodeKind::IntCmpOp(IntCmpOp::Sless));
+    let [lhs, rhs] = fg.graph().node_inputs_exact::<2>(cmp).expect("Sless");
+    Ok(Some((negated, lhs, rhs)))
+}
+
+/// The rewritten cond as `(negated, K)` for `[Xor(]Sless(x, K)[, 1)]`, or
+/// `None` when the pass left the tree alone.
+fn signed_imm_rewrite(
+    ty: ValueType,
+    flag: OverflowFlag,
+    offset: Option<u128>,
+    add_c: u128,
+    n: u128,
+    lt: bool,
+) -> Result<Option<(bool, u128)>> {
+    let (mut fg, if_node, x) = build_signed_imm_tree(ty, flag, offset, add_c, n, lt)?;
+    let Some((negated, lhs, k)) = run_to_sless(&mut fg, if_node)? else {
+        return Ok(None);
+    };
+    assert_eq!(lhs, x, "the compared value stays on the left");
+    let k = fg.int_const_u128(k).expect("a constant right operand");
+    Ok(Some((negated, k)))
+}
+
+fn sext8(v: u128) -> i128 {
+    i128::from(v as u8 as i8)
+}
+
+/// Every `(a, N)` pair at 8 bits: wherever the pass rewrites a GE or LT tree,
+/// the result agrees with the tree for every `a`, and it rewrites every
+/// `cmp` tree and every `cmn` tree but `N = INT_MIN`.
+#[test]
+fn signed_imm_rewrites_agree_with_the_flag_tree_at_8_bits() -> Result<()> {
+    let ty = ValueType::int(8);
+    for flag in [OverflowFlag::Sborrow, OverflowFlag::Scarry] {
+        for n in 0..=255u128 {
+            let add_c = match flag {
+                OverflowFlag::Sborrow => n.wrapping_neg() & 0xff,
+                OverflowFlag::Scarry => n,
+            };
+            for lt in [false, true] {
+                let got = signed_imm_rewrite(ty, flag, None, add_c, n, lt)?;
+                let declines = matches!(flag, OverflowFlag::Scarry) && n == 0x80;
+                let Some((negated, k)) = got else {
+                    assert!(declines, "{flag:?} N={n:#x} lt={lt} left alone");
+                    continue;
+                };
+                assert!(!declines, "{flag:?} N=INT_MIN has no Sless form");
+                for a in 0..=255u128 {
+                    let sum = sext8((a + add_c) & 0xff);
+                    let exact = match flag {
+                        OverflowFlag::Sborrow => sext8(a) - sext8(n),
+                        OverflowFlag::Scarry => sext8(a) + sext8(n),
+                    };
+                    let ov = !(-128..=127).contains(&exact);
+                    let tree = ((sum < 0) == ov) != lt;
+                    let rewritten = (sext8(a) < sext8(k)) != negated;
+                    assert_eq!(
+                        rewritten, tree,
+                        "{flag:?} N={n:#x} lt={lt} a={a:#x}: K={k:#x} negated={negated}"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `M` must be `-N`: any other `Add` constant is a different tree.
+#[test]
+fn signed_imm_rewrite_requires_add_constant_to_negate_n() -> Result<()> {
+    for ty in [ValueType::int(32), ValueType::int(64)] {
+        for lt in [false, true] {
+            let mask = ty.int_mask_u128().expect("narrow");
+            let neg5 = 5u128.wrapping_neg() & mask;
+            assert_eq!(
+                signed_imm_rewrite(ty, OverflowFlag::Sborrow, None, neg5, 5, lt)?,
+                Some((!lt, 5)),
+                "{ty:?} lt={lt}"
+            );
+            for add_c in [neg5 + 1, 5, 0] {
+                assert_eq!(
+                    signed_imm_rewrite(ty, OverflowFlag::Sborrow, None, add_c, 5, lt)?,
+                    None,
+                    "{ty:?} lt={lt} M={add_c:#x}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `cmn a, 5` compares against `-5`; the `Add` constant must be `N` itself.
+#[test]
+fn cmn_imm_rewrites_to_sless_against_minus_n() -> Result<()> {
+    for ty in [ValueType::int(32), ValueType::int(64)] {
+        let mask = ty.int_mask_u128().expect("narrow");
+        let neg5 = 5u128.wrapping_neg() & mask;
+        for lt in [false, true] {
+            assert_eq!(
+                signed_imm_rewrite(ty, OverflowFlag::Scarry, None, 5, 5, lt)?,
+                Some((!lt, neg5)),
+                "{ty:?} lt={lt}"
+            );
+            assert_eq!(
+                signed_imm_rewrite(ty, OverflowFlag::Scarry, None, 6, 5, lt)?,
+                None,
+                "{ty:?} lt={lt}: mismatched Add constant"
+            );
+            let int_min = mask ^ (mask >> 1);
+            assert_eq!(
+                signed_imm_rewrite(ty, OverflowFlag::Scarry, None, int_min, int_min, lt)?,
+                None,
+                "{ty:?} lt={lt}: N = INT_MIN"
+            );
+        }
+    }
+    Ok(())
+}
+
+/// `cmp X, N` on `X = Add(a, C1)`, the flag operand reassociated to
+/// `Add(a, C1 - N)`: every `(a, N)` at 8 bits for a few `C1`, and a wrong
+/// constant declines.
+#[test]
+fn offset_imm_rewrites_agree_with_the_flag_tree_at_8_bits() -> Result<()> {
+    let ty = ValueType::int(8);
+    for c1 in [1u128, 0x7f, 0x80, 0xff] {
+        for n in 0..=255u128 {
+            let add_c = c1.wrapping_sub(n) & 0xff;
+            for lt in [false, true] {
+                let off = Some(c1);
+                assert_eq!(
+                    signed_imm_rewrite(ty, OverflowFlag::Sborrow, off, (add_c + 1) & 0xff, n, lt)?,
+                    None,
+                    "C1={c1:#x} N={n:#x} lt={lt}: wrong Add constant"
+                );
+                let (negated, k) =
+                    signed_imm_rewrite(ty, OverflowFlag::Sborrow, off, add_c, n, lt)?
+                        .unwrap_or_else(|| panic!("C1={c1:#x} N={n:#x} lt={lt} left alone"));
+                for a in 0..=255u128 {
+                    let x = (a + c1) & 0xff;
+                    let sum = sext8((a + add_c) & 0xff);
+                    let ov = !(-128..=127).contains(&(sext8(x) - sext8(n)));
+                    let tree = ((sum < 0) == ov) != lt;
+                    let rewritten = (sext8(x) < sext8(k)) != negated;
+                    assert_eq!(rewritten, tree, "C1={c1:#x} N={n:#x} lt={lt} a={a:#x}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// After the GE/LT rewrite and solve-for-x on the EQ term, an offset LE is
+/// `Or(Equal(a, C3), Sless(X, N))` and GT `And(Xor(Equal(a, C3), 1),
+/// Xor(Sless(X, N), 1))`; with `C3 == N - C1` they fold to `Sless(N, X)`.
+/// Every `(a, N)` at 8 bits for a few `C1`, and a wrong `C3` declines.
+#[test]
+fn offset_le_gt_rewrites_agree_at_8_bits() -> Result<()> {
+    let ty = ValueType::int(8);
+    let a_vn = strider_ir_test_utils::reg_vn(0x1000, 1);
+    let build = |c1: u128, c3: u128, n: u128, gt: bool| {
+        RegisterSet::new()
+            .tracked(a_vn)
+            .build_if_then_else_returns(|fb| {
+                let a = fb.read_variable(&a_vn)?;
+                let c1 = fb.build_int_const(c1, ty)?;
+                let x = fb.build_int_binary_operation(a, c1, IntBinaryOp::Add, ty)?;
+                let c3 = fb.build_int_const(c3, ty)?;
+                let eq = fb.build_int_cmp_operation(a, c3, IntCmpOp::Equal, ty)?;
+                let n = fb.build_int_const(n, ty)?;
+                let lt = fb.build_int_cmp_operation(x, n, IntCmpOp::Sless, ty)?;
+                let cond = if gt {
+                    let ne = build_i1_xor_with_one(fb, eq)?;
+                    let ge = build_i1_xor_with_one(fb, lt)?;
+                    fb.build_int_binary_operation(ne, ge, IntBinaryOp::And, ValueType::I1)?
+                } else {
+                    fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, ValueType::I1)?
+                };
+                Ok((cond, x))
+            })
+    };
+    for c1 in [1u128, 0x7f, 0x80, 0xff] {
+        for n in 0..=255u128 {
+            let c3 = n.wrapping_sub(c1) & 0xff;
+            for gt in [false, true] {
+                let (mut fg, if_node, _x) = build(c1, (c3 + 1) & 0xff, n, gt)?;
+                assert!(
+                    run_to_sless(&mut fg, if_node)?.is_none(),
+                    "C1={c1:#x} N={n:#x} gt={gt}: wrong Equal constant"
+                );
+                let (mut fg, if_node, x) = build(c1, c3, n, gt)?;
+                let (negated, k, rhs) = run_to_sless(&mut fg, if_node)?
+                    .unwrap_or_else(|| panic!("C1={c1:#x} N={n:#x} gt={gt} left alone"));
+                assert_eq!(rhs, x, "the compared value moves to the right");
+                let k = fg.int_const_u128(k).expect("a constant left operand");
+                for a in 0..=255u128 {
+                    let xv = sext8((a + c1) & 0xff);
+                    let tree = if gt {
+                        a != c3 && xv >= sext8(n)
+                    } else {
+                        a == c3 || xv < sext8(n)
+                    };
+                    let rewritten = (sext8(k) < xv) != negated;
+                    assert_eq!(rewritten, tree, "C1={c1:#x} N={n:#x} gt={gt} a={a:#x}");
+                }
+            }
+        }
+    }
+    Ok(())
+}
