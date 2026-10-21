@@ -396,7 +396,7 @@ pub struct PyLifter {
     /// rest share it and may overlap each other.
     inner: Option<strider_orchestrator::Strider<AnyMemReader>>,
     /// The arch this handle was built for: what `arch` hands back, and whose
-    /// sla a `custom(...)` CC / `CallOtherAbi` must share.
+    /// register table a `custom(...)` CC / `CallOtherAbi` must share.
     pub(crate) arch: strider_target::SleighArch,
     /// The same Python reader/rom callback objects the adapters hold, so
     /// `__traverse__` can make the otherwise-buried lifter to reader edge

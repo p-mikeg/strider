@@ -307,8 +307,9 @@ const LEDGER: &[Divergence] = &[
     Divergence {
         presets: &["arm_aapcs", "arm_aapcs_soft"],
         items: &["callee-saved only in strider: cpsr_mode"],
-        reason: "CPSR.M, a register only the fork's ARM sla has: a callee returns through \
-                 its caller's banked `lr`, so it returns in its caller's mode",
+        reason: "CPSR.M, a register only the fork's ARM sla has: `sp` and `lr` are banked \
+                 per mode and AAPCS keeps `sp`, so a conforming callee returns in its \
+                 caller's mode",
     },
     Divergence {
         presets: &["arm_aapcs_soft"],
