@@ -488,6 +488,19 @@
 
 ### Fixed
 
+- ARM `msr` writing the CPSR control field (`cpsr_c`, `cpsr_fsxc`, ...),
+  A32 and Thumb-2, re-banks registers as `cps` does: it switched mode
+  silently, so `mov r8, #5` under FIQ read back 5 under SVC. A mode switch,
+  `cps` included, also re-banks the SPSR.
+- ARM `vld3`, `vld4`, `vst3` and `vst4` (multiple structures) transferred
+  from one register before their first, `{d4-d6}` writing d3-d5.
+- BE8 (`arm_be_kernel`) and BE32 (`arm_be`) `vld1` and `vst1` (multiple single
+  elements) of `.8`, `.16` and `.32` move one element per access: one
+  8-byte access put element 0 at the high end. `arm_be_kernel` now decodes
+  with its own sla, `ARM8_be8`, whose registers are `arm`'s.
+- Python: a custom `CallingConvention` or `CallOtherAbi` built on `arm`,
+  `arm_thumb` or `arm_be_kernel` serves a `Lifter` of any of the three; the
+  check compared slas, which `arm_be_kernel` no longer shares.
 - x86 SSE and VEX float-to-integer conversions that round (`cvtsd2si`,
   `cvtss2si` and their VEX forms, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`,
   `cvtps2pi`) break a tie to even, the default MXCSR mode: 2.5 converted to
