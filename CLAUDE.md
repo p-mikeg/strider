@@ -227,7 +227,7 @@ width a Sleigh varnode or temporary carries needs an entry. `bit_width(I1) ==
 
 `expected_signature` (`node_signature.rs`) is the SSoT for each kind's slot
 kinds. `Graph` holds only structure; per-function overlay (entry, `default_cc`,
-`endianness`, tracked varnodes, interners, side-tables) lives on `Function`,
+`byte_order`, tracked varnodes, interners, side-tables) lives on `Function`,
 which wraps a `Graph`. `entry` is a non-optional `NodeId` (a `Function` always
 has one), so `EditFunction::new(&mut Function)` is infallible.
 
