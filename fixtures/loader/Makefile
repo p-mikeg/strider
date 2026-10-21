@@ -2,7 +2,8 @@
 #
 # Images whose GOT slots the dynamic loader fills with values the file does
 # not hold, and objects whose GOT references strider resolves, for the ELF
-# reader's tests: out/<name>.{elf,o}, from src/.
+# reader's tests, plus a ppc64 ELFv2 image whose calls enter at local
+# entries: out/<name>.{elf,o}, from src/.
 #
 # Not per-arch like ../Makefile: each image needs a link of its own (a shared
 # library, a PIE, an executable against that library), and the golden suite
@@ -28,12 +29,14 @@ X86    := i686-linux-gnu-gcc
 MIPS32 := mips-linux-gnu-gcc -EB -mips32
 MIPS64 := mips64el-linux-gnuabi64-gcc
 A64    := aarch64-linux-gnu-gcc
+PPC64LE := powerpc64le-linux-gnu-gcc
 
 IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           mips64le_got_lib.elf mips64le_got.elf \
           x64_ifunc_pie.elf x64_ifunc_lib.elf x86_ifunc_pie.elf x64_ifunc.o \
           x64_ifunc_nopic.o x64_ifunc_static.elf \
-          x86_got_call_nopic.o x86_got_call_pic.o aarch64_got_addend.o
+          x86_got_call_nopic.o x86_got_call_pic.o aarch64_got_addend.o \
+          ppc64le_local_entry.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -76,6 +79,9 @@ $(OUTDIR)/x86_got_call_nopic.o: src/got_call.c | $(OUTDIR)
 	$(X86) $(filter-out -Wl% -nostdlib -fPIC,$(CFLAGS)) -fno-pic -fno-plt -c $< -o $@
 $(OUTDIR)/aarch64_got_addend.o: src/aarch64_got_addend.s | $(OUTDIR)
 	$(A64) -c $< -o $@
+
+$(OUTDIR)/ppc64le_local_entry.elf: src/ppc64le_local_entry.s | $(OUTDIR)
+	$(PPC64LE) $(CFLAGS) -no-pie -Wl,-e,noret_call $< -o $@
 
 clean:
 	rm -rf $(OUTDIR)
