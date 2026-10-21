@@ -38,8 +38,9 @@ pub struct AnalyzeOptions<'a> {
     /// shape when a resolution looks wrong.  Caller-supplied targets still
     /// seat: they are read by the CFG builder, not the classifier.
     pub resolve_indirect_branches: bool,
-    /// The claims each round's fresh lift is optimized under
-    /// ([`strider_ir::Function::assume`]).
+    /// The claims each round's fresh lift holds
+    /// ([`strider_ir::Function::assumptions`]): the lift reads them, as the
+    /// optimizer does.
     pub assumptions: AssumptionOptions,
     /// Drops unreachable nodes once the loop settles.
     pub compact: bool,

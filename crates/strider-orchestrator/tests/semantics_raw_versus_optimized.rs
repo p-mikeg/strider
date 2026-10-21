@@ -501,7 +501,13 @@ fn sweep_fixture(fixture: &Fixture, rom: Rom, tally: &mut Tally) {
         };
         let raw = strider
             .lifter()
-            .build_ir_with(&result.cfg, cc.clone(), &opts.cfg, opts.per_address_ccs)
+            .build_ir_with(
+                &result.cfg,
+                cc.clone(),
+                &opts.cfg,
+                opts.per_address_ccs,
+                &opts.assumptions,
+            )
             .unwrap_or_else(|e| panic!("{at}: lifting the analysed cfg: {e:#}"))
             .function;
         let rom = strider.rom().expect("a fixture Strider carries its ROM");

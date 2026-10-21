@@ -12,6 +12,14 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         terminate: bool,
     ) -> Result<()> {
         let (user_op_id, name) = decode_user_op(insn, self.lifter.user_op_names())?;
+        if self.call_other_overrides.get(name).is_none()
+            && strider_target::call_other_abi::is_msr_register_mode(
+                self.lifter.arch().preset(),
+                name,
+            )
+        {
+            return self.lift_msr_register_mode(insn);
+        }
         let class = strider_target::call_other_abi::classify_with(
             self.call_other_overrides,
             self.lifter.arch().preset(),
@@ -45,6 +53,21 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let output_vn: Option<rsleigh::Vn> = insn.output.as_ref().copied();
         self.build_abi_call_other(user_op_id, name, &explicit_args, &abi, output_vn, terminate)?;
         Ok(())
+    }
+
+    /// `out = msrRegisterMode(new, current)`: `current` under
+    /// [`strider_ir::AssumptionOptions::msr_register_keeps_mode`], else `new`.
+    fn lift_msr_register_mode(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        let (Some(out), [_, new, current]) = (insn.output.as_ref(), insn.inputs.as_slice()) else {
+            anyhow::bail!("msrRegisterMode takes two inputs and an output");
+        };
+        let keeps = self
+            .builder
+            .function()
+            .assumptions()
+            .msr_register_keeps_mode;
+        let value = self.read_vn(if keeps { current } else { new })?;
+        self.write_vn(out, value)
     }
 
     /// Whether the CFG sealed `region` `NoReturn` at the op at `addr`. Called
@@ -212,7 +235,13 @@ mod tests {
         let mut lifter = crate::lift::Lifter::new(arch, sleigh)?;
         let cfg = lifter.build_cfg(0x1000u64.into(), opts)?;
         Ok(lifter
-            .build_ir_with(&cfg, cc, opts, &rustc_hash::FxHashMap::default())?
+            .build_ir_with(
+                &cfg,
+                cc,
+                opts,
+                &rustc_hash::FxHashMap::default(),
+                &strider_ir::AssumptionOptions::none(),
+            )?
             .function)
     }
 
@@ -325,7 +354,13 @@ mod tests {
         let cc = strider_target::CallingConvention::powerpc_sysv32().build(lifter.sleigh_regs())?;
         let cfg = lifter.build_cfg(0x1000u64.into(), opts)?;
         Ok(lifter
-            .build_ir_with(&cfg, cc, opts, &rustc_hash::FxHashMap::default())?
+            .build_ir_with(
+                &cfg,
+                cc,
+                opts,
+                &rustc_hash::FxHashMap::default(),
+                &strider_ir::AssumptionOptions::none(),
+            )?
             .function)
     }
 
@@ -419,7 +454,13 @@ mod tests {
                         .is_some_and(|w| w.insn.opcode == rsleigh::Opcode::CallOther)
             });
             let f = lifter
-                .build_ir_with(&cfg, cc.clone(), opts, &no_ccs)
+                .build_ir_with(
+                    &cfg,
+                    cc.clone(),
+                    opts,
+                    &no_ccs,
+                    &strider_ir::AssumptionOptions::none(),
+                )
                 .expect("lift")
                 .function;
             let sinks = f
@@ -469,7 +510,13 @@ mod tests {
         let mut sinks = |built: &strider_cfg::CfgOptions, lifted: &strider_cfg::CfgOptions| {
             let cfg = lifter.build_cfg(0x1000u64.into(), built).expect("cfg");
             let f = lifter
-                .build_ir_with(&cfg, cc.clone(), lifted, &no_ccs)
+                .build_ir_with(
+                    &cfg,
+                    cc.clone(),
+                    lifted,
+                    &no_ccs,
+                    &strider_ir::AssumptionOptions::none(),
+                )
                 .expect("a CallOther lifts as its cfg was built")
                 .function;
             f.graph()
@@ -506,7 +553,13 @@ mod tests {
         let cfg = lifter
             .build_cfg(0x1000u64.into(), &overriding(&ends))
             .expect("cfg");
-        let Err(err) = lifter.build_ir_with(&cfg, cc, &overriding(&noop), &no_ccs) else {
+        let Err(err) = lifter.build_ir_with(
+            &cfg,
+            cc,
+            &overriding(&noop),
+            &no_ccs,
+            &strider_ir::AssumptionOptions::none(),
+        ) else {
             panic!("a CallOther the cfg ended must not lift as a NoOp");
         };
         assert!(

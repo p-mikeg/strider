@@ -368,9 +368,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         Ok(())
     }
 
-    /// [`Self::build_ir_with`] under [`strider_cfg::CfgOptions::default`] and no
-    /// CC overrides: the right pairing only for a `cfg` built with no
-    /// `call_other_overrides`.
+    /// [`Self::build_ir_with`] under [`strider_cfg::CfgOptions::default`], no
+    /// CC overrides and no claims: the right pairing only for a `cfg` built
+    /// with no `call_other_overrides`.
     pub fn build_ir(
         &self,
         cfg: &strider_cfg::Cfg,
@@ -381,6 +381,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             cc,
             &strider_cfg::CfgOptions::default(),
             &rustc_hash::FxHashMap::default(),
+            &strider_ir::AssumptionOptions::none(),
         )
     }
 
@@ -390,7 +391,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// the function default; a direct Call whose target is in
     /// `per_address_ccs` is built with that override instead. The overrides
     /// must be built against this engine's registers and fit its arch, as
-    /// `cc` must.
+    /// `cc` must. The lifted function holds `claims`
+    /// ([`strider_ir::Function::assumptions`]), and the lift itself reads
+    /// [`strider_ir::AssumptionOptions::msr_register_keeps_mode`].
     ///
     /// Never errs on incompleteness:
     /// [`strider_cfg::Cfg::incomplete`] reports that.
@@ -407,6 +410,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         cc: strider_target::BuiltCallingConvention,
         cfg_opts: &strider_cfg::CfgOptions,
         per_address_ccs: &rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
+        claims: &strider_ir::AssumptionOptions,
     ) -> Result<LiftOutcome> {
         self.check_cfg_space_ids(cfg)?;
         self.check_default_cc(&cc)?;
@@ -439,6 +443,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             per_address_ccs,
             cfg_opts.call_other_overrides,
         )?;
+        driver.builder.function_mut().assume(claims);
 
         // Semi-pruned SSA phi placement: iterated dominance frontier of each
         // variable's definition sites, less the region-local temporaries.  This
