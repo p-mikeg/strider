@@ -153,17 +153,18 @@ class CfgOptions:
     `panic`): a call to one ends its block, under `build_cfg` and `analyze`
     alike. A target is the address the call instruction names. A Thumb or
     MIPS16 one is listed at its decoded, even address: mask the ISA bit off a
-    symbol value (`addr & ~1`). A ppc64 ELFv2 call from the same module lands
-    at `Symbol.local_entry`, usually 8 bytes past `Symbol.address`.
-    `ElfLifter.analyze` adds that local entry for every listed `address`;
-    `build_cfg` and a plain `Lifter` take the set as given, so list
+    symbol value (`addr & ~1`). A ppc64 ELFv2 call sharing the callee's TOC
+    lands at `Symbol.local_entry`, usually 8 bytes past `Symbol.address`.
+    `ElfLifter.analyze` and `ElfLifter.build_cfg` add that local entry for
+    every listed `address`; a plain `Lifter` takes the set as given, so list
     `local_entry` there.
 
     `data_ranges` lists `(start, end)` address ranges, end exclusive, that are
     data rather than code (an ARM literal pool): a branch or fall-through into
     one is reported in `Cfg.incomplete` as `"undecodable_target"`, never
     decoded. The instruction at the entry address decodes even inside one.
-    `ElfLifter.analyze` fills it from the ELF's mapping symbols when empty.
+    `ElfLifter.analyze` and `ElfLifter.build_cfg` fill it from the ELF's
+    mapping symbols when empty.
     A range that ends at or below its start raises `StriderError`: it names no
     address, and accepting it silently dropped the pool the caller meant to
     mark.
@@ -205,6 +206,12 @@ class CfgOptions:
     def _with_function_max_size(self, function_max_size: int) -> "CfgOptions":
         """These options bounded to `function_max_size`, sharing both tables.
         Raises `ValueError` for `0`."""
+        ...
+    def _with_elf(self, elf: object) -> "CfgOptions":
+        """These options as `ElfLifter` runs them on `elf`: its
+        mapping-symbol data ranges unless `data_ranges` names some, and the
+        local entry of every `no_return_targets` address that is a ppc64
+        ELFv2 global entry."""
         ...
     def _seated_table_id(self) -> int:
         """The address of the seated `known_targets` table every analyse
