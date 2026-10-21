@@ -16,12 +16,12 @@
 # umod: int.rem or int.div or call
 endian little
 default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none
-assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes
+assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode
 
 == main @0x409
 cfg
   0x408 367 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x131600:4, u:0x131e00:4, u:0x148500:4, u:0x169b00:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x131700:4, u:0x131f00:4, u:0x148600:4, u:0x169d00:4]
 arg 2 [%v16]
 float_arg 0 [%v17]
 float_arg 1 [%v18]
@@ -459,7 +459,7 @@ return %v0, %v1, %v4, %v5, %v6, %v7, %v8, %v9
 == shl @0x641
 cfg
   0x640 22 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, tmpNG, tmpZR, tmpCY, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x15c100:4, u:0x15c200:4, u:0x15c400:4, u:0x15c500:1, u:0x15c600:1, u:0x15c700:1, u:0x15c800:1, u:0x15c900:1, u:0x15cd00:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, tmpNG, tmpZR, tmpCY, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x15c200:4, u:0x15c300:4, u:0x15c500:4, u:0x15c600:1, u:0x15c700:1, u:0x15c800:1, u:0x15c900:1, u:0x15ca00:1, u:0x15ce00:4]
 arg 0 [%v2]
 arg 1 [%v3]
 float_arg 0 [%v7]
@@ -482,7 +482,7 @@ return %v0, %v1, %v6, %v3, %v7, %v8, %v9, %v10
 == lshr @0x645
 cfg
   0x644 23 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, tmpNG, tmpZR, tmpCY, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x15cf00:4, u:0x15d000:4, u:0x15d200:4, u:0x15d300:1, u:0x15d400:1, u:0x15d500:1, u:0x15d600:1, u:0x15d700:1, u:0x15dd00:4, u:0x15de00:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, tmpNG, tmpZR, tmpCY, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x15d000:4, u:0x15d100:4, u:0x15d300:4, u:0x15d400:1, u:0x15d500:1, u:0x15d600:1, u:0x15d700:1, u:0x15d800:1, u:0x15de00:4, u:0x15df00:4]
 arg 0 [%v2]
 arg 1 [%v3]
 float_arg 0 [%v7]
@@ -505,7 +505,7 @@ return %v0, %v1, %v6, %v3, %v7, %v8, %v9, %v10
 == ashr @0x649
 cfg
   0x648 22 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, tmpNG, tmpZR, tmpCY, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x14b500:4, u:0x14b600:4, u:0x14b800:4, u:0x14b900:1, u:0x14ba00:1, u:0x14bb00:1, u:0x14bc00:1, u:0x14bd00:1, u:0x14c200:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, tmpNG, tmpZR, tmpCY, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x14b600:4, u:0x14b700:4, u:0x14b900:4, u:0x14ba00:1, u:0x14bb00:1, u:0x14bc00:1, u:0x14bd00:1, u:0x14be00:1, u:0x14c300:4]
 arg 0 [%v2]
 arg 1 [%v3]
 float_arg 0 [%v7]
@@ -565,7 +565,7 @@ cfg
   0x8a4 7 ops goto -> [0x8a8]
   0x8a8 1 ops goto -> [0xb78]
   0xb78 30 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x500:1, u:0x700:1, u:0x2600:1, u:0x2700:1, u:0x12c400:1, u:0x12ca00:1, u:0x12d600:1, u:0x12d800:1, u:0x12e500:1, u:0x130900:4, u:0x131e00:4, u:0x132100:4, u:0x132e00:4, u:0x132f00:4, u:0x133100:4, u:0x133400:4, u:0x14a700:4, u:0x14f600:1, u:0x150f00:4, u:0x15cf00:4, u:0x15d000:4, u:0x15d200:4, u:0x15d300:1, u:0x15d400:1, u:0x15d500:1, u:0x15d600:1, u:0x15d700:1, u:0x15e600:4, u:0x1ae000:4, u:0x1b7800:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x500:1, u:0x700:1, u:0x2600:1, u:0x2700:1, u:0x12c500:1, u:0x12cb00:1, u:0x12d700:1, u:0x12d900:1, u:0x12e600:1, u:0x130a00:4, u:0x131f00:4, u:0x132200:4, u:0x132f00:4, u:0x133000:4, u:0x133200:4, u:0x133500:4, u:0x14a800:4, u:0x14f700:1, u:0x151000:4, u:0x15d000:4, u:0x15d100:4, u:0x15d300:4, u:0x15d400:1, u:0x15d500:1, u:0x15d600:1, u:0x15d700:1, u:0x15d800:1, u:0x15e700:4, u:0x1ae200:4, u:0x1b7a00:4]
 arg 0 [%v7]
 arg 1 [%v1]
 arg 3 [%v33]
@@ -655,7 +655,7 @@ cfg
   0x8a2 0 ops tailcall 0x8a2 -> []
   0x8ac 11 ops cbranch 0x8a2 -> [0x8a2, 0x8b0]
   0x8b0 35 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x12a300:1, u:0x150900:4, u:0x1ae000:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x12a400:1, u:0x150a00:4, u:0x1ae200:4]
 arg 0 [%v9]
 arg 1 [%v1]
 arg 2 [%v10]
@@ -739,7 +739,7 @@ cfg
   0xb54.6 5 ops goto -> [0xb58]
   0xb58 1 ops goto -> [0xb78]
   0xb78 30 ops return -> []
-tracked [r0, r1, r2, r3, r12, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x500:1, u:0xb00:1, u:0xd00:1, u:0x1d00:1, u:0x1e00:1, u:0x1f00:1, u:0x2100:1, u:0x2600:1, u:0x2700:1, u:0x12c400:1, u:0x12d600:1, u:0x12d800:1, u:0x12e500:1, u:0x12eb00:1, u:0x12ed00:1, u:0x12fd00:1, u:0x12fe00:1, u:0x12ff00:1, u:0x130100:1, u:0x130900:4, u:0x131e00:4, u:0x132200:4, u:0x132400:4, u:0x132e00:4, u:0x132f00:4, u:0x133100:4, u:0x133400:4, u:0x134500:4, u:0x134600:4, u:0x134800:4, u:0x134b00:4, u:0x14a700:4, u:0x150900:4, u:0x150b00:4, u:0x150f00:4, u:0x15cf00:4, u:0x15d000:4, u:0x15d200:4, u:0x15d300:1, u:0x15d400:1, u:0x15d500:1, u:0x15d600:1, u:0x15d700:1, u:0x15e600:4, u:0x1ae000:4, u:0x1b7800:4, u:0x1b7e00:4]
+tracked [r0, r1, r2, r3, r12, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x500:1, u:0xb00:1, u:0xd00:1, u:0x1d00:1, u:0x1e00:1, u:0x1f00:1, u:0x2100:1, u:0x2600:1, u:0x2700:1, u:0x12c500:1, u:0x12d700:1, u:0x12d900:1, u:0x12e600:1, u:0x12ec00:1, u:0x12ee00:1, u:0x12fe00:1, u:0x12ff00:1, u:0x130000:1, u:0x130200:1, u:0x130a00:4, u:0x131f00:4, u:0x132300:4, u:0x132500:4, u:0x132f00:4, u:0x133000:4, u:0x133200:4, u:0x133500:4, u:0x134600:4, u:0x134700:4, u:0x134900:4, u:0x134c00:4, u:0x14a800:4, u:0x150a00:4, u:0x150c00:4, u:0x151000:4, u:0x15d000:4, u:0x15d100:4, u:0x15d300:4, u:0x15d400:1, u:0x15d500:1, u:0x15d600:1, u:0x15d700:1, u:0x15d800:1, u:0x15e700:4, u:0x1ae200:4, u:0x1b7a00:4, u:0x1b8000:4]
 arg 0 [%v6]
 arg 1 [%v1]
 arg 2 [%v35]
@@ -873,7 +873,7 @@ cfg
   0xb4a 0 ops tailcall 0xb4a -> []
   0xb5c 11 ops cbranch 0xb4a -> [0xb4a, 0xb60]
   0xb60 35 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x12a300:1, u:0x150900:4, u:0x1ae000:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x12a400:1, u:0x150a00:4, u:0x1ae200:4]
 arg 0 [%v9]
 arg 1 [%v1]
 arg 2 [%v10]
@@ -929,7 +929,7 @@ return %v58, %v59, %v60, %v89, %v62, %v63, %v64, %v65
 == __aeabi_idiv0 @0xb79
 cfg
   0xb78 30 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x131e00:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x131f00:4]
 arg 1 [%v9]
 arg 2 [%v13]
 arg 3 [%v14]
