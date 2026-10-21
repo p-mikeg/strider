@@ -468,6 +468,11 @@
 
 ### Fixed
 
+- Python: a rewrite template's fresh constant at a shift count is built at
+  the shift's width; under an `I1` root it took the root's and was masked,
+  so `int_truncate(int_shr(a, 31))` shifted by 1. A fresh operand of a
+  `Popcount`, `Lzcount` or other slot that owes its node no width is refused
+  rather than built at the root's width.
 - A jump table indexed by a bit field no longer reads past a guard written as
   another extract of the same bits (mips64 `srl; sltiu` beside `ext`): the
   guard bounds the index, where the field's whole range seated the next
