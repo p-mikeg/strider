@@ -7,6 +7,7 @@ use pyo3::types::PyDict;
 use crate::call_other_abi::PyCallOtherAbi;
 use crate::cc::PyCallingConvention;
 use crate::opt::PyOptimizerPipeline;
+use crate::reader::{LocalEntries, PyLoadedElf};
 use crate::strider_cls::function_bound;
 use strider_orchestrator::opt::AssumptionOptions;
 
@@ -219,6 +220,82 @@ struct OverridesMemo {
 pub(crate) struct NoReturnTargets {
     pub(crate) set: rustc_hash::FxHashSet<u64>,
     view: OnceLock<Py<pyo3::types::PyFrozenSet>>,
+    local: LocalEntryMemo<NoReturnTargets>,
+}
+
+impl NoReturnTargets {
+    fn new(set: rustc_hash::FxHashSet<u64>) -> Self {
+        Self {
+            set,
+            ..Self::default()
+        }
+    }
+
+    /// This set plus the local entry of every member `entries` names.
+    fn with_local_entries(self: &Arc<Self>, entries: &Arc<LocalEntries>) -> Arc<Self> {
+        if entries.is_empty() || self.set.is_empty() {
+            return Arc::clone(self);
+        }
+        self.local
+            .get(entries, || {
+                let added: Vec<u64> = local_entries_of(entries, self.set.iter().copied())
+                    .map(|(_, local)| local)
+                    .filter(|local| !self.set.contains(local))
+                    .collect();
+                (!added.is_empty())
+                    .then(|| Self::new(self.set.iter().copied().chain(added).collect()))
+            })
+            .unwrap_or_else(|| Arc::clone(self))
+    }
+}
+
+/// A table widened by an ELF's [`LocalEntries`], kept beside the entries it
+/// was widened by, so a table rebuilt after `add_elf` is widened afresh.
+/// `None` when no key had a local entry of its own.
+struct LocalEntryMemo<T>(std::sync::Mutex<Option<Widened<T>>>);
+
+/// The entries a table was widened by, and the widened table.
+type Widened<T> = (Arc<LocalEntries>, Option<Arc<T>>);
+
+impl<T> Default for LocalEntryMemo<T> {
+    fn default() -> Self {
+        Self(std::sync::Mutex::default())
+    }
+}
+
+impl<T> LocalEntryMemo<T> {
+    fn get(
+        &self,
+        entries: &Arc<LocalEntries>,
+        widen: impl FnOnce() -> Option<T>,
+    ) -> Option<Arc<T>> {
+        let mut slot = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some((built_for, widened)) = slot.as_ref()
+            && Arc::ptr_eq(built_for, entries)
+        {
+            return widened.clone();
+        }
+        let widened = widen().map(Arc::new);
+        *slot = Some((Arc::clone(entries), widened.clone()));
+        widened
+    }
+}
+
+/// The `(key, local entry)` pairs `entries` holds for `keys`.
+fn local_entries_of(
+    entries: &LocalEntries,
+    keys: impl Iterator<Item = u64>,
+) -> impl Iterator<Item = (u64, u64)> {
+    keys.flat_map(move |key| {
+        let from = entries.partition_point(|&(address, _)| address < key);
+        entries[from..]
+            .iter()
+            .take_while(move |&&(address, _)| address == key)
+            .copied()
+    })
 }
 
 /// `known_targets` as `strider_cfg::CfgOptions` borrows it.
@@ -226,6 +303,23 @@ pub(crate) type SeatedTargets =
     rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>;
 
 impl PyCfgOptions {
+    /// This object with the mapping-symbol data ranges of `elf`, unless it
+    /// already names some, and with the local entry of every
+    /// `no_return_targets` address `elf` has one for. Shares the ELF's tables
+    /// rather than copying them through Python on every analyse.
+    fn with_elf(&self, elf: &PyLoadedElf) -> PyResult<Self> {
+        let mut out = self.clone();
+        if out.data_ranges.ranges().is_empty() {
+            out.data_ranges = elf.data_ranges()?;
+        }
+        if !self.no_return_targets.set.is_empty() {
+            out.no_return_targets = self
+                .no_return_targets
+                .with_local_entries(&elf.local_entries()?);
+        }
+        Ok(out)
+    }
+
     /// `call_other_abis` checked against and built for `target`, rebuilt only
     /// when the arch changes, not per analyse.
     pub(crate) fn call_other_overrides(
@@ -282,10 +376,7 @@ impl PyCfgOptions {
                     .collect(),
             ),
             data_ranges: data_ranges_from(data_ranges)?,
-            no_return_targets: Arc::new(NoReturnTargets {
-                set: no_return_targets.0,
-                view: OnceLock::new(),
-            }),
+            no_return_targets: Arc::new(NoReturnTargets::new(no_return_targets.0)),
             known_targets_view: Arc::default(),
             call_other_abis_view: Arc::default(),
             seated: Arc::new(seated),
@@ -327,19 +418,6 @@ impl PyCfgOptions {
             .iter()
             .map(|r| (r.start, r.end))
             .collect()
-    }
-
-    /// This object with the mapping-symbol data ranges of `elf`, unless it
-    /// already names some. Shares the ELF's table rather than copying it
-    /// through Python on every analyse.
-    fn _with_elf_data_ranges(&self, elf: PyRef<'_, crate::reader::PyLoadedElf>) -> PyResult<Self> {
-        if !self.data_ranges.ranges().is_empty() {
-            return Ok(self.clone());
-        }
-        Ok(Self {
-            data_ranges: elf.data_ranges()?,
-            ..self.clone()
-        })
     }
 
     /// Indirect-branch answers supplied by the caller, as a read-only
@@ -635,6 +713,7 @@ impl PyAssumptionOptions {
 pub struct PerAddressCcs {
     py: HashMap<u64, PyCallingConvention>,
     built: std::sync::Mutex<Option<BuiltPerAddressCcs>>,
+    local: LocalEntryMemo<PerAddressCcs>,
 }
 
 impl PerAddressCcs {
@@ -642,7 +721,31 @@ impl PerAddressCcs {
         Self {
             py,
             built: std::sync::Mutex::default(),
+            local: LocalEntryMemo::default(),
         }
+    }
+
+    /// This table plus, for every key `entries` has a local entry for, that
+    /// local entry under the key's convention. A key already at the local
+    /// entry keeps its own.
+    fn with_local_entries(self: &Arc<Self>, entries: &Arc<LocalEntries>) -> Arc<Self> {
+        if entries.is_empty() || self.py.is_empty() {
+            return Arc::clone(self);
+        }
+        self.local
+            .get(entries, || {
+                let added: Vec<(u64, u64)> = local_entries_of(entries, self.py.keys().copied())
+                    .filter(|(_, local)| !self.py.contains_key(local))
+                    .collect();
+                (!added.is_empty()).then(|| {
+                    let mut py = self.py.clone();
+                    for (global, local) in added {
+                        py.insert(local, self.py[&global].clone());
+                    }
+                    Self::new(py)
+                })
+            })
+            .unwrap_or_else(|| Arc::clone(self))
     }
 }
 
@@ -777,6 +880,21 @@ impl PyLifterOptions {
             Some(table) => self.per_address_ccs_view.get(py, &table.py).map(Some),
             None => Ok(None),
         }
+    }
+
+    /// These options as `ElfLifter.analyze` runs them on `elf`: the ELF's data
+    /// ranges unless `cfg` names some, and the local entry of every
+    /// `no_return_targets` address and `per_address_ccs` key that is a ppc64
+    /// ELFv2 global entry, which a same-TOC call enters past.
+    fn _with_elf(&self, py: Python<'_>, elf: PyRef<'_, PyLoadedElf>) -> PyResult<Self> {
+        let cfg = Py::new(py, self.cfg.borrow(py).with_elf(&elf)?)?;
+        let mut out = self._with_cfg(py, cfg);
+        if let Some(table) = &self.per_address_ccs
+            && !table.py.is_empty()
+        {
+            out.per_address_ccs = Some(table.with_local_entries(&elf.local_entries()?));
+        }
+        Ok(out)
     }
 
     /// These options with `cfg` replaced and every other field carried over.

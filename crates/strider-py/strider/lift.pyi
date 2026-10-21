@@ -138,7 +138,9 @@ class LifterOptions:
     when it is not passed, `analyze` takes the defaults.
     `compact` drops unreachable nodes at the end. `per_address_ccs` overrides
     the calling convention for a callee, keyed by the direct-call target
-    address rather than the call site. `pipeline`, when set,
+    address rather than the call site: on ppc64 ELFv2 a same-module call
+    targets `Symbol.local_entry`, which only `ElfLifter.analyze` adds for a
+    key at `Symbol.address`. `pipeline`, when set,
     replaces the default optimizer pipeline for the calls these options drive.
     """
 
@@ -173,6 +175,12 @@ class LifterOptions:
         ...
     def _with_cfg(self, cfg: CfgOptions) -> LifterOptions:
         """A copy of these options with `cfg` replaced."""
+        ...
+    def _with_elf(self, elf: object) -> LifterOptions:
+        """These options as `ElfLifter.analyze` runs them on `elf`: its
+        mapping-symbol data ranges unless `cfg.data_ranges` names some, and
+        the local entry of every `no_return_targets` address and
+        `per_address_ccs` key that is a ppc64 ELFv2 global entry."""
         ...
 
 class Lifter:
@@ -518,7 +526,10 @@ class ElfLifter(Lifter):
         the lift to that size unless `opts.cfg.function_max_size` is set, and
         the bound drops `allow_code_before_start_addr`. Unless `opts.cfg.data_ranges`
         names some, the ELF's `$d` mapping symbols supply them, so a literal
-        pool is never decoded as code.
+        pool is never decoded as code. A `no_return_targets` address or
+        `per_address_ccs` key that is a ppc64 ELFv2 symbol's `address` also
+        covers its `Symbol.local_entry`, where a call from the same module
+        lands.
 
         Releases the GIL as `Lifter.analyze` does, with the same consequence
         for a daemon thread parked inside it at interpreter finalization."""
