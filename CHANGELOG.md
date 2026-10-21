@@ -616,7 +616,8 @@
 - Python: an i386 object's `R_386_GOT32` / `R_386_GOT32X` with no base
   register (`-fno-pic -fno-plt`'s `call *ext_fn@GOT`) names its GOT slot's
   address; it was the slot's offset from the GOT, so the call loaded its
-  target from address 0x14.
+  target from that offset taken as an address. A `lea ext_fn@GOT, %reg`,
+  which GNU ld gives the offset and lld the address, is a hole.
 - Python: an AArch64 object's `R_AARCH64_GOT_LD_PREL19` with a non-zero
   addend is a hole, as `ADR_GOT_PAGE` and `LD64_GOT_LO12_NC` already were;
   `ldr x0, :got:foo+16` read the slot 16 bytes past foo's, another symbol's.
