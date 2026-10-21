@@ -636,8 +636,8 @@ impl<'f> RangeMap<'f> {
 
     /// Whether `iv`, `value`'s range at `region`, is no tighter than its
     /// KnownBits bound while a guard dominating `region` bounds bits of the
-    /// same root that `value` overlaps but does not enclose, so no projection
-    /// reads it.
+    /// same root that `value` overlaps, but in a way
+    /// [`BitField::project`] does not carry to `value`.
     ///
     /// That guard may be the one sizing a table `value` indexes, in a shape
     /// this module does not read, and the KnownBits bound of a bit field is
@@ -657,10 +657,12 @@ impl<'f> RangeMap<'f> {
         };
         self.root_fields(field.root).iter().any(|&of| {
             of.overlaps(field)
-                && !of.encloses(field)
-                && self.guards_by_field[&of]
-                    .iter()
-                    .any(|&guarded| guarded != value && self.guard_at(guarded, region).is_some())
+                && self.guards_by_field[&of].iter().any(|&guarded| {
+                    guarded != value
+                        && self
+                            .guard_at(guarded, region)
+                            .is_some_and(|iv| of.project(field, iv).is_none())
+                })
         })
     }
 
@@ -1244,26 +1246,40 @@ impl BitField {
     }
 
     /// What `iv`, an interval on a value with this field, proves about a value
-    /// with the field `inner` it [`encloses`](Self::encloses).
+    /// with the field `inner`, or `None` unless it [`encloses`](Self::encloses)
+    /// `inner` and `iv`'s low end carries.
     ///
     /// The same exact field is the same value, so `iv` itself.  Otherwise the
     /// run's bits read as a number are at most `iv.hi >> shift`, whatever lies
     /// above them, and `inner`'s are that number's bits from `inner.lo - lo`
     /// on: at most `(iv.hi >> shift) >> (inner.lo - lo)`, and at most
-    /// `inner`'s own width.
+    /// `inner`'s own width.  Only the top of an exact run is monotone in the
+    /// value, so only there does `iv.lo` bound `inner` from below; anywhere
+    /// else a low end above zero is refused: dropping it would enumerate
+    /// values below it that the field never takes (`x` in `[10, 17]` puts
+    /// `(x >> 1) & 7` in `{5, 6, 7, 0}`, not `[0, 7]`).
     fn project(self, inner: BitField, iv: Interval) -> Option<Interval> {
         if self == inner {
             return Some(iv);
         }
-        if inner.shift + inner.width > 128 {
+        if !self.encloses(inner) || inner.shift + inner.width > 128 {
             return None;
         }
-        let run = iv.hi.checked_shr(self.shift)?;
-        let bits = run.checked_shr(inner.lo - self.lo).unwrap_or(0);
+        let digits = |v: u128| {
+            v.checked_shr(self.shift)
+                .and_then(|run| run.checked_shr(inner.lo - self.lo))
+                .unwrap_or(0)
+        };
+        let at_top = self.exact && inner.lo + inner.width == self.lo + self.width;
+        let lo = match iv.lo {
+            0 => 0,
+            lo if at_top => digits(lo),
+            _ => return None,
+        };
         let width_max = u128::MAX >> (128 - inner.width);
         Some(Interval::new(
-            0,
-            bits.min(width_max) << inner.shift,
+            lo << inner.shift,
+            digits(iv.hi).min(width_max) << inner.shift,
             1u128 << inner.shift,
         ))
     }
