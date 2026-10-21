@@ -15,7 +15,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == f32_arith @0x4010f0
 cfg
   0x4010f0 79 ops return -> []
-tracked [EAX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa900:4, u:0x52900:10, u:0xc0800:10, u:0xc0b00:10]
+tracked [EAX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa900:4, u:0x52900:10, u:0xc2000:10, u:0xc2300:10]
 arg 0 [%v7]
 arg 1 [%v12]
 %v0:ctrl = entry
@@ -49,7 +49,7 @@ return %v0, %v1, %v2, %v3, %v23, %v24, %v25
 == f64_arith @0x401110
 cfg
   0x401110 79 ops return -> []
-tracked [EAX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xaa00:8, u:0x52900:10, u:0xc0800:10, u:0xc0b00:10]
+tracked [EAX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xaa00:8, u:0x52900:10, u:0xc2000:10, u:0xc2300:10]
 arg 0 [%v7]
 arg 1 [%v12]
 %v0:ctrl = entry
@@ -103,7 +103,7 @@ return %v0, %v1, %v2, %v3, %v10, %v11, %v12
 == f64_to_f32 @0x401140
 cfg
   0x401140 45 ops return -> []
-tracked [EAX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa900:4, u:0xaa00:8, u:0x41500:4, u:0x52900:10, u:0x88900:4]
+tracked [EAX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa900:4, u:0xaa00:8, u:0x41500:4, u:0x52900:10, u:0x8a100:4]
 arg 0 [%v9]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -130,7 +130,7 @@ return %v0, %v14, %v13, %v15, %v17, %v18, %v19
 == int_to_float @0x401150
 cfg
   0x401150 27 ops return -> []
-tracked [EAX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x52900:10, u:0x88900:4]
+tracked [EAX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x52900:10, u:0x8a100:4]
 arg 0 [%v9]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -152,8 +152,8 @@ return %v0, %v10, %v9, %v11, %v13, %v14, %v15
 
 == float_to_int @0x401160
 cfg
-  0x401160 87 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, FPUControlWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa200:2, u:0xa300:4, u:0xa900:4, u:0x17100:2, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x52900:10, u:0x54500:10, u:0x54700:10, u:0x54800:10, u:0x54900:1, u:0x54a00:10, u:0x54b00:1, u:0x54d00:1, u:0x54e00:10, u:0x55000:4, u:0x55100:4, u:0x55300:4, u:0x55400:4, u:0x55500:1, u:0x55600:4, u:0x55700:4, u:0x55800:4, u:0xc0100:4]
+  0x401160 110 ops return -> []
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, FPUControlWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa200:2, u:0xa300:4, u:0xa900:4, u:0x17100:2, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x52900:10, u:0x54500:10, u:0x54700:10, u:0x54800:10, u:0x54900:1, u:0x54a00:10, u:0x54b00:1, u:0x54d00:1, u:0x54e00:10, u:0x55000:4, u:0x55100:4, u:0x55300:4, u:0x55400:4, u:0x55500:1, u:0x55600:4, u:0x55700:4, u:0x55800:4, u:0x55a00:10, u:0x55b00:2, u:0x55d00:2, u:0x55e00:1, u:0x55f00:4, u:0x56000:4, u:0x56100:1, u:0x56200:4, u:0x56300:10, u:0x56400:4, u:0x56500:4, u:0x56600:4, u:0x56700:1, u:0x56800:4, u:0x56900:10, u:0x56a00:4, u:0x56b00:4, u:0x56c00:4, u:0x56d00:1, u:0x56e00:4, u:0x56f00:4, u:0x57000:4, u:0xc1900:4]
 arg 0 [%v18]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -176,42 +176,20 @@ arg 0 [%v18]
 %v18:i32 = load[r] %v1, %v17
 %v19:f32 = int_bits_to_float %v18
 %v20:f80 = float_to_float %v19
-%v21:f80 = float.round %v20
-%v22:i32 = float_to_int %v21
-%v23:f80 = float.add %v20, %v20
-%v24:f80 = float.floor %v23
-%v25:i1 = fcmp.equal %v24, %v23
-%v26:f80 = float.floor %v20
-%v27:i1 = fcmp.equal %v26, %v20
-%v28:i1 = iconst[0x1]
-%v29:i1 = int.xor %v27, %v28
-%v30:i1 = int.and %v25, %v29
-%v31:i32 = extend.zero %v30
-%v32:i32 = iconst[0x1]
-%v33:i32 = int.and %v22, %v32
-%v34:i32 = int.mul %v31, %v33
-%v35:i32 = int.neg %v34
-%v36:i32 = int.add %v22, %v35
-%v37:i80 = iconst[0x0]
-%v38:f80 = int_bits_to_float %v37
-%v39:i1 = fcmp.less %v20, %v38
-%v40:i32 = extend.zero %v39
-%v41:i32 = int.add %v34, %v34
-%v42:i32 = int.mul %v40, %v41
-%v43:i32 = int.add %v36, %v42
-%v44:mem = store[r] %v13, %v15, %v43
-%v45:i32 = initial_var[EDX]
-%v46:i80 = initial_var[ST0]
-%v47:i80 = initial_var[ST1]
-%v48:i128 = initial_var[XMM0]
-return %v0, %v44, %v43, %v45, %v46, %v47, %v48
+%v21:i32 = float_to_int %v20
+%v22:mem = store[r] %v13, %v15, %v21
+%v23:i32 = initial_var[EDX]
+%v24:i80 = initial_var[ST0]
+%v25:i80 = initial_var[ST1]
+%v26:i128 = initial_var[XMM0]
+return %v0, %v22, %v21, %v23, %v24, %v25, %v26
 
 == f32_compare @0x401190
 cfg
   0x401190 89 ops cbranch 0x4011ad -> [0x4011aa.4, 0x4011ad]
   0x4011aa.4 1 ops goto -> [0x4011ad]
   0x4011ad 3 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, AF, ZF, SF, OF, EIP, C1, FPUStatusWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa900:4, u:0x17e00:1, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x52900:10, u:0x53d00:1, u:0x53e00:1, u:0x54000:1, u:0x54200:1, u:0x66200:4, u:0x66300:1, u:0xcbb00:10]
+tracked [EAX, ECX, EDX, ESP, CF, PF, AF, ZF, SF, OF, EIP, C1, FPUStatusWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa900:4, u:0x17e00:1, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x52900:10, u:0x53d00:1, u:0x53e00:1, u:0x54000:1, u:0x54200:1, u:0x67a00:4, u:0x67b00:1, u:0xcfa00:10]
 arg 0 [%v13]
 arg 1 [%v5]
 %v0:ctrl = entry
@@ -272,7 +250,7 @@ cfg
   0x4011b0 89 ops cbranch 0x4011cd -> [0x4011ca.4, 0x4011cd]
   0x4011ca.4 1 ops goto -> [0x4011cd]
   0x4011cd 3 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, AF, ZF, SF, OF, EIP, C1, FPUStatusWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xaa00:8, u:0x17e00:1, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x52900:10, u:0x53d00:1, u:0x53e00:1, u:0x54000:1, u:0x54200:1, u:0x66200:4, u:0x66300:1, u:0xcbb00:10]
+tracked [EAX, ECX, EDX, ESP, CF, PF, AF, ZF, SF, OF, EIP, C1, FPUStatusWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xaa00:8, u:0x17e00:1, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x52900:10, u:0x53d00:1, u:0x53e00:1, u:0x54000:1, u:0x54200:1, u:0x67a00:4, u:0x67b00:1, u:0xcfa00:10]
 arg 0 [%v13]
 arg 1 [%v5]
 %v0:ctrl = entry
@@ -351,8 +329,8 @@ return %v0, %v1, %v2, %v3, %v11, %v12, %v13
 
 == main @0x4011e0
 cfg
-  0x4011e0 723 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, FPUControlWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa200:2, u:0xa300:4, u:0x17100:2, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x54500:10, u:0x54700:10, u:0x54800:10, u:0x54900:1, u:0x54a00:10, u:0x54b00:1, u:0x54d00:1, u:0x54e00:10, u:0x55000:4, u:0x55100:4, u:0x55300:4, u:0x55400:4, u:0x55500:1, u:0x55600:4, u:0x55700:4, u:0x55800:4, u:0x89100:4, u:0x89500:4, u:0xc0100:4]
+  0x4011e0 861 ops return -> []
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, FPUControlWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa200:2, u:0xa300:4, u:0x17100:2, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x54500:10, u:0x54700:10, u:0x54800:10, u:0x54900:1, u:0x54a00:10, u:0x54b00:1, u:0x54d00:1, u:0x54e00:10, u:0x55000:4, u:0x55100:4, u:0x55300:4, u:0x55400:4, u:0x55500:1, u:0x55600:4, u:0x55700:4, u:0x55800:4, u:0x55a00:10, u:0x55b00:2, u:0x55d00:2, u:0x55e00:1, u:0x55f00:4, u:0x56000:4, u:0x56100:1, u:0x56200:4, u:0x56300:10, u:0x56400:4, u:0x56500:4, u:0x56600:4, u:0x56700:1, u:0x56800:4, u:0x56900:10, u:0x56a00:4, u:0x56b00:4, u:0x56c00:4, u:0x56d00:1, u:0x56e00:4, u:0x56f00:4, u:0x57000:4, u:0x8a900:4, u:0x8ad00:4, u:0xc1900:4]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[ESP]
@@ -387,275 +365,163 @@ tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, FPUControlWord, FPUInstructionP
 %v51:i32 = iconst[0xffffffe8]
 %v52:i32 = int.add %v2, %v51
 %v53:f80 = int_bits_to_float %v24
-%v54:f80 = float.round %v53
-%v55:i32 = float_to_int %v54
-%v56:f80 = float.add %v53, %v53
-%v57:f80 = float.floor %v56
-%v58:i1 = fcmp.equal %v57, %v56
-%v59:f80 = float.floor %v53
-%v60:i1 = fcmp.equal %v59, %v53
-%v61:i1 = iconst[0x1]
-%v62:i1 = int.xor %v60, %v61
-%v63:i1 = int.and %v58, %v62
-%v64:i32 = extend.zero %v63
-%v65:i32 = iconst[0x1]
-%v66:i32 = int.and %v55, %v65
-%v67:i32 = int.mul %v64, %v66
-%v68:i32 = int.neg %v67
-%v69:i32 = int.add %v55, %v68
-%v70:i80 = iconst[0x0]
-%v71:f80 = int_bits_to_float %v70
-%v72:i1 = fcmp.less %v53, %v71
-%v73:i32 = extend.zero %v72
-%v74:i32 = int.add %v67, %v67
-%v75:i32 = int.mul %v73, %v74
-%v76:i32 = int.add %v69, %v75
-%v77:mem = store[r] %v50, %v52, %v76
-%v78:i32 = load[r] %v21, %v4
-%v79:i32 = int.xor %v78, %v76
-%v80:mem = store[r] %v77, %v4, %v79
-%v81:i32 = iconst[0xffffffc0]
-%v82:i32 = int.add %v2, %v81
-%v83:i32 = iconst[0x40040000]
-%v84:mem = store[r] %v80, %v82, %v83
-%v85:i32 = iconst[0xffffffbc]
-%v86:i32 = int.add %v2, %v85
-%v87:mem = store[r] %v84, %v86, %v5
-%v88:i32 = iconst[0x3ff80000]
-%v89:mem = store[r] %v87, %v8, %v88
-%v90:mem = store[r] %v89, %v12, %v5
-%v91:i32 = iconst[0x40123a]
-%v92:mem = store[r] %v90, %v16, %v91
-%v93:i32 = iconst[0x401110]
-%v94:ctrl, %v95:mem, %v96:i32<EAX>, %v97:i32<EDX>, %v98:i80<ST0>, %v99:i80<ST1>, %v100:i128<XMM0>, %v101:i8<CF>, %v102:i8<PF>, %v103:i8<ZF>, %v104:i8<SF>, %v105:i8<OF>, %v106:i32<EIP>, %v107:i16<FPUControlWord>, %v108:i32<FPUInstructionPointer>, %v109:i80<ST2>, %v110:i80<ST3>, %v111:i80<ST4>, %v112:i80<ST5>, %v113:i80<ST6>, %v114:i80<ST7> = call %v20, %v92, %v93, %v16, %v5, %v88, %v5, %v83
-%v115:i32 = iconst[0xffffffd8]
-%v116:i32 = int.add %v2, %v115
-%v117:mem = store[r] %v95, %v116, %v107
-%v118:i32 = iconst[0xffffffe4]
-%v119:i32 = int.add %v2, %v118
-%v120:i32 = extend.zero %v107
-%v121:i32 = int.or %v120, %v47
-%v122:i16 = truncate %v121
-%v123:mem = store[r] %v117, %v119, %v122
-%v124:i32 = iconst[0xffffffec]
-%v125:i32 = int.add %v2, %v124
-%v126:f80 = int_bits_to_float %v98
-%v127:f80 = float.round %v126
-%v128:i32 = float_to_int %v127
-%v129:f80 = float.add %v126, %v126
-%v130:f80 = float.floor %v129
-%v131:i1 = fcmp.equal %v130, %v129
-%v132:f80 = float.floor %v126
-%v133:i1 = fcmp.equal %v132, %v126
-%v134:i1 = int.xor %v133, %v61
-%v135:i1 = int.and %v131, %v134
-%v136:i32 = extend.zero %v135
-%v137:i32 = int.and %v128, %v65
-%v138:i32 = int.mul %v136, %v137
-%v139:i32 = int.neg %v138
-%v140:i32 = int.add %v128, %v139
-%v141:i1 = fcmp.less %v126, %v71
-%v142:i32 = extend.zero %v141
-%v143:i32 = int.add %v138, %v138
-%v144:i32 = int.mul %v142, %v143
-%v145:i32 = int.add %v140, %v144
-%v146:mem = store[r] %v123, %v125, %v145
-%v147:i32 = load[r] %v95, %v4
-%v148:i32 = int.xor %v147, %v145
-%v149:mem = store[r] %v146, %v4, %v148
-%v150:mem = store[r] %v149, %v12, %v13
-%v151:i32 = iconst[0x401271]
-%v152:mem = store[r] %v150, %v16, %v151
-%v153:i32 = iconst[0x401130]
-%v154:ctrl, %v155:mem, %v156:i32<EAX>, %v157:i32<EDX>, %v158:i80<ST0>, %v159:i80<ST1>, %v160:i128<XMM0>, %v161:i8<CF>, %v162:i8<PF>, %v163:i8<ZF>, %v164:i8<SF>, %v165:i8<OF>, %v166:i32<EIP>, %v167:i16<FPUControlWord>, %v168:i32<FPUInstructionPointer>, %v169:i80<ST2>, %v170:i80<ST3>, %v171:i80<ST4>, %v172:i80<ST5>, %v173:i80<ST6>, %v174:i80<ST7> = call %v94, %v152, %v153, %v16, %v13
-%v175:i32 = iconst[0xffffffd6]
-%v176:i32 = int.add %v2, %v175
-%v177:mem = store[r] %v155, %v176, %v167
-%v178:i32 = iconst[0xffffffe2]
+%v54:i32 = float_to_int %v53
+%v55:mem = store[r] %v50, %v52, %v54
+%v56:i32 = load[r] %v21, %v4
+%v57:i32 = int.xor %v56, %v54
+%v58:mem = store[r] %v55, %v4, %v57
+%v59:i32 = iconst[0xffffffc0]
+%v60:i32 = int.add %v2, %v59
+%v61:i32 = iconst[0x40040000]
+%v62:mem = store[r] %v58, %v60, %v61
+%v63:i32 = iconst[0xffffffbc]
+%v64:i32 = int.add %v2, %v63
+%v65:mem = store[r] %v62, %v64, %v5
+%v66:i32 = iconst[0x3ff80000]
+%v67:mem = store[r] %v65, %v8, %v66
+%v68:mem = store[r] %v67, %v12, %v5
+%v69:i32 = iconst[0x40123a]
+%v70:mem = store[r] %v68, %v16, %v69
+%v71:i32 = iconst[0x401110]
+%v72:ctrl, %v73:mem, %v74:i32<EAX>, %v75:i32<EDX>, %v76:i80<ST0>, %v77:i80<ST1>, %v78:i128<XMM0>, %v79:i8<CF>, %v80:i8<PF>, %v81:i8<ZF>, %v82:i8<SF>, %v83:i8<OF>, %v84:i32<EIP>, %v85:i16<FPUControlWord>, %v86:i32<FPUInstructionPointer>, %v87:i80<ST2>, %v88:i80<ST3>, %v89:i80<ST4>, %v90:i80<ST5>, %v91:i80<ST6>, %v92:i80<ST7> = call %v20, %v70, %v71, %v16, %v5, %v66, %v5, %v61
+%v93:i32 = iconst[0xffffffd8]
+%v94:i32 = int.add %v2, %v93
+%v95:mem = store[r] %v73, %v94, %v85
+%v96:i32 = iconst[0xffffffe4]
+%v97:i32 = int.add %v2, %v96
+%v98:i32 = extend.zero %v85
+%v99:i32 = int.or %v98, %v47
+%v100:i16 = truncate %v99
+%v101:mem = store[r] %v95, %v97, %v100
+%v102:i32 = iconst[0xffffffec]
+%v103:i32 = int.add %v2, %v102
+%v104:f80 = int_bits_to_float %v76
+%v105:i32 = float_to_int %v104
+%v106:mem = store[r] %v101, %v103, %v105
+%v107:i32 = load[r] %v73, %v4
+%v108:i32 = int.xor %v107, %v105
+%v109:mem = store[r] %v106, %v4, %v108
+%v110:mem = store[r] %v109, %v12, %v13
+%v111:i32 = iconst[0x401271]
+%v112:mem = store[r] %v110, %v16, %v111
+%v113:i32 = iconst[0x401130]
+%v114:ctrl, %v115:mem, %v116:i32<EAX>, %v117:i32<EDX>, %v118:i80<ST0>, %v119:i80<ST1>, %v120:i128<XMM0>, %v121:i8<CF>, %v122:i8<PF>, %v123:i8<ZF>, %v124:i8<SF>, %v125:i8<OF>, %v126:i32<EIP>, %v127:i16<FPUControlWord>, %v128:i32<FPUInstructionPointer>, %v129:i80<ST2>, %v130:i80<ST3>, %v131:i80<ST4>, %v132:i80<ST5>, %v133:i80<ST6>, %v134:i80<ST7> = call %v72, %v112, %v113, %v16, %v13
+%v135:i32 = iconst[0xffffffd6]
+%v136:i32 = int.add %v2, %v135
+%v137:mem = store[r] %v115, %v136, %v127
+%v138:i32 = iconst[0xffffffe2]
+%v139:i32 = int.add %v2, %v138
+%v140:i32 = extend.zero %v127
+%v141:i32 = int.or %v140, %v47
+%v142:i16 = truncate %v141
+%v143:mem = store[r] %v137, %v139, %v142
+%v144:i32 = iconst[0xfffffff0]
+%v145:i32 = int.add %v2, %v144
+%v146:f80 = int_bits_to_float %v118
+%v147:i32 = float_to_int %v146
+%v148:mem = store[r] %v143, %v145, %v147
+%v149:i32 = load[r] %v115, %v4
+%v150:i32 = int.xor %v149, %v147
+%v151:mem = store[r] %v148, %v4, %v150
+%v152:mem = store[r] %v151, %v8, %v66
+%v153:mem = store[r] %v152, %v12, %v5
+%v154:i32 = iconst[0x4012aa]
+%v155:mem = store[r] %v153, %v16, %v154
+%v156:i32 = iconst[0x401140]
+%v157:ctrl, %v158:mem, %v159:i32<EAX>, %v160:i32<EDX>, %v161:i80<ST0>, %v162:i80<ST1>, %v163:i128<XMM0>, %v164:i8<CF>, %v165:i8<PF>, %v166:i8<ZF>, %v167:i8<SF>, %v168:i8<OF>, %v169:i32<EIP>, %v170:i16<FPUControlWord>, %v171:i32<FPUInstructionPointer>, %v172:i80<ST2>, %v173:i80<ST3>, %v174:i80<ST4>, %v175:i80<ST5>, %v176:i80<ST6>, %v177:i80<ST7> = call %v114, %v155, %v156, %v16, %v5, %v66
+%v178:i32 = iconst[0xffffffd4]
 %v179:i32 = int.add %v2, %v178
-%v180:i32 = extend.zero %v167
-%v181:i32 = int.or %v180, %v47
-%v182:i16 = truncate %v181
-%v183:mem = store[r] %v177, %v179, %v182
-%v184:i32 = iconst[0xfffffff0]
-%v185:i32 = int.add %v2, %v184
-%v186:f80 = int_bits_to_float %v158
-%v187:f80 = float.round %v186
-%v188:i32 = float_to_int %v187
-%v189:f80 = float.add %v186, %v186
-%v190:f80 = float.floor %v189
-%v191:i1 = fcmp.equal %v190, %v189
-%v192:f80 = float.floor %v186
-%v193:i1 = fcmp.equal %v192, %v186
-%v194:i1 = int.xor %v193, %v61
-%v195:i1 = int.and %v191, %v194
-%v196:i32 = extend.zero %v195
-%v197:i32 = int.and %v188, %v65
-%v198:i32 = int.mul %v196, %v197
-%v199:i32 = int.neg %v198
-%v200:i32 = int.add %v188, %v199
-%v201:i1 = fcmp.less %v186, %v71
-%v202:i32 = extend.zero %v201
-%v203:i32 = int.add %v198, %v198
-%v204:i32 = int.mul %v202, %v203
-%v205:i32 = int.add %v200, %v204
-%v206:mem = store[r] %v183, %v185, %v205
-%v207:i32 = load[r] %v155, %v4
-%v208:i32 = int.xor %v207, %v205
-%v209:mem = store[r] %v206, %v4, %v208
-%v210:mem = store[r] %v209, %v8, %v88
-%v211:mem = store[r] %v210, %v12, %v5
-%v212:i32 = iconst[0x4012aa]
-%v213:mem = store[r] %v211, %v16, %v212
-%v214:i32 = iconst[0x401140]
-%v215:ctrl, %v216:mem, %v217:i32<EAX>, %v218:i32<EDX>, %v219:i80<ST0>, %v220:i80<ST1>, %v221:i128<XMM0>, %v222:i8<CF>, %v223:i8<PF>, %v224:i8<ZF>, %v225:i8<SF>, %v226:i8<OF>, %v227:i32<EIP>, %v228:i16<FPUControlWord>, %v229:i32<FPUInstructionPointer>, %v230:i80<ST2>, %v231:i80<ST3>, %v232:i80<ST4>, %v233:i80<ST5>, %v234:i80<ST6>, %v235:i80<ST7> = call %v154, %v213, %v214, %v16, %v5, %v88
-%v236:i32 = iconst[0xffffffd4]
-%v237:i32 = int.add %v2, %v236
-%v238:mem = store[r] %v216, %v237, %v228
-%v239:i32 = iconst[0xffffffe0]
-%v240:i32 = int.add %v2, %v239
-%v241:i32 = extend.zero %v228
-%v242:i32 = int.or %v241, %v47
-%v243:i16 = truncate %v242
-%v244:mem = store[r] %v238, %v240, %v243
-%v245:i32 = iconst[0xfffffff4]
-%v246:i32 = int.add %v2, %v245
-%v247:f80 = int_bits_to_float %v219
-%v248:f80 = float.round %v247
-%v249:i32 = float_to_int %v248
-%v250:f80 = float.add %v247, %v247
-%v251:f80 = float.floor %v250
-%v252:i1 = fcmp.equal %v251, %v250
-%v253:f80 = float.floor %v247
-%v254:i1 = fcmp.equal %v253, %v247
-%v255:i1 = int.xor %v254, %v61
-%v256:i1 = int.and %v252, %v255
-%v257:i32 = extend.zero %v256
-%v258:i32 = int.and %v249, %v65
-%v259:i32 = int.mul %v257, %v258
-%v260:i32 = int.neg %v259
-%v261:i32 = int.add %v249, %v260
-%v262:i1 = fcmp.less %v247, %v71
-%v263:i32 = extend.zero %v262
-%v264:i32 = int.add %v259, %v259
-%v265:i32 = int.mul %v263, %v264
-%v266:i32 = int.add %v261, %v265
-%v267:mem = store[r] %v244, %v246, %v266
-%v268:i32 = load[r] %v216, %v4
-%v269:i32 = int.xor %v268, %v266
-%v270:mem = store[r] %v267, %v4, %v269
-%v271:i32 = iconst[0x7]
-%v272:mem = store[r] %v270, %v12, %v271
-%v273:i32 = iconst[0x4012de]
-%v274:mem = store[r] %v272, %v16, %v273
-%v275:i32 = iconst[0x401150]
-%v276:ctrl, %v277:mem, %v278:i32<EAX>, %v279:i32<EDX>, %v280:i80<ST0>, %v281:i80<ST1>, %v282:i128<XMM0>, %v283:i8<CF>, %v284:i8<PF>, %v285:i8<ZF>, %v286:i8<SF>, %v287:i8<OF>, %v288:i32<EIP>, %v289:i16<FPUControlWord>, %v290:i32<FPUInstructionPointer>, %v291:i80<ST2>, %v292:i80<ST3>, %v293:i80<ST4>, %v294:i80<ST5>, %v295:i80<ST6>, %v296:i80<ST7> = call %v215, %v274, %v275, %v16, %v271
-%v297:i32 = iconst[0xffffffd2]
-%v298:i32 = int.add %v2, %v297
-%v299:mem = store[r] %v277, %v298, %v289
-%v300:i32 = iconst[0xffffffde]
-%v301:i32 = int.add %v2, %v300
-%v302:i32 = extend.zero %v289
-%v303:i32 = int.or %v302, %v47
-%v304:i16 = truncate %v303
-%v305:mem = store[r] %v299, %v301, %v304
-%v306:i32 = iconst[0xfffffff8]
-%v307:i32 = int.add %v2, %v306
-%v308:f80 = int_bits_to_float %v280
-%v309:f80 = float.round %v308
-%v310:i32 = float_to_int %v309
-%v311:f80 = float.add %v308, %v308
-%v312:f80 = float.floor %v311
-%v313:i1 = fcmp.equal %v312, %v311
-%v314:f80 = float.floor %v308
-%v315:i1 = fcmp.equal %v314, %v308
-%v316:i1 = int.xor %v315, %v61
-%v317:i1 = int.and %v313, %v316
-%v318:i32 = extend.zero %v317
-%v319:i32 = int.and %v310, %v65
-%v320:i32 = int.mul %v318, %v319
-%v321:i32 = int.neg %v320
-%v322:i32 = int.add %v310, %v321
-%v323:i1 = fcmp.less %v308, %v71
-%v324:i32 = extend.zero %v323
-%v325:i32 = int.add %v320, %v320
-%v326:i32 = int.mul %v324, %v325
-%v327:i32 = int.add %v322, %v326
-%v328:mem = store[r] %v305, %v307, %v327
-%v329:i32 = load[r] %v277, %v4
-%v330:i32 = int.xor %v329, %v327
-%v331:mem = store[r] %v328, %v4, %v330
-%v332:i32 = iconst[0x40f00000]
-%v333:mem = store[r] %v331, %v12, %v332
-%v334:i32 = iconst[0x401315]
-%v335:mem = store[r] %v333, %v16, %v334
-%v336:i32 = iconst[0x401160]
-%v337:ctrl, %v338:mem, %v339:i32<EAX>, %v340:i32<EDX>, %v341:i80<ST0>, %v342:i80<ST1>, %v343:i128<XMM0>, %v344:i8<CF>, %v345:i8<PF>, %v346:i8<ZF>, %v347:i8<SF>, %v348:i8<OF>, %v349:i32<EIP>, %v350:i16<FPUControlWord>, %v351:i32<FPUInstructionPointer>, %v352:i80<ST2>, %v353:i80<ST3>, %v354:i80<ST4>, %v355:i80<ST5>, %v356:i80<ST6>, %v357:i80<ST7> = call %v276, %v335, %v336, %v16, %v332
-%v358:i32 = load[r] %v338, %v4
-%v359:i32 = int.xor %v358, %v339
-%v360:mem = store[r] %v338, %v4, %v359
-%v361:i32 = iconst[0x40000000]
-%v362:mem = store[r] %v360, %v8, %v361
-%v363:i32 = iconst[0x3f800000]
-%v364:mem = store[r] %v362, %v12, %v363
-%v365:i32 = iconst[0x40132e]
-%v366:mem = store[r] %v364, %v16, %v365
-%v367:i32 = iconst[0x401190]
-%v368:ctrl, %v369:mem, %v370:i32<EAX>, %v371:i32<EDX>, %v372:i80<ST0>, %v373:i80<ST1>, %v374:i128<XMM0>, %v375:i8<CF>, %v376:i8<PF>, %v377:i8<ZF>, %v378:i8<SF>, %v379:i8<OF>, %v380:i32<EIP>, %v381:i16<FPUControlWord>, %v382:i32<FPUInstructionPointer>, %v383:i80<ST2>, %v384:i80<ST3>, %v385:i80<ST4>, %v386:i80<ST5>, %v387:i80<ST6>, %v388:i80<ST7> = call %v337, %v366, %v367, %v16, %v363, %v361
-%v389:i32 = load[r] %v369, %v4
-%v390:i32 = int.xor %v389, %v370
-%v391:mem = store[r] %v369, %v4, %v390
-%v392:mem = store[r] %v391, %v82, %v361
-%v393:mem = store[r] %v392, %v86, %v5
-%v394:i32 = iconst[0x3ff00000]
-%v395:mem = store[r] %v393, %v8, %v394
-%v396:mem = store[r] %v395, %v12, %v5
-%v397:i32 = iconst[0x401348]
-%v398:mem = store[r] %v396, %v16, %v397
-%v399:i32 = iconst[0x4011b0]
-%v400:ctrl, %v401:mem, %v402:i32<EAX>, %v403:i32<EDX>, %v404:i80<ST0>, %v405:i80<ST1>, %v406:i128<XMM0>, %v407:i8<CF>, %v408:i8<PF>, %v409:i8<ZF>, %v410:i8<SF>, %v411:i8<OF>, %v412:i32<EIP>, %v413:i16<FPUControlWord>, %v414:i32<FPUInstructionPointer>, %v415:i80<ST2>, %v416:i80<ST3>, %v417:i80<ST4>, %v418:i80<ST5>, %v419:i80<ST6>, %v420:i80<ST7> = call %v368, %v398, %v399, %v16, %v5, %v394, %v5, %v361
-%v421:i32 = load[r] %v401, %v4
-%v422:i32 = int.xor %v421, %v402
-%v423:mem = store[r] %v401, %v4, %v422
-%v424:i32 = iconst[0xc0600000]
-%v425:mem = store[r] %v423, %v12, %v424
-%v426:i32 = iconst[0x40135c]
-%v427:mem = store[r] %v425, %v16, %v426
-%v428:i32 = iconst[0x4011d0]
-%v429:ctrl, %v430:mem, %v431:i32<EAX>, %v432:i32<EDX>, %v433:i80<ST0>, %v434:i80<ST1>, %v435:i128<XMM0>, %v436:i8<CF>, %v437:i8<PF>, %v438:i8<ZF>, %v439:i8<SF>, %v440:i8<OF>, %v441:i32<EIP>, %v442:i16<FPUControlWord>, %v443:i32<FPUInstructionPointer>, %v444:i80<ST2>, %v445:i80<ST3>, %v446:i80<ST4>, %v447:i80<ST5>, %v448:i80<ST6>, %v449:i80<ST7> = call %v400, %v427, %v428, %v16, %v424
-%v450:i32 = iconst[0xffffffd0]
-%v451:i32 = int.add %v2, %v450
-%v452:mem = store[r] %v430, %v451, %v442
-%v453:i32 = iconst[0xffffffdc]
-%v454:i32 = int.add %v2, %v453
-%v455:i32 = extend.zero %v442
-%v456:i32 = int.or %v455, %v47
-%v457:i16 = truncate %v456
-%v458:mem = store[r] %v452, %v454, %v457
-%v459:i32 = iconst[0xfffffffc]
-%v460:i32 = int.add %v2, %v459
-%v461:f80 = int_bits_to_float %v433
-%v462:f80 = float.round %v461
-%v463:i32 = float_to_int %v462
-%v464:f80 = float.add %v461, %v461
-%v465:f80 = float.floor %v464
-%v466:i1 = fcmp.equal %v465, %v464
-%v467:f80 = float.floor %v461
-%v468:i1 = fcmp.equal %v467, %v461
-%v469:i1 = int.xor %v468, %v61
-%v470:i1 = int.and %v466, %v469
-%v471:i32 = extend.zero %v470
-%v472:i32 = int.and %v463, %v65
-%v473:i32 = int.mul %v471, %v472
-%v474:i32 = int.neg %v473
-%v475:i32 = int.add %v463, %v474
-%v476:i1 = fcmp.less %v461, %v71
-%v477:i32 = extend.zero %v476
-%v478:i32 = int.add %v473, %v473
-%v479:i32 = int.mul %v477, %v478
-%v480:i32 = int.add %v475, %v479
-%v481:mem = store[r] %v458, %v460, %v480
-%v482:i32 = load[r] %v430, %v4
-%v483:i32 = int.xor %v482, %v480
-%v484:mem = store[r] %v481, %v4, %v483
-return %v429, %v484, %v483, %v432, %v434, %v444, %v435
+%v180:mem = store[r] %v158, %v179, %v170
+%v181:i32 = iconst[0xffffffe0]
+%v182:i32 = int.add %v2, %v181
+%v183:i32 = extend.zero %v170
+%v184:i32 = int.or %v183, %v47
+%v185:i16 = truncate %v184
+%v186:mem = store[r] %v180, %v182, %v185
+%v187:i32 = iconst[0xfffffff4]
+%v188:i32 = int.add %v2, %v187
+%v189:f80 = int_bits_to_float %v161
+%v190:i32 = float_to_int %v189
+%v191:mem = store[r] %v186, %v188, %v190
+%v192:i32 = load[r] %v158, %v4
+%v193:i32 = int.xor %v192, %v190
+%v194:mem = store[r] %v191, %v4, %v193
+%v195:i32 = iconst[0x7]
+%v196:mem = store[r] %v194, %v12, %v195
+%v197:i32 = iconst[0x4012de]
+%v198:mem = store[r] %v196, %v16, %v197
+%v199:i32 = iconst[0x401150]
+%v200:ctrl, %v201:mem, %v202:i32<EAX>, %v203:i32<EDX>, %v204:i80<ST0>, %v205:i80<ST1>, %v206:i128<XMM0>, %v207:i8<CF>, %v208:i8<PF>, %v209:i8<ZF>, %v210:i8<SF>, %v211:i8<OF>, %v212:i32<EIP>, %v213:i16<FPUControlWord>, %v214:i32<FPUInstructionPointer>, %v215:i80<ST2>, %v216:i80<ST3>, %v217:i80<ST4>, %v218:i80<ST5>, %v219:i80<ST6>, %v220:i80<ST7> = call %v157, %v198, %v199, %v16, %v195
+%v221:i32 = iconst[0xffffffd2]
+%v222:i32 = int.add %v2, %v221
+%v223:mem = store[r] %v201, %v222, %v213
+%v224:i32 = iconst[0xffffffde]
+%v225:i32 = int.add %v2, %v224
+%v226:i32 = extend.zero %v213
+%v227:i32 = int.or %v226, %v47
+%v228:i16 = truncate %v227
+%v229:mem = store[r] %v223, %v225, %v228
+%v230:i32 = iconst[0xfffffff8]
+%v231:i32 = int.add %v2, %v230
+%v232:f80 = int_bits_to_float %v204
+%v233:i32 = float_to_int %v232
+%v234:mem = store[r] %v229, %v231, %v233
+%v235:i32 = load[r] %v201, %v4
+%v236:i32 = int.xor %v235, %v233
+%v237:mem = store[r] %v234, %v4, %v236
+%v238:i32 = iconst[0x40f00000]
+%v239:mem = store[r] %v237, %v12, %v238
+%v240:i32 = iconst[0x401315]
+%v241:mem = store[r] %v239, %v16, %v240
+%v242:i32 = iconst[0x401160]
+%v243:ctrl, %v244:mem, %v245:i32<EAX>, %v246:i32<EDX>, %v247:i80<ST0>, %v248:i80<ST1>, %v249:i128<XMM0>, %v250:i8<CF>, %v251:i8<PF>, %v252:i8<ZF>, %v253:i8<SF>, %v254:i8<OF>, %v255:i32<EIP>, %v256:i16<FPUControlWord>, %v257:i32<FPUInstructionPointer>, %v258:i80<ST2>, %v259:i80<ST3>, %v260:i80<ST4>, %v261:i80<ST5>, %v262:i80<ST6>, %v263:i80<ST7> = call %v200, %v241, %v242, %v16, %v238
+%v264:i32 = load[r] %v244, %v4
+%v265:i32 = int.xor %v264, %v245
+%v266:mem = store[r] %v244, %v4, %v265
+%v267:i32 = iconst[0x40000000]
+%v268:mem = store[r] %v266, %v8, %v267
+%v269:i32 = iconst[0x3f800000]
+%v270:mem = store[r] %v268, %v12, %v269
+%v271:i32 = iconst[0x40132e]
+%v272:mem = store[r] %v270, %v16, %v271
+%v273:i32 = iconst[0x401190]
+%v274:ctrl, %v275:mem, %v276:i32<EAX>, %v277:i32<EDX>, %v278:i80<ST0>, %v279:i80<ST1>, %v280:i128<XMM0>, %v281:i8<CF>, %v282:i8<PF>, %v283:i8<ZF>, %v284:i8<SF>, %v285:i8<OF>, %v286:i32<EIP>, %v287:i16<FPUControlWord>, %v288:i32<FPUInstructionPointer>, %v289:i80<ST2>, %v290:i80<ST3>, %v291:i80<ST4>, %v292:i80<ST5>, %v293:i80<ST6>, %v294:i80<ST7> = call %v243, %v272, %v273, %v16, %v269, %v267
+%v295:i32 = load[r] %v275, %v4
+%v296:i32 = int.xor %v295, %v276
+%v297:mem = store[r] %v275, %v4, %v296
+%v298:mem = store[r] %v297, %v60, %v267
+%v299:mem = store[r] %v298, %v64, %v5
+%v300:i32 = iconst[0x3ff00000]
+%v301:mem = store[r] %v299, %v8, %v300
+%v302:mem = store[r] %v301, %v12, %v5
+%v303:i32 = iconst[0x401348]
+%v304:mem = store[r] %v302, %v16, %v303
+%v305:i32 = iconst[0x4011b0]
+%v306:ctrl, %v307:mem, %v308:i32<EAX>, %v309:i32<EDX>, %v310:i80<ST0>, %v311:i80<ST1>, %v312:i128<XMM0>, %v313:i8<CF>, %v314:i8<PF>, %v315:i8<ZF>, %v316:i8<SF>, %v317:i8<OF>, %v318:i32<EIP>, %v319:i16<FPUControlWord>, %v320:i32<FPUInstructionPointer>, %v321:i80<ST2>, %v322:i80<ST3>, %v323:i80<ST4>, %v324:i80<ST5>, %v325:i80<ST6>, %v326:i80<ST7> = call %v274, %v304, %v305, %v16, %v5, %v300, %v5, %v267
+%v327:i32 = load[r] %v307, %v4
+%v328:i32 = int.xor %v327, %v308
+%v329:mem = store[r] %v307, %v4, %v328
+%v330:i32 = iconst[0xc0600000]
+%v331:mem = store[r] %v329, %v12, %v330
+%v332:i32 = iconst[0x40135c]
+%v333:mem = store[r] %v331, %v16, %v332
+%v334:i32 = iconst[0x4011d0]
+%v335:ctrl, %v336:mem, %v337:i32<EAX>, %v338:i32<EDX>, %v339:i80<ST0>, %v340:i80<ST1>, %v341:i128<XMM0>, %v342:i8<CF>, %v343:i8<PF>, %v344:i8<ZF>, %v345:i8<SF>, %v346:i8<OF>, %v347:i32<EIP>, %v348:i16<FPUControlWord>, %v349:i32<FPUInstructionPointer>, %v350:i80<ST2>, %v351:i80<ST3>, %v352:i80<ST4>, %v353:i80<ST5>, %v354:i80<ST6>, %v355:i80<ST7> = call %v306, %v333, %v334, %v16, %v330
+%v356:i32 = iconst[0xffffffd0]
+%v357:i32 = int.add %v2, %v356
+%v358:mem = store[r] %v336, %v357, %v348
+%v359:i32 = iconst[0xffffffdc]
+%v360:i32 = int.add %v2, %v359
+%v361:i32 = extend.zero %v348
+%v362:i32 = int.or %v361, %v47
+%v363:i16 = truncate %v362
+%v364:mem = store[r] %v358, %v360, %v363
+%v365:i32 = iconst[0xfffffffc]
+%v366:i32 = int.add %v2, %v365
+%v367:f80 = int_bits_to_float %v339
+%v368:i32 = float_to_int %v367
+%v369:mem = store[r] %v364, %v366, %v368
+%v370:i32 = load[r] %v336, %v4
+%v371:i32 = int.xor %v370, %v368
+%v372:mem = store[r] %v369, %v4, %v371
+return %v335, %v372, %v371, %v338, %v340, %v350, %v341
