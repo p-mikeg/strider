@@ -197,7 +197,9 @@ the positive one:
   callee reading an address from a register its convention preserves, and
   reads an alignment hole in the outgoing-argument window as the window's end.
 - `noalias_allocators` (empty): the listed callees return fresh pointers that
-  overlap no live allocation. Nothing models deallocation, so after a free a
+  overlap no live allocation, no stack slot and no global or other constant
+  address, so an allocator carving from a static or a caller-supplied arena
+  does not qualify. Nothing models deallocation, so after a free a
   stale pointer is taken as disjoint from storage the allocator hands out
   again. A non-empty list also forwards spills across a listed call, with the
   same gaps as `escape_analysis`.
