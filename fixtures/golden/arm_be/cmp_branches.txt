@@ -441,47 +441,38 @@ cfg
   0x10424 17 ops goto -> [0x10434]
   0x10434 20 ops return -> []
 tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, d7, d6, d5, d4, d3, d2, d1, d0, u:0x0:4, u:0x4600:1, u:0x4700:1, u:0x4900:1, u:0x5d00:4, u:0x5e00:1, u:0x5f00:1, u:0x6000:1, u:0x6100:1, u:0x6200:1, u:0x10500:4, u:0x9d700:4]
-arg 0 [%v1]
-arg 1 [%v30]
-float_arg 0 [%v31]
-float_arg 1 [%v32]
-float_arg 2 [%v33]
-float_arg 3 [%v34]
+arg 0 [%v2]
+arg 1 [%v21]
+float_arg 0 [%v22]
+float_arg 1 [%v23]
+float_arg 2 [%v24]
+float_arg 3 [%v25]
 %v0:ctrl = entry
-%v1:i32 = initial_var[r0]
-%v2:i32 = iconst[0xffffffff]
-%v3:i1 = icmp.equal %v1, %v2
-%v4:i1 = iconst[0x1]
-%v5:i1 = int.xor %v3, %v4
-%v6:i32 = iconst[0x1]
-%v7:i32 = int.add %v1, %v6
-%v8:i32 = iconst[0x0]
-%v9:i1 = icmp.sless %v7, %v8
-%v10:i8 = extend.zero %v9
-%v11:i1 = icmp.scarry %v1, %v6
-%v12:i8 = extend.zero %v11
-%v13:i1 = icmp.equal %v10, %v12
-%v14:i1 = int.and %v5, %v13
-%v15:ctrl, %v16:ctrl = if %v0, %v14
-%v17:mem = initial_memory
-%v18:i32 = iconst[0xfffffff8]
-%v19:i32 = int.add %v26, %v18
-%v20:mem = store[r] %v17, %v19, %v1
-%v21:mem = store[r] %v20, %v28, %v6
-%v22:mem = store[r] %v20, %v28, %v8
+%v1:i32 = iconst[0xffffffff]
+%v2:i32 = initial_var[r0]
+%v3:i1 = icmp.sless %v1, %v2
+%v4:ctrl, %v5:ctrl = if %v0, %v3
+%v6:mem = initial_memory
+%v7:i32 = iconst[0xfffffff8]
+%v8:i32 = int.add %v17, %v7
+%v9:mem = store[r] %v6, %v8, %v2
+%v10:i32 = iconst[0x1]
+%v11:mem = store[r] %v9, %v19, %v10
+%v12:i32 = iconst[0x0]
+%v13:mem = store[r] %v9, %v19, %v12
 
-%v23:ctrl, %v24:token = region %v16, %v15
-%v25:mem = memphi %v24, %v21, %v22
-%v26:i32 = initial_var[sp]
-%v27:i32 = iconst[0xfffffffc]
-%v28:i32 = int.add %v26, %v27
-%v29:i32 = load[r] %v25, %v28
-%v30:i32 = initial_var[r1]
-%v31:i64 = initial_var[d0]
-%v32:i64 = initial_var[d1]
-%v33:i64 = initial_var[d2]
-%v34:i64 = initial_var[d3]
-return %v23, %v25, %v29, %v30, %v31, %v32, %v33, %v34
+%v14:ctrl, %v15:token = region %v5, %v4
+%v16:mem = memphi %v15, %v11, %v13
+%v17:i32 = initial_var[sp]
+%v18:i32 = iconst[0xfffffffc]
+%v19:i32 = int.add %v17, %v18
+%v20:i32 = load[r] %v16, %v19
+%v21:i32 = initial_var[r1]
+%v22:i64 = initial_var[d0]
+%v23:i64 = initial_var[d1]
+%v24:i64 = initial_var[d2]
+%v25:i64 = initial_var[d3]
+return %v14, %v16, %v20, %v21, %v22, %v23, %v24, %v25
 
 == main @0x10440
 cfg

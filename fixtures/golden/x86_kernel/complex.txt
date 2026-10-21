@@ -889,45 +889,36 @@ arg 2 [%v77]
 %v611:i32<EDX> = phi %v609, %v521, %v521, %v521, %v521, %v521, %v521, %v521, %v599
 %v612:i32<EBX> = phi %v609, %v530, %v542, %v553, %v562, %v574, %v583, %v603, %v607
 %v613:i32 = iconst[0x64]
-%v614:i1 = icmp.equal %v610, %v613
-%v615:i1 = icmp.sborrow %v610, %v613
-%v616:i8 = extend.zero %v615
-%v617:i32 = int.add %v610, %v118
-%v618:i1 = icmp.sless %v617, %v64
-%v619:i8 = extend.zero %v618
-%v620:i1 = icmp.equal %v616, %v619
-%v621:i1 = iconst[0x1]
-%v622:i1 = int.xor %v620, %v621
-%v623:i1 = int.or %v614, %v622
-%v624:ctrl, %v625:ctrl = if %v608, %v623
-%v626:i32 = load[r] %v525, %v664
-%v627:i32 = iconst[0x401566]
-%v628:mem = store[r] %v525, %v70, %v627
-%v629:i32 = load[r] %v525, %v31
-%v630:i32 = int.add %v629, %v74
-%v631:i32 = load[r] %v525, %v630
-%v632:ctrl, %v633:mem, %v634:i32<EAX>, %v635:i32<EDX>, %v636:i80<ST0>, %v637:i80<ST1>, %v638:i128<XMM0>, %v639:i32<ECX>, %v640:i8<CF>, %v641:i8<PF>, %v642:i8<ZF>, %v643:i8<SF>, %v644:i8<OF>, %v645:i32<EIP> = call %v625, %v628, %v162, %v70, %v631, %v611, %v535
-%v646:i32 = iconst[0x401577]
-%v647:mem = store[r] %v633, %v70, %v646
-%v648:i8 = truncate %v612
-%v649:i32 = extend.sign %v648
-%v650:ctrl, %v651:mem, %v652:i32<EAX>, %v653:i32<EDX>, %v654:i80<ST0>, %v655:i80<ST1>, %v656:i128<XMM0>, %v657:i32<ECX>, %v658:i8<CF>, %v659:i8<PF>, %v660:i8<ZF>, %v661:i8<SF>, %v662:i8<OF>, %v663:i32<EIP> = call %v632, %v647, %v468, %v70, %v610, %v535, %v649
-%v664:i32 = int.add %v13, %v48
-%v665:i32 = load[r] %v651, %v664
+%v614:i1 = icmp.sless %v613, %v610
+%v615:ctrl, %v616:ctrl = if %v608, %v614
+%v617:i32 = load[r] %v525, %v655
+%v618:i32 = iconst[0x401566]
+%v619:mem = store[r] %v525, %v70, %v618
+%v620:i32 = load[r] %v525, %v31
+%v621:i32 = int.add %v620, %v74
+%v622:i32 = load[r] %v525, %v621
+%v623:ctrl, %v624:mem, %v625:i32<EAX>, %v626:i32<EDX>, %v627:i80<ST0>, %v628:i80<ST1>, %v629:i128<XMM0>, %v630:i32<ECX>, %v631:i8<CF>, %v632:i8<PF>, %v633:i8<ZF>, %v634:i8<SF>, %v635:i8<OF>, %v636:i32<EIP> = call %v615, %v619, %v162, %v70, %v622, %v611, %v535
+%v637:i32 = iconst[0x401577]
+%v638:mem = store[r] %v624, %v70, %v637
+%v639:i8 = truncate %v612
+%v640:i32 = extend.sign %v639
+%v641:ctrl, %v642:mem, %v643:i32<EAX>, %v644:i32<EDX>, %v645:i80<ST0>, %v646:i80<ST1>, %v647:i128<XMM0>, %v648:i32<ECX>, %v649:i8<CF>, %v650:i8<PF>, %v651:i8<ZF>, %v652:i8<SF>, %v653:i8<OF>, %v654:i32<EIP> = call %v623, %v638, %v468, %v70, %v610, %v535, %v640
+%v655:i32 = int.add %v13, %v48
+%v656:i32 = load[r] %v642, %v655
 
-%v666:ctrl, %v667:token = region %v650, %v624
-%v668:mem = memphi %v667, %v651, %v525
-%v669:i32<EAX> = phi %v667, %v665, %v626
-%v670:i32<EDX> = phi %v667, %v653, %v611
-%v671:i80<ST0> = phi %v667, %v654, %v522
-%v672:i80<ST1> = phi %v667, %v655, %v523
-%v673:i128<XMM0> = phi %v667, %v656, %v524
-%v674:i32 = int.add %v535, %v649
-%v675:i32 = iconst[0xac]
-%v676:i32 = int.xor %v610, %v675
-%v677:i32 = int.add %v674, %v676
-%v678:mem = store[r] %v668, %v669, %v677
-return %v666, %v678, %v676, %v670, %v671, %v672, %v673
+%v657:ctrl, %v658:token = region %v641, %v616
+%v659:mem = memphi %v658, %v642, %v525
+%v660:i32<EAX> = phi %v658, %v656, %v617
+%v661:i32<EDX> = phi %v658, %v644, %v611
+%v662:i80<ST0> = phi %v658, %v645, %v522
+%v663:i80<ST1> = phi %v658, %v646, %v523
+%v664:i128<XMM0> = phi %v658, %v647, %v524
+%v665:i32 = int.add %v535, %v640
+%v666:i32 = iconst[0xac]
+%v667:i32 = int.xor %v610, %v666
+%v668:i32 = int.add %v665, %v667
+%v669:mem = store[r] %v659, %v660, %v668
+return %v657, %v669, %v667, %v661, %v662, %v663, %v664
 
 == call_uses_call_return @0x4015a0
 cfg
