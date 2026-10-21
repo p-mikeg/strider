@@ -55,6 +55,34 @@ def test_custom_cc_from_another_arch_is_rejected():
         lift.analyze(0x1000, foreign)
 
 
+def test_a_custom_cc_crosses_presets_with_one_register_table():
+    """`arm_be_kernel` has its own sla, for its big-endian data transfers,
+    but the same registers as `arm`, so a convention frozen on either
+    serves the other."""
+    # mov r0, r1 ; bx lr
+    code = b"\x01\x00\xa0\xe1\x1e\xff\x2f\xe1"
+    for built_on, lifted_by in (
+        (SleighArch.arm(), SleighArch.arm_be_kernel()),
+        (SleighArch.arm_be_kernel(), SleighArch.arm()),
+    ):
+        cc = CallingConvention.custom(
+            sleigh=built_on,
+            arg_passing_regs=["r0", "r1"],
+            callee_saved_regs=[],
+            ret_val_regs=["r0"],
+            ret_val_regs_float=[],
+            stack_pointer="sp",
+            stack_arg_base=None,
+            stack_arg_increment=4,
+            ret_stack_pop=0,
+            link_register="lr",
+            preserves_memory=False,
+        )
+        lift = strider.lift.lifter(lifted_by, strider.reader.BufferReader(0x1000, code))
+        _cfg, fn, _unresolved = lift.analyze(0x1000, cc)
+        assert len(fn.find_all(strider.pattern.function_arg(1))) == 1
+
+
 def test_a_preset_cc_is_not_arch_locked():
     """Presets resolve their names at consumption time, so they carry no
     source arch to mismatch."""
