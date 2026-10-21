@@ -8,7 +8,7 @@ cfg
   0x8049050 0 ops goto -> [0x8049054]
   0x8049054 63 ops goto -> [0x804907c]
   0x804907c 1 ops goto -> [0x804907c]
-tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x88900:4, u:0x89100:4]
+tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8a100:4, u:0x8a900:4]
 frame_address_in_call_register
 arg 0 [%v9]
 arg 1 [%v16]
@@ -256,7 +256,7 @@ cfg
   0x8049270 16 ops goto -> [0x8049295]
   0x804928a 15 ops goto -> [0x8049295]
   0x8049295 6 ops return -> []
-tracked [EAX, ECX, EDX, ESP, EBP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6600:4, u:0x6d00:4, u:0x6f00:4, u:0xa300:4, u:0x17200:4, u:0x18a00:1, u:0x18c00:1, u:0x18d00:1, u:0x18e00:1, u:0x19000:1, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x67600:4, u:0x67800:4]
+tracked [EAX, ECX, EDX, ESP, EBP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6600:4, u:0x6d00:4, u:0x6f00:4, u:0xa300:4, u:0x17200:4, u:0x18a00:1, u:0x18c00:1, u:0x18d00:1, u:0x18e00:1, u:0x19000:1, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x68e00:4, u:0x69000:4]
 arg 0 [%v1]
 arg 1 [%v45]
 arg 2 [%v63]
