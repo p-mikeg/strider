@@ -854,8 +854,8 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
         op_names: &["swapgs"],
         class: MEM_CLOBBER,
     },
-    // x86 SIMD / crypto / bit-manipulation intrinsics GHIDRA leaves as named
-    // `pcodeop`s.  Every one is register-to-register: the constructors in
+    // x86 SIMD / crypto / bit-manipulation / x87 intrinsics GHIDRA leaves as
+    // named `pcodeop`s.  Every one is register-to-register: the constructors in
     // `x86/data/languages/{ia,sha,avx,avx2,avx512}.sinc` list each operand,
     // and a memory operand arrives through `m128` / `m256` / `m512`, which
     // `ia.sinc:1159-1161` export as the DYNAMIC varnode `*:N Mem`, so reading
