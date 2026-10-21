@@ -205,9 +205,9 @@ class CallingConvention:
           address `call` pushes (x86: 4, x86-64: 8). A link-register arch
           (ARM, MIPS, PPC) pops 0 and sets `link_register`.
 
-        The resolved varnodes are frozen against `sleigh`'s sla, so the
-        result is usable only with a `Lifter` over the same sla (`arm`,
-        `arm_thumb` and `arm_be_kernel` share one); any other raises
+        The resolved varnodes are frozen against `sleigh`'s registers, so the
+        result is usable only with a `Lifter` with the same register table
+        (`arm`, `arm_thumb` and `arm_be_kernel` share one); any other raises
         `StriderError` at `analyze` time.
         """
         ...
@@ -314,9 +314,9 @@ class CallOtherAbi:
         lead the lifted call's argument list; `implicit_writes` are written
         beyond the p-code-explicit result.
 
-        The resolved varnodes are frozen against `sleigh`'s sla, so the
-        result is usable only with a `Lifter` over the same sla (`arm`,
-        `arm_thumb` and `arm_be_kernel` share one); any other raises
+        The resolved varnodes are frozen against `sleigh`'s registers, so the
+        result is usable only with a `Lifter` with the same register table
+        (`arm`, `arm_thumb` and `arm_be_kernel` share one); any other raises
         `StriderError` at `analyze` time.
         """
         ...
