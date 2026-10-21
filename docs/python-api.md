@@ -185,7 +185,10 @@ the positive one:
   slots, or into the register arguments' homes a convention keeps just below
   them (ARM, MIPS, PowerPC64: a by-value struct split between registers and
   the stack), is caught (`h(&a); return a;`), and there every call keeps the
-  slots unknown. A pointer to a local is taken to stay inside that local; a
+  slots unknown. A `CallingConvention.custom` convention whose ABI homes or
+  splits register arguments next to the stack ones (ARM, MIPS, PPC64, riscv,
+  Win64) must pass `reg_args_adjoin_stack_args=True`. A pointer to a local is
+  taken to stay inside that local; a
   callee reading a pointer from a register its convention preserves is not
   caught.
 - `return_slots_survive_untracked_writes` (default on): a RAM store whose

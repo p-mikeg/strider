@@ -384,7 +384,8 @@
 
 - `CallingConvention.custom(reg_args_adjoin_stack_args=True)` declares that
   the argument registers have stack homes just below the stack arguments, as
-  the ARM, MIPS and PowerPC64 presets do.
+  the ARM, MIPS and PowerPC64 presets do; a custom convention for such an ABI
+  (riscv and Win64 too) must set it.
 - `"past_function_end"` in `strider.cfg.INCOMPLETE_REASONS`: where code fell
   through past `function_max_size`.
 - `strider.template.int_ne`, `int_le`, `int_sle` and `float_ne` build the

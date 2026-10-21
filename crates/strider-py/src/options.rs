@@ -661,9 +661,12 @@ assumption_fields! {
     /// memory, above the entry SP. A function that hands a callee a pointer
     /// into them, or into the register arguments' homes a convention keeps
     /// just below them (ARM, MIPS, PowerPC64), is caught (`h(&a); return
-    /// a;`), and there every call keeps the slots unknown. A pointer to a
-    /// local is taken to stay inside that local; a callee reading a pointer
-    /// from a register its convention preserves is not caught.
+    /// a;`), and there every call keeps the slots unknown. A `custom`
+    /// convention whose ABI homes or splits register arguments next to the
+    /// stack ones (ARM, MIPS, PPC64, riscv, Win64) must pass
+    /// `reg_args_adjoin_stack_args=True`. A pointer to a local is taken to
+    /// stay inside that local; a callee reading a pointer from a register its
+    /// convention preserves is not caught.
     assume_incoming_args_survive_calls: bool,
 
     /// A store rooted at a different SP base than the entry SP (an
