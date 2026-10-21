@@ -47,6 +47,9 @@
 //! object to a callee is outside the C object model.  Every other exposing use
 //! (arithmetic leaving `U`, a `Phi`, a width change) counts whatever its
 //! input's offset, as above: its result is a pointer `decompose` cannot place.
+//! A stack address stored and reloaded is not followed, so a base below the
+//! area that is spilled and then offset into it is missed; GCC and LLVM
+//! rematerialise such a base rather than spill it.
 //!
 //! Sound modulo two claims the IR cannot check: a callee does not write the
 //! caller's frame outside the argument area except through a pointer it was
