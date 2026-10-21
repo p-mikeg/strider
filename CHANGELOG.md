@@ -388,6 +388,8 @@
 - `strider.template.capture_typed(c, inner)` builds `inner` at the width of
   the value `c` bound, as Rust's `capture_typed` does: the way to type a
   constant nothing else gives a width.
+- `Symbol.local_entry`: where a same-module ppc64 ELFv2 call enters the
+  function, `address` plus the `st_other` local-entry offset, else `address`.
 
 ### Changed, Rust
 
@@ -481,6 +483,11 @@
 
 ### Fixed
 
+- Python: on ppc64 ELFv2, `ElfLifter.analyze` adds the local entry of every
+  `no_return_targets` address and `per_address_ccs` key that is a symbol's
+  `address`. A same-module `bl` targets the local entry, so a table keyed by
+  symbol matched no call: a no-return call fell through into the code after
+  it, and the CFG still reported itself complete.
 - On `arm_be_kernel` (BE8), a multi-structure `VLD2/3/4` or `VST2/3/4` put
   each element in the wrong half of its D register: the lifter's
   REGISTER-space loads and stores were read in the big-endian data order,
@@ -629,6 +636,8 @@
 
 ### Added, Rust
 
+- `strider_reader::elf::local_entry_offset`: how far past a ppc64 ELFv2
+  symbol a same-TOC call enters.
 - `strider_target::ByteOrder`, the data and REGISTER-space byte orders, from
   `SleighArch::byte_order` and `Function::byte_order`. `Function::new` and
   `FunctionBuilder::new` take one, or a bare `Endianness` for every space.
