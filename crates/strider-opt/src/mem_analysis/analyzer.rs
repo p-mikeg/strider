@@ -63,7 +63,9 @@ impl MemOptions {
         let a = function.assumptions();
         Self {
             stack_global_disjoint: a.stack_global_disjoint && purpose != Structural,
-            calls_block: !(purpose == IncomingArgs && a.assume_incoming_args_survive_calls),
+            calls_block: !(purpose == IncomingArgs
+                && a.assume_incoming_args_survive_calls
+                && !incoming_area_escapes(function)),
             distinct_sp_bases_disjoint: purpose == IncomingArgs && a.distinct_sp_bases_disjoint,
             escape_analysis: purpose == Forward && a.escape_analysis,
             callee_preserves_stack_args: purpose == Forward && a.callee_preserves_stack_args,
@@ -78,6 +80,15 @@ impl MemOptions {
             ..self.clone()
         }
     }
+}
+
+/// Whether a callee may hold a pointer into the incoming-argument area, the
+/// case `assume_incoming_args_survive_calls` leaves out.
+fn incoming_area_escapes(function: &Function) -> bool {
+    function
+        .default_cc()
+        .stack_args
+        .is_some_and(|args| super::frame_escape::incoming_area_escapes(function, args.base_offset))
 }
 
 /// The SP-aware query surface.  Takes the `&Function` per call rather than

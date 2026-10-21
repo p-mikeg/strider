@@ -43,8 +43,13 @@ pub struct AssumptionOptions {
     /// edges: a narrowed edge is read afterwards by walks that block at every
     /// call, so narrowing uses what a call-blocking walk proves.  It holds for
     /// a conforming callee that was not handed a pointer into the area, since
-    /// those slots sit above the entry SP.  A memory-clobbering `CallOther` is
-    /// outside it entirely.
+    /// those slots sit above the entry SP, and the handing is checked: where a
+    /// stack address that may point into the area escapes (as a call
+    /// argument, a stored value, a return, an input to pointer arithmetic, or
+    /// in a register a call clobbers), every call blocks, as in
+    /// `h(&a); return a;`.  An address with a constant offset from the entry
+    /// SP below the area is taken to stay inside its own frame object.  A
+    /// memory-clobbering `CallOther` is outside it entirely.
     /// Default ON.
     pub assume_incoming_args_survive_calls: bool,
     /// A `Store` rooted at a *different* SP base than the entry SP (e.g. an
