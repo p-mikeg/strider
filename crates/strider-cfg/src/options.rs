@@ -66,7 +66,10 @@ pub struct CfgOptions<'a> {
     /// caller's.
     pub derived_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// Direct-call targets that never return (`exit`, `abort`); a call to one
-    /// ends its region `NoReturn`. Borrowed, as `known_targets` is.
+    /// ends its region `NoReturn`. Each is matched exactly against the address
+    /// the call names: an ISA bit masked off, and on ppc64 ELFv2 the callee's
+    /// local entry, the symbol plus `strider_reader::elf::local_entry_offset`,
+    /// which a call sharing its TOC targets. Borrowed, as `known_targets` is.
     pub no_return_targets: &'a FxHashSet<u64>,
     /// Caller classifications for user-op names, consulted before the built-in
     /// tables.  One override governs both the region terminator and the
