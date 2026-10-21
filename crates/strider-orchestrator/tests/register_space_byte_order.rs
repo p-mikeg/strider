@@ -15,7 +15,9 @@
 
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, MachineInsnAddr};
+use strider_ir::node::NodeKind;
 use strider_ir::{Function, ReadOnlyMemory};
+use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::MockRom;
 use strider_ir_test_utils::interp::{self, EntryVar, Env, Outcome, Slot};
 use strider_orchestrator::Lifter;
@@ -45,21 +47,24 @@ fn bytes(words: &[u32], order: Endianness) -> Vec<u8> {
 }
 
 /// The raw and the optimised IR of `insns` at [`BASE`].
-fn lift(arch: SleighArch, insns: &[u32], rom: &dyn ReadOnlyMemory) -> [Function; 2] {
-    // BE8 code is little-endian; BE32 code follows its data.
-    let code_order = if arch == SleighArch::arm_be() {
-        Endianness::Big
-    } else {
+fn lift(
+    arch: SleighArch,
+    cc: &CallingConvention,
+    insns: &[u32],
+    rom: &dyn ReadOnlyMemory,
+) -> [Function; 2] {
+    // BE8 code is little-endian; everywhere else code follows the data.
+    let code_order = if arch == SleighArch::arm_be_kernel() {
         Endianness::Little
+    } else {
+        arch.endianness()
     };
     let code = bytes(insns, code_order);
     let size = code.len() as u64;
     let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), BufMemReader::new(code, BASE))
         .expect("sleigh");
     let mut lifter = Lifter::new(arch, sleigh).expect("lifter");
-    let cc = CallingConvention::arm_aapcs()
-        .build(lifter.sleigh_regs())
-        .expect("cc");
+    let cc = cc.build(lifter.sleigh_regs()).expect("cc");
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::size(size),
         ..Default::default()
@@ -76,16 +81,17 @@ fn lift(arch: SleighArch, insns: &[u32], rom: &dyn ReadOnlyMemory) -> [Function;
     [raw, opt]
 }
 
-/// The returned `r0`, `r1` and the RAM bytes written, of each of the raw and
-/// the optimised run, with the named registers set at entry.
-fn run(
+/// The first two returned registers and the RAM bytes written, of each of the
+/// raw and the optimised run, with the named registers set at entry.
+fn run_on(
     arch: SleighArch,
+    cc: &CallingConvention,
     insns: &[u32],
     rom: &MockRom,
-    regs: &[(&str, u32)],
+    regs: &[(&str, u128)],
 ) -> Vec<(u128, u128, std::collections::BTreeMap<u64, u8>)> {
     let names = arch.probe_regs();
-    let at_entry: Vec<(rsleigh::Vn, u32)> = regs
+    let at_entry: Vec<(rsleigh::Vn, u128)> = regs
         .iter()
         .map(|&(name, v)| (names.name_to_vn(name).expect("a register"), v))
         .collect();
@@ -93,7 +99,7 @@ fn run(
         at_entry
             .iter()
             .find(|(vn, _)| *vn == var.vn)
-            .map_or(0, |&(_, v)| u128::from(v))
+            .map_or(0, |&(_, v)| v)
     };
     let env = Env {
         entry: &entry,
@@ -102,16 +108,27 @@ fn run(
         step_budget: 1000,
         private: None,
     };
-    lift(arch, insns, rom)
+    lift(arch, cc, insns, rom)
         .iter()
         .map(|f| match interp::run(f, &env).expect("the function runs") {
             Outcome::Return { values, writes, .. } => match values.as_slice() {
-                [Slot::Known(r0), Slot::Known(r1), ..] => (*r0, *r1, writes),
-                other => panic!("{arch:?}: r0 and r1 are not both known: {other:?}"),
+                [Slot::Known(a), Slot::Known(b), ..] => (*a, *b, writes),
+                other => panic!("{arch:?}: the first two returns are not known: {other:?}"),
             },
             other => panic!("{arch:?}: ended {other:?}"),
         })
         .collect()
+}
+
+/// [`run_on`] under AAPCS, returning `r0` and `r1`.
+fn run(
+    arch: SleighArch,
+    insns: &[u32],
+    rom: &MockRom,
+    regs: &[(&str, u32)],
+) -> Vec<(u128, u128, std::collections::BTreeMap<u64, u8>)> {
+    let regs: Vec<(&str, u128)> = regs.iter().map(|&(n, v)| (n, u128::from(v))).collect();
+    run_on(arch, &CallingConvention::arm_aapcs(), insns, rom, &regs)
 }
 
 const W: [u32; 4] = [0x1111_1111, 0x2222_2222, 0x3333_3333, 0x4444_4444];
@@ -220,4 +237,77 @@ fn little_endian_vst2_round_trips_each_lane() {
 fn be32_vst2_follows_its_big_endian_register_block() {
     let want = (u128::from(W[1]), u128::from(W[3]), [W[1], W[3], W[0], W[2]]);
     assert_eq!(vst2_round_trip(SleighArch::arm_be()), [want; 2]);
+}
+
+/// `lis r4,0xc000; b 1f; 1: mtsrin r3,r4; mfsr r3,3; blr`, with `r3` set.
+///
+/// The sla's `mtsrin` stores the whole `r3` at `&sr0 + (r4 >> 28)`, unscaled,
+/// so a selector of 12 lands on `&sr3`, and on ppc64 the store is 8 bytes
+/// wide over the 4-byte `sr3`. The branch puts `lis` in another region, so the
+/// address is unknown at lift time and the store takes the opaque path; once
+/// folded, the re-read of `sr3` is a narrower load at the store's address, and
+/// `load_forward` narrows it in the REGISTER space's byte order: the high half
+/// of `r3` on ppc64be, the low half on ppc64le.
+fn mtsrin_then_mfsr(arch: SleighArch, cc: &CallingConvention, r3: u128) -> Vec<u128> {
+    const PROGRAM: [u32; 5] = [
+        0x3C80_C000,
+        0x4800_0004,
+        0x7C60_21E4,
+        0x7C63_04A6,
+        0x4E80_0020,
+    ];
+    let rom = MockRom::raw_bytes(DATA, Vec::new());
+    let [raw, opt] = lift(arch, cc, &PROGRAM, &rom);
+    let register_loads =
+        |f: &Function| f.count_kind(|k| matches!(k, NodeKind::Load(rsleigh::VnSpace::REGISTER)));
+    assert!(
+        register_loads(&raw) > 0,
+        "{arch:?}: the store must take the opaque path"
+    );
+    assert_eq!(
+        register_loads(&opt),
+        0,
+        "{arch:?}: the re-read of sr3 was not forwarded from the opaque store"
+    );
+    run_on(arch, cc, &PROGRAM, &rom, &[("r3", r3)])
+        .into_iter()
+        .map(|(r3, _, _)| r3)
+        .collect()
+}
+
+#[test]
+fn ppc64be_narrows_a_register_space_load_to_the_high_half() {
+    assert_eq!(
+        mtsrin_then_mfsr(
+            SleighArch::ppc64be(),
+            &CallingConvention::powerpc64_elf_v1(),
+            0x1122_3344_5566_7788
+        ),
+        [0x1122_3344; 2]
+    );
+}
+
+#[test]
+fn ppc64le_narrows_a_register_space_load_to_the_low_half() {
+    assert_eq!(
+        mtsrin_then_mfsr(
+            SleighArch::ppc64le(),
+            &CallingConvention::powerpc64_elf_v2(),
+            0x1122_3344_5566_7788
+        ),
+        [0x5566_7788; 2]
+    );
+}
+
+/// On ppc32 the store is as wide as `sr3`, so it forwards whole.
+#[test]
+fn ppc32be_forwards_a_register_space_store_of_the_same_width() {
+    assert_eq!(
+        mtsrin_then_mfsr(
+            SleighArch::ppc32be(),
+            &CallingConvention::powerpc_sysv32(),
+            0x1122_3344
+        ),
+        [0x1122_3344; 2]
+    );
 }
