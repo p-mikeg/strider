@@ -496,6 +496,11 @@
 - Python: `strider.template.capture_typed` over a capture or `var()` raises
   `StriderError`; in Rust, `capture_typed(c, var(x))` and `set_value_ty` on a
   capture make `instantiate` return an error. Both panicked.
+- A table dispatch through a phi of constants seats only the slots those
+  constants name: an index in `{0, 3, 5}` read all six slots of `0..=5`, and
+  an address in `{t, t+8, t+0x20}` the two between `t+8` and `t+0x20`, which
+  the jump can never take. A jump to a phi of labels (`cmov; jmp *reg`), which
+  was unresolved, now seats each label.
 - A jump table indexed by a bit field no longer reads past a guard written as
   another extract of the same bits (mips64 `srl; sltiu` beside `ext`): the
   guard bounds the index, where the field's whole range seated the next

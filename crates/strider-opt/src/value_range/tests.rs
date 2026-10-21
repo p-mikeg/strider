@@ -1099,13 +1099,9 @@ fn back_edge_guard_bounds_a_masked_loop_index() {
     );
 }
 
-// The resolver only recurses through `Phi`, so a phi-of-phi is the one shape
-// that drives it back into itself: two loop variables swapping every
-// iteration, `phi_a = Phi(0, phi_b)` and `phi_b = Phi(1, phi_a)`, referencing
-// each other with no intervening node.  `range_of` must RETURN: the cycle is
-// cut rather than chased forever.
-#[test]
-fn phi_of_phi_cycle_terminates_top() {
+/// `a, b = 0, 1; while (a < 16) a, b = b, a`: each header phi's back-edge
+/// arm is the OTHER header phi.  The `a` phi and its header.
+fn swap_loop() -> (Function, ValueId, NodeId) {
     use strider_ir_test_utils::reg_vn;
 
     let a_vn = reg_vn(0x10, 4); // 4-byte register -> I32
@@ -1157,6 +1153,17 @@ fn phi_of_phi_cycle_terminates_top() {
     let f = b.build().unwrap();
     let header_node = f.graph().producer(header_ctrl);
 
+    (f, phi_a, header_node)
+}
+
+// The resolver only recurses through `Phi`, so a phi-of-phi is the one shape
+// that drives it back into itself: two loop variables swapping every
+// iteration, `phi_a = Phi(0, phi_b)` and `phi_b = Phi(1, phi_a)`, referencing
+// each other with no intervening node.  `range_of` must RETURN: the cycle is
+// cut rather than chased forever.
+#[test]
+fn phi_of_phi_cycle_terminates_top() {
+    let (f, phi_a, header_node) = swap_loop();
     let iv = range_at(&f, phi_a, header_node);
     let type_mask = ValueType::int(32).int_mask_u128().unwrap();
     assert!(
@@ -2619,4 +2626,124 @@ fn guard_forest_meets_exactly_the_dominating_guards() {
         deep.most_entries >= 64 && deep.most_met >= 32 && deep.deep_nonempty >= 4 * 64,
         "{deep:?}"
     );
+}
+
+/// `s = x ? 0 : (y ? 3 : last)` at the join, `last` the constant 5 or, with
+/// `None`, an argument: a phi of `0` and an inner phi of `3` and `last`.  The
+/// returned `s` and the region joining it.
+fn three_way_phi(last: Option<u64>) -> (Function, ValueId, NodeId) {
+    use strider_ir_test_utils::reg_vn;
+
+    let s_vn = reg_vn(0x10, 4);
+    let arg_vn = reg_vn(0x20, 4);
+    let mut b = RegisterSet::new()
+        .tracked(s_vn)
+        .tracked(arg_vn)
+        .arg(arg_vn)
+        .build_fn()
+        .unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let [entry, a, mid, arm_b, arm_c, inner, join] =
+        std::array::from_fn(|_| b.create_region_all().unwrap());
+    b.set_entry_region_all(entry).unwrap();
+    let i32t = ValueType::int(32);
+
+    b.set_region(entry);
+    let arg = b.read_variable(&arg_vn).unwrap();
+    let x = cmp_c(&mut b, arg, IntCmpOp::Equal, 1);
+    b.build_if(x, a, mid).unwrap();
+    b.set_region(mid);
+    let y = cmp_c(&mut b, arg, IntCmpOp::Equal, 2);
+    b.build_if(y, arm_b, arm_c).unwrap();
+    for (region, k, next) in [
+        (a, Some(0), join),
+        (arm_b, Some(3), inner),
+        (arm_c, last, inner),
+    ] {
+        b.set_region(region);
+        let v = match k {
+            Some(k) => b.build_int_const(k, i32t).unwrap(),
+            None => b.read_variable(&arg_vn).unwrap(),
+        };
+        b.write_variable(&s_vn, v).unwrap();
+        b.build_branch(next).unwrap();
+    }
+    b.set_region(inner);
+    b.build_branch(join).unwrap();
+    b.set_region(join);
+    let s = b.read_variable(&s_vn).unwrap();
+    b.build_return(Some(s), &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    let s = return_operand(&f);
+    let token = f.graph().nth_input(f.producer(s), 0).unwrap();
+    let at = f.graph().producer(token);
+    (f, s, at)
+}
+
+/// The value the function's sole `Return` returns.
+fn return_operand(f: &Function) -> ValueId {
+    let ret = f
+        .walk()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
+        .expect("a return");
+    f.value_inputs(ret).last().expect("a returned value")
+}
+
+/// A phi of `0` and a phi of `3` and `5` holds those three values, where its
+/// range is the hull `0..=5`.  Mutation: return the hull's members.
+#[test]
+fn phi_constants_are_the_arms_not_their_range() {
+    let (f, s, at) = three_way_phi(Some(5));
+    assert!(
+        matches!(f.kind_of_value(s), NodeKind::Phi),
+        "{}",
+        f.to_text(false)
+    );
+    let iv = range_at(&f, s, at);
+    assert_eq!(
+        (iv.lo, iv.hi, iv.stride),
+        (0, 5, 1),
+        "the range is the hull"
+    );
+    assert_eq!(super::phi_constants(&f, s, 3), Some(vec![0, 3, 5]));
+}
+
+/// Over `cap` values there is no set.  Mutation: compare against `cap + 1`.
+#[test]
+fn phi_constants_give_up_past_the_cap() {
+    let (f, s, _) = three_way_phi(Some(5));
+    assert_eq!(super::phi_constants(&f, s, 2), None);
+}
+
+/// An arm that is neither a constant nor such a phi leaves no set.
+/// Mutation: skip a non-constant arm instead of giving up.
+#[test]
+fn phi_constants_need_every_arm_constant() {
+    let (f, s, _) = three_way_phi(None);
+    assert!(
+        matches!(f.kind_of_value(s), NodeKind::Phi),
+        "{}",
+        f.to_text(false)
+    );
+    assert_eq!(super::phi_constants(&f, s, 16), None);
+}
+
+/// Two loop phis that are each other's back-edge arm hold only what entered
+/// them, `0` and `1`, and the cycle between them terminates.  Mutation: give
+/// up on a phi seen before instead of skipping it.
+#[test]
+fn phi_constants_close_over_a_cycle_of_phis() {
+    let (f, phi_a, _) = swap_loop();
+    assert_eq!(super::phi_constants(&f, phi_a, 16), Some(vec![0, 1]));
+}
+
+/// A value that is not a phi has no set here, a constant included.
+#[test]
+fn phi_constants_are_only_of_a_phi() {
+    let (f, s, _) = three_way_phi(Some(5));
+    let ret = f.producer(s);
+    let arm = f.phi_data_inputs(ret).next().unwrap();
+    assert_eq!(super::phi_constants(&f, arm, 16), None);
 }
