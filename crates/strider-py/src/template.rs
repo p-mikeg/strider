@@ -84,10 +84,30 @@ impl WideInt {
 }
 
 /// Type `inner`'s output at the width of the value `c` bound on the matched
-/// LHS, for an operand nothing else gives a width (a `Popcount` operand).
+/// LHS, for an operand nothing else gives a width (a `Popcount` operand). A
+/// capture or `var()` as `inner` is refused: it keeps the type of the value it
+/// bound.
 #[pyfunction]
-pub fn capture_typed(c: PyRef<'_, PyCapture>, inner: Py<PyAny>) -> PyTemplate {
-    PyTemplate::from_tmpl(TmplRepr::CaptureTyped(c.inner, inner))
+pub fn capture_typed(
+    py: Python<'_>,
+    c: PyRef<'_, PyCapture>,
+    inner: Py<PyAny>,
+) -> PyResult<PyTemplate> {
+    // A nested `capture_typed` was checked when it was built.
+    let bound = inner.bind(py);
+    let is_capture = bound.downcast::<PyCapture>().is_ok()
+        || bound
+            .downcast::<PyTemplate>()
+            .is_ok_and(|t| matches!(*t.borrow().repr, TmplRepr::Var(_)));
+    if is_capture {
+        return Err(crate::errors::into_strider_err(anyhow::anyhow!(
+            "capture_typed() over a capture: var(c) keeps the type of the value \
+             it bound, so there is nothing to type"
+        )));
+    }
+    Ok(PyTemplate::from_tmpl(TmplRepr::CaptureTyped(
+        c.inner, inner,
+    )))
 }
 
 /// Build an `I1` boolean constant equal to `value`.
