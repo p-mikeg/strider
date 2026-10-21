@@ -2747,3 +2747,127 @@ fn phi_constants_are_only_of_a_phi() {
     let arm = f.phi_data_inputs(ret).next().unwrap();
     assert_eq!(super::phi_constants(&f, arm, 16), None);
 }
+
+/// `if (x == 0) ... ; dispatch` over the argument `x`, the `x != 0` path
+/// either leading straight to the dispatch `If(x < 5)` or, with `merge`,
+/// joining the `x == 0` path first.  `x` and the dispatch `If`.
+fn not_zero_then_dispatch(merge: bool) -> (Function, ValueId, NodeId) {
+    use strider_ir_test_utils::reg_vn;
+
+    let x_vn = reg_vn(0x10, 4);
+    let mut b = RegisterSet::new()
+        .tracked(x_vn)
+        .arg(x_vn)
+        .build_fn()
+        .unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let [entry, zero, rest, c, d] = std::array::from_fn(|_| b.create_region_all().unwrap());
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    let x = b.read_variable(&x_vn).unwrap();
+    let is_zero = cmp_c(&mut b, x, IntCmpOp::Equal, 0);
+    b.build_if(is_zero, zero, rest).unwrap();
+    b.set_region(zero);
+    if merge {
+        b.build_branch(rest).unwrap();
+    } else {
+        b.build_return(None, &[]).unwrap();
+    }
+    b.set_region(rest);
+    let x_rest = b.read_variable(&x_vn).unwrap();
+    let small = cmp_c(&mut b, x_rest, IntCmpOp::Less, 5);
+    b.build_if(small, c, d).unwrap();
+    for region in [c, d] {
+        b.set_region(region);
+        b.build_return(None, &[]).unwrap();
+    }
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    let dispatch = f
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .find(|&n| {
+            let cond = f.if_cond(n);
+            matches!(f.kind_of_value(cond), NodeKind::IntCmpOp(IntCmpOp::Less))
+        })
+        .expect("the dispatch If");
+    let x = f
+        .walk_kind(|k| matches!(k, NodeKind::InitialVar(_)))
+        .flat_map(|n| f.node_outputs(n).to_vec())
+        .find(|&v| f.value_type_opt(v) == Some(ValueType::int(32)))
+        .expect("x");
+    (f, x, dispatch)
+}
+
+/// Past the false edge of `x == 0`, `x` is not 0, and only 0 is ruled out.
+/// Mutation: test the true edge instead of the false one.
+#[test]
+fn an_equality_guard_rules_its_constant_out_past_its_false_edge() {
+    let (f, x, dispatch) = not_zero_then_dispatch(false);
+    let ranges = RangeMap::new(&f).unwrap();
+    assert!(ranges.rules_out(x, 0, dispatch), "{}", f.to_text(false));
+    assert!(!ranges.rules_out(x, 1, dispatch));
+}
+
+/// Where the `x == 0` path joins the other first, `x` may be 0 again.
+/// Mutation: accept a merge as the false edge's sink.
+#[test]
+fn an_equality_guard_rules_nothing_out_past_a_merge() {
+    let (f, x, dispatch) = not_zero_then_dispatch(true);
+    let ranges = RangeMap::new(&f).unwrap();
+    assert!(!ranges.rules_out(x, 0, dispatch), "{}", f.to_text(false));
+}
+
+/// `a, b, c = 0, 1, 1; while (a < 16) a, b, c = b, c, a`: three header phis,
+/// each the next one's back-edge arm, holding two constants.  The `a` phi.
+fn rotate_loop() -> (Function, ValueId) {
+    use strider_ir_test_utils::reg_vn;
+
+    let vns = [reg_vn(0x10, 4), reg_vn(0x20, 4), reg_vn(0x30, 4)];
+    let mut b = RegisterSet::new()
+        .tracked(vns[0])
+        .tracked(vns[1])
+        .tracked(vns[2])
+        .build_fn()
+        .unwrap();
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let [entry, header, body, exit] = std::array::from_fn(|_| b.create_region_all().unwrap());
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    for (vn, k) in vns.iter().zip([0u64, 1, 1]) {
+        let k = b.build_int_const(k, ValueType::int(32)).unwrap();
+        b.write_variable(vn, k).unwrap();
+    }
+    b.build_branch(header).unwrap();
+    b.set_region(header);
+    let a = b.read_variable(&vns[0]).unwrap();
+    let cond = c_less(&mut b, 16, a);
+    b.build_if(cond, exit, body).unwrap();
+    b.set_region(body);
+    let old: Vec<ValueId> = vns.iter().map(|vn| b.read_variable(vn).unwrap()).collect();
+    for (i, vn) in vns.iter().enumerate() {
+        b.write_variable(vn, old[(i + 1) % 3]).unwrap();
+    }
+    b.build_branch(header).unwrap();
+    b.set_region(exit);
+    b.build_return(Some(a), &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    canonicalize(&mut f);
+    let a = return_operand(&f);
+    (f, a)
+}
+
+/// Three phis holding two constants: a cap of two is past the phi count,
+/// three is not.  Mutation: drop the phi count from the cap.
+#[test]
+fn phi_constants_give_up_past_the_cap_on_phis() {
+    let (f, a) = rotate_loop();
+    assert_eq!(
+        super::phi_constants(&f, a, 3),
+        Some(vec![0, 1]),
+        "{}",
+        f.to_text(false)
+    );
+    assert_eq!(super::phi_constants(&f, a, 2), None);
+}
