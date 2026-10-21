@@ -472,7 +472,8 @@
   another extract of the same bits (mips64 `srl; sltiu` beside `ext`): the
   guard bounds the index, where the field's whole range seated the next
   table's arms. A guard on wider bits bounds a field inside them
-  (`w < 20` puts `(w >> 4) & 7` at most 1), and a field bound beside a guard
+  (`w < 20` puts `(w >> 4) & 7` at most 1; a guard's low end only at the top
+  of its bits, where the field cannot wrap), and a field bound beside a guard
   on overlapping bits that neither encloses nor equals it defers the site. A
   32-bit compare now also bounds a `clrldi` index on ppc64.
 - A seeded jump-table arm dropped because it is unmapped is named in
