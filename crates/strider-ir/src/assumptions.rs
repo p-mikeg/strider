@@ -1,4 +1,5 @@
-//! The claims about the code under analysis an optimizer run may rest on.
+//! The claims about the code under analysis a lift or an optimizer run may
+//! rest on.
 
 /// Assertions about the code being analysed, none of which the analysis can
 /// check.  Every field's risky value is the positive one, and each one turned
@@ -17,8 +18,9 @@
 /// [`return_slots_survive_untracked_writes`](Self::return_slots_survive_untracked_writes),
 /// without which a return after any call is reported as unverified.  The
 /// fourth, [`msr_register_keeps_mode`](Self::msr_register_keeps_mode), fails
-/// only for ARM code that switches mode through a register, and without it an
-/// interrupt-mask restore the analysis cannot place re-banks `sp` and `lr`.  A
+/// only for ARM code that switches mode through a register `msr`, and without
+/// it an interrupt-mask restore the analysis cannot place re-banks `sp` and
+/// `lr`.  A
 /// lift holds the claims it is given and `strider_lift`'s `build_ir` none, so
 /// a test runs at the floor unless it claims one.
 ///
@@ -125,18 +127,21 @@ pub struct AssumptionOptions {
     /// return: the call in between writes memory the walk cannot place, and
     /// only this claim carries the walk back to the `lr` spill.
     pub return_slots_survive_untracked_writes: bool,
-    /// An ARM register-form `msr` writing the CPSR control field (`msr
-    /// cpsr_c, rN`) restores a mode saved earlier, so it changes neither the
-    /// mode nor the banked registers (`r8`-`r12` in and out of FIQ, `sp`,
-    /// `lr`, the SPSR); the masks and flags it writes still update.  The
-    /// immediate form and `cps` still switch mode.  Off, the write re-banks
-    /// unless its mode is provably the current one, which it is not where the
-    /// saved flags merge from two saves, come from memory or arrive in an
-    /// argument.
+    /// The mode an ARM register-form `msr` writes to the CPSR control field
+    /// (`msr cpsr_c, rN`) is the mode already in force, so the write changes
+    /// neither the mode nor the banked registers (`r8`-`r12` in and out of
+    /// FIQ, `sp`, `lr`, the SPSR); the masks and flags it writes still
+    /// update.  The immediate form and `cps` still switch mode.  Off, the
+    /// write re-banks unless its mode is provably the current one, which it is
+    /// not where the saved flags merge from two saves, come from memory or
+    /// arrive in an argument.
     ///
-    /// Wrong for code that builds a new mode in a register and writes it, as
-    /// Linux's boot-time `safe_svcmode_maskall` does: the switch is missed and
-    /// the banked registers after it read as the old mode's.
+    /// Wrong in two cases, where the switch is missed and the banked
+    /// registers after it read as the old mode's: a new mode built in a
+    /// register (Linux's boot-time `safe_svcmode_maskall`, the switch into FIQ
+    /// in `fiqasm.S`), and a saved mode restored after a switch made since the
+    /// save, by `cps` or either form of `msr` (the return to SVC in
+    /// `fiqasm.S`'s `__set_fiq_regs`).
     ///
     /// Read by the lifter, so it counts only when the lift is given it
     /// (`AnalyzeOptions::assumptions`); added to a lifted function it changes

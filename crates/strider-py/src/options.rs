@@ -538,7 +538,7 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 /// `assume_incoming_args_survive_calls` and
 /// `return_slots_survive_untracked_writes`, each of which every compiler this
 /// analyses honours, and `msr_register_keeps_mode`, which only ARM code
-/// switching mode through a register breaks.
+/// switching mode through a register `msr` breaks.
 ///
 /// An omitted or `None` field takes the analysis default, as listed above.
 #[pyclass(eq, name = "AssumptionOptions", module = "strider.lift")]
@@ -700,15 +700,17 @@ assumption_fields! {
     /// places is checked either way.
     return_slots_survive_untracked_writes: bool,
 
-    /// An ARM register-form `msr` writing the CPSR control field
-    /// (`msr cpsr_c, rN`) restores a mode saved earlier, so it changes
+    /// The mode an ARM register-form `msr` writes to the CPSR control field
+    /// (`msr cpsr_c, rN`) is the mode already in force, so the write changes
     /// neither the mode nor the banked registers (default `True`); its masks
     /// and flags still update, and the immediate form and `cps` still switch
     /// mode. Off, it re-banks `sp`, `lr` and the rest unless its mode is
-    /// provably the current one. Wrong for code that builds a new mode in a
-    /// register, as Linux's boot-time `safe_svcmode_maskall` does. Read by the
-    /// lift, so `analyze` honours it and `Lifter.optimize` adding it changes
-    /// nothing.
+    /// provably the current one. Wrong for a new mode built in a register
+    /// (Linux's boot-time `safe_svcmode_maskall`, the switch into FIQ in
+    /// `fiqasm.S`) and for a saved mode restored after a switch made since
+    /// the save (the return to SVC in `fiqasm.S`'s `__set_fiq_regs`). Read by
+    /// the lift, so `analyze` honours it and `Lifter.optimize` refuses to add
+    /// it.
     msr_register_keeps_mode: bool,
 }
 
