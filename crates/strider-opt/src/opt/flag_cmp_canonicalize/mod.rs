@@ -197,6 +197,18 @@ fn build_rules() -> Vec<BoxedRule> {
         };
     }
 
+    // Emits a signed GE rule and its LT negation over the flag-tree term:
+    //   GE:  tree          -> Xor(cmp, 1)
+    //   LT:  Xor(tree, 1)  -> cmp
+    macro_rules! ge_lt_pair {
+        ($tree:expr, $cmp:expr $(,)?) => {
+            [
+                rewrite_rule($tree, template::bool_not($cmp)),
+                rewrite_rule(bool_not($tree), $cmp),
+            ]
+        };
+    }
+
     let mut rules: Vec<BoxedRule> = vec![
         // EQ:  Equal(Add(a, Neg(b)), 0) -> Equal(a, b)
         rewrite_rule(
@@ -339,14 +351,7 @@ fn build_rules() -> Vec<BoxedRule> {
         )
         .when_match(move |edit, _ty, binds| neg_relation(binds, edit.function(), m, n, a))
     };
-    rules.push(rewrite_rule(
-        sborrow_nv(),
-        template::bool_not(template::int_slt(var(a), var(n))),
-    ));
-    rules.push(rewrite_rule(
-        bool_not(sborrow_nv()),
-        template::int_slt(var(a), var(n)),
-    ));
+    rules.extend(ge_lt_pair!(sborrow_nv(), template::int_slt(var(a), var(n))));
     // The `cmn a, N` sibling, a compare against `-N`:
     //   GE:  Equal(ZeroExtend(Sless(Add(a, N), 0)), ZeroExtend(Scarry(a, N)))         -> Xor(Sless(a, -N), 1)
     //   LT:  Xor(Equal(ZeroExtend(Sless(Add(a, N), 0)), ZeroExtend(Scarry(a, N))), 1) -> Sless(a, -N)
@@ -359,14 +364,7 @@ fn build_rules() -> Vec<BoxedRule> {
         .when_match(move |edit, _ty, binds| negation_fits(binds, edit.function(), n, a))
     };
     let neg_n = || capture_typed(a, int_const_with!([n: uint] => n.wrapping_neg()));
-    rules.push(rewrite_rule(
-        scarry_nv(),
-        template::bool_not(template::int_slt(var(a), neg_n())),
-    ));
-    rules.push(rewrite_rule(
-        bool_not(scarry_nv()),
-        template::int_slt(var(a), neg_n()),
-    ));
+    rules.extend(ge_lt_pair!(scarry_nv(), template::int_slt(var(a), neg_n())));
     // Offset-base sibling, `cmp X, N` on `X = Add(b, C1)` (a loop's `i + 1`),
     // after ConstantFold reassociated the flag operand `Add(X, -N)` into
     // `Add(b, C2)`:
@@ -375,7 +373,8 @@ fn build_rules() -> Vec<BoxedRule> {
     // and, once the EQ term has solved for `b`:
     //   LE:  Or(Equal(b, C3), Sless(X, N))                  -> Xor(Sless(N, X), 1)
     //   GT:  And(Xor(Equal(b, C3), 1), Xor(Sless(X, N), 1)) -> Sless(N, X)
-    // The guards pin `C2 == C1 - N` and `C3 == N - C1`.
+    // The guards pin `C2 == C1 - N` and `C3 == N - C1`. Not covered: `C1 == N`,
+    // whose `Add(b, 0)` folds to `b`, and the `cmn` offset form.
     let offset_nv = || {
         int_eq(
             int_zero_extend(int_slt(int_add(var(b), int_const(m)), int_const(0u128))),
@@ -386,14 +385,7 @@ fn build_rules() -> Vec<BoxedRule> {
         )
         .when_match(move |edit, _ty, binds| sub_relation(binds, edit.function(), m, n, c1, b))
     };
-    rules.push(rewrite_rule(
-        offset_nv(),
-        template::bool_not(template::int_slt(var(x), var(n))),
-    ));
-    rules.push(rewrite_rule(
-        bool_not(offset_nv()),
-        template::int_slt(var(x), var(n)),
-    ));
+    rules.extend(ge_lt_pair!(offset_nv(), template::int_slt(var(x), var(n))));
     let offset_lt = || int_slt(int_add(var(b), int_const(c1)).capture(x), int_const(n));
     let offset_eq_guard = move |edit: &strider_pattern::Matcher, _ty, binds: &Bindings| {
         sub_relation(binds, edit.function(), m, c1, n, b)
