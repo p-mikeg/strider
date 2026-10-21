@@ -177,6 +177,7 @@ impl RegisterSet {
             preserves_memory: false,
             preserves_all_registers: false,
             entry_address_vn: None,
+            reg_args_adjoin_stack_args: false,
         };
         let byte_order = self.byte_order.unwrap_or_default();
         let mut b = FunctionBuilder::new(tracked, cc, byte_order)?;

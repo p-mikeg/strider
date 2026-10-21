@@ -190,6 +190,7 @@ class CallingConvention:
         link_register: Optional[str] = ...,
         preserves_memory: bool = ...,
         arg_passing_regs_float: list[str] = ...,
+        reg_args_adjoin_stack_args: bool = ...,
     ) -> CallingConvention:
         """Build a convention from register names resolved against `sleigh`.
 
@@ -201,6 +202,11 @@ class CallingConvention:
         `arg_passing_regs_float` names the float/vector argument registers;
         they are appended after `arg_passing_regs`, so the first one is
         `arg(len(arg_passing_regs))` in a `call()` pattern.
+        `reg_args_adjoin_stack_args=True` says each argument register has a
+        stack home just below the stack arguments, one slot each (ARM AAPCS,
+        MIPS O32 / N64, PowerPC64 ELF), so a by-value argument split between
+        them is one object: its address reaching a callee keeps every
+        incoming stack argument read after a call unknown.
 
         Names are resolved and most ABI invariants checked here, so a bad one
         raises `StriderError` at construction. Among them:

@@ -297,7 +297,7 @@ impl SideTables {
     /// register a call clobbers (`i128::MAX` for no constant offset); the
     /// highest recorded is kept.
     #[inline]
-    pub fn set_frame_address_in_call_register(&mut self, reach: i128) {
+    pub fn record_call_register_frame_reach(&mut self, reach: i128) {
         self.call_register_frame_reach = Some(
             self.call_register_frame_reach
                 .map_or(reach, |r| r.max(reach)),

@@ -110,6 +110,12 @@ impl PyCallingConvention {
     ///     arg_passing_regs_float: Float/vector argument registers, in ABI
     ///         order.  Appended after `arg_passing_regs` in a `Call`'s
     ///         argument list, so the first one is `arg(len(arg_passing_regs))`.
+    ///     reg_args_adjoin_stack_args: `True` where each argument register
+    ///         has a stack home just below the stack arguments, one slot each
+    ///         (ARM AAPCS, MIPS O32 / N64, PowerPC64 ELF): a by-value
+    ///         argument split between registers and the stack is then one
+    ///         object, and its address reaching a callee keeps every
+    ///         incoming stack argument read after a call unknown.
     ///
     /// Raises `StriderError` here when `stack_pointer` is not as wide as the
     /// arch's addresses, when `stack_arg_base` is set and `stack_arg_increment`
@@ -134,6 +140,7 @@ impl PyCallingConvention {
         link_register=None,
         preserves_memory=false,
         arg_passing_regs_float=Vec::new(),
+        reg_args_adjoin_stack_args=false,
     ))]
     #[allow(clippy::too_many_arguments)]
     fn custom(
@@ -150,6 +157,7 @@ impl PyCallingConvention {
         link_register: Option<String>,
         preserves_memory: bool,
         arg_passing_regs_float: Vec<String>,
+        reg_args_adjoin_stack_args: bool,
     ) -> PyResult<Self> {
         let source_arch = sleigh.inner;
         let regs = source_arch.names().regs();
@@ -193,6 +201,7 @@ impl PyCallingConvention {
             // A custom convention makes no entry-register promise; only the
             // presets that carry an ABI guarantee do.
             entry_address_vn: None,
+            reg_args_adjoin_stack_args,
         };
         built.validate().map_err(crate::errors::into_strider_err)?;
         built
