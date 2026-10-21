@@ -34,6 +34,9 @@ pub(crate) enum Value {
     Got,
     /// `G - GOT + A`
     GotOffset,
+    /// i386 `GOT32` / `GOT32X`: `G + A` from a bare disp32 (ModRM
+    /// `mod = 0, rm = 5`), else `G - GOT + A`, as binutils tells them apart.
+    I386Got,
     /// `S + A - GOT`
     GotRelative,
     /// `GOT + A - P`
@@ -208,7 +211,7 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             elf::R_386_RELATIVE => C(V::ImageRelative, data(4, false)),
             elf::R_386_IRELATIVE => C(V::Indirect, data(4, false)),
             elf::R_386_GLOB_DAT | elf::R_386_JMP_SLOT => C(V::Slot, data(4, false)),
-            elf::R_386_GOT32 | elf::R_386_GOT32X => C(V::GotOffset, data(4, false)),
+            elf::R_386_GOT32 | elf::R_386_GOT32X => C(V::I386Got, data(4, false)),
             elf::R_386_GOTOFF => C(V::GotRelative, data(4, false)),
             elf::R_386_GOTPC => C(V::GotBasePcrel, data(4, false)),
             _ => return None,
