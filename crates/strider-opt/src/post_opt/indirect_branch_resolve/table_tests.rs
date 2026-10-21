@@ -2169,6 +2169,32 @@ fn classify_table_dispatch_drops_a_phi_constant_its_guard_excludes() {
     assert_eq!(phi_index_arms(Some(4)), vec![0x10, 0x40]);
 }
 
+/// `t[cell & 3]` with `cell` read from one of three words no ROM serves: the
+/// index does not fold under the phi's constants, so its range 0..=3 is
+/// enumerated as it is without them.  The words span more slots than a table
+/// may, so the phi itself is no index.  Mutation: keep a constant whose index
+/// does not fold, which defers the site on the target fold.
+#[test]
+fn classify_table_dispatch_falls_back_to_the_range_where_the_phi_does_not_fold() {
+    let f = phi_of_constants_dispatch([0x9000, 0x9004, 0x1_9000], None, |b, addr| {
+        let cell = b
+            .build_load(addr, VnSpace::RAM, ValueType::int(32))
+            .unwrap();
+        (masked_table_target(b, cell, 3, 4, 0x4000), None)
+    });
+    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
+    match classify(&f, Some(&rom)) {
+        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
+            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
+            vec![0x10, 0x20, 0x30, 0x40]
+        ),
+        other => panic!(
+            "expected the range's four slots; got {other:?}\n{}",
+            f.to_text(false)
+        ),
+    }
+}
+
 /// A jump to a phi of interworking words: the phi is pinned, not the
 /// masked target, so each arm's mode folds off its own word.  The words'
 /// range spans more slots than a table may, so no index bounds them.
