@@ -1773,44 +1773,37 @@ fn classify_table_dispatch_resolves_a_bitfield_index_under_its_guard() {
     );
 }
 
-/// MIPS64 `srl t,w,lo; sltiu t,t,bound; beqz t,out; ext i,w,26,6` and then
-/// `ld pc, 0x4000(i << 3)`, the index an `ext` of bits 26.. of the word `w`
-/// and the guard a `srl` of bits `lo..`, over a 64-slot table at 0x4000.
-fn classify_bit_field_dispatch(lo: u64, bound: u64) -> Option<ResolvedTargets> {
-    use strider_ir::IntCmpOp;
-    let (i32t, i64t) = (ValueType::int(32), ValueType::int(64));
+/// One guard of [`classify_guarded_dispatch`]: the `If` condition over the
+/// `I32` word.
+type WordCond<'a> = &'a dyn Fn(&mut FunctionBuilder, ValueId) -> ValueId;
+
+/// `ld pc, 0x4000(index(w) << 3)` over a 64-slot table at 0x4000, reached
+/// only once every guard in `guards`, in order, holds on the `I32` word `w`.
+fn classify_guarded_dispatch(
+    guards: &[WordCond<'_>],
+    index: fn(&mut FunctionBuilder, ValueId) -> ValueId,
+) -> Option<ResolvedTargets> {
+    let i64t = ValueType::int(64);
     let w = strider_ir_test_utils::reg_vn(0x20, 4);
     let mut b = RegisterSet::new().tracked(w).arg(w).build_fn().unwrap();
     let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
     let exit = b.create_region_all().unwrap();
     b.set_entry_region_all(entry).unwrap();
     b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
 
     b.set_region(entry);
     let word = b.read_variable(&w).unwrap();
-    let k = b.build_int_const(lo, i32t).unwrap();
-    let srl = b
-        .build_int_binary_operation(word, k, IntBinaryOp::ShiftRight, i32t)
-        .unwrap();
-    let srl = b.extend_if_needed(srl, i64t, ExtendOp::SignExtend).unwrap();
-    let n = b.build_int_const(bound, i64t).unwrap();
-    let cond = b
-        .build_int_cmp_operation(srl, n, IntCmpOp::Less, i64t)
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-
-    b.set_region(dispatch);
+    for guard in guards {
+        let next = b.create_region_all().unwrap();
+        let cond = guard(&mut b, word);
+        b.build_if(cond, next, exit).unwrap();
+        b.set_region(next);
+    }
+    let idx = index(&mut b, word);
     let op = |b: &mut FunctionBuilder, x: ValueId, c: u64, op: IntBinaryOp| {
         let c = b.build_int_const(c, i64t).unwrap();
         b.build_int_binary_operation(x, c, op, i64t).unwrap()
     };
-    let wide = b
-        .extend_if_needed(word, i64t, ExtendOp::SignExtend)
-        .unwrap();
-    let up = op(&mut b, wide, 32, IntBinaryOp::ShiftLeft);
-    let field = op(&mut b, up, 58, IntBinaryOp::ShiftRight);
-    let idx = op(&mut b, field, 0xff, IntBinaryOp::And);
     let scaled = op(&mut b, idx, 3, IntBinaryOp::ShiftLeft);
     let addr = op(&mut b, scaled, 0x4000, IntBinaryOp::Add);
     let loaded = b.build_load(addr, VnSpace::RAM, i64t).unwrap();
@@ -1831,16 +1824,97 @@ fn classify_bit_field_dispatch(lo: u64, bound: u64) -> Option<ResolvedTargets> {
     classify(&g, Some(&rom))
 }
 
+/// MIPS64 `srl t,w,lo; sltiu t,t,bound`: `sext64(w >> lo) < bound`.
+fn srl_sltiu(b: &mut FunctionBuilder, w: ValueId, lo: u64, bound: u64) -> ValueId {
+    use strider_ir::IntCmpOp;
+    let (i32t, i64t) = (ValueType::int(32), ValueType::int(64));
+    let k = b.build_int_const(lo, i32t).unwrap();
+    let srl = b
+        .build_int_binary_operation(w, k, IntBinaryOp::ShiftRight, i32t)
+        .unwrap();
+    let srl = b.extend_if_needed(srl, i64t, ExtendOp::SignExtend).unwrap();
+    let n = b.build_int_const(bound, i64t).unwrap();
+    b.build_int_cmp_operation(srl, n, IntCmpOp::Less, i64t)
+        .unwrap()
+}
+
+/// MIPS64 `ext i,w,26,6; andi i,i,0xff` on the sign-extended word:
+/// `((sext64(w) << 32) >> 58) & 0xff`.
+fn ext_26_6(b: &mut FunctionBuilder, w: ValueId) -> ValueId {
+    let i64t = ValueType::int(64);
+    let op = |b: &mut FunctionBuilder, x: ValueId, c: u64, op: IntBinaryOp| {
+        let c = b.build_int_const(c, i64t).unwrap();
+        b.build_int_binary_operation(x, c, op, i64t).unwrap()
+    };
+    let wide = b.extend_if_needed(w, i64t, ExtendOp::SignExtend).unwrap();
+    let up = op(b, wide, 32, IntBinaryOp::ShiftLeft);
+    let field = op(b, up, 58, IntBinaryOp::ShiftRight);
+    op(b, field, 0xff, IntBinaryOp::And)
+}
+
+/// [`classify_guarded_dispatch`] of the `ext` index under one `srl` guard.
+fn classify_bit_field_dispatch(lo: u64, bound: u64) -> Option<ResolvedTargets> {
+    classify_guarded_dispatch(&[&|b, w| srl_sltiu(b, w, lo, bound)], ext_26_6)
+}
+
+/// `zext64((w >> 4) & 7)`, a field of three bits.
+fn bits_4_to_7(b: &mut FunctionBuilder, w: ValueId) -> ValueId {
+    let i32t = ValueType::int(32);
+    let four = b.build_int_const(4u64, i32t).unwrap();
+    let up = b
+        .build_int_binary_operation(w, four, IntBinaryOp::ShiftRight, i32t)
+        .unwrap();
+    let seven = b.build_int_const(7u64, i32t).unwrap();
+    let field = b
+        .build_int_binary_operation(up, seven, IntBinaryOp::And, i32t)
+        .unwrap();
+    b.extend_if_needed(field, ValueType::int(64), ExtendOp::ZeroExtend)
+        .unwrap()
+}
+
+/// `w < bound` at `I32`.
+fn word_below(b: &mut FunctionBuilder, w: ValueId, bound: u64) -> ValueId {
+    let i32t = ValueType::int(32);
+    let n = b.build_int_const(bound, i32t).unwrap();
+    b.build_int_cmp_operation(w, n, strider_ir::IntCmpOp::Less, i32t)
+        .unwrap()
+}
+
+/// The arms of slots `0..n` of [`classify_guarded_dispatch`]'s table.
+fn first_slots(n: u64) -> Option<ResolvedTargets> {
+    Some(ResolvedTargets::table((0..n).map(|i| {
+        strider_cfg::ResolvedTarget::from(0x5000 + 0x10 * i)
+    })))
+}
+
+/// `if (w < 100000) switch ((w >> 4) & 7)`: the guard on the whole word
+/// allows every value of the field, so it sizes nothing and the field's own
+/// eight slots are the table.  `w >> 4` itself spans more slots than a table
+/// may, so only the field bounds the index.
+#[test]
+fn classify_table_dispatch_reads_a_field_under_a_looser_word_guard() {
+    assert_eq!(
+        classify_guarded_dispatch(&[&|b, w| word_below(b, w, 100_000)], bits_4_to_7),
+        first_slots(8),
+    );
+}
+
+/// `if (w < 20) switch ((w >> 4) & 7)`: the field is at most `19 >> 4`, so
+/// a two-entry table, and its eight-value field bound reads six slots past it.
+#[test]
+fn classify_table_dispatch_projects_a_word_guard_onto_its_field() {
+    assert_eq!(
+        classify_guarded_dispatch(&[&|b, w| word_below(b, w, 20)], bits_4_to_7),
+        first_slots(2),
+    );
+}
+
 /// gcc's `__mm_isBranchInstr` on mips64: the `srl` guard sizes the table at 62
 /// entries and the `ext` index is the same six bits, so slots 62 and 63, the
 /// next table's first entries, are never read.
 #[test]
 fn classify_table_dispatch_bounds_an_ext_index_by_its_srl_guard() {
-    let arms = (0..62).map(|i| strider_cfg::ResolvedTarget::from(0x5000 + 0x10 * i));
-    assert_eq!(
-        classify_bit_field_dispatch(26, 62),
-        Some(ResolvedTargets::table(arms)),
-    );
+    assert_eq!(classify_bit_field_dispatch(26, 62), first_slots(62));
 }
 
 /// A guard on bits 27.. of the word bounds bits the index shares, in a shape
@@ -1850,6 +1924,22 @@ fn classify_table_dispatch_bounds_an_ext_index_by_its_srl_guard() {
 #[test]
 fn classify_table_dispatch_defers_a_field_bound_beside_an_unconnected_guard() {
     assert_eq!(classify_bit_field_dispatch(27, 30), None);
+}
+
+/// A guard the index's own field carries but that bounds nothing, `w >> 26 <
+/// 64`, leaves the index its 64-value field bound beside the unconnected
+/// guard on bits 27..: the site still defers.
+#[test]
+fn classify_table_dispatch_defers_beside_an_unconnected_guard_under_a_loose_one() {
+    assert_eq!(
+        classify_guarded_dispatch(
+            &[&|b, w| srl_sltiu(b, w, 26, 64), &|b, w| srl_sltiu(
+                b, w, 27, 30
+            ),],
+            ext_26_6,
+        ),
+        None,
+    );
 }
 
 #[test]

@@ -357,8 +357,12 @@ pub struct RangeMap<'f> {
     /// Per `And(x, c)` output whose mask clears only bits KnownBits proves zero
     /// in `x`, that `x`: the two are the same value.
     identity_masks: SecondaryMap<ValueId, Option<ValueId>>,
-    /// Every guarded value with its [`BitField`], by the field's root.
-    guards_by_root: FxHashMap<ValueId, Vec<(ValueId, BitField)>>,
+    /// The guarded values whose [`BitField`] is exactly this one.
+    guards_by_field: FxHashMap<BitField, Vec<ValueId>>,
+    /// The distinct keys of `guards_by_field`, by root.
+    fields_by_root: FxHashMap<ValueId, Vec<BitField>>,
+    /// [`Self::bit_field`] answers, computed on first ask.
+    field_memo: std::cell::RefCell<SecondaryMap<ValueId, Option<Option<BitField>>>>,
     /// Open `range_of` frames, against [`MAX_RANGE_DEPTH`].
     depth: u32,
 }
@@ -595,11 +599,13 @@ impl<'f> RangeMap<'f> {
     }
 
     /// What holds on `value` itself at `region`: the guards recorded on it and
-    /// on every other expression of exactly its bits, met with what its
+    /// on every other value whose bits enclose its own, met with what its
     /// incoming edges prove if it is a phi.
     ///
     /// MIPS64 guards `w >> 26` with `srl` and indexes by an `ext` of the same
-    /// six bits, `(sext(w) << 32) >> 58`: two nodes, one value.
+    /// six bits, `(sext(w) << 32) >> 58`: two nodes, one value.  A guard on
+    /// wider bits bounds the field inside them: `w < 20` puts `(w >> 4) & 7`
+    /// at most 1.
     fn bound_at(&self, value: ValueId, region: NodeId) -> Option<Interval> {
         let own = match (
             self.guard_at(value, region),
@@ -611,18 +617,27 @@ impl<'f> RangeMap<'f> {
         let Some(field) = self.bit_field(value).filter(|f| f.exact) else {
             return own;
         };
-        self.guards_by_root
-            .get(&field.root)
-            .into_iter()
-            .flatten()
-            .filter(|&&(guarded, of)| guarded != value && of == field)
-            .filter_map(|&(guarded, _)| self.guard_at(guarded, region))
-            .fold(own, |met, iv| Some(met.map_or(iv, |m| m.intersect(iv))))
+        let mut met = own;
+        for &of in self.root_fields(field.root) {
+            if !of.encloses(field) {
+                continue;
+            }
+            for &guarded in &self.guards_by_field[&of] {
+                if guarded != value
+                    && let Some(iv) = self.guard_at(guarded, region)
+                    && let Some(bound) = of.project(field, iv)
+                {
+                    met = Some(met.map_or(bound, |m| m.intersect(bound)));
+                }
+            }
+        }
+        met
     }
 
-    /// Whether `iv`, `value`'s range at `region`, is only its KnownBits bound
-    /// while a guard dominating `region` bounds bits of the same root that
-    /// `value` shares but no hop connects to `value`.
+    /// Whether `iv`, `value`'s range at `region`, is no tighter than its
+    /// KnownBits bound while a guard dominating `region` bounds bits of the
+    /// same root that `value` overlaps but does not enclose, so no projection
+    /// reads it.
     ///
     /// That guard may be the one sizing a table `value` indexes, in a shape
     /// this module does not read, and the KnownBits bound of a bit field is
@@ -634,26 +649,34 @@ impl<'f> RangeMap<'f> {
         region: NodeId,
         iv: Interval,
     ) -> bool {
-        if self.dominating_guard(value, region).is_some()
-            || iv != self.resolve_leaf_guarded(value, None)
-        {
+        if iv != self.resolve_leaf_guarded(value, None) {
             return false;
         }
         let Some(field) = self.bit_field(value) else {
             return false;
         };
-        self.guards_by_root
-            .get(&field.root)
-            .into_iter()
-            .flatten()
-            .any(|&(guarded, of)| {
-                guarded != value && of.overlaps(field) && self.guard_at(guarded, region).is_some()
-            })
+        self.root_fields(field.root).iter().any(|&of| {
+            of.overlaps(field)
+                && !of.encloses(field)
+                && self.guards_by_field[&of]
+                    .iter()
+                    .any(|&guarded| guarded != value && self.guard_at(guarded, region).is_some())
+        })
+    }
+
+    /// The distinct fields of `root` some guarded value is.
+    fn root_fields(&self, root: ValueId) -> &[BitField] {
+        self.fields_by_root.get(&root).map_or(&[], Vec::as_slice)
     }
 
     /// `value` as bits of the value it is extracted from; see [`BitField`].
     fn bit_field(&self, value: ValueId) -> Option<BitField> {
-        bit_field(self.function, &self.identity_masks, value)
+        if let Some(hit) = self.field_memo.borrow()[value] {
+            return hit;
+        }
+        let field = bit_field(self.function, &self.identity_masks, value);
+        self.field_memo.borrow_mut()[value] = Some(field);
+        field
     }
 
     /// The union over a phi's arms of what reaching it by that arm's edge
@@ -1134,13 +1157,15 @@ fn build<'f>(
         .iter()
         .map(|(&value, by_node)| (value, GuardForest::new(&doms, by_node)))
         .collect();
-    let mut guards_by_root: FxHashMap<ValueId, Vec<(ValueId, BitField)>> = FxHashMap::default();
+    let mut guards_by_field: FxHashMap<BitField, Vec<ValueId>> = FxHashMap::default();
+    let mut fields_by_root: FxHashMap<ValueId, Vec<BitField>> = FxHashMap::default();
     for &value in guards.keys() {
         if let Some(field) = bit_field(function, &identity_masks, value) {
-            guards_by_root
-                .entry(field.root)
-                .or_default()
-                .push((value, field));
+            let guarded = guards_by_field.entry(field).or_default();
+            if guarded.is_empty() {
+                fields_by_root.entry(field.root).or_default().push(field);
+            }
+            guarded.push(value);
         }
     }
     RangeMap {
@@ -1153,7 +1178,9 @@ fn build<'f>(
         memo: FxHashMap::default(),
         guard_memo: std::cell::RefCell::new(FxHashMap::default()),
         identity_masks,
-        guards_by_root,
+        guards_by_field,
+        fields_by_root,
+        field_memo: std::cell::RefCell::new(SecondaryMap::new()),
         depth: 0,
     }
 }
@@ -1185,10 +1212,11 @@ fn identity_mask(
 const MAX_FIELD_STEPS: u32 = 16;
 
 /// A value read as a run of bits of `root`: its bits `shift..shift + width`
-/// are `root`'s bits `lo..lo + width`.  When `exact` every other bit is zero,
-/// so two values with one exact field are one unsigned value; otherwise the
-/// bits above the run are other bits of `root`.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// are `root`'s bits `lo..lo + width`, and its bits below `shift` are zero.
+/// When `exact` the bits above the run are zero too, so two values with one
+/// exact field are one unsigned value; otherwise they are other bits of
+/// `root`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 struct BitField {
     root: ValueId,
     lo: u32,
@@ -1204,6 +1232,40 @@ impl BitField {
             && (!self.exact
                 || !other.exact
                 || (self.lo < other.lo + other.width && other.lo < self.lo + self.width))
+    }
+
+    /// Whether `inner` is exact and its run lies inside this one's, which is
+    /// what lets [`Self::project`] bound it.
+    fn encloses(self, inner: BitField) -> bool {
+        self.root == inner.root
+            && inner.exact
+            && self.lo <= inner.lo
+            && inner.lo + inner.width <= self.lo + self.width
+    }
+
+    /// What `iv`, an interval on a value with this field, proves about a value
+    /// with the field `inner` it [`encloses`](Self::encloses).
+    ///
+    /// The same exact field is the same value, so `iv` itself.  Otherwise the
+    /// run's bits read as a number are at most `iv.hi >> shift`, whatever lies
+    /// above them, and `inner`'s are that number's bits from `inner.lo - lo`
+    /// on: at most `(iv.hi >> shift) >> (inner.lo - lo)`, and at most
+    /// `inner`'s own width.
+    fn project(self, inner: BitField, iv: Interval) -> Option<Interval> {
+        if self == inner {
+            return Some(iv);
+        }
+        if inner.shift + inner.width > 128 {
+            return None;
+        }
+        let run = iv.hi.checked_shr(self.shift)?;
+        let bits = run.checked_shr(inner.lo - self.lo).unwrap_or(0);
+        let width_max = u128::MAX >> (128 - inner.width);
+        Some(Interval::new(
+            0,
+            bits.min(width_max) << inner.shift,
+            1u128 << inner.shift,
+        ))
     }
 }
 
