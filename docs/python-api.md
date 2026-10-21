@@ -181,7 +181,9 @@ the positive one:
   runtime.
 - `assume_incoming_args_survive_calls` (default on): a callee leaves an
   incoming stack-argument slot as it found it, so an argument read after a
-  call is still found.
+  call is still found. A function that hands a callee a pointer into those
+  slots (`h(&a); return a;`) is caught, and there every call keeps the slot
+  unknown; a pointer to a local is taken to stay inside that local.
 - `return_slots_survive_untracked_writes` (default on): a RAM store whose
   address strider cannot place on the entry stack, and any callee or user-op,
   leave the slots the function saved its return address and entry stack

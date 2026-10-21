@@ -721,9 +721,9 @@ mod compact_tests {
             ..crate::AssumptionOptions::none()
         };
         f.assume(&listed);
-        f.side_tables_mut().set_frame_address_in_call_register();
+        f.side_tables_mut().set_frame_address_in_call_register(-8);
         f.compact().expect("compact succeeds on a valid function");
-        assert!(f.side_tables().frame_address_in_call_register());
+        assert_eq!(f.side_tables().call_register_frame_reach(), Some(-8));
         assert_eq!(f.assumptions(), &listed);
     }
 
