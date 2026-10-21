@@ -1,0 +1,78 @@
+# x64/switch_phi_x64: Strider::analyze, default options
+endian little
+default_cc arg_passing_regs=[RDI, RSI, RDX, RCX, R8, R9] arg_passing_regs_float=[XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7] callee_saved_regs=[RBX, RBP, R12, R13, R14, R15] ret_val_regs=[RAX, RDX] ret_val_regs_float=[XMM0, XMM1, ST0, ST1] stack_vn=RSP stack_args=8+8n ret_stack_pop=8 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
+assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes
+
+== phi_table_slot @0x401000
+cfg
+  0x401000 12 ops cbranch 0x40101d -> [0x40100b, 0x40101d]
+  0x40100b 12 ops cbranch 0x40101d -> [0x401016, 0x40101d]
+  0x401016 1 ops goto -> [0x40101d]
+  0x40101d 2 ops switch@0x40101d.1 [0x40101f, 0x401025, 0x40102b, 0x401031, 0x401037]
+  0x40101f 4 ops return -> []
+  0x401025 4 ops return -> []
+  0x40102b 4 ops return -> []
+  0x401031 4 ops return -> []
+  0x401037 4 ops return -> []
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x24000:8, u:0x25200:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0xe0600:4]
+arg 0 [%v1]
+arg 1 [%v8]
+arg 2 [%v26]
+float_arg 0 [%v27]
+float_arg 1 [%v28]
+%v0:ctrl = entry
+%v1:i64 = initial_var[RDI]
+%v2:i32 = truncate %v1
+%v3:i32 = iconst[0x0]
+%v4:i1 = icmp.equal %v2, %v3
+%v5:ctrl, %v6:ctrl = if %v0, %v4
+%v7:i64 = iconst[0x402000]
+%v8:i64 = initial_var[RSI]
+%v9:i32 = truncate %v8
+%v10:i1 = icmp.equal %v9, %v3
+%v11:ctrl, %v12:ctrl = if %v5, %v10
+%v13:i64 = iconst[0x402008]
+%v14:i64 = iconst[0x402020]
+
+%v15:ctrl, %v16:token = region %v6, %v12, %v11
+%v17:i64<RAX> = phi %v16, %v7, %v13, %v14
+%v18:mem = initial_memory
+%v19:i64 = load[r] %v18, %v17
+%v20:ctrl, %v21:ctrl, %v22:ctrl, %v23:ctrl, %v24:ctrl = switch[0x40101f, 0x401025, 0x40102b, 0x401031, 0x401037] %v15, %v19
+%v25:i64 = iconst[0x1]
+%v26:i64 = initial_var[RDX]
+%v27:i128 = initial_var[XMM0]
+%v28:i128 = initial_var[XMM1]
+%v29:i80 = initial_var[ST0]
+%v30:i80 = initial_var[ST1]
+return %v20, %v18, %v25, %v26, %v27, %v28, %v29, %v30
+%v31:i64 = iconst[0x2]
+return %v21, %v18, %v31, %v26, %v27, %v28, %v29, %v30
+%v32:i64 = iconst[0x3]
+return %v22, %v18, %v32, %v26, %v27, %v28, %v29, %v30
+%v33:i64 = iconst[0x4]
+return %v23, %v18, %v33, %v26, %v27, %v28, %v29, %v30
+%v34:i64 = iconst[0x5]
+return %v24, %v18, %v34, %v26, %v27, %v28, %v29, %v30
+
+== phi_label @0x40103d
+unresolved_branch [0x40104d]
+cfg
+  0x40103d 15 ops cbranch 0x40104d -> [0x401049.4, 0x40104d]
+  0x401049.4 1 ops goto -> [0x40104d]
+  0x40104d 1 ops unresolved@0x40104d -> []
+tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x25200:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x7bb00:8, u:0x7bc00:1, u:0xe0600:4]
+arg 0 [%v1]
+%v0:ctrl = entry
+%v1:i64 = initial_var[RDI]
+%v2:i32 = truncate %v1
+%v3:i32 = iconst[0x0]
+%v4:i1 = icmp.equal %v2, %v3
+%v5:ctrl, %v6:ctrl = if %v0, %v4
+%v7:i64 = iconst[0x40104f]
+%v8:i64 = iconst[0x40105b]
+
+%v9:ctrl, %v10:token = region %v5, %v6
+%v11:i64<RAX> = phi %v10, %v7, %v8
+%v12:mem = initial_memory
+indirect_branch %v9, %v12, %v11
