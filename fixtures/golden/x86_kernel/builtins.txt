@@ -12,7 +12,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == popcount32 @0x4010f0
 cfg
   0x4010f0 198 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x49d00:1, u:0x49f00:1, u:0x4a000:1, u:0x4a100:1, u:0x4a200:1, u:0x4a500:1, u:0x4a600:1, u:0x4a700:1, u:0x4a800:1, u:0x4aa00:4, u:0x4ab00:1, u:0x4ac00:1, u:0x4ae00:1, u:0x4af00:1, u:0x4b000:1, u:0x4b100:1, u:0x4b700:8, u:0x50200:1, u:0x50300:4, u:0x50400:4, u:0x50500:4, u:0x50700:1, u:0x50800:1, u:0x50900:1, u:0x50a00:1, u:0x50d00:1, u:0x50f00:1, u:0x51000:1, u:0x51100:1, u:0x51200:1, u:0x7c100:8, u:0x7c200:8, u:0x7c400:8, u:0x7c700:4, u:0xb3d00:4, u:0xb4500:4, u:0xb4600:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x49d00:1, u:0x49f00:1, u:0x4a000:1, u:0x4a100:1, u:0x4a200:1, u:0x4a500:1, u:0x4a600:1, u:0x4a700:1, u:0x4a800:1, u:0x4aa00:4, u:0x4ab00:1, u:0x4ac00:1, u:0x4ae00:1, u:0x4af00:1, u:0x4b000:1, u:0x4b100:1, u:0x4b700:8, u:0x50200:1, u:0x50300:4, u:0x50400:4, u:0x50500:4, u:0x50700:1, u:0x50800:1, u:0x50900:1, u:0x50a00:1, u:0x50d00:1, u:0x50f00:1, u:0x51000:1, u:0x51100:1, u:0x51200:1, u:0x7d900:8, u:0x7da00:8, u:0x7dc00:8, u:0x7df00:4, u:0xb5500:4, u:0xb5d00:4, u:0xb5e00:4]
 arg 0 [%v2]
 arg 1 [%v26]
 %v0:ctrl = entry
@@ -53,7 +53,7 @@ cfg
   0x401130.4 3 ops cbranch 0x401130.9 -> [0x401130.7, 0x401130.9]
   0x401130.7 2 ops goto -> [0x401130.4]
   0x401130.9 13 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x5af00:4, u:0x5b100:1, u:0x5b200:4, u:0x5b300:1]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x5c700:4, u:0x5c900:1, u:0x5ca00:4, u:0x5cb00:1]
 arg 0 [%v1]
 arg 1 [%v24]
 %v0:ctrl = entry
@@ -67,7 +67,7 @@ arg 1 [%v24]
 %v9:i32 = iconst[0x1f]
 
 %v10:ctrl, %v11:token = region %v8, %v15
-%v12:i32<u:0x5af00:4> = phi %v11, %v9, %v18
+%v12:i32<u:0x5c700:4> = phi %v11, %v9, %v18
 %v13:i32 = int.shift_right %v1, %v12
 %v14:i1 = icmp.equal %v13, %v2
 %v15:ctrl, %v16:ctrl = if %v10, %v14
@@ -75,7 +75,7 @@ arg 1 [%v24]
 %v18:i32 = int.add %v12, %v17
 
 %v19:ctrl, %v20:token = region %v7, %v16
-%v21:i32<u:0x5af00:4> = phi %v20, %v9, %v12
+%v21:i32<u:0x5c700:4> = phi %v20, %v9, %v12
 %v22:mem = initial_memory
 %v23:i32 = int.xor %v21, %v9
 %v24:i32 = initial_var[EDX]
@@ -90,7 +90,7 @@ cfg
   0x401140.4 4 ops cbranch 0x401140.10 -> [0x401140.8, 0x401140.10]
   0x401140.8 2 ops goto -> [0x401140.4]
   0x401140.10 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, ZF, EIP, ST0, ST1, XMM0, u:0x5a200:4, u:0x5a400:1, u:0x5a500:4, u:0x5a600:4, u:0x5a700:1]
+tracked [EAX, ECX, EDX, ESP, ZF, EIP, ST0, ST1, XMM0, u:0x5ba00:4, u:0x5bc00:1, u:0x5bd00:4, u:0x5be00:4, u:0x5bf00:1]
 arg 0 [%v1]
 arg 1 [%v23]
 %v0:ctrl = entry
@@ -103,7 +103,7 @@ arg 1 [%v23]
 %v7:ctrl, %v8:ctrl = if %v0, %v6
 
 %v9:ctrl, %v10:token = region %v8, %v16
-%v11:i32<u:0x5a200:4> = phi %v10, %v2, %v18
+%v11:i32<u:0x5ba00:4> = phi %v10, %v2, %v18
 %v12:i32 = int.shift_right %v1, %v11
 %v13:i32 = iconst[0x1]
 %v14:i32 = int.and %v12, %v13
@@ -112,7 +112,7 @@ arg 1 [%v23]
 %v18:i32 = int.add %v11, %v13
 
 %v19:ctrl, %v20:token = region %v7, %v17
-%v21:i32<u:0x5a200:4> = phi %v20, %v2, %v11
+%v21:i32<u:0x5ba00:4> = phi %v20, %v2, %v11
 %v22:mem = initial_memory
 %v23:i32 = initial_var[EDX]
 %v24:i80 = initial_var[ST0]
@@ -123,7 +123,7 @@ return %v19, %v22, %v21, %v23, %v24, %v25, %v26
 == popcount64 @0x401150
 cfg
   0x401150 402 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x49d00:1, u:0x49f00:1, u:0x4a000:1, u:0x4a100:1, u:0x4a200:1, u:0x4a500:1, u:0x4a600:1, u:0x4a700:1, u:0x4a800:1, u:0x4aa00:4, u:0x4ab00:1, u:0x4ac00:1, u:0x4ae00:1, u:0x4af00:1, u:0x4b000:1, u:0x4b100:1, u:0x4b700:8, u:0x50200:1, u:0x50300:4, u:0x50400:4, u:0x50500:4, u:0x50700:1, u:0x50800:1, u:0x50900:1, u:0x50a00:1, u:0x50d00:1, u:0x50f00:1, u:0x51000:1, u:0x51100:1, u:0x51200:1, u:0x7c100:8, u:0x7c200:8, u:0x7c400:8, u:0x7c700:4, u:0xb3d00:4, u:0xb4500:4, u:0xb4600:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x49d00:1, u:0x49f00:1, u:0x4a000:1, u:0x4a100:1, u:0x4a200:1, u:0x4a500:1, u:0x4a600:1, u:0x4a700:1, u:0x4a800:1, u:0x4aa00:4, u:0x4ab00:1, u:0x4ac00:1, u:0x4ae00:1, u:0x4af00:1, u:0x4b000:1, u:0x4b100:1, u:0x4b700:8, u:0x50200:1, u:0x50300:4, u:0x50400:4, u:0x50500:4, u:0x50700:1, u:0x50800:1, u:0x50900:1, u:0x50a00:1, u:0x50d00:1, u:0x50f00:1, u:0x51000:1, u:0x51100:1, u:0x51200:1, u:0x7d900:8, u:0x7da00:8, u:0x7dc00:8, u:0x7df00:4, u:0xb5500:4, u:0xb5d00:4, u:0xb5e00:4]
 arg 0 [%v2]
 arg 1 [%v26]
 %v0:ctrl = entry
@@ -185,7 +185,7 @@ cfg
   0x4011c6.9 32 ops cbranch 0x4011d4 -> [0x4011d1.4, 0x4011d4]
   0x4011d1.4 1 ops goto -> [0x4011d4]
   0x4011d4 3 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17c00:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x5af00:4, u:0x5b100:1, u:0x5b200:4, u:0x5b300:1, u:0x66200:4, u:0x66300:1, u:0xb7000:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17c00:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x5c700:4, u:0x5c900:1, u:0x5ca00:4, u:0x5cb00:1, u:0x67a00:4, u:0x67b00:1, u:0xb8800:4]
 arg 0 [%v22]
 arg 1 [%v1]
 %v0:ctrl = entry
@@ -199,7 +199,7 @@ arg 1 [%v1]
 %v9:i32 = iconst[0x1f]
 
 %v10:ctrl, %v11:token = region %v8, %v15
-%v12:i32<u:0x5af00:4> = phi %v11, %v9, %v18
+%v12:i32<u:0x5c700:4> = phi %v11, %v9, %v18
 %v13:i32 = int.shift_right %v1, %v12
 %v14:i1 = icmp.equal %v13, %v2
 %v15:ctrl, %v16:ctrl = if %v10, %v14
@@ -207,7 +207,7 @@ arg 1 [%v1]
 %v18:i32 = int.add %v12, %v17
 
 %v19:ctrl, %v20:token = region %v7, %v16
-%v21:i32<u:0x5af00:4> = phi %v20, %v9, %v12
+%v21:i32<u:0x5c700:4> = phi %v20, %v9, %v12
 %v22:i32 = initial_var[EAX]
 %v23:i1 = icmp.equal %v22, %v2
 %v24:i8 = extend.zero %v23
@@ -215,14 +215,14 @@ arg 1 [%v1]
 %v26:ctrl, %v27:ctrl = if %v19, %v25
 
 %v28:ctrl, %v29:token = region %v27, %v33
-%v30:i32<u:0x5af00:4> = phi %v29, %v9, %v35
+%v30:i32<u:0x5c700:4> = phi %v29, %v9, %v35
 %v31:i32 = int.shift_right %v22, %v30
 %v32:i1 = icmp.equal %v31, %v2
 %v33:ctrl, %v34:ctrl = if %v28, %v32
 %v35:i32 = int.add %v30, %v17
 
 %v36:ctrl, %v37:token = region %v26, %v34
-%v38:i32<u:0x5af00:4> = phi %v37, %v9, %v30
+%v38:i32<u:0x5c700:4> = phi %v37, %v9, %v30
 %v39:ctrl, %v40:ctrl = if %v36, %v3
 %v41:i32 = int.xor %v38, %v9
 %v42:i32 = iconst[0x20]
@@ -242,7 +242,7 @@ cfg
   0x4011e0 14 ops cbranch 0x4011e9 -> [0x4011e5, 0x4011e9]
   0x4011e5 12 ops return -> []
   0x4011e9 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x18d00:1, u:0x18e00:1, u:0x19000:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x67600:4, u:0x67800:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x18d00:1, u:0x18e00:1, u:0x19000:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x68e00:4, u:0x69000:4]
 arg 0 [%v1]
 arg 1 [%v19]
 %v0:ctrl = entry
