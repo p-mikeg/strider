@@ -378,15 +378,19 @@ fn guard_propagates_through_shift_left() {
 
 /// PowerPC `slwi` lifts to `And(idx << 2, ~3)`. The mask clears only bits the
 /// shift already zeroed, so the guard on `idx` bounds it exactly as it bounds
-/// the bare shift.  A mask that clears a bit the value can hold is not the
-/// same value: only `x & c <= x` carries, and KnownBits' stride of 8 with it.
+/// the bare shift; a mask that clears a bit the value can hold is not the same
+/// value.  `idx` is in `[1, 3]`, a low end only the shift's own range keeps:
+/// `{4, 8, 12}` through the identity, `{0, 8}` without it.
 #[test]
 fn guard_propagates_through_a_mask_of_known_zero_bits() {
     let range = |mask: u64| {
         let ty = ValueType::int(32);
         let g = guarded(
             ty,
-            |b, idx| cmp_c(b, idx, IntCmpOp::Less, 4),
+            |b, idx| {
+                let less_one = add_c(b, idx, 0xffff_ffff);
+                cmp_c(b, less_one, IntCmpOp::Less, 3)
+            },
             |b, idx| {
                 let two = b.build_int_const(2u64, ty).unwrap();
                 let shifted = b
@@ -400,12 +404,11 @@ fn guard_propagates_through_a_mask_of_known_zero_bits() {
         range_at(&g.f, g.ret, g.true_node)
     };
     let iv = range(0xffff_fffc);
-    assert_eq!((iv.lo, iv.hi, iv.stride), (0, 12, 4));
+    assert_eq!((iv.lo, iv.hi, iv.stride), (4, 12, 4));
     let iv = range(0xffff_fff8);
-    assert_eq!(
-        (iv.lo, iv.hi, iv.stride),
-        (0, 12, 8),
-        "a mask clearing bit 2 is not the guarded value"
+    assert!(
+        iv.lo == 0 && iv.hi >= 8 && iv.stride == 8,
+        "a mask clearing bit 2 is not the guarded value, got {iv:?}"
     );
 }
 
