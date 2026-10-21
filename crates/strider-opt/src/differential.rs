@@ -1315,8 +1315,19 @@ fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
         let w = b.read_variable(&vn).unwrap();
         let tested = random_extract(&mut b, &mut rng, w);
         let ty = b.value_type_opt(tested).unwrap();
-        let n = 1 + (u128::from(rng.next_u64()) & mask(ty) >> rng.below(ty.bit_width()));
+        let draw =
+            |rng: &mut Rng| u128::from(rng.next_u64()) & mask(ty) >> rng.below(ty.bit_width());
+        let n = (1 + draw(&mut rng)).min(mask(ty));
         let n = b.build_int_const(n, ty).unwrap();
+        // Half the guards have a low end too: `tested - lo < n`.
+        let tested = if rng.chance(50) {
+            let lo = draw(&mut rng);
+            let minus = b.build_int_const(lo.wrapping_neg() & mask(ty), ty).unwrap();
+            b.build_int_binary_operation(tested, minus, IntBinaryOp::Add, ty)
+                .unwrap()
+        } else {
+            tested
+        };
         let cond = b
             .build_int_cmp_operation(tested, n, IntCmpOp::Less, ty)
             .unwrap();
