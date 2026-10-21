@@ -357,17 +357,19 @@ const PPC_DOT_CR0_MEM: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     no_return: false,
 });
 
-/// ARM A-profile processor-mode switch: every mode banks R13/R14 and FIQ also
-/// banks R8-R12 (ARM ARM DDI 0406C B1.3.2), so the values live across one are
-/// not the ones that came in.  `ARM.sinc` defines `r13_svc` / `r14_svc` and
-/// uses them nowhere, so no banking is modelled and this list is the model.
+/// ARM A-profile processor-mode switch: every exception mode banks R13, R14
+/// and the SPSR, and FIQ also banks R8-R12 (ARM ARM DDI 0406C B1.3.2), so the
+/// values live across one are not the ones that came in.  `ARM.sinc` defines
+/// `r13_svc` / `r14_svc` and uses them nowhere, so no banking is modelled and
+/// this list is the model for every op that changes mode: `cps` and an `msr`
+/// writing the CPSR's control field (`setProcessorMode`).
 ///
-/// The FIQ set is applied to all eight ops, not to `setFIQMode` alone: the
-/// switch OUT of FIQ un-banks R8-R12 just as the switch in banks them, and the
+/// The FIQ set is applied to every op, not to `setFIQMode` alone: the switch
+/// OUT of FIQ un-banks R8-R12 just as the switch in banks them, and the
 /// incoming mode is not something the analyser knows.
 const ARM_MODE_SWITCH: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     implicit_reads: &[],
-    implicit_writes: &["r8", "r9", "r10", "r11", "r12", "sp", "lr"],
+    implicit_writes: &["r8", "r9", "r10", "r11", "r12", "sp", "lr", "spsr"],
     clobbers_memory: false,
     no_return: false,
 });
@@ -1010,6 +1012,7 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             "setFIQMode",
             "setIRQMode",
             "setMonitorMode",
+            "setProcessorMode",
             "setSupervisorMode",
             "setSystemMode",
             "setUndefinedMode",
