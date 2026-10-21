@@ -115,6 +115,13 @@ impl Template {
         crate::graph_ext::derive_root(&self.graph)
     }
 
+    /// Whether instantiating creates any node: false only for a bare capture.
+    pub fn builds_nodes(&self) -> bool {
+        self.graph
+            .all_node_ids()
+            .any(|n| matches!(self.graph.node_kind(n).kind, TmplNodeKind::Build(_)))
+    }
+
     /// Drives the rewrite engine's construction-time coverage check, which
     /// confirms the LHS binds every capture the RHS references.
     pub fn referenced_captures(&self) -> impl Iterator<Item = Capture> + '_ {
