@@ -116,10 +116,10 @@ impl PyCallingConvention {
     /// is not that width, or when `link_register=None` and `ret_stack_pop` is
     /// below it.
     ///
-    /// The frozen varnodes belong to `sleigh`'s sla, so the result is usable
-    /// only with a `Lifter` over the same sla (`arm`, `arm_thumb` and
-    /// `arm_be_kernel` share one); any other raises `StriderError` at
-    /// `analyze` time.
+    /// The frozen varnodes belong to `sleigh`'s registers, so the result is
+    /// usable only with a `Lifter` with the same register table (`arm`,
+    /// `arm_thumb` and `arm_be_kernel` share one); any other raises
+    /// `StriderError` at `analyze` time.
     #[classmethod]
     #[pyo3(signature = (
         sleigh,
