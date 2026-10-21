@@ -938,9 +938,9 @@ fn resolve_symbol_target(
         }
         _ => Isa::Same,
     };
-    let (st_info, st_other) = match sym.flags() {
-        object::SymbolFlags::Elf { st_info, st_other } => (st_info, st_other),
-        _ => (0, 0),
+    let st_info = match sym.flags() {
+        object::SymbolFlags::Elf { st_info, .. } => st_info,
+        _ => 0,
     };
     Some(Target {
         addr,
@@ -959,12 +959,25 @@ fn resolve_symbol_target(
                 .section_index()
                 .and_then(|i| obj.section_by_index(i).ok())
                 .is_some_and(|sec| sec.name() == Ok(".opd")),
-        ppc64_local_entry: if arch == A::PowerPc64 && !sym.is_undefined() {
-            ppc64_local_entry_offset(st_other)
-        } else {
-            0
-        },
+        ppc64_local_entry: local_entry_offset(obj, &sym),
     })
+}
+
+/// How far past `sym` a call sharing its TOC enters: on ppc64 ELFv2 the
+/// distance from a defined function's global entry to its local one, which
+/// is where a same-module `bl` lands. 0 on every other arch.
+pub fn local_entry_offset<'data>(
+    obj: &object::File<'data>,
+    sym: &impl object::ObjectSymbol<'data>,
+) -> u64 {
+    match sym.flags() {
+        object::SymbolFlags::Elf { st_other, .. }
+            if obj.architecture() == A::PowerPc64 && !sym.is_undefined() =>
+        {
+            ppc64_local_entry_offset(st_other)
+        }
+        _ => 0,
+    }
 }
 
 /// `PPC64_LOCAL_ENTRY_OFFSET`: bytes from a function's global entry to its
