@@ -1,7 +1,8 @@
 # fixtures/loader/Makefile
 #
 # Images whose GOT slots the dynamic loader fills with values the file does
-# not hold, for the ELF reader's tests: out/<name>.{elf,o}, from src/.
+# not hold, and objects whose GOT references strider resolves, for the ELF
+# reader's tests: out/<name>.{elf,o}, from src/.
 #
 # Not per-arch like ../Makefile: each image needs a link of its own (a shared
 # library, a PIE, an executable against that library), and the golden suite
@@ -30,7 +31,8 @@ MIPS64 := mips64el-linux-gnuabi64-gcc
 IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           mips64le_got_lib.elf mips64le_got.elf \
           x64_ifunc_pie.elf x64_ifunc_lib.elf x86_ifunc_pie.elf x64_ifunc.o \
-          x64_ifunc_nopic.o x64_ifunc_static.elf
+          x64_ifunc_nopic.o x64_ifunc_static.elf \
+          x86_got_call_nopic.o x86_got_call_pic.o
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -65,6 +67,12 @@ $(OUTDIR)/x64_ifunc_static.elf: src/ifunc.c | $(OUTDIR)
 # as a kernel's do.
 $(OUTDIR)/x64_ifunc_nopic.o: src/ifunc.c | $(OUTDIR)
 	$(X64) $(filter-out -Wl% -nostdlib -fPIC,$(CFLAGS)) -fno-pic -c $< -o $@
+
+# The same calls through a GOT register and through the slot's own address.
+$(OUTDIR)/x86_got_call_pic.o: src/got_call.c | $(OUTDIR)
+	$(X86) $(filter-out -Wl% -nostdlib,$(CFLAGS)) -fno-plt -c $< -o $@
+$(OUTDIR)/x86_got_call_nopic.o: src/got_call.c | $(OUTDIR)
+	$(X86) $(filter-out -Wl% -nostdlib -fPIC,$(CFLAGS)) -fno-pic -fno-plt -c $< -o $@
 
 clean:
 	rm -rf $(OUTDIR)
