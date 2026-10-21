@@ -243,9 +243,10 @@ pub fn trap_is_unconditional(name: &str, to_mask: Option<u128>) -> bool {
 
 /// Whether `name` is the ARM op through which a register-form `msr` to the
 /// CPSR control field yields the mode it writes: `msrRegisterMode(new,
-/// current)` is `new`, or `current` under the claim that such a write restores
-/// the mode in force. The lifter lowers it to one of its arguments, so it has
-/// no ABI row.
+/// current)` is `new`, or `current` under the claim that the mode such a write
+/// names is the one in force. The lifter lowers it to one of its arguments, so
+/// it has no ABI row, unless a caller override names it, which then classifies
+/// it as any user op and neither claim value applies.
 #[must_use]
 pub fn is_msr_register_mode(preset: crate::ArchPreset, name: &str) -> bool {
     preset.family() == crate::ArchFamily::Arm32 && name == "msrRegisterMode"
