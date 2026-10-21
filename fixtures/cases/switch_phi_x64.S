@@ -6,10 +6,11 @@
 // hold `.Lslot_2` and `.Lslot_3`, which this jump can never read, so its
 // arms are `.Lslot_0`, `.Lslot_1` and `.Lslot_4`.
 //
-// `phi_label` picks one of two labels with `cmovne` and jumps to it, the
-// shape gcc -O2 gives a computed goto whose index is a known constant on
-// every path.  Its arms are `.Llabel_0` and `.Llabel_1`; `.Llabel_unused`
-// between them is never a target.
+// `phi_label` picks one of three labels with two `cmovne`s and jumps to it,
+// the shape gcc -O2 gives a computed goto whose index is a known constant on
+// every path.  Its arms are `.Llabel_0`, `.Llabel_1` and `.Llabel_2`, 12 and
+// 6 bytes apart, so the range they span at their 6-byte spacing also names
+// `.Llabel_unused` between the first two, which is never a target.
 //
 // Built for x64; every other arch fails to assemble it and skips it.
 
@@ -50,6 +51,9 @@ phi_label:
 	mov	$.Llabel_1, %edx
 	test	%edi, %edi
 	cmovne	%rdx, %rax
+	mov	$.Llabel_2, %edx
+	test	%esi, %esi
+	cmovne	%rdx, %rax
 	jmp	*%rax
 .Llabel_0:
 	mov	$10, %eax
@@ -59,6 +63,9 @@ phi_label:
 	ret
 .Llabel_1:
 	mov	$12, %eax
+	ret
+.Llabel_2:
+	mov	$13, %eax
 	ret
 	.size	phi_label, .-phi_label
 
