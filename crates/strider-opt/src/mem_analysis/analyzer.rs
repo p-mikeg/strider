@@ -23,7 +23,8 @@ pub(crate) enum MemPurpose {
     IncomingArgs,
     /// `CallStackArgCollect`'s outgoing-argument window.
     CallStackArgs,
-    /// The jump-table walk: it decides a CFG edge, so no call relaxation.
+    /// The jump-table walk's own steps: no call relaxation.  The dispatch
+    /// value it reads was forwarded under `Forward`'s.
     TableWalk,
     /// Claims nothing: what a permanent rewire may rest on.
     Structural,
