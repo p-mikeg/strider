@@ -1476,3 +1476,130 @@ fn a_range_contains_every_runtime_value() {
         );
     }
 }
+
+/// A random state machine over `s`: each region may set `s` to a constant,
+/// then branches on the argument or on `s` itself to the next region and to
+/// another, forward or back, so its merges and loop headers are phis of
+/// constants and of each other.  The last region returns `s`.
+fn build_random_state_machine(seed: u64) -> Option<strider_ir::Function> {
+    let mut rng = Rng(seed.wrapping_mul(0xD6E8_FEB8_6659_FD93) | 1);
+    let (size, ty) = [(1, ValueType::int(8)), (4, ValueType::int(32))][rng.below(2)];
+    let s_vn = reg_vn(0x1000, size);
+    let x_vn = reg_vn(0x2000, 4);
+    let mut b = RegisterSet::new()
+        .tracked(s_vn)
+        .tracked(x_vn)
+        .arg(x_vn)
+        .build_fn()
+        .ok()?;
+    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let nregions = 3 + rng.below(8);
+    let regions: Vec<_> = (0..nregions)
+        .map(|_| b.create_region_all().unwrap())
+        .collect();
+    b.set_entry_region_all(regions[0]).ok()?;
+    for (i, &region) in regions.iter().enumerate() {
+        b.set_region(region);
+        if i + 1 == nregions {
+            let s = b.read_variable(&s_vn).ok()?;
+            b.build_return(None, &[s]).ok()?;
+            continue;
+        }
+        if i == 0 || rng.chance(60) {
+            let k = b.build_int_const(u128::from(rng.next_u64() % 9), ty).ok()?;
+            b.write_variable(&s_vn, k).ok()?;
+        }
+        let (v, vty) = if rng.chance(50) {
+            (b.read_variable(&s_vn).ok()?, ty)
+        } else {
+            (b.read_variable(&x_vn).ok()?, ValueType::int(32))
+        };
+        let c = b
+            .build_int_const(u128::from(rng.next_u64() % 9), vty)
+            .ok()?;
+        let op = [IntCmpOp::Equal, IntCmpOp::Less][rng.below(2)];
+        let cond = b.build_int_cmp_operation(v, c, op, vty).ok()?;
+        let other = regions[rng.below(nregions)];
+        if other == regions[i + 1] {
+            b.build_branch(other).ok()?;
+        } else if rng.chance(50) {
+            b.build_if(cond, regions[i + 1], other).ok()?;
+        } else {
+            b.build_if(cond, other, regions[i + 1]).ok()?;
+        }
+    }
+    b.set_lift_addr(None);
+    let f = b.build().ok()?;
+    strider_ir::validate::validate(&f).ok()?;
+    Some(f)
+}
+
+/// Every runtime value of a phi of a random state machine lies among the
+/// constants `value_range::phi_constants` names for it and in its range: the
+/// table walk enumerates the constants the range holds.  The range can be the
+/// tighter, since an edge guard bounds the arm it carries.
+#[test]
+fn a_phi_of_constants_holds_only_its_constants() {
+    let mut failures: Vec<String> = Vec::new();
+    let (mut checks, mut phis, mut functions) = (0usize, 0usize, 0usize);
+    for seed in 0..DEFAULT_FUZZ_SEEDS {
+        let Some(mut f) = build_random_state_machine(seed) else {
+            continue;
+        };
+        if crate::default_pipeline()
+            .run(&mut f, &mut crate::OptCtx::new(None))
+            .is_err()
+        {
+            continue;
+        }
+        let mut ranges = crate::value_range::RangeMap::new(&f).unwrap();
+        let mut sets: FxHashMap<ValueId, Vec<u128>> = FxHashMap::default();
+        for n in strider_ir::IRWalker::walk(&f) {
+            if !matches!(f.node_kind(n), NodeKind::Phi) {
+                continue;
+            }
+            let v = f.node_outputs(n)[0];
+            if let Some(set) = crate::value_range::phi_constants(&f, v, 64) {
+                sets.insert(v, set);
+            }
+        }
+        if sets.is_empty() {
+            continue;
+        }
+        functions += 1;
+        phis += sets.len();
+        let mut rng = Rng(seed | 1);
+        for _ in 0..8 {
+            let x = u128::from(rng.next_u64() % 10);
+            let mut bad: Option<String> = None;
+            interp::run_observed(&f, &reference_env(&|_| x), &mut |at, v, val| {
+                let Some(set) = sets.get(&v) else {
+                    return;
+                };
+                checks += 1;
+                let iv = ranges.range_of(v, at);
+                if (set.binary_search(&val).is_err() || !iv.contains(val)) && bad.is_none() {
+                    bad = Some(format!(
+                        "seed {seed}: x={x} phi {v:?}={val:#x} at {at:?} outside {set:?} or {iv:?}\n{}",
+                        f.to_text(false)
+                    ));
+                }
+            })
+            .unwrap_or_else(|why| panic!("seed {seed}: the reference interpreter: {why:?}"));
+            if let Some(b) = bad {
+                failures.push(b);
+                break;
+            }
+        }
+        if failures.len() >= 3 {
+            break;
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n=====\n"));
+    // Measured: 106 functions, 154 phis.
+    eprintln!("functions {functions} phis {phis} checks {checks}");
+    assert!(
+        functions * 6 >= DEFAULT_FUZZ_SEEDS as usize && phis >= functions && checks > 0,
+        "functions {functions} phis {phis} checks {checks}"
+    );
+}
