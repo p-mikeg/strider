@@ -28,6 +28,9 @@ pub(crate) enum Value {
     PagePcrel,
     /// `G + A - P`
     GotPcrel,
+    /// AArch64's `G(GDAT(S + A)) - P`, the slot holding `S + A`: `G - P`
+    /// when `A` is 0, and no slot otherwise.
+    GotSlotPcrel,
     /// `Page(G) - Page(P)`
     GotPagePcrel,
     /// `G`
@@ -223,7 +226,7 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             elf::R_AARCH64_GLOB_DAT | elf::R_AARCH64_JUMP_SLOT => C(V::Slot, data(8, false)),
             elf::R_AARCH64_CALL26 | elf::R_AARCH64_JUMP26 => C(V::Pcrel, F::A64Branch26),
             elf::R_AARCH64_CONDBR19 | elf::R_AARCH64_LD_PREL_LO19 => C(V::Pcrel, F::A64Imm19),
-            elf::R_AARCH64_GOT_LD_PREL19 => C(V::GotPcrel, F::A64Imm19),
+            elf::R_AARCH64_GOT_LD_PREL19 => C(V::GotSlotPcrel, F::A64Imm19),
             elf::R_AARCH64_TSTBR14 => C(V::Pcrel, F::A64Imm14),
             elf::R_AARCH64_ADR_PREL_LO21 => C(
                 V::Pcrel,
