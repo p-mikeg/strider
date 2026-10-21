@@ -393,14 +393,16 @@
 - `AssumptionOptions.none(...)` takes the constructor's keywords and sets
   only the claims named, so `none(escape_analysis=True)` is one claim where
   `AssumptionOptions(escape_analysis=True)` is five.
-- `AssumptionOptions.msr_register_keeps_mode`, default `True`: an ARM
-  register-form `msr` writing the CPSR control field (`msr cpsr_c, rN`)
-  restores a saved mode, so it re-banks nothing and leaves the mode alone;
-  its masks and flags still update, and immediate `msr` and `cps` still
-  switch. `AssumptionOptions.none()` clears it, which re-banks unless the
-  mode is provably the current one. Wrong for code building a new mode in a
-  register (Linux's boot-time `safe_svcmode_maskall`). The lift reads it, so
-  `Lifter.optimize` adding it changes nothing.
+- `AssumptionOptions.msr_register_keeps_mode`, default `True`: the mode an
+  ARM register-form `msr` writes to the CPSR control field (`msr cpsr_c,
+  rN`) is the mode already in force, so it re-banks nothing and leaves the
+  mode alone; its masks and flags still update, and immediate `msr` and
+  `cps` still switch. `AssumptionOptions.none()` clears it, which re-banks
+  unless the mode is provably the current one. Wrong for a new mode built in
+  a register (Linux's boot-time `safe_svcmode_maskall`, the switch into FIQ
+  in `fiqasm.S`) and for a saved mode restored after a switch made since the
+  save (the return to SVC in `fiqasm.S`'s `__set_fiq_regs`). The lift reads
+  it, so `Lifter.optimize` raises `StriderError` on a set that adds it.
 - `strider.template.capture_typed(c, inner)` builds `inner` at the width of
   the value `c` bound, as Rust's `capture_typed` does: the way to type a
   constant nothing else gives a width.
@@ -520,8 +522,9 @@
   longer folds to "enabled". Execution at PL1 or higher is assumed: a
   User-mode write to M, A, I or F, which the hardware ignores, is recorded.
   A mode switch, `cps` included, also re-banks the SPSR. Under the default
-  `msr_register_keeps_mode` claim the register form restores the mode and
-  re-banks nothing; `AssumptionOptions::none()` keeps the re-bank.
+  `msr_register_keeps_mode` claim the register form is taken to write the
+  mode in force and re-banks nothing; `AssumptionOptions::none()` keeps the
+  re-bank.
 - ARM `msr` sets N, Z, C, V and Q only through its flags field, from its
   source: the A32 register form overwrote them for every mask, the
   immediate form never set them, and Thumb `msr APSR_nzcvq, rN` read r0
