@@ -500,10 +500,8 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     // compute is covered by the `altv`/`vsx`/`vector` prefix below.
     ("loadVectorForShiftLeft", PURE),
     ("random", PURE),
-    // `:slbmfee D,B` invokes `slbMoveFromEntryESID()` with no operands and no
-    // output, so the architectural write of `D` is modelled nowhere and a later
-    // read of `D` forwards the stale value.  `D` is instruction-encoded, while
-    // this table names fixed registers.
+    // `slbmfee` / `slbmfev` / `slbfee.` write RT from the op's output (a fork
+    // patch: the stock sla wrote it nowhere) and read the SLB, not RAM.
     ("slbMoveFromEntryESID", PURE),
     ("slbMoveFromEntryVSID", PURE),
     ("slbfeeDotOp", PPC_DOT_CR0),
@@ -550,15 +548,10 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
     // `vsx<ver>_<n>`, and `vector<Op>`.  Reached only after `PPC_TABLE`, which
     // holds the nineteen `vsx*` forms whose memory access the sla leaves out of
     // the p-code; everything else in the three families is register compute
-    // touching no RAM.
-    //
-    // Eight of them are register compute whose DESTINATION the sla drops, the
-    // `slbMoveFromEntryESID` case again: `vsx.sinc:1442` calls
-    // `vsx300_49(A,B)` with `XT` written nowhere, and the seven `BF`-writing
-    // compares `vsx300_29`/`30`/`34`/`35`/`74`/`75`/`76` (`:1359`, `:1363`,
-    // `:1379`, `:1383`, `:1543`, `:1547`, `:1551`) pass `BF2:1` as an INPUT.
-    // The destination is instruction-encoded, so no fixed register name could
-    // be listed here; the memory classification is unaffected.
+    // touching no RAM, its destination written from the op's output. The
+    // stock sla wrote some nowhere, and the fork patches them: `xsiexpdp`'s
+    // XT, `vminud`'s vrD, and CR field BF of the seven VSX exponent compares
+    // and data-class tests.
     if name.starts_with("altv") || name.starts_with("vsx") || name.starts_with("vector") {
         return Some(PURE);
     }
