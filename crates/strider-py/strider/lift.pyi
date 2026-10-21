@@ -73,7 +73,12 @@ class AssumptionOptions:
     @property
     def callee_preserves_stack_args(self) -> bool: ...
     @property
-    def noalias_allocators(self) -> list[int]: ...
+    def noalias_allocators(self) -> list[int]:
+        """Callee addresses of pure `malloc`-like allocators, sorted. Each
+        listed call's result overlaps no other live allocation, no stack slot
+        and no global or other constant address, so an allocator carving from
+        a static or a caller-supplied arena does not qualify."""
+        ...
     @property
     def escape_analysis(self) -> bool: ...
     @property
