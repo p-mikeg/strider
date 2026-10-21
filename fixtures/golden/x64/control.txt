@@ -413,50 +413,39 @@ cfg
   0x4012eb 5 ops return -> []
   0x4012f0 6 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0xab00:8, u:0xad00:8, u:0x25200:1, u:0x26000:1, u:0x26200:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x5a500:8, u:0x80100:4, u:0x80300:4, u:0x80d00:4, u:0x80f00:4, u:0x99200:8, u:0x99300:8, u:0x99500:8, u:0x99800:4]
-arg 0 [%v1]
-arg 2 [%v21]
-float_arg 0 [%v22]
-float_arg 1 [%v23]
+arg 0 [%v2]
+arg 2 [%v24]
+float_arg 0 [%v25]
+float_arg 1 [%v26]
 %v0:ctrl = entry
-%v1:i64 = initial_var[RDI]
-%v2:i32 = truncate %v1
-%v3:i32 = iconst[0x1]
-%v4:i1 = icmp.equal %v2, %v3
-%v5:i1 = icmp.sborrow %v2, %v3
-%v6:i8 = extend.zero %v5
-%v7:i32 = iconst[0xffffffff]
-%v8:i32 = int.add %v2, %v7
-%v9:i32 = iconst[0x0]
-%v10:i1 = icmp.sless %v8, %v9
-%v11:i8 = extend.zero %v10
-%v12:i1 = icmp.equal %v6, %v11
-%v13:i1 = iconst[0x1]
-%v14:i1 = int.xor %v12, %v13
-%v15:i1 = int.or %v4, %v14
-%v16:ctrl, %v17:ctrl = if %v0, %v15
-%v18:i64 = iconst[0x2]
-%v19:mem = initial_memory
-%v20:i64 = iconst[0x1]
-%v21:i64 = initial_var[RDX]
-%v22:i128 = initial_var[XMM0]
-%v23:i128 = initial_var[XMM1]
-%v24:i80 = initial_var[ST0]
-%v25:i80 = initial_var[ST1]
-return %v16, %v19, %v20, %v21, %v22, %v23, %v24, %v25
+%v1:i32 = iconst[0x1]
+%v2:i64 = initial_var[RDI]
+%v3:i32 = truncate %v2
+%v4:i1 = icmp.sless %v1, %v3
+%v5:ctrl, %v6:ctrl = if %v0, %v4
+%v7:i64 = iconst[0x2]
+%v8:i64 = iconst[0x1]
 
-%v26:ctrl, %v27:token = region %v35, %v17
-%v28:i64<RAX> = phi %v27, %v36, %v18
-%v29:i64<R8> = phi %v27, %v39, %v20
-%v30:i32 = truncate %v28
-%v31:i32 = int.add %v30, %v3
-%v32:i32 = int.add %v2, %v3
-%v33:i1 = icmp.equal %v31, %v32
-%v34:ctrl, %v35:ctrl = if %v26, %v33
-%v36:i64 = extend.zero %v31
-%v37:i32 = truncate %v29
-%v38:i32 = int.mul %v37, %v30
-%v39:i64 = extend.zero %v38
-return %v34, %v19, %v39, %v21, %v22, %v23, %v24, %v25
+%v9:ctrl, %v10:token = region %v18, %v5
+%v11:i64<RAX> = phi %v10, %v19, %v7
+%v12:i64<R8> = phi %v10, %v23, %v8
+%v13:i32 = truncate %v11
+%v14:i32 = int.add %v13, %v1
+%v15:i32 = int.add %v3, %v1
+%v16:i1 = icmp.equal %v14, %v15
+%v17:ctrl, %v18:ctrl = if %v9, %v16
+%v19:i64 = extend.zero %v14
+%v20:mem = initial_memory
+%v21:i32 = truncate %v12
+%v22:i32 = int.mul %v21, %v13
+%v23:i64 = extend.zero %v22
+%v24:i64 = initial_var[RDX]
+%v25:i128 = initial_var[XMM0]
+%v26:i128 = initial_var[XMM1]
+%v27:i80 = initial_var[ST0]
+%v28:i80 = initial_var[ST1]
+return %v17, %v20, %v23, %v24, %v25, %v26, %v27, %v28
+return %v6, %v20, %v8, %v24, %v25, %v26, %v27, %v28
 
 == count_bits @0x401300
 cfg
