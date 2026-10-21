@@ -336,7 +336,10 @@ class Function:
         a `Capture` or a capture name; a `strider.pattern.Pat` raises
         `TypeError`, and one nested in a `Template` raises `StriderError`
         naming its constructor. A `.when()` guard on `find` raises: select the
-        sites with `find_all` instead.
+        sites with `find_all` instead. A `replace` that builds nodes raises
+        `StriderError` where the match holds no node an instruction produced
+        (an `initial_var` or `phi` root), as those nodes would carry no
+        address.
 
         One walk of the reachable nodes, not a fixed point, so a rule whose
         output its own `find` matches needs the caller to loop.
