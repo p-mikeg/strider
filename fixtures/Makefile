@@ -69,6 +69,12 @@ $(OUTDIR)/$(ARCH):
 # apply_elf_relocations tests; see cases/elf_relocs.c.
 SHARED_CASES := elf_relocs
 
+# Cases built at -O0 whatever the arch's level, because the shape under test
+# is one only an unoptimised build leaves (a stack-resident index); see each
+# case's header.  The trailing -O0 wins over the arch's own -O.
+O0_CASES := switch_phi_index
+CASE_CFLAGS = $(if $(filter $(basename $(notdir $@)),$(O0_CASES)),-O0)
+
 # CFLAGS_BASE: drop `-no-pie` / `-fno-pic` from the arch's CFLAGS for
 # the SHARED_CASES rule, since `-shared` requires PIC.  Other arch
 # flags (-m32, -O2, -g, …) are still needed.
@@ -109,7 +115,7 @@ $(OUTDIR)/$(ARCH)/%.elf: cases/%.c | $(OUTDIR)/$(ARCH)
 	elif echo "$(SHARED_CASES)" | tr ' ' '\n' | grep -qx "$(basename $(notdir $@))"; then \
 		$(CC) $(CFLAGS_BASE) $(COMMON_CFLAGS) -shared -fPIC -nostdlib $< -o $@ && echo "  Built $@ (shared)"; \
 	else \
-		$(CC) $(CFLAGS) $(COMMON_CFLAGS) $< -o $@ && echo "  Built $@"; \
+		$(CC) $(CFLAGS) $(COMMON_CFLAGS) $(CASE_CFLAGS) $< -o $@ && echo "  Built $@"; \
 	fi
 
 # Unlinked object files (`out/<arch>/<case>.o`) for the same `.c`
@@ -123,7 +129,7 @@ $(OUTDIR)/$(ARCH)/%.o: cases/%.c | $(OUTDIR)/$(ARCH)
 	@if [ "$(CC)" = "false" ]; then \
 		$(NO_CC); \
 	else \
-		$(CC) $(CFLAGS_OBJ) $(COMMON_CFLAGS) -c $< -o $@ && echo "  Built $@ (object)"; \
+		$(CC) $(CFLAGS_OBJ) $(COMMON_CFLAGS) $(CASE_CFLAGS) -c $< -o $@ && echo "  Built $@ (object)"; \
 	fi
 
 # Hand-written assembly cases (`cases/*.S`).  An `.S` source is built
