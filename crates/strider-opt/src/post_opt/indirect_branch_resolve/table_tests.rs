@@ -407,7 +407,8 @@ fn decompose_index_picks_shallowest_narrowed_index() {
     let branch = sole_indirect_branch(&g);
     let target_value = g.indirect_branch_target(branch);
     let mut ranges = crate::value_range::RangeMap::new(&g).unwrap();
-    match decompose_index(&g, &mut ranges, target_value, branch) {
+    let chain = dominator_chain(&g, target_value).expect("a dispatch cone");
+    match decompose_index(&g, &mut ranges, &chain, branch) {
         Some(hit) => assert_eq!(
             (hit.range.lo(), hit.range.hi(), hit.rebase),
             (0, 7, 0),
@@ -2071,6 +2072,135 @@ fn classify_table_dispatch_conflicting_isa_modes_on_one_addr_defers() {
         result, None,
         "conflicting modes on one address must defer the whole site"
     );
+}
+
+/// `s = arg == 1 ? k0 : (arg == 2 ? k1 : k2)` over `ks`, then
+/// `dispatch(s)` in the join, under `if (s < bound)` where one is given.
+/// `dispatch` builds the branch target and, optionally, the ISA mode the
+/// branch commits.
+fn phi_of_constants_dispatch(
+    ks: [u64; 3],
+    bound: Option<u64>,
+    dispatch: impl FnOnce(&mut FunctionBuilder, ValueId) -> (ValueId, Option<ValueId>),
+) -> Function {
+    use strider_ir::IntCmpOp;
+    let s_vn = strider_ir_test_utils::reg_vn(0x10, 4);
+    let arg_vn = strider_ir_test_utils::reg_vn(0x20, 4);
+    let i32t = ValueType::int(32);
+    let mut b = RegisterSet::new()
+        .tracked(s_vn)
+        .tracked(arg_vn)
+        .arg(arg_vn)
+        .build_fn()
+        .unwrap();
+    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let [entry, mid, a, arm_b, arm_c, join, at, exit] =
+        std::array::from_fn(|_| b.create_region_all().unwrap());
+    b.set_entry_region_all(entry).unwrap();
+    let arg_is = |b: &mut FunctionBuilder, k: u64| {
+        let arg = b.read_variable(&arg_vn).unwrap();
+        let k = b.build_int_const(k, i32t).unwrap();
+        b.build_int_cmp_operation(arg, k, IntCmpOp::Equal, i32t)
+            .unwrap()
+    };
+    b.set_region(entry);
+    let x = arg_is(&mut b, 1);
+    b.build_if(x, a, mid).unwrap();
+    b.set_region(mid);
+    let y = arg_is(&mut b, 2);
+    b.build_if(y, arm_b, arm_c).unwrap();
+    for (region, k) in [(a, ks[0]), (arm_b, ks[1]), (arm_c, ks[2])] {
+        b.set_region(region);
+        let k = b.build_int_const(k, i32t).unwrap();
+        b.write_variable(&s_vn, k).unwrap();
+        b.build_branch(join).unwrap();
+    }
+    b.set_region(join);
+    match bound {
+        Some(bound) => {
+            let s = b.read_variable(&s_vn).unwrap();
+            let bound = b.build_int_const(bound, i32t).unwrap();
+            let cond = b
+                .build_int_cmp_operation(s, bound, IntCmpOp::Less, i32t)
+                .unwrap();
+            b.build_if(cond, at, exit).unwrap();
+        }
+        None => b.build_branch(at).unwrap(),
+    }
+    b.set_region(at);
+    let s = b.read_variable(&s_vn).unwrap();
+    let (target, mode) = dispatch(&mut b, s);
+    b.build_indirect_branch_with_mode(target, mode).unwrap();
+    b.set_region(exit);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    let mut p = crate::OptimizerPipeline::new();
+    p.add(crate::PhiCollapse);
+    p.add(crate::RegionCollapse);
+    p.run(&mut f, &mut crate::OptCtx::new(None)).unwrap();
+    f
+}
+
+/// The arms of a `t[s]` dispatch over a six-entry table at `0x4000`.
+fn phi_index_arms(bound: Option<u64>) -> Vec<u64> {
+    let f = phi_of_constants_dispatch([0, 3, 5], bound, |b, s| {
+        (table_target(b, s, 4, 0x4000), None)
+    });
+    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60], 4);
+    match classify(&f, Some(&rom)) {
+        Some(ResolvedTargets::Multiple(ts)) => ts.iter().map(|t| t.addr).collect(),
+        other => panic!("expected a table; got {other:?}\n{}", f.to_text(false)),
+    }
+}
+
+/// `s` in {0, 3, 5}: `t[0]`, `t[3]` and `t[5]`, not the six slots of the
+/// range 0..=5.  Mutation: enumerate the range where the phi's constants are
+/// known.
+#[test]
+fn classify_table_dispatch_reads_only_the_slots_a_phi_of_constants_names() {
+    assert_eq!(phi_index_arms(None), vec![0x10, 0x40, 0x60]);
+}
+
+/// Under `if (s < 4)` the range is 0..=3, which drops the phi's `5`; the
+/// slots between its constants stay unread.  Mutation: skip the range filter.
+#[test]
+fn classify_table_dispatch_drops_a_phi_constant_its_guard_excludes() {
+    assert_eq!(phi_index_arms(Some(4)), vec![0x10, 0x40]);
+}
+
+/// A jump to a phi of interworking words: the phi is pinned, not the
+/// masked target, so each arm's mode folds off its own word.  The words'
+/// range spans more slots than a table may, so no index bounds them.
+/// Mutation: pin the dispatch value instead of the phi.
+#[test]
+fn classify_table_dispatch_seats_a_phi_of_words_with_their_modes() {
+    let f = phi_of_constants_dispatch([0x1000, 0x1010, 0x2001], None, |b, word| {
+        let i32t = ValueType::int(32);
+        let one = b.build_int_const(1u64, i32t).unwrap();
+        let mode = b
+            .build_int_binary_operation(word, one, IntBinaryOp::And, i32t)
+            .unwrap();
+        let even = b.build_int_const(0xFFFF_FFFEu64, i32t).unwrap();
+        let target = b
+            .build_int_binary_operation(word, even, IntBinaryOp::And, i32t)
+            .unwrap();
+        (target, Some(mode))
+    });
+    let mode = f.indirect_branch_isa_mode(sole_indirect_branch(&f));
+    assert!(mode.is_some(), "the branch commits a mode");
+    let result = classify_with(&f, None, &crate::AssumptionOptions::none(), mode);
+    match result {
+        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
+            ts.iter().map(|t| (t.addr, t.isa_bit)).collect::<Vec<_>>(),
+            vec![
+                (0x1000, Some(false)),
+                (0x1010, Some(false)),
+                (0x2000, Some(true))
+            ],
+        ),
+        other => panic!("expected three arms; got {other:?}\n{}", f.to_text(false)),
+    }
 }
 
 #[test]

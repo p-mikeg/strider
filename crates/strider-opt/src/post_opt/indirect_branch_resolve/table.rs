@@ -4,7 +4,9 @@
 //! table lives in rodata, on the stack, or behind a GP/GOT indirection.  Rather
 //! than pattern-match each addressing shape, this arm finds the index and then
 //! delegates the addressing to the abstract evaluator, pinning the index across
-//! its proven strided range and folding the dispatch cone for each value.
+//! its proven strided range and folding the dispatch cone for each value.  A
+//! cone whose every input is one phi of constants is folded for each constant
+//! instead, which is exact where the range is their hull.
 //!
 //! The foldings the evaluator covers are listed on [`eval`](super::eval).  A
 //! cone needing anything else resolves to `None` and the branch defers: sound
@@ -69,33 +71,22 @@ pub(crate) fn classify_dispatch_value(
     mode_value: Option<ValueId>,
 ) -> Option<ResolvedTargets> {
     // A `Load[reg]` function pointer has no bounded dominator and defers here.
-    let PinnedIndex {
-        index: idx_value,
-        range,
-        rebase,
-    } = decompose_index(function, ranges, target_value, site)?;
-    let idx_mask = function
-        .value_type_opt(idx_value)
-        .and_then(ValueType::int_mask_u128)?;
+    let Domain { pinned, values } = dispatch_domain(function, rom, ranges, target_value, site)?;
 
     let mut ev = super::eval::Evaluator::new(function, rom);
-    let pruned = super::eval::cone_order_pruned(function, target_value, idx_value);
+    let pruned = super::eval::cone_order_pruned(function, target_value, pinned);
     // The branch's committed ISA mode (an interworking `bx`/`jr`-dispatch),
     // `(entry & 1)`, evaluated per index so each arm carries its own mode.
-    let mode_pruned = mode_value.map(|mv| super::eval::cone_order_pruned(function, mv, idx_value));
-    // `stride` is a KnownBits MUST-divisor of the value spacing, so stepping by
-    // it visits exactly the reachable indices.  `collect::<Option<_>>` bails the
-    // moment a value fails to fold, which fails closed.  A stride wider than
-    // `usize` (a scaled wide-type range) defers rather than silently stepping by
-    // 1 and enumerating the full dense span.
-    let step = usize::try_from(range.stride()).ok()?;
-    let mut targets: Vec<ResolvedTarget> = (range.lo()..=range.hi())
-        .step_by(step)
+    let mode_pruned = mode_value.map(|mv| super::eval::cone_order_pruned(function, mv, pinned));
+    // `collect::<Option<_>>` bails the moment a value fails to fold, which
+    // fails closed.
+    let mut targets: Vec<ResolvedTarget> = values
+        .into_iter()
         .map(|x| {
             // One memo for both roots: they are siblings over one dispatch
             // word (`And(word, 1)` and `And(word, ~1)`), so everything under
             // `word` folds once.
-            ev.begin_index(idx_value, x.wrapping_sub(rebase) & idx_mask);
+            ev.begin_index(pinned, x);
             let addr = ev.eval_root(&pruned, target_value)?;
             let isa_bit = match (mode_value, &mode_pruned) {
                 // The branch commits an ISA mode per target; that mode MUST fold.
@@ -128,8 +119,84 @@ pub(crate) fn classify_dispatch_value(
     (!deduped.is_empty()).then(|| ResolvedTargets::table(deduped))
 }
 
-/// The shallowest genuinely-bounded, non-width-only, non-constant value that
-/// DOMINATES the target in its variability cone.
+/// The value the enumeration pins, and the values to pin it to.
+struct Domain {
+    pinned: ValueId,
+    values: Vec<u128>,
+}
+
+/// What to enumerate for `target`: a bounded index across its range, or the
+/// phi every input of the dispatch cone passes through across its constants.
+///
+/// The phi's constants are the values it really takes, where its range is
+/// their hull: an index in `{0, 3, 5}` ranges over `0..=5`.  They are taken
+/// where the phi bounds no index too, as for a jump to a phi of labels.  Where
+/// a bounded index is found as well, a constant the index range excludes is
+/// dropped, since both bound the same runtime value; one under which the
+/// index does not fold is kept, and the target fold decides.
+fn dispatch_domain(
+    function: &strider_ir::Function,
+    rom: Option<&dyn ReadOnlyMemory>,
+    ranges: &mut crate::value_range::RangeMap<'_>,
+    target: ValueId,
+    site: NodeId,
+) -> Option<Domain> {
+    let chain = dominator_chain(function, target)?;
+    let source = chain.last().copied().unwrap_or(target);
+    let constants = crate::value_range::phi_constants(
+        function,
+        source,
+        usize::try_from(MAX_TABLE_ENTRIES).ok()?,
+    );
+    let hit = decompose_index(function, ranges, &chain, site);
+    let (hit, constants) = match (hit, constants) {
+        (None, None) => return None,
+        (None, Some(values)) => {
+            return Some(Domain {
+                pinned: source,
+                values,
+            });
+        }
+        (Some(hit), constants) => (hit, constants),
+    };
+    let mask = function
+        .value_type_opt(hit.index)
+        .and_then(ValueType::int_mask_u128)?;
+    let Some(constants) = constants else {
+        // `stride` is a KnownBits MUST-divisor of the value spacing, so
+        // stepping by it visits exactly the reachable indices.  A stride wider
+        // than `usize` (a scaled wide-type range) defers rather than silently
+        // stepping by 1 and enumerating the full dense span.
+        let step = usize::try_from(hit.range.stride()).ok()?;
+        let values = (hit.range.lo()..=hit.range.hi())
+            .step_by(step)
+            .map(|x| x.wrapping_sub(hit.rebase) & mask)
+            .collect();
+        return Some(Domain {
+            pinned: hit.index,
+            values,
+        });
+    };
+    let mut ev = super::eval::Evaluator::new(function, rom);
+    let order = super::eval::cone_order_pruned(function, hit.index, source);
+    let values = constants
+        .into_iter()
+        .filter(|&k| {
+            ev.begin_index(source, k);
+            ev.eval_root(&order, hit.index).is_none_or(|index| {
+                hit.range
+                    .contains(u128::from(index).wrapping_add(hit.rebase) & mask)
+            })
+        })
+        .collect();
+    Some(Domain {
+        pinned: source,
+        values,
+    })
+}
+
+/// The shallowest genuinely-bounded, non-width-only, non-constant value of
+/// `chain`, the values that DOMINATE the target in its variability cone.
 ///
 /// Requiring dominance excludes a bypassed sub-branch: in a rotate
 /// `(x<<2) | (x>>30)`, `x>>30` has the tightest interval but does not dominate.
@@ -140,16 +207,39 @@ pub(crate) fn classify_dispatch_value(
 /// enumerating it visits exactly the reachable slots.  A deeper
 /// (further-from-dispatch) node's bound can be looser, and enumerating
 /// out-of-bounds slots defers a branch that should have resolved.
-///
-/// The cone traverses THROUGH a load the evaluator can fold (const-base rodata,
-/// SP-rooted stack) into its address, and stops at reg/GOT-based loads (vtable,
-/// funcptr, PIC) and opaque sources.  A virtual ENTRY feeds every root.
 fn decompose_index(
     function: &strider_ir::Function,
     ranges: &mut crate::value_range::RangeMap<'_>,
-    target: ValueId,
+    chain: &[ValueId],
     site: NodeId,
 ) -> Option<PinnedIndex> {
+    let hits: Vec<(usize, PinnedIndex)> = chain
+        .iter()
+        .enumerate()
+        .filter_map(|(depth, &v)| bounded_index(function, ranges, site, v).map(|hit| (depth, hit)))
+        .collect();
+    let shallowest = *hits.first()?;
+    // A candidate that strips to a cell of a table the evaluator folds bounds
+    // the table DATA, not the index the address scales.  A narrowing mask on
+    // the cell is what puts its range below its load width and past
+    // `bounded_index`.  Where the chain carries a bounded value BELOW that
+    // load, inside its address, that one is the index; a second mask on the
+    // cell itself is not, so the depth comparison is against the load.
+    let (depth, hit) = foldable_cell_load(function, shallowest.1.index)
+        .and_then(|cell| chain.iter().position(|&v| v == cell))
+        .and_then(|at| hits.iter().copied().find(|&(depth, _)| depth > at))
+        .unwrap_or(shallowest);
+    offsets_keep_range(function, &chain[..depth], hit.index, hit.range).then_some(hit)
+}
+
+/// The values that dominate `target` in its variability cone, nearest first,
+/// or `None` when `target` is a constant.
+///
+/// The cone traverses THROUGH a load the evaluator can fold (const-base rodata,
+/// SP-rooted stack) into its address, and stops at reg/GOT-based loads (vtable,
+/// funcptr, PIC), phis and opaque sources.  A virtual ENTRY feeds every root,
+/// so the deepest value of the chain, where it is a root, is the only one.
+fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<Vec<ValueId>> {
     // Vertex 0 is the virtual ENTRY; `value[i]` is vertex `i`'s cone value,
     // `None` for the ENTRY.
     const ENTRY: u32 = 0;
@@ -224,23 +314,7 @@ fn decompose_index(
         }
         at = up;
     }
-    let hits: Vec<(usize, PinnedIndex)> = chain
-        .iter()
-        .enumerate()
-        .filter_map(|(depth, &v)| bounded_index(function, ranges, site, v).map(|hit| (depth, hit)))
-        .collect();
-    let shallowest = *hits.first()?;
-    // A candidate that strips to a cell of a table the evaluator folds bounds
-    // the table DATA, not the index the address scales.  A narrowing mask on
-    // the cell is what puts its range below its load width and past
-    // `bounded_index`.  Where the chain carries a bounded value BELOW that
-    // load, inside its address, that one is the index; a second mask on the
-    // cell itself is not, so the depth comparison is against the load.
-    let (depth, hit) = foldable_cell_load(function, shallowest.1.index)
-        .and_then(|cell| chain.iter().position(|&v| v == cell))
-        .and_then(|at| hits.iter().copied().find(|&(depth, _)| depth > at))
-        .unwrap_or(shallowest);
-    offsets_keep_range(function, &chain[..depth], hit.index, hit.range).then_some(hit)
+    Some(chain)
 }
 
 /// The cell `v` reduces to, through the width changes, masks and constant
