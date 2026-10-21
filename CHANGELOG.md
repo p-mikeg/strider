@@ -73,6 +73,9 @@
 
 ### Breaking, Rust
 
+- `SideTables::set_frame_address_in_call_register` takes the stack address's
+  offset from the entry SP (`i128::MAX` for none), and
+  `SideTables::call_register_frame_reach` reads the highest recorded.
 - `Lifter::build_ir_with` takes the claims the lifted function holds, which
   the lift reads (`msr_register_keeps_mode`); `build_ir` lifts under none.
 - `template::instantiate` refuses what it built at the root's width: a fresh
@@ -720,6 +723,11 @@
   rests on: a listed call's result overlaps no stack slot and no global
   either, so an allocator carving from a static or caller-supplied arena does
   not qualify. They said only that it overlaps no other allocation.
+- Incoming-argument detection no longer takes the reload after `h(&a)` as
+  the argument under the default `assume_incoming_args_survive_calls`: where
+  a stack address that may point into the incoming-argument area escapes, as
+  a call argument, a stored value or in a register the call clobbers, every
+  call keeps the slot unknown. A pointer to a local leaves the claim in force.
 - The docs no longer say that call-boundary claims never reach a decoded
   branch target. The jump-table walk leaves them out of its own steps, but
   it reads the IR `LoadForward` optimized under them, so with

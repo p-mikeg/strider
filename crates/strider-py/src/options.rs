@@ -658,7 +658,10 @@ assumption_fields! {
     /// A call on an incoming stack-argument slot's memory chain leaves the
     /// slot alone (default `True`). Reaches incoming-argument detection only,
     /// where it holds for any conforming callee: those slots are the caller's
-    /// memory, above the entry SP.
+    /// memory, above the entry SP. A function that hands a callee a pointer
+    /// into them (`h(&a); return a;`) is caught, and there every call keeps
+    /// the slot unknown; a pointer to a local is taken to stay inside that
+    /// local.
     assume_incoming_args_survive_calls: bool,
 
     /// A store rooted at a different SP base than the entry SP (an

@@ -638,7 +638,7 @@ fn a_frame_address_in_a_call_register_prints_in_the_header() {
     f.graph_mut().create_node(NodeKind::Return, [ctrl], []);
     let plain = f.to_text(false);
     assert!(!plain.contains("frame_address_in_call_register"), "{plain}");
-    f.side_tables_mut().set_frame_address_in_call_register();
+    f.side_tables_mut().set_frame_address_in_call_register(-4);
     let flagged = f.to_text(false);
     let lines: Vec<&str> = flagged.lines().collect();
     assert!(lines[2].starts_with("default_cc "), "{flagged}");

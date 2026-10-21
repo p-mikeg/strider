@@ -84,10 +84,11 @@ pub struct SideTables {
     /// Cleared by [`Self::invalidate_analyses`], after every post-pass, and on
     /// compaction.
     frame_escape: Cell<Option<bool>>,
-    /// A stack address was held, at some `Call`, in a register the call
-    /// clobbers.  The call node carries no such value, so this is the only
-    /// record that a callee may have received it.
-    frame_address_in_call_register: bool,
+    /// The highest offset from the entry SP of a stack address held, at some
+    /// `Call`, in a register the call clobbers, or `None` when no call held
+    /// one.  The call node carries no such value, so this is the only record
+    /// that a callee may have received it.
+    call_register_frame_reach: Option<i128>,
     /// The claims in force: every set `Function::assume` added, none before
     /// the first.  The memory classes and the frame-escape verdict were
     /// computed under them.
@@ -105,7 +106,7 @@ impl SideTables {
             memory_interner: RefCell::default(),
             initial_var_index: FxHashMap::default(),
             frame_escape: Cell::default(),
-            frame_address_in_call_register: false,
+            call_register_frame_reach: None,
             // A function claims nothing until `Function::assume` adds some.
             assumptions: AssumptionOptions::none(),
         }
@@ -281,12 +282,26 @@ impl SideTables {
     /// Whether some `Call` saw a stack address in a register it clobbers.
     #[inline]
     pub fn frame_address_in_call_register(&self) -> bool {
-        self.frame_address_in_call_register
+        self.call_register_frame_reach.is_some()
     }
 
+    /// The highest offset from the entry SP of a stack address some `Call`
+    /// saw in a register it clobbers: `i128::MAX` when one has no constant
+    /// offset from it, `None` when no call saw one.
     #[inline]
-    pub fn set_frame_address_in_call_register(&mut self) {
-        self.frame_address_in_call_register = true;
+    pub fn call_register_frame_reach(&self) -> Option<i128> {
+        self.call_register_frame_reach
+    }
+
+    /// Records a stack address at offset `reach` from the entry SP in a
+    /// register a call clobbers (`i128::MAX` for no constant offset); the
+    /// highest recorded is kept.
+    #[inline]
+    pub fn set_frame_address_in_call_register(&mut self, reach: i128) {
+        self.call_register_frame_reach = Some(
+            self.call_register_frame_reach
+                .map_or(reach, |r| r.max(reach)),
+        );
     }
 
     /// Unordered.
@@ -333,7 +348,7 @@ impl SideTables {
             initial_var_index,
             frame_escape,
             // Holds no id: a fact about the lifted calls.
-            frame_address_in_call_register: _,
+            call_register_frame_reach: _,
             // Holds no id: every set `Function::assume` added.
             assumptions: _,
         } = self;

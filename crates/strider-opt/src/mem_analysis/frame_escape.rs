@@ -44,14 +44,14 @@
 //! handed in an argument, a clobbered register or memory, and no pointer is
 //! fabricated numerically equal to a private slot.
 
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, IRWalker, IntBinaryOp};
 
 use crate::mem_analysis::{MemKind, decompose};
 
 /// A value is a frame address iff it decomposes to a *stack* base; a heap base
 /// (an allocator's pointer) is not part of the frame `U`.
-fn is_frame_addr(function: &Function, v: strider_ir::node::ValueId) -> bool {
+fn is_frame_addr(function: &Function, v: ValueId) -> bool {
     decompose(function, v).is_some_and(|e| e.kind == MemKind::Stack)
 }
 
@@ -67,9 +67,33 @@ pub(crate) fn frame_address_escapes_cached(function: &Function) -> bool {
 }
 
 fn frame_address_escapes(function: &Function) -> bool {
-    if function.side_tables().frame_address_in_call_register() {
+    function.side_tables().frame_address_in_call_register() || any_exposed(function, |_| true)
+}
+
+/// Whether a stack address that may point at or above `area_start` bytes past
+/// the entry SP (the incoming-argument area) escapes as
+/// [`frame_address_escapes`] counts it.  An address the entry SP plus a
+/// constant below `area_start` names its own frame object, and a callee
+/// handed it cannot reach an argument through it.
+pub(crate) fn incoming_area_escapes(function: &Function, area_start: i128) -> bool {
+    if function
+        .side_tables()
+        .call_register_frame_reach()
+        .is_some_and(|reach| reach >= area_start)
+    {
         return true;
     }
+    let entry_sp = function
+        .initial_sp()
+        .and_then(|node| function.node_outputs(node).first().copied());
+    any_exposed(function, |v| {
+        !decompose(function, v).is_some_and(|e| Some(e.base) == entry_sp && e.offset < area_start)
+    })
+}
+
+/// Whether `counts` holds for some member of `U` consumed by a use that
+/// exposes it.
+fn any_exposed(function: &Function, mut counts: impl FnMut(ValueId) -> bool) -> bool {
     for node in function.walk() {
         let kind = *function.node_kind(node);
         // The structural SP anchor every callee has, not an argument.
@@ -86,7 +110,7 @@ fn frame_address_escapes(function: &Function) -> bool {
             if !is_frame_addr(function, v) {
                 continue;
             }
-            if !use_is_address_only(function, node, kind, idx) {
+            if !use_is_address_only(function, node, kind, idx) && counts(v) {
                 return true;
             }
         }

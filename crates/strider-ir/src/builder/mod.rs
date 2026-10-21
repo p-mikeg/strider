@@ -165,39 +165,143 @@ impl FunctionBuilder {
     /// `err.downcast_ref::<crate::validate::ValidationReport>()`.
     pub fn build(mut self) -> crate::Result<crate::Function> {
         crate::validate::validate(&self.function).map_err(|e| e.report(&self.function))?;
-        if any_stack_derived(&self.function, &self.call_register_values) {
+        if let Some(reach) = frame_reach(&self.function, &self.call_register_values) {
             self.function
                 .side_tables_mut()
-                .set_frame_address_in_call_register();
+                .set_frame_address_in_call_register(reach);
         }
         Ok(self.function)
     }
 }
 
-/// Whether any of `values` is computed from the entry stack pointer through the
-/// arithmetic an address is built from: `Add`, `And`, `Or`, `Xor`, a width
-/// change, or a `Phi`.  A value reloaded from memory is left out, since storing
-/// the address was already an escape.
-fn any_stack_derived(function: &Function, values: &[ValueId]) -> bool {
+/// What a value is, as an address: the entry stack pointer plus a constant,
+/// a constant, derived from the stack pointer some other way, or anything
+/// else.  `Top` is not yet known, the optimistic start a loop `Phi` needs.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Reach {
+    Top,
+    Const(i128),
+    Sp(i128),
+    SpUnplaced,
+    Other,
+}
+
+impl Reach {
+    fn meet(self, other: Self) -> Self {
+        use Reach::*;
+        match (self, other) {
+            (Top, x) | (x, Top) => x,
+            (a, b) if a == b => a,
+            (SpUnplaced | Sp(_), _) | (_, SpUnplaced | Sp(_)) => SpUnplaced,
+            _ => Other,
+        }
+    }
+
+    fn is_stack(self) -> bool {
+        matches!(self, Reach::Sp(_) | Reach::SpUnplaced)
+    }
+}
+
+/// The highest offset from the entry stack pointer among `values` that are
+/// computed from it through the arithmetic an address is built from (`Add`,
+/// `And`, `Or`, `Xor`, a width change, a `Phi`): `i128::MAX` when one has no
+/// constant offset, `None` when none is.  A value reloaded from memory is
+/// left out, since storing the address was already an escape.
+///
+/// Solved optimistically to a fixed point, so a loop that leaves the stack
+/// pointer where it found it keeps the offset.
+fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
     use crate::IRViewer;
+    use crate::node::IntUnaryOp;
     let sp = function.stack_vn();
+    // The cone the arithmetic reaches, and each value's users within it.
+    let mut cone = Vec::new();
     let mut seen = entity_utils::DenseEntitySet::new();
+    let mut users: rustc_hash::FxHashMap<ValueId, Vec<ValueId>> = rustc_hash::FxHashMap::default();
     let mut work = values.to_vec();
     while let Some(v) = work.pop() {
         if !seen.insert(v) {
             continue;
         }
+        cone.push(v);
         let node = function.producer(v);
-        match *function.node_kind(node) {
-            NodeKind::InitialVar(id) if function.initial_vn(id) == sp => return true,
+        if matches!(
+            function.node_kind(node),
             NodeKind::IntBinaryOp(
-                IntBinaryOp::Add | IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor,
-            )
-            | NodeKind::Extend(_)
-            | NodeKind::Truncate
-            | NodeKind::Phi => work.extend(function.value_inputs(node)),
-            _ => {}
+                IntBinaryOp::Add | IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor
+            ) | NodeKind::IntUnaryOp(IntUnaryOp::Neg)
+                | NodeKind::Extend(_)
+                | NodeKind::Truncate
+                | NodeKind::Phi
+        ) {
+            for input in function.value_inputs(node) {
+                users.entry(input).or_default().push(v);
+                work.push(input);
+            }
         }
     }
-    false
+    let mut reach: rustc_hash::FxHashMap<ValueId, Reach> = rustc_hash::FxHashMap::default();
+    let get =
+        |reach: &rustc_hash::FxHashMap<ValueId, Reach>, v| *reach.get(&v).unwrap_or(&Reach::Top);
+    let mut work = cone.clone();
+    while let Some(v) = work.pop() {
+        let node = function.producer(v);
+        let inputs: Vec<Reach> = function
+            .value_inputs(node)
+            .map(|i| get(&reach, i))
+            .collect();
+        // Offsets wrap at the value's width, as its arithmetic does.
+        let bits = function
+            .value_type_opt(v)
+            .map_or(128, |t| t.bit_width().min(128));
+        let wrap = |x: i128| {
+            let shift = (128 - bits) as u32;
+            x.wrapping_shl(shift).wrapping_shr(shift)
+        };
+        let next = match *function.node_kind(node) {
+            NodeKind::InitialVar(id) if function.initial_vn(id) == sp => Reach::Sp(0),
+            NodeKind::IntConst(_) => function
+                .int_const_i128(v)
+                .map_or(Reach::Other, Reach::Const),
+            _ if inputs.contains(&Reach::Top)
+                && !matches!(function.node_kind(node), NodeKind::Phi) =>
+            {
+                Reach::Top
+            }
+            NodeKind::Phi => inputs.iter().fold(Reach::Top, |acc, &r| acc.meet(r)),
+            NodeKind::IntBinaryOp(IntBinaryOp::Add) => match inputs[..] {
+                [Reach::Sp(k), Reach::Const(c)] | [Reach::Const(c), Reach::Sp(k)] => {
+                    Reach::Sp(wrap(k.wrapping_add(c)))
+                }
+                [Reach::Const(a), Reach::Const(b)] => Reach::Const(wrap(a.wrapping_add(b))),
+                _ if inputs.iter().any(|r| r.is_stack()) => Reach::SpUnplaced,
+                _ => Reach::Other,
+            },
+            NodeKind::IntUnaryOp(IntUnaryOp::Neg) => match inputs[..] {
+                [Reach::Const(c)] => Reach::Const(wrap(c.wrapping_neg())),
+                _ if inputs.iter().any(|r| r.is_stack()) => Reach::SpUnplaced,
+                _ => Reach::Other,
+            },
+            NodeKind::IntBinaryOp(IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor)
+            | NodeKind::Extend(_)
+            | NodeKind::Truncate
+                if inputs.iter().any(|r| r.is_stack()) =>
+            {
+                Reach::SpUnplaced
+            }
+            _ => Reach::Other,
+        };
+        if get(&reach, v) != next {
+            reach.insert(v, next);
+            work.extend(users.get(&v).into_iter().flatten().copied());
+        }
+    }
+    values
+        .iter()
+        .filter_map(|&v| match get(&reach, v) {
+            Reach::Sp(k) => Some(k),
+            Reach::SpUnplaced => Some(i128::MAX),
+            Reach::Top | Reach::Const(_) | Reach::Other => None,
+        })
+        .max()
 }
