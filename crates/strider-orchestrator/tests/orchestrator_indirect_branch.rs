@@ -499,6 +499,56 @@ fn a_guard_on_another_extract_of_the_index_bits_sizes_the_table() {
     }
 }
 
+/// The switch arm sets of an analysis under the default claims, which must
+/// converge with nothing incomplete: an -O0 frame's `ret` is proven only
+/// with the incoming arguments surviving its calls.
+fn complete_switch_arms(arch: common::Arch, case: &str, fn_name: &str) -> Vec<Vec<u64>> {
+    let claims = strider_opt::AssumptionOptions::default();
+    let result = analyze_claiming(arch, case, fn_name, Default::default(), true, claims)
+        .unwrap_or_else(|e| panic!("{arch:?} {fn_name}: must converge: {e:#}"));
+    assert!(
+        result.incomplete().is_empty(),
+        "{arch:?} {fn_name}: {}",
+        result.incomplete()
+    );
+    switch_arms(&result.cfg)
+}
+
+/// `switch_phi_x64.S`'s `phi_table_slot` loads its target from `tbl`,
+/// `tbl+8` or `tbl+0x20`, a phi of three addresses 8 and 24 apart.  The two
+/// slots between the last two are never read; the range the three span names
+/// them too.  Mutation: enumerate the range in `classify_dispatch_value` even
+/// where `finite_values` answers.
+#[test]
+fn a_phi_of_table_addresses_reads_only_its_own_slots() {
+    assert_eq!(
+        complete_switch_arms(common::Arch::X64, "switch_phi_x64", "phi_table_slot"),
+        vec![vec![0x40_101f, 0x40_1025, 0x40_1037]],
+    );
+}
+
+/// `switch_phi_index.c` at -O0 on x64: `goto *t[s]` with `s` one of 0, 3 and
+/// 5, so `t[0]`, `t[3]` and `t[5]` are the arms, where the range 0..5 seats
+/// all six.  Mutation: as above.
+#[test]
+fn a_phi_of_constant_indices_seats_only_the_indexed_arms() {
+    assert_eq!(
+        complete_switch_arms(common::Arch::X64, "switch_phi_index", "phi_index_dispatch"),
+        vec![vec![0x40_11b9, 0x40_11f4, 0x40_121a]],
+    );
+}
+
+/// `switch_phi_x64.S`'s `phi_label` jumps to one of two labels a `cmovne`
+/// picks: the target is itself a phi of constants, which no index bounds.
+/// Mutation: drop the phi-target fallback in `classify_dispatch_value`.
+#[test]
+fn a_jump_to_a_phi_of_labels_seats_both_labels() {
+    assert_eq!(
+        complete_switch_arms(common::Arch::X64, "switch_phi_x64", "phi_label"),
+        vec![vec![0x40_104f, 0x40_105b]],
+    );
+}
+
 /// The same shape WITHOUT the mask resolves completely, which is what isolates
 /// the bound as the cause rather than the loop or the phi.
 #[test]
