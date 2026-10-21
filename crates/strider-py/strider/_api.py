@@ -28,6 +28,7 @@ _ext = _importlib.import_module("strider._strider")
 if TYPE_CHECKING:
     # `_ext` is an opaque module to a checker, so its attributes come back as
     # `Any`; the stub imports below are the same classes with their real types.
+    from .cfg import Cfg, CfgOptions
     from .lift import Lifter, LifterOptions
     from .pattern import CaptureKey, LoadPat, Match, Pat, StorePat, ValueLike
     from .reader import BufferReader, MemLike, RomLike, Symbol
@@ -37,6 +38,7 @@ else:
     SleighArch = _ext.sleigh.SleighArch
     Lifter = _ext.lift.Lifter
     LifterOptions = _ext.lift.LifterOptions
+    CfgOptions = _ext.cfg.CfgOptions
 
 #: What the loaders accept as a filesystem path: a `str`, a `pathlib.Path`,
 #: or any object implementing `__fspath__`.
@@ -493,6 +495,16 @@ class ElfLifter(Lifter):
         is known, which is what lets `symbol_at` resolve an interior address.
         An ELF already carrying a name keeps its own answer for that name."""
         self._elf.add_symbols(symbols, is_function=is_function)
+
+    def build_cfg(self, entry: int, opts: Optional[CfgOptions] = None) -> Cfg:
+        """`Lifter.build_cfg`, with the options `analyze` derives from the
+        ELF: its `$d` mapping symbols as `data_ranges` unless `opts` names
+        some, and the local entry of every `no_return_targets` address that
+        is a ppc64 ELFv2 symbol's `address`. `entry` is an address, and no
+        symbol size bounds the build, as for `analyze(int)`."""
+        if opts is None:
+            opts = CfgOptions()
+        return super().build_cfg(entry, opts._with_elf(self._elf))
 
     def analyze(
         self,

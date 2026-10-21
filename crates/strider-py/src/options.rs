@@ -249,13 +249,15 @@ impl NoReturnTargets {
     }
 }
 
-/// A table widened by an ELF's [`LocalEntries`], kept beside the entries it
-/// was widened by, so a table rebuilt after `add_elf` is widened afresh.
-/// `None` when no key had a local entry of its own.
-struct LocalEntryMemo<T>(std::sync::Mutex<Option<Widened<T>>>);
+/// A table widened by each ELF's [`LocalEntries`], one per entries table
+/// still alive, so options shared by several handles rebuild for none of them
+/// and a table rebuilt after `add_elf` is widened afresh. `None` when no key
+/// had a local entry of its own.
+struct LocalEntryMemo<T>(std::sync::Mutex<Vec<Widened<T>>>);
 
-/// The entries a table was widened by, and the widened table.
-type Widened<T> = (Arc<LocalEntries>, Option<Arc<T>>);
+/// The entries a table was widened by, and the widened table. A dead `Weak`
+/// still pins its allocation, so its address names no later table.
+type Widened<T> = (std::sync::Weak<LocalEntries>, Option<Arc<T>>);
 
 impl<T> Default for LocalEntryMemo<T> {
     fn default() -> Self {
@@ -269,17 +271,19 @@ impl<T> LocalEntryMemo<T> {
         entries: &Arc<LocalEntries>,
         widen: impl FnOnce() -> Option<T>,
     ) -> Option<Arc<T>> {
-        let mut slot = self
+        let mut slots = self
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((built_for, widened)) = slot.as_ref()
-            && Arc::ptr_eq(built_for, entries)
+        if let Some((_, widened)) = slots
+            .iter()
+            .find(|(built_for, _)| std::ptr::eq(built_for.as_ptr(), Arc::as_ptr(entries)))
         {
             return widened.clone();
         }
+        slots.retain(|(built_for, _)| built_for.strong_count() > 0);
         let widened = widen().map(Arc::new);
-        *slot = Some((Arc::clone(entries), widened.clone()));
+        slots.push((Arc::downgrade(entries), widened.clone()));
         widened
     }
 }
@@ -449,6 +453,11 @@ impl PyCfgOptions {
             }
         };
         Ok(set.bind(py).clone())
+    }
+
+    /// This object as `ElfLifter` runs it on `elf`; see [`Self::with_elf`].
+    fn _with_elf(&self, elf: PyRef<'_, PyLoadedElf>) -> PyResult<Self> {
+        self.with_elf(&elf)
     }
 
     /// The address of the seated `known_targets` table every analyse borrows,
@@ -895,6 +904,14 @@ impl PyLifterOptions {
             out.per_address_ccs = Some(table.with_local_entries(&elf.local_entries()?));
         }
         Ok(out)
+    }
+
+    /// The address of the `per_address_ccs` table an analyse resolves, or
+    /// `None` without one.
+    fn _per_address_ccs_table_id(&self) -> Option<usize> {
+        self.per_address_ccs
+            .as_ref()
+            .map(|table| Arc::as_ptr(table) as usize)
     }
 
     /// These options with `cfg` replaced and every other field carried over.

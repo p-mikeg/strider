@@ -24,12 +24,16 @@ NOP_AFTER_STOP = 0x100000B4
 JOIN = 0x100000B8
 
 
-@pytest.fixture(scope="module")
-def elf():
-    path = WORKSPACE_ROOT / "fixtures" / "loader" / "out" / "ppc64le_local_entry.elf"
+def _image(name: str) -> str:
+    path = WORKSPACE_ROOT / "fixtures" / "loader" / "out" / name
     if not path.exists():
         pytest.fail(f"fixture missing: {path} (run `make -C fixtures/loader`)")
-    return strider.lift.load_elf(str(path))
+    return str(path)
+
+
+@pytest.fixture(scope="module")
+def elf():
+    return strider.lift.load_elf(_image("ppc64le_local_entry.elf"))
 
 
 def test_local_entry_is_the_st_other_offset(elf):
@@ -78,6 +82,57 @@ def test_the_widened_tables_are_built_once(elf):
     assert first.cfg.no_return_targets == {stop.address, stop.local_entry}
     assert first.cfg.no_return_targets is second.cfg.no_return_targets
     assert set(first.per_address_ccs or {}) == {hook.address, hook.local_entry}
+
+
+def test_build_cfg_ends_a_call_to_a_no_return_symbols_local_entry(elf):
+    entry = elf.symbol("noret_call").address
+    assert elf.build_cfg(entry).region_at(NOP_AFTER_STOP) is not None
+    stop = elf.symbol("stop").address
+    cfg = elf.build_cfg(entry, CfgOptions(no_return_targets=[stop]))
+    assert cfg.region_at(NOP_AFTER_STOP) is None
+    assert cfg.region_at(JOIN) is not None
+    assert cfg.incomplete == []
+
+
+def test_build_cfg_seats_the_elfs_data_ranges_as_analyze_does():
+    """`_start` falls through into a `$d` pool, which only the mapping symbols
+    mark as data."""
+    arm = strider.lift.load_elf(str(fixture_path("arm", "calls")))
+    start = arm.symbol("_start").address
+    cfg = arm.build_cfg(start)
+    assert [r for _, r in cfg.incomplete] == ["undecodable_target"]
+    assert cfg.incomplete == arm.analyze(start).cfg.incomplete
+
+
+def test_a_symbol_file_added_later_widens_the_next_analyse():
+    """A stripped image has no symbols to widen by; the symbol file brings
+    them, and the same options then match the local entry."""
+    stripped = strider.lift.load_elf(_image("ppc64le_local_entry_stripped.elf"))
+    full = strider.lift.load_elf(_image("ppc64le_local_entry.elf"))
+    entry, stop = full.symbol("noret_call").address, full.symbol("stop").address
+    opts = LifterOptions(cfg=CfgOptions(no_return_targets=[stop]))
+    assert stripped.analyze(entry, opts=opts).cfg.region_at(NOP_AFTER_STOP) is not None
+    stripped.add_symbol_file(_image("ppc64le_local_entry.elf"))
+    assert stripped.analyze(entry, opts=opts).cfg.region_at(NOP_AFTER_STOP) is None
+
+
+def test_the_widened_per_address_table_is_built_once(elf):
+    hook = elf.symbol("hook").address
+    opts = LifterOptions(per_address_ccs={hook: elf.cc.preserves_all()})
+    first, second = opts._with_elf(elf._elf), opts._with_elf(elf._elf)
+    assert first._per_address_ccs_table_id() == second._per_address_ccs_table_id()
+    assert first._per_address_ccs_table_id() != opts._per_address_ccs_table_id()
+
+
+def test_one_options_object_alternating_handles_rebuilds_nothing(elf):
+    other = strider.lift.load_elf(_image("ppc64le_local_entry.elf"))
+    hook = elf.symbol("hook").address
+    opts = LifterOptions(per_address_ccs={hook: elf.cc.preserves_all()})
+    # Each derived object is kept alive, so no table id can be reused.
+    first, between = opts._with_elf(elf._elf), opts._with_elf(other._elf)
+    again = opts._with_elf(elf._elf)
+    assert between._per_address_ccs_table_id() != first._per_address_ccs_table_id()
+    assert again._per_address_ccs_table_id() == first._per_address_ccs_table_id()
 
 
 def test_per_address_ccs_keyed_by_a_global_entry_reaches_the_local_call(elf):

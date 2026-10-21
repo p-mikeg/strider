@@ -271,6 +271,10 @@
 
 ### Changed, Python
 
+- `ElfLifter.build_cfg` derives its options from the ELF as `analyze` does:
+  the `$d` mapping symbols seat `data_ranges` unless the options name some,
+  and a ppc64 ELFv2 `no_return_targets` address also covers its
+  `Symbol.local_entry`.
 - `Function.to_text()` names a REGISTER-space byte order unlike the data
   order: the header reads `endian big register=little` on `arm_be_kernel`, so
   a parser of the header must accept the ` register=little` suffix.
@@ -388,8 +392,9 @@
 - `strider.template.capture_typed(c, inner)` builds `inner` at the width of
   the value `c` bound, as Rust's `capture_typed` does: the way to type a
   constant nothing else gives a width.
-- `Symbol.local_entry`: where a same-module ppc64 ELFv2 call enters the
-  function, `address` plus the `st_other` local-entry offset, else `address`.
+- `Symbol.local_entry`: where a ppc64 ELFv2 call sharing the function's TOC
+  enters it, `address` plus the `st_other` local-entry offset, else
+  `address` (keeping a Thumb bit).
 
 ### Changed, Rust
 
@@ -483,9 +488,10 @@
 
 ### Fixed
 
-- Python: on ppc64 ELFv2, `ElfLifter.analyze` adds the local entry of every
-  `no_return_targets` address and `per_address_ccs` key that is a symbol's
-  `address`. A same-module `bl` targets the local entry, so a table keyed by
+- Python: on ppc64 ELFv2, `ElfLifter.analyze` and `ElfLifter.build_cfg` add
+  the local entry of every `no_return_targets` address that is a symbol's
+  `address`, and `analyze` of every such `per_address_ccs` key. A `bl`
+  sharing the callee's TOC targets the local entry, so a table keyed by
   symbol matched no call: a no-return call fell through into the code after
   it, and the CFG still reported itself complete.
 - On `arm_be_kernel` (BE8), a multi-structure `VLD2/3/4` or `VST2/3/4` put
