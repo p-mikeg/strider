@@ -517,8 +517,8 @@ fn complete_switch_arms(arch: common::Arch, case: &str, fn_name: &str) -> Vec<Ve
 /// `switch_phi_x64.S`'s `phi_table_slot` loads its target from `tbl`,
 /// `tbl+8` or `tbl+0x20`, a phi of three addresses 8 and 24 apart.  The two
 /// slots between the last two are never read; the range the three span names
-/// them too.  Mutation: enumerate the range in `classify_dispatch_value` even
-/// where `finite_values` answers.
+/// them too.  Mutation: enumerate the range in `dispatch_domain` even where
+/// `phi_constants` answers.
 #[test]
 fn a_phi_of_table_addresses_reads_only_its_own_slots() {
     assert_eq!(
@@ -538,14 +538,16 @@ fn a_phi_of_constant_indices_seats_only_the_indexed_arms() {
     );
 }
 
-/// `switch_phi_x64.S`'s `phi_label` jumps to one of two labels a `cmovne`
-/// picks: the target is itself a phi of constants, which no index bounds.
-/// Mutation: drop the phi-target fallback in `classify_dispatch_value`.
+/// `switch_phi_x64.S`'s `phi_label` jumps to one of three labels two
+/// `cmovne`s pick: the target is itself a phi of constants, which no index
+/// bounds.  The range of the three at their spacing also names the unused
+/// label at `0x401060`.  Mutation: drop the arm of `dispatch_domain` that
+/// takes the phi's constants where no index is bounded.
 #[test]
-fn a_jump_to_a_phi_of_labels_seats_both_labels() {
+fn a_jump_to_a_phi_of_labels_seats_each_label() {
     assert_eq!(
         complete_switch_arms(common::Arch::X64, "switch_phi_x64", "phi_label"),
-        vec![vec![0x40_104f, 0x40_105b]],
+        vec![vec![0x40_105a, 0x40_1066, 0x40_106c]],
     );
 }
 
