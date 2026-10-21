@@ -132,8 +132,8 @@ struct Domain {
 /// their hull: an index in `{0, 3, 5}` ranges over `0..=5`.  They are taken
 /// where the phi bounds no index too, as for a jump to a phi of labels.  Where
 /// a bounded index is found as well, a constant the index range excludes is
-/// dropped, since both bound the same runtime value; one under which the
-/// index does not fold is kept, and the target fold decides.
+/// dropped, since both bound the same runtime value; where the index does not
+/// fold under some constant, the range is enumerated as it is without them.
 fn dispatch_domain(
     function: &strider_ir::Function,
     rom: Option<&dyn ReadOnlyMemory>,
@@ -162,35 +162,40 @@ fn dispatch_domain(
     let mask = function
         .value_type_opt(hit.index)
         .and_then(ValueType::int_mask_u128)?;
-    let Some(constants) = constants else {
-        // `stride` is a KnownBits MUST-divisor of the value spacing, so
-        // stepping by it visits exactly the reachable indices.  A stride wider
-        // than `usize` (a scaled wide-type range) defers rather than silently
-        // stepping by 1 and enumerating the full dense span.
-        let step = usize::try_from(hit.range.stride()).ok()?;
-        let values = (hit.range.lo()..=hit.range.hi())
-            .step_by(step)
-            .map(|x| x.wrapping_sub(hit.rebase) & mask)
-            .collect();
-        return Some(Domain {
-            pinned: hit.index,
-            values,
-        });
-    };
-    let mut ev = super::eval::Evaluator::new(function, rom);
-    let order = super::eval::cone_order_pruned(function, hit.index, source);
-    let values = constants
-        .into_iter()
-        .filter(|&k| {
-            ev.begin_index(source, k);
-            ev.eval_root(&order, hit.index).is_none_or(|index| {
-                hit.range
-                    .contains(u128::from(index).wrapping_add(hit.rebase) & mask)
+    if let Some(constants) = constants {
+        let mut ev = super::eval::Evaluator::new(function, rom);
+        let order = super::eval::cone_order_pruned(function, hit.index, source);
+        let values: Option<Vec<u128>> = constants
+            .into_iter()
+            .filter_map(|k| {
+                ev.begin_index(source, k);
+                match ev.eval_root(&order, hit.index) {
+                    Some(index) => hit
+                        .range
+                        .contains(u128::from(index).wrapping_add(hit.rebase) & mask)
+                        .then_some(Some(k)),
+                    None => Some(None),
+                }
             })
-        })
+            .collect();
+        if let Some(values) = values {
+            return Some(Domain {
+                pinned: source,
+                values,
+            });
+        }
+    }
+    // `stride` is a KnownBits MUST-divisor of the value spacing, so stepping by
+    // it visits exactly the reachable indices.  A stride wider than `usize` (a
+    // scaled wide-type range) defers rather than silently stepping by 1 and
+    // enumerating the full dense span.
+    let step = usize::try_from(hit.range.stride()).ok()?;
+    let values = (hit.range.lo()..=hit.range.hi())
+        .step_by(step)
+        .map(|x| x.wrapping_sub(hit.rebase) & mask)
         .collect();
     Some(Domain {
-        pinned: source,
+        pinned: hit.index,
         values,
     })
 }
