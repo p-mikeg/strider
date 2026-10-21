@@ -53,31 +53,45 @@ return %v22, %v18, %v30, %v24, %v25, %v26, %v27, %v28
 cfg
   0x40103d 15 ops cbranch 0x40104d -> [0x401049.4, 0x40104d]
   0x401049.4 1 ops goto -> [0x40104d]
-  0x40104d 1 ops switch@0x40104d [0x40104f, 0x40105b]
-  0x40104f 4 ops return -> []
-  0x40105b 4 ops return -> []
+  0x40104d 14 ops cbranch 0x401058 -> [0x401054.4, 0x401058]
+  0x401054.4 1 ops goto -> [0x401058]
+  0x401058 1 ops switch@0x401058 [0x40105a, 0x401066, 0x40106c]
+  0x40105a 4 ops return -> []
+  0x401066 4 ops return -> []
+  0x40106c 4 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x25200:1, u:0x58600:4, u:0x58700:1, u:0x58800:1, u:0x7bb00:8, u:0x7bc00:1, u:0xe0600:4]
 arg 0 [%v1]
-float_arg 0 [%v16]
-float_arg 1 [%v17]
+arg 1 [%v12]
+float_arg 0 [%v26]
+float_arg 1 [%v27]
 %v0:ctrl = entry
 %v1:i64 = initial_var[RDI]
 %v2:i32 = truncate %v1
 %v3:i32 = iconst[0x0]
 %v4:i1 = icmp.equal %v2, %v3
 %v5:ctrl, %v6:ctrl = if %v0, %v4
-%v7:i64 = iconst[0x40104f]
-%v8:i64 = iconst[0x40105b]
+%v7:i64 = iconst[0x40105a]
+%v8:i64 = iconst[0x401066]
 
 %v9:ctrl, %v10:token = region %v5, %v6
 %v11:i64<RAX> = phi %v10, %v7, %v8
-%v12:ctrl, %v13:ctrl = switch[0x40104f, 0x40105b] %v9, %v11
-%v14:mem = initial_memory
-%v15:i64 = iconst[0xa]
-%v16:i128 = initial_var[XMM0]
-%v17:i128 = initial_var[XMM1]
-%v18:i80 = initial_var[ST0]
-%v19:i80 = initial_var[ST1]
-return %v12, %v14, %v15, %v8, %v16, %v17, %v18, %v19
-%v20:i64 = iconst[0xc]
-return %v13, %v14, %v20, %v8, %v16, %v17, %v18, %v19
+%v12:i64 = initial_var[RSI]
+%v13:i32 = truncate %v12
+%v14:i1 = icmp.equal %v13, %v3
+%v15:ctrl, %v16:ctrl = if %v9, %v14
+%v17:i64 = iconst[0x40106c]
+
+%v18:ctrl, %v19:token = region %v15, %v16
+%v20:i64<RAX> = phi %v19, %v11, %v17
+%v21:ctrl, %v22:ctrl, %v23:ctrl = switch[0x40105a, 0x401066, 0x40106c] %v18, %v20
+%v24:mem = initial_memory
+%v25:i64 = iconst[0xa]
+%v26:i128 = initial_var[XMM0]
+%v27:i128 = initial_var[XMM1]
+%v28:i80 = initial_var[ST0]
+%v29:i80 = initial_var[ST1]
+return %v21, %v24, %v25, %v17, %v26, %v27, %v28, %v29
+%v30:i64 = iconst[0xc]
+return %v22, %v24, %v30, %v17, %v26, %v27, %v28, %v29
+%v31:i64 = iconst[0xd]
+return %v23, %v24, %v31, %v17, %v26, %v27, %v28, %v29
