@@ -58,8 +58,8 @@ class AssumptionOptions:
 
     Claims accumulate on a `Function` (`Function.assumptions`): `analyze`
     starts from the ones it is given, `Lifter.optimize` adds, none withdraws.
-    The lift reads `msr_register_keeps_mode`, so `optimize` adding it changes
-    nothing.
+    The lift reads `msr_register_keeps_mode`, so `optimize` refuses to add
+    it: analyse again with it.
     """
 
     # Read-only: these are getters with no setter, so a plain attribute
@@ -316,8 +316,9 @@ class Lifter:
         runs the default pipeline; a given pipeline is copied, so it stays
         usable. The claims `assumptions` holds join `function.assumptions` and
         none is withdrawn: `assumptions=None` adds nothing, and a set that
-        leaves out a claim already in force raises `StriderError` before
-        anything runs. Add one with::
+        leaves out a claim already in force, or adds `msr_register_keeps_mode`
+        (read by the lift, so analyse again with it), raises `StriderError`
+        before anything runs. Add one with::
 
             prog.optimize(function, assumptions=function.assumptions
                           | AssumptionOptions.none(escape_analysis=True))
