@@ -922,7 +922,7 @@ describes one Sleigh user-op, for `CfgOptions(call_other_abis=...)`. Both
 
 Analysis stays inside the function being lifted: a call is modelled by the
 calling convention of its target, never by reading the callee. On 32-bit x86
-two kinds of callee need their own convention through
+three kinds of callee need their own convention through
 `LifterOptions(per_address_ccs={callee: cc})`:
 
 - A callee that pops its caller's stack (`ret $imm16`: a struct return's hidden
@@ -931,8 +931,13 @@ two kinds of callee need their own convention through
 - A PC thunk (`__x86.get_pc_thunk.bx`) needs a convention that does not list
   its register in `callee_saved_regs`. Without it, the register keeps the
   caller's value across the call.
+- Under `x86_linux_kernel()`, a variadic callee (`printk`) or an
+  `asmlinkage` one takes every argument on the stack and needs
+  `x86_cdecl()`. Without it the call lists EAX, EDX and ECX as arguments 0-2,
+  so its first argument reads as `arg(3)`. To analyse such a function itself,
+  pass `cc=x86_cdecl()` and map its regparm callees to `x86_linux_kernel()`.
 
-`CallingConvention.custom` states both:
+`CallingConvention.custom` states the first two, a preset the third:
 
 ```python
 x86 = sleigh.SleighArch.x86()
@@ -948,6 +953,9 @@ pops_8 = sleigh.CallingConvention.custom(
     ret_stack_pop=8,                                   # ret $4
 )
 opts32 = strider.lift.LifterOptions(per_address_ccs={0x1010: pops_8})
+kernel = strider.lift.LifterOptions(
+    per_address_ccs={printk_addr: sleigh.CallingConvention.x86_cdecl()}
+)
 ```
 
 ARM32 hard-float passes arguments in one bank of 16 single-precision slots
