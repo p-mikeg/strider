@@ -220,3 +220,24 @@ fn mrs_reads_the_mode_cps_entered() {
     ]);
     assert_eq!(f.int_const_u128(common::returned(&f)[0]), Some(0x11));
 }
+
+/// A call keeps the mode: the callee returns through the caller's banked
+/// `lr`, so a conforming one cannot come back in another mode. The restore
+/// after it rewrites the mode the save read.
+#[test]
+fn a_call_between_the_save_and_the_restore_keeps_the_mode() {
+    // mov r4, lr; mov r8, #5; mrs r5, cpsr; cpsid i; bl .+0x100;
+    // msr cpsr_c, r5; mov r0, r8; bx r4
+    let mut words = vec![
+        A32_SAVE_LR,
+        A32_R8_IS_5,
+        0xe10f_5000,
+        0xf10c_0080,
+        0xeb00_003e,
+        0xe121_f005,
+        A32_RETURN_R8[0],
+        A32_RETURN_R8[1],
+    ];
+    words.resize(words.len() + 0x50, 0);
+    assert_eq!(r0_at_return(&a32(&words)), Some(5));
+}
