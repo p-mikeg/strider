@@ -82,13 +82,14 @@ impl MemOptions {
     }
 }
 
-/// Whether a callee may hold a pointer into the incoming-argument area, the
-/// case `assume_incoming_args_survive_calls` leaves out.
+/// Whether a callee may hold a pointer into the incoming arguments' memory,
+/// register homes included, the case `assume_incoming_args_survive_calls`
+/// leaves out.
 fn incoming_area_escapes(function: &Function) -> bool {
     function
         .default_cc()
-        .stack_args
-        .is_some_and(|args| super::frame_escape::incoming_area_escapes(function, args.base_offset))
+        .incoming_args_start()
+        .is_some_and(|start| super::frame_escape::incoming_area_escapes(function, start))
 }
 
 /// The SP-aware query surface.  Takes the `&Function` per call rather than

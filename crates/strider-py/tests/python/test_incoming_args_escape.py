@@ -30,6 +30,42 @@ CASES = {
     # The address only in a register the call clobbers (a regparm callee):
     # lea eax,[esp+4]; call h; mov eax,[esp+4]; ret
     "i386_arg_address_in_register": ("x86", "8d442404e8f70f00008b442404c3", 0, 0),
+    # f(struct S s, int i) { h(&s.v[i]); return s.v[0]; }:
+    # mov ecx,[esp+16]; lea eax,[esp+ecx*4+4]; push eax; call h; add esp,4;
+    # mov eax,[esp+4]; ret
+    "i386_indexed_arg_address": (
+        "x86",
+        "8b4c24108d448c0450e8f20f000083c4048b442404c3",
+        0,
+        0,
+    ),
+    # h(&s.v[i - 1]): the base below the area, the index carrying it in.
+    # mov ecx,[esp+16]; lea eax,[esp+ecx*4]; push eax; call h; add esp,4;
+    # mov eax,[esp+4]; ret
+    "i386_indexed_below_area": (
+        "x86",
+        "8b4c24108d048c50e8f30f000083c4048b442404c3",
+        0,
+        0,
+    ),
+    # The same with EAX cleared before the call, so only the push hands it.
+    "i386_indexed_below_area_pushed": (
+        "x86",
+        "8b4c24108d048c50b800000000e8ee0f000083c4048b442404c3",
+        0,
+        0,
+    ),
+    # f(struct { int v[6]; } s) { h(&s); return s.v[4] + s.v[5]; }: r0-r3
+    # carry v[0..3], pushed just below the stack half.
+    # push {r0-r3}; push {r4,lr}; add r0,sp,#8; bl h; ldr r1,[sp,#24];
+    # ldr r0,[sp,#28]; add r0,r0,r1; pop {r4,lr}; add sp,sp,#16; bx lr
+    "arm_split_struct_address": (
+        "arm",
+        "0f002de910402de908008de2fb0300eb18109de51c009de5010080e0"
+        "1040bde810d08de21eff2fe1",
+        4,
+        0,
+    ),
     # g(a1..a6, a7) { h(&a7); return a7; }:
     # sub rsp,8; lea rdi,[rsp+16]; call h; mov eax,[rsp+16]; add rsp,8; ret
     "x64_arg_address": (
@@ -60,6 +96,7 @@ CASES = {
 _ARCH = {
     "x86": (SleighArch.x86, CallingConvention.x86_cdecl),
     "x86_64": (SleighArch.x86_64, CallingConvention.x86_64_systemv),
+    "arm": (SleighArch.arm, CallingConvention.arm_aapcs),
 }
 
 

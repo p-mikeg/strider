@@ -659,9 +659,11 @@ assumption_fields! {
     /// slot alone (default `True`). Reaches incoming-argument detection only,
     /// where it holds for any conforming callee: those slots are the caller's
     /// memory, above the entry SP. A function that hands a callee a pointer
-    /// into them (`h(&a); return a;`) is caught, and there every call keeps
-    /// the slot unknown; a pointer to a local is taken to stay inside that
-    /// local.
+    /// into them, or into the register arguments' homes a convention keeps
+    /// just below them (ARM, MIPS, PowerPC64), is caught (`h(&a); return
+    /// a;`), and there every call keeps the slots unknown. A pointer to a
+    /// local is taken to stay inside that local; a callee reading a pointer
+    /// from a register its convention preserves is not caught.
     assume_incoming_args_survive_calls: bool,
 
     /// A store rooted at a different SP base than the entry SP (an

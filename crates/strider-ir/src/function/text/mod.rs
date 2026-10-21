@@ -309,6 +309,10 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool, vn_name: VnName<'_
     let cc_fields = cc_fields(f.default_cc(), vn_name);
     out.push_str("default_cc");
     for (field, value) in &cc_fields {
+        // Left out unset: most conventions have no register homes.
+        if *field == "reg_args_adjoin_stack_args" && value == "false" {
+            continue;
+        }
         let _ = write!(out, " {field}={value}");
     }
     out.push('\n');
@@ -671,6 +675,7 @@ fn cc_fields(
         preserves_memory,
         preserves_all_registers,
         entry_address_vn,
+        reg_args_adjoin_stack_args,
     } = cc;
     vec![
         ("arg_passing_regs", vn_list(arg_passing_regs, vn_name)),
@@ -706,6 +711,10 @@ fn cc_fields(
             entry_address_vn
                 .as_ref()
                 .map_or_else(|| "none".to_owned(), vn_name),
+        ),
+        (
+            "reg_args_adjoin_stack_args",
+            reg_args_adjoin_stack_args.to_string(),
         ),
     ]
 }

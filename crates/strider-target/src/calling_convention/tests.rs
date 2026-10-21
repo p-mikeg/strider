@@ -700,6 +700,24 @@ fn presets_stack_pointer_and_arg_offsets() {
     }
 }
 
+/// The register homes start the incoming-argument memory where the ABI
+/// keeps them contiguous with the stack arguments.
+#[test]
+fn presets_incoming_args_start() {
+    for c in cases() {
+        let (built, _) = build_case(&c);
+        let want = match c.name {
+            n if n.starts_with("ARM AAPCS") => Some(-16),
+            n if n.starts_with("MIPS O32") => Some(0),
+            n if n.starts_with("MIPS N64") => Some(-64),
+            n if n.starts_with("PowerPC ELFv1") => Some(48),
+            n if n.starts_with("PowerPC ELFv2") => Some(32),
+            _ => c.stack_args.map(|s| s.base_offset),
+        };
+        assert_eq!(built.incoming_args_start(), want, "{}", c.name);
+    }
+}
+
 /// An unknown register name in any category errors, on any architecture.
 #[test]
 fn build_returns_error_for_unknown_register_name() {
@@ -718,6 +736,7 @@ fn build_returns_error_for_unknown_register_name() {
             preserves_memory: false,
             preserves_all_registers: false,
             entry_address_reg_name: None,
+            reg_args_adjoin_stack_args: false,
         };
         let result = cc.build(&regs);
         let err = result.expect_err("expected UnknownRegName error");
@@ -747,6 +766,7 @@ fn build_returns_error_even_when_some_names_are_valid() {
         preserves_memory: false,
         preserves_all_registers: false,
         entry_address_reg_name: None,
+        reg_args_adjoin_stack_args: false,
     };
     assert!(
         cc.build(&regs).is_err(),
@@ -927,6 +947,7 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
         preserves_memory: false,
         preserves_all_registers: false,
         entry_address_reg_name: None,
+        reg_args_adjoin_stack_args: false,
     };
     let result = cc.build(&regs);
     let err = result.expect_err("expected UnknownRegName error");
