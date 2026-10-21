@@ -1909,6 +1909,102 @@ fn classify_table_dispatch_projects_a_word_guard_onto_its_field() {
     );
 }
 
+/// `x - lo < span` at the type of `x`: `x` in `[lo, lo + span)`.
+fn in_span(b: &mut FunctionBuilder, x: ValueId, lo: u64, span: u64) -> ValueId {
+    let ty = b.value_type_opt(x).unwrap();
+    let minus = b
+        .build_int_const(lo.wrapping_neg() & ty.int_mask_u128().unwrap() as u64, ty)
+        .unwrap();
+    let sum = b
+        .build_int_binary_operation(x, minus, IntBinaryOp::Add, ty)
+        .unwrap();
+    let n = b.build_int_const(span, ty).unwrap();
+    b.build_int_cmp_operation(sum, n, strider_ir::IntCmpOp::Less, ty)
+        .unwrap()
+}
+
+/// `zext64((w >> 1) & 7)`.
+fn bits_1_to_3(b: &mut FunctionBuilder, w: ValueId) -> ValueId {
+    let i32t = ValueType::int(32);
+    let one = b.build_int_const(1u64, i32t).unwrap();
+    let up = b
+        .build_int_binary_operation(w, one, IntBinaryOp::ShiftRight, i32t)
+        .unwrap();
+    let seven = b.build_int_const(7u64, i32t).unwrap();
+    let field = b
+        .build_int_binary_operation(up, seven, IntBinaryOp::And, i32t)
+        .unwrap();
+    b.extend_if_needed(field, ValueType::int(64), ExtendOp::ZeroExtend)
+        .unwrap()
+}
+
+/// [`classify_guarded_dispatch`]'s arms for these slots.
+fn slots(of: &[u64]) -> Option<ResolvedTargets> {
+    let mut arms: Vec<u64> = of.iter().map(|i| 0x5000 + 0x10 * i).collect();
+    arms.sort_unstable();
+    Some(ResolvedTargets::table(
+        arms.into_iter().map(strider_cfg::ResolvedTarget::from),
+    ))
+}
+
+/// `w` in `[10, 17]` puts `(w >> 1) & 7` in `{5, 6, 7, 0}`: the guard's low
+/// end does not carry to a field below the top of its bits, whose values wrap,
+/// so slots 1 to 4 are never read.  `w >> 1` in `[5, 8]` is what is
+/// enumerated.
+#[test]
+fn classify_table_dispatch_reads_no_slot_below_a_wrapping_field() {
+    assert_eq!(
+        classify_guarded_dispatch(&[&|b, w| in_span(b, w, 10, 8)], bits_1_to_3),
+        slots(&[0, 5, 6, 7]),
+    );
+}
+
+/// The same field under `trunc16(w)` in `[10, 17]`: nothing below the field
+/// is bounded either, so the guard bounds no candidate and the site defers.
+#[test]
+fn classify_table_dispatch_defers_a_field_under_a_guard_low_end_it_cannot_carry() {
+    let low_half = |b: &mut FunctionBuilder, w: ValueId| {
+        let half = b.truncate_if_needed(w, ValueType::int(16)).unwrap();
+        in_span(b, half, 10, 8)
+    };
+    assert_eq!(classify_guarded_dispatch(&[&low_half], bits_1_to_3), None);
+}
+
+/// `w & 15` in `[10, 13]` puts its top two bits, `(w & 15) >> 2`, in
+/// `[2, 3]`: at the top of the guarded bits the low end carries.
+#[test]
+fn classify_table_dispatch_carries_a_guard_low_end_to_the_top_of_its_bits() {
+    let nibble = |b: &mut FunctionBuilder, w: ValueId| {
+        let i32t = ValueType::int(32);
+        let m = b.build_int_const(15u64, i32t).unwrap();
+        b.build_int_binary_operation(w, m, IntBinaryOp::And, i32t)
+            .unwrap()
+    };
+    let top_two = |b: &mut FunctionBuilder, w: ValueId| {
+        let i32t = ValueType::int(32);
+        let m = b.build_int_const(15u64, i32t).unwrap();
+        let low = b
+            .build_int_binary_operation(w, m, IntBinaryOp::And, i32t)
+            .unwrap();
+        let two = b.build_int_const(2u64, i32t).unwrap();
+        let top = b
+            .build_int_binary_operation(low, two, IntBinaryOp::ShiftRight, i32t)
+            .unwrap();
+        b.extend_if_needed(top, ValueType::int(64), ExtendOp::ZeroExtend)
+            .unwrap()
+    };
+    assert_eq!(
+        classify_guarded_dispatch(
+            &[&|b, w| {
+                let low = nibble(b, w);
+                in_span(b, low, 10, 4)
+            }],
+            top_two
+        ),
+        slots(&[2, 3]),
+    );
+}
+
 /// gcc's `__mm_isBranchInstr` on mips64: the `srl` guard sizes the table at 62
 /// entries and the `ext` index is the same six bits, so slots 62 and 63, the
 /// next table's first entries, are never read.
