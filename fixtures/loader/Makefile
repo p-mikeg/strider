@@ -37,7 +37,8 @@ IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           x64_ifunc_pie.elf x64_ifunc_lib.elf x86_ifunc_pie.elf x64_ifunc.o \
           x64_ifunc_nopic.o x64_ifunc_static.elf \
           x86_got_call_nopic.o x86_got_call_pic.o aarch64_got_addend.o \
-          ppc64le_local_entry.elf ppc64le_local_entry_stripped.elf
+          ppc64le_local_entry.elf ppc64le_local_entry_stripped.elf \
+          x64_nodynsym.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -86,6 +87,12 @@ $(OUTDIR)/ppc64le_local_entry.elf: src/ppc64le_local_entry.s | $(OUTDIR)
 # The same image without its symbols, which `add_symbol_file` takes back.
 $(OUTDIR)/ppc64le_local_entry_stripped.elf: $(OUTDIR)/ppc64le_local_entry.elf
 	$(PPC64LE_OBJCOPY) --strip-all $< $@
+
+# `.dynsym` discarded by the script; GNU ld then links `.rela.dyn` to
+# `.symtab`; the test rewrites the link to 0, as the arm64 kernel has it.
+$(OUTDIR)/x64_nodynsym.elf: src/nodynsym.s src/nodynsym.lds | $(OUTDIR)
+	$(X64) -nostdlib -shared -Wl,-Bsymbolic,-z,notext,--build-id=none \
+	  -Wl,-T,src/nodynsym.lds $< -o $@
 
 clean:
 	rm -rf $(OUTDIR)

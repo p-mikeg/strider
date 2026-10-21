@@ -447,3 +447,41 @@ fn a_mips_got_hole_stops_at_its_mapping_whatever_sh_size_claims() {
     let past = rom_word(&reader, end, 4, false).expect_err("past the mapping");
     assert!(past.contains("not mapped"), "{past}");
 }
+
+/// `.rela.dyn` of an image whose `.dynsym` the link discarded: its `r_sym`
+/// indexes that table, never `.symtab`, so a word naming a symbol is a hole
+/// whichever table `sh_link` names. GNU ld 2.38 links it to `.symtab`; the
+/// arm64 5.14 kernel's ld left 0, which the patch reproduces.
+#[test]
+fn a_dynamic_relocation_with_no_dynsym_is_a_hole() {
+    let abs64 = object::elf::R_X86_64_64;
+    let slots = |elf: &OwnedElf| {
+        let obj = elf.checked_file().unwrap();
+        assert!(obj.dynamic_symbol_table().is_none(), "no .dynsym");
+        let slots = obj.symbol_by_name("slots").expect("slots").address();
+        [slots, slots + 8]
+    };
+    let linked = open("x64_nodynsym.elf");
+    let reader = ElfFileMemReader::new(&linked, GOT_IS_ROM).unwrap();
+    for slot in slots(&linked) {
+        assert_hole(rom_word(&reader, slot, 8, true), abs64, "linked to .symtab");
+    }
+
+    let unlinked = patched("x64_nodynsym.elf", |bytes, obj| {
+        // Elf64_Ehdr.e_shoff, then Elf64_Shdr.sh_link of `.rela.dyn`.
+        let shoff = u64::from_le_bytes(bytes[0x28..0x30].try_into().unwrap()) as usize;
+        let rela = obj.section_by_name(".rela.dyn").unwrap().index().0;
+        let at = shoff + rela * 64 + 0x28;
+        bytes[at..at + 4].copy_from_slice(&0u32.to_le_bytes());
+    });
+    let obj = unlinked.checked_file().unwrap();
+    assert_eq!(
+        obj.dynamic_relocations().map(|r| r.count()),
+        Some(2),
+        "link 0 walks as the dynamic table"
+    );
+    let reader = ElfFileMemReader::new(&unlinked, GOT_IS_ROM).unwrap();
+    for slot in slots(&unlinked) {
+        assert_hole(rom_word(&reader, slot, 8, true), abs64, "linked to 0");
+    }
+}
