@@ -151,8 +151,13 @@ class CfgOptions:
 
     `no_return_targets` lists direct-call targets that never return (`exit`,
     `panic`): a call to one ends its block, under `build_cfg` and `analyze`
-    alike. A Thumb or MIPS16 target is listed at its decoded, even address:
-    mask the ISA bit off a symbol value (`addr & ~1`).
+    alike. A target is the address the call instruction names. A Thumb or
+    MIPS16 one is listed at its decoded, even address: mask the ISA bit off a
+    symbol value (`addr & ~1`). A ppc64 ELFv2 call from the same module lands
+    at `Symbol.local_entry`, usually 8 bytes past `Symbol.address`.
+    `ElfLifter.analyze` adds that local entry for every listed `address`;
+    `build_cfg` and a plain `Lifter` take the set as given, so list
+    `local_entry` there.
 
     `data_ranges` lists `(start, end)` address ranges, end exclusive, that are
     data rather than code (an ARM literal pool): a branch or fall-through into
@@ -200,10 +205,6 @@ class CfgOptions:
     def _with_function_max_size(self, function_max_size: int) -> "CfgOptions":
         """These options bounded to `function_max_size`, sharing both tables.
         Raises `ValueError` for `0`."""
-        ...
-    def _with_elf_data_ranges(self, elf: object) -> "CfgOptions":
-        """These options with `elf`'s mapping-symbol data ranges, unless
-        `data_ranges` already names some."""
         ...
     def _seated_table_id(self) -> int:
         """The address of the seated `known_targets` table every analyse

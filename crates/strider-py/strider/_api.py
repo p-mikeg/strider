@@ -506,7 +506,10 @@ class ElfLifter(Lifter):
         A `str` entry is resolved through the ELF symbol table, and its
         recorded size bounds the lift unless `opts.cfg.function_max_size` is
         set. Unless `opts.cfg.data_ranges` names some, the ELF's `$d` mapping
-        symbols supply them. `cc` defaults to this handle's convention.
+        symbols supply them. A `no_return_targets` address or
+        `per_address_ccs` key that is a ppc64 ELFv2 symbol's `address` also
+        covers its `Symbol.local_entry`. `cc` defaults to this handle's
+        convention.
 
         Raises `TypeError` when `entry` is neither `str` nor `int`, and
         `StriderError` when the binary changed on disk since it was loaded.
@@ -539,8 +542,10 @@ class ElfLifter(Lifter):
                 f"got {type(target).__name__}"
             )
         # A literal pool inside the function decodes as plausible instructions;
-        # the ELF's mapping symbols are the only record that it is data.
-        opts = opts._with_cfg(opts.cfg._with_elf_data_ranges(self._elf))
+        # the ELF's mapping symbols are the only record that it is data. A
+        # ppc64 ELFv2 call enters a function at its local entry, so a table
+        # keyed by `Symbol.address` is widened to match it there.
+        opts = opts._with_elf(self._elf)
 
         # The raw address passes through: `Lifter::build_cfg` reads its low bit
         # per function and masks `decode_addr` itself.
