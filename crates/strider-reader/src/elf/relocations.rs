@@ -875,20 +875,18 @@ struct Target {
 
 /// Symbol `idx`, resolved.
 ///
-/// Dispatches through `obj.dynamic_symbol_table()` first and falls back to the
-/// static `.symtab` only when there is none. Indices in the dynamic table
-/// reference `.dynsym`, so `obj.symbol_by_index` alone would return the wrong
-/// entry; ET_REL's per-section relocations reference `.symtab`, which is what
-/// the fallback resolves.
+/// A linked image's index is into `.dynsym`, so `obj.symbol_by_index` alone
+/// would return the wrong entry; ET_REL's per-section relocations reference
+/// `.symtab`.
 ///
 /// The address is rebased through `layout`: an ET_REL symbol's `st_value` is
 /// an offset into its section, every section after the first at a given
 /// `sh_addr` sits at a synthetic base, and an undefined or `SHN_COMMON` one
 /// resolves to its [`ElfSectionLayout::extern_address`].
 ///
-/// `None` when the index doesn't resolve (malformed ELF), when its `st_shndx`
-/// names no section header, when a linked image's symbol is undefined with a
-/// zero value or `SHN_COMMON`.
+/// `None` when the index doesn't resolve (malformed ELF), when a linked image
+/// has no `.dynsym`, when its `st_shndx` names no section header, when a
+/// linked image's symbol is undefined with a zero value or `SHN_COMMON`.
 ///
 /// [`ElfSectionLayout::extern_address`]: super::sections::ElfSectionLayout::extern_address
 fn resolve_symbol_target(
@@ -901,13 +899,15 @@ fn resolve_symbol_target(
     // `dynamic_symbol_table` is simply the first `SHT_DYNSYM` section in the
     // file, populated whatever the `e_type`, so an object file carrying one
     // otherwise sends every relocation to the wrong table and patches in an
-    // unrelated symbol's `st_value`.
-    let relocatable = obj.kind() == object::ObjectKind::Relocatable;
-    let sym = obj
-        .dynamic_symbol_table()
-        .filter(|_| !relocatable)
-        .map_or_else(|| obj.symbol_by_index(idx), |t| t.symbol_by_index(idx))
-        .ok()?;
+    // unrelated symbol's `st_value`. A linked image's dynamic relocations
+    // index `.dynsym`; with none, the index names a table the link discarded,
+    // never `.symtab`.
+    let sym = if obj.kind() == object::ObjectKind::Relocatable {
+        obj.symbol_by_index(idx)
+    } else {
+        obj.dynamic_symbol_table()?.symbol_by_index(idx)
+    }
+    .ok()?;
     let addr = match layout.extern_address(idx.0) {
         Some(addr) => addr,
         None => {
