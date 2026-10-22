@@ -16,8 +16,8 @@
 //! and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone instead of the whole
 //! pipeline.
 
-use rustc_hash::FxHashMap;
-use strider_ir::node::{ExtendOp, NodeKind, ValueId, ValueType};
+use rustc_hash::{FxHashMap, FxHashSet};
+use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::interp::{self, EntryVar, Outcome, Slot};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
@@ -1549,7 +1549,7 @@ fn a_phi_of_constants_holds_only_its_constants() {
         .ok()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0);
-    let (mut checks, mut phis, mut functions) = (0usize, 0usize, 0usize);
+    let (mut checks, mut phis, mut functions, mut ruled) = (0usize, 0usize, 0usize, 0usize);
     for seed in start..start + n {
         let Some(mut f) = build_random_state_machine(seed) else {
             continue;
@@ -1576,6 +1576,7 @@ fn a_phi_of_constants_holds_only_its_constants() {
         }
         functions += 1;
         phis += sets.len();
+        let mut ruled_out: FxHashMap<(ValueId, NodeId), FxHashSet<u128>> = FxHashMap::default();
         let mut rng = Rng(seed | 1);
         for _ in 0..8 {
             let x = u128::from(rng.next_u64() % 10);
@@ -1586,9 +1587,16 @@ fn a_phi_of_constants_holds_only_its_constants() {
                 };
                 checks += 1;
                 let iv = ranges.range_of(v, at);
-                if (set.binary_search(&val).is_err() || !iv.contains(val)) && bad.is_none() {
+                let out = ruled_out
+                    .entry((v, at))
+                    .or_insert_with(|| ranges.ruled_out(v, at));
+                ruled += usize::from(!out.is_empty());
+                if (set.binary_search(&val).is_err() || !iv.contains(val) || out.contains(&val))
+                    && bad.is_none()
+                {
                     bad = Some(format!(
-                        "seed {seed}: x={x} phi {v:?}={val:#x} at {at:?} outside {set:?} or {iv:?}\n{}",
+                        "seed {seed}: x={x} phi {v:?}={val:#x} at {at:?} outside {set:?} or \
+                         {iv:?}, or ruled out by {out:?}\n{}",
                         f.to_text(false)
                     ));
                 }
@@ -1604,13 +1612,14 @@ fn a_phi_of_constants_holds_only_its_constants() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n=====\n"));
-    // Measured: 106 functions, 154 phis.  A floor over the full seed range
-    // only, as in `a_range_contains_every_runtime_value`.
-    eprintln!("functions {functions} phis {phis} checks {checks}");
+    // Measured: 106 functions, 154 phis, 32022 observations at a point with
+    // a constant ruled out.  A floor over the full seed range only, as in
+    // `a_range_contains_every_runtime_value`.
+    eprintln!("functions {functions} phis {phis} checks {checks} ruled {ruled}");
     if n >= DEFAULT_FUZZ_SEEDS {
         assert!(
-            functions * 6 >= n as usize && phis >= functions && checks > 0,
-            "functions {functions} phis {phis} checks {checks}"
+            functions * 6 >= n as usize && phis >= functions && checks > 0 && ruled > 0,
+            "functions {functions} phis {phis} checks {checks} ruled {ruled}"
         );
     }
 }
