@@ -38,7 +38,8 @@ prog = strider.lift.load_elf("fixtures/out/x86/switch.elf")
 # relocated_got_is_rom=True additionally serves .got (PPC32's .got2 too) /
 # .data.rel.ro as READ-ONLY memory, so a load through a GOT slot folds. Off
 # by default: it claims no slot is rewritten once the loader has run, which
-# nothing checks. It is refused with apply_relocations=False, which denies
+# nothing checks (PPC32 code relocating its own .got2, prom_init's
+# reloc_got2 or -mrelocatable .fixup, breaks it). It is refused with apply_relocations=False, which denies
 # that same claim: the slots would read as their on-disk bytes, 0 on a PIE.
 ```
 
