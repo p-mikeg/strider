@@ -514,6 +514,10 @@
 
 ### Fixed
 
+- Python: `load_elf` raises `ValueError` on a microMIPS image
+  (`EF_MIPS_ARCH_ASE_MICROMIPS`), which no preset decodes. It loaded as
+  plain MIPS, and a function entered at its ISA-bit address decoded as
+  MIPS16e into a complete, wrong function.
 - Python: a seeded jump-table arm whose code falls through into
   `data_ranges` or unmapped bytes is dropped (Rust:
   `Cfg::undecodable_seeded_targets` names it), as one falling past the
