@@ -124,7 +124,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
 
     /// Lowers `FloatSub(a, b)` to `FloatAdd(a, Neg(b))`.  Exact under IEEE 754:
     /// `a - b` equals `a + (-b)` for finite values, and negation flips the sign
-    /// bit of infinities and NaNs without changing NaN-ness.
+    /// bit of infinities and NaNs without changing NaN-ness.  Not bit-exact
+    /// for a NaN `b`: hardware passes `b` through with its sign (x86 and ARM
+    /// `1.0 - qNaN` is `+qNaN`), and the lowering yields `-qNaN`.  IEEE 754
+    /// leaves an arithmetic NaN's sign unspecified.
     pub(super) fn handle_float_sub(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         self.lift_float_binary(insn, |b, l, r, t| {
             let neg_r = b.build_float_unary_op(r, FloatUnaryOp::Neg, t)?;

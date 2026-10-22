@@ -251,7 +251,7 @@ IntSub(a,b)         -> Add(a, Neg(b))
 IntLessEqual(a,b)   -> Xor(Less(b,a), IntConst(1)):I1
 IntSlessEqual(a,b)  -> Xor(Sless(b,a), IntConst(1)):I1
 IntNotEqual(a,b)    -> Xor(Equal(a,b), IntConst(1)):I1
-FloatSub(a,b)       -> FloatAdd(a, Neg(b))
+FloatSub(a,b)       -> FloatAdd(a, Neg(b))   (a NaN b's sign flips)
 FloatNotEqual(a,b)  -> Xor(FloatEqual(a,b), IntConst(1)):I1
 FloatLessEqual(a,b) -> Or(FloatLess(a,b), FloatEqual(a,b)):I1   (NaN-aware)
 FLOAT_NAN(x)        -> Xor(FloatEqual(x,x), IntConst(1)):I1
