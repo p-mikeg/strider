@@ -188,8 +188,9 @@ const INTENT: &[(&str, &str, &[&[Need]])] = &[
     ("floats", "f64_compare", &[&[("fcmp.less|fcmp.equal", 2)]]),
     ("floats", "f64_to_f32", &[&[("float_to_float", 1)]]),
     ("floats", "float_to_int", &[&[("float_to_int", 1)]]),
-    // ppc32 converts by the magic-number subtraction.
-    ("floats", "int_to_float", &[&[("int_to_float", 1)], &[("float.add", 1), ("float.neg", 1), ("float_to_float", 1)]]),
+    // ppc32 converts by the magic-number subtraction, an add of its negation,
+    // folded where the magic number is a double.
+    ("floats", "int_to_float", &[&[("int_to_float", 1)], &[("float.add", 1), ("float.neg|fconst[0xc330000080000000]", 1), ("float_to_float", 1)]]),
     ("globals", "branch_on_const_string", &[&[("iconst[0x79]", 1)], &[("if", 0)]]),
     ("globals", "read_const_byte", &[&[("iconst[0x61]", 1)]]),
     ("globals", "read_const_int", &[&[("iconst[0x12345678]", 1)]]),

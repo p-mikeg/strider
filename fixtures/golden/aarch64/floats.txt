@@ -7,7 +7,7 @@
 # f64_compare: 2 fcmp.less|fcmp.equal
 # f64_to_f32: float_to_float
 # float_to_int: float_to_int
-# int_to_float: int_to_float or float.add and float.neg and float_to_float
+# int_to_float: int_to_float or float.add and float.neg|fconst[0xc330000080000000] and float_to_float
 endian little
 default_cc arg_passing_regs=[x0, x1, x2, x3, x4, x5, x6, x7] arg_passing_regs_float=[q0, q1, q2, q3, q4, q5, q6, q7] callee_saved_regs=[x19, x20, x21, x22, x23, x24, x25, x26, x27, x28, x29, x30, d8, d9, d10, d11, d12, d13, d14, d15] ret_val_regs=[x0, x1] ret_val_regs_float=[q0, q1, q2, q3] stack_vn=sp stack_args=0+8n ret_stack_pop=0 link_register_vn=x30 preserves_memory=false preserves_all_registers=false entry_address_vn=none
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode
@@ -282,7 +282,7 @@ arg 0 [%v2]
 arg 1 [%v3]
 float_arg 0 [%v4]
 float_arg 1 [%v7]
-float_arg 3 [%v25]
+float_arg 3 [%v24]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[x0]
@@ -297,25 +297,24 @@ float_arg 3 [%v25]
 %v11:f32 = float.mul %v10, %v6
 %v12:f32 = float.neg %v9
 %v13:f32 = float.add %v11, %v12
-%v14:i32 = iconst[0x3f800000]
-%v15:f32 = int_bits_to_float %v14
-%v16:f32 = float.add %v6, %v15
-%v17:f32 = float.div %v13, %v16
-%v18:i32 = float_bits_to_int %v17
-%v19:i128 = extend.zero %v18
-%v20:i128 = iconst[0xffffffff]
-%v21:i128 = int.and %v19, %v20
-%v22:i32 = float_bits_to_int %v16
-%v23:i128 = extend.zero %v22
-%v24:i128 = int.and %v23, %v20
-%v25:i128 = initial_var[q3]
-%v26:i128 = iconst[0xffffffffffffffffffffffff00000000]
-%v27:i128 = int.and %v25, %v26
-%v28:i32 = float_bits_to_int %v10
-%v29:i128 = extend.zero %v28
-%v30:i128 = int.or %v27, %v29
-%v31:i128 = int.and %v30, %v20
-return %v0, %v1, %v2, %v3, %v21, %v7, %v24, %v31
+%v14:f32 = fconst[0x3f800000]
+%v15:f32 = float.add %v6, %v14
+%v16:f32 = float.div %v13, %v15
+%v17:i32 = float_bits_to_int %v16
+%v18:i128 = extend.zero %v17
+%v19:i128 = iconst[0xffffffff]
+%v20:i128 = int.and %v18, %v19
+%v21:i32 = float_bits_to_int %v15
+%v22:i128 = extend.zero %v21
+%v23:i128 = int.and %v22, %v19
+%v24:i128 = initial_var[q3]
+%v25:i128 = iconst[0xffffffffffffffffffffffff00000000]
+%v26:i128 = int.and %v24, %v25
+%v27:i32 = float_bits_to_int %v10
+%v28:i128 = extend.zero %v27
+%v29:i128 = int.or %v26, %v28
+%v30:i128 = int.and %v29, %v19
+return %v0, %v1, %v2, %v3, %v20, %v7, %v23, %v30
 
 == f64_arith @0x880
 cfg
@@ -325,7 +324,7 @@ arg 0 [%v2]
 arg 1 [%v3]
 float_arg 0 [%v4]
 float_arg 1 [%v7]
-float_arg 3 [%v25]
+float_arg 3 [%v24]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[x0]
@@ -340,25 +339,24 @@ float_arg 3 [%v25]
 %v11:f64 = float.mul %v10, %v6
 %v12:f64 = float.neg %v9
 %v13:f64 = float.add %v11, %v12
-%v14:i64 = iconst[0x3ff0000000000000]
-%v15:f64 = int_bits_to_float %v14
-%v16:f64 = float.add %v6, %v15
-%v17:f64 = float.div %v13, %v16
-%v18:i64 = float_bits_to_int %v17
-%v19:i128 = extend.zero %v18
-%v20:i128 = iconst[0xffffffffffffffff]
-%v21:i128 = int.and %v19, %v20
-%v22:i64 = float_bits_to_int %v16
-%v23:i128 = extend.zero %v22
-%v24:i128 = int.and %v23, %v20
-%v25:i128 = initial_var[q3]
-%v26:i128 = iconst[0xffffffffffffffff0000000000000000]
-%v27:i128 = int.and %v25, %v26
-%v28:i64 = float_bits_to_int %v10
-%v29:i128 = extend.zero %v28
-%v30:i128 = int.or %v27, %v29
-%v31:i128 = int.and %v30, %v20
-return %v0, %v1, %v2, %v3, %v21, %v7, %v24, %v31
+%v14:f64 = fconst[0x3ff0000000000000]
+%v15:f64 = float.add %v6, %v14
+%v16:f64 = float.div %v13, %v15
+%v17:i64 = float_bits_to_int %v16
+%v18:i128 = extend.zero %v17
+%v19:i128 = iconst[0xffffffffffffffff]
+%v20:i128 = int.and %v18, %v19
+%v21:i64 = float_bits_to_int %v15
+%v22:i128 = extend.zero %v21
+%v23:i128 = int.and %v22, %v19
+%v24:i128 = initial_var[q3]
+%v25:i128 = iconst[0xffffffffffffffff0000000000000000]
+%v26:i128 = int.and %v24, %v25
+%v27:i64 = float_bits_to_int %v10
+%v28:i128 = extend.zero %v27
+%v29:i128 = int.or %v26, %v28
+%v30:i128 = int.and %v29, %v19
+return %v0, %v1, %v2, %v3, %v20, %v7, %v23, %v30
 
 == f32_to_f64 @0x8a0
 cfg

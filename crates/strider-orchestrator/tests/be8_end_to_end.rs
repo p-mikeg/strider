@@ -150,15 +150,9 @@ fn initial_var_bit(function: &Function, value: ValueId, bit: u64) -> Option<(Nod
     }
 }
 
-/// The float operand of `node` that is not the `IntBitsToFloat` of `bits`.
-fn other_float_operand(function: &Function, node: NodeId, bits: u128) -> Option<ValueId> {
-    let is_lit = |v: ValueId| {
-        matches!(function.kind_of_value(v), NodeKind::IntBitsToFloat)
-            && function
-                .nth_input(function.producer(v), 0)
-                .and_then(|b| function.int_const_u128(b))
-                == Some(bits)
-    };
+/// The float operand of `node` that is not the float constant `bits`.
+fn other_float_operand(function: &Function, node: NodeId, bits: u64) -> Option<ValueId> {
+    let is_lit = |v: ValueId| *function.kind_of_value(v) == NodeKind::FloatConst(bits);
     let a = function.nth_input(node, 0)?;
     let b = function.nth_input(node, 1)?;
     match (is_lit(a), is_lit(b)) {
@@ -191,7 +185,7 @@ fn load_nodes(function: &Function) -> Vec<NodeId> {
 /// bit 32.
 #[test]
 fn a_float_argument_reads_the_half_of_its_container_that_the_sla_names() {
-    const ONE_F32: u128 = 0x3f80_0000;
+    const ONE_F32: u64 = 0x3f80_0000;
     let function = analyze("floats", "f32_arith", Opt::Full);
     let d0 = function.producer(initial_value(&function, "d0"));
 
