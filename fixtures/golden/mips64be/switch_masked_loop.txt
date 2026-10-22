@@ -96,7 +96,7 @@ tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t4, t9, gp, sp, ra, pc, f0, f2,
 %v9:i64 = initial_var[ra]
 %v10:mem = store[r] %v6, %v8, %v9
 %v11:i64 = iconst[0x120011050]
-%v12:i64 = load[r] %v6, %v11
+%v12:i64 = load[r] %v1, %v11
 %v13:i64 = iconst[0xc80]
 %v14:i64 = int.add %v12, %v13
 %v15:i64 = load[r] %v10, %v14
