@@ -511,3 +511,90 @@ fn a_served_sh_size_past_the_next_section_serves_none_of_it() {
         ".data.rel.ro",
     );
 }
+
+/// `name` with `.rela.dyn`'s `sh_link` set to `link`, which `object`'s
+/// dynamic walk then skips, the image keeping its `.dynsym`.
+fn relinked(name: &str, link: impl Fn(&object::File<'_>) -> u32) -> OwnedElf {
+    patched(name, |bytes, obj| {
+        // Elf64_Ehdr.e_shoff, then Elf64_Shdr.sh_link of `.rela.dyn`.
+        let shoff = u64::from_le_bytes(bytes[0x28..0x30].try_into().unwrap()) as usize;
+        let rela = obj.section_by_name(".rela.dyn").unwrap().index().0;
+        let at = shoff + rela * 64 + 0x28;
+        bytes[at..at + 4].copy_from_slice(&link(obj).to_le_bytes());
+    })
+}
+
+/// A `.rela.dyn` linked to `.symtab` or to nothing in an image that has a
+/// `.dynsym`: its entries are walked all the same. One naming no symbol is
+/// applied, IRELATIVE being a hole; one naming a symbol is a hole, its index
+/// meaning `.dynsym` to the loader and `.symtab` to the link.
+#[test]
+fn a_dynamic_relocation_section_off_the_dynsym_is_still_walked() {
+    let irelative = object::elf::R_X86_64_IRELATIVE;
+    let pie = relinked("x64_ifunc_pie.elf", |_| 0);
+    assert_eq!(
+        pie.checked_file()
+            .unwrap()
+            .dynamic_relocations()
+            .map(|r| r.count()),
+        Some(0),
+        "object walks none of it"
+    );
+    let reader = ElfFileMemReader::new(&pie, GOT_IS_ROM).unwrap();
+    for slot in dynamic_sites(&open("x64_ifunc_pie.elf"), irelative, None) {
+        assert_hole(rom_word(&reader, slot, 8, true), irelative, "pie, link 0");
+    }
+
+    let original = open("x64_ifunc_lib.elf");
+    let sites: Vec<(u64, u32)> = original
+        .checked_file()
+        .unwrap()
+        .dynamic_relocations()
+        .unwrap()
+        .map(|(site, r)| match r.flags() {
+            RelocationFlags::Elf { r_type } => (site, r_type),
+            _ => unreachable!(),
+        })
+        .collect();
+    assert_eq!(sites.len(), 4);
+    let symtab = |obj: &object::File<'_>| obj.section_by_name(".symtab").unwrap().index().0 as u32;
+    for (lib, what) in [
+        (relinked("x64_ifunc_lib.elf", symtab), "lib, link .symtab"),
+        (relinked("x64_ifunc_lib.elf", |_| 0), "lib, link 0"),
+    ] {
+        let reader = ElfFileMemReader::new(&lib, GOT_IS_ROM).unwrap();
+        for &(site, r_type) in &sites {
+            assert_hole(rom_word(&reader, site, 8, true), r_type, what);
+        }
+    }
+}
+
+/// The same on MIPS, where every such entry is a hole: `p`'s
+/// `R_MIPS_REL32` in `.data.rel.ro`, served as `x`'s address while
+/// `.rel.dyn` links to `.dynsym`.
+#[test]
+fn a_mips_dynamic_relocation_section_off_the_dynsym_is_a_hole() {
+    let name = "mips32be_relro.elf";
+    let original = open(name);
+    let obj = original.checked_file().unwrap();
+    let p = obj.section_by_name(".data.rel.ro").unwrap().address();
+    let reader = ElfFileMemReader::new(&original, GOT_IS_ROM).unwrap();
+    assert_eq!(
+        rom_word(&reader, p, 4, false),
+        Ok(dynsym_value(&original, "x"))
+    );
+
+    let unlinked = patched(name, |bytes, obj| {
+        // Elf32_Ehdr.e_shoff, then Elf32_Shdr.sh_link of `.rel.dyn`.
+        let shoff = u32::from_be_bytes(bytes[0x20..0x24].try_into().unwrap()) as usize;
+        let rel = obj.section_by_name(".rel.dyn").unwrap().index().0;
+        let at = shoff + rel * 40 + 0x18;
+        bytes[at..at + 4].copy_from_slice(&0u32.to_be_bytes());
+    });
+    let reader = ElfFileMemReader::new(&unlinked, GOT_IS_ROM).unwrap();
+    assert_hole(
+        rom_word(&reader, p, 4, false),
+        object::elf::R_MIPS_REL32,
+        "link 0",
+    );
+}
