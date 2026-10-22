@@ -106,7 +106,12 @@ fn isel_selects_ra_when_its_cr_bit_is_set() {
         for f in &fs {
             for x in INPUTS {
                 let want = u32::from(x >> 30 > 2);
-                assert_eq!(returned(f, r3, x), want, "{} is_valid_bugaddr {x:#x}", arch.name());
+                assert_eq!(
+                    returned(f, r3, x),
+                    want,
+                    "{} is_valid_bugaddr {x:#x}",
+                    arch.name()
+                );
             }
         }
     }
@@ -119,7 +124,12 @@ fn isel_reads_ra_zero_as_the_constant_zero() {
         for f in &fs {
             for x in INPUTS {
                 let want = if x == 0 { 0 } else { x.wrapping_sub(8) };
-                assert_eq!(returned(f, r3, x), want, "{} pick_first_entity {x:#x}", arch.name());
+                assert_eq!(
+                    returned(f, r3, x),
+                    want,
+                    "{} pick_first_entity {x:#x}",
+                    arch.name()
+                );
             }
         }
     }

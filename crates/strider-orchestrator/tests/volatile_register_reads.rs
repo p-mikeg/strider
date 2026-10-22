@@ -150,7 +150,13 @@ fn powerpc_pmc1_reads_differ() {
 #[test]
 fn powerpc_mfpmr_reads_differ() {
     // mfpmr r3, 16; mfpmr r4, 16; mtpmr 16, r5; subf r3, r4, r3; blr
-    let words = [0x7c70_029c, 0x7c90_029c, 0x7cb0_039c, 0x7c64_1850, 0x4e80_0020];
+    let words = [
+        0x7c70_029c,
+        0x7c90_029c,
+        0x7cb0_039c,
+        0x7c64_1850,
+        0x4e80_0020,
+    ];
     for arch in [Arch::Ppc64be, Arch::Ppc64le] {
         let f = analyze(arch, &words);
         assert_eq!(
