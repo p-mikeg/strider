@@ -534,6 +534,11 @@
 
 ### Fixed
 
+- Python: ppc64 `xsadddp` sets the FPSCR bits `fadd` sets (FPRF, VXSNAN
+  and the summaries). It set none, so an `mffs` or `mcrfs` after it read the
+  bits from before it, and a branch on them folded. No scalar float op the
+  sla spells in p-code sets FR, FI, OX, UX, VXISI, VXIDI, VXIMZ, VXCVI or
+  VXSQRT: those keep the last explicit write's value.
 - Python: x86 `int3` and `int1` resume at the next instruction after their
   handler, as `int 3` does. They returned to address 0, so `analyze`
   reported the site an unresolved branch and the code after it was lost
