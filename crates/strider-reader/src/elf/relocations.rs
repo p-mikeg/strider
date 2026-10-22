@@ -607,7 +607,12 @@ fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo) {
     } else {
         value
     };
-    match fit(obj, field, value) {
+    // `R_X86_64_32`'s value zero-extends (x86-64 psABI 4.4).
+    let zero_extends = obj.architecture() == A::X86_64
+        && !pc_relative
+        && size_bytes == 4
+        && matches!(generic.encoding, object::RelocationEncoding::Generic);
+    match fit(obj, field, value).filter(|v| !zero_extends || v >> 32 == 0) {
         Some(value) => ctx.record(holder, field_addr, value, size_bytes, endian_le),
         None => ctx.unmodelled(holder, field_addr, size_bytes, r.type_word()),
     }

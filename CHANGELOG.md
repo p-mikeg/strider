@@ -515,6 +515,8 @@
 
 ### Fixed
 
+- Python: an x86-64 `R_X86_64_32` whose value does not zero-extend is a
+  hole, as GNU ld refuses it; one that fit only sign-extended was patched.
 - Python: the PowerPC VSX arithmetic, rounding and conversion ops
   (`xsaddqp`, `xsdivsp`, `xscvqpswz`, ...) set the FPSCR status bits they
   raise (FPRF, FR, FI, FX, OX, UX, ZX, XX, VX*); the vector conversions,
