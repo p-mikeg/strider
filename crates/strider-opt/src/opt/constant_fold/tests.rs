@@ -1184,6 +1184,77 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
     Ok(())
 }
 
+/// A truncate of an extend to a width other than the source's is one cast:
+/// below the source's width a truncate of the source, above it the same
+/// extend of the source. Both extends of every 8-bit source, against the
+/// reference interpreter: `ext(x)` truncated to 16, 32 or 1 bits, then
+/// extended again or not.
+/// Mutation: drop the two truncate-of-extend rules.
+#[test]
+fn a_truncate_of_an_extend_is_one_cast() -> Result<()> {
+    use strider_ir_test_utils::interp;
+    let int = |w: u16| {
+        if w == 1 {
+            ValueType::I1
+        } else {
+            ValueType::int(w)
+        }
+    };
+    let vn = reg_vn(0x1000, 1);
+    // (extend to, truncate to, extend again to, casts left)
+    let shapes = [
+        (32, 16, None, 1),
+        (64, 32, Some(64), 1),
+        (32, 1, None, 1),
+        (64, 1, Some(8), 2),
+    ];
+    for op in [ExtendOp::ZeroExtend, ExtendOp::SignExtend] {
+        for (wide, narrow, again, casts) in shapes {
+            let (raw, _) = make_fn_with_var(vn, |b, x| {
+                let w = b.extend_if_needed(x, int(wide), op)?;
+                let t = b.truncate_if_needed(w, int(narrow))?;
+                match again {
+                    Some(to) => b.extend_if_needed(t, int(to), op),
+                    None => Ok(t),
+                }
+            })?;
+            let mut opt = raw.clone();
+            run_to_fixed_point(&ConstantFold::new(), &mut opt)?;
+            let left = opt
+                .walk()
+                .filter(|&n| matches!(opt.node_kind(n), NodeKind::Truncate | NodeKind::Extend(_)))
+                .count();
+            assert_eq!(
+                left,
+                casts,
+                "{op:?} {wide} {narrow} {again:?}\n{}",
+                opt.to_text(false)
+            );
+            for x in 0..=0xffu128 {
+                let env = interp::Env {
+                    entry: &|_| x,
+                    rom: None,
+                    seed: 0,
+                    step_budget: 100,
+                    private: None,
+                };
+                let want = interp::run(&raw, &env);
+                assert!(
+                    matches!(&want, Ok(interp::Outcome::Return { values, .. })
+                        if values.iter().all(|v| matches!(v, interp::Slot::Known(_)))),
+                    "{want:?}"
+                );
+                assert_eq!(
+                    interp::run(&opt, &env),
+                    want,
+                    "{op:?} {wide} {narrow} {again:?} at x={x:#x}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 // Booleans are 1-bit integers: NOT is `Xor(x, IntConst(1)):I1`, AND/OR/XOR are
 // `IntBinaryOp` at I1, and a bool const is `IntConst(0|1)` typed I1. So these
 // folds all flow through the generic integer rules.
