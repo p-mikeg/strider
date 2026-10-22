@@ -291,6 +291,90 @@ fn a_vsx_compare_sets_the_fpscr_bits_it_writes() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
+/// An FPSCR bit as `(mtfsfi F,0, mcrfs cr7,F, the branch on the bit, name)`.
+type FpscrBit = (u32, u32, u32, &'static str);
+
+const FPCC_FE: FpscrBit = (0xfe00_010c, 0xff90_0080, 0x419e_000c, "FPCC.FE");
+const XX: FpscrBit = (0xfc80_010c, 0xff84_0080, 0x419e_000c, "XX");
+const ZX: FpscrBit = (0xfc80_010c, 0xff84_0080, 0x419d_000c, "ZX");
+const VXSNAN: FpscrBit = (0xfc80_010c, 0xff84_0080, 0x419f_000c, "VXSNAN");
+const VXISI: FpscrBit = (0xfd00_010c, 0xff88_0080, 0x419c_000c, "VXISI");
+const VXVC: FpscrBit = (0xfd80_010c, 0xff8c_0080, 0x419c_000c, "VXVC");
+const FR: FpscrBit = (0xfd80_010c, 0xff8c_0080, 0x419d_000c, "FR");
+const VXSQRT: FpscrBit = (0xfe80_010c, 0xff94_0080, 0x419e_000c, "VXSQRT");
+const VXCVI: FpscrBit = (0xfe80_010c, 0xff94_0080, 0x419f_000c, "VXCVI");
+
+/// The VSX arithmetic, rounding and conversion forms set the FPSCR status
+/// bits the ISA lists for them (FPRF, FR, FI, FX, OX, UX, ZX, XX, VX*), the
+/// vector conversions leave FPRF, and the XT-form compares and max/min set
+/// only the invalid-operation bits. `mtfsfi F, 0; <op>; mcrfs cr7, F;
+/// b<bit> cr7` keeps both paths for a bit the op may set, and never branches
+/// for one it leaves, as for the permutes, moves and exponent and sign ops,
+/// which set none. A left bit is probed only in a field the op sets nothing
+/// in: `mcrfs` packs the field from byte registers, so an unknown bit beside
+/// it makes the whole field unknown.
+#[test]
+fn a_vsx_op_sets_the_fpscr_status_bits_it_raises() {
+    let sets: &[(&str, u32, &[FpscrBit], &[FpscrBit])] = &[
+        (
+            "xsaddqp",
+            0xfc43_2008,
+            &[FPCC_FE, XX, VXSNAN, VXISI, FR],
+            &[],
+        ),
+        ("xsaddsp", 0xf022_1800, &[FPCC_FE, XX, VXSNAN, VXISI], &[]),
+        ("xsdivqp", 0xfc43_2448, &[FPCC_FE, ZX], &[]),
+        ("xssqrtqp", 0xfc5b_1e48, &[FPCC_FE, VXSQRT], &[]),
+        ("xscvqpswz", 0xfc49_1e88, &[XX, VXCVI], &[]),
+        ("xsrqpi", 0xfc40_180a, &[FPCC_FE, VXSNAN], &[]),
+        ("xscvdpqp", 0xfc56_1e88, &[FPCC_FE, VXSNAN], &[]),
+        ("xscvudqp", 0xfc42_1e88, &[FPCC_FE], &[]),
+        ("xscvhpdp", 0xf030_156c, &[FPCC_FE, VXSNAN], &[]),
+        ("xscvsxdsp", 0xf020_14e0, &[FPCC_FE, XX], &[]),
+        ("xsrsqrtesp", 0xf020_1028, &[FPCC_FE, ZX], &[]),
+        ("xvcvsphp", 0xf039_176c, &[XX, VXSNAN], &[FPCC_FE]),
+        ("xvcvhpsp", 0xf038_176c, &[VXSNAN], &[FPCC_FE]),
+        ("xscmpgedp", 0xf022_1898, &[VXSNAN, VXVC], &[FPCC_FE]),
+        ("xscmpeqdp", 0xf022_1818, &[VXSNAN], &[FPCC_FE]),
+        ("xvcmpnedp", 0xf022_1bd8, &[VXSNAN], &[FPCC_FE]),
+        ("xsmaxcdp", 0xf022_1c00, &[VXSNAN], &[FPCC_FE]),
+        ("xsminjdp", 0xf022_1cc0, &[VXSNAN], &[FPCC_FE]),
+        ("xxperm", 0xf022_18d0, &[], &[FPCC_FE, VXSNAN]),
+        ("xxbrd", 0xf037_176c, &[], &[FPCC_FE, VXSNAN]),
+        ("xsabsqp", 0xfc40_1e48, &[], &[FPCC_FE, VXSNAN]),
+        ("xsnegqp", 0xfc50_1e48, &[], &[FPCC_FE, VXSNAN]),
+        ("xsiexpdp", 0xf023_272c, &[], &[FPCC_FE, VXSNAN]),
+        ("xsxexpqp", 0xfc42_1e48, &[], &[FPCC_FE, VXSNAN]),
+        ("xvtstdcdp", 0xf020_17a8, &[], &[FPCC_FE, VXSNAN]),
+        ("xscvspdpn", 0xf020_152c, &[], &[FPCC_FE, VXSNAN]),
+        ("mtvsrdd", 0x7c23_2366, &[], &[FPCC_FE, VXSNAN]),
+    ];
+    let mut wrong = Vec::new();
+    for arch in [Arch::Ppc64be, Arch::Ppc64le] {
+        for &(name, word, raised, left) in sets {
+            for (bits, expected) in [(raised, &BOTH[..]), (left, &NOT_TAKEN[..])] {
+                for &(clear, read, branch, bit) in bits {
+                    let got = returned_r3s(&fpscr_branch(arch, clear, word, read, branch));
+                    if got != expected {
+                        wrong.push(format!("{arch:?} {name}, {bit}: {got:?}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// `xvcmpnedp.` sets CR6 as well: with EQ set in cr6 beforehand, a `beq cr6`
+/// after it keeps both paths.
+#[test]
+fn xvcmpnedp_dot_writes_cr6() {
+    for arch in [Arch::Ppc64be, Arch::Ppc64le] {
+        let f = branch_after(arch, &BOTH_EQ, 0xf022_1fd8, beq(6));
+        assert_eq!(returned_r3s(&f), BOTH, "{arch:?}");
+    }
+}
+
 /// `mtfsfi F, 0; <body>; mcrfs cr7, F; b<bit> cr7, 1f; li r3, 1; blr; 1: li
 /// r3, 2; blr`
 fn fpscr_branch(arch: Arch, clear: u32, body: u32, read: u32, branch: u32) -> Function {
