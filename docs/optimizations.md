@@ -95,10 +95,12 @@ folds to the value written.
 
 Each load it examines also has its memory edge moved past the memory
 definitions that cannot overwrite it. That move uses `stack_global_disjoint`
-and `noalias_allocators`' heap identity but never steps through a call: the
-passes that read the edge afterwards block at every call. Claims accumulate on a function: re-optimising
-adds the claims it names to the ones already in force and withdraws none, and
-a value forwarded under a claim stays forwarded: to drop a claim, analyse the
+and `noalias_allocators`' heap identity, but never steps through a call a
+claim makes transparent (`escape_analysis`, a listed allocator): the jump-table
+walk that reads the edge afterwards honours no such claim. Claims accumulate
+on a function: re-optimising adds the claims it names to the ones already in
+force and withdraws none, and a value forwarded under a claim stays forwarded:
+to drop a claim, analyse the
 function again without it.
 
 With `AssumptionOptions(escape_analysis=True)` it also forwards across a call,
