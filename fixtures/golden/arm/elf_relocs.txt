@@ -117,7 +117,7 @@ float_arg 7 [%v30]
 %v9:i32 = initial_var[r4]
 %v10:mem = store[r] %v6, %v8, %v9
 %v11:i32 = iconst[0x11010]
-%v12:i32 = load[r] %v10, %v11
+%v12:i32 = load[r] %v1, %v11
 %v13:i32 = initial_var[r0]
 %v14:i32 = iconst[0x3]
 %v15:i32 = int.and %v13, %v14

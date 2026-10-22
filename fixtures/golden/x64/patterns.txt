@@ -134,7 +134,7 @@ float_arg 7 [%v30]
 %v15:i64 = iconst[0x4010f5]
 %v16:mem = store[r] %v12, %v14, %v15
 %v17:i64 = iconst[0x403ff0]
-%v18:i64 = load[r] %v12, %v17
+%v18:i64 = load[r] %v1, %v17
 %v19:i64 = iconst[0x401020]
 %v20:i64 = load[r] %v1, %v2
 %v21:i64 = iconst[0x0]

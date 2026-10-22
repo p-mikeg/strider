@@ -17,7 +17,7 @@ arg 0 [%v9]
 %v6:i32 = initial_var[ESP]
 %v7:i32 = iconst[0x4]
 %v8:i32 = int.add %v6, %v7
-%v9:i32 = load[r] %v3, %v8
+%v9:i32 = load[r] %v1, %v8
 %v10:i32 = iconst[0x1]
 %v11:i32 = int.add %v9, %v10
 %v12:i32 = initial_var[EDX]
