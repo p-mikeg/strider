@@ -10,7 +10,8 @@ use strider_ir::node::{NodeId, ValueId};
 use strider_ir::{EditFunction, IRViewer, IRWalker};
 
 use strider_pattern::{
-    Capture, MatchPat, Matcher, Pattern, Result, Template, TemplatePat, instantiate, is_skip,
+    Capture, MatchPat, Matcher, Pattern, Result, Template, TemplatePat, instantiate_guarded,
+    is_skip,
 };
 
 /// Builds a rewrite-rule closure from a typed LHS and a buildable typed
@@ -21,8 +22,9 @@ use strider_pattern::{
 /// success materialises the RHS and redirects the root's value output to
 /// it. Returns `Ok(Some(new_out))` when at least one use was redirected,
 /// `Ok(None)` for a failed match, a skipped RHS, or nothing to redirect.
-/// It errors, before building anything, when the RHS builds nodes and no
-/// matched node carries an asm-fingerprint (an `InitialVar` or `Phi` root).
+/// It errors, before building anything, when the RHS would build nodes and
+/// no matched node carries an asm-fingerprint (an `InitialVar` or `Phi`
+/// root), even where a built constant would dedup onto a fingerprinted node.
 ///
 /// # Single-value-output constraint
 ///
@@ -44,15 +46,17 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs
 ///
 /// # What the node signature leaves open is author-owned
 ///
-/// [`instantiate`] checks every template node against its `NodeKind`'s
-/// `expected_signature`: the declared outputs, the input count, each input
-/// slot's value kind and the operand widths. It also errors on a gapped or
-/// duplicate input slot. What the signature does not pin is left to the RHS
-/// author, such as which address a `Load` reads.
+/// [`instantiate`](strider_pattern::instantiate) checks every template node
+/// against its `NodeKind`'s `expected_signature`: the declared outputs, the
+/// input count, each input slot's value kind and the operand widths. It also
+/// errors on a gapped or duplicate input slot. What the signature does not pin
+/// is left to the RHS author, such as which address a `Load` reads.
 ///
 /// # Errors
 ///
-/// Errors if the RHS references a capture the LHS does not bind.
+/// Errors if the RHS references a capture the LHS does not bind. The returned
+/// closure errors as [`rewrite_rule`]'s does, including when the match holds
+/// no node with an asm-fingerprint.
 pub fn rewrite_rule_runtime(lhs: Pattern, rhs: Template) -> Result<BoxedRule> {
     check_capture_coverage(&lhs, &rhs)?;
     Ok(Box::new(rewrite_rule_impl(lhs, rhs)))
@@ -63,7 +67,6 @@ fn rewrite_rule_impl(
     lhs: Pattern,
     rhs: Template,
 ) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
-    let builds_nodes = rhs.builds_nodes();
     move |edit: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
         // The root check before anything is allocated. A fold table tries
         // every rule at every candidate node, and `Matcher::new` plus
@@ -92,8 +95,8 @@ fn rewrite_rule_impl(
         // A fresh node's fingerprint is the footprint's, so a footprint of
         // exempt nodes only (an `InitialVar` or `Phi` root) would leave every
         // built node with none, which `validate` rejects.
-        if builds_nodes {
-            let side = edit.function().side_tables();
+        let attributable = |f: &strider_ir::Function| {
+            let side = f.side_tables();
             if matched_nodes
                 .iter()
                 .all(|&n| side.asm_fingerprint_is_empty(n))
@@ -104,13 +107,22 @@ fn rewrite_rule_impl(
                      an instruction produced, or replace with a capture"
                 );
             }
-        }
+            Ok(())
+        };
 
         // Threading the matched footprint as the proof-node set makes EVERY
         // fresh node, not just the root output, absorb the matched subgraph's
         // fingerprints at creation. A closure in the tree may opt out via
         // `skip()`, which becomes "no change" here.
-        let new_value = match instantiate(&rhs, edit, &bindings, node, &matched_nodes, root_ty) {
+        let new_value = match instantiate_guarded(
+            &rhs,
+            edit,
+            &bindings,
+            node,
+            &matched_nodes,
+            root_ty,
+            attributable,
+        ) {
             Ok(value) => value,
             Err(e) if is_skip(&e) => return Ok(None),
             Err(e) => return Err(e),
@@ -334,7 +346,8 @@ mod tests {
 
     /// A match made only of fingerprint-exempt nodes has no instruction
     /// address to stamp on a fresh node, so building one is refused before
-    /// anything is created; a bare-capture RHS builds nothing and still runs.
+    /// anything is created; an RHS that skips or is a bare capture builds
+    /// nothing and is no change.
     #[test]
     fn a_rewrite_of_an_exempt_only_match_builds_nothing() {
         use strider_pattern::initial_var_for;
@@ -370,6 +383,28 @@ mod tests {
         );
         drop(edit);
         strider_ir::validate::validate(&function).expect("the graph stays valid");
+
+        // A declined RHS is no change, even one that builds before declining.
+        let declined = || strider_pattern::int_const_with_fn(|_| Err(strider_pattern::skip()));
+        let skips = rewrite_rule(initial_var_for(vn), declined());
+        let skips_late = rewrite_rule(
+            initial_var_for(vn),
+            template::int_add(int_const_with!([] => 1u128), declined()),
+        );
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
+        assert_eq!(skips(&mut edit, root).unwrap(), None, "a skip is no change");
+        assert_eq!(
+            super::apply_rules_count(&mut edit, &[skips_late]).unwrap(),
+            0,
+            "a skip after a built operand is no change"
+        );
+        assert_eq!(
+            edit.function().graph().all_node_ids().count(),
+            nodes_before,
+            "a declined RHS creates no node"
+        );
+        drop(edit);
 
         let x = Capture::new();
         let keep = rewrite_rule(initial_var_for(vn).capture(x), var(x));
