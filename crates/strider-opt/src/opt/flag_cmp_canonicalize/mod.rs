@@ -316,7 +316,9 @@ fn build_rules() -> Vec<BoxedRule> {
         ),
         // Thumb "true" flag test (BEQ / BCS / BMI / BVS):
         //    Xor(IntEqual(ZeroExtend(b), 0), 1) -> b
-        // Same `I1` guard as above.
+        // Same `I1` guard as above. The CR-bit arm takes a comparison `b`
+        // first, so this sees a flag that is no comparison, such as the C
+        // of a `cmp`, `Xor(Less(a, b), 1)`.
         rewrite_rule(
             bool_not(int_eq(
                 int_zero_extend(var(b).of_width(1)),
