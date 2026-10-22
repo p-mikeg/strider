@@ -606,84 +606,425 @@ fn a_mask_the_arms_disagree_on_stays() -> crate::Result<()> {
     Ok(())
 }
 
-/// The interrupt-mask save shape: the entry writes `(x & 0xe0) | (y & 0x1f)`
-/// to `var`, the loop body `(z & high) | (var & 0x1f)`, and the Return reads
-/// `var & 0x1f` at the header. Returns the function after the pass, the value
-/// the Return reads and the entry's `y & 0x1f`.
-fn masked_loop(high: u64) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
-    use strider_ir::IntBinaryOp::{And, Or};
-    let (var, x, y, z) = (
-        reg_vn(0x1000, 4),
-        reg_vn(0x1004, 4),
-        reg_vn(0x1008, 4),
-        reg_vn(0x100c, 4),
-    );
+/// The values a [`mask_loop`] reads at entry: `x`, `y`, `z`, `w`.
+type Args = [ValueId; 4];
+
+type Build<'a, T> =
+    Box<dyn FnOnce(&mut strider_ir::FunctionBuilder, T) -> crate::Result<ValueId> + 'a>;
+
+/// A loop over `var` whose header reads `var & mask` and returns it on exit:
+/// the entry writes `entry(args)` to `var`, or leaves the incoming `var`, and
+/// the body writes `back(args, var & mask)`. Returns the function after the
+/// pass, the value the Return reads and the initial `var`.
+fn mask_loop(
+    mask: u128,
+    entry: Option<Build<'_, Args>>,
+    back: Build<'_, (Args, ValueId)>,
+) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
+    let var = reg_vn(0x1000, 4);
+    let regs = [0x1004, 0x1008, 0x100c, 0x1010].map(|off| reg_vn(off, 4));
     let ty = ValueType::int(32);
-    let mut fb = RegisterSet::new()
-        .tracked(var)
-        .tracked(x)
-        .arg(x)
-        .tracked(y)
-        .arg(y)
-        .tracked(z)
-        .arg(z)
-        .build_fn()?;
-    let entry = fb.create_region_all()?;
+    let mut set = RegisterSet::new().tracked(var).arg(var);
+    for reg in regs {
+        set = set.tracked(reg).arg(reg);
+    }
+    let mut fb = set.build_fn()?;
+    let entry_region = fb.create_region_all()?;
     let header = fb.create_region_all()?;
     let body = fb.create_region_all()?;
     let exit = fb.create_region_all()?;
-    fb.set_entry_region_all(entry)?;
+    fb.set_entry_region_all(entry_region)?;
 
-    fb.set_region(entry);
-    let xv = fb.read_variable(&x)?;
-    let yv = fb.read_variable(&y)?;
-    let high0 = fb.build_const_binop(0xe0, xv, And, ty)?;
-    let saved = fb.build_const_binop(0x1f, yv, And, ty)?;
-    let first = fb.build_int_binary_operation(high0, saved, Or, ty)?;
-    fb.write_variable(&var, first)?;
+    fb.set_region(entry_region);
+    let mut args = [fb.read_variable(&var)?; 4];
+    for (arg, reg) in args.iter_mut().zip(&regs) {
+        *arg = fb.read_variable(reg)?;
+    }
+    if let Some(entry) = entry {
+        let first = entry(&mut fb, args)?;
+        fb.write_variable(&var, first)?;
+    }
     fb.build_branch(header)?;
 
     fb.set_region(header);
     let carried = fb.read_variable(&var)?;
-    let mode = fb.build_const_binop(0x1f, carried, And, ty)?;
+    let masked = fb.build_const_binop(mask, carried, strider_ir::IntBinaryOp::And, ty)?;
     let zero = fb.build_int_const(0u64, ty)?;
-    let cond = fb.build_int_cmp_operation(mode, zero, strider_ir::IntCmpOp::Equal, ty)?;
+    let cond = fb.build_int_cmp_operation(masked, zero, strider_ir::IntCmpOp::Equal, ty)?;
     fb.build_if(cond, exit, body)?;
 
     fb.set_region(body);
-    let zv = fb.read_variable(&z)?;
-    let high = fb.build_const_binop(u128::from(high), zv, And, ty)?;
-    let again = fb.build_int_binary_operation(high, mode, Or, ty)?;
+    let again = back(&mut fb, (args, masked))?;
     fb.write_variable(&var, again)?;
     fb.build_branch(header)?;
 
     fb.set_region(exit);
-    fb.build_return(Some(mode), &[])?;
+    fb.build_return(Some(masked), &[])?;
     fb.set_lift_addr(None);
     let mut fg = fb.build()?;
     run(&mut fg)?;
     let ret = fg.node_inputs(find_return(&fg))[2];
-    Ok((fg, ret, saved))
+    let incoming = fg.initial_var_value(&var).expect("var is read");
+    Ok((fg, ret, incoming))
+}
+
+fn bin(
+    fb: &mut strider_ir::FunctionBuilder,
+    op: strider_ir::IntBinaryOp,
+    a: ValueId,
+    b: ValueId,
+) -> crate::Result<ValueId> {
+    fb.build_int_binary_operation(a, b, op, ValueType::int(32))
+}
+
+fn konst(
+    fb: &mut strider_ir::FunctionBuilder,
+    op: strider_ir::IntBinaryOp,
+    k: u128,
+    a: ValueId,
+) -> crate::Result<ValueId> {
+    fb.build_const_binop(k, a, op, ValueType::int(32))
+}
+
+/// The value the Return reads is still `var & mask`.
+fn stays(fg: &strider_ir::Function, ret: ValueId) -> bool {
+    let producer = fg.producer(ret);
+    matches!(
+        fg.node_kind(producer),
+        NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And)
+    ) && fg
+        .node_inputs(producer)
+        .into_iter()
+        .any(|v| matches!(fg.node_kind(fg.producer(v)), NodeKind::Phi))
+}
+
+/// The interrupt-mask save shape with `op` joining the body's high part:
+/// the entry writes `(x & 0xe0) | (y & 0x1f)` and the body
+/// `(z & high) op (var & 0x1f)`. Returns the function, the value the Return
+/// reads and the entry's `y & 0x1f`.
+fn masked_loop(
+    op: strider_ir::IntBinaryOp,
+    high: u128,
+) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
+    use strider_ir::IntBinaryOp::{And, Or};
+    let saved = std::cell::Cell::new(None);
+    let (fg, ret, _) = mask_loop(
+        0x1f,
+        Some(Box::new(|fb, [x, y, ..]| {
+            let high0 = konst(fb, And, 0xe0, x)?;
+            let low = konst(fb, And, 0x1f, y)?;
+            saved.set(Some(low));
+            bin(fb, Or, high0, low)
+        })),
+        Box::new(move |fb, ([_, _, z, _], masked)| {
+            let high = konst(fb, And, high, z)?;
+            bin(fb, op, high, masked)
+        }),
+    )?;
+    Ok((fg, ret, saved.get().expect("entry built")))
 }
 
 #[test]
 fn a_loop_carried_mask_folds_to_the_value_saved_before_the_loop() -> crate::Result<()> {
-    let (_, ret, saved) = masked_loop(0xe0)?;
+    let (_, ret, saved) = masked_loop(strider_ir::IntBinaryOp::Or, 0xe0)?;
     assert_eq!(ret, saved);
     Ok(())
 }
 
 #[test]
 fn a_loop_carried_mask_the_back_edge_can_change_stays() -> crate::Result<()> {
-    let (fg, ret, saved) = masked_loop(0xf0)?;
-    assert_ne!(ret, saved);
+    let (fg, ret, _) = masked_loop(strider_ir::IntBinaryOp::Or, 0xf0)?;
+    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
+    Ok(())
+}
+
+#[test]
+fn a_loop_carried_mask_through_an_xor_folds() -> crate::Result<()> {
+    let (_, ret, saved) = masked_loop(strider_ir::IntBinaryOp::Xor, 0xe0)?;
+    assert_eq!(ret, saved);
+    Ok(())
+}
+
+#[test]
+fn a_loop_carried_mask_through_an_xor_the_back_edge_can_change_stays() -> crate::Result<()> {
+    let (fg, ret, _) = masked_loop(strider_ir::IntBinaryOp::Xor, 0xf0)?;
+    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
+    Ok(())
+}
+
+/// The entry writes `(x << shift) | (y & 0xff)`, the body
+/// `(z << shift) | (var & 0xff)`.
+fn shifted_loop(shift: u128) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
+    use strider_ir::IntBinaryOp::{And, Or, ShiftLeft};
+    let saved = std::cell::Cell::new(None);
+    let (fg, ret, _) = mask_loop(
+        0xff,
+        Some(Box::new(|fb, [x, y, ..]| {
+            let high0 = konst(fb, ShiftLeft, shift, x)?;
+            let low = konst(fb, And, 0xff, y)?;
+            saved.set(Some(low));
+            bin(fb, Or, high0, low)
+        })),
+        Box::new(|fb, ([_, _, z, _], masked)| {
+            let high = konst(fb, ShiftLeft, shift, z)?;
+            bin(fb, Or, high, masked)
+        }),
+    )?;
+    Ok((fg, ret, saved.get().expect("entry built")))
+}
+
+#[test]
+fn a_mask_under_a_shift_clearing_its_bits_folds() -> crate::Result<()> {
+    let (_, ret, saved) = shifted_loop(8)?;
+    assert_eq!(ret, saved);
+    Ok(())
+}
+
+#[test]
+fn a_mask_under_a_shift_keeping_some_of_its_bits_stays() -> crate::Result<()> {
+    let (fg, ret, _) = shifted_loop(4)?;
+    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
+    Ok(())
+}
+
+/// The entry writes `zext(x as i8) | (y & mask)`, the body
+/// `zext(z as i8) | (var & mask)`.
+fn extended_loop(mask: u128) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
+    use strider_ir::IntBinaryOp::{And, Or};
+    fn zext_byte(fb: &mut strider_ir::FunctionBuilder, v: ValueId) -> crate::Result<ValueId> {
+        let byte = fb.truncate_if_needed(v, ValueType::int(8))?;
+        fb.extend_if_needed(byte, ValueType::int(32), strider_ir::ExtendOp::ZeroExtend)
+    }
+    let saved = std::cell::Cell::new(None);
+    let (fg, ret, _) = mask_loop(
+        mask,
+        Some(Box::new(|fb, [x, y, ..]| {
+            let low0 = zext_byte(fb, x)?;
+            let high = konst(fb, And, mask, y)?;
+            saved.set(Some(high));
+            bin(fb, Or, low0, high)
+        })),
+        Box::new(|fb, ([_, _, z, _], masked)| {
+            let low = zext_byte(fb, z)?;
+            bin(fb, Or, low, masked)
+        }),
+    )?;
+    Ok((fg, ret, saved.get().expect("entry built")))
+}
+
+#[test]
+fn a_mask_above_a_zero_extended_byte_folds() -> crate::Result<()> {
+    let (_, ret, saved) = extended_loop(0xffff_ff00)?;
+    assert_eq!(ret, saved);
+    Ok(())
+}
+
+#[test]
+fn a_mask_reaching_into_a_zero_extended_byte_stays() -> crate::Result<()> {
+    let (fg, ret, _) = extended_loop(0xffff_ff80)?;
+    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
+    Ok(())
+}
+
+/// The entry writes `(x & 0xe0) | (y & 0x1f)`, the body `(var & 0x1f) | k`.
+fn or_const_loop(k: u128) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
+    use strider_ir::IntBinaryOp::{And, Or};
+    let saved = std::cell::Cell::new(None);
+    let (fg, ret, _) = mask_loop(
+        0x1f,
+        Some(Box::new(|fb, [x, y, ..]| {
+            let high0 = konst(fb, And, 0xe0, x)?;
+            let low = konst(fb, And, 0x1f, y)?;
+            saved.set(Some(low));
+            bin(fb, Or, high0, low)
+        })),
+        Box::new(|fb, (_, masked)| konst(fb, Or, k, masked)),
+    )?;
+    Ok((fg, ret, saved.get().expect("entry built")))
+}
+
+#[test]
+fn a_mask_past_an_or_with_a_constant_outside_it_folds() -> crate::Result<()> {
+    let (_, ret, saved) = or_const_loop(0x40)?;
+    assert_eq!(ret, saved);
+    Ok(())
+}
+
+#[test]
+fn a_mask_past_an_or_with_a_constant_inside_it_stays() -> crate::Result<()> {
+    let (fg, ret, _) = or_const_loop(0x50)?;
+    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
+    Ok(())
+}
+
+/// Both arms are `(high & 0xe0) | low`: the entry's `low` is `y & 0x0f`, the
+/// body's `y & body_low`. Returns the function, the value the Return reads
+/// and the entry's `y & 0x0f`.
+fn narrower_mask_loop(body_low: u128) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
+    use strider_ir::IntBinaryOp::{And, Or};
+    let saved = std::cell::Cell::new(None);
+    let (fg, ret, _) = mask_loop(
+        0x1f,
+        Some(Box::new(|fb, [x, y, ..]| {
+            let high0 = konst(fb, And, 0xe0, x)?;
+            let low = konst(fb, And, 0x0f, y)?;
+            saved.set(Some(low));
+            bin(fb, Or, high0, low)
+        })),
+        Box::new(|fb, ([_, y, z, _], _)| {
+            let high = konst(fb, And, 0xe0, z)?;
+            let low = konst(fb, And, body_low, y)?;
+            bin(fb, Or, high, low)
+        }),
+    )?;
+    Ok((fg, ret, saved.get().expect("entry built")))
+}
+
+#[test]
+fn arms_already_within_the_mask_fold_to_their_shared_value() -> crate::Result<()> {
+    let (_, ret, saved) = narrower_mask_loop(0x0f)?;
+    assert_eq!(ret, saved);
+    Ok(())
+}
+
+#[test]
+fn arms_within_the_mask_that_differ_stay() -> crate::Result<()> {
+    let (fg, ret, _) = narrower_mask_loop(0x07)?;
+    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
+    Ok(())
+}
+
+/// The entry leaves `var`; the body writes `(z & 0xe0) | low`, `low` the
+/// loop's own `var & 0x1f` or the unrelated `w & 0x1f`.
+fn bare_entry_loop(own: bool) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
+    use strider_ir::IntBinaryOp::{And, Or};
+    mask_loop(
+        0x1f,
+        None,
+        Box::new(move |fb, ([_, _, z, w], masked)| {
+            let high = konst(fb, And, 0xe0, z)?;
+            let low = if own {
+                masked
+            } else {
+                konst(fb, And, 0x1f, w)?
+            };
+            bin(fb, Or, high, low)
+        }),
+    )
+}
+
+#[test]
+fn a_bare_entry_arm_folds_to_a_new_mask_of_it() -> crate::Result<()> {
+    let (fg, ret, incoming) = bare_entry_loop(true)?;
+    let producer = fg.producer(ret);
     assert!(
         matches!(
-            fg.node_kind(fg.producer(ret)),
+            fg.node_kind(producer),
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And)
         ),
         "{:?}",
-        fg.node_kind(fg.producer(ret))
+        fg.node_kind(producer)
     );
+    let inputs: Vec<ValueId> = fg.node_inputs(producer).into_iter().collect();
+    assert!(inputs.contains(&incoming), "{inputs:?}");
+    assert!(
+        inputs.iter().any(|&v| fg.int_const_u128(v) == Some(0x1f)),
+        "{inputs:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bare_entry_arm_the_back_edge_replaces_stays() -> crate::Result<()> {
+    let (fg, ret, _) = bare_entry_loop(false)?;
+    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
+    Ok(())
+}
+
+/// One phi under more masks than the peel budget covers, its arms `0x13` and
+/// `(x & 0xc0) | 0x33`: the run folds the masks clear of bit 5 it reaches,
+/// each to its constant, never one holding bit 5, where the arms differ, and
+/// leaves the rest once the budget is spent, mid-mask included.
+#[test]
+fn masks_past_the_peel_budget_stay() -> crate::Result<()> {
+    use strider_ir::IntBinaryOp::{And, Or};
+    let (var, x) = (reg_vn(0x1000, 4), reg_vn(0x1004, 4));
+    let ty = ValueType::int(32);
+    let mut fb = RegisterSet::new()
+        .tracked(var)
+        .arg(var)
+        .tracked(x)
+        .arg(x)
+        .build_fn()?;
+    let entry = fb.create_region_all()?;
+    let left = fb.create_region_all()?;
+    let right = fb.create_region_all()?;
+    let join = fb.create_region_all()?;
+    fb.set_entry_region_all(entry)?;
+
+    fb.set_region(entry);
+    let current = fb.read_variable(&var)?;
+    let xv = fb.read_variable(&x)?;
+    let zero = fb.build_int_const(0u64, ty)?;
+    let cond = fb.build_int_cmp_operation(current, zero, strider_ir::IntCmpOp::Equal, ty)?;
+    fb.build_if(cond, left, right)?;
+
+    fb.set_region(left);
+    let k = fb.build_int_const(0x13u64, ty)?;
+    fb.write_variable(&var, k)?;
+    fb.build_branch(join)?;
+
+    fb.set_region(right);
+    let high = konst(&mut fb, And, 0xc0, xv)?;
+    let other = konst(&mut fb, Or, 0x33, high)?;
+    fb.write_variable(&var, other)?;
+    fb.build_branch(join)?;
+
+    // Clear of bits 6 and 7, so `x & 0xc0` peels off; every other mask holds
+    // bit 5.
+    let masks: Vec<u128> = (1..41u128)
+        .flat_map(|i| {
+            let m = (i & 0x1f) | ((i >> 5) << 8);
+            [m, m | 0x20]
+        })
+        .collect();
+    fb.set_region(join);
+    let merged = fb.read_variable(&var)?;
+    let mut uses = Vec::new();
+    for &mask in &masks {
+        uses.push(fb.build_const_binop(mask, merged, And, ty)?);
+    }
+    fb.build_return(None, &uses)?;
+    fb.set_lift_addr(None);
+    let mut fg = fb.build()?;
+    run(&mut fg)?;
+
+    let returned: Vec<ValueId> = fg
+        .node_inputs(find_return(&fg))
+        .into_iter()
+        .skip(2)
+        .collect();
+    assert_eq!(returned.len(), masks.len());
+    let mut left_alone = 0;
+    for (&v, &mask) in returned.iter().zip(&masks) {
+        match fg.int_const_u128(v) {
+            Some(k) => {
+                assert_eq!(mask & 0x20, 0, "mask {mask:#x} folded to {k:#x}");
+                assert_eq!(k, 0x13 & mask, "mask {mask:#x}");
+            }
+            None => {
+                assert!(
+                    stays(&fg, v),
+                    "mask {mask:#x}: {:?}",
+                    fg.node_kind(fg.producer(v))
+                );
+                if mask & 0x20 == 0 {
+                    left_alone += 1;
+                }
+            }
+        }
+    }
+    assert!(left_alone > 0, "every mask clear of bit 5 folded");
+    assert!(left_alone < masks.len() / 2, "no mask folded");
     Ok(())
 }

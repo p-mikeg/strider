@@ -23,7 +23,9 @@
 //! `v`: a loop that saves `(hi & ~C) | (phi & C)` on its back edge keeps the
 //! masked bits it entered with. Each arm is peeled through a bounded chain of
 //! `And` / `Or` / `Xor` with a constant or known-zero operand, never through a
-//! phi, so the fold is linear in the arms.
+//! phi, and a run spends at most [`PEEL_VISITS_PER_ARM`] steps per arm, so a
+//! phi under many masks stays linear; a mask past the budget waits for the
+//! next run.
 
 use cranelift_entity::SecondaryMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
@@ -41,6 +43,10 @@ const INNER_VISITS_PER_PHI: usize = 4;
 
 /// Nodes one arm of a masked phi is peeled through.
 const PEEL_STEPS: usize = 8;
+
+/// Peel steps the masked-phi fold may take per arm of a phi taking part, so a
+/// phi with many masked uses stays linear in the arm count.
+const PEEL_VISITS_PER_ARM: usize = 2 * PEEL_STEPS;
 
 #[derive(Clone, Copy)]
 pub struct PhiCollapse;
@@ -86,6 +92,12 @@ impl Optimizer for PhiCollapse {
             }
         }
         let mut walked = Vec::new();
+        let mut budget = phis
+            .iter()
+            .filter(|&&phi| edit.is_live(phi))
+            .map(|&phi| edit.node_inputs(phi).len() - 1)
+            .sum::<usize>()
+            .saturating_mul(PEEL_VISITS_PER_ARM);
         for &phi in &phis {
             if !edit.is_live(phi) || !matches!(edit.node_kind(phi), NodeKind::Phi) {
                 continue;
@@ -100,7 +112,8 @@ impl Optimizer for PhiCollapse {
                     continue;
                 }
                 walked.clear();
-                let Some(value) = masked_phi_value(edit, phi, and_out, mask, ty, &mut walked)?
+                let Some(value) =
+                    masked_phi_value(edit, phi, and_out, mask, ty, &mut walked, &mut budget)?
                 else {
                     continue;
                 };
@@ -166,7 +179,8 @@ enum Masked {
 }
 
 /// The value every arm of `phi` masked by `mask` agrees on, built if needed;
-/// `None` when two arms disagree or every arm is [`Masked::Itself`].
+/// `None` when two arms disagree, every arm is [`Masked::Itself`], or the
+/// peel `budget` runs out.
 ///
 /// Each arm other than an `Itself` one is available on its predecessor edge,
 /// and so is anything it is peeled to. An `Itself` arm's edge is dominated by
@@ -179,13 +193,16 @@ fn masked_phi_value(
     mask: u128,
     ty: ValueType,
     walked: &mut Vec<NodeId>,
+    budget: &mut usize,
 ) -> Result<Option<ValueId>> {
     let selves = [edit.node_outputs(phi)[0], and_out];
     let arms: Vec<ValueId> = edit.phi_data_inputs(phi).collect();
     let mut agreed = None;
     let mut witness = None;
     for arm in arms {
-        let (masked, seen) = peel(edit, arm, mask, selves, walked);
+        let Some((masked, seen)) = peel(edit, arm, mask, selves, walked, budget) else {
+            return Ok(None);
+        };
         if masked == Masked::Itself {
             continue;
         }
@@ -196,32 +213,36 @@ fn masked_phi_value(
         witness = witness.or(seen);
     }
     Ok(match agreed {
-        None | Some(Masked::Itself) => None,
         Some(Masked::Const(k)) => Some(edit.build_int_const(k, ty)?),
         Some(Masked::Value(v)) => Some(v),
         Some(Masked::Of(x)) => match witness {
             Some(v) => Some(v),
             None => Some(edit.build_const_binop(mask, x, IntBinaryOp::And, ty)?),
         },
+        // Every arm is `Itself`.
+        _ => None,
     })
 }
 
 /// `And(arm, mask)` through at most [`PEEL_STEPS`] identities, and for a
-/// [`Masked::Of`] an existing `And(x, mask)` when the last step peeled one.
+/// [`Masked::Of`] an existing `And(x, mask)` when the last step peeled one;
+/// `None` once `budget` is spent.
 fn peel(
     edit: &crate::EditFunction<'_>,
     mut x: ValueId,
     mask: u128,
     selves: [ValueId; 2],
     walked: &mut Vec<NodeId>,
-) -> (Masked, Option<ValueId>) {
+    budget: &mut usize,
+) -> Option<(Masked, Option<ValueId>)> {
     let mut witness = None;
     for _ in 0..PEEL_STEPS {
+        *budget = budget.checked_sub(1)?;
         if selves.contains(&x) {
-            return (Masked::Itself, None);
+            return Some((Masked::Itself, None));
         }
         if let Some(k) = edit.int_const_u128(x) {
-            return (Masked::Const(k & mask), None);
+            return Some((Masked::Const(k & mask), None));
         }
         let node = edit.producer(x);
         let NodeKind::IntBinaryOp(op) = *edit.node_kind(node) else {
@@ -238,7 +259,7 @@ fn peel(
                 if k & mask == mask {
                     (y, k == mask)
                 } else if k & !mask == 0 {
-                    return (Masked::Value(x), None);
+                    return Some((Masked::Value(x), None));
                 } else {
                     break;
                 }
@@ -258,7 +279,7 @@ fn peel(
         walked.push(node);
         x = next;
     }
-    (Masked::Of(x), witness)
+    Some((Masked::Of(x), witness))
 }
 
 /// The non-constant operand and the constant of a binary op with one.
