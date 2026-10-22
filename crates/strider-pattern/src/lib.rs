@@ -42,7 +42,7 @@ pub use node_builders::{
     mem_phi, phi, phi_for, region, ret, store, switch, unreachable,
 };
 pub use template::template_pat::TemplatePat;
-pub use template::{Template, TemplateCtx, instantiate};
+pub use template::{Template, TemplateCtx, instantiate, instantiate_guarded};
 
 /// Reached from the `*_const_with!` macros via the reserved `in_ty` identifier.
 /// An `IntCmp` root's output type is always `I1`, so signed / carry handling
