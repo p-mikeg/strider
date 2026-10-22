@@ -706,3 +706,32 @@ fn an_uncomputed_relocation_in_writable_code_is_still_a_hole() {
         "only the opcode before the field is served"
     );
 }
+
+/// `fixtures/loader/out/x64_abs32.o`: `R_X86_64_32`'s value zero-extends, so
+/// `foo - 0x20000000`, which fits the field only signed, is a hole, and
+/// `foo + 0x80000000`, which fits only unsigned, is patched, as GNU ld
+/// refuses the one and links the other.
+#[test]
+fn an_x86_64_abs32_field_takes_only_a_zero_extending_value() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/loader/out/x64_abs32.o");
+    let bytes = std::fs::read(&path).expect("run `make -C fixtures/loader`");
+    let table = relocated(&bytes);
+    let insn = common::section_base(&bytes, ".text");
+    let foo = symbol_address(&bytes, "foo");
+    assert!(foo < 0x2000_0000, "{foo:#x}: the first value is negative");
+
+    let err = table
+        .read_exact(insn + 1, &mut [0u8; 4])
+        .expect_err("only fits signed")
+        .to_string();
+    assert!(
+        err.contains(&format!("relocation of type {} ", elf::R_X86_64_32)),
+        "{err}"
+    );
+    assert_eq!(
+        u64::from(word(&table, insn + 6, false)),
+        foo + 0x8000_0000,
+        "fits unsigned"
+    );
+}
