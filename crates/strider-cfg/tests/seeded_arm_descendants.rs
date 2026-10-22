@@ -377,17 +377,22 @@ fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
     assert_eq!(thumb.insns.first().map(|i| i.len), Some(2));
 }
 
+/// `xor eax, eax`, falling through to 0x1012.
+const XOR_EAX: &[u8] = &[0x31, 0xc0];
+/// `call 0x1100`, returning to 0x1015.
+const CALL_OUT: &[u8] = &[0xe8, 0xeb, 0x00, 0x00, 0x00];
+
 /// A `jmp rax` seeded with arms 0x1002 and 0x1010, over `len` bytes, built
 /// with `data` marked as data.
 ///
 /// ```text
 /// 1000  jmp rax
 /// 1002  ret               ; good arm
-/// 1010  xor eax, eax      ; bad arm, falls through to 0x1012
+/// 1010  <arm>             ; falls through
 /// ```
-fn build_falling_arm(len: usize, data: Option<std::ops::Range<u64>>) -> Cfg {
+fn build_falling_arm(len: usize, arm: &[u8], data: Option<std::ops::Range<u64>>) -> Cfg {
     let mut bytes = image(len, &[(0x1000, &[0xff, 0xe0]), (0x1002, &[0xc3])]);
-    bytes[0x10..0x12].copy_from_slice(&[0x31, 0xc0]);
+    bytes[0x10..0x10 + arm.len()].copy_from_slice(arm);
     let arch = SleighArch::x86_64();
     let sleigh = rsleigh::Sleigh::new(
         arch.sla_spec(),
@@ -413,7 +418,7 @@ fn build_falling_arm(len: usize, data: Option<std::ops::Range<u64>>) -> Cfg {
 
 #[test]
 fn an_arm_falling_through_into_data_is_dropped() {
-    let cfg = build_falling_arm(0x20, Some(0x1012..0x1014));
+    let cfg = build_falling_arm(0x20, XOR_EAX, Some(0x1012..0x1014));
     assert_eq!(switch_arms(&cfg), [0x1002]);
     assert_eq!(undecodable(&cfg), [0x1010]);
     assert_eq!(undecodable_bytes(&cfg), [0x1012]);
@@ -426,7 +431,7 @@ fn an_arm_falling_through_into_data_is_dropped() {
 
 #[test]
 fn an_arm_falling_through_into_unmapped_bytes_is_dropped() {
-    let cfg = build_falling_arm(0x12, None);
+    let cfg = build_falling_arm(0x12, XOR_EAX, None);
     assert_eq!(switch_arms(&cfg), [0x1002]);
     assert_eq!(undecodable(&cfg), [0x1010]);
     assert_eq!(
@@ -441,4 +446,36 @@ fn an_arm_falling_through_into_unmapped_bytes_is_dropped() {
             .all(|r| r.start_addr.machine_addr.addr != 0x1012)
     );
     assert_no_dangling_successor(&cfg);
+}
+
+/// The call's return address holds no code, so the callee does not return:
+/// the arm is kept, ending at the call.
+fn assert_arm_sealed_at_its_call(cfg: &Cfg, bytes: strider_cfg::Reason) {
+    assert_eq!(switch_arms(cfg), [0x1002, 0x1010]);
+    assert_eq!(undecodable(cfg), Vec::<u64>::new());
+    let arm = cfg
+        .regions()
+        .find(|r| r.start_addr.machine_addr.addr == 0x1010)
+        .expect("the arm's region");
+    assert_eq!(arm.terminator, RegionTerminator::NoReturn);
+    assert_eq!(
+        cfg.incomplete()
+            .of(bytes)
+            .map(|a| a.machine_addr.addr)
+            .collect::<Vec<_>>(),
+        [0x1015],
+    );
+    assert_no_dangling_successor(cfg);
+}
+
+#[test]
+fn an_arm_calling_before_data_is_kept_and_ends_at_the_call() {
+    let cfg = build_falling_arm(0x20, CALL_OUT, Some(0x1015..0x1017));
+    assert_arm_sealed_at_its_call(&cfg, strider_cfg::Reason::UndecodableTarget);
+}
+
+#[test]
+fn an_arm_calling_before_unmapped_bytes_is_kept_and_ends_at_the_call() {
+    let cfg = build_falling_arm(0x15, CALL_OUT, None);
+    assert_arm_sealed_at_its_call(&cfg, strider_cfg::Reason::UnmappedTarget);
 }
