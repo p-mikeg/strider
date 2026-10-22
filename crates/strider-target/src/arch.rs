@@ -591,7 +591,7 @@ impl SleighArch {
     /// `xmmTmp2` (`ia.sinc:140`).  MIPS `tsp` steps the stack over a microMIPS
     /// `lwm` / `swm` list (`mips.sinc:368`, `mipsmicro.sinc:430`).  PowerPC
     /// `r2Save` is fake storage for the TOC (`ppc_common.sinc:72`), and
-    /// `RESERVE_ADDRESS` the load-reservation address `lwarn` records
+    /// `RESERVE_ADDRESS` the load-reservation address `lwarx` records
     /// (`:53`), which only a later `stwcx` on the same thread consults.
     #[must_use]
     pub fn internal_registers(&self) -> &'static [&'static str] {
