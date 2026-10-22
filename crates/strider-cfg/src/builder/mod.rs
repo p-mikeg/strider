@@ -878,8 +878,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // carries the ARM, and an arm that LED to the bytes decodes. Read
         // off the error rather than from `address`, the failure being able to
         // sit several instructions into the region this item decoded. A
-        // fall-through past the end is named where it ran off; any other
-        // failure names the item itself.
+        // failure carrying its own address (past the end, unmapped, not code)
+        // is named there; any other names the item itself.
         if seeded_by.is_some() {
             let (at, reason) = if is_unmapped_start(&e, address) {
                 (address, crate::Reason::UnmappedTarget)

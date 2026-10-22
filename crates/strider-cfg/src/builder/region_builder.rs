@@ -970,18 +970,21 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 Ok(lift_res) => lift_res,
                 Err(e) if cur_addr.machine_addr != self.start_addr.machine_addr => {
                     // Off a seeded arm, falling into data or unmapped bytes
-                    // drops the arm, as running past the end does.
+                    // drops the arm, as running past the end does, unless a
+                    // call before them seals it.
                     let off_arm = self.builder.descent.is_some();
-                    if is_unmapped_start(&e, cur_addr) {
-                        if off_arm {
-                            return Err(e);
-                        }
+                    let unmapped = is_unmapped_start(&e, cur_addr);
+                    if unmapped && !off_arm {
                         return self.seal_at_unmapped_fallthrough(cur_addr);
                     }
-                    let Some(&NotCode { marked_data, .. }) = not_code_at(&e, cur_addr) else {
+                    let (marked_data, reason) = if unmapped {
+                        (false, crate::Reason::UnmappedTarget)
+                    } else if let Some(n) = not_code_at(&e, cur_addr) {
+                        (n.marked_data, crate::Reason::UndecodableTarget)
+                    } else {
                         return Err(e);
                     };
-                    if self.seal_at_call_not_returning(cur_addr)? {
+                    if self.seal_at_call_not_returning(cur_addr, reason)? {
                         return Ok(());
                     }
                     if marked_data && !off_arm {
@@ -1134,20 +1137,23 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Ends the region at its last `Call` / `CallIndirect` as `NoReturn` when
     /// the fall-through reached `cur_addr`, which holds no instruction; the
     /// instructions after the call (a PowerPC TOC restore) are dropped with it.
-    /// Returns whether the region held a call.
+    /// Returns whether the region held a call; `cur_addr` is reported as
+    /// `reason`.
     ///
     /// Code after a call that does not decode is what a no-return callee the
     /// build was not told about leaves behind: a literal pool, a traceback
     /// table, a deliberately invalid word.
-    fn seal_at_call_not_returning(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
+    fn seal_at_call_not_returning(
+        &mut self,
+        cur_addr: PcodeInsnAddr,
+        reason: crate::Reason,
+    ) -> Result<bool> {
         let Some(call) = self.insns.iter().rposition(is_call) else {
-            return self.seal_at_preceding_call_not_returning(cur_addr);
+            return self.seal_at_preceding_call_not_returning(cur_addr, reason);
         };
         self.insns.truncate(call + 1);
         self.finish_current_region(RegionTerminator::NoReturn)?;
-        self.builder
-            .incomplete
-            .insert(cur_addr, crate::Reason::UndecodableTarget);
+        self.builder.incomplete.insert(cur_addr, reason);
         Ok(true)
     }
 
@@ -1166,7 +1172,11 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// The nops keep their own regions, sealed onto a stub, so a branch
     /// landing on one still has a successor; orphaned otherwise, they go with
     /// `Builder::remove_unreachable_regions`.
-    fn seal_at_preceding_call_not_returning(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
+    fn seal_at_preceding_call_not_returning(
+        &mut self,
+        cur_addr: PcodeInsnAddr,
+        reason: crate::Reason,
+    ) -> Result<bool> {
         if !self.insns.is_empty() {
             return Ok(false);
         }
@@ -1192,9 +1202,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                         self.builder.non_boundary_seats.remove(&edge);
                     }
                     self.builder.region_graph[region_id].terminator = RegionTerminator::NoReturn;
-                    self.builder
-                        .incomplete
-                        .insert(cur_addr, crate::Reason::UndecodableTarget);
+                    self.builder.incomplete.insert(cur_addr, reason);
                     return Ok(true);
                 }
                 Some(_) => return Ok(false),

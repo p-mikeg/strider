@@ -45,19 +45,22 @@ pub enum Reason {
     /// address is the instruction that could not be read whole, so a MIPS
     /// branch whose delay slot is unmapped names itself. An unmapped seeded
     /// arm, or a fall-through into unmapped bytes off one, is named with no
-    /// stub: the arm is dropped. An unmapped ENTRY fails
-    /// the whole build instead.
+    /// stub: the arm is dropped, unless a call precedes the bytes, which ends
+    /// that call as `NoReturn`. An unmapped ENTRY fails the whole build
+    /// instead.
     UnmappedTarget,
     /// Holds no instruction: bytes Sleigh rejects, or
     /// [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges) marks. A
     /// branch leaves through a `TailCall` stub; a fall-through past a call
     /// ends that call as `NoReturn`. Any other fall-through into data leaves
     /// through a stub too; one into bytes Sleigh rejects fails the whole
-    /// build. Bytes reached off a seeded arm are named here with no stub: the
-    /// arm is dropped instead, and
-    /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets)
-    /// names it. So is the start of an arm, or of a region off one, whose
-    /// decode fails for a reason no other variant names.
+    /// build. Bytes reached off a seeded arm are named here with no stub, and
+    /// the arm is dropped and named by
+    /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets);
+    /// a fall-through reaching them past a call instead ends that call as
+    /// `NoReturn`, keeping the arm. The start of an arm, or of a region off
+    /// one, whose decode fails for a reason no other variant names is named
+    /// here too.
     UndecodableTarget,
     /// Where a fall-through ran off a
     /// [`FunctionBound::Size`](crate::FunctionBound::Size) end, at the first
