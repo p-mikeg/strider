@@ -730,7 +730,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// another site decodes in that site's own context (`enqueue_resolved` pins
     /// the branch's committed ISA mode, `enqueue` carries the parent region's),
     /// so on ARM/Thumb or MIPS16 one can fail while the other is live, and
-    /// stripping both would take an arm whose edge is wired.
+    /// stripping both would take an arm whose edge is wired. Within the site,
+    /// every arm at the refused address goes, whatever its mode: an address
+    /// seated in both modes is a contradiction, which the orchestrator drops
+    /// before seating it.
     fn drop_refused_switch_arms(&mut self) {
         for (parent, bad) in self.undecodable_seeded.clone() {
             if let Some(parent) = parent {
@@ -742,8 +745,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         }
     }
 
-    /// Strips the arm at `target` from the `Switch` at `site`, and its
-    /// successor edge with it.
+    /// Strips every arm at `target`'s machine address from the `Switch` at
+    /// `site`, in either ISA mode, and their successor edges with them.
     ///
     /// Stripping the LAST arm re-defers the site to an
     /// `UnresolvedIndirectBranch`: a zero-arm `Switch` fails the whole
