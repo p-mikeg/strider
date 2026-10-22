@@ -395,6 +395,44 @@ fn guard_extraction_bounds_each_edge() {
     }
 }
 
+/// `rotl(x, r)` at `I32`, `(x << r) | (x >> (32 - r))`, as PowerPC `rotlwi`
+/// lifts it.
+fn rotl(b: &mut FunctionBuilder, x: ValueId, r: u64) -> ValueId {
+    let ty = ValueType::int(32);
+    let up = b.build_int_const(r, ty).unwrap();
+    let down = b.build_int_const(32 - r, ty).unwrap();
+    let hi = b
+        .build_int_binary_operation(x, up, IntBinaryOp::ShiftLeft, ty)
+        .unwrap();
+    let lo = b
+        .build_int_binary_operation(x, down, IntBinaryOp::ShiftRight, ty)
+        .unwrap();
+    b.build_int_binary_operation(hi, lo, IntBinaryOp::Or, ty)
+        .unwrap()
+}
+
+/// A guard holding `rotl(idx, r)` below `2^r` bounds `idx` to that value
+/// shifted up by `32 - r`.  At `2^r` the rotated value's bit `r` is `idx`'s
+/// bit 0, so `idx` is no interval and stays unbounded.
+/// Mutation: drop the `hi < 2^r` test in `rotate_operand_interval`.
+#[test]
+fn a_rotate_guard_bounds_its_operand_only_below_the_rotation() {
+    let at = |c: u64| {
+        let g = guarded(
+            ValueType::int(32),
+            |b, idx| {
+                let y = rotl(b, idx, 2);
+                c_less(b, c, y)
+            },
+            |_, idx| idx,
+        );
+        range_at(&g.f, g.idx, g.false_node)
+    };
+    let iv = at(3);
+    assert_eq!((iv.lo, iv.hi, iv.stride), (0, 3 << 30, 1 << 30));
+    assert!(at(4).is_top(0xffff_ffff), "{:?}", at(4));
+}
+
 /// [`guarded`] on `idx < bound` at `I32` whose `then` arm returns `idx <op> c`,
 /// the scaled value a table index feeds into its address arithmetic.
 fn guarded_scaled(bound: u64, op: IntBinaryOp, c: u64) -> Guarded {
