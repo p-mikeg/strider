@@ -26,7 +26,9 @@ use crate::mem_analysis::{
 /// [`AssumptionOptions::return_slots_survive_untracked_writes`](crate::AssumptionOptions::return_slots_survive_untracked_writes):
 /// code that breaks it smashes its own stack. Without it, such a store's
 /// address is located the way a load's is, and a store no location is reached
-/// for is taken to clobber the slot.
+/// for is taken to clobber the slot, unless a claim the function holds puts it
+/// off the stack: a constant address under `stack_global_disjoint`, or a
+/// listed allocator's memory.
 pub struct ReturnTargets<'f> {
     function: &'f Function,
     /// Every claim a query has decided. Return sites mostly share their
@@ -541,7 +543,8 @@ impl<'f> ReturnTargets<'f> {
     /// untracked write, and `return_slots_survive_untracked_writes` is what
     /// lets it pass. With that claim cleared and `prove` given, the address is
     /// located through [`Self::guess`] instead and the claim that the guess
-    /// holds pushed onto `out`, so an unlocatable write answers `Clobbers`.
+    /// holds pushed onto `out`, so an unlocatable write answers `Clobbers`,
+    /// except one a held claim puts off the stack ([`off_stack`]).
     ///
     /// The guess stays out of the optimistic answer because it is not a
     /// placement: a merged SP value guesses from one phi arm, which no claim
@@ -574,6 +577,7 @@ impl<'f> ReturnTargets<'f> {
         let (written, guessed) = match (self.spine(addr), prove.is_some() && !optimistic) {
             (Some(written), _) => (written, false),
             (None, false) => return StoreEffect::Passes,
+            (None, true) if off_stack(function, addr) => return StoreEffect::Passes,
             (None, true) => match self.guess(path, addr) {
                 Some(offset) => (StackAddr { base: None, offset }, true),
                 None => return StoreEffect::Clobbers,
@@ -649,6 +653,15 @@ impl<'f> ReturnTargets<'f> {
         }
         Some((lo, hi))
     }
+}
+
+/// Whether a claim the function holds puts `addr` off the stack: a constant
+/// under `stack_global_disjoint`, or a listed allocator's memory.
+fn off_stack(function: &Function, addr: ValueId) -> bool {
+    if function.int_const_u128(addr).is_some() {
+        return function.assumptions().stack_global_disjoint;
+    }
+    decompose(function, addr).is_some_and(|e| matches!(e.kind, MemKind::Heap | MemKind::HeapOpaque))
 }
 
 /// `value` with every `Xor(_, 1)` of a boolean peeled off, and whether an odd

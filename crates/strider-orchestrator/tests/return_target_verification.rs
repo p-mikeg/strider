@@ -615,12 +615,13 @@ fn x86_64_a_write_through_a_pointer_loaded_from_a_global_rests_on_a_claim() {
     );
 }
 
-/// With `return_slots_survive_untracked_writes` cleared, a store to a constant
-/// address is checked against the slot, and it is `stack_global_disjoint`, not
-/// the cleared claim, that keeps it off: the `ret`'s narrowed memory edge
-/// steps past it under that claim alone.
+/// With `return_slots_survive_untracked_writes` cleared, it is
+/// `stack_global_disjoint`, not the cleared claim, that keeps a store to a
+/// constant address off the slot: the `ret`'s memory edge steps past it, and
+/// the walk would pass it anyway.
 ///
-/// Mutation: narrow under `MemPurpose::Structural`.
+/// Mutation: narrow under `MemPurpose::Structural` and drop the
+/// constant-address arm of `store_effect`.
 #[test]
 fn x86_64_a_global_store_rests_on_stack_global_disjoint() {
     // movl $0x1,0x20000 ; ret
@@ -629,6 +630,33 @@ fn x86_64_a_global_store_rests_on_stack_global_disjoint() {
     ];
     let floor = analyze_with(Arch::X64, bytes.clone(), &no_assumptions());
     assert_eq!(unresolved(&floor), vec![BASE + 11], "no claim keeps it off");
+    let disjoint = strider_opt::AssumptionOptions {
+        stack_global_disjoint: true,
+        ..no_assumptions()
+    };
+    let result = analyze_with(Arch::X64, bytes, &disjoint);
+    assert!(
+        result.incomplete().is_empty(),
+        "unresolved {:x?}",
+        unresolved(&result)
+    );
+}
+
+/// The same global store on one arm of a merge whose other arm rewrites the
+/// slot: the `ret`'s memory edge stops at the merge, so the walk meets the
+/// store itself, and `stack_global_disjoint` still keeps it off the slot.
+///
+/// Mutation: drop the constant-address arm of `store_effect`.
+#[test]
+fn x86_64_a_global_store_past_a_merge_rests_on_stack_global_disjoint() {
+    // test %edi,%edi ; je 1f ; mov (%rsp),%rax ; mov %rax,(%rsp) ; jmp 2f
+    // 1: movl $0x1,0x20000 ; 2: ret
+    let bytes = vec![
+        0x85, 0xff, 0x74, 0x0a, 0x48, 0x8b, 0x04, 0x24, 0x48, 0x89, 0x04, 0x24, 0xeb, 0x0b, 0xc7,
+        0x04, 0x25, 0x00, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0xc3,
+    ];
+    let floor = analyze_with(Arch::X64, bytes.clone(), &no_assumptions());
+    assert_eq!(unresolved(&floor), vec![BASE + 25], "no claim keeps it off");
     let disjoint = strider_opt::AssumptionOptions {
         stack_global_disjoint: true,
         ..no_assumptions()

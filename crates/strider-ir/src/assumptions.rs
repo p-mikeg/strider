@@ -146,11 +146,10 @@ pub struct AssumptionOptions {
     /// reaches, and code that hands the slot's address to a callee.  A store
     /// the address spine DOES place is checked against the slot whatever this
     /// says; a guessed location is not a placement, so clearing this is what
-    /// brings one in.  A store `LoadForward`'s narrowing stepped the return
-    /// load past, under
-    /// [`stack_global_disjoint`](Self::stack_global_disjoint) or
-    /// [`noalias_allocators`](Self::noalias_allocators), is not on the walk.
-    /// Default ON.
+    /// brings one in.  A constant-address store under
+    /// [`stack_global_disjoint`](Self::stack_global_disjoint), and a store
+    /// through a [`noalias_allocators`](Self::noalias_allocators) result,
+    /// pass whatever this says.  Default ON.
     ///
     /// The shape that needs it is an ARM `push {lr}; ... bl ...; pop {pc}`
     /// return: the call in between writes memory the walk cannot place, and
