@@ -1144,8 +1144,8 @@ fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>, walked: &object::File<'_>) {
     }
 }
 
-/// `(r_offset, entry)` of every `SHT_REL` / `SHT_RELA` entry in an
-/// allocated section `object`'s `dynamic_relocations()` skips.
+/// `(r_offset, entry)` of every `SHT_REL` / `SHT_RELA` / `SHT_CREL` entry in
+/// an allocated section `object`'s `dynamic_relocations()` skips.
 fn entries_off_dynsym<Elf: object::read::elf::FileHeader>(
     f: &object::read::elf::ElfFile<'_, Elf>,
 ) -> Vec<(u64, RelocInfo)> {
@@ -1183,6 +1183,15 @@ fn entries_off_dynsym<Elf: object::read::elf::FileHeader>(
                     e.r_offset(endian).into(),
                     info(e.r_type(endian), e.r_sym(endian), None),
                 ));
+            }
+        } else if sh.sh_type(endian) == object::elf::SHT_CREL
+            && let Ok(data) = sh.data(endian, f.data())
+            && let Ok(crel) = object::read::elf::CrelIterator::new(data)
+        {
+            let rela = crel.is_rela();
+            for e in crel.map_while(|e| e.ok()) {
+                let r = info(e.r_type, e.r_sym, rela.then_some(e.r_addend));
+                out.push((e.r_offset, r));
             }
         }
     }
