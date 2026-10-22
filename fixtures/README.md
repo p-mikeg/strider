@@ -20,7 +20,8 @@ dynamic loader fills: MIPS executables and the libraries they import from,
 and x86 / x86-64 images with an IFUNC. Beside them are the i386 and AArch64
 objects whose GOT references the reader resolves itself, a ppc64le image
 whose calls enter their callees at ELFv2 local entries, and an x86-64 library
-linked with its `.dynsym` discarded. Each needs a link or
+linked with its `.dynsym` discarded, and an x86-64 object whose
+`R_X86_64_32` values must zero-extend. Each needs a link or
 flags of its own, so they are built by `make -C loader` from `loader/src/`,
 not per arch, and the golden suite analyses none of them. They need `gcc`,
 `gcc-i686-linux-gnu`, `gcc-aarch64-linux-gnu`, `gcc-mips-linux-gnu`,
