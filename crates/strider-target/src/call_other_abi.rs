@@ -615,7 +615,7 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     ("vsx300_44", PPC_FP_RESULT),      // xscvqpudz
     ("vsx300_45", PPC_FP_RESULT),      // xscvqpuwz
     ("vsx300_46", PPC_FP_RESULT),      // xscvsdqp
-    ("vsx300_47", PPC_FP_RESULT),      // xscvudqp and xsdivqp
+    ("vsx300_47", PPC_FP_RESULT),      // xscvudqp
     ("vsx300_48", PPC_FP_RESULT),      // xsdivqpo
     ("vsx300_51", PPC_FP_RESULT),      // xsmaddqp
     ("vsx300_52", PPC_FP_RESULT),      // xsmaddqpo
@@ -644,6 +644,7 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     ("vsx300_84", PPC_FP_INVALID_CR6), // xvcmpnesp.
     ("vsx300_85", PPC_FP_VECTOR),      // xvcvhpsp
     ("vsx300_86", PPC_FP_VECTOR),      // xvcvsphp
+    ("vsx300_xsdivqp", PPC_FP_RESULT), // xsdivqp, a fork op
     // Store-conditional and byte-reverse stores write RAM; dcbz zeroes a
     // block; dcbf/dcbst/icbi and TLB/SLB management are ordering barriers;
     // icswx/copy-paste and doorbell messages have external memory effects.
