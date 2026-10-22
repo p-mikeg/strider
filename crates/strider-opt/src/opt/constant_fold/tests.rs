@@ -66,42 +66,89 @@ fn two_independent_instances_each_fold() -> Result<()> {
     Ok(())
 }
 
+/// A shift count owes the output no width (`NodeKind::operand_width`), and
+/// the evaluator tests it against the width before masking, so a count of any
+/// width folds: one past the width shifts everything out.
+/// Mutation: check every operand against the output width again.
+#[test]
+fn a_shift_count_of_another_width_folds() -> Result<()> {
+    use strider_ir::IRBuilder;
+    use strider_ir::node::ValueKind;
+    let cases = [
+        (
+            IntBinaryOp::ShiftRight,
+            0x8000_0000u64,
+            4u64,
+            8,
+            0x0800_0000u128,
+        ),
+        (IntBinaryOp::ShiftLeft, 1, 33, 64, 0),
+        (IntBinaryOp::SShiftRight, 0x8000_0000, 1, 1, 0xc000_0000),
+    ];
+    for (op, value, count, count_bits, want) in cases {
+        let mut fg = make_fn(|b| {
+            let lhs = b.build_int_const(value, ValueType::int(32))?;
+            let count_ty = if count_bits == 1 {
+                ValueType::I1
+            } else {
+                ValueType::int(count_bits)
+            };
+            let amt = b.build_int_const(count, count_ty)?;
+            let node = b.create_node(
+                NodeKind::IntBinaryOp(op),
+                [lhs, amt],
+                [ValueKind::Typed(ValueType::int(32))],
+            );
+            let [out] = b
+                .node_outputs_exact::<1>(node)
+                .expect("binary op has 1 output");
+            Ok(out)
+        })?;
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+        let ret = return_value(fg.graph())?;
+        assert_eq!(
+            fg.int_const_u128(ret),
+            Some(want),
+            "{op:?} by {count}:i{count_bits}"
+        );
+    }
+    Ok(())
+}
+
 /// The int-binary const-eval masks both operands to the output width. The
 /// lifter never emits a width-mismatched node, but the validator types
 /// `IntBinaryOp` inputs only as `AnyInt`, so the fold must skip rather than
 /// evaluate against a silently re-masked value.
 #[test]
 fn int_binary_fold_skips_width_mismatched_operands() -> Result<()> {
-    use strider_ir::IRBuilder;
     use strider_ir::node::ValueKind;
-    // A shift amount wider than the output: masking it to the output width
-    // would change the shift's meaning.
+    // Masking the wide addend to the output width would drop its high bit.
     let mut fg = make_fn(|b| {
-        let lhs = b.build_int_const(1u64, ValueType::int(32))?;
-        let amt = b.build_int_const(33u64, ValueType::int(64))?;
-        let node = b.create_node(
-            NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
-            [lhs, amt],
-            [ValueKind::Typed(ValueType::int(32))],
-        );
-        let [out] = b
-            .node_outputs_exact::<1>(node)
-            .expect("binary op has 1 output");
-        Ok(out)
+        let one = b.build_int_const(1u64, ValueType::int(64))?;
+        let wide = b.build_int_const(0x1_0000_0001u64, ValueType::int(64))?;
+        b.build_int_binary_operation(one, wide, IntBinaryOp::Add, ValueType::int(64))
     })?;
-    let outcome =
-        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
-    assert!(
-        !outcome.changed(),
-        "width-mismatched binary fold must skip, not fold"
+    let mut edit = crate::EditFunction::new(&mut fg);
+    let add64 = return_value(edit.function().graph())?;
+    let [_, wide] = edit.producer_inputs_exact::<2>(add64)?;
+    let one = edit.build_int_const(1u64, ValueType::int(32))?;
+    let add = edit.create_node(
+        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+        [one, wide],
+        [ValueKind::Typed(ValueType::int(32))],
     );
+    let [narrow] = edit.node_outputs_exact::<1>(add)?;
     assert!(
-        matches!(
-            return_kind(fg.graph())?,
-            NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft)
-        ),
-        "the ShiftLeft node must remain (fold skipped)"
+        edit.replace_value(add64, narrow),
+        "the return reads the narrow Add"
     );
+
+    for (i, rule) in super::rules::build_rules().into_iter().enumerate() {
+        assert!(
+            rule(&mut edit, add)?.is_none(),
+            "rule {i} folded an `Add` over a wider constant"
+        );
+    }
     Ok(())
 }
 
