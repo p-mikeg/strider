@@ -530,8 +530,8 @@
   section linked to `.symtab` or to nothing is applied: an entry naming no
   symbol as the dynamic table's are, one naming a symbol (and on MIPS every
   entry) as a hole. Neither walk read it, so its fields served the file's
-  bytes. Such a hole spans the word unless the type names its field, and
-  covers what is mapped of a field running past its mapping.
+  bytes. Such a hole spans the word unless the type names its field, in
+  every mapping the field reaches; a MIPS `R_MIPS_NONE` writes nothing.
 - Python: under `relocated_got_is_rom`, a `.got` or `.data.rel.ro` whose
   `sh_size` runs past the next allocated section, or past the PT_LOAD
   holding it, is served only up to there. The ROM view served the writable
