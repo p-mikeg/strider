@@ -445,16 +445,20 @@ fn for_each_reloc_site<F>(
     }
 }
 
-/// `obj`'s bytes with each relocation section header that repeats an
-/// earlier one's table, the same `(sh_type, sh_offset, sh_size)`, turned
-/// `SHT_NULL`, so that the table is walked once; `None` when none repeats.
+/// `obj`'s bytes with its relocation section headers rewritten so that no
+/// entry is walked twice; `None` when no two walked headers overlap.
 ///
-/// A linked image's repeats that disagree on `sh_link` leave which symbol
-/// table the entries index in doubt: the header kept is linked to none,
-/// which makes every entry naming a symbol a hole. An ET_REL's header
-/// repeats only with the same `sh_link` and `sh_info`: `object` walks only
-/// the ones linked to `.symtab`, each applying to the section `sh_info`
-/// names.
+/// Headers a walk reads (an ET_REL's linked to `.symtab`, a linked image's
+/// linked to `.dynsym` or allocated) whose tables overlap in the file, of one
+/// type and entry phase and, on an ET_REL, one target section, become one
+/// header over their union; an overlapping `SHT_CREL`, which only its own
+/// start decodes, is dropped instead. The rest are turned `SHT_NULL`, so the
+/// walk is bounded by the table bytes, not the header count.
+///
+/// In a linked image whose overlapping headers disagree on which symbol
+/// table the entries index (`.dynsym`, or another for the walk of tables off
+/// it), the header kept is allocated and linked to none: every entry naming
+/// a symbol is a hole.
 fn without_repeated_tables(obj: &object::File<'_>) -> Option<Vec<u8>> {
     match obj {
         object::File::Elf32(f) => without_repeated_tables_of(f),
@@ -463,16 +467,37 @@ fn without_repeated_tables(obj: &object::File<'_>) -> Option<Vec<u8>> {
     }
 }
 
+/// A relocation section header a walk reads.
+struct WalkedTable {
+    index: usize,
+    start: u64,
+    end: u64,
+    /// Whether the walk resolves a symbol entry through `.dynsym`.
+    resolves: bool,
+}
+
 fn without_repeated_tables_of<Elf: object::read::elf::FileHeader>(
     f: &object::read::elf::ElfFile<'_, Elf>,
 ) -> Option<Vec<u8>> {
     use object::read::elf::SectionHeader as _;
     let endian = f.endian();
     let relocatable = f.kind() == object::ObjectKind::Relocatable;
-    // Table -> (the header kept, its `sh_link`, whether a repeat disagrees).
-    let mut kept = std::collections::HashMap::new();
-    let mut repeats = Vec::new();
-    for (i, sh) in f.elf_section_table().iter().enumerate() {
+    let dynsym = f.elf_dynamic_symbol_table().section();
+    let symtab = f.elf_symbol_table().section();
+    let is_64 = f.is_64();
+    let alloc = u64::from(object::elf::SHF_ALLOC);
+    // An entry's bytes; 0 for `SHT_CREL`, whose entries vary.
+    let entry_size = |ty: u32| match (ty, is_64) {
+        (object::elf::SHT_REL, false) => 8,
+        (object::elf::SHT_RELA, false) => 12,
+        (object::elf::SHT_REL, true) => 16,
+        (object::elf::SHT_RELA, true) => 24,
+        _ => 0u64,
+    };
+    // (type, target section, entry phase) -> the headers walked.
+    let mut groups: std::collections::HashMap<(u32, u32, u64), Vec<WalkedTable>> =
+        std::collections::HashMap::new();
+    for (index, sh) in f.elf_section_table().iter().enumerate() {
         let ty = sh.sh_type(endian);
         if !matches!(
             ty,
@@ -480,44 +505,106 @@ fn without_repeated_tables_of<Elf: object::read::elf::FileHeader>(
         ) {
             continue;
         }
-        let (link, info) = if relocatable {
-            (sh.sh_link(endian), sh.sh_info(endian))
+        let entry = entry_size(ty);
+        let link = sh.link(endian);
+        let (target, resolves) = if relocatable {
+            if link != symtab || sh.sh_info(endian) == 0 {
+                continue;
+            }
+            (sh.sh_info(endian), true)
+        } else if link == dynsym {
+            (0, dynsym.0 != 0)
+        } else if sh.sh_flags(endian).into() & alloc != 0 {
+            (0, false)
         } else {
-            (0, 0)
+            continue;
         };
-        let table: (u32, u64, u64, u32, u32) = (
-            ty,
-            sh.sh_offset(endian).into(),
-            sh.sh_size(endian).into(),
-            link,
-            info,
-        );
-        match kept.entry(table) {
-            std::collections::hash_map::Entry::Vacant(v) => {
-                v.insert((i, sh.sh_link(endian), false));
+        let start: u64 = sh.sh_offset(endian).into();
+        let size: u64 = sh.sh_size(endian).into();
+        let phase = start.checked_rem(entry).unwrap_or(0);
+        groups
+            .entry((ty, target, phase))
+            .or_default()
+            .push(WalkedTable {
+                index,
+                start,
+                end: start.saturating_add(size),
+                resolves,
+            });
+    }
+    // (header kept, its new extent, entry size, unlinked), and the headers
+    // dropped.
+    let mut kept = Vec::new();
+    let mut dropped = Vec::new();
+    for ((ty, _, _), mut tables) in groups {
+        tables.sort_unstable_by_key(|t| (t.start, t.index));
+        let entry = entry_size(ty);
+        let mut i = 0;
+        while i < tables.len() {
+            let first = &tables[i];
+            let (mut end, mut any, mut all) = (first.end, first.resolves, first.resolves);
+            let mut j = i + 1;
+            while let Some(t) = tables.get(j).filter(|t| t.start < end) {
+                if entry != 0 {
+                    end = end.max(t.end);
+                }
+                any |= t.resolves;
+                all &= t.resolves;
+                dropped.push(t.index);
+                j += 1;
             }
-            std::collections::hash_map::Entry::Occupied(mut o) => {
-                let (_, first_link, mixed) = o.get_mut();
-                *mixed |= *first_link != sh.sh_link(endian);
-                repeats.push(i);
+            if j > i + 1 {
+                kept.push((first.index, first.start, end, entry, any && !all));
             }
+            i = j;
         }
     }
-    if repeats.is_empty() {
+    if dropped.is_empty() {
         return None;
     }
     let header = f.elf_header();
     let shoff: u64 = header.e_shoff(endian).into();
     let shentsize = u64::from(header.e_shentsize(endian));
-    // `sh_type` is the second word of either class's header, `sh_link` the
-    // seventh of an Elf32_Shdr and at 0x28 in an Elf64_Shdr; 0 is SHT_NULL
-    // and SHN_UNDEF in either byte order.
-    let link_at = if f.is_64() { 0x28 } else { 0x18 };
-    let unlinked = kept.values().filter(|k| k.2).map(|k| (k.0, link_at));
+    let le = f.is_little_endian();
     let mut bytes = f.data().to_vec();
-    for (i, field) in repeats.into_iter().map(|i| (i, 4)).chain(unlinked) {
-        let at = usize::try_from(shoff + i as u64 * shentsize + field).ok()?;
-        bytes.get_mut(at..at + 4)?.fill(0);
+    let mut put = |index: usize, field: u64, value: u64, width: usize| -> Option<()> {
+        let at = usize::try_from(shoff + index as u64 * shentsize + field).ok()?;
+        let value = if le {
+            value.to_le_bytes()
+        } else {
+            value.to_be_bytes()
+        };
+        let value = if le {
+            &value[..width]
+        } else {
+            &value[8 - width..]
+        };
+        bytes.get_mut(at..at + width)?.copy_from_slice(value);
+        Some(())
+    };
+    // Elf32_Shdr / Elf64_Shdr: sh_type at 4, sh_flags at 8, sh_offset at
+    // 0x10 / 0x18, sh_size at 0x14 / 0x20, sh_link at 0x18 / 0x28.
+    let (word, offset_at, size_at, link_at) = if is_64 {
+        (8, 0x18, 0x20, 0x28)
+    } else {
+        (4, 0x10, 0x14, 0x18)
+    };
+    for index in dropped {
+        put(index, 4, u64::from(object::elf::SHT_NULL), 4)?;
+    }
+    for (index, start, end, entry, unlink) in kept {
+        if entry != 0 {
+            put(index, offset_at, start, word)?;
+            put(index, size_at, (end - start) / entry * entry, word)?;
+        }
+        if unlink {
+            let sh = f
+                .elf_section_table()
+                .section(object::SectionIndex(index))
+                .ok()?;
+            put(index, 8, sh.sh_flags(endian).into() | alloc, word)?;
+            put(index, link_at, 0, 4)?;
+        }
     }
     Some(bytes)
 }

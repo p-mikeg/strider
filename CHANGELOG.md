@@ -520,12 +520,13 @@
   size is a descriptor's (16 or 24), as in a kernel. It was `None` for every
   function whose descriptor was followed, so `analyze(name)` on an image
   with no dot symbols is now bounded by that size, as on any other arch.
-- Python: a relocation section header naming the same table (type, file
-  offset and size) as an earlier one is dropped, so the table is walked
-  once; each such header walked it again, N headers over M entries
-  recording N x M patches. In a linked image whose repeats disagree on
-  `sh_link`, every entry naming a symbol is a hole. A header over part of
-  another's table is still walked.
+- Python: relocation section headers of one type whose tables overlap in
+  the file at one entry alignment are walked as one, over their union (an
+  overlapping `SHT_CREL` is dropped), so each entry is walked once: N
+  headers over one table of M entries recorded up to N x M patches. In a
+  linked image where they disagree on whether the entries index
+  `.dynsym`, every entry naming a symbol is a hole; a header no walk reads,
+  such as an unallocated one linked elsewhere, is left alone.
 - Python: in a linked image with a `.dynsym`, an allocated relocation
   section (`SHT_REL`, `SHT_RELA` or `SHT_CREL`) linked to `.symtab` or to
   nothing is applied: an entry naming no
