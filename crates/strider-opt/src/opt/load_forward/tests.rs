@@ -1940,9 +1940,9 @@ fn nested_loop_exit_merge_never_forwards_the_store_after_phi_collapse() -> Resul
     Ok(())
 }
 
-/// The narrowed edge is read afterwards by walks that honour fewer claims than
-/// forwarding does, so it may only name a clobber that holds with every claim
-/// off: under `escape_analysis` the edge still stops at the `Call`.
+/// The narrowed edge is read afterwards by walks that honour no call
+/// relaxation, so it may only name a clobber that holds without one: under
+/// `escape_analysis` the edge still stops at the `Call`.
 #[test]
 fn narrowing_across_a_call_ignores_escape_analysis() -> Result<()> {
     let sp = sp32_vn();
@@ -1981,11 +1981,12 @@ fn narrowing_across_a_call_ignores_escape_analysis() -> Result<()> {
     Ok(())
 }
 
-/// `stack_global_disjoint` is a claim about the program, and the narrowed edge
-/// serves return-target verification, which with its claim off does not
-/// honour it: under the claim the edge still stops at the global store.
+/// `stack_global_disjoint` is a claim every reader of the narrowed edge
+/// honours, so under it the edge steps past the global store.
+///
+/// Mutation: narrow under `MemPurpose::Structural`.
 #[test]
-fn narrowing_past_a_global_store_ignores_stack_global_disjoint() -> Result<()> {
+fn narrowing_past_a_global_store_honours_stack_global_disjoint() -> Result<()> {
     let sp = sp32_vn();
     let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
         let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
@@ -2000,9 +2001,6 @@ fn narrowing_past_a_global_store_ignores_stack_global_disjoint() -> Result<()> {
         Ok(())
     })?;
 
-    // Granted, so the alias analyzer calls the global store disjoint and
-    // narrowing is possible at all. At the floor both analyzers agree and
-    // there is nothing for the narrowing to ignore.
     fg.assume(&crate::AssumptionOptions {
         stack_global_disjoint: true,
         ..crate::AssumptionOptions::none()
@@ -2015,18 +2013,21 @@ fn narrowing_past_a_global_store_ignores_stack_global_disjoint() -> Result<()> {
         .expect("nothing stores to the slot, so the load survives");
     let mem = fg.node_inputs(load)[0];
     assert!(
-        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Store(_)),
-        "the global Store must stay on the load's memory chain, got {:?}",
+        matches!(fg.node_kind(fg.producer(mem)), NodeKind::InitialMemory),
+        "the load must narrow past the global Store, got {:?}",
         fg.node_kind(fg.producer(mem)),
     );
     Ok(())
 }
 
-/// `noalias_allocators` is a claim too: a listed callee steps a stack load past
-/// itself for forwarding, while the narrowed edge, which the jump-table walk
-/// reads with no call relaxation, still stops at the call.
+/// `noalias_allocators` gives the narrowing heap identity, so a stack load's
+/// edge steps past a store through the allocation; but a listed callee steps
+/// it past itself only for forwarding, and the narrowed edge, which the
+/// jump-table walk reads with no call relaxation, stops at the call.
+///
+/// Mutations: narrow under `MemPurpose::Structural`; under `MemPurpose::Forward`.
 #[test]
-fn narrowing_across_an_allocator_ignores_noalias_allocators() -> Result<()> {
+fn narrowing_past_a_heap_store_stops_at_its_allocator() -> Result<()> {
     const ALLOCATOR: u64 = 0x1000;
     let sp = sp32_vn();
     // A return register, without which the call has no fresh heap base and
@@ -2050,7 +2051,9 @@ fn narrowing_across_an_allocator_ignores_noalias_allocators() -> Result<()> {
     b.write_variable(&sp, call_sp)?;
     let target = b.build_int_const(ALLOCATOR, ValueType::int(32))?;
     let (_, rets) = b.build_call(target, &[], &[ret_reg], 0)?;
-    // Nothing is stored, so the load can only narrow.
+    let value = b.build_int_const(0x22u64, ValueType::int(32))?;
+    b.build_store(rets[0], value, rsleigh::VnSpace::RAM)?;
+    // Nothing is stored to the slot, so the load can only narrow.
     let eight = b.build_int_const((-8i64) as u64, ValueType::int(32))?;
     let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(32))?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;

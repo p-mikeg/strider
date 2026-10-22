@@ -186,7 +186,7 @@ float_arg 19 [%v62]
 %v24:i32 = initial_var[r4]
 %v25:mem = store[r] %v21, %v23, %v24
 %v26:i32 = iconst[0x304dc]
-%v27:i32 = load[r] %v25, %v26
+%v27:i32 = load[r] %v1, %v26
 %v28:i32 = iconst[0x2]
 %v29:i32 = int.shift_left %v20, %v28
 %v30:i32 = iconst[0x1e]

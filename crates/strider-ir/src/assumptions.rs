@@ -116,9 +116,9 @@ pub struct AssumptionOptions {
     /// [`escape_analysis`](Self::escape_analysis) documents, without that knob
     /// being set.
     ///
-    /// Passes that must hold without the claim read a heap base as a may-alias
-    /// opaque pointer rather than a distinct allocation, so setting this
-    /// widens what folds, never what a permanent rewrite names.
+    /// `LoadForward`'s narrowing reads the distinct allocation but steps
+    /// through no listed call, and incoming-argument detection's narrowing
+    /// reads a heap base as a may-alias opaque pointer.
     pub noalias_allocators: rustc_hash::FxHashSet<u64>,
     /// When the function's frame is provably private (no stack address escapes
     /// to any callee), forward a spill `Load` across a `Call` and step it past
@@ -146,7 +146,11 @@ pub struct AssumptionOptions {
     /// reaches, and code that hands the slot's address to a callee.  A store
     /// the address spine DOES place is checked against the slot whatever this
     /// says; a guessed location is not a placement, so clearing this is what
-    /// brings one in.  Default ON.
+    /// brings one in.  A store `LoadForward`'s narrowing stepped the return
+    /// load past, under
+    /// [`stack_global_disjoint`](Self::stack_global_disjoint) or
+    /// [`noalias_allocators`](Self::noalias_allocators), is not on the walk.
+    /// Default ON.
     ///
     /// The shape that needs it is an ARM `push {lr}; ... bl ...; pop {pc}`
     /// return: the call in between writes memory the walk cannot place, and
