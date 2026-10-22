@@ -578,6 +578,8 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     // The arithmetic, rounding and conversion forms set FPSCR status bits
     // (Power ISA 3.0B, Book I chapter 7), which `mcrfs` and `mffs` read back.
     // The permutes, moves, sign and exponent ops and `xscvspdpn` set none.
+    // `xvcmpne{dp,sp}[.]` are draft encodings no final ISA holds and only the
+    // sla decodes; their footprint is `xvcmpeqdp[.]`'s.
     ("vsx207_11", PPC_FP_RESULT),      // xsaddsp
     ("vsx207_14", PPC_FP_RESULT),      // xscvsxdsp
     ("vsx207_15", PPC_FP_RESULT),      // xscvuxdsp
@@ -733,7 +735,7 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
     // the three families is register compute touching no RAM, its destination
     // written from the op's output. The stock sla wrote some nowhere, and the
     // fork patches them: `xsiexpdp`'s XT, `vminud`'s vrD, and CR field BF of
-    // the seven compares.
+    // the seven `PPC_FPCC` / `PPC_FPCC_VX` compares.
     if name.starts_with("altv") || name.starts_with("vsx") || name.starts_with("vector") {
         return Some(PURE);
     }
