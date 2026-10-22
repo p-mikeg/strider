@@ -104,7 +104,11 @@ pub(crate) fn eval(f: &Function, v: ValueId, init: u128) -> Val {
         NodeKind::IntToFloat => {
             let x = strider_ir::eval::sign_extend(int(0), in_ty(0), ValueType::int(128))
                 .expect("sign extend") as i128;
-            Val::Float(narrow(ty, x as f64))
+            // Rounded once, to the destination's own precision.
+            Val::Float(match width(ty) {
+                32 => f64::from(x as f32),
+                _ => narrow(ty, x as f64),
+            })
         }
         NodeKind::FloatToInt => {
             // Out of range or NaN gives the x86 integer indefinite, the sign
@@ -196,15 +200,23 @@ fn control_live(f: &Function, c: ValueId, init: u128) -> bool {
     }
 }
 
-/// The `rax` an x86-64 function over `bytes` at `base` returns, with the
-/// function to evaluate it in.
-fn analyze_rax(bytes: Vec<u8>, base: u64) -> (Function, ValueId) {
+/// The `rax` an x86-64 function over `bytes` at `base` returns, lifted under
+/// `claims`, with the function to evaluate it in.
+fn analyze_rax(
+    bytes: Vec<u8>,
+    base: u64,
+    claims: &strider_orchestrator::opt::AssumptionOptions,
+) -> (Function, ValueId) {
     let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
         strider_ir_test_utils::MockRom::raw_bytes(base, bytes.clone()),
     );
     let (mut strider, cc) = super::strider_over_bytes(super::Arch::X64, bytes, base, Some(rom));
+    let opts = strider_orchestrator::AnalyzeOptions {
+        assumptions: claims.clone(),
+        ..Default::default()
+    };
     let f = strider
-        .analyze(base, &cc, &Default::default(), None)
+        .analyze(base, &cc, &opts, None)
         .expect("analyze")
         .function;
     let ret = f
@@ -226,7 +238,16 @@ fn as_rax(val: Val) -> u64 {
 /// destination's other bits masked in, so the value must not depend on the
 /// initial registers.
 pub(crate) fn returned_rax(bytes: Vec<u8>, base: u64) -> u64 {
-    let (f, v) = analyze_rax(bytes, base);
+    returned_rax_under(bytes, base, &Default::default())
+}
+
+/// [`returned_rax`], lifted under `claims`.
+pub(crate) fn returned_rax_under(
+    bytes: Vec<u8>,
+    base: u64,
+    claims: &strider_orchestrator::opt::AssumptionOptions,
+) -> u64 {
+    let (f, v) = analyze_rax(bytes, base, claims);
     let [zeros, ones] = [0, u128::MAX].map(|init| as_rax(eval(&f, v, init)));
     assert_eq!(zeros, ones, "rax depends on an initial register");
     zeros
@@ -234,6 +255,16 @@ pub(crate) fn returned_rax(bytes: Vec<u8>, base: u64) -> u64 {
 
 /// The returned `rax` with every initial register reading `init`.
 pub(crate) fn returned_rax_from(bytes: Vec<u8>, base: u64, init: u128) -> u64 {
-    let (f, v) = analyze_rax(bytes, base);
+    returned_rax_from_under(bytes, base, init, &Default::default())
+}
+
+/// [`returned_rax_from`], lifted under `claims`.
+pub(crate) fn returned_rax_from_under(
+    bytes: Vec<u8>,
+    base: u64,
+    init: u128,
+    claims: &strider_orchestrator::opt::AssumptionOptions,
+) -> u64 {
+    let (f, v) = analyze_rax(bytes, base, claims);
     as_rax(eval(&f, v, init))
 }

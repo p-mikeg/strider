@@ -393,6 +393,15 @@
 
 ### Added, Python
 
+- `AssumptionOptions.mxcsr_rounds_to_nearest` (default `True`): the x86
+  SSE rounding mode, MXCSR.RC, is round to nearest even at every conversion
+  that rounds by it (`cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`,
+  `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`,
+  `cvtsi2ss`, the 64-bit `cvtsi2sd` and the scalar VEX forms). Off, each one
+  reads RC and selects among nearest even, down, up and toward zero, so a
+  mode `ldmxcsr` sets folds. `AssumptionOptions.none()` clears it; the lift
+  reads it, so `optimize` refuses to add it. Before, every one of these
+  rounded to nearest even and `none()` did not lift that premise.
 - `CallingConvention.custom(reg_args_adjoin_stack_args=True)` declares that
   the argument registers have stack homes just below the stack arguments, as
   the ARM, MIPS and PowerPC64 presets do; a custom convention for such an ABI
@@ -889,6 +898,9 @@
 
 ### Added, Rust
 
+- `AssumptionOptions::mxcsr_rounds_to_nearest`, default on, read by the
+  lift through the fork's new last x86 user op `mxcsrRoundingControl`
+  (`strider_target::call_other_abi::is_mxcsr_rounding_control`).
 - `strider_pattern::instantiate_guarded`: `instantiate` with a check run
   once every template node's kind is resolved, before the first node is
   created.
