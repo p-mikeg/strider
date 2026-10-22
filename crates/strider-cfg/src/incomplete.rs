@@ -44,7 +44,8 @@ pub enum Reason {
     /// No bytes back it: the edge leaves through an empty `TailCall` stub. The
     /// address is the instruction that could not be read whole, so a MIPS
     /// branch whose delay slot is unmapped names itself. An unmapped seeded
-    /// arm is named with no stub: the arm is dropped. An unmapped ENTRY fails
+    /// arm, or a fall-through into unmapped bytes off one, is named with no
+    /// stub: the arm is dropped. An unmapped ENTRY fails
     /// the whole build instead.
     UnmappedTarget,
     /// Holds no instruction: bytes Sleigh rejects, or

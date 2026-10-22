@@ -92,7 +92,8 @@ def test_a_seed_the_build_seated_nowhere_is_not_reported():
 
 def test_a_seed_the_build_did_seat_is_still_reported():
     opts = strider.cfg.CfgOptions(known_targets={_DISPATCH: [0x1100]})
-    cfg = _x86_64(_INDIRECT + bytes(0x100) + _STRAIGHT).build_cfg(
+    # The arm is `_STRAIGHT`, at 0x1100.
+    cfg = _x86_64(_INDIRECT + bytes(0xFB) + _STRAIGHT).build_cfg(
         _BASE,
         opts,
     )

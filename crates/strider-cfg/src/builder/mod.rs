@@ -3,7 +3,9 @@ mod region_builder;
 mod split;
 
 pub(crate) use flow::{FlowCommit, FlowContext, FlowVars};
-use region_builder::{RegionBuilder, is_unmapped_start, not_code_addr, not_code_at, past_end_addr};
+use region_builder::{
+    RegionBuilder, is_unmapped_start, not_code_addr, not_code_at, past_end_addr, unmapped_addr,
+};
 
 use std::collections::BTreeMap;
 
@@ -881,6 +883,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         if seeded_by.is_some() {
             let (at, reason) = if is_unmapped_start(&e, address) {
                 (address, crate::Reason::UnmappedTarget)
+            } else if let Some(gap) = unmapped_addr(&e) {
+                (
+                    PcodeInsnAddr::at_machine_start(gap),
+                    crate::Reason::UnmappedTarget,
+                )
             } else if let Some(end) = past_end_addr(&e) {
                 (end, crate::Reason::PastFunctionEnd)
             } else if let Some(bad) = not_code_addr(&e) {

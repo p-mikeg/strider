@@ -99,6 +99,11 @@ pub(super) fn not_code_addr(err: &anyhow::Error) -> Option<u64> {
     err.downcast_ref::<NotCode>().map(|n| n.addr)
 }
 
+/// The address `err` could not read, wherever the decode started.
+pub(super) fn unmapped_addr(err: &anyhow::Error) -> Option<u64> {
+    err.downcast_ref::<UnmappedAddr>().map(|u| u.0)
+}
+
 /// A seeded arm's code fell through past the function's end, at this address.
 #[derive(Debug)]
 pub(super) struct PastEnd(pub(super) PcodeInsnAddr);
@@ -964,7 +969,13 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             let lift_res = match self.lift_code(cur_addr.machine_addr.addr) {
                 Ok(lift_res) => lift_res,
                 Err(e) if cur_addr.machine_addr != self.start_addr.machine_addr => {
+                    // Off a seeded arm, falling into data or unmapped bytes
+                    // drops the arm, as running past the end does.
+                    let off_arm = self.builder.descent.is_some();
                     if is_unmapped_start(&e, cur_addr) {
+                        if off_arm {
+                            return Err(e);
+                        }
                         return self.seal_at_unmapped_fallthrough(cur_addr);
                     }
                     let Some(&NotCode { marked_data, .. }) = not_code_at(&e, cur_addr) else {
@@ -973,7 +984,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     if self.seal_at_call_not_returning(cur_addr)? {
                         return Ok(());
                     }
-                    if marked_data {
+                    if marked_data && !off_arm {
                         self.seal_at_fallthrough_stub(cur_addr)?;
                         self.builder
                             .incomplete

@@ -514,6 +514,11 @@
 
 ### Fixed
 
+- Python: a seeded jump-table arm whose code falls through into
+  `data_ranges` or unmapped bytes is dropped (Rust:
+  `Cfg::undecodable_seeded_targets` names it), as one falling past the
+  function's end is. It was kept with a stub, so a bad arm survived with
+  its garbage and the resolver never froze its site.
 - Python: in a linked image with no `.dynsym`, a dynamic relocation naming a
   symbol is not computed. A read-only word is a hole in every view, and a
   writable one serves its file bytes. It resolved through `.symtab`, whose
