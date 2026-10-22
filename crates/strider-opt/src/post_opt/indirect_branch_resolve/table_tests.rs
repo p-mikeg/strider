@@ -272,6 +272,64 @@ fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
     );
 }
 
+/// A jump table at 0x4000 of 256 entries, and 256 bytes of a byte table at
+/// 0xA000.
+struct TwoTables(MockRom, MockRom);
+
+impl ReadOnlyMemory for TwoTables {
+    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
+        self.0.read(addr, buf).or_else(|_| self.1.read(addr, buf))
+    }
+}
+
+fn two_tables() -> TwoTables {
+    TwoTables(
+        MockRom::strided(0x4000, 4, (0..256).map(|i| 0x5000 + i).collect(), 4),
+        MockRom::raw_bytes(0xA000, vec![0; 256]),
+    )
+}
+
+/// `jump[zext(load8(base + offset))]` over an unbounded `base` (a register, as
+/// `idx` is). Where the offset is in ROM, the byte is a cell of that table.
+fn byte_at(fb: &mut FunctionBuilder, offset: u64) -> ValueId {
+    let base = build_non_const_idx(fb);
+    let off = fb.build_int_const(offset, ValueType::int(32)).unwrap();
+    let addr = fb
+        .build_int_binary_operation(base, off, IntBinaryOp::Add, ValueType::int(32))
+        .expect("add");
+    let byte = fb
+        .build_load(addr, VnSpace::RAM, ValueType::int(8))
+        .expect("byte load");
+    let idx = fb
+        .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
+        .expect("zero-extend");
+    table_target(fb, idx, 4, 0x4000)
+}
+
+/// A byte at a ROM table's base plus a register is a cell of that table, so
+/// its width bounds nothing.
+/// Mutation: read no constant as ROM in `loads_outside_rom`.
+#[test]
+fn a_width_bounded_byte_of_a_rom_table_is_excluded_as_the_index() {
+    let (g, _) = build_with_target(|fb| byte_at(fb, 0xA000));
+    assert_eq!(classify(&g, Some(&two_tables())), None);
+}
+
+/// A byte at a register plus an offset that is no address is a field read
+/// through a pointer: any of its 256 values may index the table.
+/// Mutation: read every constant as ROM in `loads_outside_rom`.
+#[test]
+fn a_width_bounded_byte_through_a_pointer_is_the_index() {
+    let (g, _) = build_with_target(|fb| byte_at(fb, 0xcb));
+    let want: Vec<u64> = (0..256).map(|i| 0x5000 + i).collect();
+    match classify(&g, Some(&two_tables())) {
+        Some(ResolvedTargets::Multiple(ts)) => {
+            assert_eq!(ts.iter().map(|t| t.addr).collect::<Vec<_>>(), want);
+        }
+        other => panic!("a field index must resolve; got {other:?}"),
+    }
+}
+
 /// The same table ENTRY scaled the way PowerPC `slwi` lifts, `And(entry << 2,
 /// ~3)`: the mask clears only bits the shift zeroed, so it is still the cell's
 /// 256 values and still defers.
@@ -408,7 +466,7 @@ fn decompose_index_picks_shallowest_narrowed_index() {
     let target_value = g.indirect_branch_target(branch);
     let mut ranges = crate::value_range::RangeMap::new(&g).unwrap();
     let chain = dominator_chain(&g, target_value).expect("a dispatch cone");
-    match decompose_index(&g, &mut ranges, &chain, branch) {
+    match decompose_index(&g, None, &mut ranges, &chain, branch) {
         Some(hit) => assert_eq!(
             (hit.range.lo(), hit.range.hi(), hit.rebase),
             (0, 7, 0),
