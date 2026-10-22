@@ -364,7 +364,8 @@ def test_mxcsr_rounds_to_nearest_reaches_the_lift(nearest):
         strider.lift.LifterOptions(assumptions=claims),
     )
     assert function.assumptions.mxcsr_rounds_to_nearest is nearest
-    assert ("initial_var[MXCSR]" in function.to_text()) is not nearest
+    mxcsr = strider.pattern.initial_var_for(arch.reg("MXCSR"))
+    assert bool(function.find_all(mxcsr)) is not nearest
 
 
 #: msr cpsr_c, r0; bx lr: the mode comes from an argument, so only the claim
