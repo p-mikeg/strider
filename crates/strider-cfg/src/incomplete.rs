@@ -33,8 +33,9 @@ pub enum Reason {
     /// The ISA MODE only. Two edges that agree on the mode but disagree on
     /// another committed var (an edge into an ARM IT block, on `condit`) are
     /// not reported: the first arrival owns the bytes. An edge the entry
-    /// reaches without a seeded arm wins over an arm, which is dropped; any
-    /// other pair is won by work-queue order, so neither decode is trusted.
+    /// reaches without a seeded arm wins over an arm, and the `Switch` loses
+    /// every arm at that address, in both modes; any other pair is won by
+    /// work-queue order, so neither decode is trusted.
     IsaModeConflict,
     /// Interior to a region but off every boundary one can start at (a MIPS
     /// delay slot too), or a region start a later decode stepped over. A
