@@ -115,10 +115,12 @@ impl Function {
 
     /// The claims in force: the union of every [`Self::assume`], none before
     /// the first.  Nothing withdraws one, so only a fresh lift drops one.
-    /// The exception is
-    /// [`msr_register_keeps_mode`](crate::AssumptionOptions::msr_register_keeps_mode),
-    /// which only the lift reads: assumed after it, the claim is listed here
-    /// while the graph does not rest on it.
+    /// The exceptions are
+    /// [`msr_register_keeps_mode`](crate::AssumptionOptions::msr_register_keeps_mode)
+    /// and
+    /// [`mxcsr_rounds_to_nearest`](crate::AssumptionOptions::mxcsr_rounds_to_nearest),
+    /// which only the lift reads: assumed after it, such a claim is listed
+    /// here while the graph does not rest on it.
     #[inline]
     pub fn assumptions(&self) -> &crate::AssumptionOptions {
         self.side_tables.assumptions()
@@ -130,8 +132,10 @@ impl Function {
     /// [`Self::stack_offset`] then reads nothing until a run or
     /// `strider_opt::refresh_memory_classes`.  A function never given a claim
     /// is optimized at the sound floor.  The lift seeds its claims here, so
-    /// [`msr_register_keeps_mode`](crate::AssumptionOptions::msr_register_keeps_mode),
-    /// which only the lift reads, is recorded without effect when assumed
+    /// [`msr_register_keeps_mode`](crate::AssumptionOptions::msr_register_keeps_mode)
+    /// and
+    /// [`mxcsr_rounds_to_nearest`](crate::AssumptionOptions::mxcsr_rounds_to_nearest),
+    /// which only the lift reads, are recorded without effect when assumed
     /// after it.
     pub fn assume(&mut self, claims: &crate::AssumptionOptions) {
         if self.side_tables.assume(claims) {
