@@ -599,16 +599,12 @@ fn a_mips_dynamic_relocation_section_off_the_dynsym_is_a_hole() {
     );
 }
 
-/// Every region's patch-window length, from its `Debug` form.
-fn patch_windows(elf: &OwnedElf) -> Vec<usize> {
+/// How many patches can overlap each region.
+fn patch_counts(elf: &OwnedElf) -> Vec<usize> {
     elf.regions(RegionSource::Auto, LoadFilter::AllAllocatable, true)
         .unwrap()
         .iter()
-        .map(|r| {
-            let dbg = format!("{r:?}");
-            let n = dbg.split("patch_window: ").nth(1).expect("patch_window");
-            n.trim_end_matches(" }").parse().unwrap()
-        })
+        .map(|r| r.patch_count())
         .collect()
 }
 
@@ -633,10 +629,10 @@ fn a_relocation_table_named_twice_is_walked_once() {
         ("x64_ifunc_lib.elf", ".rela.dyn"),
         ("x64_ifunc.o", ".rela.text"),
     ] {
-        let once = patch_windows(&open(name));
+        let once = patch_counts(&open(name));
         assert!(once.iter().any(|&n| n != 0), "{name}: some patch");
         assert_eq!(
-            patch_windows(&table_twice(name, table, ".comment")),
+            patch_counts(&table_twice(name, table, ".comment")),
             once,
             "{name}"
         );
