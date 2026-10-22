@@ -119,7 +119,8 @@ impl PyFunction {
 
     /// The claims in force: the ones `analyze` ran under, plus every set
     /// `Lifter.optimize` added since. A copy; no optimize withdraws a claim,
-    /// and none adds `msr_register_keeps_mode`, which only the lift reads.
+    /// and none adds `msr_register_keeps_mode` or `mxcsr_rounds_to_nearest`,
+    /// which only the lift reads.
     #[getter]
     fn assumptions(&self) -> PyResult<crate::options::PyAssumptionOptions> {
         self.with_read_value(|f| crate::options::PyAssumptionOptions {
