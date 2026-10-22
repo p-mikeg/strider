@@ -112,6 +112,7 @@ def test_assumptions_default_to_a_fresh_group_with_the_pipeline_claims_on():
         "assume_incoming_args_survive_calls",
         "return_slots_survive_untracked_writes",
         "msr_register_keeps_mode",
+        "mxcsr_rounds_to_nearest",
     ):
         assert getattr(a.assumptions, name) is True
     for name in (
@@ -186,6 +187,7 @@ def test_with_cfg_carries_over_every_other_field():
         escape_analysis=True,
         return_slots_survive_untracked_writes=False,
         msr_register_keeps_mode=False,
+        mxcsr_rounds_to_nearest=False,
     )
     opts = strider.lift.LifterOptions(
         cfg=strider.cfg.CfgOptions(function_max_size=64),
@@ -281,6 +283,7 @@ _ASSUMPTION_FIELDS = (
     "escape_analysis",
     "return_slots_survive_untracked_writes",
     "msr_register_keeps_mode",
+    "mxcsr_rounds_to_nearest",
 )
 
 
@@ -309,7 +312,7 @@ def test_assumption_options_repr():
         "assume_incoming_args_survive_calls=True, distinct_sp_bases_disjoint=False, "
         "callee_preserves_stack_args=False, noalias_allocators=[], "
         "escape_analysis=False, return_slots_survive_untracked_writes=True, "
-        "msr_register_keeps_mode=True)"
+        "msr_register_keeps_mode=True, mxcsr_rounds_to_nearest=True)"
     )
 
 
@@ -332,6 +335,36 @@ def test_msr_register_keeps_mode_defaults_true_and_round_trips():
     assert on.msr_register_keeps_mode is True
     assert (A.none() | on).msr_register_keeps_mode is True
     assert A.none() != on
+
+
+def test_mxcsr_rounds_to_nearest_defaults_true_and_round_trips():
+    A = strider.lift.AssumptionOptions
+    assert A().mxcsr_rounds_to_nearest is True
+    assert A.none().mxcsr_rounds_to_nearest is False
+    off = A(mxcsr_rounds_to_nearest=False)
+    assert "mxcsr_rounds_to_nearest=False" in repr(off)
+    assert eval(repr(off), {"AssumptionOptions": A}) == off
+    on = A.none(mxcsr_rounds_to_nearest=True)
+    assert (A.none() | on).mxcsr_rounds_to_nearest is True
+    assert A.none() != on
+
+
+#: cvtsd2si eax, xmm0; ret: rounds by MXCSR.RC, which only the claim fixes.
+_CVTSD2SI = b"\xf2\x0f\x2d\xc0\xc3"
+
+
+@pytest.mark.parametrize("nearest", [True, False])
+def test_mxcsr_rounds_to_nearest_reaches_the_lift(nearest):
+    arch = strider.sleigh.SleighArch.x86_64()
+    lift = strider.lift.lifter(arch, strider.reader.BufferReader(0x1000, _CVTSD2SI))
+    claims = strider.lift.AssumptionOptions(mxcsr_rounds_to_nearest=nearest)
+    cfg, function, unresolved = lift.analyze(
+        0x1000,
+        strider.sleigh.CallingConvention.x86_64_systemv(),
+        strider.lift.LifterOptions(assumptions=claims),
+    )
+    assert function.assumptions.mxcsr_rounds_to_nearest is nearest
+    assert ("initial_var[MXCSR]" in function.to_text()) is not nearest
 
 
 #: msr cpsr_c, r0; bx lr: the mode comes from an argument, so only the claim
