@@ -83,7 +83,7 @@ arg 1 [%v16]
 %v55:mem = store[r] %v51, %v53, %v54
 %v56:i32 = iconst[0x8049040]
 %v57:ctrl, %v58:mem, %v59:i32<EAX>, %v60:i32<EDX>, %v61:i80<ST0>, %v62:i80<ST1>, %v63:i128<XMM0>, %v64:i32<ECX>, %v65:i8<CF>, %v66:i8<PF>, %v67:i8<ZF>, %v68:i8<SF>, %v69:i8<OF>, %v70:i32<EIP> = call %v22, %v55, %v56, %v53, %v50, %v25, %v29, %v50, %v46, %v29, %v36, %v36
-%v71:ctrl, %v72:mem = callother[16 "halt"] %v57, %v58
+%v71:ctrl, %v72:mem = callother[1631 "halt"] %v57, %v58
 return %v71, %v72, %v59, %v60, %v61, %v62, %v63
 
 == _dl_relocate_static_pie @0x80490c0
