@@ -1070,9 +1070,10 @@ fn mips_half_field_skew(r: &RelocInfo, arch: A, endian_le: bool) -> u64 {
 /// `dynamic_relocations()` skips, their `sh_link` naming another table than
 /// `.dynsym`, or none when there is a `.dynsym`: an unstripped static
 /// executable's `.rela.plt`, linked to `.symtab`, or a table whose link was
-/// left 0. Its `r_sym == 0` entries, the IRELATIVE slots among them, are
-/// applied as the dynamic table's are. An entry naming a symbol is not
-/// computed: which table its index means is in doubt.
+/// left 0. Its `r_sym == 0` entries of a [`classify`] row, the IRELATIVE
+/// slots among them, are applied as the dynamic table's are. Every other
+/// entry is a hole over the field its row names, else over a word: one naming
+/// a symbol because which table its index means is in doubt.
 ///
 /// On MIPS every entry is a hole: its ELF64 type word is not decoded here.
 ///
@@ -1094,17 +1095,28 @@ fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>, walked: &object::File<'_>) {
             addr,
             avail: u64::MAX,
         };
-        if r.sym.is_none() && !mips {
-            apply_one_relocation(ctx, site, &r, None);
-            continue;
-        }
-        let width = match classify(obj.architecture(), &r) {
-            Some(Kind::Marker) if !mips => continue,
-            Some(Kind::Compute(_, field)) if !mips => field.width(),
-            _ => word,
+        let kind = if mips {
+            None
+        } else {
+            classify(obj.architecture(), &r)
         };
-        let holder = ctx.holder(site, addr, width);
-        ctx.unmodelled(holder, addr, width, r.type_word());
+        let width = match kind {
+            Some(Kind::Marker) => continue,
+            Some(Kind::Compute(..)) if r.sym.is_none() => {
+                apply_one_relocation(ctx, site, &r, None);
+                continue;
+            }
+            Some(Kind::Compute(_, field)) => field.width(),
+            None => word,
+        };
+        // A field running past its mapping is a hole over the bytes mapped.
+        if let Some(width) = (1..=width)
+            .rev()
+            .find(|&w| ctx.holder(site, addr, w).is_some())
+        {
+            let holder = ctx.holder(site, addr, width);
+            ctx.unmodelled(holder, addr, width, r.type_word());
+        }
     }
 }
 

@@ -4,8 +4,9 @@
 # not hold, and objects whose GOT references strider resolves, for the ELF
 # reader's tests, plus a ppc64 ELFv2 image whose calls enter at local
 # entries, a microMIPS image the loader refuses, an object whose
-# R_X86_64_32 values must zero-extend, a MIPS library with a relro
-# pointer and a ppc64 ELFv1 image: out/<name>.{elf,o}, from src/.
+# R_X86_64_32 values must zero-extend, a MIPS library and an x86-64 PIE
+# with a relro pointer and a ppc64 ELFv1 image: out/<name>.{elf,o}, from
+# src/.
 #
 # Not per-arch like ../Makefile: each image needs a link of its own (a shared
 # library, a PIE, an executable against that library), and the golden suite
@@ -43,7 +44,7 @@ IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           x86_got_call_nopic.o x86_got_call_pic.o aarch64_got_addend.o \
           ppc64le_local_entry.elf ppc64le_local_entry_stripped.elf \
           x64_nodynsym.elf mips32be_micromips.elf x64_abs32.o \
-          mips32be_relro.elf ppc64be_elfv1.elf
+          mips32be_relro.elf x64_relro_pie.elf ppc64be_elfv1.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -106,8 +107,10 @@ $(OUTDIR)/mips32be_micromips.elf: src/micromips.c | $(OUTDIR)
 $(OUTDIR)/x64_abs32.o: src/x64_abs32.s | $(OUTDIR)
 	$(X64) -c $< -o $@
 
-$(OUTDIR)/mips32be_relro.elf: src/mips_relro.c | $(OUTDIR)
+$(OUTDIR)/mips32be_relro.elf: src/relro.c | $(OUTDIR)
 	$(MIPS32) $(CFLAGS) -shared -Wl,-z,relro,-z,now $< -o $@
+$(OUTDIR)/x64_relro_pie.elf: src/relro.c | $(OUTDIR)
+	$(X64) $(CFLAGS) -pie -Wl,-z,relro,-z,now -Wl,-e,get $< -o $@
 
 # ELFv1, GCC's descriptor symbols beside an asm dot-symbol pair.
 $(OUTDIR)/ppc64be_elfv1.elf: src/ppc64_elfv1.c src/ppc64_elfv1_dot.s | $(OUTDIR)
