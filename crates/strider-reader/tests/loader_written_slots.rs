@@ -485,3 +485,29 @@ fn a_dynamic_relocation_with_no_dynsym_is_a_hole() {
         assert_hole(rom_word(&reader, slot, 8, true), abs64, "linked to 0");
     }
 }
+
+/// The PIE with `.data.rel.ro`'s `sh_size` reaching into `.dynamic`, which
+/// stays writable: the served range stops where `.dynamic` starts, so none of
+/// it is served from the ROM view.
+#[test]
+fn a_served_sh_size_past_the_next_section_serves_none_of_it() {
+    let elf = patched("x64_ifunc_pie.elf", |bytes, obj| {
+        // Elf64_Ehdr.e_shoff, then Elf64_Shdr.sh_size of `.data.rel.ro`.
+        let shoff = u64::from_le_bytes(bytes[0x28..0x30].try_into().unwrap()) as usize;
+        let relro = obj.section_by_name(".data.rel.ro").unwrap().index().0;
+        let at = shoff + relro * 64 + 0x20;
+        bytes[at..at + 8].copy_from_slice(&0x1000u64.to_le_bytes());
+    });
+    let obj = elf.checked_file().unwrap();
+    let relro = obj.section_by_name(".data.rel.ro").unwrap().address();
+    let dynamic = obj.section_by_name(".dynamic").unwrap().address();
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    let err = rom_word(&reader, dynamic, 8, true).expect_err(".dynamic is writable");
+    assert!(err.contains("not mapped"), "{err}");
+    // Served: `f_ptr`, the IFUNC word, is a hole rather than unmapped.
+    assert_hole(
+        rom_word(&reader, relro, 8, true),
+        object::elf::R_X86_64_IRELATIVE,
+        ".data.rel.ro",
+    );
+}

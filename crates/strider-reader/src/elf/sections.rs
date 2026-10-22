@@ -129,8 +129,10 @@ fn is_relocated_got_name(name: &str) -> bool {
     name == ".got" || name == ".data.rel.ro" || name.starts_with(".data.rel.ro.")
 }
 
-/// `[start, end)` of every such section, at its [`ElfSectionLayout`] base and
-/// over its whole declared extent.
+/// `[start, end)` of every such section, at its [`ElfSectionLayout`] base,
+/// over its declared extent up to the next allocated section's start: an
+/// `sh_size` reaching past that is malformed, and would serve that section's
+/// writable bytes.
 ///
 /// The name alone is not enough, because every address a range here names stops
 /// being cut out of the read-only image: the section has to be one the loader
@@ -140,21 +142,32 @@ fn is_relocated_got_name(name: &str) -> bool {
 /// per-thread block). A name-only match carves out whatever sits at the
 /// address, which for an unmapped section is another section's writable bytes.
 fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> AddressSet {
-    let mut out = Vec::new();
+    let mut starts = Vec::new();
+    let mut served = Vec::new();
     for sec in obj.sections() {
         let object::read::SectionFlags::Elf { sh_flags } = sec.flags() else {
             continue;
         };
-        let mapped_writable = sh_flags & u64::from(object::elf::SHF_ALLOC) != 0
-            && sh_flags & u64::from(object::elf::SHF_WRITE) != 0
+        let mapped = sh_flags & u64::from(object::elf::SHF_ALLOC) != 0
             && sh_flags & u64::from(object::elf::SHF_TLS) == 0;
-        if sec.size() == 0 || !mapped_writable || !sec.name().is_ok_and(is_relocated_got_name) {
+        if sec.size() == 0 || !mapped {
             continue;
         }
         let base = layout.section_base(&sec);
-        out.push((base, base.saturating_add(sec.size())));
+        starts.push(base);
+        if sh_flags & u64::from(object::elf::SHF_WRITE) != 0
+            && sec.name().is_ok_and(is_relocated_got_name)
+        {
+            served.push((base, base.saturating_add(sec.size())));
+        }
     }
-    AddressSet::merged(out)
+    starts.sort_unstable();
+    for (lo, hi) in &mut served {
+        if let Some(&next) = starts.get(starts.partition_point(|&s| s <= *lo)) {
+            *hi = (*hi).min(next);
+        }
+    }
+    AddressSet::merged(served)
 }
 
 /// The mappings one walk accepted, and which addresses are writable.
