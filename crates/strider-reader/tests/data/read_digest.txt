@@ -4862,7 +4862,7 @@ ppc32be/elf_relocs.elf auto.code_ro.raw 00d35611a0aa160b
 ppc32be/elf_relocs.elf auto.code_ro.reloc 00d35611a0aa160b
 ppc32be/elf_relocs.elf auto.immutable.raw 00d35611a0aa160b
 ppc32be/elf_relocs.elf auto.immutable.reloc 00d35611a0aa160b
-ppc32be/elf_relocs.elf auto.immutable_got.reloc dadae28f07af940d
+ppc32be/elf_relocs.elf auto.immutable_got.reloc 693aa58c38256bd1
 ppc32be/elf_relocs.elf auto.all.raw 62e43b76e68043d0
 ppc32be/elf_relocs.elf auto.all.reloc f7ca9adc2311979e
 ppc32be/elf_relocs.elf auto.writable 28f598f0a5995067
@@ -4870,7 +4870,7 @@ ppc32be/elf_relocs.elf sections.code_ro.raw 56a4a0c73e0d268c
 ppc32be/elf_relocs.elf sections.code_ro.reloc 56a4a0c73e0d268c
 ppc32be/elf_relocs.elf sections.immutable.raw 56a4a0c73e0d268c
 ppc32be/elf_relocs.elf sections.immutable.reloc 56a4a0c73e0d268c
-ppc32be/elf_relocs.elf sections.immutable_got.reloc 7b2cc789854de4b6
+ppc32be/elf_relocs.elf sections.immutable_got.reloc a9313a36a12f3c99
 ppc32be/elf_relocs.elf sections.all.raw 68b75a4a4420ee17
 ppc32be/elf_relocs.elf sections.all.reloc 58442e0a9811fcc5
 ppc32be/elf_relocs.elf sections.writable 28f598f0a5995067
@@ -5312,7 +5312,7 @@ ppc32le/elf_relocs.elf auto.code_ro.raw db7d547586ab6093
 ppc32le/elf_relocs.elf auto.code_ro.reloc db7d547586ab6093
 ppc32le/elf_relocs.elf auto.immutable.raw db7d547586ab6093
 ppc32le/elf_relocs.elf auto.immutable.reloc db7d547586ab6093
-ppc32le/elf_relocs.elf auto.immutable_got.reloc a8e9a897e43f0be0
+ppc32le/elf_relocs.elf auto.immutable_got.reloc 98b351c568f49f2f
 ppc32le/elf_relocs.elf auto.all.raw 8e4fa8d7e66df140
 ppc32le/elf_relocs.elf auto.all.reloc 7c1ac521ba09a131
 ppc32le/elf_relocs.elf auto.writable ee08d6c5598f8959
@@ -5320,7 +5320,7 @@ ppc32le/elf_relocs.elf sections.code_ro.raw 94004569f62da177
 ppc32le/elf_relocs.elf sections.code_ro.reloc 94004569f62da177
 ppc32le/elf_relocs.elf sections.immutable.raw 94004569f62da177
 ppc32le/elf_relocs.elf sections.immutable.reloc 94004569f62da177
-ppc32le/elf_relocs.elf sections.immutable_got.reloc 0d1b88f5f4812a54
+ppc32le/elf_relocs.elf sections.immutable_got.reloc f56438777386f1a3
 ppc32le/elf_relocs.elf sections.all.raw 2b991239cb4254d3
 ppc32le/elf_relocs.elf sections.all.reloc 035b5504437b886e
 ppc32le/elf_relocs.elf sections.writable ee08d6c5598f8959
@@ -5510,7 +5510,7 @@ ppc32le/switch_masked_loop.o auto.code_ro.raw 9f94ad6d2bf9e1ad
 ppc32le/switch_masked_loop.o auto.code_ro.reloc 34d33726604442a9
 ppc32le/switch_masked_loop.o auto.immutable.raw 9f94ad6d2bf9e1ad
 ppc32le/switch_masked_loop.o auto.immutable.reloc 34d33726604442a9
-ppc32le/switch_masked_loop.o auto.immutable_got.reloc 34d33726604442a9
+ppc32le/switch_masked_loop.o auto.immutable_got.reloc c56bd259969f580d
 ppc32le/switch_masked_loop.o auto.all.raw 682f8f91afd74d2e
 ppc32le/switch_masked_loop.o auto.all.reloc c56bd259969f580d
 ppc32le/switch_masked_loop.o auto.writable 462ce1ef4b286bf9
@@ -5518,7 +5518,7 @@ ppc32le/switch_masked_loop.o sections.code_ro.raw 9f94ad6d2bf9e1ad
 ppc32le/switch_masked_loop.o sections.code_ro.reloc 34d33726604442a9
 ppc32le/switch_masked_loop.o sections.immutable.raw 9f94ad6d2bf9e1ad
 ppc32le/switch_masked_loop.o sections.immutable.reloc 34d33726604442a9
-ppc32le/switch_masked_loop.o sections.immutable_got.reloc 34d33726604442a9
+ppc32le/switch_masked_loop.o sections.immutable_got.reloc c56bd259969f580d
 ppc32le/switch_masked_loop.o sections.all.raw 682f8f91afd74d2e
 ppc32le/switch_masked_loop.o sections.all.reloc c56bd259969f580d
 ppc32le/switch_masked_loop.o sections.writable 462ce1ef4b286bf9
@@ -5546,7 +5546,7 @@ ppc32le/switch_phi_index.o auto.code_ro.raw 769f2eaa1e21c45d
 ppc32le/switch_phi_index.o auto.code_ro.reloc 46c882ea48be79e6
 ppc32le/switch_phi_index.o auto.immutable.raw 769f2eaa1e21c45d
 ppc32le/switch_phi_index.o auto.immutable.reloc 46c882ea48be79e6
-ppc32le/switch_phi_index.o auto.immutable_got.reloc 58a53c9c9d9c345b
+ppc32le/switch_phi_index.o auto.immutable_got.reloc a192e15741b5d1ea
 ppc32le/switch_phi_index.o auto.all.raw 9ac2be10a1245237
 ppc32le/switch_phi_index.o auto.all.reloc a192e15741b5d1ea
 ppc32le/switch_phi_index.o auto.writable a08802356e302409
@@ -5554,7 +5554,7 @@ ppc32le/switch_phi_index.o sections.code_ro.raw 769f2eaa1e21c45d
 ppc32le/switch_phi_index.o sections.code_ro.reloc 46c882ea48be79e6
 ppc32le/switch_phi_index.o sections.immutable.raw 769f2eaa1e21c45d
 ppc32le/switch_phi_index.o sections.immutable.reloc 46c882ea48be79e6
-ppc32le/switch_phi_index.o sections.immutable_got.reloc 58a53c9c9d9c345b
+ppc32le/switch_phi_index.o sections.immutable_got.reloc a192e15741b5d1ea
 ppc32le/switch_phi_index.o sections.all.raw 9ac2be10a1245237
 ppc32le/switch_phi_index.o sections.all.reloc a192e15741b5d1ea
 ppc32le/switch_phi_index.o sections.writable a08802356e302409
