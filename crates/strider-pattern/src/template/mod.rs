@@ -548,7 +548,12 @@ fn resolve_value_tys(
                 TemplateTy::InheritRoot => match group_ty.get(&groups.find(vtx)).copied() {
                     Some(t) => t,
                     None => match tied_by.get(&vtx) {
-                        Some((kind, slot)) if kind.operand_width(*slot) == OperandWidth::Free => {
+                        Some((kind, slot))
+                            if matches!(
+                                kind.operand_width(*slot),
+                                OperandWidth::Free | OperandWidth::Conversion(_)
+                            ) =>
+                        {
                             anyhow::bail!(
                                 "template node feeding {kind:?} input {slot} has no width: it \
                                  is built fresh with no declared type, and that input owes \
@@ -945,6 +950,7 @@ mod tests {
         let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
         assert!(err.contains("Extend"), "got: {err}");
         assert!(err.contains("has no width"), "got: {err}");
+        assert!(err.contains("capture_typed"), "got: {err}");
     }
 
     /// Two fresh constants compared against each other anchor nothing, so the
