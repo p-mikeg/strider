@@ -376,3 +376,69 @@ fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
         .expect("region at 0x10004");
     assert_eq!(thumb.insns.first().map(|i| i.len), Some(2));
 }
+
+/// A `jmp rax` seeded with arms 0x1002 and 0x1010, over `len` bytes, built
+/// with `data` marked as data.
+///
+/// ```text
+/// 1000  jmp rax
+/// 1002  ret               ; good arm
+/// 1010  xor eax, eax      ; bad arm, falls through to 0x1012
+/// ```
+fn build_falling_arm(len: usize, data: Option<std::ops::Range<u64>>) -> Cfg {
+    let mut bytes = image(len, &[(0x1000, &[0xff, 0xe0]), (0x1002, &[0xc3])]);
+    bytes[0x10..0x12].copy_from_slice(&[0x31, 0xc0]);
+    let arch = SleighArch::x86_64();
+    let sleigh = rsleigh::Sleigh::new(
+        arch.sla_spec(),
+        arch.pspec(),
+        BufMemReader::new(bytes, BASE),
+    )
+    .expect("create Sleigh");
+    let known = FxHashMap::from_iter([(
+        PcodeInsnAddr::at_machine_start(BASE),
+        ResolvedTargets::table(vec![0x1002.into(), 0x1010.into()]),
+    )]);
+    let opts = CfgOptions {
+        bound: strider_cfg::FunctionBound::size(0x20),
+        known_targets: &known,
+        data_ranges: strider_cfg::DataRanges::new(data),
+        ..CfgOptions::default()
+    };
+    DecodeEngine::new(arch, sleigh)
+        .expect("decode engine")
+        .build_cfg(BASE.into(), &opts)
+        .expect("one bad arm must not fail the function")
+}
+
+#[test]
+fn an_arm_falling_through_into_data_is_dropped() {
+    let cfg = build_falling_arm(0x20, Some(0x1012..0x1014));
+    assert_eq!(switch_arms(&cfg), [0x1002]);
+    assert_eq!(undecodable(&cfg), [0x1010]);
+    assert_eq!(undecodable_bytes(&cfg), [0x1012]);
+    assert!(
+        cfg.regions()
+            .all(|r| r.start_addr.machine_addr.addr != 0x1012)
+    );
+    assert_no_dangling_successor(&cfg);
+}
+
+#[test]
+fn an_arm_falling_through_into_unmapped_bytes_is_dropped() {
+    let cfg = build_falling_arm(0x12, None);
+    assert_eq!(switch_arms(&cfg), [0x1002]);
+    assert_eq!(undecodable(&cfg), [0x1010]);
+    assert_eq!(
+        cfg.incomplete()
+            .of(strider_cfg::Reason::UnmappedTarget)
+            .map(|a| a.machine_addr.addr)
+            .collect::<Vec<_>>(),
+        [0x1012],
+    );
+    assert!(
+        cfg.regions()
+            .all(|r| r.start_addr.machine_addr.addr != 0x1012)
+    );
+    assert_no_dangling_successor(&cfg);
+}
