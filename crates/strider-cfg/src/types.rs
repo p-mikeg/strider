@@ -67,7 +67,8 @@ pub enum RegionTerminator {
     /// already-discovered region, the region is the first half of a split, it
     /// closed on an explicit `Branch` opcode, or decoding fell through onto
     /// bytes that hold no instruction, unmapped or marked data by
-    /// [`crate::CfgOptions::data_ranges`], and the region edges to a
+    /// [`crate::CfgOptions::data_ranges`], or past the function's recorded
+    /// size ([`crate::Reason::PastFunctionEnd`]), and the region edges to a
     /// `TailCall` stub there.  A fall-through onto Sleigh-REJECTED bytes with
     /// no preceding call is an `Err` on the whole build instead.
     Unconditional,
@@ -137,9 +138,11 @@ pub enum RegionTerminator {
 /// left only at the terminator.  Ends on a `Branch`, `CondBranch`, `Return`, or
 /// `BranchIndirect` opcode, on a no-return `Call`/`CallOther`/`CallIndirect`,
 /// on a zero-pcode-op instruction (`build` segments at every one), when
-/// sequential decoding reaches an already-discovered region's start, and when
-/// it reaches bytes that hold no instruction: unmapped, rejected by Sleigh, or
-/// marked data by [`crate::CfgOptions::data_ranges`].
+/// sequential decoding reaches an already-discovered region's start, and where
+/// a fall-through cannot go on: the cases
+/// [`RegionTerminator::Unconditional`] and [`RegionTerminator::NoReturn`]
+/// list (unmapped or data bytes, the function's recorded size, Sleigh-rejected
+/// bytes after a call).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Region {
     pub start_addr: PcodeInsnAddr,
