@@ -143,7 +143,7 @@ pub(crate) fn apply_elf_relocations_with(
             pair,
         );
     });
-    symtab_linked_relocations(&mut ctx);
+    relocations_off_dynsym(&mut ctx);
     mips_implicit_got(&mut ctx);
     let got = got_regions(&ctx.got, ctx.endian_le)?;
     let mut patches = ctx.patches;
@@ -380,7 +380,7 @@ fn has_crel(obj: &object::File<'_>) -> bool {
 ///   index, which is 0 when there is no `.dynsym`. A static binary's
 ///   `.rela.plt` links to `.symtab`, so it walks no sites; `strip` rewrites
 ///   that link to 0, and the same binary then walks its IRELATIVE slots;
-///   unstripped, [`symtab_linked_relocations`] walks them.
+///   unstripped, [`relocations_off_dynsym`] walks them.
 fn for_each_reloc_site<F>(
     obj: &object::File<'_>,
     owners: &std::collections::BTreeSet<usize>,
@@ -1009,41 +1009,40 @@ fn mips_half_field_skew(r: &RelocInfo, arch: A, endian_le: bool) -> u64 {
     }
 }
 
-/// A linked image without `.dynsym` whose allocated relocation sections link
-/// to `.symtab`: an unstripped static executable's `.rela.plt`, which
-/// `object`'s `dynamic_relocations()` skips, its `sh_link` naming no dynamic
-/// symbol table. Its `r_sym == 0` entries, the IRELATIVE slots, are applied
-/// as the dynamic table's are. An entry naming a symbol is not computed: no
-/// loader binds it.
+/// A linked image's allocated relocation sections that `object`'s
+/// `dynamic_relocations()` skips, their `sh_link` naming another table than
+/// `.dynsym`, or none when there is a `.dynsym`: an unstripped static
+/// executable's `.rela.plt`, linked to `.symtab`, or a table whose link was
+/// left 0. Its `r_sym == 0` entries, the IRELATIVE slots among them, are
+/// applied as the dynamic table's are. An entry naming a symbol is not
+/// computed: which table its index means is in doubt.
 ///
-/// Not on MIPS, which has no IRELATIVE and whose ELF64 type word this does
-/// not decode.
-fn symtab_linked_relocations(ctx: &mut Ctx<'_, '_>) {
+/// On MIPS every entry is a hole: its ELF64 type word is not decoded here.
+fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>) {
     let obj = ctx.obj;
-    if matches!(obj.kind(), object::ObjectKind::Relocatable)
-        || matches!(obj.architecture(), A::Mips | A::Mips64)
-        || obj.dynamic_symbol_table().is_some()
-    {
+    if matches!(obj.kind(), object::ObjectKind::Relocatable) {
         return;
     }
     let entries = match obj {
-        object::File::Elf32(f) => symtab_linked_entries(f),
-        object::File::Elf64(f) => symtab_linked_entries(f),
+        object::File::Elf32(f) => entries_off_dynsym(f),
+        object::File::Elf64(f) => entries_off_dynsym(f),
         _ => return,
     };
+    let mips = matches!(obj.architecture(), A::Mips | A::Mips64);
+    let word = if obj.is_64() { 8 } else { 4 };
     for (addr, r) in entries {
         let site = RelocSite {
             addr,
             avail: u64::MAX,
         };
-        if r.sym.is_none() {
+        if r.sym.is_none() && !mips {
             apply_one_relocation(ctx, site, &r, None);
             continue;
         }
         let width = match classify(obj.architecture(), &r) {
-            Some(Kind::Marker) => continue,
-            Some(Kind::Compute(_, field)) => field.width(),
-            None => UNKNOWN_FIELD_BYTES,
+            Some(Kind::Marker) if !mips => continue,
+            Some(Kind::Compute(_, field)) if !mips => field.width(),
+            _ => word,
         };
         let holder = ctx.holder(site, addr, width);
         ctx.unmodelled(holder, addr, width, r.type_word());
@@ -1051,16 +1050,18 @@ fn symtab_linked_relocations(ctx: &mut Ctx<'_, '_>) {
 }
 
 /// `(r_offset, entry)` of every `SHT_REL` / `SHT_RELA` entry in an
-/// allocated section linked to a symbol table other than none.
-fn symtab_linked_entries<Elf: object::read::elf::FileHeader>(
+/// allocated section `object`'s `dynamic_relocations()` skips.
+fn entries_off_dynsym<Elf: object::read::elf::FileHeader>(
     f: &object::read::elf::ElfFile<'_, Elf>,
 ) -> Vec<(u64, RelocInfo)> {
     use object::read::elf::{Rel as _, Rela as _, SectionHeader as _};
     let endian = f.endian();
+    let dynsym = f.elf_dynamic_symbol_table().section();
+    let mips64el = f.elf_header().is_mips64el(endian);
     let mut out = Vec::new();
     for sh in f.elf_section_table().iter() {
         if sh.sh_flags(endian).into() & u64::from(object::elf::SHF_ALLOC) == 0
-            || sh.link(endian).0 == 0
+            || sh.link(endian) == dynsym
         {
             continue;
         }
@@ -1075,8 +1076,8 @@ fn symtab_linked_entries<Elf: object::read::elf::FileHeader>(
         if let Ok(Some((rela, _))) = sh.rela(endian, f.data()) {
             for e in rela {
                 let r = info(
-                    e.r_type(endian, false),
-                    e.r_sym(endian, false),
+                    e.r_type(endian, mips64el),
+                    e.r_sym(endian, mips64el),
                     Some(e.r_addend(endian).into()),
                 );
                 out.push((e.r_offset(endian).into(), r));
