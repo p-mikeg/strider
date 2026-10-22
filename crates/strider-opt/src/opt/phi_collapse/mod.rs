@@ -23,9 +23,9 @@
 //! `v`: a loop that saves `(hi & ~C) | (phi & C)` on its back edge keeps the
 //! masked bits it entered with. Each arm is peeled through a bounded chain of
 //! `And` / `Or` / `Xor` with a constant or known-zero operand, never through a
-//! phi, and a run spends at most [`PEEL_VISITS_PER_ARM`] steps per arm, so a
-//! phi under many masks stays linear; a mask past the budget waits for the
-//! next run.
+//! phi, and a run spends at most [`PEEL_VISITS_PER_ARM`] steps per arm of
+//! each phi, so a phi under many masks stays linear; a mask past its phi's
+//! budget is left alone.
 
 use cranelift_entity::SecondaryMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
@@ -44,8 +44,8 @@ const INNER_VISITS_PER_PHI: usize = 4;
 /// Nodes one arm of a masked phi is peeled through.
 const PEEL_STEPS: usize = 8;
 
-/// Peel steps the masked-phi fold may take per arm of a phi taking part, so a
-/// phi with many masked uses stays linear in the arm count.
+/// Peel steps the masked-phi fold may take per arm of a phi in one run, so a
+/// phi with many masked uses stays linear in its arm count.
 const PEEL_VISITS_PER_ARM: usize = 2 * PEEL_STEPS;
 
 #[derive(Clone, Copy)]
@@ -92,22 +92,20 @@ impl Optimizer for PhiCollapse {
             }
         }
         let mut walked = Vec::new();
-        let mut budget = phis
-            .iter()
-            .filter(|&&phi| edit.is_live(phi))
-            .map(|&phi| edit.node_inputs(phi).len() - 1)
-            .sum::<usize>()
-            .saturating_mul(PEEL_VISITS_PER_ARM);
         for &phi in &phis {
             if !edit.is_live(phi) || !matches!(edit.node_kind(phi), NodeKind::Phi) {
                 continue;
             }
+            let mut budget = (edit.node_inputs(phi).len() - 1).saturating_mul(PEEL_VISITS_PER_ARM);
             let phi_out = edit.node_outputs(phi)[0];
             let masks: Vec<(ValueId, u128, ValueType)> = edit
                 .value_uses(phi_out)
                 .filter_map(|(user, _)| masked_use(edit, user, phi_out))
                 .collect();
             for (and_out, mask, ty) in masks {
+                if budget == 0 {
+                    break;
+                }
                 if !edit.is_live(edit.producer(and_out)) {
                     continue;
                 }
@@ -195,12 +193,12 @@ fn masked_phi_value(
     walked: &mut Vec<NodeId>,
     budget: &mut usize,
 ) -> Result<Option<ValueId>> {
-    let selves = [edit.node_outputs(phi)[0], and_out];
-    let arms: Vec<ValueId> = edit.phi_data_inputs(phi).collect();
+    let view = &*edit;
+    let selves = [view.node_outputs(phi)[0], and_out];
     let mut agreed = None;
     let mut witness = None;
-    for arm in arms {
-        let Some((masked, seen)) = peel(edit, arm, mask, selves, walked, budget) else {
+    for arm in view.phi_data_inputs(phi) {
+        let Some((masked, seen)) = peel(view, arm, mask, selves, walked, budget) else {
             return Ok(None);
         };
         if masked == Masked::Itself {
