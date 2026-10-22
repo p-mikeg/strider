@@ -525,6 +525,9 @@
 
 ### Fixed
 
+- Python: the `ppc32be` and `ppc32le` presets decode `isel`, which clang
+  emits for ppc32 (`iseleq r3,0,r3`). It was undecodable, so a function
+  reaching one failed its build or lost the jump-table arm that held it.
 - Python: a PowerPC jump table whose guard or index is an `rlwinm` resolves.
   A guard on a rotate held below `2^r` (`rotlwi r4,r3,29; cmplwi r4,7`)
   bounds the rotated register to its multiples of `2^(32 - r)`, and a rotate
