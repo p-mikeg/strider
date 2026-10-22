@@ -4,7 +4,9 @@
  * while the `& 7` alone admits 0..7.  Recovering the tighter bound needs the
  * back edge's guard, which does not dominate the loop header, so a classifier
  * working from the mask over-approximates and indexes past the table.  Such a
- * site must come back unresolved rather than failing the whole function. */
+ * site must come back unresolved rather than failing the whole function.
+ * At -O0 the loop test sits at the header and dominates the switch, so the
+ * site resolves to the reachable cases 0..5. */
 
 __attribute__((noinline)) static int masked_loop_sink(int v) {
     return v * 3;

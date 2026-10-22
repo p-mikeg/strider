@@ -62,7 +62,9 @@ pub enum LoadFilter {
     ///
     /// The rest is an UNCHECKED claim about the runtime, which the image
     /// cannot prove: that nothing rewrites a slot after the loader has run (a
-    /// program that writes its own GOT), and that a symbol the image defines
+    /// program that writes its own GOT, as PPC32 code relocating its own
+    /// `.got2` does: Linux's `prom_init` `reloc_got2`, `-mrelocatable`
+    /// `.fixup`), and that a symbol the image defines
     /// binds to that definition (a copy relocation, `LD_PRELOAD` or a
     /// `dlopen`ed library interposes another). Where it is false, a load
     /// through the slot folds to the wrong value. What it buys is the PIC
