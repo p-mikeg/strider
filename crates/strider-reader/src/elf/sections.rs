@@ -250,17 +250,18 @@ pub fn without_ranges(regions: Vec<MemRegion>, ranges: &AddressSet) -> Vec<MemRe
     kept
 }
 
-/// `[start, end)` address ranges, ascending, disjoint and non-touching. Only
-/// [`merged`](Self::merged) builds a non-empty set, alone or before a cut, so
-/// every set is merged, which the queries' binary searches rely on.
+/// Non-empty `[start, end)` address ranges, ascending, disjoint and
+/// non-touching. Only [`merged`](Self::merged) builds a non-empty set, alone
+/// or before a cut, so every set is merged, which the queries' binary searches
+/// rely on.
 #[derive(Clone, Debug, Default)]
 pub struct AddressSet(Vec<(u64, u64)>);
 
 impl AddressSet {
     /// `ranges` sorted, with everything that overlaps or touches merged. A
-    /// range with `start > end` holds no address and is dropped.
+    /// range with `start >= end` holds no address and is dropped.
     pub fn merged(mut ranges: Vec<(u64, u64)>) -> Self {
-        ranges.retain(|&(lo, hi)| lo <= hi);
+        ranges.retain(|&(lo, hi)| lo < hi);
         ranges.sort_unstable();
         let mut out: Vec<(u64, u64)> = Vec::with_capacity(ranges.len());
         for (lo, hi) in ranges {
@@ -1102,6 +1103,23 @@ mod tests {
         let set = AddressSet::merged(vec![(7, 8), (10, 5)]);
         assert_eq!(set.as_slice(), &[(7, 8)]);
         assert!(!set.covers(5, 10));
+    }
+
+    /// An empty range holds no address: it neither touches a query across
+    /// it nor splits a region cut by the set.
+    #[test]
+    fn an_empty_range_is_dropped() {
+        let set = AddressSet::merged(vec![(10, 10)]);
+        assert!(set.as_slice().is_empty());
+        assert!(!set.touches(9, 2));
+        let region = MemRegion::new(0, vec![0; 20]).unwrap();
+        let kept = without_ranges(vec![region], &set);
+        assert_eq!(
+            kept.iter()
+                .map(|r| (r.start_addr(), r.end_addr()))
+                .collect::<Vec<_>>(),
+            [(0, 20)]
+        );
     }
 
     /// An RWX PT_LOAD is the whole image on firmware / bare-metal / `ld -N`
