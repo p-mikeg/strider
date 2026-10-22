@@ -83,7 +83,10 @@ lft = strider.lift.lifter(sleigh.SleighArch.x86_64(), mem)      # rom=... option
 `lifter(arch, mem, rom=None)` builds a plain `Lifter`. `mem` is the instruction
 source; `rom` is optional read-only memory for constant folding.
 `BufferReader(base_addr, data)` takes `bytes`, a `bytearray` or a sequence of
-ints. The guide's [Beyond ELF](python-guide.md#beyond-elf-custom-code-and-data)
+ints. No preset decodes microMIPS: a MIPS preset decodes an odd (ISA-bit)
+address as MIPS16e, so microMIPS bytes lift wrong with nothing reported.
+`load_elf` and `add_elf` refuse a microMIPS image; a raw `lifter` cannot tell.
+The guide's [Beyond ELF](python-guide.md#beyond-elf-custom-code-and-data)
 section walks through it.
 
 ### Custom memory: `reader.MemReader` / `reader.ReadOnlyMemory`
@@ -1097,7 +1100,8 @@ that local entry for every listed `address`, and `analyze` for every
 Failures inside an analysis are a `strider.StriderError`. A wrongly TYPED
 argument raises the usual builtin (`TypeError`, `OverflowError`), and
 `load_elf` raises `FileNotFoundError` for a missing path and `ValueError` for a
-file that is not a supported ELF. A range-checked constructor argument raises
+file that is not a supported ELF, a microMIPS image among them, which
+`add_elf` refuses with `ValueError` too. A range-checked constructor argument raises
 `ValueError`: `CfgOptions(function_max_size=0)`, a size beside
 `allow_code_before_start_addr=True`, a `known_targets` string other than
 `"return"`, a string `call_other_abis` value and a `call_other_abis` name

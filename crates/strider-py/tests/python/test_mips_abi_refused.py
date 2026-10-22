@@ -85,5 +85,14 @@ def test_load_elf_refuses_a_micromips_image():
     import strider
 
     assert _ElfHeader(_MICROMIPS).e_flags & 0x0200_0000
-    with pytest.raises(ValueError, match="microMIPS"):
+    with pytest.raises(ValueError, match="microMIPS.*pass arch= and cc="):
         strider.lift.load_elf(_MICROMIPS)
+
+
+def test_add_elf_refuses_a_micromips_image():
+    """Merged into a MIPS32 handle, its functions would decode as MIPS16e."""
+    import strider
+
+    lift = strider.lift.load_elf("fixtures/loader/out/mips32be_got_lib.elf")
+    with pytest.raises(ValueError, match="microMIPS"):
+        lift.add_elf(_MICROMIPS)

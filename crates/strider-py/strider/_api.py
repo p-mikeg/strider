@@ -123,6 +123,15 @@ class _ElfHeader:
         )
 
 
+def _refuse_micromips(header: _ElfHeader, remedy: str) -> None:
+    """Every MIPS preset decodes an ISA-bit address as MIPS16e, so a
+    microMIPS image's functions would lift wrong."""
+    if header.e_machine == _EM_MIPS and header.e_flags & _EF_MIPS_MICROMIPS:
+        raise ValueError(
+            f"unsupported microMIPS image: strider has no microMIPS preset; {remedy}"
+        )
+
+
 def _arch_and_cc_for_elf(
     header: _ElfHeader,
     is_arm_be8: bool = False,
@@ -174,11 +183,7 @@ def _arch_and_cc_for_elf(
         arch = SleighArch.aarch64() if le else SleighArch.aarch64be()
         return arch, CallingConvention.aarch64_aapcs64()
     if em == _EM_MIPS:
-        # Every MIPS preset decodes an ISA-bit address as MIPS16e.
-        if header.e_flags & _EF_MIPS_MICROMIPS:
-            raise ValueError(
-                "unsupported microMIPS image: strider has no microMIPS preset"
-            )
+        _refuse_micromips(header, "pass arch= and cc= to lift its MIPS32 code")
         if is64:
             arch = SleighArch.mipsle64() if le else SleighArch.mipsbe64()
             return arch, CallingConvention.mips_n64()
@@ -304,9 +309,9 @@ def load_elf(
     which says the loader has NOT run, and the pair raises `StriderError`.
 
     Raises `FileNotFoundError` when `path` does not exist, and `ValueError`
-    when the file is not an ELF, or its architecture or ABI is unsupported.
-    Passing both `arch=` and `cc=` skips the detector, and with it the ABI
-    refusal.
+    when the file is not an ELF, or its architecture or ABI is unsupported,
+    a microMIPS image among them. Passing both `arch=` and `cc=` skips the
+    detector, and with it the ABI and microMIPS refusals.
     """
     loader = _ext._load_elf_from_segments if from_segments else _ext._load_elf_from_sections
     return _load_elf_with(
@@ -469,11 +474,20 @@ class ElfLifter(Lifter):
 
         Raises `StriderError` if the new ELF maps code over an address already
         loaded with different bytes: `add_elf` places shared objects at distinct
-        addresses, so two ELFs linked at the same base cannot be merged."""
+        addresses, so two ELFs linked at the same base cannot be merged.
+        Raises `ValueError` for a microMIPS image, which no preset decodes."""
+        path = os.fspath(path)
+        try:
+            header = _ElfHeader(path)
+        except (OSError, ValueError):
+            # Not a readable ELF: the merge reports it.
+            header = None
+        if header is not None:
+            _refuse_micromips(header, "add_elf cannot merge it")
         # One call, so a handle in use refuses before anything is merged
         # rather than leaving `symbol` and `read` seeing the new ELF and the
         # decoder not.
-        self._merge_elf(self._elf, os.fspath(path), apply_relocations, relocated_got_is_rom)
+        self._merge_elf(self._elf, path, apply_relocations, relocated_got_is_rom)
 
     def add_symbol_file(self, path: StrPath) -> None:
         """Take the symbols of `path` and none of its bytes.

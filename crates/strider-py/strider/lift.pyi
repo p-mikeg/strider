@@ -508,7 +508,8 @@ class ElfLifter(Lifter):
         `apply_relocations=False` here too, and the pair raises `StriderError`.
 
         Raises `StriderError` if the new ELF maps code over an address already
-        loaded with different bytes (two ELFs at the same base cannot merge)."""
+        loaded with different bytes (two ELFs at the same base cannot merge),
+        and `ValueError` for a microMIPS image, which no preset decodes."""
         ...
     def add_symbol_file(self, path: StrPath) -> None:
         """Take the symbols of `path` and none of its bytes.
@@ -616,8 +617,8 @@ def load_elf(
     which says the loader has NOT run, and the pair raises `StriderError`.
 
     Raises `FileNotFoundError` when `path` does not exist, and `ValueError`
-    when the file is not an ELF, or its architecture or ABI is unsupported.
-    Passing both `arch=` and `cc=` skips the detector, and with it the ABI
-    refusal.
+    when the file is not an ELF, or its architecture or ABI is unsupported,
+    a microMIPS image among them. Passing both `arch=` and `cc=` skips the
+    detector, and with it the ABI and microMIPS refusals.
     """
     ...
