@@ -515,6 +515,10 @@
 
 ### Fixed
 
+- Python: a jump-table guard on one zero-extend of a value bounds a phi arm
+  that is another zero-extend of it, as in a `jhash` tail `switch (len)`
+  whose `len` is a loaded byte; the guard bounded only the very value it
+  compared.
 - Python: a jump table indexed by a byte (or a scaled byte) read through a
   pointer resolves over the byte's width, as `psmouse_process_byte`'s
   `movzbl 0xcb(%rbx)` / `shr $6` does. A byte whose address adds an index
