@@ -210,29 +210,38 @@ fn frndint_rounds_by_the_control_word() {
     }
 }
 
-/// With no `fldcw`, the store selects on the control word the function was
-/// entered with: each RC the initial register can hold picks its own mode.
+/// With no `fldcw`, each store and `frndint` select on the control word the
+/// function was entered with: each RC the initial register can hold picks its
+/// own mode.
 #[test]
 fn an_unset_control_word_selects_on_the_initial_register() {
-    let op = &STORES[3];
-    for x in [2.5, -2.5, 2.7, -2.7] {
+    for op in &STORES {
+        let width = op.width.unwrap();
+        for x in VALUES {
+            for rc in 0..4u32 {
+                let init = u128::from(rc << 10);
+                let got = common::cone::returned_rax_from(image(op, None, x), BASE, init);
+                assert_eq!(
+                    slot(got, width),
+                    stored(rc, x, width),
+                    "{} initial rc {rc} {x}",
+                    op.name
+                );
+            }
+        }
+    }
+    for x in VALUES.into_iter().filter(|x| !x.is_nan()) {
         for rc in 0..4u32 {
             let init = u128::from(rc << 10);
-            let got = common::cone::returned_rax_from(image(op, None, x), BASE, init);
+            let got = common::cone::returned_rax_from(image(&FRNDINT, None, x), BASE, init);
             assert_eq!(
-                slot(got, 32),
-                stored(rc, x, 32),
-                "{} initial rc {rc} {x}",
-                op.name
+                got,
+                frndint(rc, x),
+                "frndint initial rc {rc} {x}: got {}",
+                f64::from_bits(got)
             );
         }
     }
-    // frndint branches on the mode, so its value is not one expression; it
-    // must still lift.
-    let (mut strider, cc) =
-        common::strider_over_bytes(common::Arch::X64, image(&FRNDINT, None, 2.5), BASE, None);
-    let result = strider.analyze(BASE, &cc, &Default::default(), None);
-    assert!(result.is_ok(), "frndint: {:?}", result.err());
 }
 
 /// gcc's i386 `(int)x` is `fnstcw; or $0xc00; fldcw; fistp; fldcw`: the
