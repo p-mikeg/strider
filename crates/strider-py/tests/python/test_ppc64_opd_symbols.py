@@ -1,11 +1,12 @@
 """ppc64 ELFv1 function descriptors.
 
 On that ABI an `STT_FUNC` `st_value` addresses an 8-byte-aligned
-{entry, TOC, env} triple in `.opd`, not code. Its `st_size` is the code's
-in GCC and Clang output, and the triple's where a dot symbol names the code,
-as in a kernel. Following it is what lets `analyze(<symbol name>)` work at all: without
-it every ELFv1 function lifts the descriptor bytes, while `_arch_and_cc_for_elf`
-was already selecting `powerpc64_elf_v1` off `e_flags` for exactly these images.
+{entry, TOC, env} triple in `.opd`, not code. Its `st_size` is the code's in
+GCC and Clang output, and the triple's where a dot symbol names the code, as
+in a kernel. Following it is what lets `analyze(<symbol name>)` work at all:
+without it every ELFv1 function lifts the descriptor bytes, while
+`_arch_and_cc_for_elf` was already selecting `powerpc64_elf_v1` off `e_flags`
+for exactly these images.
 
 The shipped ppc64 fixtures are ELFv2 and carry no `.opd`, so the image is
 synthesised here around real ppc64be `add` code lifted out of one of them,
