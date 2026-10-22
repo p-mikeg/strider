@@ -606,13 +606,18 @@ fn a_mips_dynamic_relocation_section_off_the_dynsym_is_a_hole() {
     );
 }
 
-/// How many patches can overlap each region.
+/// How many patches can overlap each region of the ROM view, which holds a
+/// served slot's holes too.
 fn patch_counts(elf: &OwnedElf) -> Vec<usize> {
-    elf.regions(RegionSource::Auto, LoadFilter::AllAllocatable, true)
-        .unwrap()
-        .iter()
-        .map(|r| r.patch_count())
-        .collect()
+    elf.regions(
+        RegionSource::Auto,
+        LoadFilter::ImmutableAndRelocatedGot,
+        true,
+    )
+    .unwrap()
+    .iter()
+    .map(|r| r.patch_count())
+    .collect()
 }
 
 /// `name` with the header of section `over` replaced by a copy of
@@ -733,6 +738,49 @@ fn an_uncomputed_word_off_the_dynsym_is_a_hole_over_the_word() {
             rom_word(&reader, half, 4, true),
             object::elf::R_X86_64_64,
             &format!("{half:#x}"),
+        );
+    }
+}
+
+/// The lib with three more headers over `.rela.dyn`, which differ from it
+/// only in `sh_link` (0, `.symtab`, `.dynstr`): which table the entries'
+/// indices mean is in doubt, so every symbol entry is a hole, as in the
+/// image relinked to 0, and the table is walked once.
+#[test]
+fn a_relocation_table_named_under_several_links_is_walked_once_unresolved() {
+    let crafted = patched("x64_ifunc_lib.elf", |bytes, obj| {
+        // Elf64_Ehdr.e_shoff; each Elf64_Shdr is 64 bytes, sh_link at 0x28.
+        let shoff = u64::from_le_bytes(bytes[0x28..0x30].try_into().unwrap()) as usize;
+        let at = |name: &str| shoff + obj.section_by_name(name).unwrap().index().0 * 64;
+        let symtab = obj.section_by_name(".symtab").unwrap().index().0 as u32;
+        let dynstr = obj.section_by_name(".dynstr").unwrap().index().0 as u32;
+        let table = at(".rela.dyn");
+        for (over, link) in [
+            (".comment", 0),
+            (".note.gnu.property", symtab),
+            (".eh_frame_hdr", dynstr),
+        ] {
+            let to = at(over);
+            bytes.copy_within(table..table + 64, to);
+            bytes[to + 0x28..to + 0x2c].copy_from_slice(&link.to_le_bytes());
+        }
+    });
+    let unlinked = relinked("x64_ifunc_lib.elf", |_| 0);
+    assert_eq!(patch_counts(&crafted), patch_counts(&unlinked));
+    let reader = ElfFileMemReader::new(&crafted, GOT_IS_ROM).unwrap();
+    for (site, r) in open("x64_ifunc_lib.elf")
+        .checked_file()
+        .unwrap()
+        .dynamic_relocations()
+        .unwrap()
+    {
+        let RelocationFlags::Elf { r_type } = r.flags() else {
+            unreachable!()
+        };
+        assert_hole(
+            rom_word(&reader, site, 8, true),
+            r_type,
+            &format!("{site:#x}"),
         );
     }
 }
