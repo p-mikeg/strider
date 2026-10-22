@@ -40,8 +40,9 @@ def int_const(value: int) -> Template:
     """Build an integer constant whose stored value, masked to the output
     width, is `value`. Negatives take the sign-extended form. Its width is the
     one it is evaluated at: an operand's width, a shift count's shift's (a
-    count too wide for it saturates rather than wraps), or the root's. Where nothing gives one, as at a `Popcount` operand, the
-    rewrite is refused; type it with `capture_typed`."""
+    count too wide for it saturates rather than wraps), or the root's. Where
+    nothing gives one, as at a `Popcount` operand, the rewrite is refused;
+    type it with `capture_typed`."""
 def bool_const(value: bool) -> Template:
     """Build a 1-bit boolean constant equal to `value`."""
 def float_const(bits: int) -> Template:
