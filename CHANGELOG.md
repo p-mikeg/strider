@@ -515,6 +515,9 @@
 
 ### Fixed
 
+- Python: a relocation table that several section headers name is walked
+  once. Each header walked it again, so a crafted image of N headers over
+  one table of M entries recorded N x M patches.
 - Python: in a linked image with a `.dynsym`, an allocated relocation
   section linked to `.symtab` or to nothing is applied: an entry naming no
   symbol as the dynamic table's are, one naming a symbol (and on MIPS every
