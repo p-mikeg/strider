@@ -154,7 +154,8 @@ fn dispatch_domain(
     )
     .map(|mut constants| {
         let site_range = ranges.range_of(source, site);
-        constants.retain(|&k| site_range.contains(k) && !ranges.rules_out(source, k, site));
+        let ruled_out = ranges.ruled_out(source, site);
+        constants.retain(|k| site_range.contains(*k) && !ruled_out.contains(k));
         constants
     });
     let hit = decompose_index(function, ranges, &chain, site);
