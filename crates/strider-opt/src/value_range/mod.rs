@@ -365,9 +365,8 @@ pub struct RangeMap<'f> {
     /// `dominating_guard` is a pure function of `guards` and `doms`, both
     /// fixed here, and every `range_of` frame asks it at least once.
     guard_memo: std::cell::RefCell<FxHashMap<(ValueId, NodeId), Option<Interval>>>,
-    /// Per `And(x, c)` output whose mask clears only bits KnownBits proves zero
-    /// in `x`, that `x`: the two are the same value.
-    identity_masks: SecondaryMap<ValueId, Option<ValueId>>,
+    /// What each `And` with a constant mask is the mask of.
+    masks: MaskOperands,
     /// The guarded values whose [`BitField`] is exactly this one.
     guards_by_field: FxHashMap<BitField, Vec<ValueId>>,
     /// The distinct keys of `guards_by_field`, by root.
@@ -445,7 +444,7 @@ impl<'f> RangeMap<'f> {
         // 256-case index.
         let result = if matches!(self.function.node_kind(producer), NodeKind::Phi) {
             self.resolve_phi(producer, region)
-        } else if let Some(operand) = self.identity_masks[value] {
+        } else if let Some(operand) = self.masks.identity[value] {
             let leaf = self.resolve_leaf(value, region);
             self.range_of(operand, region).intersect(leaf)
         } else {
@@ -721,7 +720,7 @@ impl<'f> RangeMap<'f> {
         if let Some(hit) = self.field_memo.borrow()[value] {
             return hit;
         }
-        let field = bit_field(self.function, &self.identity_masks, value);
+        let field = bit_field(self.function, &self.masks, value);
         self.field_memo.borrow_mut()[value] = Some(field);
         field
     }
@@ -824,7 +823,7 @@ impl<'f> RangeMap<'f> {
     /// `x` when `value` is an `And(x, c)` whose mask clears only bits known zero
     /// in `x`, i.e. the same value as `x`.
     pub(crate) fn identity_mask_operand(&self, value: ValueId) -> Option<ValueId> {
-        self.identity_masks[value]
+        self.masks.identity[value]
     }
 
     /// Reflexive: a node dominates itself.
@@ -1031,6 +1030,50 @@ fn add_operand_shifted_interval(
     (lo <= hi).then_some((operand, Interval::dense(lo, hi)))
 }
 
+/// `rotl(x, r)`, `Or(x << r, x >> (w - r))`, held below `2^r` keeps `x`'s
+/// low `w - r` bits zero and its top `r` bits the rotated value, so `x` is
+/// that value shifted up by `w - r`.
+fn rotate_operand_interval(
+    function: &strider_ir::Function,
+    value: ValueId,
+    interval: Interval,
+) -> Option<(ValueId, Interval)> {
+    if !matches!(
+        function.kind_of_value(value),
+        NodeKind::IntBinaryOp(IntBinaryOp::Or)
+    ) {
+        return None;
+    }
+    let w = u32::try_from(function.value_type_opt(value)?.bit_width())
+        .ok()
+        .filter(|&w| w <= 128)?;
+    let shift_of = |v: ValueId, op: IntBinaryOp| -> Option<(ValueId, u32)> {
+        if *function.kind_of_value(v) != NodeKind::IntBinaryOp(op) {
+            return None;
+        }
+        let [x, k] = function.producer_inputs_exact::<2>(v).ok()?;
+        Some((x, u32::try_from(function.int_const_u128(k)?).ok()?))
+    };
+    let [a, b] = function.producer_inputs_exact::<2>(value).ok()?;
+    let ((x, r), (y, down)) = shift_of(a, IntBinaryOp::ShiftLeft)
+        .zip(shift_of(b, IntBinaryOp::ShiftRight))
+        .or_else(|| {
+            shift_of(b, IntBinaryOp::ShiftLeft).zip(shift_of(a, IntBinaryOp::ShiftRight))
+        })?;
+    if x != y || r == 0 || r >= w || r + down != w || interval.hi >> r != 0 {
+        return None;
+    }
+    let stride = if interval.stride >> r == 0 {
+        interval.stride << down
+    } else {
+        1 << down
+    };
+    Some((
+        x,
+        Interval::new(interval.lo << down, interval.hi << down, stride),
+    ))
+}
+
 /// KnownBits proves `value` is always non-negative read as signed.
 fn is_sign_bit_known_zero(
     function: &strider_ir::Function,
@@ -1148,11 +1191,9 @@ fn build<'f>(
     known: &KnownBitsMap,
 ) -> RangeMap<'f> {
     let mut kb_bounds: SecondaryMap<ValueId, Option<Interval>> = SecondaryMap::new();
-    let mut identity_masks: SecondaryMap<ValueId, Option<ValueId>> = SecondaryMap::new();
+    let mut masks = MaskOperands::default();
     for node in function.walk() {
-        if let Some((value, operand)) = identity_mask(function, node, known) {
-            identity_masks[value] = Some(operand);
-        }
+        masks.record(function, node, known);
         for &value_id in function.node_outputs(node) {
             let kb: KnownBitsFacts = known[value_id];
             if kb.ones == 0 && kb.zeros == 0 {
@@ -1210,15 +1251,17 @@ fn build<'f>(
 
             add_guard(&mut guards, guarded_value, consumer, guard_interval);
 
-            // Back-propagate through `Add(X, const)`: a guard on `idx - K`
-            // gives `idx` the shifted bound.
+            // Back-propagate through `Add(X, const)`, where a guard on `idx - K`
+            // gives `idx` the shifted bound, and through a rotate.
             // Bounded like every other walk here: an `Add` spine is linear in
             // the function.
             const MAX_ADD_BACKPROP: usize = 64;
             let mut cur = guarded_value;
             let mut iv = guard_interval;
             let mut steps = 0usize;
-            while let Some((operand, shifted)) = add_operand_shifted_interval(function, cur, iv) {
+            while let Some((operand, shifted)) = add_operand_shifted_interval(function, cur, iv)
+                .or_else(|| rotate_operand_interval(function, cur, iv))
+            {
                 if steps == MAX_ADD_BACKPROP {
                     break;
                 }
@@ -1270,7 +1313,7 @@ fn build<'f>(
     let mut guards_by_field: FxHashMap<BitField, Vec<ValueId>> = FxHashMap::default();
     let mut fields_by_root: FxHashMap<ValueId, Vec<BitField>> = FxHashMap::default();
     for &value in guards.keys() {
-        if let Some(field) = bit_field(function, &identity_masks, value) {
+        if let Some(field) = bit_field(function, &masks, value) {
             let guarded = guards_by_field.entry(field).or_default();
             if guarded.is_empty() {
                 fields_by_root.entry(field.root).or_default().push(field);
@@ -1287,7 +1330,7 @@ fn build<'f>(
         kb_bounds,
         memo: FxHashMap::default(),
         guard_memo: std::cell::RefCell::new(FxHashMap::default()),
-        identity_masks,
+        masks,
         guards_by_field,
         fields_by_root,
         field_memo: std::cell::RefCell::new(SecondaryMap::new()),
@@ -1295,26 +1338,52 @@ fn build<'f>(
     }
 }
 
-/// `(output, x)` for an `And(x, c)` node whose mask clears only bits known zero
-/// in `x`: `slwi` / `sldi` lift to `And(ShiftLeft(idx, k), ~(2^k - 1))`.
-fn identity_mask(
-    function: &strider_ir::Function,
-    node: NodeId,
-    known: &KnownBitsMap,
-) -> Option<(ValueId, ValueId)> {
-    if !matches!(
-        function.node_kind(node),
-        NodeKind::IntBinaryOp(IntBinaryOp::And)
-    ) {
-        return None;
+/// The operands of the `And`s with a constant mask.
+#[derive(Default)]
+struct MaskOperands {
+    /// Per `And(x, c)` output whose mask clears only bits KnownBits proves zero
+    /// in `x`, that `x`: the two are the same value.  `slwi` / `sldi` lift to
+    /// `And(ShiftLeft(idx, k), ~(2^k - 1))`.
+    identity: SecondaryMap<ValueId, Option<ValueId>>,
+    /// Per `And(Or(a, b), c)` output where `c` clears every bit `a` may set,
+    /// `b`: the output is `And(b, c)`.  A PowerPC `rlwinm` lifts as the
+    /// rotate `Or(x << r, x >> (32 - r))` under a mask that drops one arm.
+    through_or: SecondaryMap<ValueId, Option<ValueId>>,
+}
+
+impl MaskOperands {
+    fn record(
+        &mut self,
+        function: &strider_ir::Function,
+        node: NodeId,
+        known: &KnownBitsMap,
+    ) -> Option<()> {
+        if !matches!(
+            function.node_kind(node),
+            NodeKind::IntBinaryOp(IntBinaryOp::And)
+        ) {
+            return None;
+        }
+        let &[value] = function.node_outputs(node) else {
+            return None;
+        };
+        let (operand, mask) = crate::const_eval::var_and_const(function, node)?;
+        let type_mask = function.value_type_opt(value)?.int_mask_u128()?;
+        let may_set = |v: ValueId| !known[v].zeros & type_mask;
+        if may_set(operand) & !mask == 0 {
+            self.identity[value] = Some(operand);
+        }
+        if let NodeKind::IntBinaryOp(IntBinaryOp::Or) = *function.kind_of_value(operand)
+            && let Ok([a, b]) = function.producer_inputs_exact::<2>(operand)
+        {
+            if may_set(a) & mask == 0 {
+                self.through_or[value] = Some(b);
+            } else if may_set(b) & mask == 0 {
+                self.through_or[value] = Some(a);
+            }
+        }
+        Some(())
     }
-    let &[value] = function.node_outputs(node) else {
-        return None;
-    };
-    let (operand, mask) = crate::const_eval::var_and_const(function, node)?;
-    let type_mask = function.value_type_opt(value)?.int_mask_u128()?;
-    let cleared = !mask & type_mask;
-    (cleared & !known[operand].zeros == 0).then_some((value, operand))
 }
 
 /// Producer steps [`bit_field`] takes below a value; past them the value
@@ -1404,6 +1473,11 @@ enum FieldOp {
     ShiftRight(u32),
     /// `& (2^m - 1)`.
     LowMask(u32),
+    /// `& ((2^width - 1) << shift)`: `((x >> shift) & (2^width - 1)) << shift`.
+    RunMask {
+        shift: u32,
+        width: u32,
+    },
 }
 
 impl FieldOp {
@@ -1455,6 +1529,11 @@ impl FieldOp {
                     ..f
                 }
             }
+            FieldOp::RunMask { shift, width } => {
+                let run = FieldOp::ShiftRight(shift).apply(f, w, w_in)?;
+                let run = FieldOp::LowMask(width).apply(run, w, w)?;
+                return FieldOp::ShiftLeft(shift).apply(run, w, w);
+            }
         })
     }
 }
@@ -1462,7 +1541,7 @@ impl FieldOp {
 /// How `value` is built from one operand by an op [`bit_field`] reads.
 fn field_step(
     function: &strider_ir::Function,
-    identity_masks: &SecondaryMap<ValueId, Option<ValueId>>,
+    masks: &MaskOperands,
     value: ValueId,
 ) -> Option<(ValueId, FieldOp)> {
     let f = function;
@@ -1490,12 +1569,28 @@ fn field_step(
                 .then(|| (x, FieldOp::ShiftLeft(c.trailing_zeros())))
         }
         NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-            if let Some(x) = identity_masks[value] {
+            if let Some(x) = masks.identity[value] {
                 return Some((x, FieldOp::Same));
             }
             let (x, c) = crate::const_eval::var_and_const(f, f.producer(value))?;
-            (c != 0 && c & c.wrapping_add(1) == 0)
-                .then(|| (x, FieldOp::LowMask(128 - c.leading_zeros())))
+            let x = masks.through_or[value].unwrap_or(x);
+            if c == 0 {
+                return None;
+            }
+            let shift = c.trailing_zeros();
+            let run = c >> shift;
+            if run & run.wrapping_add(1) != 0 {
+                return None;
+            }
+            let width = 128 - run.leading_zeros();
+            Some((
+                x,
+                if shift == 0 {
+                    FieldOp::LowMask(width)
+                } else {
+                    FieldOp::RunMask { shift, width }
+                },
+            ))
         }
         _ => None,
     }
@@ -1506,7 +1601,7 @@ fn field_step(
 /// to compare.  `None` for a non-integer.
 fn bit_field(
     function: &strider_ir::Function,
-    identity_masks: &SecondaryMap<ValueId, Option<ValueId>>,
+    masks: &MaskOperands,
     value: ValueId,
 ) -> Option<BitField> {
     let width = |v: ValueId| {
@@ -1527,7 +1622,7 @@ fn bit_field(
     let mut steps: Vec<(ValueId, ValueId, FieldOp)> = Vec::new();
     let mut base = value;
     for _ in 0..MAX_FIELD_STEPS {
-        let Some((operand, op)) = field_step(function, identity_masks, base) else {
+        let Some((operand, op)) = field_step(function, masks, base) else {
             break;
         };
         steps.push((base, operand, op));
