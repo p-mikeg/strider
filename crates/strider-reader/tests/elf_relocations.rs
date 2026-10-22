@@ -1408,3 +1408,50 @@ fn an_image_relative_word_past_its_section_is_served_as_is() {
         .expect("a field past its section is no hole");
     assert_eq!(got.to_vec(), slot_init);
 }
+
+/// An `SHT_CREL` `.rel.dyn` relinked to 0 in an image with a `.dynsym`,
+/// over an executable slot, where a hole shows: `object`'s dynamic walk
+/// skips it, and the walk of tables off `.dynsym` reads it as it reads a
+/// REL or RELA one. A RELATIVE is B + A; an entry naming a symbol a hole.
+#[test]
+fn a_crel_table_off_the_dynsym_is_walked() {
+    let build = |r_type: u32, defined_symbol: bool| {
+        let mut fx = common::elf_fixture::build_rel_elf_placed(
+            common::elf_fixture::RelOpts {
+                endian: object::Endianness::Little,
+                is_64: true,
+                e_machine: object::elf::EM_X86_64,
+                r_type,
+                defined_symbol,
+                slot_init: vec![0x55; 8],
+            },
+            common::elf_fixture::RelPlacement {
+                slot_exec: true,
+                table: common::elf_fixture::RelTable::Crel(Some(0x40)),
+                ..Default::default()
+            },
+        );
+        // Elf64_Ehdr.e_shoff, then Elf64_Shdr.sh_link of `.rel.dyn`
+        // (section 5).
+        let shoff = u64::from_le_bytes(fx.bytes[0x28..0x30].try_into().unwrap()) as usize;
+        let at = shoff + 5 * 64 + 0x28;
+        fx.bytes[at..at + 4].copy_from_slice(&0u32.to_le_bytes());
+        let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
+        let region = regions
+            .iter()
+            .find(|r| r.start_addr() <= fx.slot_addr && fx.slot_addr < r.end_addr())
+            .expect("slot region")
+            .clone();
+        (region, fx.slot_addr)
+    };
+    let (region, slot) = build(object::elf::R_X86_64_RELATIVE, false);
+    let mut got = [0u8; 8];
+    assert_eq!(region.read(slot, &mut got), Some(8));
+    assert_eq!(u64::from_le_bytes(got), 0x40, "RELATIVE");
+    let (region, slot) = build(object::elf::R_X86_64_64, true);
+    assert_eq!(
+        region.read(slot, &mut got),
+        None,
+        "a symbol entry is a hole"
+    );
+}
