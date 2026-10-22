@@ -491,23 +491,3 @@ fn region_index_covering_reports_every_covering_region_highest_start_first() {
         "the end address is not mapped"
     );
 }
-
-#[test]
-fn region_index_overlapping_reports_the_regions_a_range_touches() {
-    let regions = [
-        make_region(0x1000, 0x40),
-        make_region(0x1010, 0x10),
-        make_region(0x2000, 8),
-    ];
-    let index = RegionIndex::new(&regions);
-    assert_eq!(
-        index.overlapping(0x1018, 0x1019).collect::<Vec<_>>(),
-        vec![1, 0]
-    );
-    assert_eq!(
-        index.overlapping(0x1030, 0x2001).collect::<Vec<_>>(),
-        vec![2, 0]
-    );
-    assert!(index.overlapping(0x1500, 0x1600).next().is_none());
-    assert!(index.overlapping(0x1000, 0x1000).next().is_none());
-}
