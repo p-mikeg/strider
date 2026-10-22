@@ -515,13 +515,16 @@
 ### Fixed
 
 - Python: in a linked image with no `.dynsym`, a dynamic relocation naming a
-  symbol is a hole, from `read()` and every view. It resolved through
-  `.symtab`, whose index means something else, and served an unrelated
-  symbol's address (four `R_AARCH64_ABS64` words of an arm64 5.14 kernel).
+  symbol is not computed. A read-only word is a hole in every view, and a
+  writable one serves its file bytes. It resolved through `.symtab`, whose
+  index means something else, and served an unrelated symbol's address
+  (four `R_AARCH64_ABS64` words of an arm64 5.14 kernel).
 - Python: `Function.rewrite` / `rewrite_all` (and a Rust `rewrite_rule`)
-  of an `initial_var` or `phi` root to a replacement that builds nodes
-  raises `StriderError`. It built nodes with no instruction address, which
-  `validate` rejected, and the next `optimize` failed.
+  raise `StriderError` where the match holds no node an instruction produced
+  (such as a bare `initial_var` or `phi` root) and the replacement builds
+  nodes. It built nodes with no instruction address, which `validate`
+  rejected, and the next `optimize` failed. A replacement that declines is
+  still no change.
 - A signed compare against an immediate (`cmp edi, 5; jl`, `cmp w0, #5;
   b.gt`, `cmn r0, #5; bge`, `cmp r0, #0; ble`, and a loop's `add w1, w1,
   #1; cmp w1, #15; b.le`) folds to one `Sless`, as a register compare does,
@@ -766,6 +769,9 @@
 
 ### Added, Rust
 
+- `strider_pattern::instantiate_guarded`: `instantiate` with a check run
+  once every template node's kind is resolved, before the first node is
+  created.
 - `AssumptionOptions::msr_register_keeps_mode` (default on), the claim the
   Python field above carries, read by the lifter. The ARM sla yields a
   register-form `msr`'s mode through the user op `msrRegisterMode(new,
