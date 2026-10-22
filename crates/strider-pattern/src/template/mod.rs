@@ -93,9 +93,10 @@ pub enum TemplateTy {
 /// reaches (an untyped fresh operand at an input that owes its node no width,
 /// an untyped output no node consumes, an output typed from a capture that
 /// bound no typed value), gives a node an input count, an output or an operand its node
-/// signature refuses, or if node creation yields no value output. Most of
-/// these are found mid-build, so the nodes created before the refusal stay in
-/// `builder`'s function, dead.
+/// signature refuses, or if node creation yields no value output. Closure,
+/// `IntConst`-from-`NodeKind` and wide-float refusals come before any node is
+/// built; a signature or wiring refusal is found mid-build, so the nodes
+/// created before it stay in `builder`'s function, dead.
 pub fn instantiate<B: IRBuilder>(
     template: &Template,
     builder: &mut B,
