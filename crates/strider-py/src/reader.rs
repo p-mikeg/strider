@@ -355,8 +355,9 @@ pub struct PySymbol {
     address: u64,
     /// `None` for `st_size == 0`, which records no extent rather than an
     /// empty one: a hand-written `.S` entry point with no `.size` directive
-    /// is still a whole function. Also `None` once a ppc64 ELFv1 descriptor
-    /// has been followed, `st_size` having measured the descriptor.
+    /// is still a whole function. Also `None` for a ppc64 ELFv1 function
+    /// whose `st_size` measures its `.opd` descriptor rather than its code: a
+    /// dot symbol names the code, or the size is 16 or 24.
     #[pyo3(get)]
     size: Option<u64>,
     is_function: bool,
@@ -585,6 +586,16 @@ impl PyLoadedElf {
             // `None` for everything but a linked ppc64 ELFv1 image; built once
             // per ELF rather than per symbol.
             let opd = OpdTable::new(&file);
+            // Dot symbols, which name an ELFv1 function's code where its
+            // plain name names the descriptor.
+            let dot_names: std::collections::HashSet<&str> = if opd.is_some() {
+                file.symbols()
+                    .filter_map(|s| s.name().ok())
+                    .filter(|n| n.starts_with('.'))
+                    .collect()
+            } else {
+                std::collections::HashSet::new()
+            };
             let mut per_elf: HashMap<String, usize> = HashMap::new();
             // `.symtab` and `.dynsym` overlap: an exported symbol is in both, and
             // only `iter_symbols` would show it twice.
@@ -603,17 +614,21 @@ impl PyLoadedElf {
                 };
                 let is_function = sym.kind() == object::SymbolKind::Text;
                 // On ppc64 ELFv1 an `STT_FUNC` `st_value` addresses an `.opd`
-                // descriptor, not code, and `st_size` measures that descriptor.
-                // Following one therefore drops the size too: bounding the lift
-                // to the 24-byte triple would cut every function short.
+                // descriptor, not code. Its `st_size` is the code's, as GCC
+                // and Clang emit it, unless a dot symbol names the code or the
+                // size is a descriptor's (16 or 24 bytes): then it measures
+                // `.opd`, and bounding the lift by it would cut the function
+                // short.
                 let followed = opd
                     .as_ref()
                     .filter(|_| is_function && matches!(place, SymbolPlace::Defined))
                     .and_then(|t| t.entry_at(declared));
-                let (address, size) = match followed {
-                    Some(code) => (code, None),
-                    None => (declared, (sym.size() != 0).then(|| sym.size())),
+                let measures_opd = || {
+                    matches!(sym.size(), 16 | 24) || dot_names.contains(format!(".{name}").as_str())
                 };
+                let address = followed.unwrap_or(declared);
+                let size = (sym.size() != 0 && !(followed.is_some() && measures_opd()))
+                    .then(|| sym.size());
                 if !seen.insert((name.to_string(), address)) {
                     continue;
                 }

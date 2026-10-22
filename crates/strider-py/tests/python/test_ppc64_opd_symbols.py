@@ -1,13 +1,15 @@
 """ppc64 ELFv1 function descriptors.
 
 On that ABI an `STT_FUNC` `st_value` addresses an 8-byte-aligned
-{entry, TOC, env} triple in `.opd`, not code, and `st_size` measures that
-triple. Following it is what lets `analyze(<symbol name>)` work at all: without
+{entry, TOC, env} triple in `.opd`, not code. Its `st_size` is the code's
+in GCC and Clang output, and the triple's where a dot symbol names the code,
+as in a kernel. Following it is what lets `analyze(<symbol name>)` work at all: without
 it every ELFv1 function lifts the descriptor bytes, while `_arch_and_cc_for_elf`
 was already selecting `powerpc64_elf_v1` off `e_flags` for exactly these images.
 
 The shipped ppc64 fixtures are ELFv2 and carry no `.opd`, so the image is
-synthesised here around real ppc64be `add` code lifted out of one of them.
+synthesised here around real ppc64be `add` code lifted out of one of them,
+beside `fixtures/loader/out/ppc64be_elfv1.elf`, a GCC ELFv1 link.
 """
 
 from __future__ import annotations
@@ -158,3 +160,19 @@ def test_elfv2_leaves_addresses_alone(tmp_path):
     sym = lift.symbol("add")
     assert (sym.address, sym.size) == (opd_addr, 24)
     assert lift.entry_point() == opd_addr
+
+
+def test_a_descriptor_symbol_keeps_the_code_size_gcc_gives_it():
+    """GCC's ELFv1 output names no dot symbol: `sw`'s `st_size` is its code's,
+    so following the descriptor keeps it. `wide` has a dot twin, as a
+    kernel's functions do, so its `st_size` measures `.opd`, two descriptors
+    here, and is dropped, while `.wide` keeps the code's."""
+    from .test_loader_written_got_slots import _image
+
+    lift = strider.lift.load_elf(_image("ppc64be_elfv1.elf"))
+    sw = lift.symbol("sw")
+    assert sw.size == 60
+    assert lift.analyze("sw").cfg.region_at(sw.address) is not None
+    wide, dot_wide = lift.symbol("wide"), lift.symbol(".wide")
+    assert wide.address == dot_wide.address
+    assert (wide.size, dot_wide.size) == (None, 8)
