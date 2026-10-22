@@ -132,7 +132,10 @@ pub(crate) fn apply_elf_relocations_with(
         got: BTreeMap::new(),
         patches: Vec::new(),
     };
-    for_each_reloc_site(obj, &owners, layout, |site_addr, avail, r, pair| {
+    let deduped = without_repeated_tables(obj);
+    let deduped = deduped.as_deref().map(object::File::parse).transpose()?;
+    let walked = deduped.as_ref().unwrap_or(obj);
+    for_each_reloc_site(walked, &owners, layout, |site_addr, avail, r, pair| {
         apply_one_relocation(
             &mut ctx,
             RelocSite {
@@ -143,7 +146,7 @@ pub(crate) fn apply_elf_relocations_with(
             pair,
         );
     });
-    relocations_off_dynsym(&mut ctx);
+    relocations_off_dynsym(&mut ctx, walked);
     mips_implicit_got(&mut ctx);
     let got = got_regions(&ctx.got, ctx.endian_le)?;
     let mut patches = ctx.patches;
@@ -439,6 +442,60 @@ fn for_each_reloc_site<F>(
             }
         }
     }
+}
+
+/// `obj`'s bytes with each relocation section header that repeats an
+/// earlier one turned `SHT_NULL`, so that its table is walked once; `None`
+/// when none repeats. An ET_REL's header repeats only with the same target
+/// section, since it applies the table there.
+fn without_repeated_tables(obj: &object::File<'_>) -> Option<Vec<u8>> {
+    match obj {
+        object::File::Elf32(f) => without_repeated_tables_of(f),
+        object::File::Elf64(f) => without_repeated_tables_of(f),
+        _ => None,
+    }
+}
+
+fn without_repeated_tables_of<Elf: object::read::elf::FileHeader>(
+    f: &object::read::elf::ElfFile<'_, Elf>,
+) -> Option<Vec<u8>> {
+    use object::read::elf::SectionHeader as _;
+    let endian = f.endian();
+    let relocatable = f.kind() == object::ObjectKind::Relocatable;
+    let mut seen = std::collections::HashSet::new();
+    let repeats: Vec<usize> = f
+        .elf_section_table()
+        .iter()
+        .enumerate()
+        .filter(|(_, sh)| {
+            let ty = sh.sh_type(endian);
+            matches!(
+                ty,
+                object::elf::SHT_REL | object::elf::SHT_RELA | object::elf::SHT_CREL
+            ) && !seen.insert((
+                ty,
+                sh.sh_offset(endian).into(),
+                sh.sh_size(endian).into(),
+                sh.sh_link(endian),
+                if relocatable { sh.sh_info(endian) } else { 0 },
+            ))
+        })
+        .map(|(i, _)| i)
+        .collect();
+    if repeats.is_empty() {
+        return None;
+    }
+    let header = f.elf_header();
+    let shoff: u64 = header.e_shoff(endian).into();
+    let shentsize = u64::from(header.e_shentsize(endian));
+    let mut bytes = f.data().to_vec();
+    for i in repeats {
+        // `sh_type` is the second word of either class's header; 0 is
+        // SHT_NULL in either byte order.
+        let at = usize::try_from(shoff + i as u64 * shentsize + 4).ok()?;
+        bytes.get_mut(at..at + 4)?.fill(0);
+    }
+    Some(bytes)
 }
 
 /// For each `SHT_REL` `R_MIPS_HI16` in `relocs`, the offset of the next
@@ -1018,12 +1075,14 @@ fn mips_half_field_skew(r: &RelocInfo, arch: A, endian_le: bool) -> u64 {
 /// computed: which table its index means is in doubt.
 ///
 /// On MIPS every entry is a hole: its ELF64 type word is not decoded here.
-fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>) {
+///
+/// `walked` is `ctx.obj`, or its copy with repeated tables dropped.
+fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>, walked: &object::File<'_>) {
     let obj = ctx.obj;
     if matches!(obj.kind(), object::ObjectKind::Relocatable) {
         return;
     }
-    let entries = match obj {
+    let entries = match walked {
         object::File::Elf32(f) => entries_off_dynsym(f),
         object::File::Elf64(f) => entries_off_dynsym(f),
         _ => return,
