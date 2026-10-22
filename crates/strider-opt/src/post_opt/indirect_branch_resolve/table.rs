@@ -21,8 +21,8 @@
 //! enumerable while a dense wide range is not.  A width-only range, one exactly
 //! filling its extend-stripped type width, is a raw loaded table ENTRY and is
 //! rejected, so table data is never enumerated as an index.  A load whose
-//! address adds nothing in ROM reads a field through a pointer, not a table,
-//! and its width is its bound.
+//! address adds no bounded index reads a field through a pointer, not a
+//! table, and its width is its bound.
 //!
 //! A COMPLETE FOLD: every value in the range must fold to a constant target.
 //! Any failure returns `None`, because a `Multiple` omitting a real runtime
@@ -160,7 +160,7 @@ fn dispatch_domain(
         constants.retain(|k| site_range.contains(*k) && !ruled_out.contains(k));
         constants
     });
-    let hit = decompose_index(function, rom, ranges, &chain, site);
+    let hit = decompose_index(function, ranges, &chain, site);
     let (hit, constants) = match (hit, constants) {
         (None, None) => return None,
         (None, Some(values)) => {
@@ -226,7 +226,6 @@ fn dispatch_domain(
 /// out-of-bounds slots defers a branch that should have resolved.
 fn decompose_index(
     function: &strider_ir::Function,
-    rom: Option<&dyn ReadOnlyMemory>,
     ranges: &mut crate::value_range::RangeMap<'_>,
     chain: &[ValueId],
     site: NodeId,
@@ -234,9 +233,7 @@ fn decompose_index(
     let hits: Vec<(usize, PinnedIndex)> = chain
         .iter()
         .enumerate()
-        .filter_map(|(depth, &v)| {
-            bounded_index(function, rom, ranges, site, v).map(|hit| (depth, hit))
-        })
+        .filter_map(|(depth, &v)| bounded_index(function, ranges, site, v).map(|hit| (depth, hit)))
         .collect();
     let shallowest = *hits.first()?;
     // A candidate that strips to a cell of a table the evaluator folds bounds
@@ -463,7 +460,6 @@ fn is_base_operand(function: &strider_ir::Function, v: ValueId) -> bool {
 /// [`RangeMap::guard_left_unconnected`]: crate::value_range::RangeMap::guard_left_unconnected
 fn bounded_index(
     function: &strider_ir::Function,
-    rom: Option<&dyn ReadOnlyMemory>,
     ranges: &mut crate::value_range::RangeMap<'_>,
     site: NodeId,
     v: ValueId,
@@ -471,11 +467,12 @@ fn bounded_index(
     let ty = function
         .value_type_opt(v)
         .filter(|t| t.is_integer() && function.int_const_u128(v).is_none())?;
-    let enumerable = |ranges: &crate::value_range::RangeMap<'_>, value: ValueId, iv: Interval| {
-        index_bound_ok(ty, iv)
-            && !is_width_only(function, rom, ranges, value, iv)
-            && !ranges.guard_left_unconnected(value, site, iv)
-    };
+    let enumerable =
+        |ranges: &mut crate::value_range::RangeMap<'_>, value: ValueId, iv: Interval| {
+            index_bound_ok(ty, iv)
+                && !is_width_only(function, ranges, site, value, iv)
+                && !ranges.guard_left_unconnected(value, site, iv)
+        };
     let iv = ranges.range_of(v, site);
     if enumerable(ranges, v, iv) {
         return Some(PinnedIndex {
@@ -553,7 +550,7 @@ const MAX_SCALE_STRIP: u32 = 64;
 
 /// Is `v`'s range merely its type width rather than a real narrowing?  A raw
 /// byte load fills its cell width exactly, making it table DATA, not an index,
-/// unless it reads outside every ROM table ([`loads_outside_rom`]).
+/// unless it is a field read through a pointer ([`loads_a_field`]).
 ///
 /// Keying on the RANGE rather than on "is it load-derived" is load-bearing: a
 /// guarded raw load, `if (Load < N) switch(Load)`, is a genuine index even
@@ -574,8 +571,8 @@ const MAX_SCALE_STRIP: u32 = 64;
 /// well-defined.
 fn is_width_only(
     function: &strider_ir::Function,
-    rom: Option<&dyn ReadOnlyMemory>,
-    ranges: &crate::value_range::RangeMap<'_>,
+    ranges: &mut crate::value_range::RangeMap<'_>,
+    site: NodeId,
     v: ValueId,
     iv: Interval,
 ) -> bool {
@@ -616,7 +613,7 @@ fn is_width_only(
             None => break,
         }
     }
-    if loads_outside_rom(function, rom, base) {
+    if loads_a_field(function, ranges, site, base) {
         return false;
     }
     // Defer, as every other bail here does: with no width there is no cell
@@ -655,15 +652,15 @@ fn is_width_only(
     iv.count() == count
 }
 
-/// Whether `v` is a load from outside every table: its address is not a
-/// constant, and no constant it adds reads as `rom`.  A cell of a table
-/// sits at the table's base plus the index, and the base is in `rom`; a
-/// field of a struct, or a byte through a pointer, is at a register plus
-/// an offset that is no address.  With no `rom` every constant is taken
-/// for a table base.
-fn loads_outside_rom(
+/// Whether `v` is a load through a pointer: its address is no constant, and
+/// no term it adds ranges at `site` over few enough values to index a table.
+/// A cell of a table sits at the table's base plus a bounded index, wherever
+/// the table lives; a field of a struct, or a byte through a pointer, sits at
+/// an unbounded register or phi plus an offset.
+fn loads_a_field(
     function: &strider_ir::Function,
-    rom: Option<&dyn ReadOnlyMemory>,
+    ranges: &mut crate::value_range::RangeMap<'_>,
+    site: NodeId,
     v: ValueId,
 ) -> bool {
     if !matches!(function.node_kind(function.producer(v)), NodeKind::Load(_)) {
@@ -672,6 +669,9 @@ fn loads_outside_rom(
     let Some(addr) = function.int_inputs(v).next() else {
         return false;
     };
+    if function.int_const_u128(addr).is_some() {
+        return false;
+    }
     let mut stack = vec![addr];
     let mut steps = MAX_SCALE_STRIP;
     while let Some(term) = stack.pop() {
@@ -679,15 +679,7 @@ fn loads_outside_rom(
             return false;
         };
         steps = left;
-        if let Some(c) = function.int_const_u128(term) {
-            let in_rom = match (rom, u64::try_from(c)) {
-                (Some(rom), Ok(c)) => rom.read(c, &mut [0u8]).is_ok(),
-                (Some(_), Err(_)) => false,
-                (None, _) => true,
-            };
-            if in_rom {
-                return false;
-            }
+        if function.int_const_u128(term).is_some() {
             continue;
         }
         if matches!(
@@ -695,9 +687,11 @@ fn loads_outside_rom(
             NodeKind::IntBinaryOp(IntBinaryOp::Add)
         ) {
             stack.extend(function.int_inputs(term));
+        } else if ranges.range_of(term, site).count() <= u128::from(MAX_TABLE_ENTRIES) {
+            return false;
         }
     }
-    function.int_const_u128(addr).is_none()
+    true
 }
 
 /// `1 << k`, or `None` past the `u128` carrier.
