@@ -204,7 +204,9 @@ impl OwnedElf {
     /// # Errors
     ///
     /// When a mapping's data can't be read, or its `address + length` would
-    /// exceed `u64::MAX`, plus anything [`checked_file`](Self::checked_file)
+    /// exceed `u64::MAX`; when a relocating `mode`'s relocation section
+    /// headers name more than twice the entries the file holds at its
+    /// smallest entry; plus anything [`checked_file`](Self::checked_file)
     /// reports.
     pub fn image(&self, source: RegionSource, mode: RelocationMode) -> Result<ElfImage> {
         let obj = self.checked_file()?;

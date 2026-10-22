@@ -793,10 +793,8 @@ struct TableCopy {
     over: &'static str,
     link: Option<u32>,
     flags: Option<u64>,
-    /// Entries the copy starts past `.rela.dyn`'s first, and leaves off its
-    /// end.
-    skip: u64,
-    drop: u64,
+    /// `(sh_offset, sh_size)` in place of `.rela.dyn`'s.
+    extent: Option<(u64, u64)>,
 }
 
 /// `name` with each of `copies` written over a section header.
@@ -807,19 +805,16 @@ fn table_copies(name: &str, copies: &[TableCopy]) -> OwnedElf {
         let shoff = u64::from_le_bytes(bytes[0x28..0x30].try_into().unwrap()) as usize;
         let at = |name: &str| shoff + obj.section_by_name(name).unwrap().index().0 * 64;
         let table = at(".rela.dyn");
-        let (offset, size) = obj
-            .section_by_name(".rela.dyn")
-            .unwrap()
-            .file_range()
-            .unwrap();
         for c in copies {
             let to = at(c.over);
             bytes.copy_within(table..table + 64, to);
             let mut put = |field: usize, v: u64, n: usize| {
                 bytes[to + field..to + field + n].copy_from_slice(&v.to_le_bytes()[..n]);
             };
-            put(0x18, offset + 24 * c.skip, 8);
-            put(0x20, size - 24 * (c.skip + c.drop), 8);
+            if let Some((offset, size)) = c.extent {
+                put(0x18, offset, 8);
+                put(0x20, size, 8);
+            }
             if let Some(link) = c.link {
                 put(0x28, link.into(), 4);
             }
@@ -849,8 +844,7 @@ fn an_unwalked_header_over_a_table_does_not_displace_it() {
             over: ".gnu.hash",
             link: Some(symtab),
             flags: Some(0),
-            skip: 0,
-            drop: 0,
+            extent: None,
         }],
     );
     let reader = ElfFileMemReader::new(&decoyed, GOT_IS_ROM).unwrap();
@@ -864,42 +858,84 @@ fn an_unwalked_header_over_a_table_does_not_displace_it() {
     }
 }
 
-/// Headers over shifted and shortened slices of `.rela.dyn`'s table: each
-/// entry is walked once, so the patches are those of the image with one
-/// header, however many headers overlap.
+/// A header at `.rela.dyn`'s second entry whose `sh_size` runs past the end
+/// of the file: no walk reads it, and `.rela.dyn` is walked as before, so
+/// `h`'s and `cpu_flag`'s slots hold their addresses.
 #[test]
-fn headers_over_slices_of_one_table_walk_each_entry_once() {
-    let once = patch_counts(&open("x64_ifunc_lib.elf"));
-    let slices = table_copies(
+fn a_header_past_the_file_end_does_not_hide_a_table() {
+    let elf = open("x64_ifunc_lib.elf");
+    let (offset, _) = elf
+        .checked_file()
+        .unwrap()
+        .section_by_name(".rela.dyn")
+        .unwrap()
+        .file_range()
+        .unwrap();
+    let decoyed = table_copies(
         "x64_ifunc_lib.elf",
-        &[
-            (".comment", 1, 0),
-            (".note.gnu.property", 2, 0),
-            (".eh_frame_hdr", 3, 0),
-            (".eh_frame", 0, 1),
+        &[TableCopy {
+            over: ".comment",
+            link: None,
+            flags: None,
+            extent: Some((offset + 24, 1 << 40)),
+        }],
+    );
+    let reader = ElfFileMemReader::new(&decoyed, GOT_IS_ROM).unwrap();
+    let glob_dat = object::elf::R_X86_64_GLOB_DAT;
+    for name in ["h", "cpu_flag"] {
+        assert_eq!(
+            rom_word(&reader, dynamic_site(&elf, glob_dat, Some(name)), 8, true),
+            Ok(dynsym_value(&elf, name)),
+            "{name}"
+        );
+    }
+}
+
+/// The lib with `.rela.dyn` copied over five more headers, each from its
+/// own offset near the file's start: a crafted image whose
+/// headers name more entries than twice what the file holds at 16 bytes an
+/// entry is refused; one at that bound loads.
+#[test]
+fn headers_naming_more_entries_than_the_file_holds_are_refused() {
+    let len = std::fs::metadata(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/loader/out/x64_ifunc_lib.elf"),
+    )
+    .unwrap()
+    .len();
+    let budget = 2 * len / 16;
+    // `.rela.dyn`'s own 4 entries, then five copies that bring the total to
+    // `total`.
+    let with_total = |total: u64| {
+        let mut left = total - 4;
+        let copies = [
+            ".gnu.hash",
+            ".note.gnu.property",
+            ".eh_frame_hdr",
+            ".eh_frame",
+            ".comment",
         ]
-        .map(|(over, skip, drop)| TableCopy {
-            over,
-            link: None,
-            flags: None,
-            skip,
-            drop,
-        }),
-    );
-    assert_eq!(patch_counts(&slices), once);
-    // `.rela.dyn` itself cut to its first two entries, and another header
-    // over the rest from the second: their union is the whole table.
-    let union = table_copies(
-        "x64_ifunc_lib.elf",
-        &[(".comment", 1, 0), (".rela.dyn", 0, 2)].map(|(over, skip, drop)| TableCopy {
-            over,
-            link: None,
-            flags: None,
-            skip,
-            drop,
-        }),
-    );
-    assert_eq!(patch_counts(&union), once, "the union");
+        .into_iter()
+        .zip(0u64..)
+        .map(|(over, i)| {
+            // Each from its own entry, so no two repeat one table.
+            let n = left.min((len - 24 * i) / 24);
+            left -= n;
+            TableCopy {
+                over,
+                link: None,
+                flags: None,
+                extent: Some((24 * i, 24 * n)),
+            }
+        })
+        .collect::<Vec<_>>();
+        assert_eq!(left, 0, "{total} entries fit the headers");
+        let elf = table_copies("x64_ifunc_lib.elf", &copies);
+        ElfFileMemReader::new(&elf, GOT_IS_ROM).map(|_| ())
+    };
+    with_total(budget).expect("at the bound");
+    let err = with_total(budget + 1).expect_err("past the bound");
+    assert!(format!("{err:#}").contains("relocation entries"), "{err:#}");
 }
 
 /// `x64_nodynsym.elf` with its text PT_LOAD grown to end where `.rodata`'s
