@@ -685,6 +685,11 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     // compute is covered by the `altv`/`vsx`/`vector` prefix below.
     ("loadVectorForShiftLeft", PURE),
     ("random", PURE),
+    // e500 `mfpmr` / `mtpmr` move a performance-monitor register
+    // (`quicciii.sinc`) and touch no RAM. A `CallOther` is never
+    // deduplicated, so two reads of a running counter stay two values.
+    ("moveFromPerformanceMonitorRegister", PURE),
+    ("moveToPerformanceMonitorRegister", PURE),
     // `slbmfee` / `slbmfev` / `slbfee.` write RT from the op's output (a fork
     // patch: the stock sla wrote it nowhere) and read the SLB, not RAM.
     ("slbMoveFromEntryESID", PURE),
