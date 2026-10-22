@@ -515,6 +515,11 @@
 
 ### Fixed
 
+- Python: a jump table indexed by the low byte of a wider load, as x86-64's
+  `mov 0x10(%rdi),%eax; movzbl %al,%eax` lifts it, is read the way the
+  byte itself is: through a pointer it resolves over the byte's 256 values,
+  and as a cell of a table it still defers. The width count stopped at the
+  truncate, which the walk naming the cell already stepped through.
 - Python: `relocated_got_is_rom` serves PPC32's `.got2`, the per-object GOT
   a `-fPIC` function loads its jump-table base from after
   `bcl 20,31,$+4; mflr r30`, as it serves `.got`. Such a table was never
