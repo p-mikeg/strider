@@ -210,12 +210,12 @@ impl From<ElfRegionSource> for RegionSource {
 
 /// What `apply_relocations` and `relocated_got_is_rom` claim about the image.
 /// Relocated, fetch maps every writable section too; `relocated_got_is_rom`
-/// takes `.got` and `.data.rel.ro` into the ROM on the caller's claim that
-/// nothing rewrites them once the loader has run (never `.got.plt`), less the
-/// slots only the loader computes, which stay unmapped. In any mode, a
-/// relocation against a defined IFUNC inside an executable mapping takes the
-/// symbol's address, so an address taken in code or a data word mapped
-/// executable folds to it rather than to the resolver's result.
+/// takes `.got`, `.got2` and `.data.rel.ro` into the ROM on the caller's
+/// claim that nothing rewrites them once the loader has run (never
+/// `.got.plt`), less the slots only the loader computes, which stay unmapped.
+/// In any mode, a relocation against a defined IFUNC inside an executable
+/// mapping takes the symbol's address, so an address taken in code or a data
+/// word mapped executable folds to it rather than to the resolver's result.
 ///
 /// Refuses `relocated_got_is_rom` without `apply_relocations`, which denies
 /// that same claim.
@@ -1036,10 +1036,10 @@ fn load_elf_impl(
 /// relocations: section coverage widens to `.data.rel.ro` / `.got` and
 /// every understood relocation is applied.
 ///
-/// `relocated_got_is_rom` additionally serves `.got` / `.data.rel.ro` as
-/// read-only memory, which constant-folds a load through them; see
-/// [`relocation_mode`].  `apply_relocations` defaults to `false` here, so
-/// it has to be passed alongside: the pair without it is refused.
+/// `relocated_got_is_rom` additionally serves `.got` / `.got2` /
+/// `.data.rel.ro` as read-only memory, which constant-folds a load through
+/// them; see [`relocation_mode`].  `apply_relocations` defaults to `false`
+/// here, so it has to be passed alongside: the pair without it is refused.
 #[pyfunction]
 #[pyo3(name = "_load_elf_from_segments", signature = (path, apply_relocations=false, relocated_got_is_rom=false))]
 pub fn load_elf_from_segments(

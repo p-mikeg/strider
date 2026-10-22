@@ -4,9 +4,10 @@ use super::load::{OwnedElf, RelocationMode};
 use super::sections::RegionSource;
 
 /// An [`rsleigh::MemReader`] over an ELF's fetch image and a
-/// [`crate::ReadOnlyMemory`] over its runtime-immutable mappings (plus `.got`
-/// and `.data.rel.ro` under `got_is_rom`): instruction fetch may reference a
-/// mapping that constant-load folding must not, so the two views differ.
+/// [`crate::ReadOnlyMemory`] over its runtime-immutable mappings (plus `.got`,
+/// `.got2` and `.data.rel.ro` under `got_is_rom`): instruction fetch may
+/// reference a mapping that constant-load folding must not, so the two views
+/// differ.
 ///
 /// Its regions are windows into the [`OwnedElf`]'s bytes, so over a mapped
 /// file it holds the mapping: [`check_unchanged`](Self::check_unchanged)
