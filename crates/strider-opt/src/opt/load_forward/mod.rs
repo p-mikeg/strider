@@ -73,9 +73,8 @@ impl crate::peephole::PeepholePass for LoadForward {
                 alias: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::Forward, function)),
                 // `narrow_load_to` rewires for good, and the walks that read
                 // the edge afterwards honour no call relaxation (the jump-table
-                // walk, stack-argument collection, return-target verification
-                // with its claim off), so the narrowing honours every claim but
-                // those.
+                // walk, return-target verification with its claim off), so the
+                // narrowing honours every claim but those.
                 narrow: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::TableWalk, function)),
             }
         });
