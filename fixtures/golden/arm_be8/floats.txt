@@ -7,7 +7,7 @@
 # f64_compare: 2 fcmp.less|fcmp.equal
 # f64_to_f32: float_to_float
 # float_to_int: float_to_int
-# int_to_float: int_to_float or float.add and float.neg and float_to_float
+# int_to_float: int_to_float or float.add and float.neg|fconst[0xc330000080000000] and float_to_float
 endian big register=little
 default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode
@@ -19,10 +19,10 @@ tracked [r0, r1, r2, r3, r11, sp, lr, pc, CY, tmpNG, tmpZR, tmpCY, tmpOV, shift_
 arg 0 [%v18]
 arg 1 [%v19]
 float_arg 0 [%v9]
-float_arg 1 [%v102]
-float_arg 2 [%v103]
-float_arg 3 [%v104]
-float_arg 6 [%v81]
+float_arg 1 [%v101]
+float_arg 2 [%v102]
+float_arg 3 [%v103]
+float_arg 6 [%v80]
 float_arg 7 [%v22]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -97,39 +97,38 @@ float_arg 7 [%v22]
 %v70:i64 = int.shift_right %v68, %v14
 %v71:i32 = truncate %v70
 %v72:f32 = int_bits_to_float %v71
-%v73:i32 = iconst[0x3f800000]
-%v74:f32 = int_bits_to_float %v73
-%v75:f32 = float.add %v72, %v74
-%v76:i32 = float_bits_to_int %v75
-%v77:i64 = extend.zero %v76
-%v78:i64 = int.shift_left %v77, %v14
-%v79:i64 = int.or %v69, %v78
-%v80:i64 = int.and %v79, %v26
-%v81:i64 = initial_var[d6]
-%v82:i64 = int.and %v81, %v26
-%v83:i32 = truncate %v79
-%v84:f32 = int_bits_to_float %v83
-%v85:i64 = int.shift_right %v79, %v14
-%v86:i32 = truncate %v85
-%v87:f32 = int_bits_to_float %v86
-%v88:f32 = float.div %v84, %v87
-%v89:i32 = float_bits_to_int %v88
-%v90:i64 = extend.zero %v89
-%v91:i64 = int.shift_left %v90, %v14
-%v92:i64 = int.or %v82, %v91
-%v93:i64 = int.shift_right %v92, %v14
-%v94:i32 = truncate %v93
-%v95:i64 = extend.zero %v94
-%v96:i64 = int.shift_left %v95, %v14
-%v97:i64 = int.or %v80, %v96
-%v98:i64 = int.shift_right %v97, %v14
-%v99:i32 = truncate %v98
-%v100:i64 = extend.zero %v99
-%v101:i64 = int.or %v21, %v100
-%v102:i64 = initial_var[d1]
-%v103:i64 = initial_var[d2]
-%v104:i64 = initial_var[d3]
-return %v0, %v17, %v18, %v19, %v101, %v102, %v103, %v104
+%v73:f32 = fconst[0x3f800000]
+%v74:f32 = float.add %v72, %v73
+%v75:i32 = float_bits_to_int %v74
+%v76:i64 = extend.zero %v75
+%v77:i64 = int.shift_left %v76, %v14
+%v78:i64 = int.or %v69, %v77
+%v79:i64 = int.and %v78, %v26
+%v80:i64 = initial_var[d6]
+%v81:i64 = int.and %v80, %v26
+%v82:i32 = truncate %v78
+%v83:f32 = int_bits_to_float %v82
+%v84:i64 = int.shift_right %v78, %v14
+%v85:i32 = truncate %v84
+%v86:f32 = int_bits_to_float %v85
+%v87:f32 = float.div %v83, %v86
+%v88:i32 = float_bits_to_int %v87
+%v89:i64 = extend.zero %v88
+%v90:i64 = int.shift_left %v89, %v14
+%v91:i64 = int.or %v81, %v90
+%v92:i64 = int.shift_right %v91, %v14
+%v93:i32 = truncate %v92
+%v94:i64 = extend.zero %v93
+%v95:i64 = int.shift_left %v94, %v14
+%v96:i64 = int.or %v79, %v95
+%v97:i64 = int.shift_right %v96, %v14
+%v98:i32 = truncate %v97
+%v99:i64 = extend.zero %v98
+%v100:i64 = int.or %v21, %v99
+%v101:i64 = initial_var[d1]
+%v102:i64 = initial_var[d2]
+%v103:i64 = initial_var[d3]
+return %v0, %v17, %v18, %v19, %v100, %v101, %v102, %v103
 
 == f64_arith @0x1010c
 cfg

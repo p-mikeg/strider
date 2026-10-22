@@ -7,7 +7,7 @@
 # f64_compare: 2 fcmp.less|fcmp.equal
 # f64_to_f32: float_to_float
 # float_to_int: float_to_int
-# int_to_float: int_to_float or float.add and float.neg and float_to_float
+# int_to_float: int_to_float or float.add and float.neg|fconst[0xc330000080000000] and float_to_float
 endian big
 default_cc arg_passing_regs=[a0, a1, a2, a3] arg_passing_regs_float=[f12, f14] callee_saved_regs=[s0, s1, s2, s3, s4, s5, s6, s7, s8, gp, ra, f20, f21, f22, f23, f24, f25, f26, f27, f28, f29, f30, f31] ret_val_regs=[v0, v1] ret_val_regs_float=[f0_1, f2_3] stack_vn=sp stack_args=16+4n ret_stack_pop=0 link_register_vn=ra preserves_memory=false preserves_all_registers=false entry_address_vn=t9 reg_args_adjoin_stack_args=true
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode
@@ -176,18 +176,17 @@ float_arg 1 [%v9]
 %v24:i64 = extend.zero %v23
 %v25:i64 = int.or %v20, %v24
 %v26:i64 = int.and %v25, %v5
-%v27:i32 = iconst[0x3f800000]
-%v28:f32 = int_bits_to_float %v27
-%v29:f32 = float.add %v8, %v28
-%v30:f32 = float.div %v22, %v29
-%v31:i32 = float_bits_to_int %v30
-%v32:i64 = extend.zero %v31
-%v33:i64 = int.or %v26, %v32
-%v34:i64 = initial_var[f2_3]
-%v35:i64 = int.and %v34, %v5
-%v36:i64 = iconst[0x3f800000]
-%v37:i64 = int.or %v35, %v36
-return %v0, %v1, %v2, %v3, %v33, %v37
+%v27:f32 = fconst[0x3f800000]
+%v28:f32 = float.add %v8, %v27
+%v29:f32 = float.div %v22, %v28
+%v30:i32 = float_bits_to_int %v29
+%v31:i64 = extend.zero %v30
+%v32:i64 = int.or %v26, %v31
+%v33:i64 = initial_var[f2_3]
+%v34:i64 = int.and %v33, %v5
+%v35:i64 = iconst[0x3f800000]
+%v36:i64 = int.or %v34, %v35
+return %v0, %v1, %v2, %v3, %v32, %v36
 
 == f64_arith @0x400830
 cfg
@@ -207,12 +206,12 @@ float_arg 1 [%v6]
 %v9:f64 = float.mul %v8, %v5
 %v10:f64 = float.neg %v7
 %v11:f64 = float.add %v9, %v10
-%v12:i64 = iconst[0x3ff0000000000000]
-%v13:f64 = int_bits_to_float %v12
-%v14:f64 = float.add %v5, %v13
-%v15:f64 = float.div %v11, %v14
-%v16:i64 = float_bits_to_int %v15
-return %v0, %v1, %v2, %v3, %v16, %v12
+%v12:f64 = fconst[0x3ff0000000000000]
+%v13:f64 = float.add %v5, %v12
+%v14:f64 = float.div %v11, %v13
+%v15:i64 = float_bits_to_int %v14
+%v16:i64 = iconst[0x3ff0000000000000]
+return %v0, %v1, %v2, %v3, %v15, %v16
 
 == f32_to_f64 @0x400850
 cfg
