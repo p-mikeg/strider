@@ -525,6 +525,9 @@
 
 ### Fixed
 
+- Python: the ppc64 presets lift e500 `mfpmr` and `mtpmr`, each read of a
+  performance-monitor register its own value. A function using one failed
+  to lift on an unclassified `call_other`.
 - Python: the `ppc32be` and `ppc32le` presets decode `isel`, which clang
   emits for ppc32 (`iseleq r3,0,r3`). It was undecodable, so a function
   reaching one failed its build or lost the jump-table arm that held it.
