@@ -615,6 +615,32 @@ fn x86_64_a_write_through_a_pointer_loaded_from_a_global_rests_on_a_claim() {
     );
 }
 
+/// With `return_slots_survive_untracked_writes` cleared, a store to a constant
+/// address is checked against the slot, and it is `stack_global_disjoint`, not
+/// the cleared claim, that keeps it off: the `ret`'s narrowed memory edge
+/// steps past it under that claim alone.
+///
+/// Mutation: narrow under `MemPurpose::Structural`.
+#[test]
+fn x86_64_a_global_store_rests_on_stack_global_disjoint() {
+    // movl $0x1,0x20000 ; ret
+    let bytes = vec![
+        0xc7, 0x04, 0x25, 0x00, 0x00, 0x02, 0x00, 0x01, 0x00, 0x00, 0x00, 0xc3,
+    ];
+    let floor = analyze_with(Arch::X64, bytes.clone(), &no_assumptions());
+    assert_eq!(unresolved(&floor), vec![BASE + 11], "no claim keeps it off");
+    let disjoint = strider_opt::AssumptionOptions {
+        stack_global_disjoint: true,
+        ..no_assumptions()
+    };
+    let result = analyze_with(Arch::X64, bytes, &disjoint);
+    assert!(
+        result.incomplete().is_empty(),
+        "unresolved {:x?}",
+        unresolved(&result)
+    );
+}
+
 #[test]
 fn x86_64_an_indexed_stack_write_rests_on_a_claim() {
     // sub $0x18,%rsp ; mov %rsi,(%rsp,%rdi,8) ; add $0x18,%rsp ; ret: %rdi = 3
