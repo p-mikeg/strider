@@ -445,9 +445,15 @@ fn for_each_reloc_site<F>(
 }
 
 /// `obj`'s bytes with each relocation section header that repeats an
-/// earlier one turned `SHT_NULL`, so that its table is walked once; `None`
-/// when none repeats. An ET_REL's header repeats only with the same target
-/// section, since it applies the table there.
+/// earlier one's table, the same `(sh_type, sh_offset, sh_size)`, turned
+/// `SHT_NULL`, so that the table is walked once; `None` when none repeats.
+///
+/// A linked image's repeats that disagree on `sh_link` leave which symbol
+/// table the entries index in doubt: the header kept is linked to none,
+/// which makes every entry naming a symbol a hole. An ET_REL's header
+/// repeats only with the same `sh_link` and `sh_info`: `object` walks only
+/// the ones linked to `.symtab`, each applying to the section `sh_info`
+/// names.
 fn without_repeated_tables(obj: &object::File<'_>) -> Option<Vec<u8>> {
     match obj {
         object::File::Elf32(f) => without_repeated_tables_of(f),
@@ -462,37 +468,54 @@ fn without_repeated_tables_of<Elf: object::read::elf::FileHeader>(
     use object::read::elf::SectionHeader as _;
     let endian = f.endian();
     let relocatable = f.kind() == object::ObjectKind::Relocatable;
-    let mut seen = std::collections::HashSet::new();
-    let repeats: Vec<usize> = f
-        .elf_section_table()
-        .iter()
-        .enumerate()
-        .filter(|(_, sh)| {
-            let ty = sh.sh_type(endian);
-            matches!(
-                ty,
-                object::elf::SHT_REL | object::elf::SHT_RELA | object::elf::SHT_CREL
-            ) && !seen.insert((
-                ty,
-                sh.sh_offset(endian).into(),
-                sh.sh_size(endian).into(),
-                sh.sh_link(endian),
-                if relocatable { sh.sh_info(endian) } else { 0 },
-            ))
-        })
-        .map(|(i, _)| i)
-        .collect();
+    // Table -> (the header kept, its `sh_link`, whether a repeat disagrees).
+    let mut kept = std::collections::HashMap::new();
+    let mut repeats = Vec::new();
+    for (i, sh) in f.elf_section_table().iter().enumerate() {
+        let ty = sh.sh_type(endian);
+        if !matches!(
+            ty,
+            object::elf::SHT_REL | object::elf::SHT_RELA | object::elf::SHT_CREL
+        ) {
+            continue;
+        }
+        let (link, info) = if relocatable {
+            (sh.sh_link(endian), sh.sh_info(endian))
+        } else {
+            (0, 0)
+        };
+        let table: (u32, u64, u64, u32, u32) = (
+            ty,
+            sh.sh_offset(endian).into(),
+            sh.sh_size(endian).into(),
+            link,
+            info,
+        );
+        match kept.entry(table) {
+            std::collections::hash_map::Entry::Vacant(v) => {
+                v.insert((i, sh.sh_link(endian), false));
+            }
+            std::collections::hash_map::Entry::Occupied(mut o) => {
+                let (_, first_link, mixed) = o.get_mut();
+                *mixed |= *first_link != sh.sh_link(endian);
+                repeats.push(i);
+            }
+        }
+    }
     if repeats.is_empty() {
         return None;
     }
     let header = f.elf_header();
     let shoff: u64 = header.e_shoff(endian).into();
     let shentsize = u64::from(header.e_shentsize(endian));
+    // `sh_type` is the second word of either class's header, `sh_link` the
+    // seventh of an Elf32_Shdr and at 0x28 in an Elf64_Shdr; 0 is SHT_NULL
+    // and SHN_UNDEF in either byte order.
+    let link_at = if f.is_64() { 0x28 } else { 0x18 };
+    let unlinked = kept.values().filter(|k| k.2).map(|k| (k.0, link_at));
     let mut bytes = f.data().to_vec();
-    for i in repeats {
-        // `sh_type` is the second word of either class's header; 0 is
-        // SHT_NULL in either byte order.
-        let at = usize::try_from(shoff + i as u64 * shentsize + 4).ok()?;
+    for (i, field) in repeats.into_iter().map(|i| (i, 4)).chain(unlinked) {
+        let at = usize::try_from(shoff + i as u64 * shentsize + field).ok()?;
         bytes.get_mut(at..at + 4)?.fill(0);
     }
     Some(bytes)
