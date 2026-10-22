@@ -209,7 +209,7 @@ arg 1 [%v35]
 %v43:i64 = iconst[0x3]
 %v44:i64 = int.shift_left %v42, %v43
 %v45:i64 = iconst[0x120011038]
-%v46:i64 = load[r] %v41, %v45
+%v46:i64 = load[r] %v16, %v45
 %v47:i64 = iconst[0xfd0]
 %v48:i64 = int.add %v46, %v47
 %v49:i64 = int.add %v44, %v48
