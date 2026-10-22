@@ -941,21 +941,22 @@ fn a_bare_entry_arm_the_back_edge_replaces_stays() -> crate::Result<()> {
     Ok(())
 }
 
-/// One phi under more masks than the peel budget covers, its arms `0x13` and
-/// `(x & 0xc0) | 0x33`: the run folds the masks clear of bit 5 it reaches,
-/// each to its constant, never one holding bit 5, where the arms differ, and
-/// leaves the rest once the budget is spent, mid-mask included.
-#[test]
-fn masks_past_the_peel_budget_stay() -> crate::Result<()> {
+/// A diamond writing `0x13` and `(x & 0xc0) | 0x33` to each of
+/// `masks.len()` vars, the join reading each var under its masks, in order.
+/// Returns, per var, each mask's value after the pass: `Some(k)` folded,
+/// `None` left as `var & mask`.
+fn masked_join(masks: &[&[u128]]) -> crate::Result<Vec<Vec<Option<u128>>>> {
     use strider_ir::IntBinaryOp::{And, Or};
-    let (var, x) = (reg_vn(0x1000, 4), reg_vn(0x1004, 4));
+    let vars: Vec<_> = (0..masks.len())
+        .map(|i| reg_vn(0x1000 + 4 * i as u64, 4))
+        .collect();
+    let x = reg_vn(0x2000, 4);
     let ty = ValueType::int(32);
-    let mut fb = RegisterSet::new()
-        .tracked(var)
-        .arg(var)
-        .tracked(x)
-        .arg(x)
-        .build_fn()?;
+    let mut set = RegisterSet::new().tracked(x).arg(x);
+    for &var in &vars {
+        set = set.tracked(var).arg(var);
+    }
+    let mut fb = set.build_fn()?;
     let entry = fb.create_region_all()?;
     let left = fb.create_region_all()?;
     let right = fb.create_region_all()?;
@@ -963,68 +964,91 @@ fn masks_past_the_peel_budget_stay() -> crate::Result<()> {
     fb.set_entry_region_all(entry)?;
 
     fb.set_region(entry);
-    let current = fb.read_variable(&var)?;
     let xv = fb.read_variable(&x)?;
     let zero = fb.build_int_const(0u64, ty)?;
-    let cond = fb.build_int_cmp_operation(current, zero, strider_ir::IntCmpOp::Equal, ty)?;
+    let cond = fb.build_int_cmp_operation(xv, zero, strider_ir::IntCmpOp::Equal, ty)?;
     fb.build_if(cond, left, right)?;
 
     fb.set_region(left);
     let k = fb.build_int_const(0x13u64, ty)?;
-    fb.write_variable(&var, k)?;
+    for var in &vars {
+        fb.write_variable(var, k)?;
+    }
     fb.build_branch(join)?;
 
     fb.set_region(right);
     let high = konst(&mut fb, And, 0xc0, xv)?;
     let other = konst(&mut fb, Or, 0x33, high)?;
-    fb.write_variable(&var, other)?;
+    for var in &vars {
+        fb.write_variable(var, other)?;
+    }
     fb.build_branch(join)?;
 
-    // Clear of bits 6 and 7, so `x & 0xc0` peels off; every other mask holds
-    // bit 5.
-    let masks: Vec<u128> = (1..41u128)
-        .flat_map(|i| {
-            let m = (i & 0x1f) | ((i >> 5) << 8);
-            [m, m | 0x20]
-        })
-        .collect();
     fb.set_region(join);
-    let merged = fb.read_variable(&var)?;
     let mut uses = Vec::new();
-    for &mask in &masks {
-        uses.push(fb.build_const_binop(mask, merged, And, ty)?);
+    for (var, var_masks) in vars.iter().zip(masks) {
+        let merged = fb.read_variable(var)?;
+        for &mask in *var_masks {
+            uses.push(fb.build_const_binop(mask, merged, And, ty)?);
+        }
     }
     fb.build_return(None, &uses)?;
     fb.set_lift_addr(None);
     let mut fg = fb.build()?;
     run(&mut fg)?;
 
-    let returned: Vec<ValueId> = fg
-        .node_inputs(find_return(&fg))
-        .into_iter()
-        .skip(2)
-        .collect();
-    assert_eq!(returned.len(), masks.len());
-    let mut left_alone = 0;
-    for (&v, &mask) in returned.iter().zip(&masks) {
-        match fg.int_const_u128(v) {
-            Some(k) => {
-                assert_eq!(mask & 0x20, 0, "mask {mask:#x} folded to {k:#x}");
-                assert_eq!(k, 0x13 & mask, "mask {mask:#x}");
-            }
-            None => {
-                assert!(
-                    stays(&fg, v),
-                    "mask {mask:#x}: {:?}",
-                    fg.node_kind(fg.producer(v))
-                );
-                if mask & 0x20 == 0 {
-                    left_alone += 1;
-                }
-            }
+    let mut returned = fg.node_inputs(find_return(&fg)).into_iter().skip(2);
+    let mut out = Vec::new();
+    for var_masks in masks {
+        let mut row = Vec::new();
+        for &mask in *var_masks {
+            let v = returned.next().expect("one value per mask");
+            let k = fg.int_const_u128(v);
+            assert!(
+                k.is_some() || stays(&fg, v),
+                "mask {mask:#x}: {:?}",
+                fg.node_kind(fg.producer(v))
+            );
+            row.push(k);
+        }
+        out.push(row);
+    }
+    Ok(out)
+}
+
+/// Each mask costs one peel step on the `0x13` arm and two on the other, so a
+/// phi's budget of `2 * PEEL_VISITS_PER_ARM` folds that many masks over three,
+/// each to `0x13 & mask`, and runs out inside the next one, which stays.
+#[test]
+fn masks_past_the_peel_budget_stay() -> crate::Result<()> {
+    let budget = 2 * super::PEEL_VISITS_PER_ARM;
+    assert_ne!(budget % 3, 0, "the budget runs out inside a mask");
+    // Clear of bit 5, where the arms differ, and of bits 6 and 7, which the
+    // `x & 0xc0` arm leaves unknown.
+    let masks: Vec<u128> = (1..32).chain((1..20).map(|i| i << 8)).collect();
+    let folded = masked_join(&[&masks])?.remove(0);
+    for (k, &mask) in folded.iter().zip(&masks) {
+        if let Some(k) = *k {
+            assert_eq!(k, 0x13 & mask, "mask {mask:#x}");
         }
     }
-    assert!(left_alone > 0, "every mask clear of bit 5 folded");
-    assert!(left_alone < masks.len() / 2, "no mask folded");
+    let count = folded.iter().filter(|k| k.is_some()).count();
+    assert_eq!(count, budget / 3);
+    Ok(())
+}
+
+/// A phi whose masks all refuse spends only its own budget: a phi visited
+/// after it still folds.
+#[test]
+fn a_refusing_phi_leaves_the_next_phi_its_budget() -> crate::Result<()> {
+    let refusing: Vec<u128> = (1..64)
+        .map(|i| (i & 0x1f) | 0x20 | ((i >> 5) << 8))
+        .collect();
+    // Refusing phis on both sides, whichever order the pass visits them in.
+    let folded = masked_join(&[&refusing, &[0x1f], &refusing])?;
+    for refused in [&folded[0], &folded[2]] {
+        assert!(refused.iter().all(Option::is_none), "{refused:?}");
+    }
+    assert_eq!(folded[1], [Some(0x13)]);
     Ok(())
 }
