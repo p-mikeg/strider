@@ -1102,6 +1102,52 @@ mod tests {
         assert_eq!(shift_count(&fx, node), (T::int(32), 3 | 32));
     }
 
+    /// `Sless(5, 0):I1` at `width`, as [`sign_test_over_i32`].
+    fn sign_test_over(width: u16) -> Function {
+        make_empty_fn(|b| {
+            let a = b.build_int_const(5u64, T::int(width))?;
+            let z = b.build_int_const(0u64, T::int(width))?;
+            b.build_int_cmp_operation(a, z, IntCmpOp::Sless, T::int(width))
+        })
+        .unwrap()
+    }
+
+    /// A count the shift's width holds is kept as written, the width itself
+    /// and past it included; one it does not hold saturates, `2^w` and a
+    /// non-power-of-two width included, under every shift.
+    /// Mutation: saturate every count at or past the width.
+    #[test]
+    fn a_fresh_shift_count_saturates_only_where_the_width_cannot_hold_it() {
+        type Shift = fn(Capture, u128) -> Template;
+        let a = Capture::new();
+        let shr: Shift =
+            |a, c| super::int_truncate(super::int_shr(var(a), crate::int_const(c))).into_template();
+        let shl: Shift =
+            |a, c| super::int_truncate(super::int_shl(var(a), crate::int_const(c))).into_template();
+        let sshr: Shift = |a, c| {
+            super::int_truncate(super::int_sshr(var(a), crate::int_const(c))).into_template()
+        };
+        let cases = [
+            (shr, 32, 32, 32),
+            (shr, 32, 64, 64),
+            (shr, 32, 1 << 32, 32),
+            (shr, 24, (1 << 24) + 3, 3 | 24),
+            (shl, 32, 0x1_0000_0003, 3 | 32),
+            (sshr, 32, 0x1_0000_0003, 3 | 32),
+        ];
+        for (shift, width, count, want) in cases {
+            let lhs = crate::int_slt(var(a), crate::int_const(0u128)).into_pattern();
+            let rhs = shift(a, count);
+            let mut fx = sign_test_over(width);
+            let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
+            assert_eq!(
+                shift_count(&fx, node),
+                (T::int(width), want),
+                "{count:#x} at i{width}"
+            );
+        }
+    }
+
     /// `capture_typed` over a capture is refused, not a panic: a capture keeps
     /// the type of the value it bound.
     #[test]
