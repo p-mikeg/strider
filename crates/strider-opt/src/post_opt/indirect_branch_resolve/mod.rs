@@ -650,6 +650,93 @@ mod tests {
         assert!(!ReturnTargets::new(&f).returns_to_caller(branch, target));
     }
 
+    /// A 32-bit link-register function that calls `ALLOCATOR`, saves `lr` at
+    /// `sp - 4`, writes through the call's result or to a global, and branches
+    /// through the reloaded slot.  No `LoadForward` runs, so the walk meets
+    /// the write itself.
+    fn lr_saved_past_an_off_stack_write(
+        heap: bool,
+        claims: &strider_ir::AssumptionOptions,
+    ) -> (strider_ir::Function, NodeId, ValueId) {
+        const ALLOCATOR: u64 = 0x1000;
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let lr = fake_reg_vn(0x4c, 4);
+        let r0 = fake_reg_vn(0x00, 4);
+        let mut b = strider_ir_test_utils::sp_frame(sp)
+            .tracked(lr)
+            .link_register(lr)
+            .tracked(r0)
+            .ret(r0)
+            .build_fn_single_region()
+            .expect("build_fn_single_region");
+        let sp_val = b.read_variable(&sp).unwrap();
+        let lr_val = b.read_variable(&lr).unwrap();
+        let callee = b.build_int_const(ALLOCATOR, ValueType::int(32)).unwrap();
+        let (_, rets) = b.build_call(callee, &[], &[r0], 0).unwrap();
+        let four = b
+            .build_int_const((-4i64) as u64, ValueType::int(32))
+            .unwrap();
+        let slot = b
+            .build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))
+            .unwrap();
+        b.build_store(slot, lr_val, rsleigh::VnSpace::RAM).unwrap();
+        let at = if heap {
+            rets[0]
+        } else {
+            b.build_int_const(0x4000u64, ValueType::int(32)).unwrap()
+        };
+        let junk = b
+            .build_int_const(0xDEAD_BEEFu64, ValueType::int(32))
+            .unwrap();
+        b.build_store(at, junk, rsleigh::VnSpace::RAM).unwrap();
+        let target = b
+            .build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(32))
+            .unwrap();
+        let branch = b.build_indirect_branch(target).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        function.assume(claims);
+        let mut prep = crate::OptimizerPipeline::new();
+        prep.add(crate::PhiCollapse);
+        prep.add(crate::RegionCollapse);
+        prep.run(&mut function, &mut crate::OptCtx::new(None))
+            .expect("prep");
+        (function, branch, target)
+    }
+
+    /// With `return_slots_survive_untracked_writes` off, a write a held claim
+    /// puts off the stack passes the slot without `LoadForward` having
+    /// stepped the reload past it; at the floor it clobbers.
+    ///
+    /// Mutations: drop the constant arm of `off_stack`; drop its heap arm.
+    #[test]
+    fn an_off_stack_write_passes_the_slot_under_its_claim() {
+        let none = strider_ir::AssumptionOptions::none();
+        let claimed = |heap| {
+            let claims = if heap {
+                strider_ir::AssumptionOptions {
+                    noalias_allocators: [0x1000].into_iter().collect(),
+                    ..strider_ir::AssumptionOptions::none()
+                }
+            } else {
+                strider_ir::AssumptionOptions {
+                    stack_global_disjoint: true,
+                    ..strider_ir::AssumptionOptions::none()
+                }
+            };
+            let (f, branch, target) = lr_saved_past_an_off_stack_write(heap, &claims);
+            ReturnTargets::new(&f).returns_to_caller(branch, target)
+        };
+        for heap in [false, true] {
+            let (f, branch, target) = lr_saved_past_an_off_stack_write(heap, &none);
+            assert!(
+                !ReturnTargets::new(&f).returns_to_caller(branch, target),
+                "heap={heap}: at the floor the write may land on the slot"
+            );
+            assert!(claimed(heap), "heap={heap}: the claim keeps it off");
+        }
+    }
+
     /// A 128-bit frame saving `sp + saved` at `sp + 0x40` and `lr` at
     /// `Add(..Add(fp, addends[0]).., addends[n])`, `fp` the reloaded save, so
     /// the slot is reached only through a guess.  When `junk` is given, a

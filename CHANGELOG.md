@@ -282,12 +282,16 @@
 
 ### Changed, Python
 
-- `LoadForward` moves a load's memory edge past a constant-address store
-  under `stack_global_disjoint`, and past a store through another
-  `noalias_allocators` result, but still through no call. A jump-table
-  index reloaded past a global write is bounded by the check on the first
-  load, and with `return_slots_survive_untracked_writes` cleared a return
-  past such a store verifies on those two claims.
+- Under `stack_global_disjoint`, `LoadForward` moves a stack load's memory
+  edge past a constant-address store, and a constant-address (GOT) load's
+  past a stack store. It moves a load's edge past a store through another
+  `noalias_allocators` result, and still through no call a claim makes
+  transparent. A jump-table index reloaded past a global write is bounded by
+  the check on the first load.
+- With `return_slots_survive_untracked_writes` cleared, return-target
+  verification passes a constant-address store under
+  `stack_global_disjoint` and a store through a `noalias_allocators`
+  result, where it took both to clobber the return slot.
 - `ElfLifter.build_cfg` derives its options from the ELF as `analyze` does:
   the `$d` mapping symbols seat `data_ranges` unless the options name some,
   and a ppc64 ELFv2 `no_return_targets` address also covers its
