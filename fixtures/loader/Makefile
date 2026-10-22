@@ -3,7 +3,8 @@
 # Images whose GOT slots the dynamic loader fills with values the file does
 # not hold, and objects whose GOT references strider resolves, for the ELF
 # reader's tests, plus a ppc64 ELFv2 image whose calls enter at local
-# entries: out/<name>.{elf,o}, from src/.
+# entries and a microMIPS image the loader refuses: out/<name>.{elf,o},
+# from src/.
 #
 # Not per-arch like ../Makefile: each image needs a link of its own (a shared
 # library, a PIE, an executable against that library), and the golden suite
@@ -27,6 +28,7 @@ CFLAGS := -O2 -fPIC -fno-stack-protector -nostdlib \
 X64    := gcc
 X86    := i686-linux-gnu-gcc
 MIPS32 := mips-linux-gnu-gcc -EB -mips32
+MICROMIPS := mips-linux-gnu-gcc -EB -mips32r2 -mmicromips
 MIPS64 := mips64el-linux-gnuabi64-gcc
 A64    := aarch64-linux-gnu-gcc
 PPC64LE := powerpc64le-linux-gnu-gcc
@@ -38,7 +40,7 @@ IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           x64_ifunc_nopic.o x64_ifunc_static.elf \
           x86_got_call_nopic.o x86_got_call_pic.o aarch64_got_addend.o \
           ppc64le_local_entry.elf ppc64le_local_entry_stripped.elf \
-          x64_nodynsym.elf
+          x64_nodynsym.elf mips32be_micromips.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -93,6 +95,10 @@ $(OUTDIR)/ppc64le_local_entry_stripped.elf: $(OUTDIR)/ppc64le_local_entry.elf
 $(OUTDIR)/x64_nodynsym.elf: src/nodynsym.s src/nodynsym.lds | $(OUTDIR)
 	$(X64) -nostdlib -shared -Wl,-Bsymbolic,-z,notext,--build-id=none \
 	  -Wl,-T,src/nodynsym.lds $< -o $@
+
+$(OUTDIR)/mips32be_micromips.elf: src/micromips.c | $(OUTDIR)
+	$(MICROMIPS) $(filter-out -fPIC,$(CFLAGS)) -fno-pic -mno-abicalls -no-pie \
+	  -Wl,-e,min $< -o $@
 
 clean:
 	rm -rf $(OUTDIR)

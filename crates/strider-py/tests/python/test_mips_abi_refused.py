@@ -72,3 +72,18 @@ def test_mips64_is_still_n64():
     arch, cc = _arch_and_cc_for_elf(header)
     assert arch.name() == "mipsle64"
     assert cc.name() == "mips_n64"
+
+
+#: `mips-linux-gnu-gcc -mmicromips`, built by `make -C fixtures/loader`.
+_MICROMIPS = "fixtures/loader/out/mips32be_micromips.elf"
+
+
+def test_load_elf_refuses_a_micromips_image():
+    """No preset decodes microMIPS: every MIPS one reads an ISA-bit address
+    as MIPS16e, so `min` at 0x4000f1 would come back a complete, wrong
+    function."""
+    import strider
+
+    assert _ElfHeader(_MICROMIPS).e_flags & 0x0200_0000
+    with pytest.raises(ValueError, match="microMIPS"):
+        strider.lift.load_elf(_MICROMIPS)

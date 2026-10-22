@@ -339,7 +339,7 @@ static MIPS_FACTS: DecodeFacts = DecodeFacts {
     // pspec here pins it to 1, so that ISA is MIPS16e. rsleigh ships
     // `PSPEC_MIPS32MICRO` / `PSPEC_MIPS64MICRO` for `RELP=0` (microMIPS) and no
     // preset uses them, so a microMIPS image decodes its odd-addressed
-    // functions against MIPS16e tables.
+    // functions against MIPS16e tables; Python's `load_elf` refuses one.
     isa_mode_var: Some("ISA_MODE"),
     flow_commit_vars: &[],
     // `ext_delay` is written by the five MIPS16e branch/call constructors
