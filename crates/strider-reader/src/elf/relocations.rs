@@ -203,7 +203,8 @@ impl<'a> Ctx<'a, '_> {
     /// the field runs past `site.avail`, what is left of the section owning
     /// the site. A field past its section, or past the end of every mapping
     /// holding its first byte, would write a neighbour's bytes, so it is
-    /// neither patched nor holed.
+    /// not patched; a hole asks for its first byte only, which leaves no
+    /// mapped byte of the field served.
     fn holder(&self, site: RelocSite, addr: u64, width: usize) -> Option<&'a MemRegion> {
         // `addr` is `site.addr` plus a non-negative `mips_half_field_skew` and
         // `width` is at most 8, so neither wraps; saturating anyway keeps a
@@ -1098,7 +1099,8 @@ fn mips_half_field_skew(r: &RelocInfo, arch: A, endian_le: bool) -> u64 {
 /// entry is a hole over the field its row names, else over a word: one naming
 /// a symbol because which table its index means is in doubt.
 ///
-/// On MIPS every entry is a hole: its ELF64 type word is not decoded here.
+/// On MIPS every entry but `R_MIPS_NONE` is a hole: its ELF64 type word is
+/// not decoded here.
 ///
 /// `walked` is `ctx.obj`, or its copy with repeated tables dropped.
 fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>, walked: &object::File<'_>) {
@@ -1118,6 +1120,9 @@ fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>, walked: &object::File<'_>) {
             addr,
             avail: u64::MAX,
         };
+        if mips && r.type_word() == object::elf::R_MIPS_NONE {
+            continue;
+        }
         let kind = if mips {
             None
         } else {
@@ -1132,14 +1137,10 @@ fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>, walked: &object::File<'_>) {
             Some(Kind::Compute(_, field)) => field.width(),
             None => word,
         };
-        // A field running past its mapping is a hole over the bytes mapped.
-        if let Some(width) = (1..=width)
-            .rev()
-            .find(|&w| ctx.holder(site, addr, w).is_some())
-        {
-            let holder = ctx.holder(site, addr, width);
-            ctx.unmodelled(holder, addr, width, r.type_word());
-        }
+        // Held from its first byte, the hole spans the whole field: each
+        // region it overlaps serves its share, and none past them.
+        let holder = ctx.holder(site, addr, 1);
+        ctx.unmodelled(holder, addr, width, r.type_word());
     }
 }
 
