@@ -578,8 +578,9 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     // The arithmetic, rounding and conversion forms set FPSCR status bits
     // (Power ISA 3.0B, Book I chapter 7), which `mcrfs` and `mffs` read back.
     // The permutes, moves, sign and exponent ops and `xscvspdpn` set none.
-    // `xvcmpne{dp,sp}[.]` are draft encodings no final ISA holds and only the
-    // sla decodes; their footprint is `xvcmpeqdp[.]`'s.
+    // `xscmpnedp` and `xvcmpne{dp,sp}[.]` are draft encodings no final ISA
+    // holds and only the sla decodes; their footprints are `xscmpeqdp`'s and
+    // `xvcmpeqdp[.]`'s.
     ("vsx207_11", PPC_FP_RESULT),      // xsaddsp
     ("vsx207_14", PPC_FP_RESULT),      // xscvsxdsp
     ("vsx207_15", PPC_FP_RESULT),      // xscvuxdsp
