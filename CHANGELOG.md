@@ -278,6 +278,7 @@
   one; analyse again for a function without one. A function never given a
   claim, a fresh lift included, is optimized at the sound floor, where a
   run under `OptCtx::new` used the three default claims.
+- `RegionIndex::overlapping` is gone; `RegionIndex::covering` remains.
 
 ### Changed, Python
 

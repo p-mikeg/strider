@@ -471,15 +471,6 @@ impl RegionIndex {
         )
     }
 
-    /// Slice indices of every region overlapping `[lo, hi)`, highest `start`
-    /// first; none at all for an empty range.
-    pub fn overlapping(&self, lo: u64, hi: u64) -> Covering<'_> {
-        self.walk(
-            self.entries.partition_point(|e| e.start < hi),
-            (lo < hi).then_some(lo + 1),
-        )
-    }
-
     /// Slice index of the region serving the most bytes from `addr`, ties
     /// going to the highest `start`; `None` when nothing maps `addr`.
     pub(crate) fn widest_at(&self, addr: u64) -> Option<usize> {
@@ -504,7 +495,7 @@ impl RegionIndex {
                 upper,
                 want,
             },
-            // An end past `u64::MAX`, or an empty range.
+            // An end past `u64::MAX`.
             None => Covering {
                 index: self,
                 upper: 0,
