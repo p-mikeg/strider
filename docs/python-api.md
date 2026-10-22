@@ -278,6 +278,11 @@ strider.sleigh.CallOtherAbi.custom(
 An unknown register name raises `StriderError` at construction. An ABI stated
 here holds for this analysis only.
 
+x86 `hlt` is the `halt` user op, which falls through: kernel code resumes
+after the interrupt. `hlt` is privileged; to treat it as no-return in userland
+code (a libc `_start` ends in one) pass
+`call_other_abis={"halt": CallOtherAbi.no_return()}`.
+
 `lft.user_op_names()` lists every user-op name the architecture can emit, and
 `lft.call_other_abi(name)` reads back the classification in force: the
 built-in one, or the `cfg_opts` entry when `lft.call_other_abi(name, cfg_opts)`
