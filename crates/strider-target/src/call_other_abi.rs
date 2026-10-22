@@ -880,6 +880,13 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             no_return: false,
         }),
     },
+    // HLT (F4) waits for an interrupt and resumes at the next instruction;
+    // the handler may write any memory, and restores every register.
+    CallOtherRow {
+        scope: Scope::Family(crate::ArchFamily::X86),
+        op_names: &["halt"],
+        class: MEM_CLOBBER,
+    },
     // SYSRET (0F 07) is a fast return from SYSCALL into ring 3.  Kept
     // arch-specific so a non-x86 spec that coincidentally names a user-op
     // `sysret` cannot inherit NoReturn.  For kernel-internal analysis it

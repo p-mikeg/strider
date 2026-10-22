@@ -514,6 +514,11 @@
 
 ### Fixed
 
+- Python: x86 `hlt` falls through to the next instruction, as it resumes
+  once an interrupt is serviced, and clobbers memory (the new `halt`
+  `call_other`). It branched to itself, so `sti; hlt; cli; ret` (Linux's
+  `default_idle`) never returned and nothing was reported. A libc `_start`
+  now runs from its `hlt` into the bytes after it.
 - Python: `load_elf` raises `ValueError` on a microMIPS image
   (`EF_MIPS_ARCH_ASE_MICROMIPS`), which no preset decodes. It loaded as
   plain MIPS, and a function entered at its ISA-bit address decoded as
