@@ -520,20 +520,22 @@
   size is a descriptor's (16 or 24), as in a kernel. It was `None` for every
   function whose descriptor was followed, so `analyze(name)` on an image
   with no dot symbols is now bounded by that size, as on any other arch.
-- Python: relocation section headers of one type whose tables overlap in
-  the file at one entry alignment are walked as one, over their union (an
-  overlapping `SHT_CREL` is dropped), so each entry is walked once: N
-  headers over one table of M entries recorded up to N x M patches. In a
-  linked image where they disagree on whether the entries index
-  `.dynsym`, every entry naming a symbol is a hole; a header no walk reads,
-  such as an unallocated one linked elsewhere, is left alone.
+- Python: a relocation section header repeating another's table (the same
+  type, file offset and size, and on an object file the same target) is
+  walked once. In a linked image where the repeats disagree on whether the
+  entries index `.dynsym`, every entry naming a symbol is a hole. An image
+  whose relocation section headers name more than twice the entries the
+  file holds at its smallest entry (an `SHT_REL` one, or a byte with an
+  `SHT_CREL` table), counting no table that runs past the file, is refused
+  with an error: N headers over slices of one table of M entries recorded
+  up to N x M patches.
 - Python: in a linked image with a `.dynsym`, an allocated relocation
   section (`SHT_REL`, `SHT_RELA` or `SHT_CREL`) linked to `.symtab` or to
-  nothing is applied: an entry naming no
-  symbol as the dynamic table's are, one naming a symbol (and on MIPS every
-  entry) as a hole. Neither walk read it, so its fields served the file's
-  bytes. Such a hole spans the word unless the type names its field, in
-  every mapping the field reaches; a MIPS `R_MIPS_NONE` writes nothing.
+  nothing is applied: an entry naming no symbol as the dynamic table's are,
+  one naming a symbol (and on MIPS every entry) as a hole. Neither walk
+  read it, so its fields served the file's bytes. Such a hole spans the
+  word unless the type names its field, in every mapping the field
+  reaches; a MIPS `R_MIPS_NONE` writes nothing.
 - Python: under `relocated_got_is_rom`, a `.got` or `.data.rel.ro` whose
   `sh_size` runs past the next allocated section, or past the PT_LOAD
   holding it, is served only up to there. The ROM view served the writable

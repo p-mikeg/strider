@@ -1455,3 +1455,51 @@ fn a_crel_table_off_the_dynsym_is_walked() {
         "a symbol entry is a hole"
     );
 }
+
+/// The CREL image with its empty `.crel.empty` header (section 6) turned
+/// into a decoy linked to `.dynsym`, starting at `.dynstr` and running over
+/// the real `.rel.dyn` table: the decoy's own stream decodes no entry, and
+/// the real table is still decoded, so the RELATIVE slot reads B + A.
+#[test]
+fn a_crel_header_over_another_crel_table_does_not_hide_it() {
+    let mut fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Little,
+            is_64: true,
+            e_machine: object::elf::EM_X86_64,
+            r_type: object::elf::R_X86_64_RELATIVE,
+            defined_symbol: false,
+            slot_init: vec![0x55; 8],
+        },
+        common::elf_fixture::RelPlacement {
+            table: common::elf_fixture::RelTable::Crel(Some(0x40)),
+            empty_crel: true,
+            ..Default::default()
+        },
+    );
+    let (dynstr, reldyn_end) = {
+        let obj = object::File::parse(&*fx.bytes).unwrap();
+        let range = |name: &str| {
+            use object::ObjectSection as _;
+            obj.section_by_name(name).unwrap().file_range().unwrap()
+        };
+        let (rel, rel_size) = range(".rel.dyn");
+        (range(".dynstr").0, rel + rel_size)
+    };
+    // Elf64_Ehdr.e_shoff; the decoy's Elf64_Shdr sh_offset (0x18), sh_size
+    // (0x20) and sh_link (0x28, `.dynsym` is section 3).
+    let shoff = u64::from_le_bytes(fx.bytes[0x28..0x30].try_into().unwrap()) as usize;
+    let decoy = shoff + 6 * 64;
+    fx.bytes[decoy + 0x18..decoy + 0x20].copy_from_slice(&dynstr.to_le_bytes());
+    fx.bytes[decoy + 0x20..decoy + 0x28].copy_from_slice(&(reldyn_end - dynstr).to_le_bytes());
+    fx.bytes[decoy + 0x28..decoy + 0x2c].copy_from_slice(&3u32.to_le_bytes());
+
+    let regions = common::relocated(&fx.bytes, strider_reader::elf::LoadFilter::AllAllocatable);
+    let region = regions
+        .iter()
+        .find(|r| r.start_addr() <= fx.slot_addr && fx.slot_addr < r.end_addr())
+        .expect("slot region");
+    let mut got = [0u8; 8];
+    assert_eq!(region.read(fx.slot_addr, &mut got), Some(8));
+    assert_eq!(u64::from_le_bytes(got), 0x40);
+}
