@@ -334,24 +334,18 @@ def test_msr_register_keeps_mode_defaults_true_and_round_trips():
     assert A.none() != on
 
 
-#: dump_stack_lvl (arm 6.6-clang): mrs r5, cpsr; cpsid i around a retry loop
-#: that saves again on its back edge, then msr cpsr_c, r5; pop {.., pc}.
-_ARM_IRQ_RESTORE_LOOP = b"".join(
-    w.to_bytes(4, "little")
-    for w in (
-        0xE92D4830, 0xE1A04000, 0xE10F5000, 0xF10C0080,
-        0xEB00003A, 0xE3500000, 0x1A000004, 0xE121F005,
-        0xEB000036, 0xE10F5000, 0xF10C0080, 0xEAFFFFF7,
-        0xE1A00004, 0xEB000031, 0xE121F005, 0xE8BD8830,
-    )
-) + bytes(0x140)
+#: msr cpsr_c, r0; bx lr: the mode comes from an argument, so only the claim
+#: keeps lr from re-banking.
+_ARM_ARG_MODE_RESTORE = b"".join(
+    w.to_bytes(4, "little") for w in (0xE121F000, 0xE12FFF1E)
+)
 
 
 @pytest.mark.parametrize("keeps", [True, False])
 def test_msr_register_keeps_mode_reaches_the_lift(keeps):
     arch = strider.sleigh.SleighArch.arm()
     lift = strider.lift.lifter(
-        arch, strider.reader.BufferReader(0x1000, _ARM_IRQ_RESTORE_LOOP)
+        arch, strider.reader.BufferReader(0x1000, _ARM_ARG_MODE_RESTORE)
     )
     claims = strider.lift.AssumptionOptions(msr_register_keeps_mode=keeps)
     cfg, function, unresolved = lift.analyze(
@@ -360,4 +354,4 @@ def test_msr_register_keeps_mode_reaches_the_lift(keeps):
         strider.lift.LifterOptions(assumptions=claims),
     )
     assert function.assumptions.msr_register_keeps_mode is keeps
-    assert unresolved == ([] if keeps else [0x103C])
+    assert unresolved == ([] if keeps else [0x1004])
