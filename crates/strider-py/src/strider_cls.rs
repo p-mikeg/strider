@@ -168,7 +168,8 @@ fn build_orch_sleigh(
 
 /// The claims an `optimize` adds to `function`'s: none without `given`, and
 /// otherwise `given`, which must hold every claim already in force and may not
-/// add `msr_register_keeps_mode`, which only the lift reads.
+/// add `msr_register_keeps_mode` or `mxcsr_rounds_to_nearest`, which only the
+/// lift reads.
 fn claims_to_add(
     function: &PyFunction,
     given: Option<&crate::options::PyAssumptionOptions>,
@@ -177,10 +178,22 @@ fn claims_to_add(
         return Ok(strider_orchestrator::opt::AssumptionOptions::none());
     };
     let given = given.inner.clone();
-    let (omitted, adds_lift_claim): (Vec<String>, bool) = {
+    let (omitted, lift_claims): (Vec<String>, Vec<&str>) = {
         let read = function.read_inner().map_err(into_strider_err)?;
         let in_force = read.assumptions();
-        let adds_lift_claim = given.msr_register_keeps_mode && !in_force.msr_register_keeps_mode;
+        let lift_claims = [
+            (
+                "msr_register_keeps_mode",
+                given.msr_register_keeps_mode && !in_force.msr_register_keeps_mode,
+            ),
+            (
+                "mxcsr_rounds_to_nearest",
+                given.mxcsr_rounds_to_nearest && !in_force.mxcsr_rounds_to_nearest,
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(name, adds)| adds.then_some(name))
+        .collect();
         let omitted = in_force
             .omitted_by(&given)
             .into_iter()
@@ -198,7 +211,7 @@ fn claims_to_add(
                 format!("{name} ({})", missing.join(", "))
             })
             .collect();
-        (omitted, adds_lift_claim)
+        (omitted, lift_claims)
     };
     if !omitted.is_empty() {
         return Err(into_strider_err(anyhow::anyhow!(
@@ -208,10 +221,11 @@ fn claims_to_add(
             omitted.join(", ")
         )));
     }
-    if adds_lift_claim {
+    if !lift_claims.is_empty() {
+        let verb = if lift_claims.len() == 1 { "is" } else { "are" };
         return Err(into_strider_err(anyhow::anyhow!(
-            "optimize: msr_register_keeps_mode is read by the lift; analyse \
-             again with it"
+            "optimize: {} {verb} read by the lift; analyse again with it",
+            lift_claims.join(" and ")
         )));
     }
     Ok(given)
@@ -832,8 +846,9 @@ impl PyLifter {
     /// stays usable.  The claims `assumptions` holds join
     /// `function.assumptions` and none is withdrawn: `assumptions=None` adds
     /// nothing, and a set that leaves out a claim already in force, or adds
-    /// `msr_register_keeps_mode` (read by the lift, so analyse again with it),
-    /// raises `StriderError` before anything runs.  Add one with::
+    /// `msr_register_keeps_mode` or `mxcsr_rounds_to_nearest` (read by the
+    /// lift, so analyse again with it), raises `StriderError` before anything
+    /// runs.  Add one with::
     ///
     ///     prog.optimize(function, assumptions=function.assumptions
     ///                   | AssumptionOptions.none(escape_analysis=True))

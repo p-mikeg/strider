@@ -166,6 +166,7 @@ opts = strider.lift.LifterOptions(
         distinct_sp_bases_disjoint=False,
         callee_preserves_stack_args=False,
         msr_register_keeps_mode=True,
+        mxcsr_rounds_to_nearest=True,
     ),
     compact=True,                      # drop unreachable nodes at the end
     resolve_indirect_branches=True,    # False leaves every site an IndirectBranch
@@ -233,14 +234,25 @@ the positive one:
   mode restored after a switch made since the save, by `cps` or either form
   of `msr` (the return to SVC in `fiqasm.S`'s `__set_fiq_regs`). The lift
   reads it: `analyze` honours it, and `Lifter.optimize` refuses to add it.
+- `mxcsr_rounds_to_nearest` (default on): MXCSR.RC is 0, round to nearest
+  even, at every x86 SSE and VEX conversion that rounds by it (`cvtsd2si`,
+  `cvtss2si`, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`,
+  `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`, the 64-bit `cvtsi2sd`, and
+  their scalar VEX forms); the truncating `cvtt*` forms read no mode. Off,
+  each reads RC from MXCSR and selects among nearest even, down, up and toward
+  zero, so a mode the function sets with `ldmxcsr` folds and an unknown one
+  stays a four-way select. It is wrong where the code runs under another
+  mode: after `fesetround` or a caller's `ldmxcsr`. SSE arithmetic and the
+  opaque packed VEX conversions round to nearest either way. The lift reads
+  it, like `msr_register_keeps_mode`.
 
-`AssumptionOptions.none()` clears all eight; `AssumptionOptions()` does not. It
+`AssumptionOptions.none()` clears all nine; `AssumptionOptions()` does not. It
 is the sound floor of these fields for any input whose memory behaves as RAM:
 a load reads back the last value the analysed code stored at its address, so a
 memory-mapped register polled after a write still reads as the value written.
 `AssumptionOptions.none(...)` takes the same keywords as the constructor and
 sets only the claims named, where each one the constructor leaves out takes its
-default: `AssumptionOptions(escape_analysis=True)` holds five claims,
+default: `AssumptionOptions(escape_analysis=True)` holds six claims,
 `AssumptionOptions.none(escape_analysis=True)` one.
 
 Claims accumulate per `Function`. `analyze` starts a fresh one from the claims
@@ -248,7 +260,8 @@ it is given, and `function.assumptions` reads back the ones in force.
 `prog.optimize(function, assumptions=...)` adds the claims the set holds and
 withdraws none: `assumptions=None` adds nothing, and a set that leaves out a
 claim already in force raises `StriderError`. So does a set that adds
-`msr_register_keeps_mode`: the lift reads it, so analyse again with it. Add
+`msr_register_keeps_mode` or `mxcsr_rounds_to_nearest`: the lift reads them,
+so analyse again with the claim. Add
 one by naming the union
 (`a.union(b)` is the same):
 
