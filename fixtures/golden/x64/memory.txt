@@ -113,11 +113,13 @@ float_arg 7 [%v28]
 return %v223, %v224, %v251, %v226, %v227, %v228, %v229, %v230
 
 == _start @0x4010d0
+unresolved_branch [0x401104.2]
 cfg
   0x4010d0 0 ops goto -> [0x4010d4]
-  0x4010d4 56 ops goto -> [0x4010f5]
-  0x4010f5 1 ops goto -> [0x4010f5]
-tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x7c600:8, u:0xad500:8]
+  0x4010d4 59 ops goto -> [0x401100]
+  0x401100 0 ops goto -> [0x401104]
+  0x401104 3 ops return -> []
+tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0xab00:8, u:0xad00:8, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x7c600:8, u:0xad500:8]
 frame_address_in_call_register
 arg 2 [%v22]
 float_arg 0 [%v23]
@@ -159,12 +161,9 @@ float_arg 7 [%v30]
 %v28:i128 = initial_var[XMM5]
 %v29:i128 = initial_var[XMM6]
 %v30:i128 = initial_var[XMM7]
-%v31:ctrl, %v32:mem, %v33:i64<RAX>, %v34:i64<RDX>, %v35:i128<XMM0>, %v36:i128<XMM1>, %v37:i80<ST0>, %v38:i80<ST1>, %v39:i64<RCX>, %v40:i64<RSI>, %v41:i64<RDI>, %v42:i64<R8>, %v43:i64<R9>, %v44:i8<CF>, %v45:i8<PF>, %v46:i8<ZF>, %v47:i8<SF>, %v48:i8<OF>, %v49:i128<XMM2>, %v50:i128<XMM3>, %v51:i128<XMM4>, %v52:i128<XMM5>, %v53:i128<XMM6>, %v54:i128<XMM7> = call %v0, %v16, %v18, %v14, %v19, %v20, %v4, %v21, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v8, %v9
-
-%v55:ctrl, %v56:token = region %v31, %v58
-%v57:i1 = iconst[0x1]
-%v58:ctrl, %v59:ctrl = if %v55, %v57
-unreachable %v59, %v32
+%v31:ctrl, %v32:mem, %v33:i64<RAX>, %v34:i64<RDX>, %v35:i128<XMM0>, %v36:i128<XMM1>, %v37:i80<ST0>, %v38:i80<ST1>, %v39:i64<RCX>, %v40:i64<RSI>, %v41:i64<RDI>, %v42:i64<R8>, %v43:i64<R9>, %v44:i8<CF>, %v45:i8<PF>, %v46:i8<ZF>, %v47:i8<SF>, %v48:i8<OF>, %v49:i64<RIP>, %v50:i128<XMM2>, %v51:i128<XMM3>, %v52:i128<XMM4>, %v53:i128<XMM5>, %v54:i128<XMM6>, %v55:i128<XMM7> = call %v0, %v16, %v18, %v14, %v19, %v20, %v4, %v21, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v8, %v9
+%v56:ctrl, %v57:mem = callother[16 "halt"] %v31, %v32
+return %v56, %v57, %v33, %v34, %v35, %v36, %v37, %v38
 
 == _dl_relocate_static_pie @0x401100
 cfg
