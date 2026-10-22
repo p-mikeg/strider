@@ -525,6 +525,9 @@
 
 ### Fixed
 
+- Python: ppc64 `xsdivqp` lifts to its own `call_other`, `vsx300_xsdivqp`,
+  the last user op, so no other id moved. It shared `xscvudqp`'s
+  `vsx300_47`, so a query by name could not tell the two apart.
 - Python: the ppc64 presets lift e500 `mfpmr` and `mtpmr`, each read of a
   performance-monitor register its own value. A function using one failed
   to lift on an unclassified `call_other`.
