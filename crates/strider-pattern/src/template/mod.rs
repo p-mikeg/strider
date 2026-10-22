@@ -92,8 +92,9 @@ pub enum TemplateTy {
 /// input slots, has an `IntConst` built from a `NodeKind`, has a node no width
 /// reaches (an untyped fresh operand at an input that owes its node no width,
 /// an untyped output no node consumes, an output typed from a capture that
-/// bound no typed value), gives a node an input count, an output or an operand its node
-/// signature refuses, or if node creation yields no value output. Closure,
+/// bound no typed value, a node that declares no output), gives a node an
+/// input count, an output or an operand its node signature refuses, or if
+/// node creation yields no value output. Closure, width,
 /// `IntConst`-from-`NodeKind` and wide-float refusals come before any node is
 /// built; a signature or wiring refusal is found mid-build, so the nodes
 /// created before it stay in `builder`'s function, dead.
@@ -412,11 +413,12 @@ fn exact_kind(template: &Template, node_vtx: NodeId) -> Option<NodeKind> {
 ///
 /// # Errors
 ///
-/// If a group a node's width is tied to carries no width at all: every member
-/// is built fresh with no declared type, so any width picked here is arbitrary.
-/// At a slot [`NodeKind::operand_width`] leaves free, such as a `Popcount`
-/// operand, `strider_ir::validate` would accept the pick and the constant
-/// would hold a different value.
+/// If an output's width comes from nowhere, since any width picked here would
+/// be arbitrary: a group every member of which is built fresh with no
+/// declared type (at a slot [`NodeKind::operand_width`] leaves free, such as
+/// a `Popcount` operand, `strider_ir::validate` would accept the pick and the
+/// constant would hold a different value), an untyped output no template node
+/// consumes, or an output typed from a capture that bound no typed value.
 fn resolve_value_tys(
     template: &Template,
     order: &[NodeId],
