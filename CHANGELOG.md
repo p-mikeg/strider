@@ -514,6 +514,13 @@
 
 ### Fixed
 
+- Python: the PowerPC VSX arithmetic, rounding and conversion ops
+  (`xsaddqp`, `xsdivsp`, `xscvqpswz`, ...) set the FPSCR status bits they
+  raise (FPRF, FR, FI, FX, OX, UX, ZX, XX, VX*); the vector conversions,
+  the compares writing XT and max/min set their exception bits, and
+  `xvcmpnedp.` / `xvcmpnesp.` CR6 too. They were classed as pure, so an
+  `mcrfs` or `mffs` after one read the FPSCR as it was before, and a branch
+  on it folded.
 - Python: `PhiCollapse` folds `phi & C` to `v` when every arm masked by
   `C` is `v`, an arm that reads the mask back through the loop agreeing. An
   ARM interrupt-mask restore after a loop that saves again on its back edge
