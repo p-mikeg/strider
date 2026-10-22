@@ -534,6 +534,10 @@
 
 ### Fixed
 
+- Python: x86 `int3` and `int1` resume at the next instruction after their
+  handler, as `int 3` does. They returned to address 0, so `analyze`
+  reported the site an unresolved branch and the code after it was lost
+  (Linux's `int3_selftest`, `native_machine_emergency_restart`).
 - Python: ppc64 `xsdivqp` lifts to its own `call_other`, `vsx300_xsdivqp`,
   the last user op, so no other id moved. It shared `xscvudqp`'s
   `vsx300_47`, so a query by name could not tell the two apart.

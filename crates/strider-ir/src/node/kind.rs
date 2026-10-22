@@ -91,7 +91,7 @@ pub enum NodeKind {
     /// ISA-mode bit at slot 3. Outputs: `[]`. Surviving the pipeline means
     /// classification failed; the IR stays valid.
     IndirectBranch,
-    /// Control sink for a no-return trap (`ud2`, `int3`, `abort`, `BUG_ON`).
+    /// Control sink for a no-return trap (`ud2`, `abort`, `BUG_ON`).
     /// Inputs: `[control]`, plus the optional memory chain at slot 1, which an
     /// exit-free-cycle sink carries so its stores survive compaction.
     /// Outputs: `[]`.
