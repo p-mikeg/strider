@@ -309,6 +309,13 @@ const PPC_FPCC_VX: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
 
 /// The FPSCR status bits a scalar VSX arithmetic, rounding or conversion op
 /// may set: FPRF (`fp_c`, FPCC), FR, FI, the exceptions and their summaries.
+///
+/// The scalar float ops the sla spells in p-code (`fadd`, `fmadd`, `frsp`,
+/// `fctiw`, `xsadddp`, ...) are not user ops, so no row reaches them: they set
+/// FPRF, VXSNAN, ZX, VXZDZ and the summaries from their operands, and leave
+/// FR, FI, OX, UX, VXISI, VXIDI, VXIMZ, VXCVI and VXSQRT as the last explicit
+/// write (`mtfsf`, `mtfsfi`, `mtfsb0`, `mtfsb1`) left them, which a later
+/// `mffs` or `mcrfs` then reads.
 const PPC_FP_RESULT: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     implicit_reads: &[],
     implicit_writes: &[
