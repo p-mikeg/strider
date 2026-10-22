@@ -252,10 +252,10 @@ fn decompose_index(
 /// The values that dominate `target` in its variability cone, nearest first,
 /// or `None` when `target` is a constant.
 ///
-/// The cone traverses THROUGH a load the evaluator can fold (const-base rodata,
-/// SP-rooted stack) into its address, and stops at reg/GOT-based loads (vtable,
-/// funcptr, PIC), phis and opaque sources.  A virtual ENTRY feeds every root,
-/// so the deepest value of the chain, where it is a root, is the only one.
+/// The cone traverses THROUGH a load [`foldable_load_address`] passes into its
+/// address, and stops at any other load, phis and opaque sources.  A virtual
+/// ENTRY feeds every root, so the deepest value of the chain, where it is a
+/// root, is the only one.
 fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<Vec<ValueId>> {
     // Vertex 0 is the virtual ENTRY; `value[i]` is vertex `i`'s cone value,
     // `None` for the ENTRY.
@@ -456,12 +456,15 @@ fn offsets_keep_range(
     true
 }
 
-/// The address of a load the evaluator can fold, or `None` for a reg/GOT-based
-/// one (vtable, funcptr, PIC) it cannot.
+/// The address of a load whose address is a const or SP-rooted base, or has
+/// one as an operand of its producer; `None` otherwise.
 ///
 /// The check is operand-level because a stack table load
 /// `Load[(sp+base) + idx*stride]` has an INDEX-DEPENDENT address that never
-/// decomposes as a whole, though its `sp+base` operand does.
+/// decomposes as a whole, though its `sp+base` operand does.  So it also
+/// passes loads the evaluator cannot fold: `Load(reg + 8)`, a vtable slot or
+/// struct field, and `Load(call())`, whose constant callee is an input.  Those
+/// fold to nothing, so the site defers.
 fn foldable_load_address(function: &strider_ir::Function, load: ValueId) -> Option<ValueId> {
     let addr = function.int_inputs(load).next()?;
     let foldable = is_base_operand(function, addr)
