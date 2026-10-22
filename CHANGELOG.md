@@ -518,7 +518,8 @@
 - Python: a ppc64 ELFv1 function's `Symbol.size` is its `st_size`, which
   GCC and Clang give the code, unless a dot symbol names the code or the
   size is a descriptor's (16 or 24), as in a kernel. It was `None` for every
-  function whose descriptor was followed.
+  function whose descriptor was followed, so `analyze(name)` on an image
+  with no dot symbols is now bounded by that size, as on any other arch.
 - Python: a relocation section header naming the same table (type, file
   offset and size) as an earlier one is dropped, so the table is walked
   once; each such header walked it again, N headers over M entries
