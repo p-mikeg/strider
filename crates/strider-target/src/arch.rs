@@ -734,6 +734,12 @@ impl SleighArch {
         /// instructions, big-endian data, flagged `EF_ARM_BE8`), not BE32.
         /// This spec byte-reverses every instruction word and fails almost
         /// every decode on such a binary; use [`SleighArch::arm_be_kernel`].
+        ///
+        /// The sla still decodes NEON, which no BE32 core has (ARMv7 removed
+        /// BE32), and disagrees with itself on lane order there: a lane load
+        /// or store (`vld1.32 {d0[0]}`) addresses lane 0 at the D register's
+        /// high word, a core-register `vmov` (`vmov.32 r0, d0[0]`) at its low
+        /// word.  NEON lane values under this preset are not meaningful.
         arm_be => SLA_SPEC_ARM8_BE, PSPEC_ARMT, Big, ArmBe
     }
 
