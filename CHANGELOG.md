@@ -518,7 +518,10 @@
   once an interrupt is serviced, and clobbers memory (the new `halt`
   `call_other`). It branched to itself, so `sti; hlt; cli; ret` (Linux's
   `default_idle`) never returned and nothing was reported. A libc `_start`
-  now runs from its `hlt` into the bytes after it.
+  now runs from its `hlt` into the bytes after it. `hlt` is privileged; to
+  treat it as no-return in userland code pass
+  `call_other_abis={"halt": CallOtherAbi.no_return()}`. `halt` is the last
+  x86 user op, so no other user op's id changed.
 - Python: `load_elf` and `add_elf` raise `ValueError` on a microMIPS image
   (`EF_MIPS_ARCH_ASE_MICROMIPS`), which no preset decodes. It loaded as
   plain MIPS, and a function entered at its ISA-bit address decoded as
