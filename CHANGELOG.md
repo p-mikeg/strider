@@ -515,6 +515,11 @@
 
 ### Fixed
 
+- Python: `ConstantFold` folds a bitcast (`int_bits_to_float`,
+  `float_bits_to_int`) of a constant up to 64 bits to a constant of the same
+  bits, as the builder does. Only a bitcast built over a constant folded, so
+  one whose operand a fold made constant stayed a bitcast, hiding its value
+  from patterns and from the folds after it.
 - `ConstantFold`, `LoadReadOnly` and the jump-table evaluator fold a
   constant shift whose count is narrower or wider than the shift: they asked
   the count for the output's width, which p-code never asks of it.
