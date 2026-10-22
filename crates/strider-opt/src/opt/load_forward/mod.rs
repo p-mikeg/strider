@@ -43,7 +43,8 @@ pub struct LoadForward;
 /// placeable, which ends a prefix sooner than the memo says.
 ///
 /// `alias` carries the function's claims and decides whether to forward;
-/// `narrow` carries none, and is the only one a permanent rewire may name.
+/// `narrow` carries them less the call relaxations, and is the only one a
+/// permanent rewire may name.
 pub(crate) struct Analyzers {
     alias: MemAnalyzer,
     narrow: MemAnalyzer,
@@ -71,12 +72,11 @@ impl crate::peephole::PeepholePass for LoadForward {
             Analyzers {
                 alias: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::Forward, function)),
                 // `narrow_load_to` rewires for good, and the walks that read
-                // the edge afterwards honour fewer claims than forwarding does
-                // (the jump-table walk no call relaxation, stack-argument
-                // collection no escape analysis, return-target verification
-                // with its claim off no `stack_global_disjoint` or heap
-                // identity), so the narrowing claims none.
-                narrow: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::Structural, function)),
+                // the edge afterwards honour no call relaxation (the jump-table
+                // walk, stack-argument collection, return-target verification
+                // with its claim off), so the narrowing honours every claim but
+                // those.
+                narrow: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::TableWalk, function)),
             }
         });
         Ok(crate::peephole::PeepholeRewrite::from_changed(
