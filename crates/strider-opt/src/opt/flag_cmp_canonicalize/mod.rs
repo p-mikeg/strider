@@ -314,7 +314,7 @@ fn build_rules() -> Vec<BoxedRule> {
             int_eq(int_zero_extend(var(b).of_width(1)), int_const(0u128)),
             template::bool_not(var(b)),
         ),
-        // Thumb "true" flag test (BEQ / BCS / BMI / BVS):
+        // Thumb "true" flag test:
         //    Xor(IntEqual(ZeroExtend(b), 0), 1) -> b
         // Same `I1` guard as above. The CR-bit arm takes a comparison `b`
         // first, so this sees a flag that is no comparison, such as the C
