@@ -323,6 +323,8 @@ fn a_vsx_op_sets_the_fpscr_status_bits_it_raises() {
             &[],
         ),
         ("xsaddsp", 0xf022_1800, &[FPCC_FE, XX, VXSNAN, VXISI], &[]),
+        // Inline p-code, flagged as `fadd` is.
+        ("xsadddp", 0xf022_1900, &[FPCC_FE, VXSNAN], &[]),
         ("xsdivqp", 0xfc43_2448, &[FPCC_FE, ZX], &[]),
         ("xssqrtqp", 0xfc5b_1e48, &[FPCC_FE, VXSQRT], &[]),
         ("xscvqpswz", 0xfc49_1e88, &[XX, VXCVI], &[]),
