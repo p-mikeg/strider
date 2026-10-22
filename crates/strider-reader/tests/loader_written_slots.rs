@@ -604,6 +604,8 @@ fn a_mips_dynamic_relocation_section_off_the_dynsym_is_a_hole() {
         object::elf::R_MIPS_REL32,
         "link 0",
     );
+    // The table's `R_MIPS_NONE` at 0 writes nothing: the ELF header stays.
+    assert_eq!(rom_word(&reader, 0, 4, false), Ok(0x7f45_4c46));
 }
 
 /// How many patches can overlap each region of the ROM view, which holds a
@@ -781,6 +783,41 @@ fn a_relocation_table_named_under_several_links_is_walked_once_unresolved() {
             rom_word(&reader, site, 8, true),
             r_type,
             &format!("{site:#x}"),
+        );
+    }
+}
+
+/// `x64_nodynsym.elf` with its text PT_LOAD grown to end where `.rodata`'s
+/// starts, and the first `R_X86_64_64` moved 4 bytes before that boundary:
+/// the field spans both mappings, and the hole covers it in each.
+#[test]
+fn a_hole_over_two_adjacent_mappings_covers_both() {
+    let boundary = 0x11000u64;
+    let elf = patched("x64_nodynsym.elf", |bytes, obj| {
+        // The first Elf64_Phdr's p_filesz and p_memsz, at e_phoff + 0x20.
+        let phoff = u64::from_le_bytes(bytes[0x20..0x28].try_into().unwrap()) as usize;
+        let text = obj.section_by_name(".text").unwrap().address();
+        let len = boundary - text;
+        for field in [0x20, 0x28] {
+            bytes[phoff + field..phoff + field + 8].copy_from_slice(&len.to_le_bytes());
+        }
+        // The first Elf64_Rela's r_offset.
+        let (off, _) = obj
+            .section_by_name(".rela.dyn")
+            .unwrap()
+            .file_range()
+            .unwrap();
+        let at = off as usize;
+        bytes[at..at + 8].copy_from_slice(&(boundary - 4).to_le_bytes());
+    });
+    let obj = elf.checked_file().unwrap();
+    assert_eq!(obj.section_by_name(".rodata").unwrap().address(), boundary);
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    for half in [boundary - 4, boundary] {
+        assert_hole(
+            rom_word(&reader, half, 4, true),
+            object::elf::R_X86_64_64,
+            &format!("{half:#x}"),
         );
     }
 }
