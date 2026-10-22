@@ -775,7 +775,7 @@ float_arg 7 [%v70]
 %v163:i32 = truncate %v143
 %v164:i32 = int.add %v162, %v163
 %v165:i64 = extend.sign %v164
-%v166:i16 = truncate %v165
+%v166:i16 = truncate %v164
 %v167:i64 = extend.sign %v166
 
 %v168:ctrl, %v169:token = region %v127, %v132
@@ -1127,11 +1127,11 @@ float_arg 7 [%v70]
 %v696:i1 = icmp.equal %v677, %v4
 %v697:ctrl, %v698:ctrl = if %v675, %v696
 
-%v699:ctrl, %v700:token = region %v730, %v698
-%v701:i64<a2> = phi %v700, %v727, %v4
-%v702:i64<t4> = phi %v700, %v724, %v680
-%v703:i64<a0> = phi %v700, %v734, %v679
-%v704:i64<t0> = phi %v700, %v731, %v678
+%v699:ctrl, %v700:token = region %v729, %v698
+%v701:i64<a2> = phi %v700, %v726, %v4
+%v702:i64<t4> = phi %v700, %v723, %v680
+%v703:i64<a0> = phi %v700, %v733, %v679
+%v704:i64<t0> = phi %v700, %v730, %v678
 %v705:i32 = truncate %v682
 %v706:i64 = iconst[0x3]
 %v707:i64 = int.and %v701, %v706
@@ -1145,50 +1145,49 @@ float_arg 7 [%v70]
 %v715:ctrl, %v716:ctrl = if %v699, %v714
 %v717:i32 = truncate %v702
 %v718:i32 = int.add %v717, %v14
-%v719:i64 = extend.sign %v718
-%v720:i8 = truncate %v719
-%v721:i64 = extend.sign %v720
+%v719:i8 = truncate %v718
+%v720:i64 = extend.sign %v719
 
-%v722:ctrl, %v723:token = region %v715, %v716
-%v724:i64<t4> = phi %v723, %v702, %v721
-%v725:i32 = truncate %v701
-%v726:i32 = int.add %v725, %v14
-%v727:i64 = extend.sign %v726
-%v728:i1 = icmp.equal %v727, %v677
-%v729:ctrl, %v730:ctrl = if %v722, %v728
-%v731:i64 = int.xor %v703, %v704
-%v732:i32 = truncate %v703
-%v733:i32 = int.add %v732, %v14
-%v734:i64 = extend.sign %v733
+%v721:ctrl, %v722:token = region %v715, %v716
+%v723:i64<t4> = phi %v722, %v702, %v720
+%v724:i32 = truncate %v701
+%v725:i32 = int.add %v724, %v14
+%v726:i64 = extend.sign %v725
+%v727:i1 = icmp.equal %v726, %v677
+%v728:ctrl, %v729:ctrl = if %v721, %v727
+%v730:i64 = int.xor %v703, %v704
+%v731:i32 = truncate %v703
+%v732:i32 = int.add %v731, %v14
+%v733:i64 = extend.sign %v732
 
-%v735:ctrl, %v736:token = region %v697, %v729
-%v737:i64<t0> = phi %v736, %v678, %v731
-%v738:i64<t4> = phi %v736, %v680, %v724
-%v739:i64<v1> = phi %v736, %v681, %v713
-%v740:i64 = iconst[0x65]
-%v741:i1 = icmp.sless %v737, %v740
-%v742:ctrl, %v743:ctrl = if %v735, %v741
-%v744:i64 = iconst[0xac]
-%v745:i64 = int.xor %v737, %v744
-%v746:i32 = truncate %v745
-%v747:i32 = truncate %v738
-%v748:i32 = int.add %v746, %v747
-%v749:i32 = truncate %v679
-%v750:i32 = int.add %v748, %v749
-%v751:mem = store[r] %v683, %v684, %v750
-return %v742, %v751, %v745, %v739, %v685, %v686
-%v752:i64 = int.add %v687, %v56
-%v753:i64 = load[r] %v683, %v752
-%v754:ctrl, %v755:mem, %v756:i64<v0>, %v757:i64<v1>, %v758:i64<f0>, %v759:i64<f2>, %v760:i64<a0>, %v761:i64<a1>, %v762:i64<a2>, %v763:i64<a3>, %v764:i64<t0>, %v765:i64<t1>, %v766:i64<t2>, %v767:i64<t3>, %v768:i64<t4>, %v769:i64<t5>, %v770:i64<t6>, %v771:i64<t7>, %v772:i64<t9>, %v773:i64<pc>, %v774:i64<f12>, %v775:i64<f13>, %v776:i64<f14>, %v777:i64<f15>, %v778:i64<f16>, %v779:i64<f17>, %v780:i64<f18>, %v781:i64<f19>, %v782:i8<ISAModeSwitch> = call %v743, %v683, %v196, %v54, %v753, %v679, %v738, %v684, %v737, %v738, %v682, %v687, %v688, %v689, %v690, %v691, %v692, %v693, %v694, %v695
-%v783:ctrl, %v784:mem, %v785:i64<v0>, %v786:i64<v1>, %v787:i64<f0>, %v788:i64<f2>, %v789:i64<a0>, %v790:i64<a1>, %v791:i64<a2>, %v792:i64<a3>, %v793:i64<t0>, %v794:i64<t1>, %v795:i64<t2>, %v796:i64<t3>, %v797:i64<t4>, %v798:i64<t5>, %v799:i64<t6>, %v800:i64<t7>, %v801:i64<t9>, %v802:i64<pc>, %v803:i64<f12>, %v804:i64<f13>, %v805:i64<f14>, %v806:i64<f15>, %v807:i64<f16>, %v808:i64<f17>, %v809:i64<f18>, %v810:i64<f19>, %v811:i8<ISAModeSwitch> = call %v754, %v755, %v575, %v54, %v764, %v761, %v762, %v763, %v764, %v765, %v766, %v767, %v774, %v775, %v776, %v777, %v778, %v779, %v780, %v781
-%v812:i64 = int.xor %v793, %v744
-%v813:i32 = truncate %v812
-%v814:i32 = truncate %v794
-%v815:i32 = int.add %v813, %v814
-%v816:i32 = truncate %v790
-%v817:i32 = int.add %v815, %v816
-%v818:mem = store[r] %v784, %v792, %v817
-return %v783, %v818, %v812, %v786, %v787, %v788
+%v734:ctrl, %v735:token = region %v697, %v728
+%v736:i64<t0> = phi %v735, %v678, %v730
+%v737:i64<t4> = phi %v735, %v680, %v723
+%v738:i64<v1> = phi %v735, %v681, %v713
+%v739:i64 = iconst[0x65]
+%v740:i1 = icmp.sless %v736, %v739
+%v741:ctrl, %v742:ctrl = if %v734, %v740
+%v743:i64 = iconst[0xac]
+%v744:i64 = int.xor %v736, %v743
+%v745:i32 = truncate %v744
+%v746:i32 = truncate %v737
+%v747:i32 = int.add %v745, %v746
+%v748:i32 = truncate %v679
+%v749:i32 = int.add %v747, %v748
+%v750:mem = store[r] %v683, %v684, %v749
+return %v741, %v750, %v744, %v738, %v685, %v686
+%v751:i64 = int.add %v687, %v56
+%v752:i64 = load[r] %v683, %v751
+%v753:ctrl, %v754:mem, %v755:i64<v0>, %v756:i64<v1>, %v757:i64<f0>, %v758:i64<f2>, %v759:i64<a0>, %v760:i64<a1>, %v761:i64<a2>, %v762:i64<a3>, %v763:i64<t0>, %v764:i64<t1>, %v765:i64<t2>, %v766:i64<t3>, %v767:i64<t4>, %v768:i64<t5>, %v769:i64<t6>, %v770:i64<t7>, %v771:i64<t9>, %v772:i64<pc>, %v773:i64<f12>, %v774:i64<f13>, %v775:i64<f14>, %v776:i64<f15>, %v777:i64<f16>, %v778:i64<f17>, %v779:i64<f18>, %v780:i64<f19>, %v781:i8<ISAModeSwitch> = call %v742, %v683, %v196, %v54, %v752, %v679, %v737, %v684, %v736, %v737, %v682, %v687, %v688, %v689, %v690, %v691, %v692, %v693, %v694, %v695
+%v782:ctrl, %v783:mem, %v784:i64<v0>, %v785:i64<v1>, %v786:i64<f0>, %v787:i64<f2>, %v788:i64<a0>, %v789:i64<a1>, %v790:i64<a2>, %v791:i64<a3>, %v792:i64<t0>, %v793:i64<t1>, %v794:i64<t2>, %v795:i64<t3>, %v796:i64<t4>, %v797:i64<t5>, %v798:i64<t6>, %v799:i64<t7>, %v800:i64<t9>, %v801:i64<pc>, %v802:i64<f12>, %v803:i64<f13>, %v804:i64<f14>, %v805:i64<f15>, %v806:i64<f16>, %v807:i64<f17>, %v808:i64<f18>, %v809:i64<f19>, %v810:i8<ISAModeSwitch> = call %v753, %v754, %v575, %v54, %v763, %v760, %v761, %v762, %v763, %v764, %v765, %v766, %v773, %v774, %v775, %v776, %v777, %v778, %v779, %v780
+%v811:i64 = int.xor %v792, %v743
+%v812:i32 = truncate %v811
+%v813:i32 = truncate %v793
+%v814:i32 = int.add %v812, %v813
+%v815:i32 = truncate %v789
+%v816:i32 = int.add %v814, %v815
+%v817:mem = store[r] %v783, %v791, %v816
+return %v782, %v817, %v811, %v785, %v786, %v787
 
 == call_uses_call_return @0x1200013c8
 cfg
