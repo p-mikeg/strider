@@ -393,7 +393,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// must be built against this engine's registers and fit its arch, as
     /// `cc` must. The lifted function holds `claims`
     /// ([`strider_ir::Function::assumptions`]), and the lift itself reads
-    /// [`strider_ir::AssumptionOptions::msr_register_keeps_mode`].
+    /// [`strider_ir::AssumptionOptions::msr_register_keeps_mode`] and
+    /// [`strider_ir::AssumptionOptions::mxcsr_rounds_to_nearest`].
     ///
     /// Never errs on incompleteness:
     /// [`strider_cfg::Cfg::incomplete`] reports that.
