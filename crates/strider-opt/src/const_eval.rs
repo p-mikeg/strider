@@ -1,4 +1,4 @@
-use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::node::{ExtendOp, NodeId, NodeKind, OperandWidth, ValueId, ValueType};
 use strider_ir::{Function, IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
 
@@ -39,20 +39,29 @@ pub(crate) fn high_low_shift_bits(
     }
 }
 
-/// Whether every operand already carries `expected`'s bit width.
-///
-/// A fold masks all operands to one width, which is only correct when they
-/// already carry it. `check_function_invariants_arith_widths` covers the
-/// arithmetic operands; a shift COUNT is exempt there, so this is the only
-/// check standing over it.
-fn operands_carry(function: &Function, operands: &[ValueId], expected: ValueType) -> Option<()> {
-    let want = expected.bit_width();
+/// Whether every operand carries the width [`NodeKind::operand_width`] says
+/// `kind` evaluates it at: the output's for `OfOutput`, operand 0's for
+/// `OfFirstOperand`. A fold masks those operands to that width, which is only
+/// correct when they already carry it; a free slot, such as a shift count, is
+/// read at its own width.
+fn operands_carry(
+    function: &Function,
+    kind: &NodeKind,
+    operands: &[ValueId],
+    out: ValueType,
+) -> Option<()> {
+    let width = |v: ValueId| function.value_type_opt(v).map(ValueType::bit_width);
+    let first = width(*operands.first()?)?;
     operands
         .iter()
-        .all(|&v| {
-            function
-                .value_type_opt(v)
-                .is_some_and(|t| t.bit_width() == want)
+        .enumerate()
+        .all(|(slot, &v)| {
+            let want = match kind.operand_width(slot) {
+                OperandWidth::OfOutput => out.bit_width(),
+                OperandWidth::OfFirstOperand => first,
+                OperandWidth::Conversion(_) | OperandWidth::Free => return true,
+            };
+            width(v) == Some(want)
         })
         .then_some(())
 }
@@ -75,7 +84,7 @@ pub(crate) fn eval_node_const(
         NodeKind::IntBinaryOp(op) => {
             let ty = out_ty?;
             let (l, r) = (ins.get(0).copied()?, ins.get(1).copied()?);
-            operands_carry(function, &[l, r], ty)?;
+            operands_carry(function, &kind, &[l, r], ty)?;
             eval::int_binary(op, resolve(l)?, resolve(r)?, ty)
         }
         NodeKind::IntUnaryOp(op) => {
@@ -84,7 +93,7 @@ pub(crate) fn eval_node_const(
             // Checked like the binary arm: `IntUnaryOp` pins its operand to
             // the output width, and `validate` rejects a node that does not,
             // but this folds mid-pipeline where nothing has validated yet.
-            operands_carry(function, &[v], ty)?;
+            operands_carry(function, &kind, &[v], ty)?;
             eval::int_unary(op, resolve(v)?, ty)
         }
         NodeKind::Truncate | NodeKind::Extend(ExtendOp::ZeroExtend) => {
@@ -105,7 +114,7 @@ pub(crate) fn eval_node_const(
         NodeKind::IntCmpOp(op) => {
             let (l, r) = (ins.get(0).copied()?, ins.get(1).copied()?);
             let in_ty = function.value_type_opt(l)?;
-            operands_carry(function, &[l, r], in_ty)?;
+            operands_carry(function, &kind, &[l, r], in_ty)?;
             Some(u128::from(eval::int_cmp(
                 op,
                 resolve(l)?,
