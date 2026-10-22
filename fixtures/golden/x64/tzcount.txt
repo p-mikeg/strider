@@ -147,31 +147,31 @@ float_arg 1 [%v34]
 %v7:ctrl, %v8:ctrl = if %v0, %v6
 %v9:i64 = extend.zero %v4
 
-%v10:ctrl, %v11:token = region %v7, %v28
-%v12:i64<RDI> = phi %v11, %v1, %v16
-%v13:i64<RAX> = phi %v11, %v9, %v30
+%v10:ctrl, %v11:token = region %v7, %v27
+%v12:i64<RDI> = phi %v11, %v1, %v30
+%v13:i64<RAX> = phi %v11, %v9, %v29
 %v14:i32 = truncate %v12
 %v15:i32 = int.shift_right %v14, %v3
-%v16:i64 = extend.zero %v15
-%v17:i8 = truncate %v16
-%v18:i8 = iconst[0x1]
-%v19:i8 = int.and %v17, %v18
-%v20:i8 = iconst[0x0]
-%v21:i1 = icmp.equal %v19, %v20
-%v22:ctrl, %v23:ctrl = if %v10, %v21
-%v24:i32 = truncate %v13
-%v25:i32 = iconst[0x1f]
-%v26:i1 = icmp.equal %v24, %v25
-%v27:ctrl, %v28:ctrl = if %v22, %v26
-%v29:i32 = int.add %v24, %v3
-%v30:i64 = extend.zero %v29
+%v16:i8 = truncate %v15
+%v17:i8 = iconst[0x1]
+%v18:i8 = int.and %v16, %v17
+%v19:i8 = iconst[0x0]
+%v20:i1 = icmp.equal %v18, %v19
+%v21:ctrl, %v22:ctrl = if %v10, %v20
+%v23:i32 = truncate %v13
+%v24:i32 = iconst[0x1f]
+%v25:i1 = icmp.equal %v23, %v24
+%v26:ctrl, %v27:ctrl = if %v21, %v25
+%v28:i32 = int.add %v23, %v3
+%v29:i64 = extend.zero %v28
+%v30:i64 = extend.zero %v15
 %v31:mem = initial_memory
 %v32:i64 = initial_var[RDX]
 %v33:i128 = initial_var[XMM0]
 %v34:i128 = initial_var[XMM1]
 %v35:i80 = initial_var[ST0]
 %v36:i80 = initial_var[ST1]
-return %v27, %v31, %v30, %v32, %v33, %v34, %v35, %v36
-return %v23, %v31, %v30, %v32, %v33, %v34, %v35, %v36
+return %v26, %v31, %v29, %v32, %v33, %v34, %v35, %v36
+return %v22, %v31, %v29, %v32, %v33, %v34, %v35, %v36
 %v37:i64 = iconst[0x0]
 return %v8, %v31, %v37, %v32, %v33, %v34, %v35, %v36

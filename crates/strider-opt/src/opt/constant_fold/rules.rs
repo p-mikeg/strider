@@ -408,6 +408,34 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     let zext_round_trip = ext_round_trip!(int_zero_extend);
     let sext_round_trip = ext_round_trip!(int_sign_extend);
 
+    // Truncate(Extend(x)) to any other width is one cast: the extend keeps
+    // `x`'s bits low, so a narrower truncate is a truncate of `x`, and a wider
+    // one is the same extend of `x` to that width.
+    macro_rules! trunc_of_ext {
+        ($ext:ident) => {{
+            let x_width_is = move |ord: std::cmp::Ordering| {
+                move |edit: &strider_pattern::Matcher,
+                      ty: strider_ir::node::ValueType,
+                      bnd: &strider_pattern::Bindings| {
+                    bnd.get_type(x, edit.function())
+                        .is_some_and(|x_ty| x_ty.bit_width().cmp(&ty.bit_width()) == ord)
+                }
+            };
+            [
+                rewrite_rule(
+                    int_truncate($ext(var(x))).when_match(x_width_is(std::cmp::Ordering::Greater)),
+                    template::int_truncate(var(x)),
+                ),
+                rewrite_rule(
+                    int_truncate($ext(var(x))).when_match(x_width_is(std::cmp::Ordering::Less)),
+                    template::$ext(var(x)),
+                ),
+            ]
+        }};
+    }
+    let [trunc_of_zext_narrow, trunc_of_zext_wide] = trunc_of_ext!(int_zero_extend);
+    let [trunc_of_sext_narrow, trunc_of_sext_wide] = trunc_of_ext!(int_sign_extend);
+
     // Narrowing through a binop: `Truncate_W(op(SignExt(a), SignExt(b)))` ->
     // `op_W(a, b)`, valid only for ops whose lower W bits don't depend on the
     // upper bits (Add/Sub/Mul/And/Or/Xor). Only the (SignExt, SignExt) Mul
@@ -494,6 +522,10 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         float_bits_const,
         zext_round_trip,
         sext_round_trip,
+        trunc_of_zext_narrow,
+        trunc_of_zext_wide,
+        trunc_of_sext_narrow,
+        trunc_of_sext_wide,
         zext_zext,
         sext_sext,
         trunc_trunc,

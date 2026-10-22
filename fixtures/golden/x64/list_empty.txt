@@ -107,9 +107,9 @@ cfg
   0x401134 20 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8f00:8, u:0x24000:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x81f00:8, u:0x82100:8]
 arg 0 [%v2]
-arg 2 [%v12]
-float_arg 0 [%v13]
-float_arg 1 [%v14]
+arg 2 [%v8]
+float_arg 0 [%v9]
+float_arg 1 [%v10]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[RDI]
@@ -118,13 +118,9 @@ float_arg 1 [%v14]
 %v5:i64 = load[r] %v1, %v4
 %v6:i1 = icmp.equal %v4, %v5
 %v7:i64 = extend.zero %v6
-%v8:i8 = truncate %v7
-%v9:i64 = extend.zero %v8
-%v10:i32 = truncate %v9
-%v11:i64 = extend.zero %v10
-%v12:i64 = initial_var[RDX]
-%v13:i128 = initial_var[XMM0]
-%v14:i128 = initial_var[XMM1]
-%v15:i80 = initial_var[ST0]
-%v16:i80 = initial_var[ST1]
-return %v0, %v1, %v11, %v12, %v13, %v14, %v15, %v16
+%v8:i64 = initial_var[RDX]
+%v9:i128 = initial_var[XMM0]
+%v10:i128 = initial_var[XMM1]
+%v11:i80 = initial_var[ST0]
+%v12:i80 = initial_var[ST1]
+return %v0, %v1, %v7, %v8, %v9, %v10, %v11, %v12
