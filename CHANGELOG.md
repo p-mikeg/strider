@@ -87,9 +87,9 @@
   untyped operand at a slot that owes its node no width (a `Popcount` /
   `Lzcount` operand, a `Load` / `Store` address or data, a `Phi`, `Call` or
   `Return` input, a conversion's operand), an untyped output no template node
-  consumes, and an output typed from a capture that bound no typed value.
-  Type it with `set_value_ty` or `capture_typed`. A shift count takes the
-  shift's width.
+  consumes, an output typed from a capture that bound no typed value, and a
+  node that declares no output. Type it with `set_value_ty` or
+  `capture_typed`. A shift count takes the shift's width.
 - `BuiltCallingConvention::no_return` is gone, replaced by
   `CfgOptions::no_return_targets`, so `Strider::build_cfg` ends a call to one
   as `analyze` does. `Lifter::build_cfg` loses its `per_address_ccs` argument
