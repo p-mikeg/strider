@@ -787,6 +787,121 @@ fn a_relocation_table_named_under_several_links_is_walked_once_unresolved() {
     }
 }
 
+/// Elf64_Shdr fields of a section header copied from `.rela.dyn` over the
+/// header of `over`.
+struct TableCopy {
+    over: &'static str,
+    link: Option<u32>,
+    flags: Option<u64>,
+    /// Entries the copy starts past `.rela.dyn`'s first, and leaves off its
+    /// end.
+    skip: u64,
+    drop: u64,
+}
+
+/// `name` with each of `copies` written over a section header.
+fn table_copies(name: &str, copies: &[TableCopy]) -> OwnedElf {
+    patched(name, |bytes, obj| {
+        // Elf64_Ehdr.e_shoff; an Elf64_Shdr is 64 bytes: sh_flags at 8,
+        // sh_offset at 0x18, sh_size at 0x20, sh_link at 0x28.
+        let shoff = u64::from_le_bytes(bytes[0x28..0x30].try_into().unwrap()) as usize;
+        let at = |name: &str| shoff + obj.section_by_name(name).unwrap().index().0 * 64;
+        let table = at(".rela.dyn");
+        let (offset, size) = obj
+            .section_by_name(".rela.dyn")
+            .unwrap()
+            .file_range()
+            .unwrap();
+        for c in copies {
+            let to = at(c.over);
+            bytes.copy_within(table..table + 64, to);
+            let mut put = |field: usize, v: u64, n: usize| {
+                bytes[to + field..to + field + n].copy_from_slice(&v.to_le_bytes()[..n]);
+            };
+            put(0x18, offset + 24 * c.skip, 8);
+            put(0x20, size - 24 * (c.skip + c.drop), 8);
+            if let Some(link) = c.link {
+                put(0x28, link.into(), 4);
+            }
+            if let Some(flags) = c.flags {
+                put(8, flags, 8);
+            }
+        }
+    })
+}
+
+/// A header nothing walks, not `SHF_ALLOC` and linked to `.symtab`, over
+/// `.rela.dyn`'s table at a lower index: the table is still walked through
+/// `.dynsym`, so `h`'s and `cpu_flag`'s slots hold their addresses.
+#[test]
+fn an_unwalked_header_over_a_table_does_not_displace_it() {
+    let elf = open("x64_ifunc_lib.elf");
+    let symtab = elf
+        .checked_file()
+        .unwrap()
+        .section_by_name(".symtab")
+        .unwrap()
+        .index()
+        .0 as u32;
+    let decoyed = table_copies(
+        "x64_ifunc_lib.elf",
+        &[TableCopy {
+            over: ".gnu.hash",
+            link: Some(symtab),
+            flags: Some(0),
+            skip: 0,
+            drop: 0,
+        }],
+    );
+    let reader = ElfFileMemReader::new(&decoyed, GOT_IS_ROM).unwrap();
+    let glob_dat = object::elf::R_X86_64_GLOB_DAT;
+    for name in ["h", "cpu_flag"] {
+        assert_eq!(
+            rom_word(&reader, dynamic_site(&elf, glob_dat, Some(name)), 8, true),
+            Ok(dynsym_value(&elf, name)),
+            "{name}"
+        );
+    }
+}
+
+/// Headers over shifted and shortened slices of `.rela.dyn`'s table: each
+/// entry is walked once, so the patches are those of the image with one
+/// header, however many headers overlap.
+#[test]
+fn headers_over_slices_of_one_table_walk_each_entry_once() {
+    let once = patch_counts(&open("x64_ifunc_lib.elf"));
+    let slices = table_copies(
+        "x64_ifunc_lib.elf",
+        &[
+            (".comment", 1, 0),
+            (".note.gnu.property", 2, 0),
+            (".eh_frame_hdr", 3, 0),
+            (".eh_frame", 0, 1),
+        ]
+        .map(|(over, skip, drop)| TableCopy {
+            over,
+            link: None,
+            flags: None,
+            skip,
+            drop,
+        }),
+    );
+    assert_eq!(patch_counts(&slices), once);
+    // `.rela.dyn` itself cut to its first two entries, and another header
+    // over the rest from the second: their union is the whole table.
+    let union = table_copies(
+        "x64_ifunc_lib.elf",
+        &[(".comment", 1, 0), (".rela.dyn", 0, 2)].map(|(over, skip, drop)| TableCopy {
+            over,
+            link: None,
+            flags: None,
+            skip,
+            drop,
+        }),
+    );
+    assert_eq!(patch_counts(&union), once, "the union");
+}
+
 /// `x64_nodynsym.elf` with its text PT_LOAD grown to end where `.rodata`'s
 /// starts, and the first `R_X86_64_64` moved 4 bytes before that boundary:
 /// the field spans both mappings, and the hole covers it in each.
