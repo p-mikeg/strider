@@ -1715,7 +1715,7 @@ fn index_bound_ok_rejects_types_past_the_u128_carrier() {
     assert!(!index_bound_ok(ValueType::int(512), iv));
 }
 
-/// The `tbb` entry read as the low byte of a wider cell, `zext(trunc8(load32))`
+/// A table cell read as the low byte of a wider load, `zext(trunc8(load32))`
 /// as x86-64's `movzbl %al` after a 32-bit load: still the 256 values of
 /// table DATA.
 /// Mutation: leave the set unchanged at a truncate in `is_width_only`.

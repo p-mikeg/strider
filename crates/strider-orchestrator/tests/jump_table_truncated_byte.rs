@@ -27,10 +27,14 @@ const BASE: u64 = 0x40_1000;
 const TABLE: u64 = 0x40_2000;
 const ARMS: [u64; 3] = [0x40_100d, 0x40_1013, 0x40_1019];
 
-/// The table's 256 cells, `ARMS` in turn.
+/// The table's 256 cells: the first two arms in turn, the third only in the
+/// last cell, so reading fewer than 256 cells loses it.
 fn table() -> Vec<u8> {
     (0..256)
-        .flat_map(|i| ARMS[i % ARMS.len()].to_le_bytes())
+        .flat_map(|i| {
+            let arm = if i == 255 { ARMS[2] } else { ARMS[i % 2] };
+            arm.to_le_bytes()
+        })
         .collect()
 }
 
@@ -70,7 +74,8 @@ fn hex(s: &str) -> Vec<u8> {
         .collect()
 }
 
-/// Mutation: stop the width count's strip at a truncate.
+/// Mutations: stop the width count's strip at a truncate; enumerate one cell
+/// fewer.
 #[test]
 fn the_low_byte_of_a_loaded_field_indexes_its_256_cells() {
     let code = hex("8b47100fb6c0ff24c500204000b801000000c3b802000000c3b803000000c3");
