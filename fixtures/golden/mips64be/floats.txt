@@ -60,7 +60,7 @@ float_arg 7 [%v46]
 %v25:i64 = iconst[0xffffffff00000000]
 %v26:i64 = int.and %v24, %v25
 %v27:i64 = iconst[0x120011050]
-%v28:i64 = load[r] %v6, %v27
+%v28:i64 = load[r] %v1, %v27
 %v29:i64 = iconst[0xf6c]
 %v30:i64 = int.add %v28, %v29
 %v31:i32 = load[r] %v6, %v30
