@@ -2797,8 +2797,9 @@ fn phi_constants_are_only_of_a_phi() {
 
 /// `if (x == 0) ... ; dispatch` over the argument `x`, the `x != 0` path
 /// either leading straight to the dispatch `If(x < 5)` or, with `merge`,
-/// joining the `x == 0` path first.  `x` and the dispatch `If`.
-fn not_zero_then_dispatch(merge: bool) -> (Function, ValueId, NodeId) {
+/// joining the `x == 0` path first; `const_first` spells the test `0 == x`.
+/// `x` and the dispatch `If`.
+fn not_zero_then_dispatch(merge: bool, const_first: bool) -> (Function, ValueId, NodeId) {
     use strider_ir_test_utils::reg_vn;
 
     let x_vn = reg_vn(0x10, 4);
@@ -2812,7 +2813,13 @@ fn not_zero_then_dispatch(merge: bool) -> (Function, ValueId, NodeId) {
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
     let x = b.read_variable(&x_vn).unwrap();
-    let is_zero = cmp_c(&mut b, x, IntCmpOp::Equal, 0);
+    let is_zero = if const_first {
+        let c = b.build_int_const(0u64, ValueType::int(32)).unwrap();
+        b.build_int_cmp_operation(c, x, IntCmpOp::Equal, ValueType::int(32))
+            .unwrap()
+    } else {
+        cmp_c(&mut b, x, IntCmpOp::Equal, 0)
+    };
     b.build_if(is_zero, zero, rest).unwrap();
     b.set_region(zero);
     if merge {
@@ -2850,19 +2857,33 @@ fn not_zero_then_dispatch(merge: bool) -> (Function, ValueId, NodeId) {
 /// Mutation: test the true edge instead of the false one.
 #[test]
 fn an_equality_guard_rules_its_constant_out_past_its_false_edge() {
-    let (f, x, dispatch) = not_zero_then_dispatch(false);
+    let (f, x, dispatch) = not_zero_then_dispatch(false, false);
     let ranges = RangeMap::new(&f).unwrap();
-    assert!(ranges.rules_out(x, 0, dispatch), "{}", f.to_text(false));
-    assert!(!ranges.rules_out(x, 1, dispatch));
+    let ruled: Vec<u128> = ranges.ruled_out(x, dispatch).into_iter().collect();
+    assert_eq!(ruled, [0], "{}", f.to_text(false));
+}
+
+/// `0 == x` rules 0 out as `x == 0` does.
+/// Mutation: take the comparison's second operand as the constant always.
+#[test]
+fn an_equality_guard_with_the_constant_first_rules_it_out() {
+    let (f, x, dispatch) = not_zero_then_dispatch(false, true);
+    let ranges = RangeMap::new(&f).unwrap();
+    let ruled: Vec<u128> = ranges.ruled_out(x, dispatch).into_iter().collect();
+    assert_eq!(ruled, [0], "{}", f.to_text(false));
 }
 
 /// Where the `x == 0` path joins the other first, `x` may be 0 again.
 /// Mutation: accept a merge as the false edge's sink.
 #[test]
 fn an_equality_guard_rules_nothing_out_past_a_merge() {
-    let (f, x, dispatch) = not_zero_then_dispatch(true);
+    let (f, x, dispatch) = not_zero_then_dispatch(true, false);
     let ranges = RangeMap::new(&f).unwrap();
-    assert!(!ranges.rules_out(x, 0, dispatch), "{}", f.to_text(false));
+    assert!(
+        ranges.ruled_out(x, dispatch).is_empty(),
+        "{}",
+        f.to_text(false)
+    );
 }
 
 /// `a, b, c = 0, 1, 1; while (a < 16) a, b, c = b, c, a`: three header phis,

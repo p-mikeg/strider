@@ -18,7 +18,7 @@
 //! an interval tighter than the real runtime value set.
 
 use cranelift_entity::SecondaryMap;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use strider_ir::DominatorTree;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueKind, ValueType};
@@ -677,40 +677,38 @@ impl<'f> RangeMap<'f> {
         })
     }
 
-    /// Whether `region` is reached only by the false edge of an
-    /// `If(value == k)`, so `value` is not `k` there.
+    /// The constants `value` is not at `region`: each `k` of an
+    /// `If(value == k)` whose false edge alone reaches `region`.
     ///
     /// The edge's sink must be no merge, as for any edge guard, or the fact
     /// would hold for the merge's other predecessors too.
-    pub(crate) fn rules_out(&self, value: ValueId, k: u128, region: NodeId) -> bool {
+    pub(crate) fn ruled_out(&self, value: ValueId, region: NodeId) -> FxHashSet<u128> {
         let f = self.function;
-        f.value_uses(value).any(|(cmp, _)| {
-            if !matches!(f.node_kind(cmp), NodeKind::IntCmpOp(IntCmpOp::Equal)) {
-                return false;
-            }
-            let Some(eq) = f.first_value_output_of(cmp) else {
-                return false;
-            };
-            let Ok([a, b]) = f.producer_inputs_exact::<2>(eq) else {
-                return false;
-            };
-            let other = if a == value { b } else { a };
-            if f.int_const_u128(other) != Some(k) {
-                return false;
-            }
-            f.value_uses(eq).any(|(if_node, _)| {
-                if !matches!(f.node_kind(if_node), NodeKind::If) || f.if_cond(if_node) != eq {
-                    return false;
+        f.value_uses(value)
+            .filter_map(|(cmp, _)| {
+                if !matches!(f.node_kind(cmp), NodeKind::IntCmpOp(IntCmpOp::Equal)) {
+                    return None;
                 }
-                let outputs = f.node_outputs(if_node);
-                outputs.get(1).is_some_and(|&false_ctrl| {
-                    single_control_consumer(f, false_ctrl).is_some_and(|sink| {
-                        !matches!(f.node_kind(sink), NodeKind::Region)
-                            && self.dominates(sink, region)
+                let eq = f.first_value_output_of(cmp)?;
+                let [a, b] = f.producer_inputs_exact::<2>(eq).ok()?;
+                let k = f.int_const_u128(if a == value { b } else { a })?;
+                f.value_uses(eq)
+                    .any(|(if_node, _)| {
+                        if !matches!(f.node_kind(if_node), NodeKind::If) || f.if_cond(if_node) != eq
+                        {
+                            return false;
+                        }
+                        let outputs = f.node_outputs(if_node);
+                        outputs.get(1).is_some_and(|&false_ctrl| {
+                            single_control_consumer(f, false_ctrl).is_some_and(|sink| {
+                                !matches!(f.node_kind(sink), NodeKind::Region)
+                                    && self.dominates(sink, region)
+                            })
+                        })
                     })
-                })
+                    .then_some(k)
             })
-        })
+            .collect()
     }
 
     /// The distinct fields of `root` some guarded value is.
