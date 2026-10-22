@@ -480,8 +480,8 @@ class ElfLifter(Lifter):
         inside a relocation this loader does not compute. In writable,
         non-executable data such a field is not cut out but serves the file's
         bytes, which the loader overwrites. `rom()` serves no writable data,
-        except `.got` / `.data.rel.ro` under `relocated_got_is_rom`, where
-        such a field is unmapped."""
+        except `.got` / `.got2` / `.data.rel.ro` under `relocated_got_is_rom`,
+        where such a field is unmapped."""
         ...
     def reader(self) -> BufferReader:
         """The `BufferReader` over the regions `load_elf` mapped: PT_LOAD segments
@@ -589,10 +589,10 @@ def load_elf(
     an image whose relocation section headers name more than twice the
     entries the file holds at its smallest entry raises `StriderError`.
 
-    `relocated_got_is_rom` (default `False`) additionally serves `.got` and
-    `.data.rel.ro` as READ-ONLY memory, so a load through a GOT slot folds to
-    the address the slot holds. It is what resolves a PIC jump table whose
-    base comes out of the GOT.
+    `relocated_got_is_rom` (default `False`) additionally serves `.got`
+    (PPC32's `.got2` too) and `.data.rel.ro` as READ-ONLY memory, so a load
+    through a GOT slot folds to the address the slot holds. It is what
+    resolves a PIC jump table whose base comes out of the GOT.
 
     A slot whose load-time value only the dynamic loader computes stays
     unmapped, and a load through it does not fold: one under a relocation

@@ -515,6 +515,10 @@
 
 ### Fixed
 
+- Python: `relocated_got_is_rom` serves PPC32's `.got2`, the per-object GOT
+  a `-fPIC` function loads its jump-table base from after
+  `bcl 20,31,$+4; mflr r30`, as it serves `.got`. Such a table was never
+  resolved.
 - Python: a jump-table guard on one zero-extend of a value bounds a phi arm
   that is another zero-extend of it, as in a `jhash` tail `switch (len)`
   whose `len` is a loaded byte; the guard bounded only the very value it
