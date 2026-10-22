@@ -51,15 +51,16 @@ class AssumptionOptions:
     None is checked, and each one's risky value is the positive one, so any of
     them can make the answer wrong on valid input. `stack_global_disjoint`,
     `assume_incoming_args_survive_calls`,
-    `return_slots_survive_untracked_writes` and `msr_register_keeps_mode`
-    default `True`, the other four off or empty; clearing all eight is the
+    `return_slots_survive_untracked_writes`, `msr_register_keeps_mode` and
+    `mxcsr_rounds_to_nearest` default `True`, the other four off or empty;
+    clearing all nine is the
     sound floor under any input whose memory behaves as RAM (see `none`). What
     each one claims is in `docs/python-api.md` section 2.
 
     Claims accumulate on a `Function` (`Function.assumptions`): `analyze`
     starts from the ones it is given, `Lifter.optimize` adds, none withdraws.
-    The lift reads `msr_register_keeps_mode`, so `optimize` refuses to add
-    it: analyse again with it.
+    The lift reads `msr_register_keeps_mode` and `mxcsr_rounds_to_nearest`,
+    so `optimize` refuses to add either: analyse again with it.
     """
 
     # Read-only: these are getters with no setter, so a plain attribute
@@ -85,6 +86,12 @@ class AssumptionOptions:
     def return_slots_survive_untracked_writes(self) -> bool: ...
     @property
     def msr_register_keeps_mode(self) -> bool: ...
+    @property
+    def mxcsr_rounds_to_nearest(self) -> bool:
+        """MXCSR.RC is round to nearest even at every x86 SSE and VEX
+        conversion that rounds by it. Off, each reads RC and selects among the
+        four modes; the truncating `cvtt*` forms read none."""
+        ...
     def __init__(
         self,
         *,
@@ -96,6 +103,7 @@ class AssumptionOptions:
         escape_analysis: Optional[bool] = ...,
         return_slots_survive_untracked_writes: Optional[bool] = ...,
         msr_register_keeps_mode: Optional[bool] = ...,
+        mxcsr_rounds_to_nearest: Optional[bool] = ...,
     ) -> None:
         """Build the claims; a field omitted or `None` takes its default, as
         documented above. `noalias_allocators` reads back sorted, without
@@ -112,14 +120,15 @@ class AssumptionOptions:
         escape_analysis: Optional[bool] = ...,
         return_slots_survive_untracked_writes: Optional[bool] = ...,
         msr_register_keeps_mode: Optional[bool] = ...,
+        mxcsr_rounds_to_nearest: Optional[bool] = ...,
     ) -> "AssumptionOptions":
         """Every claim cleared, then the ones named set: with no argument, the
         sound floor of these fields under any input, forwarding solely what
         the IR structurally proves.
 
-        Four of the eight default `True`, so this is not
+        Five of the nine default `True`, so this is not
         `AssumptionOptions()`, and `AssumptionOptions(escape_analysis=True)`
-        holds five claims where `none(escape_analysis=True)` holds one. Add
+        holds six claims where `none(escape_analysis=True)` holds one. Add
         one claim to a function's claims with
         `function.assumptions | AssumptionOptions.none(escape_analysis=True)`.
 
@@ -322,7 +331,8 @@ class Lifter:
         usable. The claims `assumptions` holds join `function.assumptions` and
         none is withdrawn: `assumptions=None` adds nothing, and a set that
         leaves out a claim already in force, or adds `msr_register_keeps_mode`
-        (read by the lift, so analyse again with it), raises `StriderError`
+        or `mxcsr_rounds_to_nearest` (read by the lift, so analyse again with
+        it), raises `StriderError`
         before anything runs. Add one with::
 
             prog.optimize(function, assumptions=function.assumptions

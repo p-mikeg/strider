@@ -531,14 +531,16 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 
 /// Claims about the code being analysed, keyword-only. None is checked, and
 /// each one's risky value is the positive one, so any of them can make the
-/// answer wrong on valid input. Clearing all eight leaves only what the IR
+/// answer wrong on valid input. Clearing all nine leaves only what the IR
 /// structurally proves, which still takes memory to be RAM.
 ///
-/// Four default `True`: `stack_global_disjoint`,
+/// Five default `True`: `stack_global_disjoint`,
 /// `assume_incoming_args_survive_calls` and
 /// `return_slots_survive_untracked_writes`, each of which every compiler this
-/// analyses honours, and `msr_register_keeps_mode`, which only ARM code
-/// switching mode through a register `msr` breaks.
+/// analyses honours, `msr_register_keeps_mode`, which only ARM code
+/// switching mode through a register `msr` breaks, and
+/// `mxcsr_rounds_to_nearest`, which only x86 code changing the SSE rounding
+/// mode breaks.
 ///
 /// An omitted or `None` field takes the analysis default, as listed above.
 #[pyclass(eq, name = "AssumptionOptions", module = "strider.lift")]
@@ -723,6 +725,18 @@ assumption_fields! {
     /// the lift, so `analyze` honours it and `Lifter.optimize` refuses to add
     /// it.
     msr_register_keeps_mode: bool,
+
+    /// MXCSR.RC is 0, round to nearest even, at every x86 SSE and VEX
+    /// conversion that rounds by it (default `True`): `cvtsd2si`,
+    /// `cvtss2si`, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`, `cvtps2pi`,
+    /// `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`, the 64-bit
+    /// `cvtsi2sd`, and their scalar VEX forms; the truncating `cvtt*` forms
+    /// read no mode. Off, each reads RC from MXCSR and selects among nearest
+    /// even, down, up and toward zero, so a mode set by `ldmxcsr` folds and an
+    /// unknown one stays a select. Wrong after `fesetround` or a caller's
+    /// `ldmxcsr`. SSE arithmetic rounds to nearest either way. Read by the
+    /// lift, so `analyze` honours it and `optimize` refuses to add it.
+    mxcsr_rounds_to_nearest: bool,
 }
 
 #[pymethods]
