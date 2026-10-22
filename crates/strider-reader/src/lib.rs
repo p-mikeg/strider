@@ -210,6 +210,12 @@ impl MemRegion {
         }
     }
 
+    /// How many patches can overlap this region.
+    #[cfg(feature = "test-util")]
+    pub fn patch_count(&self) -> usize {
+        self.patches().len()
+    }
+
     pub fn start_addr(&self) -> u64 {
         self.start_addr
     }
