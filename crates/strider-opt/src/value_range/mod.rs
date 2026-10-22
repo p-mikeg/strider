@@ -773,19 +773,38 @@ impl<'f> RangeMap<'f> {
     ///
     /// The hops are collected downward and replayed upward, so each one sees
     /// the interval its own operand really carries.
+    ///
+    /// A zero-extend is the identity on the value, so the compared value
+    /// stands for each value it zero-extends: a guard on `zext32(b)` bounds
+    /// an arm `zext64(b)`.
     fn edge_bound_on(&self, edge: ValueId, arm: ValueId) -> Option<Interval> {
         let (guarded, iv) = *self.edge_guards.get(&edge)?;
+        let f = self.function;
+        let mut same = vec![guarded];
+        while same.len() < MAX_GUARD_LADDER as usize {
+            let last = same[same.len() - 1];
+            if !matches!(
+                f.node_kind(f.producer(last)),
+                NodeKind::Extend(ExtendOp::ZeroExtend)
+            ) {
+                break;
+            }
+            let Ok([x]) = f.producer_inputs_exact::<1>(last) else {
+                break;
+            };
+            same.push(x);
+        }
         let mut hops: Vec<Hop> = Vec::new();
         let mut cur = arm;
         for _ in 0..MAX_GUARD_LADDER {
-            if cur == guarded {
+            if same.contains(&cur) {
                 break;
             }
             let (operand, hop) = self.arm_carrying_operand(cur)?;
             hops.push(hop);
             cur = operand;
         }
-        if cur == guarded {
+        if same.contains(&cur) {
             return hops.iter().rev().try_fold(iv, |acc, hop| hop.lift(acc));
         }
         None
