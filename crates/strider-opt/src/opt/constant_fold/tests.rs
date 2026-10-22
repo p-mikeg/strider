@@ -1834,6 +1834,89 @@ fn fold_f64_inf_minus_inf_add_is_not_folded() -> Result<()> {
     Ok(())
 }
 
+/// A bitcast of a constant only a fold exposes folds as well: the builder
+/// folds one only over a constant it is built on. 1 + 0x3f7fffff is 1.0f,
+/// and 1.0f + 1.0f is 2.0f, 0x40000000.
+/// Mutation: drop the two bitcast-of-constant rules.
+#[test]
+fn a_bitcast_of_a_folded_constant_folds() -> Result<()> {
+    let mut fg = make_fn(|b| {
+        let one = b.build_int_const(1u64, ValueType::int(32))?;
+        let k = b.build_int_const(0x3f7f_ffffu64, ValueType::int(32))?;
+        let sum = b.build_int_binary_operation(one, k, IntBinaryOp::Add, ValueType::int(32))?;
+        b.build_int_bits_to_float(sum, ValueType::float(32))
+    })?;
+    crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    assert_return_kind(fg.graph(), NodeKind::FloatConst(0x3f80_0000));
+
+    let mut fg = make_fn(|b| {
+        let one = b.build_float_const(0x3f80_0000, ValueType::float(32));
+        let sum = b.build_float_binary_op(one, one, FloatBinaryOp::Add, ValueType::float(32))?;
+        b.build_float_bits_to_int(sum, ValueType::int(32))
+    })?;
+    crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    assert_returns_const(&fg, 0x4000_0000);
+    Ok(())
+}
+
+/// `kind` over `input`, built raw so the builder's own fold stays out of it.
+fn raw_bitcast(
+    b: &mut strider_ir::FunctionBuilder,
+    kind: NodeKind,
+    input: strider_ir::node::ValueId,
+    ty: ValueType,
+) -> strider_ir::node::ValueId {
+    use strider_ir::IRBuilder;
+    use strider_ir::node::ValueKind;
+    let node = b.create_node(kind, [input], [ValueKind::Typed(ty)]);
+    let [out] = b.node_outputs_exact::<1>(node).expect("one output");
+    out
+}
+
+/// A bitcast keeps every bit, both ways: each low byte of a 16-bit pattern
+/// under high bytes spanning zero, normal, infinity / NaN and sign, and the
+/// edges of the 32- and 64-bit ones. An 80-bit one has no `u64` float payload
+/// and stays a bitcast.
+#[test]
+fn a_bitcast_of_a_constant_folds_to_the_same_bits() -> Result<()> {
+    let edges = [0u64, 1, 0x7f, 0x80, 0x7fff_ffff, 0x8000_0000, 0xffff_ffff];
+    let wide_edges = [0x7ff8_0000_0000_0001u64, 0x8000_0000_0000_0000, u64::MAX];
+    let cases = [0x00u64, 0x3c, 0x7b, 0x7c, 0x7e, 0x80, 0xfc, 0xff]
+        .into_iter()
+        .flat_map(|hi| (0..=0xffu64).map(move |lo| (16, hi << 8 | lo)))
+        .chain(edges.iter().map(|&k| (32, k)))
+        .chain(edges.iter().chain(&wide_edges).map(|&k| (64, k)));
+    for (bits, k) in cases {
+        let (int_ty, float_ty) = (ValueType::int(bits), ValueType::float(bits));
+        let mut fg = make_fn(|b| {
+            let c = b.build_int_const(k, int_ty)?;
+            Ok(raw_bitcast(b, NodeKind::IntBitsToFloat, c, float_ty))
+        })?;
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+        assert_return_kind(fg.graph(), NodeKind::FloatConst(k));
+
+        let mut fg = make_fn(|b| {
+            let c = b.build_float_const(k, float_ty);
+            Ok(raw_bitcast(b, NodeKind::FloatBitsToInt, c, int_ty))
+        })?;
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+        assert_returns_const(&fg, k);
+    }
+
+    let mut fg = make_fn(|b| {
+        let c = b.build_int_const(1u64, ValueType::int(80))?;
+        Ok(raw_bitcast(
+            b,
+            NodeKind::IntBitsToFloat,
+            c,
+            ValueType::float(80),
+        ))
+    })?;
+    crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &mut crate::OptCtx::new(None))?;
+    assert_return_kind(fg.graph(), NodeKind::IntBitsToFloat);
+    Ok(())
+}
+
 /// Feeds the roundtrip a float Add rather than a constant, so the builder can't
 /// fold the inner cast eagerly.
 #[test]

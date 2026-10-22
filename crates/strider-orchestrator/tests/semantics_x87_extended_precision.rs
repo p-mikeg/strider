@@ -169,8 +169,10 @@ fn a_double_operand_is_widened_before_the_x87_add() {
             assert_eq!(*producer_kind(&f, operand), NodeKind::FloatToFloat);
             let narrow = inputs_of(&f, operand)[0];
             assert_eq!(f.value_type(narrow).expect("typed"), ValueType::float(64));
-            let payload = inputs_of(&f, narrow)[0];
-            f.int_const_u128(payload).expect("a folded F64 constant")
+            let NodeKind::FloatConst(payload) = *producer_kind(&f, narrow) else {
+                panic!("a folded F64 constant, got {:?}", producer_kind(&f, narrow));
+            };
+            u128::from(payload)
         })
         .collect();
     bits.sort_unstable();

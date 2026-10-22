@@ -7,7 +7,7 @@
 # f64_compare: 2 fcmp.less|fcmp.equal
 # f64_to_f32: float_to_float
 # float_to_int: float_to_int
-# int_to_float: int_to_float or float.add and float.neg and float_to_float
+# int_to_float: int_to_float or float.add and float.neg|fconst[0xc330000080000000] and float_to_float
 endian big
 default_cc arg_passing_regs=[r0, r1, r2, r3] arg_passing_regs_float=[d0, d1, d2, d3, d4, d5, d6, d7] callee_saved_regs=[r4, r5, r6, r7, r8, r9, r10, r11, lr, d8, d9, d10, d11, d12, d13, d14, d15, cpsr_mode] ret_val_regs=[r0, r1] ret_val_regs_float=[d0, d1, d2, d3] stack_vn=sp stack_args=0+4n ret_stack_pop=0 link_register_vn=lr preserves_memory=false preserves_all_registers=false entry_address_vn=none reg_args_adjoin_stack_args=true
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode
@@ -19,9 +19,9 @@ tracked [r0, r1, r2, r3, sp, lr, pc, CY, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry
 arg 0 [%v14]
 arg 1 [%v15]
 float_arg 0 [%v5]
-float_arg 1 [%v38]
-float_arg 2 [%v46]
-float_arg 3 [%v54]
+float_arg 1 [%v37]
+float_arg 2 [%v45]
+float_arg 3 [%v53]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[sp]
@@ -53,31 +53,30 @@ float_arg 3 [%v54]
 %v28:i64 = extend.zero %v27
 %v29:i64 = int.or %v20, %v28
 %v30:i64 = int.and %v29, %v16
-%v31:i32 = iconst[0x3f800000]
-%v32:f32 = int_bits_to_float %v31
-%v33:f32 = float.add %v21, %v32
-%v34:f32 = float.div %v26, %v33
-%v35:i32 = float_bits_to_int %v34
-%v36:i64 = extend.zero %v35
-%v37:i64 = int.or %v30, %v36
-%v38:i64 = initial_var[d1]
-%v39:i64 = int.and %v38, %v16
-%v40:i64 = extend.zero %v6
-%v41:i64 = int.or %v39, %v40
-%v42:i64 = int.and %v41, %v16
-%v43:i32 = float_bits_to_int %v33
-%v44:i64 = extend.zero %v43
-%v45:i64 = int.or %v42, %v44
-%v46:i64 = initial_var[d2]
-%v47:i64 = int.and %v46, %v16
-%v48:i32 = float_bits_to_int %v23
-%v49:i64 = extend.zero %v48
-%v50:i64 = int.or %v47, %v49
-%v51:i64 = int.and %v50, %v16
-%v52:i64 = iconst[0x3f800000]
-%v53:i64 = int.or %v51, %v52
-%v54:i64 = initial_var[d3]
-return %v0, %v13, %v14, %v15, %v37, %v45, %v53, %v54
+%v31:f32 = fconst[0x3f800000]
+%v32:f32 = float.add %v21, %v31
+%v33:f32 = float.div %v26, %v32
+%v34:i32 = float_bits_to_int %v33
+%v35:i64 = extend.zero %v34
+%v36:i64 = int.or %v30, %v35
+%v37:i64 = initial_var[d1]
+%v38:i64 = int.and %v37, %v16
+%v39:i64 = extend.zero %v6
+%v40:i64 = int.or %v38, %v39
+%v41:i64 = int.and %v40, %v16
+%v42:i32 = float_bits_to_int %v32
+%v43:i64 = extend.zero %v42
+%v44:i64 = int.or %v41, %v43
+%v45:i64 = initial_var[d2]
+%v46:i64 = int.and %v45, %v16
+%v47:i32 = float_bits_to_int %v23
+%v48:i64 = extend.zero %v47
+%v49:i64 = int.or %v46, %v48
+%v50:i64 = int.and %v49, %v16
+%v51:i64 = iconst[0x3f800000]
+%v52:i64 = int.or %v50, %v51
+%v53:i64 = initial_var[d3]
+return %v0, %v13, %v14, %v15, %v36, %v44, %v52, %v53
 
 == f64_arith @0x10110
 cfg
@@ -107,14 +106,14 @@ float_arg 3 [%v25]
 %v16:f64 = float.mul %v15, %v13
 %v17:f64 = float.neg %v14
 %v18:f64 = float.add %v16, %v17
-%v19:i64 = iconst[0x3ff0000000000000]
-%v20:f64 = int_bits_to_float %v19
-%v21:f64 = float.add %v13, %v20
-%v22:f64 = float.div %v18, %v21
-%v23:i64 = float_bits_to_int %v22
-%v24:i64 = float_bits_to_int %v21
+%v19:f64 = fconst[0x3ff0000000000000]
+%v20:f64 = float.add %v13, %v19
+%v21:f64 = float.div %v18, %v20
+%v22:i64 = float_bits_to_int %v21
+%v23:i64 = float_bits_to_int %v20
+%v24:i64 = iconst[0x3ff0000000000000]
 %v25:i64 = initial_var[d3]
-return %v0, %v10, %v11, %v12, %v23, %v24, %v19, %v25
+return %v0, %v10, %v11, %v12, %v22, %v23, %v24, %v25
 
 == f32_to_f64 @0x10148
 cfg

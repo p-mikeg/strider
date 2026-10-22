@@ -381,6 +381,19 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // FloatBitsToInt(IntBitsToFloat(x)) -> x
     let rule_float_int = rewrite_rule(float_bits_to_int(int_bits_to_float(var(x))), var(x));
 
+    // A bitcast of a constant is a constant of the same bits, up to the
+    // `u64` a `FloatConst` carries, as the builder folds one.
+    let fits_u64 =
+        |_: &strider_pattern::Matcher, ty: strider_ir::node::ValueType, _: &_| ty.byte_size() <= 8;
+    let int_bits_const = rewrite_rule(
+        int_bits_to_float(int_const(c)).when_match(fits_u64),
+        float_const_with!([c: uint] => u64::try_from(c).map_err(|_| strider_pattern::skip())?),
+    );
+    let float_bits_const = rewrite_rule(
+        float_bits_to_int(float_const(c)).when_match(fits_u64),
+        int_const_with!([c: float_bits] => u128::from(c)),
+    );
+
     // Truncate(Extend(x)) -> x, but only when `x`'s type equals the truncate's
     // output type; otherwise this is a real narrowing, not an identity.
     macro_rules! ext_round_trip {
@@ -477,6 +490,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     vec![
         rule_int_float,
         rule_float_int,
+        int_bits_const,
+        float_bits_const,
         zext_round_trip,
         sext_round_trip,
         zext_zext,
