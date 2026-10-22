@@ -338,24 +338,56 @@ fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<V
 /// scalings between a load and the address arithmetic, when that is a load of
 /// a table the evaluator can fold.
 fn foldable_cell_load(function: &strider_ir::Function, v: ValueId) -> Option<ValueId> {
+    let (cell, _) = strip_to_cell(function, v, |and| {
+        strip_commutative_const_scale(function, and).map(|(next, _)| next)
+    })?;
+    (matches!(
+        function.node_kind(function.producer(cell)),
+        NodeKind::Load(_)
+    ) && foldable_load_address(function, cell).is_some())
+    .then_some(cell)
+}
+
+/// What `v` reduces to through zero-extends, truncates, the constant masks
+/// `through_mask` strips and constant scalings, with the steps that change
+/// the value set, outermost first. `None` past [`MAX_SCALE_STRIP`] steps.
+fn strip_to_cell(
+    function: &strider_ir::Function,
+    v: ValueId,
+    mut through_mask: impl FnMut(ValueId) -> Option<ValueId>,
+) -> Option<(ValueId, Vec<Scale>)> {
     let mut base = v;
+    let mut chain: Vec<Scale> = Vec::new();
     for _ in 0..MAX_SCALE_STRIP {
         let inner = match *function.node_kind(function.producer(base)) {
-            NodeKind::Load(_) => {
-                return foldable_load_address(function, base).map(|_| base);
+            NodeKind::Extend(ExtendOp::ZeroExtend) => {
+                function.int_inputs(base).next().map(|next| (next, None))
             }
-            NodeKind::Extend(ExtendOp::ZeroExtend) | NodeKind::Truncate => {
-                function.int_inputs(base).next()
+            NodeKind::Truncate => function
+                .int_inputs(base)
+                .next()
+                .zip(function.value_type_opt(base))
+                .map(|(next, ty)| (next, Some(Scale::Wrap(ty.bit_width())))),
+            NodeKind::IntBinaryOp(IntBinaryOp::And) => through_mask(base).map(|next| (next, None)),
+            NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => strip_const_scale(function, base)
+                .and_then(|(next, k)| Some((next, Some(Scale::Widen(pow2(k)?))))),
+            NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight) => strip_const_scale(function, base)
+                .and_then(|(next, k)| Some((next, Some(Scale::Narrow(pow2(k)?))))),
+            NodeKind::IntBinaryOp(IntBinaryOp::Div) => strip_const_scale(function, base)
+                .and_then(|(next, c)| (c != 0).then_some((next, Some(Scale::Narrow(c))))),
+            NodeKind::IntBinaryOp(IntBinaryOp::Mul) => {
+                strip_commutative_const_scale(function, base)
+                    .and_then(|(next, c)| (c != 0).then_some((next, Some(Scale::Widen(c)))))
             }
-            NodeKind::IntBinaryOp(IntBinaryOp::And | IntBinaryOp::Mul) => {
-                strip_commutative_const_scale(function, base).map(|(next, _)| next)
-            }
-            NodeKind::IntBinaryOp(
-                IntBinaryOp::ShiftLeft | IntBinaryOp::ShiftRight | IntBinaryOp::Div,
-            ) => strip_const_scale(function, base).map(|(next, _)| next),
             _ => None,
         };
-        base = inner?;
+        match inner {
+            Some((next, scale)) => {
+                base = next;
+                chain.extend(scale);
+            }
+            None => return Some((base, chain)),
+        }
     }
     None
 }
@@ -534,18 +566,19 @@ fn strip_commutative_const_scale(
     crate::const_eval::var_and_const(function, function.producer(v))
 }
 
-/// One constant scaling on the way from a cell to `v`, collected outermost
-/// first.
+/// One step on the way from a cell to `v` that changes its value set.
 enum Scale {
     /// `* m`: spreads the value set out, so a later divide collapses less.
     Widen(u128),
     /// `/ c`: collapses the value set once it outruns the spacing.
     Narrow(u128),
+    /// A truncate to this many bits: the set taken modulo `2^bits`.
+    Wrap(usize),
 }
 
-/// Producer steps [`is_width_only`]'s scale strip may take, matching the caps
-/// its sibling walks carry.  Exhausting it answers "width-only", the same
-/// conservative bail as an uncountable scale.
+/// Producer steps [`strip_to_cell`] may take, matching the caps its sibling
+/// walks carry.  Exhausting it answers "width-only", the same conservative
+/// bail as an uncountable scale.
 const MAX_SCALE_STRIP: u32 = 64;
 
 /// Is `v`'s range merely its type width rather than a real narrowing?  A raw
@@ -556,16 +589,17 @@ const MAX_SCALE_STRIP: u32 = 64;
 /// guarded raw load, `if (Load < N) switch(Load)`, is a genuine index even
 /// though it strips to a `Load`.
 ///
-/// Zero-extends, masks clearing only known-zero bits and constant scalings are
-/// stripped first, then replayed innermost-first over the cell's `1 << w`
-/// consecutive values, tracking their spacing: a divide collapses the set only
-/// by however much it outruns the spacing a preceding multiply built up, so
-/// `(cell << 2) >> 1` keeps all `1 << w`.  The count is then capped by what
-/// the OUTPUT width can hold at that spacing, since a widening scale wraps:
-/// `zext(i8) << 25` at `I32` has 128 distinct values, not 256.  A scale past
-/// the `u128` carrier, a floor over an unrelated spacing, and a strip longer
-/// than [`MAX_SCALE_STRIP`] all answer "width-only", which defers the site
-/// rather than enumerating a cell.
+/// Zero-extends, truncates, masks clearing only known-zero bits and constant
+/// scalings are stripped first ([`strip_to_cell`]), then replayed
+/// innermost-first over the cell's `1 << w` consecutive values, tracking their
+/// spacing: a divide collapses the set only by however much it outruns the
+/// spacing a preceding multiply built up, so `(cell << 2) >> 1` keeps all
+/// `1 << w`.  A truncate, and then the OUTPUT width, wrap the set
+/// ([`wrap`]): `zext(i8) << 25` at `I32` has 128 distinct values, not 256,
+/// and `trunc8(i32)` has 256.  A scale past the `u128` carrier, a floor over
+/// an unrelated spacing, a wrap that leaves no progression, and a strip
+/// longer than [`MAX_SCALE_STRIP`] all answer "width-only", which defers the
+/// site rather than enumerating a cell.
 /// An unrecognised producer is not a failure: the strip ends there and the
 /// count is taken at that value's own width.  `w < 128` keeps the shift
 /// well-defined.
@@ -576,43 +610,10 @@ fn is_width_only(
     v: ValueId,
     iv: Interval,
 ) -> bool {
-    let mut base = v;
-    let mut chain: Vec<Scale> = Vec::new();
-    let mut steps = MAX_SCALE_STRIP;
-    loop {
-        let Some(left) = steps.checked_sub(1) else {
-            return true;
-        };
-        steps = left;
-        let producer = function.producer(base);
-        let inner = match *function.node_kind(producer) {
-            // Preserves the integer value while widening the type.
-            NodeKind::Extend(ExtendOp::ZeroExtend) => {
-                function.int_inputs(base).next().map(|next| (next, None))
-            }
-            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-                ranges.identity_mask_operand(base).map(|next| (next, None))
-            }
-            NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => strip_const_scale(function, base)
-                .and_then(|(next, k)| Some((next, Some(Scale::Widen(pow2(k)?))))),
-            NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight) => strip_const_scale(function, base)
-                .and_then(|(next, k)| Some((next, Some(Scale::Narrow(pow2(k)?))))),
-            NodeKind::IntBinaryOp(IntBinaryOp::Div) => strip_const_scale(function, base)
-                .and_then(|(next, c)| (c != 0).then_some((next, Some(Scale::Narrow(c))))),
-            NodeKind::IntBinaryOp(IntBinaryOp::Mul) => {
-                strip_commutative_const_scale(function, base)
-                    .and_then(|(next, c)| (c != 0).then_some((next, Some(Scale::Widen(c)))))
-            }
-            _ => None,
-        };
-        match inner {
-            Some((next, scale)) => {
-                base = next;
-                chain.extend(scale);
-            }
-            None => break,
-        }
-    }
+    let Some((base, chain)) = strip_to_cell(function, v, |and| ranges.identity_mask_operand(and))
+    else {
+        return true;
+    };
     if loads_a_field(function, ranges, site, base) {
         return false;
     }
@@ -640,16 +641,43 @@ fn is_width_only(
             // Floor over a spacing that neither divides nor is divided leaves
             // no arithmetic progression to count.
             Scale::Narrow(_) => return true,
+            Scale::Wrap(bits) => match wrap(count, spacing, bits) {
+                Some(wrapped) => (count, spacing) = wrapped,
+                None => return true,
+            },
         }
     }
-    // A widening scale is modular at the output width: values `spacing` apart
-    // repeat after `2^out_w / spacing` of them, however many the cell had.
-    if let Some(out_w) = function.value_type_opt(v).map(|t| t.bit_width())
-        && out_w < 128
-    {
-        count = count.min((1u128 << out_w) / spacing.max(1)).max(1);
+    // A widening scale is modular at the output width too.
+    if let Some(out_w) = function.value_type_opt(v).map(|t| t.bit_width()) {
+        match wrap(count, spacing, out_w) {
+            Some((wrapped, _)) => count = wrapped,
+            None => return true,
+        }
     }
     iv.count() == count
+}
+
+/// `count` values `spacing` apart from 0, taken modulo `2^bits`: their count
+/// and spacing, or `None` where that is no arithmetic progression.  Past the
+/// `u128` carrier nothing wraps.
+fn wrap(count: u128, spacing: u128, bits: usize) -> Option<(u128, u128)> {
+    let Some((bits, modulus)) = u32::try_from(bits)
+        .ok()
+        .and_then(|bits| Some((bits, 1u128.checked_shl(bits)?)))
+    else {
+        return Some((count, spacing));
+    };
+    if (count - 1)
+        .checked_mul(spacing)
+        .is_some_and(|top| top < modulus)
+    {
+        return Some((count, spacing));
+    }
+    // `spacing * i` covers every multiple of the power of two shared with the
+    // modulus, once `i` runs over that many consecutive values.
+    let shared = 1u128 << spacing.trailing_zeros().min(bits);
+    let full = modulus / shared;
+    (count >= full).then_some((full, shared))
 }
 
 /// Whether `v` is a load through a pointer: its address is no constant, and

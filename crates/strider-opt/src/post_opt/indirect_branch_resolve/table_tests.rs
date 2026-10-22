@@ -1715,6 +1715,46 @@ fn index_bound_ok_rejects_types_past_the_u128_carrier() {
     assert!(!index_bound_ok(ValueType::int(512), iv));
 }
 
+/// The `tbb` entry read as the low byte of a wider cell, `zext(trunc8(load32))`
+/// as x86-64's `movzbl %al` after a 32-bit load: still the 256 values of
+/// table DATA.
+/// Mutation: leave the set unchanged at a truncate in `is_width_only`.
+#[test]
+fn classify_table_dispatch_excludes_truncated_table_entry_as_index() {
+    let (g, _target) = build_with_target(|fb| {
+        let cell_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
+        let cell = fb
+            .build_load(cell_addr, VnSpace::RAM, ValueType::int(32))
+            .expect("word load (table entry)");
+        let byte = fb
+            .truncate_if_needed(cell, ValueType::int(8))
+            .expect("its low byte");
+        let idx = fb
+            .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
+            .expect("zero-extend the byte to I32");
+        table_target(fb, idx, 4u64, 0x4000u64)
+    });
+    let rom = MockRom::strided(0x4000, 4, vec![0x10; 256], 4);
+    assert_eq!(classify(&g, Some(&rom)), None);
+}
+
+/// Values `spacing` apart taken modulo `2^bits`.
+/// Mutation: keep `spacing` as the shared power of two.
+#[test]
+fn wrap_counts_a_progression_modulo_its_width() {
+    assert_eq!(wrap(4, 3, 8), Some((4, 3)), "fits");
+    assert_eq!(wrap(1 << 32, 1, 8), Some((256, 1)), "a truncate");
+    assert_eq!(wrap(256, 4, 8), Some((64, 4)), "a widening shift");
+    assert_eq!(
+        wrap(256, 3, 8),
+        Some((256, 1)),
+        "odd steps cover every value"
+    );
+    assert_eq!(wrap(256, 6, 8), Some((128, 2)));
+    assert_eq!(wrap(100, 3, 8), None, "wraps before covering the cycle");
+    assert_eq!(wrap(256, 1, 128), Some((256, 1)), "past the carrier");
+}
+
 #[test]
 fn classify_table_dispatch_excludes_right_shifted_table_entry_as_index() {
     // As the `tbb` case above, with the entry scaled by `>> 2` before the `* 4`
