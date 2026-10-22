@@ -7,7 +7,7 @@
 # f64_compare: 2 fcmp.less|fcmp.equal
 # f64_to_f32: float_to_float
 # float_to_int: float_to_int
-# int_to_float: int_to_float or float.add and float.neg and float_to_float
+# int_to_float: int_to_float or float.add and float.neg|fconst[0xc330000080000000] and float_to_float
 endian little
 default_cc arg_passing_regs=[RDI, RSI, RDX, RCX, R8, R9] arg_passing_regs_float=[XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7] callee_saved_regs=[RBX, RBP, R12, R13, R14, R15] ret_val_regs=[RAX, RDX] ret_val_regs_float=[XMM0, XMM1, ST0, ST1] stack_vn=RSP stack_args=8+8n ret_stack_pop=8 link_register_vn=none preserves_memory=false preserves_all_registers=false entry_address_vn=none
 assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode
@@ -332,16 +332,15 @@ float_arg 2 [%v17]
 %v55:i128 = extend.zero %v54
 %v56:i128 = int.or %v51, %v55
 %v57:i128 = int.and %v56, %v5
-%v58:i32 = iconst[0x3f800000]
-%v59:f32 = int_bits_to_float %v58
-%v60:f32 = float.add %v46, %v59
-%v61:f32 = float.div %v53, %v60
-%v62:i32 = float_bits_to_int %v61
-%v63:i128 = extend.zero %v62
-%v64:i128 = int.or %v57, %v63
-%v65:i80 = initial_var[ST0]
-%v66:i80 = initial_var[ST1]
-return %v0, %v1, %v2, %v3, %v64, %v9, %v65, %v66
+%v58:f32 = fconst[0x3f800000]
+%v59:f32 = float.add %v46, %v58
+%v60:f32 = float.div %v53, %v59
+%v61:i32 = float_bits_to_int %v60
+%v62:i128 = extend.zero %v61
+%v63:i128 = int.or %v57, %v62
+%v64:i80 = initial_var[ST0]
+%v65:i80 = initial_var[ST1]
+return %v0, %v1, %v2, %v3, %v63, %v9, %v64, %v65
 
 == f64_arith @0x401260
 cfg
@@ -394,16 +393,15 @@ float_arg 2 [%v17]
 %v39:i128 = extend.zero %v38
 %v40:i128 = int.or %v35, %v39
 %v41:i128 = int.and %v40, %v5
-%v42:i64 = iconst[0x3ff0000000000000]
-%v43:f64 = int_bits_to_float %v42
-%v44:f64 = float.add %v30, %v43
-%v45:f64 = float.div %v37, %v44
-%v46:i64 = float_bits_to_int %v45
-%v47:i128 = extend.zero %v46
-%v48:i128 = int.or %v41, %v47
-%v49:i80 = initial_var[ST0]
-%v50:i80 = initial_var[ST1]
-return %v0, %v1, %v2, %v3, %v48, %v9, %v49, %v50
+%v42:f64 = fconst[0x3ff0000000000000]
+%v43:f64 = float.add %v30, %v42
+%v44:f64 = float.div %v37, %v43
+%v45:i64 = float_bits_to_int %v44
+%v46:i128 = extend.zero %v45
+%v47:i128 = int.or %v41, %v46
+%v48:i80 = initial_var[ST0]
+%v49:i80 = initial_var[ST1]
+return %v0, %v1, %v2, %v3, %v47, %v9, %v48, %v49
 
 == f32_to_f64 @0x401290
 cfg
