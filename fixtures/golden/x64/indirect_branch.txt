@@ -114,7 +114,7 @@ float_arg 7 [%v30]
 %v29:i128 = initial_var[XMM6]
 %v30:i128 = initial_var[XMM7]
 %v31:ctrl, %v32:mem, %v33:i64<RAX>, %v34:i64<RDX>, %v35:i128<XMM0>, %v36:i128<XMM1>, %v37:i80<ST0>, %v38:i80<ST1>, %v39:i64<RCX>, %v40:i64<RSI>, %v41:i64<RDI>, %v42:i64<R8>, %v43:i64<R9>, %v44:i8<CF>, %v45:i8<PF>, %v46:i8<ZF>, %v47:i8<SF>, %v48:i8<OF>, %v49:i64<RIP>, %v50:i128<XMM2>, %v51:i128<XMM3>, %v52:i128<XMM4>, %v53:i128<XMM5>, %v54:i128<XMM6>, %v55:i128<XMM7> = call %v0, %v16, %v18, %v14, %v19, %v20, %v4, %v21, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v8, %v9
-%v56:ctrl, %v57:mem = callother[16 "halt"] %v31, %v32
+%v56:ctrl, %v57:mem = callother[1757 "halt"] %v31, %v32
 return %v56, %v57, %v33, %v34, %v35, %v36, %v37, %v38
 
 == _dl_relocate_static_pie @0x4010a0
