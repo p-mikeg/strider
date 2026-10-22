@@ -62,6 +62,8 @@ _EF_ARM_ABI_FLOAT_SOFT = 0x0000_0200
 _EF_MIPS_ABI2 = 0x0000_0020
 _EF_MIPS_ABI = 0x0000_F000
 _EF_MIPS_ABI_NAMES = {0x2000: "O64", 0x3000: "EABI32", 0x4000: "EABI64"}
+# `EF_MIPS_ARCH_ASE_MICROMIPS`: the image's code is microMIPS.
+_EF_MIPS_MICROMIPS = 0x0200_0000
 
 # PowerPC `KERNELBASE`: Linux links its own text at 0xc000_0000 (ppc32) or
 # 0xc000_0000_0000_0000 (ppc64), which is `TASK_SIZE` on ppc32 and far above
@@ -126,8 +128,8 @@ def _arch_and_cc_for_elf(
     is_arm_be8: bool = False,
 ) -> tuple[SleighArch, CallingConvention]:
     """Pick the `SleighArch` and `CallingConvention` preset matching this ELF.
-    Raises `ValueError` for an unsupported e_machine, and for an ELF32 MIPS
-    ABI other than O32.
+    Raises `ValueError` for an unsupported e_machine, for an ELF32 MIPS
+    ABI other than O32, and for a microMIPS image.
 
     The convention is the userland one on every architecture but PowerPC,
     where an `e_entry` at or above `KERNELBASE` selects the kernel flavour:
@@ -172,6 +174,11 @@ def _arch_and_cc_for_elf(
         arch = SleighArch.aarch64() if le else SleighArch.aarch64be()
         return arch, CallingConvention.aarch64_aapcs64()
     if em == _EM_MIPS:
+        # Every MIPS preset decodes an ISA-bit address as MIPS16e.
+        if header.e_flags & _EF_MIPS_MICROMIPS:
+            raise ValueError(
+                "unsupported microMIPS image: strider has no microMIPS preset"
+            )
         if is64:
             arch = SleighArch.mipsle64() if le else SleighArch.mipsbe64()
             return arch, CallingConvention.mips_n64()
