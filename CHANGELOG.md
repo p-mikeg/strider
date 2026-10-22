@@ -515,6 +515,12 @@
 
 ### Fixed
 
+- Python: a PowerPC jump table whose guard or index is an `rlwinm` resolves.
+  A guard on a rotate held below `2^r` (`rotlwi r4,r3,29; cmplwi r4,7`)
+  bounds the rotated register to its multiples of `2^(32 - r)`, and a rotate
+  under a mask that drops one of its halves (`srwi`, `extrwi`, an index
+  scaled into place) reads as the bit field it extracts, so a guard on the
+  field bounds the index. Such sites were unresolved.
 - Python: a jump table indexed by the low byte of a wider load, as x86-64's
   `mov 0x10(%rdi),%eax; movzbl %al,%eax` lifts it, is read the way the
   byte itself is: through a pointer it resolves over the byte's 256 values,
