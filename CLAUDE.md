@@ -368,10 +368,11 @@ when both IR slots hold the same value.
   (`Function::assumptions`), which every SP-aware pass and classifier reads:
   `AnalyzeOptions.assumptions` seeds each round's fresh lift, and
   `Function::assume` adds claims, withdrawing none.
-  `assumptions` is an `AssumptionOptions` of eight claims about the code being
+  `assumptions` is an `AssumptionOptions` of nine claims about the code being
   analysed that the IR cannot prove, so a wrong one miscompiles; every field's
-  risky value is the positive one, four default ON (one,
-  `msr_register_keeps_mode`, is read by the lift instead), and
+  risky value is the positive one, five default ON (two,
+  `msr_register_keeps_mode` and `mxcsr_rounds_to_nearest`, are read by the
+  lift instead), and
   `AssumptionOptions::none()`, not `::default()`, is the sound floor of those
   fields under any input whose memory behaves as RAM. It is the floor, not the
   only sound setting: `callee_preserves_stack_args` is inert without
