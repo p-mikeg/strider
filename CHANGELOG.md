@@ -527,7 +527,8 @@
   `sh_link`, every entry naming a symbol is a hole. A header over part of
   another's table is still walked.
 - Python: in a linked image with a `.dynsym`, an allocated relocation
-  section linked to `.symtab` or to nothing is applied: an entry naming no
+  section (`SHT_REL`, `SHT_RELA` or `SHT_CREL`) linked to `.symtab` or to
+  nothing is applied: an entry naming no
   symbol as the dynamic table's are, one naming a symbol (and on MIPS every
   entry) as a hole. Neither walk read it, so its fields served the file's
   bytes. Such a hole spans the word unless the type names its field, in
