@@ -519,10 +519,11 @@
   `call_other`). It branched to itself, so `sti; hlt; cli; ret` (Linux's
   `default_idle`) never returned and nothing was reported. A libc `_start`
   now runs from its `hlt` into the bytes after it.
-- Python: `load_elf` raises `ValueError` on a microMIPS image
+- Python: `load_elf` and `add_elf` raise `ValueError` on a microMIPS image
   (`EF_MIPS_ARCH_ASE_MICROMIPS`), which no preset decodes. It loaded as
   plain MIPS, and a function entered at its ISA-bit address decoded as
-  MIPS16e into a complete, wrong function.
+  MIPS16e into a complete, wrong function. `load_elf` with both `arch=` and
+  `cc=` still loads one, to lift its MIPS32 code.
 - Python: a seeded jump-table arm whose code falls through into
   `data_ranges` or unmapped bytes is dropped (Rust:
   `Cfg::undecodable_seeded_targets` names it), as one falling past the

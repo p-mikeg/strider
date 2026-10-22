@@ -23,19 +23,23 @@ class SleighArch:
         ...
     @classmethod
     def mipsbe32(cls) -> SleighArch:
-        """32-bit MIPS, big-endian."""
+        """32-bit MIPS, big-endian. An odd (ISA-bit) address decodes as
+        MIPS16e; no preset decodes microMIPS."""
         ...
     @classmethod
     def mipsle32(cls) -> SleighArch:
-        """32-bit MIPS, little-endian."""
+        """32-bit MIPS, little-endian. An odd (ISA-bit) address decodes as
+        MIPS16e; no preset decodes microMIPS."""
         ...
     @classmethod
     def mipsbe64(cls) -> SleighArch:
-        """64-bit MIPS, big-endian."""
+        """64-bit MIPS, big-endian. An odd (ISA-bit) address decodes as
+        MIPS16e; no preset decodes microMIPS."""
         ...
     @classmethod
     def mipsle64(cls) -> SleighArch:
-        """64-bit MIPS, little-endian."""
+        """64-bit MIPS, little-endian. An odd (ISA-bit) address decodes as
+        MIPS16e; no preset decodes microMIPS."""
         ...
     @classmethod
     def arm(cls) -> SleighArch:
