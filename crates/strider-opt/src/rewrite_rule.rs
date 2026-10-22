@@ -389,7 +389,7 @@ mod tests {
         let skips = rewrite_rule(initial_var_for(vn), declined());
         let skips_late = rewrite_rule(
             initial_var_for(vn),
-            template::int_add(int_const_with!([] => 1u128), declined()),
+            template::int_add(declined(), int_const_with!([] => 1u128)),
         );
         let mut edit = EditFunction::new(&mut function);
         edit.cull_dead();
