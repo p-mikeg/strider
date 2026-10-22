@@ -380,9 +380,8 @@ when both IR slots hold the same value.
   `alias` one is `MemPurpose::Forward` over `assumptions`, the `narrow` one
   `MemPurpose::TableWalk`, the same claims less the call relaxations, because
   the edge `narrow_load_to` rewires is read afterwards by walks that honour no
-  call relaxation (the table walk, stack-argument collection, return-target
-  verification with its claim off, which reads `stack_global_disjoint` and
-  heap identity only through that edge).
+  call relaxation (the table walk, and return-target verification with its
+  claim off).
 
 ## strider-py
 

@@ -169,10 +169,9 @@ fn detect_stack_args(
 /// nearest clobber is anything but the clean `InitialMemory` root.
 ///
 /// Narrows to `narrow_cfg`'s clobber, never `alias_cfg`'s, which piles the
-/// incoming-arg relaxations on top.  The rewired edge is read afterwards by
-/// walks that block at every call, so `narrow_cfg` claims nothing at all
-/// (`MemPurpose::Structural`): an edge resting on a relaxation would hand it to
-/// a walk that does not honour it.
+/// incoming-arg relaxations on top: an edge resting on a relaxation would hand
+/// it to a later walk that does not honour it.  `narrow_cfg` claims nothing
+/// (`MemPurpose::Structural`).
 fn mem_chain_is_dirty(
     edit: &mut crate::EditFunction<'_>,
     alias_cfg: &MemAnalyzer,
