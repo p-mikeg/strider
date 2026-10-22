@@ -235,7 +235,7 @@ float_arg 3 [%v85]
 %v10:i128 = int.or %v7, %v9
 %v11:i128 = iconst[0xffffff00]
 %v12:i128 = int.and %v10, %v11
-%v13:i8 = truncate %v9
+%v13:i8 = truncate %v2
 %v14:i8 = popcount %v13
 %v15:i128 = extend.zero %v14
 %v16:i128 = int.or %v12, %v15
@@ -412,7 +412,7 @@ float_arg 3 [%v136]
 %v9:i128 = int.or %v7, %v8
 %v10:i128 = iconst[0xffffffffffffff00]
 %v11:i128 = int.and %v9, %v10
-%v12:i8 = truncate %v8
+%v12:i8 = truncate %v2
 %v13:i8 = popcount %v12
 %v14:i128 = extend.zero %v13
 %v15:i128 = int.or %v11, %v14

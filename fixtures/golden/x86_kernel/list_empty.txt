@@ -125,9 +125,7 @@ arg 0 [%v2]
 %v5:i32 = load[r] %v1, %v4
 %v6:i1 = icmp.equal %v4, %v5
 %v7:i32 = extend.zero %v6
-%v8:i8 = truncate %v7
-%v9:i32 = extend.zero %v8
-%v10:i80 = initial_var[ST0]
-%v11:i80 = initial_var[ST1]
-%v12:i128 = initial_var[XMM0]
-return %v0, %v1, %v9, %v4, %v10, %v11, %v12
+%v8:i80 = initial_var[ST0]
+%v9:i80 = initial_var[ST1]
+%v10:i128 = initial_var[XMM0]
+return %v0, %v1, %v7, %v4, %v8, %v9, %v10

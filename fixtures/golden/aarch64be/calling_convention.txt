@@ -965,17 +965,17 @@ float_arg 7 [%v56]
 %v31:i64 = iconst[0x220a4c]
 %v32:i32 = extend.sign %v14
 %v33:mem = store[r] %v30, %v31, %v32
-%v34:i64 = extend.zero %v19
-%v35:i32 = truncate %v34
-%v36:mem = store[r] %v33, %v31, %v35
-%v37:i32 = extend.sign %v24
-%v38:mem = store[r] %v36, %v31, %v37
-%v39:i64 = extend.zero %v29
-%v40:i32 = truncate %v39
-%v41:mem = store[r] %v38, %v31, %v40
-%v42:i64 = iconst[0x210334]
-%v43:i64 = extend.zero %v32
-%v44:i64 = extend.zero %v37
+%v34:i32 = extend.zero %v19
+%v35:mem = store[r] %v33, %v31, %v34
+%v36:i32 = extend.sign %v24
+%v37:mem = store[r] %v35, %v31, %v36
+%v38:i32 = extend.zero %v29
+%v39:mem = store[r] %v37, %v31, %v38
+%v40:i64 = iconst[0x210334]
+%v41:i64 = extend.zero %v32
+%v42:i64 = extend.zero %v19
+%v43:i64 = extend.zero %v36
+%v44:i64 = extend.zero %v29
 %v45:i64 = initial_var[x4]
 %v46:i64 = initial_var[x5]
 %v47:i64 = initial_var[x6]
@@ -988,22 +988,20 @@ float_arg 7 [%v56]
 %v54:i128 = initial_var[q5]
 %v55:i128 = initial_var[q6]
 %v56:i128 = initial_var[q7]
-%v57:ctrl, %v58:mem, %v59:i64<x0>, %v60:i64<x1>, %v61:i128<q0>, %v62:i128<q1>, %v63:i128<q2>, %v64:i128<q3>, %v65:i64<pc>, %v66:i8<tmpCY>, %v67:i8<tmpOV>, %v68:i8<tmpNG>, %v69:i8<tmpZR>, %v70:i64<x2>, %v71:i64<x3>, %v72:i64<x4>, %v73:i64<x5>, %v74:i64<x6>, %v75:i64<x7>, %v76:i64<x8>, %v77:i64<x9>, %v78:i128<q4>, %v79:i128<q5>, %v80:i128<q6>, %v81:i128<q7> = call %v0, %v41, %v42, %v27, %v43, %v34, %v44, %v39, %v45, %v46, %v47, %v48, %v49, %v50, %v51, %v52, %v53, %v54, %v55, %v56, %v29, %v19, %v5, %v9
+%v57:ctrl, %v58:mem, %v59:i64<x0>, %v60:i64<x1>, %v61:i128<q0>, %v62:i128<q1>, %v63:i128<q2>, %v64:i128<q3>, %v65:i64<pc>, %v66:i8<tmpCY>, %v67:i8<tmpOV>, %v68:i8<tmpNG>, %v69:i8<tmpZR>, %v70:i64<x2>, %v71:i64<x3>, %v72:i64<x4>, %v73:i64<x5>, %v74:i64<x6>, %v75:i64<x7>, %v76:i64<x8>, %v77:i64<x9>, %v78:i128<q4>, %v79:i128<q5>, %v80:i128<q6>, %v81:i128<q7> = call %v0, %v39, %v40, %v27, %v41, %v42, %v43, %v44, %v45, %v46, %v47, %v48, %v49, %v50, %v51, %v52, %v53, %v54, %v55, %v56, %v29, %v19, %v5, %v9
 %v82:i8 = load[r] %v58, %v12
 %v83:i32 = extend.sign %v82
 %v84:i8 = load[r] %v58, %v17
-%v85:i64 = extend.zero %v84
-%v86:i32 = truncate %v85
-%v87:i32 = int.add %v83, %v86
-%v88:i16 = load[r] %v58, %v22
-%v89:i32 = extend.sign %v88
-%v90:i32 = int.add %v87, %v89
-%v91:i16 = load[r] %v58, %v27
-%v92:i64 = extend.zero %v91
-%v93:i32 = truncate %v92
-%v94:i32 = int.add %v90, %v93
-%v95:i64 = extend.zero %v94
-return %v57, %v58, %v95, %v60, %v61, %v62, %v63, %v64
+%v85:i32 = extend.zero %v84
+%v86:i32 = int.add %v83, %v85
+%v87:i16 = load[r] %v58, %v22
+%v88:i32 = extend.sign %v87
+%v89:i32 = int.add %v86, %v88
+%v90:i16 = load[r] %v58, %v27
+%v91:i32 = extend.zero %v90
+%v92:i32 = int.add %v89, %v91
+%v93:i64 = extend.zero %v92
+return %v57, %v58, %v93, %v60, %v61, %v62, %v63, %v64
 
 == mixed_4 @0x210780
 cfg

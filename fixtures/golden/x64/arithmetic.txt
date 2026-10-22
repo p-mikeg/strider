@@ -577,28 +577,26 @@ cfg
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58b00:1, u:0x58d00:1, u:0x58e00:1, u:0x58f00:1, u:0x59000:1, u:0x59300:1, u:0x59400:1, u:0x59500:1, u:0x59600:1, u:0x59800:4, u:0x59900:1, u:0x59a00:1, u:0x59c00:1, u:0x59d00:1, u:0x59e00:1, u:0x59f00:1, u:0x5ce00:1, u:0x5cf00:1, u:0x5d000:4, u:0x5d200:1, u:0x5d300:1, u:0x5d400:1, u:0x5d500:1, u:0x5d800:1, u:0x5d900:1, u:0x5db00:1, u:0x5dc00:1, u:0x5dd00:1, u:0x5de00:1, u:0xdfe00:1, u:0xdff00:4]
 arg 0 [%v2]
 arg 1 [%v4]
-arg 2 [%v13]
-float_arg 0 [%v14]
-float_arg 1 [%v15]
+arg 2 [%v11]
+float_arg 0 [%v12]
+float_arg 1 [%v13]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[RDI]
 %v3:i32 = truncate %v2
 %v4:i64 = initial_var[RSI]
-%v5:i32 = truncate %v4
-%v6:i64 = extend.zero %v5
-%v7:i8 = truncate %v6
-%v8:i8 = iconst[0x1f]
-%v9:i8 = int.and %v7, %v8
-%v10:i32 = extend.zero %v9
-%v11:i32 = int.shift_left %v3, %v10
-%v12:i64 = extend.zero %v11
-%v13:i64 = initial_var[RDX]
-%v14:i128 = initial_var[XMM0]
-%v15:i128 = initial_var[XMM1]
-%v16:i80 = initial_var[ST0]
-%v17:i80 = initial_var[ST1]
-return %v0, %v1, %v12, %v13, %v14, %v15, %v16, %v17
+%v5:i8 = truncate %v4
+%v6:i8 = iconst[0x1f]
+%v7:i8 = int.and %v5, %v6
+%v8:i32 = extend.zero %v7
+%v9:i32 = int.shift_left %v3, %v8
+%v10:i64 = extend.zero %v9
+%v11:i64 = initial_var[RDX]
+%v12:i128 = initial_var[XMM0]
+%v13:i128 = initial_var[XMM1]
+%v14:i80 = initial_var[ST0]
+%v15:i80 = initial_var[ST1]
+return %v0, %v1, %v10, %v11, %v12, %v13, %v14, %v15
 
 == lshr @0x401350
 cfg
@@ -607,28 +605,26 @@ cfg
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58b00:1, u:0x58d00:1, u:0x58e00:1, u:0x58f00:1, u:0x59000:1, u:0x59300:1, u:0x59400:1, u:0x59500:1, u:0x59600:1, u:0x59800:4, u:0x59900:1, u:0x59a00:1, u:0x59c00:1, u:0x59d00:1, u:0x59e00:1, u:0x59f00:1, u:0x5f000:1, u:0x5f100:1, u:0x5f200:4, u:0x5f300:4, u:0x5f500:1, u:0x5f600:1, u:0x5f700:1, u:0x5f800:1, u:0x5fb00:1, u:0x5fd00:1, u:0x5fe00:1, u:0x5ff00:1, u:0x60000:1, u:0xe8200:1, u:0xe8300:4]
 arg 0 [%v2]
 arg 1 [%v4]
-arg 2 [%v13]
-float_arg 0 [%v14]
-float_arg 1 [%v15]
+arg 2 [%v11]
+float_arg 0 [%v12]
+float_arg 1 [%v13]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[RDI]
 %v3:i32 = truncate %v2
 %v4:i64 = initial_var[RSI]
-%v5:i32 = truncate %v4
-%v6:i64 = extend.zero %v5
-%v7:i8 = truncate %v6
-%v8:i8 = iconst[0x1f]
-%v9:i8 = int.and %v7, %v8
-%v10:i32 = extend.zero %v9
-%v11:i32 = int.shift_right %v3, %v10
-%v12:i64 = extend.zero %v11
-%v13:i64 = initial_var[RDX]
-%v14:i128 = initial_var[XMM0]
-%v15:i128 = initial_var[XMM1]
-%v16:i80 = initial_var[ST0]
-%v17:i80 = initial_var[ST1]
-return %v0, %v1, %v12, %v13, %v14, %v15, %v16, %v17
+%v5:i8 = truncate %v4
+%v6:i8 = iconst[0x1f]
+%v7:i8 = int.and %v5, %v6
+%v8:i32 = extend.zero %v7
+%v9:i32 = int.shift_right %v3, %v8
+%v10:i64 = extend.zero %v9
+%v11:i64 = initial_var[RDX]
+%v12:i128 = initial_var[XMM0]
+%v13:i128 = initial_var[XMM1]
+%v14:i80 = initial_var[ST0]
+%v15:i80 = initial_var[ST1]
+return %v0, %v1, %v10, %v11, %v12, %v13, %v14, %v15
 
 == ashr @0x401360
 cfg
@@ -637,28 +633,26 @@ cfg
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x58b00:1, u:0x58d00:1, u:0x58e00:1, u:0x58f00:1, u:0x59000:1, u:0x59300:1, u:0x59400:1, u:0x59500:1, u:0x59600:1, u:0x59800:4, u:0x59900:1, u:0x59a00:1, u:0x59c00:1, u:0x59d00:1, u:0x59e00:1, u:0x59f00:1, u:0x5e100:1, u:0x5e200:1, u:0x5e300:4, u:0x5e400:4, u:0x5e600:1, u:0x5e700:1, u:0x5e800:1, u:0x5e900:1, u:0x5ec00:1, u:0x5ed00:1, u:0xdc400:1, u:0xdc500:4]
 arg 0 [%v2]
 arg 1 [%v4]
-arg 2 [%v13]
-float_arg 0 [%v14]
-float_arg 1 [%v15]
+arg 2 [%v11]
+float_arg 0 [%v12]
+float_arg 1 [%v13]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[RDI]
 %v3:i32 = truncate %v2
 %v4:i64 = initial_var[RSI]
-%v5:i32 = truncate %v4
-%v6:i64 = extend.zero %v5
-%v7:i8 = truncate %v6
-%v8:i8 = iconst[0x1f]
-%v9:i8 = int.and %v7, %v8
-%v10:i32 = extend.zero %v9
-%v11:i32 = int.sshift_right %v3, %v10
-%v12:i64 = extend.zero %v11
-%v13:i64 = initial_var[RDX]
-%v14:i128 = initial_var[XMM0]
-%v15:i128 = initial_var[XMM1]
-%v16:i80 = initial_var[ST0]
-%v17:i80 = initial_var[ST1]
-return %v0, %v1, %v12, %v13, %v14, %v15, %v16, %v17
+%v5:i8 = truncate %v4
+%v6:i8 = iconst[0x1f]
+%v7:i8 = int.and %v5, %v6
+%v8:i32 = extend.zero %v7
+%v9:i32 = int.sshift_right %v3, %v8
+%v10:i64 = extend.zero %v9
+%v11:i64 = initial_var[RDX]
+%v12:i128 = initial_var[XMM0]
+%v13:i128 = initial_var[XMM1]
+%v14:i80 = initial_var[ST0]
+%v15:i80 = initial_var[ST1]
+return %v0, %v1, %v10, %v11, %v12, %v13, %v14, %v15
 
 == negate @0x401370
 cfg
