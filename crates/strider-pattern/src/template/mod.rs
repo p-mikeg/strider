@@ -158,6 +158,14 @@ pub fn instantiate_guarded<B: IRBuilder>(
     let mut kinds: Vec<(NodeId, Option<NodeKind>)> = Vec::with_capacity(order.len());
     for vtx in order {
         let nd = template.graph.node_kind(vtx);
+        if matches!(nd.kind, TmplNodeKind::Build(_)) && template.graph.node_outputs(vtx).is_empty()
+        {
+            anyhow::bail!(
+                "template node {} declares no output, so nothing gives it a type: \
+                 declare its outputs (value_output / memory_output)",
+                node_name(template, vtx)
+            );
+        }
         let kind = match &nd.kind {
             TmplNodeKind::Capture => {
                 kinds.push((vtx, None));
@@ -801,8 +809,7 @@ fn check_conversion(
     Ok(())
 }
 
-/// Each value output takes its own resolved type. A node with no explicit
-/// output vertex falls back to a single value output of the root's type.
+/// Each output takes its own resolved type.
 fn output_kinds_for(
     template: &Template,
     node_vtx: NodeId,
@@ -813,9 +820,6 @@ fn output_kinds_for(
         if let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(out_vtx) {
             by_slot.insert(o.slot, resolved_output_kind(o, out_vtx, value_tys));
         }
-    }
-    if by_slot.is_empty() {
-        return Ok(vec![ValueKind::Typed(value_tys.root_ty)]);
     }
     // As in `collect_inputs`: the dense `into_values()` would shift a later
     // slot down onto the wrong IR output index, and the signature check above
@@ -1185,6 +1189,31 @@ mod tests {
 
         let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
         assert!(err.contains("no template node consumes it"), "got: {err}");
+    }
+
+    /// A node that declares no output has no width of its own, and the root's
+    /// would be a guess.
+    /// Mutation: give such a node one output of the root's type again.
+    #[test]
+    fn a_node_declaring_no_output_is_refused() {
+        let x = Capture::new();
+        let mut fx = make_empty_fn(|b| {
+            let a = b.build_int_const(5u64, T::int(64))?;
+            let k = b.build_int_const(1u64, T::int(64))?;
+            b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
+        })
+        .unwrap();
+        let lhs = crate::int_add(var(x), crate::int_const(1u128)).into_pattern();
+        let mut b = super::TemplateBuilder::new();
+        let l = b.capture(x);
+        let r = b.capture(x);
+        let add = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+        b.input(add, 0, l);
+        b.input(add, 1, r);
+        let rhs = b.finish();
+
+        let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
+        assert!(err.contains("declares no output"), "got: {err}");
     }
 
     /// A width taken from a capture bound to memory has no width to take.
