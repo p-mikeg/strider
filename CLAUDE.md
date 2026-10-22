@@ -378,11 +378,11 @@ when both IR slots hold the same value.
   `escape_analysis` or a listed allocator. Per-field detail is on the struct
   (`crates/strider-ir/src/assumptions.rs`). `LoadForward` is two analyzers: the
   `alias` one is `MemPurpose::Forward` over `assumptions`, the `narrow` one
-  `MemPurpose::Structural`, which claims nothing, because the edge
-  `narrow_load_to` rewires is read afterwards by walks that honour fewer claims
-  (the table walk honours no call relaxation and stack-argument collection no
-  escape analysis; return-target verification with its claim off honours
-  neither `stack_global_disjoint` nor heap identity).
+  `MemPurpose::TableWalk`, the same claims less the call relaxations, because
+  the edge `narrow_load_to` rewires is read afterwards by walks that honour no
+  call relaxation (the table walk, stack-argument collection, return-target
+  verification with its claim off, which reads `stack_global_disjoint` and
+  heap identity only through that edge).
 
 ## strider-py
 

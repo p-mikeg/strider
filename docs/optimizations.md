@@ -94,9 +94,9 @@ the function stored there, so a memory-mapped register polled after a write
 folds to the value written.
 
 Each load it examines also has its memory edge moved past the memory
-definitions that cannot overwrite it. That move uses none of the
-`AssumptionOptions`: the passes that read the edge afterwards honour fewer
-claims than forwarding does. Claims accumulate on a function: re-optimising
+definitions that cannot overwrite it. That move uses `stack_global_disjoint`
+and `noalias_allocators`' heap identity but never steps through a call: the
+passes that read the edge afterwards block at every call. Claims accumulate on a function: re-optimising
 adds the claims it names to the ones already in force and withdraws none, and
 a value forwarded under a claim stays forwarded: to drop a claim, analyse the
 function again without it.
