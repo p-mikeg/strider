@@ -147,12 +147,14 @@ impl PyCfg {
     ///   decodes in the other.
     /// - `"interior_target"`: off every instruction boundary, or a region
     ///   start a later decode stepped over.
-    /// - `"unmapped_target"`: no byte of the image backs it. An unmapped
-    ///   seeded arm is named here and dropped.
+    /// - `"unmapped_target"`: no byte of the image backs it. A seeded arm
+    ///   that is unmapped, or whose code falls through here, is dropped,
+    ///   unless a call precedes the bytes, which then does not return.
     /// - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
-    ///   it as data. A seeded arm leading to such bytes is dropped, and so is
-    ///   one whose decode fails for a reason no other entry names, named here
-    ///   at its start.
+    ///   it as data. A seeded arm leading to such bytes is dropped, unless
+    ///   its code falls through to them past a call, which then does not
+    ///   return; so is one whose decode fails for a reason no other entry
+    ///   names, named here at its start.
     /// - `"past_function_end"`: where code falls through past
     ///   `function_max_size`, and so tail-calls this address, or where a call
     ///   not to a `no_return_targets` entry would return; a seeded arm whose
