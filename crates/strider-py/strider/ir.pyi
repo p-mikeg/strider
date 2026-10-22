@@ -339,7 +339,7 @@ class Function:
         sites with `find_all` instead. A `replace` that builds nodes raises
         `StriderError` where the match holds no node an instruction produced
         (an `initial_var` or `phi` root), as those nodes would carry no
-        address.
+        address, even a constant equal to one already in the graph.
 
         One walk of the reachable nodes, not a fixed point, so a rule whose
         output its own `find` matches needs the caller to loop.

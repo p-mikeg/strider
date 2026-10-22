@@ -104,6 +104,33 @@ pub fn instantiate<B: IRBuilder>(
     proof_nodes: &[NodeId],
     root_ty: ValueType,
 ) -> anyhow::Result<ValueId> {
+    instantiate_guarded(
+        template,
+        builder,
+        bindings,
+        lhs_root,
+        proof_nodes,
+        root_ty,
+        |_| Ok(()),
+    )
+}
+
+/// [`instantiate`], calling `before_build` once every node's kind is resolved
+/// and before the first node is created, only when the template builds one.
+/// A closure's skip comes first, so a declined template never reaches it.
+///
+/// # Errors
+///
+/// As [`instantiate`], and whatever `before_build` returns.
+pub fn instantiate_guarded<B: IRBuilder>(
+    template: &Template,
+    builder: &mut B,
+    bindings: &Bindings,
+    lhs_root: NodeId,
+    proof_nodes: &[NodeId],
+    root_ty: ValueType,
+    before_build: impl FnOnce(&Function) -> anyhow::Result<()>,
+) -> anyhow::Result<ValueId> {
     let root = template.root()?;
     let order = topo_order(&template.graph)?;
 
@@ -125,29 +152,14 @@ pub fn instantiate<B: IRBuilder>(
     let mut materialised: FxHashMap<TmplValueId, ValueId> = FxHashMap::default();
     let mut root_value: Option<ValueId> = None;
 
+    // Every kind first, so a closure's skip declines the template before any
+    // node exists. `None` is a capture leaf.
+    let mut kinds: Vec<(NodeId, Option<NodeKind>)> = Vec::with_capacity(order.len());
     for vtx in order {
         let nd = template.graph.node_kind(vtx);
-
-        // A `Capture` leaf has no build kind: it IS the materialisation. Its
-        // `ValueCapture` output resolves to the LHS binding, reusing that
-        // value verbatim as in `int_add(x, 0) -> x`, and is never synthesised.
-        // The capture id lives on the output, not the marker node.
         let kind = match &nd.kind {
             TmplNodeKind::Capture => {
-                let outs = template.graph.node_outputs(vtx);
-                let out_vtx = *outs
-                    .first()
-                    .ok_or_else(|| anyhow!("capture leaf has no value-capture output"))?;
-                let TmplValue::ValueCapture(cap) = template.graph.value_kind_ref(out_vtx) else {
-                    return Err(anyhow!("capture leaf output is not a ValueCapture"));
-                };
-                let bound_value = bindings.get_value(*cap).ok_or_else(|| {
-                    anyhow!("capture {cap:?} referenced in template but unbound by LHS")
-                })?;
-                materialised.insert(out_vtx, bound_value);
-                if vtx == root {
-                    root_value = Some(bound_value);
-                }
+                kinds.push((vtx, None));
                 continue;
             }
             TmplNodeKind::Build(TemplateKind::Exact(NodeKind::IntConst(_))) => {
@@ -210,6 +222,35 @@ pub fn instantiate<B: IRBuilder>(
                 })
             }
             other => other,
+        };
+        kinds.push((vtx, Some(kind)));
+    }
+
+    if kinds.iter().any(|(_, k)| k.is_some()) {
+        before_build(builder.function())?;
+    }
+
+    for (vtx, kind) in kinds {
+        // A `Capture` leaf has no build kind: it IS the materialisation. Its
+        // `ValueCapture` output resolves to the LHS binding, reusing that
+        // value verbatim as in `int_add(x, 0) -> x`, and is never synthesised.
+        // The capture id lives on the output, not the marker node.
+        let Some(kind) = kind else {
+            let outs = template.graph.node_outputs(vtx);
+            let out_vtx = *outs
+                .first()
+                .ok_or_else(|| anyhow!("capture leaf has no value-capture output"))?;
+            let TmplValue::ValueCapture(cap) = template.graph.value_kind_ref(out_vtx) else {
+                return Err(anyhow!("capture leaf output is not a ValueCapture"));
+            };
+            let bound_value = bindings.get_value(*cap).ok_or_else(|| {
+                anyhow!("capture {cap:?} referenced in template but unbound by LHS")
+            })?;
+            materialised.insert(out_vtx, bound_value);
+            if vtx == root {
+                root_value = Some(bound_value);
+            }
+            continue;
         };
 
         let inputs = collect_inputs(template, vtx, &materialised)?;
