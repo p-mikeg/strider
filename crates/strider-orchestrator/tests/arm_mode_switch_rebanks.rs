@@ -318,32 +318,45 @@ fn a_loop_restore_of_the_saved_mode_returns_without_the_claim() {
     }
 }
 
-/// `msr cpsr_c, r0; bx lr`: the mode comes from an argument, so only the claim
-/// keeps `lr`, and with it the return, from re-banking.
+/// The restored mode comes from an argument, so only the claim keeps the
+/// return from re-banking: `msr cpsr_c, r0; bx lr` returns through `lr`, and
+/// `push {lr}; msr cpsr_c, r0; pop {pc}` through the banked `sp`.
 #[test]
 fn an_unplaced_register_restore_returns_only_under_the_claim() {
-    let bx_lr = BASE + 4;
-    let words = [0xe121_f000, 0xe12f_ff1e];
-    for (name, opts, reported) in [
-        ("default", AnalyzeOptions::default(), false),
-        ("claim off", keeping_mode(false), true),
+    let none = AnalyzeOptions {
+        assumptions: AssumptionOptions::none(),
+        ..AnalyzeOptions::default()
+    };
+    for (shape, words, ret) in [
+        ("bx lr", &[0xe121_f000, 0xe12f_ff1e][..], BASE + 4),
+        (
+            "pop {pc}",
+            &[0xe52d_e004, 0xe121_f000, 0xe49d_f004][..],
+            BASE + 8,
+        ),
     ] {
-        let bytes = common::words_image(&words, strider_target::Endianness::Little);
-        let (mut strider, cc) = common::strider_over_bytes(Arch::Arm, bytes, BASE, None);
-        let result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
-        let unresolved: Vec<u64> = result
-            .incomplete()
-            .of(strider_cfg::Reason::UnresolvedBranch)
-            .map(|a| a.machine_addr.addr)
-            .collect();
-        if reported {
-            assert_eq!(unresolved, [bx_lr], "{name}");
-        } else {
-            assert!(
-                result.incomplete().is_empty(),
-                "{name}: {:?}",
-                result.incomplete()
-            );
+        for (name, opts, reported) in [
+            ("default", AnalyzeOptions::default(), false),
+            ("claim off", keeping_mode(false), true),
+            ("none", none.clone(), true),
+        ] {
+            let bytes = common::words_image(words, strider_target::Endianness::Little);
+            let (mut strider, cc) = common::strider_over_bytes(Arch::Arm, bytes, BASE, None);
+            let result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
+            let unresolved: Vec<u64> = result
+                .incomplete()
+                .of(strider_cfg::Reason::UnresolvedBranch)
+                .map(|a| a.machine_addr.addr)
+                .collect();
+            if reported {
+                assert_eq!(unresolved, [ret], "{shape}, {name}");
+            } else {
+                assert!(
+                    result.incomplete().is_empty(),
+                    "{shape}, {name}: {:?}",
+                    result.incomplete()
+                );
+            }
         }
     }
 }
