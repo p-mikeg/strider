@@ -107,14 +107,17 @@ Each shape has exactly one form in the IR, so a pattern matches one thing:
     IntSlessEqual(a, b)  -> Xor(Sless(b, a), IntConst(1)):I1
     IntNeg(x)            -> Xor(x, all_ones)        (Sleigh IntNeg is ~x)
     BoolNeg(x)           -> Xor(x, IntConst(1)):I1
-    FloatSub(a, b)       -> FloatAdd(a, Neg(b))
+    FloatSub(a, b)       -> FloatAdd(a, Neg(b))     (a NaN b's sign flips)
     FloatNotEqual(a, b)  -> Xor(FloatEqual(a, b), IntConst(1)):I1
     FloatNan(x)          -> Xor(FloatEqual(x, x), IntConst(1)):I1
     FloatLessEqual(a, b) -> Or(FloatLess(a, b), FloatEqual(a, b)):I1
 
 Every one is exact. Subtraction wraps identically to adding the negation; the
 integer negations are `Xor` with the all-ones constant of their width, which at
-`I1` is 1; `x != x` is IEEE 754's definition of NaN. The float `<=` is the one
+`I1` is 1; `x != x` is IEEE 754's definition of NaN. `FloatSub` is exact
+under IEEE 754, which leaves an arithmetic NaN's sign unspecified, but not
+bit-exact: hardware passes a NaN subtrahend through with its sign (x86 and ARM
+`1.0 - qNaN` is `+qNaN`), and the lowering negates it. The float `<=` is the one
 that does NOT follow the integer pattern: `Not(Less(b, a))` answers TRUE on a
 NaN operand, where IEEE 754 requires false, and both `Less` and `Equal` answer
 false on NaN, so their `Or` is right.
