@@ -261,58 +261,75 @@ fn a_call_between_the_save_and_the_restore_keeps_the_mode() {
     assert_eq!(r0_at_return(&a32(&words)), Some(5));
 }
 
-/// `dump_stack_lvl` (arm 6.6-clang): an interrupt-mask save and restore
-/// around a retry loop. The loop saves again on its back edge, so the restore
-/// after it writes a phi of two `mrs` results, whose mode the analysis cannot
-/// place.
+/// `dump_stack_lvl` from the arm 6.6-clang kernel (`0x8098ac2c`): an
+/// interrupt-mask save and restore around a retry loop. The loop saves again
+/// on its back edge, so the restore after it writes a phi of two `mrs`
+/// results, each of whose mode bits is the mode in force at entry.
 ///
 /// ```text
 ///       push {r4, r5, fp, lr}; mov r4, r0; mrs r5, cpsr; cpsid i
 /// loop: bl a; cmp r0, #0; bne out
 ///       msr cpsr_c, r5; bl b; mrs r5, cpsr; cpsid i; b loop
-/// out:  mov r0, r4; bl c; msr cpsr_c, r5; pop {r4, r5, fp, pc}
+/// out:  mov r0, r4; bl c; mov r0, #0; mov r1, #0; mov r2, r4; bl d; bl e
+///       msr cpsr_c, r5; pop {r4, r5, fp, pc}
 /// ```
 fn dump_stack_lvl() -> Vec<u8> {
-    let mut words = vec![
+    let words = [
         0xe92d_4830,
         0xe1a0_4000,
         0xe10f_5000,
         0xf10c_0080,
-        0xeb00_003a,
+        0xebdf_c2d0,
         0xe350_0000,
         0x1a00_0004,
         0xe121_f005,
-        0xeb00_0036,
+        0xebdf_c2c6,
         0xe10f_5000,
         0xf10c_0080,
         0xeaff_fff7,
         0xe1a0_0004,
-        0xeb00_0031,
+        0xebff_4617,
+        0xe3a0_0000,
+        0xe3a0_1000,
+        0xe1a0_2004,
+        0xebde_0272,
+        0xebdf_c2df,
         0xe121_f005,
         0xe8bd_8830,
     ];
-    words.resize(words.len() + 0x50, 0);
     common::words_image(&words, strider_target::Endianness::Little)
 }
 
-/// The restore's mode is unplaced, so only the claim keeps `sp` and `lr`, and
-/// with them the return, from re-banking.
+/// Both arms of the restored phi mask to the entry mode, so the restore keeps
+/// `sp` and `lr`, and with them the return, with or without the claim.
+#[test]
+fn a_loop_restore_of_the_saved_mode_returns_without_the_claim() {
+    for (name, opts) in [
+        ("default", AnalyzeOptions::default()),
+        ("claim off", keeping_mode(false)),
+    ] {
+        let (mut strider, cc) = common::strider_over_bytes(Arch::Arm, dump_stack_lvl(), BASE, None);
+        let result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
+        assert!(
+            result.incomplete().is_empty(),
+            "{name}: {:?}",
+            result.incomplete()
+        );
+    }
+}
+
+/// `msr cpsr_c, r0; bx lr`: the mode comes from an argument, so only the claim
+/// keeps `lr`, and with it the return, from re-banking.
 #[test]
 fn an_unplaced_register_restore_returns_only_under_the_claim() {
-    let pop_pc = BASE + 0x3c;
+    let bx_lr = BASE + 4;
+    let words = [0xe121_f000, 0xe12f_ff1e];
     for (name, opts, reported) in [
         ("default", AnalyzeOptions::default(), false),
         ("claim off", keeping_mode(false), true),
-        (
-            "none",
-            AnalyzeOptions {
-                assumptions: AssumptionOptions::none(),
-                ..AnalyzeOptions::default()
-            },
-            true,
-        ),
     ] {
-        let (mut strider, cc) = common::strider_over_bytes(Arch::Arm, dump_stack_lvl(), BASE, None);
+        let bytes = common::words_image(&words, strider_target::Endianness::Little);
+        let (mut strider, cc) = common::strider_over_bytes(Arch::Arm, bytes, BASE, None);
         let result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
         let unresolved: Vec<u64> = result
             .incomplete()
@@ -320,7 +337,7 @@ fn an_unplaced_register_restore_returns_only_under_the_claim() {
             .map(|a| a.machine_addr.addr)
             .collect();
         if reported {
-            assert_eq!(unresolved, [pop_pc], "{name}");
+            assert_eq!(unresolved, [bx_lr], "{name}");
         } else {
             assert!(
                 result.incomplete().is_empty(),
