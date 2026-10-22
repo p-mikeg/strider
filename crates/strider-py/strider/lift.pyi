@@ -592,7 +592,9 @@ def load_elf(
     `relocated_got_is_rom` (default `False`) additionally serves `.got`
     (PPC32's `.got2` too) and `.data.rel.ro` as READ-ONLY memory, so a load
     through a GOT slot folds to the address the slot holds. It is what
-    resolves a PIC jump table whose base comes out of the GOT.
+    resolves a PIC jump table whose base comes out of the GOT. PPC32 code
+    that relocates its own `.got2` (Linux's `prom_init` `reloc_got2`,
+    `-mrelocatable` `.fixup`) breaks the claim.
 
     A slot whose load-time value only the dynamic loader computes stays
     unmapped, and a load through it does not fold: one under a relocation
