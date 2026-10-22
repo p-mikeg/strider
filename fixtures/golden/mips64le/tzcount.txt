@@ -1,7 +1,7 @@
 # mips64le/tzcount: Strider::analyze, default options
 endian little
 default_cc arg_passing_regs=[a0, a1, a2, a3, t0, t1, t2, t3] arg_passing_regs_float=[f12, f13, f14, f15, f16, f17, f18, f19] callee_saved_regs=[s0, s1, s2, s3, s4, s5, s6, s7, s8, gp, ra, f24, f25, f26, f27, f28, f29, f30, f31] ret_val_regs=[v0, v1] ret_val_regs_float=[f0, f2] stack_vn=sp stack_args=0+8n ret_stack_pop=0 link_register_vn=ra preserves_memory=false preserves_all_registers=false entry_address_vn=t9 reg_args_adjoin_stack_args=true
-assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode
+assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode mxcsr_rounds_to_nearest
 
 == main @0x120000890
 cfg
