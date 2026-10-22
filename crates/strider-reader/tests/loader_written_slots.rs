@@ -7,7 +7,7 @@ use object::{
     Object, ObjectSection, ObjectSegment, ObjectSymbol, ObjectSymbolTable, RelocationFlags,
 };
 use rsleigh::{MemReader, VnAddr, VnSpace};
-use strider_reader::elf::RelocationMode;
+use strider_reader::elf::{LoadFilter, RegionSource, RelocationMode};
 use strider_reader::{ElfFileMemReader, OwnedElf, ReadOnlyMemory};
 
 const GOT_IS_ROM: RelocationMode = RelocationMode::Applied { got_is_rom: true };
@@ -597,4 +597,48 @@ fn a_mips_dynamic_relocation_section_off_the_dynsym_is_a_hole() {
         object::elf::R_MIPS_REL32,
         "link 0",
     );
+}
+
+/// Every region's patch-window length, from its `Debug` form.
+fn patch_windows(elf: &OwnedElf) -> Vec<usize> {
+    elf.regions(RegionSource::Auto, LoadFilter::AllAllocatable, true)
+        .unwrap()
+        .iter()
+        .map(|r| {
+            let dbg = format!("{r:?}");
+            let n = dbg.split("patch_window: ").nth(1).expect("patch_window");
+            n.trim_end_matches(" }").parse().unwrap()
+        })
+        .collect()
+}
+
+/// `name` with the header of section `over` replaced by a copy of
+/// `table`'s, so two headers name one relocation table.
+fn table_twice(name: &str, table: &str, over: &str) -> OwnedElf {
+    patched(name, |bytes, obj| {
+        // Elf64_Ehdr.e_shoff; each Elf64_Shdr is 64 bytes.
+        let shoff = u64::from_le_bytes(bytes[0x28..0x30].try_into().unwrap()) as usize;
+        let at = |name: &str| shoff + obj.section_by_name(name).unwrap().index().0 * 64;
+        let (from, to) = (at(table), at(over));
+        bytes.copy_within(from..from + 64, to);
+    })
+}
+
+/// A relocation table two section headers name is walked once: the patch
+/// lists are those of the image with one header, for the dynamic table and
+/// for an object's per-section one.
+#[test]
+fn a_relocation_table_named_twice_is_walked_once() {
+    for (name, table) in [
+        ("x64_ifunc_lib.elf", ".rela.dyn"),
+        ("x64_ifunc.o", ".rela.text"),
+    ] {
+        let once = patch_windows(&open(name));
+        assert!(once.iter().any(|&n| n != 0), "{name}: some patch");
+        assert_eq!(
+            patch_windows(&table_twice(name, table, ".comment")),
+            once,
+            "{name}"
+        );
+    }
 }
