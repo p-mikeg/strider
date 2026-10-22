@@ -1189,7 +1189,7 @@ fn fold_truncate_of_extend_skips_when_widths_differ() -> Result<()> {
 /// extend of the source. Both extends of every 8-bit source, against the
 /// reference interpreter: `ext(x)` truncated to 16, 32 or 1 bits, then
 /// extended again or not.
-/// Mutation: drop the two truncate-of-extend rules.
+/// Mutation: drop the four truncate-of-extend rules.
 #[test]
 fn a_truncate_of_an_extend_is_one_cast() -> Result<()> {
     use strider_ir_test_utils::interp;
