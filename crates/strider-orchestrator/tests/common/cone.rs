@@ -164,7 +164,35 @@ pub(crate) fn eval(f: &Function, v: ValueId, init: u128) -> Val {
             Val::Int(strider_ir::eval::sign_extend(int(0), in_ty(0), ty).expect("sign extend"))
         }
         NodeKind::Truncate => Val::Int(int(0) & mask(ty)),
+        NodeKind::Phi => {
+            let preds = inputs_of(f, ins[0]);
+            let live: Vec<usize> = (0..preds.len())
+                .filter(|&i| control_live(f, preds[i], init))
+                .collect();
+            let [i] = live[..] else {
+                panic!("{} live predecessors of a Phi", live.len());
+            };
+            eval(f, ins[i + 1], init)
+        }
         other => panic!("{other:?} in a conversion of constants"),
+    }
+}
+
+/// Whether control reaches `c` with every initial register reading `init`.
+fn control_live(f: &Function, c: ValueId, init: u128) -> bool {
+    let node = f.producer(c);
+    let ins = inputs_of(f, c);
+    match f.node_kind(node) {
+        NodeKind::Entry => true,
+        NodeKind::Region => ins.into_iter().any(|p| control_live(f, p, init)),
+        NodeKind::If => {
+            let Val::Int(cond) = eval(f, ins[1], init) else {
+                panic!("a float If condition");
+            };
+            let taken = f.node_outputs(node)[usize::from(cond == 0)];
+            taken == c && control_live(f, ins[0], init)
+        }
+        other => panic!("{other:?} on a control path"),
     }
 }
 
