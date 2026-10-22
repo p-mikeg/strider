@@ -515,6 +515,10 @@
 
 ### Fixed
 
+- Python: a ppc64 ELFv1 function's `Symbol.size` is its `st_size`, which
+  GCC and Clang give the code, unless a dot symbol names the code or the
+  size is a descriptor's (16 or 24), as in a kernel. It was `None` for every
+  function whose descriptor was followed.
 - Python: a relocation table that several section headers name is walked
   once. Each header walked it again, so a crafted image of N headers over
   one table of M entries recorded N x M patches.

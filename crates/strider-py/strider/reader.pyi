@@ -94,8 +94,9 @@ class Symbol:
     def size(self) -> Optional[int]:
         """`None` for `st_size == 0`, which records no extent rather than an
         empty one: a hand-written `.S` entry point with no `.size` directive is
-        still a whole function. Also `None` once a ppc64 ELFv1 descriptor has
-        been followed, `st_size` having measured the descriptor."""
+        still a whole function. Also `None` for a ppc64 ELFv1 function whose
+        `st_size` measures its `.opd` descriptor rather than its code: a dot
+        symbol names the code, or the size is 16 or 24."""
         ...
 
     @property
