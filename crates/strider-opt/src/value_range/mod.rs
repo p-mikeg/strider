@@ -231,8 +231,14 @@ impl Interval {
     /// element constrains no spacing and takes the other's: a phi arm pinned to
     /// a constant must not flatten the strided arm it joins, and two of them
     /// keep the gap between their starts.  Zero survives only where the join is
-    /// one point, where 1 is as tight.
+    /// one point, where 1 is as tight.  An empty side adds nothing.
     fn union(self, other: Self) -> Self {
+        if self.is_empty() {
+            return other;
+        }
+        if other.is_empty() {
+            return self;
+        }
         let step = |iv: Self| if iv.count() <= 1 { 0 } else { iv.stride };
         Self::new(
             self.lo.min(other.lo),

@@ -515,6 +515,9 @@
 
 ### Fixed
 
+- An index range joined with an empty one is the other range, its lower
+  bound and stride kept; the join widened the lower bound to 1 and dropped
+  the stride.
 - Python: a ppc64 ELFv1 function's `Symbol.size` is its `st_size`, which
   GCC and Clang give the code, unless a dot symbol names the code or the
   size is a descriptor's (16 or 24), as in a kernel. It was `None` for every

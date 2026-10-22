@@ -63,6 +63,53 @@ fn union_of_single_elements_keeps_the_gap_as_the_stride() {
     assert_eq!(point.count(), 1);
 }
 
+/// An empty side adds nothing, so the join is the other side exactly: its
+/// `lo` and stride kept. Every 8-bit interval, against each spelling of empty.
+/// Mutation: drop the empty early-outs from `union`.
+#[test]
+fn union_with_an_empty_side_is_the_other_side() {
+    for empty in [
+        super::EMPTY,
+        Interval::new(9, 3, 1),
+        Interval::new(255, 0, 7),
+    ] {
+        assert!(empty.is_empty());
+        for lo in 0..=255u128 {
+            for hi in 0..=255u128 {
+                for stride in 1..=255u128 {
+                    let x = Interval::new(lo, hi, stride);
+                    if x.is_empty() {
+                        assert!(empty.union(x).is_empty() && x.union(empty).is_empty());
+                        continue;
+                    }
+                    assert_eq!(empty.union(x), x, "{empty:?} with {x:?}");
+                    assert_eq!(x.union(empty), x, "{x:?} with {empty:?}");
+                }
+            }
+        }
+    }
+}
+
+/// Every element of either side is in the join: all pairs of intervals over
+/// `0..8`, empties included.
+#[test]
+fn union_contains_both_sides() {
+    let all: Vec<Interval> = (0..8u128)
+        .flat_map(|lo| (0..8u128).flat_map(move |hi| (1..8u128).map(move |s| (lo, hi, s))))
+        .map(|(lo, hi, s)| Interval::new(lo, hi, s))
+        .collect();
+    for &a in &all {
+        for &b in &all {
+            let u = a.union(b);
+            for x in 0..8u128 {
+                if a.contains(x) || b.contains(x) {
+                    assert!(u.contains(x), "{a:?} | {b:?} = {u:?} misses {x}");
+                }
+            }
+        }
+    }
+}
+
 /// The AP-meet must keep the stride phase: intersecting a dense `[5, 40]` with
 /// a multiples-of-8 progression yields `{8, 16, 24, 32, 40}` (lo rounded up to
 /// the stride phase, stride 8), NOT `{5, 13, 21, ...}`.
