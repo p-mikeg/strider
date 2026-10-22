@@ -296,6 +296,71 @@ const PPC_FPCC_VX: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     no_return: false,
 });
 
+/// The FPSCR status bits a scalar VSX arithmetic, rounding or conversion op
+/// may set: FPRF (`fp_c`, FPCC), FR, FI, the exceptions and their summaries.
+const PPC_FP_RESULT: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &[
+        "fp_fx",
+        "fp_fex",
+        "fp_vx",
+        "fp_ox",
+        "fp_ux",
+        "fp_zx",
+        "fp_xx",
+        "fp_vxsnan",
+        "fp_vxisi",
+        "fp_vxidi",
+        "fp_vxzdz",
+        "fp_vximz",
+        "fp_vxsqrt",
+        "fp_vxcvi",
+        "fp_fr",
+        "fp_fi",
+        "fp_c",
+        "fp_cc0",
+        "fp_cc1",
+        "fp_cc2",
+        "fp_cc3",
+    ],
+    clobbers_memory: false,
+    no_return: false,
+});
+
+/// A VSX vector conversion: the exceptions it raises and their summaries,
+/// with FPRF, FR and FI left alone.
+const PPC_FP_VECTOR: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &[
+        "fp_fx",
+        "fp_fex",
+        "fp_vx",
+        "fp_ox",
+        "fp_ux",
+        "fp_xx",
+        "fp_vxsnan",
+    ],
+    clobbers_memory: false,
+    no_return: false,
+});
+
+/// A VSX compare writing XT, or a max/min: VXSNAN, the ordered compares'
+/// VXVC, and their summaries.
+const PPC_FP_INVALID: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc"],
+    clobbers_memory: false,
+    no_return: false,
+});
+
+/// [`PPC_FP_INVALID`] plus the CR6 an `Rc=1` vector compare sets.
+const PPC_FP_INVALID_CR6: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
+    implicit_reads: &[],
+    implicit_writes: &["fp_fx", "fp_fex", "fp_vx", "fp_vxsnan", "fp_vxvc", "cr6"],
+    clobbers_memory: false,
+    no_return: false,
+});
+
 /// Every FPSCR bit `mtfsf` can rewrite (`FM=0xff`), which `setSummaryFPSCR`
 /// and `mcrfs` read back directly.
 const PPC_FPSCR: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
@@ -510,6 +575,72 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     ("vsx300_74", PPC_FPCC),    // xststdcdp
     ("vsx300_75", PPC_FPCC),    // xststdcqp
     ("vsx300_76", PPC_FPCC),    // xststdcsp
+    // The arithmetic, rounding and conversion forms set FPSCR status bits
+    // (Power ISA 3.0B, Book I chapter 7), which `mcrfs` and `mffs` read back.
+    // The permutes, moves, sign and exponent ops and `xscvspdpn` set none.
+    ("vsx207_11", PPC_FP_RESULT),      // xsaddsp
+    ("vsx207_14", PPC_FP_RESULT),      // xscvsxdsp
+    ("vsx207_15", PPC_FP_RESULT),      // xscvuxdsp
+    ("vsx207_16", PPC_FP_RESULT),      // xsdivsp
+    ("vsx207_17", PPC_FP_RESULT),      // xsmaddasp
+    ("vsx207_18", PPC_FP_RESULT),      // xsmaddmsp
+    ("vsx207_19", PPC_FP_RESULT),      // xsmsubasp
+    ("vsx207_20", PPC_FP_RESULT),      // xsmsubmsp
+    ("vsx207_21", PPC_FP_RESULT),      // xsmulsp
+    ("vsx207_22", PPC_FP_RESULT),      // xsnmaddasp
+    ("vsx207_23", PPC_FP_RESULT),      // xsnmaddmsp
+    ("vsx207_24", PPC_FP_RESULT),      // xsnmsubasp
+    ("vsx207_25", PPC_FP_RESULT),      // xsnmsubmsp
+    ("vsx207_26", PPC_FP_RESULT),      // xsresp
+    ("vsx207_27", PPC_FP_RESULT),      // xsrsp
+    ("vsx207_28", PPC_FP_RESULT),      // xsrsqrtesp
+    ("vsx207_29", PPC_FP_RESULT),      // xssqrtsp
+    ("vsx207_30", PPC_FP_RESULT),      // xssubsp
+    ("vsx300_26", PPC_FP_RESULT),      // xsaddqp
+    ("vsx300_27", PPC_FP_RESULT),      // xsaddqpo
+    ("vsx300_28", PPC_FP_INVALID),     // xscmpeqdp
+    ("vsx300_31", PPC_FP_INVALID),     // xscmpgedp
+    ("vsx300_32", PPC_FP_INVALID),     // xscmpgtdp
+    ("vsx300_33", PPC_FP_INVALID),     // xscmpnedp
+    ("vsx300_37", PPC_FP_RESULT),      // xscvdphp
+    ("vsx300_38", PPC_FP_RESULT),      // xscvdpqp
+    ("vsx300_39", PPC_FP_RESULT),      // xscvhpdp
+    ("vsx300_40", PPC_FP_RESULT),      // xscvqpdp
+    ("vsx300_41", PPC_FP_RESULT),      // xscvqpdpo
+    ("vsx300_42", PPC_FP_RESULT),      // xscvqpsdz
+    ("vsx300_43", PPC_FP_RESULT),      // xscvqpswz
+    ("vsx300_44", PPC_FP_RESULT),      // xscvqpudz
+    ("vsx300_45", PPC_FP_RESULT),      // xscvqpuwz
+    ("vsx300_46", PPC_FP_RESULT),      // xscvsdqp
+    ("vsx300_47", PPC_FP_RESULT),      // xscvudqp and xsdivqp
+    ("vsx300_48", PPC_FP_RESULT),      // xsdivqpo
+    ("vsx300_51", PPC_FP_RESULT),      // xsmaddqp
+    ("vsx300_52", PPC_FP_RESULT),      // xsmaddqpo
+    ("vsx300_53", PPC_FP_INVALID),     // xsmaxcdp
+    ("vsx300_54", PPC_FP_INVALID),     // xsmaxjdp
+    ("vsx300_55", PPC_FP_INVALID),     // xsmincdp
+    ("vsx300_56", PPC_FP_INVALID),     // xsminjdp
+    ("vsx300_57", PPC_FP_RESULT),      // xsmsubqp
+    ("vsx300_58", PPC_FP_RESULT),      // xsmsubqpo
+    ("vsx300_59", PPC_FP_RESULT),      // xsmulqp
+    ("vsx300_60", PPC_FP_RESULT),      // xsmulqpo
+    ("vsx300_63", PPC_FP_RESULT),      // xsnmaddqp
+    ("vsx300_64", PPC_FP_RESULT),      // xsnmaddqpo
+    ("vsx300_65", PPC_FP_RESULT),      // xsnmsubqp
+    ("vsx300_66", PPC_FP_RESULT),      // xsnmsubqpo
+    ("vsx300_67", PPC_FP_RESULT),      // xsrqpi
+    ("vsx300_68", PPC_FP_RESULT),      // xsrqpix
+    ("vsx300_69", PPC_FP_RESULT),      // xsrqpxp
+    ("vsx300_70", PPC_FP_RESULT),      // xssqrtqp
+    ("vsx300_71", PPC_FP_RESULT),      // xssqrtqpo
+    ("vsx300_72", PPC_FP_RESULT),      // xssubqp
+    ("vsx300_73", PPC_FP_RESULT),      // xssubqpo
+    ("vsx300_81", PPC_FP_INVALID),     // xvcmpnedp
+    ("vsx300_82", PPC_FP_INVALID_CR6), // xvcmpnedp.
+    ("vsx300_83", PPC_FP_INVALID),     // xvcmpnesp
+    ("vsx300_84", PPC_FP_INVALID_CR6), // xvcmpnesp.
+    ("vsx300_85", PPC_FP_VECTOR),      // xvcvhpsp
+    ("vsx300_86", PPC_FP_VECTOR),      // xvcvsphp
     // Store-conditional and byte-reverse stores write RAM; dcbz zeroes a
     // block; dcbf/dcbst/icbi and TLB/SLB management are ordering barriers;
     // icswx/copy-paste and doorbell messages have external memory effects.
@@ -598,12 +729,11 @@ fn classify_ppc(preset: crate::ArchPreset, name: &str) -> Option<CallOtherClass>
     // GHIDRA emits Altivec / VSX / named vector intrinsics as `altv207_<n>`,
     // `vsx<ver>_<n>`, and `vector<Op>`.  Reached only after `PPC_TABLE`, which
     // holds the nineteen `vsx*` forms whose memory access the sla leaves out of
-    // the p-code and the seven compares that also set FPSCR bits; everything
-    // else in the three families is register compute touching no RAM, its
-    // destination written from the op's output. The stock sla wrote some
-    // nowhere, and the fork patches them: `xsiexpdp`'s XT, `vminud`'s vrD,
-    // and CR field BF of those seven compares. The FPSCR status bits the
-    // arithmetic forms set (FPRF, FX, OX, UX, XX, VX*) are not modelled.
+    // the p-code and the forms that also set FPSCR bits; everything else in
+    // the three families is register compute touching no RAM, its destination
+    // written from the op's output. The stock sla wrote some nowhere, and the
+    // fork patches them: `xsiexpdp`'s XT, `vminud`'s vrD, and CR field BF of
+    // the seven compares.
     if name.starts_with("altv") || name.starts_with("vsx") || name.starts_with("vector") {
         return Some(PURE);
     }
