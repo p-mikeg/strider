@@ -549,3 +549,141 @@ fn a_phi_on_an_unreachable_region_is_left_alone() -> crate::Result<()> {
     run(&mut fg)?;
     Ok(())
 }
+
+/// `And(phi(a, b), 0x1f)` over a diamond writing `a` and `b`: the value the
+/// Return reads afterwards.
+fn masked_diamond(a: u64, b: u64) -> crate::Result<(strider_ir::Function, ValueId)> {
+    let var = reg_vn(0x1000, 4);
+    let ty = ValueType::int(32);
+    let mut fb = RegisterSet::new().tracked(var).arg(var).build_fn()?;
+    let entry = fb.create_region_all()?;
+    let left = fb.create_region_all()?;
+    let right = fb.create_region_all()?;
+    let join = fb.create_region_all()?;
+    fb.set_entry_region_all(entry)?;
+
+    fb.set_region(entry);
+    let current = fb.read_variable(&var)?;
+    let zero = fb.build_int_const(0u64, ty)?;
+    let cond = fb.build_int_cmp_operation(current, zero, strider_ir::IntCmpOp::Equal, ty)?;
+    fb.build_if(cond, left, right)?;
+    for (region, k) in [(left, a), (right, b)] {
+        fb.set_region(region);
+        let value = fb.build_int_const(k, ty)?;
+        fb.write_variable(&var, value)?;
+        fb.build_branch(join)?;
+    }
+
+    fb.set_region(join);
+    let merged = fb.read_variable(&var)?;
+    let masked = fb.build_const_binop(0x1f, merged, strider_ir::IntBinaryOp::And, ty)?;
+    fb.build_return(Some(masked), &[])?;
+    fb.set_lift_addr(None);
+    let mut fg = fb.build()?;
+    run(&mut fg)?;
+    let ret = fg.node_inputs(find_return(&fg))[2];
+    Ok((fg, ret))
+}
+
+#[test]
+fn a_mask_every_constant_arm_agrees_on_folds_to_that_constant() -> crate::Result<()> {
+    let (fg, ret) = masked_diamond(0x13, 0x33)?;
+    assert_eq!(fg.int_const_u128(ret), Some(0x13));
+    Ok(())
+}
+
+#[test]
+fn a_mask_the_arms_disagree_on_stays() -> crate::Result<()> {
+    let (fg, ret) = masked_diamond(0x13, 0x14)?;
+    assert!(
+        matches!(
+            fg.node_kind(fg.producer(ret)),
+            NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And)
+        ),
+        "{:?}",
+        fg.node_kind(fg.producer(ret))
+    );
+    Ok(())
+}
+
+/// The interrupt-mask save shape: the entry writes `(x & 0xe0) | (y & 0x1f)`
+/// to `var`, the loop body `(z & high) | (var & 0x1f)`, and the Return reads
+/// `var & 0x1f` at the header. Returns the function after the pass, the value
+/// the Return reads and the entry's `y & 0x1f`.
+fn masked_loop(high: u64) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
+    use strider_ir::IntBinaryOp::{And, Or};
+    let (var, x, y, z) = (
+        reg_vn(0x1000, 4),
+        reg_vn(0x1004, 4),
+        reg_vn(0x1008, 4),
+        reg_vn(0x100c, 4),
+    );
+    let ty = ValueType::int(32);
+    let mut fb = RegisterSet::new()
+        .tracked(var)
+        .tracked(x)
+        .arg(x)
+        .tracked(y)
+        .arg(y)
+        .tracked(z)
+        .arg(z)
+        .build_fn()?;
+    let entry = fb.create_region_all()?;
+    let header = fb.create_region_all()?;
+    let body = fb.create_region_all()?;
+    let exit = fb.create_region_all()?;
+    fb.set_entry_region_all(entry)?;
+
+    fb.set_region(entry);
+    let xv = fb.read_variable(&x)?;
+    let yv = fb.read_variable(&y)?;
+    let high0 = fb.build_const_binop(0xe0, xv, And, ty)?;
+    let saved = fb.build_const_binop(0x1f, yv, And, ty)?;
+    let first = fb.build_int_binary_operation(high0, saved, Or, ty)?;
+    fb.write_variable(&var, first)?;
+    fb.build_branch(header)?;
+
+    fb.set_region(header);
+    let carried = fb.read_variable(&var)?;
+    let mode = fb.build_const_binop(0x1f, carried, And, ty)?;
+    let zero = fb.build_int_const(0u64, ty)?;
+    let cond = fb.build_int_cmp_operation(mode, zero, strider_ir::IntCmpOp::Equal, ty)?;
+    fb.build_if(cond, exit, body)?;
+
+    fb.set_region(body);
+    let zv = fb.read_variable(&z)?;
+    let high = fb.build_const_binop(u128::from(high), zv, And, ty)?;
+    let again = fb.build_int_binary_operation(high, mode, Or, ty)?;
+    fb.write_variable(&var, again)?;
+    fb.build_branch(header)?;
+
+    fb.set_region(exit);
+    fb.build_return(Some(mode), &[])?;
+    fb.set_lift_addr(None);
+    let mut fg = fb.build()?;
+    run(&mut fg)?;
+    let ret = fg.node_inputs(find_return(&fg))[2];
+    Ok((fg, ret, saved))
+}
+
+#[test]
+fn a_loop_carried_mask_folds_to_the_value_saved_before_the_loop() -> crate::Result<()> {
+    let (_, ret, saved) = masked_loop(0xe0)?;
+    assert_eq!(ret, saved);
+    Ok(())
+}
+
+#[test]
+fn a_loop_carried_mask_the_back_edge_can_change_stays() -> crate::Result<()> {
+    let (fg, ret, saved) = masked_loop(0xf0)?;
+    assert_ne!(ret, saved);
+    assert!(
+        matches!(
+            fg.node_kind(fg.producer(ret)),
+            NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And)
+        ),
+        "{:?}",
+        fg.node_kind(fg.producer(ret))
+    );
+    Ok(())
+}

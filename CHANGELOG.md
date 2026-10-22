@@ -514,6 +514,13 @@
 
 ### Fixed
 
+- Python: `PhiCollapse` folds `phi & C` to `v` when every arm masked by
+  `C` is `v`, an arm that reads the mask back through the loop agreeing. An
+  ARM interrupt-mask restore after a loop that saves again on its back edge
+  (`mrs r5, cpsr; cpsid i` before the loop and on the back edge, then
+  `msr cpsr_c, r5`, Linux's `dump_stack_lvl`) now keeps the mode without
+  `msr_register_keeps_mode`, so its return resolves. It was reported as an
+  unresolved branch.
 - Python: x86 `hlt` falls through to the next instruction, as it resumes
   once an interrupt is serviced, and clobbers memory (the new `halt`
   `call_other`). It branched to itself, so `sti; hlt; cli; ret` (Linux's

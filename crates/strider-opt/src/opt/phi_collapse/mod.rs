@@ -17,10 +17,17 @@
 //! fails on a `Region` unreachable from entry: `phi(token, Add(phi, 2))` is
 //! then a one-member component whose single outside value is the `Add`, and
 //! collapsing onto it closes a non-phi data cycle.  Such a phi is skipped.
+//!
+//! The same argument folds `And(phi, C)` to `v` when every arm, masked by `C`,
+//! is `v`, an arm that reaches the `And` or the phi itself agreeing with any
+//! `v`: a loop that saves `(hi & ~C) | (phi & C)` on its back edge keeps the
+//! masked bits it entered with. Each arm is peeled through a bounded chain of
+//! `And` / `Or` / `Xor` with a constant or known-zero operand, never through a
+//! phi, so the fold is linear in the arms.
 
 use cranelift_entity::SecondaryMap;
-use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IntBinaryOp};
 
 use crate::error::Result;
 use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
@@ -31,6 +38,9 @@ mod tests;
 /// Phis the inner-component reruns may visit, per phi taking part, so the
 /// reruns stay linear in the phi count.
 const INNER_VISITS_PER_PHI: usize = 4;
+
+/// Nodes one arm of a masked phi is peeled through.
+const PEEL_STEPS: usize = 8;
 
 #[derive(Clone, Copy)]
 pub struct PhiCollapse;
@@ -75,6 +85,35 @@ impl Optimizer for PhiCollapse {
                 Outside::Many(_) | Outside::None => {}
             }
         }
+        let mut walked = Vec::new();
+        for &phi in &phis {
+            if !edit.is_live(phi) || !matches!(edit.node_kind(phi), NodeKind::Phi) {
+                continue;
+            }
+            let phi_out = edit.node_outputs(phi)[0];
+            let masks: Vec<(ValueId, u128, ValueType)> = edit
+                .value_uses(phi_out)
+                .filter_map(|(user, _)| masked_use(edit, user, phi_out))
+                .collect();
+            for (and_out, mask, ty) in masks {
+                if !edit.is_live(edit.producer(and_out)) {
+                    continue;
+                }
+                walked.clear();
+                let Some(value) = masked_phi_value(edit, phi, and_out, mask, ty, &mut walked)?
+                else {
+                    continue;
+                };
+                let into = edit.producer(value);
+                for &n in &walked {
+                    edit.absorb_node_fingerprint(into, n);
+                }
+                edit.absorb_node_fingerprint(into, phi);
+                if edit.replace_value(and_out, value) {
+                    overall = OptimizationResult::Changed;
+                }
+            }
+        }
         Ok(overall)
     }
 }
@@ -93,6 +132,174 @@ fn collapse(edit: &mut crate::EditFunction<'_>, scc: &[NodeId], value: ValueId) 
         edit.kill_node(phi);
     }
     Ok(())
+}
+
+/// `user`'s output and mask when it is `And(phi_out, C)`.
+fn masked_use(
+    edit: &crate::EditFunction<'_>,
+    user: NodeId,
+    phi_out: ValueId,
+) -> Option<(ValueId, u128, ValueType)> {
+    if !matches!(
+        edit.node_kind(user),
+        NodeKind::IntBinaryOp(IntBinaryOp::And)
+    ) {
+        return None;
+    }
+    let (out, ty) = edit.single_value_output(user).ok()?;
+    ty.int_mask_u128()?;
+    let [a, b] = edit.node_inputs_exact::<2>(user).ok()?;
+    let other = if a == phi_out { b } else { a };
+    Some((out, edit.int_const_u128(other)?, ty))
+}
+
+/// `And(arm, C)` after peeling.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Masked {
+    /// The arm reads the `And` being folded, or its phi.
+    Itself,
+    Const(u128),
+    /// An existing value equal to `And(arm, C)`.
+    Value(ValueId),
+    /// `And(x, C)`.
+    Of(ValueId),
+}
+
+/// The value every arm of `phi` masked by `mask` agrees on, built if needed;
+/// `None` when two arms disagree or every arm is [`Masked::Itself`].
+///
+/// Each arm other than an `Itself` one is available on its predecessor edge,
+/// and so is anything it is peeled to. An `Itself` arm's edge is dominated by
+/// the phi's `Region`, so every first entry into the `Region` comes through an
+/// agreeing arm, and the agreed value dominates the `Region`.
+fn masked_phi_value(
+    edit: &mut crate::EditFunction<'_>,
+    phi: NodeId,
+    and_out: ValueId,
+    mask: u128,
+    ty: ValueType,
+    walked: &mut Vec<NodeId>,
+) -> Result<Option<ValueId>> {
+    let selves = [edit.node_outputs(phi)[0], and_out];
+    let arms: Vec<ValueId> = edit.phi_data_inputs(phi).collect();
+    let mut agreed = None;
+    let mut witness = None;
+    for arm in arms {
+        let (masked, seen) = peel(edit, arm, mask, selves, walked);
+        if masked == Masked::Itself {
+            continue;
+        }
+        if agreed.is_some_and(|a| a != masked) {
+            return Ok(None);
+        }
+        agreed = Some(masked);
+        witness = witness.or(seen);
+    }
+    Ok(match agreed {
+        None | Some(Masked::Itself) => None,
+        Some(Masked::Const(k)) => Some(edit.build_int_const(k, ty)?),
+        Some(Masked::Value(v)) => Some(v),
+        Some(Masked::Of(x)) => match witness {
+            Some(v) => Some(v),
+            None => Some(edit.build_const_binop(mask, x, IntBinaryOp::And, ty)?),
+        },
+    })
+}
+
+/// `And(arm, mask)` through at most [`PEEL_STEPS`] identities, and for a
+/// [`Masked::Of`] an existing `And(x, mask)` when the last step peeled one.
+fn peel(
+    edit: &crate::EditFunction<'_>,
+    mut x: ValueId,
+    mask: u128,
+    selves: [ValueId; 2],
+    walked: &mut Vec<NodeId>,
+) -> (Masked, Option<ValueId>) {
+    let mut witness = None;
+    for _ in 0..PEEL_STEPS {
+        if selves.contains(&x) {
+            return (Masked::Itself, None);
+        }
+        if let Some(k) = edit.int_const_u128(x) {
+            return (Masked::Const(k & mask), None);
+        }
+        let node = edit.producer(x);
+        let NodeKind::IntBinaryOp(op) = *edit.node_kind(node) else {
+            break;
+        };
+        let Ok([a, b]) = edit.node_inputs_exact::<2>(node) else {
+            break;
+        };
+        let (next, exact) = match op {
+            IntBinaryOp::And => {
+                let Some((y, k)) = const_operand(edit, a, b) else {
+                    break;
+                };
+                if k & mask == mask {
+                    (y, k == mask)
+                } else if k & !mask == 0 {
+                    return (Masked::Value(x), None);
+                } else {
+                    break;
+                }
+            }
+            IntBinaryOp::Or | IntBinaryOp::Xor => {
+                if known_zero(edit, a) & mask == mask {
+                    (b, false)
+                } else if known_zero(edit, b) & mask == mask {
+                    (a, false)
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        };
+        witness = exact.then_some(x);
+        walked.push(node);
+        x = next;
+    }
+    (Masked::Of(x), witness)
+}
+
+/// The non-constant operand and the constant of a binary op with one.
+fn const_operand(
+    edit: &crate::EditFunction<'_>,
+    a: ValueId,
+    b: ValueId,
+) -> Option<(ValueId, u128)> {
+    match (edit.int_const_u128(a), edit.int_const_u128(b)) {
+        (None, Some(k)) => Some((a, k)),
+        (Some(k), None) => Some((b, k)),
+        _ => None,
+    }
+}
+
+/// Bits of `v` its producer alone proves zero.
+fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId) -> u128 {
+    if let Some(k) = edit.int_const_u128(v) {
+        return !k;
+    }
+    let node = edit.producer(v);
+    match *edit.node_kind(node) {
+        NodeKind::IntBinaryOp(IntBinaryOp::And) => edit
+            .node_inputs_exact::<2>(node)
+            .ok()
+            .and_then(|[a, b]| const_operand(edit, a, b))
+            .map_or(0, |(_, k)| !k),
+        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
+            let width = edit.value_type_opt(v).map_or(0, ValueType::bit_width);
+            edit.nth_input(node, 1)
+                .and_then(|count| edit.int_const_u128(count))
+                .filter(|&k| k < width as u128)
+                .map_or(0, |k| (1u128 << k) - 1)
+        }
+        NodeKind::Extend(ExtendOp::ZeroExtend) => edit
+            .nth_input(node, 0)
+            .and_then(|input| edit.value_type_opt(input))
+            .and_then(ValueType::int_mask_u128)
+            .map_or(0, |m| !m),
+        _ => 0,
+    }
 }
 
 enum Outside {
