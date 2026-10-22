@@ -638,3 +638,31 @@ fn a_relocation_table_named_twice_is_walked_once() {
         );
     }
 }
+
+/// `fixtures/out/x86/elf_relocs.elf` (lld) ends its relro PT_LOAD with
+/// `.got` and maps `.got.plt` from the next. Patched: `.got`'s `sh_size`
+/// reaches past `.got.plt`, and `.got.plt` loses `SHF_ALLOC`, so no section
+/// start bounds the served range: the PT_LOAD holding `.got` does.
+#[test]
+fn a_served_range_ends_with_its_mapping() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/out/x86/elf_relocs.elf");
+    let mut bytes = std::fs::read(&path).expect("run `make -C fixtures`");
+    let (got, got_plt) = {
+        let obj = object::File::parse(&*bytes).unwrap();
+        let index = |name: &str| obj.section_by_name(name).unwrap().index().0;
+        let got_plt = obj.section_by_name(".got.plt").unwrap().address();
+        (index(".got"), (index(".got.plt"), got_plt))
+    };
+    // Elf32_Ehdr.e_shoff; Elf32_Shdr is 40 bytes, sh_flags at 8, sh_size at
+    // 0x14.
+    let shoff = u32::from_le_bytes(bytes[0x20..0x24].try_into().unwrap()) as usize;
+    let at = shoff + got * 40 + 0x14;
+    bytes[at..at + 4].copy_from_slice(&0x2000u32.to_le_bytes());
+    let at = shoff + got_plt.0 * 40 + 8;
+    bytes[at..at + 4].copy_from_slice(&object::elf::SHF_WRITE.to_le_bytes());
+    let elf = OwnedElf::parse(bytes).unwrap();
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    let err = rom_word(&reader, got_plt.1, 4, true).expect_err(".got.plt is writable");
+    assert!(err.contains("not mapped"), "{err}");
+}

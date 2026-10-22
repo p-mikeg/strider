@@ -130,9 +130,9 @@ fn is_relocated_got_name(name: &str) -> bool {
 }
 
 /// `[start, end)` of every such section, at its [`ElfSectionLayout`] base,
-/// over its declared extent up to the next allocated section's start: an
-/// `sh_size` reaching past that is malformed, and would serve that section's
-/// writable bytes.
+/// over its declared extent up to the next allocated section's start and the
+/// end of the PT_LOAD holding it: an `sh_size` reaching past either is
+/// malformed, and would serve writable bytes the section does not hold.
 ///
 /// The name alone is not enough, because every address a range here names stops
 /// being cut out of the read-only image: the section has to be one the loader
@@ -165,6 +165,13 @@ fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> Ad
     for (lo, hi) in &mut served {
         if let Some(&next) = starts.get(starts.partition_point(|&s| s <= *lo)) {
             *hi = (*hi).min(next);
+        }
+        let segment_end = obj
+            .segments()
+            .map(|seg| (seg.address(), seg.address().saturating_add(seg.size())))
+            .find(|&(start, end)| start <= *lo && *lo < end);
+        if let Some((_, end)) = segment_end {
+            *hi = (*hi).min(end);
         }
     }
     AddressSet::merged(served)
