@@ -54,9 +54,11 @@ pub(super) struct ArgWindowGeometry {
 }
 
 /// Walks the contiguous prefix of argument slots up to `hi`, the reach the
-/// probing load needs.  A wider `hi` only ever ends the prefix sooner (a store
-/// above the narrow window is one more def the scan can stop at), so a window
-/// scanned for one probe answers a shallower one conservatively.
+/// probing load needs.  For every slot below a narrower `hi`, a wider scan
+/// reaches the same verdict: a same-base store is anchored and the scan goes
+/// on, any other def decides by its class alone, and a `MemPhi` opaque to the
+/// wider window falls back per slot.  So a window scanned for one probe
+/// answers a shallower one.
 pub(super) fn scan_arg_window(
     function: &Function,
     analyzer: &MemAnalyzer,
