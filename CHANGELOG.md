@@ -515,6 +515,11 @@
 
 ### Fixed
 
+- Python: in a linked image with a `.dynsym`, an allocated relocation
+  section linked to `.symtab` or to nothing is applied: an entry naming no
+  symbol as the dynamic table's are, one naming a symbol (and on MIPS every
+  entry) as a hole. Neither walk read it, so its fields served the file's
+  bytes.
 - Python: under `relocated_got_is_rom`, a `.got` or `.data.rel.ro` whose
   `sh_size` runs past the next allocated section is served only up to it.
   The ROM view served the writable bytes it ran over.
