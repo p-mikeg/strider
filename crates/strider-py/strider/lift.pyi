@@ -585,7 +585,9 @@ def load_elf(
     `apply_relocations` (default `True`) applies relocations, which shared
     objects and PIE binaries need; it also selects what is mapped, so `False`
     drops writable non-executable sections rather than serving their on-disk
-    bytes. A writable-and-executable mapping is kept either way.
+    bytes. A writable-and-executable mapping is kept either way. With it on,
+    an image whose relocation section headers name more than twice the
+    entries the file holds at its smallest entry raises `StriderError`.
 
     `relocated_got_is_rom` (default `False`) additionally serves `.got` and
     `.data.rel.ro` as READ-ONLY memory, so a load through a GOT slot folds to
