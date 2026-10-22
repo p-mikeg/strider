@@ -132,10 +132,10 @@ struct Domain {
 /// their hull: an index in `{0, 3, 5}` ranges over `0..=5`.  One outside the
 /// phi's range at the site, or ruled out by an `== k` guard on the way, is
 /// dropped.  They are taken where the phi bounds no index too, as for a jump
-/// to a phi of labels.  Where
-/// a bounded index is found as well, a constant the index range excludes is
-/// dropped, since both bound the same runtime value; where the index does not
-/// fold under some constant, the range is enumerated as it is without them.
+/// to a phi of labels.  Where a bounded index is found as well, a constant
+/// the index range excludes is dropped, since both bound the same runtime
+/// value; where the index does not fold under some constant, the range is
+/// enumerated as it is without them.
 fn dispatch_domain(
     function: &strider_ir::Function,
     rom: Option<&dyn ReadOnlyMemory>,
