@@ -528,8 +528,9 @@
   entry) as a hole. Neither walk read it, so its fields served the file's
   bytes.
 - Python: under `relocated_got_is_rom`, a `.got` or `.data.rel.ro` whose
-  `sh_size` runs past the next allocated section is served only up to it.
-  The ROM view served the writable bytes it ran over.
+  `sh_size` runs past the next allocated section, or past the PT_LOAD
+  holding it, is served only up to there. The ROM view served the writable
+  bytes it ran over.
 - Python: an x86-64 `R_X86_64_32` whose value does not zero-extend is a
   hole, as GNU ld refuses it; one that fit only sign-extended was patched.
 - Python: the PowerPC VSX arithmetic, rounding and conversion ops
