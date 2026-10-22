@@ -252,6 +252,17 @@ pub fn is_msr_register_mode(preset: crate::ArchPreset, name: &str) -> bool {
     preset.family() == crate::ArchFamily::Arm32 && name == "msrRegisterMode"
 }
 
+/// Whether `name` is the x86 op through which an SSE or VEX conversion reads
+/// the rounding mode it rounds by: `mxcsrRoundingControl(rc)` is `rc`, the
+/// live MXCSR.RC, or 0 under the claim that the mode is round to nearest. The
+/// lifter lowers it to one of the two, so it has no ABI row, unless a caller
+/// override names it, which then classifies it as any user op and neither
+/// claim value applies.
+#[must_use]
+pub fn is_mxcsr_rounding_control(preset: crate::ArchPreset, name: &str) -> bool {
+    preset.family() == crate::ArchFamily::X86 && name == "mxcsrRoundingControl"
+}
+
 const PURE: CallOtherClass = CallOtherClass::PURE;
 const MEM_CLOBBER: CallOtherClass = CallOtherClass::MEM_CLOBBER;
 

@@ -1,5 +1,6 @@
 use anyhow::Context as _;
 use anyhow::{Result, anyhow};
+use strider_ir::{IRBuilderExt as _, VnTypeExt as _};
 
 use super::FunctionLifter;
 
@@ -19,6 +20,14 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             )
         {
             return self.lift_msr_register_mode(insn);
+        }
+        if self.call_other_overrides.get(name).is_none()
+            && strider_target::call_other_abi::is_mxcsr_rounding_control(
+                self.lifter.arch().preset(),
+                name,
+            )
+        {
+            return self.lift_mxcsr_rounding_control(insn);
         }
         let class = strider_target::call_other_abi::classify_with(
             self.call_other_overrides,
@@ -67,6 +76,25 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             .assumptions()
             .msr_register_keeps_mode;
         let value = self.read_vn(if keeps { current } else { new })?;
+        self.write_vn(out, value)
+    }
+
+    /// `rc = mxcsrRoundingControl(live)`: 0, round to nearest even, under
+    /// [`strider_ir::AssumptionOptions::mxcsr_rounds_to_nearest`], else `live`.
+    fn lift_mxcsr_rounding_control(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        let (Some(out), [_, live]) = (insn.output.as_ref(), insn.inputs.as_slice()) else {
+            anyhow::bail!("mxcsrRoundingControl takes one input and an output");
+        };
+        let value = if self
+            .builder
+            .function()
+            .assumptions()
+            .mxcsr_rounds_to_nearest
+        {
+            self.builder.build_int_const(0u64, out.int_type()?)?
+        } else {
+            self.read_vn(live)?
+        };
         self.write_vn(out, value)
     }
 
