@@ -336,6 +336,7 @@ fn a_vsx_op_sets_the_fpscr_status_bits_it_raises() {
         ("xvcvhpsp", 0xf038_176c, &[VXSNAN], &[FPCC_FE]),
         ("xscmpgedp", 0xf022_1898, &[VXSNAN, VXVC], &[FPCC_FE]),
         ("xscmpeqdp", 0xf022_1818, &[VXSNAN], &[FPCC_FE]),
+        // A draft encoding only the sla decodes.
         ("xvcmpnedp", 0xf022_1bd8, &[VXSNAN], &[FPCC_FE]),
         ("xsmaxcdp", 0xf022_1c00, &[VXSNAN], &[FPCC_FE]),
         ("xsminjdp", 0xf022_1cc0, &[VXSNAN], &[FPCC_FE]),
@@ -365,8 +366,9 @@ fn a_vsx_op_sets_the_fpscr_status_bits_it_raises() {
     assert!(wrong.is_empty(), "{wrong:#?}");
 }
 
-/// `xvcmpnedp.` sets CR6 as well: with EQ set in cr6 beforehand, a `beq cr6`
-/// after it keeps both paths.
+/// `xvcmpnedp.`, a draft encoding only the sla decodes, sets CR6 as well, as
+/// `xvcmpeqdp.` does: with EQ set in cr6 beforehand, a `beq cr6` after it
+/// keeps both paths.
 #[test]
 fn xvcmpnedp_dot_writes_cr6() {
     for arch in [Arch::Ppc64be, Arch::Ppc64le] {
