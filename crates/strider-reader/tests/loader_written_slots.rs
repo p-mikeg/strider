@@ -526,8 +526,8 @@ fn relinked(name: &str, link: impl Fn(&object::File<'_>) -> u32) -> OwnedElf {
 
 /// A `.rela.dyn` linked to `.symtab` or to nothing in an image that has a
 /// `.dynsym`: its entries are walked all the same. One naming no symbol is
-/// applied, IRELATIVE being a hole; one naming a symbol is a hole, its index
-/// meaning `.dynsym` to the loader and `.symtab` to the link.
+/// applied, RELATIVE served and IRELATIVE a hole; one naming a symbol is a
+/// hole, its index meaning `.dynsym` to the loader and `.symtab` to the link.
 #[test]
 fn a_dynamic_relocation_section_off_the_dynsym_is_still_walked() {
     let irelative = object::elf::R_X86_64_IRELATIVE;
@@ -544,6 +544,13 @@ fn a_dynamic_relocation_section_off_the_dynsym_is_still_walked() {
     for slot in dynamic_sites(&open("x64_ifunc_pie.elf"), irelative, None) {
         assert_hole(rom_word(&reader, slot, 8, true), irelative, "pie, link 0");
     }
+    // `p`'s R_X86_64_RELATIVE: B + A, B modelled 0, is `x`'s address.
+    let relro = relinked("x64_relro_pie.elf", |_| 0);
+    let obj = relro.checked_file().unwrap();
+    let p = obj.section_by_name(".data.rel.ro").unwrap().address();
+    let x = obj.symbol_by_name("x").unwrap().address();
+    let reader = ElfFileMemReader::new(&relro, GOT_IS_ROM).unwrap();
+    assert_eq!(rom_word(&reader, p, 8, true), Ok(x), "relro pie, link 0");
 
     let original = open("x64_ifunc_lib.elf");
     let sites: Vec<(u64, u32)> = original
@@ -665,4 +672,67 @@ fn a_served_range_ends_with_its_mapping() {
     let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
     let err = rom_word(&reader, got_plt.1, 4, true).expect_err(".got.plt is writable");
     assert!(err.contains("not mapped"), "{err}");
+}
+
+/// `x64_nodynsym.elf`'s second `R_X86_64_64` moved to the last 4 bytes of
+/// its read-only mapping: the 8-byte field runs past the mapping, and the
+/// hole still covers the 4 bytes mapped.
+#[test]
+fn a_hole_past_a_mappings_end_covers_what_is_mapped() {
+    let end = |obj: &object::File<'_>| {
+        let rodata = obj.section_by_name(".rodata").unwrap().address();
+        obj.segments()
+            .map(|s| (s.address(), s.address() + s.size()))
+            .find(|&(lo, hi)| lo <= rodata && rodata < hi)
+            .unwrap()
+            .1
+    };
+    let elf = patched("x64_nodynsym.elf", |bytes, obj| {
+        // The second Elf64_Rela's r_offset.
+        let (off, _) = obj
+            .section_by_name(".rela.dyn")
+            .unwrap()
+            .file_range()
+            .unwrap();
+        let at = off as usize + 24;
+        bytes[at..at + 8].copy_from_slice(&(end(obj) - 4).to_le_bytes());
+    });
+    let field = end(&elf.checked_file().unwrap()) - 4;
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    assert_hole(
+        rom_word(&reader, field, 4, true),
+        object::elf::R_X86_64_64,
+        "the mapped half",
+    );
+}
+
+/// `x64_nodynsym.elf`'s first entry retyped `R_X86_64_64` against no symbol:
+/// a word the walk does not compute is a hole over the whole word, as one
+/// naming a symbol is.
+#[test]
+fn an_uncomputed_word_off_the_dynsym_is_a_hole_over_the_word() {
+    let elf = patched("x64_nodynsym.elf", |bytes, obj| {
+        // The first Elf64_Rela's r_info: r_sym 0, R_X86_64_64.
+        let (off, _) = obj
+            .section_by_name(".rela.dyn")
+            .unwrap()
+            .file_range()
+            .unwrap();
+        let at = off as usize + 8;
+        bytes[at..at + 8].copy_from_slice(&u64::from(object::elf::R_X86_64_64).to_le_bytes());
+    });
+    let slots = elf
+        .checked_file()
+        .unwrap()
+        .symbol_by_name("slots")
+        .unwrap()
+        .address();
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    for half in [slots, slots + 4] {
+        assert_hole(
+            rom_word(&reader, half, 4, true),
+            object::elf::R_X86_64_64,
+            &format!("{half:#x}"),
+        );
+    }
 }
