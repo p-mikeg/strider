@@ -43,13 +43,13 @@ pub enum RelocationMode {
     /// link-time value rather than its target.
     Unapplied,
     /// Applied by this loader, which then also maps every writable section for
-    /// fetch. `got_is_rom` serves `.got` and `.data.rel.ro` as ROM too: an
-    /// unchecked claim that the dynamic loader fills those slots before the
-    /// program runs and nothing writes them afterwards (a full-RELRO link maps
-    /// them read-only), and that a symbol the image defines binds to that
-    /// definition. A slot whose value only the loader computes stays a hole,
-    /// as `LoadFilter::ImmutableAndRelocatedGot` lists. `.got.plt` is never
-    /// served, since lazy binding rewrites it.
+    /// fetch. `got_is_rom` serves `.got` (PPC32's `.got2` too) and
+    /// `.data.rel.ro` as ROM too: an unchecked claim that the dynamic loader
+    /// fills those slots before the program runs and nothing writes them
+    /// afterwards (a full-RELRO link maps them read-only), and that a symbol
+    /// the image defines binds to that definition. A slot whose value only the
+    /// loader computes stays a hole, as `LoadFilter::ImmutableAndRelocatedGot`
+    /// lists. `.got.plt` is never served, since lazy binding rewrites it.
     Applied { got_is_rom: bool },
 }
 
@@ -59,8 +59,8 @@ pub struct ElfImage {
     /// Instruction fetch: code and read-only mappings, plus every writable one
     /// once relocated.
     pub fetch: Vec<MemRegion>,
-    /// The runtime-immutable mappings, plus `.got` and `.data.rel.ro` under
-    /// `got_is_rom`.
+    /// The runtime-immutable mappings, plus `.got`, `.got2` and `.data.rel.ro`
+    /// under `got_is_rom`.
     pub rom: Vec<MemRegion>,
     /// Every address the image maps writable, loaded or not.
     pub writable: AddressSet,
@@ -199,7 +199,7 @@ impl OwnedElf {
     /// The fetch and ROM region sets `mode` picks, and the writable addresses,
     /// from one parse: fetch is the code and read-only mappings unrelocated,
     /// every allocatable one relocated; ROM is the immutable mappings, plus
-    /// `.got` / `.data.rel.ro` under `got_is_rom`.
+    /// `.got` / `.got2` / `.data.rel.ro` under `got_is_rom`.
     ///
     /// # Errors
     ///

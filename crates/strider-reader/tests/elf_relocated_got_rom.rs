@@ -111,6 +111,42 @@ fn the_opt_in_serves_a_relocated_glob_dat_slot_at_its_full_width() {
     );
 }
 
+/// `fixtures/loader/out/ppc32be_got2.elf`: a PPC32 `-fPIC` library loads its
+/// jump-table bases out of `.got2`, the per-object GOT, each slot under one
+/// `R_PPC_RELATIVE`.
+#[test]
+fn the_opt_in_serves_a_ppc32_got2_slot_at_its_relocated_value() {
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/loader/out/ppc32be_got2.elf");
+    let owned = strider_reader::load_elf(&path)
+        .unwrap_or_else(|e| panic!("{}: {e:#} (run `make -C fixtures/loader`)", path.display()));
+    let obj = owned.checked_file().unwrap();
+    let got2 = obj.section_by_name(".got2").unwrap();
+    let got2 = got2.address()..got2.address() + got2.size();
+    let slots: Vec<(u64, i64)> = obj
+        .dynamic_relocations()
+        .unwrap()
+        .filter(|(site, _)| got2.contains(site))
+        .map(|(site, r)| (site, r.addend()))
+        .collect();
+    assert_eq!(slots.len(), 2, "one R_PPC_RELATIVE per table base");
+
+    let regions = |filter| {
+        owned
+            .regions(elf::RegionSource::Auto, filter, true)
+            .unwrap()
+    };
+    let (default, opted_in) = (regions(DEFAULT), regions(OPT_IN));
+    for (site, addend) in slots {
+        assert!(!serves(&default, site, 4), "the default refuses {site:#x}");
+        assert_eq!(
+            read_u32_be(&opted_in, site),
+            Some(u32::try_from(addend).unwrap()),
+            "the opt-in serves {site:#x} at its relocated value"
+        );
+    }
+}
+
 /// The opt-in claims the loader has relocated those slots, and withholding
 /// relocations denies it: served unrelocated, the slot reads as its file
 /// bytes, 0 on a PIE where the address lives in the addend, and a load
@@ -300,7 +336,7 @@ fn a_linked_mips_pic_image_serves_only_its_got_under_the_opt_in() {
 }
 
 /// Every built fixture, relocated: the opt-in may only ADD addresses to the
-/// default view, and every address it adds must be inside a `.got` or
+/// default view, and every address it adds must be inside a `.got`, `.got2` or
 /// `.data.rel.ro*` extent. One assertion over the whole fixture tree, so a
 /// section name creeping into the served set is caught wherever it appears.
 #[test]
@@ -314,7 +350,10 @@ fn across_every_fixture_the_opt_in_only_adds_got_and_data_rel_ro_addresses() {
             obj.sections()
                 .filter(|s| {
                     s.name().is_ok_and(|n| {
-                        n == ".got" || n == ".data.rel.ro" || n.starts_with(".data.rel.ro.")
+                        n == ".got"
+                            || n == ".got2"
+                            || n == ".data.rel.ro"
+                            || n.starts_with(".data.rel.ro.")
                     })
                 })
                 .map(|s| {
@@ -348,7 +387,7 @@ fn across_every_fixture_the_opt_in_only_adds_got_and_data_rel_ro_addresses() {
                 assert!(
                     allowed.iter().any(|&(s, e)| s <= lo && hi <= e),
                     "{name}: the opt-in added [{lo:#x}, {hi:#x}), \
-                     in no .got / .data.rel.ro: {allowed:#x?}"
+                     in no .got / .got2 / .data.rel.ro: {allowed:#x?}"
                 );
             }
         }

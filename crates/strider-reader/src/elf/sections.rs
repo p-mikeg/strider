@@ -47,9 +47,10 @@ pub enum LoadFilter {
     /// constant-address load without consulting the memory chain, so a writable
     /// mapping here makes a store-then-reload fold to its file-initial value.
     ImmutableOnly,
-    /// [`ImmutableOnly`](Self::ImmutableOnly) plus `.got` and `.data.rel.ro`,
-    /// writable mappings that the dynamic loader fills before the program runs
-    /// and that a full-RELRO link then maps read-only.
+    /// [`ImmutableOnly`](Self::ImmutableOnly) plus `.got` (and PPC32's
+    /// per-object `.got2`) and `.data.rel.ro`, writable mappings that the
+    /// dynamic loader fills before the program runs and that a full-RELRO link
+    /// then maps read-only.
     ///
     /// A slot whose load-time value only the loader computes is a hole, not
     /// its file bytes: one under a relocation the applier does not compute,
@@ -122,11 +123,12 @@ impl LoadFilter {
 
 /// Whether `name` is one of the sections
 /// [`LoadFilter::ImmutableAndRelocatedGot`] serves although they are writable:
-/// `.got`, `.data.rel.ro` and its `.local` / per-object suffixes.
+/// `.got`, PPC32's `.got2`, `.data.rel.ro` and its `.local` / per-object
+/// suffixes.
 ///
 /// `.got.plt` fails the exact-name test, for the reason the filter gives.
 fn is_relocated_got_name(name: &str) -> bool {
-    name == ".got" || name == ".data.rel.ro" || name.starts_with(".data.rel.ro.")
+    name == ".got" || name == ".got2" || name == ".data.rel.ro" || name.starts_with(".data.rel.ro.")
 }
 
 /// `[start, end)` of every such section, at its [`ElfSectionLayout`] base,
