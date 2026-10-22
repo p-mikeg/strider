@@ -515,6 +515,11 @@
 
 ### Fixed
 
+- Python: a jump table indexed by a byte (or a scaled byte) read through a
+  pointer resolves over the byte's width, as `psmouse_process_byte`'s
+  `movzbl 0xcb(%rbx)` / `shr $6` does; only a byte from a table in ROM is
+  table data the width does not bound. It was deferred, unless a 32-bit
+  register read put a truncate between the extends.
 - Python: `ConstantFold` turns a truncate of an extend to a width other
   than the source's into one cast: a truncate of the source below its
   width, the same extend of it above, so `zext64(trunc32(zext64(x8)))` is
