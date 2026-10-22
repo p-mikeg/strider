@@ -515,6 +515,10 @@
 
 ### Fixed
 
+- Python: `ConstantFold` turns a truncate of an extend to a width other
+  than the source's into one cast: a truncate of the source below its
+  width, the same extend of it above, so `zext64(trunc32(zext64(x8)))` is
+  `zext64(x8)`. Only the truncate back to the source's own width folded.
 - Python: `ConstantFold` folds a bitcast (`int_bits_to_float`,
   `float_bits_to_int`) of a constant up to 64 bits to a constant of the same
   bits, as the builder does. Only a bitcast built over a constant folded, so
