@@ -515,6 +515,9 @@
 
 ### Fixed
 
+- `ConstantFold`, `LoadReadOnly` and the jump-table evaluator fold a
+  constant shift whose count is narrower or wider than the shift: they asked
+  the count for the output's width, which p-code never asks of it.
 - An index range joined with an empty one is the other range, its lower
   bound and stride kept; the join widened the lower bound to 1 and dropped
   the stride.
