@@ -709,8 +709,8 @@
   `cvtss2si` and their VEX forms, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`,
   `cvtps2pi`) break a tie to even, the default MXCSR mode: 2.5 converted to
   3. `vcvtsd2si r64` and `cvtps2pi` returned the rounded value's float bits,
-  and `cvtpd2dq`, `cvtps2dq` and `cvtpd2pi` truncated. MXCSR.RC is not
-  modelled; the conversions assume its default.
+  and `cvtpd2dq`, `cvtps2dq` and `cvtpd2pi` truncated. They assume RC's
+  default under `mxcsr_rounds_to_nearest`, and read RC without it.
 - x87 `fist`, `fistp` and `frndint` round by the control word's RC (nearest
   even, down, up or toward zero) instead of always breaking a tie away from
   zero. gcc's i386 `(int)x`, which sets RC to truncate around a `fistp`, now
