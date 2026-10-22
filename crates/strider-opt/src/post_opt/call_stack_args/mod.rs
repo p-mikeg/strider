@@ -50,6 +50,10 @@ fn collect_stack_args(
     let Some(first_off) = call_sp_off.checked_add(stack_args.offset_of(0)) else {
         return Vec::new();
     };
+    // The arity is unknown, so the window is `[first_off, inf)`. No store on
+    // the same base is disjoint from it, so the scan anchors each one, a push
+    // below the window included, and no frame is private to it: a cost in
+    // work and precision only.
     let mut scan = ArgStoreScan::new(
         function,
         alias_cfg,
