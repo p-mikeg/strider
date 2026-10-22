@@ -157,7 +157,7 @@ float_arg 7 [%v45]
 %v19:i32 = truncate %v18
 %v20:mem = store[r] %v15, %v17, %v19
 %v21:i64 = iconst[0x20620]
-%v22:i64 = load[r] %v20, %v21
+%v22:i64 = load[r] %v1, %v21
 %v23:i64 = extend.zero %v14
 %v24:i64 = iconst[0x3]
 %v25:i64 = int.and %v23, %v24

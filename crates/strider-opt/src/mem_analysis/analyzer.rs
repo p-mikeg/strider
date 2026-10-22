@@ -23,10 +23,11 @@ pub(crate) enum MemPurpose {
     IncomingArgs,
     /// `CallStackArgCollect`'s outgoing-argument window.
     CallStackArgs,
-    /// The jump-table walk's own steps: no call relaxation.  The dispatch
-    /// value it reads was forwarded under `Forward`'s.
+    /// The jump-table walk's own steps and `LoadForward`'s narrowing: no call
+    /// relaxation.  The dispatch value the walk reads was forwarded under
+    /// `Forward`'s.
     TableWalk,
-    /// Claims nothing: what a permanent rewire may rest on.
+    /// Claims nothing: `FunctionArgDetect`'s narrowing.
     Structural,
 }
 

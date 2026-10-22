@@ -43,7 +43,7 @@ float_arg 7 [%v61]
 %v19:i64 = iconst[0xffffffffffffffd8]
 %v20:i64 = int.add %v2, %v19
 %v21:i64 = iconst[0x120012050]
-%v22:i64 = load[r] %v6, %v21
+%v22:i64 = load[r] %v1, %v21
 %v23:i64 = iconst[0x1500]
 %v24:i64 = int.add %v22, %v23
 %v25:i64 = load[r] %v6, %v24

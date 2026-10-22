@@ -75,7 +75,7 @@ unresolved_branch [0x120000b28.5]
 cfg
   0x120000af0 36 ops unresolved@0x120000b28.5 -> []
 tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t9, sp, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x200:8, u:0x300:8, u:0x1c00:8, u:0x1f00:8, u:0x13600:4]
-arg 0 [%v16]
+arg 0 [%v15]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[sp]
@@ -88,22 +88,21 @@ arg 0 [%v16]
 %v9:mem = store[r] %v1, %v4, %v8
 %v10:i64 = iconst[0xfffffffffffffff8]
 %v11:i64 = int.add %v2, %v10
-%v12:i64 = load[r] %v9, %v5
-%v13:i64 = iconst[0xb30]
-%v14:i64 = int.add %v12, %v13
-%v15:mem = store[r] %v9, %v11, %v14
-%v16:i64 = initial_var[a0]
-%v17:i64 = iconst[0x1]
-%v18:i64 = int.and %v16, %v17
-%v19:i64 = iconst[0x3]
-%v20:i64 = int.shift_left %v18, %v19
-%v21:i64 = int.add %v4, %v20
-%v22:i64 = load[r] %v15, %v21
-%v23:i64 = iconst[0xfffffffffffffffe]
-%v24:i64 = int.and %v22, %v23
-%v25:i64 = int.and %v22, %v17
-%v26:i64 = iconst[0x0]
-%v27:i1 = icmp.equal %v25, %v26
-%v28:i1 = iconst[0x1]
-%v29:i1 = int.xor %v27, %v28
-indirect_branch %v0, %v15, %v24, %v29
+%v12:i64 = iconst[0xb30]
+%v13:i64 = int.add %v6, %v12
+%v14:mem = store[r] %v9, %v11, %v13
+%v15:i64 = initial_var[a0]
+%v16:i64 = iconst[0x1]
+%v17:i64 = int.and %v15, %v16
+%v18:i64 = iconst[0x3]
+%v19:i64 = int.shift_left %v17, %v18
+%v20:i64 = int.add %v4, %v19
+%v21:i64 = load[r] %v14, %v20
+%v22:i64 = iconst[0xfffffffffffffffe]
+%v23:i64 = int.and %v21, %v22
+%v24:i64 = int.and %v21, %v16
+%v25:i64 = iconst[0x0]
+%v26:i1 = icmp.equal %v24, %v25
+%v27:i1 = iconst[0x1]
+%v28:i1 = int.xor %v26, %v27
+indirect_branch %v0, %v14, %v23, %v28

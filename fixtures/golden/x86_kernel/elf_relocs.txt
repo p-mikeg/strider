@@ -100,7 +100,7 @@ arg 1 [%v29]
 %v19:i32 = iconst[0x130f]
 %v20:mem = store[r] %v18, %v16, %v19
 %v21:i32 = iconst[0x237c]
-%v22:i32 = load[r] %v18, %v21
+%v22:i32 = load[r] %v1, %v21
 %v23:i32 = iconst[0x3]
 %v24:i32 = int.and %v13, %v23
 %v25:i32 = iconst[0x4]

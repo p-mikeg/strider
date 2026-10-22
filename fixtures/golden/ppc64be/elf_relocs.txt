@@ -287,7 +287,7 @@ float_arg 24 [%v78]
 %v29:i64 = iconst[0x28708]
 %v30:mem = store[r] %v26, %v28, %v29
 %v31:i64 = iconst[0x20710]
-%v32:i64 = load[r] %v26, %v31
+%v32:i64 = load[r] %v1, %v31
 %v33:i64 = extend.zero %v21
 %v34:i64 = iconst[0x20]
 %v35:i64 = int.shift_left %v33, %v34

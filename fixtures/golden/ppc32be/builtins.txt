@@ -26,7 +26,7 @@ tracked [r0, r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r13, r30, LR, CTR, f1, f2
 %v7:i32 = iconst[0x0]
 %v8:mem = store[r] %v6, %v5, %v7
 %v9:i32 = iconst[0x10020000]
-%v10:i32 = load[r] %v8, %v9
+%v10:i32 = load[r] %v1, %v9
 indirect_branch %v0, %v8, %v10
 
 == popcount32 @0x100004bc

@@ -282,6 +282,12 @@
 
 ### Changed, Python
 
+- `LoadForward` moves a load's memory edge past a constant-address store
+  under `stack_global_disjoint`, and past a store through another
+  `noalias_allocators` result, but still through no call. A jump-table
+  index reloaded past a global write is bounded by the check on the first
+  load, and with `return_slots_survive_untracked_writes` cleared a return
+  past such a store verifies on those two claims.
 - `ElfLifter.build_cfg` derives its options from the ELF as `analyze` does:
   the `$d` mapping symbols seat `data_ranges` unless the options name some,
   and a ppc64 ELFv2 `no_return_targets` address also covers its

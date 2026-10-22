@@ -1826,13 +1826,11 @@ mod heap_tests {
         Ok(fg)
     }
 
-    /// SOUNDNESS: the memory-edge rewire serves return-target verification,
-    /// which with its claim off honours no heap identity, so it may name only
-    /// what holds with the allocator set empty.  Two allocations are disjoint
-    /// under the set and both opaque without it, so the edge stops at the
-    /// store to the OTHER object, not past it.
+    /// The memory-edge rewire honours heap identity but no call relaxation:
+    /// the edge steps past the store to the OTHER allocation and stops at the
+    /// call that made it.
     #[test]
-    fn narrowing_never_carries_the_allocator_set() -> crate::Result<()> {
+    fn narrowing_carries_the_allocator_set_up_to_the_call() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
         let q = alloc_call(&mut b, KMEM_CACHE_ALLOC)?;
@@ -1850,9 +1848,9 @@ mod heap_tests {
             .expect("load");
         let clobber = fg.producer(fg.node_inputs(load)[0]);
         assert!(
-            matches!(fg.node_kind(clobber), NodeKind::Store(_)),
-            "the store to the other allocation must stay on the load's memory \
-             chain, got {:?}",
+            matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
+            "the load must narrow past the store to the other allocation onto \
+             its call, got {:?}",
             fg.node_kind(clobber),
         );
         Ok(())

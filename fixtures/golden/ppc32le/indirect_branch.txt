@@ -27,12 +27,12 @@ arg 0 [%v12]
 %v14:i32 = iconst[0xffffffec]
 %v15:i32 = int.add %v2, %v14
 %v16:i32 = iconst[0x100201fc]
-%v17:i32 = load[r] %v13, %v16
+%v17:i32 = load[r] %v1, %v16
 %v18:mem = store[r] %v13, %v15, %v17
 %v19:i32 = iconst[0xfffffff0]
 %v20:i32 = int.add %v2, %v19
 %v21:i32 = iconst[0x10020200]
-%v22:i32 = load[r] %v18, %v21
+%v22:i32 = load[r] %v1, %v21
 %v23:mem = store[r] %v18, %v20, %v22
 %v24:i32 = iconst[0xffffffe8]
 %v25:i32 = int.add %v2, %v24

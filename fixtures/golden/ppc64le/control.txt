@@ -65,7 +65,7 @@ float_arg 24 [%v43]
 %v14:i64 = initial_var[r6]
 %v15:i64 = initial_var[r7]
 %v16:i64 = iconst[0x1001ff20]
-%v17:i64 = load[r] %v9, %v16
+%v17:i64 = load[r] %v1, %v16
 %v18:i64 = initial_var[r10]
 %v19:i64 = initial_var[f1]
 %v20:i64 = initial_var[f2]
