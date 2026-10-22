@@ -46,7 +46,9 @@ pub enum RelocationMode {
     /// fetch. `got_is_rom` serves `.got` (PPC32's `.got2` too) and
     /// `.data.rel.ro` as ROM too: an unchecked claim that the dynamic loader
     /// fills those slots before the program runs and nothing writes them
-    /// afterwards (a full-RELRO link maps them read-only), and that a symbol
+    /// afterwards (a full-RELRO link maps them read-only; PPC32 code that
+    /// relocates its own `.got2`, `prom_init`'s `reloc_got2` or
+    /// `-mrelocatable` `.fixup`, breaks it), and that a symbol
     /// the image defines binds to that definition. A slot whose value only the
     /// loader computes stays a hole, as `LoadFilter::ImmutableAndRelocatedGot`
     /// lists. `.got.plt` is never served, since lazy binding rewrites it.
