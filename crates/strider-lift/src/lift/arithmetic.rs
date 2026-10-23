@@ -13,31 +13,16 @@ use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp, Valu
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
-/// Sleigh's contract guarantees equal widths here. The lift resizes operands to
-/// one width before the builder sees them, so this is the only check: without
-/// it a malformed `.sla` lifts silently, and a widened `Carry` / `Scarry` /
-/// `Sborrow` operand makes the flag constant-false.
-fn require_equal_input_widths(a: &rsleigh::Vn, b: &rsleigh::Vn) -> Result<()> {
+/// Sleigh's contract guarantees `a` and `b` equal widths wherever this runs.
+/// The lift resizes operands to one width before the builder sees them, so
+/// this is the only check: without it a malformed `.sla` lifts silently.
+/// `what` names the op in the error.
+pub(super) fn require_same_size(a: &rsleigh::Vn, b: &rsleigh::Vn, what: &str) -> Result<()> {
     if a.size != b.size {
         return Err(anyhow::anyhow!(
-            "p-code input width mismatch: lhs={} rhs={} (Sleigh requires equal widths)",
+            "p-code {what} width mismatch: {} against {} (Sleigh requires equal widths)",
             a.size,
             b.size,
-        ));
-    }
-    Ok(())
-}
-
-/// Unary counterpart of [`require_equal_input_widths`].
-pub(super) fn require_equal_input_output_width(
-    input: &rsleigh::Vn,
-    output: &rsleigh::Vn,
-) -> Result<()> {
-    if input.size != output.size {
-        return Err(anyhow::anyhow!(
-            "p-code unary op width mismatch: input={} output={} (Sleigh requires equal widths)",
-            input.size,
-            output.size,
         ));
     }
     Ok(())
@@ -57,21 +42,6 @@ fn reject_operand_wider_than_output(operand: &rsleigh::Vn, output: &rsleigh::Vn)
     Ok(())
 }
 
-/// `SShiftRight`'s value operand: the lowering agrees with
-/// `OpBehaviorIntSright` only at equal widths, so anything else is rejected
-/// rather than silently taken.
-fn reject_operand_width_mismatch(operand: &rsleigh::Vn, output: &rsleigh::Vn) -> Result<()> {
-    if operand.size != output.size {
-        return Err(anyhow::anyhow!(
-            "p-code signed shift width mismatch: operand={} against output={} \
-             (the sign fill would land at the wrong width)",
-            operand.size,
-            output.size,
-        ));
-    }
-    Ok(())
-}
-
 /// A width rule on one raw p-code operand, checked before it is read.
 #[derive(Clone, Copy)]
 enum WidthGuard {
@@ -79,7 +49,8 @@ enum WidthGuard {
     /// Coercion would truncate a wider operand, and the op's low bits do not
     /// survive that.
     NotWider,
-    /// The lowering agrees with p-code only at the output width.
+    /// The lowering agrees with p-code only at the output width:
+    /// `SShiftRight`'s sign fill lands at the operand's.
     Equal,
 }
 
@@ -88,7 +59,7 @@ impl WidthGuard {
         match self {
             Self::Any => Ok(()),
             Self::NotWider => reject_operand_wider_than_output(nth_input_or_err(insn, slot)?, out),
-            Self::Equal => reject_operand_width_mismatch(nth_input_or_err(insn, slot)?, out),
+            Self::Equal => require_same_size(nth_input_or_err(insn, slot)?, out, "signed shift"),
         }
     }
 }
@@ -278,7 +249,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // emits them equal-width; fail loud if not.  The value comparisons
         // legitimately take mixed widths, so they are unguarded.
         if matches!(op, IntCmpOp::Carry | IntCmpOp::Scarry | IntCmpOp::Sborrow) {
-            require_equal_input_widths(nth_input_or_err(insn, 0)?, nth_input_or_err(insn, 1)?)?;
+            require_same_size(
+                nth_input_or_err(insn, 0)?,
+                nth_input_or_err(insn, 1)?,
+                "input",
+            )?;
         }
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
@@ -305,7 +280,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         op: IntCmpOp,
         swap_operands: bool,
     ) -> Result<()> {
-        require_equal_input_widths(nth_input_or_err(insn, 0)?, nth_input_or_err(insn, 1)?)?;
+        require_same_size(
+            nth_input_or_err(insn, 0)?,
+            nth_input_or_err(insn, 1)?,
+            "input",
+        )?;
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
@@ -355,12 +334,16 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // Sleigh requires all three widths to agree here, unlike the
         // comparison lowerings, whose I1 output makes only the input check
         // apply.
-        require_equal_input_widths(nth_input_or_err(insn, 0)?, nth_input_or_err(insn, 1)?)?;
+        require_same_size(
+            nth_input_or_err(insn, 0)?,
+            nth_input_or_err(insn, 1)?,
+            "input",
+        )?;
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
         let out_ty = out_vn.int_type()?;
-        require_equal_input_output_width(nth_input_or_err(insn, 0)?, out_vn)?;
+        require_same_size(nth_input_or_err(insn, 0)?, out_vn, "unary op")?;
         let lhs = self.builder.convert_to_int_if_needed(lhs, out_ty)?;
         let rhs = self.builder.convert_to_int_if_needed(rhs, out_ty)?;
         let neg_rhs = self
