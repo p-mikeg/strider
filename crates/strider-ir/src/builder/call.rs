@@ -178,11 +178,7 @@ impl FunctionBuilder {
             vn_container::largest_container_in(self.function().all_vns(), v)
         });
         let mut arg_passing: SmallVec<[ValueId; 4]> = SmallVec::new();
-        for vn in &arg_vns {
-            let c = vn_container::largest_container_in(self.function().all_vns(), vn);
-            arg_passing.push(self.read_variable(&c)?);
-        }
-        for vn in &float_arg_vns {
+        for vn in arg_vns.iter().chain(&float_arg_vns) {
             let v = self.read_arg_slice(vn)?;
             arg_passing.push(v);
         }
@@ -214,13 +210,12 @@ impl FunctionBuilder {
         if container == *vn {
             return self.read_variable(&container);
         }
-        let offset_bytes = vn.addr_off - container.addr_off;
-        let shift_bits = 8 * match self.function().byte_order().register {
-            strider_target::Endianness::Little => offset_bytes,
-            strider_target::Endianness::Big => {
-                u64::from(container.size) - u64::from(vn.size) - offset_bytes
-            }
-        };
+        let shift_bits = self
+            .function()
+            .byte_order()
+            .register
+            .slice_shift_bits(vn, &container)
+            .ok_or_else(|| anyhow!("{vn:?} is not inside {container:?}"))?;
         let container_ty = container.int_type()?;
         let whole = self.read_variable(&container)?;
         let shifted =

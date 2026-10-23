@@ -1077,6 +1077,8 @@
 - `Function::is_entry_sp`: whether a value is the entry stack pointer.
 - `BuiltCallingConvention::float_arg_prefix`, the float arguments a call
   passes: `float_arg_slots` up to the first untracked one.
+- `Endianness::slice_shift_bits`, a register slice's bit distance from its
+  container's LSB.
 
 ## 0.2.0
 
