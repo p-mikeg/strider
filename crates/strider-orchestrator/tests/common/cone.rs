@@ -1,19 +1,22 @@
 //! Evaluates a returned value's cone by each node kind's p-code meaning, for
 //! tests whose answer passes through a node the optimiser does not fold
-//! (`FloatToInt`, any F80 arithmetic). Float lanes are carried as `f64`,
-//! which is exact for the values these tests use.
+//! (`FloatToInt`, any F80 or F128 arithmetic). Float lanes are carried as
+//! `f64`, which is exact for the values these tests use, and 128-bit floats
+//! as their bits ([`super::quad`]).
 
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Function, IRViewer, IRWalker, ValueType,
 };
 
+use super::quad::{self, DOUBLE, QUAD, SINGLE};
 use super::{inputs_of, producer_kind};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Val {
     Int(u128),
     Float(f64),
+    Quad(u128),
 }
 
 fn width(ty: ValueType) -> u16 {
@@ -79,11 +82,46 @@ fn narrow(ty: ValueType, x: f64) -> f64 {
     }
 }
 
+/// The format of a float of `ty`.
+fn format(ty: ValueType) -> quad::Format {
+    match width(ty) {
+        32 => SINGLE,
+        64 => DOUBLE,
+        128 => QUAD,
+        w => panic!("no float format of width {w} here"),
+    }
+}
+
+/// A float `Val` of `ty` as its bits.
+fn float_bits(val: Val, ty: ValueType) -> u128 {
+    match (val, width(ty)) {
+        (Val::Quad(q), _) => q,
+        (Val::Float(x), 32) => u128::from((x as f32).to_bits()),
+        (Val::Float(x), 64) => u128::from(x.to_bits()),
+        (val, w) => panic!("{val:?} is no float of width {w}"),
+    }
+}
+
+/// The float `Val` of `ty` with `bits`.
+fn float_val(bits: u128, ty: ValueType) -> Val {
+    match width(ty) {
+        32 => Val::Float(f64::from(f32::from_bits(bits as u32))),
+        64 => Val::Float(f64::from_bits(bits as u64)),
+        128 => Val::Quad(bits),
+        w => panic!("no float of width {w} here"),
+    }
+}
+
 /// Evaluates `v`'s cone by each node's p-code meaning, every initial
 /// register reading as `init` (masked to its width).
 pub(crate) fn eval(f: &Function, v: ValueId, init: u128) -> Val {
+    eval_env(f, v, &|_| init)
+}
+
+/// [`eval`] with each initial register reading as `env` gives it.
+pub(crate) fn eval_env(f: &Function, v: ValueId, env: &dyn Fn(&rsleigh::Vn) -> u128) -> Val {
     MEMO.with(|m| m.borrow_mut().clear());
-    eval_rec(f, v, init)
+    eval_rec(f, v, env)
 }
 
 thread_local! {
@@ -93,7 +131,7 @@ thread_local! {
         std::cell::RefCell::default();
 }
 
-fn eval_rec(f: &Function, v: ValueId, init: u128) -> Val {
+fn eval_rec(f: &Function, v: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> Val {
     if let Some(val) = MEMO.with(|m| m.borrow().get(&v).copied()) {
         return val;
     }
@@ -102,21 +140,27 @@ fn eval_rec(f: &Function, v: ValueId, init: u128) -> Val {
     val
 }
 
-fn eval_node(f: &Function, v: ValueId, init: u128) -> Val {
+fn eval_node(f: &Function, v: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> Val {
     let ty = f.value_type(v).expect("typed");
     let ins = inputs_of(f, v);
     let int = |i: usize| match eval_rec(f, ins[i], init) {
         Val::Int(x) => x,
-        Val::Float(x) => panic!("operand {i} of {:?} is the float {x}", producer_kind(f, v)),
+        other => panic!("operand {i} of {:?} is {other:?}", producer_kind(f, v)),
     };
     let float = |i: usize| match eval_rec(f, ins[i], init) {
         Val::Float(x) => x,
-        Val::Int(x) => panic!("operand {i} of {:?} is the int {x:#x}", producer_kind(f, v)),
+        other => panic!("operand {i} of {:?} is {other:?}", producer_kind(f, v)),
     };
     let in_ty = |i: usize| f.value_type(ins[i]).expect("typed");
+    let bits = |i: usize| float_bits(eval_rec(f, ins[i], init), in_ty(i));
+    let wide = width(ty) == 128
+        || ins.first().is_some_and(|&i| {
+            f.value_type(i)
+                .is_ok_and(|t| t.is_float() && width(t) == 128)
+        });
     match producer_kind(f, v) {
         NodeKind::IntConst(_) => Val::Int(f.int_const_u128(v).expect("int const")),
-        NodeKind::InitialVar(_) => Val::Int(init & mask(ty)),
+        NodeKind::InitialVar(id) => Val::Int(init(&f.initial_vn(*id)) & mask(ty)),
         NodeKind::FloatConst(bits) => Val::Float(match width(ty) {
             16 => f16_to_f64(*bits as u16),
             32 => f64::from(f32::from_bits(*bits as u32)),
@@ -128,20 +172,26 @@ fn eval_node(f: &Function, v: ValueId, init: u128) -> Val {
             32 => f64::from(f32::from_bits(int(0) as u32)),
             64 => f64::from_bits(int(0) as u64),
             80 => f80_to_f64(int(0)),
+            128 => return Val::Quad(int(0)),
             w => panic!("IntBitsToFloat of width {w}"),
         }),
         NodeKind::FloatBitsToInt => Val::Int(match width(in_ty(0)) {
             32 => u128::from((float(0) as f32).to_bits()),
+            128 => bits(0),
             64 => u128::from(float(0).to_bits()),
             80 => f64_to_f80(float(0)),
             w => panic!("FloatBitsToInt of width {w}"),
         }),
+        NodeKind::FloatToFloat if wide => {
+            float_val(quad::convert(format(in_ty(0)), format(ty), bits(0)), ty)
+        }
         NodeKind::FloatToFloat => Val::Float(narrow(ty, float(0))),
         NodeKind::IntToFloat => {
             let x = strider_ir::eval::sign_extend(int(0), in_ty(0), ValueType::int(128))
                 .expect("sign extend") as i128;
             // Rounded once, to the destination's own precision.
             Val::Float(match width(ty) {
+                128 => return Val::Quad(quad::from_int(QUAD, x)),
                 32 => f64::from(x as f32),
                 _ => narrow(ty, x as f64),
             })
@@ -156,6 +206,19 @@ fn eval_node(f: &Function, v: ValueId, init: u128) -> Val {
             } else {
                 (x as i128) as u128 & mask(ty)
             })
+        }
+        NodeKind::FloatUnaryOp(FloatUnaryOp::Neg) if wide => Val::Quad(quad::neg(QUAD, bits(0))),
+        NodeKind::FloatBinaryOp(op) if wide => Val::Quad(match op {
+            FloatBinaryOp::Add => quad::add(QUAD, bits(0), bits(1)),
+            FloatBinaryOp::Mul => quad::mul(QUAD, bits(0), bits(1)),
+            FloatBinaryOp::Div => panic!("a 128-bit float division"),
+        }),
+        NodeKind::FloatCmpOp(op) if wide => {
+            let ord = quad::cmp(QUAD, bits(0), bits(1));
+            Val::Int(u128::from(match op {
+                FloatCmpOp::Equal => ord == Some(std::cmp::Ordering::Equal),
+                FloatCmpOp::Less => ord == Some(std::cmp::Ordering::Less),
+            }))
         }
         NodeKind::FloatUnaryOp(op) => {
             let x = float(0);
@@ -204,6 +267,24 @@ fn eval_node(f: &Function, v: ValueId, init: u128) -> Val {
             Val::Int(strider_ir::eval::sign_extend(int(0), in_ty(0), ty).expect("sign extend"))
         }
         NodeKind::Truncate => Val::Int(int(0) & mask(ty)),
+        NodeKind::Load(space) => {
+            let addr = int(NodeKind::ACCESS_ADDR_SLOT);
+            let big = f.byte_order().of(*space) == strider_target::Endianness::Big;
+            let size = usize::from(width(ty) / 8);
+            let mut out = 0u128;
+            for i in 0..size {
+                let place = if big { size - 1 - i } else { i };
+                let byte = stored_byte(
+                    f,
+                    ins[NodeKind::ACCESS_MEM_SLOT],
+                    addr + i as u128,
+                    big,
+                    init,
+                );
+                out |= u128::from(byte) << (8 * place);
+            }
+            Val::Int(out)
+        }
         NodeKind::Phi => {
             let preds = inputs_of(f, ins[0]);
             let live: Vec<usize> = (0..preds.len())
@@ -218,8 +299,45 @@ fn eval_node(f: &Function, v: ValueId, init: u128) -> Val {
     }
 }
 
+/// The byte at `addr` of the memory `mem`, which only stores this cone
+/// evaluates may have written.
+fn stored_byte(
+    f: &Function,
+    mem: ValueId,
+    addr: u128,
+    big: bool,
+    init: &dyn Fn(&rsleigh::Vn) -> u128,
+) -> u8 {
+    let mut mem = mem;
+    loop {
+        let ins = inputs_of(f, mem);
+        match producer_kind(f, mem) {
+            NodeKind::Store(_) => {
+                let at = match eval_rec(f, ins[NodeKind::ACCESS_ADDR_SLOT], init) {
+                    Val::Int(x) => x,
+                    other => panic!("a store address is {other:?}"),
+                };
+                let data = ins[NodeKind::STORE_DATA_SLOT];
+                let ty = f.value_type(data).expect("typed");
+                let size = u128::from(width(ty) / 8);
+                if (at..at + size).contains(&addr) {
+                    let bits = match eval_rec(f, data, init) {
+                        Val::Int(x) => x,
+                        val => float_bits(val, ty),
+                    };
+                    let k = addr - at;
+                    let place = if big { size - 1 - k } else { k };
+                    return (bits >> (8 * place)) as u8;
+                }
+                mem = ins[NodeKind::ACCESS_MEM_SLOT];
+            }
+            other => panic!("a load reaches {other:?} at {addr:#x}"),
+        }
+    }
+}
+
 /// Whether control reaches `c` with every initial register reading `init`.
-fn control_live(f: &Function, c: ValueId, init: u128) -> bool {
+fn control_live(f: &Function, c: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> bool {
     let node = f.producer(c);
     let ins = inputs_of(f, c);
     match f.node_kind(node) {
@@ -291,7 +409,7 @@ fn returned(f: &Function) -> ValueId {
 fn as_rax(val: Val) -> u64 {
     match val {
         Val::Int(x) => u64::try_from(x).expect("rax is 64 bits"),
-        Val::Float(x) => panic!("rax holds the float {x}"),
+        other => panic!("rax holds {other:?}"),
     }
 }
 
@@ -356,4 +474,115 @@ pub(crate) fn returned_at_under(
         .iter()
         .map(|(f, v)| as_rax(eval(f, *v, init)))
         .collect()
+}
+
+/// Where [`lift_image`] maps its image.
+pub(crate) const IMAGE_BASE: u64 = 0x10000;
+
+/// A function lifted with chosen registers returned and chosen initial
+/// registers to set.
+pub(crate) struct Lifted {
+    pub(crate) f: Function,
+    rets: Vec<ValueId>,
+    inputs: Vec<rsleigh::Vn>,
+    /// The register space is big-endian.
+    big: bool,
+}
+
+impl Lifted {
+    /// The register `inputs[i]` names.
+    pub(crate) fn input(&self, i: usize) -> rsleigh::Vn {
+        self.inputs[i]
+    }
+
+    /// The returned registers with `inputs[i]` reading `vals[i]`, every other
+    /// initial register byte reading `fill`'s byte at its place.
+    pub(crate) fn run(&self, vals: &[u128], fill: u128) -> Vec<Val> {
+        let env = |vn: &rsleigh::Vn| -> u128 {
+            let size = vn.size as usize;
+            let mut out = fill & mask(ValueType::Int(u16::try_from(8 * size).expect("width")));
+            for i in 0..size {
+                let at = vn.addr_off + i as u64;
+                let place = if self.big { size - 1 - i } else { i };
+                let hit = self.inputs.iter().zip(vals).find(|(r, _)| {
+                    r.addr_space == vn.addr_space
+                        && (r.addr_off..r.addr_off + u64::from(r.size)).contains(&at)
+                });
+                if let Some((r, &val)) = hit {
+                    let k = (at - r.addr_off) as usize;
+                    let from = if self.big { r.size as usize - 1 - k } else { k };
+                    let byte = val >> (8 * from) & 0xff;
+                    out = out & !(0xff << (8 * place)) | byte << (8 * place);
+                }
+            }
+            out
+        };
+        self.rets
+            .iter()
+            .map(|&v| eval_env(&self.f, v, &env))
+            .collect()
+    }
+}
+
+/// `words` (then nothing: the last must end the function) lifted on `arch`
+/// under `claims`, returning the registers `rets`, with `inputs` resolved
+/// for [`Lifted::run`].
+pub(crate) fn lift_regs(
+    arch: super::Arch,
+    words: &[u32],
+    rets: &[&str],
+    inputs: &[&str],
+    claims: &strider_orchestrator::opt::AssumptionOptions,
+) -> Lifted {
+    let bytes = super::words_image(words, arch.sleigh().endianness());
+    lift_image(arch, bytes, rets, inputs, claims)
+}
+
+/// [`lift_regs`] over an image mapped at [`IMAGE_BASE`], read-only, with
+/// the function at its start.
+pub(crate) fn lift_image(
+    arch: super::Arch,
+    bytes: Vec<u8>,
+    rets: &[&str],
+    inputs: &[&str],
+    claims: &strider_orchestrator::opt::AssumptionOptions,
+) -> Lifted {
+    const BASE: u64 = IMAGE_BASE;
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
+        strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone()),
+    );
+    let (mut strider, mut cc) = super::strider_over_bytes(arch, bytes, BASE, Some(rom));
+    let vn = |name: &str| {
+        strider_target::calling_convention::vn_for_name(strider.sleigh_regs(), name)
+            .expect("a register name")
+    };
+    cc.ret_val_regs = rets.iter().map(|r| vn(r)).collect();
+    cc.ret_val_regs_float = Vec::new();
+    // A returned register is no longer one the function preserves.
+    let rets_vns = cc.ret_val_regs.clone();
+    cc.callee_saved_regs.retain(|s| {
+        !rets_vns.iter().any(|r| {
+            r.addr_space == s.addr_space
+                && r.addr_off < s.addr_off + u64::from(s.size)
+                && s.addr_off < r.addr_off + u64::from(r.size)
+        })
+    });
+    let inputs = inputs.iter().map(|r| vn(r)).collect();
+    let opts = strider_orchestrator::AnalyzeOptions {
+        assumptions: claims.clone(),
+        ..Default::default()
+    };
+    let f = strider
+        .analyze(BASE, &cc, &opts, None)
+        .expect("analyze")
+        .function;
+    let rets = super::returned(&f);
+    assert_eq!(rets.len(), cc.ret_val_regs.len(), "one value per register");
+    let big = f.byte_order().register == strider_target::Endianness::Big;
+    Lifted {
+        f,
+        rets,
+        inputs,
+        big,
+    }
 }
