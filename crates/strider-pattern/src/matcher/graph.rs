@@ -132,6 +132,19 @@ impl Pattern {
         self.root.clone().map_err(anyhow::Error::msg)
     }
 
+    /// Whether a match may bind a value it reached through a `Phi` /
+    /// `MemPhi`: a pat node admitting one pins an input, or a binding walk
+    /// matches past this graph's own edges.
+    pub fn may_bind_through_phi(&self) -> bool {
+        self.graph.all_node_ids().any(|n| {
+            let node = self.graph.node_kind(n);
+            node.binding_walk.is_some()
+                || (!node.input_slots.is_empty()
+                    && (node.kind.matches(&strider_ir::node::NodeKind::Phi)
+                        || node.kind.matches(&strider_ir::node::NodeKind::MemPhi)))
+        })
+    }
+
     /// Includes what a node's binding walk declares: that sub-pattern's graph
     /// lives inside the walk closure, not here.
     pub fn bound_captures(&self) -> impl Iterator<Item = crate::capture::Capture> + '_ {
@@ -282,6 +295,24 @@ mod tests {
     use strider_ir::ConstId;
     use strider_ir::node::NodeKind;
     use strider_ir_test_utils::Rng;
+
+    /// A phi bound as a leaf binds nothing through it; one whose inputs the
+    /// pattern pins, or a branch walk, may.
+    #[test]
+    fn may_bind_through_phi_reads_the_pattern_shape() {
+        use crate::{Capture, anything, if_else, int_add, mem_phi, phi, ret, var};
+        let c = Capture::new();
+        let shape = |p: Pattern| p.may_bind_through_phi();
+        assert!(!shape(int_add(phi(), var(c)).into_pattern()));
+        assert!(!shape(int_add(var(c), anything()).into_pattern()));
+        assert!(shape(
+            int_add(phi().phi_input(0, var(c)), anything()).into_pattern()
+        ));
+        assert!(shape(mem_phi().phi_input(0, crate::store()).into_pattern()));
+        assert!(shape(
+            if_else().with_true(ret().into_pattern()).into_pattern()
+        ));
+    }
 
     #[test]
     fn builds_bipartite_add_shape() {
