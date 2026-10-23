@@ -25,7 +25,7 @@ impl Optimizer for RegionCollapse {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        _opt: &mut OptCtx<'_>,
+        _opt: &OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         // One walk of the cached live Regions, no worklist. `try_collapse` reads
         // each root's CURRENT inputs and liveness, so edits made earlier in this

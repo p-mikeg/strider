@@ -22,7 +22,7 @@ impl Optimizer for CfgDetach {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        _ctx: &mut OptCtx<'_>,
+        _ctx: &OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         strip_dead_predecessors(edit)
     }

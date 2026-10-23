@@ -72,7 +72,7 @@ fn replace_switch_address_with_const_collapses_switch_after_reoptimize() -> anyh
     }
 
     let pipeline = strider_orchestrator::opt::default_pipeline();
-    pipeline.run(&mut g, &mut strider_orchestrator::opt::OptCtx::new(None))?;
+    pipeline.run(&mut g, &strider_orchestrator::opt::OptCtx::new(None))?;
 
     assert_eq!(
         count_switches(&g),
@@ -127,7 +127,7 @@ fn rewrite_rule_targeting_old_if_ladder_shape_is_a_no_op_against_switch_dispatch
         fired, 0,
         "an if-ladder-shaped rewrite rule must not match anything against a Switch-lowered dispatch",
     );
-    pipeline.run(&mut g, &mut strider_orchestrator::opt::OptCtx::new(None))?;
+    pipeline.run(&mut g, &strider_orchestrator::opt::OptCtx::new(None))?;
 
     assert_eq!(
         count_switches(&g),
@@ -175,10 +175,7 @@ fn replace_input_then_reoptimize_then_replace_again_works() -> anyhow::Result<()
     };
     assert_eq!(n1, 1, "first rewrite collapses Add(7,0)");
     // Propagates the folded constant through the second Add.
-    pipeline.run(
-        &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
-    )?;
+    pipeline.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))?;
 
     // ConstantFold already collapsed Add(7,1) to IntConst(8); the rewrite
     // finds nothing but must still succeed.
@@ -198,16 +195,10 @@ fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
     let mut function = add_k_plus_zero(7);
     let pipeline = strider_orchestrator::opt::default_pipeline();
 
-    pipeline.run(
-        &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
-    )?; // first run: collapses Add(7,0)
+    pipeline.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))?; // first run: collapses Add(7,0)
     let count_after_first = function.walk().count();
 
-    pipeline.run(
-        &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
-    )?; // second run: no-op
+    pipeline.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))?; // second run: no-op
     let count_after_second = function.walk().count();
 
     assert_eq!(
