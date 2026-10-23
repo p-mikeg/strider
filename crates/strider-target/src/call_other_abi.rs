@@ -837,10 +837,13 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
     // of those registers at the user-visible level.
     //
     // The cost: with no argument register listed, an `int 0x80` handed a stack
-    // address in EBX gives that value no consumer node, so
-    // `frame_address_escapes` does not see the escape.  ARM `software_interrupt`
-    // and x86-64 `syscall` list theirs and are covered; only
-    // `assumptions.escape_analysis` reads that verdict.
+    // address in EBX gives that value no consumer node, so the frame-escape
+    // scans (`frame_address_escapes`, read by `assumptions.escape_analysis`
+    // and the listed-allocator relaxation, and `incoming_area_escapes`) do
+    // not see the escape.  ARM `software_interrupt` and x86-64 `syscall` list
+    // theirs and are covered.  The call itself clobbers memory and blocks
+    // every walk, so only a pointer the kernel keeps and writes during a
+    // later call matters.
     CallOtherRow {
         scope: Scope::Family(crate::ArchFamily::X86),
         op_names: &["swi"],
