@@ -76,16 +76,16 @@ fn analyze(case: &str, fn_name: &str, opt: Opt) -> Function {
         strider_reader::elf::RelocationMode::Unapplied,
     )
     .expect("rom reader");
-    let mut ctx = strider_orchestrator::opt::OptCtx::new(Some(&rom));
+    let ctx = strider_orchestrator::opt::OptCtx::new(Some(&rom));
     match opt {
         Opt::Full => strider_orchestrator::opt::default_pipeline()
-            .run(&mut function, &mut ctx)
+            .run(&mut function, &ctx)
             .expect("pipeline"),
         Opt::LoadReadOnlyOnly => {
             strider_orchestrator::opt::run_one(
                 &strider_orchestrator::opt::LoadReadOnly,
                 &mut function,
-                &mut ctx,
+                &ctx,
             )
             .expect("LoadReadOnly");
         }

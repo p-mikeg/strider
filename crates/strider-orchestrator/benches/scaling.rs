@@ -105,7 +105,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
     function.assume(&strider_orchestrator::opt::AssumptionOptions::default());
     p.run(
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(Some(&rom_for_opt)),
+        &strider_orchestrator::opt::OptCtx::new(Some(&rom_for_opt)),
     )
     .expect("optimizer pipeline");
     function
@@ -218,7 +218,7 @@ mod synthetic {
         p.add(PhiCollapse);
         p.add(RegionCollapse);
         fg.assume(&strider_orchestrator::opt::AssumptionOptions::default());
-        p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
+        p.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();
         fg
     }
@@ -280,7 +280,7 @@ mod synthetic {
         p.add(PhiCollapse);
         p.add(RegionCollapse);
         fg.assume(&strider_orchestrator::opt::AssumptionOptions::default());
-        p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
+        p.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();
         fg
     }
@@ -365,7 +365,7 @@ mod synthetic {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
         fg.assume(&strider_orchestrator::opt::AssumptionOptions::default());
-        p.run(&mut fg, &mut strider_orchestrator::opt::OptCtx::new(None))
+        p.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();
         fg
     }
@@ -401,7 +401,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
         strider_orchestrator::opt::run_one(
             &pass,
             &mut fg,
-            &mut strider_orchestrator::opt::OptCtx::new(None),
+            &strider_orchestrator::opt::OptCtx::new(None),
         )
         .unwrap();
         assert_eq!(
@@ -425,7 +425,7 @@ fn bench_stack_store_chain(c: &mut Criterion) {
                     let _ = strider_orchestrator::opt::run_one_unvalidated(
                         &pass,
                         &mut fg,
-                        &mut strider_orchestrator::opt::OptCtx::new(None),
+                        &strider_orchestrator::opt::OptCtx::new(None),
                     );
                     black_box(fg);
                 },

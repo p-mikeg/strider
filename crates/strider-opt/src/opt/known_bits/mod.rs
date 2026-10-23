@@ -352,7 +352,7 @@ impl Optimizer for KnownBits {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        _opt_ctx: &mut crate::OptCtx<'_>,
+        _opt_ctx: &crate::OptCtx<'_>,
     ) -> crate::Result<OptimizationResult> {
         let known = analyze(edit.function())?;
 
