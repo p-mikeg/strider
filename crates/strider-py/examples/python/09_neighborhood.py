@@ -29,4 +29,4 @@ print("render a .dot with:  dot -Tsvg <file>.dot -o out.svg")
 
 # The interactive explorer re-centers as you click; it blocks until Ctrl-C.
 if "--serve" in sys.argv:
-    prog.visualize(function)
+    strider.explore.visualize(function)

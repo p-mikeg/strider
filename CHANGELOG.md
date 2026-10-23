@@ -4,6 +4,10 @@
 
 ### Breaking, Python
 
+- `Lifter.visualize` is gone: `strider.explore.visualize(target, *, host=,
+  port=, depth=, whole=, background=)` is the one entry. It takes `host` and
+  the rest by keyword only, and a negative `depth` raises `ValueError`, where
+  `Lifter.visualize` raised `OverflowError`.
 - `CallingConvention.no_return()` is gone. List a callee that never returns
   in `CfgOptions(no_return_targets=...)`, which `Lifter.build_cfg` honours
   too; it ignored a no-return `per_address_ccs` entry.

@@ -81,7 +81,7 @@ strider.sleigh    # SleighArch, CallingConvention, CallOtherAbi, Vn, VnSpace;
 strider.StriderError    # the one top-level name
 ```
 
-`prog.visualize(fn)` serves the graph as an interactive explorer in a browser
+`strider.explore.visualize(fn)` serves the graph as an interactive explorer in a browser
 and is the quickest way to see the shape a pattern has to match;
 [python-api.md](python-api.md#10-visualizing) has the view it opens on, the
 keys and the toolbar.
@@ -152,4 +152,5 @@ first; its "Breaking, Python" section says how to port each of these:
   it with `strider.template`.
 - `Lifter.optimize(function, ...)` is `function.optimize(assumptions=...,
   pipeline=...)`, and takes `assumptions=` in place of `opts=`.
+- `Lifter.visualize(target)` is `strider.explore.visualize(target)`.
 - `AssumptionOptions` is unhashable and compares by value.

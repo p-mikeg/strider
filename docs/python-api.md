@@ -883,8 +883,8 @@ does.
 ## 10. Visualizing
 
 ```python
-prog.visualize(function)          # interactive explorer; prints a URL, blocks
-prog.visualize(cfg)               # a Cfg works too
+strider.explore.visualize(function)   # interactive explorer; prints a URL, blocks
+strider.explore.visualize(cfg)        # a Cfg works too
 ```
 
 The explorer opens on the **whole graph**, since a neighborhood view hides
@@ -906,7 +906,7 @@ knobs stop applying to) and **reset** to go back. The three limits start at
 **depth** takes whatever `visualize(depth=...)` seeds.
 
 `visualize()` binds `host='127.0.0.1'` and `port=0` (a free port) by default.
-Both are arguments; a non-loopback `host` exposes the graph, the queries and
+Both are keyword arguments; a non-loopback `host` exposes the graph, the queries and
 the bytes behind them to anything that can reach the port, with no
 authentication, so bind one only on a network you trust.
 
@@ -915,7 +915,7 @@ authentication, so bind one only on a network you trust.
 immediately:
 
 ```python
-port = prog.visualize(fn, background=True)
+port = strider.explore.visualize(fn, background=True)
 # ... keep querying, analysing and rendering on this thread ...
 strider.explore.shutdown(port)   # stops the server and joins its thread
 ```

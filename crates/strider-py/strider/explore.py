@@ -1,6 +1,6 @@
 """Interactive IR explorer: a small local server plus a graphviz frontend.
 
-`Lifter.visualize(target)` serves a page showing the whole graph. Pass
+`visualize(target)` serves a page showing the whole graph. Pass
 `whole=False` for the neighborhood (inputs and outputs) around one node
 instead, which stays usable on a large function. Click a node to re-center on
 it, click an edge to walk along it, shift-click to mark it. The search bar runs
