@@ -67,6 +67,7 @@ fn rewrite_rule_impl(
     lhs: Pattern,
     rhs: Template,
 ) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
+    let through_phi = lhs.may_bind_through_phi();
     move |edit: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
         // The root check before anything is allocated. A fold table tries
         // every rule at every candidate node, and `Matcher::new` plus
@@ -149,13 +150,15 @@ fn rewrite_rule_impl(
         // A match through a phi binds values the phi merges, which need not
         // sit below the root: a loop phi's back-edge value reads the phi, and
         // a merge arm's value is defined on one path only. Such a match gets
-        // the unpruned walk and an availability check.
-        let crosses_phi = matched_nodes.iter().any(|&n| {
-            matches!(
-                edit.function().node_kind(n),
-                NodeKind::Phi | NodeKind::MemPhi
-            )
-        });
+        // the unpruned walk and an availability check. A phi bound as a leaf
+        // is harmless: a cycle back through it passes through that phi.
+        let crosses_phi = through_phi
+            && matched_nodes.iter().any(|&n| {
+                matches!(
+                    edit.function().node_kind(n),
+                    NodeKind::Phi | NodeKind::MemPhi
+                )
+            });
         if new_value != root_value {
             let cycle = if crosses_phi {
                 reads_without_phi(edit, new_value, root_value)
@@ -244,11 +247,12 @@ fn reads_without_phi(f: &impl IRViewer, from: ValueId, target: ValueId) -> bool 
 }
 
 /// Whether `value` is computable wherever `replaced` is: its early position
-/// dominates `replaced`'s, which dominates every use.
+/// dominates `replaced`'s, which dominates every use. A `replaced` with no
+/// position has no use on a path that runs.
 fn available_at(f: &strider_ir::Function, value: ValueId, replaced: ValueId) -> bool {
     let tree = strider_ir::control_dominator_tree(f);
     let at = |v| strider_ir::early_position(f, &tree, v);
-    matches!((at(value), at(replaced)), (Some(def), Some(used)) if tree.dominates(def, used))
+    at(replaced).is_none_or(|used| at(value).is_some_and(|def| tree.dominates(def, used)))
 }
 
 /// Asserts every capture the RHS references also appears in the LHS.
@@ -1279,6 +1283,54 @@ mod tests {
             })
             .count();
         assert_eq!((fired, sites), (1, 1));
+        strider_ir::validate::validate(&function).unwrap();
+    }
+
+    /// `r = phi(.., r) + 1` in a loop no edge enters: `r` runs on no path, so
+    /// replacing it through the phi needs no availability.
+    #[test]
+    fn a_rewrite_through_a_phi_in_code_that_never_runs_is_not_refused() {
+        use strider_ir::IntCmpOp;
+        use strider_pattern::{phi, var};
+
+        let x = reg_vn(0x1000, 8);
+        let mut b = RegisterSet::new().tracked(x).arg(x).build_fn().unwrap();
+        let entry = b.create_region_all().unwrap();
+        let dead = b.create_region_all().unwrap();
+        let exit = b.create_region_all().unwrap();
+        b.set_entry_region_all(entry).unwrap();
+        b.set_lift_addr(Some(0x10));
+        b.set_region(entry);
+        b.build_branch(exit).unwrap();
+        b.set_region(dead);
+        let p = b.read_variable(&x).unwrap();
+        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let r = b
+            .build_int_binary_operation(p, one, IntBinaryOp::Add, ValueType::int(64))
+            .unwrap();
+        b.write_variable(&x, r).unwrap();
+        let stop = b.build_int_const(9u64, ValueType::int(64)).unwrap();
+        let done = b
+            .build_int_cmp_operation(r, stop, IntCmpOp::Equal, ValueType::int(64))
+            .unwrap();
+        b.build_if(done, exit, dead).unwrap();
+        b.set_region(exit);
+        let out = b.read_variable(&x).unwrap();
+        b.build_return(Some(out), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let root = function.producer(r);
+        assert!(matches!(
+            function.node_kind(function.producer(p)),
+            NodeKind::Phi
+        ));
+
+        let (a, k) = (Capture::new(), Capture::new());
+        let rule = rewrite_rule(int_add(phi().phi_input(0, var(a)), var(k)), var(k));
+        let mut edit = EditFunction::new(&mut function);
+        assert!(rule(&mut edit, root).unwrap().is_some());
+        edit.clean();
+        drop(edit);
         strider_ir::validate::validate(&function).unwrap();
     }
 }
