@@ -387,8 +387,8 @@ fn frsp_rounds_by_fpscr_rn() {
     }
 }
 
-/// `xscvdpspn` writes a word the GPR moves do not read back directly, so it
-/// is checked to read RN exactly when the claim is off.
+/// `xscvdpspn` reads RN exactly when the claim is off (its value is checked
+/// in `ppc_vsx_and_rounding.rs`).
 #[test]
 fn xscvdpspn_reads_fpscr_rn_only_without_the_claim() {
     // xscvdpspn vs34, vs34; blr, vs34 the vector return register
@@ -445,4 +445,70 @@ fn mtfsfi_of_field_zero_recomputes_fex_and_vx() {
         );
         assert_eq!((got >> 28) & 0xf, want, "mtfsfi 0, {u:#06b}");
     }
+}
+
+/// FEX and VX stay the summaries of the bits they cover whatever field
+/// `mtfsfi` writes: clearing every VX and enable bit through fields 1-3 and
+/// 5-7 clears both, and FX and OX keep their value (all ones on entry).
+#[test]
+fn mtfsfi_of_any_field_keeps_fex_and_vx_the_summaries() {
+    let mut words = vec![
+        0xfc80_010c_u32,
+        0xfd00_010c,
+        0xfd80_010c,
+        0xfe80_010c,
+        0xff00_010c,
+        0xff80_010c,
+    ];
+    // mffs f1; mffprd r3, f1; blr
+    words.extend([0xfc20_048e, 0x7c23_0066, 0x4e80_0020]);
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let got = common::cone::returned_from_under(
+        Arch::Ppc64le,
+        bytes,
+        BASE,
+        u128::MAX,
+        &AssumptionOptions::none(),
+    );
+    assert_eq!((got >> 28) & 0xf, 0b1001);
+}
+
+/// FEX is the OR of the enabled exceptions, and FX rises with VX: with every
+/// bit set on entry and XE cleared, `fadd` keeps FEX set (four enabled
+/// exceptions, which an XOR cancelled); with FX, OX, UX, ZX, XX and FI cleared, an
+/// `fctiwz` of the NaN f1 holds raises VXCVI and with it VX and FX.
+#[test]
+fn fpscr_summaries_are_ors_and_fx_follows_vx() {
+    let run = |words: &[u32]| {
+        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        common::cone::returned_from_under(
+            Arch::Ppc64le,
+            bytes,
+            BASE,
+            u128::MAX,
+            &AssumptionOptions::none(),
+        )
+    };
+    // mtfsfi 7, 0; fadd f1, f1, f1; mffs f1; mffprd r3, f1; blr
+    let fex = run(&[
+        0xff80_010c,
+        0xfc21_082a,
+        0xfc20_048e,
+        0x7c23_0066,
+        0x4e80_0020,
+    ]);
+    assert_eq!((fex >> 30) & 1, 1, "FEX");
+    // mtfsfi 0, 0; mtfsfi 1, 0; mtfsfi 3, 0; fctiwz f1, f1; mffs f1;
+    // mffprd r3, f1; blr (field 3 holds FI, which fctiwz ORs into XX)
+    let fx = run(&[
+        0xfc00_010c,
+        0xfc80_010c,
+        0xfd80_010c,
+        0xfc20_081e,
+        0xfc20_048e,
+        0x7c23_0066,
+        0x4e80_0020,
+    ]);
+    assert_eq!((fx >> 29) & 1, 1, "VX");
+    assert_eq!((fx >> 31) & 1, 1, "FX");
 }

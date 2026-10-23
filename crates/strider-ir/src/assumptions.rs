@@ -197,7 +197,9 @@ pub struct AssumptionOptions {
     /// conversions lifted as opaque user ops (the packed VEX and EVEX forms,
     /// `roundss` and its kin), whose results nothing folds.  MXCSR.FTZ and
     /// DAZ are taken as 0 either way, so under `-ffast-math`, which sets them
-    /// at startup, even [`AssumptionOptions::none`] narrows a denormal wrongly.
+    /// at startup, even [`AssumptionOptions::none`] narrows a denormal wrongly;
+    /// so are PowerPC FPSCR.NI, OE and UE, so code that sets them (non-IEEE
+    /// mode, enabled overflow or underflow traps) has no floor here either.
     ///
     /// Read by the lifter, so it counts only when the lift is given it
     /// (`AnalyzeOptions::assumptions`); added to a lifted function it changes
