@@ -230,7 +230,11 @@ impl FunctionBuilder {
         }
     }
 
-    pub(crate) fn write_variable_from_id(&mut self, var_id: InitialVnId, value: ValueId) -> Result<()> {
+    pub(crate) fn write_variable_from_id(
+        &mut self,
+        var_id: InitialVnId,
+        value: ValueId,
+    ) -> Result<()> {
         let region_id = self.require_cur_region()?;
         self.regions[region_id].variables[var_id] = value.into();
         Ok(())
