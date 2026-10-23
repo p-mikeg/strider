@@ -567,6 +567,9 @@
 
 ### Fixed
 
+- Python: under `relocated_got_is_rom=True` a MIPS global GOT entry is
+  served only when the `.dynsym` header is `DT_SYMTAB`'s table; a header
+  moved onto a decoy symbol served an import's entry as its lazy stub.
 - Python: a dynamic image's relocation tables are each walked as they lie,
   and what the loaders could read differently is a hole: every place of
   two tables that overlap off each other's entry boundaries, a place two
