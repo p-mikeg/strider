@@ -11,7 +11,7 @@
 //!   define register offset=0x0300 size=8 [ d31 d30 ... d0 ];  # reversed
 //! ```
 //!
-//! `reg_shift_from_container` must therefore key the shift off the
+//! `Endianness::slice_shift_bits` must therefore key the shift off the
 //! sla's register endianness: keying it off `arch.endianness()` puts `s0` at
 //! bit 32 of `d0` instead of bit 0, reading and writing the wrong half of
 //! every VFP/NEON sub-register.  `arm()` and `arm_be_kernel()` share one
