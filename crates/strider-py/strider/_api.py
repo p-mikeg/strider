@@ -286,6 +286,10 @@ def load_elf(
     the address the slot holds. It is what resolves a PIC jump table whose
     base comes out of the GOT.
 
+    An image carrying Android packed relocations (lld's
+    `--pack-dyn-relocs=android`), which strider does not decode, serves
+    neither.
+
     A slot whose load-time value only the dynamic loader computes stays
     unmapped, and a load through it does not fold: one under a relocation
     strider does not compute, such as one against an imported symbol the
