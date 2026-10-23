@@ -735,3 +735,31 @@ fn an_x86_64_abs32_field_takes_only_a_zero_extending_value() {
         "fits unsigned"
     );
 }
+
+/// A fetch through `ElfFileMemReader` that lands on such a hole names the
+/// relocation, as the lookup table does.
+#[test]
+fn a_fetch_on_an_uncomputed_relocation_names_it() {
+    let mut obj = Object::new(BinaryFormat::Elf, Architecture::X86_64, Endianness::Little);
+    let text = obj.add_section(Vec::new(), b".text".to_vec(), SectionKind::Text);
+    obj.append_section_data(text, &[0xb8, 0x11, 0x22, 0x33, 0x44, 0xc3], 1);
+    let tls = undefined(&mut obj, "tls_var");
+    reloc(&mut obj, text, 1, tls, 0, elf::R_X86_64_TPOFF32);
+    let bytes = obj.write().expect("write");
+    let insn = common::section_base(&bytes, ".text");
+
+    let owned = strider_reader::elf::OwnedElf::parse(bytes).expect("parse");
+    let reader = strider_reader::ElfFileMemReader::new(
+        &owned,
+        strider_reader::elf::RelocationMode::Applied { got_is_rom: false },
+    )
+    .expect("reader");
+    let mut buf = [0u8; 4];
+    let err = rsleigh::MemReader::read(&reader, rsleigh::VnAddr {
+        space: rsleigh::VnSpace::RAM,
+        off: insn + 1,
+    }, &mut buf)
+        .expect_err("a hole")
+        .to_string();
+    assert!(err.contains("relocation of type 23"), "got: {err}");
+}

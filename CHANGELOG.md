@@ -1113,9 +1113,14 @@
 - Python: with `return_slots_survive_untracked_writes` cleared, a call whose
   convention preserves memory no longer makes a return after it unverified,
   as every other memory walk already steps it.
+- A decode through `ElfFileMemReader` that lands on a relocation the loader
+  does not compute names the relocation type, where it said the address was
+  not mapped; a Python `BufferReader` already did.
 
 ### Added, Rust
 
+- `MemRegionsLookupTable` implements `rsleigh::MemReader`, the one fetch
+  adapter `ElfFileMemReader` and the Python `BufferReader` share.
 - `AssumptionOptions::fp_rounding_mode_is_nearest`, default on, read by the
   lift through the fork's new user ops, each appended after the upstream
   ones: x86 `mxcsrRoundingControl`, PowerPC and ARM `fpscrRoundingControl`
