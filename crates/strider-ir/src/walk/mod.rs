@@ -158,16 +158,16 @@ pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), iter::once(entry))
 }
 
-pub type DefUsePostorder<'a> = PostOrder<DefUseSuccs<'a>>;
+pub(crate) type DefUsePostorder<'a> = PostOrder<DefUseSuccs<'a>>;
 
 /// The liveness-unrestricted counterpart of [`DefUseSuccs`]: a post-order
 /// from some roots reaches every transitive consumer, dead ones included.
 #[derive(Clone, Copy)]
-pub struct RawDefUseSuccs<'a>(&'a Graph);
+pub(crate) struct RawDefUseSuccs<'a>(&'a Graph);
 
 impl<'a> RawDefUseSuccs<'a> {
     #[inline]
-    pub fn new(graph: &'a Graph) -> Self {
+    pub(crate) fn new(graph: &'a Graph) -> Self {
         Self(graph)
     }
 }
@@ -184,14 +184,14 @@ impl graph_algorithms::walk::GraphRef for RawDefUseSuccs<'_> {
 
 /// Forward def-use edges restricted to a precomputed live set.
 #[derive(Clone, Copy)]
-pub struct DefUseSuccs<'a> {
+pub(crate) struct DefUseSuccs<'a> {
     graph: &'a Graph,
     live_nodes: &'a DenseEntitySet<NodeId>,
 }
 
 impl<'a> DefUseSuccs<'a> {
     #[inline]
-    pub fn new(graph: &'a Graph, live_nodes: &'a DenseEntitySet<NodeId>) -> Self {
+    pub(crate) fn new(graph: &'a Graph, live_nodes: &'a DenseEntitySet<NodeId>) -> Self {
         Self { graph, live_nodes }
     }
 }
@@ -233,7 +233,7 @@ impl GraphWalkInfo {
 
     /// Every node is yielded after its consumers, unless the use closes a
     /// def-use cycle.
-    pub fn postorder<'a>(&'a self, graph: &'a Graph) -> DefUsePostorder<'a> {
+    pub(crate) fn postorder<'a>(&'a self, graph: &'a Graph) -> DefUsePostorder<'a> {
         PostOrder::new(
             DefUseSuccs::new(graph, &self.live_nodes),
             self.roots.iter().copied(),

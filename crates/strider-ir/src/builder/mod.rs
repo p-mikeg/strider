@@ -104,7 +104,7 @@ impl FunctionBuilder {
             call_register_values: Vec::new(),
             internal_registers: Vec::new(),
         };
-        fb.build_entry()?;
+        fb.build_initial_memory()?;
         Ok(fb)
     }
 

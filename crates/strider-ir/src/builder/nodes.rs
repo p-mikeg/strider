@@ -14,7 +14,7 @@ use crate::region::RegionId;
 impl FunctionBuilder {
     /// Mints the `InitialMemory` node and keeps its `Memory` output as
     /// `entry_memory`.
-    pub fn build_entry(&mut self) -> Result<()> {
+    pub(super) fn build_initial_memory(&mut self) -> Result<()> {
         let memory_node = self.function_mut().graph_mut().create_node(
             NodeKind::InitialMemory,
             [],
