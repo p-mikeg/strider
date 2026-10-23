@@ -698,12 +698,14 @@ impl<'f> RangeMap<'f> {
                             return false;
                         }
                         let outputs = f.node_outputs(if_node);
-                        outputs.get(1).is_some_and(|&false_ctrl| {
-                            single_control_consumer(f, false_ctrl).is_some_and(|sink| {
-                                !matches!(f.node_kind(sink), NodeKind::Region)
-                                    && self.doms.dominates(sink, region)
+                        outputs
+                            .get(NodeKind::IF_FALSE_OUT_SLOT)
+                            .is_some_and(|&false_ctrl| {
+                                single_control_consumer(f, false_ctrl).is_some_and(|sink| {
+                                    !matches!(f.node_kind(sink), NodeKind::Region)
+                                        && self.doms.dominates(sink, region)
+                                })
                             })
-                        })
                     })
                     .then_some(k)
             })
