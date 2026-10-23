@@ -681,20 +681,27 @@ impl PyLifter {
 
     /// How `name` is classified: the `opts` entry for it when there is one,
     /// else the built-in table, else `None` for a name strider has no answer
-    /// for (which fails the lift of any function containing it).
+    /// for (which fails the lift of any function containing it).  Raises
+    /// `StriderError` where `build_cfg` would over `opts`' `call_other_abis`,
+    /// for an entry built against another arch's register table.
     #[pyo3(signature = (name, opts=None))]
     fn call_other_abi(
         slf: &Bound<'_, Self>,
         name: &str,
         opts: Option<Py<PyCfgOptions>>,
     ) -> PyResult<Option<crate::call_other_abi::PyCallOtherAbi>> {
-        let preset = try_borrow_lifter(slf)?.arch.preset();
-        if let Some(opts) = opts
-            && let Some(abi) = opts.borrow(slf.py()).call_other_abis.get(name)
-        {
-            return Ok(Some(abi.clone()));
+        let arch = try_borrow_lifter(slf)?.arch;
+        if let Some(opts) = opts {
+            let opts = opts.borrow(slf.py());
+            opts.call_other_overrides(arch)?;
+            if let Some(abi) = opts.call_other_abis.get(name) {
+                return Ok(Some(abi.clone()));
+            }
         }
-        Ok(crate::call_other_abi::PyCallOtherAbi::builtin(preset, name))
+        Ok(crate::call_other_abi::PyCallOtherAbi::builtin(
+            arch.preset(),
+            name,
+        ))
     }
 
     /// Build the control-flow graph of the function at `entry`, without
