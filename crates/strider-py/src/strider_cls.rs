@@ -47,13 +47,35 @@ pub(crate) fn build_cc(
     regs: &rsleigh::SleighRegs,
     target: strider_target::SleighArch,
 ) -> PyResult<strider_target::BuiltCallingConvention> {
-    check_source_arch(
-        cc.source_arch,
-        target,
-        format_args!("this custom CallingConvention"),
-    )?;
+    build_cc_at(cc, regs, target, None)
+}
+
+/// [`build_cc`], for the per-address override at `addr` when there is one.
+fn build_cc_at(
+    cc: &PyCallingConvention,
+    regs: &rsleigh::SleighRegs,
+    target: strider_target::SleighArch,
+    addr: Option<u64>,
+) -> PyResult<strider_target::BuiltCallingConvention> {
+    match addr {
+        None => check_source_arch(
+            cc.source_arch,
+            target,
+            format_args!("this custom CallingConvention"),
+        ),
+        Some(addr) => check_source_arch(
+            cc.source_arch,
+            target,
+            format_args!("the custom per-address CallingConvention at {addr:#x}"),
+        ),
+    }?;
     match &cc.inner {
-        crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(into_strider_err),
+        crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(|e| {
+            into_strider_err(match addr {
+                None => e,
+                Some(addr) => anyhow::anyhow!("per-address CC at {addr:#x} unresolved: {e:?}"),
+            })
+        }),
         crate::cc::CcImpl::Custom(built) => Ok(*built.clone()),
     }
 }
@@ -67,22 +89,7 @@ pub(crate) fn build_per_address_ccs(
 ) -> PyResult<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>> {
     per_address_ccs_py
         .iter()
-        .map(|(&addr, py_cc)| {
-            check_source_arch(
-                py_cc.source_arch,
-                target,
-                format_args!("the custom per-address CallingConvention at {addr:#x}"),
-            )?;
-            let built = match &py_cc.inner {
-                crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(|e| {
-                    into_strider_err(anyhow::anyhow!(
-                        "per-address CC at {addr:#x} unresolved: {e:?}"
-                    ))
-                })?,
-                crate::cc::CcImpl::Custom(built) => *built.clone(),
-            };
-            Ok((addr, built))
-        })
+        .map(|(&addr, py_cc)| Ok((addr, build_cc_at(py_cc, regs, target, Some(addr))?)))
         .collect::<PyResult<_>>()
 }
 
