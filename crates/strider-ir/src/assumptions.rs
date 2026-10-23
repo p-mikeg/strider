@@ -164,7 +164,8 @@ pub struct AssumptionOptions {
     /// brings one in.  A constant-address store under
     /// [`stack_global_disjoint`](Self::stack_global_disjoint), and a store
     /// through a [`noalias_allocators`](Self::noalias_allocators) result,
-    /// pass whatever this says.  Default ON.
+    /// and a call whose convention preserves memory, pass whatever this
+    /// says.  Default ON.
     ///
     /// The shape that needs it is an ARM `push {lr}; ... bl ...; pop {pc}`
     /// return: the call in between writes memory the walk cannot place, and
