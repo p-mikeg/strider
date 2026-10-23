@@ -9,12 +9,13 @@ register modelled as an SSA variable.
 
 - `Lifter<R>`, the engine: built once per architecture over an
   `rsleigh::MemReader` `R`, whose `strider_cfg::DecodeEngine<R>` it wraps, and
-  reused across functions and rebuild rounds, since `Sleigh::regs()` is
-  expensive and the register table never changes.
+  reused across functions and rebuild rounds, since that engine carries the
+  decode context across builds.
   `build_cfg(entry, cfg_opts)` decodes; `build_ir(cfg, cc)` /
-  `build_ir_with(cfg, cc, cfg_opts, per_address_ccs)` lift, given the
-  `CfgOptions` the cfg was built with. The calling convention is per function,
-  hence an argument rather than engine state.
+  `build_ir_with(cfg, cc, cfg_opts, per_address_ccs, claims)` lift, given the
+  `CfgOptions` the cfg was built with and the claims the function holds. The
+  calling convention is per function, hence an argument rather than engine
+  state.
 - `LiftOutcome`: the `Function`, plus `unresolved_branches` (each unresolved
   `BranchIndirect`'s pcode address and its `IndirectBranch` placeholder),
   `switch_anchors` (each seated `Switch`, so a resolver can re-derive and WIDEN
