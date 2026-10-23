@@ -58,13 +58,15 @@
   are `SleighArch.reg` / `reg_name` / `name()`, and a `sleigh=` other than a
   `SleighArch` raises `TypeError: argument 'sleigh': ... cannot be converted
   to 'SleighArch'`.
-- `Lifter.optimize(function, pipeline=None, assumptions=None)` takes the
-  claims to add as `assumptions=`, an `AssumptionOptions`, in place of
-  `opts=`, whose other fields it ignored. It adds them to the function's and
-  withdraws none. `assumptions=None` adds nothing, where `opts=None` applied
-  the three default claims; a set that leaves out a claim already in force
-  raises `StriderError` naming it, and each missing allocator address, before
-  anything runs. Pass
+- `Lifter.optimize(function, pipeline=None, opts=None)` is
+  `Function.optimize(assumptions=None, pipeline=None)`, run against the rom of
+  the `Lifter` that produced the function, so the error for a function from
+  another handle is gone. It takes the claims to add as `assumptions=`, an
+  `AssumptionOptions`, in place of `opts=`, whose other fields it ignored. It
+  adds them to the function's and withdraws none. `assumptions=None` adds
+  nothing, where `opts=None` applied the three default claims; a set that
+  leaves out a claim already in force raises `StriderError` naming it, and
+  each missing allocator address, before anything runs. Pass
   `assumptions=function.assumptions | AssumptionOptions.none(escape_analysis=True)`
   to add one; analyse again to drop one.
 - `AssumptionOptions` is unhashable: `hash()`, set membership and dict keys
@@ -446,7 +448,7 @@
   a register (Linux's boot-time `safe_svcmode_maskall`, the switch into FIQ
   in `fiqasm.S`) and for a saved mode restored after a switch made since the
   save (the return to SVC in `fiqasm.S`'s `__set_fiq_regs`). The lift reads
-  it, so `Lifter.optimize` raises `StriderError` on a set that adds it.
+  it, so `Function.optimize` raises `StriderError` on a set that adds it.
 - `strider.template.capture_typed(c, inner)` builds `inner` at the width of
   the value `c` bound, as Rust's `capture_typed` does: the way to type a
   constant nothing else gives a width.
@@ -869,7 +871,7 @@
   `False` in the abi3 wheel.
 - A pattern dropped from a thread-local destructor after strider-pattern's
   drop pit was torn down aborted the process; it is dropped in place.
-- Python: `Lifter.optimize(f)` no longer drops the `noalias_allocators`
+- Python: `f.optimize()` no longer drops the `noalias_allocators`
   `analyze` ran under, and with them every `heap_only()` match: claims
   accumulate on the function instead of being replaced.
 - `CallStackArgCollect` no longer attaches a stack argument that one

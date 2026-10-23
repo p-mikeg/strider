@@ -83,7 +83,7 @@ def test_optimize_keeps_the_allocator_set_analyze_ran_under():
     """`optimize` without `assumptions` adds no claim and keeps the ones
     `analyze` ran under, so the store stays `heap_only`."""
     lift, g = _heap_function()
-    lift.optimize(g)
+    g.optimize()
     assert len(g.find_all(store().heap_only())) == 1
 
 
@@ -93,9 +93,7 @@ def test_optimize_updates_the_allocator_set_rewrite_uses():
     one."""
     lift, g = _heap_function(allocators=())
     assert g.find_all(store().heap_only()) == []
-    lift.optimize(
-        g, assumptions=strider.lift.AssumptionOptions(noalias_allocators=[_HEAP_ALLOCATOR])
-    )
+    g.optimize(assumptions=strider.lift.AssumptionOptions(noalias_allocators=[_HEAP_ALLOCATOR]))
     assert len(g.find_all(store().heap_only())) == 1
     x, y = Capture(), Capture()
     g.rewrite(find=int_mul(var(x), var(y)), replace=tpl.var(x))

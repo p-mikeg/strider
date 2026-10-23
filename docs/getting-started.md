@@ -150,5 +150,6 @@ first; its "Breaking, Python" section says how to port each of these:
 - `BoundCapture` loses its reader properties: `m[c].uint` is `m.uint(c)`.
 - A `strider.pattern` pattern is no longer a rewrite right-hand side: spell
   it with `strider.template`.
-- `Lifter.optimize` takes `assumptions=` in place of `opts=`.
+- `Lifter.optimize(function, ...)` is `function.optimize(assumptions=...,
+  pipeline=...)`, and takes `assumptions=` in place of `opts=`.
 - `AssumptionOptions` is unhashable and compares by value.

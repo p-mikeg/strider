@@ -51,7 +51,7 @@ def _folded_constants(build, operand: float):
         find=float_add(var(x), var(y)), replace=build(tpl.float_const(_bits(operand)))
     )
     assert g.validate() is None
-    lift.optimize(g)
+    g.optimize()
     c = Capture()
     return {_value(m.float_bits(c)) for m in g.find_all(float_const(c))}
 

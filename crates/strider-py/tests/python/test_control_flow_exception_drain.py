@@ -76,7 +76,7 @@ def test_stash_does_not_leak_into_optimize_or_dot(exc_type):
     reader = _Reader(None)
     lift = _lifter(reader)
     result = lift.analyze(_BASE, strider.sleigh.CallingConvention.x86_64_systemv())
-    lift.optimize(result.function)
+    result.function.optimize()
     assert result.function.neighborhood_dot(
         result.function.entry_node(), pretty=True
     )

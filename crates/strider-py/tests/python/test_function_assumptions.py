@@ -92,14 +92,14 @@ def test_each_analyze_starts_from_its_own_claims():
 
 def test_optimize_without_assumptions_adds_no_claim():
     lift, g = _spill_at_floor()
-    lift.optimize(g)
+    g.optimize()
     assert g.assumptions == AssumptionOptions.none()
     assert len(g.find_all(load())) == 1, "optimize turned stack_global_disjoint on"
 
 
 def test_the_floor_as_a_set_adds_no_claim():
     lift, g = _spill_at_floor()
-    lift.optimize(g, assumptions=AssumptionOptions.none())
+    g.optimize(assumptions=AssumptionOptions.none())
     assert g.assumptions == AssumptionOptions.none()
     assert len(g.find_all(load())) == 1, "none() added a claim"
 
@@ -107,12 +107,12 @@ def test_the_floor_as_a_set_adds_no_claim():
 def test_optimize_takes_no_options():
     lift, g = _spill_at_floor()
     with pytest.raises(TypeError, match="opts"):
-        lift.optimize(g, opts=LifterOptions())  # type: ignore[call-arg]
+        g.optimize(opts=LifterOptions())  # type: ignore[call-arg]
 
 
 def test_optimize_keeps_the_allocator_in_force():
     lift, g = _heap()
-    lift.optimize(g)
+    g.optimize()
     assert g.assumptions.noalias_allocators == [_ALLOCATOR]
 
 
@@ -125,7 +125,7 @@ def test_a_named_set_that_omits_a_claim_in_force_raises():
             "in force on this Function: stack_global_disjoint, noalias_allocators (0x1100). "
         ),
     ) as raised:
-        lift.optimize(g, assumptions=narrower)
+        g.optimize(assumptions=narrower)
     assert "function.assumptions | <your set>" in str(raised.value)
 
 
@@ -135,7 +135,7 @@ def test_a_refused_optimize_runs_nothing():
     assert len(g.find_all(load())) == 1, "the reload stays without the claim"
     before = g.assumptions
     with pytest.raises(strider.StriderError, match="noalias_allocators"):
-        lift.optimize(g, assumptions=AssumptionOptions())
+        g.optimize(assumptions=AssumptionOptions())
     assert len(g.find_all(load())) == 1, "a refused optimize ran"
     assert g.assumptions == before
 
@@ -147,13 +147,13 @@ def test_the_omission_names_only_the_missing_allocators():
         strider.StriderError,
         match=re.escape("in force on this Function: noalias_allocators (0x1100, 0x1300). "),
     ):
-        lift.optimize(g, assumptions=partial)
+        g.optimize(assumptions=partial)
 
 
 def test_the_union_of_the_claims_in_force_adds_one():
     lift, g = _heap()
     wider = g.assumptions | AssumptionOptions.none(escape_analysis=True)
-    lift.optimize(g, assumptions=wider)
+    g.optimize(assumptions=wider)
     assert g.assumptions.escape_analysis is True
     assert g.assumptions.noalias_allocators == [_ALLOCATOR]
     assert g.assumptions.stack_global_disjoint is True
@@ -162,7 +162,7 @@ def test_the_union_of_the_claims_in_force_adds_one():
 def test_none_with_a_keyword_adds_exactly_that_claim():
     lift, g = _spill_at_floor()
     wider = g.assumptions | AssumptionOptions.none(escape_analysis=True)
-    lift.optimize(g, assumptions=wider)
+    g.optimize(assumptions=wider)
     assert g.assumptions == AssumptionOptions.none(escape_analysis=True)
 
 
@@ -196,7 +196,7 @@ def test_a_keyword_set_carries_its_defaults_into_the_union():
         match="msr_register_keeps_mode and fp_rounding_mode_is_nearest are read by the "
         "lift; analyse again with them",
     ):
-        lift.optimize(g, assumptions=g.assumptions | AssumptionOptions(escape_analysis=True))
+        g.optimize(assumptions=g.assumptions | AssumptionOptions(escape_analysis=True))
     assert g.assumptions == AssumptionOptions.none(), "a refused set adds nothing"
     assert len(g.find_all(load())) == 1, "a refused set runs nothing"
     wider = AssumptionOptions(
@@ -204,7 +204,7 @@ def test_a_keyword_set_carries_its_defaults_into_the_union():
         msr_register_keeps_mode=False,
         fp_rounding_mode_is_nearest=False,
     )
-    lift.optimize(g, assumptions=g.assumptions | wider)
+    g.optimize(assumptions=g.assumptions | wider)
     assert g.assumptions == wider
     assert len(g.find_all(load())) == 0, "stack_global_disjoint did not forward"
 

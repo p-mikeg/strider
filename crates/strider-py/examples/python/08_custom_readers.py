@@ -90,7 +90,7 @@ n = edited.rewrite(
 )
 print(f"rewrote {n} site(s)")
 
-lft.optimize(edited)
+edited.optimize()
 orig_shapes = len(fn.find_all(int_add(function_arg(0), var(k)), ignore_casts=True))
 edited_shapes = len(edited.find_all(int_add(function_arg(0), var(k)), ignore_casts=True))
 print(f"`arg0 + <captured>` shapes, original: {orig_shapes}, clone after rewrite: {edited_shapes}")

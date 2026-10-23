@@ -118,7 +118,7 @@ impl PyFunction {
     }
 
     /// The claims in force: the ones `analyze` ran under, plus every set
-    /// `Lifter.optimize` added since. A copy; no optimize withdraws a claim,
+    /// `optimize` added since. A copy; no optimize withdraws a claim,
     /// and none adds `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest`,
     /// which only the lift reads.
     #[getter]
@@ -126,6 +126,40 @@ impl PyFunction {
         self.with_read_value(|f| crate::options::PyAssumptionOptions {
             inner: f.assumptions().clone(),
         })
+    }
+
+    /// Run an optimizer pipeline over this graph in place.  `pipeline=None`
+    /// runs the default pipeline; a given `OptimizerPipeline` is copied, so it
+    /// stays usable.  The claims `assumptions` holds join `self.assumptions`
+    /// and none is withdrawn: `assumptions=None` adds nothing, and a set that
+    /// leaves out a claim already in force, or adds `msr_register_keeps_mode`
+    /// or `fp_rounding_mode_is_nearest` (read by the lift, so analyse again
+    /// with it), raises `StriderError` before anything runs.  Add one with::
+    ///
+    ///     function.optimize(assumptions=function.assumptions
+    ///                       | AssumptionOptions.none(escape_analysis=True))
+    ///
+    /// Runs against the rom of the `Lifter` that produced this function, so
+    /// `LoadReadOnly` folds here exactly as it does inside `analyze`, and
+    /// raises `StriderError` while that `Lifter` is in an `analyze`,
+    /// `build_cfg` or `add_elf`.  Invalidates outstanding `Node` / `Match`
+    /// handles for this function.
+    ///
+    /// Holds the GIL for the whole run, unlike `analyze`.
+    #[pyo3(signature = (assumptions=None, pipeline=None))]
+    fn optimize(
+        &self,
+        py: Python<'_>,
+        assumptions: Option<PyRef<'_, crate::options::PyAssumptionOptions>>,
+        pipeline: Option<PyRef<'_, crate::opt::PyOptimizerPipeline>>,
+    ) -> PyResult<()> {
+        let lifter = self.cfg.bind(py).try_borrow()?.lifter.clone_ref(py);
+        crate::strider_cls::optimize_function(
+            lifter.bind(py),
+            self,
+            pipeline.as_deref(),
+            assumptions.as_deref(),
+        )
     }
 
     /// Render the IR graph to Graphviz DOT. Returns the string when `path` is

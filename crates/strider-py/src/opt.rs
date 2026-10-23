@@ -41,7 +41,7 @@ impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
 
 /// Builder for an optimizer pipeline.  Construct via `empty()` or
 /// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
-/// `Lifter.optimize(function, pipeline)`.  Applying a pipeline copies its
+/// `Function.optimize(pipeline=...)`.  Applying a pipeline copies its
 /// passes, so one pipeline drives any number of calls.
 #[pyclass(name = "OptimizerPipeline", module = "strider.opt")]
 pub struct PyOptimizerPipeline {

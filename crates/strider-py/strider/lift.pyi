@@ -46,7 +46,7 @@ class AnalyzeResult(NamedTuple):
 
 class AssumptionOptions:
     """Claims about the code being analysed, for `LifterOptions(assumptions=...)`
-    and `Lifter.optimize(assumptions=...)`.
+    and `Function.optimize(assumptions=...)`.
 
     None is checked, and each one's risky value is the positive one, so any of
     them can make the answer wrong on valid input. `stack_global_disjoint`,
@@ -58,7 +58,7 @@ class AssumptionOptions:
     `docs/python-api.md` section 2.
 
     Claims accumulate on a `Function` (`Function.assumptions`): `analyze`
-    starts from the ones it is given, `Lifter.optimize` adds, none withdraws.
+    starts from the ones it is given, `Function.optimize` adds, none withdraws.
     The lift reads `msr_register_keeps_mode` and `fp_rounding_mode_is_nearest`,
     so `optimize` refuses to add either: analyse again with the claim.
     """
@@ -320,31 +320,6 @@ class Lifter:
         Rust frames below the callback and no exception can be raised for it.
         Analyse on non-daemon threads and join them, which is clean.
         """
-        ...
-    def optimize(
-        self,
-        function: Function,
-        pipeline: Optional[OptimizerPipeline] = ...,
-        assumptions: Optional[AssumptionOptions] = ...,
-    ) -> None:
-        """Run an optimizer pipeline over `function` in place. `pipeline=None`
-        runs the default pipeline; a given pipeline is copied, so it stays
-        usable. The claims `assumptions` holds join `function.assumptions` and
-        none is withdrawn: `assumptions=None` adds nothing, and a set that
-        leaves out a claim already in force, or adds `msr_register_keeps_mode`
-        or `fp_rounding_mode_is_nearest` (read by the lift, so analyse again with
-        it), raises `StriderError`
-        before anything runs. Add one with::
-
-            prog.optimize(function, assumptions=function.assumptions
-                          | AssumptionOptions.none(escape_analysis=True))
-
-        Runs against this handle's `rom`, so `LoadReadOnly` folds here exactly
-        as it does inside `analyze`. Invalidates outstanding `Node` / `Match`
-        handles and every node id for `function`.
-
-        Holds the GIL for the whole run, unlike `analyze`: the run borrows the
-        function for mutation."""
         ...
     def pcode_at(self, entry: int, addr: int) -> str:
         """Decode from `entry` one instruction at a time until `addr`, and
