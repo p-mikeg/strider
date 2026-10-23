@@ -39,7 +39,7 @@ impl Optimizer for DeadBranchElimination {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        ctx: &mut OptCtx<'_>,
+        ctx: &OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let folded = run_peephole(&DbeFold, edit, ctx)?;
         if folded.changed() {
@@ -67,7 +67,7 @@ impl PeepholePass for DbeFold {
         &self,
         escapes: &mut EscapeOracle,
         edit: &mut crate::EditFunction<'_>,
-        _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
+        _opt_ctx: &crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
         let Some(selection) = constant_selection(edit, root) else {

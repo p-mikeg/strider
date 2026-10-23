@@ -105,7 +105,7 @@ pub(crate) trait PeepholePass {
         &self,
         sweep: &mut Self::Sweep,
         edit: &mut crate::EditFunction<'_>,
-        opt_ctx: &mut crate::pipeline::OptCtx<'_>,
+        opt_ctx: &crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite>;
 }
@@ -118,7 +118,7 @@ pub(crate) trait PeepholePass {
 pub(crate) fn run_peephole<P: PeepholePass>(
     pass: &P,
     edit: &mut crate::EditFunction<'_>,
-    opt_ctx: &mut crate::pipeline::OptCtx<'_>,
+    opt_ctx: &crate::pipeline::OptCtx<'_>,
 ) -> Result<OptimizationResult> {
     let mut sweep = P::Sweep::default();
     // Seeds iterate in reverse-postorder (or postorder, per `seed_order`), not
@@ -192,7 +192,7 @@ impl<P: PeepholePass + Clone + Send + 'static> crate::pipeline::Optimizer for P 
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        opt_ctx: &mut crate::pipeline::OptCtx<'_>,
+        opt_ctx: &crate::pipeline::OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         run_peephole(self, edit, opt_ctx)
     }
@@ -254,7 +254,7 @@ mod tests {
             &self,
             _sweep: &mut (),
             edit: &mut crate::EditFunction<'_>,
-            _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
+            _opt_ctx: &crate::pipeline::OptCtx<'_>,
             root: NodeId,
         ) -> Result<PeepholeRewrite> {
             use cranelift_entity::EntityRef;
@@ -324,8 +324,8 @@ mod tests {
         let mut fg = add_two_consts();
         let pass = ScriptedPass::<true>::new(match_nothing, true);
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
+        let octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut edit, &octx).unwrap();
         assert_eq!(r, OptimizationResult::NoChange);
         assert!(pass.visit_log.borrow().is_empty());
     }
@@ -335,8 +335,8 @@ mod tests {
         let mut fg = add_two_consts();
         let pass = ScriptedPass::<false>::new(match_add, true);
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
+        let octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut edit, &octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         assert!(!pass.visit_log.borrow().is_empty());
 
@@ -363,8 +363,8 @@ mod tests {
         .unwrap();
         let pass = ScriptedPass::<false>::new(match_add, true);
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
-        let _ = run_peephole(&pass, &mut edit, &mut octx).unwrap();
+        let octx = crate::pipeline::OptCtx::new(None);
+        let _ = run_peephole(&pass, &mut edit, &octx).unwrap();
         let log = pass.visit_log.borrow().clone();
         assert_eq!(log.len(), 2, "exactly two visits, no re-enqueue: {log:?}");
     }
@@ -382,8 +382,8 @@ mod tests {
         .unwrap();
         let pass = ScriptedPass::<true>::new(match_add, true);
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
+        let octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut edit, &octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         // The exact count depends on worklist dedup policy; only the lower
         // bound of 2 is guaranteed.
@@ -406,10 +406,10 @@ mod tests {
             ..ScriptedPass::<true>::new(match_add, true)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
+        let octx = crate::pipeline::OptCtx::new(None);
         // The next id to be handed out is the new `Add`'s.
         let new_node_idx = edit.graph_ref().next_node_id().index() as u32;
-        let r = run_peephole(&pass, &mut edit, &mut octx).unwrap();
+        let r = run_peephole(&pass, &mut edit, &octx).unwrap();
         assert_eq!(r, OptimizationResult::Changed);
         let log = pass.visit_log.borrow().clone();
         assert!(
@@ -439,8 +439,8 @@ mod tests {
             ..ScriptedPass::<false>::new(match_add, false)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
-        run_peephole(&pass, &mut edit, &mut octx).unwrap();
+        let octx = crate::pipeline::OptCtx::new(None);
+        run_peephole(&pass, &mut edit, &octx).unwrap();
         let log = pass.visit_log.borrow().clone();
         assert_eq!(log.len(), 1, "only the inner Add is visited: {log:?}");
         assert!(
@@ -487,8 +487,8 @@ mod tests {
             ..ScriptedPass::<false>::new(match_add, false)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut edit, &mut octx);
+        let octx = crate::pipeline::OptCtx::new(None);
+        let r = run_peephole(&pass, &mut edit, &octx);
         assert!(r.is_err(), "errored pass must surface error");
         let msg = format!("{:?}", r.unwrap_err());
         assert!(
@@ -509,8 +509,8 @@ mod tests {
             ..ScriptedPass::<true>::new(match_add, true)
         };
         let mut edit = crate::EditFunction::new(&mut fg);
-        let mut octx = crate::pipeline::OptCtx::new(None);
-        let err = run_peephole(&pass, &mut edit, &mut octx)
+        let octx = crate::pipeline::OptCtx::new(None);
+        let err = run_peephole(&pass, &mut edit, &octx)
             .expect_err("a non-confluent pass must error, not hang");
         let msg = format!("{err:#}");
         assert!(msg.contains("did not converge"), "unexpected error: {msg}");

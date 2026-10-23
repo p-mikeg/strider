@@ -338,7 +338,7 @@ fn lift(cases: &[Case]) -> (Vec<[Function; 2]>, rsleigh::Vn) {
             .function;
         let mut opt = raw.clone();
         strider_orchestrator::opt::default_pipeline()
-            .run(&mut opt, &mut strider_orchestrator::opt::OptCtx::new(None))
+            .run(&mut opt, &strider_orchestrator::opt::OptCtx::new(None))
             .expect("pipeline");
         lifts.push([raw, opt]);
         at += size;

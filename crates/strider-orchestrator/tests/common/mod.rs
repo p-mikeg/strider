@@ -321,10 +321,7 @@ pub(crate) fn optimize(
         assume_incoming_args_survive_calls: true,
         ..strider_orchestrator::opt::AssumptionOptions::none()
     });
-    p.run(
-        function,
-        &mut strider_orchestrator::opt::OptCtx::new(Some(rom)),
-    )
+    p.run(function, &strider_orchestrator::opt::OptCtx::new(Some(rom)))
 }
 
 use strider_ir::node::NodeKind;

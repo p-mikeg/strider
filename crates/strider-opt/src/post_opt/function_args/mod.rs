@@ -22,7 +22,7 @@ impl PostOptimizer for FunctionArgDetect {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        _opt_ctx: &mut crate::OptCtx<'_>,
+        _opt_ctx: &crate::OptCtx<'_>,
     ) -> Result<()> {
         let cc = edit.function().default_cc();
         let first_stack_arg = cc.arg_passing_regs.len();
