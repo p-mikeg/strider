@@ -95,9 +95,10 @@ pub(super) fn scan_arg_window(
             // Nothing the caller wrote as an argument reaches the slot, so the
             // argument list ends below it.
             //
-            // KNOWN LIMIT: an argument whose alignment exceeds the slot stride
-            // leaves a hole the psABI still hands the callee, and this reads
-            // that hole as the end. Continuing past it would blind the window
+            // KNOWN LIMIT: an argument slot the caller leaves unwritten (the
+            // hole an argument aligned past the slot stride leaves, or an
+            // argument it never stores) still belongs to the callee, and this
+            // reads it as the end. Continuing past it would blind the window
             // from the hole up, which is indistinguishable from a spill sitting
             // above the arguments and would stop forwarding for every one of
             // those. Only the callee's arity separates the two, and the IR does
