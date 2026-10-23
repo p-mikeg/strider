@@ -398,7 +398,8 @@
   even at every conversion that rounds by them (`cvtsd2si`, `cvtss2si`,
   `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`,
   `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`, the 64-bit `cvtsi2sd` and the scalar
-  VEX forms; `fctid`, `fctiw`, `fctidu`, `fctiwu`). Off, each one reads the
+  VEX forms; `fctid`, `fctiw`, `fctidu`, `fctiwu`, `fcfid*`, `frsp`,
+  `xscvdpspn`). Off, each one reads the
   mode and selects among nearest even, down, up and toward zero, so a mode
   `ldmxcsr` or `mtfsfi` sets folds. `AssumptionOptions.none()` clears it; the
   lift reads it, so `optimize` refuses to add it. Before, the SSE forms
@@ -546,6 +547,13 @@
   0 for the unsigned forms), where it gave the x86 indefinite.
 - Python: PowerPC `mtfsfi` writes its immediate U to the field, where it
   wrote U shifted left one bit, into the next field.
+- Python: PowerPC `fcfidu` and `fcfidus` convert the doubleword as
+  unsigned. They converted it as signed, so `(double)(1ull << 63)` gave
+  -9.22e18. `frsp`, `fcfid`, `fcfids`, `fcfidu`, `fcfidus` and `xscvdpspn`
+  round by FPSCR.RN without `fp_rounding_mode_is_nearest`; they always
+  rounded to nearest. The signed `fcti*` forms set VXCVI when the
+  conversion is invalid, and `mtfsfi` to field 0 recomputes FEX and VX
+  rather than taking them from U.
 - Python: ppc64 `xsadddp` sets the FPSCR bits `fadd` sets (FPRF, VXSNAN
   and the summaries). It set none, so an `mffs` or `mcrfs` after it read the
   bits from before it, and a branch on them folded. It shares `fadd`'s two
