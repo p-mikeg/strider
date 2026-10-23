@@ -11,6 +11,9 @@
 mod common;
 
 use common::Arch;
+use common::cone::{Val, lift_image, lift_regs};
+use strider_ir::node::NodeKind;
+use strider_ir::{IRViewer, IRWalker};
 use strider_orchestrator::opt::AssumptionOptions;
 
 const BASE: u64 = 0x10000;
@@ -124,5 +127,129 @@ fn xsadddp_works_in_doubleword_zero() {
             2.5f64.to_bits(),
             "{arch:?}"
         );
+    }
+}
+
+fn int(v: &Val) -> u128 {
+    match v {
+        Val::Int(x) => *x,
+        other => panic!("{other:?} is no register value"),
+    }
+}
+
+/// `xscvdpspn vs0, vs1` leaves doubleword 1 of vs0, which the ISA leaves
+/// undefined, as it was.
+#[test]
+fn xscvdpspn_keeps_doubleword_one() {
+    for arch in ARCHES {
+        let lifted = lift_regs(
+            arch,
+            &[0xf000_0c2c, BLR],
+            &["vs0"],
+            &["vs0", "f1"],
+            &AssumptionOptions::default(),
+        );
+        let dw1 = 0x0123_4567_89ab_cdef_u128;
+        let x = 1.5f32;
+        let got = int(&lifted.run(&[dw1, f64::from(x).to_bits().into()], 0)[0]);
+        let w = u128::from(x.to_bits());
+        assert_eq!(got, w << 96 | w << 64 | dw1, "{arch:?}: got {got:#x}");
+    }
+}
+
+/// `lxsd v2, 64(r4)` loads doubleword 0 of vs34 and zeroes doubleword 1.
+#[test]
+fn lxsd_loads_doubleword_zero_and_zeroes_doubleword_one() {
+    for arch in ARCHES {
+        let endian = arch.sleigh().endianness();
+        let mut bytes = common::words_image(&[0x3c80_0001, 0xe444_0042, BLR], endian);
+        bytes.resize(DATA, 0);
+        let mem = 0x403f_3e3d_3c3b_3a39_u64;
+        bytes.extend_from_slice(&match endian {
+            strider_target::Endianness::Big => mem.to_be_bytes(),
+            strider_target::Endianness::Little => mem.to_le_bytes(),
+        });
+        let lifted = lift_image(arch, bytes, &["vs34"], &[], &AssumptionOptions::default());
+        let got = int(&lifted.run(&[], u128::MAX)[0]);
+        assert_eq!(got, u128::from(mem) << 64, "{arch:?}: got {got:#x}");
+    }
+}
+
+/// `stxvw4x vs1, 0, r4` stores word i of vs1 at r4 + 4i, each in the
+/// target's byte order, as `lxvw4x` loads them.
+#[test]
+fn stxvw4x_stores_word_zero_first() {
+    // addi r4, r1, -64; stxvw4x vs1, 0, r4; lwz r3/r5/r6/r7, 0/4/8/12(r4)
+    let words = [
+        0x3881_ffc0,
+        0x7c20_2718,
+        0x8064_0000,
+        0x80a4_0004,
+        0x80c4_0008,
+        0x80e4_000c,
+        BLR,
+    ];
+    let vs1 = 0x0011_2233_4455_6677_8899_aabb_ccdd_eeff_u128;
+    for arch in ARCHES {
+        let lifted = lift_regs(
+            arch,
+            &words,
+            &["r3", "r5", "r6", "r7"],
+            &["vs1"],
+            &AssumptionOptions::default(),
+        );
+        let got: Vec<u128> = lifted.run(&[vs1], 0).iter().map(int).collect();
+        let want: Vec<u128> = (0..4).map(|i| vs1 >> (96 - 32 * i) & 0xffff_ffff).collect();
+        assert_eq!(got, want, "{arch:?}");
+    }
+}
+
+/// The scalar multiply-add CallOthers read their target, the addend or
+/// multiplicand: XT for `xs*m*sp`, vrD for `xs*m*qp`.
+#[test]
+fn vsx_multiply_add_ops_read_their_target() {
+    let sp = [
+        0xf022_1808u32,
+        0xf022_1848,
+        0xf022_1888,
+        0xf022_18c8,
+        0xf022_1c08,
+        0xf022_1c48,
+        0xf022_1c88,
+        0xf022_1cc8,
+    ];
+    let qp = [
+        0xfc43_2308u32,
+        0xfc43_2309,
+        0xfc43_2348,
+        0xfc43_2349,
+        0xfc43_2388,
+        0xfc43_2389,
+        0xfc43_23c8,
+        0xfc43_23c9,
+    ];
+    let forms = sp
+        .map(|w| (w, "vs1"))
+        .into_iter()
+        .chain(qp.map(|w| (w, "vs34")));
+    for (word, target) in forms {
+        let lifted = lift_regs(
+            Arch::Ppc64le,
+            &[word, BLR],
+            &[target],
+            &[target],
+            &AssumptionOptions::default(),
+        );
+        let (f, vn) = (&lifted.f, lifted.input(0));
+        let reads = f
+            .walk()
+            .filter(|&n| matches!(f.node_kind(n), NodeKind::CallOther { .. }))
+            .any(|n| {
+                f.node_inputs(n).into_iter().any(|v| {
+                    matches!(f.node_kind(f.producer(v)),
+                        NodeKind::InitialVar(id) if f.initial_vn(*id) == vn)
+                })
+            });
+        assert!(reads, "{word:#x}: no CallOther reads the incoming {target}");
     }
 }
