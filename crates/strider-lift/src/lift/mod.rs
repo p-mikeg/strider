@@ -108,8 +108,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     pub fn new(arch: strider_target::SleighArch, reader: R) -> Result<Self> {
         let engine = strider_cfg::DecodeEngine::new(arch, reader)?;
         let sleigh = engine.sleigh();
-        let sleigh_regs = arch.names().regs();
-        let declared_reg_vns = sleigh_regs.vns().collect();
         // `VnSpace::RAM` is the shortcut byte `b'r'`, which Sleigh derives from
         // the first character of a space's name, bumping on collision.  A
         // second processor space named with an `r` would take a bumped
@@ -134,6 +132,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
                 "{arch:?}: \"ram\" has word size {ram_word_size}, and the lift indexes it in bytes"
             ));
         }
+        // After the ram checks: `names` panics on the sla they refuse.
+        let sleigh_regs = arch.names().regs();
+        let declared_reg_vns = sleigh_regs.vns().collect();
         let space_ids = sleigh.space_ids();
         // Capture and carry are paired BOTH ways: `name_to_vn` answers `None`
         // for a misspelling rather than erroring, so a one-directional check
