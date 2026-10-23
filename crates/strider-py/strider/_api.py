@@ -280,21 +280,21 @@ def load_elf(
     bytes. A writable-and-executable mapping is kept either way. With it off,
     every relocation field still mapped (in code, a `.rodata` table, a TEXTREL
     image's instructions) serves its file bytes: the addend or the link-time
-    value, not the relocated one. With it on, an image whose relocation
-    section headers name more than twice the entries the file holds at its
+    value, not the relocated one. With it on, a linked image is relocated from
+    the tables its dynamic tags place, as the loader reads them, Android
+    packed ones included, whatever its section headers say. An image whose
+    relocation tables name more than twice the entries the file holds at their
     smallest entry raises `StriderError`, and so does one whose code
-    (`DT_TEXTREL`, or a writable-and-executable mapping) a dynamic relocation
-    table strider does not read may relocate: one no section header covers, as
-    after `llvm-objcopy --strip-sections`, or an Android packed one.
+    (`DT_TEXTREL`, or a writable-and-executable mapping) a table the tags
+    place but strider cannot read or decode may relocate.
 
     `relocated_got_is_rom` (default `False`) additionally serves `.got` and
     `.data.rel.ro` as READ-ONLY memory, so a load through a GOT slot folds to
     the address the slot holds. It is what resolves a PIC jump table whose
     base comes out of the GOT.
 
-    An image carrying relocations strider does not read, Android packed
-    ones (lld's `--pack-dyn-relocs=android`) or a `PT_DYNAMIC` table no
-    section header covers, serves neither.
+    An image with a table its dynamic tags place that strider cannot read or
+    decode serves neither.
 
     A slot whose load-time value only the dynamic loader computes stays
     unmapped, and a load through it does not fold: one under a relocation
@@ -484,8 +484,8 @@ class ElfLifter(Lifter):
         relocation field still mapped as its file bytes, as in `load_elf`.
         With it on, an image whose relocation section headers name more than
         twice the entries the file holds at its smallest entry, or whose code
-        a dynamic relocation table strider does not read may relocate, raises
-        `StriderError`, as in `load_elf`.
+        a dynamic relocation table strider cannot read or decode may relocate,
+        raises `StriderError`, as in `load_elf`.
 
         `relocated_got_is_rom` is `load_elf`'s unchecked claim, made for THIS
         image only: it does not inherit the handle's, since one shared
