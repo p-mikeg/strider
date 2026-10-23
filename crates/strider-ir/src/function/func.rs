@@ -244,7 +244,7 @@ impl Function {
     }
 
     /// In allocation order.
-    pub fn vn_ids(&self) -> impl Iterator<Item = crate::node::InitialVnId> + '_ {
+    pub(crate) fn vn_ids(&self) -> impl Iterator<Item = crate::node::InitialVnId> + '_ {
         self.vn_interner.keys()
     }
 
