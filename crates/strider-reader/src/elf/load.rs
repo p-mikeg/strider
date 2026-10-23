@@ -208,9 +208,9 @@ impl OwnedElf {
     /// When a mapping's data can't be read, or its `address + length` would
     /// exceed `u64::MAX`; when a relocating `mode`'s relocation section
     /// headers name more than twice the entries the file holds at its
-    /// smallest entry, or a dynamic relocation table no walk reads (no
-    /// section header covers it, or it is Android packed) may relocate code
-    /// (`DT_TEXTREL`, or a writable and executable mapping); plus anything
+    /// smallest entry, or a table the dynamic tags place that cannot be read
+    /// or decoded may relocate code (`DT_TEXTREL`, or a writable and
+    /// executable mapping); plus anything
     /// [`checked_file`](Self::checked_file) reports.
     pub fn image(&self, source: RegionSource, mode: RelocationMode) -> Result<ElfImage> {
         let obj = self.checked_file()?;

@@ -4,9 +4,9 @@
 //!
 //! ET_EXEC / ET_DYN walk **program headers** (PT_LOAD), the canonical runtime
 //! layout: section headers can be stripped entirely without affecting it.
-//! Relocations are read off section headers, though; see
-//! `has_unwalked_relocations` for an image whose `PT_DYNAMIC` tables none
-//! covers.
+//! A linked image with a `PT_DYNAMIC` is relocated from the tables its dynamic
+//! tags place, as the loader reads them, so stripping the headers changes
+//! none of its relocations either (`dynamic::loader_view`).
 //!
 //! ET_REL and every other kind fall back to walking **sections**, since a
 //! relocatable object has no program headers at all (PT_LOAD only appears
@@ -84,9 +84,8 @@ pub enum LoadFilter {
     /// A section of either name is carved out only where the link really maps
     /// it writable and not as TLS (`SHF_ALLOC | SHF_WRITE`, no `SHF_TLS`), and
     /// `relocate = false` is refused outright: it denies the very claim this
-    /// filter makes. None is carved out of an image carrying relocations no
-    /// walk reads: Android's packed tables, or a `PT_DYNAMIC` table no section
-    /// header covers.
+    /// filter makes. None is carved out of an image with a table its dynamic
+    /// tags place that cannot be read or decoded.
     ImmutableAndRelocatedGot,
     /// Every allocatable mapping, `.data` / `.got` / `.data.rel.ro` included.
     AllAllocatable,
@@ -153,10 +152,13 @@ fn is_relocated_got_name(name: &str) -> bool {
 /// per-thread block). A name-only match carves out whatever sits at the
 /// address, which for an unmapped section is another section's writable bytes.
 ///
-/// Empty when the image carries relocations no walk reads, which could land
-/// in any of them.
+/// Empty when a table the image's dynamic tags place cannot be read or
+/// decoded: what it relocates could land in any of them.
 fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> AddressSet {
-    if super::relocations::has_unwalked_relocations(obj) {
+    if matches!(
+        super::dynamic::loader_view(obj),
+        super::dynamic::LoaderView::Unreadable(_) | super::dynamic::LoaderView::OverBudget { .. }
+    ) {
         return AddressSet::default();
     }
     let mut starts = Vec::new();

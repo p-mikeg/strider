@@ -82,20 +82,25 @@ def test_a_copy_relocated_array_element_is_not_folded():
     assert function.find_all(p.load()), function.to_text()
 
 
-def test_a_call_through_an_android_packed_table_is_not_folded():
+def test_a_call_through_an_android_packed_table_reaches_its_target():
     """`call1` tail-calls `ptrs[1]`, whose `R_AARCH64_RELATIVE` lld packed
-    into an `SHT_ANDROID_RELA` table strider does not decode: the file holds
-    0 there."""
+    into an `SHT_ANDROID_RELA` table, decoded as bionic decodes it: the call
+    folds to `g2`, where the file holds 0."""
     elf = strider.lift.load_elf(_image("aarch64_android_rela.elf"), relocated_got_is_rom=True)
+    g2 = elf.symbol("g2").address
     text = elf.analyze("call1").function.to_text()
     assert "iconst[0x0]" not in text, text
-    assert " load" in text, text
+    assert f"iconst[{g2:#x}]" in text, text
 
 
-def test_a_textrel_image_without_section_headers_is_refused():
-    """`llvm-objcopy --strip-sections` leaves only `PT_DYNAMIC` to name the
-    `.rel.dyn` that relocates `getl`'s operand, which strider reads off
-    section headers; unrelocated, `getl` loaded from address 0."""
-    with pytest.raises(strider.StriderError, match="no section header covers"):
-        strider.lift.load_elf(_image("x86_textrel_noshdr.elf"))
-    strider.lift.load_elf(_image("x86_textrel_noshdr.elf"), apply_relocations=False)
+def test_a_textrel_image_without_section_headers_is_relocated_from_its_tags():
+    """`llvm-objcopy --strip-sections` leaves only `PT_DYNAMIC` to place the
+    `.rel.dyn` that relocates `getl`'s operand. It is walked, and with no
+    `.dynsym` header to resolve `loc` the operand is a hole: `getl` no longer
+    loads from address 0 and folds to the ELF magic."""
+    twin = strider.lift.load_elf(_image("x86_textrel.elf"))
+    getl = twin.symbol("getl").address
+    elf = strider.lift.load_elf(_image("x86_textrel_noshdr.elf"))
+    result = elf.analyze(getl)
+    assert "iconst[0x464c457f]" not in result.function.to_text()
+    assert result.cfg.incomplete, result.function.to_text()
