@@ -8,9 +8,11 @@ const DEFAULT_STYLE: &str = "dark";
 /// The CFG renderers' fallback theme: `dark` with Courier metrics.
 pub const DEFAULT_CFG_STYLE: &str = "dark_cfg";
 
+type StyleCtor = fn() -> dot::DotStyle;
+
 /// Every style name a render accepts, and the theme it picks: the roster
 /// `strider.cfg.DOT_STYLES` publishes.
-pub(crate) const DOT_STYLES: [(&str, fn() -> dot::DotStyle); 3] = [
+pub(crate) const DOT_STYLES: [(&str, StyleCtor); 3] = [
     ("dark", dot::DotStyle::dark),
     ("dark_cfg", dot::DotStyle::dark_cfg),
     ("empty", dot::DotStyle::empty),
