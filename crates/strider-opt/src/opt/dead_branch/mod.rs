@@ -91,12 +91,16 @@ impl PeepholePass for DbeFold {
         if !escapes.live_side_escapes(edit, root, selection.live) {
             return Ok(PeepholeRewrite::NoChange);
         }
-        // An If's condition and a Switch's selector share a slot.  The
-        // constant selector is the proof for taking this arm, so its
+        // The constant selector is the proof for taking this arm, so its
         // fingerprint must survive `kill_node` cascade-culling its cone.
+        let selector_slot = if matches!(edit.node_kind(root), NodeKind::If) {
+            NodeKind::IF_COND_SLOT
+        } else {
+            NodeKind::SWITCH_SELECTOR_SLOT
+        };
         let (ctrl_value, selector) = {
             let inputs = edit.node_inputs(root);
-            (inputs[NodeKind::CTRL_SLOT], inputs[NodeKind::IF_COND_SLOT])
+            (inputs[NodeKind::CTRL_SLOT], inputs[selector_slot])
         };
         edit.absorb_fingerprint(ctrl_value, selector);
         edit.replace_value(selection.live, ctrl_value);
