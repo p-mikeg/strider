@@ -1037,7 +1037,7 @@ fn two_arg_carriers() -> (strider_ir::Function, rsleigh::Vn) {
         .all_node_ids()
         .find(|&n| matches!(function.node_kind(n), NodeKind::Load(_)))
         .expect("Load carrier");
-    // Stamp the offset `StackOffsetDetect` would record, so
+    // Stamp the offset a run's closing stamp would record, so
     // `function_arg_stack`'s offset check has something to read. Only the
     // offset is read, so any valid base output handle works.
     let base = function.node_outputs(stack_carrier)[0];
