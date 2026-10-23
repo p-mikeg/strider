@@ -1,3 +1,5 @@
+import pathlib
+import re
 import typing
 import pytest
 import strider
@@ -186,6 +188,10 @@ def test_cfg_style_reaches_both_renderers(x86_memory_elf):
 def test_dot_styles_name_every_theme_a_render_accepts(x86_memory_elf):
     assert strider.cfg.DOT_STYLES == ("dark", "dark_cfg", "empty")
     assert typing.get_args(strider.cfg.DotStyle) == strider.cfg.DOT_STYLES
+    # pyright checks callers against the stub's own copy.
+    stub = (pathlib.Path(strider.__file__).parent / "cfg.pyi").read_text()
+    body = stub.split("DotStyle = Literal[", 1)[1].split("]", 1)[0]
+    assert tuple(re.findall(r'"([^"]+)"', body)) == strider.cfg.DOT_STYLES
     addr = symbol_addr(x86_memory_elf, "array_sum")
     mem = strider.lift.load_elf(str(x86_memory_elf)).reader()
     s = strider.lift.lifter(strider.sleigh.SleighArch.x86(), mem)
