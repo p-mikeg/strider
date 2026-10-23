@@ -19,28 +19,14 @@ mod test_support;
 mod tests;
 mod vars;
 
-/// `VnSpace` renders as its shortcut character alone, and ram's is `r`, which
-/// reads as "register" in a message rejecting one.
-fn space_name(space: rsleigh::VnSpace) -> &'static str {
-    match space {
-        rsleigh::VnSpace::REGISTER => "register",
-        rsleigh::VnSpace::UNIQUE => "unique",
-        rsleigh::VnSpace::RAM => "ram",
-        rsleigh::VnSpace::CONST => "const",
-        _ => "an unnamed",
-    }
-}
-
 /// Errors unless `vn` is in REGISTER or UNIQUE space.
 pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()> {
     match vn.addr_space {
         rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE => Ok(()),
-        space => Err(anyhow::anyhow!(
-            "a call-class read or write names a {} varnode at {:#x} size {}; \
-             only register and unique varnodes can carry one",
-            space_name(space),
-            vn.addr_off,
-            vn.size,
+        _ => Err(anyhow::anyhow!(
+            "a call-class read or write names the varnode {}; only register \
+             and unique varnodes can carry one",
+            crate::function::vn_str(vn),
         )),
     }
 }

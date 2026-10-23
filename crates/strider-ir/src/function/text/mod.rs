@@ -595,7 +595,9 @@ fn push_value_kind(out: &mut String, kind: ValueKind) {
     }
 }
 
-fn space_str(space: rsleigh::VnSpace) -> String {
+/// `space` as its Sleigh shortcut character, or its byte in hex where that
+/// is not graphic or is the `:` separator: the one raw spelling of a space.
+pub(crate) fn space_str(space: rsleigh::VnSpace) -> String {
     let byte = space.shortcut_raw();
     if byte.is_ascii_graphic() && byte != b':' {
         char::from(byte).to_string()
@@ -604,8 +606,8 @@ fn space_str(space: rsleigh::VnSpace) -> String {
     }
 }
 
-/// `space:offset:size`, the space as its Sleigh shortcut character.
-fn vn_str(vn: &rsleigh::Vn) -> String {
+/// `space:offset:size`, the space as [`space_str`] spells it.
+pub(crate) fn vn_str(vn: &rsleigh::Vn) -> String {
     format!(
         "{}:{:#x}:{}",
         space_str(vn.addr_space),

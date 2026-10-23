@@ -13,22 +13,6 @@ impl FunctionDotDumper<'_> {
         vn_to_display_name(self.names, vn)
     }
 
-    /// Checks the default code space first so arches whose code space isn't
-    /// literally `RAM` still render as "ram".
-    fn pretty_vnspace(&self, space: rsleigh::VnSpace) -> &'static str {
-        let default = self.names.default_code_space();
-        if space == default {
-            return "ram";
-        }
-        match space {
-            rsleigh::VnSpace::CONST => "const",
-            rsleigh::VnSpace::REGISTER => "register",
-            rsleigh::VnSpace::UNIQUE => "unique",
-            rsleigh::VnSpace::RAM => "ram",
-            _ => "??",
-        }
-    }
-
     fn out_type(&self, node: NodeId) -> Option<ValueType> {
         self.function
             .first_value_output_of(node)
@@ -140,12 +124,12 @@ impl FunctionDotDumper<'_> {
             },
 
             NodeKind::Load(space) => {
-                let space = self.pretty_vnspace(*space);
+                let space = self.names.space(*space);
                 let ty = self.out_type_suffix(node, " ");
                 self.with_sp_offset(node, format!("Load{ty}\n← {space}"))
             }
             NodeKind::Store(space) => {
-                let space = self.pretty_vnspace(*space);
+                let space = self.names.space(*space);
                 let ty = self.input_type_suffix(node, NodeKind::STORE_DATA_SLOT, " ");
                 self.with_sp_offset(node, format!("Store{ty}\n-> {space}"))
             }
