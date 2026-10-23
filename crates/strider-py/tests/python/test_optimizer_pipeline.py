@@ -213,10 +213,9 @@ def test_function_optimize_folds_against_the_handles_rom():
 
 
 def test_a_rewriting_post_pass_restamps_stack_offsets():
-    """A fixed-point pass added with `add_post` that rewrites an address must
-    not leave the stack offsets an earlier post-pass stamped.  `LoadForward`
-    turns the `[rax+4]` load's address into `rsp + 12` after `StackOffsetDetect`
-    stamped it as no stack address."""
+    """A fixed-point pass added with `add_post` that rewrites an address
+    leaves no stale stack offset: `LoadForward` turns the `[rax+4]` load's
+    address into `rsp + 12`, and the run's closing stamp reads that."""
     # lea rax,[rsp+8]; mov [rsp],rax; mov rax,[rsp]; mov eax,[rax+4]; ret
     code = bytes.fromhex("488d442408" "48890424" "488b0424" "8b4004" "c3")
     base = 0x1000
@@ -230,7 +229,6 @@ def test_a_rewriting_post_pass_restamps_stack_offsets():
         ),
     )
     pipe = strider.opt.OptimizerPipeline.empty()
-    pipe.add_post(strider.opt.StackOffsetDetect())
     pipe.add_post(strider.opt.LoadForward())
     fn.optimize(pipeline=pipe)
     assert len(fn.find_all(load().stack_offset(12))) == 1

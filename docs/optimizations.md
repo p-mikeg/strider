@@ -142,8 +142,8 @@ result of a call to a `noalias_allocators` entry. Offsets are comparable only
 against another access sharing the same base: an alignment-masked `sp & -16` is
 its own base, since its distance from the entry stack pointer depends on the
 caller. These pairs are what a query for stack accesses, or for one exact slot,
-reads. `StackOffsetDetect` records them as a post-pass, for a custom pipeline
-whose later post-pass reads them.
+reads. A converged run records them after its post-passes, and Rust's
+`refresh_memory_classes` records them again after an edit outside a pipeline.
 
 ## Indirect-branch resolution
 

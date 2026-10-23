@@ -49,3 +49,7 @@ pub fn refresh_memory_classes(edit: &mut crate::EditFunction<'_>) {
     edit.function().side_tables().invalidate_analyses();
     stamp_all(edit);
 }
+
+#[cfg(test)]
+#[path = "stamp_tests.rs"]
+mod tests;

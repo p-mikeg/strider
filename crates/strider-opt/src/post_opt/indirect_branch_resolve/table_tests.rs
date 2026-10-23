@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    ConstantFold, KnownBits, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse,
-    StackOffsetDetect,
-};
+use crate::{ConstantFold, KnownBits, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse};
 use rsleigh::VnSpace;
 use std::sync::Mutex;
 use strider_ir::node::ValueType;
@@ -1690,7 +1687,6 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
     pipeline.add(ConstantFold::new());
     pipeline.add(PhiCollapse);
     pipeline.add(RegionCollapse);
-    pipeline.add_post_pass(StackOffsetDetect);
     pipeline.add(LoadForward);
 
     pipeline.run(&mut fg, &crate::OptCtx::new(None))?;

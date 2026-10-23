@@ -443,7 +443,7 @@ mod tests {
     fn a_cloned_pipeline_of_boxed_passes_runs_as_the_original() -> crate::Result<()> {
         let mut pipeline = super::OptimizerPipeline::new();
         pipeline.add_boxed(Box::new(crate::ConstantFold::new()));
-        pipeline.add_post_boxed(Box::new(crate::StackOffsetDetect));
+        pipeline.add_post_boxed(Box::new(crate::CallStackArgCollect));
         let names = |p: &super::OptimizerPipeline| {
             (
                 p.passes().iter().map(|p| p.name()).collect::<Vec<_>>(),
@@ -454,7 +454,7 @@ mod tests {
         assert_eq!(names(&clone), names(&pipeline));
         assert_eq!(
             names(&pipeline),
-            (vec!["ConstantFold"], vec!["StackOffsetDetect"])
+            (vec!["ConstantFold"], vec!["CallStackArgCollect"])
         );
 
         let (mut a, mut b) = (folding_fn(), folding_fn());
@@ -627,7 +627,11 @@ mod tests {
         folding.run(&mut function, &OptCtx::new(None))?;
         let pass = CountsRuns(std::sync::Arc::default());
         super::run_one_unvalidated(&pass, &mut function, &OptCtx::new(None))?;
-        super::run_post(&crate::StackOffsetDetect, &mut function, &OptCtx::new(None))?;
+        super::run_post(
+            &crate::CallStackArgCollect,
+            &mut function,
+            &OptCtx::new(None),
+        )?;
         assert_eq!(function.assumptions(), &claims);
         Ok(())
     }
@@ -720,6 +724,21 @@ mod tests {
         Ok(())
     }
 
+    /// Fills the memory classes, so a later post-pass can leave one stale.
+    #[derive(Clone)]
+    struct Stamps;
+
+    impl super::PostOptimizer for Stamps {
+        fn apply(
+            &self,
+            edit: &mut crate::EditFunction<'_>,
+            _ctx: &OptCtx<'_>,
+        ) -> crate::Result<()> {
+            crate::mem_analysis::stamp_all(edit);
+            Ok(())
+        }
+    }
+
     /// Moves the stored address `sp + c` to `sp + c - 4` by rewiring the
     /// `Add`'s constant, so the address value keeps its id.
     #[derive(Clone)]
@@ -769,7 +788,7 @@ mod tests {
 
         let mut p = super::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
-        p.add_post_pass(crate::StackOffsetDetect);
+        p.add_post_pass(Stamps);
         p.add_post_pass(MovesStoreDown);
         p.run(&mut function, &OptCtx::new(None))?;
 

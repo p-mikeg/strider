@@ -138,7 +138,7 @@ mod decompose_tests {
 
     #[test]
     fn decompose_is_idempotent_and_committed_slot_round_trips() -> crate::Result<()> {
-        // Committing a slot is what `StackOffsetDetect` does.
+        // Committing a slot is what a run's closing stamp does.
         let sp = sp();
         let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
@@ -690,7 +690,7 @@ mod cfg_tests {
 
         // Claimed before the stand-in below, which a new claim would drop.
         let cfg = MemAnalyzer::new(super::call_blocking(&mut f, true));
-        // Stand in for `StackOffsetDetect`: record `[sp+8]` even though the raw
+        // Stand in for the run's closing stamp: record `[sp+8]` even though the raw
         // address folded to an opaque shape.
         let store_addr = f.store_addr(store);
         f.side_tables_mut().set_stack_slot(store_addr, entry_sp, 8);
