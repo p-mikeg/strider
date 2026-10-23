@@ -78,7 +78,6 @@ impl PyFunction {
     pub(crate) fn run_pipeline_in_place(
         &self,
         pipeline: strider_orchestrator::opt::OptimizerPipeline,
-        label: &str,
         rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>,
         claims: &strider_orchestrator::opt::AssumptionOptions,
     ) -> PyResult<()> {
@@ -91,7 +90,7 @@ impl PyFunction {
         function.assume(claims);
         let ctx = strider_orchestrator::opt::OptCtx::new(rom);
         pipeline.run(&mut function, &ctx).map_err(|e| {
-            crate::errors::into_strider_err(anyhow::anyhow!("{label} failed: {e:#}"))
+            crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:#}"))
         })?;
         Ok(())
     }

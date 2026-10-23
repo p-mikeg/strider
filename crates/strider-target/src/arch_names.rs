@@ -27,7 +27,7 @@ impl ArchNames {
     ///
     /// The register table cannot be read, a space name is not UTF-8, or the
     /// sla declares no space with shortcut `r`.
-    pub fn from_sleigh<R: MemReader>(sleigh: &Sleigh<R>) -> anyhow::Result<Self> {
+    fn from_sleigh<R: MemReader>(sleigh: &Sleigh<R>) -> anyhow::Result<Self> {
         let regs = sleigh.regs()?;
         let spaces = (0..=u8::MAX)
             .filter_map(|shortcut| {
