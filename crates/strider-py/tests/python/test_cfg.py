@@ -1,3 +1,4 @@
+import typing
 import pytest
 import strider
 
@@ -180,6 +181,21 @@ def test_cfg_style_reaches_both_renderers(x86_memory_elf):
         with pytest.raises(strider.StriderError):
             # Deliberate: an unknown theme name is a runtime error.
             render(style="not_a_theme")  # type: ignore[arg-type]
+
+
+def test_dot_styles_name_every_theme_a_render_accepts(x86_memory_elf):
+    assert strider.cfg.DOT_STYLES == ("dark", "dark_cfg", "empty")
+    assert typing.get_args(strider.cfg.DotStyle) == strider.cfg.DOT_STYLES
+    addr = symbol_addr(x86_memory_elf, "array_sum")
+    mem = strider.lift.load_elf(str(x86_memory_elf)).reader()
+    s = strider.lift.lifter(strider.sleigh.SleighArch.x86(), mem)
+    cfg = s.build_cfg(addr, strider.cfg.CfgOptions(allow_code_before_start_addr=True))
+    for style in strider.cfg.DOT_STYLES:
+        assert cfg.to_dot(style=style) is not None
+    with pytest.raises(
+        strider.StriderError, match='expected "dark", "dark_cfg" or "empty"'
+    ):
+        cfg.to_dot(style="not_a_theme")  # type: ignore[arg-type]
 
 
 def _stub_inside_a_crossing_jmp():
