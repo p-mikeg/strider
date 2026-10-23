@@ -39,11 +39,13 @@
 //! since a leaked pointer can be stored to a global and reloaded by a later
 //! callee.
 //!
-//! A frame that stores its entry SP is exposed by that store, as the ARM APCS
-//! frame record does (`mov ip, sp; push {.., ip, ..}`).  It counts for
-//! [`incoming_area_escapes`] too, since its offset 0 lies inside ARM's
-//! register-argument homes, and the frame also holds the entry SP in `ip`, a
-//! clobbered register, at its first call.
+//! A frame that stores its entry SP is exposed by that store: the PowerPC
+//! `stwu`/`stdu` back chain and the ARM APCS frame record (`mov ip, sp; push
+//! {.., ip, ..}`), so the whole-function verdict is `true` on both.  The
+//! APCS frame also counts for [`incoming_area_escapes`], since its offset 0
+//! lies inside ARM's register-argument homes, and it holds the entry SP in
+//! `ip`, a clobbered register, at its first call.  The entry SP the PowerPC
+//! back chain stores lies below every PowerPC area start, so it does not.
 //!
 //! [`incoming_area_escapes`] asks the narrower question of whether the
 //! incoming-argument memory may be reached.  It places an exposure only where

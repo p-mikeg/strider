@@ -123,7 +123,7 @@ pub struct AssumptionOptions {
     /// A non-empty set also forwards a stack spill across a listed call when the
     /// frame is provably private, so it carries the gaps
     /// [`escape_analysis`](Self::escape_analysis) documents, without that knob
-    /// being set.
+    /// being set, and is likewise inert on a frame that stores its entry SP.
     ///
     /// `LoadForward`'s narrowing reads the distinct allocation but steps
     /// through no listed call, incoming-argument detection's narrowing reads a
@@ -145,6 +145,10 @@ pub struct AssumptionOptions {
     /// argument it never stores) read as the end of the outgoing-argument
     /// window, so a callee's own argument slot above it can be forwarded
     /// across the call.
+    ///
+    /// A frame that stores its entry SP escapes, so the forwarding is inert
+    /// on every PowerPC frame (the `stwu`/`stdu` back chain) and on an ARM
+    /// APCS frame record.
     pub escape_analysis: bool,
     /// A RAM `Store` whose address this analysis cannot place on the entry
     /// stack, and any callee or user-op, leave the stack slots the function
