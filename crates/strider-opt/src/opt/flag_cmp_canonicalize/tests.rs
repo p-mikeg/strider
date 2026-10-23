@@ -132,6 +132,40 @@ fn ppc_cr_bit_test_canonicalizes_through_a_ne_zero_branch() -> Result<()> {
 /// the comparison's fingerprint.  Three distinct addresses, because
 /// `replace_value` alone carries the comparison's own and the `Truncate`'s but
 /// drops `ADDR_PACK`.
+/// The Thumb "true" flag test over a flag that is no comparison, the C of a
+/// `cmp` (`Xor(Less(a, b), 1)`), is the CR-bit arm's one-term pack: it
+/// collapses to the flag and keeps the test's addresses.
+///
+/// Mutation: let `single_bit_term` name only a comparison under a
+/// `ZeroExtend`.
+#[test]
+fn a_thumb_true_flag_test_collapses_to_a_non_comparison_flag() -> Result<()> {
+    let mut fg = nonzero_flag_test(build_i1_xor_with_one)?;
+    crate::pipeline::run_one(
+        &FlagCmpCanonicalize::new(),
+        &mut fg,
+        &crate::OptCtx::new(None),
+    )?;
+    let if_node = fg
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
+        .expect("If node");
+    let cond = fg.graph().producer(if_cond_output(fg.graph(), if_node));
+    assert_eq!(*fg.node_kind(cond), NodeKind::IntBinaryOp(IntBinaryOp::Xor));
+    let [lt, _] = fg.node_inputs_exact::<2>(cond).expect("binary");
+    assert_eq!(
+        *fg.node_kind(fg.producer(lt)),
+        NodeKind::IntCmpOp(IntCmpOp::Less),
+        "the condition is the flag itself, Xor(Less, 1)"
+    );
+    let fp = fg.side_tables().asm_fingerprint(cond);
+    assert!(
+        fp.contains(&ADDR_PACK) && fp.contains(&ADDR_TRUNC),
+        "the test's addresses survive in the flag's fingerprint; got {fp:?}"
+    );
+    Ok(())
+}
+
 /// `If(Xor(Equal(ZeroExtend(flag):I32, 0), 1))`, the `flag != 0` branch
 /// lowering, with the comparison at `ADDR_CMP`, the widened flag at
 /// `ADDR_PACK` and its test at `ADDR_TRUNC`.  `flag` is `make_flag`'s
@@ -717,7 +751,7 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
         build_i1_xor_with_one(fb, eq)
     })?;
 
-    // Two iterations: the Thumb flag-test rule strips the outer
+    // Two iterations: the CR-bit arm strips the outer
     // `Xor(IntEqual(..., 0), 1)`, then the EQ rule simplifies the inner
     // `Equal(diff, 0)`.  A real pipeline gets this from its fixed-point loop.
     let _ = crate::pipeline::run_one(
