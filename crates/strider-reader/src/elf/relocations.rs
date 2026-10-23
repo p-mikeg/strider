@@ -100,9 +100,10 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 ///
 /// # Errors
 ///
-/// When a loaded section's bytes cannot be read, or when the relocation
+/// When a loaded section's bytes cannot be read, when the relocation
 /// section headers name more entries than [`RELOCATION_ENTRY_BUDGET`] times
-/// what the file holds (see `without_repeated_tables`).
+/// what the file holds (see `without_repeated_tables`), and when relocations
+/// no walk reads may relocate code (see [`has_unwalked_relocations`]).
 pub(crate) fn apply_elf_relocations_with(
     regions: &mut [MemRegion],
     obj: &object::File<'_>,
@@ -119,6 +120,14 @@ pub(crate) fn apply_elf_relocations_with(
         },
         "two regions share a start"
     );
+    if has_unwalked_relocations(obj) && relocates_code(obj) {
+        anyhow::bail!(
+            "the image relocates code through a dynamic relocation table no \
+             section header covers (stripped section headers, or Android packed \
+             relocations), which strider does not read: its code would be served \
+             unrelocated. Load it with relocations unapplied"
+        );
+    }
     let owners = super::sections::loaded_section_indices(obj, layout, loaded_with)?;
     // One lookup per relocation instead of a scan of every region; an ET_REL
     // carries one region per SHF_ALLOC section.
@@ -1533,11 +1542,19 @@ const SHT_ANDROID_REL: u32 = 0x6000_0001;
 const SHT_ANDROID_RELA: u32 = 0x6000_0002;
 const DT_ANDROID_REL: u32 = 0x6000_000f;
 const DT_ANDROID_RELA: u32 = 0x6000_0011;
+/// LLVM's compact table, which `object` does not name; it has no size tag.
+const DT_CREL: u32 = 0x4000_0026;
 
 /// Whether a linked image carries dynamic relocations no walk here reads:
-/// an Android packed table, by section type or by dynamic tag. Which slots
-/// those relocate is unknown, so none of `.got` / `.data.rel.ro` is served
-/// as ROM.
+/// an Android packed table, by section type or by dynamic tag, or a
+/// `PT_DYNAMIC` table (`DT_RELA`, `DT_REL`, `DT_JMPREL`, `DT_CREL`) that no
+/// walked section header covers, as when the headers are stripped. A walked
+/// header covers its `sh_addr` extent only where its `sh_offset` holds the
+/// bytes a `PT_LOAD` maps there, the bytes `ld.so` reads.
+///
+/// Which slots those relocate is unknown, so none of `.got` /
+/// `.data.rel.ro` is served as ROM, and a relocating load refuses an image
+/// whose code they may relocate (see [`relocates_code`]).
 pub(crate) fn has_unwalked_relocations(obj: &object::File<'_>) -> bool {
     match obj {
         object::File::Elf32(f) => has_unwalked_relocations_of(f),
@@ -1558,10 +1575,105 @@ fn has_unwalked_relocations_of<Elf: object::read::elf::FileHeader>(
         .elf_section_table()
         .iter()
         .any(|sh| matches!(sh.sh_type(endian), SHT_ANDROID_REL | SHT_ANDROID_RELA));
-    let packed_tag = DynamicTags::of(f).is_some_and(|tags| {
-        tags.get(DT_ANDROID_REL).is_some() || tags.get(DT_ANDROID_RELA).is_some()
-    });
-    packed_section || packed_tag
+    let Some(tags) = DynamicTags::of(f) else {
+        return packed_section;
+    };
+    let packed_tag = tags.get(DT_ANDROID_REL).is_some() || tags.get(DT_ANDROID_RELA).is_some();
+    packed_section || packed_tag || has_uncovered_table(f, &tags)
+}
+
+/// Whether a `PT_DYNAMIC` relocation table lies outside every walked
+/// section header's extent, see [`has_unwalked_relocations`]. A table whose
+/// size tag is missing is taken to be one byte.
+fn has_uncovered_table<Elf: object::read::elf::FileHeader>(
+    f: &object::read::elf::ElfFile<'_, Elf>,
+    tags: &DynamicTags,
+) -> bool {
+    use object::elf;
+    use object::read::elf::{ProgramHeader as _, SectionHeader as _};
+    let endian = f.endian();
+    let dynsym = f.elf_dynamic_symbol_table().section();
+    let loads: Vec<(u64, u64, u64)> = f
+        .elf_program_headers()
+        .iter()
+        .filter(|ph| ph.p_type(endian) == elf::PT_LOAD)
+        .map(|ph| {
+            let vaddr: u64 = ph.p_vaddr(endian).into();
+            let filesz: u64 = ph.p_filesz(endian).into();
+            (
+                vaddr,
+                vaddr.saturating_add(filesz),
+                ph.p_offset(endian).into(),
+            )
+        })
+        .collect();
+    let file_backed = |addr: u64, size: u64, offset: u64| {
+        loads.iter().any(|&(lo, hi, p_offset)| {
+            lo <= addr
+                && addr.checked_add(size).is_some_and(|end| end <= hi)
+                && p_offset.checked_add(addr - lo) == Some(offset)
+        })
+    };
+    let walked = AddressSet::merged(
+        f.elf_section_table()
+            .iter()
+            .filter(|sh| {
+                matches!(
+                    sh.sh_type(endian),
+                    elf::SHT_REL | elf::SHT_RELA | elf::SHT_CREL
+                ) && (sh.link(endian) == dynsym
+                    || sh.sh_flags(endian).into() & u64::from(elf::SHF_ALLOC) != 0)
+            })
+            .map(|sh| -> (u64, u64, u64) {
+                (
+                    sh.sh_addr(endian).into(),
+                    sh.sh_size(endian).into(),
+                    sh.sh_offset(endian).into(),
+                )
+            })
+            .filter(|&(addr, size, offset)| file_backed(addr, size, offset))
+            .map(|(addr, size, _)| (addr, addr + size))
+            .collect(),
+    );
+    [
+        (elf::DT_RELA, Some(elf::DT_RELASZ)),
+        (elf::DT_REL, Some(elf::DT_RELSZ)),
+        (elf::DT_JMPREL, Some(elf::DT_PLTRELSZ)),
+        (DT_CREL, None),
+    ]
+    .into_iter()
+    .any(|(at, size)| {
+        let Some(addr) = tags.get(at) else {
+            return false;
+        };
+        let size = size.and_then(|t| tags.get(t)).unwrap_or(1);
+        size != 0 && !walked.covers(addr, addr.saturating_add(size))
+    })
+}
+
+/// Whether the loader may relocate code: `DT_TEXTREL`, `DF_TEXTREL`, or a
+/// `PT_LOAD` both writable and executable.
+fn relocates_code(obj: &object::File<'_>) -> bool {
+    fn of<Elf: object::read::elf::FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> bool {
+        use object::elf;
+        use object::read::elf::ProgramHeader as _;
+        let endian = f.endian();
+        let rwx = elf::PF_W | elf::PF_X;
+        let tags = DynamicTags::of(f);
+        tags.as_ref().is_some_and(|t| {
+            t.get(elf::DT_TEXTREL).is_some()
+                || t.get(elf::DT_FLAGS)
+                    .is_some_and(|v| v & u64::from(elf::DF_TEXTREL) != 0)
+        }) || f
+            .elf_program_headers()
+            .iter()
+            .any(|ph| ph.p_type(endian) == elf::PT_LOAD && ph.p_flags(endian) & rwx == rwx)
+    }
+    match obj {
+        object::File::Elf32(f) => of(f),
+        object::File::Elf64(f) => of(f),
+        _ => false,
+    }
 }
 
 #[cfg(test)]

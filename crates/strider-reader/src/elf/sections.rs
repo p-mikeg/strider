@@ -4,6 +4,9 @@
 //!
 //! ET_EXEC / ET_DYN walk **program headers** (PT_LOAD), the canonical runtime
 //! layout: section headers can be stripped entirely without affecting it.
+//! Relocations are read off section headers, though; see
+//! `has_unwalked_relocations` for an image whose `PT_DYNAMIC` tables none
+//! covers.
 //!
 //! ET_REL and every other kind fall back to walking **sections**, since a
 //! relocatable object has no program headers at all (PT_LOAD only appears
@@ -81,7 +84,8 @@ pub enum LoadFilter {
     /// it writable and not as TLS (`SHF_ALLOC | SHF_WRITE`, no `SHF_TLS`), and
     /// `relocate = false` is refused outright: it denies the very claim this
     /// filter makes. None is carved out of an image carrying relocations no
-    /// walk reads (Android's packed tables).
+    /// walk reads: Android's packed tables, or a `PT_DYNAMIC` table no section
+    /// header covers.
     ImmutableAndRelocatedGot,
     /// Every allocatable mapping, `.data` / `.got` / `.data.rel.ro` included.
     AllAllocatable,
