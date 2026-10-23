@@ -180,7 +180,7 @@ impl<'f> ReturnTargets<'f> {
                 let producer = function.producer(value);
                 match *function.node_kind(producer) {
                     NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                        let Some((operand, addend)) = const_addend(function, producer) else {
+                        let Some((operand, addend)) = crate::const_eval::const_addend(function, producer) else {
                             return false;
                         };
                         let Some(offset) = offset.checked_sub(addend) else {
@@ -409,12 +409,8 @@ impl<'f> ReturnTargets<'f> {
         else {
             return None;
         };
-        let at_entry = matches!(
-            *function.node_kind(function.producer(base)),
-            NodeKind::InitialVar(id) if function.initial_vn(id) == function.default_cc().stack_vn
-        );
         Some(StackAddr {
-            base: (!at_entry).then_some(base),
+            base: (!function.is_entry_sp(base)).then_some(base),
             offset,
         })
     }
@@ -445,7 +441,7 @@ impl<'f> ReturnTargets<'f> {
             let producer = function.producer(cur);
             match *function.node_kind(producer) {
                 NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                    let Some((operand, addend)) = const_addend(function, producer) else {
+                    let Some((operand, addend)) = crate::const_eval::const_addend(function, producer) else {
                         break None;
                     };
                     let Some(sum) = accrued.checked_add(addend) else {
@@ -708,10 +704,4 @@ fn guards(function: &Function, cond: ValueId) -> impl Iterator<Item = (NodeId, b
     direct
         .chain(negations)
         .filter(|&(user, _)| matches!(function.node_kind(user), NodeKind::If))
-}
-
-/// `(x, c)` for `Add(x, c)` with `c` a constant.
-fn const_addend(function: &Function, add: NodeId) -> Option<(ValueId, i128)> {
-    let (x, c) = crate::const_eval::var_and_const(function, add)?;
-    Some((x, function.value_type_opt(x)?.get_signed_int(c)?))
 }

@@ -391,6 +391,14 @@ impl Function {
             .map(|(&value, &id)| (value, id))
     }
 
+    /// Whether `value` is the entry SP, the output of `InitialVar(stack_vn)`.
+    pub fn is_entry_sp(&self, value: ValueId) -> bool {
+        matches!(
+            *self.node_kind(self.producer(value)),
+            NodeKind::InitialVar(id) if self.initial_vn(id) == self.default_cc.stack_vn
+        )
+    }
+
     /// The `InitialVar(stack_vn)` node, whose output is the entry SP, or `None`
     /// when the function tracks no such node (`stack_vn` deduped into a wider
     /// container).  Does NOT filter by liveness: the returned node may already

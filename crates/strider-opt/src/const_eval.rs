@@ -147,6 +147,12 @@ pub(crate) fn var_and_const(function: &Function, node: NodeId) -> Option<(ValueI
     }
 }
 
+/// `(x, c)` for `Add(x, c)` with `c` a constant, read signed at `x`'s width.
+pub(crate) fn const_addend(function: &Function, add: NodeId) -> Option<(ValueId, i128)> {
+    let (x, c) = var_and_const(function, add)?;
+    Some((x, function.value_type_opt(x)?.get_signed_int(c)?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::eval_node_const;

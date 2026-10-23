@@ -101,7 +101,7 @@ impl<'a> Evaluator<'a> {
         // not by re-running `decompose` per node per fold.  On the converged
         // graph the only SP shapes are the terminal `InitialVar(sp)`,
         // `Add(sp-rooted, const)`, and the alignment base `And(sp-rooted, mask)`.
-        if matches!(kind, NodeKind::InitialVar(id) if f.initial_vn(id) == f.default_cc().stack_vn) {
+        if f.is_entry_sp(value) {
             return Some(Abs::SpRel {
                 base: value,
                 offset: 0,
