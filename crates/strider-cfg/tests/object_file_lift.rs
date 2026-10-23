@@ -33,8 +33,6 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
         strider_reader::ElfFileMemReader::new(&elf, strider_reader::elf::RelocationMode::Unapplied)
             .expect("ElfFileMemReader::new on .o");
     let arch = SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem)
-        .expect("create Sleigh for ET_REL fixture");
 
     // Through the layout, not raw `st_value`: an ET_REL symbol's `st_value` is
     // an offset into its section, and the reader seats those sections apart at
@@ -45,7 +43,7 @@ fn et_rel_x64_object_file_lifts_tzcount_into_a_cfg() {
             .expect("tzcount symbol present in .o"),
     );
 
-    let cfg = DecodeEngine::new(arch, sleigh)
+    let cfg = DecodeEngine::new(arch, mem)
         .expect("decode engine")
         .build_cfg(tz_addr.into(), &CfgOptions::default())
         .expect("build_cfg on tzcount lifted from .o");

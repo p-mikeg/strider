@@ -25,16 +25,7 @@ fn lifter() -> Lifter<BufMemReader<Vec<u8>>> {
     let arch = SleighArch::mipsbe32();
     let mut bytes = ABS_VAL.to_vec();
     bytes.resize(0x40, 0);
-    Lifter::new(
-        arch,
-        rsleigh::Sleigh::new(
-            arch.sla_spec(),
-            arch.pspec(),
-            BufMemReader::new(bytes, BASE),
-        )
-        .expect("create Sleigh"),
-    )
-    .unwrap()
+    Lifter::new(arch, BufMemReader::new(bytes, BASE)).unwrap()
 }
 
 fn insns(lifter: &mut Lifter<BufMemReader<Vec<u8>>>, entry: u64, size: u64) -> Vec<String> {

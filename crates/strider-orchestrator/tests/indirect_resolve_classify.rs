@@ -191,10 +191,8 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
 
     let arch = SleighArch::aarch64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh =
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create aarch64 sleigh");
 
-    let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
+    let mut strider = Lifter::new(arch, reader).expect("Lifter::new");
     let cc = CallingConvention::aarch64_aapcs64()
         .build(strider.sleigh_regs())
         .expect("build cc");

@@ -4,20 +4,13 @@
 //! the `lock` instruction, which is glibc's `je 0f; lock; 0:` shape. An owner
 //! starting earlier runs instructions the taken path never executes.
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{Cfg, CfgOptions, DecodeEngine};
 use strider_target::SleighArch;
 
 fn build_x86(bytes: Vec<u8>) -> Cfg {
     let arch = SleighArch::x86();
-    let sleigh = Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes, 0x1000),
-    )
-    .expect("sleigh");
-    DecodeEngine::new(arch, sleigh)
+    DecodeEngine::new(arch, BufMemReader::new(bytes, 0x1000))
         .expect("decode engine")
         .build_cfg(0x1000u64.into(), &CfgOptions::default())
         .expect("build")

@@ -6,7 +6,6 @@
 //! Byte sequences are GNU `as` output, cross-checked with
 //! `objdump -D -b binary -mi386:x86-64 -M intel`.
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
@@ -41,15 +40,12 @@ fn returned_rax(body: &[&[u8]]) -> u128 {
     bytes.extend_from_slice(&VEC.to_le_bytes());
 
     let arch = SleighArch::x86_64();
-    let sleigh = Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes.clone(), BASE),
-    )
-    .expect("sleigh");
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
-        Box::new(strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes));
-    let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(rom)).expect("strider");
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
+        strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone()),
+    );
+    let mut strider =
+        strider_orchestrator::Strider::new(arch, BufMemReader::new(bytes, BASE), Some(rom))
+            .expect("strider");
     let cc = CallingConvention::x86_64_systemv()
         .build(strider.sleigh_regs())
         .expect("cc");

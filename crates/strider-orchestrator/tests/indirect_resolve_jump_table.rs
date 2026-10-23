@@ -230,13 +230,12 @@ fn analyze_x64_snippet_with_rom(
 ) -> strider_orchestrator::AnalyzeResult {
     let arch = strider_target::SleighArch::x86_64();
     let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let regs = sleigh.regs().expect("regs");
-    let cc = strider_target::CallingConvention::x86_64_systemv()
-        .build(&regs)
-        .expect("build cc");
-    let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(Box::new(rom)))
+    let mut strider = strider_orchestrator::Strider::new(arch, reader, Some(Box::new(rom)))
         .expect("Strider::new");
+    let regs = strider.sleigh_regs();
+    let cc = strider_target::CallingConvention::x86_64_systemv()
+        .build(regs)
+        .expect("build cc");
     strider
         .analyze(
             base,

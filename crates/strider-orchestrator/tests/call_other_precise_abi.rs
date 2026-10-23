@@ -10,8 +10,7 @@ fn cpuid_clobbers_only_eax_ebx_ecx_edx() {
     let bytes = vec![0x0fu8, 0xa2, 0xc3];
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let mut strider_h = strider_orchestrator::Lifter::new(arch, sleigh).expect("strider");
+    let mut strider_h = strider_orchestrator::Lifter::new(arch, reader).expect("strider");
     let cc = strider_target::CallingConvention::x86_64_systemv()
         .build(strider_h.sleigh_regs())
         .expect("build cc");
@@ -78,8 +77,7 @@ fn unmodelled_sysreg_read_clobbers_only_destination() {
     let bytes = vec![0xe0u8, 0xf0, 0x3d, 0xd5, 0xc0, 0x03, 0x5f, 0xd6];
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let mut strider_h = strider_orchestrator::Lifter::new(arch, sleigh).expect("strider");
+    let mut strider_h = strider_orchestrator::Lifter::new(arch, reader).expect("strider");
     let cc = strider_target::CallingConvention::aarch64_aapcs64()
         .build(strider_h.sleigh_regs())
         .expect("build cc");

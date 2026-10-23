@@ -33,13 +33,7 @@ fn image(k: usize, m: usize, descending: bool) -> Vec<u8> {
 /// Bytes of instruction storage the built CFG's regions hold.
 fn held_bytes(k: usize, m: usize, descending: bool) -> usize {
     let arch = SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(image(k, m, descending), BASE),
-    )
-    .expect("sleigh");
-    let cfg = DecodeEngine::new(arch, sleigh)
+    let cfg = DecodeEngine::new(arch, BufMemReader::new(image(k, m, descending), BASE))
         .expect("decode engine")
         .build_cfg(BASE.into(), &CfgOptions::default())
         .expect("build");

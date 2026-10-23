@@ -695,10 +695,8 @@ pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::V
     bytes.extend(std::iter::repeat_n(0xccu8, 64));
     let arch = SleighArch::aarch64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh =
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create aarch64 sleigh");
 
-    let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
+    let mut strider = Lifter::new(arch, reader).expect("Lifter::new");
     let cc = CallingConvention::aarch64_aapcs64()
         .build(strider.sleigh_regs())
         .expect("build cc");

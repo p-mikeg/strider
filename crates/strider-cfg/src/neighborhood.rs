@@ -72,9 +72,7 @@ mod tests {
         let start = 0x1000;
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(bytes, start);
-        let sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        crate::DecodeEngine::new(arch, sleigh)
+        crate::DecodeEngine::new(arch, reader)
             .expect("decode engine")
             .build_cfg(start.into(), &CfgOptions::default())
             .expect("build_cfg on synthetic bytes")

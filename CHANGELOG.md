@@ -73,6 +73,10 @@
 
 ### Breaking, Rust
 
+- `DecodeEngine::new(arch, reader)`, `Lifter::new(arch, reader)` and
+  `Strider::new(arch, reader, rom)` take the `MemReader` and build the arch's
+  Sleigh themselves, through the new `SleighArch::sleigh(reader)`; none takes
+  a `Sleigh`, so the error for one built from another sla or pspec is gone.
 - `Optimizer::apply`, `PostOptimizer::apply`, `OptimizerPipeline::run`,
   `run_one`, `run_one_unvalidated` and `run_post` take `&OptCtx`, not
   `&mut OptCtx`: nothing writes it.

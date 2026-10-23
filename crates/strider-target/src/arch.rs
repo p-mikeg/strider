@@ -413,6 +413,17 @@ macro_rules! arch_ctor {
 }
 
 impl SleighArch {
+    /// A Sleigh over `reader` from this preset's sla and pspec: the one place
+    /// a Sleigh is built for an arch.
+    ///
+    /// # Errors
+    ///
+    /// When the compiled-in sla does not load.
+    pub fn sleigh<R: rsleigh::MemReader>(&self, reader: R) -> anyhow::Result<rsleigh::Sleigh<R>> {
+        rsleigh::Sleigh::new(self.sla_spec, self.pspec, reader)
+            .map_err(|e| anyhow::anyhow!("{:?}: Sleigh::new failed: {e}", self.preset))
+    }
+
     pub fn sla_spec(&self) -> rsleigh::sla_spec::SlaSpec {
         self.sla_spec
     }

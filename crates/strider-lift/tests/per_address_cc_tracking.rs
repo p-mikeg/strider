@@ -7,13 +7,11 @@ fn per_address_cc_integer_arg_registers_are_seeded() {
     // call g ; ret ; g: ret
     let bytes = vec![0xe8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xc3];
     let arch = strider_target::SleighArch::x86();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    let mut lifter = strider_lift::lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
     )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    .expect("lifter");
     let cc = strider_target::CallingConvention::x86_cdecl()
         .build(lifter.sleigh_regs())
         .expect("cdecl");
@@ -53,13 +51,11 @@ fn an_override_this_function_never_calls_seeds_nothing() {
     // call g ; ret ; g: ret
     let bytes = vec![0xe8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xc3];
     let arch = strider_target::SleighArch::x86();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    let mut lifter = strider_lift::lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
     )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    .expect("lifter");
     let cc = strider_target::CallingConvention::x86_cdecl()
         .build(lifter.sleigh_regs())
         .expect("cdecl");
@@ -98,13 +94,11 @@ fn a_tail_calls_override_argument_registers_are_seeded() {
     // jmp g ; ret ; g: ret, under a 2-byte bound, so the `jmp` is a tail call.
     let bytes = vec![0xeb, 0x01, 0xc3, 0xc3];
     let arch = strider_target::SleighArch::x86();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    let mut lifter = strider_lift::lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
     )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    .expect("lifter");
     let cc = strider_target::CallingConvention::x86_cdecl()
         .build(lifter.sleigh_regs())
         .expect("cdecl");

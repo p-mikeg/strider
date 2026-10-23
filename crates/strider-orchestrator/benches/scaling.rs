@@ -85,9 +85,7 @@ fn analyze_case(c: Case) -> strider_ir::Function {
         strider_reader::elf::RelocationMode::Unapplied,
     )
     .expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), mem)
-        .expect("real sleigh");
-    let mut ana = strider_orchestrator::Lifter::new(sleigh_arch, sleigh).expect("Lifter::new");
+    let mut ana = strider_orchestrator::Lifter::new(sleigh_arch, mem).expect("Lifter::new");
     let cc = (fixture.arch.cc)()
         .build(ana.sleigh_regs())
         .expect("build cc");

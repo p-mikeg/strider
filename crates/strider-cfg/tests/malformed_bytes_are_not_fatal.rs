@@ -2,7 +2,6 @@
 //! a `Cfg` or a clean error. These inputs each used to take the process down
 //! or panic out of a public entry point.
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, DecodeEngine};
 use strider_target::SleighArch;
@@ -17,8 +16,7 @@ fn hex(s: &[u8]) -> Vec<u8> {
 /// assertion here, a crash or a panic being what these inputs used to produce.
 fn build_succeeds(arch: &SleighArch, bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> bool {
     let reader = BufMemReader::new(bytes, start);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-    DecodeEngine::new(*arch, sleigh)
+    DecodeEngine::new(*arch, reader)
         .expect("decode engine")
         .build_cfg(start.into(), opts)
         .is_ok()
@@ -87,7 +85,7 @@ fn a_by_element_dot_product_reads_the_register_its_encoding_names() {
 
     let reg_inputs = |bytes: Vec<u8>, usdot_at: u64| {
         let reader = BufMemReader::new(bytes, 0);
-        let mut sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+        let mut sleigh = arch.sleigh(reader).expect("sleigh");
         // Decode from the top so the dirtied case really does reuse the
         // context the two loads left behind.
         let mut addr = 0;

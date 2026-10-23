@@ -14,17 +14,11 @@ fn build_arm(words: &[u32]) -> Cfg {
     let arch = SleighArch::arm();
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
     let size = bytes.len() as u64;
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes, BASE),
-    )
-    .expect("create Sleigh");
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::size(size),
         ..CfgOptions::default()
     };
-    DecodeEngine::new(arch, sleigh)
+    DecodeEngine::new(arch, BufMemReader::new(bytes, BASE))
         .expect("decode engine")
         .build_cfg(BASE.into(), &opts)
         .expect("build")

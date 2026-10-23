@@ -7,12 +7,12 @@ sea-of-nodes IR `strider-lift` builds from it.
 
 ## What's here
 
-- `DecodeEngine::new(arch, sleigh)?.build_cfg(entry, &opts)` -> `Cfg`. The
-  engine owns the Sleigh and the decode context it carries from one function
-  to the next, so every build decodes as on a fresh engine; on an arch with an
-  ISA mode the entry's low bit selects it (Thumb, MIPS16e). A work queue
-  seeded with the entry drives decoding: each item either decodes a new region
-  or routes an edge to an existing one.
+- `DecodeEngine::new(arch, reader)?.build_cfg(entry, &opts)` -> `Cfg`. The
+  engine builds and owns the arch's Sleigh and the decode context it carries
+  from one function to the next, so every build decodes as on a fresh engine;
+  on an arch with an ISA mode the entry's low bit selects it (Thumb,
+  MIPS16e). A work queue seeded with the entry drives decoding: each item
+  either decodes a new region or routes an edge to an existing one.
 - `Region`, the graph's node: maximal straight-line pcode entered only at
   `start_addr`, ending at its `RegionTerminator`. `contains_addr` decides which
   bytes it owns, down to the pcode index, since a region can end mid-pcode

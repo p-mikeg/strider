@@ -1016,11 +1016,7 @@ mod tests {
         base: u64,
         options: &crate::CfgOptions<'_>,
     ) -> crate::Result<crate::Cfg> {
-        let arch = strider_target::SleighArch::x86_64();
-        let sleigh = make_sleigh_over(bytes, base);
-        crate::DecodeEngine::new(arch, sleigh)
-            .expect("decode engine")
-            .build_cfg(base.into(), options)
+        crate::test_support::make_engine_over(bytes, base).build_cfg(base.into(), options)
     }
 
     /// Every `Switch` arm must resolve to a successor region starting exactly at
@@ -1143,45 +1139,23 @@ mod tests {
         );
     }
 
+    /// ARM paired with the x86-64 sla: the mode var it re-imposes at every
+    /// region is not one that sla flows, so the re-impose would be a silent
+    /// no-op.
     #[test]
-    fn an_engine_whose_sleigh_is_another_archs_is_refused() {
-        let sleigh = make_sleigh_over(vec![0xc3; 8], 0x1000);
-        let err = crate::DecodeEngine::new(strider_target::SleighArch::x86(), sleigh)
+    fn an_isa_mode_var_the_sla_does_not_flow_is_an_error() {
+        let sleigh = make_sleigh_over(vec![0xc3], 0x1000);
+        let err = crate::DecodeEngine::from_sleigh(strider_target::SleighArch::arm(), sleigh)
             .err()
-            .expect("an x86-64 Sleigh under the x86 preset");
-        assert!(
-            err.to_string()
-                .contains("the Sleigh was built from another sla"),
-            "{err}"
-        );
-    }
-
-    /// `arm_thumb` shares the ARM sla and differs only in its pspec, whose
-    /// defaults the engine snapshots as a cold entry's context.
-    #[test]
-    fn an_engine_whose_sleigh_has_another_pspec_is_refused() {
-        let arm = strider_target::SleighArch::arm();
-        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 8], 0x1000);
-        let sleigh =
-            rsleigh::Sleigh::new(arm.sla_spec(), arm.pspec(), reader).expect("create Sleigh");
-        let err = crate::DecodeEngine::new(strider_target::SleighArch::arm_thumb(), sleigh)
-            .err()
-            .expect("an ARM-pspec Sleigh under the Thumb preset");
-        assert!(
-            err.to_string()
-                .contains("the Sleigh was built from another pspec"),
-            "{err}"
-        );
+            .expect("an ARM engine over the x86-64 sla");
+        assert!(err.to_string().contains("TMode"), "{err}");
     }
 
     /// A function whose first byte is unmapped has nothing to analyse, so there
     /// is no partial answer to report.
     #[test]
     fn an_unmapped_entry_is_still_an_error() {
-        let arch = strider_target::SleighArch::x86_64();
-        let sleigh = make_sleigh_over(vec![0xc3; 8], 0x1000);
-        let err = crate::DecodeEngine::new(arch, sleigh)
-            .expect("decode engine")
+        let err = crate::test_support::make_engine_over(vec![0xc3; 8], 0x1000)
             .build_cfg(0x9000u64.into(), &crate::CfgOptions::default())
             .expect_err("an unmapped entry has no function to report on");
         assert!(
@@ -1785,9 +1759,7 @@ mod tests {
         put(0x1010, 0xe12f_ff10); // bx r0
 
         let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
-        let sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        let mut engine = crate::DecodeEngine::new(arch, sleigh).expect("decode engine");
+        let mut engine = crate::DecodeEngine::new(arch, reader).expect("decode engine");
         let mut known_targets = rustc_hash::FxHashMap::default();
         known_targets.insert(
             PcodeInsnAddr::at_machine_start(0x1010),
@@ -1843,9 +1815,7 @@ mod tests {
         use crate::builder::flow::CONTEXT_READS;
         let arch = strider_target::SleighArch::arm();
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x100], 0x1000);
-        let sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        let mut engine = crate::DecodeEngine::new(arch, sleigh).expect("decode engine");
+        let mut engine = crate::DecodeEngine::new(arch, reader).expect("decode engine");
 
         CONTEXT_READS.with(|n| n.set(0));
         let _ = engine.flow_vars.snapshot(&engine.sleigh, 0x1000);
@@ -1874,9 +1844,7 @@ mod tests {
     fn enqueue_ignores_a_context_commit_this_build_did_not_make() {
         let arch = strider_target::SleighArch::arm();
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x100], 0x1000);
-        let sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        let mut engine = crate::DecodeEngine::new(arch, sleigh).expect("decode engine");
+        let mut engine = crate::DecodeEngine::new(arch, reader).expect("decode engine");
 
         // Pure IT-block state: `enqueue` takes only the ISA-mode var from the
         // parent, so this one comes from the baseline either way.
@@ -1934,9 +1902,7 @@ mod tests {
             "x86-64 commits nothing to re-derive",
         );
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x100], 0x1000);
-        let sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        let mut engine = crate::DecodeEngine::new(arch, sleigh).expect("decode engine");
+        let mut engine = crate::DecodeEngine::new(arch, reader).expect("decode engine");
         let victim = engine
             .sleigh
             .flow_context_vars()
@@ -2445,9 +2411,7 @@ mod tests {
         let interior = |lent: &'static [(&'static str, super::FlowCommit, u32)]| {
             let arch = strider_target::SleighArch::x86();
             let reader = rsleigh::mem_readers::BufMemReader::new(LOCK_REENTRY.to_vec(), 0x1000);
-            let sleigh =
-                rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-            let mut engine = crate::DecodeEngine::new(arch, sleigh).expect("decode engine");
+            let mut engine = crate::DecodeEngine::new(arch, reader).expect("decode engine");
             let opts = crate::CfgOptions::default();
             let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
             b.flow_commit_defaults = lent;

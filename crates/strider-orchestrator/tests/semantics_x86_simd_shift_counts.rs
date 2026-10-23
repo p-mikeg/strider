@@ -7,7 +7,6 @@
 //! width turns it into zero, so either mistake silently leaves the input
 //! unshifted.
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
@@ -82,15 +81,12 @@ fn operands(mut v: Vec<u8>, value: u128, count: u128) -> Vec<u8> {
 /// The constant left in `rax`, which is return value slot 0 under System V.
 fn returned_rax(bytes: Vec<u8>) -> u128 {
     let arch = SleighArch::x86_64();
-    let sleigh = Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes.clone(), BASE),
-    )
-    .expect("sleigh");
-    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
-        Box::new(strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes));
-    let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(rom)).expect("strider");
+    let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
+        strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone()),
+    );
+    let mut strider =
+        strider_orchestrator::Strider::new(arch, BufMemReader::new(bytes, BASE), Some(rom))
+            .expect("strider");
     let cc = CallingConvention::x86_64_systemv()
         .build(strider.sleigh_regs())
         .expect("cc");
