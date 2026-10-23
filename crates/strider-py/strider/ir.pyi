@@ -143,7 +143,7 @@ class Function:
         """The claims in force: the ones `analyze` ran under, plus every set
         `Lifter.optimize` added since. A copy; no optimize withdraws a claim,
         so dropping one means analysing again without it, and none adds
-        `msr_register_keeps_mode` or `mxcsr_rounds_to_nearest`, which only the
+        `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest`, which only the
         lift reads."""
         ...
     def entry_node(self) -> int:
