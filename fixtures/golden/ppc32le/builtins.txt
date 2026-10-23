@@ -7,12 +7,12 @@
 # popcount64: popcount|lzcount or call or 2 int.and|int.or|int.xor|int.shift_left|int.shift_right|int.sshift_right|int.neg
 endian little
 default_cc arg_passing_regs=[r3, r4, r5, r6, r7, r8, r9, r10] arg_passing_regs_float=[f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45] callee_saved_regs=[r2, r13, r14, r15, r16, r17, r18, r19, r20, r21, r22, r23, r24, r25, r26, r27, r28, r29, r30, r31, LR, f14, f15, f16, f17, f18, f19, f20, f21, f22, f23, f24, f25, f26, f27, f28, f29, f30, f31, cr2, cr3, cr4, vs52, vs53, vs54, vs55, vs56, vs57, vs58, vs59, vs60, vs61, vs62, vs63] ret_val_regs=[r3, r4] ret_val_regs_float=[f1, f2, vs34] stack_vn=r1 stack_args=8+4n ret_stack_pop=0 link_register_vn=LR preserves_memory=false preserves_all_registers=false entry_address_vn=none
-assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode mxcsr_rounds_to_nearest
+assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slots_survive_untracked_writes msr_register_keeps_mode fp_rounding_mode_is_nearest
 
 == popcount32 @0x100100ec
 cfg
   0x100100ec 170 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, xer_so, cr0, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1b00:1, u:0x1c00:1, u:0x1e00:1, u:0x2000:1, u:0x2300:1, u:0x2400:1, u:0x2500:1, u:0x2600:1, u:0x19c00:4, u:0x19e00:4, u:0x24900:4, u:0x73300:1, u:0x73400:4, u:0x73500:1, u:0x73600:4, u:0x73800:4]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, xer_so, cr0, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1b00:1, u:0x1c00:1, u:0x1e00:1, u:0x2000:1, u:0x2300:1, u:0x2400:1, u:0x2500:1, u:0x2600:1, u:0x1f600:4, u:0x1f800:4, u:0x2a300:4, u:0x78c00:1, u:0x78d00:4, u:0x78e00:1, u:0x78f00:4, u:0x79100:4]
 arg 0 [%v12]
 float_arg 0 [%v58]
 float_arg 1 [%v59]
@@ -83,7 +83,7 @@ return %v0, %v13, %v57, %v49, %v58, %v59, %v60
 == clz32 @0x10010164
 cfg
   0x10010164 15 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x19c00:4, u:0x19e00:4]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1f600:4, u:0x1f800:4]
 arg 0 [%v12]
 arg 1 [%v15]
 float_arg 0 [%v16]
@@ -113,7 +113,7 @@ return %v0, %v13, %v14, %v15, %v16, %v17, %v18
 == ctz32 @0x10010188
 cfg
   0x10010188 21 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, xer_ca, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x19c00:4, u:0x19e00:4, u:0x24400:4, u:0x7e300:1]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, xer_ca, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1f600:4, u:0x1f800:4, u:0x29e00:4, u:0x83c00:1]
 arg 0 [%v12]
 float_arg 0 [%v22]
 float_arg 1 [%v23]
@@ -148,7 +148,7 @@ return %v0, %v13, %v21, %v12, %v22, %v23, %v24
 == popcount64 @0x100101b8
 cfg
   0x100101b8 325 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, xer_so, cr0, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1b00:1, u:0x1c00:1, u:0x1e00:1, u:0x2000:1, u:0x2300:1, u:0x2400:1, u:0x2500:1, u:0x2600:1, u:0x19c00:4, u:0x19e00:4, u:0x24900:4, u:0x73300:1, u:0x73400:4, u:0x73500:1, u:0x73600:4, u:0x73800:4]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, xer_so, cr0, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1b00:1, u:0x1c00:1, u:0x1e00:1, u:0x2000:1, u:0x2300:1, u:0x2400:1, u:0x2500:1, u:0x2600:1, u:0x1f600:4, u:0x1f800:4, u:0x2a300:4, u:0x78c00:1, u:0x78d00:4, u:0x78e00:1, u:0x78f00:4, u:0x79100:4]
 arg 0 [%v16]
 arg 1 [%v12]
 float_arg 0 [%v90]
@@ -254,7 +254,7 @@ cfg
   0x1001027c 34 ops cbranch 0x100102b4 -> [0x100102ac, 0x100102b4]
   0x100102ac 2 ops goto -> [0x100102b4]
   0x100102b4 4 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, xer_so, cr0, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x16900:1, u:0x19c00:4, u:0x19e00:4, u:0x2c500:4, u:0x2c600:4, u:0x2c700:1, u:0x2c800:1, u:0x2c900:1, u:0x2ca00:1, u:0x2cb00:1, u:0x2cc00:1, u:0x2cd00:1, u:0x2ce00:1, u:0x2cf00:1]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, xer_so, cr0, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x1c300:1, u:0x1f600:4, u:0x1f800:4, u:0x31f00:4, u:0x32000:4, u:0x32100:1, u:0x32200:1, u:0x32300:1, u:0x32400:1, u:0x32500:1, u:0x32600:1, u:0x32700:1, u:0x32800:1, u:0x32900:1]
 arg 0 [%v26]
 arg 1 [%v1]
 float_arg 0 [%v29]
@@ -300,7 +300,7 @@ cfg
   0x100102e4 6 ops goto -> [0x10010308]
   0x100102f4 8 ops goto -> [0x10010308]
   0x10010308 6 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, xer_so, cr0, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x16600:1, u:0x19c00:4, u:0x19e00:4, u:0x29500:4, u:0x29600:4, u:0x29700:1, u:0x29800:1, u:0x29900:1, u:0x29a00:1, u:0x29b00:1, u:0x29c00:1, u:0x29d00:1, u:0x29e00:1, u:0x29f00:1]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, xer_so, cr0, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x1c000:1, u:0x1f600:4, u:0x1f800:4, u:0x2ef00:4, u:0x2f000:4, u:0x2f100:1, u:0x2f200:1, u:0x2f300:1, u:0x2f400:1, u:0x2f500:1, u:0x2f600:1, u:0x2f700:1, u:0x2f800:1, u:0x2f900:1]
 arg 0 [%v1]
 arg 1 [%v29]
 float_arg 0 [%v30]
@@ -343,7 +343,7 @@ return %v22, %v24, %v28, %v29, %v30, %v31, %v32
 == main @0x10010318
 cfg
   0x10010318 95 ops return -> []
-tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x19c00:4, u:0x19e00:4]
+tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1f600:4, u:0x1f800:4]
 arg 1 [%v26]
 arg 2 [%v27]
 arg 3 [%v28]
