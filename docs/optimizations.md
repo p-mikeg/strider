@@ -97,11 +97,11 @@ Each load it examines also has its memory edge moved past the memory
 definitions that cannot overwrite it. That move uses `stack_global_disjoint`
 and `noalias_allocators`' heap identity, but never steps through a call a
 claim makes transparent (`escape_analysis`, a listed allocator): the jump-table
-walk that reads the edge afterwards honours no such claim. Claims accumulate
-on a function: re-optimising adds the claims it names to the ones already in
-force and withdraws none, and a value forwarded under a claim stays forwarded:
-to drop a claim, analyse the
-function again without it.
+walk and return-target verification with its claim off read the edge
+afterwards, and honour no such claim. Claims accumulate on a function:
+re-optimising adds the claims it names to the ones already in force and
+withdraws none, and a value forwarded under a claim stays forwarded: to drop
+a claim, analyse the function again without it.
 
 With `AssumptionOptions(escape_analysis=True)` it also forwards across a call,
 when no stack address escapes the frame anywhere in the function (as a call
