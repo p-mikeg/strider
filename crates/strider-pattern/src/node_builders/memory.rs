@@ -286,7 +286,7 @@ pub fn store() -> StorePat {
         inner: NodePat::node(KindSpec::variant_of(&NodeKind::Store(
             rsleigh::VnSpace::RAM,
         )))
-        .with_mem_value(0),
+        .with_mem_value(NodeKind::MEM_OUT_SLOT),
         has_data: false,
         bit_width: None,
         region: RegionFilter::default(),

@@ -92,7 +92,6 @@ fn register_arity(
     function: &strider_ir::Function,
     cc: &strider_target::BuiltCallingConvention,
 ) -> usize {
-    const FIXED_INPUTS: usize = 4;
     let tracked = function.all_vns();
     // A `None` slot means the function was not lifted against this convention;
     // the lifter passes the prefix before the first one, so nothing after it is
@@ -102,7 +101,7 @@ fn register_arity(
         .into_iter()
         .take_while(Option::is_some)
         .count();
-    FIXED_INPUTS + cc.arg_passing_regs.len() + float_args
+    NodeKind::Call { cc: None }.input_head_len() + cc.arg_passing_regs.len() + float_args
 }
 
 /// Wires positional stack args into each `Call`.  A per-`Call` CC override

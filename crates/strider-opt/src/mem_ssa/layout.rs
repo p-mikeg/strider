@@ -21,7 +21,7 @@
 use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
 const NONE: u32 = u32::MAX;
@@ -635,7 +635,9 @@ impl Discovered {
         index[initial] = 0;
         let mut i = 0;
         while i < node.len() {
-            let out = memory_output(function, node[i]);
+            let out = function
+                .memory_output_of(node[i])
+                .expect("a memory def has a memory output");
             for (user, slot) in graph.value_uses(out) {
                 if index[user] == NONE && consumes_memory_at(function, user, slot) {
                     index[user] = node.len() as u32;
@@ -679,21 +681,13 @@ impl Discovered {
     }
 }
 
-fn memory_output(function: &Function, node: NodeId) -> ValueId {
-    function
-        .node_outputs(node)
-        .iter()
-        .copied()
-        .find(|&v| function.graph().value_kind(v) == ValueKind::Memory)
-        .expect("a memory def has a memory output")
-}
-
 /// Whether `user` reads memory at `slot` and produces memory of its own.
 fn consumes_memory_at(function: &Function, user: NodeId, slot: u32) -> bool {
+    let slot = slot as usize;
     match function.node_kind(user) {
-        NodeKind::MemPhi => slot > 0,
-        NodeKind::Store(_) => slot == 0,
-        NodeKind::Call { .. } | NodeKind::CallOther { .. } => slot == 1,
+        kind @ NodeKind::MemPhi => slot >= kind.input_head_len(),
+        NodeKind::Store(_) => slot == NodeKind::ACCESS_MEM_SLOT,
+        NodeKind::Call { .. } | NodeKind::CallOther { .. } => slot == NodeKind::CTRL_MEM_SLOT,
         _ => false,
     }
 }
