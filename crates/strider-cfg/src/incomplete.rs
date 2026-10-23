@@ -49,7 +49,10 @@ pub enum Reason {
     /// stub: the arm is dropped, unless a call precedes the bytes, which ends
     /// that call as `NoReturn`. A branch, or a conditional's not-taken side,
     /// into unmapped bytes off an arm leaves through a stub and keeps the arm.
-    /// An unmapped ENTRY fails the whole build instead.
+    /// So does an arm landing on a stub a direct edge already left here: the
+    /// address is reported either way, and it says nothing about the table's
+    /// bound, where an arm whose own decode runs into the bytes does. An
+    /// unmapped ENTRY fails the whole build instead.
     UnmappedTarget,
     /// Holds no instruction: bytes Sleigh rejects, or
     /// [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges) marks. A
@@ -60,9 +63,10 @@ pub enum Reason {
     /// the arm is dropped and named by
     /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets);
     /// a fall-through reaching them past a call instead ends that call as
-    /// `NoReturn`, keeping the arm. The start of an arm, or of a region off
-    /// one, whose decode fails for a reason no other variant names is named
-    /// here too.
+    /// `NoReturn`, keeping the arm. An arm landing on a stub a direct edge
+    /// already left here keeps it, as for [`Self::UnmappedTarget`]. The start
+    /// of an arm, or of a region off one, whose decode fails for a reason no
+    /// other variant names is named here too.
     UndecodableTarget,
     /// Where a fall-through ran off a
     /// [`FunctionBound::Size`](crate::FunctionBound::Size) end, at the first
