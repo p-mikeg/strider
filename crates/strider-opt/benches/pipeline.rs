@@ -30,7 +30,7 @@ fn pipeline_benches(c: &mut Criterion) {
             build_foldable_chain,
             |mut function| {
                 function.assume(&strider_opt::AssumptionOptions::default());
-                pipeline.run(&mut function, &mut OptCtx::new(None)).unwrap();
+                pipeline.run(&mut function, &OptCtx::new(None)).unwrap();
                 black_box(function)
             },
             BatchSize::LargeInput,

@@ -25,7 +25,7 @@ impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
     fn apply(
         &self,
         edit: &mut strider_opt::EditFunction<'_>,
-        ctx: &mut strider_orchestrator::opt::OptCtx<'_>,
+        ctx: &strider_orchestrator::opt::OptCtx<'_>,
     ) -> strider_orchestrator::opt::Result<()> {
         self.0.apply(edit, ctx)?;
         Ok(())

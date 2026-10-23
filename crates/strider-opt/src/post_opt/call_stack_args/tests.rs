@@ -253,7 +253,7 @@ fn outgoing_span_three_wide_arg_store_collected_as_one_arg() -> Result<()> {
 fn collect_call_inputs(fg: &mut strider_ir::Function) -> Result<Vec<ValueId>> {
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(fg, &crate::OptCtx::new(None))?;
     let call_id = find_call(fg.graph())?;
     Ok(fg.node_inputs(call_id).into_iter().collect())
 }
@@ -453,7 +453,7 @@ fn missing_slot_zero_skips_collection() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
 
     let after_inputs = fg.node_inputs(find_call(fg.graph())?).len();
     assert_eq!(
@@ -480,7 +480,7 @@ fn call_with_no_stack_stores_unchanged() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
 
     let after_inputs = fg.node_inputs(find_call(fg.graph())?).len();
     assert_eq!(
@@ -574,7 +574,7 @@ fn strict_walker_terminates_at_non_aliasing_global_store() -> Result<()> {
     // At the floor `stack_global_disjoint` is off; its default would step
     // through the global write instead.
     pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
@@ -629,7 +629,7 @@ fn strict_walker_collects_no_args_when_first_chain_node_is_global_store() -> Res
     let mut pipeline = cf_rp_pipeline();
     // At the floor the default `stack_global_disjoint` is off.
     pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
@@ -961,7 +961,7 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
 
     let call_id_post = fg
         .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
@@ -1013,7 +1013,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
     // Canonicalize so decomposition would work if it were used.
     {
         let prep = cf_rp_pipeline();
-        prep.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        prep.run(&mut fg, &crate::OptCtx::new(None))?;
     }
 
     let arg0_store = fg
@@ -1055,7 +1055,7 @@ fn call_stack_arg_collect_reads_offset_from_side_table_not_decompose() -> Result
         .set_stack_slot(arg0_store_addr, sp_base, 4);
 
     let pass = CallStackArgCollect;
-    crate::pipeline::run_post(&pass, &mut fg, &mut crate::OptCtx::new(None))?;
+    crate::pipeline::run_post(&pass, &mut fg, &crate::OptCtx::new(None))?;
 
     let call_id = find_call(fg.graph())?;
     let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
@@ -1105,7 +1105,7 @@ fn collect_walk_steps(slots: usize) -> Result<u64> {
     let mut pipeline = crate::OptimizerPipeline::new();
     pipeline.add(crate::PhiCollapse);
     pipeline.add(crate::RegionCollapse);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
 
     let call_id = find_call(fg.graph())?;
     fg.assume(&crate::AssumptionOptions {
@@ -1196,7 +1196,7 @@ fn repeated_pipeline_runs_leave_the_collected_tail_alone() -> Result<()> {
 
     let pipeline = crate::default_pipeline();
     for run in 1..=3 {
-        pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
         let call_id = find_call(fg.graph())?;
         let inputs: Vec<ValueId> = fg.node_inputs(call_id).into_iter().collect();
         assert_eq!(
@@ -1235,7 +1235,7 @@ fn collect_at_the_offset_carrier_top(first_slot: i128, frame: i128) -> Result<us
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(CallStackArgCollect);
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
     Ok(fg.node_inputs(find_call(fg.graph())?).len())
 }
 
@@ -1326,7 +1326,7 @@ fn collecting_across_call_diamonds_costs_near_linear_work() -> Result<()> {
         let mut fg = crate::test_support::memory_shapes::stack_arg_call_diamonds(n)?;
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         crate::mem_ssa::CLIMB_STEPS.with(|c| c.set(0));
-        crate::pipeline::run_post(&CallStackArgCollect, &mut fg, &mut crate::OptCtx::new(None))?;
+        crate::pipeline::run_post(&CallStackArgCollect, &mut fg, &crate::OptCtx::new(None))?;
         Ok(crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
             + crate::mem_ssa::CLIMB_STEPS.with(std::cell::Cell::get))
     };

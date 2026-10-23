@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     function.assume(&strider_orchestrator::opt::AssumptionOptions::default());
     pipeline.run(
         &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(Some(&rom)),
+        &strider_orchestrator::opt::OptCtx::new(Some(&rom)),
     )?;
 
     let dot = dot::GraphDot::new(function.dot_dumper(arch.names()), dot::DotStyle::dark());

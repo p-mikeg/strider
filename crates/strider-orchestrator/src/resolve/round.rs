@@ -114,7 +114,7 @@ where
                 edit.add_node_input(ret, target);
             }
         }
-        pipeline.run(&mut function, &mut OptCtx::new(rom_ref))?;
+        pipeline.run(&mut function, &OptCtx::new(rom_ref))?;
         // Before `settle_return_sites` truncates the `Return`s and cleans, so
         // the classifier reads the IR the pipeline settled on.
         let strider_opt::ClassifiedSites { sites, resolved } = if opts.resolve_indirect_branches {

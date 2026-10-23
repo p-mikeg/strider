@@ -568,7 +568,7 @@ mod tests {
         let mut prep = crate::OptimizerPipeline::new();
         prep.add(crate::PhiCollapse);
         prep.add(crate::RegionCollapse);
-        prep.run(&mut function, &mut crate::OptCtx::new(None))
+        prep.run(&mut function, &crate::OptCtx::new(None))
             .expect("prep");
         (function, branch, target)
     }
@@ -632,7 +632,7 @@ mod tests {
         let mut prep = crate::OptimizerPipeline::new();
         prep.add(crate::PhiCollapse);
         prep.add(crate::RegionCollapse);
-        prep.run(&mut function, &mut crate::OptCtx::new(None))
+        prep.run(&mut function, &crate::OptCtx::new(None))
             .expect("prep");
         (function, branch, target)
     }
@@ -699,7 +699,7 @@ mod tests {
         let mut prep = crate::OptimizerPipeline::new();
         prep.add(crate::PhiCollapse);
         prep.add(crate::RegionCollapse);
-        prep.run(&mut function, &mut crate::OptCtx::new(None))
+        prep.run(&mut function, &crate::OptCtx::new(None))
             .expect("prep");
         (function, branch, target)
     }
@@ -784,7 +784,7 @@ mod tests {
         let mut prep = crate::OptimizerPipeline::new();
         prep.add(crate::PhiCollapse);
         prep.add(crate::RegionCollapse);
-        prep.run(&mut function, &mut crate::OptCtx::new(None))
+        prep.run(&mut function, &crate::OptCtx::new(None))
             .expect("prep");
         (function, branch, target)
     }

@@ -55,7 +55,7 @@ impl Optimizer for PhiCollapse {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        _opt: &mut OptCtx<'_>,
+        _opt: &OptCtx<'_>,
     ) -> Result<OptimizationResult> {
         let reachable = strider_ir::walk::cfg_reachable(edit.function().graph(), edit.entry());
         let phis: Vec<NodeId> = edit

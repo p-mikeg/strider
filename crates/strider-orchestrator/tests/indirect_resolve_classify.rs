@@ -214,11 +214,8 @@ fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::V
     // Run the pipeline so x30's value at the branch site reflects the
     // Call's clobber output, not InitialVar.
     let p = strider_orchestrator::opt::default_pipeline();
-    p.run(
-        &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
-    )
-    .expect("optimizer pipeline");
+    p.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
+        .expect("optimizer pipeline");
 
     assert_eq!(
         outcome.unresolved_branches.len(),

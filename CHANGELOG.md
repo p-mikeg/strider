@@ -73,6 +73,9 @@
 
 ### Breaking, Rust
 
+- `Optimizer::apply`, `PostOptimizer::apply`, `OptimizerPipeline::run`,
+  `run_one`, `run_one_unvalidated` and `run_post` take `&OptCtx`, not
+  `&mut OptCtx`: nothing writes it.
 - `SideTables::set_frame_address_in_call_register` is
   `record_call_register_frame_reach`, taking the stack address's offset from
   the entry SP (`i128::MAX` for none); `call_register_frame_reach` reads the
