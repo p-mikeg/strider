@@ -175,7 +175,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // `container_of` returns `reg` unchanged when nothing tracked contains
         // it, which here means `reg` is its own container: a legitimate
         // full-width access, not a failure.
-        Ok(self.container_of(reg))
+        Ok(self.container_map.container_of(reg))
     }
 
     /// Reads `reg` by shifting its slice out of the container and truncating.

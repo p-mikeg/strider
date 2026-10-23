@@ -273,7 +273,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
                     }
                     _ => None,
                 };
-                if let Some(vn) = slot.and_then(|s| pcode_consts::enclosing_register(declared, &s))
+                if let Some(vn) = slot.and_then(|s| vn_container::smallest_enclosing(declared, &s))
                 {
                     found.insert(vn);
                 }
@@ -471,7 +471,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             driver.def_sites = def_sites.clone();
         }
         def_sites.retain(|&id, _| !driver.is_local_temporary(id, &nonlocal));
-        let placement = dom.iterated_frontier(&def_sites);
+        let placement = graph_algorithms::dominance::phi_placement(&dom.frontiers, &def_sites);
 
         let region_map = driver.build_region_map(&placement)?;
 
@@ -566,7 +566,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         if self
             .builder
             .function()
-            .vn_id_of(&self.container_of(&vn))
+            .vn_id_of(&self.container_map.container_of(&vn))
             .is_none()
         {
             return Ok(());
@@ -605,14 +605,14 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             let function = self.builder.function();
             function
                 .default_cc()
-                .float_arg_slots(function.all_vns(), |v| self.container_of(v))
+                .float_arg_slots(function.all_vns(), |v| self.container_map.container_of(v))
         };
         // The entry machine address, so a materialised slice carries a
         // fingerprint like every other non-exempt node.
         let entry_addr = self.entry_machine_addr();
         for (j, carrier) in float_slots.into_iter().enumerate() {
             let Some(carrier) = carrier else { continue };
-            let value = if self.container_of(&carrier) == carrier {
+            let value = if self.container_map.container_of(&carrier) == carrier {
                 self.builder.function().initial_var_value(&carrier)
             } else {
                 // A slice out of a shared container dedups with the function's
@@ -645,7 +645,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         for &cfg_rid in dom.preorder() {
             let ir_region = ir_region_of(region_map, cfg_rid)?;
             // The entry region has no idom; `set_entry_region` seeded it.
-            if let Some(idom_cfg) = dom.immediate_dominator(cfg_rid) {
+            if let Some(idom_cfg) = dom.doms.immediate_dominator(cfg_rid) {
                 let idom_ir = ir_region_of(region_map, idom_cfg)?;
                 self.builder.inherit_variables(ir_region, idom_ir);
             }

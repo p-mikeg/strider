@@ -221,12 +221,12 @@ impl<'a> Evaluator<'a> {
         }
         if data_ty.is_integer() && load_ty.is_integer() && load_ty.byte_size() < data_ty.byte_size()
         {
-            // Little-endian gives 0, so the low bytes pass through.
-            let shift_bits = crate::const_eval::high_low_shift_bits(
-                data_ty,
-                load_ty,
-                self.function.endianness(),
-            );
+            let shift_bits = match self.function.endianness() {
+                strider_target::Endianness::Little => 0,
+                strider_target::Endianness::Big => {
+                    crate::const_eval::big_endian_slice_shift_bits(data_ty, load_ty)
+                }
+            };
             return load_ty.get_unsigned_int(v >> shift_bits);
         }
         None
