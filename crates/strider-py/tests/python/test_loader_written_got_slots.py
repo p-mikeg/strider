@@ -71,3 +71,23 @@ def test_a_tail_call_through_a_plain_slot_still_folds():
     result = elf.analyze("call_h")
     assert not result.unresolved
     assert f"iconst[{h:#x}]" in result.function.to_text()
+
+
+def test_a_copy_relocated_array_element_is_not_folded():
+    """`get3` reads `tbl[3]` from the PIE's `R_X86_64_COPY` object, which
+    holds zeros in the file and the library's 4 at run time."""
+    elf = strider.lift.load_elf(_image("x64_copy_pie.elf"), relocated_got_is_rom=True)
+    function = elf.analyze("get3").function
+    assert not function.find_all(p.ret().ret_val(0, p.int_const())), function.to_text()
+    assert function.find_all(p.load()), function.to_text()
+
+
+def test_a_call_through_an_android_packed_table_is_not_folded():
+    """`call1` tail-calls `ptrs[1]`, whose `R_AARCH64_RELATIVE` lld packed
+    into an `SHT_ANDROID_RELA` table strider does not decode: the file holds
+    0 there."""
+    elf = strider.lift.load_elf(_image("aarch64_android_rela.elf"), relocated_got_is_rom=True)
+    text = elf.analyze("call1").function.to_text()
+    assert "iconst[0x0]" not in text, text
+    assert " load" in text, text
+
