@@ -536,29 +536,36 @@ fn builds_a_cr_pack(kind: &NodeKind) -> bool {
 }
 
 /// Folds every CR-pack interior node's asm-fingerprint into the surviving
-/// comparison.  The descent is confined to [`builds_a_cr_pack`].
+/// comparison.  The descent is confined to [`builds_a_cr_pack`], plus the
+/// `IntEqual(_, 0)` of the `Xor` spelling, and stops at the comparison.
 fn absorb_cr_pack_fingerprints(
     edit: &mut crate::EditFunction<'_>,
     cond_out: ValueId,
     cmp: ValueId,
 ) {
     let into = edit.producer(cmp);
-    let mut stack = vec![edit.producer(cond_out)];
+    let root = edit.producer(cond_out);
+    let tested_eq = match edit.node_kind(root) {
+        NodeKind::IntBinaryOp(IntBinaryOp::Xor) => {
+            crate::peephole::input_producers_iter(edit, root)
+                .find(|&n| matches!(edit.node_kind(n), NodeKind::IntCmpOp(IntCmpOp::Equal)))
+        }
+        _ => None,
+    };
+    let mut stack = vec![root];
     let mut visited: entity_utils::DenseEntitySet<NodeId> = entity_utils::DenseEntitySet::new();
     let mut interior: Vec<NodeId> = Vec::new();
     while let Some(n) = stack.pop() {
-        if !visited.insert(n) {
+        if n == into || !visited.insert(n) {
             continue;
         }
         interior.push(n);
-        if builds_a_cr_pack(edit.node_kind(n)) {
+        if builds_a_cr_pack(edit.node_kind(n)) || Some(n) == tested_eq {
             stack.extend(crate::peephole::input_producers_iter(edit, n));
         }
     }
     for n in interior {
-        if n != into {
-            edit.absorb_node_fingerprint(into, n);
-        }
+        edit.absorb_node_fingerprint(into, n);
     }
 }
 
