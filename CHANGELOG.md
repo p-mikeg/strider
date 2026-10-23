@@ -1130,6 +1130,11 @@
 - A decode through `ElfFileMemReader` that lands on a relocation the loader
   does not compute names the relocation type, where it said the address was
   not mapped; a Python `BufferReader` already did.
+- Python: a `flag != 0` branch test folded to the flag's comparison keeps
+  the instruction addresses of the widened flag below the test in that
+  comparison's `asm_fingerprint`, as the `Truncate` spelling of a PowerPC
+  CR-bit test already did. 69 fixture functions gain addresses; none loses
+  one.
 
 ### Added, Rust
 
