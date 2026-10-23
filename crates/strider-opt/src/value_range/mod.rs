@@ -725,8 +725,8 @@ impl<'f> RangeMap<'f> {
         self.ifs.iter().any(|&if_node| {
             self.doms.dominates(if_node, site) && {
                 let cond = f.if_cond(if_node);
-                !(excludes_one_value(f, cond, |v| view(v).is_some())
-                    && !self.edge_reaches(if_node, NodeKind::IF_TRUE_OUT_SLOT, site))
+                (!excludes_one_value(f, cond, |v| view(v).is_some())
+                    || self.edge_reaches(if_node, NodeKind::IF_TRUE_OUT_SLOT, site))
                     && !self.guards_index(if_node, value, cell)
                     && cell_bits_read(f, cond, view) & index_bits != 0
             }
