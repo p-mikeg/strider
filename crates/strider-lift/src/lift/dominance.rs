@@ -74,8 +74,7 @@ mod tests {
             0x85, 0xff, 0x74, 0x06, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x31, 0xc0, 0xc3,
         ];
         let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-        let mut lifter = crate::lift::Lifter::new(arch, sleigh).expect("lifter");
+        let mut lifter = crate::lift::Lifter::new(arch, reader).expect("lifter");
         let cfg = lifter
             .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
             .expect("cfg");

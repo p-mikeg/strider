@@ -49,12 +49,11 @@ fn add_chain_snippet_fingerprints_are_exact_snippet_addresses() {
 
     let arch = strider_target::SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let regs = sleigh.regs().expect("regs");
+    let mut strider = Strider::new(arch, reader, None).expect("Strider::new");
+    let regs = strider.sleigh_regs();
     let cc = strider_target::CallingConvention::x86_64_systemv()
-        .build(&regs)
+        .build(regs)
         .expect("build cc");
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
     let result = strider
         .analyze(
             base,

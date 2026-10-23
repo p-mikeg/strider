@@ -114,9 +114,7 @@ pub(crate) fn driver_for_reader<R: rsleigh::MemReader>(
     strider_target::BuiltCallingConvention,
 ) {
     let sleigh_arch = arch.sleigh();
-    let sleigh = rsleigh::Sleigh::new(sleigh_arch.sla_spec(), sleigh_arch.pspec(), reader)
-        .expect("create sleigh");
-    let driver = strider_orchestrator::Lifter::new(sleigh_arch, sleigh).expect("Lifter::new");
+    let driver = strider_orchestrator::Lifter::new(sleigh_arch, reader).expect("Lifter::new");
     let cc = arch
         .cc()
         .build(driver.sleigh_regs())
@@ -135,19 +133,13 @@ pub(crate) fn strider_over_bytes(
     strider_orchestrator::Strider<rsleigh::mem_readers::BufMemReader<Vec<u8>>>,
     strider_target::BuiltCallingConvention,
 ) {
-    let sleigh_arch = arch.sleigh();
-    let sleigh = rsleigh::Sleigh::new(
-        sleigh_arch.sla_spec(),
-        sleigh_arch.pspec(),
-        rsleigh::mem_readers::BufMemReader::new(bytes, base),
-    )
-    .expect("create sleigh");
+    let reader = rsleigh::mem_readers::BufMemReader::new(bytes, base);
+    let strider =
+        strider_orchestrator::Strider::new(arch.sleigh(), reader, rom).expect("Strider::new");
     let cc = arch
         .cc()
-        .build(&sleigh.regs().expect("sleigh regs"))
+        .build(strider.sleigh_regs())
         .expect("build cc against sleigh regs");
-    let strider =
-        strider_orchestrator::Strider::new(sleigh_arch, sleigh, rom).expect("Strider::new");
     (strider, cc)
 }
 

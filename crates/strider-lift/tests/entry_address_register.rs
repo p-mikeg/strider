@@ -11,13 +11,11 @@ fn reads_reg_and_entry_const(
     reg: &str,
     bytes: Vec<u8>,
 ) -> (bool, bool) {
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    let mut lifter = strider_lift::lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
     )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    .expect("lifter");
     let reg_vn = lifter.sleigh_regs().name_to_vn(reg).expect("the register");
     let cc = cc.build(lifter.sleigh_regs()).expect("cc");
     let cfg = lifter

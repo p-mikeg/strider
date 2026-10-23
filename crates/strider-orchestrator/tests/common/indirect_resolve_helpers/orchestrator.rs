@@ -53,10 +53,8 @@ pub(crate) fn run_pipeline_x86_64(
     let base = 0x1000u64;
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    let sleigh =
-        rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create x86_64 sleigh");
 
-    let mut strider = Lifter::new(arch, sleigh).expect("Lifter::new");
+    let mut strider = Lifter::new(arch, reader).expect("Lifter::new");
     let cc = CallingConvention::x86_64_systemv()
         .build(strider.sleigh_regs())
         .expect("build cc");

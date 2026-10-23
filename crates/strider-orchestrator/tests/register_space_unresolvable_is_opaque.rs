@@ -23,13 +23,12 @@ use strider_orchestrator::{AnalyzeOptions, Strider};
 const BASE: u64 = 0x1000;
 
 fn lift(arch: strider_target::SleighArch, code: Vec<u8>, entry: u64) -> strider_ir::Function {
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), BufMemReader::new(code, BASE))
-        .expect("sleigh");
-    let regs = sleigh.regs().expect("regs");
+    let mut strider =
+        Strider::new(arch, BufMemReader::new(code, BASE), None).expect("Strider::new");
+    let regs = strider.sleigh_regs();
     let cc = strider_target::CallingConvention::arm_aapcs()
-        .build(&regs)
+        .build(regs)
         .expect("cc");
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
     strider
         .analyze(entry, &cc, &AnalyzeOptions::default(), None)
         .expect("a multi-structure NEON access must not fail the function")

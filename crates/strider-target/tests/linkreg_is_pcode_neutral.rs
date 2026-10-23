@@ -92,7 +92,7 @@ fn image(arch: &SleighArch, word: u32) -> Vec<u8> {
 /// the second measurement a `linkreg=0` one.
 fn lift_at(arch: &SleighArch, word: u32, linkreg: u32) -> Option<(String, usize, u32)> {
     let reader = rsleigh::mem_readers::BufMemReader::new(image(arch, word), BASE);
-    let mut sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
+    let mut sleigh = arch.sleigh(reader).expect("sleigh");
     sleigh
         .set_context_at(BASE, "linkreg", linkreg)
         .expect("linkreg is a PowerPC context var");

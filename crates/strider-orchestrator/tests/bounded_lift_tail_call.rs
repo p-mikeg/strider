@@ -14,7 +14,6 @@
 
 mod common;
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::IRWalker;
 use strider_ir::node::NodeKind;
@@ -27,16 +26,14 @@ const TAIL_TARGET: u64 = 0x9000;
 
 /// The function at `entry` under x86_64 SystemV and `opts`.
 fn run_at(
-    sleigh: Sleigh<BufMemReader<Vec<u8>>>,
+    reader: BufMemReader<Vec<u8>>,
     entry: u64,
     opts: &AnalyzeOptions,
 ) -> anyhow::Result<strider_ir::Function> {
-    let arch = SleighArch::x86_64();
-    let regs = sleigh.regs().expect("regs");
+    let mut strider = Strider::new(SleighArch::x86_64(), reader, None)?;
     let cc = CallingConvention::x86_64_systemv()
-        .build(&regs)
+        .build(strider.sleigh_regs())
         .expect("build cc");
-    let mut strider = Strider::new(arch, sleigh, None)?;
     strider.analyze(entry, &cc, opts, None).map(|r| r.function)
 }
 
@@ -46,10 +43,8 @@ fn synthetic_bytes() -> Vec<u8> {
     vec![0xB8, 0x05, 0x00, 0x00, 0x00, 0xE9, 0xF6, 0x7F, 0x00, 0x00]
 }
 
-fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(synthetic_bytes(), BASE);
-    Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new")
+fn make_reader() -> BufMemReader<Vec<u8>> {
+    BufMemReader::new(synthetic_bytes(), BASE)
 }
 
 #[test]
@@ -62,7 +57,7 @@ fn bounded_lift_handles_tail_call_terminator() {
         ..AnalyzeOptions::default()
     };
     let function =
-        run_at(make_sleigh(), BASE, &opts).expect("orchestrator must lift TailCall as Call+Return");
+        run_at(make_reader(), BASE, &opts).expect("orchestrator must lift TailCall as Call+Return");
 
     assert!(
         common::find_call_to(&function, TAIL_TARGET).is_some(),
@@ -93,9 +88,7 @@ fn bounded_lift_backward_jmp_with_size_bound_classifies_as_tail_call() {
     bs.extend_from_slice(&[0xB8, 0x05, 0x00, 0x00, 0x00]); // mov eax, 5
     bs.extend_from_slice(&[0xE9, 0x76, 0xFF, 0xFF, 0xFF]); // jmp -0x8A to 0x1000
 
-    let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bs, BASE);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
@@ -104,7 +97,7 @@ fn bounded_lift_backward_jmp_with_size_bound_classifies_as_tail_call() {
         },
         ..AnalyzeOptions::default()
     };
-    let function = run_at(sleigh, FN_START, &opts)
+    let function = run_at(reader, FN_START, &opts)
         .expect("backward jmp under a size bound must classify as tail call");
 
     assert!(
@@ -129,12 +122,10 @@ fn bounded_lift_fall_through_past_size_bound_tail_calls_the_end() {
     let mut bs = vec![0x31u8, 0xc0];
     bs.extend_from_slice(&[0xF0, 0x4C, 0x0F, 0xB1, 0x73, 0x58]);
 
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(bs, BASE);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
-    let regs = sleigh.regs().expect("regs");
+    let mut strider = Strider::new(SleighArch::x86_64(), BufMemReader::new(bs, BASE), None)
+        .expect("Strider::new");
     let cc = CallingConvention::x86_64_systemv()
-        .build(&regs)
+        .build(strider.sleigh_regs())
         .expect("build cc");
     let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
@@ -143,8 +134,7 @@ fn bounded_lift_fall_through_past_size_bound_tail_calls_the_end() {
         },
         ..AnalyzeOptions::default()
     };
-    let result = Strider::new(arch, sleigh, None)
-        .expect("Strider::new")
+    let result = strider
         .analyze(BASE, &cc, &opts, None)
         .expect("a fall-through past the bound is no error");
 
@@ -179,9 +169,7 @@ fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() 
     const FALLTHROUGH_TARGET: u64 = 0x1002;
     let bs = vec![0x74u8, 0x7e];
 
-    let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bs, BASE);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
@@ -190,7 +178,7 @@ fn bounded_lift_keeps_cond_branch_with_both_targets_oob_as_two_tail_call_arms() 
         },
         ..AnalyzeOptions::default()
     };
-    let function = run_at(sleigh, BASE, &opts)
+    let function = run_at(reader, BASE, &opts)
         .expect("cond-branch with both OOB targets must lift as a conditional tail call");
 
     assert!(
@@ -234,9 +222,7 @@ fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
     const OOB_TARGET: u64 = 0x1080;
     let bs = vec![0x85u8, 0xFF, 0x74, 0x7C, 0xC3];
 
-    let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bs, BASE);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new");
 
     let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
@@ -245,7 +231,7 @@ fn bounded_lift_oob_taken_arm_lifts_as_conditional_tail_call() {
         },
         ..AnalyzeOptions::default()
     };
-    let function = run_at(sleigh, BASE, &opts)
+    let function = run_at(reader, BASE, &opts)
         .expect("cond-branch with one OOB arm must lift as a conditional tail call");
 
     assert!(

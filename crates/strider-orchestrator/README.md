@@ -6,8 +6,9 @@ re-run the whole thing until the control-flow graph stops changing.
 
 ## What's here
 
-- `Strider<R>`, the per-binary handle: `new(arch, sleigh, rom)` over an
-  `rsleigh::Sleigh` and an optional read-only image (what `LoadReadOnly` folds
+- `Strider<R>`, the per-binary handle: `new(arch, reader, rom)` over an
+  `rsleigh::MemReader`, from which it builds the arch's Sleigh, and an
+  optional read-only image (what `LoadReadOnly` folds
   against and what the jump-table classifier reads tables from; `None` disables
   both).
 - `Strider::analyze(entry, cc, opts, pipeline)` -> `Result<AnalyzeResult>`:
