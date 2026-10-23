@@ -10,6 +10,7 @@ pub use edit::FunctionState;
 pub use func::Function;
 #[cfg(any(test, feature = "test-util"))]
 pub use func::cc_ret_and_clobber_vns;
+pub(crate) use text::{space_str, vn_str};
 
 /// Trivial-convention [`Function`] tracking `vns`.
 #[cfg(test)]
