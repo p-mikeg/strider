@@ -129,6 +129,15 @@ fn a_guard_on_an_unmerged_reload_of_the_field_defers_the_dispatch() {
     assert_eq!(dispatch(&guard), None);
 }
 
+/// `lea (%rax,%rax,2),%ecx ; cmp $9,%ecx ; jae dflt`: a guard the range
+/// analysis records, but on a value the index is not built from.
+/// Mutation: exempt every recorded guard on a value of the field.
+#[test]
+fn a_read_guard_off_the_index_chain_defers_the_dispatch() {
+    let test = [0x8d, 0x0c, 0x40, 0x83, 0xf9, 0x09, 0x73, 0x1f];
+    assert_eq!(dispatch(&guarded(&test)), None);
+}
+
 /// `cmpb $3,%al ; ja dflt`, which the range analysis reads.
 #[test]
 fn a_read_guard_on_a_field_seats_the_four_arms() {
@@ -146,4 +155,89 @@ fn an_equality_test_or_no_test_leaves_the_whole_byte() {
         let arms = dispatch(&guard).expect("seated");
         assert_eq!(arms.len(), 6, "{arms:x?}");
     }
+}
+
+/// The arms an ARM dispatch at 0x1000 seats: `words`, then a four-word
+/// table at `table`, then five `bx lr`, the first four the arms.
+fn arm_dispatch(mut words: Vec<u32>, table: u64, data: std::ops::Range<u64>) -> Option<Vec<u64>> {
+    let first_arm = table + 16;
+    let arms: Vec<u64> = (0..4).map(|i| first_arm + 4 * i).collect();
+    words.extend(arms.iter().map(|&a| u32::try_from(a).expect("fits")));
+    words.extend([0xe12f_ff1e; 5]);
+    let code: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let len = code.len() as u64;
+    let rom = Box::new(MockRom::strided(table, 4, arms, 4))
+        as Box<dyn strider_orchestrator::opt::ReadOnlyMemory>;
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, code, BASE, Some(rom));
+    let opts = AnalyzeOptions {
+        cfg: CfgOptions {
+            bound: FunctionBound::size(len),
+            data_ranges: strider_cfg::DataRanges::new(Some(data)),
+            ..CfgOptions::default()
+        },
+        ..Default::default()
+    };
+    let result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
+    result.cfg.regions().find_map(|r| match &r.terminator {
+        RegionTerminator::Switch { targets, .. } => {
+            let mut got: Vec<u64> = targets.iter().map(|t| t.addr).collect();
+            got.sort_unstable();
+            Some(got)
+        }
+        _ => None,
+    })
+}
+
+/// `ldr r1,[r1,#0x30] ; tst r1,#<bit> ; bne default ; lsr r2,r1,#30 ;
+/// ldr pc,[pc,r2,lsl #2] ; nop`, then the table at 0x1018. A test of bit 29
+/// cannot bound `r1 >> 30`; a test of bit 31 can.
+/// Mutation: count a test of any bit of the field.
+#[test]
+fn a_test_of_bits_the_index_does_not_read_bounds_nothing() {
+    let run = |tst: u32| {
+        let words = vec![
+            0xe591_1030,
+            tst,
+            0x1a00_000a,
+            0xe1a0_2f21,
+            0xe79f_f102,
+            0xe320_f000,
+        ];
+        arm_dispatch(words, 0x1018, 0x1018..0x1028)
+    };
+    assert_eq!(
+        run(0xe311_0202).as_deref(),
+        Some([0x1028, 0x102c, 0x1030, 0x1034].as_slice()),
+        "tst r1, #0x20000000",
+    );
+    assert_eq!(run(0xe311_0102), None, "tst r1, #0x80000000");
+}
+
+/// Linux 3.16 arm `isp1760_urb_enqueue`'s dispatch (its real instructions at
+/// 0x1000, the table's four words after the `b`):
+///
+/// ```text
+/// ldr   r1, [r1, #0x30]
+/// lsr   r2, r1, #30
+/// cmp   r2, #3
+/// ldrls pc, [pc, r2, lsl #2]
+/// b     default
+/// ```
+///
+/// The dispatch's own bounds check tests the field and is read, so it is no
+/// unread test, though it narrows nothing the shift had not.
+/// Mutation: count a read guard on the field as an unread test.
+#[test]
+fn a_read_bounds_check_no_tighter_than_the_field_still_seats_its_arms() {
+    let words = vec![
+        0xe591_1030,
+        0xe1a0_2f21,
+        0xe352_0003,
+        0x979f_f102,
+        0xea00_0007,
+    ];
+    assert_eq!(
+        arm_dispatch(words, 0x1014, 0x1014..0x1024).as_deref(),
+        Some([0x1024, 0x1028, 0x102c, 0x1030].as_slice()),
+    );
 }

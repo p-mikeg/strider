@@ -679,13 +679,15 @@ impl<'f> RangeMap<'f> {
     }
 
     /// Whether `iv`, `value`'s range at `site`, is no tighter than its
-    /// KnownBits bound while an `If` dominating `site` tests `cell`, a load
-    /// `value` derives from, or another load of `cell`'s address.
+    /// KnownBits bound while an `If` dominating `site` tests bits of `cell`, a
+    /// load `value` derives from, that `value` reads, or a load of `cell`'s
+    /// address.
     ///
     /// Such a test (a mask, a shift, a sign) bounds the cell in a shape no
     /// guard here reads, or on a reload `range_of` does not connect, and may
     /// be what sizes a table `value` indexes. `Equal(cast*(cell), k)` only
-    /// excludes `k`, which [`Self::ruled_out`] reads.
+    /// excludes `k`, which [`Self::ruled_out`] reads, and a guard recorded
+    /// between `cell` and `value` is one `range_of` reads.
     pub(crate) fn cell_test_left_unread(
         &self,
         value: ValueId,
@@ -698,17 +700,39 @@ impl<'f> RangeMap<'f> {
         }
         let f = self.function;
         let addr = f.int_inputs(cell).next();
-        let is_cell = |v: ValueId| {
-            v == cell
-                || (matches!(f.node_kind(f.producer(v)), NodeKind::Load(_))
-                    && f.int_inputs(v).next() == addr)
+        // `Some(aligned)` for `cell` or a load of its address: aligned when its
+        // bits are `cell`'s bit for bit.
+        let view = |v: ValueId| {
+            if v == cell {
+                Some(true)
+            } else if matches!(f.node_kind(f.producer(v)), NodeKind::Load(_))
+                && f.int_inputs(v).next() == addr
+            {
+                Some(f.value_type_opt(v) == f.value_type_opt(cell))
+            } else {
+                None
+            }
         };
+        let index_bits = cell_bits_read(f, value, |v| (v == cell).then_some(true));
         self.ifs.iter().any(|&if_node| {
             self.doms.dominates(if_node, site) && {
                 let cond = f.if_cond(if_node);
-                !excludes_one_value(f, cond, is_cell) && cone_reaches(f, cond, is_cell)
+                !excludes_one_value(f, cond, |v| view(v).is_some())
+                    && !self.guards_index(if_node, value, cell)
+                    && cell_bits_read(f, cond, view) & index_bits != 0
             }
         })
+    }
+
+    /// Whether an edge of `if_node` records a guard on a value between `cell`
+    /// and `value`, which `range_of` reads on the way to `value`.
+    fn guards_index(&self, if_node: NodeId, value: ValueId, cell: ValueId) -> bool {
+        let f = self.function;
+        let outputs = f.node_outputs(if_node);
+        [NodeKind::IF_TRUE_OUT_SLOT, NodeKind::IF_FALSE_OUT_SLOT]
+            .iter()
+            .filter_map(|&slot| self.edge_guards.get(outputs.get(slot)?))
+            .any(|&(guarded, _)| cone_reaches(f, value, guarded) && cone_reaches(f, guarded, cell))
     }
 
     /// The constants `value` is not at `region`: each `k` of an
@@ -1019,44 +1043,135 @@ fn excludes_one_value(
     false
 }
 
-/// Whether `root`'s integer operand cone reaches a value `is_cell` accepts,
-/// through integer ops and casts only. Past [`MAX_TEST_CONE`] values it
-/// answers yes, which defers.
-fn cone_reaches(
-    f: &strider_ir::Function,
-    root: ValueId,
-    is_cell: impl Fn(ValueId) -> bool,
-) -> bool {
-    let mut seen = FxHashSet::default();
-    let mut stack = vec![root];
-    while let Some(v) = stack.pop() {
-        if !seen.insert(v) {
-            continue;
-        }
-        if seen.len() > MAX_TEST_CONE {
-            return true;
-        }
-        if is_cell(v) {
-            return true;
-        }
-        if matches!(
-            f.node_kind(f.producer(v)),
-            NodeKind::IntBinaryOp(_)
-                | NodeKind::IntUnaryOp(_)
-                | NodeKind::IntCmpOp(_)
-                | NodeKind::Extend(_)
-                | NodeKind::Truncate
-                | NodeKind::Popcount
-                | NodeKind::Lzcount
-        ) {
-            stack.extend(f.int_inputs(v).filter(|&i| f.int_const_u128(i).is_none()));
-        }
-    }
-    false
+/// Whether `root`'s value reads bits of `target`. Past [`MAX_TEST_CONE`]
+/// values it answers no.
+fn cone_reaches(f: &strider_ir::Function, root: ValueId, target: ValueId) -> bool {
+    bits_read(f, root, |v| (v == target).then_some(true)).is_some_and(|b| b != 0)
 }
 
-/// Values [`cone_reaches`] visits under one condition.
+/// [`bits_read`], every bit past [`MAX_TEST_CONE`] values.
+fn cell_bits_read(
+    f: &strider_ir::Function,
+    root: ValueId,
+    view: impl Fn(ValueId) -> Option<bool>,
+) -> u128 {
+    bits_read(f, root, view).unwrap_or(u128::MAX)
+}
+
+/// The bits of the values `view` accepts that `root`'s value depends on,
+/// walking its operands through integer ops and casts, not through a phi or a
+/// load. `view` answers whether a value's bits align with the cell's, and
+/// every bit of one that does not counts. `None` past [`MAX_TEST_CONE`]
+/// values.
+fn bits_read(
+    f: &strider_ir::Function,
+    root: ValueId,
+    view: impl Fn(ValueId) -> Option<bool>,
+) -> Option<u128> {
+    let mut demanded: FxHashMap<ValueId, u128> = FxHashMap::default();
+    let mut stack = vec![(root, width_mask(f, root))];
+    let mut read = 0u128;
+    while let Some((v, demand)) = stack.pop() {
+        let seen = demanded.entry(v).or_insert(0);
+        let new = demand & !*seen;
+        if new == 0 {
+            continue;
+        }
+        *seen |= new;
+        if demanded.len() > MAX_TEST_CONE {
+            return None;
+        }
+        match view(v) {
+            Some(true) => read |= new,
+            Some(false) => read = u128::MAX,
+            None => stack.extend(operand_demand(f, v, new)),
+        }
+    }
+    Some(read)
+}
+
+/// Values [`bits_read`] visits under one root.
 const MAX_TEST_CONE: usize = 64;
+
+/// The mask of `v`'s width; see [`type_mask_or_top`].
+fn width_mask(f: &strider_ir::Function, v: ValueId) -> u128 {
+    type_mask_or_top(f.value_type_opt(v))
+}
+
+/// The bits of each variable operand of `v`'s producer that `demand`, bits of
+/// `v`, depends on. Nothing for a producer that is not an integer op or cast;
+/// every bit of an operand of an op this does not model.
+fn operand_demand(f: &strider_ir::Function, v: ValueId, demand: u128) -> Vec<(ValueId, u128)> {
+    let kind = *f.node_kind(f.producer(v));
+    if !matches!(
+        kind,
+        NodeKind::IntBinaryOp(_)
+            | NodeKind::IntUnaryOp(_)
+            | NodeKind::IntCmpOp(_)
+            | NodeKind::Extend(_)
+            | NodeKind::Truncate
+            | NodeKind::Popcount
+            | NodeKind::Lzcount
+    ) {
+        return Vec::new();
+    }
+    let inputs: Vec<ValueId> = f.int_inputs(v).collect();
+    let sign_of = |x: ValueId| {
+        let m = width_mask(f, x);
+        m ^ (m >> 1)
+    };
+    // Bit `i` of a sum or product depends on operand bits `0..=i` only.
+    let at_or_below = match 128 - demand.leading_zeros() {
+        128 => u128::MAX,
+        n => (1u128 << n) - 1,
+    };
+    let shift = inputs
+        .get(1)
+        .and_then(|&k| f.int_const_u128(k))
+        .and_then(|k| u32::try_from(k).ok());
+    let mask_const = match (kind, inputs.as_slice()) {
+        (NodeKind::IntBinaryOp(IntBinaryOp::And), &[a, b]) => {
+            f.int_const_u128(b).or_else(|| f.int_const_u128(a))
+        }
+        _ => None,
+    };
+    inputs
+        .iter()
+        .enumerate()
+        .filter(|&(_, &x)| f.int_const_u128(x).is_none())
+        .map(|(i, &x)| {
+            let d = match (kind, i, shift) {
+                (NodeKind::Extend(op), 0, _) => {
+                    let past = demand & !width_mask(f, x) != 0;
+                    let sign = past && op == ExtendOp::SignExtend;
+                    demand | if sign { sign_of(x) } else { 0 }
+                }
+                (NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft), 0, Some(k)) => {
+                    demand.checked_shr(k).unwrap_or(0)
+                }
+                (NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight), 0, Some(k)) => {
+                    demand.checked_shl(k).unwrap_or(0)
+                }
+                (NodeKind::IntBinaryOp(IntBinaryOp::SShiftRight), 0, Some(k)) => {
+                    demand.checked_shl(k).unwrap_or(0) | sign_of(x)
+                }
+                (NodeKind::IntBinaryOp(IntBinaryOp::And), _, _) => {
+                    demand & mask_const.unwrap_or(u128::MAX)
+                }
+                (NodeKind::Truncate, 0, _)
+                | (NodeKind::IntBinaryOp(IntBinaryOp::Or | IntBinaryOp::Xor), _, _) => demand,
+                (
+                    NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::Mul)
+                    | NodeKind::IntUnaryOp(_),
+                    _,
+                    _,
+                ) => at_or_below,
+                _ => u128::MAX,
+            };
+            (x, d & width_mask(f, x))
+        })
+        .collect()
+}
 
 /// `u128::MAX` (unconstrained top) when the value carries no typed edge, for a
 /// non-integer type, and for a width past the `u128` carrier, where no `u128`
