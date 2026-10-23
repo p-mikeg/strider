@@ -209,8 +209,9 @@ class Function:
         """The canonical text form: one line per node reachable from entry,
         `outs = op[payload] ins`, after a header of endianness, tracked
         varnodes, default convention, an `assumptions` line naming the claims
-        in force that are on, a `frame_address_in_call_register` line when a
-        call's clobbered register held a stack address, and argument
+        in force that are on, a `frame_address_in_call_register
+        reach=<offset|unbounded>` line when a call's clobbered register held
+        a stack address (the highest offset from the entry SP), and argument
         carriers. `fingerprints=True`
         ends each line in its sorted asm address set `  @{..}`, which can be
         many times the rest on a large function.

@@ -14,7 +14,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 cfg
   0x3dc 190 ops return -> []
 tracked [r0, r1, r2, r3, r4, r12, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x130e00:4, u:0x131600:4, u:0x131700:4, u:0x131f00:4, u:0x148600:4, u:0x15f600:4, u:0x15f700:4, u:0x15f800:4]
-frame_address_in_call_register
+frame_address_in_call_register reach=-24
 float_arg 0 [%v35]
 float_arg 1 [%v36]
 float_arg 2 [%v37]

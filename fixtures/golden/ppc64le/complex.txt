@@ -503,7 +503,7 @@ cfg
   0x10010484 8 ops goto -> [0x10010498]
   0x10010498 10 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, r31, xer_so, cr0, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x1d800:1, u:0x21a00:8, u:0x22200:8, u:0x22800:8, u:0x22a00:8, u:0x29e00:8, u:0x31f00:8, u:0x32000:8, u:0x32100:1, u:0x32200:1, u:0x32300:1, u:0x32400:1, u:0x32500:1, u:0x32600:1, u:0x32700:1, u:0x32800:1, u:0x32900:1, u:0x5d400:4, u:0x5f400:4]
-frame_address_in_call_register
+frame_address_in_call_register reach=unbounded
 arg 0 [%v1]
 arg 2 [%v41]
 arg 3 [%v42]
@@ -1213,7 +1213,7 @@ cfg
   0x10010b50 18 ops goto -> [0x10010b70]
   0x10010b70 25 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, r31, xer_so, cr0, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x1d200:1, u:0x1d400:1, u:0x1d500:1, u:0x1d800:1, u:0x21a00:8, u:0x21c00:8, u:0x21e00:8, u:0x22000:8, u:0x22200:8, u:0x22800:8, u:0x22a00:8, u:0x29e00:8, u:0x2a200:8, u:0x30700:8, u:0x30800:8, u:0x30900:1, u:0x30a00:1, u:0x30b00:1, u:0x30c00:1, u:0x30d00:1, u:0x30e00:1, u:0x30f00:1, u:0x31000:1, u:0x31100:1, u:0x31f00:8, u:0x32000:8, u:0x32100:1, u:0x32200:1, u:0x32300:1, u:0x32400:1, u:0x32500:1, u:0x32600:1, u:0x32700:1, u:0x32800:1, u:0x32900:1, u:0x33700:8, u:0x33800:8, u:0x33900:1, u:0x33a00:1, u:0x33b00:1, u:0x33c00:1, u:0x33d00:1, u:0x33e00:1, u:0x33f00:1, u:0x34000:1, u:0x34100:1, u:0x56d00:1, u:0x59400:2, u:0x5d400:4, u:0x5f400:4, u:0x5fd00:8, u:0x5fe00:4, u:0x81b00:4, u:0x81c00:8, u:0x81d00:4, u:0x81e00:8, u:0x82000:8, u:0x82100:8, u:0x82b00:4, u:0x82c00:8, u:0x82d00:4, u:0x82e00:8, u:0x83000:8, u:0x83100:4, u:0x83200:8, u:0x86d00:1, u:0x86e00:8, u:0x86f00:8, u:0x87100:8, u:0x87200:8, u:0x87300:1, u:0x87400:8, u:0x87600:8, u:0x8a200:4, u:0x8a400:4]
-frame_address_in_call_register
+frame_address_in_call_register reach=unbounded
 arg 0 [%v31]
 arg 1 [%v1]
 arg 2 [%v27]
@@ -2080,7 +2080,7 @@ return %v98, %v99, %v137, %v101, %v102, %v103, %v104, %v105, %v106, %v107, %v108
 cfg
   0x10010c20 203 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x22200:8, u:0x22800:8, u:0x22a00:8, u:0x29e00:8, u:0x2a200:8, u:0x5f400:4, u:0x81b00:4, u:0x81c00:8, u:0x81d00:4, u:0x81e00:8, u:0x82000:8, u:0x82100:8]
-frame_address_in_call_register
+frame_address_in_call_register reach=unbounded
 arg 3 [%v46]
 arg 4 [%v47]
 arg 5 [%v48]

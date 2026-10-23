@@ -8,7 +8,7 @@ cfg
   0x401020 0 ops goto -> [0x401024]
   0x401024 247 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9d00:8, u:0xd400:4, u:0xd500:8, u:0x23f00:4, u:0x58600:8, u:0x58700:1, u:0x58800:1]
-frame_address_in_call_register
+frame_address_in_call_register reach=-40
 arg 4 [%v41]
 arg 5 [%v42]
 float_arg 0 [%v43]
@@ -157,7 +157,7 @@ cfg
   0x4011a0 0 ops goto -> [0x4011a4]
   0x4011a4 3 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RBP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0xab00:8, u:0xad00:8, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x7c600:8, u:0xad500:8]
-frame_address_in_call_register
+frame_address_in_call_register reach=8
 arg 2 [%v22]
 float_arg 0 [%v23]
 float_arg 1 [%v24]
@@ -428,7 +428,7 @@ cfg
   0x40130c 16 ops return -> []
   0x401320 16 ops return -> []
 tracked [RAX, RCX, RDX, RSP, RSI, RDI, R8, R9, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x9d00:8, u:0xd400:4, u:0x25200:1, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0xecb00:4]
-frame_address_in_call_register
+frame_address_in_call_register reach=-4
 arg 0 [%v1]
 arg 1 [%v19]
 arg 2 [%v20]
@@ -756,7 +756,7 @@ cfg
   0x4015f0 6 ops goto -> [0x4014e7]
   0x401600 23 ops goto -> [0x4014dd]
 tracked [RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI, R8, R9, R10, R11, CF, PF, ZF, SF, OF, RIP, ST0, ST1, XMM0, XMM1, XMM2, XMM3, XMM4, XMM5, XMM6, XMM7, u:0x8f00:8, u:0x9300:8, u:0x9500:8, u:0x9d00:8, u:0xd400:4, u:0xd500:8, u:0xd700:16, u:0x23f00:4, u:0x24000:8, u:0x25200:1, u:0x25900:1, u:0x26000:1, u:0x26200:1, u:0x26300:1, u:0x26400:1, u:0x26600:1, u:0x4fc00:8, u:0x58600:8, u:0x58700:1, u:0x58800:1, u:0x58b00:1, u:0x58d00:1, u:0x58e00:1, u:0x58f00:1, u:0x59000:1, u:0x59300:1, u:0x59400:1, u:0x59500:1, u:0x59600:1, u:0x59800:4, u:0x59900:1, u:0x59a00:1, u:0x59c00:1, u:0x59d00:1, u:0x59e00:1, u:0x59f00:1, u:0x5f000:1, u:0x5f100:1, u:0x5f200:4, u:0x5f300:4, u:0x5f500:1, u:0x5f600:1, u:0x5f700:1, u:0x5f800:1, u:0x5fb00:1, u:0x5fd00:1, u:0x5fe00:1, u:0x5ff00:1, u:0x60000:1, u:0x7e600:4, u:0x7e700:1, u:0x80100:4, u:0x80300:4, u:0x80d00:4, u:0x80f00:4, u:0xad500:8, u:0xe8200:1, u:0xe8300:4, u:0xebf00:1, u:0xecb00:4]
-frame_address_in_call_register
+frame_address_in_call_register reach=unbounded
 arg 0 [%v45]
 arg 1 [%v1]
 arg 2 [%v50]

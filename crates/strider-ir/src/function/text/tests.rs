@@ -626,27 +626,35 @@ fn named_text_respells_each_register_varnode_and_nothing_else() {
 }
 
 /// A call that received a stack address in a clobbered register is a fact
-/// no node carries, so the header names it, right after `default_cc`.
+/// no node carries, so the header names it, with its reach, right after
+/// `default_cc`.
 #[test]
 fn a_frame_address_in_a_call_register_prints_in_the_header() {
-    let mut f = Function::new(
-        strider_target::BuiltCallingConvention::default(),
-        strider_target::Endianness::Little,
-        Vec::new(),
-    );
-    let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
-    f.graph_mut().create_node(NodeKind::Return, [ctrl], []);
-    let plain = f.to_text(false);
+    let empty = || {
+        let mut f = Function::new(
+            strider_target::BuiltCallingConvention::default(),
+            strider_target::Endianness::Little,
+            Vec::new(),
+        );
+        let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
+        f.graph_mut().create_node(NodeKind::Return, [ctrl], []);
+        f
+    };
+    let plain = empty().to_text(false);
     assert!(!plain.contains("frame_address_in_call_register"), "{plain}");
-    f.side_tables_mut().record_call_register_frame_reach(-4);
-    let flagged = f.to_text(false);
-    let lines: Vec<&str> = flagged.lines().collect();
-    assert!(lines[2].starts_with("default_cc "), "{flagged}");
-    assert_eq!(lines[3], "frame_address_in_call_register", "{flagged}");
-    assert_eq!(
-        flagged.replacen("frame_address_in_call_register\n", "", 1),
-        plain
-    );
+    for (reach, line) in [
+        (-4, "frame_address_in_call_register reach=-4"),
+        (16, "frame_address_in_call_register reach=16"),
+        (i128::MAX, "frame_address_in_call_register reach=unbounded"),
+    ] {
+        let mut f = empty();
+        f.side_tables_mut().record_call_register_frame_reach(reach);
+        let flagged = f.to_text(false);
+        let lines: Vec<&str> = flagged.lines().collect();
+        assert!(lines[2].starts_with("default_cc "), "{flagged}");
+        assert_eq!(lines[3], line, "{flagged}");
+        assert_eq!(flagged.replacen(&format!("{line}\n"), "", 1), plain);
+    }
 }
 
 /// The claims in force are no node either: the header names the ones that
