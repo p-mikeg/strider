@@ -281,7 +281,10 @@ class Lifter:
     ) -> Optional[CallOtherAbi]:
         """How `name` is classified: the `opts` entry for it when there is
         one, else the built-in table, else `None` for a name strider has no
-        answer for (which fails the lift of any function containing it)."""
+        answer for (which fails the lift of any function containing it).
+        Raises `StriderError` where `build_cfg` would over `opts`'
+        `call_other_abis`, for an entry built against another arch's
+        register table."""
         ...
     def build_cfg(
         self,

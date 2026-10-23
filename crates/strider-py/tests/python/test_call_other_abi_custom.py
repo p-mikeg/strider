@@ -153,6 +153,17 @@ def test_classification_reads_back():
     assert lift.call_other_abi("rdtsc", opts) != builtin
 
 
+def test_classification_refuses_a_foreign_entry_as_build_cfg_does():
+    lift = _lifter()
+    foreign = CallOtherAbi.custom(SleighArch.aarch64(), implicit_reads=["x8"])
+    opts = strider.cfg.CfgOptions(call_other_abis={"rdtsc": foreign})
+    with pytest.raises(strider.StriderError, match="built against a \"aarch64\" Sleigh") as built:
+        lift.build_cfg(0x1000, opts)
+    with pytest.raises(strider.StriderError) as classified:
+        lift.call_other_abi("rdtsc", opts)
+    assert str(classified.value) == str(built.value)
+
+
 # syscall; ret
 SYSCALL_RET = b"\x0f\x05\xc3"
 
