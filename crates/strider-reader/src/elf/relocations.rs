@@ -1308,8 +1308,8 @@ fn mips_half_field_skew(r: &RelocInfo, arch: A, endian_le: bool) -> u64 {
 /// entry is a hole over the field its row names, else over a word: one naming
 /// a symbol because which table its index means is in doubt.
 ///
-/// On MIPS every entry but `R_MIPS_NONE` is a hole: its ELF64 type word is
-/// not decoded here.
+/// On MIPS every entry but `R_MIPS_NONE` and a MIPS32 `R_MIPS_COPY` is a
+/// hole: its ELF64 type word is not decoded here.
 ///
 /// `walked` is `ctx.obj`, or its copy with repeated tables dropped.
 fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>, walked: &object::File<'_>) {
@@ -1332,10 +1332,13 @@ fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>, walked: &object::File<'_>) {
         if mips && r.type_word() == object::elf::R_MIPS_NONE {
             continue;
         }
-        let kind = if mips {
-            None
-        } else {
+        // A MIPS32 type word is the type alone, so its COPY is known too.
+        let kind = if !mips {
             classify(obj.architecture(), &r)
+        } else if obj.architecture() == A::Mips && r.type_word() == object::elf::R_MIPS_COPY {
+            Some(Kind::Copy)
+        } else {
+            None
         };
         let width = match kind {
             Some(Kind::Marker) => continue,
