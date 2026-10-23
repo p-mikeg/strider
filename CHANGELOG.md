@@ -456,7 +456,7 @@
   claim of both.
 - `AssumptionOptions.none(...)` takes the constructor's keywords and sets
   only the claims named, so `none(escape_analysis=True)` is one claim where
-  `AssumptionOptions(escape_analysis=True)` is five.
+  `AssumptionOptions(escape_analysis=True)` is six.
 - `AssumptionOptions.msr_register_keeps_mode`, default `True`: the mode an
   ARM register-form `msr` writes to the CPSR control field (`msr cpsr_c,
   rN`) is the mode already in force, so it re-banks nothing and leaves the
