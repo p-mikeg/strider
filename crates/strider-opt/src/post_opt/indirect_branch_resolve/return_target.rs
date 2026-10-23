@@ -668,31 +668,11 @@ fn off_stack(function: &Function, addr: ValueId) -> bool {
 /// number were.
 fn condition(function: &Function, mut value: ValueId) -> (ValueId, bool) {
     let mut flipped = false;
-    while let Some(inner) = negated(function, value) {
+    while let Some(inner) = crate::opt::if_cond_inversion::bool_not_operand(function, value) {
         value = inner;
         flipped = !flipped;
     }
     (value, flipped)
-}
-
-/// `x` for a boolean `Xor(x, 1)`.
-fn negated(function: &Function, value: ValueId) -> Option<ValueId> {
-    if !function.value_kind(value).is_bool() {
-        return None;
-    }
-    let producer = function.producer(value);
-    if !matches!(
-        function.node_kind(producer),
-        NodeKind::IntBinaryOp(IntBinaryOp::Xor)
-    ) {
-        return None;
-    }
-    let [l, r] = function.node_inputs_exact::<2>(producer).ok()?;
-    match (function.bool_const_val(l), function.bool_const_val(r)) {
-        (_, Some(true)) => Some(l),
-        (Some(true), _) => Some(r),
-        _ => None,
-    }
 }
 
 /// Each `If` testing `cond` or its negation, and whether it tests the negation.
@@ -702,7 +682,8 @@ fn guards(function: &Function, cond: ValueId) -> impl Iterator<Item = (NodeId, b
         .value_uses(cond)
         .filter_map(move |(user, _)| {
             let out = function.first_value_output_of(user)?;
-            (negated(function, out) == Some(cond)).then_some(out)
+            (crate::opt::if_cond_inversion::bool_not_operand(function, out) == Some(cond))
+                .then_some(out)
         })
         .flat_map(|out| function.value_uses(out).map(|(user, _)| (user, true)));
     direct
