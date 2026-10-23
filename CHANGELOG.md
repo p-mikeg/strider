@@ -567,6 +567,10 @@
 
 ### Fixed
 
+- Python: `Lifter.pcode_at` reads its `entry` as `analyze` and `build_cfg`
+  do: an int that does not fit an address, or a symbol name, raises
+  `StriderError` naming the cause, where it raised a bare `OverflowError` or
+  `TypeError`.
 - Python: `add_elf` refuses an image whose architecture, class or byte
   order, or on ARM whose `EF_ARM_BE8`, differs from the first image's. It
   merged one silently, and the handle's one arch decoded it as garbage: a

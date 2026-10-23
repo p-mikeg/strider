@@ -112,6 +112,16 @@ def _arm():
     )
 
 
+@pytest.mark.parametrize(
+    ("entry", "says"),
+    [(-1, "out of range"), (2**64, "out of range"), ("main", "must be an address")],
+)
+def test_pcode_at_names_a_bad_entry_as_analyze_does(entry, says):
+    """`pcode_at` takes its `entry` as `analyze` and `build_cfg` do."""
+    with pytest.raises(strider.StriderError, match=says):
+        _arm().pcode_at(entry, _BASE)
+
+
 @pytest.mark.parametrize("addr", [0x1000, 0x1004, 0x1008, 0x100C])
 def test_pcode_at_does_not_depend_on_earlier_calls(addr):
     """`pcode_at` answers the same whatever order the calls came in, a
