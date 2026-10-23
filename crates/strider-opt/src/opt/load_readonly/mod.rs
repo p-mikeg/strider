@@ -57,7 +57,7 @@ impl crate::peephole::PeepholePass for LoadReadOnly {
         &self,
         _sweep: &mut (),
         edit: &mut crate::EditFunction<'_>,
-        opt_ctx: &mut OptCtx<'_>,
+        opt_ctx: &OptCtx<'_>,
         root: NodeId,
     ) -> Result<crate::peephole::PeepholeRewrite> {
         let Some(rom) = opt_ctx.rom else {

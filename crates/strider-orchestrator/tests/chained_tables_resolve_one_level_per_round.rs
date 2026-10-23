@@ -82,7 +82,7 @@ impl strider_orchestrator::opt::ReadOnlyMemory for Rom {
 struct CountWideRuns(Arc<AtomicUsize>);
 
 impl PostOptimizer for CountWideRuns {
-    fn apply(&self, edit: &mut EditFunction<'_>, _ctx: &mut OptCtx<'_>) -> anyhow::Result<()> {
+    fn apply(&self, edit: &mut EditFunction<'_>, _ctx: &OptCtx<'_>) -> anyhow::Result<()> {
         let sites = edit
             .function()
             .walk_kind(|k| matches!(k, NodeKind::IndirectBranch | NodeKind::Switch(_)))

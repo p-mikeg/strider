@@ -54,7 +54,7 @@ impl<'mem> OptCtx<'mem> {
 ///     fn apply(
 ///         &self,
 ///         _edit: &mut EditFunction<'_>,
-///         _ctx: &mut OptCtx<'_>,
+///         _ctx: &OptCtx<'_>,
 ///     ) -> anyhow::Result<OptimizationResult> {
 ///         // ... pass body operating on `_edit` ...
 ///         Ok(OptimizationResult::NoChange)
@@ -72,7 +72,7 @@ pub trait Optimizer: OptimizerClone {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        ctx: &mut OptCtx<'_>,
+        ctx: &OptCtx<'_>,
     ) -> crate::Result<OptimizationResult>;
 
     /// The concrete struct's short name.
@@ -100,7 +100,7 @@ pub trait Optimizer: OptimizerClone {
 pub fn run_one(
     pass: &dyn Optimizer,
     function: &mut strider_ir::Function,
-    octx: &mut OptCtx<'_>,
+    octx: &OptCtx<'_>,
 ) -> crate::Result<OptimizationResult> {
     let result = run_one_unvalidated(pass, function, octx)?;
     if let Err(errors) = strider_ir::validate::validate(function) {
@@ -123,7 +123,7 @@ pub fn run_one(
 pub fn run_one_unvalidated(
     pass: &dyn Optimizer,
     function: &mut strider_ir::Function,
-    octx: &mut OptCtx<'_>,
+    octx: &OptCtx<'_>,
 ) -> crate::Result<OptimizationResult> {
     // As `run` starts: a memo an edit since the last run can have outdated is
     // dropped.
@@ -143,7 +143,7 @@ pub fn run_one_unvalidated(
 fn apply_checked(
     pass: &dyn Optimizer,
     edit: &mut crate::EditFunction<'_>,
-    ctx: &mut OptCtx<'_>,
+    ctx: &OptCtx<'_>,
 ) -> crate::Result<OptimizationResult> {
     let generation = edit.generation();
     let result = pass.apply(edit, ctx)?;
@@ -165,7 +165,7 @@ fn apply_checked(
 pub fn run_post(
     pass: &dyn PostOptimizer,
     function: &mut strider_ir::Function,
-    octx: &mut OptCtx<'_>,
+    octx: &OptCtx<'_>,
 ) -> crate::Result<()> {
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
@@ -179,7 +179,7 @@ pub fn run_post(
 fn apply_post(
     pass: &dyn PostOptimizer,
     edit: &mut crate::EditFunction<'_>,
-    ctx: &mut OptCtx<'_>,
+    ctx: &OptCtx<'_>,
 ) -> crate::Result<()> {
     let edits = edit.edits();
     pass.apply(edit, ctx)?;
@@ -229,7 +229,7 @@ pub trait PostOptimizer: PostOptimizerClone {
     /// # Errors
     ///
     /// Returns the first error the pass hits.
-    fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &mut OptCtx<'_>) -> crate::Result<()>;
+    fn apply(&self, edit: &mut crate::EditFunction<'_>, ctx: &OptCtx<'_>) -> crate::Result<()>;
 
     /// The concrete struct's short name.
     fn name(&self) -> &'static str {
@@ -333,11 +333,7 @@ impl OptimizerPipeline {
     ///
     /// Every pass reads [`strider_ir::Function::assumptions`]; a caller adds
     /// claims with [`strider_ir::Function::assume`] before the run.
-    pub fn run(
-        &self,
-        function: &mut strider_ir::Function,
-        ctx: &mut OptCtx<'_>,
-    ) -> crate::Result<()> {
+    pub fn run(&self, function: &mut strider_ir::Function, ctx: &OptCtx<'_>) -> crate::Result<()> {
         const MAX_ITERS: u32 = 1024;
         // A memo left by an earlier run or an edit since is dropped: a rewrite
         // can move the address it names.
@@ -373,7 +369,7 @@ impl OptimizerPipeline {
     fn fixed_point(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        ctx: &mut OptCtx<'_>,
+        ctx: &OptCtx<'_>,
         max_iters: u32,
     ) -> crate::Result<bool> {
         // Per pass, `edits()` after its last run when that run changed nothing.
@@ -462,8 +458,8 @@ mod tests {
         );
 
         let (mut a, mut b) = (folding_fn(), folding_fn());
-        pipeline.run(&mut a, &mut OptCtx::new(None))?;
-        clone.run(&mut b, &mut OptCtx::new(None))?;
+        pipeline.run(&mut a, &OptCtx::new(None))?;
+        clone.run(&mut b, &OptCtx::new(None))?;
         assert!(
             !a.walk()
                 .any(|n| matches!(a.node_kind(n), strider_ir::node::NodeKind::IntBinaryOp(_))),
@@ -479,7 +475,7 @@ mod tests {
         let mut function = one_const_fn(3);
         let pipeline = crate::default_pipeline();
         let before = function.walk().count();
-        pipeline.run(&mut function, &mut OptCtx::new(None))?;
+        pipeline.run(&mut function, &OptCtx::new(None))?;
         let after = function.walk().count();
         // An already-folded constant cannot fold further, so the reachable
         // count is stable. Pins that `run` does not mutate the graph beyond
@@ -502,7 +498,7 @@ mod tests {
             fn apply(
                 &self,
                 _edit: &mut crate::EditFunction<'_>,
-                _ctx: &mut OptCtx<'_>,
+                _ctx: &OptCtx<'_>,
             ) -> crate::Result<OptimizationResult> {
                 Ok(OptimizationResult::Changed)
             }
@@ -512,7 +508,7 @@ mod tests {
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(AlwaysChanged);
         let err = pipeline
-            .run(&mut function, &mut OptCtx::new(None))
+            .run(&mut function, &OptCtx::new(None))
             .expect_err("pipeline must bail out on a non-monotone pass");
         assert!(
             err.to_string().contains("did not converge"),
@@ -535,7 +531,7 @@ mod tests {
             fn apply(
                 &self,
                 edit: &mut crate::EditFunction<'_>,
-                _ctx: &mut OptCtx<'_>,
+                _ctx: &OptCtx<'_>,
             ) -> crate::Result<OptimizationResult> {
                 let ret = edit
                     .live_of_kind(|k| matches!(k, NodeKind::Return))
@@ -556,7 +552,7 @@ mod tests {
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(AlwaysChangedUnattributed);
         let err = pipeline
-            .run(&mut function, &mut OptCtx::new(None))
+            .run(&mut function, &OptCtx::new(None))
             .expect_err("the pass never converges");
         assert!(
             err.to_string().contains("asm-fingerprint"),
@@ -575,7 +571,7 @@ mod tests {
             fn apply(
                 &self,
                 _edit: &mut crate::EditFunction<'_>,
-                _ctx: &mut OptCtx<'_>,
+                _ctx: &OptCtx<'_>,
             ) -> crate::Result<OptimizationResult> {
                 Ok(OptimizationResult::NoChange)
             }
@@ -590,7 +586,7 @@ mod tests {
             function.side_tables().memory_decomp(returned).1.is_some(),
             "the memo is installed"
         );
-        crate::pipeline::run_one(&NoOp, &mut function, &mut OptCtx::new(None))?;
+        crate::pipeline::run_one(&NoOp, &mut function, &OptCtx::new(None))?;
         assert!(
             function.side_tables().memory_decomp(returned).1.is_none(),
             "run_one must drop a memo an earlier edit left"
@@ -606,7 +602,7 @@ mod tests {
         function
             .side_tables()
             .set_stack_slot(returned, returned, 16);
-        super::OptimizerPipeline::new().run(&mut function, &mut OptCtx::new(None))?;
+        super::OptimizerPipeline::new().run(&mut function, &OptCtx::new(None))?;
         assert!(
             function.side_tables().memory_decomp(returned).1.is_none(),
             "run must drop a memo an earlier edit left"
@@ -628,14 +624,10 @@ mod tests {
         function.assume(&claims);
         let mut folding = super::OptimizerPipeline::new();
         folding.add(crate::ConstantFold::new());
-        folding.run(&mut function, &mut OptCtx::new(None))?;
+        folding.run(&mut function, &OptCtx::new(None))?;
         let pass = CountsRuns(std::sync::Arc::default());
-        super::run_one_unvalidated(&pass, &mut function, &mut OptCtx::new(None))?;
-        super::run_post(
-            &crate::StackOffsetDetect,
-            &mut function,
-            &mut OptCtx::new(None),
-        )?;
+        super::run_one_unvalidated(&pass, &mut function, &OptCtx::new(None))?;
+        super::run_post(&crate::StackOffsetDetect, &mut function, &OptCtx::new(None))?;
         assert_eq!(function.assumptions(), &claims);
         Ok(())
     }
@@ -651,7 +643,7 @@ mod tests {
             fn apply(
                 &self,
                 edit: &mut crate::EditFunction<'_>,
-                _ctx: &mut OptCtx<'_>,
+                _ctx: &OptCtx<'_>,
             ) -> crate::Result<super::OptimizationResult> {
                 let old = crate::test_support::return_value(edit.function().graph())?;
                 edit.function().side_tables().set_stack_slot(old, old, 16);
@@ -664,7 +656,7 @@ mod tests {
 
         let mut function = one_const_fn(5);
         let returned = crate::test_support::return_value(function.graph())?;
-        crate::pipeline::run_one(&StampsThenRewrites, &mut function, &mut OptCtx::new(None))?;
+        crate::pipeline::run_one(&StampsThenRewrites, &mut function, &OptCtx::new(None))?;
         assert!(function.side_tables().memory_decomp(returned).1.is_none());
         Ok(())
     }
@@ -678,7 +670,7 @@ mod tests {
             fn apply(
                 &self,
                 _edit: &mut crate::EditFunction<'_>,
-                _ctx: &mut OptCtx<'_>,
+                _ctx: &OptCtx<'_>,
             ) -> crate::Result<()> {
                 Ok(())
             }
@@ -689,7 +681,7 @@ mod tests {
         function
             .side_tables()
             .set_stack_slot(returned, returned, 16);
-        super::run_post(&NoOpPost, &mut function, &mut OptCtx::new(None))?;
+        super::run_post(&NoOpPost, &mut function, &OptCtx::new(None))?;
         assert!(function.side_tables().memory_decomp(returned).1.is_some());
         Ok(())
     }
@@ -705,7 +697,7 @@ mod tests {
             fn apply(
                 &self,
                 edit: &mut crate::EditFunction<'_>,
-                _ctx: &mut OptCtx<'_>,
+                _ctx: &OptCtx<'_>,
             ) -> crate::Result<()> {
                 let graph = edit.function_mut().graph_mut();
                 let sum = crate::test_support::return_value(graph)?;
@@ -722,7 +714,7 @@ mod tests {
         super::run_post(
             &RewiresThroughFunctionMut,
             &mut function,
-            &mut OptCtx::new(None),
+            &OptCtx::new(None),
         )?;
         assert_eq!(function.side_tables().frame_escape(), None);
         Ok(())
@@ -737,7 +729,7 @@ mod tests {
         fn apply(
             &self,
             edit: &mut crate::EditFunction<'_>,
-            _ctx: &mut OptCtx<'_>,
+            _ctx: &OptCtx<'_>,
         ) -> crate::Result<()> {
             let store = edit
                 .live_of_kind(|k| matches!(k, strider_ir::node::NodeKind::Store(_)))
@@ -779,7 +771,7 @@ mod tests {
         p.add(crate::PhiCollapse);
         p.add_post_pass(crate::StackOffsetDetect);
         p.add_post_pass(MovesStoreDown);
-        p.run(&mut function, &mut OptCtx::new(None))?;
+        p.run(&mut function, &OptCtx::new(None))?;
 
         let store = function
             .walk()
@@ -801,7 +793,7 @@ mod tests {
         fn apply(
             &self,
             edit: &mut crate::EditFunction<'_>,
-            _ctx: &mut OptCtx<'_>,
+            _ctx: &OptCtx<'_>,
         ) -> crate::Result<super::OptimizationResult> {
             let run = self.runs.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if run >= self.edits {
@@ -827,7 +819,7 @@ mod tests {
         fn apply(
             &self,
             _edit: &mut crate::EditFunction<'_>,
-            _ctx: &mut OptCtx<'_>,
+            _ctx: &OptCtx<'_>,
         ) -> crate::Result<super::OptimizationResult> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(super::OptimizationResult::NoChange)
@@ -849,7 +841,7 @@ mod tests {
             runs: Arc::clone(&rewrites),
         });
         pipeline.add(CountsRuns(Arc::clone(&counted)));
-        pipeline.run(&mut one_const_fn(1), &mut OptCtx::new(None))?;
+        pipeline.run(&mut one_const_fn(1), &OptCtx::new(None))?;
         assert_eq!(rewrites.load(Ordering::Relaxed), 4);
         assert_eq!(counted.load(Ordering::Relaxed), 3);
         Ok(())
@@ -868,7 +860,7 @@ mod tests {
             fn apply(
                 &self,
                 edit: &mut crate::EditFunction<'_>,
-                _ctx: &mut OptCtx<'_>,
+                _ctx: &OptCtx<'_>,
             ) -> crate::Result<OptimizationResult> {
                 let ret = edit
                     .live_of_kind(|k| matches!(k, NodeKind::Return))
@@ -884,7 +876,7 @@ mod tests {
         let mut function = one_const_fn(1);
         let mut pipeline = OptimizerPipeline::new();
         pipeline.add(HidesAnEdit);
-        let _ = pipeline.run(&mut function, &mut OptCtx::new(None));
+        let _ = pipeline.run(&mut function, &OptCtx::new(None));
     }
 
     /// A pipeline carrying a post-pass must still produce a graph that
@@ -913,7 +905,7 @@ mod tests {
         let mut p = OptimizerPipeline::new();
         p.add(ConstantFold::new());
         p.add_post_pass(CallStackArgCollect);
-        p.run(&mut function, &mut OptCtx::new(None))?;
+        p.run(&mut function, &OptCtx::new(None))?;
         Ok(())
     }
 
@@ -962,7 +954,7 @@ mod tests {
         p.add(RegionCollapse);
         p.add(DeadBranchElimination);
         p.add(LoadForward);
-        p.run(&mut function, &mut OptCtx::new(None))?;
+        p.run(&mut function, &OptCtx::new(None))?;
 
         let val = crate::test_support::return_value(function.graph())?;
         let kind = *function.kind_of_value(val);
@@ -988,7 +980,7 @@ mod tests {
             }
             Ok(acc)
         })?;
-        crate::default_pipeline().run(&mut function, &mut OptCtx::new(None))?;
+        crate::default_pipeline().run(&mut function, &OptCtx::new(None))?;
         // The chain folds to a single `IntConst(50)`.
         assert!(
             function.walk().count() < 20,

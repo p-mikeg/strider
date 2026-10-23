@@ -74,11 +74,8 @@ pub(crate) fn run_pipeline_x86_64(
     // PhiCollapse simplifies the trivial Return shape so the classifier
     // sees the producer-shape it expects.
     let p = strider_orchestrator::opt::default_pipeline();
-    p.run(
-        &mut function,
-        &mut strider_orchestrator::opt::OptCtx::new(None),
-    )
-    .expect("optimizer pipeline");
+    p.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
+        .expect("optimizer pipeline");
 
     assert_eq!(
         outcome.unresolved_branches.len(),

@@ -89,8 +89,8 @@ impl PyFunction {
         // partially rewritten, and a bump after the `?` never happens.
         function.graph_mut().bump_generation();
         function.assume(claims);
-        let mut ctx = strider_orchestrator::opt::OptCtx::new(rom);
-        pipeline.run(&mut function, &mut ctx).map_err(|e| {
+        let ctx = strider_orchestrator::opt::OptCtx::new(rom);
+        pipeline.run(&mut function, &ctx).map_err(|e| {
             crate::errors::into_strider_err(anyhow::anyhow!("{label} failed: {e:#}"))
         })?;
         Ok(())

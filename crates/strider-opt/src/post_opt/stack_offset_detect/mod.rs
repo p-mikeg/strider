@@ -13,11 +13,7 @@ use crate::pipeline::PostOptimizer;
 pub struct StackOffsetDetect;
 
 impl PostOptimizer for StackOffsetDetect {
-    fn apply(
-        &self,
-        edit: &mut crate::EditFunction<'_>,
-        _ctx: &mut crate::OptCtx<'_>,
-    ) -> Result<()> {
+    fn apply(&self, edit: &mut crate::EditFunction<'_>, _ctx: &crate::OptCtx<'_>) -> Result<()> {
         crate::mem_analysis::stamp_all(edit);
         Ok(())
     }

@@ -808,7 +808,7 @@ fn the_pipeline_preserves_dag_semantics() {
                 "flag" => p.add(crate::FlagCmpCanonicalize::new()),
                 _ => p = crate::default_pipeline(),
             }
-            p.run(f, &mut crate::OptCtx::new(None))
+            p.run(f, &crate::OptCtx::new(None))
         };
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             check_seed(seed, steps, &run)
@@ -1097,7 +1097,7 @@ fn the_pipeline_preserves_cfg_semantics() {
                     outcomes.push(want);
                 }
                 crate::default_pipeline()
-                    .run(&mut f, &mut crate::OptCtx::new(None))
+                    .run(&mut f, &crate::OptCtx::new(None))
                     .map_err(|e| format!("seed {seed}: pipeline error {e:#}\n{before_text}"))?;
                 let mut cmp = 0;
                 for (vec, want) in vecs.iter().zip(&outcomes) {
@@ -1217,7 +1217,7 @@ fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
         b.set_lift_addr(None);
         let mut f = b.build().unwrap();
         crate::default_pipeline()
-            .run(&mut f, &mut crate::OptCtx::new(None))
+            .run(&mut f, &crate::OptCtx::new(None))
             .unwrap_or_else(|e| panic!("{op:?}: {e:#}"));
         let ret = return_values(&f);
         assert_eq!(ret.len(), 1, "{op:?}: return arity");
@@ -1345,7 +1345,7 @@ fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
             let mut p = crate::OptimizerPipeline::new();
             p.add(crate::PhiCollapse);
             p.add(crate::RegionCollapse);
-            p.run(&mut f, &mut crate::OptCtx::new(None)).unwrap();
+            p.run(&mut f, &crate::OptCtx::new(None)).unwrap();
         }
         let ranges = std::cell::RefCell::new(crate::value_range::RangeMap::new(&f).unwrap());
         for _ in 0..64 {
@@ -1414,7 +1414,7 @@ fn a_range_contains_every_runtime_value() {
             continue;
         };
         if crate::default_pipeline()
-            .run(&mut f, &mut crate::OptCtx::new(None))
+            .run(&mut f, &crate::OptCtx::new(None))
             .is_err()
         {
             continue;
@@ -1555,7 +1555,7 @@ fn a_phi_of_constants_holds_only_its_constants() {
             continue;
         };
         if crate::default_pipeline()
-            .run(&mut f, &mut crate::OptCtx::new(None))
+            .run(&mut f, &crate::OptCtx::new(None))
             .is_err()
         {
             continue;

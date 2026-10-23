@@ -168,10 +168,7 @@ fn switch_with_const_index_collapses_through_default_pipeline() {
 
     let pipeline = strider_orchestrator::opt::default_pipeline();
     pipeline
-        .run(
-            &mut function,
-            &mut strider_orchestrator::opt::OptCtx::new(None),
-        )
+        .run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("optimizer pipeline");
 
     assert_eq!(

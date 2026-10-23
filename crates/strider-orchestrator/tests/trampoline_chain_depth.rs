@@ -34,7 +34,7 @@ fn chain(links: u64) -> Vec<u8> {
 struct CountRounds(Arc<AtomicUsize>);
 
 impl PostOptimizer for CountRounds {
-    fn apply(&self, _edit: &mut EditFunction<'_>, _ctx: &mut OptCtx<'_>) -> anyhow::Result<()> {
+    fn apply(&self, _edit: &mut EditFunction<'_>, _ctx: &OptCtx<'_>) -> anyhow::Result<()> {
         self.0.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }

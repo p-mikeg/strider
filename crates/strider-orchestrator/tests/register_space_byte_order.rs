@@ -74,9 +74,9 @@ fn lift(
         .expect("cfg");
     let raw = lifter.build_ir(&cfg, cc).expect("build_ir").function;
     let mut opt = raw.clone();
-    let mut ctx = strider_orchestrator::opt::OptCtx::new(Some(rom));
+    let ctx = strider_orchestrator::opt::OptCtx::new(Some(rom));
     strider_orchestrator::opt::default_pipeline()
-        .run(&mut opt, &mut ctx)
+        .run(&mut opt, &ctx)
         .expect("pipeline");
     [raw, opt]
 }

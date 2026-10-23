@@ -64,7 +64,7 @@ impl crate::peephole::PeepholePass for LoadForward {
         &self,
         analyzers: &mut Option<Analyzers>,
         edit: &mut crate::EditFunction<'_>,
-        _opt_ctx: &mut crate::pipeline::OptCtx<'_>,
+        _opt_ctx: &crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<crate::peephole::PeepholeRewrite> {
         let cfgs = analyzers.get_or_insert_with(|| {
