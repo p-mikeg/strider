@@ -1068,6 +1068,8 @@
   set holds, `omitted_by` names the claims another set lacks, `holds_all`
   answers whether it holds every claim of another, and it derives
   `PartialEq` / `Eq`.
+- `Lifter::arch`, the arch the engine decodes with; `Strider::arch` reads
+  it.
 
 ## 0.2.0
 
