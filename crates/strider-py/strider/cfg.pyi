@@ -12,6 +12,8 @@ __all__: list[str]
 
 #: Colour themes accepted by every `to_html` / `to_dot` renderer.
 DotStyle = Literal["dark", "dark_cfg", "empty"]
+#: Every `DotStyle`.
+DOT_STYLES: tuple[DotStyle, ...]
 
 #: Why `Cfg.incomplete` names an address.
 IncompleteReason = Literal[

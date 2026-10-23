@@ -94,24 +94,23 @@ impl PyCfg {
     /// order.
     fn pcode_map(&self) -> &HashMap<u64, String> {
         self.pcode_map.get_or_init(|| {
-            let mut grouped: HashMap<u64, Vec<(u64, String)>> = HashMap::new();
+            let mut grouped: HashMap<u64, Vec<(u64, &rsleigh::Insn)>> = HashMap::new();
             for region in self.inner.regions() {
                 for ri in &region.insns {
-                    grouped.entry(ri.addr.machine_addr.addr).or_default().push((
-                        ri.addr.insn_index,
-                        strider_cfg::insn_plain_text(&ri.insn, self.inner.space_ids()).to_string(),
-                    ));
+                    grouped
+                        .entry(ri.addr.machine_addr.addr)
+                        .or_default()
+                        .push((ri.addr.insn_index, &ri.insn));
                 }
             }
             grouped
                 .into_iter()
                 .map(|(addr, mut ops)| {
                     ops.sort_by_key(|(idx, _)| *idx);
-                    let text = ops
-                        .into_iter()
-                        .map(|(_, text)| text)
-                        .collect::<Vec<_>>()
-                        .join("; ");
+                    let text = crate::pcode::pcode_text(
+                        ops.into_iter().map(|(_, insn)| insn),
+                        self.inner.space_ids(),
+                    );
                     (addr, text)
                 })
                 .collect()
@@ -293,6 +292,10 @@ impl PyCfg {
 
 pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyCfg>()?;
+    m.add(
+        "DOT_STYLES",
+        pyo3::types::PyTuple::new_bound(py, crate::dot::DOT_STYLES.map(|(name, _)| name)),
+    )?;
     m.add(
         "INCOMPLETE_REASONS",
         pyo3::types::PyTuple::new_bound(
