@@ -133,10 +133,11 @@ pub struct AssumptionOptions {
     /// covers a callee reading a register its convention does not pass (i386
     /// `regparm`, clang `fastcc`, the GNU C static chain, AArch64's X8).  It
     /// sits here because the proof keeps two gaps the IR cannot close: a callee
-    /// reading an address from a register its convention preserves, and, where
-    /// an argument's alignment exceeds the slot stride, the padding hole read
-    /// as the end of the outgoing-argument window, so a callee's own argument
-    /// slot above the hole can be forwarded across the call.
+    /// reading an address from a register its convention preserves, and an
+    /// argument slot the caller leaves unwritten (an alignment hole, or an
+    /// argument it never stores) read as the end of the outgoing-argument
+    /// window, so a callee's own argument slot above it can be forwarded
+    /// across the call.
     pub escape_analysis: bool,
     /// A RAM `Store` whose address this analysis cannot place on the entry
     /// stack, and any callee or user-op, leave the stack slots the function
