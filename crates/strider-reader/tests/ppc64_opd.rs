@@ -204,27 +204,14 @@ fn rela_opd(bytes: &[u8]) -> (u64, u64) {
         .unwrap()
 }
 
-/// 2000 exact repeats of a 16-entry `.rela.opd` name three times the
-/// entries the file holds, but walk the one table once: every descriptor
-/// still resolves.
+/// The `.opd` relocations count each distinct table once against the
+/// relocation entry budget. Distinct overlapping slices of one `.rela.opd`
+/// that name more entries than the budget, work the slices' count times
+/// their length, follow no descriptor; 2000 exact repeats of a 16-entry
+/// table, three times the budget if each were counted, are the one table
+/// and still resolve every descriptor.
 #[test]
-fn exact_repeats_of_the_opd_relocations_are_walked_once() {
-    let bytes = opd_object(16);
-    let table = rela_opd(&bytes);
-    let bytes = with_rela_opd_copies(bytes, &vec![table; 2000]);
-    let file = object::File::parse(&bytes[..]).expect("parse");
-    let layout = strider_reader::elf::ElfSectionLayout::new(&file);
-    let opd = OpdTable::new(&file).expect("an ELFv1 object with an .opd");
-    let f15 = layout.symbol_address(&file.symbol_by_name("f15").unwrap());
-    let code = common::section_base(&bytes, ".text");
-    assert_eq!(opd.entry_at(f15), Some(code + 60));
-}
-
-/// Distinct overlapping slices of one `.rela.opd`, naming more entries than
-/// the relocation entry budget allows, are walked not at all: the work they
-/// ask is the slices' count times their length.
-#[test]
-fn opd_relocation_headers_past_the_entry_budget_follow_no_descriptor() {
+fn opd_relocations_are_bounded_by_their_distinct_tables() {
     let bytes = opd_object(64);
     let (off, _) = rela_opd(&bytes);
     let slices: Vec<(u64, u64)> = (0..64u64)
@@ -232,5 +219,15 @@ fn opd_relocation_headers_past_the_entry_budget_follow_no_descriptor() {
         .collect();
     let bytes = with_rela_opd_copies(bytes, &slices);
     let file = object::File::parse(&bytes[..]).expect("parse");
-    assert!(OpdTable::new(&file).is_none());
+    assert!(OpdTable::new(&file).is_none(), "past the budget");
+
+    let bytes = opd_object(16);
+    let table = rela_opd(&bytes);
+    let bytes = with_rela_opd_copies(bytes, &vec![table; 2000]);
+    let file = object::File::parse(&bytes[..]).expect("parse");
+    let layout = strider_reader::elf::ElfSectionLayout::new(&file);
+    let opd = OpdTable::new(&file).expect("exact repeats are one table");
+    let f15 = layout.symbol_address(&file.symbol_by_name("f15").unwrap());
+    let code = common::section_base(&bytes, ".text");
+    assert_eq!(opd.entry_at(f15), Some(code + 60));
 }
