@@ -1168,7 +1168,7 @@ fn partly_overwritten_wide_store_supplies_no_arg() -> Result<()> {
     Ok(())
 }
 
-/// `Lifter.optimize` re-runs the default pipeline over an already optimized
+/// `Function.optimize` re-runs the default pipeline over an already optimized
 /// `Function`, so the collected tail must be replaced, not extended.
 #[test]
 fn repeated_pipeline_runs_leave_the_collected_tail_alone() -> Result<()> {

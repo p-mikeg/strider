@@ -19,8 +19,8 @@ use crate::strider_cls::PyLifter;
 #[pyclass(name = "Cfg", module = "strider.cfg")]
 pub struct PyCfg {
     pub(crate) inner: strider_cfg::Cfg,
-    /// The `Lifter` that built `inner`: `Cfg.lifter`, and `optimize`'s
-    /// same-handle check.
+    /// The `Lifter` that built `inner`: `Cfg.lifter`, and the rom
+    /// `Function.optimize` folds against.
     pub(crate) lifter: Py<PyLifter>,
     /// That lifter's arch, whose name table every render reads, so a render
     /// never borrows `lifter` (which `analyze` holds mutably with the GIL

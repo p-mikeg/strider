@@ -32,7 +32,7 @@ assert n == before > 0
 
 # Re-optimize after any structural change; no pipeline arg re-runs the full
 # default pipeline.
-elf.optimize(function)
+function.optimize()
 
 print(f"after rewrite + reoptimize: {len(function.find_all(int_mul(var(x), int_const(4))))} `x * 4`, "
       f"{len(function.find_all(int_shl(var(x), int_const(2))))} `x << 2`")

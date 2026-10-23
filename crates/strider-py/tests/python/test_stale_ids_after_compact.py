@@ -99,7 +99,7 @@ def test_optimize_invalidates_outstanding_handles():
 
     pipe = strider.opt.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
-    lift.optimize(fn, pipe)
+    fn.optimize(pipeline=pipe)
 
     # Stale handle: dereferencing must raise, not read the mutated arena.
     with pytest.raises(strider.StriderError):
