@@ -8,6 +8,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+import pytest
+
 import strider
 
 from .conftest import fixture_path
@@ -265,3 +267,15 @@ def test_a_body_write_with_no_progress_gives_up_when_the_server_is_stopping():
     p.handler._send(b"x" * 4096, "text/plain")
     assert p.sent == b""
     assert p.handler.close_connection, "a cut write must close its connection"
+
+
+def test_explore_visualize_is_the_one_entry():
+    """No `Lifter.visualize`; `explore.visualize` checks its own arguments
+    before binding anything."""
+    lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
+    fn = lift.analyze(lift.entry_point()).function
+    assert not hasattr(lift, "visualize")
+    with pytest.raises(ValueError, match="depth"):
+        strider.explore.visualize(fn, depth=-1)
+    with pytest.raises(TypeError):
+        strider.explore.visualize(fn, "127.0.0.1")  # type: ignore[misc]

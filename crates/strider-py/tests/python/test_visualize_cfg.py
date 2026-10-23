@@ -42,7 +42,7 @@ def _serve_bg(target_kind, port, code=b"\x75\x01\x90\xc3", **kw):
             target = lift.analyze(
                 0x1000, strider.sleigh.CallingConvention.x86_64_systemv(),
             ).function
-        lift.visualize(target, port=port, **kw)
+        strider.explore.visualize(target, port=port, **kw)
 
     # Non-daemon: a daemon thread lets the interpreter exit with the server
     # still running (the abort above), while a non-daemon one turns that leak
@@ -57,7 +57,7 @@ def _stop(port, thread):
     thread.join(timeout=10)
     assert not thread.is_alive(), (
         "explorer thread survived shutdown(); a thread left parked inside "
-        "the Rust visualize frame aborts the interpreter at finalization"
+        "visualize aborts the interpreter at finalization"
     )
 
 
@@ -339,7 +339,7 @@ def test_interpreter_exit_with_a_parked_explorer_does_not_abort():
                 strider.sleigh.SleighArch.x86_64(),
                 strider.reader.BufferReader(0x1000, b"\\x75\\x01\\x90\\xc3"),
             )
-            lift.visualize(lift.build_cfg(0x1000), port=0)
+            strider.explore.visualize(lift.build_cfg(0x1000), port=0)
         threading.Thread(target=run, daemon=True).start()
         time.sleep(2)
         """
@@ -374,7 +374,7 @@ def test_a_non_daemon_explorer_thread_does_not_hang_interpreter_exit():
                 strider.sleigh.SleighArch.x86_64(),
                 strider.reader.BufferReader(0x1000, b"\\x75\\x01\\x90\\xc3"),
             )
-            lift.visualize(lift.build_cfg(0x1000), port=0)
+            strider.explore.visualize(lift.build_cfg(0x1000), port=0)
         threading.Thread(target=run).start()   # non-daemon on purpose
         time.sleep(2)
         """

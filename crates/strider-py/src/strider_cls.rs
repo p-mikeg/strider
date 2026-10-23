@@ -983,55 +983,6 @@ impl PyLifter {
         out
     }
 
-    /// Start the interactive explorer for `target`, a `Function` or a `Cfg`.
-    /// Prints the local URL and blocks on this thread until Ctrl-C;
-    /// `background=True` serves on its own thread and RETURNS the bound port,
-    /// so you can keep querying while the page is open.
-    ///
-    /// `host` / `port` choose where to bind, `port=0` taking whatever is free.
-    /// The default binds loopback: any other `host` puts the graph of the
-    /// binary you are analysing on the network, and no endpoint authenticates.
-    /// `depth` is the neighborhood radius, which seeds the page's own control.
-    ///
-    /// Opens on the WHOLE graph: a neighborhood view hides nodes without
-    /// saying so. `whole=False` opens on the neighborhood around the entry
-    /// instead (inputs and outputs out to `depth` hops), which is what scales
-    /// to large functions; the toolbar's `whole` toggle switches between them
-    /// either way. A function of a few thousand nodes can keep the layout
-    /// engine busy for a while, so prefer `whole=False` there.
-    ///
-    /// The neighborhood knobs open uncapped and are set from the page, where
-    /// 0 means no limit on each.
-    ///
-    /// `strider.explore.shutdown(port)` stops a server and joins its thread.
-    /// It is registered to run before the interpreter joins non-daemon
-    /// threads, so an explorer left running does not hang or abort at exit.
-    #[pyo3(signature = (target, host="127.0.0.1", port=0, depth=None, whole=true, background=false))]
-    // One parameter per Python keyword, which `#[pyo3(signature)]` needs here.
-    #[allow(clippy::too_many_arguments)]
-    fn visualize(
-        _slf: &Bound<'_, Self>,
-        py: Python<'_>,
-        target: Py<PyAny>,
-        host: &str,
-        port: u16,
-        depth: Option<usize>,
-        whole: bool,
-        background: bool,
-    ) -> PyResult<u16> {
-        let explore = py.import_bound("strider.explore")?;
-        let kwargs = pyo3::types::PyDict::new_bound(py);
-        kwargs.set_item("host", host)?;
-        kwargs.set_item("port", port)?;
-        // `None` leaves the renderer's own default, which the explorer reads
-        // off the binding signature and shows as the control's default.
-        kwargs.set_item("depth", depth)?;
-        kwargs.set_item("whole", whole)?;
-        kwargs.set_item("background", background)?;
-        explore
-            .call_method("visualize", (target,), Some(&kwargs))?
-            .extract()
-    }
 }
 
 /// Create a lifter for `arch` that can lift and analyze functions.  `mem`

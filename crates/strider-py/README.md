@@ -42,7 +42,7 @@ the one top-level name.
 | `strider.pattern` | the match DSL: `Pat`, `Capture`, `Match`, the builders, `.constraints` |
 | `strider.template` | the build side of a rewrite: `Template` |
 | `strider.opt` | `OptimizerPipeline` and the individual passes |
-| `strider.explore` | the CFG / IR explorer `Lifter.visualize` serves; `shutdown(port)` stops it |
+| `strider.explore` | the CFG / IR explorer: `visualize(target)` serves it, `shutdown(port)` stops it |
 
 ## Learn more
 
