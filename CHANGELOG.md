@@ -565,6 +565,10 @@
 
 ### Fixed
 
+- Python: each optimizer pass's `__doc__` is its stub docstring. They had
+  drifted: `help(LoadForward)` said every call and control merge blocks it,
+  and both texts said a `MemPhi` does, where one whose arms reach the same
+  definition does not.
 - Python: `ElfLifter.analyze` no longer raises when an attached symbol file
   changed after the tables built from it, which is all it reads of one. A
   change to the image itself still raises, from the read that would see it.

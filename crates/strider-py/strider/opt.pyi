@@ -72,15 +72,15 @@ class OptimizerPipeline:
         ...
 
 class ConstantFold:
-    """Evaluates constant expressions and applies algebraic identities
-    (`x+0` to `x`, `x^x` to `0`, AND-mask merging)."""
+    """Evaluates constant expressions and applies algebraic identities (`x+0`
+    to `x`, `x^x` to `0`, AND-mask merging)."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class KnownBits:
-    """Tracks which bits are known to be zero or one and simplifies
-    operations whose result is fully determined."""
+    """Tracks which bits are known to be zero or one and simplifies operations
+    whose result is fully determined."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
@@ -93,33 +93,36 @@ class FlagCmpCanonicalize:
         ...
 
 class IfCondInversion:
-    """Rewrites a branch on a negated condition into a branch on the plain
-    condition with its two arms swapped."""
+    """Rewrites a branch on a negated condition (`Xor(C, IntConst(1)):I1`) into
+    a branch on the plain condition with its two arms swapped."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class PhiCollapse:
     """Braun trivial-phi elimination: redirects a `Phi` / `MemPhi` whose value
-    inputs resolve to exactly one distinct value, self-references discarded, to
-    that value. A genuine two-way merge is left alone."""
+    inputs resolve to exactly one distinct value, self-references
+    discarded, to that value, and a strongly connected group of phis
+    whose only outside input is one value to that input. A genuine
+    two-way merge is left alone."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class RegionCollapse:
     """Collapses a `Region` that already has exactly one control input,
-    rewiring its control consumers to that predecessor and each phi over it to
-    that phi's lone value input. A multi-predecessor Region is left alone."""
+    rewiring its control consumers to that predecessor and each phi over
+    it to that phi's lone value input. A multi-predecessor Region is
+    left alone."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class DeadBranchElimination:
-    """Folds a branch with a constant selector (an `If` on a constant `I1`,
-    a `Switch` on a constant dispatch address), wiring the live successor past
-    it and killing the branch node, and strips the dead arm's predecessor
-    slots from the joins."""
+    """Folds a branch with a constant selector (an `If` on a constant `I1`, a
+    `Switch` on a constant dispatch address), wiring the live successor
+    past it and killing the branch node, and strips the dead arm's
+    predecessor slots from the joins."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
@@ -133,35 +136,38 @@ class CfgDetach:
 
 class LoadForward:
     """Forwards a store's value to a later load when the nearest may-aliasing
-    memory definition is an exact-match store: same address class, base and
-    offset, covering the load's whole range. A partial overlap, a `MemPhi`
-    (control merge), `InitialMemory`, or a call the assumptions cannot see
-    through all block it."""
+    memory definition is an exact-match store: same address class, base
+    and offset, covering the load's whole range. A partial overlap,
+    `InitialMemory`, a `MemPhi` whose arms reach different definitions,
+    or a call the assumptions cannot see through blocks it; a `MemPhi`
+    whose arms agree does not."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 
 class FunctionArgDetect:
-    """Records which values carry each incoming stack-passed argument.
-    Register arguments are recorded at lift time."""
+    """Records which values carry each incoming stack-passed argument. Register
+    arguments are recorded at lift time."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class CallStackArgCollect:
-    """Wires the stack slots written before a call in as that call's
-    positional arguments."""
+    """Wires the stack slots written before a call in as that call's positional
+    arguments."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
 
 class LoadReadOnly:
     """Folds a load from a constant address into a constant, reading the bytes
-    from the read-only memory image (`rom=`). A no-op when no rom is supplied.
+    from the read-only memory image (`rom=`). A no-op when no rom is
+    supplied.
 
-    The fold never consults the load's memory chain, so the rom must map only
-    runtime-immutable memory: code and `.rodata`, never `.data` / `.got`."""
+    The fold never consults the load's memory chain, so the rom must map
+    only runtime-immutable memory: code and `.rodata`, never `.data` /
+    `.got`."""
     def __init__(self) -> None:
         """Build the pass."""
         ...
