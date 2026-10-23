@@ -1146,7 +1146,6 @@ fn operand_demand(f: &strider_ir::Function, v: ValueId, demand: u128) -> Vec<(Va
                     let sign = past && op == ExtendOp::SignExtend;
                     demand | if sign { sign_of(x) } else { 0 }
                 }
-                (NodeKind::Truncate, 0, _) => demand,
                 (NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft), 0, Some(k)) => {
                     demand.checked_shr(k).unwrap_or(0)
                 }
@@ -1159,7 +1158,8 @@ fn operand_demand(f: &strider_ir::Function, v: ValueId, demand: u128) -> Vec<(Va
                 (NodeKind::IntBinaryOp(IntBinaryOp::And), _, _) => {
                     demand & mask_const.unwrap_or(u128::MAX)
                 }
-                (NodeKind::IntBinaryOp(IntBinaryOp::Or | IntBinaryOp::Xor), _, _) => demand,
+                (NodeKind::Truncate, 0, _)
+                | (NodeKind::IntBinaryOp(IntBinaryOp::Or | IntBinaryOp::Xor), _, _) => demand,
                 (
                     NodeKind::IntBinaryOp(IntBinaryOp::Add | IntBinaryOp::Mul)
                     | NodeKind::IntUnaryOp(_),
