@@ -245,6 +245,45 @@ fn a_relocation_inside_a_table_refuses_the_image() {
     }
 }
 
+/// `mips32be_got.elf` with its `.dynsym` header's `sh_offset` moved so that
+/// symbol 5 lies in `.comment` (file offset 0x3e4), written there as
+/// defined in `.text` at the lazy stub `ext_call`'s GOT entry holds.
+/// `DT_SYMTAB` still places the table where `ext_call` and `ext_var` are
+/// imports, so their global entries stay holes.
+#[test]
+fn a_mips_global_got_entry_reads_only_dt_symtabs_dynsym() {
+    let mut b = bytes("mips32be_got.elf");
+    let sh = |i: usize| 0x880 + 40 * i;
+    assert_eq!(
+        u32::from_be_bytes(b[sh(6) + 4..sh(6) + 8].try_into().unwrap()),
+        object::elf::SHT_DYNSYM
+    );
+    // Elf32_Sym: st_name, st_value, st_size, st_info, st_other, st_shndx.
+    let sym = [
+        0u32.to_be_bytes().as_slice(),
+        &0x4003a0u32.to_be_bytes(),
+        &0u32.to_be_bytes(),
+        &[0x12, 0],
+        &8u16.to_be_bytes(),
+    ]
+    .concat();
+    b[0x3e4..0x3e4 + 16].copy_from_slice(&sym);
+    b[sh(6) + 16..sh(6) + 20].copy_from_slice(&(0x3e4u32 - 5 * 16).to_be_bytes());
+    let elf = OwnedElf::parse(b).unwrap();
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    for (addr, what) in [(0x4103dc, "ext_var"), (0x4103e0, "ext_call")] {
+        let mut word = [0u8; 4];
+        let got = ReadOnlyMemory::read(&reader, addr, &mut word).map_err(|e| e.to_string());
+        assert!(
+            got.as_ref().is_err_and(|e| e.contains(&format!(
+                "relocation of type {} ",
+                object::elf::R_MIPS_GLOB_DAT
+            ))),
+            "{what}: {got:?} {word:02x?}"
+        );
+    }
+}
+
 /// SLEB128 of `v`.
 fn sleb(mut v: i64) -> Vec<u8> {
     let mut out = Vec::new();
