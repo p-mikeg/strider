@@ -274,7 +274,7 @@ fn known_bits_shared_output_folds_once() -> Result<()> {
 /// for a genuinely unknown value.
 fn make_fn_with_var<F>(f: F) -> Result<strider_ir::Function>
 where
-    F: FnOnce(&mut FunctionBuilder, rsleigh::Vn) -> Result<strider_ir::Value>,
+    F: FnOnce(&mut FunctionBuilder, rsleigh::Vn) -> Result<strider_ir::node::ValueId>,
 {
     let v = rsleigh::Vn {
         addr_off: 0x40,
