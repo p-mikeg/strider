@@ -64,7 +64,7 @@ fn is_phi(kind: &NodeKind) -> bool {
 
 /// The `Region` a phi's token input comes from.
 fn phi_region(f: &Function, phi: NodeId) -> Option<NodeId> {
-    let token = f.nth_input(phi, 0)?;
+    let token = f.nth_input(phi, NodeKind::PHI_TOKEN_SLOT)?;
     let region = f.producer(token);
     matches!(f.node_kind(region), NodeKind::Region).then_some(region)
 }

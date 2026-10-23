@@ -27,9 +27,10 @@ impl FunctionBuilder {
             output_kinds.push(ValueKind::Typed(vn.int_type()?));
         }
         let node = self.create_node(kind, inputs, output_kinds);
+        let values = kind.output_head_len();
         let outputs: Vec<ValueId> = self.function().node_outputs(node).to_vec();
 
-        for (value, vn) in core::iter::zip(&outputs[2..], output_vns) {
+        for (value, vn) in core::iter::zip(&outputs[values..], output_vns) {
             self.function_mut().set_vn_for_value(*value, *vn);
         }
         Ok((node, outputs))
@@ -74,12 +75,12 @@ impl FunctionBuilder {
         let inputs = [ctrl, memory, call_address, sp_value]
             .into_iter()
             .chain(args.iter().copied());
-        let (node, outputs) =
-            self.emit_call_node(NodeKind::Call { cc: None }, inputs, output_vns)?;
+        let kind = NodeKind::Call { cc: None };
+        let (node, outputs) = self.emit_call_node(kind, inputs, output_vns)?;
 
         // The region stays open.
-        self.advance_cur_region_ctrl(outputs[0])?;
-        self.advance_cur_region_memory(outputs[1])?;
+        self.advance_cur_region_ctrl(outputs[NodeKind::CTRL_OUT_SLOT])?;
+        self.advance_cur_region_memory(outputs[NodeKind::CTRL_MEM_OUT_SLOT])?;
 
         // A link-register ISA passes 0.
         if ret_stack_pop != 0 {
@@ -90,7 +91,7 @@ impl FunctionBuilder {
             self.write_variable(&sp_vn, adjusted)?;
         }
 
-        Ok((node, outputs[2..].to_vec()))
+        Ok((node, outputs[kind.output_head_len()..].to_vec()))
     }
 
     /// Every varnode must be REGISTER / UNIQUE space, and none may appear
@@ -126,24 +127,28 @@ impl FunctionBuilder {
         let ctrl = self.cur_region_control()?;
         let memory = self.cur_region_memory()?;
         let inputs = [ctrl, memory].into_iter().chain(args.iter().copied());
-        let (node, outputs) =
-            self.emit_call_node(NodeKind::CallOther { user_op_id }, inputs, output_vns)?;
+        let kind = NodeKind::CallOther { user_op_id };
+        let (node, outputs) = self.emit_call_node(kind, inputs, output_vns)?;
 
         // Sinking control into `Unreachable` leaves the memory edge dangling,
         // so a terminating op advances neither: the region is closed and has no
         // successor to read either edge. A memory-clobbering op that also never
         // returns (a PowerPC `BUG()` trap) reaches exactly this.
         if terminate {
-            self.create_node(NodeKind::Unreachable, [outputs[0]], []);
+            self.create_node(
+                NodeKind::Unreachable,
+                [outputs[NodeKind::CTRL_OUT_SLOT]],
+                [],
+            );
             self.terminate_cur_region().map(|_| ())?;
         } else {
-            self.advance_cur_region_ctrl(outputs[0])?;
+            self.advance_cur_region_ctrl(outputs[NodeKind::CTRL_OUT_SLOT])?;
             if advance_memory {
-                self.advance_cur_region_memory(outputs[1])?;
+                self.advance_cur_region_memory(outputs[NodeKind::CTRL_MEM_OUT_SLOT])?;
             }
         }
 
-        Ok((node, outputs[2..].to_vec()))
+        Ok((node, outputs[kind.output_head_len()..].to_vec()))
     }
 
     /// Test-only: the CC-aware `Call` construction the lifter performs in

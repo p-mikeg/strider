@@ -57,13 +57,13 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
     pipeline
 }
 
-/// Input[2] of the first `Return`, after ctrl and mem.
+/// The first `Return`'s first value input.
 pub(crate) fn return_value(graph: &Graph) -> crate::Result<Value> {
     let ret = graph
         .all_node_ids()
         .find(|&n| matches!(graph.node_kind(n), NodeKind::Return))
         .ok_or_else(|| anyhow!("no return node found in function"))?;
-    Ok(graph.node_inputs(ret)[2])
+    Ok(graph.node_inputs(ret)[NodeKind::Return.input_head_len()])
 }
 
 pub(crate) fn return_kind(graph: &Graph) -> crate::Result<NodeKind> {

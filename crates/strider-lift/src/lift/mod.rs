@@ -1067,7 +1067,7 @@ mod tests {
         walk.by_ref().for_each(|_| {});
         let reachable = walk.into_visited();
 
-        // Grouped by the region's phi token (a `Phi`'s input 0), so phis from
+        // Grouped by the region's phi token, so phis from
         // different regions do not interleave.
         let mut per_region: rustc_hash::FxHashMap<
             strider_ir::node::ValueId,
@@ -1077,7 +1077,7 @@ mod tests {
             .reachable_kind_iter(&reachable)
             .filter(|(_, k)| matches!(k, NodeKind::Phi))
         {
-            let token = f.node_inputs(node)[0];
+            let token = f.node_inputs(node)[NodeKind::PHI_TOKEN_SLOT];
             let [out] = f.node_outputs_exact::<1>(node).expect("phi output");
             let vn = f.get_vn_for_value(out).expect("phi carries a vn tag");
             let id = f.vn_id_of(&vn).expect("tagged vn is tracked");

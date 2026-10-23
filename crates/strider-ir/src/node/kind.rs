@@ -186,6 +186,23 @@ impl NodeKind {
     pub const INDIRECT_BRANCH_TARGET_SLOT: usize = 2;
     /// Input slot of a `Switch`'s selector.
     pub const SWITCH_SELECTOR_SLOT: usize = 1;
+    /// Input slot of a `Phi` / `MemPhi`'s phi token, the owning `Region`'s.
+    pub const PHI_TOKEN_SLOT: usize = 0;
+    /// Output slot of the control successor on every kind with one fixed
+    /// (`Entry`, `Region`, `Call`, `CallOther`).
+    pub const CTRL_OUT_SLOT: usize = 0;
+    /// Output slot of the memory token after the control successor (`Call`,
+    /// `CallOther`).
+    pub const CTRL_MEM_OUT_SLOT: usize = 1;
+    /// Output slot of the memory token of a kind with no other output
+    /// (`InitialMemory`, `Store`, `MemPhi`).
+    pub const MEM_OUT_SLOT: usize = 0;
+    /// Output slot of a `Region`'s phi token.
+    pub const REGION_PHI_OUT_SLOT: usize = 1;
+    /// Output slot of an `If`'s arm for a true condition.
+    pub const IF_TRUE_OUT_SLOT: usize = 0;
+    /// Output slot of an `If`'s arm for a false condition.
+    pub const IF_FALSE_OUT_SLOT: usize = 1;
 
     #[inline]
     pub fn is_const(self) -> bool {
@@ -200,6 +217,15 @@ impl NodeKind {
     pub fn input_head_len(&self) -> usize {
         crate::node_signature::expected_signature(self)
             .inputs
+            .head_len()
+    }
+
+    /// Fixed output slots before the variadic tail: a `Call` / `CallOther`'s
+    /// first value output.
+    #[must_use]
+    pub fn output_head_len(&self) -> usize {
+        crate::node_signature::expected_signature(self)
+            .outputs
             .head_len()
     }
 
