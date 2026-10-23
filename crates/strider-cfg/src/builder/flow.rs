@@ -154,31 +154,6 @@ impl FlowVars {
         ctx
     }
 
-    /// Overwrite `ctx`'s flow var `var` with the value committed at `addr`.
-    /// Pins the ISA mode from the parent region onto a snapshot whose `var`
-    /// value may be the pspec default: a target the mode has not
-    /// straight-line-flowed to yet (a forward branch).
-    ///
-    /// No-op when `var` is not a flow var of this sla, `ctx` was not
-    /// snapshotted by these vars, or the read fails.
-    pub fn take_var_at<R: rsleigh::MemReader>(
-        &self,
-        ctx: &mut FlowContext,
-        sleigh: &rsleigh::Sleigh<R>,
-        addr: u64,
-        var: &str,
-    ) {
-        let Some(i) = self.vars.iter().position(|name| name == var) else {
-            return;
-        };
-        if i >= ctx.0.len() {
-            return;
-        }
-        if let Ok(value) = get_context_at(sleigh, addr, var) {
-            ctx.0[i] = value;
-        }
-    }
-
     /// The vars where `have` disagrees with `want`, as `(name, want value)`.
     fn diff<'a>(
         &'a self,
@@ -255,11 +230,6 @@ mod tests {
         let foreign = FlowContext::default();
         assert_eq!(vars.value_of(&foreign, "TMode"), None);
         assert_eq!(vars.with_mode_bit(&foreign, "TMode", true), foreign);
-
-        let (sleigh, _reads) = counting_arm_sleigh();
-        let mut short = foreign.clone();
-        vars.take_var_at(&mut short, &sleigh, 0x1000, "TMode");
-        assert_eq!(short, foreign);
     }
 
     /// Counts every memory read the Sleigh issues, so a test can tell a parse
