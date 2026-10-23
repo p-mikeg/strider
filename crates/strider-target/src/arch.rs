@@ -566,8 +566,9 @@ impl SleighArch {
     /// boundary at all.
     ///
     /// Only ARM among the presets here. x86 and AArch64 contain no `globalset`
-    /// at all; MIPS commits `ISA_MODE` only at a `jalx` call target, which
-    /// analysis never decodes, and its `PAIR_INSTRUCTION_FLAG` / `ext_delay`
+    /// at all; MIPS commits `ISA_MODE` only at a `jalx` call target, an
+    /// ISA-mode var the CFG build holds per region instead (a callee below the
+    /// caller paints the caller's bytes), and its `PAIR_INSTRUCTION_FLAG` / `ext_delay`
     /// are `noflow` and go to [`Self::transient_decode_vars`]; PowerPC's
     /// `linkreg` IS committed to a differing value by `mtlr`
     /// (`ppc_embedded.sinc:155`) and is flowing, but every constructor it
