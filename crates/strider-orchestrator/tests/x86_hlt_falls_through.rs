@@ -40,3 +40,16 @@ fn a_jump_to_itself_still_never_returns() {
     let r = analyze(vec![0xeb, 0xfe, 0xc3]);
     assert_eq!(count(&r.function, |k| matches!(k, NodeKind::Return)), 0);
 }
+
+/// A LOCK prefix makes `hlt` undecodable (#UD), so the bytes are reported.
+#[test]
+fn lock_hlt_does_not_decode() {
+    // je 0x10003; ret; lock hlt; ret
+    let r = analyze(vec![0x74, 0x01, 0xc3, 0xf0, 0xf4, 0xc3]);
+    let undecodable: Vec<u64> = r
+        .incomplete()
+        .of(strider_orchestrator::Reason::UndecodableTarget)
+        .map(|a| a.machine_addr.addr)
+        .collect();
+    assert_eq!(undecodable, vec![BASE + 3]);
+}
