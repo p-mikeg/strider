@@ -273,12 +273,7 @@ pub fn is_rounding_mode_control(preset: crate::ArchPreset, name: &str) -> bool {
 const PURE: CallOtherClass = CallOtherClass::PURE;
 const MEM_CLOBBER: CallOtherClass = CallOtherClass::MEM_CLOBBER;
 
-/// A PowerPC `Rc=1` "dot" form whose only modelled effect is the CR0 write
-/// the ISA defines for it.  The sla emits these as a bare void pcodeop with no
-/// `cr0flags(...)`, unlike `stwcx.` / `stdcx.`, so without this the condition
-/// register keeps whatever a previous instruction left in it and a `bne cr0`
-/// after one folds on a stale value.  `cr0` is a fixed Sleigh name on all four
-/// PPC presets.
+/// PowerPC `wrtee` / `wrteei`, which write MSR.EE; `mfmsr` reads it back.
 const PPC_MSR: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     implicit_reads: &[],
     implicit_writes: &["MSR"],
