@@ -739,8 +739,9 @@ assumption_fields! {
     /// unknown one stays a select. Wrong after `fesetround` or a caller's mode
     /// change. Float arithmetic is taken to round to nearest, the conversions
     /// lifted as opaque user ops (packed VEX, EVEX, `roundss`) are outside it,
-    /// and MXCSR.FTZ/DAZ are taken as 0, so `none()` is not a sound floor for
-    /// `-ffast-math` code. Read by the lift, so `analyze` honours it and
+    /// and MXCSR.FTZ/DAZ and PowerPC FPSCR.NI/OE/UE are taken as 0, so
+    /// `none()` is not a sound floor for `-ffast-math` code or code that sets
+    /// those. Read by the lift, so `analyze` honours it and
     /// `optimize` refuses to add it.
     fp_rounding_mode_is_nearest: bool,
 }
