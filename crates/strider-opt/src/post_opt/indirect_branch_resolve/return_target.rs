@@ -263,6 +263,10 @@ impl<'f> ReturnTargets<'f> {
                             }
                         }
                     }
+                    NodeKind::Call { .. } if function.get_cc(node).preserves_memory => {
+                        out.extend(function.memory_input_of(node).map(below));
+                        true
+                    }
                     NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
                         if !self
                             .function
