@@ -336,40 +336,6 @@ class Lifter:
         the pspec default mode: sweep from a fresh `Lifter` instead.
         """
         ...
-    def visualize(
-        self,
-        target: Union[Function, Cfg],
-        host: str = ...,
-        port: int = ...,
-        depth: Optional[int] = ...,
-        whole: bool = ...,
-        background: bool = ...,
-    ) -> int:
-        """Start the interactive explorer for `target`, a `Function` or a
-        `Cfg`. Prints the local URL and blocks on this thread until Ctrl-C;
-        `background=True` serves on its own thread and returns the bound port,
-        so you can keep querying while the page is open.
-
-        `host` / `port` choose where to bind, `port=0` taking whatever is free.
-        The default binds loopback: any other `host` puts the graph of the
-        binary you are analysing on the network, and no endpoint authenticates.
-        `depth` is the neighborhood radius, used only when `whole=False`.
-
-        Opens on the WHOLE graph: a neighborhood view hides nodes without
-        saying so. `whole=False` opens on the neighborhood around the entry
-        instead (inputs and outputs out to `depth` hops), which is what
-        scales to large functions; the toolbar's `whole` toggle switches
-        between them either way. The neighborhood knobs open uncapped and are
-        set from the page, where 0 means no limit on each.
-
-        A function of a few thousand nodes can keep the layout engine busy for
-        a long time.
-
-        `strider.explore.shutdown(port)` stops a server and joins its thread.
-        It is registered to run before the interpreter joins non-daemon
-        threads, so an explorer left running does not hang or abort at exit.
-        """
-        ...
 
 def lifter(
     arch: SleighArch,
