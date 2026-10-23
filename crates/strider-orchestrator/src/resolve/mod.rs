@@ -9,8 +9,7 @@ mod sites;
 pub(crate) mod test_support;
 
 use anyhow::Result;
-use rustc_hash::FxHashMap;
-use strider_cfg::{Incompleteness, MachineInsnAddr, PcodeInsnAddr, Reason, ResolvedTargets};
+use strider_cfg::{CfgOptions, Incompleteness, MachineInsnAddr, PcodeInsnAddr, Reason};
 
 use crate::{AnalyzeOptions, AnalyzeResult, Strider};
 use reports::{
@@ -51,6 +50,8 @@ enum Termination {
 
 /// What the loop carries from one round to the next.
 struct LoopState<'s> {
+    /// The caller's cfg options, whose `known_targets` `sites` seeds from.
+    base: &'s CfgOptions<'s>,
     /// Every site's answer, over the caller's seeds.
     sites: SiteTable<'s>,
     /// Sticky: a site that lost ground in ANY round, or whose seat the loop
@@ -85,7 +86,7 @@ where
         pipeline: &strider_opt::OptimizerPipeline,
         classify: Classifier<'_>,
     ) -> Result<AnalyzeResult> {
-        let mut st = LoopState::new(opts.cfg.known_targets);
+        let mut st = LoopState::new(&opts.cfg);
         // Every round rebuilds the whole function from the seat set: cfg, lift
         // and pipeline. Carrying a round's work forward would make the cfg a
         // function of more than the seats, which is what convergence rests on.
@@ -94,7 +95,7 @@ where
                 start_addr,
                 cc,
                 opts,
-                &st.sites.cfg_options(&opts.cfg),
+                &st.sites.cfg_options(st.base),
                 pipeline,
                 classify,
             )?;
@@ -115,9 +116,10 @@ where
 }
 
 impl<'s> LoopState<'s> {
-    fn new(seeds: &'s FxHashMap<PcodeInsnAddr, ResolvedTargets>) -> Self {
+    fn new(base: &'s CfgOptions<'s>) -> Self {
         Self {
-            sites: SiteTable::new(seeds),
+            base,
+            sites: SiteTable::new(base.known_targets),
             derived_incomplete: Vec::new(),
             assumed_modes: Vec::new(),
             incomplete: Incompleteness::default(),
