@@ -1110,6 +1110,9 @@
   callee takes every argument on the stack, so under that convention its
   first argument reads as `arg(3)`, and give the recipe:
   `per_address_ccs={callee: CallingConvention.x86_cdecl()}`.
+- Python: with `return_slots_survive_untracked_writes` cleared, a call whose
+  convention preserves memory no longer makes a return after it unverified,
+  as every other memory walk already steps it.
 
 ### Added, Rust
 

@@ -827,3 +827,52 @@ fn an_empty_seed_leaves_a_derived_return_verified() {
         );
     }
 }
+
+/// A call whose convention preserves memory leaves the return slot as it
+/// found it whatever the claims say, as every memory walk already takes it:
+/// with the claim cleared, a merge whose other arm rewrites the slot brings
+/// the slot walk to the call itself, and it passes.
+///
+/// Mutation: drop the `preserves_memory` arm of the slot walk.
+#[test]
+fn x86_64_a_memory_preserving_call_past_a_merge_rests_on_no_claim() {
+    // test %edi,%edi ; je 1f ; mov (%rsp),%rax ; mov %rax,(%rsp) ; jmp 2f
+    // 1: call BASE+0x1000 ; 2: ret
+    let bytes = vec![
+        0x85, 0xff, 0x74, 0x0a, 0x48, 0x8b, 0x04, 0x24, 0x48, 0x89, 0x04, 0x24, 0xeb, 0x05, 0xe8,
+        0xed, 0x0f, 0x00, 0x00, 0xc3,
+    ];
+    let size = bytes.len() as u64;
+    let (mut strider, cc) = common::strider_over_bytes(Arch::X64, bytes, BASE, None);
+    let preserving = Arch::X64
+        .cc()
+        .preserves_all()
+        .build(strider.sleigh_regs())
+        .expect("build cc");
+    let analyze = |strider: &mut strider_orchestrator::Strider<_>, overrides| {
+        let opts = strider_orchestrator::AnalyzeOptions {
+            cfg: strider_cfg::CfgOptions {
+                bound: strider_cfg::FunctionBound::size(size),
+                ..Default::default()
+            },
+            per_address_ccs: overrides,
+            assumptions: no_assumptions(),
+            ..Default::default()
+        };
+        strider.analyze(BASE, &cc, &opts, None).expect("analyze")
+    };
+    let plain = rustc_hash::FxHashMap::default();
+    assert_eq!(
+        unresolved(&analyze(&mut strider, &plain)),
+        vec![BASE + 19],
+        "an ordinary callee may write the slot"
+    );
+    let overrides: rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention> =
+        [(BASE + 0x1000, preserving)].into_iter().collect();
+    let result = analyze(&mut strider, &overrides);
+    assert!(
+        result.incomplete().is_empty(),
+        "incomplete {:x?}",
+        result.incomplete()
+    );
+}
