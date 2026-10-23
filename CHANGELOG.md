@@ -294,12 +294,15 @@
   run under `OptCtx::new` used the three default claims.
 - `RegionIndex::overlapping` is gone; `RegionIndex::covering` remains.
 - `strider_ir::Value`, the second name for `strider_ir::node::ValueId`, is
-  gone.
+  gone: use `ValueId`.
 - Crate-private now, having no user outside strider-ir:
   `FunctionBuilder::build_entry` (renamed `build_initial_memory`; a second
-  call minted a second `InitialMemory`), `write_variable_from_id`,
-  `Function::vn_ids`, `GraphWalkInfo::postorder` and the walk types
-  `DefUsePostorder`, `RawDefUseSuccs` and `DefUseSuccs`.
+  call minted a second `InitialMemory`; `FunctionBuilder::new` already mints
+  the one), `write_variable_from_id` (use `write_variable` with the varnode),
+  `Function::vn_ids` (use `all_vns`, in the same order),
+  `GraphWalkInfo::postorder` (use `reverse_postorder`, reversed) and the walk
+  types `DefUsePostorder`, `RawDefUseSuccs` and `DefUseSuccs` (no
+  replacement).
 - `Cfg::function_isa_bit` is gone: `flowing_isa_bit_at_site` answers every
   indirect site on an arch with an ISA-mode var, already degrading to the
   function's own mode where the branch address carries no readable context.
