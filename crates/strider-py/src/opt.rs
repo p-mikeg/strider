@@ -218,55 +218,65 @@ macro_rules! opt_passes {
     };
 }
 
+// Each text is its class's docstring in `strider/opt.pyi` too, word for word;
+// `test_docstrings.py` holds the two equal.
 opt_passes! {
     main {
         "ConstantFold" => PyConstantFold = strider_orchestrator::opt::ConstantFold::new(),
-            "Constant-folds the IR: evaluates constant ops and applies algebraic \
-             identities (`x+0->x`, `x^x->0`, AND-mask merging, ...).";
+            "Evaluates constant expressions and applies algebraic identities (`x+0` \
+             to `x`, `x^x` to `0`, AND-mask merging).";
         "KnownBits" => PyKnownBits = strider_orchestrator::opt::KnownBits,
-            "Bit-level known-zeros / known-ones lattice propagation, simplifying \
-             ops whose result bits are statically determined.";
+            "Tracks which bits are known to be zero or one and simplifies \
+             operations whose result is fully determined.";
         "PhiCollapse" => PyPhiCollapse = strider_orchestrator::opt::PhiCollapse,
-            "Braun trivial-phi elimination: collapses a `Phi` / `MemPhi` whose \
-             non-self-referential value inputs all resolve to a single value, and \
-             a strongly connected group of phis whose only outside input is one \
-             value (destructive).";
+            "Braun trivial-phi elimination: redirects a `Phi` / `MemPhi` whose \
+             value inputs resolve to exactly one distinct value, self-references \
+             discarded, to that value, and a strongly connected group of phis whose \
+             only outside input is one value to that input. A genuine two-way merge \
+             is left alone.";
         "RegionCollapse" => PyRegionCollapse = strider_orchestrator::opt::RegionCollapse,
-            "Collapses a single-control-input `Region` join, rewiring its control \
-             consumers to its lone predecessor (destructive).";
+            "Collapses a `Region` that already has exactly one control input, \
+             rewiring its control consumers to that predecessor and each phi over \
+             it to that phi's lone value input. A multi-predecessor Region is left \
+             alone.";
         "DeadBranchElimination" => PyDeadBranchElimination =
             strider_orchestrator::opt::DeadBranchElimination,
-            "Folds a branch with a constant selector (an `If` on a constant `I1`, \
-             a `Switch` on a constant dispatch address), wiring the live successor \
+            "Folds a branch with a constant selector (an `If` on a constant `I1`, a \
+             `Switch` on a constant dispatch address), wiring the live successor \
              past it and killing the branch node, and strips the dead arm's \
-             predecessor slots from the joins (destructive).";
+             predecessor slots from the joins.";
         "CfgDetach" => PyCfgDetach = strider_orchestrator::opt::CfgDetach,
-            "Removes dead `Region`-predecessor slots (and the matching `Phi` / \
-             `MemPhi` value slots) once a folded `If` makes a predecessor \
-             control-unreachable (destructive).";
+            "Removes a `Region` predecessor slot whose control producer entry can \
+             no longer reach, along with the matching `Phi` / `MemPhi` value slots.";
         "FlagCmpCanonicalize" => PyFlagCmpCanonicalize =
             strider_orchestrator::opt::FlagCmpCanonicalize::new(),
-            "Rewrites a flag-tree (e.g. AArch64 NZCV-style chains) into a single \
-             `IntCmpOp`.";
+            "Folds an architecture's condition-flag tree into a single direct \
+             comparison node.";
         "IfCondInversion" => PyIfCondInversion = strider_orchestrator::opt::IfCondInversion::new(),
-            "Rewrites a branch on a negated condition (`Xor(C, IntConst(1)):I1`) into \
-             a branch on the plain condition with its two arms swapped.";
+            "Rewrites a branch on a negated condition (`Xor(C, IntConst(1)):I1`) \
+             into a branch on the plain condition with its two arms swapped.";
         "LoadForward" => PyLoadForward = strider_orchestrator::opt::LoadForward,
-            "Forwards a store's value to a later load of the same location when \
-             no intervening write, call or control merge can clobber it.";
+            "Forwards a store's value to a later load when the nearest may-aliasing \
+             memory definition is an exact-match store: same address class, base \
+             and offset, covering the load's whole range. A partial overlap, \
+             `InitialMemory`, a `MemPhi` whose arms reach different definitions, or \
+             a call the assumptions cannot see through blocks it; a `MemPhi` whose \
+             arms agree does not.";
         "LoadReadOnly" => PyLoadReadOnly = strider_orchestrator::opt::LoadReadOnly,
-            "`LoadReadOnly()` folds constant-address loads against the rom supplied \
-             via `strider.lift.lifter(arch, mem, rom=mem)` or \
-             `strider.lift.load_elf(...)`. No change when no rom is available.";
+            "Folds a load from a constant address into a constant, reading the \
+             bytes from the read-only memory image (`rom=`). A no-op when no rom is \
+             supplied.\n\nThe fold never consults the load's memory chain, so the \
+             rom must map only runtime-immutable memory: code and `.rodata`, never \
+             `.data` / `.got`.";
     }
     post {
         "FunctionArgDetect" => PyFunctionArgDetect = strider_orchestrator::opt::FunctionArgDetect,
-            "Post-pass that records which values carry each incoming stack-passed \
-             argument. Register arguments are recorded at lift time.";
+            "Records which values carry each incoming stack-passed argument. \
+             Register arguments are recorded at lift time.";
         "CallStackArgCollect" => PyCallStackArgCollect =
             strider_orchestrator::opt::CallStackArgCollect,
-            "Post-pass that wires positional stack arguments into `Call` nodes per \
-             the calling convention's stack-arg layout.";
+            "Wires the stack slots written before a call in as that call's \
+             positional arguments.";
     }
 }
 
