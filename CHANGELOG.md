@@ -567,6 +567,10 @@
 
 ### Fixed
 
+- Python: under `relocated_got_is_rom=True` every byte of an `R_*_COPY`
+  object is unmapped. Only its first 4 bytes were, and the rest served the
+  file's zeros, so a gcc PIE's `return tbl[3]` against a library's const
+  array folded to 0.
 - Python: a jump table indexed by a byte read through a pointer is no
   longer enumerated over the whole byte when a test dominating the dispatch
   bounds that byte in a shape the range analysis does not read (`test $0xfc;
