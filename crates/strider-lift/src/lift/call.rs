@@ -48,7 +48,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // and the pcode-explicit output dropped.  Otherwise the ABI carries the
         // footprint, so one path serves side-effecting and terminating ops
         // alike.
-        let Some(abi) = class.built(&self.lifter.sleigh_regs)? else {
+        let Some(abi) = class.built(self.lifter.sleigh_regs())? else {
             anyhow::ensure!(
                 !terminate,
                 "CallOther {name:?} ends its region, but its class builds no node to \
