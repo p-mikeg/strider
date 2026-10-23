@@ -30,12 +30,9 @@ use super::ring::wrap_to_addr_width;
 /// frame. The operand is therefore walked down to `InitialVar(sp)` and its
 /// accumulated displacement required to be non-positive.
 pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, size: i128) -> bool {
-    let base_node = function.producer(base);
-    let rooted_at_entry_sp = match *function.node_kind(base_node) {
-        NodeKind::InitialVar(id) => function.initial_vn(id) == function.default_cc().stack_vn,
-        _ => alignment_masked_operand(function, base_node)
-            .is_some_and(|operand| at_or_below_entry_sp(function, operand, 0)),
-    };
+    let rooted_at_entry_sp = function.is_entry_sp(base)
+        || alignment_masked_operand(function, function.producer(base))
+            .is_some_and(|operand| at_or_below_entry_sp(function, operand, 0));
     // The END of the access, not its start: one that begins below the bound and
     // reaches over it touches the caller's block, which a callee may write.
     rooted_at_entry_sp
@@ -59,7 +56,6 @@ pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, siz
 fn at_or_below_entry_sp(function: &Function, value: ValueId, acc: i128) -> bool {
     /// A real SP spine is a handful of links; this only bounds a pathological one.
     const MAX_STEPS: usize = 256;
-    let sp = function.default_cc().stack_vn;
     let mut work = vec![(value, acc)];
     let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
     let mut steps = 0usize;
@@ -70,11 +66,11 @@ fn at_or_below_entry_sp(function: &Function, value: ValueId, acc: i128) -> bool 
         }
         let node = function.producer(cur);
         match *function.node_kind(node) {
-            NodeKind::InitialVar(id) => {
+            NodeKind::InitialVar(_) => {
                 // Compare at the ADDRESS width, as `decompose` does: a raw
                 // `i128` sum can be non-positive while the address it stands
                 // for wrapped back above the entry SP, into the caller's frame.
-                if function.initial_vn(id) != sp || wrap_to_addr_width(function, cur, acc) > 0 {
+                if !function.is_entry_sp(cur) || wrap_to_addr_width(function, cur, acc) > 0 {
                     return false;
                 }
             }
@@ -86,14 +82,10 @@ fn at_or_below_entry_sp(function: &Function, value: ValueId, acc: i128) -> bool 
                 work.push((operand, acc));
             }
             NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                let Some((next, k)) = crate::const_eval::var_and_const(function, node) else {
+                let Some((next, k)) = crate::const_eval::const_addend(function, node) else {
                     return false;
                 };
-                let Some(sum) = function
-                    .value_type_opt(next)
-                    .and_then(|ty| ty.get_signed_int(k))
-                    .and_then(|k| acc.checked_add(k))
-                else {
+                let Some(sum) = acc.checked_add(k) else {
                     return false;
                 };
                 work.push((next, sum));

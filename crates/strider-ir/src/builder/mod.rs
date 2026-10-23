@@ -232,7 +232,6 @@ fn is_address_arithmetic(kind: &NodeKind) -> bool {
 fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
     use crate::IRViewer;
     use crate::node::IntUnaryOp;
-    let sp = function.stack_vn();
     // The cone the arithmetic reaches, and each value's users within it.
     let mut cone = Vec::new();
     let mut seen = entity_utils::DenseEntitySet::new();
@@ -271,7 +270,7 @@ fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
         };
         let next = if !is_address_arithmetic(&kind) {
             match kind {
-                NodeKind::InitialVar(id) if function.initial_vn(id) == sp => Reach::Sp(0),
+                _ if function.is_entry_sp(v) => Reach::Sp(0),
                 NodeKind::IntConst(_) => function
                     .int_const_i128(v)
                     .map_or(Reach::Other, Reach::Const),
