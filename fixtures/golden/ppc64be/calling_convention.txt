@@ -1859,7 +1859,7 @@ return %v54, %v96, %v100, %v97, %v58, %v59, %v60, %v61, %v62, %v63, %v64, %v65, 
 cfg
   0x10010dd4 209 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x22200:8, u:0x22800:8, u:0x22a00:8, u:0x29e00:8, u:0x5f400:4, u:0x81b00:4, u:0x81c00:8, u:0x81d00:4, u:0x81e00:8, u:0x82000:8, u:0x82100:8]
-frame_address_in_call_register
+frame_address_in_call_register reach=unbounded
 arg 1 [%v20]
 arg 2 [%v21]
 arg 3 [%v22]

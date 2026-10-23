@@ -103,7 +103,7 @@ cfg
   0x100005fc 20 ops cbranch 0x100005bc -> [0x100005bc, 0x10000608]
   0x10000608 11 ops return -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, xer_so, cr0, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x1cc00:1, u:0x20100:4, u:0x20300:4, u:0x2fa00:4, u:0x2fb00:4, u:0x2fc00:1, u:0x2fd00:1, u:0x2fe00:1, u:0x2ff00:1, u:0x30000:1, u:0x30100:1, u:0x30200:1, u:0x30300:1, u:0x30400:1, u:0x7a000:1, u:0x7a100:4, u:0x7a200:1, u:0x7a300:4, u:0x7a500:4]
-frame_address_in_call_register
+frame_address_in_call_register reach=unbounded
 arg 1 [%v37]
 arg 2 [%v41]
 float_arg 0 [%v38]

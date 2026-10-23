@@ -12,7 +12,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 cfg
   0x400510 149 ops return -> []
 tracked [v0, v1, a0, a1, a2, a3, sp, ra, pc, f0_1, f2_3, f12, f14, ISAModeSwitch, u:0x200:4, u:0x300:4, u:0x1900:4, u:0x1c00:4]
-frame_address_in_call_register
+frame_address_in_call_register reach=-40
 float_arg 0 [%v34]
 float_arg 1 [%v35]
 %v0:ctrl = entry
