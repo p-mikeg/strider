@@ -657,7 +657,9 @@ impl PyLifter {
         relocated_got_is_rom: bool,
     ) -> PyResult<()> {
         let mut this = try_borrow_lifter_mut(slf)?;
-        let arch = PySleighArch { inner: this.target()? };
+        let arch = PySleighArch {
+            inner: this.target()?,
+        };
         let (mem, rom) = {
             let mut elf = elf.try_borrow_mut()?;
             elf.add_elf(path, apply_relocations, relocated_got_is_rom)?;
@@ -698,7 +700,10 @@ impl PyLifter {
                 return Ok(Some(abi.clone()));
             }
         }
-        Ok(crate::call_other_abi::PyCallOtherAbi::builtin(arch.preset(), name))
+        Ok(crate::call_other_abi::PyCallOtherAbi::builtin(
+            arch.preset(),
+            name,
+        ))
     }
 
     /// Build the control-flow graph of the function at `entry`, without

@@ -755,11 +755,15 @@ fn a_fetch_on_an_uncomputed_relocation_names_it() {
     )
     .expect("reader");
     let mut buf = [0u8; 4];
-    let err = rsleigh::MemReader::read(&reader, rsleigh::VnAddr {
-        space: rsleigh::VnSpace::RAM,
-        off: insn + 1,
-    }, &mut buf)
-        .expect_err("a hole")
-        .to_string();
+    let err = rsleigh::MemReader::read(
+        &reader,
+        rsleigh::VnAddr {
+            space: rsleigh::VnSpace::RAM,
+            off: insn + 1,
+        },
+        &mut buf,
+    )
+    .expect_err("a hole")
+    .to_string();
     assert!(err.contains("relocation of type 23"), "got: {err}");
 }
