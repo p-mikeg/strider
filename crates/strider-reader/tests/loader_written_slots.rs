@@ -1200,3 +1200,94 @@ fn a_header_off_the_mapped_bytes_covers_no_dynamic_table() {
     let got = rom_word(&reader, ptrs, 8, true);
     assert!(got.is_err(), "{got:?}");
 }
+
+/// The sites of a mips64el image's `.rel.dyn` entries of type `r_type`:
+/// `object` reads its `r_info` transposed, so the type is read here, the
+/// entry's last byte.
+fn mips64el_rel_sites(elf: &OwnedElf, r_type: u32) -> Vec<u64> {
+    let obj = elf.checked_file().unwrap();
+    let data = obj.section_by_name(".rel.dyn").unwrap().data().unwrap();
+    data.chunks_exact(16)
+        .filter(|e| u32::from(e[15]) == r_type)
+        .map(|e| u64::from_le_bytes(e[..8].try_into().unwrap()))
+        .collect()
+}
+
+/// Every TLS slot the loader fills is a hole at its full width: a 64-bit TP
+/// offset, module id or module offset is 8 bytes, a TLS descriptor two
+/// words. The upper half of a negative TP offset served the file's 0.
+#[test]
+fn a_tls_slot_is_a_hole_over_its_whole_width() {
+    use object::elf as e;
+    let images: [(&str, &[(u32, u64)]); 8] = [
+        (
+            "x64_tls.elf",
+            &[
+                (e::R_X86_64_TPOFF64, 8),
+                (e::R_X86_64_DTPMOD64, 8),
+                (e::R_X86_64_DTPOFF64, 8),
+            ],
+        ),
+        (
+            "x64_tlsdesc.elf",
+            &[(e::R_X86_64_TPOFF64, 8), (e::R_X86_64_TLSDESC, 16)],
+        ),
+        (
+            "aarch64_tls.elf",
+            &[(e::R_AARCH64_TLS_TPREL, 8), (e::R_AARCH64_TLSDESC, 16)],
+        ),
+        (
+            "aarch64_tls_trad.elf",
+            &[
+                (e::R_AARCH64_TLS_TPREL, 8),
+                (e::R_AARCH64_TLS_DTPMOD, 8),
+                (e::R_AARCH64_TLS_DTPREL, 8),
+            ],
+        ),
+        (
+            "ppc64le_tls.elf",
+            &[
+                (e::R_PPC64_TPREL64, 8),
+                (e::R_PPC64_DTPMOD64, 8),
+                (e::R_PPC64_DTPREL64, 8),
+            ],
+        ),
+        (
+            "mips64le_tls.elf",
+            &[
+                (e::R_MIPS_TLS_TPREL64, 8),
+                (e::R_MIPS_TLS_DTPMOD64, 8),
+                (e::R_MIPS_TLS_DTPREL64, 8),
+            ],
+        ),
+        (
+            "x86_tlsdesc.elf",
+            &[(e::R_386_TLS_TPOFF, 4), (e::R_386_TLS_DESC, 8)],
+        ),
+        (
+            "arm_tlsdesc.elf",
+            &[(e::R_ARM_TLS_TPOFF32, 4), (e::R_ARM_TLS_DESC, 8)],
+        ),
+    ];
+    for (name, slots) in images {
+        let elf = open(name);
+        let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+        let obj = elf.checked_file().unwrap();
+        let mips = obj.architecture() == object::Architecture::Mips64;
+        for &(r_type, width) in slots {
+            let sites = if mips {
+                mips64el_rel_sites(&elf, r_type)
+            } else {
+                dynamic_sites(&elf, r_type, None)
+            };
+            assert_eq!(sites.len(), 1, "{name} type {r_type}");
+            for off in (0..width).step_by(4) {
+                assert_hole(
+                    rom_word(&reader, sites[0] + off, 4, obj.is_little_endian()),
+                    r_type,
+                    &format!("{name} type {r_type} +{off}"),
+                );
+            }
+        }
+    }
+}
