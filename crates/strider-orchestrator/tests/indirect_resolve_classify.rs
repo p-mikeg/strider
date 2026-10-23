@@ -172,7 +172,8 @@ fn classify_target_is_idempotent_on_unchanged_graph() {
 /// AArch64: `bl 0x1010` (clobbers x30 with the return address) followed by
 /// `br x30`. After optimisation, x30's value at the branch site is the
 /// Call's clobber output, not `InitialVar(x30)`.
-fn build_lr_clobbered_by_call_scenario() -> (strider_ir::Function, strider_ir::Value, rsleigh::Vn) {
+fn build_lr_clobbered_by_call_scenario()
+-> (strider_ir::Function, strider_ir::node::ValueId, rsleigh::Vn) {
     use rsleigh::mem_readers::BufMemReader;
     use strider_cfg::{CfgOptions, MachineInsnAddr};
     use strider_orchestrator::Lifter;

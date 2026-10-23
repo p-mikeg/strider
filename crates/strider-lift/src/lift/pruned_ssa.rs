@@ -142,7 +142,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     pub(crate) fn write_variable(
         &mut self,
         vn: &rsleigh::Vn,
-        val: strider_ir::Value,
+        val: strider_ir::node::ValueId,
     ) -> Result<()> {
         #[cfg(debug_assertions)]
         if let Some(region) = self.current_cfg_region

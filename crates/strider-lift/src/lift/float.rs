@@ -11,7 +11,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(super) fn write_float_to_vn(
         &mut self,
         vn: &rsleigh::Vn,
-        float_val: strider_ir::Value,
+        float_val: strider_ir::node::ValueId,
     ) -> Result<()> {
         let int_ty: ValueType = vn.int_type()?;
         let int_val = self.builder.build_float_bits_to_int(float_val, int_ty)?;
@@ -25,10 +25,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         insn: &rsleigh::Insn,
         build: impl FnOnce(
             &mut strider_ir::FunctionBuilder,
-            strider_ir::Value,
-            strider_ir::Value,
+            strider_ir::node::ValueId,
+            strider_ir::node::ValueId,
             ValueType,
-        ) -> Result<strider_ir::Value>,
+        ) -> Result<strider_ir::node::ValueId>,
     ) -> Result<()> {
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
@@ -45,9 +45,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         insn: &rsleigh::Insn,
         build: impl FnOnce(
             &mut strider_ir::FunctionBuilder,
-            strider_ir::Value,
+            strider_ir::node::ValueId,
             ValueType,
-        ) -> Result<strider_ir::Value>,
+        ) -> Result<strider_ir::node::ValueId>,
     ) -> Result<()> {
         let value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
@@ -89,9 +89,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Common float type is inferred from `lhs`.
     fn cast_float_cmp_operands(
         &mut self,
-        lhs: strider_ir::Value,
-        rhs: strider_ir::Value,
-    ) -> Result<(strider_ir::Value, strider_ir::Value)> {
+        lhs: strider_ir::node::ValueId,
+        rhs: strider_ir::node::ValueId,
+    ) -> Result<(strider_ir::node::ValueId, strider_ir::node::ValueId)> {
         let float_ty = self.builder.infer_float_type(lhs)?;
         let lhs = self.builder.cast_to_float_if_needed(lhs, float_ty)?;
         let rhs = self.builder.cast_to_float_if_needed(rhs, float_ty)?;
@@ -103,9 +103,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// operand is NaN, so the negation is true, matching `NotEqual`/`is_nan`.
     fn build_float_eq_negated(
         &mut self,
-        lhs: strider_ir::Value,
-        rhs: strider_ir::Value,
-    ) -> Result<strider_ir::Value> {
+        lhs: strider_ir::node::ValueId,
+        rhs: strider_ir::node::ValueId,
+    ) -> Result<strider_ir::node::ValueId> {
         let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
         let eq = self
             .builder
