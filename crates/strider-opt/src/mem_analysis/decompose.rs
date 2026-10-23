@@ -255,9 +255,7 @@ fn spine_walk_trailed(
         }
         let node = function.producer(cur);
         match *function.node_kind(node) {
-            NodeKind::InitialVar(id)
-                if function.initial_vn(id) == function.default_cc().stack_vn =>
-            {
+            NodeKind::InitialVar(_) if function.is_entry_sp(cur) => {
                 return SpineEnd::Rooted(anchor.unwrap_or(MemExpr {
                     base: cur,
                     offset: wrap_to_addr_width(function, cur, acc),
@@ -296,13 +294,7 @@ fn spine_walk_trailed(
             NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
                 // SP + const in either order.  The const shifts the accumulated
                 // offset only while above the anchor.
-                let Some((sp_operand, k)) = crate::const_eval::var_and_const(function, node) else {
-                    return SpineEnd::Opaque;
-                };
-                let Some(c) = function
-                    .value_type_opt(sp_operand)
-                    .and_then(|ty| ty.get_signed_int(k))
-                else {
+                let Some((sp_operand, c)) = crate::const_eval::const_addend(function, node) else {
                     return SpineEnd::Opaque;
                 };
                 if anchor.is_none() {
