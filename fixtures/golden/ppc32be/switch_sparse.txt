@@ -9,7 +9,7 @@ cfg
   0x10000300 9 ops goto -> [0x1000030c]
   0x1000030c 18 ops goto -> [0x100006d0]
   0x100006d0 5 ops unresolved@0x100006dc -> []
-tracked [r0, r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r13, r30, LR, CTR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1f600:4, u:0x1f800:4, u:0x26e00:4, u:0x5b900:4, u:0x78c00:1, u:0x78d00:4, u:0x78e00:1, u:0x78f00:4, u:0x79100:4]
+tracked [r0, r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r13, r30, LR, CTR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20000:4, u:0x20200:4, u:0x27800:4, u:0x5aa00:4, u:0x7b900:1, u:0x7ba00:4, u:0x7bb00:1, u:0x7bc00:4, u:0x7be00:4]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r1]
@@ -38,7 +38,7 @@ cfg
   0x10000540 4 ops goto -> [0x10000550]
   0x1000054c 1 ops goto -> [0x10000550]
   0x10000550 6 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, xer_so, cr0, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x1c300:1, u:0x1c600:1, u:0x1f600:4, u:0x1f800:4, u:0x2ef00:4, u:0x2f000:4, u:0x2f100:1, u:0x2f200:1, u:0x2f300:1, u:0x2f400:1, u:0x2f500:1, u:0x2f600:1, u:0x2f700:1, u:0x2f800:1, u:0x2f900:1]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, xer_so, cr0, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x1cd00:1, u:0x1d000:1, u:0x20000:4, u:0x20200:4, u:0x2f900:4, u:0x2fa00:4, u:0x2fb00:1, u:0x2fc00:1, u:0x2fd00:1, u:0x2fe00:1, u:0x2ff00:1, u:0x30000:1, u:0x30100:1, u:0x30200:1, u:0x30300:1]
 arg 0 [%v1]
 arg 1 [%v51]
 float_arg 0 [%v53]
@@ -102,7 +102,7 @@ cfg
   0x100005bc 30 ops goto -> [0x100005fc]
   0x100005fc 20 ops cbranch 0x100005bc -> [0x100005bc, 0x10000608]
   0x10000608 11 ops return -> []
-tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, xer_so, cr0, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x1c100:1, u:0x1f600:4, u:0x1f800:4, u:0x2ef00:4, u:0x2f000:4, u:0x2f100:1, u:0x2f200:1, u:0x2f300:1, u:0x2f400:1, u:0x2f500:1, u:0x2f600:1, u:0x2f700:1, u:0x2f800:1, u:0x2f900:1, u:0x78c00:1, u:0x78d00:4, u:0x78e00:1, u:0x78f00:4, u:0x79100:4]
+tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, xer_so, cr0, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x1600:4, u:0x1800:1, u:0x1cb00:1, u:0x20000:4, u:0x20200:4, u:0x2f900:4, u:0x2fa00:4, u:0x2fb00:1, u:0x2fc00:1, u:0x2fd00:1, u:0x2fe00:1, u:0x2ff00:1, u:0x30000:1, u:0x30100:1, u:0x30200:1, u:0x30300:1, u:0x7b900:1, u:0x7ba00:4, u:0x7bb00:1, u:0x7bc00:4, u:0x7be00:4]
 frame_address_in_call_register
 arg 1 [%v37]
 arg 2 [%v41]
