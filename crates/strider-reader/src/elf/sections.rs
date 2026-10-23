@@ -753,6 +753,11 @@ pub fn mapping_symbol_data_ranges(obj: &object::File<'_>) -> Vec<std::ops::Range
 ///
 /// An unlinked `.opd` holds zeros, so the relocations are the only record of
 /// the entry; `S` is rebased through `layout` exactly as a patch's is.
+///
+/// The tables are those `.symtab`-linked headers name for `.opd`, an exact
+/// repeat of one `(sh_type, sh_offset, sh_size)` walked once. Empty too when
+/// they name more entries than the relocation walk's budget allows, which
+/// refuses the image.
 pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> BTreeMap<u64, u64> {
     let mut out = BTreeMap::new();
     if obj.architecture() != object::Architecture::PowerPc64
@@ -760,21 +765,15 @@ pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> 
     {
         return out;
     }
-    let Some(opd) = obj.section_by_name(".opd") else {
+    let (object::File::Elf64(f), Some(opd)) = (obj, obj.section_by_name(".opd")) else {
         return out;
     };
     let base = layout.section_base(&opd);
-    for (offset, reloc) in opd.relocations() {
-        if reloc.flags()
-            != (object::RelocationFlags::Elf {
-                r_type: object::elf::R_PPC64_ADDR64,
-            })
-        {
+    for (offset, r_type, sym, addend) in opd_relocations(f, opd.index().0).unwrap_or_default() {
+        if r_type != object::elf::R_PPC64_ADDR64 || sym == 0 {
             continue;
         }
-        let object::RelocationTarget::Symbol(idx) = reloc.target() else {
-            continue;
-        };
+        let idx = object::SymbolIndex(sym as usize);
         let Ok(sym) = obj.symbol_by_index(idx) else {
             continue;
         };
@@ -786,12 +785,72 @@ pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> 
         };
         // 0 is never an entry, and leaving it out keeps a descriptor whose
         // relocation names no symbol visible as one.
-        let entry = s.wrapping_add(reloc.addend() as u64);
+        let entry = s.wrapping_add(addend as u64);
         if entry != 0 {
             out.insert(base.wrapping_add(offset), entry);
         }
     }
     out
+}
+
+/// `(r_offset, r_type, r_sym, r_addend)` of every relocation against the
+/// section `target`, see [`opd_entries`]; `None` past the budget.
+fn opd_relocations(
+    f: &object::read::elf::ElfFile64<'_, object::Endianness>,
+    target: usize,
+) -> Option<Vec<(u64, u32, u32, i64)>> {
+    use object::read::elf::{Rel as _, Rela as _, SectionHeader as _};
+    let endian = f.endian();
+    let data = f.data();
+    let symtab = f.elf_symbol_table().section();
+    let file_len = data.len() as u64;
+    let mut seen = std::collections::HashSet::new();
+    let (mut entries, mut smallest) = (0u64, 16u64);
+    let mut out = Vec::new();
+    for sh in f.elf_section_table().iter() {
+        let ty = sh.sh_type(endian);
+        let entry: u64 = match ty {
+            object::elf::SHT_REL => 16,
+            object::elf::SHT_RELA => 24,
+            object::elf::SHT_CREL => 1,
+            _ => continue,
+        };
+        if sh.link(endian) != symtab
+            || sh.sh_info(endian) as usize != target
+            || !seen.insert((ty, sh.sh_offset(endian), sh.sh_size(endian)))
+        {
+            continue;
+        }
+        entries = entries.saturating_add(sh.sh_size(endian) / entry);
+        smallest = smallest.min(entry);
+        if entries > super::relocations::RELOCATION_ENTRY_BUDGET * file_len / smallest {
+            return None;
+        }
+        if let Ok(Some((rela, _))) = sh.rela(endian, data) {
+            out.extend(rela.iter().map(|e| {
+                (
+                    e.r_offset(endian),
+                    e.r_type(endian, false),
+                    e.r_sym(endian, false),
+                    e.r_addend(endian),
+                )
+            }));
+        } else if let Ok(Some((rel, _))) = sh.rel(endian, data) {
+            out.extend(
+                rel.iter()
+                    .map(|e| (e.r_offset(endian), e.r_type(endian), e.r_sym(endian), 0)),
+            );
+        } else if ty == object::elf::SHT_CREL
+            && let Ok(bytes) = sh.data(endian, data)
+            && let Ok(crel) = object::read::elf::CrelIterator::new(bytes)
+        {
+            out.extend(
+                crel.map_while(|e| e.ok())
+                    .map(|e| (e.r_offset, e.r_type, e.r_sym, e.r_addend)),
+            );
+        }
+    }
+    Some(out)
 }
 
 /// ppc64 ELFv1 function descriptors.
