@@ -314,18 +314,8 @@ fn build_rules() -> Vec<BoxedRule> {
             int_eq(int_zero_extend(var(b).of_width(1)), int_const(0u128)),
             template::bool_not(var(b)),
         ),
-        // Thumb "true" flag test:
-        //    Xor(IntEqual(ZeroExtend(b), 0), 1) -> b
-        // Same `I1` guard as above. The CR-bit arm takes a comparison `b`
-        // first, so this sees a flag that is no comparison, such as the C
-        // of a `cmp`, `Xor(Less(a, b), 1)`.
-        rewrite_rule(
-            bool_not(int_eq(
-                int_zero_extend(var(b).of_width(1)),
-                int_const(0u128),
-            )),
-            var(b),
-        ),
+        // The Thumb "true" flag test, `Xor(IntEqual(ZeroExtend(b:I1), 0), 1)
+        // -> b`, is the CR-bit arm's one-term pack.
     ];
 
     // Constant compare operand (`cmp a, N; ja`/`jbe`), after ConstantFold
@@ -494,10 +484,11 @@ fn build_rules() -> Vec<BoxedRule> {
     rules
 }
 
-/// Rewrites a PowerPC CR-bit test to the comparison sitting at the tested bit:
+/// Rewrites a PowerPC CR-bit test to the boolean sitting at the tested bit:
 /// `Truncate(ShiftRight(Or(ShiftLeft(ZeroExtend(cmp_i:I1), pos_i) ...), k)):I1`
-/// -> `cmp_i` where `pos_i == k`.  `None` on any shape it cannot prove a true
-/// identity for.
+/// -> `cmp_i` where `pos_i == k`.  A one-term pack is the Thumb "true" flag
+/// test, `Xor(IntEqual(ZeroExtend(b:I1), 0), 1)` -> `b`.  `None` on any shape
+/// it cannot prove a true identity for.
 fn canonicalize_cr_bit_test(
     edit: &mut crate::EditFunction<'_>,
     root: NodeId,
@@ -536,8 +527,8 @@ fn builds_a_cr_pack(kind: &NodeKind) -> bool {
 }
 
 /// Folds every CR-pack interior node's asm-fingerprint into the surviving
-/// comparison.  The descent is confined to [`builds_a_cr_pack`], plus the
-/// `IntEqual(_, 0)` of the `Xor` spelling, and stops at the comparison.
+/// boolean.  The descent is confined to [`builds_a_cr_pack`], plus the
+/// `IntEqual(_, 0)` of the `Xor` spelling, and stops at the boolean.
 fn absorb_cr_pack_fingerprints(
     edit: &mut crate::EditFunction<'_>,
     cond_out: ValueId,
@@ -613,10 +604,10 @@ fn const_operand_is(f: &impl IRViewer, l: ValueId, r: ValueId, c: u128) -> Optio
     }
 }
 
-/// The `(condition-output, comparison)` pair for a CR-bit test.  `Some` only
+/// The `(condition-output, boolean)` pair for a CR-bit test.  `Some` only
 /// when every OR term is a provable single-bit value at a DISTINCT position and
-/// the one at the tested bit carries a comparison; only then does that bit equal
-/// the comparison for all inputs.
+/// the one at the tested bit carries an `I1`; only then does that bit equal
+/// the `I1` for all inputs.
 fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueId)> {
     let cond_out = *f.node_outputs(root).first()?;
     if f.value_type_opt(cond_out) != Some(ValueType::I1) {
@@ -654,7 +645,7 @@ fn cr_bit_comparison(f: &impl IRViewer, root: NodeId) -> Option<(ValueId, ValueI
         }
         positions.push(pos);
         if pos == bit {
-            // The tested bit must carry a comparison, not an opaque masked bit.
+            // The tested bit must carry an `I1`, not an opaque masked bit.
             found = Some(cmp?);
         }
     }
@@ -681,10 +672,10 @@ fn flatten_or(f: &impl IRViewer, value: ValueId, out: &mut Vec<ValueId>, depth: 
     out.push(value);
 }
 
-/// Classifies a CR-pack term as `(bit position, comparison at that bit)`,
+/// Classifies a CR-pack term as `(bit position, boolean at that bit)`,
 /// proving structurally that it sets ONLY that bit; `None` for anything not
-/// provably single-bit.  The comparison is `Some` for a bare `IntCmpOp` leaf
-/// or a `ZeroExtend` of one.
+/// provably single-bit.  The boolean is `Some` for a bare `IntCmpOp` leaf or
+/// a `ZeroExtend` of any `I1`.
 fn single_bit_term(
     f: &impl IRViewer,
     value: ValueId,
@@ -709,10 +700,7 @@ fn single_bit_term(
         NodeKind::Extend(ExtendOp::ZeroExtend) => {
             let [src] = f.producer_inputs_exact::<1>(value).ok()?;
             match f.value_type_opt(src) {
-                Some(ValueType::I1) => Some((
-                    0,
-                    matches!(f.kind_of_value(src), NodeKind::IntCmpOp(_)).then_some(src),
-                )),
+                Some(ValueType::I1) => Some((0, Some(src))),
                 Some(ValueType::Int(_) | ValueType::Float(_)) | None => {
                     single_bit_term(f, src, depth + 1)
                 }
