@@ -767,6 +767,26 @@ fn build_call_other_rejects_non_value_arg() -> Result<()> {
     Ok(())
 }
 
+/// A RAM output varnode is refused, spelled as the text format spells it.
+#[test]
+fn build_call_other_names_a_ram_output_in_the_text_spelling() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let vn = rsleigh::Vn {
+        addr_space: rsleigh::VnSpace::RAM,
+        addr_off: 0x1000,
+        size: 4,
+    };
+    let err = b
+        .build_call_other(0, &[], &[vn], false, false)
+        .expect_err("a RAM output");
+    let want = format!(
+        "names the varnode {}:0x1000:4;",
+        crate::function::space_str(vn.addr_space)
+    );
+    assert!(err.to_string().contains(&want), "got: {err}");
+    Ok(())
+}
+
 /// Any value fitting `u128` interns as `Bits` whatever the declared width, so
 /// `build_int_const` and `build_int_const_limbs` reach one interned value.
 #[test]
