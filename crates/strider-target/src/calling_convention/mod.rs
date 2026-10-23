@@ -293,6 +293,23 @@ impl BuiltCallingConvention {
             .collect()
     }
 
+    /// The float arguments a call passes: [`Self::float_arg_slots`] up to the
+    /// first `None`, so index `j` stays ABI position `j`, which is what the
+    /// callee side records.
+    ///
+    /// Every convention a lift sees has its float argument registers tracked,
+    /// so a `None` means one the function was not lifted against.
+    pub fn float_arg_prefix(
+        &self,
+        tracked_vns: &[rsleigh::Vn],
+        container_of: impl Fn(&rsleigh::Vn) -> rsleigh::Vn,
+    ) -> Vec<rsleigh::Vn> {
+        self.float_arg_slots(tracked_vns, container_of)
+            .into_iter()
+            .map_while(|slot| slot)
+            .collect()
+    }
+
     /// Where the incoming arguments' memory starts, as an offset from the
     /// entry SP: the first stack argument, or under
     /// [`Self::reg_args_adjoin_stack_args`] the first register argument's
