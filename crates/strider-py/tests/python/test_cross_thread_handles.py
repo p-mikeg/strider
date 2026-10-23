@@ -170,7 +170,7 @@ _METHODS = {
     "rom": lambda lift, fn, vn: lift.rom(),
     "arch": lambda lift, fn, vn: lift.arch,
     "build_cfg": lambda lift, fn, vn: lift.build_cfg(0x1000),
-    "optimize": lambda lift, fn, vn: lift.optimize(fn),
+    "optimize": lambda lift, fn, vn: fn.optimize(),
     "_rebuild": lambda lift, fn, vn: lift._rebuild(
         strider.sleigh.SleighArch.x86_64(), strider.reader.BufferReader(0x1000, _ADD_RET)
     ),
