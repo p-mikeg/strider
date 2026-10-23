@@ -199,7 +199,7 @@ return %v0, %v1, %v19, %v20, %v21, %v22
 == point_sum @0x120000c70
 cfg
   0x120000c70 14 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x121f00:4]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1c00:8, u:0x1f00:8, u:0x11e000:4]
 arg 0 [%v2]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -218,7 +218,7 @@ return %v0, %v1, %v8, %v9, %v10, %v11
 == make_pair @0x120000c88
 cfg
   0x120000c88 44 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1700:1, u:0x1800:1, u:0x1a00:1, u:0x1c00:8, u:0x1f00:8, u:0x119300:8, u:0x119400:1, u:0x119500:8, u:0x11a500:8, u:0x11a600:1, u:0x11a700:1, u:0x11aa00:8, u:0x11ae00:8, u:0x11bd00:8, u:0x11be00:1, u:0x11bf00:1, u:0x11c200:8, u:0x11c600:8]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1700:1, u:0x1800:1, u:0x1a00:1, u:0x1c00:8, u:0x1f00:8, u:0x115400:8, u:0x115500:1, u:0x115600:8, u:0x116600:8, u:0x116700:1, u:0x116800:1, u:0x116b00:8, u:0x116f00:8, u:0x117e00:8, u:0x117f00:1, u:0x118000:1, u:0x118300:8, u:0x118700:8]
 arg 0 [%v2]
 arg 1 [%v5]
 %v0:ctrl = entry

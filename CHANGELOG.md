@@ -419,14 +419,17 @@
 ### Added, Python
 
 - `AssumptionOptions.fp_rounding_mode_is_nearest` (default `True`): the x86
-  SSE rounding mode, MXCSR.RC, and the PowerPC FPSCR.RN are round to nearest
-  even at every conversion that rounds by them (`cvtsd2si`, `cvtss2si`,
-  `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`,
-  `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`, the 64-bit `cvtsi2sd` and the scalar
-  VEX forms; `fctid`, `fctiw`, `fctidu`, `fctiwu`, `fcfid*`, `frsp`,
-  `xscvdpspn`). Off, each one reads the
+  SSE rounding mode, MXCSR.RC, the PowerPC FPSCR.RN, the ARM FPSCR.RMode and
+  the MIPS FCSR.RM are round to nearest even at every conversion that rounds
+  by them (`cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`,
+  `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`,
+  the 64-bit `cvtsi2sd` and the scalar VEX forms; `fctid`, `fctiw`,
+  `fctidu`, `fctiwu`, `fcfid*`, `frsp`, `xscvdpspn`; ARM `vcvtr`; MIPS
+  `cvt.w`, `cvt.l`). Off, each one reads the
   mode and selects among nearest even, down, up and toward zero, so a mode
-  `ldmxcsr` or `mtfsfi` sets folds. `AssumptionOptions.none()` clears it; the
+  `ldmxcsr`, `mtfsfi`, `vmsr` or `ctc1` sets folds. A MIPS `cvt.w` or
+  `cvt.l` no longer reads FCSR under the claim, which shifts the
+  `InitialVnId`s after it. `AssumptionOptions.none()` clears it; the
   lift reads it, so `optimize` refuses to add it. Before, the SSE forms
   rounded to nearest even and `none()` did not lift that premise. MXCSR.FTZ
   and DAZ are still taken as 0. A function holding a rounding SSE
@@ -565,6 +568,30 @@
 
 ### Fixed
 
+- Python: AArch64 `fcvt{n,a,m,p,z}{s,u}` round to nearest even, to nearest
+  away from zero, down, up or toward zero as the mnemonic says, where every
+  one truncated, and saturate to the destination's range, a NaN giving 0;
+  the unsigned forms converted as signed. glibc's `lround(2.5)` (`fcvtas`)
+  read as 2. The scalar and general `#fbits` forms scale exactly and
+  saturate too. `fjcvtzs` wraps modulo 2^32 and sets Z when exact, clearing
+  N, C and V, which it left stale.
+- Python: ARM `vcvt` to a 32-bit integer saturates, a NaN giving 0, and
+  `vcvtr` rounds by FPSCR.RMode, taken as 0 under
+  `fp_rounding_mode_is_nearest`, where it was an opaque op of the wrong bits.
+- Python: MIPS float-to-integer conversions saturate to the legacy default
+  (the signed maximum for a NaN, an infinity or a value out of range),
+  `round` breaks a tie to even, and `cvt.w` and `cvt.l` round by FCSR.RM,
+  taken as 0 under `fp_rounding_mode_is_nearest`, where they took any mode
+  but 0 as toward -inf and broke a tie away from zero. `trunc.l.s` on a
+  32-bit FPU writes the whole doubleword.
+- Python: x87 `fprem` and `fprem1` lift as the opaque `x87Prem` and
+  `x87Prem1`, each with a status op that sets C0-C3. They computed about 0
+  and left C0-C3 alone, so glibc's `fmodl` loop tested a stale C2.
+- Python: x87 `fxam` classifies from the encoding: a NaN read as an
+  infinity, an infinity or a denormal as normal, and -0.0 as positive. It
+  and `fcom` keep the status word's other bits, where they cleared them.
+- Python: `lock hlt` (F0 F4) is reported undecodable, as LOCK HLT faults,
+  where it lifted as `hlt`.
 - Python: each optimizer pass's `__doc__` is its stub docstring. They had
   drifted: `help(LoadForward)` said every call and control merge blocks it,
   and both texts said a `MemPhi` does, where one whose arms reach the same
@@ -1064,8 +1091,9 @@
 ### Added, Rust
 
 - `AssumptionOptions::fp_rounding_mode_is_nearest`, default on, read by the
-  lift through the fork's new last user ops, x86 `mxcsrRoundingControl` and
-  PowerPC `fpscrRoundingControl`
+  lift through the fork's new user ops, each appended after the upstream
+  ones: x86 `mxcsrRoundingControl`, PowerPC and ARM `fpscrRoundingControl`
+  and MIPS `fcsrRoundingControl`
   (`strider_target::call_other_abi::is_rounding_mode_control`).
 - `strider_pattern::instantiate_guarded`: `instantiate` with a check run
   once every template node's kind is resolved, before the first node is

@@ -253,17 +253,20 @@ pub fn is_msr_register_mode(preset: crate::ArchPreset, name: &str) -> bool {
 }
 
 /// Whether `name` is the op through which a conversion reads the rounding
-/// mode it rounds by: x86 `mxcsrRoundingControl(rc)` (MXCSR.RC) and PowerPC
-/// `fpscrRoundingControl(rn)` (FPSCR.RN) are their input, the live mode, or 0
-/// under the claim that the mode is round to nearest. The lifter lowers it to
-/// one of the two, so it has no ABI row, unless a caller override names it,
-/// which then classifies it as any user op and neither claim value applies.
+/// mode it rounds by: x86 `mxcsrRoundingControl(rc)` (MXCSR.RC), PowerPC
+/// `fpscrRoundingControl(rn)` (FPSCR.RN), ARM `fpscrRoundingControl(rmode)`
+/// (FPSCR.RMode) and MIPS `fcsrRoundingControl(rm)` (FCSR.RM) are their
+/// input, the live mode, or 0 under the claim that the mode is round to
+/// nearest, which 0 is in each encoding. The lifter lowers it to one of the
+/// two, so it has no ABI row, unless a caller override names it, which then
+/// classifies it as any user op and neither claim value applies.
 #[must_use]
 pub fn is_rounding_mode_control(preset: crate::ArchPreset, name: &str) -> bool {
     match preset.family() {
         crate::ArchFamily::X86 => name == "mxcsrRoundingControl",
-        crate::ArchFamily::Ppc => name == "fpscrRoundingControl",
-        _ => false,
+        crate::ArchFamily::Ppc | crate::ArchFamily::Arm32 => name == "fpscrRoundingControl",
+        crate::ArchFamily::Mips => name == "fcsrRoundingControl",
+        crate::ArchFamily::Aarch64 => false,
     }
 }
 
@@ -1105,6 +1108,13 @@ static ARCH_SPECIFIC_TABLE: &[CallOtherRow] = &[
             // x87 FYL2X / FYL2XP1: `log2st0:10 = log2(ST0)` or
             // `log2(ST0 f+ 1)`, the logarithm the following multiply scales.
             "log2",
+            // x87 FPREM / FPREM1: `ST0 = x87Prem(ST0, ST1)` and the status
+            // word `FPUStatusWord = x87PremStatus(ST0, ST1, FPUStatusWord)`,
+            // and their `x87Prem1` pair.
+            "x87Prem",
+            "x87Prem1",
+            "x87Prem1Status",
+            "x87PremStatus",
             // `XmmReg1 = pblendvb(XmmReg1, XmmReg2_m128, XMM0)`
             // (`ia.sinc:9996-9997`): the otherwise-implicit XMM0 is a listed
             // operand, like SHA256RNDS2.

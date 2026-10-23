@@ -87,7 +87,7 @@ unresolved_branch [0x8049170.2]
 cfg
   0x8049140 0 ops goto -> [0x8049144]
   0x8049144 69 ops return -> []
-tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8a100:4, u:0x8a900:4]
+tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8a300:4, u:0x8ab00:4]
 frame_address_in_call_register reach=4
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -177,7 +177,7 @@ cfg
   0x8049300 15 ops return -> []
   0x8049310 15 ops return -> []
   0x8049320 15 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x7600:4, u:0x17200:4, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x68e00:4, u:0x69000:4]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x7600:4, u:0x17200:4, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69000:4, u:0x69200:4]
 arg 0 [%v6]
 arg 1 [%v38]
 %v0:ctrl = entry
@@ -239,7 +239,7 @@ cfg
   0x80493a0 15 ops return -> []
   0x80493b0 15 ops return -> []
   0x80493c0 15 ops return -> []
-tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x7600:4, u:0x17200:4, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x68e00:4, u:0x69000:4]
+tracked [EAX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6d00:4, u:0x6f00:4, u:0x7600:4, u:0x17200:4, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69000:4, u:0x69200:4]
 arg 0 [%v6]
 arg 1 [%v40]
 %v0:ctrl = entry

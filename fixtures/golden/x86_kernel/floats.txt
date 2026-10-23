@@ -15,7 +15,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == f32_arith @0x4010f0
 cfg
   0x4010f0 79 ops return -> []
-tracked [EAX, ECX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa900:4, u:0x52900:10, u:0xc2000:10, u:0xc2300:10]
+tracked [EAX, ECX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa900:4, u:0x52900:10, u:0xc2200:10, u:0xc2500:10]
 arg 0 [%v2]
 arg 1 [%v3]
 arg 3 [%v7]
@@ -51,7 +51,7 @@ return %v0, %v1, %v2, %v3, %v23, %v24, %v25
 == f64_arith @0x401110
 cfg
   0x401110 79 ops return -> []
-tracked [EAX, ECX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xaa00:8, u:0x52900:10, u:0xc2000:10, u:0xc2300:10]
+tracked [EAX, ECX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xaa00:8, u:0x52900:10, u:0xc2200:10, u:0xc2500:10]
 arg 0 [%v2]
 arg 1 [%v3]
 arg 3 [%v7]
@@ -109,7 +109,7 @@ return %v0, %v1, %v2, %v3, %v10, %v11, %v12
 == f64_to_f32 @0x401140
 cfg
   0x401140 45 ops return -> []
-tracked [EAX, ECX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa900:4, u:0xaa00:8, u:0x41500:4, u:0x52900:10, u:0x8a100:4]
+tracked [EAX, ECX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa900:4, u:0xaa00:8, u:0x41500:4, u:0x52900:10, u:0x8a300:4]
 arg 0 [%v5]
 arg 1 [%v15]
 arg 3 [%v9]
@@ -138,7 +138,7 @@ return %v0, %v14, %v13, %v15, %v17, %v18, %v19
 == int_to_float @0x401150
 cfg
   0x401150 24 ops return -> []
-tracked [EAX, ECX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0xa300:4, u:0x41500:4, u:0x52900:10, u:0x8a100:4]
+tracked [EAX, ECX, EDX, ESP, EIP, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0xa300:4, u:0x41500:4, u:0x52900:10, u:0x8a300:4]
 arg 0 [%v5]
 arg 1 [%v8]
 %v0:ctrl = entry
@@ -159,7 +159,7 @@ return %v0, %v7, %v5, %v8, %v10, %v11, %v12
 == float_to_int @0x401160
 cfg
   0x401160 110 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, FPUControlWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa200:2, u:0xa300:4, u:0xa900:4, u:0x17100:2, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x52900:10, u:0x54500:10, u:0x54700:10, u:0x54800:10, u:0x54900:1, u:0x54a00:10, u:0x54b00:1, u:0x54d00:1, u:0x54e00:10, u:0x55000:4, u:0x55100:4, u:0x55300:4, u:0x55400:4, u:0x55500:1, u:0x55600:4, u:0x55700:4, u:0x55800:4, u:0x55a00:10, u:0x55b00:2, u:0x55d00:2, u:0x55e00:1, u:0x55f00:4, u:0x56000:4, u:0x56100:1, u:0x56200:4, u:0x56300:10, u:0x56400:4, u:0x56500:4, u:0x56600:4, u:0x56700:1, u:0x56800:4, u:0x56900:10, u:0x56a00:4, u:0x56b00:4, u:0x56c00:4, u:0x56d00:1, u:0x56e00:4, u:0x56f00:4, u:0x57000:4, u:0xc1900:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, FPUControlWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa200:2, u:0xa300:4, u:0xa900:4, u:0x17100:2, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x52900:10, u:0x54700:10, u:0x54900:10, u:0x54a00:10, u:0x54b00:1, u:0x54c00:10, u:0x54d00:1, u:0x54f00:1, u:0x55000:10, u:0x55200:4, u:0x55300:4, u:0x55500:4, u:0x55600:4, u:0x55700:1, u:0x55800:4, u:0x55900:4, u:0x55a00:4, u:0x55c00:10, u:0x55d00:2, u:0x55f00:2, u:0x56000:1, u:0x56100:4, u:0x56200:4, u:0x56300:1, u:0x56400:4, u:0x56500:10, u:0x56600:4, u:0x56700:4, u:0x56800:4, u:0x56900:1, u:0x56a00:4, u:0x56b00:10, u:0x56c00:4, u:0x56d00:4, u:0x56e00:4, u:0x56f00:1, u:0x57000:4, u:0x57100:4, u:0x57200:4, u:0xc1b00:4]
 arg 1 [%v23]
 arg 3 [%v18]
 %v0:ctrl = entry
@@ -196,7 +196,7 @@ cfg
   0x401190 89 ops cbranch 0x4011ad -> [0x4011aa.4, 0x4011ad]
   0x4011aa.4 1 ops goto -> [0x4011ad]
   0x4011ad 3 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, AF, ZF, SF, OF, EIP, C1, FPUStatusWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa900:4, u:0x17e00:1, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x52900:10, u:0x53d00:1, u:0x53e00:1, u:0x54000:1, u:0x54200:1, u:0x67a00:4, u:0x67b00:1, u:0xcfa00:10]
+tracked [EAX, ECX, EDX, ESP, CF, PF, AF, ZF, SF, OF, EIP, C1, FPUStatusWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa900:4, u:0x17e00:1, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x52900:10, u:0x53f00:1, u:0x54000:1, u:0x54200:1, u:0x54400:1, u:0x67c00:4, u:0x67d00:1, u:0xd1c00:10]
 arg 1 [%v48]
 arg 3 [%v13]
 arg 4 [%v5]
@@ -258,7 +258,7 @@ cfg
   0x4011b0 89 ops cbranch 0x4011cd -> [0x4011ca.4, 0x4011cd]
   0x4011ca.4 1 ops goto -> [0x4011cd]
   0x4011cd 3 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, AF, ZF, SF, OF, EIP, C1, FPUStatusWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xaa00:8, u:0x17e00:1, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x52900:10, u:0x53d00:1, u:0x53e00:1, u:0x54000:1, u:0x54200:1, u:0x67a00:4, u:0x67b00:1, u:0xcfa00:10]
+tracked [EAX, ECX, EDX, ESP, CF, PF, AF, ZF, SF, OF, EIP, C1, FPUStatusWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xaa00:8, u:0x17e00:1, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x52900:10, u:0x53f00:1, u:0x54000:1, u:0x54200:1, u:0x54400:1, u:0x67c00:4, u:0x67d00:1, u:0xd1c00:10]
 arg 1 [%v48]
 arg 3 [%v13]
 arg 4 [%v5]
@@ -341,7 +341,7 @@ return %v0, %v1, %v2, %v3, %v11, %v12, %v13
 == main @0x4011e0
 cfg
   0x4011e0 841 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, FPUControlWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa200:2, u:0xa300:4, u:0x17100:2, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x54500:10, u:0x54700:10, u:0x54800:10, u:0x54900:1, u:0x54a00:10, u:0x54b00:1, u:0x54d00:1, u:0x54e00:10, u:0x55000:4, u:0x55100:4, u:0x55300:4, u:0x55400:4, u:0x55500:1, u:0x55600:4, u:0x55700:4, u:0x55800:4, u:0x55a00:10, u:0x55b00:2, u:0x55d00:2, u:0x55e00:1, u:0x55f00:4, u:0x56000:4, u:0x56100:1, u:0x56200:4, u:0x56300:10, u:0x56400:4, u:0x56500:4, u:0x56600:4, u:0x56700:1, u:0x56800:4, u:0x56900:10, u:0x56a00:4, u:0x56b00:4, u:0x56c00:4, u:0x56d00:1, u:0x56e00:4, u:0x56f00:4, u:0x57000:4, u:0x8a900:4, u:0x8ad00:4, u:0xc1900:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, FPUControlWord, FPUInstructionPointer, ST0, ST1, ST2, ST3, ST4, ST5, ST6, ST7, XMM0, u:0x7600:4, u:0xa200:2, u:0xa300:4, u:0x17100:2, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x54700:10, u:0x54900:10, u:0x54a00:10, u:0x54b00:1, u:0x54c00:10, u:0x54d00:1, u:0x54f00:1, u:0x55000:10, u:0x55200:4, u:0x55300:4, u:0x55500:4, u:0x55600:4, u:0x55700:1, u:0x55800:4, u:0x55900:4, u:0x55a00:4, u:0x55c00:10, u:0x55d00:2, u:0x55f00:2, u:0x56000:1, u:0x56100:4, u:0x56200:4, u:0x56300:1, u:0x56400:4, u:0x56500:10, u:0x56600:4, u:0x56700:4, u:0x56800:4, u:0x56900:1, u:0x56a00:4, u:0x56b00:10, u:0x56c00:4, u:0x56d00:4, u:0x56e00:4, u:0x56f00:1, u:0x57000:4, u:0x57100:4, u:0x57200:4, u:0x8ab00:4, u:0x8af00:4, u:0xc1b00:4]
 arg 0 [%v20]
 arg 1 [%v21]
 arg 2 [%v22]
