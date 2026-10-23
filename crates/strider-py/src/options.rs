@@ -353,8 +353,9 @@ impl PyCfgOptions {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let OverridesMemo { built, builds } = &mut *memo;
         memo_per_arch(built, target, || {
+            let overrides = crate::strider_cls::overrides_from(&self.call_other_abis, target)?;
             *builds += 1;
-            crate::strider_cls::overrides_from(&self.call_other_abis, target)
+            Ok(overrides)
         })
     }
 }
