@@ -25,9 +25,8 @@
   `build_cfg` return whatever it names and never raise over it, so the
   `OnIncomplete`, `IncompleteAnalysis` and `on_incomplete=` added since 0.2.0
   are gone too.
-- `OptimizerPipeline.default().post_passes` no longer lists
-  `StackOffsetDetect`; every run still records the stack and heap slots after
-  its post-passes.
+- `strider.opt.StackOffsetDetect` is gone: every run records the stack and
+  heap slots after its post-passes, which is all the pass did.
 - `Lifter.reg` and `Lifter.reg_name` are gone: `lifter.arch.reg(name)` and
   `lifter.arch.reg_name(vn)` answer from the same table.
 - `lifter=` is gone from `Function.to_dot`, `Function.neighborhood_dot`,
@@ -154,15 +153,14 @@
 - `strider_opt::apply_rules_count_with` is gone: `apply_rules_count`
   re-derives the memory classes under the claims the function holds, where
   it used none and dropped every heap class.
-- `StackOffsetDetect` stamps under those claims too, not `OptCtx`'s.
 - `SideTables::clear_memory_slots` is gone: `invalidate_analyses` drops the
   memory classes and the frame-escape verdict together.
 - `SideTables` is no longer `Default`: only a `Function` builds one, so
   nothing can reset its claims to `none()`.
 - `SleighArch::probe_regs` (`test-util`) returns `SleighRegs`, not a
   `Result`: it copies the table `SleighArch::names` holds.
-- `default_pipeline()` drops `StackOffsetDetect`: a post-pass appended to it
-  is no longer guaranteed to find the memory classes filled; it calls
+- `StackOffsetDetect` is gone: a converged run stamps the memory classes
+  after its post-passes, and a post-pass that reads them before that calls
   `refresh_memory_classes`.
 - `value_range::Interval`'s fields are private (`Interval::new`, `lo()`,
   `hi()`, `stride()`, `is_empty()`); `compute_value_ranges(f, &doms, &known)`
