@@ -215,14 +215,17 @@ the positive one:
   stored value, a return, or a register the call clobbers. The proof misses a
   callee reading an address from a register its convention preserves, and
   reads an argument slot the caller leaves unwritten (an alignment hole, or an
-  argument it never stores) as the outgoing-argument window's end.
+  argument it never stores) as the outgoing-argument window's end. A frame
+  that stores its entry stack pointer escapes, so this is inert on every
+  PowerPC frame (the back chain) and on an ARM APCS frame record.
 - `noalias_allocators` (empty): the listed callees return fresh pointers that
   overlap no live allocation, no stack slot and no global or other constant
   address, so an allocator carving from a static or a caller-supplied arena
   does not qualify. Nothing models deallocation, so after a free a
   stale pointer is taken as disjoint from storage the allocator hands out
   again. A non-empty list also forwards spills across a listed call, with the
-  same gaps as `escape_analysis`.
+  same gaps as `escape_analysis`, and is inert on a frame that stores its
+  entry stack pointer.
 - `callee_preserves_stack_args` (off): a callee leaves the outgoing-argument
   slots unchanged, which the psABIs do not require. It changes nothing unless
   `escape_analysis` is on or `noalias_allocators` is non-empty.
