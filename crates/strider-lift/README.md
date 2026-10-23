@@ -139,8 +139,8 @@ an unresolved indirect branch as an `IndirectBranch` placeholder anchoring the
 dispatch varnode plus, on ARM and MIPS, the ISA-mode bit the branch's
 instruction committed, so a resolver can decode each target in the right mode.
 
-A control cycle that never exits (`while (1)`, a spin loop, x86's `hlt`) roots
-no terminator, so `retain_reachable` would drop its whole body and `validate`
+A control cycle that never exits (`while (1)`, a spin loop) roots no
+terminator, so `retain_reachable` would drop its whole body and `validate`
 rejects the shape. One `If(true) { back edge } { Unreachable }` is seated on each
 such cycle to give it a root.
 
