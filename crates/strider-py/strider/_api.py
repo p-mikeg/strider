@@ -467,7 +467,10 @@ class ElfLifter(Lifter):
         `apply_relocations` defaults to `True`, matching `load_elf`: a merged
         ELF is normally the ET_DYN case relocations exist for, and the flag
         also selects what is mapped, so `False` drops writable non-executable
-        sections rather than serving their on-disk bytes.
+        sections rather than serving their on-disk bytes. With it on, an image
+        whose relocation section headers name more than twice the entries the
+        file holds at its smallest entry raises `StriderError`, as in
+        `load_elf`.
 
         `relocated_got_is_rom` is `load_elf`'s unchecked claim, made for THIS
         image only: it does not inherit the handle's, since one shared
