@@ -67,16 +67,11 @@ pub struct Lifter<R: rsleigh::MemReader> {
     /// The Sleigh and the decode context it carries across functions: `&mut`
     /// to build a CFG, `&` to lift one.
     engine: strider_cfg::DecodeEngine<R>,
-    /// Cached at construction: `Sleigh::regs()` is expensive.
-    sleigh_regs: rsleigh::SleighRegs,
     /// The declared register file as a slice, for the per-op containment
     /// queries in [`pcode_consts`]. `SleighRegs` only hands out an iterator.
     declared_reg_vns: Vec<rsleigh::Vn>,
     /// This engine's address spaces, for [`Self::check_cfg_space_ids`].
     space_ids: rsleigh::SpaceIds,
-    /// This engine's addresses, in bytes: the width a convention's stack
-    /// geometry has to match.
-    ram_addr_size: u32,
     /// The register a branch commits its target's ISA mode to (ARM's
     /// `setISAMode` reads it, MIPS's `JXWritePC` writes it), `None` exactly
     /// where the arch has no ISA-mode var.
@@ -107,13 +102,13 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ///
     /// # Errors
     ///
-    /// When [`strider_cfg::DecodeEngine::new`] fails, the sla's registers
-    /// cannot be read, its `ram` space is missing or not byte-addressed, or
-    /// it and `arch` disagree on the ISA mode.
+    /// When [`strider_cfg::DecodeEngine::new`] fails, the sla's `ram` space
+    /// is missing or not byte-addressed, or it and `arch` disagree on the ISA
+    /// mode.
     pub fn new(arch: strider_target::SleighArch, reader: R) -> Result<Self> {
         let engine = strider_cfg::DecodeEngine::new(arch, reader)?;
         let sleigh = engine.sleigh();
-        let sleigh_regs = sleigh.regs()?;
+        let sleigh_regs = arch.names().regs();
         let declared_reg_vns = sleigh_regs.vns().collect();
         // `VnSpace::RAM` is the shortcut byte `b'r'`, which Sleigh derives from
         // the first character of a space's name, bumping on collision.  A
@@ -139,19 +134,16 @@ impl<R: rsleigh::MemReader> Lifter<R> {
                 "{arch:?}: \"ram\" has word size {ram_word_size}, and the lift indexes it in bytes"
             ));
         }
-        let ram_addr_size = ram.addr_size();
         let space_ids = sleigh.space_ids();
         // Capture and carry are paired BOTH ways: `name_to_vn` answers `None`
         // for a misspelling rather than erroring, so a one-directional check
         // would pass vacuously while the mode bit is never captured.
-        let isa_mode_switch_vn = isa_mode_switch_vn(arch, &sleigh_regs)?;
-        let volatile_ranges = arch.volatile_register_ranges(&sleigh_regs)?;
+        let isa_mode_switch_vn = isa_mode_switch_vn(arch, sleigh_regs)?;
+        let volatile_ranges = arch.volatile_register_ranges(sleigh_regs)?;
         Ok(Self {
             engine,
-            sleigh_regs,
             declared_reg_vns,
             space_ids,
-            ram_addr_size,
             isa_mode_switch_vn,
             volatile_ranges,
         })
@@ -167,7 +159,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// engine's `ram`: all a per-address override gets. A preset or Python
     /// `custom` is validated already; a Rust struct literal is not.
     pub(crate) fn check_cc(&self, cc: &strider_target::BuiltCallingConvention) -> Result<()> {
-        cc.check_addr_size(self.ram_addr_size)
+        cc.check_addr_size(self.arch().names().ram_addr_size())
             .map_err(|e| anyhow!("{:?}: {e}", self.arch().preset()))
     }
 
@@ -188,13 +180,14 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         self.engine.sleigh()
     }
 
-    pub(crate) fn arch(&self) -> strider_target::SleighArch {
+    #[must_use]
+    pub fn arch(&self) -> strider_target::SleighArch {
         self.engine.arch()
     }
 
     #[must_use]
-    pub fn sleigh_regs(&self) -> &rsleigh::SleighRegs {
-        &self.sleigh_regs
+    pub fn sleigh_regs(&self) -> &'static rsleigh::SleighRegs {
+        self.arch().names().regs()
     }
 
     /// Whether `vn` shares a byte with a volatile register.
@@ -320,7 +313,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
                     abi.implicit_reads
                         .iter()
                         .chain(abi.implicit_writes)
-                        .filter_map(|reg| self.sleigh_regs.name_to_vn(reg)),
+                        .filter_map(|reg| self.sleigh_regs().name_to_vn(reg)),
                 ),
                 Some(CallOtherLookup::Built(abi)) => found.extend(
                     abi.implicit_reads
