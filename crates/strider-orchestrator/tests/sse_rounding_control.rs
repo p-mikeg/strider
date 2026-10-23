@@ -1,5 +1,5 @@
 //! x86 SSE and VEX conversions that round by MXCSR.RC (bits 13-14: 0 nearest
-//! even, 1 down, 2 up, 3 toward zero). Under `mxcsr_rounds_to_nearest` the
+//! even, 1 down, 2 up, 3 toward zero). Under `fp_rounding_mode_is_nearest` the
 //! lift takes RC to be 0; without it each conversion reads RC and selects
 //! among the four modes, so a mode `ldmxcsr` sets folds and the mode the
 //! function was entered with stays a select on the initial MXCSR.
@@ -102,50 +102,51 @@ fn to_int(rc: u32, x: f64, width: u32) -> u64 {
     }
 }
 
-/// Whether `rc` rounds a value below its nearest answer `n` down to the next
-/// float below `n` (`Some(false)`), above it up to the next float above
-/// (`Some(true)`), or keeps `n` (`None`). `above` says `n` lies above the
-/// value, `below` below it, `neg` that the value is negative.
-fn step(rc: u32, above: bool, below: bool, neg: bool) -> Option<bool> {
-    let down = above && (rc == 1 || (rc == 3 && !neg));
-    let up = below && (rc == 2 || (rc == 3 && neg));
-    if down {
-        Some(false)
-    } else if up {
-        Some(true)
-    } else {
-        None
+/// The float `rc` picks from the floats bracketing an exact value: `floor`
+/// the greatest at or below it, `ceil` the least at or above, `nearest` the
+/// nearest even. Toward zero takes `floor` for a non-negative value.
+fn pick<F>(rc: u32, nearest: F, floor: F, ceil: F, neg: bool) -> F {
+    match rc {
+        0 => nearest,
+        1 => floor,
+        2 => ceil,
+        _ if neg => ceil,
+        _ => floor,
     }
 }
 
+/// `x` as a double under `rc`: the bracketing doubles found by comparing the
+/// exact `x` with the nearest one and its neighbours.
 fn i_to_f64(rc: u32, x: i64) -> f64 {
+    let x = i128::from(x);
     let n = x as f64;
-    let e = n as i128;
-    match step(rc, e > i128::from(x), e < i128::from(x), x < 0) {
-        Some(true) => n.next_up(),
-        Some(false) => n.next_down(),
-        None => n,
-    }
+    let exact = |f: f64| f as i128;
+    let floor = if exact(n) <= x { n } else { n.next_down() };
+    let ceil = if exact(n) >= x { n } else { n.next_up() };
+    assert!(exact(floor) <= x && x <= exact(ceil));
+    pick(rc, n, floor, ceil, x < 0)
 }
 
 fn i_to_f32(rc: u32, x: i64) -> f32 {
+    let x = i128::from(x);
     let n = x as f32;
-    let e = n as i128;
-    match step(rc, e > i128::from(x), e < i128::from(x), x < 0) {
-        Some(true) => n.next_up(),
-        Some(false) => n.next_down(),
-        None => n,
-    }
+    let exact = |f: f32| f as i128;
+    let floor = if exact(n) <= x { n } else { n.next_down() };
+    let ceil = if exact(n) >= x { n } else { n.next_up() };
+    assert!(exact(floor) <= x && x <= exact(ceil));
+    pick(rc, n, floor, ceil, x < 0)
 }
 
+/// `x` narrowed to a single under `rc`, bracketed in double precision, where
+/// every single is exact.
 fn narrowed(rc: u32, x: f64) -> f32 {
     let n = x as f32;
-    let back = f64::from(n);
-    match step(rc, back > x, back < x, x < 0.0) {
-        Some(true) => n.next_up(),
-        Some(false) => n.next_down(),
-        None => n,
+    if x.is_nan() {
+        return n;
     }
+    let floor = if f64::from(n) <= x { n } else { n.next_down() };
+    let ceil = if f64::from(n) >= x { n } else { n.next_up() };
+    pick(rc, n, floor, ceil, x < 0.0)
 }
 
 /// Ties each way and sign, fractions either side of a half, and values no
@@ -478,7 +479,7 @@ fn the_claim_rounds_to_nearest_whatever_mxcsr_holds() {
     };
     let data = 2.7f64.to_le_bytes();
     let claims = AssumptionOptions::default();
-    assert!(claims.mxcsr_rounds_to_nearest);
+    assert!(claims.fp_rounding_mode_is_nearest);
     let got = common::cone::returned_rax_under(op.image(Some(1), &data), BASE, &claims);
     assert_eq!(got & 0xffff_ffff, 3);
     assert_eq!(

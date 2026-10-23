@@ -673,7 +673,7 @@ fn the_claims_in_force_print_in_the_header() {
     let line = "assumptions stack_global_disjoint assume_incoming_args_survive_calls \
                 noalias_allocators=[0x1000, 0x2000] escape_analysis \
                 return_slots_survive_untracked_writes msr_register_keeps_mode \
-                mxcsr_rounds_to_nearest";
+                fp_rounding_mode_is_nearest";
     assert_eq!(lines[3], line, "{claimed}");
     assert_eq!(claimed.replacen(&format!("{line}\n"), "", 1), plain);
 }
