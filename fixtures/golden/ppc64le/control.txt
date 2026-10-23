@@ -16,7 +16,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 cfg
   0x100004e0 21 ops tailcall 0x100004c0 -> []
 tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x22200:8, u:0x22800:8, u:0x22a00:8, u:0x82b00:4, u:0x82c00:8, u:0x82d00:4, u:0x82e00:8, u:0x83000:8, u:0x83100:4, u:0x83200:8]
-frame_address_in_call_register
+frame_address_in_call_register reach=unbounded
 arg 0 [%v11]
 arg 1 [%v12]
 arg 2 [%v13]
