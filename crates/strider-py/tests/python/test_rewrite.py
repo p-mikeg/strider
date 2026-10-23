@@ -53,7 +53,7 @@ def test_rewrite_then_reoptimize():
     lift, g = built_lifter_and_function("x86", "memory", "array_sum", optimize=False)
     x, y = Capture(), Capture()
     assert g.rewrite(find=int_add(var(x), var(y)), replace=tpl.var(x)) > 0
-    lift.optimize(g)
+    g.optimize()
     assert g.node_count() > 0
 
 

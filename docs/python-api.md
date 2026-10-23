@@ -233,7 +233,7 @@ the positive one:
   `safe_svcmode_maskall`, the switch into FIQ in `fiqasm.S`), and a saved
   mode restored after a switch made since the save, by `cps` or either form
   of `msr` (the return to SVC in `fiqasm.S`'s `__set_fiq_regs`). The lift
-  reads it: `analyze` honours it, and `Lifter.optimize` refuses to add it.
+  reads it: `analyze` honours it, and `Function.optimize` refuses to add it.
 - `fp_rounding_mode_is_nearest` (default on): the dynamic rounding mode a
   float-to-integer or narrowing conversion rounds by is round to nearest even.
   That is x86 MXCSR.RC at `cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`,
@@ -264,7 +264,7 @@ default: `AssumptionOptions(escape_analysis=True)` holds six claims,
 
 Claims accumulate per `Function`. `analyze` starts a fresh one from the claims
 it is given, and `function.assumptions` reads back the ones in force.
-`prog.optimize(function, assumptions=...)` adds the claims the set holds and
+`function.optimize(assumptions=...)` adds the claims the set holds and
 withdraws none: `assumptions=None` adds nothing, and a set that leaves out a
 claim already in force raises `StriderError`. So does a set that adds
 `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest`: the lift reads them,
@@ -275,8 +275,8 @@ one by naming the union
 ```python
 from strider.lift import AssumptionOptions
 
-prog.optimize(function,
-              assumptions=function.assumptions | AssumptionOptions.none(escape_analysis=True))
+function.optimize(
+    assumptions=function.assumptions | AssumptionOptions.none(escape_analysis=True))
 ```
 
 To drop one, analyse again without it. A claim a
@@ -866,7 +866,7 @@ pipe.add_post(strider.opt.CallStackArgCollect()) # a post-pass, run once at the 
 pipe.passes                                      # ["ConstantFold"]
 pipe.post_passes                                 # ["CallStackArgCollect"]
 pipe = strider.opt.OptimizerPipeline.default()   # the standard set, in analyze's order
-prog.optimize(function, pipe)                    # optimize lives on the lifter; runs in place
+function.optimize(pipeline=pipe)                 # runs in place, against the lifter's rom
 ```
 
 Main passes, which `add` takes: `ConstantFold`, `LoadReadOnly`, `KnownBits`,
