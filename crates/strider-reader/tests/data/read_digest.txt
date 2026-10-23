@@ -992,7 +992,7 @@ arm/abi.elf auto.code_ro.raw 0ad06fbb079cb084
 arm/abi.elf auto.code_ro.reloc 0ad06fbb079cb084
 arm/abi.elf auto.immutable.raw 0ad06fbb079cb084
 arm/abi.elf auto.immutable.reloc 0ad06fbb079cb084
-arm/abi.elf auto.immutable_got.reloc d4d50c82a4bb4a8a
+arm/abi.elf auto.immutable_got.reloc 2cc319d02311dbd0
 arm/abi.elf auto.all.raw a95ad71cd4daaf4b
 arm/abi.elf auto.all.reloc a95ad71cd4daaf4b
 arm/abi.elf auto.writable 80169444fbe0b417
@@ -1000,7 +1000,7 @@ arm/abi.elf sections.code_ro.raw c67a2c5eaec7bc10
 arm/abi.elf sections.code_ro.reloc c67a2c5eaec7bc10
 arm/abi.elf sections.immutable.raw c67a2c5eaec7bc10
 arm/abi.elf sections.immutable.reloc c67a2c5eaec7bc10
-arm/abi.elf sections.immutable_got.reloc 6fbbd465e20d1956
+arm/abi.elf sections.immutable_got.reloc ca3522865ed54e74
 arm/abi.elf sections.all.raw d518874559bdfb91
 arm/abi.elf sections.all.reloc d518874559bdfb91
 arm/abi.elf sections.writable 80169444fbe0b417
@@ -1010,7 +1010,7 @@ arm/arithmetic.elf auto.code_ro.raw a69aaa6c7ca6c1aa
 arm/arithmetic.elf auto.code_ro.reloc a69aaa6c7ca6c1aa
 arm/arithmetic.elf auto.immutable.raw a69aaa6c7ca6c1aa
 arm/arithmetic.elf auto.immutable.reloc a69aaa6c7ca6c1aa
-arm/arithmetic.elf auto.immutable_got.reloc 94eb7ea276355e71
+arm/arithmetic.elf auto.immutable_got.reloc 387f56545e0db933
 arm/arithmetic.elf auto.all.raw 280eed65893203fe
 arm/arithmetic.elf auto.all.reloc 280eed65893203fe
 arm/arithmetic.elf auto.writable f3d4b7748e287fcb
@@ -1018,7 +1018,7 @@ arm/arithmetic.elf sections.code_ro.raw 9651dee0a9e312a0
 arm/arithmetic.elf sections.code_ro.reloc 9651dee0a9e312a0
 arm/arithmetic.elf sections.immutable.raw 9651dee0a9e312a0
 arm/arithmetic.elf sections.immutable.reloc 9651dee0a9e312a0
-arm/arithmetic.elf sections.immutable_got.reloc 1a5715ad4f7cfdeb
+arm/arithmetic.elf sections.immutable_got.reloc 7593c5e594769e75
 arm/arithmetic.elf sections.all.raw 84db9353ea68299c
 arm/arithmetic.elf sections.all.reloc 84db9353ea68299c
 arm/arithmetic.elf sections.writable f3d4b7748e287fcb
@@ -1028,7 +1028,7 @@ arm/builtins.elf auto.code_ro.raw 9e44415812f88c73
 arm/builtins.elf auto.code_ro.reloc 9e44415812f88c73
 arm/builtins.elf auto.immutable.raw 9e44415812f88c73
 arm/builtins.elf auto.immutable.reloc 9e44415812f88c73
-arm/builtins.elf auto.immutable_got.reloc b92d004d5ac4012d
+arm/builtins.elf auto.immutable_got.reloc ced080746fdd4ac7
 arm/builtins.elf auto.all.raw 4d806692e684baee
 arm/builtins.elf auto.all.reloc 4d806692e684baee
 arm/builtins.elf auto.writable 80169444fbe0b417
@@ -1036,7 +1036,7 @@ arm/builtins.elf sections.code_ro.raw 96ed33159a44be30
 arm/builtins.elf sections.code_ro.reloc 96ed33159a44be30
 arm/builtins.elf sections.immutable.raw 96ed33159a44be30
 arm/builtins.elf sections.immutable.reloc 96ed33159a44be30
-arm/builtins.elf sections.immutable_got.reloc 058d7fd09898c216
+arm/builtins.elf sections.immutable_got.reloc 86be7004778b2424
 arm/builtins.elf sections.all.raw 28b36428556cf1f1
 arm/builtins.elf sections.all.reloc 28b36428556cf1f1
 arm/builtins.elf sections.writable 80169444fbe0b417
@@ -1046,7 +1046,7 @@ arm/calling_convention.elf auto.code_ro.raw f26a3dd25028199a
 arm/calling_convention.elf auto.code_ro.reloc f26a3dd25028199a
 arm/calling_convention.elf auto.immutable.raw f26a3dd25028199a
 arm/calling_convention.elf auto.immutable.reloc f26a3dd25028199a
-arm/calling_convention.elf auto.immutable_got.reloc 49faea3d0f72bf60
+arm/calling_convention.elf auto.immutable_got.reloc 0ebdebb0cac6d536
 arm/calling_convention.elf auto.all.raw 8acfac5ff16b144e
 arm/calling_convention.elf auto.all.reloc 8acfac5ff16b144e
 arm/calling_convention.elf auto.writable 77eccc8d535b051f
@@ -1054,7 +1054,7 @@ arm/calling_convention.elf sections.code_ro.raw 84d3b76451fa5455
 arm/calling_convention.elf sections.code_ro.reloc 84d3b76451fa5455
 arm/calling_convention.elf sections.immutable.raw 84d3b76451fa5455
 arm/calling_convention.elf sections.immutable.reloc 84d3b76451fa5455
-arm/calling_convention.elf sections.immutable_got.reloc 0730c6527c9d484f
+arm/calling_convention.elf sections.immutable_got.reloc 0699ebd343225f99
 arm/calling_convention.elf sections.all.raw d6120ab231ff126f
 arm/calling_convention.elf sections.all.reloc d6120ab231ff126f
 arm/calling_convention.elf sections.writable 77eccc8d535b051f
@@ -1064,7 +1064,7 @@ arm/calls.elf auto.code_ro.raw 9fb5f5cb4e577ca2
 arm/calls.elf auto.code_ro.reloc 9fb5f5cb4e577ca2
 arm/calls.elf auto.immutable.raw 9fb5f5cb4e577ca2
 arm/calls.elf auto.immutable.reloc 9fb5f5cb4e577ca2
-arm/calls.elf auto.immutable_got.reloc c8d181ffb58dd3c8
+arm/calls.elf auto.immutable_got.reloc 94d59d792febb98e
 arm/calls.elf auto.all.raw bc71b74a820495e5
 arm/calls.elf auto.all.reloc bc71b74a820495e5
 arm/calls.elf auto.writable 80169444fbe0b417
@@ -1072,7 +1072,7 @@ arm/calls.elf sections.code_ro.raw a0d151869bf4be1c
 arm/calls.elf sections.code_ro.reloc a0d151869bf4be1c
 arm/calls.elf sections.immutable.raw a0d151869bf4be1c
 arm/calls.elf sections.immutable.reloc a0d151869bf4be1c
-arm/calls.elf sections.immutable_got.reloc 02ac769212726c22
+arm/calls.elf sections.immutable_got.reloc 56bb6944b171bb38
 arm/calls.elf sections.all.raw 364f31ccace5fec5
 arm/calls.elf sections.all.reloc 364f31ccace5fec5
 arm/calls.elf sections.writable 80169444fbe0b417
@@ -1082,7 +1082,7 @@ arm/cmp_branches.elf auto.code_ro.raw faca1eced132b6b8
 arm/cmp_branches.elf auto.code_ro.reloc faca1eced132b6b8
 arm/cmp_branches.elf auto.immutable.raw faca1eced132b6b8
 arm/cmp_branches.elf auto.immutable.reloc faca1eced132b6b8
-arm/cmp_branches.elf auto.immutable_got.reloc 2c69c3c223f492de
+arm/cmp_branches.elf auto.immutable_got.reloc 78fb882d7af0384c
 arm/cmp_branches.elf auto.all.raw 034cb337c5d6d3cb
 arm/cmp_branches.elf auto.all.reloc 034cb337c5d6d3cb
 arm/cmp_branches.elf auto.writable 80169444fbe0b417
@@ -1090,7 +1090,7 @@ arm/cmp_branches.elf sections.code_ro.raw 6c15908edf6ca1dc
 arm/cmp_branches.elf sections.code_ro.reloc 6c15908edf6ca1dc
 arm/cmp_branches.elf sections.immutable.raw 6c15908edf6ca1dc
 arm/cmp_branches.elf sections.immutable.reloc 6c15908edf6ca1dc
-arm/cmp_branches.elf sections.immutable_got.reloc 68aee3b80c290de2
+arm/cmp_branches.elf sections.immutable_got.reloc 1181ed024328c6f8
 arm/cmp_branches.elf sections.all.raw 75db9263e74ac699
 arm/cmp_branches.elf sections.all.reloc 75db9263e74ac699
 arm/cmp_branches.elf sections.writable 80169444fbe0b417
@@ -1100,7 +1100,7 @@ arm/complex.elf auto.code_ro.raw 188892b0e2656f2b
 arm/complex.elf auto.code_ro.reloc 188892b0e2656f2b
 arm/complex.elf auto.immutable.raw 188892b0e2656f2b
 arm/complex.elf auto.immutable.reloc 188892b0e2656f2b
-arm/complex.elf auto.immutable_got.reloc a20a998982f586f5
+arm/complex.elf auto.immutable_got.reloc cf61c9c94ab53df7
 arm/complex.elf auto.all.raw 2612f67f96405dd1
 arm/complex.elf auto.all.reloc 2612f67f96405dd1
 arm/complex.elf auto.writable 80169444fbe0b417
@@ -1108,7 +1108,7 @@ arm/complex.elf sections.code_ro.raw 0161b8ee72ca2a60
 arm/complex.elf sections.code_ro.reloc 0161b8ee72ca2a60
 arm/complex.elf sections.immutable.raw 0161b8ee72ca2a60
 arm/complex.elf sections.immutable.reloc 0161b8ee72ca2a60
-arm/complex.elf sections.immutable_got.reloc f4e72e04dc2931e6
+arm/complex.elf sections.immutable_got.reloc ddfc02c186722f44
 arm/complex.elf sections.all.raw ca5d32b12143539a
 arm/complex.elf sections.all.reloc ca5d32b12143539a
 arm/complex.elf sections.writable 80169444fbe0b417
@@ -1118,7 +1118,7 @@ arm/control.elf auto.code_ro.raw 6de54443ca836b68
 arm/control.elf auto.code_ro.reloc 6de54443ca836b68
 arm/control.elf auto.immutable.raw 6de54443ca836b68
 arm/control.elf auto.immutable.reloc 6de54443ca836b68
-arm/control.elf auto.immutable_got.reloc b67260a177669fce
+arm/control.elf auto.immutable_got.reloc 9b54893fb782b9bc
 arm/control.elf auto.all.raw 643cdf58cd7cb866
 arm/control.elf auto.all.reloc 643cdf58cd7cb866
 arm/control.elf auto.writable 80169444fbe0b417
@@ -1126,7 +1126,7 @@ arm/control.elf sections.code_ro.raw 92adeb6d67664c4a
 arm/control.elf sections.code_ro.reloc 92adeb6d67664c4a
 arm/control.elf sections.immutable.raw 92adeb6d67664c4a
 arm/control.elf sections.immutable.reloc 92adeb6d67664c4a
-arm/control.elf sections.immutable_got.reloc f489b2aaf2130150
+arm/control.elf sections.immutable_got.reloc a6b5769c3600c8a6
 arm/control.elf sections.all.raw 086421a06b6f9aa2
 arm/control.elf sections.all.reloc 086421a06b6f9aa2
 arm/control.elf sections.writable 80169444fbe0b417
@@ -1136,7 +1136,7 @@ arm/elf_relocs.elf auto.code_ro.raw 2bc50ace78b4c18b
 arm/elf_relocs.elf auto.code_ro.reloc 2bc50ace78b4c18b
 arm/elf_relocs.elf auto.immutable.raw 2bc50ace78b4c18b
 arm/elf_relocs.elf auto.immutable.reloc 2bc50ace78b4c18b
-arm/elf_relocs.elf auto.immutable_got.reloc 5b13ede0d6580469
+arm/elf_relocs.elf auto.immutable_got.reloc 1fdf4adbdc3cc57b
 arm/elf_relocs.elf auto.all.raw 7e5542f01bdd2724
 arm/elf_relocs.elf auto.all.reloc 4dc5dcc6487a23fc
 arm/elf_relocs.elf auto.writable 510ed20cda9c5e74
@@ -1144,7 +1144,7 @@ arm/elf_relocs.elf sections.code_ro.raw 9d9397668cf9891a
 arm/elf_relocs.elf sections.code_ro.reloc 9d9397668cf9891a
 arm/elf_relocs.elf sections.immutable.raw 9d9397668cf9891a
 arm/elf_relocs.elf sections.immutable.reloc 9d9397668cf9891a
-arm/elf_relocs.elf sections.immutable_got.reloc ced816871d0e4bc0
+arm/elf_relocs.elf sections.immutable_got.reloc 3275c9804a6006c8
 arm/elf_relocs.elf sections.all.raw d9025c8b96e26746
 arm/elf_relocs.elf sections.all.reloc 12e6d3ef1304f9f2
 arm/elf_relocs.elf sections.writable 510ed20cda9c5e74
@@ -1172,7 +1172,7 @@ arm/floats.elf auto.code_ro.raw 342c6db1ceba6294
 arm/floats.elf auto.code_ro.reloc 342c6db1ceba6294
 arm/floats.elf auto.immutable.raw 342c6db1ceba6294
 arm/floats.elf auto.immutable.reloc 342c6db1ceba6294
-arm/floats.elf auto.immutable_got.reloc cc58b21f2e055d1a
+arm/floats.elf auto.immutable_got.reloc 400a5e9d2ef97e60
 arm/floats.elf auto.all.raw e2e2e5b1e0b306d3
 arm/floats.elf auto.all.reloc e2e2e5b1e0b306d3
 arm/floats.elf auto.writable 80169444fbe0b417
@@ -1180,7 +1180,7 @@ arm/floats.elf sections.code_ro.raw db4de09d4572473c
 arm/floats.elf sections.code_ro.reloc db4de09d4572473c
 arm/floats.elf sections.immutable.raw db4de09d4572473c
 arm/floats.elf sections.immutable.reloc db4de09d4572473c
-arm/floats.elf sections.immutable_got.reloc e358e13db0ade2c2
+arm/floats.elf sections.immutable_got.reloc 75fabe440d3297d8
 arm/floats.elf sections.all.raw c22b9f4d15ecff7d
 arm/floats.elf sections.all.reloc c22b9f4d15ecff7d
 arm/floats.elf sections.writable 80169444fbe0b417
@@ -1190,7 +1190,7 @@ arm/globals.elf auto.code_ro.raw 99f8253da29855d5
 arm/globals.elf auto.code_ro.reloc 99f8253da29855d5
 arm/globals.elf auto.immutable.raw 99f8253da29855d5
 arm/globals.elf auto.immutable.reloc 99f8253da29855d5
-arm/globals.elf auto.immutable_got.reloc eee7f94f5c5d15cf
+arm/globals.elf auto.immutable_got.reloc c318c3cdcfb82319
 arm/globals.elf auto.all.raw 2a7b17063c6c6e9b
 arm/globals.elf auto.all.reloc 2a7b17063c6c6e9b
 arm/globals.elf auto.writable 80169444fbe0b417
@@ -1198,7 +1198,7 @@ arm/globals.elf sections.code_ro.raw 962336a1886b8847
 arm/globals.elf sections.code_ro.reloc 962336a1886b8847
 arm/globals.elf sections.immutable.raw 962336a1886b8847
 arm/globals.elf sections.immutable.reloc 962336a1886b8847
-arm/globals.elf sections.immutable_got.reloc f16bbcd5c913eb91
+arm/globals.elf sections.immutable_got.reloc c471c7dd04322dcb
 arm/globals.elf sections.all.raw 06cba80af8b1dcfb
 arm/globals.elf sections.all.reloc 06cba80af8b1dcfb
 arm/globals.elf sections.writable 80169444fbe0b417
@@ -1226,7 +1226,7 @@ arm/indirect_branch.elf auto.code_ro.raw 0df79131a215e10d
 arm/indirect_branch.elf auto.code_ro.reloc 0df79131a215e10d
 arm/indirect_branch.elf auto.immutable.raw 0df79131a215e10d
 arm/indirect_branch.elf auto.immutable.reloc 0df79131a215e10d
-arm/indirect_branch.elf auto.immutable_got.reloc 913342a4ba0c8ea7
+arm/indirect_branch.elf auto.immutable_got.reloc 78287d0366b45061
 arm/indirect_branch.elf auto.all.raw 60b3d16bc268de50
 arm/indirect_branch.elf auto.all.reloc 60b3d16bc268de50
 arm/indirect_branch.elf auto.writable 80169444fbe0b417
@@ -1234,7 +1234,7 @@ arm/indirect_branch.elf sections.code_ro.raw ac056d5d487bfaee
 arm/indirect_branch.elf sections.code_ro.reloc ac056d5d487bfaee
 arm/indirect_branch.elf sections.immutable.raw ac056d5d487bfaee
 arm/indirect_branch.elf sections.immutable.reloc ac056d5d487bfaee
-arm/indirect_branch.elf sections.immutable_got.reloc 8642ed16b56fea04
+arm/indirect_branch.elf sections.immutable_got.reloc 475d1e90ab250032
 arm/indirect_branch.elf sections.all.raw 495f767a8c353bad
 arm/indirect_branch.elf sections.all.reloc 495f767a8c353bad
 arm/indirect_branch.elf sections.writable 80169444fbe0b417
@@ -1244,7 +1244,7 @@ arm/known_bits.elf auto.code_ro.raw dcc33a8a42c60749
 arm/known_bits.elf auto.code_ro.reloc dcc33a8a42c60749
 arm/known_bits.elf auto.immutable.raw dcc33a8a42c60749
 arm/known_bits.elf auto.immutable.reloc dcc33a8a42c60749
-arm/known_bits.elf auto.immutable_got.reloc b1b9f97fa6d88023
+arm/known_bits.elf auto.immutable_got.reloc 5621487f71f36c25
 arm/known_bits.elf auto.all.raw ed6f489c7be38e24
 arm/known_bits.elf auto.all.reloc ed6f489c7be38e24
 arm/known_bits.elf auto.writable 80169444fbe0b417
@@ -1252,7 +1252,7 @@ arm/known_bits.elf sections.code_ro.raw 54aa8006774afc47
 arm/known_bits.elf sections.code_ro.reloc 54aa8006774afc47
 arm/known_bits.elf sections.immutable.raw 54aa8006774afc47
 arm/known_bits.elf sections.immutable.reloc 54aa8006774afc47
-arm/known_bits.elf sections.immutable_got.reloc f3b9f2e8401b5f91
+arm/known_bits.elf sections.immutable_got.reloc e08527b192ea01cb
 arm/known_bits.elf sections.all.raw 2891f5d777d3b206
 arm/known_bits.elf sections.all.reloc 2891f5d777d3b206
 arm/known_bits.elf sections.writable 80169444fbe0b417
@@ -1262,7 +1262,7 @@ arm/list_empty.elf auto.code_ro.raw 4f15e4aa824d3dd4
 arm/list_empty.elf auto.code_ro.reloc 4f15e4aa824d3dd4
 arm/list_empty.elf auto.immutable.raw 4f15e4aa824d3dd4
 arm/list_empty.elf auto.immutable.reloc 4f15e4aa824d3dd4
-arm/list_empty.elf auto.immutable_got.reloc fdeea2a3c110e25a
+arm/list_empty.elf auto.immutable_got.reloc 71f910621f3bc3a0
 arm/list_empty.elf auto.all.raw 972f01872f57d736
 arm/list_empty.elf auto.all.reloc 972f01872f57d736
 arm/list_empty.elf auto.writable b93b0a4a97887cdf
@@ -1270,7 +1270,7 @@ arm/list_empty.elf sections.code_ro.raw 9e06c3014cf1c154
 arm/list_empty.elf sections.code_ro.reloc 9e06c3014cf1c154
 arm/list_empty.elf sections.immutable.raw 9e06c3014cf1c154
 arm/list_empty.elf sections.immutable.reloc 9e06c3014cf1c154
-arm/list_empty.elf sections.immutable_got.reloc 749013b3038ba5da
+arm/list_empty.elf sections.immutable_got.reloc e7ac6f7c161c9120
 arm/list_empty.elf sections.all.raw bde2af9d540fa988
 arm/list_empty.elf sections.all.reloc bde2af9d540fa988
 arm/list_empty.elf sections.writable b93b0a4a97887cdf
@@ -1280,7 +1280,7 @@ arm/memory.elf auto.code_ro.raw 1463af55f52f48ca
 arm/memory.elf auto.code_ro.reloc 1463af55f52f48ca
 arm/memory.elf auto.immutable.raw 1463af55f52f48ca
 arm/memory.elf auto.immutable.reloc 1463af55f52f48ca
-arm/memory.elf auto.immutable_got.reloc d8137cae676fffd0
+arm/memory.elf auto.immutable_got.reloc eb64d87fb890a926
 arm/memory.elf auto.all.raw 38cacdaa6dfe0c35
 arm/memory.elf auto.all.reloc 38cacdaa6dfe0c35
 arm/memory.elf auto.writable 80169444fbe0b417
@@ -1288,7 +1288,7 @@ arm/memory.elf sections.code_ro.raw f407dd6694790a58
 arm/memory.elf sections.code_ro.reloc f407dd6694790a58
 arm/memory.elf sections.immutable.raw f407dd6694790a58
 arm/memory.elf sections.immutable.reloc f407dd6694790a58
-arm/memory.elf sections.immutable_got.reloc 1ea7e060f0fff57e
+arm/memory.elf sections.immutable_got.reloc 75a5f0e00c5e25ec
 arm/memory.elf sections.all.raw e8e62322e45a52b9
 arm/memory.elf sections.all.reloc e8e62322e45a52b9
 arm/memory.elf sections.writable 80169444fbe0b417
@@ -1298,7 +1298,7 @@ arm/patterns.elf auto.code_ro.raw ecaf49e2eb49f1f6
 arm/patterns.elf auto.code_ro.reloc ecaf49e2eb49f1f6
 arm/patterns.elf auto.immutable.raw ecaf49e2eb49f1f6
 arm/patterns.elf auto.immutable.reloc ecaf49e2eb49f1f6
-arm/patterns.elf auto.immutable_got.reloc 33d8673cebd3b38c
+arm/patterns.elf auto.immutable_got.reloc d5a99d9443235b8a
 arm/patterns.elf auto.all.raw 3fc93de98e64cf99
 arm/patterns.elf auto.all.reloc 3fc93de98e64cf99
 arm/patterns.elf auto.writable 80169444fbe0b417
@@ -1306,7 +1306,7 @@ arm/patterns.elf sections.code_ro.raw e3aca57a30fb2376
 arm/patterns.elf sections.code_ro.reloc e3aca57a30fb2376
 arm/patterns.elf sections.immutable.raw e3aca57a30fb2376
 arm/patterns.elf sections.immutable.reloc e3aca57a30fb2376
-arm/patterns.elf sections.immutable_got.reloc 14dd7c1039b8090c
+arm/patterns.elf sections.immutable_got.reloc a6c6c0ef2145b30a
 arm/patterns.elf sections.all.raw 54611b09b0369443
 arm/patterns.elf sections.all.reloc 54611b09b0369443
 arm/patterns.elf sections.writable 80169444fbe0b417
@@ -1316,7 +1316,7 @@ arm/stack.elf auto.code_ro.raw 5c0bb5cd16222b39
 arm/stack.elf auto.code_ro.reloc 5c0bb5cd16222b39
 arm/stack.elf auto.immutable.raw 5c0bb5cd16222b39
 arm/stack.elf auto.immutable.reloc 5c0bb5cd16222b39
-arm/stack.elf auto.immutable_got.reloc 38a251e572293793
+arm/stack.elf auto.immutable_got.reloc 4e3cc7577140d5d5
 arm/stack.elf auto.all.raw b6d13def3d6d8290
 arm/stack.elf auto.all.reloc b6d13def3d6d8290
 arm/stack.elf auto.writable 80169444fbe0b417
@@ -1324,7 +1324,7 @@ arm/stack.elf sections.code_ro.raw 03394820bf3cbdd4
 arm/stack.elf sections.code_ro.reloc 03394820bf3cbdd4
 arm/stack.elf sections.immutable.raw 03394820bf3cbdd4
 arm/stack.elf sections.immutable.reloc 03394820bf3cbdd4
-arm/stack.elf sections.immutable_got.reloc 92739a5b9500625a
+arm/stack.elf sections.immutable_got.reloc 4c644eb6082f43a0
 arm/stack.elf sections.all.raw 9d225a1594f57f1d
 arm/stack.elf sections.all.reloc 9d225a1594f57f1d
 arm/stack.elf sections.writable 80169444fbe0b417
@@ -1334,7 +1334,7 @@ arm/switch.elf auto.code_ro.raw 603b4817269828f1
 arm/switch.elf auto.code_ro.reloc 603b4817269828f1
 arm/switch.elf auto.immutable.raw 603b4817269828f1
 arm/switch.elf auto.immutable.reloc 603b4817269828f1
-arm/switch.elf auto.immutable_got.reloc 792d6e030029b30b
+arm/switch.elf auto.immutable_got.reloc 607e14e83b5c12bd
 arm/switch.elf auto.all.raw 04cc56f3d3acf198
 arm/switch.elf auto.all.reloc 04cc56f3d3acf198
 arm/switch.elf auto.writable 80169444fbe0b417
@@ -1342,7 +1342,7 @@ arm/switch.elf sections.code_ro.raw 5b0c097a4712782a
 arm/switch.elf sections.code_ro.reloc 5b0c097a4712782a
 arm/switch.elf sections.immutable.raw 5b0c097a4712782a
 arm/switch.elf sections.immutable.reloc 5b0c097a4712782a
-arm/switch.elf sections.immutable_got.reloc b4708f588acab4b0
+arm/switch.elf sections.immutable_got.reloc 317187e7d1316386
 arm/switch.elf sections.all.raw 24d505045c83d31f
 arm/switch.elf sections.all.reloc 24d505045c83d31f
 arm/switch.elf sections.writable 80169444fbe0b417
@@ -1370,7 +1370,7 @@ arm/switch_masked_loop.elf auto.code_ro.raw 97846f81f221dfc7
 arm/switch_masked_loop.elf auto.code_ro.reloc 97846f81f221dfc7
 arm/switch_masked_loop.elf auto.immutable.raw 97846f81f221dfc7
 arm/switch_masked_loop.elf auto.immutable.reloc 97846f81f221dfc7
-arm/switch_masked_loop.elf auto.immutable_got.reloc 7931f6877b865711
+arm/switch_masked_loop.elf auto.immutable_got.reloc dae740c5c0d22f4b
 arm/switch_masked_loop.elf auto.all.raw e90911fef2865b33
 arm/switch_masked_loop.elf auto.all.reloc e90911fef2865b33
 arm/switch_masked_loop.elf auto.writable 80169444fbe0b417
@@ -1378,7 +1378,7 @@ arm/switch_masked_loop.elf sections.code_ro.raw 1fbf96d3904ad701
 arm/switch_masked_loop.elf sections.code_ro.reloc 1fbf96d3904ad701
 arm/switch_masked_loop.elf sections.immutable.raw 1fbf96d3904ad701
 arm/switch_masked_loop.elf sections.immutable.reloc 1fbf96d3904ad701
-arm/switch_masked_loop.elf sections.immutable_got.reloc df9f5628fee14cdb
+arm/switch_masked_loop.elf sections.immutable_got.reloc 68e5237201f1340d
 arm/switch_masked_loop.elf sections.all.raw 047d1130a700b1bb
 arm/switch_masked_loop.elf sections.all.reloc 047d1130a700b1bb
 arm/switch_masked_loop.elf sections.writable 80169444fbe0b417
@@ -1388,7 +1388,7 @@ arm/switch_phi_index.elf auto.code_ro.raw 5f992beaeedb7418
 arm/switch_phi_index.elf auto.code_ro.reloc 5f992beaeedb7418
 arm/switch_phi_index.elf auto.immutable.raw 5f992beaeedb7418
 arm/switch_phi_index.elf auto.immutable.reloc 5f992beaeedb7418
-arm/switch_phi_index.elf auto.immutable_got.reloc 876b835ca3f0a5f8
+arm/switch_phi_index.elf auto.immutable_got.reloc 3762455fb4de406a
 arm/switch_phi_index.elf auto.all.raw 9113848f1be81e52
 arm/switch_phi_index.elf auto.all.reloc 9113848f1be81e52
 arm/switch_phi_index.elf auto.writable 876649c0b9137f5f
@@ -1396,7 +1396,7 @@ arm/switch_phi_index.elf sections.code_ro.raw c7842437e2179a45
 arm/switch_phi_index.elf sections.code_ro.reloc c7842437e2179a45
 arm/switch_phi_index.elf sections.immutable.raw c7842437e2179a45
 arm/switch_phi_index.elf sections.immutable.reloc c7842437e2179a45
-arm/switch_phi_index.elf sections.immutable_got.reloc e2c826f1be1e658b
+arm/switch_phi_index.elf sections.immutable_got.reloc bf883ffe15fc1a61
 arm/switch_phi_index.elf sections.all.raw bc3c2e0894ed9de8
 arm/switch_phi_index.elf sections.all.reloc bc3c2e0894ed9de8
 arm/switch_phi_index.elf sections.writable 876649c0b9137f5f
@@ -1424,7 +1424,7 @@ arm/switch_sparse.elf auto.code_ro.raw 4cbfedab7ae781fc
 arm/switch_sparse.elf auto.code_ro.reloc 4cbfedab7ae781fc
 arm/switch_sparse.elf auto.immutable.raw 4cbfedab7ae781fc
 arm/switch_sparse.elf auto.immutable.reloc 4cbfedab7ae781fc
-arm/switch_sparse.elf auto.immutable_got.reloc ef5990b9f838c582
+arm/switch_sparse.elf auto.immutable_got.reloc 72bcc329fd427a98
 arm/switch_sparse.elf auto.all.raw 4e051ffd9991406c
 arm/switch_sparse.elf auto.all.reloc 4e051ffd9991406c
 arm/switch_sparse.elf auto.writable 80169444fbe0b417
@@ -1432,7 +1432,7 @@ arm/switch_sparse.elf sections.code_ro.raw b4b87009f19c0e9d
 arm/switch_sparse.elf sections.code_ro.reloc b4b87009f19c0e9d
 arm/switch_sparse.elf sections.immutable.raw b4b87009f19c0e9d
 arm/switch_sparse.elf sections.immutable.reloc b4b87009f19c0e9d
-arm/switch_sparse.elf sections.immutable_got.reloc 707d5b3fd9c971b7
+arm/switch_sparse.elf sections.immutable_got.reloc 2e2c3ee54faf82f1
 arm/switch_sparse.elf sections.all.raw 49b2e02c9c2593a1
 arm/switch_sparse.elf sections.all.reloc 49b2e02c9c2593a1
 arm/switch_sparse.elf sections.writable 80169444fbe0b417
@@ -1442,7 +1442,7 @@ arm/switch_value_range.elf auto.code_ro.raw 1b6efacdd88ac4f1
 arm/switch_value_range.elf auto.code_ro.reloc 1b6efacdd88ac4f1
 arm/switch_value_range.elf auto.immutable.raw 1b6efacdd88ac4f1
 arm/switch_value_range.elf auto.immutable.reloc 1b6efacdd88ac4f1
-arm/switch_value_range.elf auto.immutable_got.reloc 3c252c33d7144f0b
+arm/switch_value_range.elf auto.immutable_got.reloc 2ae54f494475cebd
 arm/switch_value_range.elf auto.all.raw 7746f37b2ccbf7fc
 arm/switch_value_range.elf auto.all.reloc 7746f37b2ccbf7fc
 arm/switch_value_range.elf auto.writable 80169444fbe0b417
@@ -1450,7 +1450,7 @@ arm/switch_value_range.elf sections.code_ro.raw a5679d4eadb3d290
 arm/switch_value_range.elf sections.code_ro.reloc a5679d4eadb3d290
 arm/switch_value_range.elf sections.immutable.raw a5679d4eadb3d290
 arm/switch_value_range.elf sections.immutable.reloc a5679d4eadb3d290
-arm/switch_value_range.elf sections.immutable_got.reloc fe77875c41df5bd6
+arm/switch_value_range.elf sections.immutable_got.reloc df8fdb94d75f72f4
 arm/switch_value_range.elf sections.all.raw d43bd065cef9cb7d
 arm/switch_value_range.elf sections.all.reloc d43bd065cef9cb7d
 arm/switch_value_range.elf sections.writable 80169444fbe0b417
@@ -1460,7 +1460,7 @@ arm/tzcount.elf auto.code_ro.raw 5865323c30939594
 arm/tzcount.elf auto.code_ro.reloc 5865323c30939594
 arm/tzcount.elf auto.immutable.raw 5865323c30939594
 arm/tzcount.elf auto.immutable.reloc 5865323c30939594
-arm/tzcount.elf auto.immutable_got.reloc 9c329f0cc8f4901a
+arm/tzcount.elf auto.immutable_got.reloc 0e4e5ab8c0e41960
 arm/tzcount.elf auto.all.raw 2c5365094162882a
 arm/tzcount.elf auto.all.reloc 2c5365094162882a
 arm/tzcount.elf auto.writable 80169444fbe0b417
@@ -1468,7 +1468,7 @@ arm/tzcount.elf sections.code_ro.raw c477966b7bf13d96
 arm/tzcount.elf sections.code_ro.reloc c477966b7bf13d96
 arm/tzcount.elf sections.immutable.raw c477966b7bf13d96
 arm/tzcount.elf sections.immutable.reloc c477966b7bf13d96
-arm/tzcount.elf sections.immutable_got.reloc e959cb157fda93ac
+arm/tzcount.elf sections.immutable_got.reloc 8d9e6f5224182a2a
 arm/tzcount.elf sections.all.raw 03aca76cdd8f5a5e
 arm/tzcount.elf sections.all.reloc 03aca76cdd8f5a5e
 arm/tzcount.elf sections.writable 80169444fbe0b417
@@ -1640,7 +1640,7 @@ arm_be/elf_relocs.elf auto.code_ro.raw 13482689d78fcce9
 arm_be/elf_relocs.elf auto.code_ro.reloc 13482689d78fcce9
 arm_be/elf_relocs.elf auto.immutable.raw 13482689d78fcce9
 arm_be/elf_relocs.elf auto.immutable.reloc 13482689d78fcce9
-arm_be/elf_relocs.elf auto.immutable_got.reloc 42a4692219115d5d
+arm_be/elf_relocs.elf auto.immutable_got.reloc 8e793134c1d795f9
 arm_be/elf_relocs.elf auto.all.raw a8115616b27662a5
 arm_be/elf_relocs.elf auto.all.reloc 25340704677b1647
 arm_be/elf_relocs.elf auto.writable 510ed20cda9c5e74
@@ -1648,7 +1648,7 @@ arm_be/elf_relocs.elf sections.code_ro.raw 2b9d615f81a42a5e
 arm_be/elf_relocs.elf sections.code_ro.reloc 2b9d615f81a42a5e
 arm_be/elf_relocs.elf sections.immutable.raw 2b9d615f81a42a5e
 arm_be/elf_relocs.elf sections.immutable.reloc 2b9d615f81a42a5e
-arm_be/elf_relocs.elf sections.immutable_got.reloc 19283ef69f19c70e
+arm_be/elf_relocs.elf sections.immutable_got.reloc e2096c1be8303fe0
 arm_be/elf_relocs.elf sections.all.raw 76a568c6eb4bf5f6
 arm_be/elf_relocs.elf sections.all.reloc d5cccc1c3d7c2adc
 arm_be/elf_relocs.elf sections.writable 510ed20cda9c5e74
@@ -2090,7 +2090,7 @@ arm_be8/elf_relocs.elf auto.code_ro.raw ed27c900462d4ced
 arm_be8/elf_relocs.elf auto.code_ro.reloc ed27c900462d4ced
 arm_be8/elf_relocs.elf auto.immutable.raw ed27c900462d4ced
 arm_be8/elf_relocs.elf auto.immutable.reloc ed27c900462d4ced
-arm_be8/elf_relocs.elf auto.immutable_got.reloc 51d64f016e971056
+arm_be8/elf_relocs.elf auto.immutable_got.reloc cadc598e1e698488
 arm_be8/elf_relocs.elf auto.all.raw dd49062a82341542
 arm_be8/elf_relocs.elf auto.all.reloc adb4b9b6d5187ef1
 arm_be8/elf_relocs.elf auto.writable 510ed20cda9c5e74
@@ -2098,7 +2098,7 @@ arm_be8/elf_relocs.elf sections.code_ro.raw 2c2ad95102c65e93
 arm_be8/elf_relocs.elf sections.code_ro.reloc 2c2ad95102c65e93
 arm_be8/elf_relocs.elf sections.immutable.raw 2c2ad95102c65e93
 arm_be8/elf_relocs.elf sections.immutable.reloc 2c2ad95102c65e93
-arm_be8/elf_relocs.elf sections.immutable_got.reloc 22af3f772c52b3a4
+arm_be8/elf_relocs.elf sections.immutable_got.reloc 13e6487735f99ce2
 arm_be8/elf_relocs.elf sections.all.raw 364545a94db91210
 arm_be8/elf_relocs.elf sections.all.reloc 95495063e2c30e5b
 arm_be8/elf_relocs.elf sections.writable 510ed20cda9c5e74
@@ -2378,7 +2378,7 @@ arm_thumb/abi.elf auto.code_ro.raw 75906ec97084f09a
 arm_thumb/abi.elf auto.code_ro.reloc 75906ec97084f09a
 arm_thumb/abi.elf auto.immutable.raw 75906ec97084f09a
 arm_thumb/abi.elf auto.immutable.reloc 75906ec97084f09a
-arm_thumb/abi.elf auto.immutable_got.reloc 5ce38f9af237a64a
+arm_thumb/abi.elf auto.immutable_got.reloc b85d2799e0f61070
 arm_thumb/abi.elf auto.all.raw aa929798c1a624cb
 arm_thumb/abi.elf auto.all.reloc aa929798c1a624cb
 arm_thumb/abi.elf auto.writable 80169444fbe0b417
@@ -2386,7 +2386,7 @@ arm_thumb/abi.elf sections.code_ro.raw 3d91eda53ce9a855
 arm_thumb/abi.elf sections.code_ro.reloc 3d91eda53ce9a855
 arm_thumb/abi.elf sections.immutable.raw 3d91eda53ce9a855
 arm_thumb/abi.elf sections.immutable.reloc 3d91eda53ce9a855
-arm_thumb/abi.elf sections.immutable_got.reloc a93fa7740cb1ce85
+arm_thumb/abi.elf sections.immutable_got.reloc 53df2714388d5dcf
 arm_thumb/abi.elf sections.all.raw 256b0c8cf55763da
 arm_thumb/abi.elf sections.all.reloc 256b0c8cf55763da
 arm_thumb/abi.elf sections.writable 80169444fbe0b417
@@ -2396,7 +2396,7 @@ arm_thumb/arithmetic.elf auto.code_ro.raw bdf3eab002fdfd5a
 arm_thumb/arithmetic.elf auto.code_ro.reloc bdf3eab002fdfd5a
 arm_thumb/arithmetic.elf auto.immutable.raw bdf3eab002fdfd5a
 arm_thumb/arithmetic.elf auto.immutable.reloc bdf3eab002fdfd5a
-arm_thumb/arithmetic.elf auto.immutable_got.reloc bef50669c5e5adf7
+arm_thumb/arithmetic.elf auto.immutable_got.reloc b9513d7b8802b1c1
 arm_thumb/arithmetic.elf auto.all.raw fc250746a02273de
 arm_thumb/arithmetic.elf auto.all.reloc fc250746a02273de
 arm_thumb/arithmetic.elf auto.writable f3d4b7748e287fcb
@@ -2404,7 +2404,7 @@ arm_thumb/arithmetic.elf sections.code_ro.raw 09f0c82fc698072e
 arm_thumb/arithmetic.elf sections.code_ro.reloc 09f0c82fc698072e
 arm_thumb/arithmetic.elf sections.immutable.raw 09f0c82fc698072e
 arm_thumb/arithmetic.elf sections.immutable.reloc 09f0c82fc698072e
-arm_thumb/arithmetic.elf sections.immutable_got.reloc 5cdf0f7d764df463
+arm_thumb/arithmetic.elf sections.immutable_got.reloc 2a8988d0ac706385
 arm_thumb/arithmetic.elf sections.all.raw 12dffb90fb342518
 arm_thumb/arithmetic.elf sections.all.reloc 12dffb90fb342518
 arm_thumb/arithmetic.elf sections.writable f3d4b7748e287fcb
@@ -2414,7 +2414,7 @@ arm_thumb/builtins.elf auto.code_ro.raw c03c50d0c1985916
 arm_thumb/builtins.elf auto.code_ro.reloc c03c50d0c1985916
 arm_thumb/builtins.elf auto.immutable.raw c03c50d0c1985916
 arm_thumb/builtins.elf auto.immutable.reloc c03c50d0c1985916
-arm_thumb/builtins.elf auto.immutable_got.reloc 014deb57f6b0997e
+arm_thumb/builtins.elf auto.immutable_got.reloc 7565f54cc77f60a4
 arm_thumb/builtins.elf auto.all.raw 3431e6cbff6c0dfc
 arm_thumb/builtins.elf auto.all.reloc 3431e6cbff6c0dfc
 arm_thumb/builtins.elf auto.writable 80169444fbe0b417
@@ -2422,7 +2422,7 @@ arm_thumb/builtins.elf sections.code_ro.raw e75dc35d59e43461
 arm_thumb/builtins.elf sections.code_ro.reloc e75dc35d59e43461
 arm_thumb/builtins.elf sections.immutable.raw e75dc35d59e43461
 arm_thumb/builtins.elf sections.immutable.reloc e75dc35d59e43461
-arm_thumb/builtins.elf sections.immutable_got.reloc 794f4123821de991
+arm_thumb/builtins.elf sections.immutable_got.reloc e848242a36aea473
 arm_thumb/builtins.elf sections.all.raw 0e8a4a6215c51621
 arm_thumb/builtins.elf sections.all.reloc 0e8a4a6215c51621
 arm_thumb/builtins.elf sections.writable 80169444fbe0b417
@@ -2432,7 +2432,7 @@ arm_thumb/calling_convention.elf auto.code_ro.raw ba01f019a7dbb4c0
 arm_thumb/calling_convention.elf auto.code_ro.reloc ba01f019a7dbb4c0
 arm_thumb/calling_convention.elf auto.immutable.raw ba01f019a7dbb4c0
 arm_thumb/calling_convention.elf auto.immutable.reloc ba01f019a7dbb4c0
-arm_thumb/calling_convention.elf auto.immutable_got.reloc f4a7dabb89754840
+arm_thumb/calling_convention.elf auto.immutable_got.reloc 923619a30beebede
 arm_thumb/calling_convention.elf auto.all.raw 6ba9462608ee98a8
 arm_thumb/calling_convention.elf auto.all.reloc 6ba9462608ee98a8
 arm_thumb/calling_convention.elf auto.writable 77eccc8d535b051f
@@ -2440,7 +2440,7 @@ arm_thumb/calling_convention.elf sections.code_ro.raw 289edba491e84d8e
 arm_thumb/calling_convention.elf sections.code_ro.reloc 289edba491e84d8e
 arm_thumb/calling_convention.elf sections.immutable.raw 289edba491e84d8e
 arm_thumb/calling_convention.elf sections.immutable.reloc 289edba491e84d8e
-arm_thumb/calling_convention.elf sections.immutable_got.reloc 8d3b57af16e125de
+arm_thumb/calling_convention.elf sections.immutable_got.reloc f8187d5350ab8f3c
 arm_thumb/calling_convention.elf sections.all.raw 7fea4da5b127b87e
 arm_thumb/calling_convention.elf sections.all.reloc 7fea4da5b127b87e
 arm_thumb/calling_convention.elf sections.writable 77eccc8d535b051f
@@ -2450,7 +2450,7 @@ arm_thumb/calls.elf auto.code_ro.raw 609674da67ce7b5d
 arm_thumb/calls.elf auto.code_ro.reloc 609674da67ce7b5d
 arm_thumb/calls.elf auto.immutable.raw 609674da67ce7b5d
 arm_thumb/calls.elf auto.immutable.reloc 609674da67ce7b5d
-arm_thumb/calls.elf auto.immutable_got.reloc f21047c1bc32ba2d
+arm_thumb/calls.elf auto.immutable_got.reloc 80fd17977b0be627
 arm_thumb/calls.elf auto.all.raw e205444077ac94ca
 arm_thumb/calls.elf auto.all.reloc e205444077ac94ca
 arm_thumb/calls.elf auto.writable 80169444fbe0b417
@@ -2458,7 +2458,7 @@ arm_thumb/calls.elf sections.code_ro.raw a154b401a40fdcab
 arm_thumb/calls.elf sections.code_ro.reloc a154b401a40fdcab
 arm_thumb/calls.elf sections.immutable.raw a154b401a40fdcab
 arm_thumb/calls.elf sections.immutable.reloc a154b401a40fdcab
-arm_thumb/calls.elf sections.immutable_got.reloc 314089d7adec92db
+arm_thumb/calls.elf sections.immutable_got.reloc a30636c844192f2d
 arm_thumb/calls.elf sections.all.raw 0636e105e5f1ccf8
 arm_thumb/calls.elf sections.all.reloc 0636e105e5f1ccf8
 arm_thumb/calls.elf sections.writable 80169444fbe0b417
@@ -2468,7 +2468,7 @@ arm_thumb/cmp_branches.elf auto.code_ro.raw 2ac617cf049a8eab
 arm_thumb/cmp_branches.elf auto.code_ro.reloc 2ac617cf049a8eab
 arm_thumb/cmp_branches.elf auto.immutable.raw 2ac617cf049a8eab
 arm_thumb/cmp_branches.elf auto.immutable.reloc 2ac617cf049a8eab
-arm_thumb/cmp_branches.elf auto.immutable_got.reloc 4d1bf3ad43fb44db
+arm_thumb/cmp_branches.elf auto.immutable_got.reloc 731eaa5710f0512d
 arm_thumb/cmp_branches.elf auto.all.raw ad9175d2e95ab7ac
 arm_thumb/cmp_branches.elf auto.all.reloc ad9175d2e95ab7ac
 arm_thumb/cmp_branches.elf auto.writable 80169444fbe0b417
@@ -2476,7 +2476,7 @@ arm_thumb/cmp_branches.elf sections.code_ro.raw 3f5605446f9fc77b
 arm_thumb/cmp_branches.elf sections.code_ro.reloc 3f5605446f9fc77b
 arm_thumb/cmp_branches.elf sections.immutable.raw 3f5605446f9fc77b
 arm_thumb/cmp_branches.elf sections.immutable.reloc 3f5605446f9fc77b
-arm_thumb/cmp_branches.elf sections.immutable_got.reloc 6d548fcd47fb302b
+arm_thumb/cmp_branches.elf sections.immutable_got.reloc 124ea641805b56bd
 arm_thumb/cmp_branches.elf sections.all.raw b3c9692a4ec7a38c
 arm_thumb/cmp_branches.elf sections.all.reloc b3c9692a4ec7a38c
 arm_thumb/cmp_branches.elf sections.writable 80169444fbe0b417
@@ -2486,7 +2486,7 @@ arm_thumb/complex.elf auto.code_ro.raw 21bdd06b8b924468
 arm_thumb/complex.elf auto.code_ro.reloc 21bdd06b8b924468
 arm_thumb/complex.elf auto.immutable.raw 21bdd06b8b924468
 arm_thumb/complex.elf auto.immutable.reloc 21bdd06b8b924468
-arm_thumb/complex.elf auto.immutable_got.reloc dc173d939ab9e748
+arm_thumb/complex.elf auto.immutable_got.reloc 48af94f006a55a16
 arm_thumb/complex.elf auto.all.raw f57b616c81a58ab3
 arm_thumb/complex.elf auto.all.reloc f57b616c81a58ab3
 arm_thumb/complex.elf auto.writable 80169444fbe0b417
@@ -2494,7 +2494,7 @@ arm_thumb/complex.elf sections.code_ro.raw 955d971a73590218
 arm_thumb/complex.elf sections.code_ro.reloc 955d971a73590218
 arm_thumb/complex.elf sections.immutable.raw 955d971a73590218
 arm_thumb/complex.elf sections.immutable.reloc 955d971a73590218
-arm_thumb/complex.elf sections.immutable_got.reloc 923a79510fe0c8b8
+arm_thumb/complex.elf sections.immutable_got.reloc 6e5838b5a11ac386
 arm_thumb/complex.elf sections.all.raw 9a8b9d660b8fe58f
 arm_thumb/complex.elf sections.all.reloc 9a8b9d660b8fe58f
 arm_thumb/complex.elf sections.writable 80169444fbe0b417
@@ -2504,7 +2504,7 @@ arm_thumb/control.elf auto.code_ro.raw 94e9a88de96f855d
 arm_thumb/control.elf auto.code_ro.reloc 94e9a88de96f855d
 arm_thumb/control.elf auto.immutable.raw 94e9a88de96f855d
 arm_thumb/control.elf auto.immutable.reloc 94e9a88de96f855d
-arm_thumb/control.elf auto.immutable_got.reloc 762d925d8187c42d
+arm_thumb/control.elf auto.immutable_got.reloc 952762c90ddea027
 arm_thumb/control.elf auto.all.raw 6cdb8ebb26aef33d
 arm_thumb/control.elf auto.all.reloc 6cdb8ebb26aef33d
 arm_thumb/control.elf auto.writable 80169444fbe0b417
@@ -2512,7 +2512,7 @@ arm_thumb/control.elf sections.code_ro.raw 639a2682cea0f6d7
 arm_thumb/control.elf sections.code_ro.reloc 639a2682cea0f6d7
 arm_thumb/control.elf sections.immutable.raw 639a2682cea0f6d7
 arm_thumb/control.elf sections.immutable.reloc 639a2682cea0f6d7
-arm_thumb/control.elf sections.immutable_got.reloc 014629f022d36817
+arm_thumb/control.elf sections.immutable_got.reloc 54b06cf0eb577861
 arm_thumb/control.elf sections.all.raw fbfe129ea995a9bf
 arm_thumb/control.elf sections.all.reloc fbfe129ea995a9bf
 arm_thumb/control.elf sections.writable 80169444fbe0b417
@@ -2522,7 +2522,7 @@ arm_thumb/elf_relocs.elf auto.code_ro.raw 873b89982c352de2
 arm_thumb/elf_relocs.elf auto.code_ro.reloc 873b89982c352de2
 arm_thumb/elf_relocs.elf auto.immutable.raw 873b89982c352de2
 arm_thumb/elf_relocs.elf auto.immutable.reloc 873b89982c352de2
-arm_thumb/elf_relocs.elf auto.immutable_got.reloc 676fcc1f3879dee9
+arm_thumb/elf_relocs.elf auto.immutable_got.reloc a90af58c3beffe2a
 arm_thumb/elf_relocs.elf auto.all.raw 452b33510478ea17
 arm_thumb/elf_relocs.elf auto.all.reloc ae61e8e3e2233438
 arm_thumb/elf_relocs.elf auto.writable 510ed20cda9c5e74
@@ -2530,7 +2530,7 @@ arm_thumb/elf_relocs.elf sections.code_ro.raw 340ed505037bc7e4
 arm_thumb/elf_relocs.elf sections.code_ro.reloc 340ed505037bc7e4
 arm_thumb/elf_relocs.elf sections.immutable.raw 340ed505037bc7e4
 arm_thumb/elf_relocs.elf sections.immutable.reloc 340ed505037bc7e4
-arm_thumb/elf_relocs.elf sections.immutable_got.reloc 331587b28997685f
+arm_thumb/elf_relocs.elf sections.immutable_got.reloc e5891b6b49e0b658
 arm_thumb/elf_relocs.elf sections.all.raw af72ce8c2f6d67c0
 arm_thumb/elf_relocs.elf sections.all.reloc 39b353066035c8e9
 arm_thumb/elf_relocs.elf sections.writable 510ed20cda9c5e74
@@ -2540,7 +2540,7 @@ arm_thumb/floats.elf auto.code_ro.raw 0d998fe9a360620e
 arm_thumb/floats.elf auto.code_ro.reloc 0d998fe9a360620e
 arm_thumb/floats.elf auto.immutable.raw 0d998fe9a360620e
 arm_thumb/floats.elf auto.immutable.reloc 0d998fe9a360620e
-arm_thumb/floats.elf auto.immutable_got.reloc 9071fcd08c98fa5e
+arm_thumb/floats.elf auto.immutable_got.reloc bf039fc017f80dbc
 arm_thumb/floats.elf auto.all.raw 53cbccb641331430
 arm_thumb/floats.elf auto.all.reloc 53cbccb641331430
 arm_thumb/floats.elf auto.writable 80169444fbe0b417
@@ -2548,7 +2548,7 @@ arm_thumb/floats.elf sections.code_ro.raw b6d04fef61e85508
 arm_thumb/floats.elf sections.code_ro.reloc b6d04fef61e85508
 arm_thumb/floats.elf sections.immutable.raw b6d04fef61e85508
 arm_thumb/floats.elf sections.immutable.reloc b6d04fef61e85508
-arm_thumb/floats.elf sections.immutable_got.reloc 79993abb5575a468
+arm_thumb/floats.elf sections.immutable_got.reloc bd55761ed7499036
 arm_thumb/floats.elf sections.all.raw 64fc9d3fa9765a72
 arm_thumb/floats.elf sections.all.reloc 64fc9d3fa9765a72
 arm_thumb/floats.elf sections.writable 80169444fbe0b417
@@ -2558,7 +2558,7 @@ arm_thumb/globals.elf auto.code_ro.raw 646df7df1f0a14f0
 arm_thumb/globals.elf auto.code_ro.reloc 646df7df1f0a14f0
 arm_thumb/globals.elf auto.immutable.raw 646df7df1f0a14f0
 arm_thumb/globals.elf auto.immutable.reloc 646df7df1f0a14f0
-arm_thumb/globals.elf auto.immutable_got.reloc a3d200457d57c3f0
+arm_thumb/globals.elf auto.immutable_got.reloc b3f88a878aa95d0e
 arm_thumb/globals.elf auto.all.raw 7f65d2fb05b3f7ca
 arm_thumb/globals.elf auto.all.reloc 7f65d2fb05b3f7ca
 arm_thumb/globals.elf auto.writable 80169444fbe0b417
@@ -2566,7 +2566,7 @@ arm_thumb/globals.elf sections.code_ro.raw eeb48b3573118190
 arm_thumb/globals.elf sections.code_ro.reloc eeb48b3573118190
 arm_thumb/globals.elf sections.immutable.raw eeb48b3573118190
 arm_thumb/globals.elf sections.immutable.reloc eeb48b3573118190
-arm_thumb/globals.elf sections.immutable_got.reloc b1437ce903153190
+arm_thumb/globals.elf sections.immutable_got.reloc e7898009087a9a2e
 arm_thumb/globals.elf sections.all.raw 367279826cb3dc40
 arm_thumb/globals.elf sections.all.reloc 367279826cb3dc40
 arm_thumb/globals.elf sections.writable 80169444fbe0b417
@@ -2576,7 +2576,7 @@ arm_thumb/indirect_branch.elf auto.code_ro.raw aea67d333e655b05
 arm_thumb/indirect_branch.elf auto.code_ro.reloc aea67d333e655b05
 arm_thumb/indirect_branch.elf auto.immutable.raw aea67d333e655b05
 arm_thumb/indirect_branch.elf auto.immutable.reloc aea67d333e655b05
-arm_thumb/indirect_branch.elf auto.immutable_got.reloc 0913fc630ef45235
+arm_thumb/indirect_branch.elf auto.immutable_got.reloc 50762bf504b05dff
 arm_thumb/indirect_branch.elf auto.all.raw 87c8a7661e7a954c
 arm_thumb/indirect_branch.elf auto.all.reloc 87c8a7661e7a954c
 arm_thumb/indirect_branch.elf auto.writable 80169444fbe0b417
@@ -2584,7 +2584,7 @@ arm_thumb/indirect_branch.elf sections.code_ro.raw b1382a5de7937b27
 arm_thumb/indirect_branch.elf sections.code_ro.reloc b1382a5de7937b27
 arm_thumb/indirect_branch.elf sections.immutable.raw b1382a5de7937b27
 arm_thumb/indirect_branch.elf sections.immutable.reloc b1382a5de7937b27
-arm_thumb/indirect_branch.elf sections.immutable_got.reloc 4b6ededc93cc89e7
+arm_thumb/indirect_branch.elf sections.immutable_got.reloc 8270a4e83244aaf1
 arm_thumb/indirect_branch.elf sections.all.raw 51300b9f01efb026
 arm_thumb/indirect_branch.elf sections.all.reloc 51300b9f01efb026
 arm_thumb/indirect_branch.elf sections.writable 80169444fbe0b417
@@ -2594,7 +2594,7 @@ arm_thumb/known_bits.elf auto.code_ro.raw b46614a4e3325e80
 arm_thumb/known_bits.elf auto.code_ro.reloc b46614a4e3325e80
 arm_thumb/known_bits.elf auto.immutable.raw b46614a4e3325e80
 arm_thumb/known_bits.elf auto.immutable.reloc b46614a4e3325e80
-arm_thumb/known_bits.elf auto.immutable_got.reloc a0251c0e8dfb2c00
+arm_thumb/known_bits.elf auto.immutable_got.reloc c7753a8bf4d32e9e
 arm_thumb/known_bits.elf auto.all.raw ad7dd8a2d64425df
 arm_thumb/known_bits.elf auto.all.reloc ad7dd8a2d64425df
 arm_thumb/known_bits.elf auto.writable 80169444fbe0b417
@@ -2602,7 +2602,7 @@ arm_thumb/known_bits.elf sections.code_ro.raw ef37f7e7044843d4
 arm_thumb/known_bits.elf sections.code_ro.reloc ef37f7e7044843d4
 arm_thumb/known_bits.elf sections.immutable.raw ef37f7e7044843d4
 arm_thumb/known_bits.elf sections.immutable.reloc ef37f7e7044843d4
-arm_thumb/known_bits.elf sections.immutable_got.reloc 8f6cb8422be67704
+arm_thumb/known_bits.elf sections.immutable_got.reloc 021dc9bb438a018a
 arm_thumb/known_bits.elf sections.all.raw 8b019362a2b1e823
 arm_thumb/known_bits.elf sections.all.reloc 8b019362a2b1e823
 arm_thumb/known_bits.elf sections.writable 80169444fbe0b417
@@ -2612,7 +2612,7 @@ arm_thumb/list_empty.elf auto.code_ro.raw 9303f0c9dd40747d
 arm_thumb/list_empty.elf auto.code_ro.reloc 9303f0c9dd40747d
 arm_thumb/list_empty.elf auto.immutable.raw 9303f0c9dd40747d
 arm_thumb/list_empty.elf auto.immutable.reloc 9303f0c9dd40747d
-arm_thumb/list_empty.elf auto.immutable_got.reloc ed1c721e28653b4d
+arm_thumb/list_empty.elf auto.immutable_got.reloc e4839475269f9a47
 arm_thumb/list_empty.elf auto.all.raw 9940296f740c8d25
 arm_thumb/list_empty.elf auto.all.reloc 9940296f740c8d25
 arm_thumb/list_empty.elf auto.writable b93b0a4a97887cdf
@@ -2620,7 +2620,7 @@ arm_thumb/list_empty.elf sections.code_ro.raw d8eb43f7e78b43f0
 arm_thumb/list_empty.elf sections.code_ro.reloc d8eb43f7e78b43f0
 arm_thumb/list_empty.elf sections.immutable.raw d8eb43f7e78b43f0
 arm_thumb/list_empty.elf sections.immutable.reloc d8eb43f7e78b43f0
-arm_thumb/list_empty.elf sections.immutable_got.reloc 72697f9854a6f2f0
+arm_thumb/list_empty.elf sections.immutable_got.reloc bda3719b6718140e
 arm_thumb/list_empty.elf sections.all.raw 2815220e01edbf4e
 arm_thumb/list_empty.elf sections.all.reloc 2815220e01edbf4e
 arm_thumb/list_empty.elf sections.writable b93b0a4a97887cdf
@@ -2630,7 +2630,7 @@ arm_thumb/memory.elf auto.code_ro.raw b3b28a64e1619ae8
 arm_thumb/memory.elf auto.code_ro.reloc b3b28a64e1619ae8
 arm_thumb/memory.elf auto.immutable.raw b3b28a64e1619ae8
 arm_thumb/memory.elf auto.immutable.reloc b3b28a64e1619ae8
-arm_thumb/memory.elf auto.immutable_got.reloc 48e928f8ffe087c8
+arm_thumb/memory.elf auto.immutable_got.reloc 64d81c2f5b646896
 arm_thumb/memory.elf auto.all.raw eb32e514a3656ced
 arm_thumb/memory.elf auto.all.reloc eb32e514a3656ced
 arm_thumb/memory.elf auto.writable 80169444fbe0b417
@@ -2638,7 +2638,7 @@ arm_thumb/memory.elf sections.code_ro.raw 2bc4912d55bbc7c6
 arm_thumb/memory.elf sections.code_ro.reloc 2bc4912d55bbc7c6
 arm_thumb/memory.elf sections.immutable.raw 2bc4912d55bbc7c6
 arm_thumb/memory.elf sections.immutable.reloc 2bc4912d55bbc7c6
-arm_thumb/memory.elf sections.immutable_got.reloc d9496fe94d42c436
+arm_thumb/memory.elf sections.immutable_got.reloc a7aa27d3bc6fa0c4
 arm_thumb/memory.elf sections.all.raw 13b0277274a019ab
 arm_thumb/memory.elf sections.all.reloc 13b0277274a019ab
 arm_thumb/memory.elf sections.writable 80169444fbe0b417
@@ -2648,7 +2648,7 @@ arm_thumb/patterns.elf auto.code_ro.raw a0152b93c23386ea
 arm_thumb/patterns.elf auto.code_ro.reloc a0152b93c23386ea
 arm_thumb/patterns.elf auto.immutable.raw a0152b93c23386ea
 arm_thumb/patterns.elf auto.immutable.reloc a0152b93c23386ea
-arm_thumb/patterns.elf auto.immutable_got.reloc 77563a623110111a
+arm_thumb/patterns.elf auto.immutable_got.reloc 3ae2e898f79620c0
 arm_thumb/patterns.elf auto.all.raw ac74da4f1d15a378
 arm_thumb/patterns.elf auto.all.reloc ac74da4f1d15a378
 arm_thumb/patterns.elf auto.writable 80169444fbe0b417
@@ -2656,7 +2656,7 @@ arm_thumb/patterns.elf sections.code_ro.raw 8f645ed8577885a6
 arm_thumb/patterns.elf sections.code_ro.reloc 8f645ed8577885a6
 arm_thumb/patterns.elf sections.immutable.raw 8f645ed8577885a6
 arm_thumb/patterns.elf sections.immutable.reloc 8f645ed8577885a6
-arm_thumb/patterns.elf sections.immutable_got.reloc a0d5df74b3a99e96
+arm_thumb/patterns.elf sections.immutable_got.reloc de561aac96c485a4
 arm_thumb/patterns.elf sections.all.raw aeda30178f752bca
 arm_thumb/patterns.elf sections.all.reloc aeda30178f752bca
 arm_thumb/patterns.elf sections.writable 80169444fbe0b417
@@ -2666,7 +2666,7 @@ arm_thumb/stack.elf auto.code_ro.raw c017654f59bd81e1
 arm_thumb/stack.elf auto.code_ro.reloc c017654f59bd81e1
 arm_thumb/stack.elf auto.immutable.raw c017654f59bd81e1
 arm_thumb/stack.elf auto.immutable.reloc c017654f59bd81e1
-arm_thumb/stack.elf auto.immutable_got.reloc 1b6162fae18fba81
+arm_thumb/stack.elf auto.immutable_got.reloc 263b4650a2508bd3
 arm_thumb/stack.elf auto.all.raw 6b35858d5f9a255a
 arm_thumb/stack.elf auto.all.reloc 6b35858d5f9a255a
 arm_thumb/stack.elf auto.writable 80169444fbe0b417
@@ -2674,7 +2674,7 @@ arm_thumb/stack.elf sections.code_ro.raw 2223ce69b9a61009
 arm_thumb/stack.elf sections.code_ro.reloc 2223ce69b9a61009
 arm_thumb/stack.elf sections.immutable.raw 2223ce69b9a61009
 arm_thumb/stack.elf sections.immutable.reloc 2223ce69b9a61009
-arm_thumb/stack.elf sections.immutable_got.reloc 609e1a475df1fc49
+arm_thumb/stack.elf sections.immutable_got.reloc f772fffa52b15f0b
 arm_thumb/stack.elf sections.all.raw 8cfe5fc86e76dd44
 arm_thumb/stack.elf sections.all.reloc 8cfe5fc86e76dd44
 arm_thumb/stack.elf sections.writable 80169444fbe0b417
@@ -2684,7 +2684,7 @@ arm_thumb/switch.elf auto.code_ro.raw 04cdacb228832321
 arm_thumb/switch.elf auto.code_ro.reloc 04cdacb228832321
 arm_thumb/switch.elf auto.immutable.raw 04cdacb228832321
 arm_thumb/switch.elf auto.immutable.reloc 04cdacb228832321
-arm_thumb/switch.elf auto.immutable_got.reloc d25e6f4fafe855c1
+arm_thumb/switch.elf auto.immutable_got.reloc 116fb941032ec313
 arm_thumb/switch.elf auto.all.raw 85e1352badea0869
 arm_thumb/switch.elf auto.all.reloc 85e1352badea0869
 arm_thumb/switch.elf auto.writable 80169444fbe0b417
@@ -2692,7 +2692,7 @@ arm_thumb/switch.elf sections.code_ro.raw a3fa4ad8c6ce7213
 arm_thumb/switch.elf sections.code_ro.reloc a3fa4ad8c6ce7213
 arm_thumb/switch.elf sections.immutable.raw a3fa4ad8c6ce7213
 arm_thumb/switch.elf sections.immutable.reloc a3fa4ad8c6ce7213
-arm_thumb/switch.elf sections.immutable_got.reloc b0a3c12714956f23
+arm_thumb/switch.elf sections.immutable_got.reloc 8d145645bfc9dee5
 arm_thumb/switch.elf sections.all.raw eab054c44fe6a16d
 arm_thumb/switch.elf sections.all.reloc eab054c44fe6a16d
 arm_thumb/switch.elf sections.writable 80169444fbe0b417
@@ -2702,7 +2702,7 @@ arm_thumb/switch_masked_loop.elf auto.code_ro.raw 52f9ad7a9f4c70ed
 arm_thumb/switch_masked_loop.elf auto.code_ro.reloc 52f9ad7a9f4c70ed
 arm_thumb/switch_masked_loop.elf auto.immutable.raw 52f9ad7a9f4c70ed
 arm_thumb/switch_masked_loop.elf auto.immutable.reloc 52f9ad7a9f4c70ed
-arm_thumb/switch_masked_loop.elf auto.immutable_got.reloc c23e82b01d4796bd
+arm_thumb/switch_masked_loop.elf auto.immutable_got.reloc 60d02f6c14dde2f7
 arm_thumb/switch_masked_loop.elf auto.all.raw d2064a9669de80d0
 arm_thumb/switch_masked_loop.elf auto.all.reloc d2064a9669de80d0
 arm_thumb/switch_masked_loop.elf auto.writable 80169444fbe0b417
@@ -2710,7 +2710,7 @@ arm_thumb/switch_masked_loop.elf sections.code_ro.raw c1dbf55a0b068f46
 arm_thumb/switch_masked_loop.elf sections.code_ro.reloc c1dbf55a0b068f46
 arm_thumb/switch_masked_loop.elf sections.immutable.raw c1dbf55a0b068f46
 arm_thumb/switch_masked_loop.elf sections.immutable.reloc c1dbf55a0b068f46
-arm_thumb/switch_masked_loop.elf sections.immutable_got.reloc f24c3f7c04a1e1b6
+arm_thumb/switch_masked_loop.elf sections.immutable_got.reloc 41591182ca3cbc44
 arm_thumb/switch_masked_loop.elf sections.all.raw 2b20cfcd57e81ef9
 arm_thumb/switch_masked_loop.elf sections.all.reloc 2b20cfcd57e81ef9
 arm_thumb/switch_masked_loop.elf sections.writable 80169444fbe0b417
@@ -2738,7 +2738,7 @@ arm_thumb/switch_phi_index.elf auto.code_ro.raw 15a51a0fcbadcd62
 arm_thumb/switch_phi_index.elf auto.code_ro.reloc 15a51a0fcbadcd62
 arm_thumb/switch_phi_index.elf auto.immutable.raw 15a51a0fcbadcd62
 arm_thumb/switch_phi_index.elf auto.immutable.reloc 15a51a0fcbadcd62
-arm_thumb/switch_phi_index.elf auto.immutable_got.reloc 46364c00d51942ad
+arm_thumb/switch_phi_index.elf auto.immutable_got.reloc 3a0aa477dba81a43
 arm_thumb/switch_phi_index.elf auto.all.raw 935666333e769861
 arm_thumb/switch_phi_index.elf auto.all.reloc 935666333e769861
 arm_thumb/switch_phi_index.elf auto.writable 876649c0b9137f5f
@@ -2746,7 +2746,7 @@ arm_thumb/switch_phi_index.elf sections.code_ro.raw e5a244f4c315c701
 arm_thumb/switch_phi_index.elf sections.code_ro.reloc e5a244f4c315c701
 arm_thumb/switch_phi_index.elf sections.immutable.raw e5a244f4c315c701
 arm_thumb/switch_phi_index.elf sections.immutable.reloc e5a244f4c315c701
-arm_thumb/switch_phi_index.elf sections.immutable_got.reloc 0fd3c2735da3d1bc
+arm_thumb/switch_phi_index.elf sections.immutable_got.reloc 2736df6a295b16e6
 arm_thumb/switch_phi_index.elf sections.all.raw 822834ce95abf9d1
 arm_thumb/switch_phi_index.elf sections.all.reloc 822834ce95abf9d1
 arm_thumb/switch_phi_index.elf sections.writable 876649c0b9137f5f
@@ -2774,7 +2774,7 @@ arm_thumb/switch_sparse.elf auto.code_ro.raw cd3d50021eceb405
 arm_thumb/switch_sparse.elf auto.code_ro.reloc cd3d50021eceb405
 arm_thumb/switch_sparse.elf auto.immutable.raw cd3d50021eceb405
 arm_thumb/switch_sparse.elf auto.immutable.reloc cd3d50021eceb405
-arm_thumb/switch_sparse.elf auto.immutable_got.reloc 09836a62921fab35
+arm_thumb/switch_sparse.elf auto.immutable_got.reloc 4d4bf6d91e1feeff
 arm_thumb/switch_sparse.elf auto.all.raw c6b2f6473603b559
 arm_thumb/switch_sparse.elf auto.all.reloc c6b2f6473603b559
 arm_thumb/switch_sparse.elf auto.writable 80169444fbe0b417
@@ -2782,7 +2782,7 @@ arm_thumb/switch_sparse.elf sections.code_ro.raw 4eab45813b6d58b2
 arm_thumb/switch_sparse.elf sections.code_ro.reloc 4eab45813b6d58b2
 arm_thumb/switch_sparse.elf sections.immutable.raw 4eab45813b6d58b2
 arm_thumb/switch_sparse.elf sections.immutable.reloc 4eab45813b6d58b2
-arm_thumb/switch_sparse.elf sections.immutable_got.reloc 1fe99390117b7c02
+arm_thumb/switch_sparse.elf sections.immutable_got.reloc 9875116e68286c98
 arm_thumb/switch_sparse.elf sections.all.raw be547eaf6051a74a
 arm_thumb/switch_sparse.elf sections.all.reloc be547eaf6051a74a
 arm_thumb/switch_sparse.elf sections.writable 80169444fbe0b417
@@ -2792,7 +2792,7 @@ arm_thumb/switch_value_range.elf auto.code_ro.raw 0cda95a2bf7a51fe
 arm_thumb/switch_value_range.elf auto.code_ro.reloc 0cda95a2bf7a51fe
 arm_thumb/switch_value_range.elf auto.immutable.raw 0cda95a2bf7a51fe
 arm_thumb/switch_value_range.elf auto.immutable.reloc 0cda95a2bf7a51fe
-arm_thumb/switch_value_range.elf auto.immutable_got.reloc e8bf0d866cd0d6ce
+arm_thumb/switch_value_range.elf auto.immutable_got.reloc 59e2231241378eac
 arm_thumb/switch_value_range.elf auto.all.raw 84e0cece50d9e067
 arm_thumb/switch_value_range.elf auto.all.reloc 84e0cece50d9e067
 arm_thumb/switch_value_range.elf auto.writable 80169444fbe0b417
@@ -2800,7 +2800,7 @@ arm_thumb/switch_value_range.elf sections.code_ro.raw f3fba9e4f2d07f42
 arm_thumb/switch_value_range.elf sections.code_ro.reloc f3fba9e4f2d07f42
 arm_thumb/switch_value_range.elf sections.immutable.raw f3fba9e4f2d07f42
 arm_thumb/switch_value_range.elf sections.immutable.reloc f3fba9e4f2d07f42
-arm_thumb/switch_value_range.elf sections.immutable_got.reloc 19d5230a6f682d12
+arm_thumb/switch_value_range.elf sections.immutable_got.reloc d4d599c3e2d5aba8
 arm_thumb/switch_value_range.elf sections.all.raw 3c009406b561fbcb
 arm_thumb/switch_value_range.elf sections.all.reloc 3c009406b561fbcb
 arm_thumb/switch_value_range.elf sections.writable 80169444fbe0b417
@@ -2810,7 +2810,7 @@ arm_thumb/tzcount.elf auto.code_ro.raw 857ce7db5f613cb8
 arm_thumb/tzcount.elf auto.code_ro.reloc 857ce7db5f613cb8
 arm_thumb/tzcount.elf auto.immutable.raw 857ce7db5f613cb8
 arm_thumb/tzcount.elf auto.immutable.reloc 857ce7db5f613cb8
-arm_thumb/tzcount.elf auto.immutable_got.reloc a290dec6331b6ed8
+arm_thumb/tzcount.elf auto.immutable_got.reloc 79f5529e7ea7c7a6
 arm_thumb/tzcount.elf auto.all.raw 7213e1819b588bcf
 arm_thumb/tzcount.elf auto.all.reloc 7213e1819b588bcf
 arm_thumb/tzcount.elf auto.writable 80169444fbe0b417
@@ -2818,7 +2818,7 @@ arm_thumb/tzcount.elf sections.code_ro.raw 91fba8be766ec35a
 arm_thumb/tzcount.elf sections.code_ro.reloc 91fba8be766ec35a
 arm_thumb/tzcount.elf sections.immutable.raw 91fba8be766ec35a
 arm_thumb/tzcount.elf sections.immutable.reloc 91fba8be766ec35a
-arm_thumb/tzcount.elf sections.immutable_got.reloc 298501e92888a50a
+arm_thumb/tzcount.elf sections.immutable_got.reloc a0ec1ec7b638bb30
 arm_thumb/tzcount.elf sections.all.raw 21e8685ab0d88541
 arm_thumb/tzcount.elf sections.all.reloc 21e8685ab0d88541
 arm_thumb/tzcount.elf sections.writable 80169444fbe0b417
@@ -4718,7 +4718,7 @@ ppc32be/abi.elf auto.code_ro.raw 0177b22be90d0196
 ppc32be/abi.elf auto.code_ro.reloc 0177b22be90d0196
 ppc32be/abi.elf auto.immutable.raw 0177b22be90d0196
 ppc32be/abi.elf auto.immutable.reloc 0177b22be90d0196
-ppc32be/abi.elf auto.immutable_got.reloc ea2de188b18080d1
+ppc32be/abi.elf auto.immutable_got.reloc 6b5e58a2e10f41ed
 ppc32be/abi.elf auto.all.raw 6b4516cac55f0f06
 ppc32be/abi.elf auto.all.reloc 6b4516cac55f0f06
 ppc32be/abi.elf auto.writable efeca80a1c7e0953
@@ -4726,7 +4726,7 @@ ppc32be/abi.elf sections.code_ro.raw 1b40f7ac143999ba
 ppc32be/abi.elf sections.code_ro.reloc 1b40f7ac143999ba
 ppc32be/abi.elf sections.immutable.raw 1b40f7ac143999ba
 ppc32be/abi.elf sections.immutable.reloc 1b40f7ac143999ba
-ppc32be/abi.elf sections.immutable_got.reloc 682830ecfee9561d
+ppc32be/abi.elf sections.immutable_got.reloc 618f67ba8f3adaf1
 ppc32be/abi.elf sections.all.raw f30c5a8d88679323
 ppc32be/abi.elf sections.all.reloc f30c5a8d88679323
 ppc32be/abi.elf sections.writable efeca80a1c7e0953
@@ -4736,7 +4736,7 @@ ppc32be/arithmetic.elf auto.code_ro.raw 2d9feb0147d0967e
 ppc32be/arithmetic.elf auto.code_ro.reloc 2d9feb0147d0967e
 ppc32be/arithmetic.elf auto.immutable.raw 2d9feb0147d0967e
 ppc32be/arithmetic.elf auto.immutable.reloc 2d9feb0147d0967e
-ppc32be/arithmetic.elf auto.immutable_got.reloc 67ffeab21c0c2609
+ppc32be/arithmetic.elf auto.immutable_got.reloc 1392cf8511f31215
 ppc32be/arithmetic.elf auto.all.raw 458d45e154d9d3c5
 ppc32be/arithmetic.elf auto.all.reloc 458d45e154d9d3c5
 ppc32be/arithmetic.elf auto.writable efeca80a1c7e0953
@@ -4744,7 +4744,7 @@ ppc32be/arithmetic.elf sections.code_ro.raw 623ef72f94e8f621
 ppc32be/arithmetic.elf sections.code_ro.reloc 623ef72f94e8f621
 ppc32be/arithmetic.elf sections.immutable.raw 623ef72f94e8f621
 ppc32be/arithmetic.elf sections.immutable.reloc 623ef72f94e8f621
-ppc32be/arithmetic.elf sections.immutable_got.reloc 0bc5db14d0752f48
+ppc32be/arithmetic.elf sections.immutable_got.reloc aa2119cd5d9d516c
 ppc32be/arithmetic.elf sections.all.raw d44abb6f00832bca
 ppc32be/arithmetic.elf sections.all.reloc d44abb6f00832bca
 ppc32be/arithmetic.elf sections.writable efeca80a1c7e0953
@@ -4754,7 +4754,7 @@ ppc32be/builtins.elf auto.code_ro.raw 6a7b7f9934f651a6
 ppc32be/builtins.elf auto.code_ro.reloc 6a7b7f9934f651a6
 ppc32be/builtins.elf auto.immutable.raw 6a7b7f9934f651a6
 ppc32be/builtins.elf auto.immutable.reloc 6a7b7f9934f651a6
-ppc32be/builtins.elf auto.immutable_got.reloc 398634962f851721
+ppc32be/builtins.elf auto.immutable_got.reloc 0c9a3194bb41cb3d
 ppc32be/builtins.elf auto.all.raw 3a0b0a6789694fa7
 ppc32be/builtins.elf auto.all.reloc 3a0b0a6789694fa7
 ppc32be/builtins.elf auto.writable efeca80a1c7e0953
@@ -4762,7 +4762,7 @@ ppc32be/builtins.elf sections.code_ro.raw d0084d9b3a609cc1
 ppc32be/builtins.elf sections.code_ro.reloc d0084d9b3a609cc1
 ppc32be/builtins.elf sections.immutable.raw d0084d9b3a609cc1
 ppc32be/builtins.elf sections.immutable.reloc d0084d9b3a609cc1
-ppc32be/builtins.elf sections.immutable_got.reloc c0411b08597e0da8
+ppc32be/builtins.elf sections.immutable_got.reloc e0610e8166e886cc
 ppc32be/builtins.elf sections.all.raw 736888e659a742ff
 ppc32be/builtins.elf sections.all.reloc 736888e659a742ff
 ppc32be/builtins.elf sections.writable efeca80a1c7e0953
@@ -4772,7 +4772,7 @@ ppc32be/calling_convention.elf auto.code_ro.raw 0c871944a34eb96e
 ppc32be/calling_convention.elf auto.code_ro.reloc 0c871944a34eb96e
 ppc32be/calling_convention.elf auto.immutable.raw 0c871944a34eb96e
 ppc32be/calling_convention.elf auto.immutable.reloc 0c871944a34eb96e
-ppc32be/calling_convention.elf auto.immutable_got.reloc 8c128fa120b4e6f9
+ppc32be/calling_convention.elf auto.immutable_got.reloc 635fc9980e232685
 ppc32be/calling_convention.elf auto.all.raw 58a88a53d84eb529
 ppc32be/calling_convention.elf auto.all.reloc 58a88a53d84eb529
 ppc32be/calling_convention.elf auto.writable f8166fc1c503b84b
@@ -4780,7 +4780,7 @@ ppc32be/calling_convention.elf sections.code_ro.raw 37f2fd7458edc623
 ppc32be/calling_convention.elf sections.code_ro.reloc 37f2fd7458edc623
 ppc32be/calling_convention.elf sections.immutable.raw 37f2fd7458edc623
 ppc32be/calling_convention.elf sections.immutable.reloc 37f2fd7458edc623
-ppc32be/calling_convention.elf sections.immutable_got.reloc 33a978028bb9400e
+ppc32be/calling_convention.elf sections.immutable_got.reloc 8427ab75f160f112
 ppc32be/calling_convention.elf sections.all.raw 9040f6b7bc851a54
 ppc32be/calling_convention.elf sections.all.reloc 9040f6b7bc851a54
 ppc32be/calling_convention.elf sections.writable f8166fc1c503b84b
@@ -4790,7 +4790,7 @@ ppc32be/calls.elf auto.code_ro.raw d61c1c303852e24e
 ppc32be/calls.elf auto.code_ro.reloc d61c1c303852e24e
 ppc32be/calls.elf auto.immutable.raw d61c1c303852e24e
 ppc32be/calls.elf auto.immutable.reloc d61c1c303852e24e
-ppc32be/calls.elf auto.immutable_got.reloc 7a4b794f5ca62219
+ppc32be/calls.elf auto.immutable_got.reloc 8cb4c8f74e6a9525
 ppc32be/calls.elf auto.all.raw bdd52c214dd59e6a
 ppc32be/calls.elf auto.all.reloc bdd52c214dd59e6a
 ppc32be/calls.elf auto.writable efeca80a1c7e0953
@@ -4798,7 +4798,7 @@ ppc32be/calls.elf sections.code_ro.raw 4e67c59140f885f0
 ppc32be/calls.elf sections.code_ro.reloc 4e67c59140f885f0
 ppc32be/calls.elf sections.immutable.raw 4e67c59140f885f0
 ppc32be/calls.elf sections.immutable.reloc 4e67c59140f885f0
-ppc32be/calls.elf sections.immutable_got.reloc a0a132ba5ae1ab3f
+ppc32be/calls.elf sections.immutable_got.reloc ff7a1000fc7d2b0b
 ppc32be/calls.elf sections.all.raw 543ea9a0d4ddd789
 ppc32be/calls.elf sections.all.reloc 543ea9a0d4ddd789
 ppc32be/calls.elf sections.writable efeca80a1c7e0953
@@ -4808,7 +4808,7 @@ ppc32be/cmp_branches.elf auto.code_ro.raw 8ca60c6f9e0dcae4
 ppc32be/cmp_branches.elf auto.code_ro.reloc 8ca60c6f9e0dcae4
 ppc32be/cmp_branches.elf auto.immutable.raw 8ca60c6f9e0dcae4
 ppc32be/cmp_branches.elf auto.immutable.reloc 8ca60c6f9e0dcae4
-ppc32be/cmp_branches.elf auto.immutable_got.reloc 107f3e02e28f12eb
+ppc32be/cmp_branches.elf auto.immutable_got.reloc 8396b58977566a6f
 ppc32be/cmp_branches.elf auto.all.raw e7ecefcf1aa57530
 ppc32be/cmp_branches.elf auto.all.reloc e7ecefcf1aa57530
 ppc32be/cmp_branches.elf auto.writable efeca80a1c7e0953
@@ -4816,7 +4816,7 @@ ppc32be/cmp_branches.elf sections.code_ro.raw 7e13383bb2fc8fae
 ppc32be/cmp_branches.elf sections.code_ro.reloc 7e13383bb2fc8fae
 ppc32be/cmp_branches.elf sections.immutable.raw 7e13383bb2fc8fae
 ppc32be/cmp_branches.elf sections.immutable.reloc 7e13383bb2fc8fae
-ppc32be/cmp_branches.elf sections.immutable_got.reloc 95a19cdd7e0ef439
+ppc32be/cmp_branches.elf sections.immutable_got.reloc 663c2e86b59bb1c5
 ppc32be/cmp_branches.elf sections.all.raw 92ac30271db62f74
 ppc32be/cmp_branches.elf sections.all.reloc 92ac30271db62f74
 ppc32be/cmp_branches.elf sections.writable efeca80a1c7e0953
@@ -4826,7 +4826,7 @@ ppc32be/complex.elf auto.code_ro.raw 477b3c6ab3b0e53a
 ppc32be/complex.elf auto.code_ro.reloc 477b3c6ab3b0e53a
 ppc32be/complex.elf auto.immutable.raw 477b3c6ab3b0e53a
 ppc32be/complex.elf auto.immutable.reloc 477b3c6ab3b0e53a
-ppc32be/complex.elf auto.immutable_got.reloc 650073f7d192d39d
+ppc32be/complex.elf auto.immutable_got.reloc 55bd160d24a5a671
 ppc32be/complex.elf auto.all.raw 98db8211ab402995
 ppc32be/complex.elf auto.all.reloc 98db8211ab402995
 ppc32be/complex.elf auto.writable efeca80a1c7e0953
@@ -4834,7 +4834,7 @@ ppc32be/complex.elf sections.code_ro.raw 14f838bc9024b2e6
 ppc32be/complex.elf sections.code_ro.reloc 14f838bc9024b2e6
 ppc32be/complex.elf sections.immutable.raw 14f838bc9024b2e6
 ppc32be/complex.elf sections.immutable.reloc 14f838bc9024b2e6
-ppc32be/complex.elf sections.immutable_got.reloc 2d4f6c64382f1361
+ppc32be/complex.elf sections.immutable_got.reloc 32d307e125f54f7d
 ppc32be/complex.elf sections.all.raw 305c5f77a46714fd
 ppc32be/complex.elf sections.all.reloc 305c5f77a46714fd
 ppc32be/complex.elf sections.writable efeca80a1c7e0953
@@ -4844,7 +4844,7 @@ ppc32be/control.elf auto.code_ro.raw 3f8ea40bc9e5f00d
 ppc32be/control.elf auto.code_ro.reloc 3f8ea40bc9e5f00d
 ppc32be/control.elf auto.immutable.raw 3f8ea40bc9e5f00d
 ppc32be/control.elf auto.immutable.reloc 3f8ea40bc9e5f00d
-ppc32be/control.elf auto.immutable_got.reloc 78b06016f3e6d1bc
+ppc32be/control.elf auto.immutable_got.reloc 3ebe4c34ed467e28
 ppc32be/control.elf auto.all.raw 4d8500a20028ce8b
 ppc32be/control.elf auto.all.reloc 4d8500a20028ce8b
 ppc32be/control.elf auto.writable efeca80a1c7e0953
@@ -4852,7 +4852,7 @@ ppc32be/control.elf sections.code_ro.raw a2dd6ed2d66ae811
 ppc32be/control.elf sections.code_ro.reloc a2dd6ed2d66ae811
 ppc32be/control.elf sections.immutable.raw a2dd6ed2d66ae811
 ppc32be/control.elf sections.immutable.reloc a2dd6ed2d66ae811
-ppc32be/control.elf sections.immutable_got.reloc 6020718a11b253b8
+ppc32be/control.elf sections.immutable_got.reloc f2f8baeaa77c73dc
 ppc32be/control.elf sections.all.raw 57c6045b74847580
 ppc32be/control.elf sections.all.reloc 57c6045b74847580
 ppc32be/control.elf sections.writable efeca80a1c7e0953
@@ -4862,7 +4862,7 @@ ppc32be/elf_relocs.elf auto.code_ro.raw 00d35611a0aa160b
 ppc32be/elf_relocs.elf auto.code_ro.reloc 00d35611a0aa160b
 ppc32be/elf_relocs.elf auto.immutable.raw 00d35611a0aa160b
 ppc32be/elf_relocs.elf auto.immutable.reloc 00d35611a0aa160b
-ppc32be/elf_relocs.elf auto.immutable_got.reloc 693aa58c38256bd1
+ppc32be/elf_relocs.elf auto.immutable_got.reloc d10b283bc2784f0d
 ppc32be/elf_relocs.elf auto.all.raw 62e43b76e68043d0
 ppc32be/elf_relocs.elf auto.all.reloc f7ca9adc2311979e
 ppc32be/elf_relocs.elf auto.writable 28f598f0a5995067
@@ -4870,7 +4870,7 @@ ppc32be/elf_relocs.elf sections.code_ro.raw 56a4a0c73e0d268c
 ppc32be/elf_relocs.elf sections.code_ro.reloc 56a4a0c73e0d268c
 ppc32be/elf_relocs.elf sections.immutable.raw 56a4a0c73e0d268c
 ppc32be/elf_relocs.elf sections.immutable.reloc 56a4a0c73e0d268c
-ppc32be/elf_relocs.elf sections.immutable_got.reloc a9313a36a12f3c99
+ppc32be/elf_relocs.elf sections.immutable_got.reloc db6fcabca9eeaa65
 ppc32be/elf_relocs.elf sections.all.raw 68b75a4a4420ee17
 ppc32be/elf_relocs.elf sections.all.reloc 58442e0a9811fcc5
 ppc32be/elf_relocs.elf sections.writable 28f598f0a5995067
@@ -4880,7 +4880,7 @@ ppc32be/floats.elf auto.code_ro.raw 9c8d975c5eec5b93
 ppc32be/floats.elf auto.code_ro.reloc 9c8d975c5eec5b93
 ppc32be/floats.elf auto.immutable.raw 9c8d975c5eec5b93
 ppc32be/floats.elf auto.immutable.reloc 9c8d975c5eec5b93
-ppc32be/floats.elf auto.immutable_got.reloc a9e181c622d4b8fe
+ppc32be/floats.elf auto.immutable_got.reloc 560812169f9fb642
 ppc32be/floats.elf auto.all.raw cd41c7a1fe1812fa
 ppc32be/floats.elf auto.all.reloc cd41c7a1fe1812fa
 ppc32be/floats.elf auto.writable efeca80a1c7e0953
@@ -4888,7 +4888,7 @@ ppc32be/floats.elf sections.code_ro.raw d43e38d018d61170
 ppc32be/floats.elf sections.code_ro.reloc d43e38d018d61170
 ppc32be/floats.elf sections.immutable.raw d43e38d018d61170
 ppc32be/floats.elf sections.immutable.reloc d43e38d018d61170
-ppc32be/floats.elf sections.immutable_got.reloc 5ebe49d2eff3c0bf
+ppc32be/floats.elf sections.immutable_got.reloc 947a0f41c607668b
 ppc32be/floats.elf sections.all.raw 1d74b6c3af205f18
 ppc32be/floats.elf sections.all.reloc 1d74b6c3af205f18
 ppc32be/floats.elf sections.writable efeca80a1c7e0953
@@ -4898,7 +4898,7 @@ ppc32be/globals.elf auto.code_ro.raw e76c06c460b649f3
 ppc32be/globals.elf auto.code_ro.reloc e76c06c460b649f3
 ppc32be/globals.elf auto.immutable.raw e76c06c460b649f3
 ppc32be/globals.elf auto.immutable.reloc e76c06c460b649f3
-ppc32be/globals.elf auto.immutable_got.reloc 154be384ce1e361e
+ppc32be/globals.elf auto.immutable_got.reloc 6a14cabc91d49262
 ppc32be/globals.elf auto.all.raw 59a5d8815707ceed
 ppc32be/globals.elf auto.all.reloc 59a5d8815707ceed
 ppc32be/globals.elf auto.writable efeca80a1c7e0953
@@ -4906,7 +4906,7 @@ ppc32be/globals.elf sections.code_ro.raw ca65703958e8b8c3
 ppc32be/globals.elf sections.code_ro.reloc ca65703958e8b8c3
 ppc32be/globals.elf sections.immutable.raw ca65703958e8b8c3
 ppc32be/globals.elf sections.immutable.reloc ca65703958e8b8c3
-ppc32be/globals.elf sections.immutable_got.reloc ad28320a700b716e
+ppc32be/globals.elf sections.immutable_got.reloc 3922faeec482bdf2
 ppc32be/globals.elf sections.all.raw 29df80edb771cb26
 ppc32be/globals.elf sections.all.reloc 29df80edb771cb26
 ppc32be/globals.elf sections.writable efeca80a1c7e0953
@@ -4916,7 +4916,7 @@ ppc32be/indirect_branch.elf auto.code_ro.raw ee9e93674cc62e82
 ppc32be/indirect_branch.elf auto.code_ro.reloc ee9e93674cc62e82
 ppc32be/indirect_branch.elf auto.immutable.raw ee9e93674cc62e82
 ppc32be/indirect_branch.elf auto.immutable.reloc ee9e93674cc62e82
-ppc32be/indirect_branch.elf auto.immutable_got.reloc d2e0b4b06ea2d9b5
+ppc32be/indirect_branch.elf auto.immutable_got.reloc 21cb376e12798d39
 ppc32be/indirect_branch.elf auto.all.raw 5a3040b003f00f43
 ppc32be/indirect_branch.elf auto.all.reloc 5a3040b003f00f43
 ppc32be/indirect_branch.elf auto.writable efeca80a1c7e0953
@@ -4924,7 +4924,7 @@ ppc32be/indirect_branch.elf sections.code_ro.raw 7a8028da49da6dc7
 ppc32be/indirect_branch.elf sections.code_ro.reloc 7a8028da49da6dc7
 ppc32be/indirect_branch.elf sections.immutable.raw 7a8028da49da6dc7
 ppc32be/indirect_branch.elf sections.immutable.reloc 7a8028da49da6dc7
-ppc32be/indirect_branch.elf sections.immutable_got.reloc 4bd5e381645fd91a
+ppc32be/indirect_branch.elf sections.immutable_got.reloc 19745782c9897576
 ppc32be/indirect_branch.elf sections.all.raw f30bbbb1d20f8e3c
 ppc32be/indirect_branch.elf sections.all.reloc f30bbbb1d20f8e3c
 ppc32be/indirect_branch.elf sections.writable efeca80a1c7e0953
@@ -4934,7 +4934,7 @@ ppc32be/known_bits.elf auto.code_ro.raw d48b2238b11a2e9b
 ppc32be/known_bits.elf auto.code_ro.reloc d48b2238b11a2e9b
 ppc32be/known_bits.elf auto.immutable.raw d48b2238b11a2e9b
 ppc32be/known_bits.elf auto.immutable.reloc d48b2238b11a2e9b
-ppc32be/known_bits.elf auto.immutable_got.reloc 473f648481a14556
+ppc32be/known_bits.elf auto.immutable_got.reloc d3ef44ed4279254a
 ppc32be/known_bits.elf auto.all.raw 6424513f3fe77b65
 ppc32be/known_bits.elf auto.all.reloc 6424513f3fe77b65
 ppc32be/known_bits.elf auto.writable efeca80a1c7e0953
@@ -4942,7 +4942,7 @@ ppc32be/known_bits.elf sections.code_ro.raw 663ea4a35ef4607c
 ppc32be/known_bits.elf sections.code_ro.reloc 663ea4a35ef4607c
 ppc32be/known_bits.elf sections.immutable.raw 663ea4a35ef4607c
 ppc32be/known_bits.elf sections.immutable.reloc 663ea4a35ef4607c
-ppc32be/known_bits.elf sections.immutable_got.reloc 2715263a7c6735f3
+ppc32be/known_bits.elf sections.immutable_got.reloc 49c9d1e3a08903c7
 ppc32be/known_bits.elf sections.all.raw f30ee9d91b6ae5d9
 ppc32be/known_bits.elf sections.all.reloc f30ee9d91b6ae5d9
 ppc32be/known_bits.elf sections.writable efeca80a1c7e0953
@@ -4952,7 +4952,7 @@ ppc32be/list_empty.elf auto.code_ro.raw cc018cc2aece67c2
 ppc32be/list_empty.elf auto.code_ro.reloc cc018cc2aece67c2
 ppc32be/list_empty.elf auto.immutable.raw cc018cc2aece67c2
 ppc32be/list_empty.elf auto.immutable.reloc cc018cc2aece67c2
-ppc32be/list_empty.elf auto.immutable_got.reloc b8daf73aaf09cdf5
+ppc32be/list_empty.elf auto.immutable_got.reloc 62013b3edc25ff79
 ppc32be/list_empty.elf auto.all.raw 26a96ca51a2d821b
 ppc32be/list_empty.elf auto.all.reloc 26a96ca51a2d821b
 ppc32be/list_empty.elf auto.writable b6c8320480d6408b
@@ -4960,7 +4960,7 @@ ppc32be/list_empty.elf sections.code_ro.raw 2845b9ff34f5f20d
 ppc32be/list_empty.elf sections.code_ro.reloc 2845b9ff34f5f20d
 ppc32be/list_empty.elf sections.immutable.raw 2845b9ff34f5f20d
 ppc32be/list_empty.elf sections.immutable.reloc 2845b9ff34f5f20d
-ppc32be/list_empty.elf sections.immutable_got.reloc d3bd159000f417bc
+ppc32be/list_empty.elf sections.immutable_got.reloc fdb269b550f39428
 ppc32be/list_empty.elf sections.all.raw ce3a987dd239d7fa
 ppc32be/list_empty.elf sections.all.reloc ce3a987dd239d7fa
 ppc32be/list_empty.elf sections.writable b6c8320480d6408b
@@ -4970,7 +4970,7 @@ ppc32be/memory.elf auto.code_ro.raw 8f2fc8ebca7f1ce3
 ppc32be/memory.elf auto.code_ro.reloc 8f2fc8ebca7f1ce3
 ppc32be/memory.elf auto.immutable.raw 8f2fc8ebca7f1ce3
 ppc32be/memory.elf auto.immutable.reloc 8f2fc8ebca7f1ce3
-ppc32be/memory.elf auto.immutable_got.reloc 037c3a288eca95ce
+ppc32be/memory.elf auto.immutable_got.reloc 98b8e502307772d2
 ppc32be/memory.elf auto.all.raw 0ce11c06a1f9bab9
 ppc32be/memory.elf auto.all.reloc 0ce11c06a1f9bab9
 ppc32be/memory.elf auto.writable efeca80a1c7e0953
@@ -4978,7 +4978,7 @@ ppc32be/memory.elf sections.code_ro.raw 062009e3a5c6c8a3
 ppc32be/memory.elf sections.code_ro.reloc 062009e3a5c6c8a3
 ppc32be/memory.elf sections.immutable.raw 062009e3a5c6c8a3
 ppc32be/memory.elf sections.immutable.reloc 062009e3a5c6c8a3
-ppc32be/memory.elf sections.immutable_got.reloc 53367f340c91f48e
+ppc32be/memory.elf sections.immutable_got.reloc 4070ce55f24f0f92
 ppc32be/memory.elf sections.all.raw f2826d91b444ba0e
 ppc32be/memory.elf sections.all.reloc f2826d91b444ba0e
 ppc32be/memory.elf sections.writable efeca80a1c7e0953
@@ -4988,7 +4988,7 @@ ppc32be/patterns.elf auto.code_ro.raw 7bd6ce17511db3f8
 ppc32be/patterns.elf auto.code_ro.reloc 7bd6ce17511db3f8
 ppc32be/patterns.elf auto.immutable.raw 7bd6ce17511db3f8
 ppc32be/patterns.elf auto.immutable.reloc 7bd6ce17511db3f8
-ppc32be/patterns.elf auto.immutable_got.reloc ea4164ac065a3a17
+ppc32be/patterns.elf auto.immutable_got.reloc da972b98f7062273
 ppc32be/patterns.elf auto.all.raw b6b786c176b06df8
 ppc32be/patterns.elf auto.all.reloc b6b786c176b06df8
 ppc32be/patterns.elf auto.writable efeca80a1c7e0953
@@ -4996,7 +4996,7 @@ ppc32be/patterns.elf sections.code_ro.raw a1a9a07a44b48f0e
 ppc32be/patterns.elf sections.code_ro.reloc a1a9a07a44b48f0e
 ppc32be/patterns.elf sections.immutable.raw a1a9a07a44b48f0e
 ppc32be/patterns.elf sections.immutable.reloc a1a9a07a44b48f0e
-ppc32be/patterns.elf sections.immutable_got.reloc dd31f7f6113bf5d9
+ppc32be/patterns.elf sections.immutable_got.reloc 805612aa078c5ae5
 ppc32be/patterns.elf sections.all.raw 750fbd041df6026c
 ppc32be/patterns.elf sections.all.reloc 750fbd041df6026c
 ppc32be/patterns.elf sections.writable efeca80a1c7e0953
@@ -5006,7 +5006,7 @@ ppc32be/stack.elf auto.code_ro.raw 431fc40c9f470b95
 ppc32be/stack.elf auto.code_ro.reloc 431fc40c9f470b95
 ppc32be/stack.elf auto.immutable.raw 431fc40c9f470b95
 ppc32be/stack.elf auto.immutable.reloc 431fc40c9f470b95
-ppc32be/stack.elf auto.immutable_got.reloc 58981f0a216125d4
+ppc32be/stack.elf auto.immutable_got.reloc 7dbfa9a9b074f0b0
 ppc32be/stack.elf auto.all.raw d149bb07298edc5b
 ppc32be/stack.elf auto.all.reloc d149bb07298edc5b
 ppc32be/stack.elf auto.writable efeca80a1c7e0953
@@ -5014,7 +5014,7 @@ ppc32be/stack.elf sections.code_ro.raw bae65773724d9ef4
 ppc32be/stack.elf sections.code_ro.reloc bae65773724d9ef4
 ppc32be/stack.elf sections.immutable.raw bae65773724d9ef4
 ppc32be/stack.elf sections.immutable.reloc bae65773724d9ef4
-ppc32be/stack.elf sections.immutable_got.reloc 30a60c9ccbcf38bb
+ppc32be/stack.elf sections.immutable_got.reloc 7580127cbd101c7f
 ppc32be/stack.elf sections.all.raw 1da974ddb4110871
 ppc32be/stack.elf sections.all.reloc 1da974ddb4110871
 ppc32be/stack.elf sections.writable efeca80a1c7e0953
@@ -5024,7 +5024,7 @@ ppc32be/switch.elf auto.code_ro.raw d7b112e6ae88a878
 ppc32be/switch.elf auto.code_ro.reloc d7b112e6ae88a878
 ppc32be/switch.elf auto.immutable.raw d7b112e6ae88a878
 ppc32be/switch.elf auto.immutable.reloc d7b112e6ae88a878
-ppc32be/switch.elf auto.immutable_got.reloc 4bab929fa8aaea97
+ppc32be/switch.elf auto.immutable_got.reloc 479f4643144836f3
 ppc32be/switch.elf auto.all.raw d14b8fec8ac27ce0
 ppc32be/switch.elf auto.all.reloc d14b8fec8ac27ce0
 ppc32be/switch.elf auto.writable efeca80a1c7e0953
@@ -5032,7 +5032,7 @@ ppc32be/switch.elf sections.code_ro.raw 1577c81c7464608c
 ppc32be/switch.elf sections.code_ro.reloc 1577c81c7464608c
 ppc32be/switch.elf sections.immutable.raw 1577c81c7464608c
 ppc32be/switch.elf sections.immutable.reloc 1577c81c7464608c
-ppc32be/switch.elf sections.immutable_got.reloc 50a788a71a22ba43
+ppc32be/switch.elf sections.immutable_got.reloc aa38f9982fcd63d7
 ppc32be/switch.elf sections.all.raw c34c84d0fbad2d19
 ppc32be/switch.elf sections.all.reloc c34c84d0fbad2d19
 ppc32be/switch.elf sections.writable efeca80a1c7e0953
@@ -5042,7 +5042,7 @@ ppc32be/switch_masked_loop.elf auto.code_ro.raw b7f2b8d866460688
 ppc32be/switch_masked_loop.elf auto.code_ro.reloc b7f2b8d866460688
 ppc32be/switch_masked_loop.elf auto.immutable.raw b7f2b8d866460688
 ppc32be/switch_masked_loop.elf auto.immutable.reloc b7f2b8d866460688
-ppc32be/switch_masked_loop.elf auto.immutable_got.reloc e70619d840391ca7
+ppc32be/switch_masked_loop.elf auto.immutable_got.reloc 78c1b7120520de83
 ppc32be/switch_masked_loop.elf auto.all.raw cc9e9ba72fa79c1b
 ppc32be/switch_masked_loop.elf auto.all.reloc cc9e9ba72fa79c1b
 ppc32be/switch_masked_loop.elf auto.writable efeca80a1c7e0953
@@ -5050,7 +5050,7 @@ ppc32be/switch_masked_loop.elf sections.code_ro.raw eb678ec50bd448bb
 ppc32be/switch_masked_loop.elf sections.code_ro.reloc eb678ec50bd448bb
 ppc32be/switch_masked_loop.elf sections.immutable.raw eb678ec50bd448bb
 ppc32be/switch_masked_loop.elf sections.immutable.reloc eb678ec50bd448bb
-ppc32be/switch_masked_loop.elf sections.immutable_got.reloc 21fc38aaf2411eb6
+ppc32be/switch_masked_loop.elf sections.immutable_got.reloc 95037fc361435d2a
 ppc32be/switch_masked_loop.elf sections.all.raw 9cef351e64807748
 ppc32be/switch_masked_loop.elf sections.all.reloc 9cef351e64807748
 ppc32be/switch_masked_loop.elf sections.writable efeca80a1c7e0953
@@ -5078,7 +5078,7 @@ ppc32be/switch_phi_index.elf auto.code_ro.raw b961d467aecf8905
 ppc32be/switch_phi_index.elf auto.code_ro.reloc b961d467aecf8905
 ppc32be/switch_phi_index.elf auto.immutable.raw b961d467aecf8905
 ppc32be/switch_phi_index.elf auto.immutable.reloc b961d467aecf8905
-ppc32be/switch_phi_index.elf auto.immutable_got.reloc e422aac0bfe69e04
+ppc32be/switch_phi_index.elf auto.immutable_got.reloc dccd1331eff40fa0
 ppc32be/switch_phi_index.elf auto.all.raw e47529711a3a04cb
 ppc32be/switch_phi_index.elf auto.all.reloc e47529711a3a04cb
 ppc32be/switch_phi_index.elf auto.writable efeca80a1c7e0953
@@ -5086,7 +5086,7 @@ ppc32be/switch_phi_index.elf sections.code_ro.raw 2073937b6af8d28b
 ppc32be/switch_phi_index.elf sections.code_ro.reloc 2073937b6af8d28b
 ppc32be/switch_phi_index.elf sections.immutable.raw 2073937b6af8d28b
 ppc32be/switch_phi_index.elf sections.immutable.reloc 2073937b6af8d28b
-ppc32be/switch_phi_index.elf sections.immutable_got.reloc 875386b125897386
+ppc32be/switch_phi_index.elf sections.immutable_got.reloc 4d8f6e15f672d83a
 ppc32be/switch_phi_index.elf sections.all.raw fa5410203014b649
 ppc32be/switch_phi_index.elf sections.all.reloc fa5410203014b649
 ppc32be/switch_phi_index.elf sections.writable efeca80a1c7e0953
@@ -5114,7 +5114,7 @@ ppc32be/switch_sparse.elf auto.code_ro.raw 6c53a7916ded8408
 ppc32be/switch_sparse.elf auto.code_ro.reloc 6c53a7916ded8408
 ppc32be/switch_sparse.elf auto.immutable.raw 6c53a7916ded8408
 ppc32be/switch_sparse.elf auto.immutable.reloc 6c53a7916ded8408
-ppc32be/switch_sparse.elf auto.immutable_got.reloc 1c2e7dd2ee1a0627
+ppc32be/switch_sparse.elf auto.immutable_got.reloc 2979b3b4ff13e203
 ppc32be/switch_sparse.elf auto.all.raw 7bd1074b88c6a40c
 ppc32be/switch_sparse.elf auto.all.reloc 7bd1074b88c6a40c
 ppc32be/switch_sparse.elf auto.writable efeca80a1c7e0953
@@ -5122,7 +5122,7 @@ ppc32be/switch_sparse.elf sections.code_ro.raw 3875972b7dab234b
 ppc32be/switch_sparse.elf sections.code_ro.reloc 3875972b7dab234b
 ppc32be/switch_sparse.elf sections.immutable.raw 3875972b7dab234b
 ppc32be/switch_sparse.elf sections.immutable.reloc 3875972b7dab234b
-ppc32be/switch_sparse.elf sections.immutable_got.reloc 303e1aa75ebf9346
+ppc32be/switch_sparse.elf sections.immutable_got.reloc 4d1a8fd476e529fa
 ppc32be/switch_sparse.elf sections.all.raw 20ea663173e846bf
 ppc32be/switch_sparse.elf sections.all.reloc 20ea663173e846bf
 ppc32be/switch_sparse.elf sections.writable efeca80a1c7e0953
@@ -5132,7 +5132,7 @@ ppc32be/switch_value_range.elf auto.code_ro.raw bc72fd0d4f057f24
 ppc32be/switch_value_range.elf auto.code_ro.reloc bc72fd0d4f057f24
 ppc32be/switch_value_range.elf auto.immutable.raw bc72fd0d4f057f24
 ppc32be/switch_value_range.elf auto.immutable.reloc bc72fd0d4f057f24
-ppc32be/switch_value_range.elf auto.immutable_got.reloc 33ad2181cd4f002b
+ppc32be/switch_value_range.elf auto.immutable_got.reloc 9e5f54bbb4dc6daf
 ppc32be/switch_value_range.elf auto.all.raw 13efb759ed6adb60
 ppc32be/switch_value_range.elf auto.all.reloc 13efb759ed6adb60
 ppc32be/switch_value_range.elf auto.writable efeca80a1c7e0953
@@ -5140,7 +5140,7 @@ ppc32be/switch_value_range.elf sections.code_ro.raw 56a2c6c85461bf9a
 ppc32be/switch_value_range.elf sections.code_ro.reloc 56a2c6c85461bf9a
 ppc32be/switch_value_range.elf sections.immutable.raw 56a2c6c85461bf9a
 ppc32be/switch_value_range.elf sections.immutable.reloc 56a2c6c85461bf9a
-ppc32be/switch_value_range.elf sections.immutable_got.reloc f7c24bdbcbe567bd
+ppc32be/switch_value_range.elf sections.immutable_got.reloc 2e2acee308509c91
 ppc32be/switch_value_range.elf sections.all.raw 8b9cf8efc93d725c
 ppc32be/switch_value_range.elf sections.all.reloc 8b9cf8efc93d725c
 ppc32be/switch_value_range.elf sections.writable efeca80a1c7e0953
@@ -5150,7 +5150,7 @@ ppc32be/tzcount.elf auto.code_ro.raw 16f192c283bd3a90
 ppc32be/tzcount.elf auto.code_ro.reloc 16f192c283bd3a90
 ppc32be/tzcount.elf auto.immutable.raw 16f192c283bd3a90
 ppc32be/tzcount.elf auto.immutable.reloc 16f192c283bd3a90
-ppc32be/tzcount.elf auto.immutable_got.reloc 0d462b54a549079f
+ppc32be/tzcount.elf auto.immutable_got.reloc d087335bea94a06b
 ppc32be/tzcount.elf auto.all.raw b0d4385a170fa1c1
 ppc32be/tzcount.elf auto.all.reloc b0d4385a170fa1c1
 ppc32be/tzcount.elf auto.writable efeca80a1c7e0953
@@ -5158,7 +5158,7 @@ ppc32be/tzcount.elf sections.code_ro.raw daa8c25a2844c486
 ppc32be/tzcount.elf sections.code_ro.reloc daa8c25a2844c486
 ppc32be/tzcount.elf sections.immutable.raw daa8c25a2844c486
 ppc32be/tzcount.elf sections.immutable.reloc daa8c25a2844c486
-ppc32be/tzcount.elf sections.immutable_got.reloc c7d59f0fb078ed41
+ppc32be/tzcount.elf sections.immutable_got.reloc c90c36952477855d
 ppc32be/tzcount.elf sections.all.raw abd48fc23d98c9e9
 ppc32be/tzcount.elf sections.all.reloc abd48fc23d98c9e9
 ppc32be/tzcount.elf sections.writable efeca80a1c7e0953
@@ -5312,7 +5312,7 @@ ppc32le/elf_relocs.elf auto.code_ro.raw db7d547586ab6093
 ppc32le/elf_relocs.elf auto.code_ro.reloc db7d547586ab6093
 ppc32le/elf_relocs.elf auto.immutable.raw db7d547586ab6093
 ppc32le/elf_relocs.elf auto.immutable.reloc db7d547586ab6093
-ppc32le/elf_relocs.elf auto.immutable_got.reloc 98b351c568f49f2f
+ppc32le/elf_relocs.elf auto.immutable_got.reloc ed41d087c2284d37
 ppc32le/elf_relocs.elf auto.all.raw 8e4fa8d7e66df140
 ppc32le/elf_relocs.elf auto.all.reloc 7c1ac521ba09a131
 ppc32le/elf_relocs.elf auto.writable ee08d6c5598f8959
@@ -5320,7 +5320,7 @@ ppc32le/elf_relocs.elf sections.code_ro.raw 94004569f62da177
 ppc32le/elf_relocs.elf sections.code_ro.reloc 94004569f62da177
 ppc32le/elf_relocs.elf sections.immutable.raw 94004569f62da177
 ppc32le/elf_relocs.elf sections.immutable.reloc 94004569f62da177
-ppc32le/elf_relocs.elf sections.immutable_got.reloc f56438777386f1a3
+ppc32le/elf_relocs.elf sections.immutable_got.reloc ee5cef23ac739d93
 ppc32le/elf_relocs.elf sections.all.raw 2b991239cb4254d3
 ppc32le/elf_relocs.elf sections.all.reloc 035b5504437b886e
 ppc32le/elf_relocs.elf sections.writable ee08d6c5598f8959
