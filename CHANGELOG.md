@@ -589,19 +589,19 @@
   as is an i386 or ARM `TLS_DESC` slot over its 8. Only the first 4 bytes
   were, so a 4-byte read of the upper half of a negative TP offset folded
   to 0.
-- Python: `load_elf` and `add_elf` with relocations applied raise
-  `StriderError` for an image whose code (`DT_TEXTREL`, or a writable and
-  executable mapping) a `PT_DYNAMIC` relocation table no section header
-  covers may relocate, as after `llvm-objcopy --strip-sections`. No
-  relocation was applied or holed there, so `mov loc,%eax` decoded as a load
-  from address 0, which folded to the ELF magic. Without such code,
-  `relocated_got_is_rom=True` serves no `.got` or `.data.rel.ro` of an
-  image carrying a table no header covers.
-- Python: `relocated_got_is_rom=True` serves no `.got` or `.data.rel.ro` of
-  an image carrying Android packed relocations (`SHT_ANDROID_RELA`, lld's
-  `--pack-dyn-relocs=android`), which strider does not decode. Every
-  pointer they relocate served the file's 0, so a call through a const
-  function-pointer table folded to address 0.
+- Python: a linked image with a `PT_DYNAMIC` is relocated from the tables
+  its dynamic tags place, read as `ld.so` and bionic read them: the last
+  `PT_DYNAMIC`, at its `p_vaddr`, and the last of each tag, placing
+  `DT_RELA`, `DT_REL`, `DT_JMPREL`, `DT_CREL` and Android packed (`APS2`)
+  tables. No section header decides it any more: an image with its headers
+  stripped (`llvm-objcopy --strip-sections`), retyped or decoyed was
+  relocated from them, or not at all, so a TEXTREL `mov loc,%eax` decoded
+  as a load from address 0, and an Android packed library's pointers
+  served the file's 0 under `relocated_got_is_rom=True`. A symbol resolves
+  only through a `.dynsym` header at `DT_SYMTAB`. A table the tags place
+  that cannot be read or decoded makes `load_elf` and `add_elf` raise
+  `StriderError` when the image relocates code, and otherwise leaves
+  `.got` and `.data.rel.ro` unserved under `relocated_got_is_rom=True`.
 - Python: under `relocated_got_is_rom=True` every byte of an `R_*_COPY`
   object is unmapped. Only its first 4 bytes were, and the rest served the
   file's zeros, so a gcc PIE's `return tbl[3]` against a library's const
