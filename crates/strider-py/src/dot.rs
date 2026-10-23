@@ -8,21 +8,29 @@ const DEFAULT_STYLE: &str = "dark";
 /// The CFG renderers' fallback theme: `dark` with Courier metrics.
 pub const DEFAULT_CFG_STYLE: &str = "dark_cfg";
 
+type StyleCtor = fn() -> dot::DotStyle;
+
+/// Every style name a render accepts, and the theme it picks: the roster
+/// `strider.cfg.DOT_STYLES` publishes.
+pub(crate) const DOT_STYLES: [(&str, StyleCtor); 3] = [
+    ("dark", dot::DotStyle::dark),
+    ("dark_cfg", dot::DotStyle::dark_cfg),
+    ("empty", dot::DotStyle::empty),
+];
+
 /// Map a style name onto a [`dot::DotStyle`].  An unknown name is an error,
 /// never a silent default.
 pub fn dot_style_for(name: Option<&str>) -> PyResult<dot::DotStyle> {
-    let style = match name.unwrap_or(DEFAULT_STYLE) {
-        "dark" => dot::DotStyle::dark(),
-        "dark_cfg" => dot::DotStyle::dark_cfg(),
-        "empty" => dot::DotStyle::empty(),
-        other => {
-            return Err(into_strider_err(anyhow::anyhow!(
-                "unknown dot style {other:?}; expected \"dark\", \
-                 \"dark_cfg\" or \"empty\""
-            )));
-        }
-    };
-    Ok(style)
+    let name = name.unwrap_or(DEFAULT_STYLE);
+    if let Some((_, style)) = DOT_STYLES.iter().find(|(n, _)| *n == name) {
+        return Ok(style());
+    }
+    let quoted: Vec<String> = DOT_STYLES.iter().map(|(n, _)| format!("{n:?}")).collect();
+    let (last, rest) = quoted.split_last().expect("a non-empty roster");
+    Err(into_strider_err(anyhow::anyhow!(
+        "unknown dot style {name:?}; expected {} or {last}",
+        rest.join(", ")
+    )))
 }
 
 /// Writes `d` to `path` and returns `None`, or returns the text when there is

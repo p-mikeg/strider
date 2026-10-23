@@ -265,7 +265,7 @@ template.TemplateLike = _t.Union[  # type: ignore[attr-defined]
     template.Template, _p.Capture, int
 ]
 _export(template, "TemplateLike")
-cfg.DotStyle = _t.Literal["dark", "dark_cfg", "empty"]  # type: ignore[attr-defined]
+cfg.DotStyle = _t.Literal[cfg.DOT_STYLES]  # type: ignore[attr-defined]
 _export(cfg, "DotStyle")
 lift.StrPath = _mod_api.StrPath              # type: ignore[attr-defined]
 _export(lift, "StrPath")

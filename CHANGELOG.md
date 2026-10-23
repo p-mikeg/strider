@@ -470,6 +470,8 @@
 - `Symbol.local_entry`: where a ppc64 ELFv2 call sharing the function's TOC
   enters it, `address` plus the `st_other` local-entry offset, else
   `address` (keeping a Thumb bit).
+- `strider.cfg.DOT_STYLES`, every theme name a render accepts; `DotStyle`
+  is its `Literal`.
 
 ### Changed, Rust
 
