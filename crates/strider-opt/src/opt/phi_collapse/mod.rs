@@ -31,6 +31,7 @@ use cranelift_entity::SecondaryMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IntBinaryOp};
 
+use crate::const_eval::var_and_const;
 use crate::error::Result;
 use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 
@@ -251,7 +252,7 @@ fn peel(
         };
         let (next, exact) = match op {
             IntBinaryOp::And => {
-                let Some((y, k)) = const_operand(edit, a, b) else {
+                let Some((y, k)) = var_and_const(edit.function(), node) else {
                     break;
                 };
                 if k & mask == mask {
@@ -280,19 +281,6 @@ fn peel(
     Some((Masked::Of(x), witness))
 }
 
-/// The non-constant operand and the constant of a binary op with one.
-fn const_operand(
-    edit: &crate::EditFunction<'_>,
-    a: ValueId,
-    b: ValueId,
-) -> Option<(ValueId, u128)> {
-    match (edit.int_const_u128(a), edit.int_const_u128(b)) {
-        (None, Some(k)) => Some((a, k)),
-        (Some(k), None) => Some((b, k)),
-        _ => None,
-    }
-}
-
 /// Bits of `v` its producer alone proves zero.
 fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId) -> u128 {
     if let Some(k) = edit.int_const_u128(v) {
@@ -300,11 +288,9 @@ fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId) -> u128 {
     }
     let node = edit.producer(v);
     match *edit.node_kind(node) {
-        NodeKind::IntBinaryOp(IntBinaryOp::And) => edit
-            .node_inputs_exact::<2>(node)
-            .ok()
-            .and_then(|[a, b]| const_operand(edit, a, b))
-            .map_or(0, |(_, k)| !k),
+        NodeKind::IntBinaryOp(IntBinaryOp::And) => {
+            var_and_const(edit.function(), node).map_or(0, |(_, k)| !k)
+        }
         NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
             let width = edit.value_type_opt(v).map_or(0, ValueType::bit_width);
             edit.nth_input(node, 1)
