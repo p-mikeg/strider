@@ -567,6 +567,12 @@
 
 ### Fixed
 
+- Python: a jump table indexed by a byte read through a pointer is no
+  longer enumerated over the whole byte when a test dominating the dispatch
+  bounds that byte in a shape the range analysis does not read (`test $0xfc;
+  jne`, `shr; jne`, a sign test), or guards a reload of the same field. The
+  cells past the table were seated as arms with nothing reported; the site
+  is now deferred and reported as `unresolved_branch`.
 - Python: a seeded jump-table arm onto an address a direct edge already
   found unmapped or undecodable is dropped (and named by Rust's
   `Cfg::undecodable_seeded_targets`), as it is when no direct edge reached

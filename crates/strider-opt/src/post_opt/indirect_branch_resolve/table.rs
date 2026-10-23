@@ -586,7 +586,9 @@ const MAX_SCALE_STRIP: u32 = 64;
 
 /// Is `v`'s range merely its type width rather than a real narrowing?  A raw
 /// byte load fills its cell width exactly, making it table DATA, not an index,
-/// unless it is a field read through a pointer ([`loads_a_field`]).
+/// unless it is a field read through a pointer ([`loads_a_field`]) that no
+/// dominating test bounds unread
+/// ([`RangeMap::cell_test_left_unread`](crate::value_range::RangeMap::cell_test_left_unread)).
 ///
 /// Keying on the RANGE rather than on "is it load-derived" is load-bearing: a
 /// guarded raw load, `if (Load < N) switch(Load)`, is a genuine index even
@@ -618,7 +620,7 @@ fn is_width_only(
         return true;
     };
     if loads_a_field(function, ranges, site, base) {
-        return false;
+        return ranges.cell_test_left_unread(v, base, site, iv);
     }
     // Defer, as every other bail here does: with no width there is no cell
     // count to compare the range against, so nothing disproves table DATA.
