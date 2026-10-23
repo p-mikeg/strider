@@ -174,14 +174,9 @@ impl FunctionBuilder {
         // position `j` lands at `arg_vns.len() + j`; registers sharing a
         // container (AAPCS-VFP `d0`/`d1` inside `q0`) each pass their own
         // slice of it.
-        let float_arg_vns: SmallVec<[rsleigh::Vn; 4]> = cc
-            .float_arg_slots(self.function().all_vns(), |v| {
-                vn_container::largest_container_in(self.function().all_vns(), v)
-            })
-            .into_iter()
-            .take_while(Option::is_some)
-            .flatten()
-            .collect();
+        let float_arg_vns = cc.float_arg_prefix(self.function().all_vns(), |v| {
+            vn_container::largest_container_in(self.function().all_vns(), v)
+        });
         let mut arg_passing: SmallVec<[ValueId; 4]> = SmallVec::new();
         for vn in &arg_vns {
             let c = vn_container::largest_container_in(self.function().all_vns(), vn);

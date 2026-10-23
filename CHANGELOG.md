@@ -1075,6 +1075,8 @@
   `REGION_PHI_OUT_SLOT`, `IF_TRUE_OUT_SLOT` and `IF_FALSE_OUT_SLOT`;
   `NodeKind::output_head_len` is a `Call` / `CallOther`'s first value output.
 - `Function::is_entry_sp`: whether a value is the entry stack pointer.
+- `BuiltCallingConvention::float_arg_prefix`, the float arguments a call
+  passes: `float_arg_slots` up to the first untracked one.
 
 ## 0.2.0
 

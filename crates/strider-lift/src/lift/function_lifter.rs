@@ -65,8 +65,9 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     /// and the container map are both frozen for the lift, so every call site
     /// without a `per_address_ccs` override yields this same split.
     pub(super) default_ret_clobber_vns: (Vec<rsleigh::Vn>, Vec<rsleigh::Vn>),
-    /// [`super::cc_projection::float_arg_prefix`] under the function-default
-    /// CC, cached for the same reason.
+    /// [`strider_target::BuiltCallingConvention::float_arg_prefix`] under the
+    /// function-default CC, cached for the same reason: it scans the tracked
+    /// set per float register.
     pub(super) default_float_arg_vns: Vec<rsleigh::Vn>,
     /// What [`Self::collect_def_sites`] mirrored, for the write-path check in
     /// [`Self::write_variable`]. Empty until `build_ir` fills it.
@@ -171,9 +172,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         };
         let default_float_arg_vns = {
             let f = builder.function();
-            super::cc_projection::float_arg_prefix(f.default_cc(), f.all_vns(), |v| {
-                container_map.container_of(v)
-            })
+            f.default_cc()
+                .float_arg_prefix(f.all_vns(), |v| container_map.container_of(v))
         };
         Ok(Self {
             lifter,
