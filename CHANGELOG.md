@@ -118,8 +118,8 @@
   pipeline)` takes `AnalyzeOptions { cfg, per_address_ccs,
   resolve_indirect_branches, assumptions, compact }` in place of
   `LiftOptions` and `OptOptions`, and
-  `Lifter::build_ir_with(cfg, cc, &cfg_opts, &per_address_ccs)` takes the
-  `CfgOptions` the cfg was built with.
+  `Lifter::build_ir_with(cfg, cc, &cfg_opts, &per_address_ccs, &claims)` takes
+  the `CfgOptions` the cfg was built with.
 - `AnalyzeResult`'s six report fields and `Cfg::{isa_mode_conflicts,
   interior_branch_targets, unmapped_branch_targets, undecodable_branch_targets}`
   are gone: `AnalyzeResult::incomplete()` and `Cfg::incomplete()` return
