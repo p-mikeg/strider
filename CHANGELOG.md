@@ -552,15 +552,23 @@
   -9.22e18. `frsp`, `fcfid`, `fcfids`, `fcfidu`, `fcfidus` and `xscvdpspn`
   round by FPSCR.RN without `fp_rounding_mode_is_nearest`; they always
   rounded to nearest. The signed `fcti*` forms set VXCVI when the
-  conversion is invalid, and `mtfsfi` to field 0 recomputes FEX and VX
-  rather than taking them from U.
+  conversion is invalid, and `mtfsfi` keeps FEX and VX the summaries of the
+  bits they cover for every field, where field 0 took them from U and the
+  others left them stale. FEX is the OR of the enabled exceptions, where two
+  cancelled, and FX rises with VX.
+- Python: PowerPC `friz` (gcc's `trunc()`) rounds toward zero to a double.
+  It wrote the integer's bits, so `friz` of 2.5 read as about 1e-323.
+- Python: ppc64 `xscvdpspn` reads doubleword 0 of its source and writes the
+  single to words 0 and 1, so gcc's `xscvdpspn; mfvsrwz` float-to-bits pun
+  gives the IEEE single's bits; it read doubleword 1 and wrote word 3, and the
+  pun returned stale bits. `lxsdx` and `xsadddp` use doubleword 0, which the
+  FPR of the same number overlays, where they used doubleword 1.
 - Python: ppc64 `xsadddp` sets the FPSCR bits `fadd` sets (FPRF, VXSNAN
   and the summaries). It set none, so an `mffs` or `mcrfs` after it read the
   bits from before it, and a branch on them folded. It shares `fadd`'s two
   flaws: VXSNAN is set for a quiet NaN too, and XX ORs in the FI no p-code
   op sets. No scalar float op the sla spells in p-code sets FR, FI, OX, UX,
-  VXISI, VXIDI, VXIMZ or VXSQRT, nor the signed conversions VXCVI: those keep
-  the last explicit write's value, so `mtfsb0` FI, `fadd`, `mffs` reads FI
+  VXISI, VXIDI, VXIMZ or VXSQRT: those keep the last explicit write's value, so `mtfsb0` FI, `fadd`, `mffs` reads FI
   as 0.
 - Python: ppc64 `xsdivqp` lifts to its own `call_other`, `vsx300_xsdivqp`,
   the last user op, so no other id moved. It shared `xscvudqp`'s

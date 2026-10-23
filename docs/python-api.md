@@ -249,7 +249,8 @@ the positive one:
   arithmetic, taken to round to nearest, and the conversions lifted as opaque
   user ops (packed VEX, EVEX, `roundss` and its kin), which nothing folds
   through. MXCSR.FTZ and DAZ are taken as 0 either way, so `none()` is not a
-  sound floor for `-ffast-math` code, whose startup sets them. The lift reads
+  sound floor for `-ffast-math` code, whose startup sets them; nor is it for
+  PowerPC code that sets FPSCR.NI, OE or UE, likewise taken as 0. The lift reads
   it, like `msr_register_keeps_mode`.
 
 `AssumptionOptions.none()` clears all nine; `AssumptionOptions()` does not. It
