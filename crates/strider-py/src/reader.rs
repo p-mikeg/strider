@@ -488,6 +488,40 @@ impl PyLoadedElf {
         Ok(())
     }
 
+    /// The architecture, class, byte order and ARM `EF_ARM_BE8` of `candidate`
+    /// match the first loaded image's: one handle decodes with one arch.
+    fn check_same_target(&self, candidate: &strider_reader::OwnedElf, path: &str) -> PyResult<()> {
+        use object::read::Object as _;
+        let Some(image) = self.elfs.first() else {
+            return Ok(());
+        };
+        let target = |elf: &strider_reader::OwnedElf| -> anyhow::Result<String> {
+            let file = elf.checked_file()?;
+            Ok(format!(
+                "{:?} {}-bit {}-endian{}",
+                file.architecture(),
+                if file.is_64() { 64 } else { 32 },
+                if file.is_little_endian() {
+                    "little"
+                } else {
+                    "big"
+                },
+                if elf.is_arm_be8()? { " BE8" } else { "" },
+            ))
+        };
+        let (want, got) = (
+            target(image).map_err(into_strider_err)?,
+            target(candidate).map_err(into_strider_err)?,
+        );
+        if want != got {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "add_elf: {path} is {got}, the loaded image {want}; one handle \
+                 decodes one target"
+            )));
+        }
+        Ok(())
+    }
+
     /// Building parses the mapping, so a file that changed underneath is an
     /// error here rather than a SIGBUS. A table already built needs no mapping
     /// and costs no stat.
@@ -873,11 +907,13 @@ impl PyLoadedElf {
     /// nothing about a library merged into it.  With `apply_relocations=False`
     /// it is refused, the two denying each other.
     ///
-    /// Errors if the new ELF maps code over an address already loaded with
-    /// DIFFERENT bytes: `add_elf` places shared objects at distinct addresses,
-    /// so two ELFs linked at the same base cannot share one address space.
-    /// Re-merging an image already fully loaded, byte for byte, is allowed and
-    /// does nothing.
+    /// Errors if the new ELF's architecture, class or byte order, or on ARM
+    /// its `EF_ARM_BE8`, differs from the first image's: one handle decodes
+    /// one target. Errors too if it maps code over an address already loaded
+    /// with DIFFERENT bytes: `add_elf` places shared objects at distinct
+    /// addresses, so two ELFs linked at the same base cannot share one address
+    /// space. Re-merging an image already fully loaded, byte for byte, is
+    /// allowed and does nothing.
     #[pyo3(signature = (path, apply_relocations=true, relocated_got_is_rom=false))]
     pub(crate) fn add_elf(
         &mut self,
@@ -886,6 +922,7 @@ impl PyLoadedElf {
         relocated_got_is_rom: bool,
     ) -> PyResult<()> {
         let elf = strider_reader::load_elf(path).map_err(into_strider_err)?;
+        self.check_same_target(&elf, path)?;
         let mode = relocation_mode(apply_relocations, relocated_got_is_rom)?;
         let image = elf
             .image(self.source.into(), mode)

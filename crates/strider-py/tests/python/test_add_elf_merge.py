@@ -7,6 +7,8 @@ import pytest
 
 import strider
 
+from .conftest import fixture_path
+
 
 def test_add_elf_merges_symbols_of_both(x86_memory_elf, x86_relocs_elf):
     """A valid (non-overlapping) `add_elf` unions the symbol sets, leaving the
@@ -62,3 +64,21 @@ def test_add_elf_then_analyze_sees_merged_regions(x86_memory_elf, x86_relocs_elf
     elf.add_elf(str(x86_relocs_elf))
     _cfg, function, _unresolved = elf.analyze("helper_a")
     assert function.node_count() > 0
+
+
+@pytest.mark.parametrize(
+    ("loaded", "added", "differs"),
+    [
+        ("x64", "aarch64", "Aarch64"),
+        ("aarch64", "aarch64be", "big-endian"),
+        ("arm_be", "arm_be8", "BE8"),
+    ],
+)
+def test_add_elf_refuses_an_image_another_decoder_reads(loaded, added, differs):
+    """One handle decodes with one arch, so an image of another architecture,
+    class or byte order, or a BE8 image beside a BE32 one (`EI_DATA` marks
+    both alike), would decode as garbage. Refused before any byte merges."""
+    elf = strider.lift.load_elf(str(fixture_path(loaded, "memory")))
+    with pytest.raises(strider.StriderError, match="one handle decodes one target") as e:
+        elf.add_elf(str(fixture_path(added, "calls")))
+    assert differs in str(e.value)
