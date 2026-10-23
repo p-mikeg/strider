@@ -584,6 +584,28 @@
   taken as 0 under `fp_rounding_mode_is_nearest`, where they took any mode
   but 0 as toward -inf and broke a tie away from zero. `trunc.l.s` on a
   32-bit FPU writes the whole doubleword.
+- Python: PowerPC `fmadd`, `fmsub`, `fnmadd`, `fnmsub` and their single
+  and record forms round the exact A*C ± B once, where they rounded the
+  product and the sum apart (the single forms three times), so gcc's
+  default `a*b+c` could read one bit off and `-2^31 * DBL_MAX + inf` read
+  NaN; `fmsub.` and `fnmsub.` rounded to single. The VSX `xs*m*sp` and
+  `xs*m*qp` ops read their target, the addend or multiplicand.
+- Python: PowerPC FP record forms set CR1 bit 3 to OX, where they wrote it
+  into CR3's EQ bit, and `mtfsb1.` sets CR1. FX rises only when an
+  exception bit is newly set, where one left set re-raised it after
+  `mtfsb0` cleared it. `mtfsf`, `mtfsb0`, `mtfsb1` and `mcrfs` keep FEX and
+  VX the summaries, `mtfsb1` of a clear exception bit raises FX, `mcrfs`
+  of field 1 clears VXSNAN, and `fcmpu` and `fcmpo` set FPCC's unordered
+  bit.
+- Python: ppc64 `lxsd` loads doubleword 0 and zeroes doubleword 1, where it
+  loaded doubleword 1; little-endian `stxvw4x` stores word 0 first, where it
+  reversed the words; `fmrgew` and `fmrgow` merge the high and the low
+  words, FRA's first, where they took the other words in the other order.
+- Python: PowerPC `stfs` and its forms store the ISA's bits of fS,
+  truncating, where they rounded to nearest and an exponent past a single's
+  gave infinity, and `lfs` and its forms keep a signalling NaN signalling,
+  so a float copied through an FPR keeps its bits. `xscvdpspn` keeps
+  doubleword 1, which the ISA leaves undefined.
 - Python: x87 `fprem` and `fprem1` lift as the opaque `x87Prem` and
   `x87Prem1`, each with a status op that sets C0-C3. They computed about 0
   and left C0-C3 alone, so glibc's `fmodl` loop tested a stale C2.
