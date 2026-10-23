@@ -14,7 +14,7 @@ cfg
   0x10000300 9 ops goto -> [0x1000030c]
   0x1000030c 18 ops goto -> [0x10000870]
   0x10000870 5 ops unresolved@0x1000087c -> []
-tracked [r0, r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r13, r30, LR, CTR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20000:4, u:0x20200:4, u:0x27800:4, u:0x5aa00:4, u:0x7b900:1, u:0x7ba00:4, u:0x7bb00:1, u:0x7bc00:4, u:0x7be00:4]
+tracked [r0, r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r13, r30, LR, CTR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20100:4, u:0x20300:4, u:0x27900:4, u:0x5ab00:4, u:0x7a000:1, u:0x7a100:4, u:0x7a200:1, u:0x7a300:4, u:0x7a500:4]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r1]
@@ -31,7 +31,7 @@ indirect_branch %v0, %v8, %v10
 == eight_int_args @0x100004bc
 cfg
   0x100004bc 51 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20000:4, u:0x20200:4]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20100:4, u:0x20300:4]
 arg 0 [%v12]
 arg 1 [%v16]
 arg 2 [%v20]
@@ -100,7 +100,7 @@ return %v0, %v41, %v48, %v16, %v49, %v50, %v51
 == mixed_args @0x10000538
 cfg
   0x10000538 45 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20000:4, u:0x20200:4]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20100:4, u:0x20300:4]
 arg 0 [%v12]
 arg 1 [%v16]
 arg 2 [%v20]
@@ -159,7 +159,7 @@ return %v0, %v33, %v40, %v16, %v41, %v42, %v43
 == point_sum @0x100005a4
 cfg
   0x100005a4 30 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r30, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20000:4, u:0x20200:4]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r30, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20100:4, u:0x20300:4]
 arg 0 [%v16]
 arg 1 [%v26]
 float_arg 0 [%v27]
@@ -200,7 +200,7 @@ return %v0, %v24, %v25, %v26, %v27, %v28, %v29
 == make_pair @0x100005ec
 cfg
   0x100005ec 37 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20000:4, u:0x20200:4]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20100:4, u:0x20300:4]
 arg 0 [%v12]
 arg 1 [%v16]
 arg 2 [%v20]
@@ -248,7 +248,7 @@ return %v0, %v31, %v32, %v16, %v33, %v34, %v35
 == tail_caller @0x1000063c
 cfg
   0x1000063c 42 ops return -> []
-tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20000:4, u:0x20200:4]
+tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20100:4, u:0x20300:4]
 arg 0 [%v16]
 arg 1 [%v20]
 float_arg 0 [%v23]
@@ -320,7 +320,7 @@ return %v43, %v44, %v45, %v46, %v47, %v48, %v49
 == main @0x1000069c
 cfg
   0x1000069c 120 ops return -> []
-tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20000:4, u:0x20200:4]
+tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x20100:4, u:0x20300:4]
 frame_address_in_call_register
 float_arg 0 [%v26]
 float_arg 1 [%v27]
