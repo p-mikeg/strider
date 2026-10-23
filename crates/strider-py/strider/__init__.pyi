@@ -10,7 +10,7 @@ The public API is the domain submodules `strider.ir`, `strider.lift`,
 from __future__ import annotations
 
 # Outside `__all__` but part of the surface: `explore.shutdown(port)` is the
-# supported way to stop an explorer `Lifter.visualize` started on another
+# supported way to stop an explorer `explore.visualize` started on another
 # thread.
 from . import explore as explore
 from . import cfg as cfg

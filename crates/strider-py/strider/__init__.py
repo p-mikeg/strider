@@ -61,7 +61,7 @@ def _export(module, *names: str) -> None:
 from . import _api as _mod_api  # noqa: E402
 
 # `explore` is a submodule, not an attribute the extension binds; import it so
-# `strider.explore.shutdown(port)` works without `Lifter.visualize` having run.
+# `strider.explore.visualize` / `shutdown` work without an explicit import.
 from . import explore as explore  # noqa: E402
 
 lift.ElfLifter = _mod_api.ElfLifter          # type: ignore[attr-defined]

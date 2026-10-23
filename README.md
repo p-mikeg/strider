@@ -45,7 +45,7 @@ for hit in function.find_all(pattern, ignore_casts=True):
 # which stays usable on large functions. It prints a local URL and serves
 # until Ctrl-C; background=True serves on a thread and returns the port, so
 # you can keep querying:
-port = prog.visualize(function, background=True)
+port = strider.explore.visualize(function, background=True)
 strider.explore.shutdown(port)
 ```
 
@@ -172,7 +172,7 @@ built, so merge every ELF with `add_elf` before building the workers.
 
 A 0.1.0 pattern that now matches nothing has most often met `ConstantFold`'s
 repeated-term factoring: `x + x*2` reaches the query as `x*3`. Draw the function
-with `prog.visualize(function)` to see the shape the optimizer left behind.
+with `strider.explore.visualize(function)` to see the shape the optimizer left behind.
 
 ## Documentation
 
