@@ -281,7 +281,9 @@ fn peel(
     Some((Masked::Of(x), witness))
 }
 
-/// Bits of `v` its producer alone proves zero.
+/// Bits of `v` its producer alone proves zero: a one-hop subset of
+/// `known_bits`' `node_known_bits`, so an over-width `ShiftLeft` proves
+/// nothing here where that proves every bit.
 fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId) -> u128 {
     if let Some(k) = edit.int_const_u128(v) {
         return !k;
