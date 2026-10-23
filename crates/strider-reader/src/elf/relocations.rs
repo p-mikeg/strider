@@ -580,7 +580,10 @@ fn without_repeated_tables_of<Elf: object::read::elf::FileHeader>(
         }
         Some(())
     };
-    Ok(rewritten().map(|()| bytes))
+    // `object` reads the whole header table in-file at `sizeof(Shdr)` a
+    // header, so every field written lies in `bytes`.
+    rewritten().ok_or_else(|| anyhow::anyhow!("a section header lies outside the file"))?;
+    Ok(Some(bytes))
 }
 
 /// For each `SHT_REL` `R_MIPS_HI16` in `relocs`, the offset of the next
