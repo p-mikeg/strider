@@ -330,7 +330,9 @@ when both IR slots hold the same value.
   ThumbEE mode survive into a later `build_cfg` and drop a `Store`.
   Only ARM needs any of this: x86 and AArch64 declare flowing vars but no
   constructor commits one; MIPS commits `ISA_MODE` only at a `jalx` call
-  target, which analysis never decodes; and ppc `linkreg` is committed by
+  target, an ISA-mode var like ARM `blx`'s `TMode`, whose paint can reach
+  the caller's own bytes, so a region's successors carry the region's own
+  mode and never read it off the engine; and ppc `linkreg` is committed by
   `mtlr` but is itself flowing, and every constructor it selects emits the same
   p-code either way.
   NOT re-derived, and so still first-decode-wins: two edges reaching one

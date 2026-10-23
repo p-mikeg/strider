@@ -567,6 +567,12 @@
 
 ### Fixed
 
+- Python: an ARM or Thumb `blx #imm`, or a MIPS `jalx`, to a callee below
+  the caller no longer switches the ISA mode of the caller's own successors.
+  The call commits the mode at its target, painting forward over the caller,
+  and the edges the caller's region enqueued read it there, so on a fresh
+  engine the ARM `nop` after the `blx` in clang Thumb kernels' `__bad_stack`
+  decoded as a phantom Thumb call, and a MIPS `jalx` failed to build.
 - Python: PowerPC `fctid` and `fctiw` round by FPSCR.RN, where they
   truncated, and `fctidu` and `fctiwu` break a tie to even, where they broke
   it away from zero (all four under `fp_rounding_mode_is_nearest`, which takes

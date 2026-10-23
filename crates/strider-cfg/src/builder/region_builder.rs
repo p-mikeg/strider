@@ -337,6 +337,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         self.hold_isa_mode(addr)?;
         let mut lift = self.lift_unheld(addr)?;
         if self.hold_delay_slot(addr, lift.machine_insn_len)? {
+            // The first decode may have committed the mode at a target below,
+            // painting `addr` itself.
+            self.hold_isa_mode(addr)?;
             lift = self.lift_unheld(addr)?;
         }
         self.last_lift = Some(addr);
@@ -642,11 +645,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         };
         let region = self.finish_current_region(terminator)?;
         if !is_tail_call {
-            self.builder.enqueue(
-                Some(region),
-                branch_target_addr,
-                self.start_addr.machine_addr.addr,
-            );
+            self.builder
+                .enqueue(Some(region), branch_target_addr, self.isa_mode);
         }
         Ok(InsnOutcome::RegionClosed)
     }
@@ -699,8 +699,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 let stub = self.builder.tail_call_stub(successor)?;
                 self.builder.region_graph.add_edge(region, stub, ());
             } else {
-                self.builder
-                    .enqueue(Some(region), successor, self.start_addr.machine_addr.addr);
+                self.builder.enqueue(Some(region), successor, self.isa_mode);
             }
         }
         Ok(InsnOutcome::RegionClosed)
@@ -1049,8 +1048,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // PhiCollapse), so this costs only build time.
                 if self.insns.is_empty() || is_zero_op {
                     let region = self.finish_current_region(RegionTerminator::Unconditional)?;
-                    self.builder
-                        .enqueue(Some(region), cur_addr, self.start_addr.machine_addr.addr);
+                    self.builder.enqueue(Some(region), cur_addr, self.isa_mode);
                     return Ok(());
                 }
             }
