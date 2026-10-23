@@ -567,6 +567,10 @@
 
 ### Fixed
 
+- Python: a `strider.template.float_const` with a set bit above the width it
+  is evaluated at refuses the rewrite, as Rust `float_const` and
+  `float_const_with_fn` do. The bits were masked to the width, so an f64's
+  bits at an F32 operand (`1.0` as `0x3ff0000000000000`) built `0.0`.
 - Python: `Function.rewrite` / `rewrite_all`, and Rust `apply_rules_count`,
   count a site once. A match whose only consumer an earlier fire of the same
   walk had replaced was still rewritten and counted, and its fingerprints

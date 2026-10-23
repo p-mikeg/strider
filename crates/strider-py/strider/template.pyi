@@ -46,7 +46,9 @@ def int_const(value: int) -> Template:
 def bool_const(value: bool) -> Template:
     """Build a 1-bit boolean constant equal to `value`."""
 def float_const(bits: int) -> Template:
-    """Build a float constant with raw bit pattern `bits`."""
+    """Build a float constant with the IEEE 754 bit pattern `bits`, at the
+    width it is evaluated at; a set bit above that width refuses the
+    rewrite."""
 
 def int_add(l: TemplateLike, r: TemplateLike) -> Template:
     """Build integer addition."""
