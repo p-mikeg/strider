@@ -156,9 +156,7 @@ mod tests {
     fn dot_string(bytes: Vec<u8>, start: u64) -> String {
         let arch = SleighArch::x86_64();
         let reader = BufMemReader::new(bytes, start);
-        let sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-        let mut engine = DecodeEngine::new(arch, sleigh).expect("decode engine");
+        let mut engine = DecodeEngine::new(arch, reader).expect("decode engine");
         let cfg = engine
             .build_cfg(start.into(), &CfgOptions::default())
             .expect("build_cfg on synthetic bytes");

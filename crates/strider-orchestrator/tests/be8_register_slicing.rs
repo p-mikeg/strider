@@ -68,8 +68,7 @@ fn preserve_masks(arch: SleighArch) -> Vec<u128> {
 
 fn lift_snippet(arch: SleighArch) -> strider_ir::Function {
     let reader = BufMemReader::new(snippet_bytes(), BASE);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let mut lifter = Lifter::new(arch, sleigh).expect("lifter");
+    let mut lifter = Lifter::new(arch, reader).expect("lifter");
     let cc = CallingConvention::arm_aapcs()
         .build(lifter.sleigh_regs())
         .expect("cc");

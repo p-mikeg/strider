@@ -102,15 +102,14 @@ fn entry_of(elf: &OwnedElf, addr: u64) -> u64 {
 /// The lifted and optimised function at `entry` under `powerpc64_elf_v1`.
 fn analyze(elf: &OwnedElf, entry: u64) -> strider_ir::Function {
     let arch = SleighArch::ppc64be();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        ElfFileMemReader::new(elf, RelocationMode::Unapplied).expect("mem"),
-    )
-    .expect("sleigh");
     let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> =
         Box::new(ElfFileMemReader::new(elf, RelocationMode::Unapplied).expect("rom"));
-    let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(rom)).expect("strider");
+    let mut strider = strider_orchestrator::Strider::new(
+        arch,
+        ElfFileMemReader::new(elf, RelocationMode::Unapplied).expect("mem"),
+        Some(rom),
+    )
+    .expect("strider");
     let cc = CallingConvention::powerpc64_elf_v1()
         .build(strider.sleigh_regs())
         .expect("cc");

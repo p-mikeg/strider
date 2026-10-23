@@ -114,13 +114,7 @@ fn with_test_lifter_arch_cc(
     per_address_ccs: &rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
     f: impl FnOnce(&mut FunctionLifter<'_, TestReader>, strider_cfg::RegionId),
 ) {
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(term_bytes, 0x1000),
-    )
-    .expect("create test Sleigh");
-    let mut lifter = Lifter::new(arch, sleigh).expect("lifter");
+    let mut lifter = Lifter::new(arch, BufMemReader::new(term_bytes, 0x1000)).expect("lifter");
     let cfg = lifter
         .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
         .expect("throwaway cfg");
@@ -1631,12 +1625,7 @@ pub(super) fn lift_bytes_with_opts(
     bytes: Vec<u8>,
     opts: strider_cfg::CfgOptions,
 ) -> anyhow::Result<strider_ir::Function> {
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
-    )?;
-    let mut lifter = Lifter::new(arch, sleigh)?;
+    let mut lifter = Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000))?;
     let cfg = lifter.build_cfg(0x1000u64.into(), &opts)?;
     let built = cc.build(lifter.sleigh_regs())?;
     Ok(lifter

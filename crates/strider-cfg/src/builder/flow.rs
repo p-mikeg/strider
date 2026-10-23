@@ -289,8 +289,7 @@ mod tests {
             inner: rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x100], 0x1000),
             reads: std::rc::Rc::clone(&reads),
         };
-        let sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+        let sleigh = arch.sleigh(reader).expect("create Sleigh");
         (sleigh, reads)
     }
 
@@ -353,8 +352,7 @@ mod tests {
         use strider_target::SleighArch;
         let arch = SleighArch::arm();
         let reader = BufMemReader::new(vec![0u8; 0x100], 0x1000);
-        let mut sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+        let mut sleigh = arch.sleigh(reader).expect("create Sleigh");
         let flow = FlowVars::discover(&sleigh).expect("discover flow vars");
         assert!(
             flow.vars
@@ -409,12 +407,9 @@ mod tests {
             if arch.flow_commit_vars().is_empty() {
                 continue;
             }
-            let sleigh = rsleigh::Sleigh::new(
-                arch.sla_spec(),
-                arch.pspec(),
-                rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0),
-            )
-            .expect("create Sleigh");
+            let sleigh = arch
+                .sleigh(rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0))
+                .expect("create Sleigh");
             let flow = FlowVars::discover(&sleigh).expect("flow vars");
             for &name in arch.flow_commit_vars() {
                 let (_, class) = want

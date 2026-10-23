@@ -26,13 +26,7 @@ const ABS_VAL_BASE: u64 = 0x4007d0;
 
 fn engine(bytes: Vec<u8>, base: u64) -> Engine {
     let arch = SleighArch::mipsbe32();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes, base),
-    )
-    .expect("create Sleigh");
-    DecodeEngine::new(arch, sleigh).expect("decode engine")
+    DecodeEngine::new(arch, BufMemReader::new(bytes, base)).expect("decode engine")
 }
 
 /// A cold build at `entry` in ISA `mode`, which production reads off the

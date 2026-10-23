@@ -43,8 +43,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .address();
 
     let arch = strider_target::SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
-    let mut strider = strider_orchestrator::Strider::new(arch, sleigh, Some(Box::new(rom)))?;
+    let mut strider = strider_orchestrator::Strider::new(arch, mem_reader, Some(Box::new(rom)))?;
     let cc = strider_target::CallingConvention::x86_64_systemv().build(strider.sleigh_regs())?;
 
     let result = strider.analyze(

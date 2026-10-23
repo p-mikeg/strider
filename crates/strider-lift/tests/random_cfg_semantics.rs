@@ -604,13 +604,9 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
         .flat_map(|(g, blocks)| assemble(blocks, BASE + g as u64 * SPAN))
         .collect();
     let arch = strider_target::SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        rsleigh::mem_readers::BufMemReader::new(image, BASE),
-    )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    let mut lifter =
+        strider_lift::lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(image, BASE))
+            .expect("lifter");
     let mut tally = Tally::default();
     for (g, blocks) in functions.iter().enumerate() {
         let base = BASE + g as u64 * SPAN;

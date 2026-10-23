@@ -10,13 +10,11 @@ fn lift(
     cc: strider_target::CallingConvention,
     bytes: Vec<u8>,
 ) -> strider_ir::Function {
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    let mut lifter = strider_lift::lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
     )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    .expect("lifter");
     let cc = cc.build(lifter.sleigh_regs()).expect("cc");
     let cfg = lifter
         .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())

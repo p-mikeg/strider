@@ -19,13 +19,11 @@ const BYTES: [u8; 16] = [
 #[test]
 fn an_opaque_register_load_does_not_forward_across_a_named_register_write() {
     let arch = strider_target::SleighArch::ppc32be();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    let mut lifter = strider_lift::lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(BYTES.to_vec(), 0x1000),
     )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    .expect("lifter");
     let sr0 = lifter.sleigh_regs().name_to_vn("sr0").expect("sr0");
     let cc = strider_target::CallingConvention::powerpc_sysv32()
         .build(lifter.sleigh_regs())

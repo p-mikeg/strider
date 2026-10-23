@@ -59,7 +59,8 @@ fn transient_decode_vars_resolve_on_their_preset() {
     for preset in ArchPreset::ALL {
         let arch = preset.arch();
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+        let sleigh = arch
+            .sleigh(reader)
             .unwrap_or_else(|e| panic!("{preset:?}: Sleigh::new failed: {e:?}"));
         for name in arch.transient_decode_vars() {
             sleigh
@@ -77,7 +78,8 @@ fn internal_registers_resolve_on_their_preset() {
     for preset in ArchPreset::ALL {
         let arch = preset.arch();
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![], 0x0);
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader)
+        let sleigh = arch
+            .sleigh(reader)
             .unwrap_or_else(|e| panic!("{preset:?}: Sleigh::new failed: {e:?}"));
         let regs = sleigh
             .regs()
