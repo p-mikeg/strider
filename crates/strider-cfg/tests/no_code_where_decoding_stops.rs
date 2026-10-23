@@ -4,7 +4,6 @@
 //! gcc traceback table) and a range the image marks as data (an ARM literal
 //! pool after a call to an unmarked no-return function).
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{
     Cfg, CfgOptions, DataRanges, DecodeEngine, PcodeInsnAddr, RegionTerminator, ResolvedTargets,
@@ -13,8 +12,7 @@ use strider_target::SleighArch;
 
 fn build(arch: &SleighArch, bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> anyhow::Result<Cfg> {
     let reader = BufMemReader::new(bytes, start);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-    DecodeEngine::new(*arch, sleigh)
+    DecodeEngine::new(*arch, reader)
         .expect("decode engine")
         .build_cfg(start.into(), opts)
 }

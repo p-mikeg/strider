@@ -16,16 +16,7 @@ fn repeating_one_entry_does_not_exhaust_the_context_commit_log() {
     let mut bytes = vec![0u8; 0x40];
     bytes[0x00..0x02].copy_from_slice(&[0x70, 0x47]); // 0x1000: bx lr (Thumb)
     bytes[0x10..0x14].copy_from_slice(&[0x1e, 0xff, 0x2f, 0xe1]); // 0x1010: bx lr (ARM)
-    let mut lifter = Lifter::new(
-        arch,
-        rsleigh::Sleigh::new(
-            arch.sla_spec(),
-            arch.pspec(),
-            BufMemReader::new(bytes, 0x1000),
-        )
-        .expect("create Sleigh"),
-    )
-    .unwrap();
+    let mut lifter = Lifter::new(arch, BufMemReader::new(bytes, 0x1000)).unwrap();
     // What a clone of the engine decodes the Thumb entry as, which is what
     // `pcode_at` answers with.
     let thumb_decode = |l: &Lifter<BufMemReader<Vec<u8>>>| {

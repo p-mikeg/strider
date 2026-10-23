@@ -48,8 +48,7 @@ fn lift(
 ) -> anyhow::Result<Lifted> {
     let entry = 0x1000u64;
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    let mut h = strider_orchestrator::Lifter::new(arch, sleigh)?;
+    let mut h = strider_orchestrator::Lifter::new(arch, reader)?;
     let cc = cc.build(h.sleigh_regs())?;
     let cfg = h.build_cfg(
         strider_cfg::MachineInsnAddr::from(entry),

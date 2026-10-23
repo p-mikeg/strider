@@ -49,8 +49,7 @@ fn analyze(case: &str, fn_name: &str, opt: Opt) -> Function {
         strider_reader::elf::RelocationMode::Unapplied,
     )
     .expect("mem reader");
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem).expect("sleigh");
-    let mut lifter = strider_orchestrator::Lifter::new(arch, sleigh).expect("lifter");
+    let mut lifter = strider_orchestrator::Lifter::new(arch, mem).expect("lifter");
     let cc = CallingConvention::arm_aapcs()
         .build(lifter.sleigh_regs())
         .expect("cc");

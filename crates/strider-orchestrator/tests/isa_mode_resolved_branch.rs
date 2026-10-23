@@ -359,22 +359,16 @@ fn analyze_resolves_an_interworking_table_in_each_arm_mode() {
     use interworking_table::{ARM_ARMS, BASE, THUMB_ARMS};
 
     let bytes = interworking_table::bytes();
-    let sleigh_arch = Arch::Arm.sleigh();
-    let sleigh = rsleigh::Sleigh::new(
-        sleigh_arch.sla_spec(),
-        sleigh_arch.pspec(),
-        BufMemReader::new(bytes.clone(), BASE),
-    )
-    .expect("sleigh");
-    let cc = Arch::Arm
-        .cc()
-        .build(&sleigh.regs().expect("regs"))
-        .expect("cc");
     let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
         strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone()),
     );
-    let mut strider =
-        strider_orchestrator::Strider::new(sleigh_arch, sleigh, Some(rom)).expect("Strider::new");
+    let mut strider = strider_orchestrator::Strider::new(
+        Arch::Arm.sleigh(),
+        BufMemReader::new(bytes.clone(), BASE),
+        Some(rom),
+    )
+    .expect("Strider::new");
+    let cc = Arch::Arm.cc().build(strider.sleigh_regs()).expect("cc");
     let result = strider
         .analyze(
             BASE,

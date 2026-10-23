@@ -15,8 +15,6 @@ fn build(bytes: &[u8], arms: &[u64]) -> anyhow::Result<Cfg> {
     let arch = SleighArch::x86_64();
     let mut code = bytes.to_vec();
     code.resize(bytes.len() + 16, 0xcc);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), BufMemReader::new(code, BASE))
-        .expect("create Sleigh");
     let known = FxHashMap::from_iter([(
         PcodeInsnAddr::at_machine_start(BASE),
         ResolvedTargets::table(arms.iter().map(|&a| strider_cfg::ResolvedTarget::from(a))),
@@ -25,7 +23,7 @@ fn build(bytes: &[u8], arms: &[u64]) -> anyhow::Result<Cfg> {
         known_targets: &known,
         ..CfgOptions::default()
     };
-    DecodeEngine::new(arch, sleigh)
+    DecodeEngine::new(arch, BufMemReader::new(code, BASE))
         .expect("decode engine")
         .build_cfg(BASE.into(), &opts)
 }
@@ -178,12 +176,6 @@ fn undecodable_bytes_reached_without_an_arm_still_fail_the_function() {
         0x74, 0x05, 0xff, 0xe0, 0xc3, 0xc3, 0xc3, 0x90, 0x48, 0x89, 0xc0, 0x06,
     ];
     let arch = SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes.to_vec(), BASE),
-    )
-    .expect("create Sleigh");
     let known = FxHashMap::from_iter([(
         PcodeInsnAddr::at_machine_start(0x1002),
         ResolvedTargets::table(vec![0x1004.into(), 0x1007.into()]),
@@ -193,7 +185,7 @@ fn undecodable_bytes_reached_without_an_arm_still_fail_the_function() {
         ..CfgOptions::default()
     };
     assert!(
-        DecodeEngine::new(arch, sleigh)
+        DecodeEngine::new(arch, BufMemReader::new(bytes.to_vec(), BASE))
             .expect("decode engine")
             .build_cfg(BASE.into(), &opts)
             .is_err()
@@ -203,12 +195,6 @@ fn undecodable_bytes_reached_without_an_arm_still_fail_the_function() {
 /// Builds over `bytes` with one `known_targets` entry per site.
 fn build_sites(bytes: &[u8], size: u64, sites: &[(u64, &[u64])]) -> anyhow::Result<Cfg> {
     let arch = SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes.to_vec(), BASE),
-    )
-    .expect("create Sleigh");
     let known = FxHashMap::from_iter(sites.iter().map(|&(site, arms)| {
         (
             PcodeInsnAddr::at_machine_start(site),
@@ -220,7 +206,7 @@ fn build_sites(bytes: &[u8], size: u64, sites: &[(u64, &[u64])]) -> anyhow::Resu
         known_targets: &known,
         ..CfgOptions::default()
     };
-    DecodeEngine::new(arch, sleigh)
+    DecodeEngine::new(arch, BufMemReader::new(bytes.to_vec(), BASE))
         .expect("decode engine")
         .build_cfg(BASE.into(), &opts)
 }
@@ -339,12 +325,6 @@ fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
     bytes.extend_from_slice(&[0; 16]);
 
     let arch = SleighArch::arm();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes, base),
-    )
-    .unwrap();
     let known = FxHashMap::from_iter([(
         PcodeInsnAddr::at_machine_start(base),
         ResolvedTargets::table(vec![
@@ -358,7 +338,7 @@ fn an_edge_decoded_off_an_arm_does_not_take_bytes_an_earlier_arm_decoded() {
         ..CfgOptions::default()
     };
     // An even entry is ARM state.
-    let cfg = DecodeEngine::new(arch, sleigh)
+    let cfg = DecodeEngine::new(arch, BufMemReader::new(bytes, base))
         .unwrap()
         .build_cfg(base.into(), &opts)
         .expect("build");
@@ -394,12 +374,6 @@ fn build_falling_arm(len: usize, arm: &[u8], data: Option<std::ops::Range<u64>>)
     let mut bytes = image(len, &[(0x1000, &[0xff, 0xe0]), (0x1002, &[0xc3])]);
     bytes[0x10..0x10 + arm.len()].copy_from_slice(arm);
     let arch = SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes, BASE),
-    )
-    .expect("create Sleigh");
     let known = FxHashMap::from_iter([(
         PcodeInsnAddr::at_machine_start(BASE),
         ResolvedTargets::table(vec![0x1002.into(), 0x1010.into()]),
@@ -410,7 +384,7 @@ fn build_falling_arm(len: usize, arm: &[u8], data: Option<std::ops::Range<u64>>)
         data_ranges: strider_cfg::DataRanges::new(data),
         ..CfgOptions::default()
     };
-    DecodeEngine::new(arch, sleigh)
+    DecodeEngine::new(arch, BufMemReader::new(bytes, BASE))
         .expect("decode engine")
         .build_cfg(BASE.into(), &opts)
         .expect("one bad arm must not fail the function")

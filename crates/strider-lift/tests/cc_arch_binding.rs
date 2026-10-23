@@ -20,12 +20,10 @@ fn lift_built_at(
     build: impl FnOnce(&rsleigh::SleighRegs) -> anyhow::Result<BuiltCallingConvention>,
     over: Option<(u64, Cc)>,
 ) -> anyhow::Result<()> {
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    let mut lifter = strider_lift::lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(code.to_vec(), 0x1000),
     )?;
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh)?;
     let built = build(lifter.sleigh_regs())?;
     let mut per_address_ccs = rustc_hash::FxHashMap::default();
     if let Some((addr, o)) = over {

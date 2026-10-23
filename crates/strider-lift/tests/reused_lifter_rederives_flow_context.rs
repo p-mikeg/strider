@@ -21,13 +21,8 @@ fn bytes() -> Vec<u8> {
 
 fn lifter() -> strider_lift::lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
     let arch = strider_target::SleighArch::arm_thumb();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        rsleigh::mem_readers::BufMemReader::new(bytes(), BASE),
-    )
-    .expect("sleigh");
-    strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter")
+    strider_lift::lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes(), BASE))
+        .expect("lifter")
 }
 
 /// Every machine instruction a build decoded, as opcode names per address.
@@ -86,13 +81,11 @@ fn thumbee_bytes() -> Vec<u8> {
 
 fn thumbee_lifter() -> strider_lift::lift::Lifter<rsleigh::mem_readers::BufMemReader<Vec<u8>>> {
     let arch = strider_target::SleighArch::arm_thumb();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    strider_lift::lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(thumbee_bytes(), BASE),
     )
-    .expect("sleigh");
-    strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter")
+    .expect("lifter")
 }
 
 /// A region owning `at` that records no p-code op and spans `span` bytes,
