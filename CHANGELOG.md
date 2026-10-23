@@ -573,12 +573,6 @@
   jne`, `shr; jne`, a sign test), or guards a reload of the same field. The
   cells past the table were seated as arms with nothing reported; the site
   is now deferred and reported as `unresolved_branch`.
-- Python: a seeded jump-table arm onto an address a direct edge already
-  found unmapped or undecodable is dropped (and named by Rust's
-  `Cfg::undecodable_seeded_targets`), as it is when no direct edge reached
-  the address first. It was kept, wired to the direct edge's stub, so
-  whether a `default: BUG()` arm seated its site depended on whether the
-  bounds guard branched to the same BUG word.
 - Python: an ARM or Thumb `blx #imm`, or a MIPS `jalx`, to a callee below
   the caller no longer switches the ISA mode of the caller's own successors.
   The call commits the mode at its target, painting forward over the caller,
