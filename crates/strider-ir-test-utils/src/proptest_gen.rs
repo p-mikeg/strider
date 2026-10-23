@@ -119,15 +119,15 @@ pub fn step_seq() -> impl Strategy<Value = Vec<Step>> {
 /// One operand bucket per width `int_ty()` emits, plus I1 for comparisons.
 #[derive(Default)]
 struct Pools {
-    u8s: Vec<strider_ir::Value>,
-    u16s: Vec<strider_ir::Value>,
-    u32s: Vec<strider_ir::Value>,
-    u64s: Vec<strider_ir::Value>,
-    bools: Vec<strider_ir::Value>,
+    u8s: Vec<strider_ir::node::ValueId>,
+    u16s: Vec<strider_ir::node::ValueId>,
+    u32s: Vec<strider_ir::node::ValueId>,
+    u64s: Vec<strider_ir::node::ValueId>,
+    bools: Vec<strider_ir::node::ValueId>,
 }
 
 impl Pools {
-    fn bucket(&self, ty: ValueType) -> &Vec<strider_ir::Value> {
+    fn bucket(&self, ty: ValueType) -> &Vec<strider_ir::node::ValueId> {
         match ty {
             ValueType::Int(8) => &self.u8s,
             ValueType::Int(16) => &self.u16s,
@@ -140,7 +140,7 @@ impl Pools {
         }
     }
 
-    fn bucket_mut(&mut self, ty: ValueType) -> &mut Vec<strider_ir::Value> {
+    fn bucket_mut(&mut self, ty: ValueType) -> &mut Vec<strider_ir::node::ValueId> {
         match ty {
             ValueType::Int(8) => &mut self.u8s,
             ValueType::Int(16) => &mut self.u16s,
@@ -153,7 +153,7 @@ impl Pools {
         }
     }
 
-    fn pick(&self, ty: ValueType, idx: u8) -> Option<strider_ir::Value> {
+    fn pick(&self, ty: ValueType, idx: u8) -> Option<strider_ir::node::ValueId> {
         let b = self.bucket(ty);
         if b.is_empty() {
             None
@@ -163,7 +163,7 @@ impl Pools {
     }
 
     /// Any tracked value, so the replay always has something to return.
-    fn any_value(&self) -> Option<strider_ir::Value> {
+    fn any_value(&self) -> Option<strider_ir::node::ValueId> {
         for b in [&self.u64s, &self.u32s, &self.u16s, &self.u8s, &self.bools] {
             if let Some(&v) = b.last() {
                 return Some(v);

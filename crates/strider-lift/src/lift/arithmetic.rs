@@ -79,9 +79,9 @@ impl Coerce {
     fn apply(
         self,
         b: &mut strider_ir::FunctionBuilder,
-        v: strider_ir::Value,
+        v: strider_ir::node::ValueId,
         ty: ValueType,
-    ) -> Result<strider_ir::Value> {
+    ) -> Result<strider_ir::node::ValueId> {
         match self {
             Self::Convert => b.convert_to_int_if_needed(v, ty),
             Self::SignExtend => b.extend_if_needed(v, ty, ExtendOp::SignExtend),
@@ -169,9 +169,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// that are not powers of two (`I24`, `I48`, `I80`, ...) as well.
     fn saturate_shift_count(
         &mut self,
-        count: strider_ir::Value,
+        count: strider_ir::node::ValueId,
         out_ty: ValueType,
-    ) -> Result<strider_ir::Value> {
+    ) -> Result<strider_ir::node::ValueId> {
         let count_ty = strider_ir::IRViewer::value_type(self.builder.function(), count)?;
         if count_ty.bit_width() <= out_ty.bit_width() {
             return Ok(count);
@@ -306,7 +306,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Canonical logical NOT: `Xor(x, IntConst(1)):I1`, since at `I1` the
     /// all-ones constant of a bitwise complement is `1`.  `x` must already be
     /// `I1`.  Shared by the boolean, integer-cmp and float-cmp lowerings.
-    pub(super) fn build_logical_not(&mut self, x: strider_ir::Value) -> Result<strider_ir::Value> {
+    pub(super) fn build_logical_not(
+        &mut self,
+        x: strider_ir::node::ValueId,
+    ) -> Result<strider_ir::node::ValueId> {
         let one = self.builder.build_boolean_const(true);
         self.builder
             .build_int_binary_operation(x, one, IntBinaryOp::Xor, strider_ir::ValueType::I1)

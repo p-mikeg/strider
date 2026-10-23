@@ -4,7 +4,8 @@
 //! with shift/mask operations inserted for the slice.
 
 use anyhow::{anyhow, bail};
-use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, Value, ValueType, VnTypeExt};
+use strider_ir::node::ValueId;
+use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, ValueType, VnTypeExt};
 
 use super::FunctionLifter;
 use super::pcode_util::Result;
@@ -75,7 +76,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         space: rsleigh::VnSpace,
         off: u64,
         what: &str,
-    ) -> Result<strider_ir::Value> {
+    ) -> Result<ValueId> {
         let space_info = self
             .lifter
             .sleigh()
@@ -87,15 +88,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         )
     }
 
-    pub(crate) fn read_vns(&mut self, vns: &[rsleigh::Vn]) -> Result<Vec<strider_ir::Value>> {
+    pub(crate) fn read_vns(&mut self, vns: &[rsleigh::Vn]) -> Result<Vec<ValueId>> {
         vns.iter().map(|vn| self.read_vn(vn)).collect()
     }
 
-    pub(super) fn read_input(
-        &mut self,
-        insn: &rsleigh::Insn,
-        n: usize,
-    ) -> Result<strider_ir::Value> {
+    pub(super) fn read_input(&mut self, insn: &rsleigh::Insn, n: usize) -> Result<ValueId> {
         let vn = crate::lift::pcode_util::nth_input_or_err(insn, n)?;
         self.read_vn(vn)
     }
@@ -103,7 +100,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// UNIQUE goes through the same aliasing path as REGISTER: Sleigh
     /// sometimes writes a wide unique and reads a narrow slice of it (MIPS
     /// MULT writes a 64-bit unique, then Copy reads 32 bits of it).
-    pub(crate) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<strider_ir::Value> {
+    pub(crate) fn read_vn(&mut self, vn: &rsleigh::Vn) -> Result<ValueId> {
         let space = vn.addr_space;
         match space {
             rsleigh::VnSpace::CONST => self.builder.build_int_const(vn.addr_off, vn.int_type()?),
@@ -122,7 +119,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// reads merge. Ghidra's decompiler lifts it the same way, as its builtin
     /// `read_volatile` user-op. A write stays a plain register write: no read
     /// observes it.
-    fn read_volatile(&mut self, vn: &rsleigh::Vn) -> Result<Value> {
+    fn read_volatile(&mut self, vn: &rsleigh::Vn) -> Result<ValueId> {
         let (_, outputs) =
             self.builder
                 .build_call_other(READ_VOLATILE_USER_OP_ID, &[], &[*vn], false, false)?;
@@ -135,7 +132,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         Ok(outputs[0])
     }
 
-    pub(crate) fn write_vn(&mut self, vn: &rsleigh::Vn, val: strider_ir::Value) -> Result<()> {
+    pub(crate) fn write_vn(&mut self, vn: &rsleigh::Vn, val: ValueId) -> Result<()> {
         // Stash an ISA-mode commit for `pending_isa_mode`. Full `Vn` equality,
         // not just space+offset: a differently-sized varnode sharing the offset
         // is a different register.
@@ -179,7 +176,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     }
 
     /// Reads `reg` by shifting its slice out of the container and truncating.
-    pub(crate) fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<Value> {
+    pub(crate) fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<ValueId> {
         let ctx = match self.enter_sub_register(reg, "read_reg_vn")? {
             SubRegOutcome::Direct { container_reg } => {
                 return self.builder.read_variable(&container_reg);
@@ -209,7 +206,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// its complement within the container.  Skipping that positioning inverts
     /// the mask on an upper-half write (AArch64 `FCVT D0,S0` zeroing the upper
     /// 64 bits of V0) and silently zeros the container's lower half.
-    pub(crate) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: Value) -> Result<()> {
+    pub(crate) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: ValueId) -> Result<()> {
         let ctx = match self.enter_sub_register(reg, "write_reg_vn")? {
             SubRegOutcome::Direct { container_reg: _ } => {
                 // Register SSA slots hold integers at the register's natural
@@ -294,10 +291,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// preserved container bits.
     fn build_masked_insert(
         &mut self,
-        val: Value,
+        val: ValueId,
         reg: &rsleigh::Vn,
         ctx: &SubRegContext,
-    ) -> Result<Value> {
+    ) -> Result<ValueId> {
         let ty = ctx.container_ty;
         let shift_bits = ctx.shift_bits;
         let width_bits = ty.bit_width() as u64;

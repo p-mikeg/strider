@@ -45,5 +45,4 @@ pub use node::{
 pub use region::RegionId;
 pub use viewer::{IRViewer, IRWalker};
 
-pub type Value = node::ValueId;
 pub type ValueType = node::ValueType;

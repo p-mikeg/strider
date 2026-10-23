@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{
     Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntUnaryOp,
-    ReadOnlyMemory, Result, Value, ValueType,
+    ReadOnlyMemory, Result, ValueType,
 };
 
 /// Node-kind assertion vocabulary over entry-reachable nodes.
@@ -217,7 +217,7 @@ impl RegisterSet {
         cond_builder: F,
     ) -> Result<(Function, strider_ir::node::NodeId, T)>
     where
-        F: FnOnce(&mut FunctionBuilder) -> Result<(strider_ir::Value, T)>,
+        F: FnOnce(&mut FunctionBuilder) -> Result<(strider_ir::node::ValueId, T)>,
     {
         let mut b = self.build_fn()?;
         let entry = b.create_region_all()?;
@@ -256,7 +256,7 @@ impl RegisterSet {
 /// Propagates any error from the builder closure or from `FunctionBuilder::build`.
 pub fn make_empty_fn<F>(f: F) -> Result<Function>
 where
-    F: FnOnce(&mut FunctionBuilder) -> Result<Value>,
+    F: FnOnce(&mut FunctionBuilder) -> Result<ValueId>,
 {
     make_empty_fn_endian(strider_target::Endianness::Little, f)
 }
@@ -269,7 +269,7 @@ where
 /// Propagates any error from the builder or from `FunctionBuilder::build`.
 pub fn make_empty_fn_endian<F>(endianness: strider_target::Endianness, f: F) -> Result<Function>
 where
-    F: FnOnce(&mut FunctionBuilder) -> Result<Value>,
+    F: FnOnce(&mut FunctionBuilder) -> Result<ValueId>,
 {
     // No declared registers, so the trivial convention: only the synthetic SP
     // is tracked, as an unreferenced `InitialVar`.
@@ -294,9 +294,9 @@ where
 /// # Errors
 ///
 /// Propagates any error from the builder closure or from `FunctionBuilder::build`.
-pub fn make_fn_with_var<F>(vn: rsleigh::Vn, f: F) -> Result<(Function, Value)>
+pub fn make_fn_with_var<F>(vn: rsleigh::Vn, f: F) -> Result<(Function, ValueId)>
 where
-    F: FnOnce(&mut FunctionBuilder, Value) -> Result<Value>,
+    F: FnOnce(&mut FunctionBuilder, ValueId) -> Result<ValueId>,
 {
     let mut b = RegisterSet::new()
         .tracked(vn)
@@ -564,7 +564,7 @@ pub fn stack_args_at(base_offset: i128, increment: i128) -> Option<strider_targe
 /// Propagates any error from the builder closure or from `FunctionBuilder::build`.
 pub fn make_sp_fn<F>(stack_vn: rsleigh::Vn, f: F) -> Result<Function>
 where
-    F: FnOnce(&mut FunctionBuilder, Value) -> Result<()>,
+    F: FnOnce(&mut FunctionBuilder, ValueId) -> Result<()>,
 {
     let mut b = sp_frame(stack_vn).build_fn_single_region()?;
     let sp_val = b.read_variable(&stack_vn)?;

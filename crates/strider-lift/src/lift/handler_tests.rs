@@ -143,7 +143,7 @@ fn with_test_lifter_arch_cc(
 /// `value`'s producer tree: a tracked register's entry value prints as
 /// `r<offset>`, a constant as `<hex>:<type>`, any other node as
 /// `<kind>:<type>(<operands>)`.
-fn operand_tree(f: &strider_ir::Function, value: strider_ir::Value) -> String {
+fn operand_tree(f: &strider_ir::Function, value: strider_ir::node::ValueId) -> String {
     let node = f.producer(value);
     let ty = f.value_type(value).expect("a typed value");
     match f.node_kind(node) {
