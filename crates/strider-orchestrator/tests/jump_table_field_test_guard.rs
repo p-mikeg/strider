@@ -287,3 +287,36 @@ fn a_test_of_an_overlapping_load_bounds_the_field() {
     ];
     assert_only([head.as_slice(), &JMP_RAX].concat(), &[0, 1, 2, 3]);
 }
+
+/// `movzwl 0x10(%rdi),%eax ; cmp $0xfe,%eax ; jb dflt ; cmp $0x101,%eax ;
+/// ja dflt ; movzbl %al,%eax`: the cell is in [0xfe, 0x101], so the byte is
+/// 0xfe, 0xff, 0 or 1, and the recorded guards are lost at the truncate.
+#[test]
+#[ignore = "known limit: a guard lost at the truncate is trusted"]
+fn a_recorded_guard_lost_at_a_truncate_still_bounds_the_field() {
+    let head = [
+        0x0f, 0xb7, 0x47, 0x10, 0x3d, 0xfe, 0x00, 0x00, 0x00, 0x72, 0x29, 0x3d, 0x01, 0x01, 0x00,
+        0x00, 0x77, 0x22, 0x0f, 0xb6, 0xc0,
+    ];
+    assert_only([head.as_slice(), &JMP_RAX].concat(), &[0, 1, 4, 5]);
+}
+
+/// `movzbl 0x10(%rdi),%edx ; mov %edx,%eax ; test %esi,%esi ; je 1f ;
+/// or $0x100,%eax ; 1: testb $0xfc,%al ; jne dflt ; jmp *0x2000(,%rdx,8)`:
+/// the test reads the cell through a phi.
+#[test]
+#[ignore = "known limit: a test through a phi reads no bits"]
+fn a_test_through_a_phi_bounds_the_field() {
+    let head = [
+        0x0f, 0xb6, 0x57, 0x10, 0x89, 0xd0, 0x85, 0xf6, 0x74, 0x05, 0x0d, 0x00, 0x01, 0x00, 0x00,
+        0xa8, 0xfc, 0x75, 0x1f, 0xff, 0x24, 0xd5, 0x00, 0x20, 0x00, 0x00,
+    ];
+    assert_only(head.to_vec(), &[0, 1, 2, 3]);
+    // `mov %eax,%ecx ; shl $24,%ecx ; test %esi,%esi ; je 1f ; or $1,%ecx ;
+    // 1: cmp $0x3ffffff,%ecx ; ja dflt`.
+    let shl = [
+        0x89, 0xc1, 0xc1, 0xe1, 0x18, 0x85, 0xf6, 0x74, 0x03, 0x83, 0xc9, 0x01, 0x81, 0xf9, 0xff,
+        0xff, 0xff, 0x03, 0x77, 0x1f,
+    ];
+    assert_only([guarded(&shl), JMP_RAX.to_vec()].concat(), &[0, 1, 2, 3]);
+}
