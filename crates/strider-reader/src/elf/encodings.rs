@@ -1,7 +1,7 @@
 //! What every relocation type a row here names computes, and the field that
 //! value is encoded into: instruction immediates, GOT and TOC references, and
 //! the data words `object` reports `Unknown` (image-relative words, GOT/PLT
-//! slots, PC-relative words).
+//! slots, PC-relative words, TLS slots).
 //!
 //! Formulas are the psABI ones: `S` the symbol, `A` the addend, `P` the site,
 //! `B` the image base, `G` the symbol's GOT slot, `GOT` the GOT's start and
@@ -54,6 +54,9 @@ pub(crate) enum Value {
     /// `indirect(B + A)`: what the IFUNC resolver at `B + A` returns, which
     /// only running it computes: `R_*_IRELATIVE`.
     Indirect,
+    /// A TLS module id, offset, TP offset or descriptor, which only the
+    /// loader computes.
+    Tls,
     /// `S` plus the RELA addend: a GOT or PLT slot, whose `SHT_REL` field
     /// holds the PLT push address rather than an addend.
     Slot,
@@ -70,7 +73,7 @@ impl Value {
     pub(crate) fn reads_symbol(self) -> bool {
         !matches!(
             self,
-            Value::ImageRelative | Value::Indirect | Value::GotBasePcrel | Value::Toc
+            Value::ImageRelative | Value::Indirect | Value::Tls | Value::GotBasePcrel | Value::Toc
         )
     }
 }
@@ -211,6 +214,10 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             // materialised.
             elf::R_X86_64_GOTOFF64 | elf::R_X86_64_PLTOFF64 => C(V::GotRelative, data(8, false)),
             elf::R_X86_64_PC64 => C(V::Pcrel, data(8, false)),
+            elf::R_X86_64_DTPMOD64 | elf::R_X86_64_DTPOFF64 | elf::R_X86_64_TPOFF64 => {
+                C(V::Tls, data(8, false))
+            }
+            elf::R_X86_64_TLSDESC => C(V::Tls, data(16, false)),
             _ => return None,
         },
         A::I386 => match r_type {
@@ -222,6 +229,7 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             elf::R_386_GOT32 | elf::R_386_GOT32X => C(V::I386Got, data(4, false)),
             elf::R_386_GOTOFF => C(V::GotRelative, data(4, false)),
             elf::R_386_GOTPC => C(V::GotBasePcrel, data(4, false)),
+            elf::R_386_TLS_DESC => C(V::Tls, data(8, false)),
             _ => return None,
         },
         A::Aarch64 => match r_type {
@@ -278,6 +286,10 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             elf::R_AARCH64_MOVW_UABS_G2_NC => C(V::Abs, movw(2, false)),
             elf::R_AARCH64_MOVW_UABS_G3 => C(V::Abs, movw(3, false)),
             R_AARCH64_PLT32 => C(V::Pcrel, data(4, true)),
+            elf::R_AARCH64_TLS_DTPMOD | elf::R_AARCH64_TLS_DTPREL | elf::R_AARCH64_TLS_TPREL => {
+                C(V::Tls, data(8, false))
+            }
+            elf::R_AARCH64_TLSDESC => C(V::Tls, data(16, false)),
             _ => return None,
         },
         A::Arm => match r_type {
@@ -308,6 +320,7 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             elf::R_ARM_GOT_PREL => C(V::GotPcrel, data(4, false)),
             elf::R_ARM_GOTOFF => C(V::GotRelative, data(4, false)),
             elf::R_ARM_GOTPC => C(V::GotBasePcrel, data(4, false)),
+            elf::R_ARM_TLS_DESC => C(V::Tls, data(8, false)),
             _ => return None,
         },
         A::PowerPc | A::PowerPc64 => {
@@ -353,6 +366,9 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
                 elf::R_PPC64_TOC16_HI if ppc64 => C(V::TocRelative, F::PpcHalf16(Half::Hi)),
                 elf::R_PPC64_TOC16_HA if ppc64 => C(V::TocRelative, F::PpcHalf16(Half::Ha)),
                 elf::R_PPC64_TOC if ppc64 => C(V::Toc, data(8, false)),
+                elf::R_PPC64_DTPMOD64 | elf::R_PPC64_TPREL64 | elf::R_PPC64_DTPREL64 if ppc64 => {
+                    C(V::Tls, data(8, false))
+                }
                 _ => return None,
             }
         }
@@ -381,6 +397,11 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
                 elf::R_MIPS_HIGHER => C(V::Abs, F::MipsHalf16(Half::MipsHigher)),
                 elf::R_MIPS_HIGHEST => C(V::Abs, F::MipsHalf16(Half::MipsHighest)),
                 elf::R_MIPS_PC16 => C(V::Pcrel, F::MipsPc16),
+                elf::R_MIPS_TLS_DTPMOD64 | elf::R_MIPS_TLS_DTPREL64 | elf::R_MIPS_TLS_TPREL64
+                    if arch == A::Mips64 =>
+                {
+                    C(V::Tls, data(8, false))
+                }
                 _ => return None,
             }
         }

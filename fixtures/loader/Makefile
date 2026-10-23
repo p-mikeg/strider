@@ -34,6 +34,7 @@ MIPS32 := mips-linux-gnu-gcc -EB -mips32
 MICROMIPS := mips-linux-gnu-gcc -EB -mips32r2 -mmicromips
 MIPS64 := mips64el-linux-gnuabi64-gcc
 A64    := aarch64-linux-gnu-gcc
+ARM    := arm-linux-gnueabihf-gcc
 PPC32   := powerpc-linux-gnu-gcc
 PPC64   := powerpc64-linux-gnu-gcc
 PPC64LE := powerpc64le-linux-gnu-gcc
@@ -52,7 +53,9 @@ IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           ppc32be_got2.elf x64_copy_lib.elf x64_copy_pie.elf \
           aarch64_copy_lib.elf aarch64_copy.elf \
           aarch64_android_rela.elf aarch64_plain_rela.elf \
-          x86_textrel.elf x86_textrel_noshdr.elf
+          x86_textrel.elf x86_textrel_noshdr.elf \
+          x64_tls.elf x64_tlsdesc.elf aarch64_tls.elf aarch64_tls_trad.elf \
+          ppc64le_tls.elf mips64le_tls.elf x86_tlsdesc.elf arm_tlsdesc.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -155,6 +158,26 @@ $(OUTDIR)/x86_textrel.elf: src/textrel.c | $(OUTDIR)
 	$(X86) $(filter-out -fPIC,$(CFLAGS)) -fno-pic -shared -Wl,-z,notext $< -o $@
 $(OUTDIR)/x86_textrel_noshdr.elf: $(OUTDIR)/x86_textrel.elf
 	$(LLVM_OBJCOPY) --strip-sections $< $@
+
+# TLS slots of every width: 64-bit TP offsets, module ids and offsets, and
+# TLS descriptors (two words), AArch64's by default.
+TLS_LIB := -shared -Wl,-z,relro,-z,now
+$(OUTDIR)/x64_tls.elf: src/tls.c | $(OUTDIR)
+	$(X64) $(CFLAGS) $(TLS_LIB) $< -o $@
+$(OUTDIR)/x64_tlsdesc.elf: src/tls.c | $(OUTDIR)
+	$(X64) $(CFLAGS) -mtls-dialect=gnu2 $(TLS_LIB) $< -o $@
+$(OUTDIR)/aarch64_tls.elf: src/tls.c | $(OUTDIR)
+	$(A64) $(CFLAGS) $(TLS_LIB) $< -o $@
+$(OUTDIR)/aarch64_tls_trad.elf: src/tls.c | $(OUTDIR)
+	$(A64) $(CFLAGS) -mtls-dialect=trad $(TLS_LIB) $< -o $@
+$(OUTDIR)/ppc64le_tls.elf: src/tls.c | $(OUTDIR)
+	$(PPC64LE) $(CFLAGS) $(TLS_LIB) $< -o $@
+$(OUTDIR)/mips64le_tls.elf: src/tls.c | $(OUTDIR)
+	$(MIPS64) $(CFLAGS) $(TLS_LIB) $< -o $@
+$(OUTDIR)/x86_tlsdesc.elf: src/tls.c | $(OUTDIR)
+	$(X86) $(CFLAGS) -mtls-dialect=gnu2 $(TLS_LIB) $< -o $@
+$(OUTDIR)/arm_tlsdesc.elf: src/tls.c | $(OUTDIR)
+	$(ARM) $(CFLAGS) -mtls-dialect=gnu2 $(TLS_LIB) $< -o $@
 
 clean:
 	rm -rf $(OUTDIR)
