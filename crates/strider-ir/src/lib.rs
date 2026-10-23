@@ -28,6 +28,7 @@ mod node_signature;
 mod region;
 mod schedule;
 pub use ::read_only_memory::ReadOnlyMemory;
+pub use schedule::early_position;
 pub mod validate;
 mod viewer;
 pub mod walk;

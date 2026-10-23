@@ -150,3 +150,62 @@ pub(crate) fn schedule_early(ctx: &ScheduleContext<'_>, mut schedule: impl FnMut
         schedule(node);
     }
 }
+
+/// Where `value` is first computable on `tree`, the function's
+/// [`crate::control_dominator_tree`]: a control node at itself, a phi at its
+/// `Region`, and a floating node at the latest of its data inputs' positions,
+/// the tree root when it has none. `None` when a position is outside the tree
+/// or two inputs lie on different dominator branches.
+pub fn early_position(
+    function: &Function,
+    tree: &DominatorTree<NodeId>,
+    value: crate::node::ValueId,
+) -> Option<NodeId> {
+    let graph = function.graph();
+    let pinned_at = |node: NodeId| -> Option<Option<NodeId>> {
+        let at = match graph.node_kind(node) {
+            NodeKind::Phi | NodeKind::MemPhi => {
+                let token = graph.nth_input(node, NodeKind::PHI_TOKEN_SLOT)?;
+                graph.value_definition(token).0
+            }
+            _ if is_pinned(graph, node) => node,
+            _ => return None,
+        };
+        Some(tree.contains(at).then_some(at))
+    };
+    let data_preds = |node: NodeId| {
+        graph
+            .node_inputs(node)
+            .into_iter()
+            .filter(|&v| !graph.value_kind(v).is_control())
+            .map(|v| graph.value_definition(v).0)
+    };
+    let mut at: rustc_hash::FxHashMap<NodeId, Option<NodeId>> = Default::default();
+    let mut stack = vec![(graph.value_definition(value).0, false)];
+    while let Some((node, expanded)) = stack.pop() {
+        if expanded {
+            let mut latest = Some(tree.root());
+            for pred in data_preds(node) {
+                latest = match (latest, at.get(&pred).copied().flatten()) {
+                    (Some(cur), Some(pos)) if tree.dominates(cur, pos) => Some(pos),
+                    (Some(cur), Some(pos)) if tree.dominates(pos, cur) => Some(cur),
+                    _ => None,
+                };
+            }
+            at.insert(node, latest);
+            continue;
+        }
+        if at.contains_key(&node) {
+            continue;
+        }
+        if let Some(pos) = pinned_at(node) {
+            at.insert(node, pos);
+            continue;
+        }
+        // In progress: a data cycle back to it reads no position.
+        at.insert(node, None);
+        stack.push((node, true));
+        stack.extend(data_preds(node).map(|p| (p, false)));
+    }
+    at[&graph.value_definition(value).0]
+}

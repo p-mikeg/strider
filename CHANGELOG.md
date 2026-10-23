@@ -567,6 +567,11 @@
 
 ### Fixed
 
+- Python: `Function.rewrite` / `rewrite_all`, and Rust `rewrite_rule`, refuse
+  a match through a `Phi` / `MemPhi` whose replacement reads the value it
+  replaces with no phi between them, or is not available wherever that value
+  is. `phi(a, b) -> b` on a loop left a non-phi data cycle, and on a merge a
+  value defined on one arm only, both reported as a successful rewrite.
 - Python: under `relocated_got_is_rom=True` a MIPS global GOT entry is
   served only when the `.dynsym` header is `DT_SYMTAB`'s table; a header
   moved onto a decoy symbol served an import's entry as its lazy stub.
