@@ -567,6 +567,9 @@
 
 ### Fixed
 
+- Python: `ElfLifter.analyze` no longer raises when an attached symbol file
+  changed after the tables built from it, which is all it reads of one. A
+  change to the image itself still raises, from the read that would see it.
 - Python: an empty `CfgOptions(data_ranges=...)` range and a `BufferReader`
   region past the end of the address space raise `ValueError`, as every
   other range-checked constructor argument does. They raised `StriderError`.
