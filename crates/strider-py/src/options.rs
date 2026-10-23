@@ -550,8 +550,8 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 /// `return_slots_survive_untracked_writes`, each of which every compiler this
 /// analyses honours, `msr_register_keeps_mode`, which only ARM code
 /// switching mode through a register `msr` breaks, and
-/// `fp_rounding_mode_is_nearest`, which only code changing the SSE or PowerPC
-/// rounding mode breaks.
+/// `fp_rounding_mode_is_nearest`, which only code changing the SSE, PowerPC,
+/// ARM VFP or MIPS FPU rounding mode breaks.
 ///
 /// An omitted or `None` field takes the analysis default, as listed above.
 #[pyclass(eq, name = "AssumptionOptions", module = "strider.lift")]
@@ -743,16 +743,19 @@ assumption_fields! {
     /// `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`,
     /// `cvtsi2ss`, the 64-bit `cvtsi2sd` and their scalar VEX forms, and
     /// PowerPC FPSCR.RN at `fctid`, `fctiw`, `fctidu`, `fctiwu`, `fcfid`,
-    /// `fcfids`, `fcfidu`, `fcfidus`, `frsp` and `xscvdpspn`. The
-    /// truncating forms (`cvtt*`, `fcti*z`) read no mode, and the x87 stores
-    /// read the control word either way. Off, each reads the mode and selects
-    /// among its four, so a mode set by `ldmxcsr` or `mtfsfi` folds and an
-    /// unknown one stays a select. Wrong after `fesetround` or a caller's mode
-    /// change. Float arithmetic is taken to round to nearest, the conversions
-    /// lifted as opaque user ops (packed VEX, EVEX, `roundss`) are outside it,
-    /// and MXCSR.FTZ/DAZ and PowerPC FPSCR.NI/OE/UE are taken as 0, so
-    /// `none()` is not a sound floor for `-ffast-math` code or code that sets
-    /// those. Read by the lift, so `analyze` honours it and
+    /// `fcfids`, `fcfidu`, `fcfidus`, `frsp` and `xscvdpspn`, ARM
+    /// FPSCR.RMode at `vcvtr`, and MIPS FCSR.RM at `cvt.w` and `cvt.l`. The
+    /// fixed-mode forms (`cvtt*`, `fcti*z`, ARM `vcvt`, MIPS `round`,
+    /// `trunc`, `floor`, `ceil`, every AArch64 `fcvt*`) read no mode, and the
+    /// x87 stores read the control word either way. Off, each reads the mode
+    /// and selects among its four, so a mode set by `ldmxcsr`, `mtfsfi`,
+    /// `vmsr` or `ctc1` folds and an unknown one stays a select. Wrong after
+    /// `fesetround` or a caller's mode change. Float arithmetic is taken to
+    /// round to nearest, the conversions lifted as opaque user ops (packed
+    /// VEX, EVEX, `roundss`) are outside it, and MXCSR.FTZ/DAZ, PowerPC
+    /// FPSCR.NI/OE/UE, ARM FPSCR.FZ, AArch64 FPCR.FZ and MIPS FCSR.FS are
+    /// taken as 0, so `none()` is not a sound floor for `-ffast-math` code or
+    /// code that sets those. Read by the lift, so `analyze` honours it and
     /// `optimize` refuses to add it.
     fp_rounding_mode_is_nearest: bool,
 }

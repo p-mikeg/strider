@@ -186,13 +186,16 @@ pub struct AssumptionOptions {
     /// SSE and VEX conversion that reads it (`cvtsd2si`, `cvtss2si`,
     /// `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`,
     /// `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`, the 64-bit `cvtsi2sd`
-    /// and the scalar VEX forms), and PowerPC FPSCR.RN at `fctid`, `fctiw`,
+    /// and the scalar VEX forms), PowerPC FPSCR.RN at `fctid`, `fctiw`,
     /// `fctidu`, `fctiwu`, `fcfid`, `fcfids`, `fcfidu`, `fcfidus`, `frsp`
-    /// and `xscvdpspn`.  The truncating forms (`cvtt*`, `fcti*z`) read
-    /// no mode, and the x87 stores read the control word whatever this says.
-    /// Off, each conversion reads the mode and selects among its four, so a
-    /// mode the function sets (`ldmxcsr`, `mtfsfi`) folds and an unknown one
-    /// stays a select.
+    /// and `xscvdpspn`, ARM FPSCR.RMode (bits 22-23) at `vcvtr`, and MIPS
+    /// FCSR.RM (bits 0-1) at `cvt.w` and `cvt.l`.  The forms whose rounding
+    /// is fixed (`cvtt*`, `fcti*z`, ARM `vcvt`, MIPS `round`, `trunc`,
+    /// `floor` and `ceil`, and every AArch64 `fcvt*`) read no mode, and the
+    /// x87 stores read the control word whatever this says.  Off, each
+    /// conversion reads the mode and selects among its four, so a mode the
+    /// function sets (`ldmxcsr`, `mtfsfi`, `vmsr`, `ctc1`) folds and an
+    /// unknown one stays a select.
     ///
     /// Wrong where the code runs under another mode: after `fesetround`, or
     /// a mode a caller set or this analysis cannot place.  Outside it: the
@@ -201,8 +204,9 @@ pub struct AssumptionOptions {
     /// `roundss` and its kin), whose results nothing folds.  MXCSR.FTZ and
     /// DAZ are taken as 0 either way, so under `-ffast-math`, which sets them
     /// at startup, even [`AssumptionOptions::none`] narrows a denormal wrongly;
-    /// so are PowerPC FPSCR.NI, OE and UE, so code that sets them (non-IEEE
-    /// mode, enabled overflow or underflow traps) has no floor here either.
+    /// so are PowerPC FPSCR.NI, OE and UE, ARM FPSCR.FZ, AArch64 FPCR.FZ and
+    /// MIPS FCSR.FS, so code that sets them (non-IEEE mode, flush to zero,
+    /// enabled overflow or underflow traps) has no floor here either.
     ///
     /// Read by the lifter, so it counts only when the lift is given it
     /// (`AnalyzeOptions::assumptions`); added to a lifted function it changes
