@@ -215,24 +215,20 @@ pub fn instantiate_guarded<B: IRBuilder>(
         };
 
         // A template `FloatConst` carries raw IEEE bits with no width; the
-        // width is resolved here, so bits above it are dropped here.
-        let kind = match kind {
-            NodeKind::FloatConst(bits) => {
-                let ty = node_value_ty(template, vtx, &value_tys);
-                // The payload is a `u64`, so a wider float has no encoding here
-                // and the mask would silently keep 64 of its bits.
-                anyhow::ensure!(
-                    !(ty.is_float() && ty.byte_size() > 8),
-                    "template float const at {ty}: the payload is a u64"
-                );
-                NodeKind::FloatConst(if ty.is_float() {
-                    ty.mask_float_bits(bits)
-                } else {
-                    bits
-                })
-            }
-            other => other,
-        };
+        // width is resolved here, and bits above it are another constant.
+        if let NodeKind::FloatConst(bits) = kind {
+            let ty = node_value_ty(template, vtx, &value_tys);
+            // The payload is a `u64`, so a wider float has no encoding here.
+            anyhow::ensure!(
+                !(ty.is_float() && ty.byte_size() > 8),
+                "template float const at {ty}: the payload is a u64"
+            );
+            anyhow::ensure!(
+                !ty.is_float() || ty.mask_float_bits(bits) == bits,
+                "template float const {bits:#x} has bits above {ty}; give the \
+                 IEEE pattern at the width it is evaluated at"
+            );
+        }
         kinds.push((vtx, Some(kind)));
     }
 
