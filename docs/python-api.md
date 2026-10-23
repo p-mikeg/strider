@@ -240,19 +240,22 @@ the positive one:
   float-to-integer or narrowing conversion rounds by is round to nearest even.
   That is x86 MXCSR.RC at `cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`,
   `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`,
-  `cvtsi2ss`, the 64-bit `cvtsi2sd` and their scalar VEX forms, and PowerPC
+  `cvtsi2ss`, the 64-bit `cvtsi2sd` and their scalar VEX forms, PowerPC
   FPSCR.RN at `fctid`, `fctiw`, `fctidu`, `fctiwu`, `fcfid`, `fcfids`,
-  `fcfidu`, `fcfidus`, `frsp` and `xscvdpspn`. The truncating
-  `cvtt*` and `fcti*z` forms read no mode, and the x87 stores read the control
-  word either way. Off, each conversion reads the mode and selects among its
-  four, so a mode the function sets (`ldmxcsr`, `mtfsfi`) folds and an unknown
-  one stays a four-way select. It is wrong where the code runs under another
+  `fcfidu`, `fcfidus`, `frsp` and `xscvdpspn`, ARM FPSCR.RMode at `vcvtr`,
+  and MIPS FCSR.RM at `cvt.w` and `cvt.l`. The fixed-mode forms (`cvtt*`,
+  `fcti*z`, ARM `vcvt`, MIPS `round`, `trunc`, `floor` and `ceil`, every
+  AArch64 `fcvt*`) read no mode, and the x87 stores read the control word
+  either way. Off, each conversion reads the mode and selects among its four,
+  so a mode the function sets (`ldmxcsr`, `mtfsfi`, `vmsr`, `ctc1`) folds and
+  an unknown one stays a four-way select. It is wrong where the code runs under another
   mode: after `fesetround` or a caller's mode change. Outside it: float
   arithmetic, taken to round to nearest, and the conversions lifted as opaque
   user ops (packed VEX, EVEX, `roundss` and its kin), which nothing folds
   through. MXCSR.FTZ and DAZ are taken as 0 either way, so `none()` is not a
   sound floor for `-ffast-math` code, whose startup sets them; nor is it for
-  PowerPC code that sets FPSCR.NI, OE or UE, likewise taken as 0. The lift reads
+  PowerPC code that sets FPSCR.NI, OE or UE, or for flush-to-zero ARM
+  (FPSCR.FZ), AArch64 (FPCR.FZ) or MIPS (FCSR.FS) code, likewise taken as 0. The lift reads
   it, like `msr_register_keeps_mode`.
 
 `AssumptionOptions.none()` clears all nine; `AssumptionOptions()` does not. It
