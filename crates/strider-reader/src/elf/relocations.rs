@@ -223,7 +223,8 @@ impl<'a> Ctx<'a, '_> {
     /// the field runs past `site.avail`, what is left of the section owning
     /// the site. A field past its section, or past the end of every mapping
     /// holding its first byte, would write a neighbour's bytes, so it is
-    /// not patched. The walk of tables off `.dynsym` asks for a hole's first
+    /// not patched. [`holder_or_hole`](Self::holder_or_hole) holes the
+    /// latter, and the walk of tables off `.dynsym` asks for a hole's first
     /// byte only, which leaves no mapped byte of the field served.
     fn holder(&self, site: RelocSite, addr: u64, width: usize) -> Option<&'a MemRegion> {
         // `addr` is `site.addr` plus a non-negative `mips_half_field_skew` and
@@ -233,6 +234,27 @@ impl<'a> Ctx<'a, '_> {
             return None;
         }
         self.holding(addr, width)
+    }
+
+    /// [`holder`](Self::holder), and a hole over the field when no one region
+    /// holds it but one holds its first byte, inside `site.avail`: a field
+    /// over two adjacent mappings, or past the end of the one holding its
+    /// start, can be neither read nor patched whole.
+    fn holder_or_hole(
+        &mut self,
+        site: RelocSite,
+        addr: u64,
+        width: usize,
+        r_type: u32,
+    ) -> Option<&'a MemRegion> {
+        let holder = self.holder(site, addr, width);
+        if holder.is_none()
+            && addr.wrapping_sub(site.addr).saturating_add(width as u64) <= site.avail
+        {
+            let first = self.holding(addr, 1);
+            self.unmodelled(first, addr, width, r_type);
+        }
+        holder
     }
 
     /// Records the low `width` bytes of `value` at `addr` when a region holds
@@ -744,7 +766,7 @@ fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo) {
     // A mips64el implicit-addend entry, whose kind and size `object` may
     // have read off its symbol index.
     let Some(generic) = r.generic else {
-        let holder = ctx.holder(site, site_addr, UNKNOWN_FIELD_BYTES);
+        let holder = ctx.holder_or_hole(site, site_addr, UNKNOWN_FIELD_BYTES, r.type_word());
         ctx.unmodelled(holder, site_addr, UNKNOWN_FIELD_BYTES, r.type_word());
         return;
     };
@@ -778,7 +800,7 @@ fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo) {
         } else {
             UNKNOWN_FIELD_BYTES
         };
-        let holder = ctx.holder(site, site_addr, width);
+        let holder = ctx.holder_or_hole(site, site_addr, width, r.type_word());
         ctx.unmodelled(holder, site_addr, width, r.type_word());
         return;
     };
@@ -792,7 +814,7 @@ fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo) {
         return;
     };
 
-    let holder = ctx.holder(site, field_addr, size_bytes);
+    let holder = ctx.holder_or_hole(site, field_addr, size_bytes, r.type_word());
     // An `Absolute` target, an immediate with no symbol, has no `S` to add.
     let Some(target) = r
         .sym
@@ -879,7 +901,7 @@ fn apply_classified(
     }
     let p = site.addr;
     let width = field.width();
-    let holder = ctx.holder(site, p, width);
+    let holder = ctx.holder_or_hole(site, p, width, r.type_word());
     // Read nothing: a TLS descriptor is wider than a field read.
     if value == Value::Tls {
         ctx.unmodelled(holder, p, width, r.type_word());

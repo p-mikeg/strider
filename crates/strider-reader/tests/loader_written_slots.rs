@@ -1339,3 +1339,69 @@ fn a_lazy_got_header_word_the_loader_writes_is_a_hole() {
         }
     }
 }
+
+/// A `.dynsym`-walked field over two adjacent read-only mappings: the code
+/// `PT_LOAD` split at `.eh_frame`, its `PT_NOTE` header rewritten to the
+/// `PT_LOAD` of the rest, and the `R_X86_64_RELATIVE`'s `r_offset` moved 4
+/// bytes before the split. No one mapping holds the field to patch, so both
+/// halves are holes rather than the file's bytes.
+#[test]
+fn a_field_over_two_adjacent_read_only_mappings_is_a_hole() {
+    let elf = patched("x64_relro_pie.elf", |bytes, obj| {
+        let split = obj.section_by_name(".eh_frame").unwrap().address();
+        let phoff = u64::from_le_bytes(bytes[0x20..0x28].try_into().unwrap()) as usize;
+        let phnum = usize::from(u16::from_le_bytes(bytes[0x38..0x3a].try_into().unwrap()));
+        let u32_at = |b: &[u8], at: usize| u32::from_le_bytes(b[at..at + 4].try_into().unwrap());
+        let u64_at = |b: &[u8], at: usize| u64::from_le_bytes(b[at..at + 8].try_into().unwrap());
+        let phdrs: Vec<usize> = (0..phnum).map(|i| phoff + 56 * i).collect();
+        let code = *phdrs
+            .iter()
+            .find(|&&ph| u32_at(bytes, ph) == object::elf::PT_LOAD && u64_at(bytes, ph + 8) == 0)
+            .unwrap();
+        let note = *phdrs
+            .iter()
+            .find(|&&ph| u32_at(bytes, ph) == object::elf::PT_NOTE)
+            .unwrap();
+        let end = u64_at(bytes, code + 0x20);
+        // Elf64_Phdr: p_type, p_flags, p_offset, p_vaddr, p_paddr, p_filesz,
+        // p_memsz, p_align.
+        for field in [0x20, 0x28] {
+            bytes[code + field..code + field + 8].copy_from_slice(&split.to_le_bytes());
+        }
+        let rest = [
+            (0x00, u64::from(object::elf::PT_LOAD), 4),
+            (0x04, u64::from(object::elf::PF_R), 4),
+            (0x08, split, 8),
+            (0x10, split, 8),
+            (0x18, split, 8),
+            (0x20, end - split, 8),
+            (0x28, end - split, 8),
+            (0x30, 0x1000, 8),
+        ];
+        for (field, value, width) in rest {
+            bytes[note + field..note + field + width]
+                .copy_from_slice(&value.to_le_bytes()[..width]);
+        }
+        let (off, _) = obj
+            .section_by_name(".rela.dyn")
+            .unwrap()
+            .file_range()
+            .unwrap();
+        let at = off as usize;
+        bytes[at..at + 8].copy_from_slice(&(split - 4).to_le_bytes());
+    });
+    let split = elf
+        .checked_file()
+        .unwrap()
+        .section_by_name(".eh_frame")
+        .unwrap()
+        .address();
+    let reader = ElfFileMemReader::new(&elf, APPLIED).unwrap();
+    for half in [split - 4, split] {
+        assert_hole(
+            rom_word(&reader, half, 4, true),
+            object::elf::R_X86_64_RELATIVE,
+            &format!("{half:#x}"),
+        );
+    }
+}
