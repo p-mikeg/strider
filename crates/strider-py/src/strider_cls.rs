@@ -431,11 +431,11 @@ fn analyze_result_type(py: Python<'_>) -> PyResult<PyObject> {
 /// convention is an argument of every `analyze` call.
 #[pyclass(name = "Lifter", module = "strider.lift", subclass)]
 pub struct PyLifter {
-    /// Owns the Sleigh, cached register table and optional rom; `None` once
-    /// `__clear__` has released it. A call borrows the handle for its whole
-    /// run: `analyze`, `build_cfg` and `add_elf` exclusively, so any other
-    /// call while one is in flight, on this thread or another, raises; the
-    /// rest share it and may overlap each other.
+    /// Owns the Sleigh and optional rom; `None` once `__clear__` has released
+    /// it. A call borrows the handle for its whole run: `analyze`, `build_cfg`
+    /// and `add_elf` exclusively, so any other call while one is in flight, on
+    /// this thread or another, raises; the rest share it and may overlap each
+    /// other.
     inner: Option<strider_orchestrator::Strider<AnyMemReader>>,
     /// The arch this handle was built for: what `arch` hands back, and whose
     /// register table a `custom(...)` CC / `CallOtherAbi` must share.
