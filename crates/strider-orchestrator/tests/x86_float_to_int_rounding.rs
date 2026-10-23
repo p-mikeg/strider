@@ -1,7 +1,7 @@
 //! x86 SSE and VEX float-to-integer conversions that round (`cvtsd2si`,
 //! `cvtss2si`, their VEX forms, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`,
 //! `cvtps2pi`) round to nearest with ties to EVEN, the MXCSR.RC default
-//! `mxcsr_rounds_to_nearest` claims (`sse_rounding_control.rs` drops the
+//! `fp_rounding_mode_is_nearest` claims (`sse_rounding_control.rs` drops the
 //! claim). p-code `FLOAT_ROUND` alone
 //! breaks a tie away from zero, so `2.5` must not become 3, and the packed
 //! forms must round rather than truncate. A NaN or a result out of range is

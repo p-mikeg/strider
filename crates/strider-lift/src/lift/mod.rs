@@ -394,7 +394,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// `cc` must. The lifted function holds `claims`
     /// ([`strider_ir::Function::assumptions`]), and the lift itself reads
     /// [`strider_ir::AssumptionOptions::msr_register_keeps_mode`] and
-    /// [`strider_ir::AssumptionOptions::mxcsr_rounds_to_nearest`].
+    /// [`strider_ir::AssumptionOptions::fp_rounding_mode_is_nearest`].
     ///
     /// Never errs on incompleteness:
     /// [`strider_cfg::Cfg::incomplete`] reports that.

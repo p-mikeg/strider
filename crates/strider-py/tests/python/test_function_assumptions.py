@@ -34,7 +34,7 @@ _FIELDS = (
     "escape_analysis",
     "return_slots_survive_untracked_writes",
     "msr_register_keeps_mode",
-    "mxcsr_rounds_to_nearest",
+    "fp_rounding_mode_is_nearest",
 )
 
 
@@ -75,7 +75,7 @@ def test_to_text_names_the_claims_in_force():
     assert claims == [
         "assumptions stack_global_disjoint assume_incoming_args_survive_calls"
         " noalias_allocators=[0x1100] return_slots_survive_untracked_writes"
-        " msr_register_keeps_mode mxcsr_rounds_to_nearest"
+        " msr_register_keeps_mode fp_rounding_mode_is_nearest"
     ]
     _lift, floor = _spill_at_floor()
     assert "assumptions" not in floor.to_text()
@@ -185,7 +185,7 @@ def test_an_unknown_claim_raises_in_none_as_in_the_constructor():
 def test_a_keyword_set_carries_its_defaults_into_the_union():
     """`AssumptionOptions(x=True)` fills every other claim with its default,
     five of them on. Two are `msr_register_keeps_mode` and
-    `mxcsr_rounds_to_nearest`, which only the lift reads, so on a `none()`
+    `fp_rounding_mode_is_nearest`, which only the lift reads, so on a `none()`
     function `optimize` refuses the set rather than record a claim the graph
     does not rest on. Pinned so that changing it is a decision."""
     want = AssumptionOptions() | AssumptionOptions.none(escape_analysis=True)
@@ -193,8 +193,8 @@ def test_a_keyword_set_carries_its_defaults_into_the_union():
     lift, g = _spill_at_floor()
     with pytest.raises(
         strider.StriderError,
-        match="msr_register_keeps_mode and mxcsr_rounds_to_nearest are read by the "
-        "lift; analyse again with it",
+        match="msr_register_keeps_mode and fp_rounding_mode_is_nearest are read by the "
+        "lift; analyse again with them",
     ):
         lift.optimize(g, assumptions=g.assumptions | AssumptionOptions(escape_analysis=True))
     assert g.assumptions == AssumptionOptions.none(), "a refused set adds nothing"
@@ -202,7 +202,7 @@ def test_a_keyword_set_carries_its_defaults_into_the_union():
     wider = AssumptionOptions(
         escape_analysis=True,
         msr_register_keeps_mode=False,
-        mxcsr_rounds_to_nearest=False,
+        fp_rounding_mode_is_nearest=False,
     )
     lift.optimize(g, assumptions=g.assumptions | wider)
     assert g.assumptions == wider
@@ -234,7 +234,7 @@ def test_union_holds_every_claim_of_both():
         "escape_analysis": True,
         "return_slots_survive_untracked_writes": True,
         "msr_register_keeps_mode": True,
-        "mxcsr_rounds_to_nearest": True,
+        "fp_rounding_mode_is_nearest": True,
     }
     assert a | b == both
     assert a.noalias_allocators == [3], "union copies; the operands stay"

@@ -22,9 +22,9 @@
 /// only for ARM code that switches mode through a register `msr`, and without
 /// it an interrupt-mask restore the analysis cannot place re-banks `sp` and
 /// `lr`.  The fifth,
-/// [`mxcsr_rounds_to_nearest`](Self::mxcsr_rounds_to_nearest), fails only
-/// for x86 code that changes the SSE rounding mode, and without it every
-/// rounding SSE conversion selects among four modes.  A
+/// [`fp_rounding_mode_is_nearest`](Self::fp_rounding_mode_is_nearest), fails
+/// only for code that changes the SSE or PowerPC rounding mode, and without
+/// it every rounding conversion selects among four modes.  A
 /// lift holds the claims it is given and `strider_lift`'s `build_ir` none, so
 /// a test runs at the floor unless it claims one.
 ///
@@ -178,24 +178,30 @@ pub struct AssumptionOptions {
     /// (`AnalyzeOptions::assumptions`); added to a lifted function it changes
     /// nothing.  Default ON.
     pub msr_register_keeps_mode: bool,
-    /// MXCSR.RC (bits 13-14) is 0, round to nearest even, at every x86 SSE
-    /// and VEX conversion that rounds by it: `cvtsd2si`, `cvtss2si`,
+    /// The dynamic rounding mode a float-to-integer or narrowing conversion
+    /// rounds by is round to nearest even: x86 MXCSR.RC (bits 13-14) at every
+    /// SSE and VEX conversion that reads it (`cvtsd2si`, `cvtss2si`,
     /// `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`,
-    /// `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss` and the 64-bit
-    /// `cvtsi2sd`, and the scalar VEX forms of each.  The truncating `cvtt*`
-    /// forms read no mode.  Off, each one reads RC from MXCSR and selects
-    /// among nearest even, down, up and toward zero, so a mode the function
-    /// sets with `ldmxcsr` folds and an unknown one stays a select.
+    /// `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`, the 64-bit `cvtsi2sd`
+    /// and the scalar VEX forms), and PowerPC FPSCR.RN at `fctid`, `fctiw`,
+    /// `fctidu` and `fctiwu`.  The truncating forms (`cvtt*`, `fcti*z`) read
+    /// no mode, and the x87 stores read the control word whatever this says.
+    /// Off, each conversion reads the mode and selects among its four, so a
+    /// mode the function sets (`ldmxcsr`, `mtfsfi`) folds and an unknown one
+    /// stays a select.
     ///
-    /// Wrong where the code runs under another mode: after `fesetround`, a
-    /// caller's `ldmxcsr`, or one this analysis cannot place.  The SSE
-    /// arithmetic and the opaque packed VEX conversions round to nearest
-    /// whatever this says.
+    /// Wrong where the code runs under another mode: after `fesetround`, or
+    /// a mode a caller set or this analysis cannot place.  Outside it: the
+    /// float arithmetic, taken to round to nearest either way, and the
+    /// conversions lifted as opaque user ops (the packed VEX and EVEX forms,
+    /// `roundss` and its kin), whose results nothing folds.  MXCSR.FTZ and
+    /// DAZ are taken as 0 either way, so under `-ffast-math`, which sets them
+    /// at startup, even [`AssumptionOptions::none`] narrows a denormal wrongly.
     ///
     /// Read by the lifter, so it counts only when the lift is given it
     /// (`AnalyzeOptions::assumptions`); added to a lifted function it changes
     /// nothing.  Default ON.
-    pub mxcsr_rounds_to_nearest: bool,
+    pub fp_rounding_mode_is_nearest: bool,
 }
 
 impl AssumptionOptions {
@@ -220,7 +226,7 @@ impl AssumptionOptions {
             escape_analysis: false,
             return_slots_survive_untracked_writes: false,
             msr_register_keeps_mode: false,
-            mxcsr_rounds_to_nearest: false,
+            fp_rounding_mode_is_nearest: false,
         }
     }
 
@@ -237,7 +243,7 @@ impl AssumptionOptions {
             escape_analysis,
             return_slots_survive_untracked_writes,
             msr_register_keeps_mode,
-            mxcsr_rounds_to_nearest,
+            fp_rounding_mode_is_nearest,
         } = other;
         self.stack_global_disjoint |= *stack_global_disjoint;
         self.assume_incoming_args_survive_calls |= *assume_incoming_args_survive_calls;
@@ -247,7 +253,7 @@ impl AssumptionOptions {
         self.escape_analysis |= *escape_analysis;
         self.return_slots_survive_untracked_writes |= *return_slots_survive_untracked_writes;
         self.msr_register_keeps_mode |= *msr_register_keeps_mode;
-        self.mxcsr_rounds_to_nearest |= *mxcsr_rounds_to_nearest;
+        self.fp_rounding_mode_is_nearest |= *fp_rounding_mode_is_nearest;
     }
 
     /// The claims `self` holds that `other` does not, by field name in
@@ -264,7 +270,7 @@ impl AssumptionOptions {
             escape_analysis,
             return_slots_survive_untracked_writes,
             msr_register_keeps_mode,
-            mxcsr_rounds_to_nearest,
+            fp_rounding_mode_is_nearest,
         } = self;
         [
             (
@@ -301,8 +307,8 @@ impl AssumptionOptions {
                 *msr_register_keeps_mode && !other.msr_register_keeps_mode,
             ),
             (
-                "mxcsr_rounds_to_nearest",
-                *mxcsr_rounds_to_nearest && !other.mxcsr_rounds_to_nearest,
+                "fp_rounding_mode_is_nearest",
+                *fp_rounding_mode_is_nearest && !other.fp_rounding_mode_is_nearest,
             ),
         ]
         .into_iter()
@@ -323,7 +329,7 @@ impl AssumptionOptions {
             escape_analysis,
             return_slots_survive_untracked_writes,
             msr_register_keeps_mode,
-            mxcsr_rounds_to_nearest,
+            fp_rounding_mode_is_nearest,
         } = other;
         (!stack_global_disjoint || self.stack_global_disjoint)
             && (!assume_incoming_args_survive_calls || self.assume_incoming_args_survive_calls)
@@ -334,7 +340,7 @@ impl AssumptionOptions {
             && (!return_slots_survive_untracked_writes
                 || self.return_slots_survive_untracked_writes)
             && (!msr_register_keeps_mode || self.msr_register_keeps_mode)
-            && (!mxcsr_rounds_to_nearest || self.mxcsr_rounds_to_nearest)
+            && (!fp_rounding_mode_is_nearest || self.fp_rounding_mode_is_nearest)
     }
 }
 
@@ -349,7 +355,7 @@ impl Default for AssumptionOptions {
             escape_analysis: false,
             return_slots_survive_untracked_writes: true,
             msr_register_keeps_mode: true,
-            mxcsr_rounds_to_nearest: true,
+            fp_rounding_mode_is_nearest: true,
         }
     }
 }
