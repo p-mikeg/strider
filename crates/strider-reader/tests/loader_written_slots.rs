@@ -1306,8 +1306,10 @@ fn dynamic_tag32(obj: &object::File<'_>, tag: u32) -> u64 {
     };
     data.chunks_exact(8)
         .find(|d| read(&d[..4]) == tag)
-        .map(|d| u64::from(read(&d[4..])))
-        .unwrap_or_else(|| panic!("dynamic tag {tag:#x}"))
+        .map_or_else(
+            || panic!("dynamic tag {tag:#x}"),
+            |d| u64::from(read(&d[4..])),
+        )
 }
 
 /// Under lazy binding the loader writes two GOT header words no relocation
