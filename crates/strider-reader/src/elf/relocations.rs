@@ -88,7 +88,8 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 /// defining it: every byte of its `st_size` is a hole, see [`hole_copies`].
 ///
 /// A MIPS image's primary GOT holds entries no relocation record covers:
-/// [`mips_implicit_got`] holes the ones the loader writes.
+/// [`mips_implicit_got`] holes the ones the loader writes, and
+/// [`lazy_got_header`] the ARM and PPC32 lazy-binding words.
 ///
 /// Any patch list the regions already carry is replaced, so re-applying over
 /// one region set is idempotent.
@@ -164,6 +165,7 @@ pub(crate) fn apply_elf_relocations_with(
     relocations_off_dynsym(&mut ctx, walked);
     hole_copies(&mut ctx);
     mips_implicit_got(&mut ctx);
+    lazy_got_header(&mut ctx);
     let got = got_regions(&ctx.got, ctx.endian_le)?;
     let mut patches = ctx.patches;
     // Stable, so the last patch recorded at a site is the one a read applies.
@@ -1462,6 +1464,38 @@ fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
         if !served {
             hole(ctx, addr);
         }
+    }
+}
+
+/// Holes over the two GOT header words the dynamic loader writes for lazy
+/// binding, which no relocation record covers: ARM's link map and resolver
+/// at `DT_PLTGOT + 4` / `+ 8` (glibc's `elf_machine_runtime_setup`), which
+/// PLT0 jumps through, and the secure-PLT PPC32 pair at `DT_PPC_GOT + 4` /
+/// `+ 8`. Only an image with a `DT_JMPREL` has them; `DF_BIND_NOW` or not,
+/// a hole costing only the fold. A hole names the arch's `JUMP_SLOT`.
+fn lazy_got_header(ctx: &mut Ctx<'_, '_>) {
+    use object::elf;
+    let obj = ctx.obj;
+    let (base_tag, r_type) = match obj.architecture() {
+        A::Arm => (elf::DT_PLTGOT, elf::R_ARM_JUMP_SLOT),
+        A::PowerPc => (elf::DT_PPC_GOT, elf::R_PPC_JMP_SLOT),
+        _ => return,
+    };
+    let object::File::Elf32(f) = obj else {
+        return;
+    };
+    let Some(tags) = DynamicTags::of(f) else {
+        return;
+    };
+    let (Some(base), Some(_)) = (tags.get(base_tag), tags.get(elf::DT_JMPREL)) else {
+        return;
+    };
+    for off in [4, 8] {
+        let Some(addr) = base.checked_add(off) else {
+            return;
+        };
+        let holder = ctx.holding(addr, 4);
+        ctx.unmodelled(holder, addr, 4, r_type);
     }
 }
 

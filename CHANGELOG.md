@@ -567,6 +567,10 @@
 
 ### Fixed
 
+- Python: under `relocated_got_is_rom=True` the two GOT header words the
+  loader writes for lazy binding are unmapped: ARM's at `DT_PLTGOT + 4` and
+  `+ 8`, and secure-PLT PPC32's after `DT_PPC_GOT`. They served the file's
+  zeros, so PLT0's `ldr pc, [lr, #8]!` folded to a jump to address 0.
 - Python: under `relocated_got_is_rom=True` a 64-bit TLS slot (a module id,
   module offset or TP offset) is unmapped over all 8 of its bytes, and a
   TLS descriptor over both its words, on x86-64, AArch64, ppc64 and MIPS64,
