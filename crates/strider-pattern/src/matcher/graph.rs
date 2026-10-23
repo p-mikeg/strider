@@ -132,17 +132,26 @@ impl Pattern {
         self.root.clone().map_err(anyhow::Error::msg)
     }
 
-    /// Whether a match may bind a value it reached through a `Phi` /
-    /// `MemPhi`: a pat node admitting one pins an input, or a binding walk
-    /// matches past this graph's own edges.
-    pub fn may_bind_through_phi(&self) -> bool {
-        self.graph.all_node_ids().any(|n| {
-            let node = self.graph.node_kind(n);
-            node.binding_walk.is_some()
-                || (!node.input_slots.is_empty()
-                    && (node.kind.matches(&strider_ir::node::NodeKind::Phi)
-                        || node.kind.matches(&strider_ir::node::NodeKind::MemPhi)))
-        })
+    /// Whether a match may bind a value it reached through a join, which
+    /// need not sit below the match root: a pat node admitting a `Phi`,
+    /// `MemPhi` or `Region` pins an input, or [`Self::has_binding_walk`].
+    pub fn may_bind_through_a_join(&self) -> bool {
+        use strider_ir::node::NodeKind;
+        self.has_binding_walk()
+            || self.graph.all_node_ids().any(|n| {
+                let node = self.graph.node_kind(n);
+                !node.input_slots.is_empty()
+                    && [NodeKind::Phi, NodeKind::MemPhi, NodeKind::Region]
+                        .iter()
+                        .any(|k| node.kind.matches(k))
+            })
+    }
+
+    /// Whether a pat node binds through a walk past this graph's own edges.
+    pub fn has_binding_walk(&self) -> bool {
+        self.graph
+            .all_node_ids()
+            .any(|n| self.graph.node_kind(n).binding_walk.is_some())
     }
 
     /// Includes what a node's binding walk declares: that sub-pattern's graph
@@ -296,13 +305,15 @@ mod tests {
     use strider_ir::node::NodeKind;
     use strider_ir_test_utils::Rng;
 
-    /// A phi bound as a leaf binds nothing through it; one whose inputs the
+    /// A join bound as a leaf binds nothing through it; one whose inputs the
     /// pattern pins, or a branch walk, may.
     #[test]
-    fn may_bind_through_phi_reads_the_pattern_shape() {
-        use crate::{Capture, anything, if_else, int_add, mem_phi, phi, ret, var};
+    fn may_bind_through_a_join_reads_the_pattern_shape() {
+        use crate::{
+            Capture, anything, call, if_else, int_add, load, mem_phi, phi, region, ret, var,
+        };
         let c = Capture::new();
-        let shape = |p: Pattern| p.may_bind_through_phi();
+        let shape = |p: Pattern| p.may_bind_through_a_join();
         assert!(!shape(int_add(phi(), var(c)).into_pattern()));
         assert!(!shape(int_add(var(c), anything()).into_pattern()));
         assert!(shape(
@@ -312,6 +323,16 @@ mod tests {
         assert!(shape(
             if_else().with_true(ret().into_pattern()).into_pattern()
         ));
+        assert!(!shape(load().mem(call().ctrl(region())).into_pattern()));
+        assert!(shape(
+            load()
+                .mem(call().ctrl(region().any_input(anything())))
+                .into_pattern()
+        ));
+        let walk = if_else().with_true(ret().into_pattern()).into_pattern();
+        assert!(walk.has_binding_walk());
+        let pinned_phi = int_add(phi().phi_input(0, var(c)), anything()).into_pattern();
+        assert!(!pinned_phi.has_binding_walk());
     }
 
     #[test]
