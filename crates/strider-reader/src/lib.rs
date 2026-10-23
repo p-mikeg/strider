@@ -721,6 +721,21 @@ impl MemRegionsLookupTable {
     }
 }
 
+/// Instruction fetch: [`MemRegionsLookupTable::read`], erring with
+/// [`MemRegionsLookupTable::unmapped`] where it serves nothing.
+impl rsleigh::MemReader for MemRegionsLookupTable {
+    type Err = MemReadError;
+
+    fn read(
+        &self,
+        addr: rsleigh::VnAddr,
+        out_buf: &mut [u8],
+    ) -> std::result::Result<usize, Self::Err> {
+        MemRegionsLookupTable::read(self, addr.off, out_buf)
+            .ok_or_else(|| MemReadError(self.unmapped(addr.off)))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{DESCENTS, MemRegion, MemRegionsLookupTable, RegionIndex};
