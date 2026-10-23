@@ -27,9 +27,10 @@ mod common;
 
 const BASE: u64 = 0x1000;
 const TABLE: u64 = 0x2000;
-/// `jmp *0x2000(,%rax,8)` and everything after it.
-const DISPATCH_AND_TAIL: &[u8] = &[
-    0xff, 0x24, 0xc5, 0x00, 0x20, 0x00, 0x00, // jmp *0x2000(,%rax,8)
+/// `jmp *0x2000(,%rax,8)`.
+const JMP_RAX: [u8; 7] = [0xff, 0x24, 0xc5, 0x00, 0x20, 0x00, 0x00];
+/// Everything after the dispatch.
+const TAIL: &[u8] = &[
     0xb8, 0x0a, 0x00, 0x00, 0x00, 0xc3, // a0
     0xb8, 0x0b, 0x00, 0x00, 0x00, 0xc3, // a1
     0xb8, 0x0c, 0x00, 0x00, 0x00, 0xc3, // a2
@@ -39,17 +40,22 @@ const DISPATCH_AND_TAIL: &[u8] = &[
     0xb8, 0x15, 0x00, 0x00, 0x00, 0xc3, // o1
 ];
 
-/// What the dispatch after `guard` became: its arms, or `None` when it is
-/// reported unresolved.
+/// What the `jmp *0x2000(,%rax,8)` after `guard` became: its arms, or `None`
+/// when it is reported unresolved.
 fn dispatch(guard: &[u8]) -> Option<Vec<u64>> {
-    let at = |off: usize| BASE + (guard.len() + off) as u64;
+    dispatch_through([guard, JMP_RAX.as_slice()].concat())
+}
+
+/// [`dispatch`], for `head` ending in its own seven-byte dispatch.
+fn dispatch_through(head: Vec<u8>) -> Option<Vec<u64>> {
+    let at = |off: usize| BASE + (head.len() - 7 + off) as u64;
     let site = at(0);
     let real = [at(7), at(13), at(19), at(25)];
     let other = [at(34), at(40)];
     let cells: Vec<u64> = (0..256)
         .map(|i| if i < 4 { real[i] } else { other[i % 2] })
         .collect();
-    let code = [guard, DISPATCH_AND_TAIL].concat();
+    let code = [head.as_slice(), TAIL].concat();
     let len = code.len() as u64;
     let rom = Box::new(MockRom::strided(TABLE, 8, cells, 8))
         as Box<dyn strider_orchestrator::opt::ReadOnlyMemory>;
@@ -239,5 +245,34 @@ fn a_read_bounds_check_no_tighter_than_the_field_still_seats_its_arms() {
     assert_eq!(
         arm_dispatch(words, 0x1014, 0x1014..0x1024).as_deref(),
         Some([0x1024, 0x1028, 0x102c, 0x1030].as_slice()),
+    );
+}
+
+/// The labels of `head`'s layout: `[a0, a1, a2, a3, o0, o1]`.
+fn labels(head_len: usize) -> [u64; 6] {
+    let at = |off: usize| BASE + (head_len + off) as u64;
+    [at(0), at(6), at(12), at(18), at(27), at(33)]
+}
+
+/// Asserts the dispatch after `head` is deferred, or seats only the labels
+/// at `feasible` (indices into [`labels`]).
+fn assert_only(head: Vec<u8>, feasible: &[usize]) {
+    let names = labels(head.len());
+    let got = dispatch_through(head);
+    if let Some(arms) = got {
+        let mut want: Vec<u64> = feasible.iter().map(|&i| names[i]).collect();
+        want.sort_unstable();
+        assert_eq!(arms, want, "an infeasible arm was seated");
+    }
+}
+
+/// `cmp $2,%al ; jne dflt`: the dispatch is on the equality's true edge, so
+/// only cell 2 is feasible.
+/// Mutation: exempt an equality whichever edge reaches the dispatch.
+#[test]
+fn an_equality_the_dispatch_sits_under_bounds_the_field() {
+    assert_only(
+        [guarded(&[0x3c, 0x02, 0x75, 0x1f]), JMP_RAX.to_vec()].concat(),
+        &[2],
     );
 }
