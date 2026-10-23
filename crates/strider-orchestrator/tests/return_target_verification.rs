@@ -621,7 +621,7 @@ fn x86_64_a_write_through_a_pointer_loaded_from_a_global_rests_on_a_claim() {
 /// the walk would pass it anyway.
 ///
 /// Mutation: narrow under `MemPurpose::Structural` and drop the
-/// constant-address arm of `store_effect`.
+/// constant-address arm of `off_stack`.
 #[test]
 fn x86_64_a_global_store_rests_on_stack_global_disjoint() {
     // movl $0x1,0x20000 ; ret
@@ -646,7 +646,7 @@ fn x86_64_a_global_store_rests_on_stack_global_disjoint() {
 /// slot: the `ret`'s memory edge stops at the merge, so the walk meets the
 /// store itself, and `stack_global_disjoint` still keeps it off the slot.
 ///
-/// Mutation: drop the constant-address arm of `store_effect`.
+/// Mutation: drop the constant-address arm of `off_stack`.
 #[test]
 fn x86_64_a_global_store_past_a_merge_rests_on_stack_global_disjoint() {
     // test %edi,%edi ; je 1f ; mov (%rsp),%rax ; mov %rax,(%rsp) ; jmp 2f
