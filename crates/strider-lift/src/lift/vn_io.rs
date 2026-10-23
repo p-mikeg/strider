@@ -261,11 +261,12 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // turn a malformed Sleigh spec into a clean lift failure rather than
         // corrupt IR, in release and debug alike.  A `None` here is the
         // big-endian arm's subtraction going below zero.
-        let Some(shift_bits) = reg_shift_from_container(
-            self.lifter.arch().register_endianness(),
-            reg,
-            &container_reg,
-        ) else {
+        let Some(shift_bits) = self
+            .lifter
+            .arch()
+            .register_endianness()
+            .slice_shift_bits(reg, &container_reg)
+        else {
             return Err(anyhow!(
                 "{op}: sub-register {reg:?} is not contained in {container_reg:?}"
             ));
@@ -329,80 +330,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // the window `container_mask` clears.
         self.builder
             .build_int_binary_operation(preserved, shifted_value, IntBinaryOp::Or, ty)
-    }
-}
-
-/// Bit distance between `reg`'s slot and `container_reg`'s LSB, or `None` when
-/// `reg` does not sit inside `container_reg`.
-///
-/// Little-endian: the LSB byte is at offset 0, so the byte distance from the
-/// container's start is the shift.  Big-endian: the MSB byte is at offset 0,
-/// so the sub-register sits `container.size - reg.size - (reg.off -
-/// container.off)` bytes above the LSB.
-///
-/// Keyed on [`SleighArch::register_endianness`](strider_target::SleighArch::register_endianness),
-/// not the data order.
-fn reg_shift_from_container(
-    endianness: strider_target::Endianness,
-    reg: &rsleigh::Vn,
-    container_reg: &rsleigh::Vn,
-) -> Option<u64> {
-    let within = reg.addr_off.checked_sub(container_reg.addr_off)?;
-    let bytes = match endianness {
-        strider_target::Endianness::Little => within,
-        strider_target::Endianness::Big => u64::from(container_reg.size)
-            .checked_sub(u64::from(reg.size))?
-            .checked_sub(within)?,
-    };
-    bytes.checked_mul(8)
-}
-
-/// The LE / BE shift VALUES are covered end to end against a real lifter by
-/// `aliasing_tests`; what is not reachable there is a non-contained pair,
-/// which the containment guarantee upstream rules out.
-#[cfg(test)]
-mod shift_containment_tests {
-    use super::reg_shift_from_container;
-    use rsleigh::{Vn, VnSpace};
-    use strider_target::Endianness::{Big, Little};
-
-    fn reg(off: u64, size: u32) -> Vn {
-        Vn {
-            addr_off: off,
-            addr_space: VnSpace::REGISTER,
-            size,
-        }
-    }
-
-    #[test]
-    fn a_reg_outside_its_container_is_none_not_a_panic() {
-        // Starting below the container: both arms subtract below zero on the
-        // offset.
-        let high = reg(4, 4);
-        assert_eq!(reg_shift_from_container(Little, &reg(0, 1), &high), None);
-        assert_eq!(reg_shift_from_container(Big, &reg(0, 1), &high), None);
-        // Starting inside but overhanging the end: only the big-endian arm
-        // subtracts the sizes, so only it can see this one.
-        let container = reg(0, 4);
-        assert_eq!(reg_shift_from_container(Big, &reg(0, 8), &container), None);
-        assert_eq!(reg_shift_from_container(Big, &reg(2, 4), &container), None);
-    }
-
-    #[test]
-    fn a_contained_reg_shifts_by_its_distance_from_the_lsb() {
-        let container = reg(0, 4);
-        assert_eq!(
-            reg_shift_from_container(Little, &reg(3, 1), &container),
-            Some(24)
-        );
-        assert_eq!(
-            reg_shift_from_container(Big, &reg(3, 1), &container),
-            Some(0)
-        );
-        assert_eq!(
-            reg_shift_from_container(Big, &reg(0, 1), &container),
-            Some(24)
-        );
     }
 }
 
