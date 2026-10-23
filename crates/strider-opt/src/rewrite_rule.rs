@@ -67,7 +67,8 @@ fn rewrite_rule_impl(
     lhs: Pattern,
     rhs: Template,
 ) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
-    let through_phi = lhs.may_bind_through_phi();
+    let through_join = lhs.may_bind_through_a_join();
+    let walks = lhs.has_binding_walk();
     move |edit: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
         // The root check before anything is allocated. A fold table tries
         // every rule at every candidate node, and `Matcher::new` plus
@@ -147,20 +148,22 @@ fn rewrite_rule_impl(
         // edges included, so an RHS reading the root closes a data cycle: the
         // node becomes its own input and nothing downstream rejects it.
         //
-        // A match through a phi binds values the phi merges, which need not
-        // sit below the root: a loop phi's back-edge value reads the phi, and
-        // a merge arm's value is defined on one path only. Such a match gets
-        // the unpruned walk and an availability check. A phi bound as a leaf
-        // is harmless: a cycle back through it passes through that phi.
-        let crosses_phi = through_phi
-            && matched_nodes.iter().any(|&n| {
-                matches!(
-                    edit.function().node_kind(n),
-                    NodeKind::Phi | NodeKind::MemPhi
-                )
-            });
+        // A match through a join binds values that need not sit below the
+        // root: a loop's back-edge value reads the header, and a merge arm's
+        // value is defined on one path only. Such a match, or one a binding
+        // walk made, gets the unpruned walk and an availability check. A phi
+        // bound as a leaf is harmless: a cycle back through it passes through
+        // that phi.
+        let crosses_join = through_join
+            && (walks
+                || matched_nodes.iter().any(|&n| {
+                    matches!(
+                        edit.function().node_kind(n),
+                        NodeKind::Phi | NodeKind::MemPhi | NodeKind::Region
+                    )
+                }));
         if new_value != root_value {
-            let cycle = if crosses_phi {
+            let cycle = if crosses_join {
                 reads_without_phi(edit, new_value, root_value)
             } else {
                 reads_value(edit, new_value, root_value, &matched_nodes)
@@ -173,7 +176,7 @@ fn rewrite_rule_impl(
                      dedup cache"
                 );
             }
-            if crosses_phi && !available_at(edit.function(), new_value, root_value) {
+            if crosses_join && !available_at(edit.function(), new_value, root_value) {
                 anyhow::bail!(
                     "rewrite would read the replacement where it is not available: \
                      its definition does not dominate the value it replaces"
@@ -1329,6 +1332,127 @@ mod tests {
         let rule = rewrite_rule(int_add(phi().phi_input(0, var(a)), var(k)), var(k));
         let mut edit = EditFunction::new(&mut function);
         assert!(rule(&mut edit, root).unwrap().is_some());
+        edit.clean();
+        drop(edit);
+        strider_ir::validate::validate(&function).unwrap();
+    }
+
+    /// `head: call; y = *p; x = y + 1; if (x < 9) goto head`. A match through
+    /// the loop's `Region` binds the latch's `x`, which reads the root `y`
+    /// with no phi between them: `y -> x` would make `x = x + 1`.
+    #[test]
+    fn a_rewrite_through_a_region_may_not_close_a_cycle() {
+        use strider_ir::IntCmpOp;
+        use strider_ir_test_utils::{sp_arg_frame, stack_vn_x86_64};
+        use strider_pattern::{anything, call, if_else, int_cmp, load, region, var};
+
+        let ptr = reg_vn(0x1000, 8);
+        let mut b = sp_arg_frame(stack_vn_x86_64())
+            .tracked(ptr)
+            .arg(ptr)
+            .build_fn()
+            .unwrap();
+        let entry = b.create_region_all().unwrap();
+        let head = b.create_region_all().unwrap();
+        let exit = b.create_region_all().unwrap();
+        b.set_entry_region_all(entry).unwrap();
+        b.set_lift_addr(Some(0x10));
+        b.set_region(entry);
+        b.build_branch(head).unwrap();
+        b.set_region(head);
+        let target = b.build_int_const(0x2000u64, ValueType::int(64)).unwrap();
+        b.build_call(target, &[], &[], 0).unwrap();
+        let addr = b.read_variable(&ptr).unwrap();
+        let y = b
+            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
+            .unwrap();
+        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let x = b
+            .build_int_binary_operation(y, one, IntBinaryOp::Add, ValueType::int(64))
+            .unwrap();
+        let nine = b.build_int_const(9u64, ValueType::int(64)).unwrap();
+        let more = b
+            .build_int_cmp_operation(x, nine, IntCmpOp::Sless, ValueType::int(64))
+            .unwrap();
+        b.build_if(more, head, exit).unwrap();
+        b.set_region(exit);
+        b.build_return(Some(x), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let root = function.producer(y);
+
+        let c = Capture::new();
+        let lhs = load().mem(call().ctrl(region().any_input(if_else().cond(int_cmp(
+            IntCmpOp::Sless,
+            var(c),
+            anything(),
+        )))));
+        let rule = rewrite_rule(lhs, var(c));
+        let mut edit = EditFunction::new(&mut function);
+        let err = rule(&mut edit, root).expect_err("the latch's value reads the root");
+        assert!(err.to_string().contains("data cycle"), "{err}");
+        edit.clean();
+        drop(edit);
+        strider_ir::validate::validate(&function).unwrap();
+    }
+
+    /// `if (c) { f(); return *p } else { return g() }`, both arms' `Region`s
+    /// collapsed. A branch walk binds `g()`'s result, which only the other
+    /// arm computes, for the root `*p`.
+    #[test]
+    fn a_rewrite_a_branch_walk_bound_may_not_read_the_other_arm() {
+        use strider_ir_test_utils::{sp_arg_frame, stack_vn_x86_64};
+        use strider_pattern::{WithOutput, call, if_else, load, var};
+
+        let ptr = reg_vn(0x1000, 8);
+        let flag = reg_vn(0x1100, 1);
+        let ret = reg_vn(0x1200, 8);
+        let mut b = sp_arg_frame(stack_vn_x86_64())
+            .tracked(ptr)
+            .arg(ptr)
+            .tracked(flag)
+            .arg(flag)
+            .tracked(ret)
+            .build_fn()
+            .unwrap();
+        let entry = b.create_region_all().unwrap();
+        let then = b.create_region_all().unwrap();
+        let other = b.create_region_all().unwrap();
+        b.set_entry_region_all(entry).unwrap();
+        b.set_lift_addr(Some(0x10));
+        b.set_region(entry);
+        let c = b.read_variable(&flag).unwrap();
+        let c = b.truncate_if_needed(c, ValueType::I1).unwrap();
+        b.build_if(c, then, other).unwrap();
+        b.set_region(then);
+        let f = b.build_int_const(0x2000u64, ValueType::int(64)).unwrap();
+        b.build_call(f, &[], &[], 0).unwrap();
+        let addr = b.read_variable(&ptr).unwrap();
+        let y = b
+            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
+            .unwrap();
+        b.build_return(Some(y), &[]).unwrap();
+        b.set_region(other);
+        let g = b.build_int_const(0x3000u64, ValueType::int(64)).unwrap();
+        let (_, outs) = b.build_call(g, &[], &[ret], 0).unwrap();
+        b.build_return(Some(outs[0]), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        crate::pipeline::run_one(
+            &crate::RegionCollapse,
+            &mut function,
+            &crate::OptCtx::new(None),
+        )
+        .unwrap();
+        let root = function.producer(y);
+
+        let cap = Capture::new();
+        let other_arm = call().output(2).capture(cap).into_pattern();
+        let lhs = load().mem(call().ctrl(if_else().with_false(other_arm)));
+        let rule = rewrite_rule(lhs, var(cap));
+        let mut edit = EditFunction::new(&mut function);
+        let err = rule(&mut edit, root).expect_err("the other arm's value is unavailable");
+        assert!(err.to_string().contains("not available"), "{err}");
         edit.clean();
         drop(edit);
         strider_ir::validate::validate(&function).unwrap();
