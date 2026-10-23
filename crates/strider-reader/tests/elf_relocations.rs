@@ -705,7 +705,7 @@ fn mips64el_ignores_a_relocation_kind_read_from_the_symbol_index() {
     table.read_exact(fx.slot_addr, &mut got).expect("read slot");
     assert_eq!(
         got, [0u8; 8],
-        "R_MIPS_COPY is unhandled; the site must keep its file-initial bytes"
+        "R_MIPS_GPREL32 is unhandled; the site must keep its file-initial bytes"
     );
 }
 
@@ -1023,7 +1023,7 @@ fn a_word_sized_rel32_that_does_not_fit_is_a_hole() {
 
 /// A mips64el `SHT_REL` entry's `r_info` is transposed in what `object`
 /// reports, so the hole over an unhandled one must take its type from the
-/// untransposed word: `R_MIPS_COPY`, not the symbol index 1.
+/// untransposed word: `R_MIPS_GPREL32`, not the symbol index 1.
 #[test]
 fn a_mips64el_rel_hole_names_the_relocation_type() {
     let fx = common::elf_fixture::build_rel_elf_placed(
@@ -1031,7 +1031,7 @@ fn a_mips64el_rel_hole_names_the_relocation_type() {
             endian: object::Endianness::Little,
             is_64: true,
             e_machine: object::elf::EM_MIPS,
-            r_type: object::elf::R_MIPS_COPY,
+            r_type: object::elf::R_MIPS_GPREL32,
             defined_symbol: true,
             slot_init: vec![0u8; 8],
         },
@@ -1045,7 +1045,7 @@ fn a_mips64el_rel_hole_names_the_relocation_type() {
         strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
     assert_eq!(
         table.unmodelled_relocation_at(fx.slot_addr),
-        Some(object::elf::R_MIPS_COPY)
+        Some(object::elf::R_MIPS_GPREL32)
     );
 }
 
@@ -1080,7 +1080,7 @@ fn a_mips64_rel32_to_a_kseg_address_is_patched() {
 }
 
 /// A big-endian MIPS64 type word carries `r_ssym` in its top byte, which is
-/// not part of the type: the hole names `R_MIPS_COPY`.
+/// not part of the type: the hole names `R_MIPS_GPREL32`.
 #[test]
 fn a_mips64_be_hole_drops_r_ssym_from_the_type() {
     let fx = common::elf_fixture::build_rel_elf_placed(
@@ -1088,7 +1088,7 @@ fn a_mips64_be_hole_drops_r_ssym_from_the_type() {
             endian: object::Endianness::Big,
             is_64: true,
             e_machine: object::elf::EM_MIPS,
-            r_type: (1 << 24) | object::elf::R_MIPS_COPY,
+            r_type: (1 << 24) | object::elf::R_MIPS_GPREL32,
             defined_symbol: true,
             slot_init: vec![0u8; 8],
         },
@@ -1102,7 +1102,7 @@ fn a_mips64_be_hole_drops_r_ssym_from_the_type() {
         strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
     assert_eq!(
         table.unmodelled_relocation_at(fx.slot_addr),
-        Some(object::elf::R_MIPS_COPY)
+        Some(object::elf::R_MIPS_GPREL32)
     );
 }
 

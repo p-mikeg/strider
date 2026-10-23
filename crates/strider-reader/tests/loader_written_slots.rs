@@ -972,3 +972,27 @@ fn a_hole_over_two_adjacent_mappings_covers_both() {
         );
     }
 }
+
+/// An `R_*_COPY` object, which `ld.so` fills from the library defining it:
+/// every byte of it is a hole, not only its first word. The file holds zeros
+/// where `tbl[3]` reads 4 at run time.
+#[test]
+fn a_copy_relocated_object_is_a_hole_over_its_whole_size() {
+    for (name, r_type) in [
+        ("x64_copy_pie.elf", object::elf::R_X86_64_COPY),
+        ("aarch64_copy.elf", object::elf::R_AARCH64_COPY),
+    ] {
+        let elf = open(name);
+        let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+        let site = dynamic_site(&elf, r_type, Some("tbl"));
+        assert_eq!(site, dynsym_value(&elf, "tbl"), "{name}: the copy is tbl");
+        assert_eq!(fetch_word(&reader, site + 12, 4, true), 0, "{name}: file");
+        for off in (0..32).step_by(4) {
+            assert_hole(
+                rom_word(&reader, site + off, 4, true),
+                r_type,
+                &format!("{name} tbl+{off}"),
+            );
+        }
+    }
+}

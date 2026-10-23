@@ -177,6 +177,9 @@ pub(crate) enum Kind {
     /// Leaves the field as assembled: `R_*_NONE` and pure markers.
     Marker,
     Compute(Value, Field),
+    /// `R_*_COPY`: the loader copies the symbol's object, `st_size` bytes,
+    /// from the library defining it to `P`.
+    Copy,
 }
 
 /// Classifies a relocation for `arch`, `None` when no row here names it.
@@ -193,6 +196,7 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
     Some(match arch {
         A::X86_64 => match r_type {
             elf::R_X86_64_NONE | elf::R_X86_64_TLSDESC_CALL => Marker,
+            elf::R_X86_64_COPY => Kind::Copy,
             elf::R_X86_64_RELATIVE => C(V::ImageRelative, data(8, false)),
             elf::R_X86_64_IRELATIVE => C(V::Indirect, data(8, false)),
             elf::R_X86_64_GLOB_DAT | elf::R_X86_64_JUMP_SLOT => C(V::Slot, data(8, false)),
@@ -211,6 +215,7 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
         },
         A::I386 => match r_type {
             elf::R_386_NONE | elf::R_386_TLS_DESC_CALL => Marker,
+            elf::R_386_COPY => Kind::Copy,
             elf::R_386_RELATIVE => C(V::ImageRelative, data(4, false)),
             elf::R_386_IRELATIVE => C(V::Indirect, data(4, false)),
             elf::R_386_GLOB_DAT | elf::R_386_JMP_SLOT => C(V::Slot, data(4, false)),
@@ -221,6 +226,7 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
         },
         A::Aarch64 => match r_type {
             elf::R_AARCH64_NONE | 256 | elf::R_AARCH64_TLSDESC_CALL => Marker,
+            elf::R_AARCH64_COPY => Kind::Copy,
             elf::R_AARCH64_RELATIVE => C(V::ImageRelative, data(8, false)),
             elf::R_AARCH64_IRELATIVE => C(V::Indirect, data(8, false)),
             elf::R_AARCH64_GLOB_DAT | elf::R_AARCH64_JUMP_SLOT => C(V::Slot, data(8, false)),
@@ -276,6 +282,7 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
         },
         A::Arm => match r_type {
             elf::R_ARM_NONE | elf::R_ARM_V4BX => Marker,
+            elf::R_ARM_COPY => Kind::Copy,
             elf::R_ARM_RELATIVE => C(V::ImageRelative, data(4, false)),
             elf::R_ARM_IRELATIVE => C(V::Indirect, data(4, false)),
             elf::R_ARM_GLOB_DAT | elf::R_ARM_JUMP_SLOT => C(V::Slot, data(4, false)),
@@ -308,6 +315,7 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
             let word = if ppc64 { 8 } else { 4 };
             match r_type {
                 elf::R_PPC_NONE => Marker,
+                elf::R_PPC_COPY => Kind::Copy,
                 elf::R_PPC64_TLS | elf::R_PPC64_TOCSAVE | R_PPC64_ENTRY if ppc64 => Marker,
                 // `R_PPC64_*` shares these numbers with `R_PPC_*`.
                 elf::R_PPC_RELATIVE => C(V::ImageRelative, data(word, false)),
@@ -366,6 +374,7 @@ pub(crate) fn classify(arch: A, r: &RelocInfo) -> Option<Kind> {
                     return None;
                 }
                 elf::R_MIPS_NONE | elf::R_MIPS_JALR => Marker,
+                elf::R_MIPS_COPY => Kind::Copy,
                 elf::R_MIPS_26 => C(V::Abs, F::Mips26),
                 elf::R_MIPS_HI16 => C(V::Abs, F::MipsHalf16(Half::Ha)),
                 elf::R_MIPS_LO16 => C(V::Abs, F::MipsHalf16(Half::Lo)),

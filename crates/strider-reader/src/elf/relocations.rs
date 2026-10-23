@@ -84,6 +84,9 @@ fn apply_addend(base: u64, addend: i64) -> u64 {
 /// is left unmapped; inside an executable mapping `S` is the symbol's address,
 /// as [`Ctx::in_code`] says.
 ///
+/// An `R_*_COPY` object holds what the loader copies from the library
+/// defining it: every byte of its `st_size` is a hole, see [`hole_copies`].
+///
 /// A MIPS image's primary GOT holds entries no relocation record covers:
 /// [`mips_implicit_got`] holes the ones the loader writes.
 ///
@@ -132,6 +135,7 @@ pub(crate) fn apply_elf_relocations_with(
             || obj.architecture() == A::Aarch64,
         opd_entries: super::sections::opd_entries(obj, layout),
         got: BTreeMap::new(),
+        copies: Vec::new(),
         patches: Vec::new(),
     };
     let deduped = without_repeated_tables(obj)?;
@@ -149,6 +153,7 @@ pub(crate) fn apply_elf_relocations_with(
         );
     });
     relocations_off_dynsym(&mut ctx, walked);
+    hole_copies(&mut ctx);
     mips_implicit_got(&mut ctx);
     let got = got_regions(&ctx.got, ctx.endian_le)?;
     let mut patches = ctx.patches;
@@ -180,6 +185,8 @@ struct Ctx<'a, 'd> {
     opd_entries: BTreeMap<u64, u64>,
     /// GOT slot address -> (the symbol address it holds, slot width).
     got: BTreeMap<u64, (u64, usize)>,
+    /// `[start, end)` of each `R_*_COPY` object, and its relocation type.
+    copies: Vec<(u64, u64, u32)>,
     /// Every patch the walk records, in record order.
     patches: Vec<Patch>,
 }
@@ -261,11 +268,20 @@ impl<'a> Ctx<'a, '_> {
     /// decoder, and serving them unrelocated hands it a plausible wrong
     /// instruction with nothing said about it. A ROM view's served `.got` /
     /// `.data.rel.ro` has left `writable`, so a field there is a hole too.
+    ///
+    /// A field wider than a patch takes one hole per patch-wide piece.
     fn unmodelled(&mut self, holder: Option<&MemRegion>, addr: u64, width: usize, r_type: u32) {
-        if holder.is_some()
-            && (!self.writable.touches(addr, width) || self.executable.touches(addr, width))
-        {
-            self.patches.push(Patch::hole(addr, width, r_type));
+        if holder.is_none() {
+            return;
+        }
+        let end = addr.saturating_add(width as u64);
+        let mut at = addr;
+        while at < end {
+            let piece = (end - at).min(crate::MAX_PATCH_LEN) as usize;
+            if !self.writable.touches(at, piece) || self.executable.touches(at, piece) {
+                self.patches.push(Patch::hole(at, piece, r_type));
+            }
+            at += piece as u64;
         }
     }
 }
@@ -647,7 +663,62 @@ fn apply_one_relocation(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo, p
     match classify(ctx.obj.architecture(), r) {
         Some(Kind::Marker) => {}
         Some(Kind::Compute(value, field)) => apply_classified(ctx, site, r, pair, value, field),
+        Some(Kind::Copy) => {
+            let size = r.sym.and_then(|idx| symbol_size(ctx.obj, idx));
+            note_copy(ctx, site.addr, size, r.type_word());
+        }
         None => apply_plain(ctx, site, r),
+    }
+}
+
+/// `st_size` of symbol `idx`, from the table [`resolve_symbol_target`]
+/// reads.
+fn symbol_size(obj: &object::File<'_>, idx: object::SymbolIndex) -> Option<u64> {
+    let sym = if obj.kind() == object::ObjectKind::Relocatable {
+        obj.symbol_by_index(idx)
+    } else {
+        obj.dynamic_symbol_table()?.symbol_by_index(idx)
+    };
+    Some(sym.ok()?.size())
+}
+
+/// Records the object an `R_*_COPY` at `addr` fills: `size` bytes, or with
+/// no size known, up to the end of every region holding `addr`.
+fn note_copy(ctx: &mut Ctx<'_, '_>, addr: u64, size: Option<u64>, r_type: u32) {
+    let end = match size {
+        Some(size) => addr.saturating_add(size),
+        None => ctx
+            .regions
+            .iter()
+            .filter(|region| region.contains(addr))
+            .map(MemRegion::end_addr)
+            .max()
+            .unwrap_or(addr),
+    };
+    ctx.copies.push((addr, end, r_type));
+}
+
+/// Holes over every byte of every `R_*_COPY` object a region holds: what
+/// the loader copies there is the defining library's, never the file's.
+/// The objects are merged first, so the work is bounded by the bytes held.
+fn hole_copies(ctx: &mut Ctx<'_, '_>) {
+    let copies = std::mem::take(&mut ctx.copies);
+    let Some(&(_, _, r_type)) = copies.first() else {
+        return;
+    };
+    let objects = AddressSet::merged(copies.iter().map(|&(lo, hi, _)| (lo, hi)).collect());
+    let mut held = Vec::new();
+    for region in ctx.regions {
+        let (start, end) = (region.start_addr(), region.end_addr());
+        for &(lo, hi) in objects.as_slice() {
+            if lo < end && start < hi {
+                held.push((lo.max(start), hi.min(end)));
+            }
+        }
+    }
+    for &(lo, hi) in AddressSet::merged(held).as_slice() {
+        let holder = ctx.holding(lo, 1);
+        ctx.unmodelled(holder, lo, (hi - lo) as usize, r_type);
     }
 }
 
@@ -1194,6 +1265,11 @@ fn relocations_off_dynsym(ctx: &mut Ctx<'_, '_>, walked: &object::File<'_>) {
         };
         let width = match kind {
             Some(Kind::Marker) => continue,
+            // Which table the index means is in doubt, and with it the size.
+            Some(Kind::Copy) => {
+                note_copy(ctx, addr, None, r.type_word());
+                continue;
+            }
             Some(Kind::Compute(..)) if r.sym.is_none() => {
                 apply_one_relocation(ctx, site, &r, None);
                 continue;
@@ -1762,5 +1838,31 @@ mod tests {
             "44 rows, the 36 either-symbol ones counted twice, and the 4 \
              `R_MIPS_64` ones 6 more times under a third type"
         );
+    }
+
+    /// `R_*_COPY` is the one copy row on each arch, and only as a single
+    /// MIPS type.
+    #[test]
+    fn classify_pins_the_copy_rows() {
+        use object::elf as e;
+        let copy = |arch: A| match arch {
+            A::X86_64 => e::R_X86_64_COPY,
+            A::I386 => e::R_386_COPY,
+            A::Aarch64 => e::R_AARCH64_COPY,
+            A::Arm => e::R_ARM_COPY,
+            A::PowerPc | A::PowerPc64 => e::R_PPC_COPY,
+            _ => e::R_MIPS_COPY,
+        };
+        let mut rows = 0;
+        for (arch, r) in word_domain() {
+            let want = r.r_type == copy(arch) && r.r_type2 == e::R_MIPS_NONE;
+            rows += usize::from(want);
+            assert_eq!(
+                classify(arch, &r) == Some(Kind::Copy),
+                want,
+                "{arch:?} {r:?}"
+            );
+        }
+        assert_eq!(rows, 16, "8 arches, against a symbol and none");
     }
 }

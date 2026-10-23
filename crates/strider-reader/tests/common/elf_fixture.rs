@@ -1548,7 +1548,7 @@ pub(crate) fn build_mips64_rel32_elf(endian: Endianness) -> RelFixture {
 }
 
 /// A mips64el ET_DYN whose one `SHT_REL` entry carries a relocation type
-/// nothing here handles (`R_MIPS_COPY`) and a symbol index that collides with
+/// nothing here handles (`R_MIPS_GPREL32`) and a symbol index that collides with
 /// `R_MIPS_16`.
 ///
 /// `object` reads `Elf64_Rel::r_info` as a single little-endian `u64`, so the
@@ -1559,7 +1559,7 @@ pub(crate) fn build_mips64el_transposed_kind_elf() -> RelFixture {
         endian: Endianness::Little,
         is_64: true,
         e_machine: elf::EM_MIPS,
-        r_type: elf::R_MIPS_COPY,
+        r_type: elf::R_MIPS_GPREL32,
         defined_symbol: true,
         slot_init: vec![0u8; 8],
     })
