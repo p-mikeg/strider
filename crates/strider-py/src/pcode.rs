@@ -15,11 +15,17 @@ pub(crate) fn lift_one_text<R: rsleigh::MemReader>(
     let lift = sleigh
         .lift_one(addr)
         .map_err(|e| into_strider_err(anyhow::anyhow!("lift_one at {addr:#x} failed: {e:#}")))?;
-    let text = lift
-        .insns
-        .iter()
+    Ok((pcode_text(&lift.insns, space_ids), lift.machine_insn_len))
+}
+
+/// One machine instruction's p-code ops, joined with `"; "` in order.
+pub(crate) fn pcode_text<'a>(
+    insns: impl IntoIterator<Item = &'a rsleigh::Insn>,
+    space_ids: &rsleigh::SpaceIds,
+) -> String {
+    insns
+        .into_iter()
         .map(|insn| strider_cfg::insn_plain_text(insn, space_ids).to_string())
         .collect::<Vec<_>>()
-        .join("; ");
-    Ok((text, lift.machine_insn_len))
+        .join("; ")
 }
