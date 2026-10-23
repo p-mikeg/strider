@@ -567,6 +567,12 @@
 
 ### Fixed
 
+- Python: under `relocated_got_is_rom=True` a 64-bit TLS slot (a module id,
+  module offset or TP offset) is unmapped over all 8 of its bytes, and a
+  TLS descriptor over both its words, on x86-64, AArch64, ppc64 and MIPS64,
+  as is an i386 or ARM `TLS_DESC` slot over its 8. Only the first 4 bytes
+  were, so a 4-byte read of the upper half of a negative TP offset folded
+  to 0.
 - Python: `load_elf` and `add_elf` with relocations applied raise
   `StriderError` for an image whose code (`DT_TEXTREL`, or a writable and
   executable mapping) a `PT_DYNAMIC` relocation table no section header

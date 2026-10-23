@@ -878,6 +878,11 @@ fn apply_classified(
     let p = site.addr;
     let width = field.width();
     let holder = ctx.holder(site, p, width);
+    // Read nothing: a TLS descriptor is wider than a field read.
+    if value == Value::Tls {
+        ctx.unmodelled(holder, p, width, r.type_word());
+        return;
+    }
     // The common case by far: a RELA image-relative word reads no symbol or field.
     if let (Value::ImageRelative, Some(a)) = (value, r.rela_addend) {
         match fit(ctx.obj, field, apply_addend(0, a)) {
@@ -997,7 +1002,7 @@ fn compute_classified(
         Value::TocRelative => sa.wrapping_sub(layout.toc_base()?),
         Value::Toc => apply_addend(layout.toc_base()?, a),
         Value::ImageRelative => apply_addend(0, a),
-        Value::Indirect => return None,
+        Value::Indirect | Value::Tls => return None,
         Value::PltCall => s.wrapping_sub(p),
         // A descriptor's entry is where `S + A` in `.opd` relocates to.
         Value::Ppc64Call { .. } if target?.in_opd => ctx.opd_entries.get(&sa)?.wrapping_sub(p),
@@ -2032,5 +2037,51 @@ mod tests {
             );
         }
         assert_eq!(rows, 16, "8 arches, against a symbol and none");
+    }
+
+    /// The TLS rows and their widths; PPC32 and MIPS32 share the numbers of
+    /// their 64-bit twins, whose 4-byte fields take no row.
+    #[test]
+    fn classify_pins_the_tls_rows() {
+        use object::elf as e;
+        let rows: &[(A, u32, u8)] = &[
+            (A::X86_64, e::R_X86_64_DTPMOD64, 8),
+            (A::X86_64, e::R_X86_64_DTPOFF64, 8),
+            (A::X86_64, e::R_X86_64_TPOFF64, 8),
+            (A::X86_64, e::R_X86_64_TLSDESC, 16),
+            (A::I386, e::R_386_TLS_DESC, 8),
+            (A::Aarch64, e::R_AARCH64_TLS_DTPMOD, 8),
+            (A::Aarch64, e::R_AARCH64_TLS_DTPREL, 8),
+            (A::Aarch64, e::R_AARCH64_TLS_TPREL, 8),
+            (A::Aarch64, e::R_AARCH64_TLSDESC, 16),
+            (A::Arm, e::R_ARM_TLS_DESC, 8),
+            (A::PowerPc64, e::R_PPC64_DTPMOD64, 8),
+            (A::PowerPc64, e::R_PPC64_TPREL64, 8),
+            (A::PowerPc64, e::R_PPC64_DTPREL64, 8),
+            (A::Mips64, e::R_MIPS_TLS_DTPMOD64, 8),
+            (A::Mips64, e::R_MIPS_TLS_DTPREL64, 8),
+            (A::Mips64, e::R_MIPS_TLS_TPREL64, 8),
+        ];
+        let mut seen = 0;
+        for (arch, r) in word_domain() {
+            let want = rows
+                .iter()
+                .find(|row| row.0 == arch && row.1 == r.r_type && r.r_type2 == e::R_MIPS_NONE)
+                .map(|row| {
+                    Kind::Compute(
+                        Value::Tls,
+                        Field::Data {
+                            bytes: row.2,
+                            signed: false,
+                        },
+                    )
+                });
+            seen += usize::from(want.is_some());
+            let got = classify(arch, &r);
+            if want.is_some() || matches!(got, Some(Kind::Compute(Value::Tls, _))) {
+                assert_eq!(got, want, "{arch:?} {r:?}");
+            }
+        }
+        assert_eq!(seen, 32, "16 rows, against a symbol and none");
     }
 }
