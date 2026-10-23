@@ -3,8 +3,6 @@ use strider_ir::{Function, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::IrBuilderEx;
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
 
-use crate::StackOffsetDetect;
-
 fn stamped_count(function: &Function) -> usize {
     function
         .graph()
@@ -20,8 +18,7 @@ fn run(function: &mut Function) {
     crate::test_support::cf_rp_pipeline()
         .run(function, &crate::OptCtx::new(None))
         .expect("canonicalize must not error");
-    crate::pipeline::run_post(&StackOffsetDetect, function, &crate::OptCtx::new(None))
-        .expect("must not error");
+    super::stamp_all(&mut crate::EditFunction::new(function));
 }
 
 /// Builds `store [sp-4] = 0x42; load [sp-4]; return loaded`.

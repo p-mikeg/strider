@@ -54,7 +54,6 @@ pub use post_opt::function_args::FunctionArgDetect;
 #[cfg(any(test, feature = "test-util"))]
 pub use post_opt::indirect_branch_resolve::classify_target;
 pub use post_opt::indirect_branch_resolve::{ClassifiedSites, ReturnTargets, classify_sites};
-pub use post_opt::stack_offset_detect::StackOffsetDetect;
 pub use strider_ir::ReadOnlyMemory;
 
 pub fn default_pipeline() -> OptimizerPipeline {
