@@ -152,13 +152,14 @@ fn is_relocated_got_name(name: &str) -> bool {
 /// per-thread block). A name-only match carves out whatever sits at the
 /// address, which for an unmapped section is another section's writable bytes.
 ///
-/// Empty when a table the image's dynamic tags place cannot be read or
-/// decoded: what it relocates could land in any of them.
-fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> AddressSet {
-    if matches!(
-        super::dynamic::loader_view(obj),
-        super::dynamic::LoaderView::Unreadable(_) | super::dynamic::LoaderView::OverBudget { .. }
-    ) {
+/// Empty when `unread`, a table the image's dynamic tags place that cannot
+/// be read or decoded: what it relocates could land in any of them.
+fn relocated_got_ranges(
+    obj: &object::File<'_>,
+    layout: &ElfSectionLayout,
+    unread: bool,
+) -> AddressSet {
+    if unread {
         return AddressSet::default();
     }
     let mut starts = Vec::new();
@@ -337,6 +338,11 @@ impl AddressSet {
         let first = self.0.partition_point(|&(_, end)| end <= lo);
         let last = first + self.0[first..].partition_point(|&(start, _)| start < hi);
         &self.0[first..last]
+    }
+
+    /// The addresses of `self` not in `cut`.
+    pub(crate) fn without(&self, cut: &Self) -> Self {
+        Self::merged_without(self.0.clone(), cut)
     }
 
     /// The ranges, ascending.
@@ -1003,6 +1009,7 @@ pub(crate) fn collect_regions(
     source: RegionSource,
     filter: LoadFilter,
     layout: &ElfSectionLayout,
+    unread: bool,
 ) -> Result<LoadedImage> {
     let image = match (source, obj.kind()) {
         (RegionSource::Auto, ObjectKind::Executable | ObjectKind::Dynamic) => {
@@ -1017,7 +1024,7 @@ pub(crate) fn collect_regions(
         // A read-only mapping a writable one overlaps is writable there.
         LoadFilter::ImmutableOnly => image.without_writable_except(&AddressSet::default()),
         LoadFilter::ImmutableAndRelocatedGot => {
-            image.without_writable_except(&relocated_got_ranges(obj, layout))
+            image.without_writable_except(&relocated_got_ranges(obj, layout, unread))
         }
         _ => image.into_image(),
     })
