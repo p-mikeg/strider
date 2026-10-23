@@ -149,8 +149,8 @@ pub fn instantiate_guarded<B: IRBuilder>(
 
     // Keyed on the output VERTEX rather than the producer node, so a
     // multi-output interior node feeds the right slot to each consumer: a
-    // `Store`'s memory output and a sibling value output must resolve to
-    // distinct IR outputs.
+    // `Call`'s memory output and its value outputs must resolve to distinct
+    // IR outputs.
     let mut materialised: FxHashMap<TmplValueId, ValueId> = FxHashMap::default();
     let mut root_value: Option<ValueId> = None;
 
@@ -262,7 +262,7 @@ pub fn instantiate_guarded<B: IRBuilder>(
         let inputs = collect_inputs(template, vtx, &materialised)?;
 
         // Usually a single value output; a multi-output node such as a
-        // `Store` declares its memory output here too.
+        // `Call` declares its memory output here too.
         let outputs = output_kinds_for(template, vtx, &value_tys)?;
         for (slot, got) in outputs.iter().enumerate() {
             let want = kind.expected_output_kind(slot).ok_or_else(|| {
@@ -271,7 +271,6 @@ pub fn instantiate_guarded<B: IRBuilder>(
                      its node signature admits"
                 )
             })?;
-            // A `Store` with no explicit output vertex gets a value output here.
             if !want.admits(*got) {
                 anyhow::bail!(
                     "template node {kind:?} declares {got} at output slot {slot}, \
