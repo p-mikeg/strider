@@ -567,6 +567,10 @@
 
 ### Fixed
 
+- Python: `Function.to_text` prints the frame reach a call register held,
+  `frame_address_in_call_register reach=<offset|unbounded>`, which the
+  incoming-argument escape verdict reads. Two functions that differ only in
+  the reach printed the same text.
 - Python: a `strider.template.float_const` with a set bit above the width it
   is evaluated at refuses the rewrite, as Rust `float_const` and
   `float_const_with_fn` do. The bits were masked to the width, so an f64's
