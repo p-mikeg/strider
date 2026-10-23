@@ -31,6 +31,25 @@ impl Endianness {
             }
         }
     }
+
+    /// Bit distance between `reg`'s slot and `container`'s LSB in this order,
+    /// or `None` when `reg` does not sit inside `container`.
+    ///
+    /// Little-endian: the LSB byte is at offset 0, so the byte distance from
+    /// the container's start is the shift. Big-endian: the MSB byte is at
+    /// offset 0, so the slice sits `container.size - reg.size - (reg.off -
+    /// container.off)` bytes above the LSB.
+    #[must_use]
+    pub fn slice_shift_bits(self, reg: &rsleigh::Vn, container: &rsleigh::Vn) -> Option<u64> {
+        let within = reg.addr_off.checked_sub(container.addr_off)?;
+        let bytes = match self {
+            Self::Little => within,
+            Self::Big => u64::from(container.size)
+                .checked_sub(u64::from(reg.size))?
+                .checked_sub(within)?,
+        };
+        bytes.checked_mul(8)
+    }
 }
 
 /// The byte order of each address space: the data order, and the Sleigh
@@ -67,6 +86,38 @@ impl From<Endianness> for ByteOrder {
 #[cfg(test)]
 mod endianness_tests {
     use super::Endianness;
+    use super::Endianness::{Big, Little};
+    use rsleigh::{Vn, VnSpace};
+
+    fn reg(off: u64, size: u32) -> Vn {
+        Vn {
+            addr_off: off,
+            addr_space: VnSpace::REGISTER,
+            size,
+        }
+    }
+
+    #[test]
+    fn a_reg_outside_its_container_is_none_not_a_panic() {
+        // Starting below the container: both arms subtract below zero on the
+        // offset.
+        let high = reg(4, 4);
+        assert_eq!(Little.slice_shift_bits(&reg(0, 1), &high), None);
+        assert_eq!(Big.slice_shift_bits(&reg(0, 1), &high), None);
+        // Starting inside but overhanging the end: only the big-endian arm
+        // subtracts the sizes, so only it can see this one.
+        let container = reg(0, 4);
+        assert_eq!(Big.slice_shift_bits(&reg(0, 8), &container), None);
+        assert_eq!(Big.slice_shift_bits(&reg(2, 4), &container), None);
+    }
+
+    #[test]
+    fn a_contained_reg_shifts_by_its_distance_from_the_lsb() {
+        let container = reg(0, 4);
+        assert_eq!(Little.slice_shift_bits(&reg(3, 1), &container), Some(24));
+        assert_eq!(Big.slice_shift_bits(&reg(3, 1), &container), Some(0));
+        assert_eq!(Big.slice_shift_bits(&reg(0, 1), &container), Some(24));
+    }
 
     #[test]
     fn read_uint_decodes_n_byte_word_per_endianness() {
