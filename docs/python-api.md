@@ -259,9 +259,11 @@ the positive one:
   it, like `msr_register_keeps_mode`.
 
 `AssumptionOptions.none()` clears all nine; `AssumptionOptions()` does not. It
-is the sound floor of these fields for any input whose memory behaves as RAM:
-a load reads back the last value the analysed code stored at its address, so a
-memory-mapped register polled after a write still reads as the value written.
+is the sound floor of these fields for any input whose memory behaves as RAM
+and whose floating-point controls are the IEEE default: a load reads back the
+last value the analysed code stored at its address, so a memory-mapped register
+polled after a write still reads as the value written, and the FTZ, DAZ, NI,
+OE, UE, FZ and FS controls above are clear.
 `AssumptionOptions.none(...)` takes the same keywords as the constructor and
 sets only the claims named, where each one the constructor leaves out takes its
 default: `AssumptionOptions(escape_analysis=True)` holds six claims,

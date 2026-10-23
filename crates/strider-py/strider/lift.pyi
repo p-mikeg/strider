@@ -54,7 +54,8 @@ class AssumptionOptions:
     `return_slots_survive_untracked_writes`, `msr_register_keeps_mode` and
     `fp_rounding_mode_is_nearest` default `True`, the other four off or empty;
     clearing all nine is the sound floor under any input whose memory
-    behaves as RAM (see `none`). What each one claims is in
+    behaves as RAM and whose floating-point controls are the IEEE default
+    (see `none`). What each one claims is in
     `docs/python-api.md` section 2.
 
     Claims accumulate on a `Function` (`Function.assumptions`): `analyze`
@@ -138,7 +139,12 @@ class AssumptionOptions:
         analysed code stored at its address, with nothing outside that code
         (a device, another thread, a signal handler) changing it in between.
         A memory-mapped register polled after a write reads as the value
-        written, and no option lifts that premise.
+        written. The floating-point controls other than the rounding mode
+        are still taken to be the IEEE default: float arithmetic rounds to
+        nearest, and x86 MXCSR.FTZ and DAZ, PowerPC FPSCR.NI, OE and UE, ARM
+        FPSCR.FZ, AArch64 FPCR.FZ and MIPS FCSR.FS are clear, so
+        `-ffast-math` code, whose startup sets FTZ and DAZ, has no floor
+        here. No option lifts either premise.
         """
         ...
     def union(self, other: AssumptionOptions) -> AssumptionOptions:

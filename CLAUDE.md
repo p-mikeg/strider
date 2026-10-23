@@ -377,9 +377,10 @@ when both IR slots hold the same value.
   `msr_register_keeps_mode` and `fp_rounding_mode_is_nearest`, are read by the
   lift instead), and
   `AssumptionOptions::none()`, not `::default()`, is the sound floor of those
-  fields under any input whose memory behaves as RAM. It is the floor, not the
-  only sound setting: `callee_preserves_stack_args` is inert without
-  `escape_analysis` or a listed allocator. Per-field detail is on the struct
+  fields under any input whose memory behaves as RAM and whose floating-point
+  controls (MXCSR.FTZ/DAZ, FPSCR.NI/OE/UE, FZ, FS) are the IEEE default. It is
+  the floor, not the only sound setting: `callee_preserves_stack_args` is inert
+  without `escape_analysis` or a listed allocator. Per-field detail is on the struct
   (`crates/strider-ir/src/assumptions.rs`). `LoadForward` is two analyzers: the
   `alias` one is `MemPurpose::Forward` over `assumptions`, the `narrow` one
   `MemPurpose::TableWalk`, the same claims less the call relaxations, because
