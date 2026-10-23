@@ -276,3 +276,14 @@ fn an_equality_the_dispatch_sits_under_bounds_the_field() {
         &[2],
     );
 }
+
+/// `movzwl 0x10(%rdi),%eax ; testb $0xfc,0x11(%rdi) ; jne dflt ; shr $8,%eax`:
+/// the test loads the index's byte at its own address.
+/// Mutation: count only a load at the cell's own address.
+#[test]
+fn a_test_of_an_overlapping_load_bounds_the_field() {
+    let head = [
+        0x0f, 0xb7, 0x47, 0x10, 0xf6, 0x47, 0x11, 0xfc, 0x75, 0x22, 0xc1, 0xe8, 0x08,
+    ];
+    assert_only([head.as_slice(), &JMP_RAX].concat(), &[0, 1, 2, 3]);
+}
