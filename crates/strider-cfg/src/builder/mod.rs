@@ -596,6 +596,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             };
             let is_start = region.start_addr == addr;
             let is_boundary = region.contains_insn_at(addr);
+            let is_stub = is_start
+                && region.insns.is_empty()
+                && matches!(
+                    region.terminator,
+                    super::types::RegionTerminator::TailCall { .. }
+                );
             if mode_clash {
                 self.incomplete.insert(addr, crate::Reason::IsaModeConflict);
             }
@@ -606,6 +612,26 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 // that is not there. Wiring the edge anyway would leave the seat
                 // disagreeing with its own `IsaModeConflict` inside one build.
                 self.clashing_seeded.push((parent_region_id, addr));
+                return Ok(());
+            }
+            if let Some(seed) = seeded_by.filter(|s| s.is_arm(parent_region, addr))
+                && is_stub
+                && [
+                    crate::Reason::UnmappedTarget,
+                    crate::Reason::UndecodableTarget,
+                ]
+                .into_iter()
+                .any(|r| self.incomplete.names(addr, r))
+            {
+                // A direct edge already found no code here, and an arm onto
+                // such bytes is dropped whichever edge reached them first.
+                self.undecodable_seeded.push((
+                    seed.switch,
+                    crate::UndecodableTarget {
+                        site: seed.site,
+                        target: seed.arm,
+                    },
+                ));
                 return Ok(());
             }
             let target = if is_start {
