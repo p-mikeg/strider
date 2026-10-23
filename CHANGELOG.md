@@ -567,6 +567,9 @@
 
 ### Fixed
 
+- Python: the `load_elf` and `add_elf` docs say that `apply_relocations=False`
+  serves every relocation field still mapped, a `.rodata` table's and a
+  TEXTREL image's code included, as its file bytes.
 - Python: under `relocated_got_is_rom=True` the two GOT header words the
   loader writes for lazy binding are unmapped: ARM's at `DT_PLTGOT + 4` and
   `+ 8`, and secure-PLT PPC32's after `DT_PPC_GOT`. They served the file's
