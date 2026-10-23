@@ -685,9 +685,10 @@ impl<'f> RangeMap<'f> {
     ///
     /// Such a test (a mask, a shift, a sign) bounds the cell in a shape no
     /// guard here reads, or on a reload `range_of` does not connect, and may
-    /// be what sizes a table `value` indexes. `Equal(cast*(cell), k)` only
-    /// excludes `k`, which [`Self::ruled_out`] reads, and a guard recorded
-    /// between `cell` and `value` is one `range_of` reads.
+    /// be what sizes a table `value` indexes. `Equal(cast*(cell), k)` whose
+    /// true edge does not reach `site` only excludes `k`, which
+    /// [`Self::ruled_out`] reads, and a guard recorded between `cell` and
+    /// `value` is one `range_of` reads.
     pub(crate) fn cell_test_left_unread(
         &self,
         value: ValueId,
@@ -717,7 +718,8 @@ impl<'f> RangeMap<'f> {
         self.ifs.iter().any(|&if_node| {
             self.doms.dominates(if_node, site) && {
                 let cond = f.if_cond(if_node);
-                !excludes_one_value(f, cond, |v| view(v).is_some())
+                (!excludes_one_value(f, cond, |v| view(v).is_some())
+                    || self.edge_reaches(if_node, NodeKind::IF_TRUE_OUT_SLOT, site))
                     && !self.guards_index(if_node, value, cell)
                     && cell_bits_read(f, cond, view) & index_bits != 0
             }
@@ -733,6 +735,15 @@ impl<'f> RangeMap<'f> {
             .iter()
             .filter_map(|&slot| self.edge_guards.get(outputs.get(slot)?))
             .any(|&(guarded, _)| cone_reaches(f, value, guarded) && cone_reaches(f, guarded, cell))
+    }
+
+    /// Whether the successor of `if_node`'s edge at `slot` dominates `site`.
+    fn edge_reaches(&self, if_node: NodeId, slot: usize, site: NodeId) -> bool {
+        let f = self.function;
+        f.node_outputs(if_node)
+            .get(slot)
+            .and_then(|&edge| single_control_consumer(f, edge))
+            .is_some_and(|sink| self.doms.dominates(sink, site))
     }
 
     /// The constants `value` is not at `region`: each `k` of an
