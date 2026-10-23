@@ -336,7 +336,9 @@ impl FloatConstArg for Capture {
 }
 
 /// Match a `FloatConst` whose IEEE 754 bit pattern equals `bits`; given a
-/// [`Capture`], any `FloatConst`, bound to it.
+/// [`Capture`], any `FloatConst`, bound to it. As a template, `bits` is the
+/// pattern at the width the constant is evaluated at, and a set bit above
+/// that width refuses the rewrite.
 pub fn float_const<A: FloatConstArg>(bits: A) -> A::Pat {
     bits.into_float_const()
 }
@@ -565,7 +567,8 @@ where
 }
 
 /// A `FloatConst` whose IEEE 754 bit pattern `f` computes at rewrite time, at
-/// the width it is evaluated at ([`TemplateTy::InheritRoot`]).
+/// the width it is evaluated at ([`TemplateTy::InheritRoot`]). A set bit above
+/// that width refuses the rewrite.
 pub fn float_const_with_fn<F>(f: F) -> ConstWith
 where
     F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u64> + 'static + Send,

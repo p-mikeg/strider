@@ -462,70 +462,57 @@ fn const_with_closure_captures_are_reported_as_referenced() {
 }
 
 /// A template `FloatConst` carries raw IEEE bits with no width attached; the
-/// width arrives only when the node is materialised. Bits above it must be
-/// dropped there, or the rewrite plants a node the validator rejects and the
-/// dedup table sees as distinct from the same constant built normally.
-#[test]
-fn float_const_template_masks_bits_above_the_resolved_width() {
+/// width arrives only when the node is materialised. Bits above it are a
+/// different constant (an f64's bits at F32 would read as another value), so
+/// the instantiation is refused rather than masked.
+#[track_caller]
+fn instantiate_f32_err(rhs: &Template) -> String {
     let masked = u64::from(f32::to_bits(1.5));
-    let unmasked = 0xDEAD_BEEF_0000_0000u64 | masked;
-
     let mut fx = make_empty_fn(|b| Ok(b.build_float_const(masked, T::float(32)))).unwrap();
     let lhs = strider_pattern::float_const(masked).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
     assert_eq!(root_ty, T::float(32));
+    let mut ef = EditFunction::new(&mut fx);
+    instantiate(rhs, &mut ef, &bindings, root_node, &[root_node], root_ty)
+        .expect_err("bits above F32 are refused")
+        .to_string()
+}
 
-    let rhs = strider_pattern::float_const(unmasked).into_template();
-    let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
-
-    let kind = *fx.node_kind(fx.producer(new_value));
-    assert_eq!(
-        kind,
-        NodeKind::FloatConst(masked),
-        "an F32 template constant must drop bits 63:32; got {kind:?}"
-    );
-    strider_ir::validate::validate(&fx).expect("the rewritten function must validate");
+#[test]
+fn float_const_template_refuses_bits_above_the_resolved_width() {
+    let rhs = strider_pattern::float_const(f64::to_bits(1.0)).into_template();
+    let err = instantiate_f32_err(&rhs);
+    assert!(err.contains("f32"), "{err}");
 }
 
 /// The same for a constant computed at rewrite time.
 #[test]
-fn float_const_with_fn_masks_bits_above_the_resolved_width() {
-    let masked = u64::from(f32::to_bits(1.5));
-    let unmasked = 0xDEAD_BEEF_0000_0000u64 | masked;
-
-    let mut fx = make_empty_fn(|b| Ok(b.build_float_const(masked, T::float(32)))).unwrap();
-    let lhs = strider_pattern::float_const(masked).into_pattern();
-    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
-
+fn float_const_with_fn_refuses_bits_above_the_resolved_width() {
+    let unmasked = 0xDEAD_BEEF_0000_0000u64 | u64::from(f32::to_bits(1.5));
     let rhs = strider_pattern::float_const_with_fn(move |_| Ok(unmasked)).into_template();
-    let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
-
-    let kind = *fx.node_kind(fx.producer(new_value));
-    assert_eq!(
-        kind,
-        NodeKind::FloatConst(masked),
-        "an F32 rewrite-time constant must drop bits 63:32; got {kind:?}"
-    );
-    strider_ir::validate::validate(&fx).expect("the rewritten function must validate");
+    let err = instantiate_f32_err(&rhs);
+    assert!(err.contains("f32"), "{err}");
 }
 
-/// The unmasked constant is not merely a dedup miss. Spliced in where a real
-/// rewrite puts it, it is IR the validator rejects, which no value a user can
-/// write through the public `float_const` may become.
+/// Bits that fit the width are the constant itself, spliced in as valid IR.
 #[test]
-fn float_const_template_result_is_valid_ir_once_spliced_in() {
-    let masked = u64::from(f32::to_bits(1.5));
-    let unmasked = 0xDEAD_BEEF_0000_0000u64 | masked;
+fn float_const_template_at_its_own_width_is_valid_ir_once_spliced_in() {
+    let one = u64::from(f32::to_bits(1.5));
+    let two = u64::from(f32::to_bits(2.0));
 
     let mut t = strider_ir_test_utils::Tb::empty();
-    let c = t.float_bits(masked, T::float(32));
+    let c = t.float_bits(one, T::float(32));
     let mut fx = t.ret_val(c);
 
-    let lhs = strider_pattern::float_const(masked).into_pattern();
+    let lhs = strider_pattern::float_const(one).into_pattern();
     let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
 
-    let rhs = strider_pattern::float_const(unmasked).into_template();
+    let rhs = strider_pattern::float_const(two).into_template();
     let new_value = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
+    assert_eq!(
+        *fx.node_kind(fx.producer(new_value)),
+        NodeKind::FloatConst(two)
+    );
 
     let [old_value] = fx.node_outputs_exact::<1>(root_node).unwrap();
     EditFunction::new(&mut fx).replace_value(old_value, new_value);
