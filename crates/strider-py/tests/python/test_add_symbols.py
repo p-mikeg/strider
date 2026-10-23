@@ -49,6 +49,25 @@ def test_add_symbol_file_leaves_the_mapped_bytes_alone(tmp_path):
     assert lift.build_cfg(entry).to_dot() == before
 
 
+def test_a_symbol_file_changed_after_its_table_is_built_is_not_reread(tmp_path):
+    """`analyze` reads the image's bytes, re-stat on every read, and a symbol
+    file only through the tables built from it. Once those are built, a
+    change to that file is nothing `analyze` reads, so it does not raise."""
+    full, dbg, stripped = _strip_and_split(tmp_path)
+    lift = strider.lift.load_elf(str(stripped))
+    lift.add_symbol_file(str(dbg))
+    name = next(n for n, s in lift.symbols().items() if s.size)
+    lift.analyze(name)
+    with dbg.open("ab") as f:
+        f.write(b"\0" * 64)
+    assert lift.analyze(name).function.node_count() > 0
+    assert lift.analyze(lift.symbol(name).address).function.node_count() > 0
+    with stripped.open("ab") as f:
+        f.write(b"\0" * 64)
+    with pytest.raises(strider.StriderError, match="changed on disk"):
+        lift.analyze(name)
+
+
 def test_add_symbols_takes_addresses_and_extents():
     lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
     lift.add_symbols({"bare": 0x40_0000, "sized": (0x50_0000, 0x40)})
