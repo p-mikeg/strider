@@ -90,11 +90,7 @@ impl Cfg {
     }
 
     /// Caller-seeded or classifier-derived targets that failed to decode, or
-    /// led to code that did, so their edge is absent from this CFG. A
-    /// misclassified jump-table bound reaches past the table and yields
-    /// addresses that are not code; dropping those keeps the rest of the
-    /// function analysable, and reporting them is what stops the CFG being
-    /// silently incomplete.
+    /// led to code that did, so their edge is absent from this CFG.
     ///
     /// "Led to" stops at the next dispatch: an arm that reaches the bad bytes
     /// only back through another `Switch` (an outer table's arm into an inner
@@ -141,11 +137,9 @@ impl Cfg {
     /// Sites seated as a `TailCall` because the answer was a single target
     /// outside the function.
     ///
-    /// Seating one consumes the site at CFG-build time, exactly as
-    /// [`Self::link_register_seated`] does: a dispatch that really had more
-    /// arms leaves no placeholder and no `Switch` anchor behind, so nothing
-    /// later can tell the difference between a genuine tail call and a
-    /// dispatch collapsed to its first derived answer.
+    /// Seating one consumes the site at CFG-build time, as
+    /// [`Self::link_register_seated`] does, so a dispatch collapsed to its
+    /// first derived answer looks like a genuine tail call.
     pub fn tail_call_seated(&self) -> &[types::PcodeInsnAddr] {
         &self.tail_call_seated
     }
