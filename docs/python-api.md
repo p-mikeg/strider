@@ -212,7 +212,8 @@ the positive one:
   load forwards across a call. An address escapes through a call argument, a
   stored value, a return, or a register the call clobbers. The proof misses a
   callee reading an address from a register its convention preserves, and
-  reads an alignment hole in the outgoing-argument window as the window's end.
+  reads an argument slot the caller leaves unwritten (an alignment hole, or an
+  argument it never stores) as the outgoing-argument window's end.
 - `noalias_allocators` (empty): the listed callees return fresh pointers that
   overlap no live allocation, no stack slot and no global or other constant
   address, so an allocator carving from a static or a caller-supplied arena
