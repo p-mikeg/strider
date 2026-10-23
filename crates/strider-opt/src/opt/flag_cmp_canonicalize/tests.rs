@@ -132,12 +132,81 @@ fn ppc_cr_bit_test_canonicalizes_through_a_ne_zero_branch() -> Result<()> {
 /// the comparison's fingerprint.  Three distinct addresses, because
 /// `replace_value` alone carries the comparison's own and the `Truncate`'s but
 /// drops `ADDR_PACK`.
+/// `If(Xor(Equal(ZeroExtend(flag):I32, 0), 1))`, the `flag != 0` branch
+/// lowering, with the comparison at `ADDR_CMP`, the widened flag at
+/// `ADDR_PACK` and its test at `ADDR_TRUNC`.  `flag` is `make_flag`'s
+/// boolean over `Less(idx, 8)`.
+fn nonzero_flag_test(
+    make_flag: impl Fn(&mut FunctionBuilder, ValueId) -> Result<ValueId>,
+) -> Result<strider_ir::Function> {
+    use strider_ir::node::ExtendOp;
+    let ty = ValueType::int(32);
+    let mut b = RegisterSet::new().build_fn()?;
+    let entry = b.create_region_all()?;
+    let taken = b.create_region_all()?;
+    let fall = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+
+    b.set_lift_addr(Some(ADDR_CMP));
+    let dummy = b.build_int_const(0xF00Du64, ValueType::int(64))?;
+    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let eight = b.build_int_const(8u64, ty)?;
+    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+    let flag = make_flag(&mut b, lt)?;
+
+    b.set_lift_addr(Some(ADDR_PACK));
+    let wide = b.extend_if_needed(flag, ty, ExtendOp::ZeroExtend)?;
+
+    b.set_lift_addr(Some(ADDR_TRUNC));
+    let zero = b.build_int_const(0u64, ty)?;
+    let eq = b.build_int_cmp_operation(wide, zero, IntCmpOp::Equal, ty)?;
+    let cond = build_i1_xor_with_one(&mut b, eq)?;
+    b.build_if(cond, taken, fall)?;
+
+    b.set_lift_addr(Some(ADDR_PACK));
+    b.set_region(taken);
+    b.build_return(Some(idx), &[])?;
+    b.set_region(fall);
+    b.build_return(Some(idx), &[])?;
+    b.set_lift_addr(None);
+    b.build()
+}
+
+const ADDR_CMP: u64 = 0x1111;
+const ADDR_PACK: u64 = 0x2222;
+const ADDR_TRUNC: u64 = 0x3333;
+
+/// The `flag != 0` spelling of a one-term pack: the widened flag sits below
+/// the tested `Equal`, and its address survives in the comparison's
+/// fingerprint as the `Truncate` spelling's pack does.
+///
+/// Mutation: stop the descent at the tested `Equal`.
+#[test]
+fn a_nonzero_flag_test_keeps_the_widened_flags_fingerprint() -> Result<()> {
+    let mut fg = nonzero_flag_test(|_, lt| Ok(lt))?;
+    crate::pipeline::run_one(
+        &FlagCmpCanonicalize::new(),
+        &mut fg,
+        &crate::OptCtx::new(None),
+    )?;
+    let if_node = fg
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
+        .expect("If node");
+    let cond = fg.graph().producer(if_cond_output(fg.graph(), if_node));
+    assert_eq!(*fg.node_kind(cond), NodeKind::IntCmpOp(IntCmpOp::Less));
+    let fp = fg.side_tables().asm_fingerprint(cond);
+    assert!(
+        fp.contains(&ADDR_PACK) && fp.contains(&ADDR_TRUNC) && fp.contains(&ADDR_CMP),
+        "the test's addresses survive in the comparison's fingerprint; got {fp:?}"
+    );
+    Ok(())
+}
+
 #[test]
 fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
     use strider_ir::node::ExtendOp;
-    const ADDR_CMP: u64 = 0x1111;
-    const ADDR_PACK: u64 = 0x2222;
-    const ADDR_TRUNC: u64 = 0x3333;
     let ty = ValueType::int(32);
     let mut b = RegisterSet::new().build_fn()?;
     let entry = b.create_region_all()?;
