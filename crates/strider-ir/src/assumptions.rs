@@ -5,7 +5,8 @@
 /// check.  Every field's risky value is the positive one, and each one turned
 /// on can make the answer wrong on valid input; the miscompile is then the
 /// caller's.  [`AssumptionOptions::none`] is the sound floor of THESE fields
-/// under any input program whose memory behaves as RAM (see there);
+/// under any input program whose memory behaves as RAM and whose
+/// floating-point controls are the IEEE default (see there);
 /// strider-orchestrator's `AnalyzeOptions::resolve_indirect_branches` defaults
 /// on and is outside it.
 ///
@@ -222,7 +223,12 @@ impl AssumptionOptions {
     /// analysed code stored at its address, and nothing outside that code (a
     /// device, another thread, a signal handler) changes it in between.  A
     /// memory-mapped register polled after a write reads as the value written.
-    /// No field lifts the premise.
+    /// It also takes the floating-point controls other than the rounding mode
+    /// to be the IEEE default: float arithmetic rounds to nearest, and x86
+    /// MXCSR.FTZ and DAZ, PowerPC FPSCR.NI, OE and UE, ARM FPSCR.FZ, AArch64
+    /// FPCR.FZ and MIPS FCSR.FS are clear, so `-ffast-math` code, whose
+    /// startup sets FTZ and DAZ, has no floor here.  No field lifts either
+    /// premise.
     #[must_use]
     pub fn none() -> Self {
         // Spelled out, not `..Self::default()`: a field added default-on
