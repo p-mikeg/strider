@@ -79,6 +79,11 @@
 - `Lifter.call_other_abi(name, opts)` checks `opts.call_other_abis` as
   `build_cfg` does and raises the same `StriderError` for an entry built
   against another arch's register table, where it returned that entry.
+- `ElfLifter.arch` and `ElfLifter.reader()` are the base `Lifter`'s: both
+  raise the re-entrant `StriderError` while an `analyze`, `build_cfg` or
+  `add_elf` on the handle is in flight, and `reader()` returns the one
+  `BufferReader` the handle decodes through, where each call built a new
+  one over the same regions.
 
 ### Breaking, Rust
 

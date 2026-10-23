@@ -356,7 +356,7 @@ class ElfLifter(Lifter):
     ```
     """
 
-    __slots__ = ("_elf", "_arch", "_cc")
+    __slots__ = ("_elf", "_cc")
 
     def __new__(
         cls,
@@ -378,19 +378,13 @@ class ElfLifter(Lifter):
         mem: "MemLike",
         rom: Optional["RomLike"] = None,
     ) -> None:
-        """Attach the ELF backend, architecture and default calling
-        convention; `mem` and `rom` were already consumed by `__new__`."""
-        del mem, rom
+        """Attach the ELF backend and default calling convention; `arch`,
+        `mem` and `rom` were already consumed by `__new__`."""
+        del arch, mem, rom
         self._elf = elf
-        self._arch = arch
         # Every base `Lifter.analyze` takes its own convention; this is the
         # ELF-derived default.
         self._cc = cc
-
-    @property
-    def arch(self) -> SleighArch:
-        """The architecture this binary was loaded as."""
-        return self._arch
 
     @property
     def cc(self) -> CallingConvention:
@@ -400,7 +394,7 @@ class ElfLifter(Lifter):
     @property
     def endianness(self) -> str:
         """Byte order of the loaded binary: `"little"` or `"big"`."""
-        return self._arch.endianness()
+        return self.arch.endianness()
 
     @property
     def is_arm_be8(self) -> bool:
@@ -411,7 +405,7 @@ class ElfLifter(Lifter):
         return self._elf.is_arm_be8
 
     def __repr__(self) -> str:
-        return f"ElfLifter(arch={self._arch.name()}, cc={self._cc.name()})"
+        return f"ElfLifter(arch={self.arch.name()}, cc={self._cc.name()})"
 
     def functions(self) -> Iterator["Symbol"]:
         """The function symbols in address order, one per address: aliases of
@@ -462,11 +456,6 @@ class ElfLifter(Lifter):
         serves no writable data, except `.got` / `.data.rel.ro` under
         `relocated_got_is_rom`, where such a field is unmapped."""
         return self._elf.read(addr, size)
-
-    def reader(self) -> "BufferReader":
-        """The `BufferReader` over the regions `load_elf` mapped (PT_LOAD
-        segments unless `from_segments=False`)."""
-        return self._elf.reader()
 
     def add_elf(
         self,
