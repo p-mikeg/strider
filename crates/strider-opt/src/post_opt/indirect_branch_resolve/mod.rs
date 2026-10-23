@@ -2,9 +2,11 @@
 //! sites.
 //!
 //! [`classify_target`] tries an ordered list of sound recognisers, first match
-//! wins: a literal `IntConst` address, an `InitialVar(lr)` return, then
-//! `table::classify_table_dispatch` for rodata jump tables and on-stack label
-//! arrays.  No match leaves the target unresolved.
+//! wins: a literal `IntConst` address, an `InitialVar(lr)` return, a
+//! `Load(RAM)` return that [`ReturnTargets::returns_to_caller`] follows back
+//! to the saved link register, then `table::classify_table_dispatch` for
+//! rodata jump tables and on-stack label arrays.  No match leaves the target
+//! unresolved.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IRWalker};
