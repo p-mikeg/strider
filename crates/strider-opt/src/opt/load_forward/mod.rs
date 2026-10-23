@@ -185,10 +185,13 @@ fn narrow(
     let NodeKind::Load(space) = *edit.node_kind(load) else {
         unreachable!("narrow reshapes a load");
     };
-    let shifted = match edit.function().byte_order().of(space) {
+    let order = edit.function().byte_order();
+    let shifted = match order.of(space) {
         Endianness::Little => store_data,
         Endianness::Big => {
-            let shift_bits = crate::const_eval::big_endian_slice_shift_bits(store_data_ty, load_ty);
+            let shift_bits =
+                crate::const_eval::slice_shift_bits(order, space, store_data_ty, load_ty)
+                    .expect("a narrowed load is no wider than its store");
             let shift_const = edit.build_int_const(u128::from(shift_bits), store_data_ty)?;
             // `build_int_const` carries no contributor stamp, so attribute the
             // const by hand; every reachable node needs a fingerprint.
