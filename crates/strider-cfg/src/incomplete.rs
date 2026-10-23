@@ -47,8 +47,10 @@ pub enum Reason {
     /// branch whose delay slot is unmapped names itself. An unmapped seeded
     /// arm, or a fall-through into unmapped bytes off one, is named with no
     /// stub: the arm is dropped, unless a call precedes the bytes, which ends
-    /// that call as `NoReturn`. An arm onto a stub a direct edge left here is
-    /// dropped too. An unmapped ENTRY fails the whole build instead.
+    /// that call as `NoReturn`. A branch, or a conditional's not-taken side,
+    /// into unmapped bytes off an arm leaves through a stub and keeps the arm.
+    /// An arm onto a stub a direct edge left here is dropped too. An unmapped
+    /// ENTRY fails the whole build instead.
     UnmappedTarget,
     /// Holds no instruction: bytes Sleigh rejects, or
     /// [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges) marks. A
