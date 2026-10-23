@@ -567,6 +567,9 @@
 
 ### Fixed
 
+- Python: an empty `CfgOptions(data_ranges=...)` range and a `BufferReader`
+  region past the end of the address space raise `ValueError`, as every
+  other range-checked constructor argument does. They raised `StriderError`.
 - Python: `Lifter.pcode_at` reads its `entry` as `analyze` and `build_cfg`
   do: an int that does not fit an address, or a symbol name, raises
   `StriderError` naming the cause, where it raised a bare `OverflowError` or
