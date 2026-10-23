@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 import strider
 from strider import pattern as p
 
@@ -73,3 +75,11 @@ def test_optimize_lives_on_the_function_only():
     assert not hasattr(_lifter(0x11), "optimize")
     assert not hasattr(strider.opt, "optimize")
 
+
+def test_a_positional_pipeline_is_refused():
+    """`assumptions` is first, so a pipeline passed positionally does not
+    silently bind to it."""
+    fn = _unoptimized(_lifter(0x11))
+    with pytest.raises(TypeError):
+        fn.optimize(strider.opt.OptimizerPipeline.default())  # type: ignore[arg-type]
+    assert len(fn.find_all(p.load())) == 1, "nothing ran"

@@ -9,7 +9,8 @@ Blocks showing a whole flow run against the committed fixture ELFs under
 `fixtures/out/`; the signature listings use placeholder names.
 
 The public surface is eight domain submodules plus one top-level error.
-`explore` is bound too, and backs `visualize`, but is outside `__all__`:
+`explore` is bound too, home of the `visualize` explorer, but outside
+`__all__`:
 
 ```python
 import strider
@@ -135,7 +136,7 @@ _cfg, fn, _u = lft.analyze(0x1000, sleigh.CallingConvention.x86_64_systemv())
 
 A handle works on any thread. `analyze`, `build_cfg` and `add_elf` hold it
 alone: while one is in flight, from a `read()` callback or another thread,
-`analyze`, `build_cfg`, `optimize`, `pcode_at`, `call_other_abi`,
+`analyze`, `build_cfg`, `Function.optimize`, `pcode_at`, `call_other_abi`,
 `user_op_names`, `add_elf`, a plain `Lifter`'s `arch` and `reader()`, and
 `rom()` on any `Lifter` raise `StriderError: this Lifter is already in use`,
 and those three raise while any of these is in flight. The others may overlap
@@ -145,7 +146,7 @@ parallel, a worker thread builds its own handle over the same `prog.arch`,
 flight; since `analyze` drops the GIL the two run in parallel. A handle
 decodes the image as it stood when it was built, so an `add_elf` on `prog`
 after a worker's handle exists never reaches that worker: merge every ELF
-first. `optimize` holds the GIL for its whole run.
+first. `Function.optimize` holds the GIL for its whole run.
 
 ### `lift.LifterOptions`, per-call tuning
 

@@ -65,7 +65,8 @@
 - `Lifter.optimize(function, pipeline=None, opts=None)` is
   `Function.optimize(assumptions=None, pipeline=None)`, run against the rom of
   the `Lifter` that produced the function, so the error for a function from
-  another handle is gone. It takes the claims to add as `assumptions=`, an
+  another handle is gone. `pipeline` is second, so pass it by keyword:
+  `function.optimize(pipe)` raises `TypeError`. It takes the claims to add as `assumptions=`, an
   `AssumptionOptions`, in place of `opts=`, whose other fields it ignored. It
   adds them to the function's and withdraws none. `assumptions=None` adds
   nothing, where `opts=None` applied the three default claims; a set that
@@ -381,7 +382,7 @@
   (ARM, MIPS, PPC) pops 0 but sets `link_register`. An unknown register name
   in either `custom` names its list: `CallingConvention.custom:
   arg_passing_regs: unknown sleigh register name "X"`.
-- A `Lifter` works on any thread: `analyze`, `build_cfg`, `optimize`,
+- A `Lifter` works on any thread: `analyze`, `build_cfg`, `Function.optimize`,
   `pcode_at`, `call_other_abi`, `user_op_names` and `add_elf` no longer raise
   off the thread that built it, reversing 0.2.0.
   Each of them, a plain `Lifter`'s `arch` and `reader()`, and `rom()` on any
@@ -389,7 +390,7 @@
   `build_cfg` or `add_elf` is in flight on the handle, from a `read()`
   callback or another thread, and those three raise while any of these calls
   is; the others may overlap each other. All but `analyze`, `build_cfg` and
-  `optimize` raised PyO3's `RuntimeError`. Such an `add_elf` merges nothing.
+  `Function.optimize` raised PyO3's `RuntimeError`. Such an `add_elf` merges nothing.
 - `AssumptionOptions(...)` takes its defaults from Rust: a field passed
   `None` takes its default (it raised `TypeError`), `noalias_allocators`
   reads back sorted and deduplicated, `repr` included (it kept the order and
@@ -488,8 +489,7 @@
 - `Lifter::new`, `Strider::new` and `DecodeEngine::new` return `Err` when the
   arch and sla disagree on the ISA mode: a mode var the sla does not flow, or
   (not `DecodeEngine::new`) an unpaired `ISAModeSwitch`. Before, only a debug
-  build asserted it. `DecodeEngine::new` also returns `Err` when its
-  `Sleigh` was not built from its arch's sla and pspec.
+  build asserted it.
 - A relocated image no longer fails to load with "patch budget": every
   region shares one patch list, so a site any number of overlapping
   mappings cover is patched in all of them at no extra cost.
