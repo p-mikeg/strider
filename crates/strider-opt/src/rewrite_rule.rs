@@ -317,7 +317,9 @@ where
         // The walk visits consumers first, so a fire can leave a later
         // candidate with only dead consumers. `clean` culls it, and a culled
         // node keeps its kind and fingerprints, so an LHS that pins no input
-        // would still match it.
+        // would still match it. `clean` never culls a side-effecting value
+        // producer (`CPoolRef`, `New`), so one orphaned here stays a
+        // candidate.
         if !edit.is_live(node) {
             continue;
         }
