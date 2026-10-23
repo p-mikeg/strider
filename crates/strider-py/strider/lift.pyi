@@ -566,10 +566,12 @@ def load_elf(
     image gives no address; an IFUNC's (`R_*_IRELATIVE`, or a relocation
     against a defined `STT_GNU_IFUNC` symbol), which holds what the resolver
     returns; every byte of an `R_*_COPY` object, which the loader copies from
-    the library defining it; and on MIPS, whose primary GOT no relocation
-    covers, the lazy-resolver word, the module-pointer word when its top bit
-    asks for one, and every global entry except those for symbols the image
-    defines that already hold their address. `.got.plt` is never served,
+    the library defining it; the two GOT header words ARM and secure-PLT
+    PPC32 lazy binding writes (`DT_PLTGOT + 4` / `+ 8`, `DT_PPC_GOT + 4` /
+    `+ 8`); and on MIPS, whose primary GOT no relocation covers, the
+    lazy-resolver word, the module-pointer word when its top bit asks for
+    one, and every global entry except those for symbols the image defines
+    that already hold their address. `.got.plt` is never served,
     lazy binding rewriting those slots on the first call through each one.
 
     Inside an executable mapping a relocation against a defined IFUNC takes

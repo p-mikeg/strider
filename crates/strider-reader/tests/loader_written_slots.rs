@@ -1291,3 +1291,49 @@ fn a_tls_slot_is_a_hole_over_its_whole_width() {
         }
     }
 }
+
+/// An ELF32 image's dynamic tag `tag`.
+fn dynamic_tag32(obj: &object::File<'_>, tag: u32) -> u64 {
+    let data = obj.section_by_name(".dynamic").unwrap().data().unwrap();
+    let le = obj.is_little_endian();
+    let read = |b: &[u8]| {
+        let b: [u8; 4] = b.try_into().unwrap();
+        if le {
+            u32::from_le_bytes(b)
+        } else {
+            u32::from_be_bytes(b)
+        }
+    };
+    data.chunks_exact(8)
+        .find(|d| read(&d[..4]) == tag)
+        .map(|d| u64::from(read(&d[4..])))
+        .unwrap_or_else(|| panic!("dynamic tag {tag:#x}"))
+}
+
+/// Under lazy binding the loader writes two GOT header words no relocation
+/// covers: ARM's link map and resolver at `DT_PLTGOT + 4` / `+ 8`, the
+/// second of which PLT0 jumps through, and the secure-PLT PPC32 pair after
+/// `DT_PPC_GOT`. Both are holes; the `_DYNAMIC` word before them is served.
+#[test]
+fn a_lazy_got_header_word_the_loader_writes_is_a_hole() {
+    use object::elf as e;
+    for (name, base_tag, r_type) in [
+        ("arm_lazy.elf", e::DT_PLTGOT, e::R_ARM_JUMP_SLOT),
+        ("ppc32be_lazy.elf", e::DT_PPC_GOT, e::R_PPC_JMP_SLOT),
+    ] {
+        let elf = open(name);
+        let obj = elf.checked_file().unwrap();
+        let le = obj.is_little_endian();
+        let base = dynamic_tag32(&obj, base_tag);
+        let dynamic = obj.section_by_name(".dynamic").unwrap().address();
+        let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+        assert_eq!(rom_word(&reader, base, 4, le), Ok(dynamic), "{name} GOT[0]");
+        for off in [4, 8] {
+            assert_hole(
+                rom_word(&reader, base + off, 4, le),
+                r_type,
+                &format!("{name} +{off}"),
+            );
+        }
+    }
+}
