@@ -18,7 +18,6 @@ use strider_orchestrator::opt::AssumptionOptions;
 const BASE: u64 = 0x10000;
 const STRIDE: usize = 64;
 const LIT: usize = 48;
-const NOP: u32 = 0xd503_201f;
 const RET: u32 = 0xd65f_03c0;
 
 const GPR: &[(u32, &str)] = &[
