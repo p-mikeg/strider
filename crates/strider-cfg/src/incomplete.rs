@@ -47,8 +47,8 @@ pub enum Reason {
     /// branch whose delay slot is unmapped names itself. An unmapped seeded
     /// arm, or a fall-through into unmapped bytes off one, is named with no
     /// stub: the arm is dropped, unless a call precedes the bytes, which ends
-    /// that call as `NoReturn`. An unmapped ENTRY fails the whole build
-    /// instead.
+    /// that call as `NoReturn`. An arm onto a stub a direct edge left here is
+    /// dropped too. An unmapped ENTRY fails the whole build instead.
     UnmappedTarget,
     /// Holds no instruction: bytes Sleigh rejects, or
     /// [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges) marks. A
@@ -57,7 +57,8 @@ pub enum Reason {
     /// through a stub too; one into bytes Sleigh rejects fails the whole
     /// build. Bytes reached off a seeded arm are named here with no stub, and
     /// the arm is dropped and named by
-    /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets);
+    /// [`Cfg::undecodable_seeded_targets`](crate::Cfg::undecodable_seeded_targets),
+    /// as is an arm onto a stub a direct edge left here;
     /// a fall-through reaching them past a call instead ends that call as
     /// `NoReturn`, keeping the arm. The start of an arm, or of a region off
     /// one, whose decode fails for a reason no other variant names is named
@@ -138,6 +139,11 @@ impl Incompleteness {
         self.iter()
             .filter(move |&(_, r)| r == reason)
             .map(|(addr, _)| addr)
+    }
+
+    /// Whether `addr` is named for `reason`.
+    pub(crate) fn names(&self, addr: PcodeInsnAddr, reason: Reason) -> bool {
+        self.0.contains(&(addr, reason))
     }
 
     /// Names `addr` for `reason`; a repeat is a no-op.
