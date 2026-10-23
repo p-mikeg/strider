@@ -295,6 +295,11 @@
 - `RegionIndex::overlapping` is gone; `RegionIndex::covering` remains.
 - `strider_ir::Value`, the second name for `strider_ir::node::ValueId`, is
   gone.
+- Crate-private now, having no user outside strider-ir:
+  `FunctionBuilder::build_entry` (renamed `build_initial_memory`; a second
+  call minted a second `InitialMemory`), `write_variable_from_id`,
+  `Function::vn_ids`, `GraphWalkInfo::postorder` and the walk types
+  `DefUsePostorder`, `RawDefUseSuccs` and `DefUseSuccs`.
 
 ### Changed, Python
 
