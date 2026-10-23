@@ -567,6 +567,17 @@
 
 ### Fixed
 
+- Python: a dynamic image's relocation tables are each walked as they lie,
+  and what the loaders could read differently is a hole: every place of
+  two tables that overlap off each other's entry boundaries, a place two
+  entries relocate or one `REL` entry relocates twice, and a place in the
+  dynamic array. A relocation inside a relocation table, which rewrites it,
+  makes the table unreadable. When a table is unreadable, a relocating load
+  serves no writable mapping, `read` included, where it served them
+  unrelocated. An ELF32 Android stream reads its fields at 32 bits, as
+  bionic does, and its entries count against the budget at their plain
+  size. A `.dynsym` is `DT_SYMTAB`'s only when its header holds the whole
+  table, as far as `DT_HASH` / `DT_GNU_HASH` count it.
 - Python: a ppc64 ELFv1 relocatable's `.opd` relocations are walked once per
   distinct table and within the relocation entry budget. Repeated headers
   over one `.rela.opd` cost their count times its length, unbounded, in
