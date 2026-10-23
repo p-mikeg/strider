@@ -11,7 +11,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == main @0x3dd
 cfg
   0x3dc 249 ops return -> []
-tracked [r0, r1, r2, r3, r4, r5, r12, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x131600:4, u:0x131700:4, u:0x147900:4, u:0x148600:4, u:0x157400:4, u:0x1ab400:4]
+tracked [r0, r1, r2, r3, r4, r5, r12, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x135200:4, u:0x135300:4, u:0x14b500:4, u:0x14c200:4, u:0x15b000:4, u:0x1af000:4]
 frame_address_in_call_register reach=-24
 float_arg 0 [%v40]
 float_arg 1 [%v41]
@@ -123,7 +123,7 @@ return %v201, %v231, %v230, %v204, %v205, %v206, %v207, %v208
 == eight_int_args @0x56d
 cfg
   0x56c 21 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x148600:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x14c200:4]
 arg 0 [%v8]
 arg 1 [%v7]
 arg 2 [%v6]
@@ -169,7 +169,7 @@ return %v0, %v1, %v23, %v17, %v24, %v25, %v26, %v27
 == mixed_args @0x585
 cfg
   0x584 19 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x147d00:4, u:0x148600:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x14b900:4, u:0x14c200:4]
 arg 0 [%v10]
 arg 1 [%v9]
 arg 2 [%v8]
@@ -207,7 +207,7 @@ return %v0, %v1, %v17, %v11, %v18, %v19, %v20, %v21
 == point_sum @0x599
 cfg
   0x598 18 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x131600:4, u:0x131700:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x135200:4, u:0x135300:4]
 arg 0 [%v9]
 arg 1 [%v5]
 float_arg 0 [%v12]
@@ -235,7 +235,7 @@ return %v0, %v10, %v11, %v5, %v12, %v13, %v14, %v15
 == make_pair @0x5a9
 cfg
   0x5a8 11 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x147900:4, u:0x1ab400:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x14b500:4, u:0x1af000:4]
 arg 0 [%v2]
 arg 1 [%v3]
 arg 2 [%v7]
@@ -261,7 +261,7 @@ return %v0, %v8, %v2, %v3, %v9, %v10, %v11, %v12
 == tail_caller @0x5b1
 cfg
   0x5b0 33 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x131700:4, u:0x147900:4, u:0x169d00:4, u:0x1ab400:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x135300:4, u:0x14b500:4, u:0x16d900:4, u:0x1af000:4]
 arg 0 [%v9]
 arg 1 [%v13]
 float_arg 0 [%v22]
