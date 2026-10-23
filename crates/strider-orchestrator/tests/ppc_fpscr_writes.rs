@@ -235,7 +235,19 @@ fn mtfsf_recomputes_the_summaries() {
 /// it copied, FX among them; FEX and VX are then the summaries.
 #[test]
 fn mcrfs_clears_the_exceptions_it_copies() {
-    let cases = states(48, 0x5eed_f5b3);
+    // Each field's exception bits alone, every exception enabled, so the
+    // summaries fall to 0 once they are cleared.
+    let alone = (0..8).map(|field| State {
+        img: summaries(
+            EXCEPTIONS
+                .iter()
+                .filter(|&&i| i / 4 == field)
+                .chain(&[24, 25, 26, 27, 28])
+                .fold(0, |img, &i| put(img, i, true)),
+        ),
+        crs: [0; 3],
+    });
+    let cases: Vec<State> = states(48, 0x5eed_f5b3).into_iter().chain(alone).collect();
     for arch in ARCHES {
         for bfa in 0..8 {
             let lifted = lift(arch, &[0xfc00_0080 | 2 << 23 | (bfa as u32) << 18], &[]);
