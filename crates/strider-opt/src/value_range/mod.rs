@@ -680,8 +680,8 @@ impl<'f> RangeMap<'f> {
 
     /// Whether `iv`, `value`'s range at `site`, is no tighter than its
     /// KnownBits bound while an `If` dominating `site` tests bits of `cell`, a
-    /// load `value` derives from, that `value` reads, or a load of `cell`'s
-    /// address.
+    /// load `value` derives from, that `value` reads, or of a load
+    /// overlapping `cell`.
     ///
     /// Such a test (a mask, a shift, a sign) bounds the cell in a shape no
     /// guard here reads, or on a reload `range_of` does not connect, and may
@@ -700,18 +700,25 @@ impl<'f> RangeMap<'f> {
             return false;
         }
         let f = self.function;
-        let addr = f.int_inputs(cell).next();
-        // `Some(aligned)` for `cell` or a load of its address: aligned when its
-        // bits are `cell`'s bit for bit.
+        let cell_at = load_extent(f, cell);
+        // `Some(aligned)` for `cell` or a load overlapping its bytes: aligned
+        // when its bits are `cell`'s bit for bit.
         let view = |v: ValueId| {
             if v == cell {
+                return Some(true);
+            }
+            let (cell_base, cell_off, cell_len) = cell_at?;
+            let (base, off, len) = load_extent(f, v)?;
+            if base != cell_base {
+                return None;
+            }
+            let d = f
+                .value_type_opt(base)?
+                .get_signed_int(off.wrapping_sub(cell_off))?;
+            if d == 0 && len == cell_len {
                 Some(true)
-            } else if matches!(f.node_kind(f.producer(v)), NodeKind::Load(_))
-                && f.int_inputs(v).next() == addr
-            {
-                Some(f.value_type_opt(v) == f.value_type_opt(cell))
             } else {
-                None
+                (d > -len && d < cell_len).then_some(false)
             }
         };
         let index_bits = cell_bits_read(f, value, |v| (v == cell).then_some(true));
@@ -1103,6 +1110,23 @@ fn bits_read(
 
 /// Values [`bits_read`] visits under one root.
 const MAX_TEST_CONE: usize = 64;
+
+/// `(base, offset, bytes)` of the load producing `v`: its address as a base
+/// and a constant offset from it.
+fn load_extent(f: &strider_ir::Function, v: ValueId) -> Option<(ValueId, u128, i128)> {
+    if !matches!(f.node_kind(f.producer(v)), NodeKind::Load(_)) {
+        return None;
+    }
+    let addr = f.int_inputs(v).next()?;
+    let len = i128::try_from(f.value_type_opt(v)?.byte_size()).ok()?;
+    let (base, off) = match f.node_kind(f.producer(addr)) {
+        NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
+            crate::const_eval::var_and_const(f, f.producer(addr)).unwrap_or((addr, 0))
+        }
+        _ => (addr, 0),
+    };
+    Some((base, off, len))
+}
 
 /// The mask of `v`'s width; see [`type_mask_or_top`].
 fn width_mask(f: &strider_ir::Function, v: ValueId) -> u128 {
