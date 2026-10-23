@@ -602,6 +602,9 @@
   that cannot be read or decoded makes `load_elf` and `add_elf` raise
   `StriderError` when the image relocates code, and otherwise leaves
   `.got` and `.data.rel.ro` unserved under `relocated_got_is_rom=True`.
+- Python: a MIPS32 `R_MIPS_COPY` in a relocation table not linked to
+  `.dynsym` is a hole to the end of its mapping, as on the other arches;
+  it was holed over one word.
 - Python: under `relocated_got_is_rom=True` every byte of an `R_*_COPY`
   object is unmapped. Only its first 4 bytes were, and the rest served the
   file's zeros, so a gcc PIE's `return tbl[3]` against a library's const

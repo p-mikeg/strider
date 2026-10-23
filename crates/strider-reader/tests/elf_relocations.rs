@@ -1501,3 +1501,42 @@ fn a_crel_header_over_another_crel_table_does_not_hide_it() {
     assert_eq!(region.read(fx.slot_addr, &mut got), Some(8));
     assert_eq!(u64::from_le_bytes(got), 0x40);
 }
+
+/// A big-endian MIPS32 `R_MIPS_COPY` in a `.rel.dyn` linked to no symbol
+/// table, over a 16-byte executable slot: which table its index means is
+/// in doubt, and with it the object's size, so the hole runs to the end of
+/// the mapping rather than over the one word at `r_offset`.
+#[test]
+fn a_mips32_copy_off_the_dynsym_is_a_hole_to_its_mappings_end() {
+    let mut fx = common::elf_fixture::build_rel_elf_placed(
+        common::elf_fixture::RelOpts {
+            endian: object::Endianness::Big,
+            is_64: false,
+            e_machine: object::elf::EM_MIPS,
+            r_type: object::elf::R_MIPS_COPY,
+            defined_symbol: true,
+            slot_init: vec![0x11; 16],
+        },
+        common::elf_fixture::RelPlacement {
+            slot_exec: true,
+            ..Default::default()
+        },
+    );
+    // Elf32_Ehdr.e_shoff, then Elf32_Shdr.sh_link of `.rel.dyn`.
+    let at = {
+        use object::{Object as _, ObjectSection as _};
+        let obj = object::File::parse(&fx.bytes[..]).unwrap();
+        let index = obj.section_by_name(".rel.dyn").unwrap().index().0;
+        u32::from_be_bytes(fx.bytes[0x20..0x24].try_into().unwrap()) as usize + 40 * index + 0x18
+    };
+    fx.bytes[at..at + 4].copy_from_slice(&0u32.to_be_bytes());
+    let table =
+        strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
+    for off in [0, 4, 8, 12] {
+        assert_eq!(
+            table.unmodelled_relocation_at(fx.slot_addr + off),
+            Some(object::elf::R_MIPS_COPY),
+            "slot+{off}"
+        );
+    }
+}
