@@ -200,7 +200,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         &mut self,
         parent: Option<NodeIndex>,
         addr: PcodeInsnAddr,
-        source_addr: u64,
+        isa_mode: Option<u32>,
     ) {
         // Per-instruction decode state (ARM/Thumb ITSTATE, MIPS16 register-list
         // iteration) flows only to `inst_next`, and the edges between an IT
@@ -219,12 +219,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             self.function_mode.clone()
         };
         // A direct edge switches no ISA mode, so the child decodes in the
-        // parent's, which need not be the entry's: take the ISA-mode var from
-        // the parent region's context at `source_addr` so a Thumb region of an
-        // otherwise-ARM function hands Thumb on.
-        if let Some(var) = self.arch.isa_mode_var() {
-            self.flow_vars
-                .take_var_at(&mut carried, self.sleigh, source_addr, var);
+        // mode its parent region decoded in, which need not be the entry's.
+        // Never the engine's value at the parent's start: an interworking
+        // call commits the mode at its target, and a callee below the caller
+        // paints forward over the caller's own bytes.
+        if let (Some(var), Some(mode)) = (self.arch.isa_mode_var(), isa_mode) {
+            carried = self.flow_vars.with_mode_bit(&carried, var, mode != 0);
         }
         self.work_queue.push(WorkItem {
             parent,
@@ -802,7 +802,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// failure.
     fn drain(&mut self) -> Result<Vec<(NodeIndex, anyhow::Error)>> {
         let entry = self.start_pcode_addr();
-        self.enqueue(None, entry, entry.machine_addr.addr);
+        let mode = self.isa_mode_of(&self.function_mode);
+        self.enqueue(None, entry, mode);
         let mut lost_successor = Vec::new();
         while let Some(WorkItem {
             parent: parent_region,
@@ -1786,12 +1787,12 @@ mod tests {
         );
     }
 
-    /// A direct edge needs exactly one var of the parent's context: the
-    /// ISA-mode bit. It reads NO snapshot of the target, which would both cost
-    /// a read per flow var per edge and answer with whatever a previous
-    /// `build_cfg` on this engine committed there.
+    /// A direct edge reads nothing of the engine: the ISA mode is the parent
+    /// region's, and a snapshot of the target would both cost a read per flow
+    /// var per edge and answer with whatever a previous `build_cfg` on this
+    /// engine committed there.
     #[test]
-    fn enqueue_reads_one_parent_context_var_per_edge() {
+    fn enqueue_reads_no_context_off_a_commit_point() {
         use crate::builder::flow::CONTEXT_READS;
         let arch = strider_target::SleighArch::arm();
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x100], 0x1000);
@@ -1802,17 +1803,17 @@ mod tests {
         let per_snapshot = CONTEXT_READS.with(std::cell::Cell::get);
         assert!(per_snapshot > 1, "premise: the ARM sla flows several vars");
 
-        // The entry context the engine hands the builder is a real one, whose
-        // ISA-mode var `enqueue` takes from the parent; an empty one would make
-        // the count vacuous.
         let opts = crate::CfgOptions::default();
         let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
         CONTEXT_READS.with(|n| n.set(0));
-        b.enqueue(None, addr(0x1000, 0), 0x1000);
+        b.enqueue(None, addr(0x1000, 0), Some(1));
+        assert_eq!(CONTEXT_READS.with(std::cell::Cell::get), 0);
+        let var = arch.isa_mode_var().expect("ARM has an ISA-mode var");
         assert_eq!(
-            CONTEXT_READS.with(std::cell::Cell::get),
-            1,
-            "the parent's ISA-mode var, and no snapshot of the target",
+            b.flow_vars
+                .value_of(&b.work_queue.last().expect("queued").carried, var),
+            Some(1),
+            "the child carries the parent's mode",
         );
     }
 
@@ -1849,7 +1850,7 @@ mod tests {
         // where this build committed.
         let opts = crate::CfgOptions::default();
         let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
-        b.enqueue(None, addr(0x1040, 0), 0x1000);
+        b.enqueue(None, addr(0x1040, 0), None);
         assert_eq!(
             b.flow_vars
                 .value_of(&b.work_queue.last().expect("queued").carried, victim),
@@ -1860,7 +1861,7 @@ mod tests {
         // The same address once this build has decoded into it: its own commit
         // is what the edges inside a split IT block need.
         b.committed_next.insert(0x1040);
-        b.enqueue(None, addr(0x1040, 0), 0x1000);
+        b.enqueue(None, addr(0x1040, 0), None);
         assert_eq!(
             b.flow_vars
                 .value_of(&b.work_queue.last().expect("queued").carried, victim),
@@ -1902,7 +1903,7 @@ mod tests {
         let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
         // Vouched for, and still not read: nothing re-derived it.
         b.committed_next.insert(0x1040);
-        b.enqueue(None, addr(0x1040, 0), 0x1000);
+        b.enqueue(None, addr(0x1040, 0), None);
         assert_eq!(
             b.flow_vars
                 .value_of(&b.work_queue.last().expect("queued").carried, &victim),
