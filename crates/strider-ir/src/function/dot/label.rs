@@ -146,8 +146,7 @@ impl FunctionDotDumper<'_> {
             }
             NodeKind::Store(space) => {
                 let space = self.pretty_vnspace(*space);
-                // data is input 2; memory and addr are 0 and 1
-                let ty = self.input_type_suffix(node, 2, " ");
+                let ty = self.input_type_suffix(node, NodeKind::STORE_DATA_SLOT, " ");
                 self.with_sp_offset(node, format!("Store{ty}\n-> {space}"))
             }
             NodeKind::Truncate => self.width_change_label(node, "Truncate"),

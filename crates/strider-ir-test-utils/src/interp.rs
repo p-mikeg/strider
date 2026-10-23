@@ -187,7 +187,7 @@ pub fn run_observed(
         match *f.node_kind(node) {
             NodeKind::Region => {
                 m.enter(node, slot);
-                ctrl = f.node_outputs(node)[0];
+                ctrl = f.node_outputs(node)[NodeKind::CTRL_OUT_SLOT];
             }
             NodeKind::If => {
                 let cond = f.if_cond(node);
@@ -215,7 +215,7 @@ pub fn run_observed(
             }
             NodeKind::Call { .. } => {
                 m.call(node)?;
-                ctrl = f.node_outputs(node)[0];
+                ctrl = f.node_outputs(node)[NodeKind::CTRL_OUT_SLOT];
             }
             NodeKind::Return => return m.ret(node, observe),
             NodeKind::Unreachable => return m.trap(node),
@@ -280,7 +280,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     /// for that edge, all read before any is written.
     fn enter(&mut self, region: NodeId, slot: usize) {
         let f = self.f;
-        let token = f.node_outputs(region)[1];
+        let token = f.node_outputs(region)[NodeKind::REGION_PHI_OUT_SLOT];
         let phis: Vec<NodeId> = f
             .value_uses(token)
             .map(|(node, _)| node)
@@ -289,8 +289,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         let mut ints = Vec::new();
         let mut mems = Vec::new();
         for phi in phis {
-            // Input 0 is the token, then one input per predecessor.
-            let input = f.node_inputs(phi)[slot + 1];
+            let input = f.node_inputs(phi)[f.node_kind(phi).input_head_len() + slot];
             let out = f.node_outputs(phi)[0];
             match f.node_kind(phi) {
                 NodeKind::Phi => ints.push((out, self.int(input))),
@@ -548,7 +547,7 @@ impl<'a, 'e> Machine<'a, 'e> {
             })
         };
         let seed = self.env.seed;
-        let ints = outs[2..]
+        let ints = outs[f.node_kind(node).output_head_len()..]
             .iter()
             .enumerate()
             .map(|(i, &out)| {
@@ -565,7 +564,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 (out, value)
             })
             .collect();
-        self.settle(ints, vec![(outs[1], Ok(after))]);
+        self.settle(ints, vec![(outs[NodeKind::CTRL_MEM_OUT_SLOT], Ok(after))]);
         Ok(())
     }
 

@@ -1070,6 +1070,11 @@
   `PartialEq` / `Eq`.
 - `Lifter::arch`, the arch the engine decodes with; `Strider::arch` reads
   it.
+- `NodeKind::PHI_TOKEN_SLOT`, a phi's token input, and the output slots
+  `CTRL_OUT_SLOT`, `CTRL_MEM_OUT_SLOT`, `MEM_OUT_SLOT`,
+  `REGION_PHI_OUT_SLOT`, `IF_TRUE_OUT_SLOT` and `IF_FALSE_OUT_SLOT`;
+  `NodeKind::output_head_len` is a `Call` / `CallOther`'s first value output.
+- `Function::is_entry_sp`: whether a value is the entry stack pointer.
 
 ## 0.2.0
 

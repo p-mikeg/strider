@@ -638,8 +638,7 @@ impl<'g> EditFunction<'g> {
         // inputs are removed.
         let phi_nodes: Vec<NodeId> = {
             let outputs = self.node_outputs(region);
-            if outputs.len() >= 2 {
-                let phi_value = outputs[1]; // ValueId: Copy
+            if let Some(&phi_value) = outputs.get(NodeKind::REGION_PHI_OUT_SLOT) {
                 self.graph_ref()
                     .value_uses(phi_value)
                     .map(|(n, _)| n)
