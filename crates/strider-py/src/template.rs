@@ -116,7 +116,8 @@ pub fn bool_const(value: bool) -> PyTemplate {
     PyTemplate::from_tmpl(TmplRepr::BoolConst(value))
 }
 
-/// Build a `FloatConst` with raw bits `bits`.
+/// Build a float constant with the IEEE 754 bit pattern `bits`, at the width
+/// it is evaluated at; a set bit above that width refuses the rewrite.
 #[pyfunction]
 pub fn float_const(bits: u64) -> PyTemplate {
     PyTemplate::from_tmpl(TmplRepr::FloatConst(bits))
