@@ -193,8 +193,16 @@ impl OwnedElf {
         relocate: bool,
     ) -> Result<Vec<MemRegion>> {
         let obj = self.checked_file()?;
+        let view = super::dynamic::loader_view(&obj);
         Ok(self
-            .regions_with(&obj, &ElfSectionLayout::new(&obj), source, filter, relocate)?
+            .regions_with(
+                &obj,
+                &ElfSectionLayout::new(&obj),
+                source,
+                filter,
+                relocate,
+                &view,
+            )?
             .regions)
     }
 
@@ -231,10 +239,11 @@ impl OwnedElf {
                 true,
             ),
         };
-        let fetch = self.regions_with(&obj, &layout, source, fetch, relocate)?;
+        let view = super::dynamic::loader_view(&obj);
+        let fetch = self.regions_with(&obj, &layout, source, fetch, relocate, &view)?;
         Ok(ElfImage {
             rom: self
-                .regions_with(&obj, &layout, source, rom, relocate)?
+                .regions_with(&obj, &layout, source, rom, relocate, &view)?
                 .regions,
             fetch: fetch.regions,
             writable: fetch.writable,
@@ -255,6 +264,11 @@ impl OwnedElf {
     /// When a mapping's data can't be read or its `address + length` would
     /// exceed `u64::MAX`, and when `filter` is `ImmutableAndRelocatedGot` with
     /// `relocate == false`.
+    ///
+    /// `view` is [`loader_view`](super::dynamic::loader_view) of `obj`. When
+    /// it cannot read what the tags relocate, a relocating load serves no
+    /// writable, non-executable mapping at all: those are where it would
+    /// land.
     pub(crate) fn regions_with(
         &self,
         obj: &object::File<'_>,
@@ -262,6 +276,7 @@ impl OwnedElf {
         source: RegionSource,
         filter: LoadFilter,
         relocate: bool,
+        view: &super::dynamic::LoaderView,
     ) -> Result<super::sections::LoadedImage> {
         if matches!(filter, LoadFilter::ImmutableAndRelocatedGot) && !relocate {
             anyhow::bail!(
@@ -272,9 +287,22 @@ impl OwnedElf {
                  Relocate, or use LoadFilter::ImmutableOnly"
             );
         }
-        let mut image =
-            super::sections::collect_regions(obj, &self.backing, source, filter, layout)?;
+        let mut image = super::sections::collect_regions(
+            obj,
+            &self.backing,
+            source,
+            filter,
+            layout,
+            view.is_unread(),
+        )?;
         if relocate {
+            if view.is_unread() {
+                let data = AddressSet::without(&image.writable, &image.executable);
+                image.regions = crate::collapse_equal_starts(super::sections::without_ranges(
+                    std::mem::take(&mut image.regions),
+                    &data,
+                ));
+            }
             let got = apply_elf_relocations_with(
                 &mut image.regions,
                 obj,
@@ -282,6 +310,7 @@ impl OwnedElf {
                 layout,
                 &image.writable,
                 &image.executable,
+                view,
             )?;
             image.regions.extend(got);
         }

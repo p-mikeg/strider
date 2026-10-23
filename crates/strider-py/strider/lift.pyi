@@ -551,7 +551,8 @@ def load_elf(
     relocation tables name more than twice the entries the file holds at their
     smallest entry raises `StriderError`, and so does one whose code
     (`DT_TEXTREL`, or a writable-and-executable mapping) a table the tags
-    place but strider cannot read or decode may relocate.
+    place but strider cannot read or decode may relocate. Any other image with
+    such a table serves none of its writable mappings.
 
     `relocated_got_is_rom` (default `False`) additionally serves `.got`
     (PPC32's `.got2` too) and `.data.rel.ro` as READ-ONLY memory, so a load
