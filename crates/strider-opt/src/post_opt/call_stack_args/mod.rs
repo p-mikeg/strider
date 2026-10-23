@@ -93,14 +93,9 @@ fn register_arity(
     cc: &strider_target::BuiltCallingConvention,
 ) -> usize {
     let tracked = function.all_vns();
-    // A `None` slot means the function was not lifted against this convention;
-    // the lifter passes the prefix before the first one, so nothing after it is
-    // an input either.
     let float_args = cc
-        .float_arg_slots(tracked, |v| vn_container::largest_container_in(tracked, v))
-        .into_iter()
-        .take_while(Option::is_some)
-        .count();
+        .float_arg_prefix(tracked, |v| vn_container::largest_container_in(tracked, v))
+        .len();
     NodeKind::Call { cc: None }.input_head_len() + cc.arg_passing_regs.len() + float_args
 }
 
@@ -124,7 +119,7 @@ impl PostOptimizer for CallStackArgCollect {
             MemPurpose::CallStackArgs,
             edit.function(),
         ));
-        // `float_arg_slots` scans the tracked set per float register, so the
+        // `float_arg_prefix` scans the tracked set per float register, so the
         // unoverridden calls share one scan.
         let default_arity = register_arity(edit.function(), edit.function().default_cc());
         for call_id in calls {
