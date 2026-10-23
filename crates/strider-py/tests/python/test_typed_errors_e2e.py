@@ -16,7 +16,7 @@ import strider
 
 
 def test_reader_error_on_overflowing_region_addr():
-    with pytest.raises(strider.StriderError, match=r"(?i)overflow"):
+    with pytest.raises(ValueError, match=r"(?i)overflow"):
         # 0xFFFFFFFFFFFFFFFE + 4 bytes overflows u64.
         strider.reader.BufferReader(0xFFFF_FFFF_FFFF_FFFE, b"\x00\x00\x00\x00")
 
@@ -129,13 +129,14 @@ def test_unresolved_indirect_branch_via_jmp_rax():
     )
 
 
-def test_strider_error_catches_every_error_category():
-    """`except StriderError` stays the single catch-all: every category above
-    raises StriderError or a subclass of it."""
-    raised: BaseException | None = None
-    try:
-        strider.reader.BufferReader(0xFFFF_FFFF_FFFF_FFFF, b"\x00\x00")
-    except strider.StriderError as e:
-        raised = e
-    assert raised is not None, "expected StriderError from overflowing BufferReader"
-    assert isinstance(raised, strider.StriderError)
+def test_a_range_checked_constructor_argument_is_no_strider_error():
+    """A constructor argument out of its range is the caller's own value, a
+    `ValueError`, so `except StriderError` around an analysis does not
+    swallow it."""
+    for bad in (
+        lambda: strider.reader.BufferReader(0xFFFF_FFFF_FFFF_FFFF, b"\x00\x00"),
+        lambda: strider.cfg.CfgOptions(data_ranges=[(5, 5)]),
+    ):
+        with pytest.raises(ValueError) as e:
+            bad()
+        assert not isinstance(e.value, strider.StriderError)

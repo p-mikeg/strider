@@ -19,7 +19,7 @@ def test_read_past_region_edge_truncates():
 
 
 def test_base_plus_len_overflow_rejected():
-    with pytest.raises(strider.StriderError):
+    with pytest.raises(ValueError):
         strider.reader.BufferReader(0xFFFFFFFFFFFFFFFE, b"\x00\x00\x00\x00")
 
 
