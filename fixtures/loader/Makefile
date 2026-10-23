@@ -39,6 +39,7 @@ PPC64   := powerpc64-linux-gnu-gcc
 PPC64LE := powerpc64le-linux-gnu-gcc
 PPC64LE_OBJCOPY := powerpc64le-linux-gnu-objcopy
 LLD_A64 := clang --target=aarch64-linux-gnu -fuse-ld=lld
+LLVM_OBJCOPY := llvm-objcopy-14
 
 IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           mips64le_got_lib.elf mips64le_got.elf \
@@ -50,7 +51,8 @@ IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           mips32be_relro.elf x64_relro_pie.elf ppc64be_elfv1.elf \
           ppc32be_got2.elf x64_copy_lib.elf x64_copy_pie.elf \
           aarch64_copy_lib.elf aarch64_copy.elf \
-          aarch64_android_rela.elf aarch64_plain_rela.elf
+          aarch64_android_rela.elf aarch64_plain_rela.elf \
+          x86_textrel.elf x86_textrel_noshdr.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -146,6 +148,13 @@ $(OUTDIR)/aarch64_android_rela.elf: $(ANDROID_SRC) | $(OUTDIR)
 	  -Wl,--pack-dyn-relocs=android $(ANDROID_SRC) -o $@
 $(OUTDIR)/aarch64_plain_rela.elf: $(ANDROID_SRC) | $(OUTDIR)
 	$(LLD_A64) $(CFLAGS) -shared -Wl,-z,relro,-z,now $(ANDROID_SRC) -o $@
+
+# A TEXTREL library, and the same image with every section header dropped:
+# `ld.so` reads its relocations off PT_DYNAMIC alone.
+$(OUTDIR)/x86_textrel.elf: src/textrel.c | $(OUTDIR)
+	$(X86) $(filter-out -fPIC,$(CFLAGS)) -fno-pic -shared -Wl,-z,notext $< -o $@
+$(OUTDIR)/x86_textrel_noshdr.elf: $(OUTDIR)/x86_textrel.elf
+	$(LLVM_OBJCOPY) --strip-sections $< $@
 
 clean:
 	rm -rf $(OUTDIR)

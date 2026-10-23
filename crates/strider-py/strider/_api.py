@@ -279,16 +279,20 @@ def load_elf(
     drops writable non-executable sections rather than serving their on-disk
     bytes. A writable-and-executable mapping is kept either way. With it on,
     an image whose relocation section headers name more than twice the
-    entries the file holds at its smallest entry raises `StriderError`.
+    entries the file holds at its smallest entry raises `StriderError`, and
+    so does one whose code (`DT_TEXTREL`, or a writable-and-executable
+    mapping) a dynamic relocation table strider does not read may relocate:
+    one no section header covers, as after `llvm-objcopy --strip-sections`,
+    or an Android packed one.
 
     `relocated_got_is_rom` (default `False`) additionally serves `.got` and
     `.data.rel.ro` as READ-ONLY memory, so a load through a GOT slot folds to
     the address the slot holds. It is what resolves a PIC jump table whose
     base comes out of the GOT.
 
-    An image carrying Android packed relocations (lld's
-    `--pack-dyn-relocs=android`), which strider does not decode, serves
-    neither.
+    An image carrying relocations strider does not read, Android packed
+    ones (lld's `--pack-dyn-relocs=android`) or a `PT_DYNAMIC` table no
+    section header covers, serves neither.
 
     A slot whose load-time value only the dynamic loader computes stays
     unmapped, and a load through it does not fold: one under a relocation
@@ -474,8 +478,9 @@ class ElfLifter(Lifter):
         also selects what is mapped, so `False` drops writable non-executable
         sections rather than serving their on-disk bytes. With it on, an image
         whose relocation section headers name more than twice the entries the
-        file holds at its smallest entry raises `StriderError`, as in
-        `load_elf`.
+        file holds at its smallest entry, or whose code a dynamic relocation
+        table strider does not read may relocate, raises `StriderError`, as
+        in `load_elf`.
 
         `relocated_got_is_rom` is `load_elf`'s unchecked claim, made for THIS
         image only: it does not inherit the handle's, since one shared
