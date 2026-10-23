@@ -113,7 +113,9 @@ class Cfg:
         - `"unmapped_target"`: no byte of the image backs it. A seeded arm
           that is unmapped, or whose code falls through here, is dropped,
           unless a call precedes the bytes, which then does not return. So is
-          an arm onto the address a direct edge already reached.
+          an arm onto the address a direct edge already reached. A branch, or
+          a conditional's not-taken side, from an arm's code to here leaves
+          through a stub and keeps the arm.
         - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
           it as data. A seeded arm leading to such bytes is dropped, unless
           its code falls through to them past a call, which then does not
