@@ -184,7 +184,8 @@ pub struct AssumptionOptions {
     /// `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`,
     /// `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`, the 64-bit `cvtsi2sd`
     /// and the scalar VEX forms), and PowerPC FPSCR.RN at `fctid`, `fctiw`,
-    /// `fctidu` and `fctiwu`.  The truncating forms (`cvtt*`, `fcti*z`) read
+    /// `fctidu`, `fctiwu`, `fcfid`, `fcfids`, `fcfidu`, `fcfidus`, `frsp`
+    /// and `xscvdpspn`.  The truncating forms (`cvtt*`, `fcti*z`) read
     /// no mode, and the x87 stores read the control word whatever this says.
     /// Off, each conversion reads the mode and selects among its four, so a
     /// mode the function sets (`ldmxcsr`, `mtfsfi`) folds and an unknown one
