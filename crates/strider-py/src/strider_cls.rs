@@ -158,14 +158,6 @@ pub(crate) fn function_bound(
     Ok(strider_cfg::FunctionBound::Size(size))
 }
 
-fn build_orch_sleigh(
-    arch: &PySleighArch,
-    reader: AnyMemReader,
-) -> PyResult<rsleigh::Sleigh<AnyMemReader>> {
-    rsleigh::Sleigh::new(arch.inner.sla_spec(), arch.inner.pspec(), reader)
-        .map_err(|e| into_strider_err(anyhow::anyhow!("Sleigh::new failed: {e:#}")))
-}
-
 /// The claims an `optimize` adds to `function`'s: none without `given`, and
 /// otherwise `given`, which must hold every claim already in force and may not
 /// add `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest`, which only the
@@ -240,11 +232,10 @@ pub(crate) fn build_strider(
     mem: MemInput,
     rom: Option<MemInput>,
 ) -> PyResult<strider_orchestrator::Strider<AnyMemReader>> {
-    let reader = mem.into_any();
-    let sleigh = build_orch_sleigh(&arch, reader)?;
     let rom_box: Option<Box<dyn strider_orchestrator::opt::ReadOnlyMemory>> =
         rom.map(MemInput::into_box);
-    strider_orchestrator::Strider::new(arch.inner, sleigh, rom_box).map_err(into_strider_err)
+    strider_orchestrator::Strider::new(arch.inner, mem.into_any(), rom_box)
+        .map_err(into_strider_err)
 }
 
 /// Python dict keys are unique, so the duplicate-name rejection cannot fire

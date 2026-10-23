@@ -129,13 +129,11 @@ fn spin_loops(count: usize) -> Vec<u8> {
 /// The node visits sink seating performs, and the sinks it seated.
 fn seating_cost(count: usize) -> (usize, usize) {
     let arch = strider_target::SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    let mut lifter = crate::lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(spin_loops(count), 0x1000),
     )
-    .expect("create Sleigh");
-    let mut lifter = crate::lift::Lifter::new(arch, sleigh).expect("lifter");
+    .expect("lifter");
     let cfg = lifter
         .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
         .expect("cfg");

@@ -74,20 +74,22 @@ impl<R> Strider<R>
 where
     R: rsleigh::MemReader,
 {
+    /// A handle decoding through `reader`, with the Sleigh built from `arch`.
+    ///
     /// # Errors
     ///
-    /// Returns `Err` from [`Lifter::new`]: `Sleigh::regs()` or
-    /// `Sleigh::user_op_names()` failing, the arch declaring no address space
-    /// with shortcut `'r'` or naming that space something other than `"ram"`,
-    /// and `DecodeEngine::new` failing. An arch and sla that disagree on the
-    /// ISA mode (a mode var the sla does not flow, an unpaired
-    /// `ISAModeSwitch`) fail too.
+    /// Returns `Err` from [`Lifter::new`]: the sla not loading,
+    /// `Sleigh::regs()` or `Sleigh::user_op_names()` failing, the arch
+    /// declaring no address space with shortcut `'r'` or naming that space
+    /// something other than `"ram"`, and `DecodeEngine::new` failing. An arch
+    /// and sla that disagree on the ISA mode (a mode var the sla does not
+    /// flow, an unpaired `ISAModeSwitch`) fail too.
     pub fn new(
         arch: strider_target::SleighArch,
-        sleigh: rsleigh::Sleigh<R>,
+        reader: R,
         rom: Option<Box<dyn ReadOnlyMemory>>,
     ) -> Result<Self> {
-        let lifter = Lifter::new(arch, sleigh)
+        let lifter = Lifter::new(arch, reader)
             .map_err(|e| anyhow!("Strider::new: Lifter::new failed: {e:?}"))?;
         Ok(Self { arch, lifter, rom })
     }

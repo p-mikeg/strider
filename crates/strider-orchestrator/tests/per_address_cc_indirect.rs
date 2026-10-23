@@ -11,21 +11,21 @@ use strider_target::{CallingConvention as TargetCC, SleighArch};
 
 mod common;
 
-/// Lift and optimise the function at `entry` over `sleigh` with the standard
+/// Lift and optimise the function at `entry` over `reader` with the standard
 /// SystemV-x86_64 convention, the given size bound, and the per-address
-/// CC overrides (preset CCs, built against `sleigh`'s register table).
+/// CC overrides (preset CCs, built against the engine's register table).
 fn run_at(
-    sleigh: rsleigh::Sleigh<BufMemReader<Vec<u8>>>,
+    reader: BufMemReader<Vec<u8>>,
     entry: u64,
     size: u64,
     overrides: FxHashMap<u64, TargetCC>,
 ) -> strider_ir::Function {
-    let arch = SleighArch::x86_64();
-    let regs = sleigh.regs().unwrap();
-    let cc = TargetCC::x86_64_systemv().build(&regs).unwrap();
+    let mut strider = Strider::new(SleighArch::x86_64(), reader, None).unwrap();
+    let regs = strider.sleigh_regs();
+    let cc = TargetCC::x86_64_systemv().build(regs).unwrap();
     let per_address_ccs: FxHashMap<u64, strider_target::BuiltCallingConvention> = overrides
         .into_iter()
-        .map(|(addr, preset)| (addr, preset.build(&regs).unwrap()))
+        .map(|(addr, preset)| (addr, preset.build(regs).unwrap()))
         .collect();
     let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
@@ -35,7 +35,6 @@ fn run_at(
         per_address_ccs: &per_address_ccs,
         ..Default::default()
     };
-    let mut strider = Strider::new(arch, sleigh, None).unwrap();
     strider.analyze(entry, &cc, &opts, None).unwrap().function
 }
 
@@ -68,15 +67,13 @@ fn x86_64_indirect_jmp_to_const_bytes() -> (Vec<u8>, u64, u64) {
 #[test]
 fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list() {
     let (bytes, entry, call_target) = x86_64_indirect_jmp_to_const_bytes();
-    let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
     overrides.insert(call_target, TargetCC::x86_64_systemv().preserves_all());
 
     // 9 bytes covers `mov rax, imm` + `jmp rax` exactly.
-    let bfg = run_at(sleigh, entry, 9, overrides);
+    let bfg = run_at(reader, entry, 9, overrides);
 
     let call_id = bfg
         .graph()
@@ -132,9 +129,7 @@ fn indirect_resolves_to_intra_fn_overridden_address_uses_override_clobber_list()
 #[test]
 fn resolved_override_tail_call_passes_whole_graph_validate() {
     let (bytes, entry, call_target) = x86_64_indirect_jmp_to_const_bytes();
-    let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
     // `preserves_all` differs from SystemV in its (empty) clobber set but
@@ -142,7 +137,7 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
     // shrinks while the Return's ret-val arity stays at the function default.
     overrides.insert(call_target, TargetCC::x86_64_systemv().preserves_all());
 
-    let bfg = run_at(sleigh, entry, 9, overrides);
+    let bfg = run_at(reader, entry, 9, overrides);
 
     strider_ir::validate::validate(&bfg)
         .expect("resolved override tail-call must pass whole-graph validation");
@@ -176,9 +171,7 @@ fn resolved_override_tail_call_passes_whole_graph_validate() {
 #[test]
 fn indirect_default_cc_tail_call_runs_and_does_not_double_count_ret_regs() {
     let (bytes, entry, _call_target) = x86_64_indirect_jmp_to_const_bytes();
-    let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     // No per-address overrides: the splice uses the function's stored
     // default SystemV convention. `run_at`'s unwrap only proves analysis
@@ -186,7 +179,7 @@ fn indirect_default_cc_tail_call_runs_and_does_not_double_count_ret_regs() {
     // after in-place indirect-branch edits (`validate` runs only during the
     // initial `FunctionBuilder::build`), so the explicit node-shape
     // assertions below are what actually prove post-edit Call/Return arity.
-    let bfg = run_at(sleigh, entry, 9, FxHashMap::default());
+    let bfg = run_at(reader, entry, 9, FxHashMap::default());
 
     let call_id = bfg
         .graph()
@@ -228,9 +221,7 @@ fn indirect_default_cc_tail_call_runs_and_does_not_double_count_ret_regs() {
 #[test]
 fn indirect_override_with_ret_regs_does_not_double_count_them() {
     let (bytes, entry, _call_target) = x86_64_indirect_jmp_to_const_bytes();
-    let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     // A normal override (SystemV) gives the spliced Call real ret regs
     // (RAX + XMM0); the all-preserving override above can't expose a
@@ -238,7 +229,7 @@ fn indirect_override_with_ret_regs_does_not_double_count_them() {
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
     overrides.insert(_call_target, TargetCC::x86_64_systemv());
 
-    let bfg = run_at(sleigh, entry, 9, overrides);
+    let bfg = run_at(reader, entry, 9, overrides);
 
     let call_id = bfg
         .graph()
@@ -274,14 +265,12 @@ fn indirect_override_with_ret_regs_does_not_double_count_them() {
 #[test]
 fn lift_time_tail_call_to_overridden_address_uses_override_clobber_list() {
     let (bytes, entry, call_target) = x86_64_tail_call_bytes();
-    let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, entry);
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).unwrap();
 
     let mut overrides: FxHashMap<u64, TargetCC> = FxHashMap::default();
     overrides.insert(call_target, TargetCC::x86_64_systemv().preserves_all());
 
-    let bfg = run_at(sleigh, entry, 10, overrides);
+    let bfg = run_at(reader, entry, 10, overrides);
 
     let call_id = bfg
         .graph()

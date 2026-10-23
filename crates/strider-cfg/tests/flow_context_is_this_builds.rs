@@ -24,13 +24,7 @@ type Engine = DecodeEngine<BufMemReader<Vec<u8>>>;
 /// caller sweeping many functions from one handle does.
 fn thumb(bytes: Vec<u8>) -> Engine {
     let arch = SleighArch::arm_thumb();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(bytes, BASE),
-    )
-    .expect("create Sleigh");
-    DecodeEngine::new(arch, sleigh).expect("decode engine")
+    DecodeEngine::new(arch, BufMemReader::new(bytes, BASE)).expect("decode engine")
 }
 
 /// The Thumb function at `addr`, entered as production enters one: with the

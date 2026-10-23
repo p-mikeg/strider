@@ -15,13 +15,9 @@ fn lift(
     cc: CallingConvention,
     ret_reg: &str,
 ) -> (Function, ValueId, rsleigh::SleighRegs) {
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        rsleigh::mem_readers::BufMemReader::new(bytes, BASE),
-    )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    let mut lifter =
+        strider_lift::lift::Lifter::new(arch, rsleigh::mem_readers::BufMemReader::new(bytes, BASE))
+            .expect("lifter");
     let regs = lifter.sleigh_regs().clone();
     let cc: BuiltCallingConvention = cc.build(&regs).expect("cc");
     let cfg = lifter

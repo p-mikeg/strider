@@ -10,7 +10,6 @@
 
 mod common;
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::{IRViewer, IRWalker};
 use strider_orchestrator::{AnalyzeOptions, Strider};
@@ -50,10 +49,8 @@ fn synthetic_bytes() -> Vec<u8> {
     bs
 }
 
-fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(synthetic_bytes(), BASE);
-    Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("Sleigh::new")
+fn make_reader() -> BufMemReader<Vec<u8>> {
+    BufMemReader::new(synthetic_bytes(), BASE)
 }
 
 /// The cfg builder must not decode any `prev_fn` byte when lifting
@@ -62,10 +59,9 @@ fn make_sleigh() -> Sleigh<BufMemReader<Vec<u8>>> {
 /// `[TARGET_FN, TARGET_FN_END)`.
 #[test]
 fn bounded_lift_does_not_walk_backward_into_prev_fn() {
-    let sleigh = make_sleigh();
-    let regs = sleigh.regs().expect("regs");
+    let mut strider = Strider::new(SleighArch::x86_64(), make_reader(), None).unwrap();
     let cc = CallingConvention::x86_64_systemv()
-        .build(&regs)
+        .build(strider.sleigh_regs())
         .expect("build cc");
     let opts = AnalyzeOptions {
         cfg: strider_cfg::CfgOptions {
@@ -74,7 +70,6 @@ fn bounded_lift_does_not_walk_backward_into_prev_fn() {
         },
         ..AnalyzeOptions::default()
     };
-    let mut strider = Strider::new(SleighArch::x86_64(), sleigh, None).unwrap();
     let function = strider
         .analyze(TARGET_FN, &cc, &opts, None)
         .expect("bounded lift must complete without reaching prev_fn")

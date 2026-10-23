@@ -27,13 +27,7 @@ fn shape(cfg: &Cfg) -> Shape {
 
 fn thumb_engine(code: &[u8]) -> Engine {
     let arch = SleighArch::arm_thumb();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
-        BufMemReader::new(code.to_vec(), 0x1000),
-    )
-    .expect("create Sleigh");
-    DecodeEngine::new(arch, sleigh).expect("decode engine")
+    DecodeEngine::new(arch, BufMemReader::new(code.to_vec(), 0x1000)).expect("decode engine")
 }
 
 /// Thumb `itt eq ; movs r0,#0 ; movs r0,#0 ; bx lr`: the `IT` commits `condit`
@@ -95,21 +89,4 @@ fn an_engine_alternating_isa_modes_builds_each_entry_as_a_fresh_one_does() {
     assert_eq!(arm, fresh(0x1004));
     assert_eq!(thumb, fresh(0x1001));
     assert_eq!(thumb_again, thumb);
-}
-
-/// ARM paired with the x86-64 sla: the mode var it re-imposes at every region
-/// is not one that sla flows, so the re-impose would be a silent no-op.
-#[test]
-fn an_isa_mode_var_the_sla_does_not_flow_is_an_error() {
-    let x86 = SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        x86.sla_spec(),
-        x86.pspec(),
-        BufMemReader::new(vec![0xc3], 0x1000),
-    )
-    .expect("create Sleigh");
-    let err = DecodeEngine::new(SleighArch::arm(), sleigh)
-        .err()
-        .expect("an ARM engine over the x86-64 sla");
-    assert!(err.to_string().contains("TMode"), "{err}");
 }

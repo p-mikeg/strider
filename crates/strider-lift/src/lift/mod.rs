@@ -85,8 +85,34 @@ pub struct Lifter<R: rsleigh::MemReader> {
     volatile_ranges: Vec<core::ops::Range<u64>>,
 }
 
+/// The `ISAModeSwitch` register of `regs`, `None` exactly where `arch` has no
+/// ISA-mode var.
+fn isa_mode_switch_vn(
+    arch: strider_target::SleighArch,
+    regs: &rsleigh::SleighRegs,
+) -> Result<Option<rsleigh::Vn>> {
+    let vn = regs.name_to_vn("ISAModeSwitch");
+    if vn.is_some() != arch.isa_mode_var().is_some() {
+        return Err(anyhow!(
+            "{arch:?}: ISAModeSwitch resolved={}, isa_mode_var={:?}",
+            vn.is_some(),
+            arch.isa_mode_var(),
+        ));
+    }
+    Ok(vn)
+}
+
 impl<R: rsleigh::MemReader> Lifter<R> {
-    pub fn new(arch: strider_target::SleighArch, sleigh: rsleigh::Sleigh<R>) -> Result<Self> {
+    /// A lift engine over `reader`, with the Sleigh built from `arch`.
+    ///
+    /// # Errors
+    ///
+    /// When [`strider_cfg::DecodeEngine::new`] fails, the sla's registers
+    /// cannot be read, its `ram` space is missing or not byte-addressed, or
+    /// it and `arch` disagree on the ISA mode.
+    pub fn new(arch: strider_target::SleighArch, reader: R) -> Result<Self> {
+        let engine = strider_cfg::DecodeEngine::new(arch, reader)?;
+        let sleigh = engine.sleigh();
         let sleigh_regs = sleigh.regs()?;
         let declared_reg_vns = sleigh_regs.vns().collect();
         // `VnSpace::RAM` is the shortcut byte `b'r'`, which Sleigh derives from
@@ -118,17 +144,10 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // Capture and carry are paired BOTH ways: `name_to_vn` answers `None`
         // for a misspelling rather than erroring, so a one-directional check
         // would pass vacuously while the mode bit is never captured.
-        let isa_mode_switch_vn = sleigh_regs.name_to_vn("ISAModeSwitch");
-        if isa_mode_switch_vn.is_some() != arch.isa_mode_var().is_some() {
-            return Err(anyhow!(
-                "{arch:?}: ISAModeSwitch resolved={}, isa_mode_var={:?}",
-                isa_mode_switch_vn.is_some(),
-                arch.isa_mode_var(),
-            ));
-        }
+        let isa_mode_switch_vn = isa_mode_switch_vn(arch, &sleigh_regs)?;
         let volatile_ranges = arch.volatile_register_ranges(&sleigh_regs)?;
         Ok(Self {
-            engine: strider_cfg::DecodeEngine::new(arch, sleigh)?,
+            engine,
             sleigh_regs,
             declared_reg_vns,
             space_ids,
@@ -839,8 +858,7 @@ mod tests {
             .expect("build cc");
         // AArch64 `ret` = 0xD65F03C0, little-endian.
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0xc0, 0x03, 0x5f, 0xd6], 0x1000);
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-        let mut lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let mut lifter = super::Lifter::new(arch, reader).expect("lifter");
         let cfg = lifter
             .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
             .expect("cfg");
@@ -879,8 +897,7 @@ mod tests {
             vec![0x01, 0x00, 0x00, 0xd4, 0xc0, 0x03, 0x5f, 0xd6],
             0x1000,
         );
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-        let mut lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let mut lifter = super::Lifter::new(arch, reader).expect("lifter");
         let cfg = lifter
             .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
             .expect("cfg");
@@ -931,9 +948,7 @@ mod tests {
         let opts = strider_cfg::CfgOptions::default();
         let new_lifter = || {
             let reader = rsleigh::mem_readers::BufMemReader::new(code.clone(), 0x1000);
-            let sleigh =
-                rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-            super::Lifter::new(arch, sleigh).expect("lifter")
+            super::Lifter::new(arch, reader).expect("lifter")
         };
 
         // Lift A (the polluter) first, then B on the same engine.
@@ -983,8 +998,7 @@ mod tests {
         // as a 4-byte ARM insn it would run past the 4-byte buffer and fail.
         let code = vec![0x01, 0x20, 0x70, 0x47];
         let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-        let mut lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let mut lifter = super::Lifter::new(arch, reader).expect("lifter");
         let opts = strider_cfg::CfgOptions::default();
 
         // Entry passed with the Thumb bit set (0x1001). Under the ARM default
@@ -1049,8 +1063,7 @@ mod tests {
             0xba, 0x03, 0x00, 0x00, 0x00, 0xbe, 0x04, 0x00, 0x00, 0x00, 0xc3,
         ];
         let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-        let mut lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let mut lifter = super::Lifter::new(arch, reader).expect("lifter");
         let cfg = lifter
             .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
             .expect("cfg");
@@ -1105,8 +1118,7 @@ mod tests {
             0xc3,
         ];
         let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-        let mut lifter = super::Lifter::new(arch, sleigh).expect("lifter");
+        let mut lifter = super::Lifter::new(arch, reader).expect("lifter");
         let opts = strider_cfg::CfgOptions::default();
         let cfg = lifter.build_cfg(0x1000u64.into(), &opts).expect("cfg");
 
@@ -1144,9 +1156,7 @@ mod tests {
         let opts = strider_cfg::CfgOptions::default();
         let new_lifter = || {
             let reader = rsleigh::mem_readers::BufMemReader::new(code.clone(), 0x1000);
-            let sleigh =
-                rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-            super::Lifter::new(arch, sleigh).expect("lifter")
+            super::Lifter::new(arch, reader).expect("lifter")
         };
 
         let mut owner = new_lifter();
@@ -1181,9 +1191,7 @@ mod tests {
         for preset in strider_target::ArchPreset::ALL {
             let arch = preset.arch();
             let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x10], 0x1000);
-            let sleigh =
-                rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-            let lifter = super::Lifter::new(arch, sleigh)
+            let lifter = super::Lifter::new(arch, reader)
                 .unwrap_or_else(|e| panic!("{preset:?}: Lifter::new must succeed; got {e}"));
             assert!(
                 !lifter.user_op_names().is_empty(),
@@ -1199,10 +1207,9 @@ mod tests {
     fn an_unpaired_isa_mode_switch_is_an_error() {
         let arm = strider_target::SleighArch::arm();
         let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x10], 0x1000);
-        let sleigh = rsleigh::Sleigh::new(arm.sla_spec(), arm.pspec(), reader).expect("sleigh");
-        let err = super::Lifter::new(strider_target::SleighArch::x86_64(), sleigh)
-            .err()
-            .expect("an x86-64 lifter over the ARM sla");
+        let regs = arm.sleigh(reader).expect("sleigh").regs().expect("regs");
+        let err = super::isa_mode_switch_vn(strider_target::SleighArch::x86_64(), &regs)
+            .expect_err("an x86-64 lifter over the ARM sla");
         assert!(err.to_string().contains("ISAModeSwitch"), "{err}");
     }
 }

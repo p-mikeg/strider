@@ -21,13 +21,11 @@ const BYTES: [u8; 16] = [
 #[test]
 fn opaque_register_store_gives_colliding_registers_distinct_slots() {
     let arch = strider_target::SleighArch::ppc32be();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    let mut lifter = strider_lift::lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(BYTES.to_vec(), 0x1000),
     )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    .expect("lifter");
     let cr0 = lifter.sleigh_regs().name_to_vn("cr0").expect("cr0");
     let xer_so = lifter.sleigh_regs().name_to_vn("xer_so").expect("xer_so");
     assert_eq!(cr0.size, 1);

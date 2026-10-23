@@ -133,12 +133,9 @@ impl SleighArch {
             [const { OnceLock::new() }; ArchPreset::ALL.len()];
         NAMES[self.preset() as usize].get_or_init(|| {
             let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
-            let sleigh = Sleigh::new(self.sla_spec(), self.pspec(), probe).unwrap_or_else(|e| {
-                panic!(
-                    "{:?}: the compiled-in sla does not load: {e}",
-                    self.preset()
-                )
-            });
+            let sleigh = self
+                .sleigh(probe)
+                .unwrap_or_else(|e| panic!("the compiled-in sla does not load: {e:#}"));
             ArchNames::from_sleigh(&sleigh).unwrap_or_else(|e| panic!("{:?}: {e:#}", self.preset()))
         })
     }
@@ -158,8 +155,7 @@ mod tests {
         for &preset in ArchPreset::ALL {
             let arch = preset.arch();
             let probe = rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0);
-            let sleigh =
-                rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), probe).expect("sleigh");
+            let sleigh = arch.sleigh(probe).expect("sleigh");
             let regs = sleigh.regs().expect("regs");
             let names = arch.names();
             assert_eq!(names.regs(), &regs, "{preset:?}");

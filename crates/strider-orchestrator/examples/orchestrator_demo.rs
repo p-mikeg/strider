@@ -42,8 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         strider_reader::elf::RelocationMode::Unapplied,
     )?;
 
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem_reader)?;
-    let mut lifter = strider_orchestrator::Lifter::new(arch, sleigh)?;
+    let mut lifter = strider_orchestrator::Lifter::new(arch, mem_reader)?;
     let cc = cc.build(lifter.sleigh_regs())?;
 
     let cfg_options = strider_cfg::CfgOptions {

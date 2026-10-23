@@ -9,13 +9,11 @@ use strider_ir::{IRViewer, IRWalker};
 /// `Add(sp, c)`.
 fn call_stack_pop(bytes: Vec<u8>) -> Option<u128> {
     let arch = strider_target::SleighArch::x86_64();
-    let sleigh = rsleigh::Sleigh::new(
-        arch.sla_spec(),
-        arch.pspec(),
+    let mut lifter = strider_lift::lift::Lifter::new(
+        arch,
         rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
     )
-    .expect("sleigh");
-    let mut lifter = strider_lift::lift::Lifter::new(arch, sleigh).expect("lifter");
+    .expect("lifter");
     let cc = strider_target::CallingConvention::x86_64_systemv()
         .build(lifter.sleigh_regs())
         .expect("systemv");

@@ -1,26 +1,18 @@
 mod common;
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_ir::{IRViewer, IRWalker};
 use strider_orchestrator::{AnalyzeOptions, Strider};
 use strider_target::{CallingConvention, SleighArch};
 
-fn make_sleigh_value(bytes: Vec<u8>, base: u64) -> Sleigh<BufMemReader<Vec<u8>>> {
-    let arch = SleighArch::x86_64();
-    let reader = BufMemReader::new(bytes, base);
-    Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh")
-}
-
 /// x86_64 SystemV, default options.
 fn run_at(bytes: Vec<u8>, base: u64) -> anyhow::Result<strider_orchestrator::AnalyzeResult> {
     let arch = SleighArch::x86_64();
-    let sleigh = make_sleigh_value(bytes, base);
-    let regs = sleigh.regs().expect("regs");
+    let mut strider = Strider::new(arch, BufMemReader::new(bytes, base), None)?;
+    let regs = strider.sleigh_regs();
     let cc = CallingConvention::x86_64_systemv()
-        .build(&regs)
+        .build(regs)
         .expect("build cc");
-    let mut strider = Strider::new(arch, sleigh, None)?;
     strider.analyze(
         base,
         &cc,
@@ -110,12 +102,12 @@ fn analyze_seats_pre_seeded_known_targets_from_analyze_options() {
     };
 
     let arch = SleighArch::x86_64();
-    let sleigh = make_sleigh_value(bytes, 0x1000);
-    let regs = sleigh.regs().expect("regs");
+    let mut strider =
+        Strider::new(arch, BufMemReader::new(bytes, 0x1000), None).expect("Strider::new");
+    let regs = strider.sleigh_regs();
     let cc = CallingConvention::x86_64_systemv()
-        .build(&regs)
+        .build(regs)
         .expect("build cc");
-    let mut strider = Strider::new(arch, sleigh, None).expect("Strider::new");
     let result = strider.analyze(0x1000, &cc, &opts, None).expect("analyze");
     assert_eq!(
         result
@@ -270,12 +262,9 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
 
     // Single manual pass (the example's path).
     let arch = SleighArch::x86_64();
-    let sleigh = make_sleigh_value(bytes.clone(), 0x1000);
-    let regs = sleigh.regs().expect("regs");
-    let cc = CallingConvention::x86_64_systemv()
-        .build(&regs)
-        .expect("cc");
-    let mut lifter = Lifter::new(arch, sleigh).expect("lifter");
+    let mut lifter = Lifter::new(arch, BufMemReader::new(bytes.clone(), 0x1000)).expect("lifter");
+    let regs = lifter.sleigh_regs();
+    let cc = CallingConvention::x86_64_systemv().build(regs).expect("cc");
     let cfg = lifter
         .build_cfg(
             strider_cfg::MachineInsnAddr::from(0x1000u64),
@@ -316,12 +305,9 @@ fn analyze_resolution_loop_beats_single_pass_manual_lift() {
         let arch = SleighArch::x86_64();
         let mut b2: Vec<u8> = vec![0x68, k_le[0], k_le[1], k_le[2], k_le[3], 0x58, 0xff, 0xe0];
         b2.extend(std::iter::repeat_n(0xccu8, 64));
-        let sleigh = make_sleigh_value(b2, 0x1000);
-        let regs = sleigh.regs().expect("regs");
-        let cc = CallingConvention::x86_64_systemv()
-            .build(&regs)
-            .expect("cc");
-        let mut strider = Strider::new(arch, sleigh, None).expect("strider");
+        let mut strider = Strider::new(arch, BufMemReader::new(b2, 0x1000), None).expect("strider");
+        let regs = strider.sleigh_regs();
+        let cc = CallingConvention::x86_64_systemv().build(regs).expect("cc");
         strider
             .analyze(
                 0x1000,

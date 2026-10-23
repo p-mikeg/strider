@@ -251,8 +251,7 @@ impl Fixture {
         let arch = (self.arch.sleigh)();
         let mem = ElfFileMemReader::new(&self.elf, strider_reader::elf::RelocationMode::Unapplied)
             .expect("mem reader");
-        let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), mem).expect("sleigh");
-        let strider = Strider::new(arch, sleigh, Some(rom)).expect("Strider::new");
+        let strider = Strider::new(arch, mem, Some(rom)).expect("Strider::new");
         let cc = (self.arch.cc)()
             .build(strider.sleigh_regs())
             .expect("build cc");
