@@ -76,6 +76,9 @@
 - `AssumptionOptions` is unhashable: `hash()`, set membership and dict keys
   raise `TypeError`. It compares by value (`function.assumptions ==
   AssumptionOptions.none()`), where it compared by identity.
+- `Lifter.call_other_abi(name, opts)` checks `opts.call_other_abis` as
+  `build_cfg` does and raises the same `StriderError` for an entry built
+  against another arch's register table, where it returned that entry.
 
 ### Breaking, Rust
 
