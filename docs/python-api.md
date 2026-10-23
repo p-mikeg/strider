@@ -137,8 +137,8 @@ _cfg, fn, _u = lft.analyze(0x1000, sleigh.CallingConvention.x86_64_systemv())
 A handle works on any thread. `analyze`, `build_cfg` and `add_elf` hold it
 alone: while one is in flight, from a `read()` callback or another thread,
 `analyze`, `build_cfg`, `Function.optimize`, `pcode_at`, `call_other_abi`,
-`user_op_names`, `add_elf`, a plain `Lifter`'s `arch` and `reader()`, and
-`rom()` on any `Lifter` raise `StriderError: this Lifter is already in use`,
+`user_op_names`, `add_elf`, `arch`, `reader()` and `rom()` on any `Lifter`
+raise `StriderError: this Lifter is already in use`,
 and those three raise while any of these is in flight. The others may overlap
 each other. Such an `add_elf` merges nothing. To analyse in
 parallel, a worker thread builds its own handle over the same `prog.arch`,
