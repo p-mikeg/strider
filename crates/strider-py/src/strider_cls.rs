@@ -255,7 +255,7 @@ pub(crate) fn optimize_function(
         Some(p) => p.build_pipeline(),
         None => strider_orchestrator::opt::default_pipeline(),
     };
-    with_pending_control_flow(|| function.run_pipeline_in_place(pipeline, "optimize", rom, &claims))
+    with_pending_control_flow(|| function.run_pipeline_in_place(pipeline, rom, &claims))
 }
 
 pub(crate) fn build_strider(
