@@ -543,7 +543,8 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 /// Claims about the code being analysed, keyword-only. None is checked, and
 /// each one's risky value is the positive one, so any of them can make the
 /// answer wrong on valid input. Clearing all nine leaves only what the IR
-/// structurally proves, which still takes memory to be RAM.
+/// structurally proves, which still takes memory to be RAM and the
+/// floating-point controls to be the IEEE default.
 ///
 /// Five default `True`: `stack_global_disjoint`,
 /// `assume_incoming_args_survive_calls` and
@@ -627,9 +628,12 @@ macro_rules! assumption_fields {
 
             /// Every claim cleared, then the ones named set. With none named,
             /// the sound floor of these fields under any input program whose
-            /// memory behaves as RAM, forwarding solely what the IR
-            /// structurally proves. A memory-mapped register polled after a
-            /// write still reads as the value written.
+            /// memory behaves as RAM and whose floating-point controls are the
+            /// IEEE default, forwarding solely what the IR structurally
+            /// proves. A memory-mapped register polled after a write still
+            /// reads as the value written, and float arithmetic rounds to
+            /// nearest with MXCSR.FTZ/DAZ, FPSCR.NI/OE/UE, FPSCR.FZ, FPCR.FZ
+            /// and FCSR.FS clear.
             #[staticmethod]
             #[allow(clippy::too_many_arguments)]
             #[pyo3(signature = (*, $($name = None),*))]
