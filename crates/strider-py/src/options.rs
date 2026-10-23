@@ -205,6 +205,23 @@ pub struct PyCfgOptions {
     overrides: Arc<std::sync::Mutex<OverridesMemo>>,
 }
 
+/// `slot`'s table when it was built for `target`'s preset, else `build`'s,
+/// kept in `slot`: every field of a `SleighArch` is fixed by its preset.
+fn memo_per_arch<T>(
+    slot: &mut Option<(strider_target::SleighArch, Arc<T>)>,
+    target: strider_target::SleighArch,
+    build: impl FnOnce() -> PyResult<T>,
+) -> PyResult<Arc<T>> {
+    if let Some((arch, built)) = slot
+        && arch.preset() == target.preset()
+    {
+        return Ok(Arc::clone(built));
+    }
+    let built = Arc::new(build()?);
+    *slot = Some((target, Arc::clone(&built)));
+    Ok(built)
+}
+
 /// The last `call_other_abis` resolution and how many were made.
 #[derive(Default)]
 struct OverridesMemo {
@@ -334,18 +351,11 @@ impl PyCfgOptions {
             .overrides
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((arch, built)) = &memo.built
-            && *arch == target
-        {
-            return Ok(Arc::clone(built));
-        }
-        let built = Arc::new(crate::strider_cls::overrides_from(
-            &self.call_other_abis,
-            target,
-        )?);
-        memo.builds += 1;
-        memo.built = Some((target, Arc::clone(&built)));
-        Ok(built)
+        let OverridesMemo { built, builds } = &mut *memo;
+        memo_per_arch(built, target, || {
+            *builds += 1;
+            crate::strider_cls::overrides_from(&self.call_other_abis, target)
+        })
     }
 }
 
@@ -864,16 +874,9 @@ impl PyLifterOptions {
             .built
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((cached, built)) = slot.as_ref()
-            && cached.preset() == target.preset()
-        {
-            return Ok(std::sync::Arc::clone(built));
-        }
-        let built = std::sync::Arc::new(crate::strider_cls::build_per_address_ccs(
-            &table.py, regs, target,
-        )?);
-        *slot = Some((target, std::sync::Arc::clone(&built)));
-        Ok(built)
+        memo_per_arch(&mut slot, target, || {
+            crate::strider_cls::build_per_address_ccs(&table.py, regs, target)
+        })
     }
 }
 
