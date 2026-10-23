@@ -701,7 +701,7 @@ impl<'f> RangeMap<'f> {
                         outputs.get(1).is_some_and(|&false_ctrl| {
                             single_control_consumer(f, false_ctrl).is_some_and(|sink| {
                                 !matches!(f.node_kind(sink), NodeKind::Region)
-                                    && self.dominates(sink, region)
+                                    && self.doms.dominates(sink, region)
                             })
                         })
                     })
@@ -742,7 +742,7 @@ impl<'f> RangeMap<'f> {
             return None;
         }
         let joining = self.find_joining_region(phi_node)?;
-        if !self.dominates(joining, region) {
+        if !self.doms.dominates(joining, region) {
             return None;
         }
         let data: Vec<ValueId> = f.phi_data_inputs(phi_node).collect();
@@ -824,11 +824,6 @@ impl<'f> RangeMap<'f> {
     /// in `x`, i.e. the same value as `x`.
     pub(crate) fn identity_mask_operand(&self, value: ValueId) -> Option<ValueId> {
         self.masks.identity[value]
-    }
-
-    /// Reflexive: a node dominates itself.
-    fn dominates(&self, node: NodeId, region: NodeId) -> bool {
-        self.doms.dominates(node, region)
     }
 
     /// The guards recorded on `value` itself whose node dominates `region`,

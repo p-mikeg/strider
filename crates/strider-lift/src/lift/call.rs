@@ -157,7 +157,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // than wrong. Decided per container, since one arch can hold register
         // files that differ.
         let result_vn = match output.map(|vn| {
-            let container = self.container_of(&vn);
+            let container = self.container_map.container_of(&vn);
             if self.lifter.arch().callother_output_is_exact_in(&container) {
                 vn
             } else {
@@ -181,7 +181,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         };
         let mut clobber_vns: Vec<rsleigh::Vn> = Vec::new();
         for vn in &abi.implicit_writes {
-            let c = self.container_of(vn);
+            let c = self.container_map.container_of(vn);
             if Some(c) == result_vn || clobber_vns.contains(&c) {
                 continue;
             }

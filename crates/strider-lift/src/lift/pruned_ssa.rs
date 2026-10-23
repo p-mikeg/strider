@@ -146,7 +146,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     ) -> Result<()> {
         #[cfg(debug_assertions)]
         if let Some(region) = self.current_cfg_region
-            && let Some(id) = self.builder.function().vn_id_of(&self.container_of(vn))
+            && let Some(id) = self
+                .builder
+                .function()
+                .vn_id_of(&self.container_map.container_of(vn))
         {
             debug_assert!(
                 self.def_sites
@@ -324,6 +327,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     }
 
     fn vn_id_of_container(&self, vn: &rsleigh::Vn) -> Option<InitialVnId> {
-        self.builder.function().vn_id_of(&self.container_of(vn))
+        self.builder
+            .function()
+            .vn_id_of(&self.container_map.container_of(vn))
     }
 }
