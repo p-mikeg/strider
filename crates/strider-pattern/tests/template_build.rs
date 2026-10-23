@@ -523,9 +523,8 @@ fn float_const_template_at_its_own_width_is_valid_ir_once_spliced_in() {
 /// A `Store` template that declares a VALUE output where the node signature
 /// requires `[Memory]` is rejected at instantiation.
 ///
-/// `output_kinds_for` takes the author's declaration and defaults a node with
-/// no explicit output vertex to one value output of the root's type, so
-/// without this check the malformed node reaches the graph.
+/// `output_kinds_for` takes the author's declaration as it stands, so without
+/// this check the malformed node reaches the graph.
 #[test]
 fn instantiate_rejects_an_output_kind_the_node_signature_forbids() {
     let x = Capture::new();
