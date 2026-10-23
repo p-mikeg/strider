@@ -114,7 +114,7 @@ impl PostOptimizer for CallStackArgCollect {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
-        _opt_ctx: &mut crate::OptCtx<'_>,
+        _opt_ctx: &crate::OptCtx<'_>,
     ) -> Result<()> {
         // The owned `Vec` lets the immutable borrow end before the mutation loop
         // takes `edit` mutably.

@@ -623,7 +623,7 @@ mod tests {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::new(None))
+        p.run(&mut function, &crate::OptCtx::new(None))
             .expect("pipeline");
         let order = cone_order(&function, loaded);
         let mut ev = Evaluator::new(&function, None);

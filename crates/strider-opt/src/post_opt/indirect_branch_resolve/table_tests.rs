@@ -408,7 +408,7 @@ fn classify_table_dispatch_resolves_guarded_shift_narrowed_loaded_index() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut g, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut g, &crate::OptCtx::new(None)).unwrap();
     }
 
     let rom = MockRom::strided(
@@ -663,7 +663,7 @@ fn classify_table_dispatch_resolves_a_bound_held_by_a_guarded_sibling() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut function, &crate::OptCtx::new(None)).unwrap();
     }
 
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
@@ -748,7 +748,7 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut function, &crate::OptCtx::new(None)).unwrap();
     }
 
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
@@ -944,7 +944,7 @@ fn classify_table_dispatch_guarded_direct_load_target() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut function, &crate::OptCtx::new(None)).unwrap();
     }
     let result = classify(&function, None);
     assert_eq!(
@@ -1008,7 +1008,7 @@ fn classify_table_dispatch_decoy_offpath_value_not_enumerated() {
         p.add(crate::KnownBits);
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut function, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut function, &crate::OptCtx::new(None)).unwrap();
     }
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let result = classify(&function, Some(&rom));
@@ -1033,7 +1033,7 @@ fn finish_stack_array(mut fg: strider_ir::Function) -> (strider_ir::Function, Va
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
+    p.run(&mut fg, &crate::OptCtx::new(None)).unwrap();
     let load = fg
         .graph()
         .all_node_ids()
@@ -1648,7 +1648,7 @@ fn stack_table_built_in_two_hops() -> Function {
     p.add(KnownBits);
     p.add(PhiCollapse);
     p.add(RegionCollapse);
-    p.run(&mut fg, &mut crate::OptCtx::new(None)).unwrap();
+    p.run(&mut fg, &crate::OptCtx::new(None)).unwrap();
     fg
 }
 
@@ -1693,7 +1693,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
     pipeline.add_post_pass(StackOffsetDetect);
     pipeline.add(LoadForward);
 
-    pipeline.run(&mut fg, &mut crate::OptCtx::new(None))?;
+    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -1860,7 +1860,7 @@ fn classify_table_dispatch_resolves_a_bitfield_index_under_its_guard() {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut g, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut g, &crate::OptCtx::new(None)).unwrap();
     }
 
     let rom = MockRom::strided(0x4000, 4, (0..32).map(|i| 0x5000 + 0x10 * i).collect(), 4);
@@ -1917,7 +1917,7 @@ fn classify_guarded_dispatch(
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
         p.add(crate::RegionCollapse);
-        p.run(&mut g, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(&mut g, &crate::OptCtx::new(None)).unwrap();
     }
     let rom = MockRom::strided(0x4000, 8, (0..64).map(|i| 0x5000 + 0x10 * i).collect(), 8);
     classify(&g, Some(&rom))
@@ -2234,7 +2234,7 @@ fn phi_of_constants_dispatch(
     let mut p = crate::OptimizerPipeline::new();
     p.add(crate::PhiCollapse);
     p.add(crate::RegionCollapse);
-    p.run(&mut f, &mut crate::OptCtx::new(None)).unwrap();
+    p.run(&mut f, &crate::OptCtx::new(None)).unwrap();
     f
 }
 
@@ -2687,7 +2687,7 @@ fn rederive_seated_switch(mut g: Function, switch: NodeId) -> Option<ResolvedTar
     prep.add(PhiCollapse);
     prep.add(ConstantFold::new());
     prep.add(RegionCollapse);
-    prep.run(&mut g, &mut crate::OptCtx::new(Some(&rom)))
+    prep.run(&mut g, &crate::OptCtx::new(Some(&rom)))
         .expect("prep");
     let found = super::super::classify_sites(&g, Some(&rom)).expect("classify");
     assert!(
@@ -2773,7 +2773,7 @@ fn a_heap_verdict_opens_the_slot_map_only_under_its_claim() {
             noalias_allocators: allocators.iter().copied().collect(),
             ..crate::AssumptionOptions::none()
         });
-        p.run(fg, &mut crate::OptCtx::new(None)).unwrap();
+        p.run(fg, &crate::OptCtx::new(None)).unwrap();
         super::super::classify_sites(fg, None)
             .unwrap()
             .resolved

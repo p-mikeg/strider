@@ -15,7 +15,7 @@ pub(crate) fn run_to_fixed_point(
     fg: &mut strider_ir::Function,
 ) -> crate::Result<usize> {
     let mut iterations = 0;
-    while crate::run_one(pass, fg, &mut crate::OptCtx::new(None))?.changed() {
+    while crate::run_one(pass, fg, &crate::OptCtx::new(None))?.changed() {
         iterations += 1;
     }
     Ok(iterations)
@@ -354,7 +354,7 @@ pub(crate) mod memory_shapes {
         let mut collapse = crate::OptimizerPipeline::new();
         collapse.add(crate::PhiCollapse);
         collapse.add(crate::RegionCollapse);
-        collapse.run(&mut fg, &mut crate::OptCtx::new(None))?;
+        collapse.run(&mut fg, &crate::OptCtx::new(None))?;
         Ok(fg)
     }
 
