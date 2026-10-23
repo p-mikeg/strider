@@ -37,9 +37,10 @@ pub struct AssumptionOptions {
     /// The stack and the global / constant-address regions (`.data`,
     /// `.rodata`, `.bss`, MMIO) never overlap at runtime, so the walker steps
     /// through a constant-address `Store` when looking back from an SP-rooted
-    /// `Load` and vice-versa.  Wrong only where a constant address
-    /// coincidentally equals `sp + K` at runtime.  No other class pair reads
-    /// it.  Default ON.
+    /// `Load` and vice-versa, and return-target verification passes a
+    /// constant-address store over the return slot.  Wrong only where a
+    /// constant address coincidentally equals `sp + K` at runtime.  No other
+    /// class pair reads it.  Default ON.
     pub stack_global_disjoint: bool,
     /// A `Call` on an incoming stack-argument slot's memory chain leaves the
     /// slot as it found it, so the argument is still detectable after the
@@ -120,8 +121,9 @@ pub struct AssumptionOptions {
     /// being set.
     ///
     /// `LoadForward`'s narrowing reads the distinct allocation but steps
-    /// through no listed call, and incoming-argument detection's narrowing
-    /// reads a heap base as a may-alias opaque pointer.
+    /// through no listed call, incoming-argument detection's narrowing reads a
+    /// heap base as a may-alias opaque pointer, and return-target verification
+    /// passes a store to a listed allocation over the return slot.
     pub noalias_allocators: rustc_hash::FxHashSet<u64>,
     /// When the function's frame is provably private (no stack address escapes
     /// to any callee), forward a spill `Load` across a `Call` and step it past
