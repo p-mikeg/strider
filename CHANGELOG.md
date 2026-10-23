@@ -206,7 +206,7 @@
   class is the sla's own `noflow` declaration, read off by the decoder.
 - `strider_cfg::{Builder, FlowVars, FlowContext}` are private, and with them
   `Builder::for_arch` and its `with_*` setters. Build a CFG with
-  `DecodeEngine::new(arch, sleigh)?.build_cfg(entry, &opts)`, which pins the
+  `DecodeEngine::new(arch, reader)?.build_cfg(entry, &opts)`, which pins the
   entry's ISA mode and carries the decode context across builds; a bare
   `Builder` decoded ARM with ISA-mode handling off.
 - `graph_algorithms::dominance::{DomRelation, DomTree, DomTreeWalk,
