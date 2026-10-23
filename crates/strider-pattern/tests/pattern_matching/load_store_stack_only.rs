@@ -1,5 +1,5 @@
 //! The side-table is stamped manually via `set_stack_slot` instead of by
-//! running `StackOffsetDetect`, keeping these tests on matcher behaviour.
+//! running a pipeline, keeping these tests on matcher behaviour.
 
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{IRViewer, IRWalker};

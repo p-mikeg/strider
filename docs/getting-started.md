@@ -138,8 +138,8 @@ first; its "Breaking, Python" section says how to port each of these:
   `ValueError`.
 - `CfgOptions.with_function_max_size`, `with_data_ranges` and
   `LifterOptions.with_cfg` are gone: pass the fields to the constructors.
-- `OptimizerPipeline.default().post_passes` no longer lists
-  `StackOffsetDetect`.
+- `strider.opt.StackOffsetDetect` is gone: every run records the stack slots
+  after its post-passes.
 - `Lifter.reg` / `reg_name` are gone: use `lifter.arch.reg` / `reg_name`.
 - `strider.sleigh.Sleigh` is gone: its lookups are on `SleighArch`.
 - `lifter=` is gone from the `to_dot` / `neighborhood_dot` renderers.

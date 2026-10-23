@@ -29,7 +29,6 @@ MainOptimizerPass = Union[
 #: A pass that runs once, after the fixed-point loop converges. `add` raises
 #: for these; `add_post` takes them and any `MainOptimizerPass` too.
 PostOptimizerPass = Union[
-    "StackOffsetDetect",
     "FunctionArgDetect",
     "CallStackArgCollect",
 ]
@@ -52,9 +51,8 @@ class OptimizerPipeline:
     @classmethod
     def default(cls) -> OptimizerPipeline:
         """The pipeline `analyze` runs when no pipeline is supplied: every
-        built-in pass but `StackOffsetDetect`, whose records every run makes
-        after its post-passes. `analyze` runs its indirect-branch classifier
-        after whatever pipeline it is given."""
+        built-in pass. `analyze` runs its indirect-branch classifier after
+        whatever pipeline it is given."""
         ...
     @property
     def passes(self) -> list[str]:
@@ -143,13 +141,6 @@ class LoadForward:
         """Build the pass."""
         ...
 
-class StackOffsetDetect:
-    """Annotates stack-pointer-relative loads and stores with their frame
-    offsets, for a custom pipeline whose later post-pass reads them: every run
-    records them after its post-passes anyway."""
-    def __init__(self) -> None:
-        """Build the pass."""
-        ...
 
 class FunctionArgDetect:
     """Records which values carry each incoming stack-passed argument.

@@ -260,8 +260,6 @@ opt_passes! {
              `strider.lift.load_elf(...)`. No change when no rom is available.";
     }
     post {
-        "StackOffsetDetect" => PyStackOffsetDetect = strider_orchestrator::opt::StackOffsetDetect,
-            "Stamps every SP-relative Store/Load with its concrete offset.";
         "FunctionArgDetect" => PyFunctionArgDetect = strider_orchestrator::opt::FunctionArgDetect,
             "Post-pass that records which values carry each incoming stack-passed \
              argument. Register arguments are recorded at lift time.";
