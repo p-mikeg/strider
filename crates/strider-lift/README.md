@@ -80,8 +80,8 @@ value when the address names one. The space's loads and stores follow
 
 Semi-pruned SSA. `collect_def_sites` walks every region's pcode and records what
 the lift will write; `is_local_temporary` drops the UNIQUE temporaries no region
-reads before writing, and `iterated_frontier` turns the rest into the set of
-variables needing a `Phi` at each region.
+reads before writing, and `graph_algorithms::dominance::phi_placement` turns the
+rest into the set of variables needing a `Phi` at each region.
 `record_insn_effects` is a HAND-WRITTEN mirror of the lift's write paths, not a
 shared code path: a def it records that the lift never writes costs a dead phi,
 one the lift writes and it misses loses the phi and miscompiles.
