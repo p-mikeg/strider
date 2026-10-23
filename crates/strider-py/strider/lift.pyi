@@ -464,7 +464,9 @@ class ElfLifter(Lifter):
         object's link says nothing about another's. It contradicts
         `apply_relocations=False` here too, and the pair raises `StriderError`.
 
-        Raises `StriderError` if the new ELF maps code over an address already
+        Raises `StriderError` if the new ELF's architecture, class or byte
+        order, or on ARM its `EF_ARM_BE8`, differs from the first image's (one
+        handle decodes one target), or if it maps code over an address already
         loaded with different bytes (two ELFs at the same base cannot merge),
         and `ValueError` for a microMIPS image, which no preset decodes."""
         ...

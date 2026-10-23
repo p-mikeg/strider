@@ -567,6 +567,10 @@
 
 ### Fixed
 
+- Python: `add_elf` refuses an image whose architecture, class or byte
+  order, or on ARM whose `EF_ARM_BE8`, differs from the first image's. It
+  merged one silently, and the handle's one arch decoded it as garbage: a
+  BE8 image beside a BE32 one decoded byte-swapped.
 - Python: `Function.to_text` prints the frame reach a call register held,
   `frame_address_in_call_register reach=<offset|unbounded>`, which the
   incoming-argument escape verdict reads. Two functions that differ only in
