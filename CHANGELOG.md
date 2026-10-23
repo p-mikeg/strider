@@ -84,9 +84,15 @@
   `add_elf` on the handle is in flight, and `reader()` returns the one
   `BufferReader` the handle decodes through, where each call built a new
   one over the same regions.
+- `Function.to_dot(pretty=True)` names a `Load` / `Store` space by its sla
+  name, where a space outside RAM, register, unique and const read `??`
+  and an arch's default code space read `ram` whatever the sla calls it.
 
 ### Breaking, Rust
 
+- A call output or return varnode outside register and unique space is
+  refused naming it as the IR text spells it (`r:0x1000:4`), where the
+  message spelled the space and the offset apart.
 - `DecodeEngine::new(arch, reader)`, `Lifter::new(arch, reader)` and
   `Strider::new(arch, reader, rom)` take the `MemReader` and build the arch's
   Sleigh themselves, through the new `SleighArch::sleigh(reader)`; none takes

@@ -9,9 +9,15 @@ use crate::function::Function;
 use crate::node::{NodeId, NodeKind};
 use crate::{IRViewer, IRWalker};
 
-/// `{space-shortcut}{offset:#x}:{size}`, e.g. `%0x38:8`.
+/// `{space}{offset:#x}:{size}`, the space as the text format spells it, e.g.
+/// `%0x38:8`.
 fn fmt_vn(vn: &rsleigh::Vn) -> String {
-    format!("{}{:#x}:{}", vn.addr_space.shortcut(), vn.addr_off, vn.size)
+    format!(
+        "{}{:#x}:{}",
+        crate::function::space_str(vn.addr_space),
+        vn.addr_off,
+        vn.size
+    )
 }
 
 pub(super) struct RawFunctionDumper<'a> {
