@@ -58,7 +58,8 @@ pub enum LoadFilter {
     /// A slot whose load-time value only the loader computes is a hole, not
     /// its file bytes: one under a relocation the applier does not compute,
     /// an IFUNC's among them (it holds what the resolver returns), every byte
-    /// of an `R_*_COPY` object (the defining library's copy), and on
+    /// of an `R_*_COPY` object (the defining library's copy), the two GOT
+    /// header words ARM and secure-PLT PPC32 lazy binding writes, and on
     /// MIPS each primary GOT entry the loader writes without a relocation
     /// record: the lazy-resolver word, the module-pointer word when its top
     /// bit asks for one, and every global entry except those for symbols the
