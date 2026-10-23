@@ -388,8 +388,8 @@ when both IR slots hold the same value.
 
 Domain-namespaced submodules (`strider.ir`, `.lift`, `.cfg`, `.sleigh`,
 `.reader`, `.opt`, `.pattern` with its nested `.pattern.constraints`,
-`.template`, plus `.explore`, which backs `visualize` and is bound but outside
-`__all__`) plus the single top-level `strider.StriderError`.
+`.template`, plus `.explore`, home of the `visualize` explorer, bound but
+outside `__all__`) plus the single top-level `strider.StriderError`.
 `strider.lift.lifter(arch, mem, rom=None)` builds the lift handle;
 `analyze(entry, cc, opts)` returns an `AnalyzeResult` with
 `.cfg` / `.function` / `.unresolved` (also unpackable as a 3-tuple), whatever
