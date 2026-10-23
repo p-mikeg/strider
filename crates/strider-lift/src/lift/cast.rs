@@ -61,9 +61,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         enforce_equal_io_width: bool,
         build: impl FnOnce(
             &mut strider_ir::FunctionBuilder,
-            strider_ir::Value,
+            strider_ir::node::ValueId,
             ValueType,
-        ) -> Result<strider_ir::Value>,
+        ) -> Result<strider_ir::node::ValueId>,
     ) -> Result<()> {
         let out_vn = require_output_vn(insn)?;
         if enforce_equal_io_width {
