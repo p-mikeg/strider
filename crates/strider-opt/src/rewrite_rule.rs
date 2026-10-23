@@ -310,6 +310,10 @@ where
         for r in rules {
             if r(edit, node)?.is_some() {
                 applied += 1;
+                // The walk visits consumers first, so a fire can leave a later
+                // candidate with only dead consumers; culling it detaches its
+                // inputs and leaves no use to redirect.
+                edit.clean();
                 break;
             }
         }
@@ -1224,6 +1228,57 @@ mod tests {
         assert!(err.to_string().contains("data cycle"), "{err}");
         edit.clean();
         drop(edit);
+        strider_ir::validate::validate(&function).unwrap();
+    }
+
+    /// `((v + 1) + 2) + 3` under `add(add(x, _), _) -> add(x, K)`: the fire at
+    /// the outer `Add` leaves the middle one with only a dead consumer, so it
+    /// is no site and is not counted.
+    #[test]
+    fn a_match_an_earlier_fire_left_dead_is_not_counted() {
+        use super::apply_rules_count;
+        use strider_ir::IRWalker;
+        use strider_pattern::{anything, var};
+
+        let vn = reg_vn(0x1000, 8);
+        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(0x10));
+        let mut sum = b.read_variable(&vn).unwrap();
+        for k in 1u64..=3 {
+            let c = b.build_int_const(k, ValueType::int(64)).unwrap();
+            sum = b
+                .build_int_binary_operation(sum, c, IntBinaryOp::Add, ValueType::int(64))
+                .unwrap();
+        }
+        b.build_return(Some(sum), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let x = Capture::new();
+        let rule = rewrite_rule(
+            int_add(int_add(var(x), anything()), anything()),
+            int_add(var(x), int_const(0x77u128)),
+        );
+        let fired = {
+            let mut edit = EditFunction::new(&mut function);
+            apply_rules_count(&mut edit, std::slice::from_ref(&rule)).unwrap()
+        };
+        let sites = function
+            .walk()
+            .filter(|&n| {
+                matches!(
+                    function.node_kind(n),
+                    NodeKind::IntBinaryOp(IntBinaryOp::Add)
+                ) && function
+                    .node_inputs(n)
+                    .into_iter()
+                    .any(|v| function.int_const_u128(v) == Some(0x77))
+            })
+            .count();
+        assert_eq!((fired, sites), (1, 1));
         strider_ir::validate::validate(&function).unwrap();
     }
 }

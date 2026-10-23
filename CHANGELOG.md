@@ -567,6 +567,10 @@
 
 ### Fixed
 
+- Python: `Function.rewrite` / `rewrite_all`, and Rust `apply_rules_count`,
+  count a site once. A match whose only consumer an earlier fire of the same
+  walk had replaced was still rewritten and counted, and its fingerprints
+  absorbed into the surviving value.
 - Python: `Function.rewrite` / `rewrite_all`, and Rust `rewrite_rule`, refuse
   a match through a `Phi` / `MemPhi` whose replacement reads the value it
   replaces with no phi between them, or is not available wherever that value
