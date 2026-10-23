@@ -6,8 +6,8 @@
 # entries, a microMIPS image the loader refuses, an object whose
 # R_X86_64_32 values must zero-extend, a MIPS library and an x86-64 PIE
 # with a relro pointer, a ppc64 ELFv1 image and a ppc32 library whose table
-# bases sit in `.got2`: out/<name>.{elf,o}, from
-# src/.
+# bases sit in `.got2`, and executables with an R_*_COPY object:
+# out/<name>.{elf,o}, from src/.
 #
 # Not per-arch like ../Makefile: each image needs a link of its own (a shared
 # library, a PIE, an executable against that library), and the golden suite
@@ -47,7 +47,8 @@ IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           ppc64le_local_entry.elf ppc64le_local_entry_stripped.elf \
           x64_nodynsym.elf mips32be_micromips.elf x64_abs32.o \
           mips32be_relro.elf x64_relro_pie.elf ppc64be_elfv1.elf \
-          ppc32be_got2.elf
+          ppc32be_got2.elf x64_copy_lib.elf x64_copy_pie.elf \
+          aarch64_copy_lib.elf aarch64_copy.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -121,6 +122,19 @@ $(OUTDIR)/ppc64be_elfv1.elf: src/ppc64_elfv1.c src/ppc64_elfv1_dot.s | $(OUTDIR)
 
 $(OUTDIR)/ppc32be_got2.elf: src/ppc32_got2.c | $(OUTDIR)
 	$(PPC32) $(CFLAGS) -shared $< -o $@
+
+# A full-RELRO PIE (and a non-PIC AArch64 executable) reading a library's
+# const array directly: GNU ld copies it into `.data.rel.ro` under R_*_COPY.
+$(OUTDIR)/x64_copy_lib.elf: src/copy_lib.c | $(OUTDIR)
+	$(X64) $(CFLAGS) -shared -Wl,-soname,libcopy.so $< -o $@
+$(OUTDIR)/x64_copy_pie.elf: src/copy.c $(OUTDIR)/x64_copy_lib.elf
+	$(X64) $(filter-out -fPIC,$(CFLAGS)) -fPIE -pie -Wl,-z,relro,-z,now \
+	  -Wl,-e,get3 $< $(OUTDIR)/x64_copy_lib.elf -o $@
+$(OUTDIR)/aarch64_copy_lib.elf: src/copy_lib.c | $(OUTDIR)
+	$(A64) $(CFLAGS) -shared -Wl,-soname,libcopy.so $< -o $@
+$(OUTDIR)/aarch64_copy.elf: src/copy.c $(OUTDIR)/aarch64_copy_lib.elf
+	$(A64) $(filter-out -fPIC,$(CFLAGS)) -fno-pic -no-pie -Wl,-z,relro,-z,now \
+	  -Wl,-e,get3 $< $(OUTDIR)/aarch64_copy_lib.elf -o $@
 
 clean:
 	rm -rf $(OUTDIR)
