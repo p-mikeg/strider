@@ -99,7 +99,7 @@ fn invert(
     // `redirect_input` absorbs the Xor's asm history into `inner` only when
     // this redirect leaves the Xor dead.  If the Xor keeps other live uses it
     // still computes its own value, so absorbing would be false attribution.
-    let cond_use_id = edit.node_input_id_at(if_node, 1)?;
+    let cond_use_id = edit.node_input_id_at(if_node, NodeKind::IF_COND_SLOT)?;
     edit.redirect_input(cond_use_id, inner);
 
     // Swap consumers between output[0] (true) and output[1] (false).  Both

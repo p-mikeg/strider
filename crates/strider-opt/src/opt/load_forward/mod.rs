@@ -158,8 +158,8 @@ fn feeds_an_address(function: &strider_ir::Function, value: ValueId) -> bool {
     while let Some(v) = work.pop() {
         for (user, slot) in function.graph().value_uses(v) {
             match function.node_kind(user) {
-                NodeKind::Store(_) if slot == 1 => return true,
-                NodeKind::Call { .. } if slot == 3 => return true,
+                NodeKind::Store(_) if slot as usize == NodeKind::ACCESS_ADDR_SLOT => return true,
+                NodeKind::Call { .. } if slot as usize == NodeKind::CALL_SP_SLOT => return true,
                 NodeKind::IntBinaryOp(
                     strider_ir::IntBinaryOp::Add | strider_ir::IntBinaryOp::And,
                 ) if seen.insert(user) => {

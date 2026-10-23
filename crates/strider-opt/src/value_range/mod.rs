@@ -869,10 +869,10 @@ impl<'f> RangeMap<'f> {
         }
     }
 
-    /// The `Region` whose PhiToken is this Phi's slot-0 input.
+    /// The `Region` whose PhiToken this Phi takes.
     fn find_joining_region(&self, phi_node: NodeId) -> Option<NodeId> {
         let f = self.function;
-        let phi_token_val = f.nth_input(phi_node, 0)?;
+        let phi_token_val = f.nth_input(phi_node, NodeKind::PHI_TOKEN_SLOT)?;
         if f.value_kind(phi_token_val) != ValueKind::PhiToken {
             return None;
         }
@@ -895,10 +895,9 @@ impl<'f> RangeMap<'f> {
             .filter(|&v| g.value_kind(v).is_control())
             .map(|ctrl_val| {
                 let producer = g.producer(ctrl_val);
-                // An If's outputs are [true_ctrl, false_ctrl].
                 if matches!(g.node_kind(producer), NodeKind::If) {
                     let if_outputs = g.node_outputs(producer);
-                    if !if_outputs.is_empty() && if_outputs[0] == ctrl_val {
+                    if if_outputs.get(NodeKind::IF_TRUE_OUT_SLOT) == Some(&ctrl_val) {
                         return joining_region;
                     }
                 }
@@ -915,8 +914,7 @@ impl<'f> RangeMap<'f> {
         loop {
             match f.node_kind(curr) {
                 NodeKind::If | NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
-                    // The controlling predecessor is the first input.
-                    if let Some(pred_ctrl) = f.nth_input(curr, 0) {
+                    if let Some(pred_ctrl) = f.nth_input(curr, NodeKind::CTRL_SLOT) {
                         curr = f.producer(pred_ctrl);
                     } else {
                         return curr;
@@ -1224,8 +1222,8 @@ fn build<'f>(
         if if_outputs.len() < 2 {
             continue;
         }
-        let true_ctrl = if_outputs[0];
-        let false_ctrl = if_outputs[1];
+        let true_ctrl = if_outputs[NodeKind::IF_TRUE_OUT_SLOT];
+        let false_ctrl = if_outputs[NodeKind::IF_FALSE_OUT_SLOT];
 
         let cond_value = function.if_cond(if_node);
 

@@ -99,9 +99,9 @@ pub(crate) fn narrow_load_to(
                 .memory_output_of(clobber)
                 .expect("a clobber node has a memory output");
             let mem_use = function
-                .node_input_id_at(load, 0)
-                .expect("a Load has a memory input at slot 0");
-            let cur_mem = function.node_inputs(load)[0];
+                .node_input_id_at(load, NodeKind::ACCESS_MEM_SLOT)
+                .expect("a Load has a memory input");
+            let cur_mem = function.node_inputs(load)[NodeKind::ACCESS_MEM_SLOT];
             (cur_mem != target_mem).then_some((mem_use, target_mem))
         } else {
             None

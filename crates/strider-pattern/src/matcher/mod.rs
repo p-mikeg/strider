@@ -1173,8 +1173,8 @@ impl<'f> ConstraintEval<'f> {
             return None;
         }
         let phi_inputs = f.node_inputs(phi_node);
-        // Slot 0 is the PhiToken; its producer is the owning Region.
-        let region = f.producer(*phi_inputs.get(0)?);
+        // The PhiToken's producer is the owning Region.
+        let region = f.producer(*phi_inputs.get(NodeKind::PHI_TOKEN_SLOT)?);
         if !matches!(f.node_kind(region), NodeKind::Region) {
             return None;
         }
