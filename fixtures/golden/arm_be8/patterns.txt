@@ -239,7 +239,7 @@ return %v62, %v64, %v65, %v66, %v67, %v68, %v69, %v70
 cfg
   0x10240 251 ops return -> []
 tracked [r0, r1, r2, r3, r11, sp, lr, pc, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, mult_addr, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x5d00:4, u:0x5e00:1, u:0x5f00:1, u:0x6000:1, u:0x6100:1, u:0x6200:1, u:0x10700:4, u:0xa5000:4, u:0xa5100:4]
-frame_address_in_call_register
+frame_address_in_call_register reach=-16
 float_arg 0 [%v21]
 float_arg 1 [%v22]
 float_arg 2 [%v23]

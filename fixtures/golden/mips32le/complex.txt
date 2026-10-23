@@ -7,7 +7,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 cfg
   0x400510 183 ops return -> []
 tracked [v0, v1, a0, a1, a2, a3, t0, sp, ra, pc, f0_1, f2_3, f12, f14, ISAModeSwitch, u:0x200:4, u:0x300:4, u:0x1900:4, u:0x1c00:4]
-frame_address_in_call_register
+frame_address_in_call_register reach=unbounded
 arg 1 [%v51]
 arg 2 [%v52]
 arg 3 [%v53]
@@ -256,7 +256,7 @@ cfg
   0x40085c 15 ops return -> []
   0x400874 15 ops return -> []
 tracked [v0, v1, a0, a1, a2, a3, sp, ra, pc, f0_1, f2_3, f12, f14, ISAModeSwitch, u:0x200:4, u:0x300:4, u:0x1900:4, u:0x1c00:4, u:0x2e00:1]
-frame_address_in_call_register
+frame_address_in_call_register reach=-16
 arg 0 [%v1]
 arg 1 [%v20]
 arg 2 [%v21]
@@ -494,7 +494,7 @@ cfg
   0x400bf8 14 ops goto -> [0x4009d4]
   0x400c14 12 ops goto -> [0x4009c4]
 tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, t4, t5, t6, sp, ra, pc, f0_1, f2_3, f12, f14, ISAModeSwitch, u:0x200:4, u:0x300:4, u:0x1900:4, u:0x1c00:4, u:0x2400:1, u:0x2600:1, u:0x2800:1, u:0x2a00:1, u:0x2e00:1, u:0xa100:1, u:0xa300:1, u:0xaf00:4]
-frame_address_in_call_register
+frame_address_in_call_register reach=unbounded
 arg 0 [%v49]
 arg 1 [%v1]
 arg 2 [%v53]

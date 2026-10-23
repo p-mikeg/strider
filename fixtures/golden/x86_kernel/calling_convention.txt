@@ -777,7 +777,7 @@ return %v13, %v27, %v28, %v16, %v17, %v18, %v19
 cfg
   0x401500 359 ops return -> []
 tracked [EAX, ECX, EDX, ESP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0xa300:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8a100:4, u:0x8a900:4]
-frame_address_in_call_register
+frame_address_in_call_register reach=-8
 arg 1 [%v17]
 arg 2 [%v18]
 %v0:ctrl = entry
