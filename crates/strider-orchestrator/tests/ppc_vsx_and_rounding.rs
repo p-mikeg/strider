@@ -43,6 +43,9 @@ fn returned(arch: Arch, words: &[u32], data: u64) -> u64 {
     )
 }
 
+/// A round-to-integral form: its name, encoding and the host's rounding.
+type RoundForm = (&'static str, u32, fn(f64) -> f64);
+
 const VALUES: [f64; 16] = [
     2.5,
     -2.5,
@@ -64,7 +67,7 @@ const VALUES: [f64; 16] = [
 
 #[test]
 fn round_to_integral_forms_stay_doubles() {
-    let forms: [(&str, u32, fn(f64) -> f64); 4] = [
+    let forms: [RoundForm; 4] = [
         ("friz", 0xfc20_0b50, f64::trunc),
         ("frin", 0xfc20_0b10, f64::round),
         ("frip", 0xfc20_0b90, f64::ceil),
