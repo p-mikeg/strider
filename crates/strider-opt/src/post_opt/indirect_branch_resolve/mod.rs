@@ -7,6 +7,12 @@
 //! to the saved link register, then `table::classify_table_dispatch` for
 //! rodata jump tables and on-stack label arrays.  No match leaves the target
 //! unresolved.
+//!
+//! Known limits of the field-index rule, both seen only in crafted or
+//! hand-written asm, with no compiler shape found: a recorded guard whose
+//! bound a later truncate loses (a 16-bit cell in `[0xfe, 0x101]` indexed by
+//! its low byte) is trusted, and a test reading the cell through a phi reads
+//! no bits of it. Either can seat cells the guard rules out.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IRWalker};
