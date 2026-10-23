@@ -239,7 +239,8 @@ the positive one:
   That is x86 MXCSR.RC at `cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`,
   `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`,
   `cvtsi2ss`, the 64-bit `cvtsi2sd` and their scalar VEX forms, and PowerPC
-  FPSCR.RN at `fctid`, `fctiw`, `fctidu` and `fctiwu`. The truncating
+  FPSCR.RN at `fctid`, `fctiw`, `fctidu`, `fctiwu`, `fcfid`, `fcfids`,
+  `fcfidu`, `fcfidus`, `frsp` and `xscvdpspn`. The truncating
   `cvtt*` and `fcti*z` forms read no mode, and the x87 stores read the control
   word either way. Off, each conversion reads the mode and selects among its
   four, so a mode the function sets (`ldmxcsr`, `mtfsfi`) folds and an unknown
