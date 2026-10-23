@@ -5,14 +5,6 @@
 use super::FunctionLifter;
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
-    /// O(1) via the precomputed `container_map`, falling back to a scan of the
-    /// tracked set for ad-hoc varnodes not in it.  Returns `vn` unchanged when
-    /// nothing tracked contains it, or when `vn` is not in an aliasable
-    /// (REGISTER / UNIQUE) space.
-    pub(crate) fn container_of(&self, vn: &rsleigh::Vn) -> rsleigh::Vn {
-        self.container_map.container_of(vn)
-    }
-
     /// The `Call` output split for one call site: the cached default-CC scan,
     /// or a fresh one under a `per_address_ccs` override.
     pub(crate) fn call_ret_and_clobber_vns(
@@ -21,9 +13,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     ) -> (Vec<rsleigh::Vn>, Vec<rsleigh::Vn>) {
         match override_cc {
             None => self.default_ret_clobber_vns.clone(),
-            Some(cc) => {
-                cc.ret_and_clobber_vns(self.builder.function().all_vns(), |v| self.container_of(v))
-            }
+            Some(cc) => cc.ret_and_clobber_vns(self.builder.function().all_vns(), |v| {
+                self.container_map.container_of(v)
+            }),
         }
     }
 
@@ -37,9 +29,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     ) -> Vec<rsleigh::Vn> {
         match override_cc {
             None => self.default_float_arg_vns.clone(),
-            Some(cc) => {
-                cc.float_arg_prefix(self.builder.function().all_vns(), |v| self.container_of(v))
-            }
+            Some(cc) => cc.float_arg_prefix(self.builder.function().all_vns(), |v| {
+                self.container_map.container_of(v)
+            }),
         }
     }
 
@@ -50,8 +42,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
-        cc.ret_and_clobber_vns(self.builder.function().all_vns(), |v| self.container_of(v))
-            .0
+        cc.ret_and_clobber_vns(self.builder.function().all_vns(), |v| {
+            self.container_map.container_of(v)
+        })
+        .0
     }
 
     /// Non-ret caller-saved varnodes in `all_vns` order.  Test-only, same as
@@ -61,7 +55,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Vec<rsleigh::Vn> {
-        cc.ret_and_clobber_vns(self.builder.function().all_vns(), |v| self.container_of(v))
-            .1
+        cc.ret_and_clobber_vns(self.builder.function().all_vns(), |v| {
+            self.container_map.container_of(v)
+        })
+        .1
     }
 }
