@@ -333,7 +333,7 @@ impl AddressSet {
 
     /// The ranges overlapping `[lo, hi)`: a binary search, which holds
     /// because the set is merged.
-    fn overlapping(&self, lo: u64, hi: u64) -> &[(u64, u64)] {
+    pub(crate) fn overlapping(&self, lo: u64, hi: u64) -> &[(u64, u64)] {
         let first = self.0.partition_point(|&(_, end)| end <= lo);
         let last = first + self.0[first..].partition_point(|&(start, _)| start < hi);
         &self.0[first..last]
