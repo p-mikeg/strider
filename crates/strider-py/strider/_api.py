@@ -307,8 +307,8 @@ def load_elf(
     `+ 8`); and on MIPS, whose primary GOT no relocation covers, the
     lazy-resolver word, the module-pointer word when its top bit asks for
     one, and every global entry except those for symbols the image defines
-    that already hold their address. `.got.plt` is never served,
-    lazy binding rewriting those slots on the first call through each one.
+    that already hold their address. `.got.plt` is never served, lazy binding
+    rewriting those slots on the first call through each one.
 
     Inside an executable mapping a relocation against a defined IFUNC takes
     the symbol's own address instead, so the instruction still decodes. An
