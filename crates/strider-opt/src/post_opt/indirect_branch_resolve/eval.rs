@@ -130,7 +130,7 @@ impl<'a> Evaluator<'a> {
                     _ => self.eval_const_node(value),
                 }
             }
-            // Slot maps hold RAM stores and reshape in the data order.
+            // Slot maps hold RAM stores.
             NodeKind::Load(rsleigh::VnSpace::RAM) => self.eval_load(node, value),
             NodeKind::Phi => self.eval_phi(node),
             _ => self.eval_const_node(value),
@@ -172,7 +172,10 @@ impl<'a> Evaluator<'a> {
                 // Jump targets are constants on the converged graph.
                 let data_ty = f.value_type_opt(data)?;
                 let raw = f.int_const_u128(data)?;
-                Some(Abs::Const(self.reshape(raw, data_ty, load_ty)?))
+                let NodeKind::Load(space) = *f.node_kind(node) else {
+                    return None;
+                };
+                Some(Abs::Const(self.reshape(raw, data_ty, load_ty, space)?))
             }
         }
     }
@@ -213,20 +216,23 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// Equal widths pass through.  `None` for a load wider than the store, a
-    /// same-size type mismatch, and any non-integer pair.
-    fn reshape(&self, v: u128, data_ty: ValueType, load_ty: ValueType) -> Option<u128> {
+    /// `v`, a store's data, as the `load_ty` load in `space` at the store's
+    /// address reads it. Equal widths pass through.  `None` for a load wider
+    /// than the store, a same-size type mismatch, and any non-integer pair.
+    fn reshape(
+        &self,
+        v: u128,
+        data_ty: ValueType,
+        load_ty: ValueType,
+        space: rsleigh::VnSpace,
+    ) -> Option<u128> {
         if data_ty == load_ty {
             return Some(v);
         }
         if data_ty.is_integer() && load_ty.is_integer() && load_ty.byte_size() < data_ty.byte_size()
         {
-            let shift_bits = match self.function.endianness() {
-                strider_target::Endianness::Little => 0,
-                strider_target::Endianness::Big => {
-                    crate::const_eval::big_endian_slice_shift_bits(data_ty, load_ty)
-                }
-            };
+            let order = self.function.byte_order();
+            let shift_bits = crate::const_eval::slice_shift_bits(order, space, data_ty, load_ty)?;
             return load_ty.get_unsigned_int(v >> shift_bits);
         }
         None
@@ -629,6 +635,29 @@ mod tests {
         let mut ev = Evaluator::new(&function, None);
         ev.begin_index(idx, 0);
         ev.eval_root(&order, loaded)
+    }
+
+    /// A narrower load reads its slice of a store in its own space's byte
+    /// order: on ARM BE8 the register block is little-endian under
+    /// big-endian data.
+    /// Mutation: slice in the data order whatever the space.
+    #[test]
+    fn a_reshaped_store_is_sliced_in_the_loads_space_order() {
+        let sp = reg_vn(0x2000, 8);
+        let mut b = strider_ir_test_utils::sp_frame(sp)
+            .byte_order(strider_target::ByteOrder {
+                data: strider_target::Endianness::Big,
+                register: strider_target::Endianness::Little,
+            })
+            .build_fn_single_region()
+            .expect("build_fn_single_region");
+        b.build_return(None, &[]).expect("build_return");
+        b.set_lift_addr(None);
+        let function = b.build().expect("build");
+        let ev = Evaluator::new(&function, None);
+        let reshape = |space| ev.reshape(0xDEAD_BEEF, ValueType::int(32), ValueType::int(8), space);
+        assert_eq!(reshape(rsleigh::VnSpace::RAM), Some(0xDE));
+        assert_eq!(reshape(rsleigh::VnSpace::REGISTER), Some(0xEF));
     }
 
     /// A stack slot map holds RAM stores, so only a RAM load reads it.
