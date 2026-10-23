@@ -881,7 +881,8 @@ impl PyLifter {
     /// Also raises once this `Lifter` has committed more decode modes than the
     /// sweep engine can carry over, which on an ISA-mode arch is the only
     /// alternative to answering in the wrong mode.
-    fn pcode_at(slf: &Bound<'_, Self>, entry: u64, addr: u64) -> PyResult<String> {
+    fn pcode_at(slf: &Bound<'_, Self>, entry: &Bound<'_, PyAny>, addr: u64) -> PyResult<String> {
+        let entry = entry_addr(entry)?;
         let py = slf.py();
         let this = try_borrow_lifter(slf)?;
         // A mapping shortened under us takes a SIGBUS on the read, which no
