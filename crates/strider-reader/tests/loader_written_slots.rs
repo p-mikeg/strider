@@ -996,3 +996,59 @@ fn a_copy_relocated_object_is_a_hole_over_its_whole_size() {
         }
     }
 }
+
+/// lld's `--pack-dyn-relocs=android` table (`SHT_ANDROID_RELA`), which no
+/// walk here decodes: the ROM serves no relocated slot, where each of
+/// `ptrs`'s words would read the file's 0. Its unpacked twin serves them.
+#[test]
+fn an_android_packed_image_serves_no_relocated_slot() {
+    let plain = open("aarch64_plain_rela.elf");
+    let (ptrs, g1) = (
+        dynsym_or_symtab(&plain, "ptrs"),
+        dynsym_or_symtab(&plain, "g1"),
+    );
+    let reader = ElfFileMemReader::new(&plain, GOT_IS_ROM).unwrap();
+    assert_eq!(rom_word(&reader, ptrs, 8, true), Ok(g1), "plain ptrs[0]");
+    let packed = open("aarch64_android_rela.elf");
+    let ptrs = dynsym_or_symtab(&packed, "ptrs");
+    let reader = ElfFileMemReader::new(&packed, GOT_IS_ROM).unwrap();
+    for i in 0..4 {
+        let got = rom_word(&reader, ptrs + 8 * i, 8, true);
+        assert!(got.is_err(), "packed ptrs[{i}]: {got:?}");
+    }
+}
+
+/// Either sign of a packed table is enough: the image with its section
+/// type rewritten to `SHT_PROGBITS` (the tags alone), and the one with its
+/// `DT_ANDROID_RELA` / `DT_ANDROID_RELASZ` rewritten to `DT_DEBUG` (the
+/// section alone).
+#[test]
+fn either_sign_of_an_android_packed_table_serves_no_relocated_slot() {
+    let name = "aarch64_android_rela.elf";
+    let tags_only = patched(name, |bytes, obj| {
+        let shoff = u64::from_le_bytes(bytes[0x28..0x30].try_into().unwrap()) as usize;
+        let index = obj.section_by_name(".rela.dyn").unwrap().index().0;
+        let at = shoff + 64 * index + 4;
+        bytes[at..at + 4].copy_from_slice(&object::elf::SHT_PROGBITS.to_le_bytes());
+    });
+    let section_only = patched(name, |bytes, obj| {
+        let (off, size) = obj
+            .section_by_name(".dynamic")
+            .unwrap()
+            .file_range()
+            .unwrap();
+        for at in (off as usize..(off + size) as usize).step_by(16) {
+            let tag = u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap());
+            if matches!(tag, 0x6000_0011 | 0x6000_0012) {
+                let debug = u64::from(object::elf::DT_DEBUG);
+                bytes[at..at + 8].copy_from_slice(&debug.to_le_bytes());
+            }
+        }
+    });
+    for (what, elf) in [("tags only", tags_only), ("section only", section_only)] {
+        let ptrs = dynsym_or_symtab(&elf, "ptrs");
+        let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+        let got = rom_word(&reader, ptrs, 8, true);
+        assert!(got.is_err(), "{what}: {got:?}");
+    }
+}

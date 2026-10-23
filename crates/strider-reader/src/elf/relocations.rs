@@ -1478,20 +1478,8 @@ fn mips_got_tags(obj: &object::File<'_>) -> Option<Option<MipsGotTags>> {
 fn mips_got_tags_of<Elf: object::read::elf::FileHeader>(
     f: &object::read::elf::ElfFile<'_, Elf>,
 ) -> Option<Option<MipsGotTags>> {
-    use object::read::elf::{Dyn as _, ProgramHeader as _};
-    let endian = f.endian();
-    let entries = f
-        .elf_program_headers()
-        .iter()
-        .find_map(|ph| ph.dynamic(endian, f.data()).ok().flatten())?;
-    let tag = |want: u32| -> Option<u64> {
-        entries
-            .iter()
-            .map(|d| -> (u64, u64) { (d.d_tag(endian).into(), d.d_val(endian).into()) })
-            .take_while(|&(t, _)| t != u64::from(object::elf::DT_NULL))
-            .find(|&(t, _)| t == u64::from(want))
-            .map(|(_, v)| v)
-    };
+    let tags = DynamicTags::of(f)?;
+    let tag = |want: u32| tags.get(want);
     let (Some(base), Some(local_gotno), Some(gotsym), Some(symtabno)) = (
         tag(object::elf::DT_PLTGOT),
         tag(object::elf::DT_MIPS_LOCAL_GOTNO),
@@ -1506,6 +1494,74 @@ fn mips_got_tags_of<Elf: object::read::elf::FileHeader>(
         gotsym,
         symtabno,
     }))
+}
+
+/// The `PT_DYNAMIC` entries before `DT_NULL`, as `(d_tag, d_val)`.
+struct DynamicTags(Vec<(u64, u64)>);
+
+impl DynamicTags {
+    /// `None` without a readable `PT_DYNAMIC`.
+    fn of<Elf: object::read::elf::FileHeader>(
+        f: &object::read::elf::ElfFile<'_, Elf>,
+    ) -> Option<Self> {
+        use object::read::elf::{Dyn as _, ProgramHeader as _};
+        let endian = f.endian();
+        let entries = f
+            .elf_program_headers()
+            .iter()
+            .find_map(|ph| ph.dynamic(endian, f.data()).ok().flatten())?;
+        Some(Self(
+            entries
+                .iter()
+                .map(|d| -> (u64, u64) { (d.d_tag(endian).into(), d.d_val(endian).into()) })
+                .take_while(|&(t, _)| t != u64::from(object::elf::DT_NULL))
+                .collect(),
+        ))
+    }
+
+    /// The first `want` entry's value.
+    fn get(&self, want: u32) -> Option<u64> {
+        self.0
+            .iter()
+            .find(|&&(t, _)| t == u64::from(want))
+            .map(|&(_, v)| v)
+    }
+}
+
+/// lld's `--pack-dyn-relocs=android` table types and the tags placing them.
+const SHT_ANDROID_REL: u32 = 0x6000_0001;
+const SHT_ANDROID_RELA: u32 = 0x6000_0002;
+const DT_ANDROID_REL: u32 = 0x6000_000f;
+const DT_ANDROID_RELA: u32 = 0x6000_0011;
+
+/// Whether a linked image carries dynamic relocations no walk here reads:
+/// an Android packed table, by section type or by dynamic tag. Which slots
+/// those relocate is unknown, so none of `.got` / `.data.rel.ro` is served
+/// as ROM.
+pub(crate) fn has_unwalked_relocations(obj: &object::File<'_>) -> bool {
+    match obj {
+        object::File::Elf32(f) => has_unwalked_relocations_of(f),
+        object::File::Elf64(f) => has_unwalked_relocations_of(f),
+        _ => false,
+    }
+}
+
+fn has_unwalked_relocations_of<Elf: object::read::elf::FileHeader>(
+    f: &object::read::elf::ElfFile<'_, Elf>,
+) -> bool {
+    use object::read::elf::SectionHeader as _;
+    let endian = f.endian();
+    if f.kind() == object::ObjectKind::Relocatable {
+        return false;
+    }
+    let packed_section = f
+        .elf_section_table()
+        .iter()
+        .any(|sh| matches!(sh.sh_type(endian), SHT_ANDROID_REL | SHT_ANDROID_RELA));
+    let packed_tag = DynamicTags::of(f).is_some_and(|tags| {
+        tags.get(DT_ANDROID_REL).is_some() || tags.get(DT_ANDROID_RELA).is_some()
+    });
+    packed_section || packed_tag
 }
 
 #[cfg(test)]
