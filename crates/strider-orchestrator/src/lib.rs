@@ -63,7 +63,6 @@ pub struct Strider<R>
 where
     R: rsleigh::MemReader,
 {
-    arch: strider_target::SleighArch,
     lifter: Lifter<R>,
     /// The read-only image `LoadReadOnly` folds against and the indirect-branch
     /// classifier reads jump tables from; `None` disables both.
@@ -79,7 +78,7 @@ where
     /// # Errors
     ///
     /// Returns `Err` from [`Lifter::new`]: the sla not loading,
-    /// `Sleigh::regs()` or `Sleigh::user_op_names()` failing, the arch
+    /// `Sleigh::user_op_names()` failing, the arch
     /// declaring no address space with shortcut `'r'` or naming that space
     /// something other than `"ram"`, and `DecodeEngine::new` failing. An arch
     /// and sla that disagree on the ISA mode (a mode var the sla does not
@@ -91,7 +90,7 @@ where
     ) -> Result<Self> {
         let lifter = Lifter::new(arch, reader)
             .map_err(|e| anyhow!("Strider::new: Lifter::new failed: {e:?}"))?;
-        Ok(Self { arch, lifter, rom })
+        Ok(Self { lifter, rom })
     }
 
     #[must_use]
@@ -101,7 +100,7 @@ where
 
     #[must_use]
     pub fn arch(&self) -> strider_target::SleighArch {
-        self.arch
+        self.lifter.arch()
     }
 
     /// Every Sleigh user-op name this architecture can emit, indexed by

@@ -113,7 +113,8 @@ Strider:
   `DecodeEngine<R>` owns the `Sleigh<R>` and the decode context it carries
   across functions, and is the one way to build a CFG. IR-free.
 - `strider-lift`: CFG -> IR. The `Lifter<R>` engine wraps a `DecodeEngine<R>`
-  and caches `SleighRegs`; the calling convention is a per-call argument.
+  and reads its registers from `SleighArch::names`; the calling convention is
+  a per-call argument.
 - `strider-pattern`: the graph-based pattern DSL (`Pattern` / `Capture` /
   `Matcher` / `Match` / builders) over `strider-graph` with the `NeverCacheable`
   policy. `Pat` is the Python class, not a Rust type. Both recursion limits are
