@@ -444,9 +444,6 @@ pub struct PyLifter {
     /// this thread or another, raises; the rest share it and may overlap each
     /// other.
     inner: Option<strider_orchestrator::Strider<AnyMemReader>>,
-    /// The arch this handle was built for: what `arch` hands back, and whose
-    /// register table a `custom(...)` CC / `CallOtherAbi` must share.
-    pub(crate) arch: strider_target::SleighArch,
     /// The same Python reader/rom callback objects the adapters hold, so
     /// `__traverse__` can make the otherwise-buried lifter to reader edge
     /// visible to the cyclic GC.  Empty for the owned-data path.
@@ -525,6 +522,12 @@ impl PyLifter {
         Ok(self.strider()?.sleigh())
     }
 
+    /// The arch this handle decodes with, whose register table a `custom(...)`
+    /// CC / `CallOtherAbi` must share.
+    fn target(&self) -> PyResult<strider_target::SleighArch> {
+        Ok(self.strider()?.arch())
+    }
+
     /// Retires any cached `pcode_at` sweep engine, for a caller about to
     /// decode through the persistent Sleigh and so possibly commit context.
     fn bump_context_gen(&self) {
@@ -540,10 +543,8 @@ fn build_lifter(
     let mem_input = mem.extract::<MemInput>()?;
     let rom_input = rom.as_ref().map(|r| r.extract::<MemInput>()).transpose()?;
     let py_deps = collect_py_deps(&mem_input, rom_input.as_ref());
-    let arch_value = arch.inner;
     Ok(PyLifter {
         inner: Some(build_strider(arch, mem_input, rom_input)?),
-        arch: arch_value,
         py_deps,
         mem_obj: Some(mem.unbind()),
         rom_obj: rom.map(Bound::unbind),
@@ -561,7 +562,7 @@ impl PyLifter {
     /// while one is.
     #[getter]
     fn arch(slf: &Bound<'_, Self>) -> PyResult<crate::arch::PySleighArch> {
-        let inner = try_borrow_lifter(slf)?.arch;
+        let inner = try_borrow_lifter(slf)?.target()?;
         Ok(crate::arch::PySleighArch { inner })
     }
 
@@ -656,14 +657,15 @@ impl PyLifter {
         relocated_got_is_rom: bool,
     ) -> PyResult<()> {
         let mut this = try_borrow_lifter_mut(slf)?;
-        this.strider()?;
+        let arch = PySleighArch {
+            inner: this.target()?,
+        };
         let (mem, rom) = {
             let mut elf = elf.try_borrow_mut()?;
             elf.add_elf(path, apply_relocations, relocated_got_is_rom)?;
             (elf.reader(), elf.ro_reader())
         };
         let py = slf.py();
-        let arch = PySleighArch { inner: this.arch };
         *this = build_lifter(
             arch,
             Bound::new(py, mem)?.into_any(),
@@ -690,7 +692,7 @@ impl PyLifter {
         name: &str,
         opts: Option<Py<PyCfgOptions>>,
     ) -> PyResult<Option<crate::call_other_abi::PyCallOtherAbi>> {
-        let arch = try_borrow_lifter(slf)?.arch;
+        let arch = try_borrow_lifter(slf)?.target()?;
         if let Some(opts) = opts {
             let opts = opts.borrow(slf.py());
             opts.call_other_overrides(arch)?;
@@ -722,7 +724,7 @@ impl PyLifter {
             let lifter = try_borrow_lifter(bound)?;
             crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
         }
-        let target = try_borrow_lifter(bound)?.arch;
+        let target = try_borrow_lifter(bound)?.target()?;
         // The borrow outlives `cfg_opts`, which holds the seeded table rather
         // than a copy of it.
         let opts_ref = opts.as_ref().map(|o| o.borrow(py));
@@ -808,7 +810,7 @@ impl PyLifter {
             crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
             crate::reader::check_mem_unchanged(py, &lifter.rom_obj)?;
             let regs = lifter.strider()?.sleigh_regs();
-            let target = lifter.arch;
+            let target = lifter.target()?;
             let cc_built = build_cc(&cc, regs, target)?;
             let per_address_built = opts.borrow(py).built_per_address_ccs(regs, target)?;
             (target, cc_built, per_address_built)

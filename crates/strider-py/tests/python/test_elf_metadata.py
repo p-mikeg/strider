@@ -39,6 +39,18 @@ def test_is_arm_be8_is_false_off_arm():
     assert _switch_elf().is_arm_be8 is False
 
 
+def test_arch_and_reader_are_the_lifters_own(x86_memory_elf, x86_relocs_elf):
+    """An `ElfLifter` answers `arch` and `reader()` from the base `Lifter`,
+    so `reader()` is the one reader the handle decodes through, across an
+    `add_elf` too."""
+    lift = strider.lift.load_elf(str(x86_memory_elf))
+    assert lift.arch.name() == strider.lift.Lifter.arch.__get__(lift).name()
+    assert lift.reader() is lift.reader()
+    assert lift.reader() is strider.lift.Lifter.reader(lift)
+    lift.add_elf(str(x86_relocs_elf))
+    assert lift.reader() is strider.lift.Lifter.reader(lift)
+
+
 def test_be8_flag_picks_the_be8_arch(tmp_path):
     """A BE8 image stores instructions little-endian, so the plain `arm_be`
     preset decodes every one of them byte-swapped; `EF_ARM_BE8` is the only

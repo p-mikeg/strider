@@ -384,10 +384,6 @@ class ElfLifter(Lifter):
         """Do not call this directly; use `load_elf`."""
         ...
     @property
-    def arch(self) -> SleighArch:
-        """The architecture this binary was loaded as."""
-        ...
-    @property
     def cc(self) -> CallingConvention:
         """The calling convention `analyze` uses when none is passed."""
         ...
@@ -449,7 +445,7 @@ class ElfLifter(Lifter):
         ...
     def reader(self) -> BufferReader:
         """The `BufferReader` over the regions `load_elf` mapped: PT_LOAD segments
-        unless `from_segments=False`."""
+        unless `from_segments=False`. The base `Lifter.reader`, narrowed."""
         ...
     def add_elf(
         self,

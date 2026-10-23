@@ -576,10 +576,10 @@ _ZERO_ARG_RETURNS = {
         ("Cfg", "incomplete"): "list[tuple[int, IncompleteReason]]",
     },
     "strider.lift": {
+        ("Lifter", "arch"): "SleighArch",
         ("Lifter", "reader"): "MemLike",
         ("Lifter", "rom"): "Optional[RomLike]",
         ("Lifter", "user_op_names"): "list[str]",
-        ("ElfLifter", "arch"): "SleighArch",
         ("ElfLifter", "cc"): "CallingConvention",
         ("ElfLifter", "entry_point"): "int",
         ("ElfLifter", "reader"): "BufferReader",
