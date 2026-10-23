@@ -7,6 +7,7 @@ from typing import Optional, Sequence, Union
 
 from .cfg import Cfg, DotStyle
 from .lift import AssumptionOptions
+from .opt import OptimizerPipeline
 from .pattern import (
     Capture,
     CaptureKey,
@@ -141,13 +142,39 @@ class Function:
     @property
     def assumptions(self) -> AssumptionOptions:
         """The claims in force: the ones `analyze` ran under, plus every set
-        `Lifter.optimize` added since. A copy; no optimize withdraws a claim,
+        `optimize` added since. A copy; no optimize withdraws a claim,
         so dropping one means analysing again without it, and none adds
         `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest`, which only the
         lift reads."""
         ...
     def entry_node(self) -> int:
         """The node id of the function's `Entry` node."""
+        ...
+    def optimize(
+        self,
+        assumptions: Optional[AssumptionOptions] = ...,
+        pipeline: Optional[OptimizerPipeline] = ...,
+    ) -> None:
+        """Run an optimizer pipeline over this function in place.
+        `pipeline=None` runs the default pipeline; a given pipeline is copied,
+        so it stays usable. The claims `assumptions` holds join
+        `self.assumptions` and none is withdrawn: `assumptions=None` adds
+        nothing, and a set that leaves out a claim already in force, or adds
+        `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest` (read by the
+        lift, so analyse again with it), raises `StriderError` before anything
+        runs. Add one with::
+
+            function.optimize(assumptions=function.assumptions
+                              | AssumptionOptions.none(escape_analysis=True))
+
+        Runs against the `rom` of the `Lifter` that produced this function, so
+        `LoadReadOnly` folds here exactly as it does inside `analyze`, and
+        raises `StriderError` while that `Lifter` is in an `analyze`,
+        `build_cfg` or `add_elf`. Invalidates outstanding `Node` / `Match`
+        handles and every node id for this function.
+
+        Holds the GIL for the whole run, unlike `analyze`: the run borrows the
+        function for mutation."""
         ...
     def to_dot(
         self,
@@ -227,7 +254,7 @@ class Function:
         for an invalid id.
 
         A raw id is meaningful only in the graph generation it came from:
-        `compact` renumbers, and `Lifter.optimize` / `rewrite` rewire nodes out
+        `compact` renumbers, and `optimize` / `rewrite` rewire nodes out
         from under it, so an id held across either can name something else or
         nothing. A `Node` carries its generation and goes stale instead; a bare
         int cannot."""

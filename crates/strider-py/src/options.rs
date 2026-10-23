@@ -722,7 +722,7 @@ assumption_fields! {
     /// (Linux's boot-time `safe_svcmode_maskall`, the switch into FIQ in
     /// `fiqasm.S`) and for a saved mode restored after a switch made since
     /// the save (the return to SVC in `fiqasm.S`'s `__set_fiq_regs`). Read by
-    /// the lift, so `analyze` honours it and `Lifter.optimize` refuses to add
+    /// the lift, so `analyze` honours it and `Function.optimize` refuses to add
     /// it.
     msr_register_keeps_mode: bool,
 

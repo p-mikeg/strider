@@ -227,6 +227,30 @@ fn claims_to_add(
     Ok(given)
 }
 
+/// `Function.optimize`: `pipeline` (the default when `None`) over `function`
+/// in place, against `lifter`'s rom, after adding the claims `assumptions`
+/// holds (see [`claims_to_add`]).
+pub(crate) fn optimize_function(
+    lifter: &Bound<'_, PyLifter>,
+    function: &PyFunction,
+    pipeline: Option<&crate::opt::PyOptimizerPipeline>,
+    assumptions: Option<&crate::options::PyAssumptionOptions>,
+) -> PyResult<()> {
+    let py = lifter.py();
+    let this = try_borrow_lifter(lifter)?;
+    // `LoadReadOnly` reads the rom, and a mapping shortened under us takes
+    // a SIGBUS there, which no Python `except` can catch.
+    crate::reader::check_mem_unchanged(py, &this.mem_obj)?;
+    crate::reader::check_mem_unchanged(py, &this.rom_obj)?;
+    let claims = claims_to_add(function, assumptions)?;
+    let rom = this.strider()?.rom();
+    let pipeline = match pipeline {
+        Some(p) => p.build_pipeline(),
+        None => strider_orchestrator::opt::default_pipeline(),
+    };
+    with_pending_control_flow(|| function.run_pipeline_in_place(pipeline, "optimize", rom, &claims))
+}
+
 pub(crate) fn build_strider(
     arch: PySleighArch,
     mem: MemInput,
@@ -834,56 +858,6 @@ impl PyLifter {
             .bind(py)
             .call1((cfg_obj, py_function, unresolved))?;
         Ok(result.unbind())
-    }
-
-    /// Run an optimizer pipeline over `function` in place.  `pipeline=None`
-    /// runs the default pipeline; a given `OptimizerPipeline` is copied, so it
-    /// stays usable.  The claims `assumptions` holds join
-    /// `function.assumptions` and none is withdrawn: `assumptions=None` adds
-    /// nothing, and a set that leaves out a claim already in force, or adds
-    /// `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest` (read by the
-    /// lift, so analyse again with it), raises `StriderError` before anything
-    /// runs.  Add one with::
-    ///
-    ///     prog.optimize(function, assumptions=function.assumptions
-    ///                   | AssumptionOptions.none(escape_analysis=True))
-    ///
-    /// Runs against this handle's rom, so `LoadReadOnly` folds here exactly as
-    /// it does inside `analyze`.  Raises `StriderError` for a `function` some
-    /// other handle produced: folding its constant-address loads against this
-    /// rom would read a different binary's bytes.  Invalidates outstanding
-    /// `Node` / `Match` handles for `function`.
-    ///
-    /// Holds the GIL for the whole run, unlike `analyze`.
-    #[pyo3(signature = (function, pipeline=None, assumptions=None))]
-    fn optimize(
-        slf: &Bound<'_, Self>,
-        py: Python<'_>,
-        function: &PyFunction,
-        pipeline: Option<&crate::opt::PyOptimizerPipeline>,
-        assumptions: Option<PyRef<'_, crate::options::PyAssumptionOptions>>,
-    ) -> PyResult<()> {
-        if !function.cfg.bind(py).try_borrow()?.lifter.bind(py).is(slf) {
-            return Err(into_strider_err(anyhow::anyhow!(
-                "this Function was lifted by a different Lifter; optimize folds \
-                 its constant-address loads against the handle's own rom, so the \
-                 two must be the same handle"
-            )));
-        }
-        let this = try_borrow_lifter(slf)?;
-        // `LoadReadOnly` reads the rom, and a mapping shortened under us takes
-        // a SIGBUS there, which no Python `except` can catch.
-        crate::reader::check_mem_unchanged(py, &this.mem_obj)?;
-        crate::reader::check_mem_unchanged(py, &this.rom_obj)?;
-        let claims = claims_to_add(function, assumptions.as_deref())?;
-        let rom = this.strider()?.rom();
-        with_pending_control_flow(|| match pipeline {
-            Some(p) => function.run_pipeline_in_place(p.build_pipeline(), "optimize", rom, &claims),
-            None => {
-                let pipe = strider_orchestrator::opt::default_pipeline();
-                function.run_pipeline_in_place(pipe, "optimize", rom, &claims)
-            }
-        })
     }
 
     /// Decode from `entry` one instruction at a time until `addr`, and

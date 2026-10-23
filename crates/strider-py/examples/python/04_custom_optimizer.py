@@ -45,12 +45,12 @@ print(f"no further optimization applied                 : {shape(no_opt)}")
 partial_pipe = strider.opt.OptimizerPipeline.empty()
 partial_pipe.add(strider.opt.ConstantFold())
 partial = no_opt.clone()
-elf.optimize(partial, partial_pipe)
+partial.optimize(pipeline=partial_pipe)
 print(f"ConstantFold-only pipeline                      : {shape(partial)}")
 
 # The default pipeline reaches at least the same fixed point.
 full = no_opt.clone()
-elf.optimize(full, strider.opt.OptimizerPipeline.default())
+full.optimize(pipeline=strider.opt.OptimizerPipeline.default())
 print(f"default pipeline                                : {shape(full)}")
 
 print(
