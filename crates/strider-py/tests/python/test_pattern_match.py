@@ -223,7 +223,7 @@ def test_find_all_with_when_predicate_mutating_graph_is_safe():
 
     def predicate(_m):
         try:
-            lift.optimize(g)
+            g.optimize()
         except strider.StriderError as e:
             errors_caught.append(str(e))
         return True

@@ -326,7 +326,7 @@ Both the `find` and `replace` sides use `Capture` objects. A rewrite can expose
 fresh simplifications, so re-run the optimizer afterwards to tidy up:
 
 ```python
-prog.optimize(function)   # collapse phi / dead-branch noise the rewrite exposed
+function.optimize()   # collapse phi / dead-branch noise the rewrite exposed
 ```
 
 Use `rewrite_all([(find, replace), ...])` to stage several rules at once. One

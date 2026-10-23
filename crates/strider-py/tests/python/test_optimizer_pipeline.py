@@ -68,9 +68,9 @@ def test_cc_aware_passes_construct(x86_memory_elf):
     assert len(pipe.post_passes) == 2
 
 
-def test_optimize_on_lifter_mutates(x86_memory_elf):
-    """`optimize` lives on `Lifter`, not `Function`: `lift.optimize(g)` runs
-    the default pipeline in place, and `Function.optimize` / `.reoptimize`
+def test_optimize_on_function_mutates(x86_memory_elf):
+    """`optimize` lives on `Function`, not `Lifter`: `g.optimize()` runs
+    the default pipeline in place, and `Lifter.optimize` and `.reoptimize`
     are gone."""
     addr = symbol_addr(x86_memory_elf, "array_sum")
     arch = strider.sleigh.SleighArch.x86()
@@ -86,11 +86,11 @@ def test_optimize_on_lifter_mutates(x86_memory_elf):
         ),
     )
     assert g.node_count() >= 1
-    lift.optimize(g)
+    g.optimize()
     # `node_count` counts every arena slot, reachable or not, and need not
     # shrink before compaction.
     assert g.node_count() >= 1
-    assert not hasattr(g, "optimize")
+    assert not hasattr(lift, "optimize")
     assert not hasattr(g, "reoptimize")
 
 
@@ -103,7 +103,7 @@ def test_graph_reoptimize(x86_memory_elf):
     _cfg, g, _unresolved = s.analyze(
         addr, cc, opts=strider.lift.LifterOptions(cfg=strider.cfg.CfgOptions(allow_code_before_start_addr=True))
     )
-    s.optimize(g)
+    g.optimize()
     assert g.node_count() > 0
 
 
@@ -121,7 +121,7 @@ def test_run_constant_fold_pipeline_on_real_graph(x86_memory_elf):
     pipe = strider.opt.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
     pipe.add(strider.opt.KnownBits())
-    s.optimize(g, pipe)
+    g.optimize(pipeline=pipe)
     # Optimization may or may not reduce node count.
     assert g.node_count() >= 1
     assert pre >= 1
@@ -141,9 +141,9 @@ def test_optimize_twice_on_the_same_pipeline_reuses_it(x86_memory_elf):
 
     pipe = strider.opt.OptimizerPipeline.empty()
     pipe.add(strider.opt.ConstantFold())
-    s.optimize(g, pipe)
+    g.optimize(pipeline=pipe)
     assert pipe.passes == ["ConstantFold"]
-    s.optimize(g, pipe)
+    g.optimize(pipeline=pipe)
     assert pipe.passes == ["ConstantFold"]
 
 
@@ -171,8 +171,8 @@ def test_one_lifter_options_drives_many_analyses(x86_memory_elf):
     assert pipe.passes == ["ConstantFold", "KnownBits"]
 
 
-def test_lifter_optimize_folds_against_the_handles_rom():
-    """`Lifter.optimize` builds the same `OptCtx` `analyze` does, so
+def test_function_optimize_folds_against_the_handles_rom():
+    """`Function.optimize` builds the same `OptCtx` `analyze` does, so
     `LoadReadOnly` folds there too."""
     from strider import reader, sleigh
     from strider.pattern import int_const, load
@@ -201,7 +201,7 @@ def test_lifter_optimize_folds_against_the_handles_rom():
         pipe = strider.opt.OptimizerPipeline.empty()
         pipe.add(strider.opt.LoadReadOnly())
         pipe.add(strider.opt.ConstantFold())
-        lft.optimize(result.function, pipe)
+        result.function.optimize(pipeline=pipe)
         return result.function
 
     with_rom = loads_after_manual_optimize(True)
@@ -232,7 +232,7 @@ def test_a_rewriting_post_pass_restamps_stack_offsets():
     pipe = strider.opt.OptimizerPipeline.empty()
     pipe.add_post(strider.opt.StackOffsetDetect())
     pipe.add_post(strider.opt.LoadForward())
-    lift.optimize(fn, pipe)
+    fn.optimize(pipeline=pipe)
     assert len(fn.find_all(load().stack_offset(12))) == 1
 
 

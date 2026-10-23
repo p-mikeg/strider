@@ -41,7 +41,7 @@ class OptimizerPipeline:
     """An ordered list of optimizer passes, plus post-passes that run once
     after the main passes finish.
 
-    Pass one to `Lifter.optimize(function, pipeline)`, or to
+    Pass one to `Function.optimize(pipeline=...)`, or to
     `LifterOptions(pipeline=...)` to override the default. Applying a pipeline
     copies its passes, so one object serves any number of calls.
     """
