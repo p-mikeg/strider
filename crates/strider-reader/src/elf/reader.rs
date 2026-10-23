@@ -60,9 +60,7 @@ impl rsleigh::MemReader for ElfFileMemReader {
         addr: rsleigh::VnAddr,
         out_buf: &mut [u8],
     ) -> std::result::Result<usize, Self::Err> {
-        self.fetch.read(addr.off, out_buf).ok_or_else(|| {
-            crate::MemReadError(anyhow::anyhow!("address {:#x} is not mapped", addr.off))
-        })
+        rsleigh::MemReader::read(&self.fetch, addr, out_buf)
     }
 }
 
