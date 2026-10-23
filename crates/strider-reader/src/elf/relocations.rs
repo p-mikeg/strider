@@ -768,7 +768,9 @@ fn note_copy(ctx: &mut Ctx<'_, '_>, addr: u64, size: Option<u64>, r_type: u32) {
 
 /// Holes over every byte of every `R_*_COPY` object a region holds: what
 /// the loader copies there is the defining library's, never the file's.
-/// The objects are merged first, so the work is bounded by the bytes held.
+/// The objects are merged first, and each region finds the ones it overlaps
+/// by a binary search, so the work is the regions' count times its log
+/// plus the bytes held.
 fn hole_copies(ctx: &mut Ctx<'_, '_>) {
     let copies = std::mem::take(&mut ctx.copies);
     let Some(&(_, _, r_type)) = copies.first() else {
@@ -778,10 +780,8 @@ fn hole_copies(ctx: &mut Ctx<'_, '_>) {
     let mut held = Vec::new();
     for region in ctx.regions {
         let (start, end) = (region.start_addr(), region.end_addr());
-        for &(lo, hi) in objects.as_slice() {
-            if lo < end && start < hi {
-                held.push((lo.max(start), hi.min(end)));
-            }
+        for &(lo, hi) in objects.overlapping(start, end) {
+            held.push((lo.max(start), hi.min(end)));
         }
     }
     for &(lo, hi) in AddressSet::merged(held).as_slice() {
