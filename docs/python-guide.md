@@ -339,14 +339,14 @@ Example `03` walks through this end to end.
 
 ## Looking at the graph
 
-`visualize` opens an interactive explorer on the whole graph, or with
+`strider.explore.visualize` opens an interactive explorer on the whole graph, or with
 `whole=False` on the neighborhood around the entry, re-centering as you click.
 
 ```python
-prog.visualize(function)                   # prints a local URL; blocks until interrupted
-prog.visualize(function, whole=False)      # a neighborhood, re-centering as you click
-port = prog.visualize(function, background=True)   # serve and keep querying
-strider.explore.shutdown(port)             # ...until you stop it
+strider.explore.visualize(function)                # prints a local URL; blocks until interrupted
+strider.explore.visualize(function, whole=False)   # a neighborhood, re-centering as you click
+port = strider.explore.visualize(function, background=True)   # serve and keep querying
+strider.explore.shutdown(port)                     # ...until you stop it
 ```
 
 The keys, the toolbar and what its limits apply to are in
