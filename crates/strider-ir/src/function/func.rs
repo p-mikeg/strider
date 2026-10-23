@@ -118,7 +118,7 @@ impl Function {
     /// The exceptions are
     /// [`msr_register_keeps_mode`](crate::AssumptionOptions::msr_register_keeps_mode)
     /// and
-    /// [`mxcsr_rounds_to_nearest`](crate::AssumptionOptions::mxcsr_rounds_to_nearest),
+    /// [`fp_rounding_mode_is_nearest`](crate::AssumptionOptions::fp_rounding_mode_is_nearest),
     /// which only the lift reads: assumed after it, such a claim is listed
     /// here while the graph does not rest on it.
     #[inline]
@@ -134,7 +134,7 @@ impl Function {
     /// is optimized at the sound floor.  The lift seeds its claims here, so
     /// [`msr_register_keeps_mode`](crate::AssumptionOptions::msr_register_keeps_mode)
     /// and
-    /// [`mxcsr_rounds_to_nearest`](crate::AssumptionOptions::mxcsr_rounds_to_nearest),
+    /// [`fp_rounding_mode_is_nearest`](crate::AssumptionOptions::fp_rounding_mode_is_nearest),
     /// which only the lift reads, are recorded without effect when assumed
     /// after it.
     pub fn assume(&mut self, claims: &crate::AssumptionOptions) {

@@ -252,15 +252,19 @@ pub fn is_msr_register_mode(preset: crate::ArchPreset, name: &str) -> bool {
     preset.family() == crate::ArchFamily::Arm32 && name == "msrRegisterMode"
 }
 
-/// Whether `name` is the x86 op through which an SSE or VEX conversion reads
-/// the rounding mode it rounds by: `mxcsrRoundingControl(rc)` is `rc`, the
-/// live MXCSR.RC, or 0 under the claim that the mode is round to nearest. The
-/// lifter lowers it to one of the two, so it has no ABI row, unless a caller
-/// override names it, which then classifies it as any user op and neither
-/// claim value applies.
+/// Whether `name` is the op through which a conversion reads the rounding
+/// mode it rounds by: x86 `mxcsrRoundingControl(rc)` (MXCSR.RC) and PowerPC
+/// `fpscrRoundingControl(rn)` (FPSCR.RN) are their input, the live mode, or 0
+/// under the claim that the mode is round to nearest. The lifter lowers it to
+/// one of the two, so it has no ABI row, unless a caller override names it,
+/// which then classifies it as any user op and neither claim value applies.
 #[must_use]
-pub fn is_mxcsr_rounding_control(preset: crate::ArchPreset, name: &str) -> bool {
-    preset.family() == crate::ArchFamily::X86 && name == "mxcsrRoundingControl"
+pub fn is_rounding_mode_control(preset: crate::ArchPreset, name: &str) -> bool {
+    match preset.family() {
+        crate::ArchFamily::X86 => name == "mxcsrRoundingControl",
+        crate::ArchFamily::Ppc => name == "fpscrRoundingControl",
+        _ => false,
+    }
 }
 
 const PURE: CallOtherClass = CallOtherClass::PURE;
@@ -312,10 +316,11 @@ const PPC_FPCC_VX: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
 ///
 /// The scalar float ops the sla spells in p-code (`fadd`, `fmadd`, `frsp`,
 /// `fctiw`, `xsadddp`, ...) are not user ops, so no row reaches them: they set
-/// FPRF, VXSNAN, ZX, VXZDZ and the summaries from their operands, and leave
-/// FR, FI, OX, UX, VXISI, VXIDI, VXIMZ, VXCVI and VXSQRT as the last explicit
-/// write (`mtfsf`, `mtfsfi`, `mtfsb0`, `mtfsb1`) left them, which a later
-/// `mffs` or `mcrfs` then reads.
+/// FPRF, VXSNAN (for any NaN, quiet ones too), ZX, VXZDZ and the summaries
+/// from their operands, XX from the stale FI, and leave FR, FI, OX, UX,
+/// VXISI, VXIDI, VXIMZ, VXSQRT and, for the signed conversions, VXCVI as the
+/// last explicit write (`mtfsf`, `mtfsfi`, `mtfsb0`, `mtfsb1`) left them,
+/// which a later `mffs` or `mcrfs` then reads.
 const PPC_FP_RESULT: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     implicit_reads: &[],
     implicit_writes: &[
@@ -725,7 +730,7 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     // folds to the same value.
     //
     // Narrow reach, unlike `wrtee` / `wrteei`: `mtfsf` ITSELF is modelled in
-    // p-code (`ppc_instructions.sinc:2507`, which pins `BIT_25=0 & BIT_16=0`
+    // p-code (`ppc_instructions.sinc:2476`, which pins `BIT_25=0 & BIT_16=0`
     // and emits `packFPSCR` / `unpackFPSCR`), so these `MoveToFPSCRField*`
     // pcodeops exist only in `ppc_isa.sinc`, included only by the
     // `ppc_64_isa*` slaspecs. They therefore fire on the Power ISA 2.06

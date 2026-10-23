@@ -52,15 +52,14 @@ class AssumptionOptions:
     them can make the answer wrong on valid input. `stack_global_disjoint`,
     `assume_incoming_args_survive_calls`,
     `return_slots_survive_untracked_writes`, `msr_register_keeps_mode` and
-    `mxcsr_rounds_to_nearest` default `True`, the other four off or empty;
-    clearing all nine is the
-    sound floor under any input whose memory behaves as RAM (see `none`). What
+    `fp_rounding_mode_is_nearest` default `True`, the other four off or empty;
+    clearing all nine is the sound floor under any input whose memory behaves as RAM (see `none`). What
     each one claims is in `docs/python-api.md` section 2.
 
     Claims accumulate on a `Function` (`Function.assumptions`): `analyze`
     starts from the ones it is given, `Lifter.optimize` adds, none withdraws.
-    The lift reads `msr_register_keeps_mode` and `mxcsr_rounds_to_nearest`,
-    so `optimize` refuses to add either: analyse again with it.
+    The lift reads `msr_register_keeps_mode` and `fp_rounding_mode_is_nearest`,
+    so `optimize` refuses to add either: analyse again with the claim.
     """
 
     # Read-only: these are getters with no setter, so a plain attribute
@@ -87,10 +86,11 @@ class AssumptionOptions:
     @property
     def msr_register_keeps_mode(self) -> bool: ...
     @property
-    def mxcsr_rounds_to_nearest(self) -> bool:
-        """MXCSR.RC is round to nearest even at every x86 SSE and VEX
-        conversion that rounds by it. Off, each reads RC and selects among the
-        four modes; the truncating `cvtt*` forms read none."""
+    def fp_rounding_mode_is_nearest(self) -> bool:
+        """The SSE MXCSR.RC and PowerPC FPSCR.RN rounding modes are round to
+        nearest even at every conversion that rounds by them. Off, each reads
+        the mode and selects among its four; the truncating `cvtt*` and
+        `fcti*z` forms read none."""
         ...
     def __init__(
         self,
@@ -103,7 +103,7 @@ class AssumptionOptions:
         escape_analysis: Optional[bool] = ...,
         return_slots_survive_untracked_writes: Optional[bool] = ...,
         msr_register_keeps_mode: Optional[bool] = ...,
-        mxcsr_rounds_to_nearest: Optional[bool] = ...,
+        fp_rounding_mode_is_nearest: Optional[bool] = ...,
     ) -> None:
         """Build the claims; a field omitted or `None` takes its default, as
         documented above. `noalias_allocators` reads back sorted, without
@@ -120,7 +120,7 @@ class AssumptionOptions:
         escape_analysis: Optional[bool] = ...,
         return_slots_survive_untracked_writes: Optional[bool] = ...,
         msr_register_keeps_mode: Optional[bool] = ...,
-        mxcsr_rounds_to_nearest: Optional[bool] = ...,
+        fp_rounding_mode_is_nearest: Optional[bool] = ...,
     ) -> "AssumptionOptions":
         """Every claim cleared, then the ones named set: with no argument, the
         sound floor of these fields under any input, forwarding solely what
@@ -331,7 +331,7 @@ class Lifter:
         usable. The claims `assumptions` holds join `function.assumptions` and
         none is withdrawn: `assumptions=None` adds nothing, and a set that
         leaves out a claim already in force, or adds `msr_register_keeps_mode`
-        or `mxcsr_rounds_to_nearest` (read by the lift, so analyse again with
+        or `fp_rounding_mode_is_nearest` (read by the lift, so analyse again with
         it), raises `StriderError`
         before anything runs. Add one with::
 

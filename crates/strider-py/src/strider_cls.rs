@@ -168,7 +168,7 @@ fn build_orch_sleigh(
 
 /// The claims an `optimize` adds to `function`'s: none without `given`, and
 /// otherwise `given`, which must hold every claim already in force and may not
-/// add `msr_register_keeps_mode` or `mxcsr_rounds_to_nearest`, which only the
+/// add `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest`, which only the
 /// lift reads.
 fn claims_to_add(
     function: &PyFunction,
@@ -187,8 +187,8 @@ fn claims_to_add(
                 given.msr_register_keeps_mode && !in_force.msr_register_keeps_mode,
             ),
             (
-                "mxcsr_rounds_to_nearest",
-                given.mxcsr_rounds_to_nearest && !in_force.mxcsr_rounds_to_nearest,
+                "fp_rounding_mode_is_nearest",
+                given.fp_rounding_mode_is_nearest && !in_force.fp_rounding_mode_is_nearest,
             ),
         ]
         .into_iter()
@@ -222,9 +222,13 @@ fn claims_to_add(
         )));
     }
     if !lift_claims.is_empty() {
-        let verb = if lift_claims.len() == 1 { "is" } else { "are" };
+        let (verb, them) = if lift_claims.len() == 1 {
+            ("is", "it")
+        } else {
+            ("are", "them")
+        };
         return Err(into_strider_err(anyhow::anyhow!(
-            "optimize: {} {verb} read by the lift; analyse again with it",
+            "optimize: {} {verb} read by the lift; analyse again with {them}",
             lift_claims.join(" and ")
         )));
     }
@@ -846,7 +850,7 @@ impl PyLifter {
     /// stays usable.  The claims `assumptions` holds join
     /// `function.assumptions` and none is withdrawn: `assumptions=None` adds
     /// nothing, and a set that leaves out a claim already in force, or adds
-    /// `msr_register_keeps_mode` or `mxcsr_rounds_to_nearest` (read by the
+    /// `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest` (read by the
     /// lift, so analyse again with it), raises `StriderError` before anything
     /// runs.  Add one with::
     ///

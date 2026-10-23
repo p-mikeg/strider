@@ -371,7 +371,7 @@ when both IR slots hold the same value.
   `assumptions` is an `AssumptionOptions` of nine claims about the code being
   analysed that the IR cannot prove, so a wrong one miscompiles; every field's
   risky value is the positive one, five default ON (two,
-  `msr_register_keeps_mode` and `mxcsr_rounds_to_nearest`, are read by the
+  `msr_register_keeps_mode` and `fp_rounding_mode_is_nearest`, are read by the
   lift instead), and
   `AssumptionOptions::none()`, not `::default()`, is the sound floor of those
   fields under any input whose memory behaves as RAM. It is the floor, not the
