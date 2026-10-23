@@ -75,7 +75,7 @@ return %v0, %v1, %v4, %v5, %v6, %v7, %v8
 cfg
   0x12f0 13 ops goto -> [0x12fa]
   0x12fa 53 ops return -> []
-tracked [EAX, ECX, EDX, EBX, ESP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6800:4, u:0x6a00:4, u:0x6c00:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x66200:4, u:0x8a100:4]
+tracked [EAX, ECX, EDX, EBX, ESP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x6800:4, u:0x6a00:4, u:0x6c00:4, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x66400:4, u:0x8a300:4]
 arg 0 [%v13]
 arg 1 [%v29]
 %v0:ctrl = entry
