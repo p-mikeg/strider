@@ -348,8 +348,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// the context does not name it.
     ///
     /// The one projection of `isa_mode_var` onto a `FlowContext`; the region
-    /// mode, the clash check, the entry-mode degrade and `Cfg::function_isa_bit`
-    /// are all this question asked at different contexts.
+    /// mode, the clash check and the entry-mode degrade are all this question
+    /// asked at different contexts.
     fn isa_mode_of(&self, ctx: &FlowContext) -> Option<u32> {
         self.arch
             .isa_mode_var()
@@ -969,7 +969,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             self.incomplete.insert(addr, crate::Reason::UnverifiedSeed);
         }
 
-        let function_isa_bit = self.isa_mode_of(&self.function_mode).map(|mode| mode != 0);
         Ok(Cfg {
             region_graph: self.region_graph,
             entry: starting_region,
@@ -982,7 +981,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             incomplete: self.incomplete,
             link_register_seated: self.link_register_seated,
             tail_call_seated: self.tail_call_seated,
-            function_isa_bit,
             flowing_isa_bits: self.flowing_isa_bits,
             space_ids: self.sleigh.space_ids(),
         })

@@ -61,7 +61,6 @@ pub struct Cfg {
     pub(crate) incomplete: Incompleteness,
     pub(crate) link_register_seated: Vec<types::PcodeInsnAddr>,
     pub(crate) tail_call_seated: Vec<types::PcodeInsnAddr>,
-    pub(crate) function_isa_bit: Option<bool>,
     pub(crate) flowing_isa_bits: std::collections::BTreeMap<types::PcodeInsnAddr, bool>,
     pub(crate) space_ids: rsleigh::SpaceIds,
 }
@@ -151,25 +150,13 @@ impl Cfg {
         &self.tail_call_seated
     }
 
-    /// This function's own ISA mode: the fallback a resolved target decodes in
-    /// when the branch address carries no readable context, and the mode for an
-    /// arch-wide default. `None` on an arch without an ISA-mode var.
-    ///
-    /// NOT the live base. The build reads the context AT the branch address
-    /// first and reaches for this only when that read fails, so a caller
-    /// deciding a seated target's mode reads
-    /// [`Self::flowing_isa_bit_at_site`] first and falls back to this.
-    pub fn function_isa_bit(&self) -> Option<bool> {
-        self.function_isa_bit
-    }
-
     /// The ISA-mode bit that flowed into the indirect branch at `site`, sampled
     /// while that site's region was decoded: the mode a target seated there
     /// with no mode of its own decodes in.
     ///
     /// `None` for an address no indirect branch was sealed at, and on an arch
-    /// with no ISA-mode var, where [`Self::function_isa_bit`] is the whole
-    /// answer.
+    /// with no ISA-mode var. Where the branch address carries no readable
+    /// context, the sample is the function's own mode.
     pub fn flowing_isa_bit_at_site(&self, site: types::PcodeInsnAddr) -> Option<bool> {
         self.flowing_isa_bits.get(&site).copied()
     }

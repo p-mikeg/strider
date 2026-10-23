@@ -300,6 +300,9 @@
   call minted a second `InitialMemory`), `write_variable_from_id`,
   `Function::vn_ids`, `GraphWalkInfo::postorder` and the walk types
   `DefUsePostorder`, `RawDefUseSuccs` and `DefUseSuccs`.
+- `Cfg::function_isa_bit` is gone: `flowing_isa_bit_at_site` answers every
+  indirect site on an arch with an ISA-mode var, already degrading to the
+  function's own mode where the branch address carries no readable context.
 
 ### Changed, Python
 
