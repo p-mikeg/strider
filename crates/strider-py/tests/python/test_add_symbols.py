@@ -56,7 +56,7 @@ def test_a_symbol_file_changed_after_its_table_is_built_is_not_reread(tmp_path):
     full, dbg, stripped = _strip_and_split(tmp_path)
     lift = strider.lift.load_elf(str(stripped))
     lift.add_symbol_file(str(dbg))
-    name = next(n for n, s in lift.symbols().items() if s.size)
+    name = "dispatch_value"
     lift.analyze(name)
     with dbg.open("ab") as f:
         f.write(b"\0" * 64)
