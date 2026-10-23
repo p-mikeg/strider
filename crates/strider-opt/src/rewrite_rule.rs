@@ -314,12 +314,16 @@ where
     let candidates: Vec<NodeId> = edit.walk().collect();
     let mut applied: usize = 0;
     for node in candidates {
+        // The walk visits consumers first, so a fire can leave a later
+        // candidate with only dead consumers. `clean` culls it, and a culled
+        // node keeps its kind and fingerprints, so an LHS that pins no input
+        // would still match it.
+        if !edit.is_live(node) {
+            continue;
+        }
         for r in rules {
             if r(edit, node)?.is_some() {
                 applied += 1;
-                // The walk visits consumers first, so a fire can leave a later
-                // candidate with only dead consumers; culling it detaches its
-                // inputs and leaves no use to redirect.
                 edit.clean();
                 break;
             }
@@ -1455,6 +1459,52 @@ mod tests {
         assert!(err.to_string().contains("not available"), "{err}");
         edit.clean();
         drop(edit);
+        strider_ir::validate::validate(&function).unwrap();
+    }
+
+    /// `store [p] = 5; return *p + 7` under `[load + k -> k, load -> 5]`: the
+    /// first rule culls the load, and the second, which pins no input, would
+    /// still match it and stamp its address onto the live `5`.
+    #[test]
+    fn a_candidate_an_earlier_fire_culled_is_not_tried() {
+        use super::apply_rules_count;
+        use strider_pattern::{load, var};
+
+        let ptr = reg_vn(0x1000, 8);
+        let mut b = RegisterSet::new().tracked(ptr).arg(ptr).build_fn().unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(0x10));
+        let addr = b.read_variable(&ptr).unwrap();
+        let five = b.build_int_const(5u64, ValueType::int(64)).unwrap();
+        b.build_store(addr, five, rsleigh::VnSpace::RAM).unwrap();
+        b.set_lift_addr(Some(0x20));
+        let loaded = b
+            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
+            .unwrap();
+        b.set_lift_addr(Some(0x30));
+        let seven = b.build_int_const(7u64, ValueType::int(64)).unwrap();
+        let sum = b
+            .build_int_binary_operation(loaded, seven, IntBinaryOp::Add, ValueType::int(64))
+            .unwrap();
+        b.build_return(Some(sum), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let five = function.producer(five);
+
+        let k = Capture::new();
+        let rules = [
+            rewrite_rule(int_add(load(), var(k)), var(k)),
+            rewrite_rule(load(), int_const(5u128)),
+        ];
+        let fired = {
+            let mut edit = EditFunction::new(&mut function);
+            apply_rules_count(&mut edit, &rules).unwrap()
+        };
+        assert_eq!(fired, 1);
+        let stamped = function.side_tables().asm_fingerprint(five);
+        assert!(!stamped.contains(&0x20), "{stamped:x?}");
         strider_ir::validate::validate(&function).unwrap();
     }
 }
