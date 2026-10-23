@@ -355,7 +355,7 @@ fn fold_and_and_masks() -> Result<()> {
 /// operand order irrelevant.
 fn assert_add_with_const(
     fg: &strider_ir::Function,
-    expected_base: strider_ir::Value,
+    expected_base: strider_ir::node::ValueId,
     expected_const: u64,
     ty: ValueType,
 ) -> Result<()> {
@@ -373,7 +373,7 @@ fn assert_add_with_const(
     let masked = ty
         .get_unsigned_int(u128::from(expected_const))
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
-    let const_on = |o: strider_ir::Value| -> bool {
+    let const_on = |o: strider_ir::node::ValueId| -> bool {
         matches!(fg.kind_of_value(o), NodeKind::IntConst(_))
             && ty.get_unsigned_int(fg.int_const_u128(o).unwrap_or(u128::MAX)) == Some(masked)
     };
@@ -396,7 +396,7 @@ fn assert_add_with_const(
 /// one `Add` with a negative-valued constant.
 fn assert_sub_with_const(
     fg: &strider_ir::Function,
-    expected_base: strider_ir::Value,
+    expected_base: strider_ir::node::ValueId,
     expected_const: u64,
     ty: ValueType,
 ) -> Result<()> {
@@ -415,7 +415,7 @@ fn assert_sub_with_const(
     let neg_masked = ty
         .get_unsigned_int(u128::from(expected_const).wrapping_neg())
         .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
-    let const_match = |value: strider_ir::Value| {
+    let const_match = |value: strider_ir::node::ValueId| {
         matches!(fg.kind_of_value(value), NodeKind::IntConst(_))
             && ty.get_unsigned_int(fg.int_const_u128(value).unwrap_or(u128::MAX))
                 == Some(neg_masked)
@@ -2215,7 +2215,7 @@ fn int_const_eval_skips_past_128_bits() -> Result<()> {
 /// The unique `Mul` the factoring rules produce: base and coefficient.
 fn assert_mul_with_const(
     fg: &strider_ir::Function,
-    expected_base: strider_ir::Value,
+    expected_base: strider_ir::node::ValueId,
     expected_const: u128,
     ty: ValueType,
 ) -> Result<()> {
@@ -2403,8 +2403,8 @@ fn factor_declines_a_wide_count_out_of_range() -> Result<()> {
 /// `Add` / `Mul` / `Neg` / `ShiftLeft`, evaluated in `u128` and left unmasked.
 fn linear_coeff(
     fg: &strider_ir::Function,
-    val: strider_ir::Value,
-    base: strider_ir::Value,
+    val: strider_ir::node::ValueId,
+    base: strider_ir::node::ValueId,
 ) -> Option<u128> {
     if val == base {
         return Some(1);
@@ -2453,7 +2453,7 @@ fn factor_shape(
     ty: ValueType,
     c1: u128,
     c2: u128,
-) -> Result<(strider_ir::Function, strider_ir::Value)> {
+) -> Result<(strider_ir::Function, strider_ir::node::ValueId)> {
     let byte_size = u32::try_from(if ty == ValueType::I1 {
         8
     } else {

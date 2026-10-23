@@ -66,7 +66,9 @@ pub(crate) fn x86_64_snippet(insns: &[(&[u8], &str)]) -> Vec<u8> {
 /// `UnresolvedIndirectBranch`.  After the full optimiser pipeline runs
 /// (including `LoadForward`), the loaded value folds to `IntConst(k)`,
 /// exactly the shape the IR-level resolver's IntConst arm classifies.
-pub(crate) fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, strider_ir::Value) {
+pub(crate) fn build_int_const_target_scenario_via_stack(
+    k: u64,
+) -> (Function, strider_ir::node::ValueId) {
     // The `pop rax` step gives the optimiser an SP-rooted load that
     // `LoadForward` can simplify back to the pushed constant K; the cfg
     // builder cannot classify the target and defers it.
@@ -90,7 +92,7 @@ pub(crate) fn build_int_const_target_scenario_via_stack(k: u64) -> (Function, st
 /// On x86_64 there is no architectural link register, so the
 /// "InitialVar(target_vn) == InitialVar(lr_vn)" arm in the classifier
 /// returns `None` here regardless of caller-supplied lr.
-pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::Value) {
+pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_ir::node::ValueId) {
     let bytes = x86_64_snippet(&[(&[0xff, 0xe0], "jmp rax")]);
     let (function, target, _lr) = run_pipeline_x86_64(bytes);
     (function, target)
@@ -108,7 +110,7 @@ pub(crate) fn build_initial_var_target_scenario_x86_64() -> (Function, strider_i
 /// (same offset, no aliasing stores in between); the classifier's
 /// LinkRegister arm matches the resulting shape.
 pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
--> (Function, strider_ir::Value, rsleigh::Vn) {
+-> (Function, strider_ir::node::ValueId, rsleigh::Vn) {
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::sp_frame;
     use strider_orchestrator::opt::{ConstantFold, LoadForward, OptimizerPipeline};
@@ -173,7 +175,7 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
         .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
-    let mut found: Option<strider_ir::Value> = None;
+    let mut found: Option<strider_ir::node::ValueId> = None;
     for nid in fg.walk() {
         if !matches!(fg.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
@@ -204,7 +206,7 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
 /// LinkRegister arm doesn't false-positive.
 pub(crate) fn build_push_target_pop_pc_scenario(
     k: u64,
-) -> (Function, strider_ir::Value, rsleigh::Vn) {
+) -> (Function, strider_ir::node::ValueId, rsleigh::Vn) {
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::sp_frame;
     use strider_orchestrator::opt::{ConstantFold, LoadForward, OptimizerPipeline};
@@ -253,7 +255,7 @@ pub(crate) fn build_push_target_pop_pc_scenario(
         .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
 
-    let mut found: Option<strider_ir::Value> = None;
+    let mut found: Option<strider_ir::node::ValueId> = None;
     for nid in fg.walk() {
         if !matches!(fg.node_kind(nid), NodeKind::IndirectBranch) {
             continue;
@@ -293,7 +295,7 @@ pub(crate) fn build_jump_table_known_bits_scenario(
     base: u64,
     stride: u64,
     idx_mask: u64,
-) -> (Function, strider_ir::Value) {
+) -> (Function, strider_ir::node::ValueId) {
     use strider_ir::IntBinaryOp;
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
@@ -362,7 +364,7 @@ pub(crate) fn build_jump_table_predecessor_if_scenario(
     base: u64,
     stride: u64,
     bound: u64,
-) -> (Function, strider_ir::Value) {
+) -> (Function, strider_ir::node::ValueId) {
     use strider_ir::node::ValueType;
     use strider_ir::{IntBinaryOp, IntCmpOp};
     use strider_ir_test_utils::RegisterSet;
@@ -441,7 +443,7 @@ pub(crate) fn build_jump_table_predecessor_if_scenario(
 pub(crate) fn build_jump_table_unbounded_scenario(
     base: u64,
     stride: u64,
-) -> (Function, strider_ir::Value) {
+) -> (Function, strider_ir::node::ValueId) {
     use strider_ir::IntBinaryOp;
     use strider_ir::node::ValueType;
     use strider_ir_test_utils::RegisterSet;
@@ -488,7 +490,7 @@ pub(crate) fn build_jump_table_unbounded_scenario(
 /// shaped; used to verify the classifier's Load arm falls through
 /// to None on unrelated load shapes (e.g. `Load(IntConst(addr))` for
 /// a simple global read).
-pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::Value) {
+pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::node::ValueId) {
     use strider_ir::node::ValueType;
     use strider_orchestrator::opt::{ConstantFold, OptimizerPipeline};
 
@@ -686,7 +688,7 @@ pub(crate) fn build_stack_array_dispatch_scenario(
 ///
 /// The cfg builder defers the `br x0` via `UnresolvedIndirectBranch`, so the
 /// IR-level indirect-branch resolver sees the cleaned-up shape.
-pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::Value, rsleigh::Vn) {
+pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::node::ValueId, rsleigh::Vn) {
     // AArch64 (little-endian) encoding:
     //   mov x0, x30  ->  e0 03 1e aa   (alias for `orr x0, xzr, x30`)
     //   br  x0       ->  00 00 1f d6

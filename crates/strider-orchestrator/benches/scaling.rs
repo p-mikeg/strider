@@ -188,7 +188,7 @@ mod synthetic {
             .build_fn_single_region()
             .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
-        let mut load_addrs: Vec<strider_ir::Value> = Vec::with_capacity(n);
+        let mut load_addrs: Vec<strider_ir::node::ValueId> = Vec::with_capacity(n);
         for i in 0..n {
             let off = -((i as i64 + 1) * 8) as u64;
             let off_const = b.build_int_const(off, ValueType::int(64)).unwrap();
