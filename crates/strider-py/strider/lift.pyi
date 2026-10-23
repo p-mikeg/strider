@@ -312,13 +312,15 @@ class Lifter:
         held, so finalization waits for the analysis the way any other Python
         call does.
 
-        A DAEMON thread running an analysis when the interpreter starts
-        finalizing is still unsafe with a Python `mem` or `rom`: the thread is
-        terminated inside your `read` callback, and the unwind passes through
-        Rust frames, which aborts or segfaults the process. CPython hangs a
-        pure-Python daemon thread safely instead, so this is a cost of the
-        Rust frames below the callback and no exception can be raised for it.
-        Analyse on non-daemon threads and join them, which is clean.
+        A DAEMON thread inside this call when the interpreter starts
+        finalizing aborts the process either way. With the GIL released it is
+        killed holding no GIL, and the forced unwind out of the released
+        region aborts. With a Python `mem` or `rom` it is terminated inside
+        your `read` callback, and the unwind through the Rust frames below it
+        aborts or segfaults. CPython hangs a pure-Python daemon thread safely
+        instead, so this is a cost of the Rust frames and no exception can be
+        raised for it. Analyse on non-daemon threads and join them, which is
+        clean.
         """
         ...
     def pcode_at(self, entry: int, addr: int) -> str:
@@ -517,8 +519,8 @@ class ElfLifter(Lifter):
         `per_address_ccs` key that is a ppc64 ELFv2 symbol's `address` also
         covers its `Symbol.local_entry`, where a call sharing its TOC lands.
 
-        Releases the GIL as `Lifter.analyze` does, with the same consequence
-        for a daemon thread parked inside it at interpreter finalization."""
+        Releases the GIL as `Lifter.analyze` does, and a daemon thread inside
+        it at interpreter finalization aborts the process as it does there."""
         ...
     def __repr__(self) -> str: ...
 
