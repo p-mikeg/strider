@@ -1108,7 +1108,8 @@ fn a_mips64_be_hole_drops_r_ssym_from_the_type() {
 
 /// A relocation at the top of the address space: a slot ending at
 /// `2^64 - 1` is patched; one whose mapping ends at `2^64` loses its last
-/// byte, so no region holds the field and it is neither patched nor holed.
+/// byte, so no region holds the field to patch and its mapped bytes are a
+/// hole.
 #[test]
 fn a_relocation_at_the_top_of_the_address_space_loads() {
     for (slot_addr, patched) in [(u64::MAX - 8, true), (u64::MAX - 7, false)] {
@@ -1132,7 +1133,7 @@ fn a_relocation_at_the_top_of_the_address_space_loads() {
             strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
         assert_eq!(
             table.unmodelled_relocation_at(slot_addr),
-            None,
+            (!patched).then_some(object::elf::R_X86_64_GLOB_DAT),
             "{slot_addr:#x}"
         );
         if patched {
@@ -1143,10 +1144,7 @@ fn a_relocation_at_the_top_of_the_address_space_loads() {
             assert_eq!(u64::from_le_bytes(field), fx.sym_addr);
         } else {
             let mut field = [0u8; 7];
-            table
-                .read_exact(slot_addr, &mut field)
-                .expect("all but the last byte is mapped");
-            assert_eq!(field, [0u8; 7], "served as assembled");
+            assert!(table.read_exact(slot_addr, &mut field).is_err());
         }
     }
 }
@@ -1380,10 +1378,10 @@ fn an_image_relative_relocation_ignores_its_symbol() {
 }
 
 /// An `R_X86_64_RELATIVE` whose eight-byte field runs past its four-byte
-/// section is neither patched nor a hole: the section's bytes are served as
-/// they are.
+/// mapping cannot be patched, and the four bytes mapped are a hole rather
+/// than the file's.
 #[test]
-fn an_image_relative_word_past_its_section_is_served_as_is() {
+fn an_image_relative_word_past_its_mapping_is_a_hole() {
     let slot_init = vec![0x11, 0x22, 0x33, 0x44];
     let fx = common::elf_fixture::build_rel_elf_placed(
         common::elf_fixture::RelOpts {
@@ -1402,11 +1400,11 @@ fn an_image_relative_word_past_its_section_is_served_as_is() {
     );
     let table =
         strider_reader::MemRegionsLookupTable::new(common::load_with_relocations(&fx.bytes));
-    let mut got = [0u8; 4];
-    table
-        .read_exact(fx.slot_addr, &mut got)
-        .expect("a field past its section is no hole");
-    assert_eq!(got.to_vec(), slot_init);
+    assert!(table.read_exact(fx.slot_addr, &mut [0u8; 4]).is_err());
+    assert_eq!(
+        table.unmodelled_relocation_at(fx.slot_addr),
+        Some(object::elf::R_X86_64_RELATIVE)
+    );
 }
 
 /// An `SHT_CREL` `.rel.dyn` relinked to 0 in an image with a `.dynsym`,
