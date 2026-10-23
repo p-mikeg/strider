@@ -95,7 +95,8 @@ impl PyBufferReader {
 #[pymethods]
 impl PyBufferReader {
     /// Create a reader over a single raw-byte region: `data` mapped at
-    /// `base_addr`.  Raises `StriderError` if the region is invalid.
+    /// `base_addr`.  Raises `ValueError` for a region that runs past the end
+    /// of the address space.
     #[new]
     fn new(base_addr: u64, data: &Bound<'_, PyAny>) -> PyResult<Self> {
         // `bytes` / `bytearray` copy in one piece; anything else (a list of
@@ -104,7 +105,10 @@ impl PyBufferReader {
             Ok(bytes) => bytes.to_vec(),
             Err(_) => data.extract::<Vec<u8>>()?,
         };
-        let region = MemRegion::new(base_addr, data).map_err(into_strider_err)?;
+        // The one failure is a region past the address space, a range-checked
+        // argument.
+        let region = MemRegion::new(base_addr, data)
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
         Ok(Self::from_regions(vec![region]))
     }
 
