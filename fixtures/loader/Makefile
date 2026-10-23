@@ -55,7 +55,8 @@ IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           aarch64_android_rela.elf aarch64_plain_rela.elf \
           x86_textrel.elf x86_textrel_noshdr.elf \
           x64_tls.elf x64_tlsdesc.elf aarch64_tls.elf aarch64_tls_trad.elf \
-          ppc64le_tls.elf mips64le_tls.elf x86_tlsdesc.elf arm_tlsdesc.elf
+          ppc64le_tls.elf mips64le_tls.elf x86_tlsdesc.elf arm_tlsdesc.elf \
+          arm_lazy.elf ppc32be_lazy.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -178,6 +179,13 @@ $(OUTDIR)/x86_tlsdesc.elf: src/tls.c | $(OUTDIR)
 	$(X86) $(CFLAGS) -mtls-dialect=gnu2 $(TLS_LIB) $< -o $@
 $(OUTDIR)/arm_tlsdesc.elf: src/tls.c | $(OUTDIR)
 	$(ARM) $(CFLAGS) -mtls-dialect=gnu2 $(TLS_LIB) $< -o $@
+
+# Lazy binding: the loader writes ARM's GOT[1] / GOT[2] at DT_PLTGOT and the
+# secure-PLT PPC32 words after DT_PPC_GOT, none under a relocation.
+$(OUTDIR)/arm_lazy.elf: src/plt_call.c | $(OUTDIR)
+	$(ARM) $(CFLAGS) -shared $< -o $@
+$(OUTDIR)/ppc32be_lazy.elf: src/plt_call.c | $(OUTDIR)
+	$(PPC32) $(CFLAGS) -shared $< -o $@
 
 clean:
 	rm -rf $(OUTDIR)
