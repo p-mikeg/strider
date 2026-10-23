@@ -1982,8 +1982,9 @@ mod tests {
         assert_eq!(rows, 16, "8 arches, against a symbol and none");
     }
 
-    /// The TLS rows and their widths; PPC32 and MIPS32 share the numbers of
-    /// their 64-bit twins, whose 4-byte fields take no row.
+    /// The TLS rows and their widths; PPC32 shares the numbers of its 64-bit
+    /// twins, whose 4-byte fields take no row, and the MIPS rows are
+    /// MIPS64's alone.
     #[test]
     fn classify_pins_the_tls_rows() {
         use object::elf as e;
