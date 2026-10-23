@@ -203,32 +203,14 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         source_addr: u64,
     ) {
         // Per-instruction decode state (ARM/Thumb ITSTATE, MIPS16 register-list
-        // iteration) flows only to `inst_next`, and strider needs it there: a
-        // sla lifts an IT-predicated instruction as a conditional branch over
-        // itself, so an IT block really does become several regions and the
-        // edges between them carry the state the `IT` committed.
-        //
-        // So read the engine, but ONLY at an address this build committed. A
-        // snapshot anywhere else answers with whatever a PREVIOUS `build_cfg`
-        // on this engine left there, and `pin_at` would then diff that
-        // snapshot against itself and write nothing, adopting a stale
-        // `globalset` instead of resetting it. The entry pin cannot undo that:
-        // the forward paint stops at the next commit of the same var. Off the
-        // flowed path the baseline is the function's own entry context, which
-        // is what `enqueue_resolved` uses.
-        // Trustworthy only where this build re-derived the context:
-        // `RegionBuilder::rederive_flow` re-derives each `inst_next` it decodes
-        // through, so what sits there is this build's commit whatever an
-        // earlier build left. Two things are NOT that, and both take the
-        // function's own baseline: a branch target that is no decoded
-        // instruction's `inst_next`, where the engine may still hold an
-        // earlier `globalset`; and an arch naming no `flow_commit_vars`, where
-        // `rederive_flow` is a no-op and the snapshot would answer with
-        // whatever ANY decode left, including a throwaway one
-        // (`is_benign_prefix_reentry` lifts a mid-instruction address out of
-        // band, and `oneInstruction` applies its commits). The two conditions
-        // are disjoint locally: `is_benign_prefix_reentry` returns early on a
-        // non-empty `flow_commit_defaults`, this same slice.
+        // iteration) flows only to `inst_next`, and the edges between an IT
+        // block's regions carry what the `IT` committed. So read the engine,
+        // but only where `committed_next` vouches for it; elsewhere the
+        // snapshot is a previous `build_cfg`'s, and `pin_at` would adopt that
+        // stale `globalset` (the entry pin's forward paint stops at its
+        // commit). An arch naming no `flow_commit_vars` re-derives nothing, and
+        // its out-of-band `is_benign_prefix_reentry` decode commits too, so it
+        // takes the function's own baseline, as `enqueue_resolved` does.
         let mut carried = if !self.flow_commit_defaults.is_empty()
             && self.committed_next.contains(&addr.machine_addr.addr)
         {
