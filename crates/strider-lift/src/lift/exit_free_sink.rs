@@ -128,7 +128,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 fn region_memory_input(graph: &Graph, region: NodeId, index: usize) -> Result<ValueId> {
     let phi_token = graph
         .node_outputs(region)
-        .get(1)
+        .get(NodeKind::REGION_PHI_OUT_SLOT)
         .copied()
         .ok_or_else(|| anyhow!("region {region:?} has no PhiToken output"))?;
     let mem_phi = graph

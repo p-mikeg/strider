@@ -274,15 +274,14 @@ mod tests {
             if !is_var_phi {
                 return value;
             }
-            // Inputs are [phi_token, ...per-pred values], so a single
-            // predecessor puts the value at slot 1.
-            if function.node_inputs(pid).len() != 2 {
+            let head = NodeKind::Phi.input_head_len();
+            if function.node_inputs(pid).len() != head + 1 {
                 return value;
             }
-            let Some(slot1) = function.nth_input(pid, 1) else {
+            let Some(sole) = function.nth_input(pid, head) else {
                 return value;
             };
-            value = slot1;
+            value = sole;
         }
     }
 

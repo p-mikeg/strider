@@ -939,5 +939,69 @@ mod tests {
             Some("target")
         );
         assert_eq!(name(switch, NodeKind::SWITCH_SELECTOR_SLOT), Some("val"));
+        for kind in [NodeKind::Phi, NodeKind::MemPhi] {
+            assert_eq!(
+                name(kind, NodeKind::PHI_TOKEN_SLOT),
+                Some("phi"),
+                "{kind:?}"
+            );
+        }
+    }
+
+    /// Each named output slot holds the kind the signature gives it, and the
+    /// value outputs start at `output_head_len`.
+    #[test]
+    fn output_slot_consts_name_their_signature_slots() {
+        use ExpectedValueKind as E;
+        let out =
+            |k: NodeKind, slot: usize| expected_signature(&k).outputs.at(slot).map(|s| s.kind);
+        let call = NodeKind::Call { cc: None };
+        let call_other = NodeKind::CallOther { user_op_id: 0 };
+        for kind in [NodeKind::Entry, NodeKind::Region, call, call_other] {
+            assert_eq!(
+                out(kind, NodeKind::CTRL_OUT_SLOT),
+                Some(E::Control),
+                "{kind:?}"
+            );
+        }
+        for kind in [call, call_other] {
+            assert_eq!(
+                out(kind, NodeKind::CTRL_MEM_OUT_SLOT),
+                Some(E::Memory),
+                "{kind:?}"
+            );
+            assert_eq!(kind.output_head_len(), 2, "{kind:?}");
+            assert_eq!(
+                out(kind, kind.output_head_len()),
+                Some(E::AnyValue),
+                "{kind:?}"
+            );
+        }
+        let space = rsleigh::VnSpace::RAM;
+        for kind in [
+            NodeKind::InitialMemory,
+            NodeKind::Store(space),
+            NodeKind::MemPhi,
+        ] {
+            assert_eq!(
+                out(kind, NodeKind::MEM_OUT_SLOT),
+                Some(E::Memory),
+                "{kind:?}"
+            );
+            assert_eq!(expected_signature(&kind).outputs.max_len(), 1, "{kind:?}");
+        }
+        assert_eq!(
+            out(NodeKind::Region, NodeKind::REGION_PHI_OUT_SLOT),
+            Some(E::PhiToken)
+        );
+        assert_eq!(
+            out(NodeKind::If, NodeKind::IF_TRUE_OUT_SLOT),
+            Some(E::Control)
+        );
+        assert_eq!(
+            out(NodeKind::If, NodeKind::IF_FALSE_OUT_SLOT),
+            Some(E::Control)
+        );
+        assert_ne!(NodeKind::IF_TRUE_OUT_SLOT, NodeKind::IF_FALSE_OUT_SLOT);
     }
 }
