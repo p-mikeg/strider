@@ -1338,8 +1338,7 @@ mod tests {
     fn branches_to_pcode_count(word: u32) -> bool {
         let arch = SleighArch::mipsbe32();
         let reader = BufMemReader::new(word.to_be_bytes().to_vec(), 0x1000);
-        let mut sleigh =
-            rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
+        let mut sleigh = arch.sleigh(reader).expect("create Sleigh");
         let lift = sleigh.lift_one(0x1000).expect("lift_one");
         let pcode_count = lift.insns.len() as i64;
         lift.insns.iter().enumerate().any(|(i, insn)| {

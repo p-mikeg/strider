@@ -21,9 +21,7 @@ use crate::{Cfg, CfgOptions, MachineInsnAddr, Result};
 ///
 /// let arch = SleighArch::x86_64();
 /// let reader = BufMemReader::new(vec![0xc3], 0x1000);
-/// let sleigh =
-///     rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-/// let mut engine = DecodeEngine::new(arch, sleigh)?;
+/// let mut engine = DecodeEngine::new(arch, reader)?;
 /// let cfg = engine.build_cfg(0x1000u64.into(), &CfgOptions::default())?;
 /// # Ok::<(), anyhow::Error>(())
 /// ```
@@ -52,13 +50,22 @@ pub struct DecodeEngine<R: rsleigh::MemReader> {
 }
 
 impl<R: rsleigh::MemReader> DecodeEngine<R> {
+    /// An engine over `reader`, with the Sleigh built from `arch`.
+    ///
     /// # Errors
     ///
-    /// When the sla's user-op names or flowing context vars cannot be read,
-    /// the sla does not flow the arch's ISA-mode var, it does not declare a
-    /// var the arch re-derives, or `sleigh` was built from another sla or
-    /// pspec than `arch`'s.
-    pub fn new(arch: strider_target::SleighArch, sleigh: rsleigh::Sleigh<R>) -> Result<Self> {
+    /// When the sla does not load, its user-op names or flowing context vars
+    /// cannot be read, it does not flow the arch's ISA-mode var, or it does
+    /// not declare a var the arch re-derives.
+    pub fn new(arch: strider_target::SleighArch, reader: R) -> Result<Self> {
+        Self::from_sleigh(arch, arch.sleigh(reader)?)
+    }
+
+    /// [`Self::new`] over a Sleigh built already, which may be another arch's.
+    pub(crate) fn from_sleigh(
+        arch: strider_target::SleighArch,
+        sleigh: rsleigh::Sleigh<R>,
+    ) -> Result<Self> {
         // Not `unwrap_or_default`: with an empty table the CFG classifies every
         // `CallOther` as returning, so a no-return one decodes on into whatever
         // follows it, and the lift rejects every one as an unknown user-op.
@@ -93,21 +100,6 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
             .iter()
             .filter_map(|name| Some((*name, sleigh.get_context_at(0, name).ok()?)))
             .collect();
-        // After the checks above, which report the mismatches they can see.
-        // The right preset's specs are pointer-equal, costing no memcmp.
-        let (sla, want_sla) = (sleigh.sla_spec().0, arch.sla_spec().0);
-        anyhow::ensure!(
-            std::ptr::eq(sla, want_sla) || sla == want_sla,
-            "{:?}: the Sleigh was built from another sla",
-            arch.preset()
-        );
-        // The pspec separates presets that share an sla (`arm`, `arm_thumb`).
-        let (pspec, want_pspec) = (sleigh.pspec().set_vars, arch.pspec().set_vars);
-        anyhow::ensure!(
-            std::ptr::eq(pspec, want_pspec) || pspec == want_pspec,
-            "{:?}: the Sleigh was built from another pspec",
-            arch.preset()
-        );
         Ok(Self {
             sleigh,
             arch,

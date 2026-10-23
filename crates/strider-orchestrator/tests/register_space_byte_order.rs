@@ -61,9 +61,7 @@ fn lift(
     };
     let code = bytes(insns, code_order);
     let size = code.len() as u64;
-    let sleigh = rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), BufMemReader::new(code, BASE))
-        .expect("sleigh");
-    let mut lifter = Lifter::new(arch, sleigh).expect("lifter");
+    let mut lifter = Lifter::new(arch, BufMemReader::new(code, BASE)).expect("lifter");
     let cc = cc.build(lifter.sleigh_regs()).expect("cc");
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::size(size),

@@ -15,13 +15,13 @@ type TestReader = BufMemReader<Vec<u8>>;
 fn make_sleigh_x86_64(bytes: Vec<u8>, base: u64) -> Sleigh<TestReader> {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh x86_64")
+    arch.sleigh(reader).expect("create Sleigh x86_64")
 }
 
 fn build_from_bytes(bytes: Vec<u8>, start: u64) -> Cfg {
     let arch = SleighArch::x86_64();
-    let sleigh = make_sleigh_x86_64(bytes, start);
-    DecodeEngine::new(arch, sleigh)
+    let reader = BufMemReader::new(bytes, start);
+    DecodeEngine::new(arch, reader)
         .expect("decode engine")
         .build_cfg(start.into(), &CfgOptions::default())
         .expect("build_cfg on synthetic bytes")
@@ -29,8 +29,8 @@ fn build_from_bytes(bytes: Vec<u8>, start: u64) -> Cfg {
 
 fn build_from_bytes_opts(bytes: Vec<u8>, start: u64, opts: &CfgOptions) -> Cfg {
     let arch = SleighArch::x86_64();
-    let sleigh = make_sleigh_x86_64(bytes, start);
-    DecodeEngine::new(arch, sleigh)
+    let reader = BufMemReader::new(bytes, start);
+    DecodeEngine::new(arch, reader)
         .expect("decode engine")
         .build_cfg(start.into(), opts)
         .expect("build_cfg on synthetic bytes")
@@ -201,14 +201,13 @@ fn allow_code_before_start_addr_negates_below_start_tail_call() {
 
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, 0x0ff0);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::Open {
             code_before_start: true,
         },
         ..CfgOptions::default()
     };
-    let cfg = DecodeEngine::new(arch, sleigh)
+    let cfg = DecodeEngine::new(arch, reader)
         .expect("decode engine")
         .build_cfg(0x1000u64.into(), &opts)
         .unwrap();
@@ -517,12 +516,11 @@ fn a_call_returning_past_size_bound_is_reported() {
 /// `bytes` at `start` under `arch`, bounded to `size`.
 fn build_sized(arch: SleighArch, bytes: Vec<u8>, start: u64, size: u64) -> Cfg {
     let reader = BufMemReader::new(bytes, start);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
     let opts = CfgOptions {
         bound: strider_cfg::FunctionBound::size(size),
         ..CfgOptions::default()
     };
-    DecodeEngine::new(arch, sleigh)
+    DecodeEngine::new(arch, reader)
         .expect("decode engine")
         .build_cfg(start.into(), &opts)
         .expect("build_cfg")
@@ -690,8 +688,7 @@ fn build_ppc32be(words: &[u32], start: u64, opts: &CfgOptions) -> Cfg {
     let arch = SleighArch::ppc32be();
     let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_be_bytes()).collect();
     let reader = BufMemReader::new(bytes, start);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh ppc32be");
-    DecodeEngine::new(arch, sleigh)
+    DecodeEngine::new(arch, reader)
         .expect("decode engine")
         .build_cfg(start.into(), opts)
         .expect("build_cfg on synthetic ppc words")
@@ -767,8 +764,8 @@ fn build_one(engine: &mut DecodeEngine<TestReader>, start: u64) -> Cfg {
 /// the SLA spec.
 #[test]
 fn an_engine_can_be_used_for_multiple_cfg_builds() {
-    let sleigh = make_sleigh_x86_64(vec![0xc3u8], 0x1000);
-    let mut engine = DecodeEngine::new(SleighArch::x86_64(), sleigh).expect("decode engine");
+    let reader = BufMemReader::new(vec![0xc3u8], 0x1000);
+    let mut engine = DecodeEngine::new(SleighArch::x86_64(), reader).expect("decode engine");
     let count1 = build_one(&mut engine, 0x1000).region_graph().node_count();
     let count2 = build_one(&mut engine, 0x1000).region_graph().node_count();
     let cfg3 = build_one(&mut engine, 0x1000);
@@ -968,8 +965,8 @@ fn a_switch_arm_interior_to_a_sibling_arm_is_dropped() {
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
-    let sleigh = make_sleigh_x86_64(bytes, base);
-    let cfg = DecodeEngine::new(arch, sleigh)
+    let reader = BufMemReader::new(bytes, base);
+    let cfg = DecodeEngine::new(arch, reader)
         .expect("decode engine")
         .build_cfg(base.into(), &opts)
         .expect("build with an over-read switch arm");
@@ -1029,8 +1026,8 @@ fn a_switch_arm_shadowed_by_an_overlapping_region_is_dropped() {
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
-    let sleigh = make_sleigh_x86_64(bytes, base);
-    let cfg = DecodeEngine::new(arch, sleigh)
+    let reader = BufMemReader::new(bytes, base);
+    let cfg = DecodeEngine::new(arch, reader)
         .expect("decode engine")
         .build_cfg(base.into(), &opts)
         .expect("build with an over-read switch arm shadowed by an overlapping region");
@@ -1077,8 +1074,8 @@ fn a_switch_arm_inside_a_zero_pcode_op_instruction_is_dropped() {
         ..CfgOptions::default()
     };
     let arch = SleighArch::x86_64();
-    let sleigh = make_sleigh_x86_64(bytes, base);
-    let cfg = DecodeEngine::new(arch, sleigh)
+    let reader = BufMemReader::new(bytes, base);
+    let cfg = DecodeEngine::new(arch, reader)
         .expect("decode engine")
         .build_cfg(base.into(), &opts)
         .expect("build with an over-read switch arm inside a zero-pcode-op instruction");
@@ -1125,8 +1122,7 @@ fn re_imposing_a_context_over_an_it_block_builds() {
         0x00, 0x47, 0x06, 0xbf, 0x00, 0x20, 0x00, 0x20, 0x00, 0x20, 0x70, 0x47,
     ]);
     let reader = BufMemReader::new(bytes, 0x1000);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh");
-    let mut engine = DecodeEngine::new(arch, sleigh).expect("decode engine");
+    let mut engine = DecodeEngine::new(arch, reader).expect("decode engine");
 
     // Entered with the Thumb bit, as production enters a Thumb function; the
     // engine pins the entry context each round.
@@ -1182,8 +1178,7 @@ fn thumb_coproc_bytes_that_once_overran_the_parse_state_do_not_crash() {
         let mut bytes = word.to_be_bytes().to_vec();
         bytes.resize(0x40, 0x70);
         let reader = BufMemReader::new(bytes, 0x1000);
-        let mut sleigh =
-            Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh arm_thumb");
+        let mut sleigh = arch.sleigh(reader).expect("create Sleigh arm_thumb");
         // Returning at all is the assertion; a regression takes the process
         // down here rather than failing.
         drop(sleigh.lift_one(0x1000));

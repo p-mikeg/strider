@@ -70,12 +70,12 @@ pub(crate) fn make_cfg(
 pub(crate) fn make_sleigh_over(bytes: Vec<u8>, base: u64) -> rsleigh::Sleigh<TestReader> {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, base);
-    rsleigh::Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("create Sleigh")
+    arch.sleigh(reader).expect("create Sleigh")
 }
 
 /// [`make_sleigh_over`] as an engine.
 pub(crate) fn make_engine_over(bytes: Vec<u8>, base: u64) -> DecodeEngine<TestReader> {
-    DecodeEngine::new(SleighArch::x86_64(), make_sleigh_over(bytes, base))
+    DecodeEngine::new(SleighArch::x86_64(), BufMemReader::new(bytes, base))
         .expect("x86-64 decode engine")
 }
 

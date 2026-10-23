@@ -6,7 +6,6 @@
 //! for bytes that half owns and a fresh region is decoded INSIDE an
 //! instruction, with nothing reported.
 
-use rsleigh::Sleigh;
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{Cfg, CfgOptions, DecodeEngine};
 use strider_target::SleighArch;
@@ -14,8 +13,7 @@ use strider_target::SleighArch;
 fn build(bytes: Vec<u8>, start: u64) -> Cfg {
     let arch = SleighArch::x86_64();
     let reader = BufMemReader::new(bytes, start);
-    let sleigh = Sleigh::new(arch.sla_spec(), arch.pspec(), reader).expect("sleigh");
-    DecodeEngine::new(arch, sleigh)
+    DecodeEngine::new(arch, reader)
         .expect("decode engine")
         .build_cfg(start.into(), &CfgOptions::default())
         .expect("build")
