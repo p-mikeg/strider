@@ -49,8 +49,7 @@ impl crate::peephole::PeepholePass for IfCondInversion {
         _opt_ctx: &crate::pipeline::OptCtx<'_>,
         root: NodeId,
     ) -> Result<PeepholeRewrite> {
-        let Some(inner_value) =
-            PATTERN.with(|(pat, cap)| is_inverted_cond_match(edit.function(), root, pat, *cap))
+        let Some(inner_value) = bool_not_operand(edit.function(), edit.function().if_cond(root))
         else {
             return Ok(PeepholeRewrite::NoChange);
         };
@@ -60,22 +59,15 @@ impl crate::peephole::PeepholePass for IfCondInversion {
     }
 }
 
-/// Returns the `Xor`'s non-constant operand when the `If` cond is the canonical
-/// 1-bit logical NOT `Xor(x, IntConst(1)):I1`.
-fn is_inverted_cond_match(
-    function: &strider_ir::Function,
-    if_node: NodeId,
-    inner_pat: &Pattern,
-    inner_capture: Capture,
-) -> Option<ValueId> {
-    let cond_value = function.if_cond(if_node);
-    let cond_node = function.producer(cond_value);
+/// `x` when `value` is the canonical 1-bit logical NOT `Xor(x, IntConst(1)):I1`.
+pub(crate) fn bool_not_operand(function: &strider_ir::Function, value: ValueId) -> Option<ValueId> {
     // `match_at` tries the pattern at exactly this node, no graph walk.
-    let m = Matcher::new(function);
-    let hit = m
-        .match_at(cond_node, inner_pat)
-        .expect("classifier pattern is single-rooted")?;
-    hit.value(inner_capture)
+    PATTERN.with(|(pat, cap)| {
+        Matcher::new(function)
+            .match_at(function.producer(value), pat)
+            .expect("classifier pattern is single-rooted")?
+            .value(*cap)
+    })
 }
 
 /// Resolves every consuming edge to a stable `UseId` up front, so a later
