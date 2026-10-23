@@ -112,14 +112,16 @@ class Cfg:
           start a later decode stepped over.
         - `"unmapped_target"`: no byte of the image backs it. A seeded arm
           that is unmapped, or whose code falls through here, is dropped,
-          unless a call precedes the bytes, which then does not return. A branch, or
-          a conditional's not-taken side, from an arm's code to here leaves
-          through a stub and keeps the arm.
+          unless a call precedes the bytes, which then does not return. A
+          branch, or a conditional's not-taken side, from an arm's code to here
+          leaves through a stub and keeps the arm, as does an arm landing on an
+          address a direct edge already reported here.
         - `"undecodable_target"`: holds no instruction, or `data_ranges` marks
           it as data. A seeded arm leading to such bytes is dropped, unless
           its code falls through to them past a call, which then does not
           return; so is one whose decode fails for a reason no other entry
-          names, named here at its start.
+          names, named here at its start. An arm landing on an address a direct
+          edge already reported here keeps that edge's stub.
         - `"past_function_end"`: where code falls through past
           `function_max_size`, and so tail-calls this address, or where a call
           not to a `no_return_targets` entry would return; a seeded arm whose
