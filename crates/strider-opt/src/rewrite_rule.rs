@@ -6,7 +6,7 @@
 //! Asm-fingerprint absorption holds by construction: every fresh RHS node
 //! absorbs the matched footprint's fingerprints at creation (superset-only).
 
-use strider_ir::node::{NodeId, ValueId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{EditFunction, IRViewer, IRWalker};
 
 use strider_pattern::{
@@ -145,13 +145,37 @@ fn rewrite_rule_impl(
         // `replace_value` redirects EVERY use of the root, the RHS's own fresh
         // edges included, so an RHS reading the root closes a data cycle: the
         // node becomes its own input and nothing downstream rejects it.
-        if new_value != root_value && reads_value(edit, new_value, root_value, &matched_nodes) {
-            anyhow::bail!(
-                "rewrite would make the replacement read the value it replaces, \
-                 closing a data cycle; an RHS may not consume its own match root, \
-                 and rebuilding the LHS shape reaches the same node through the \
-                 dedup cache"
-            );
+        //
+        // A match through a phi binds values the phi merges, which need not
+        // sit below the root: a loop phi's back-edge value reads the phi, and
+        // a merge arm's value is defined on one path only. Such a match gets
+        // the unpruned walk and an availability check.
+        let crosses_phi = matched_nodes.iter().any(|&n| {
+            matches!(
+                edit.function().node_kind(n),
+                NodeKind::Phi | NodeKind::MemPhi
+            )
+        });
+        if new_value != root_value {
+            let cycle = if crosses_phi {
+                reads_without_phi(edit, new_value, root_value)
+            } else {
+                reads_value(edit, new_value, root_value, &matched_nodes)
+            };
+            if cycle {
+                anyhow::bail!(
+                    "rewrite would make the replacement read the value it replaces, \
+                     closing a data cycle; an RHS may not consume its own match root, \
+                     and rebuilding the LHS shape reaches the same node through the \
+                     dedup cache"
+                );
+            }
+            if crosses_phi && !available_at(edit.function(), new_value, root_value) {
+                anyhow::bail!(
+                    "rewrite would read the replacement where it is not available: \
+                     its definition does not dominate the value it replaces"
+                );
+            }
         }
 
         // Redundant for a fresh-node RHS, but load-bearing for a
@@ -192,6 +216,39 @@ fn reads_value(f: &impl IRViewer, from: ValueId, target: ValueId, matched: &[Nod
         stack.extend(f.node_inputs(producer));
     }
     false
+}
+
+/// Whether `from` reads `target` along data inputs with no phi between them,
+/// so redirecting `target`'s uses to `from` closes a cycle no phi breaks.
+fn reads_without_phi(f: &impl IRViewer, from: ValueId, target: ValueId) -> bool {
+    let mut seen = rustc_hash::FxHashSet::default();
+    let mut stack = vec![from];
+    while let Some(v) = stack.pop() {
+        if v == target {
+            return true;
+        }
+        if !seen.insert(v) {
+            continue;
+        }
+        let producer = f.producer(v);
+        if matches!(f.node_kind(producer), NodeKind::Phi | NodeKind::MemPhi) {
+            continue;
+        }
+        stack.extend(
+            f.node_inputs(producer)
+                .into_iter()
+                .filter(|&input| !f.value_kind(input).is_control()),
+        );
+    }
+    false
+}
+
+/// Whether `value` is computable wherever `replaced` is: its early position
+/// dominates `replaced`'s, which dominates every use.
+fn available_at(f: &strider_ir::Function, value: ValueId, replaced: ValueId) -> bool {
+    let tree = strider_ir::control_dominator_tree(f);
+    let at = |v| strider_ir::early_position(f, &tree, v);
+    matches!((at(value), at(replaced)), (Some(def), Some(used)) if tree.dominates(def, used))
 }
 
 /// Asserts every capture the RHS references also appears in the LHS.
@@ -1115,5 +1172,58 @@ mod tests {
         );
 
         assert_live_matches_reachable(&edit);
+    }
+
+    /// `p = phi(x, b); r = p + 3; b = r + 1`. Replacing `r` by `b`, which the
+    /// match bound through the phi, would make `b` read itself, though `b`
+    /// sits in `r`'s own block.
+    #[test]
+    fn a_rewrite_through_a_phi_may_not_close_a_cycle_its_back_edge_carries() {
+        use strider_ir::IntCmpOp;
+        use strider_pattern::{phi, var};
+
+        let x = reg_vn(0x1000, 8);
+        let mut b = RegisterSet::new().tracked(x).arg(x).build_fn().unwrap();
+        let entry = b.create_region_all().unwrap();
+        let head = b.create_region_all().unwrap();
+        let exit = b.create_region_all().unwrap();
+        b.set_entry_region_all(entry).unwrap();
+        b.set_lift_addr(Some(0x10));
+        b.set_region(entry);
+        b.build_branch(head).unwrap();
+        b.set_region(head);
+        let p = b.read_variable(&x).unwrap();
+        let three = b.build_int_const(3u64, ValueType::int(64)).unwrap();
+        let r = b
+            .build_int_binary_operation(p, three, IntBinaryOp::Add, ValueType::int(64))
+            .unwrap();
+        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let next = b
+            .build_int_binary_operation(r, one, IntBinaryOp::Add, ValueType::int(64))
+            .unwrap();
+        b.write_variable(&x, next).unwrap();
+        let stop = b.build_int_const(9u64, ValueType::int(64)).unwrap();
+        let done = b
+            .build_int_cmp_operation(next, stop, IntCmpOp::Equal, ValueType::int(64))
+            .unwrap();
+        b.build_if(done, exit, head).unwrap();
+        b.set_region(exit);
+        b.build_return(Some(r), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let root = function.producer(r);
+
+        let (init, back, c) = (Capture::new(), Capture::new(), Capture::new());
+        let lhs = int_add(
+            phi().phi_input(0, var(init)).phi_input(1, var(back)),
+            var(c),
+        );
+        let rule = rewrite_rule(lhs, var(back));
+        let mut edit = EditFunction::new(&mut function);
+        let err = rule(&mut edit, root).expect_err("the back-edge value reads the root");
+        assert!(err.to_string().contains("data cycle"), "{err}");
+        edit.clean();
+        drop(edit);
+        strider_ir::validate::validate(&function).unwrap();
     }
 }
