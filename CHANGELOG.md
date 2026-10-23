@@ -293,6 +293,8 @@
   claim, a fresh lift included, is optimized at the sound floor, where a
   run under `OptCtx::new` used the three default claims.
 - `RegionIndex::overlapping` is gone; `RegionIndex::covering` remains.
+- `strider_ir::Value`, the second name for `strider_ir::node::ValueId`, is
+  gone.
 
 ### Changed, Python
 

@@ -1,7 +1,7 @@
 use rsleigh::{Vn, VnSpace};
 
 use strider_ir::node::{ExtendOp, IntBinaryOp, IntCmpOp, NodeKind, ValueKind, ValueType};
-use strider_ir::{IRBuilderExt, IRViewer, Value};
+use strider_ir::{IRBuilderExt, IRViewer, node::ValueId};
 
 use super::handler_tests::{lift_bytes, with_test_lifter_tracking_arch};
 use crate::lift::FunctionLifter;
@@ -32,7 +32,7 @@ fn unique_vn(off: u64, size: u32) -> Vn {
     }
 }
 
-fn pk(d: &FunctionLifter<'_, TestReader>, v: Value) -> NodeKind {
+fn pk(d: &FunctionLifter<'_, TestReader>, v: ValueId) -> NodeKind {
     let f = d.builder.function();
     *f.node_kind(f.producer(v))
 }
@@ -41,10 +41,10 @@ fn pk(d: &FunctionLifter<'_, TestReader>, v: Value) -> NodeKind {
 /// is the `And` consuming the pre-write container value `initial`.
 fn classify_preserve_insert_arms(
     d: &FunctionLifter<'_, TestReader>,
-    lhs: Value,
-    rhs: Value,
-    initial: Value,
-) -> (Value, Value) {
+    lhs: ValueId,
+    rhs: ValueId,
+    initial: ValueId,
+) -> (ValueId, ValueId) {
     for (arm, other) in [(lhs, rhs), (rhs, lhs)] {
         let consumes_container = pk(d, arm) == NodeKind::IntBinaryOp(IntBinaryOp::And)
             && d.builder
@@ -60,7 +60,7 @@ fn classify_preserve_insert_arms(
 }
 
 /// The constant inputs of `value`'s producer, sorted.
-fn arm_consts(d: &FunctionLifter<'_, TestReader>, value: Value) -> Vec<u128> {
+fn arm_consts(d: &FunctionLifter<'_, TestReader>, value: ValueId) -> Vec<u128> {
     let f = d.builder.function();
     let mut consts: Vec<u128> = f
         .node_inputs(f.producer(value))
@@ -464,7 +464,7 @@ fn wide_container_subregister_read_slices_and_write_masks_at_container_width() {
 
 /// The 256-bit mask has no `u128` form, so the wide masks are read back as
 /// little-endian bytes.
-fn wide_mask_bytes(d: &FunctionLifter<'_, TestReader>, and_val: Value) -> Option<Vec<u8>> {
+fn wide_mask_bytes(d: &FunctionLifter<'_, TestReader>, and_val: ValueId) -> Option<Vec<u8>> {
     let f = d.builder.function();
     f.node_inputs(f.producer(and_val))
         .into_iter()

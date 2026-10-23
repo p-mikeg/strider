@@ -1,7 +1,7 @@
 use anyhow::anyhow;
 
 use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{Graph, IRViewer, Value};
+use strider_ir::{Graph, IRViewer, node::ValueId};
 
 pub(crate) use strider_ir_test_utils::{Rng, make_empty_fn as make_fn, make_fn_with_var};
 
@@ -58,7 +58,7 @@ pub(crate) fn standard_test() -> OptimizerPipeline {
 }
 
 /// The first `Return`'s first value input.
-pub(crate) fn return_value(graph: &Graph) -> crate::Result<Value> {
+pub(crate) fn return_value(graph: &Graph) -> crate::Result<ValueId> {
     let ret = graph
         .all_node_ids()
         .find(|&n| matches!(graph.node_kind(n), NodeKind::Return))
@@ -89,18 +89,18 @@ pub(crate) fn find_unique_if(graph: &Graph) -> NodeId {
 /// phi needs collapsing first.
 pub(crate) mod memory_shapes {
     use strider_ir::node::ValueType;
-    use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, Value};
+    use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, node::ValueId};
     use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, sp_frame, stack_vn_x86_64};
 
     const TY: ValueType = ValueType::int(64);
     /// A slot no shape reads, taking the loads that would otherwise be dead.
     const SINK: usize = usize::MAX >> 8;
 
-    fn address(b: &mut FunctionBuilder, slot: usize) -> crate::Result<Value> {
+    fn address(b: &mut FunctionBuilder, slot: usize) -> crate::Result<ValueId> {
         b.build_int_const(0x10_0000 + 8 * slot as u64, TY)
     }
 
-    fn store(b: &mut FunctionBuilder, slot: usize, value: Value) -> crate::Result<()> {
+    fn store(b: &mut FunctionBuilder, slot: usize, value: ValueId) -> crate::Result<()> {
         let addr = address(b, slot)?;
         b.build_store(addr, value, rsleigh::VnSpace::RAM)?;
         Ok(())
@@ -111,7 +111,7 @@ pub(crate) mod memory_shapes {
         store(b, slot, v)
     }
 
-    fn load(b: &mut FunctionBuilder, slot: usize) -> crate::Result<Value> {
+    fn load(b: &mut FunctionBuilder, slot: usize) -> crate::Result<ValueId> {
         let addr = address(b, slot)?;
         b.build_load(addr, rsleigh::VnSpace::RAM, TY)
     }
@@ -358,7 +358,7 @@ pub(crate) mod memory_shapes {
         Ok(fg)
     }
 
-    fn sp_plus(b: &mut FunctionBuilder, sp: rsleigh::Vn, k: i64) -> crate::Result<Value> {
+    fn sp_plus(b: &mut FunctionBuilder, sp: rsleigh::Vn, k: i64) -> crate::Result<ValueId> {
         let sp_value = b.read_variable(&sp)?;
         let k = b.build_int_const(k as u64, ValueType::int(32))?;
         b.build_int_binary_operation(sp_value, k, IntBinaryOp::Add, ValueType::int(32))
@@ -420,7 +420,7 @@ pub(crate) mod memory_shapes {
     /// ```
     ///
     /// Returns the builder, its terminator not yet built, and the reload.
-    pub(crate) fn stack_top_spill() -> crate::Result<(FunctionBuilder, Value)> {
+    pub(crate) fn stack_top_spill() -> crate::Result<(FunctionBuilder, ValueId)> {
         let sp = strider_ir_test_utils::stack_vn_x86();
         let mut b = sp_frame(sp)
             .stack_args(strider_ir_test_utils::stack_args_at(0, 4))

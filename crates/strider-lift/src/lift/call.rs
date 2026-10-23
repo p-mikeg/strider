@@ -123,12 +123,12 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         &mut self,
         user_op_id: u64,
         name: &str,
-        explicit_args: &[strider_ir::Value],
+        explicit_args: &[strider_ir::node::ValueId],
         abi: &strider_target::BuiltCallOtherAbi,
         output: Option<rsleigh::Vn>,
         terminate: bool,
-    ) -> Result<Option<strider_ir::Value>> {
-        let mut args: Vec<strider_ir::Value> =
+    ) -> Result<Option<strider_ir::node::ValueId>> {
+        let mut args: Vec<strider_ir::node::ValueId> =
             Vec::with_capacity(abi.implicit_reads.len() + explicit_args.len());
         for vn in &abi.implicit_reads {
             // An ABI footprint names a register the function's tracked set may
