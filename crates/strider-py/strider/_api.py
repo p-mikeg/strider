@@ -574,9 +574,6 @@ class ElfLifter(Lifter):
         Releases the GIL as `Lifter.analyze` does, and a daemon thread inside
         it at interpreter finalization aborts the process as it does there.
         """
-        # A rebuild between load_elf and this call would otherwise be read
-        # through a stale mapping: silently different bytes, or a SIGBUS.
-        self._elf.check_unchanged()
         target = entry
         if opts is None:
             opts = LifterOptions()
