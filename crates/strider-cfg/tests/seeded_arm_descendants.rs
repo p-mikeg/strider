@@ -453,3 +453,55 @@ fn an_arm_calling_before_unmapped_bytes_is_kept_and_ends_at_the_call() {
     let cfg = build_falling_arm(0x15, CALL_OUT, None);
     assert_arm_sealed_at_its_call(&cfg, strider_cfg::Reason::UnmappedTarget);
 }
+
+/// One `jmp rax` at 0x1002 seeded with `arms`, over `bytes`, `data` marked as
+/// data, the bound left open.
+fn build_after_a_guard(bytes: Vec<u8>, arms: &[u64], data: Option<std::ops::Range<u64>>) -> Cfg {
+    let known = FxHashMap::from_iter([(
+        PcodeInsnAddr::at_machine_start(0x1002),
+        ResolvedTargets::table(arms.iter().map(|&a| strider_cfg::ResolvedTarget::from(a))),
+    )]);
+    let opts = CfgOptions {
+        known_targets: &known,
+        data_ranges: strider_cfg::DataRanges::new(data),
+        ..CfgOptions::default()
+    };
+    DecodeEngine::new(SleighArch::x86_64(), BufMemReader::new(bytes, BASE))
+        .expect("decode engine")
+        .build_cfg(BASE.into(), &opts)
+        .expect("build")
+}
+
+/// An arm landing on a stub a direct edge already left, at an address it
+/// reported, keeps the stub: the bytes say nothing about the table's bound.
+///
+/// ```text
+/// 1000  je <target>
+/// 1002  jmp rax           ; arms 0x1004 and <target>
+/// 1004  ret
+/// ```
+#[test]
+fn an_arm_onto_a_stub_a_direct_edge_reported_keeps_it() {
+    // 0x1009 is data; 0x1020 is past the image.
+    for (target, data, reason) in [
+        (
+            0x1009u64,
+            Some(0x1009..0x100b),
+            strider_cfg::Reason::UndecodableTarget,
+        ),
+        (0x1020, None, strider_cfg::Reason::UnmappedTarget),
+    ] {
+        let je = u8::try_from(target - 0x1002).expect("short je");
+        let bytes = image(0x10, &[(0x1000, &[0x74, je, 0xff, 0xe0, 0xc3])]);
+        let cfg = build_after_a_guard(bytes, &[0x1004, target], data);
+        assert_eq!(arms_at(&cfg, 0x1002), [0x1004, target], "arm {target:#x}");
+        assert_eq!(undecodable(&cfg), Vec::<u64>::new(), "arm {target:#x}");
+        assert!(
+            cfg.incomplete()
+                .of(reason)
+                .any(|a| a.machine_addr.addr == target),
+            "arm {target:#x}"
+        );
+        assert_no_dangling_successor(&cfg);
+    }
+}
