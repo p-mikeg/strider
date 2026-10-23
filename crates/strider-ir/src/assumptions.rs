@@ -70,6 +70,10 @@ pub struct AssumptionOptions {
     /// [`escape_analysis`](Self::escape_analysis), the check misses a callee
     /// reading an address from a register its convention preserves.  A
     /// memory-clobbering `CallOther` is outside it entirely.
+    /// Code that stores its entry SP or holds it in a clobbered register at a
+    /// call (the APCS frame record of ARM `-mapcs-frame`, `mov ip, sp; push
+    /// {.., ip, ..}`) hands that address over, so there every call blocks and
+    /// no stack argument read after a call is found, as with the claim off.
     /// Default ON.
     pub assume_incoming_args_survive_calls: bool,
     /// A `Store` rooted at a *different* SP base than the entry SP (e.g. an

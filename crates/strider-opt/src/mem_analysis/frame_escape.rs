@@ -39,6 +39,12 @@
 //! since a leaked pointer can be stored to a global and reloaded by a later
 //! callee.
 //!
+//! A frame that stores its entry SP is exposed by that store, as the ARM APCS
+//! frame record does (`mov ip, sp; push {.., ip, ..}`).  It counts for
+//! [`incoming_area_escapes`] too, since its offset 0 lies inside ARM's
+//! register-argument homes, and the frame also holds the entry SP in `ip`, a
+//! clobbered register, at its first call.
+//!
 //! [`incoming_area_escapes`] asks the narrower question of whether the
 //! incoming-argument memory may be reached.  It places an exposure only where
 //! the use hands over the address itself (a call argument, a stored value, a
