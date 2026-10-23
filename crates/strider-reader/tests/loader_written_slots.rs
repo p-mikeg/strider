@@ -1052,3 +1052,151 @@ fn either_sign_of_an_android_packed_table_serves_no_relocated_slot() {
         assert!(got.is_err(), "{what}: {got:?}");
     }
 }
+
+/// `getl`'s and `geti`'s `mov 0x0,%eax` operands, the twin's `R_386_32`
+/// sites against `loc` and `imp`.
+fn textrel_sites(twin: &OwnedElf) -> (u64, u64) {
+    let r_386_32 = object::elf::R_386_32;
+    (
+        dynamic_site(twin, r_386_32, Some("loc")),
+        dynamic_site(twin, r_386_32, Some("imp")),
+    )
+}
+
+const APPLIED: RelocationMode = RelocationMode::Applied { got_is_rom: false };
+
+/// `llvm-objcopy --strip-sections` leaves `ld.so` its `PT_DYNAMIC`, which
+/// still names the `.rel.dyn` that relocates code. No walk reads it without
+/// the section headers, so a relocating load refuses the image rather than
+/// decode `getl` as `return *(int *)0`.
+#[test]
+fn a_textrel_image_without_section_headers_is_refused() {
+    let twin = open("x86_textrel.elf");
+    let (loc_site, imp_site) = textrel_sites(&twin);
+    let reader = ElfFileMemReader::new(&twin, APPLIED).unwrap();
+    let loc = dynsym_value(&twin, "loc");
+    assert_eq!(fetch_word(&reader, loc_site, 4, true), loc, "twin getl");
+    let mut buf = [0u8; 4];
+    let at = VnAddr {
+        off: imp_site,
+        space: VnSpace::RAM,
+    };
+    assert!(MemReader::read(&reader, at, &mut buf).is_err(), "twin geti");
+
+    let elf = open("x86_textrel_noshdr.elf");
+    assert_eq!(elf.checked_file().unwrap().sections().count(), 0);
+    for mode in [APPLIED, GOT_IS_ROM] {
+        match ElfFileMemReader::new(&elf, mode) {
+            Err(e) => assert!(
+                format!("{e:#}").contains("no section header covers"),
+                "{e:#}"
+            ),
+            Ok(reader) => panic!(
+                "{mode:?}: getl's operand served {:#x}",
+                fetch_word(&reader, loc_site, 4, true)
+            ),
+        }
+    }
+    let unapplied = ElfFileMemReader::new(&elf, RelocationMode::Unapplied).unwrap();
+    assert_eq!(fetch_word(&unapplied, loc_site, 4, true), 0, "file bytes");
+}
+
+/// The stripped image with `dropped` tags rewritten to `DT_DEBUG`, and with
+/// `rwx` its code `PT_LOAD` made writable too.
+fn textrel_noshdr_patched(dropped: &'static [u32], rwx: bool) -> OwnedElf {
+    patched("x86_textrel_noshdr.elf", |bytes, _| {
+        let phoff = u32::from_le_bytes(bytes[0x1c..0x20].try_into().unwrap()) as usize;
+        let phnum = usize::from(u16::from_le_bytes(bytes[0x2c..0x2e].try_into().unwrap()));
+        let mut dynamic = None;
+        for ph in (0..phnum).map(|i| phoff + 32 * i) {
+            let p_type = u32::from_le_bytes(bytes[ph..ph + 4].try_into().unwrap());
+            let p_flags = u32::from_le_bytes(bytes[ph + 24..ph + 28].try_into().unwrap());
+            if rwx && p_type == object::elf::PT_LOAD && p_flags & object::elf::PF_X != 0 {
+                let rwx = object::elf::PF_R | object::elf::PF_W | object::elf::PF_X;
+                bytes[ph + 24..ph + 28].copy_from_slice(&rwx.to_le_bytes());
+            }
+            if p_type == object::elf::PT_DYNAMIC {
+                let off = u32::from_le_bytes(bytes[ph + 4..ph + 8].try_into().unwrap());
+                let size = u32::from_le_bytes(bytes[ph + 16..ph + 20].try_into().unwrap());
+                dynamic = Some((off as usize, size as usize));
+            }
+        }
+        let (off, size) = dynamic.expect("PT_DYNAMIC");
+        for at in (off..off + size).step_by(8) {
+            let tag = u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+            if dropped.contains(&tag) {
+                bytes[at..at + 4].copy_from_slice(&object::elf::DT_DEBUG.to_le_bytes());
+            }
+        }
+    })
+}
+
+/// Each sign that the loader relocates code is enough on its own:
+/// `DT_TEXTREL`, `DF_TEXTREL` in `DT_FLAGS`, and a writable and executable
+/// `PT_LOAD`, each left alone by rewriting the others away.
+#[test]
+fn each_sign_of_relocated_code_without_section_headers_is_refused() {
+    use object::elf::{DT_FLAGS, DT_TEXTREL};
+    let (loc_site, _) = textrel_sites(&open("x86_textrel.elf"));
+    for (what, elf) in [
+        ("DT_TEXTREL", textrel_noshdr_patched(&[DT_FLAGS], false)),
+        ("DF_TEXTREL", textrel_noshdr_patched(&[DT_TEXTREL], false)),
+        ("RWX", textrel_noshdr_patched(&[DT_TEXTREL, DT_FLAGS], true)),
+    ] {
+        match ElfFileMemReader::new(&elf, APPLIED) {
+            Err(e) => assert!(
+                format!("{e:#}").contains("no section header covers"),
+                "{what}: {e:#}"
+            ),
+            Ok(reader) => panic!(
+                "{what}: getl's operand served {:#x}",
+                fetch_word(&reader, loc_site, 4, true)
+            ),
+        }
+    }
+    let neither = textrel_noshdr_patched(&[DT_TEXTREL, DT_FLAGS], false);
+    assert!(
+        ElfFileMemReader::new(&neither, APPLIED).is_ok(),
+        "no code sign"
+    );
+}
+
+/// `.rela.dyn`'s header rewritten to `SHT_PROGBITS`: no walk reads the
+/// `DT_RELA` table, so the ROM serves no `.data.rel.ro`, where `ptrs[0]`
+/// would read the file's 0 rather than `g1`.
+#[test]
+fn a_dynamic_table_no_walked_header_covers_serves_no_relocated_slot() {
+    let name = "aarch64_plain_rela.elf";
+    let elf = open(name);
+    let (ptrs, g1) = (dynsym_or_symtab(&elf, "ptrs"), dynsym_or_symtab(&elf, "g1"));
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    assert_eq!(rom_word(&reader, ptrs, 8, true), Ok(g1), "unpatched");
+    let elf = patched(name, |bytes, obj| {
+        let shoff = u64::from_le_bytes(bytes[0x28..0x30].try_into().unwrap()) as usize;
+        let index = obj.section_by_name(".rela.dyn").unwrap().index().0;
+        let at = shoff + 64 * index + 4;
+        bytes[at..at + 4].copy_from_slice(&object::elf::SHT_PROGBITS.to_le_bytes());
+    });
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    let got = rom_word(&reader, ptrs, 8, true);
+    assert!(got.is_err(), "{got:?}");
+}
+
+/// `.rela.dyn`'s `sh_offset` moved to the end of the file: the header's
+/// `sh_addr` extent is `DT_RELA`'s, but no walk reads the bytes `ld.so` does
+/// there, so it covers nothing.
+#[test]
+fn a_header_off_the_mapped_bytes_covers_no_dynamic_table() {
+    let name = "aarch64_plain_rela.elf";
+    let ptrs = dynsym_or_symtab(&open(name), "ptrs");
+    let elf = patched(name, |bytes, obj| {
+        let shoff = u64::from_le_bytes(bytes[0x28..0x30].try_into().unwrap()) as usize;
+        let index = obj.section_by_name(".rela.dyn").unwrap().index().0;
+        let at = shoff + 64 * index + 0x18;
+        let end = bytes.len() as u64;
+        bytes[at..at + 8].copy_from_slice(&end.to_le_bytes());
+    });
+    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
+    let got = rom_word(&reader, ptrs, 8, true);
+    assert!(got.is_err(), "{got:?}");
+}

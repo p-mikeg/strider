@@ -567,6 +567,14 @@
 
 ### Fixed
 
+- Python: `load_elf` and `add_elf` with relocations applied raise
+  `StriderError` for an image whose code (`DT_TEXTREL`, or a writable and
+  executable mapping) a `PT_DYNAMIC` relocation table no section header
+  covers may relocate, as after `llvm-objcopy --strip-sections`. No
+  relocation was applied or holed there, so `mov loc,%eax` decoded as a load
+  from address 0, which folded to the ELF magic. Without such code,
+  `relocated_got_is_rom=True` serves no `.got` or `.data.rel.ro` of an
+  image carrying a table no header covers.
 - Python: `relocated_got_is_rom=True` serves no `.got` or `.data.rel.ro` of
   an image carrying Android packed relocations (`SHT_ANDROID_RELA`, lld's
   `--pack-dyn-relocs=android`), which strider does not decode. Every

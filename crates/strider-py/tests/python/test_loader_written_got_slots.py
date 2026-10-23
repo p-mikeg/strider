@@ -91,3 +91,11 @@ def test_a_call_through_an_android_packed_table_is_not_folded():
     assert "iconst[0x0]" not in text, text
     assert " load" in text, text
 
+
+def test_a_textrel_image_without_section_headers_is_refused():
+    """`llvm-objcopy --strip-sections` leaves only `PT_DYNAMIC` to name the
+    `.rel.dyn` that relocates `getl`'s operand, which strider reads off
+    section headers; unrelocated, `getl` loaded from address 0."""
+    with pytest.raises(strider.StriderError, match="no section header covers"):
+        strider.lift.load_elf(_image("x86_textrel_noshdr.elf"))
+    strider.lift.load_elf(_image("x86_textrel_noshdr.elf"), apply_relocations=False)
