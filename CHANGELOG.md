@@ -567,6 +567,10 @@
 
 ### Fixed
 
+- Python: a dynamic relocation field no one mapping holds whole, over two
+  adjacent read-only mappings or past the end of the one holding its start,
+  is a hole. It was neither patched nor holed, so its mapped bytes served
+  the file's.
 - Python: the `load_elf` and `add_elf` docs say that `apply_relocations=False`
   serves every relocation field still mapped, a `.rodata` table's and a
   TEXTREL image's code included, as its file bytes.
