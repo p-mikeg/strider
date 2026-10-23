@@ -20,6 +20,8 @@ pub(crate) mod fixtures;
 
 pub(crate) mod cone;
 
+pub(crate) mod quad;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Arch {
     X86,
