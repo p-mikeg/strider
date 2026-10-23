@@ -446,11 +446,15 @@ fn xscvudqp_and_xsdivqp_are_distinct_user_ops() {
         let divide = the_call_other(&f, "vsx300_xsdivqp");
         assert_eq!(operands(&f, convert).len(), 1, "{arch:?} xscvudqp");
         assert_eq!(operands(&f, divide).len(), 2, "{arch:?} xsdivqp");
-        // The new op is the last of the 877, so no other id moved.
+        // The fork's ops close the list of 878, so no upstream id moved.
         let (strider, _) = common::strider_over_bytes(arch, vec![0; 4], BASE, None);
         let names = strider.user_op_names();
-        assert_eq!(names.len(), 877, "{arch:?}");
-        assert_eq!(names[876], "vsx300_xsdivqp", "{arch:?}");
+        assert_eq!(names.len(), 878, "{arch:?}");
+        assert_eq!(
+            names[876..],
+            ["vsx300_xsdivqp", "fpscrRoundingControl"],
+            "{arch:?}"
+        );
         assert_eq!(names[875], "altv300_71", "{arch:?}");
         assert_eq!(names[373], "vsx300_47", "{arch:?}");
     }

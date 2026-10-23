@@ -393,15 +393,19 @@
 
 ### Added, Python
 
-- `AssumptionOptions.mxcsr_rounds_to_nearest` (default `True`): the x86
-  SSE rounding mode, MXCSR.RC, is round to nearest even at every conversion
-  that rounds by it (`cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`,
-  `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`,
-  `cvtsi2ss`, the 64-bit `cvtsi2sd` and the scalar VEX forms). Off, each one
-  reads RC and selects among nearest even, down, up and toward zero, so a
-  mode `ldmxcsr` sets folds. `AssumptionOptions.none()` clears it; the lift
-  reads it, so `optimize` refuses to add it. Before, every one of these
-  rounded to nearest even and `none()` did not lift that premise.
+- `AssumptionOptions.fp_rounding_mode_is_nearest` (default `True`): the x86
+  SSE rounding mode, MXCSR.RC, and the PowerPC FPSCR.RN are round to nearest
+  even at every conversion that rounds by them (`cvtsd2si`, `cvtss2si`,
+  `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`,
+  `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`, the 64-bit `cvtsi2sd` and the scalar
+  VEX forms; `fctid`, `fctiw`, `fctidu`, `fctiwu`). Off, each one reads the
+  mode and selects among nearest even, down, up and toward zero, so a mode
+  `ldmxcsr` or `mtfsfi` sets folds. `AssumptionOptions.none()` clears it; the
+  lift reads it, so `optimize` refuses to add it. Before, the SSE forms
+  rounded to nearest even and `none()` did not lift that premise. MXCSR.FTZ
+  and DAZ are still taken as 0. A function holding a rounding SSE
+  conversion now tracks MXCSR (and a PowerPC one the RN bits), which shifts
+  the `InitialVnId`s after it.
 - `CallingConvention.custom(reg_args_adjoin_stack_args=True)` declares that
   the argument registers have stack homes just below the stack arguments, as
   the ARM, MIPS and PowerPC64 presets do; a custom convention for such an ABI
@@ -534,11 +538,22 @@
 
 ### Fixed
 
+- Python: PowerPC `fctid` and `fctiw` round by FPSCR.RN, where they
+  truncated, and `fctidu` and `fctiwu` break a tie to even, where they broke
+  it away from zero (all four under `fp_rounding_mode_is_nearest`, which takes
+  RN as 0). Every float-to-integer form, the `z` ones too, saturates a value
+  out of range and gives the ISA's result for a NaN (the most negative value,
+  0 for the unsigned forms), where it gave the x86 indefinite.
+- Python: PowerPC `mtfsfi` writes its immediate U to the field, where it
+  wrote U shifted left one bit, into the next field.
 - Python: ppc64 `xsadddp` sets the FPSCR bits `fadd` sets (FPRF, VXSNAN
   and the summaries). It set none, so an `mffs` or `mcrfs` after it read the
-  bits from before it, and a branch on them folded. No scalar float op the
-  sla spells in p-code sets FR, FI, OX, UX, VXISI, VXIDI, VXIMZ, VXCVI or
-  VXSQRT: those keep the last explicit write's value.
+  bits from before it, and a branch on them folded. It shares `fadd`'s two
+  flaws: VXSNAN is set for a quiet NaN too, and XX ORs in the FI no p-code
+  op sets. No scalar float op the sla spells in p-code sets FR, FI, OX, UX,
+  VXISI, VXIDI, VXIMZ or VXSQRT, nor the signed conversions VXCVI: those keep
+  the last explicit write's value, so `mtfsb0` FI, `fadd`, `mffs` reads FI
+  as 0.
 - Python: ppc64 `xsdivqp` lifts to its own `call_other`, `vsx300_xsdivqp`,
   the last user op, so no other id moved. It shared `xscvudqp`'s
   `vsx300_47`, so a query by name could not tell the two apart.
@@ -706,7 +721,7 @@
   `cvtps2pi`) break a tie to even, the default MXCSR mode: 2.5 converted to
   3. `vcvtsd2si r64` and `cvtps2pi` returned the rounded value's float bits,
   and `cvtpd2dq`, `cvtps2dq` and `cvtpd2pi` truncated. They assume RC's
-  default under `mxcsr_rounds_to_nearest`, and read RC without it.
+  default under `fp_rounding_mode_is_nearest`, and read RC without it.
 - x87 `fist`, `fistp` and `frndint` round by the control word's RC (nearest
   even, down, up or toward zero) instead of always breaking a tie away from
   zero. gcc's i386 `(int)x`, which sets RC to truncate around a `fistp`, now
@@ -903,9 +918,10 @@
 
 ### Added, Rust
 
-- `AssumptionOptions::mxcsr_rounds_to_nearest`, default on, read by the
-  lift through the fork's new last x86 user op `mxcsrRoundingControl`
-  (`strider_target::call_other_abi::is_mxcsr_rounding_control`).
+- `AssumptionOptions::fp_rounding_mode_is_nearest`, default on, read by the
+  lift through the fork's new last user ops, x86 `mxcsrRoundingControl` and
+  PowerPC `fpscrRoundingControl`
+  (`strider_target::call_other_abi::is_rounding_mode_control`).
 - `strider_pattern::instantiate_guarded`: `instantiate` with a check run
   once every template node's kind is resolved, before the first node is
   created.

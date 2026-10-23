@@ -200,9 +200,11 @@ fn control_live(f: &Function, c: ValueId, init: u128) -> bool {
     }
 }
 
-/// The `rax` an x86-64 function over `bytes` at `base` returns, lifted under
-/// `claims`, with the function to evaluate it in.
-fn analyze_rax(
+/// The first integer register an `arch` function over `bytes` at `base`
+/// returns (`rax`, `r3`), lifted under `claims`, with the function to
+/// evaluate it in.
+fn analyze_ret(
+    arch: super::Arch,
     bytes: Vec<u8>,
     base: u64,
     claims: &strider_orchestrator::opt::AssumptionOptions,
@@ -210,7 +212,7 @@ fn analyze_rax(
     let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
         strider_ir_test_utils::MockRom::raw_bytes(base, bytes.clone()),
     );
-    let (mut strider, cc) = super::strider_over_bytes(super::Arch::X64, bytes, base, Some(rom));
+    let (mut strider, cc) = super::strider_over_bytes(arch, bytes, base, Some(rom));
     let opts = strider_orchestrator::AnalyzeOptions {
         assumptions: claims.clone(),
         ..Default::default()
@@ -223,7 +225,7 @@ fn analyze_rax(
         .walk()
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
         .expect("one Return");
-    let v = f.node_inputs(ret).into_iter().nth(2).expect("rax slot");
+    let v = f.node_inputs(ret).into_iter().nth(2).expect("return slot");
     (f, v)
 }
 
@@ -247,7 +249,7 @@ pub(crate) fn returned_rax_under(
     base: u64,
     claims: &strider_orchestrator::opt::AssumptionOptions,
 ) -> u64 {
-    let (f, v) = analyze_rax(bytes, base, claims);
+    let (f, v) = analyze_ret(super::Arch::X64, bytes, base, claims);
     let [zeros, ones] = [0, u128::MAX].map(|init| as_rax(eval(&f, v, init)));
     assert_eq!(zeros, ones, "rax depends on an initial register");
     zeros
@@ -265,6 +267,18 @@ pub(crate) fn returned_rax_from_under(
     init: u128,
     claims: &strider_orchestrator::opt::AssumptionOptions,
 ) -> u64 {
-    let (f, v) = analyze_rax(bytes, base, claims);
+    returned_from_under(super::Arch::X64, bytes, base, init, claims)
+}
+
+/// The first integer register an `arch` function returns, every initial
+/// register reading `init`, lifted under `claims`.
+pub(crate) fn returned_from_under(
+    arch: super::Arch,
+    bytes: Vec<u8>,
+    base: u64,
+    init: u128,
+    claims: &strider_orchestrator::opt::AssumptionOptions,
+) -> u64 {
+    let (f, v) = analyze_ret(arch, bytes, base, claims);
     as_rax(eval(&f, v, init))
 }
