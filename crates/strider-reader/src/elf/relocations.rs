@@ -1468,8 +1468,8 @@ fn is_ifunc(st_info: u8) -> bool {
 ///   which the loader replaces before the program runs or on the first call.
 ///
 /// The local entries hold `B + value`, `B` modelled 0, and stay as the file
-/// has them. Without `.dynsym` no symbol can be checked, so every global
-/// entry is a hole, and a dynamic image missing one of the tags that place
+/// has them. Without `.dynsym`, or with one that is not `DT_SYMTAB`'s table,
+/// no symbol can be checked, so every global entry is a hole, and a dynamic image missing one of the tags that place
 /// the GOT makes every `.got` word one. A hole names `R_MIPS_GLOB_DAT`, the
 /// relocation that covers the same kind of entry outside the primary GOT.
 fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
@@ -1529,7 +1529,9 @@ fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
         hole(ctx, addr);
     }
 
-    let dynsym = obj.dynamic_symbol_table();
+    // Only a `.dynsym` that is `DT_SYMTAB`'s table says which entries the
+    // loader leaves as they are.
+    let dynsym = obj.dynamic_symbol_table().filter(|_| ctx.symbols);
     let globals = tags.symtabno.saturating_sub(tags.gotsym);
     for i in 0..globals {
         let Some(addr) = tags.local_gotno.checked_add(i).and_then(slot) else {
