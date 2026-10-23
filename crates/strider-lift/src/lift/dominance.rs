@@ -1,13 +1,12 @@
 use graph_algorithms::dominance::{Dominators, Frontiers};
 use petgraph::Direction::Incoming;
-use rustc_hash::{FxHashMap, FxHashSet};
 use strider_cfg::{Cfg, RegionId};
 
 pub(crate) struct DomInfo {
-    doms: Dominators<RegionId>,
+    pub(crate) doms: Dominators<RegionId>,
     /// Where a definition in `r` first stops dominating, hence where a phi may
     /// be needed.  An absent key means an empty frontier.
-    frontiers: Frontiers<RegionId>,
+    pub(crate) frontiers: Frontiers<RegionId>,
     /// The order the SSA renaming walk uses: every region appears after its
     /// immediate dominator, siblings ascending by `RegionId`. It is the order
     /// the lift translates regions in, so every body node's NodeId follows it.
@@ -30,31 +29,10 @@ impl DomInfo {
         }
     }
 
-    /// `None` for the entry region and for any region unreachable from it.
-    #[must_use]
-    pub(crate) fn immediate_dominator(&self, r: RegionId) -> Option<RegionId> {
-        self.doms.immediate_dominator(r)
-    }
-
     /// Excludes regions unreachable from the entry.
     #[must_use]
     pub(crate) fn preorder(&self) -> &[RegionId] {
         &self.preorder
-    }
-
-    /// Cytron phi placement: maps `variable -> defining regions` to the
-    /// variables needing a value `Phi` at each region.
-    #[must_use]
-    pub(crate) fn iterated_frontier<Var, C, H>(
-        &self,
-        def_sites: &std::collections::HashMap<Var, C, H>,
-    ) -> FxHashMap<RegionId, FxHashSet<Var>>
-    where
-        Var: Copy + Eq + std::hash::Hash,
-        H: std::hash::BuildHasher,
-        for<'a> &'a C: IntoIterator<Item = &'a RegionId>,
-    {
-        graph_algorithms::dominance::phi_placement(&self.frontiers, def_sites)
     }
 }
 

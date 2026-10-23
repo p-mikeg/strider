@@ -162,8 +162,9 @@ pub(crate) fn is_register_space_access(insn: &rsleigh::Insn) -> bool {
 /// other.
 ///
 /// The slice itself is returned, not its container, because the width is the
-/// access width. [`enclosing_register`] is what the tracked set is seeded
-/// with, and `write_vn` reaches it from the slice through the container map.
+/// access width. The declared register enclosing it is what the tracked set is
+/// seeded with, and `write_vn` reaches it from the slice through the container
+/// map.
 pub(super) fn register_slot(
     insn: &rsleigh::Insn,
     consts: &PcodeConsts,
@@ -184,16 +185,6 @@ fn raw_register_slot(insn: &rsleigh::Insn, consts: &PcodeConsts, size: u32) -> O
         addr_off: off,
         size,
     })
-}
-
-/// The declared register a resolved slot is a slice of. Seeded into the
-/// tracked set so the slot and every other view of that register share one SSA
-/// variable.
-pub(crate) fn enclosing_register(
-    declared: &[rsleigh::Vn],
-    slot: &rsleigh::Vn,
-) -> Option<rsleigh::Vn> {
-    vn_container::smallest_enclosing(declared, slot)
 }
 
 /// The tracked varnodes an UNRESOLVABLE register-space write may reach: the
