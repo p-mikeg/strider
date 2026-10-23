@@ -38,6 +38,7 @@ PPC32   := powerpc-linux-gnu-gcc
 PPC64   := powerpc64-linux-gnu-gcc
 PPC64LE := powerpc64le-linux-gnu-gcc
 PPC64LE_OBJCOPY := powerpc64le-linux-gnu-objcopy
+LLD_A64 := clang --target=aarch64-linux-gnu -fuse-ld=lld
 
 IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           mips64le_got_lib.elf mips64le_got.elf \
@@ -48,7 +49,8 @@ IMAGES := mips32be_got_lib.elf mips32be_got.elf \
           x64_nodynsym.elf mips32be_micromips.elf x64_abs32.o \
           mips32be_relro.elf x64_relro_pie.elf ppc64be_elfv1.elf \
           ppc32be_got2.elf x64_copy_lib.elf x64_copy_pie.elf \
-          aarch64_copy_lib.elf aarch64_copy.elf
+          aarch64_copy_lib.elf aarch64_copy.elf \
+          aarch64_android_rela.elf aarch64_plain_rela.elf
 
 .PHONY: all clean
 all: $(addprefix $(OUTDIR)/,$(IMAGES))
@@ -135,6 +137,15 @@ $(OUTDIR)/aarch64_copy_lib.elf: src/copy_lib.c | $(OUTDIR)
 $(OUTDIR)/aarch64_copy.elf: src/copy.c $(OUTDIR)/aarch64_copy_lib.elf
 	$(A64) $(filter-out -fPIC,$(CFLAGS)) -fno-pic -no-pie -Wl,-z,relro,-z,now \
 	  -Wl,-e,get3 $< $(OUTDIR)/aarch64_copy_lib.elf -o $@
+
+# The same library with its dynamic relocations packed the Android way and
+# not.
+ANDROID_SRC := src/android_ptrs.c src/android_call.c
+$(OUTDIR)/aarch64_android_rela.elf: $(ANDROID_SRC) | $(OUTDIR)
+	$(LLD_A64) $(CFLAGS) -shared -Wl,-z,relro,-z,now \
+	  -Wl,--pack-dyn-relocs=android $(ANDROID_SRC) -o $@
+$(OUTDIR)/aarch64_plain_rela.elf: $(ANDROID_SRC) | $(OUTDIR)
+	$(LLD_A64) $(CFLAGS) -shared -Wl,-z,relro,-z,now $(ANDROID_SRC) -o $@
 
 clean:
 	rm -rf $(OUTDIR)

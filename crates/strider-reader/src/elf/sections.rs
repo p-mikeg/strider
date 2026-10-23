@@ -80,7 +80,8 @@ pub enum LoadFilter {
     /// A section of either name is carved out only where the link really maps
     /// it writable and not as TLS (`SHF_ALLOC | SHF_WRITE`, no `SHF_TLS`), and
     /// `relocate = false` is refused outright: it denies the very claim this
-    /// filter makes.
+    /// filter makes. None is carved out of an image carrying relocations no
+    /// walk reads (Android's packed tables).
     ImmutableAndRelocatedGot,
     /// Every allocatable mapping, `.data` / `.got` / `.data.rel.ro` included.
     AllAllocatable,
@@ -146,7 +147,13 @@ fn is_relocated_got_name(name: &str) -> bool {
 /// (`SHF_ALLOC | SHF_WRITE`, no `SHF_TLS`, whose addresses are offsets into the
 /// per-thread block). A name-only match carves out whatever sits at the
 /// address, which for an unmapped section is another section's writable bytes.
+///
+/// Empty when the image carries relocations no walk reads, which could land
+/// in any of them.
 fn relocated_got_ranges(obj: &object::File<'_>, layout: &ElfSectionLayout) -> AddressSet {
+    if super::relocations::has_unwalked_relocations(obj) {
+        return AddressSet::default();
+    }
     let mut starts = Vec::new();
     let mut served = Vec::new();
     for sec in obj.sections() {

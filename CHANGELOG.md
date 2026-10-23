@@ -567,6 +567,11 @@
 
 ### Fixed
 
+- Python: `relocated_got_is_rom=True` serves no `.got` or `.data.rel.ro` of
+  an image carrying Android packed relocations (`SHT_ANDROID_RELA`, lld's
+  `--pack-dyn-relocs=android`), which strider does not decode. Every
+  pointer they relocate served the file's 0, so a call through a const
+  function-pointer table folded to address 0.
 - Python: under `relocated_got_is_rom=True` every byte of an `R_*_COPY`
   object is unmapped. Only its first 4 bytes were, and the rest served the
   file's zeros, so a gcc PIE's `return tbl[3]` against a library's const
