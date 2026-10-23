@@ -22,14 +22,25 @@ pub(crate) fn read_rom_const(
     ty.get_unsigned_int(loaded)
 }
 
-/// Right-shift in bits that brings the big-endian `load_ty`-width slice at
-/// the start of a wider `store_ty` integer into the low end. A little-endian
-/// slice is low already.
-///
-/// `load_ty` must be no wider than `store_ty`, else the subtraction underflows.
-#[inline]
-pub(crate) fn big_endian_slice_shift_bits(store_ty: ValueType, load_ty: ValueType) -> u32 {
-    (store_ty.byte_size() - load_ty.byte_size()) as u32 * 8
+/// Right-shift in bits that brings the `load_ty`-width slice a load in
+/// `space` reads at the start of a wider `store_ty` value into the low end,
+/// in that space's byte order: [`strider_target::Endianness::slice_shift_bits`]
+/// at offset 0. `None` for a load wider than the store.
+pub(crate) fn slice_shift_bits(
+    order: strider_target::ByteOrder,
+    space: rsleigh::VnSpace,
+    store_ty: ValueType,
+    load_ty: ValueType,
+) -> Option<u32> {
+    let at = |ty: ValueType| rsleigh::Vn {
+        addr_space: space,
+        addr_off: 0,
+        size: u32::try_from(ty.byte_size()).unwrap_or(u32::MAX),
+    };
+    let bits = order
+        .of(space)
+        .slice_shift_bits(&at(load_ty), &at(store_ty))?;
+    u32::try_from(bits).ok()
 }
 
 /// Whether every operand carries the width [`NodeKind::operand_width`] says
