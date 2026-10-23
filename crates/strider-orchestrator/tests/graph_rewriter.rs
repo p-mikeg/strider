@@ -207,3 +207,61 @@ fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+/// `phi(a, b) -> arm` tried at every phi of a lifted function, carrying on
+/// past a refusal. The function stays valid. Returns the refusals' messages.
+fn collapse_phis_to_arm(arch: common::Arch, case: &str, name: &str, arm: usize) -> Vec<String> {
+    let mut function = common::analyze(arch, case, name);
+    let (a, b) = (Capture::new(), Capture::new());
+    let lhs = strider_pattern::phi()
+        .phi_input(0, var(a))
+        .phi_input(1, var(b));
+    let rule = rewrite_rule(lhs, var([a, b][arm]));
+    let phis: Vec<_> = function
+        .walk()
+        .filter(|&n| matches!(function.node_kind(n), NodeKind::Phi))
+        .collect();
+    let mut refusals = Vec::new();
+    {
+        let mut ctx = EditFunction::new(&mut function);
+        for phi in phis {
+            if let Err(e) = rule(&mut ctx, phi) {
+                refusals.push(e.to_string());
+            }
+        }
+        ctx.clean();
+    }
+    if let Err(e) = strider_ir::validate::validate(&function) {
+        panic!("{case}::{name} arm {arm}: invalid after the rewrite ({refusals:?}): {e}");
+    }
+    refusals
+}
+
+/// A loop phi collapsed to its back-edge value would read itself through a
+/// path with no phi on it.
+#[test]
+fn collapsing_a_loop_phi_to_its_back_edge_is_refused() {
+    for (arch, case, name) in [
+        (common::Arch::X86, "memory", "array_sum"),
+        (common::Arch::X64, "control", "sum_to_n"),
+    ] {
+        let refusals: Vec<_> = (0..2)
+            .flat_map(|arm| collapse_phis_to_arm(arch, case, name, arm))
+            .collect();
+        assert!(
+            refusals.iter().any(|e| e.contains("data cycle")),
+            "{case}::{name}: no phi refused as a cycle: {refusals:?}"
+        );
+    }
+}
+
+/// A merge phi collapsed to one arm's value would be read where that arm's
+/// definition does not dominate.
+#[test]
+fn collapsing_a_merge_phi_to_one_arm_is_refused() {
+    let refusals = collapse_phis_to_arm(common::Arch::X64, "control", "_init", 1);
+    assert!(
+        refusals.iter().any(|e| e.contains("not available")),
+        "{refusals:?}"
+    );
+}
