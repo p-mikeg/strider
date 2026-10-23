@@ -53,8 +53,9 @@ class AssumptionOptions:
     `assume_incoming_args_survive_calls`,
     `return_slots_survive_untracked_writes`, `msr_register_keeps_mode` and
     `fp_rounding_mode_is_nearest` default `True`, the other four off or empty;
-    clearing all nine is the sound floor under any input whose memory behaves as RAM (see `none`). What
-    each one claims is in `docs/python-api.md` section 2.
+    clearing all nine is the sound floor under any input whose memory
+    behaves as RAM (see `none`). What each one claims is in
+    `docs/python-api.md` section 2.
 
     Claims accumulate on a `Function` (`Function.assumptions`): `analyze`
     starts from the ones it is given, `Lifter.optimize` adds, none withdraws.

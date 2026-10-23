@@ -69,13 +69,34 @@ fn narrow(ty: ValueType, x: f64) -> f64 {
 /// Evaluates `v`'s cone by each node's p-code meaning, every initial
 /// register reading as `init` (masked to its width).
 pub(crate) fn eval(f: &Function, v: ValueId, init: u128) -> Val {
+    MEMO.with(|m| m.borrow_mut().clear());
+    eval_rec(f, v, init)
+}
+
+thread_local! {
+    /// Values already evaluated in the current [`eval`]: a cone shares
+    /// subexpressions, which a plain recursion re-walks once per use.
+    static MEMO: std::cell::RefCell<std::collections::HashMap<ValueId, Val>> =
+        std::cell::RefCell::default();
+}
+
+fn eval_rec(f: &Function, v: ValueId, init: u128) -> Val {
+    if let Some(val) = MEMO.with(|m| m.borrow().get(&v).copied()) {
+        return val;
+    }
+    let val = eval_node(f, v, init);
+    MEMO.with(|m| m.borrow_mut().insert(v, val));
+    val
+}
+
+fn eval_node(f: &Function, v: ValueId, init: u128) -> Val {
     let ty = f.value_type(v).expect("typed");
     let ins = inputs_of(f, v);
-    let int = |i: usize| match eval(f, ins[i], init) {
+    let int = |i: usize| match eval_rec(f, ins[i], init) {
         Val::Int(x) => x,
         Val::Float(x) => panic!("operand {i} of {:?} is the float {x}", producer_kind(f, v)),
     };
-    let float = |i: usize| match eval(f, ins[i], init) {
+    let float = |i: usize| match eval_rec(f, ins[i], init) {
         Val::Float(x) => x,
         Val::Int(x) => panic!("operand {i} of {:?} is the int {x:#x}", producer_kind(f, v)),
     };
@@ -176,7 +197,7 @@ pub(crate) fn eval(f: &Function, v: ValueId, init: u128) -> Val {
             let [i] = live[..] else {
                 panic!("{} live predecessors of a Phi", live.len());
             };
-            eval(f, ins[i + 1], init)
+            eval_rec(f, ins[i + 1], init)
         }
         other => panic!("{other:?} in a conversion of constants"),
     }
@@ -190,7 +211,7 @@ fn control_live(f: &Function, c: ValueId, init: u128) -> bool {
         NodeKind::Entry => true,
         NodeKind::Region => ins.into_iter().any(|p| control_live(f, p, init)),
         NodeKind::If => {
-            let Val::Int(cond) = eval(f, ins[1], init) else {
+            let Val::Int(cond) = eval_rec(f, ins[1], init) else {
                 panic!("a float If condition");
             };
             let taken = f.node_outputs(node)[usize::from(cond == 0)];

@@ -459,3 +459,26 @@ fn xscvudqp_and_xsdivqp_are_distinct_user_ops() {
         assert_eq!(names[373], "vsx300_47", "{arch:?}");
     }
 }
+
+/// Every float-to-integer conversion, signed or not, may raise VXCVI on an
+/// unknown operand: `mtfsfi 5, 0; <conv> f1, f1; mcrfs cr7, 5; b<VXCVI>`
+/// keeps both paths.
+#[test]
+fn a_float_to_int_conversion_raises_vxcvi() {
+    let (clear, read, branch, _) = VXCVI;
+    let mut wrong = Vec::new();
+    for arch in [Arch::Ppc32be, Arch::Ppc32le, Arch::Ppc64be, Arch::Ppc64le] {
+        for (name, word) in [
+            ("fctid", 0xfc20_0e5c),
+            ("fctidz", 0xfc20_0e5e),
+            ("fctiw", 0xfc20_081c),
+            ("fctiwz", 0xfc20_081e),
+        ] {
+            let got = returned_r3s(&fpscr_branch(arch, clear, word, read, branch));
+            if got != BOTH {
+                wrong.push(format!("{arch:?} {name}: {got:?}"));
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}

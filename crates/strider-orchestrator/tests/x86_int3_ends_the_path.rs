@@ -1,7 +1,8 @@
 //! `int3` and `int1` end the path and are reported: most are padding after a
 //! call that never returns, and a handler that resumes (a debugger, the
 //! kernel's `int3_selftest`) is not something the decode can know. `int 3`
-//! (`cd 03`), the system-call form, falls through its handler call.
+//! (`cd 03`), the `int imm8` encoding of the same trap, falls through its
+//! handler call, as every `int imm8` does.
 
 mod common;
 

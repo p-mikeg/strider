@@ -86,9 +86,25 @@ const CONVS: [Conv; 8] = [
     },
 ];
 
-/// Ties each way and sign, plain fractions, each destination's edges and
-/// values none holds.
-const VALUES: [f64; 20] = [
+/// Ties each way and sign, plain fractions, each destination's edges, the
+/// doubles either side of them, and values none holds.
+const VALUES: [f64; 36] = [
+    5e-324,
+    -5e-324,
+    -0.9,
+    -1.0,
+    2147483647.9,
+    2147483648.0,
+    -2147483648.9,
+    -2147483649.0,
+    4294967295.9,
+    4294967296.0,
+    -9_223_372_036_854_775_808.0,
+    -9_223_372_036_854_777_856.0,
+    9_223_372_036_854_774_784.0,
+    18_446_744_073_709_549_568.0,
+    -1e300,
+    1e300,
     2.5,
     -2.5,
     3.5,
@@ -112,20 +128,19 @@ const VALUES: [f64; 20] = [
 ];
 
 fn image(conv: Conv, rn: Option<u32>, x: f64) -> Vec<u8> {
+    image_raw(conv.word, rn, x.to_bits())
+}
+
+/// The image for `word` with the doubleword `data` loaded into f1.
+fn image_raw(word: u32, rn: Option<u32>, data: u64) -> Vec<u8> {
     let mut words: Vec<u32> = rn
         .map(|rn| vec![0xff80_010c | rn << 12])
         .unwrap_or_default();
-    words.extend([
-        0x3d20_0001,
-        0xc829_0040,
-        conv.word,
-        0x7c23_0066,
-        0x4e80_0020,
-    ]);
+    words.extend([0x3d20_0001, 0xc829_0040, word, 0x7c23_0066, 0x4e80_0020]);
     let mut bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
     assert!(bytes.len() <= DATA);
     bytes.resize(DATA, 0);
-    bytes.extend_from_slice(&x.to_le_bytes());
+    bytes.extend_from_slice(&data.to_le_bytes());
     bytes
 }
 
@@ -235,5 +250,199 @@ fn the_rounding_mode_op_is_the_last_user_op() {
             Some("fpscrRoundingControl"),
             "{arch:?}"
         );
+    }
+}
+
+/// The float `rn` picks from the floats bracketing an exact value: `floor`
+/// the greatest at or below it, `ceil` the least at or above, `nearest` the
+/// nearest even. Toward zero takes `floor` for a non-negative value.
+fn pick<F>(rn: u32, nearest: F, floor: F, ceil: F, neg: bool) -> F {
+    match rn {
+        0 => nearest,
+        2 => ceil,
+        3 => floor,
+        _ if neg => ceil,
+        _ => floor,
+    }
+}
+
+fn int_to_f64(rn: u32, x: i128) -> f64 {
+    let n = x as f64;
+    let exact = |f: f64| f as i128;
+    let floor = if exact(n) <= x { n } else { n.next_down() };
+    let ceil = if exact(n) >= x { n } else { n.next_up() };
+    assert!(exact(floor) <= x && x <= exact(ceil));
+    pick(rn, n, floor, ceil, x < 0)
+}
+
+fn int_to_f32(rn: u32, x: i128) -> f32 {
+    let n = x as f32;
+    let exact = |f: f32| f as i128;
+    let floor = if exact(n) <= x { n } else { n.next_down() };
+    let ceil = if exact(n) >= x { n } else { n.next_up() };
+    assert!(exact(floor) <= x && x <= exact(ceil));
+    pick(rn, n, floor, ceil, x < 0)
+}
+
+fn narrowed(rn: u32, x: f64) -> f32 {
+    let n = x as f32;
+    if x.is_nan() {
+        return n;
+    }
+    let floor = if f64::from(n) <= x { n } else { n.next_down() };
+    let ceil = if f64::from(n) >= x { n } else { n.next_up() };
+    pick(rn, n, floor, ceil, x < 0.0)
+}
+
+/// Integers each format holds exactly, ties, and values past 2^63, which
+/// only the unsigned forms read as positive.
+const INTS: [u64; 12] = [
+    0,
+    1,
+    u64::MAX,
+    (1 << 53) + 1,
+    (1 << 53) + 3,
+    (1 << 24) + 1,
+    1 << 63,
+    (1 << 63) + 1,
+    (1 << 63) + 1025,
+    u64::MAX - 1024,
+    0xffff_ff7f_ffff_ffff,
+    12_345_678_901_234_567,
+];
+
+/// `fcfid`, `fcfids`, `fcfidu` and `fcfidus` (Power ISA 3.0B 4.6.7.2) read
+/// the doubleword as a signed or unsigned integer and round it to a double or
+/// a single by RN; a single comes back as the double it widens to.
+#[test]
+fn integer_to_float_conversions_round_by_fpscr_rn() {
+    let none = AssumptionOptions::none();
+    let forms: [(&str, u32, bool, bool); 4] = [
+        ("fcfid", 0xfc20_0e9c, true, false),
+        ("fcfids", 0xec20_0e9c, true, true),
+        ("fcfidu", 0xfc20_0f9c, false, false),
+        ("fcfidus", 0xec20_0f9c, false, true),
+    ];
+    for (name, word, signed, single) in forms {
+        for bits in INTS {
+            let x = if signed {
+                i128::from(bits as i64)
+            } else {
+                i128::from(bits)
+            };
+            for rn in 0..4 {
+                let want = if single {
+                    f64::from(int_to_f32(rn, x)).to_bits()
+                } else {
+                    int_to_f64(rn, x).to_bits()
+                };
+                let got = common::cone::returned_from_under(
+                    Arch::Ppc64le,
+                    image_raw(word, Some(rn), bits),
+                    BASE,
+                    0,
+                    &none,
+                );
+                assert_eq!(
+                    got,
+                    want,
+                    "{name} rn {rn} {x}: got {} want {}",
+                    f64::from_bits(got),
+                    f64::from_bits(want)
+                );
+            }
+        }
+    }
+}
+
+/// `frsp` rounds a double to single precision by RN.
+#[test]
+fn frsp_rounds_by_fpscr_rn() {
+    let none = AssumptionOptions::none();
+    let values = [
+        1.0 + 1.0 / (1u64 << 30) as f64,
+        -1.0 - 1.0 / (1u64 << 30) as f64,
+        1.0 + 1.0 / (1u64 << 24) as f64,
+        0.1,
+        -0.1,
+        1e39,
+        -1e39,
+        1e-46,
+        -1e-46,
+        -0.0,
+        f64::INFINITY,
+    ];
+    for x in values {
+        for rn in 0..4 {
+            let want = f64::from(narrowed(rn, x)).to_bits();
+            let got = common::cone::returned_from_under(
+                Arch::Ppc64le,
+                image_raw(0xfc20_0818, Some(rn), x.to_bits()),
+                BASE,
+                0,
+                &none,
+            );
+            assert_eq!(got, want, "frsp rn {rn} {x}");
+        }
+    }
+}
+
+/// `xscvdpspn` writes a word the GPR moves do not read back directly, so it
+/// is checked to read RN exactly when the claim is off.
+#[test]
+fn xscvdpspn_reads_fpscr_rn_only_without_the_claim() {
+    // xscvdpspn vs34, vs34; blr, vs34 the vector return register
+    let words = [0xf040_142f_u32, 0x4e80_0020];
+    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+    for (claims, reads) in [
+        (AssumptionOptions::none(), true),
+        (AssumptionOptions::default(), false),
+    ] {
+        let (mut strider, cc) =
+            common::strider_over_bytes(Arch::Ppc64le, bytes.clone(), BASE, None);
+        let rn1 = strider.sleigh_regs().name_to_vn("fp_rn1").expect("fp_rn1");
+        let opts = strider_orchestrator::AnalyzeOptions {
+            assumptions: claims,
+            ..Default::default()
+        };
+        let f = strider
+            .analyze(BASE, &cc, &opts, None)
+            .expect("analyze")
+            .function;
+        assert_eq!(
+            f.initial_var_value(&rn1).is_some(),
+            reads,
+            "{}",
+            f.to_text(false)
+        );
+    }
+}
+
+/// `mtfsfi 0, U` sets FX and OX from U, and FEX and VX from the bits they
+/// summarise (Power ISA 3.0B 4.6.10), here all clear.
+#[test]
+fn mtfsfi_of_field_zero_recomputes_fex_and_vx() {
+    // mtfsfi 1..3, 5..7 to 0 clear every VX and enable bit.
+    let clears = [
+        0xfc80_010c_u32,
+        0xfd00_010c,
+        0xfd80_010c,
+        0xfe80_010c,
+        0xff00_010c,
+        0xff80_010c,
+    ];
+    for (u, want) in [(0b0110u32, 0), (0b1001, 0b1001), (0b1111, 0b1001)] {
+        let mut words = clears.to_vec();
+        // mtfsfi 0, U; mffs f1; mffprd r3, f1; blr
+        words.extend([0xfc00_010c | u << 12, 0xfc20_048e, 0x7c23_0066, 0x4e80_0020]);
+        let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let got = common::cone::returned_from_under(
+            Arch::Ppc64le,
+            bytes,
+            BASE,
+            u128::MAX,
+            &AssumptionOptions::none(),
+        );
+        assert_eq!((got >> 28) & 0xf, want, "mtfsfi 0, {u:#06b}");
     }
 }
