@@ -571,7 +571,7 @@
   distinct table and within the relocation entry budget. Repeated headers
   over one `.rela.opd` cost their count times its length, unbounded, in
   `load_elf` and in symbol lookup alike; past the budget no descriptor is
-  followed, as the relocating load refuses the image.
+  followed.
 - Python: a dynamic relocation field no one mapping holds whole, over two
   adjacent read-only mappings or past the end of the one holding its start,
   is a hole. It was neither patched nor holed, so its mapped bytes served
