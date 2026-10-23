@@ -375,6 +375,8 @@ pub struct RangeMap<'f> {
     field_memo: std::cell::RefCell<SecondaryMap<ValueId, Option<Option<BitField>>>>,
     /// Open `range_of` frames, against [`MAX_RANGE_DEPTH`].
     depth: u32,
+    /// Every `If`.
+    ifs: Vec<NodeId>,
 }
 
 impl<'f> RangeMap<'f> {
@@ -676,6 +678,39 @@ impl<'f> RangeMap<'f> {
         })
     }
 
+    /// Whether `iv`, `value`'s range at `site`, is no tighter than its
+    /// KnownBits bound while an `If` dominating `site` tests `cell`, a load
+    /// `value` derives from, or another load of `cell`'s address.
+    ///
+    /// Such a test (a mask, a shift, a sign) bounds the cell in a shape no
+    /// guard here reads, or on a reload `range_of` does not connect, and may
+    /// be what sizes a table `value` indexes. `Equal(cast*(cell), k)` only
+    /// excludes `k`, which [`Self::ruled_out`] reads.
+    pub(crate) fn cell_test_left_unread(
+        &self,
+        value: ValueId,
+        cell: ValueId,
+        site: NodeId,
+        iv: Interval,
+    ) -> bool {
+        if iv != self.resolve_leaf_guarded(value, None) {
+            return false;
+        }
+        let f = self.function;
+        let addr = f.int_inputs(cell).next();
+        let is_cell = |v: ValueId| {
+            v == cell
+                || (matches!(f.node_kind(f.producer(v)), NodeKind::Load(_))
+                    && f.int_inputs(v).next() == addr)
+        };
+        self.ifs.iter().any(|&if_node| {
+            self.doms.dominates(if_node, site) && {
+                let cond = f.if_cond(if_node);
+                !excludes_one_value(f, cond, is_cell) && cone_reaches(f, cond, is_cell)
+            }
+        })
+    }
+
     /// The constants `value` is not at `region`: each `k` of an
     /// `If(value == k)` whose false edge alone reaches `region`.
     ///
@@ -948,6 +983,81 @@ thread_local! {
     pub(crate) static GUARD_PROBES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+/// Whether `cond` is `Equal(x, k)` with `x` a cast chain over a value
+/// `is_cell` accepts.
+fn excludes_one_value(
+    f: &strider_ir::Function,
+    cond: ValueId,
+    is_cell: impl Fn(ValueId) -> bool,
+) -> bool {
+    if !matches!(
+        f.node_kind(f.producer(cond)),
+        NodeKind::IntCmpOp(IntCmpOp::Equal)
+    ) {
+        return false;
+    }
+    let Ok([a, b]) = f.producer_inputs_exact::<2>(cond) else {
+        return false;
+    };
+    let mut x = match (f.int_const_u128(a), f.int_const_u128(b)) {
+        (Some(_), None) => b,
+        (None, Some(_)) => a,
+        _ => return false,
+    };
+    for _ in 0..MAX_GUARD_LADDER {
+        if is_cell(x) {
+            return true;
+        }
+        match f.node_kind(f.producer(x)) {
+            NodeKind::Extend(_) | NodeKind::Truncate => match f.int_inputs(x).next() {
+                Some(inner) => x = inner,
+                None => return false,
+            },
+            _ => return false,
+        }
+    }
+    false
+}
+
+/// Whether `root`'s integer operand cone reaches a value `is_cell` accepts,
+/// through integer ops and casts only. Past [`MAX_TEST_CONE`] values it
+/// answers yes, which defers.
+fn cone_reaches(
+    f: &strider_ir::Function,
+    root: ValueId,
+    is_cell: impl Fn(ValueId) -> bool,
+) -> bool {
+    let mut seen = FxHashSet::default();
+    let mut stack = vec![root];
+    while let Some(v) = stack.pop() {
+        if !seen.insert(v) {
+            continue;
+        }
+        if seen.len() > MAX_TEST_CONE {
+            return true;
+        }
+        if is_cell(v) {
+            return true;
+        }
+        if matches!(
+            f.node_kind(f.producer(v)),
+            NodeKind::IntBinaryOp(_)
+                | NodeKind::IntUnaryOp(_)
+                | NodeKind::IntCmpOp(_)
+                | NodeKind::Extend(_)
+                | NodeKind::Truncate
+                | NodeKind::Popcount
+                | NodeKind::Lzcount
+        ) {
+            stack.extend(f.int_inputs(v).filter(|&i| f.int_const_u128(i).is_none()));
+        }
+    }
+    false
+}
+
+/// Values [`cone_reaches`] visits under one condition.
+const MAX_TEST_CONE: usize = 64;
+
 /// `u128::MAX` (unconstrained top) when the value carries no typed edge, for a
 /// non-integer type, and for a width past the `u128` carrier, where no `u128`
 /// is a bound the value is inside. Every consumer that needs a real bound gates
@@ -1214,7 +1324,8 @@ fn build<'f>(
     let mut guards: FxHashMap<ValueId, FxHashMap<NodeId, Interval>> = FxHashMap::default();
     let mut edge_guards: FxHashMap<ValueId, (ValueId, Interval)> = FxHashMap::default();
 
-    for if_node in function.walk_kind(|k| matches!(k, NodeKind::If)) {
+    let ifs: Vec<NodeId> = function.walk_kind(|k| matches!(k, NodeKind::If)).collect();
+    for &if_node in &ifs {
         let if_outputs = function.node_outputs(if_node);
         if if_outputs.len() < 2 {
             continue;
@@ -1330,6 +1441,7 @@ fn build<'f>(
         fields_by_root,
         field_memo: std::cell::RefCell::new(SecondaryMap::new()),
         depth: 0,
+        ifs,
     }
 }
 
