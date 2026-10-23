@@ -982,7 +982,6 @@ impl PyLifter {
         }
         out
     }
-
 }
 
 /// Create a lifter for `arch` that can lift and analyze functions.  `mem`
