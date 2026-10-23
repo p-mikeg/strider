@@ -41,6 +41,19 @@ fn f80_to_f64(bits: u128) -> f64 {
     sign * (mant as f64) * 2f64.powi(exp - 16383 - 63)
 }
 
+/// An IEEE half-precision bit pattern as an `f64`, exactly.
+pub(crate) fn f16_to_f64(bits: u16) -> f64 {
+    let sign = if bits >> 15 == 1 { -1.0 } else { 1.0 };
+    let exp = i32::from(bits >> 10 & 0x1f);
+    let frac = f64::from(bits & 0x3ff);
+    sign * match exp {
+        0 => frac * 2f64.powi(-24),
+        0x1f if frac == 0.0 => f64::INFINITY,
+        0x1f => f64::NAN,
+        _ => (1024.0 + frac) * 2f64.powi(exp - 25),
+    }
+}
+
 /// An `f64` as an x87 extended-precision bit pattern (no NaN payloads).
 fn f64_to_f80(x: f64) -> u128 {
     let sign = u128::from(x.is_sign_negative()) << 79;
@@ -105,11 +118,13 @@ fn eval_node(f: &Function, v: ValueId, init: u128) -> Val {
         NodeKind::IntConst(_) => Val::Int(f.int_const_u128(v).expect("int const")),
         NodeKind::InitialVar(_) => Val::Int(init & mask(ty)),
         NodeKind::FloatConst(bits) => Val::Float(match width(ty) {
+            16 => f16_to_f64(*bits as u16),
             32 => f64::from(f32::from_bits(*bits as u32)),
             64 => f64::from_bits(*bits),
             w => panic!("FloatConst of width {w}"),
         }),
         NodeKind::IntBitsToFloat => Val::Float(match width(ty) {
+            16 => f16_to_f64(int(0) as u16),
             32 => f64::from(f32::from_bits(int(0) as u32)),
             64 => f64::from_bits(int(0) as u64),
             80 => f80_to_f64(int(0)),
@@ -230,6 +245,19 @@ fn analyze_ret(
     base: u64,
     claims: &strider_orchestrator::opt::AssumptionOptions,
 ) -> (Function, ValueId) {
+    analyze_rets(arch, bytes, base, &[base], claims)
+        .pop()
+        .expect("one entry")
+}
+
+/// [`analyze_ret`] at each of `entries`, one image and one engine for all.
+fn analyze_rets(
+    arch: super::Arch,
+    bytes: Vec<u8>,
+    base: u64,
+    entries: &[u64],
+    claims: &strider_orchestrator::opt::AssumptionOptions,
+) -> Vec<(Function, ValueId)> {
     let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
         strider_ir_test_utils::MockRom::raw_bytes(base, bytes.clone()),
     );
@@ -238,16 +266,26 @@ fn analyze_ret(
         assumptions: claims.clone(),
         ..Default::default()
     };
-    let f = strider
-        .analyze(base, &cc, &opts, None)
-        .expect("analyze")
-        .function;
+    entries
+        .iter()
+        .map(|&entry| {
+            let f = strider
+                .analyze(entry, &cc, &opts, None)
+                .expect("analyze")
+                .function;
+            let v = returned(&f);
+            (f, v)
+        })
+        .collect()
+}
+
+/// The value in the first return slot of `f`'s one `Return`.
+fn returned(f: &Function) -> ValueId {
     let ret = f
         .walk()
         .find(|&n| matches!(f.node_kind(n), NodeKind::Return))
         .expect("one Return");
-    let v = f.node_inputs(ret).into_iter().nth(2).expect("return slot");
-    (f, v)
+    f.node_inputs(ret).into_iter().nth(2).expect("return slot")
 }
 
 fn as_rax(val: Val) -> u64 {
@@ -302,4 +340,20 @@ pub(crate) fn returned_from_under(
 ) -> u64 {
     let (f, v) = analyze_ret(arch, bytes, base, claims);
     as_rax(eval(&f, v, init))
+}
+
+/// [`returned_from_under`] for the function at each of `entries`, all in one
+/// image.
+pub(crate) fn returned_at_under(
+    arch: super::Arch,
+    bytes: Vec<u8>,
+    base: u64,
+    entries: &[u64],
+    init: u128,
+    claims: &strider_orchestrator::opt::AssumptionOptions,
+) -> Vec<u64> {
+    analyze_rets(arch, bytes, base, entries, claims)
+        .iter()
+        .map(|(f, v)| as_rax(eval(f, *v, init)))
+        .collect()
 }
