@@ -162,7 +162,7 @@ impl MatchPat for CallPat {
     /// any value output matches. `.res()` tightens it.
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.0
-            .with_value_anchor(FIRST_VALUE_OUT_SLOT)
+            .with_value_anchor(NodeKind::Call { cc: None }.output_head_len())
             .compile_anchored(b)
     }
 
@@ -173,12 +173,11 @@ impl MatchPat for CallPat {
 
 impl MemPat for CallPat {}
 
-/// `Call` / `CallOther` outputs are `[Control(0), Memory(1), value...(2)]`,
-/// so return and clobber values start at slot 2.
-const FIRST_VALUE_OUT_SLOT: usize = 2;
-
 pub fn call() -> CallPat {
-    CallPat(NodePat::node(KindSpec::variant_of(&NodeKind::Call { cc: None })).with_mem_value(1))
+    CallPat(
+        NodePat::node(KindSpec::variant_of(&NodeKind::Call { cc: None }))
+            .with_mem_value(NodeKind::CTRL_MEM_OUT_SLOT),
+    )
 }
 
 /// A `CallOther` is a Sleigh `CALLOTHER` user-op: an opaque
@@ -254,7 +253,7 @@ impl MatchPat for CallOtherPat {
     /// See [`CallPat`]'s impl.
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         self.configured()
-            .with_value_anchor(FIRST_VALUE_OUT_SLOT)
+            .with_value_anchor(NodeKind::CallOther { user_op_id: 0 }.output_head_len())
             .compile_anchored(b)
     }
 
@@ -268,7 +267,7 @@ impl MemPat for CallOtherPat {}
 pub fn call_other() -> CallOtherPat {
     let kind = KindSpec::variant_of(&NodeKind::CallOther { user_op_id: 0 });
     CallOtherPat {
-        inner: NodePat::node(kind).with_mem_value(1),
+        inner: NodePat::node(kind).with_mem_value(NodeKind::CTRL_MEM_OUT_SLOT),
         name_filter: None,
     }
 }
@@ -384,7 +383,9 @@ impl MatchPat for EntryPat {
 }
 
 pub fn entry() -> EntryPat {
-    EntryPat(NodePat::node(KindSpec::Exact(NodeKind::Entry)).with_control_value(0))
+    EntryPat(
+        NodePat::node(KindSpec::Exact(NodeKind::Entry)).with_control_value(NodeKind::CTRL_OUT_SLOT),
+    )
 }
 
 delegate_with_output!(EntryPat, 0);
@@ -414,7 +415,10 @@ impl MatchPat for RegionPat {
 }
 
 pub fn region() -> RegionPat {
-    RegionPat(NodePat::node(KindSpec::Exact(NodeKind::Region)).with_control_value(0))
+    RegionPat(
+        NodePat::node(KindSpec::Exact(NodeKind::Region))
+            .with_control_value(NodeKind::CTRL_OUT_SLOT),
+    )
 }
 
 delegate_with_output!(RegionPat, 0);
@@ -560,16 +564,16 @@ impl IfPat {
     /// nodes count against the enclosing pattern's node cap, since the matcher
     /// recurses through them on the same stack.
     pub fn with_true(self, pat: Pattern) -> Self {
-        self.with_branch(0, pat)
+        self.with_branch(NodeKind::IF_TRUE_OUT_SLOT, pat)
     }
 
     /// Control output slot 1. See [`with_true`](Self::with_true), which also
     /// documents the refusal and the branch-capture agreement rule.
     pub fn with_false(self, pat: Pattern) -> Self {
-        self.with_branch(1, pat)
+        self.with_branch(NodeKind::IF_FALSE_OUT_SLOT, pat)
     }
 
-    /// `slot` 0 is true, 1 is false.
+    /// `slot` is the arm's `If` output slot.
     fn with_branch(mut self, slot: usize, pat: Pattern) -> Self {
         self.branch_refusal[slot] = pat
             .root()
@@ -594,7 +598,7 @@ impl IfPat {
                 match_branch_consumer(m, if_node, slot, pat.get(), b, k)
             },
         );
-        if slot == 0 {
+        if slot == NodeKind::IF_TRUE_OUT_SLOT {
             self.true_branch = Some(walk);
         } else {
             self.false_branch = Some(walk);

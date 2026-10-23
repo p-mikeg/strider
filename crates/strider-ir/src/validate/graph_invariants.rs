@@ -352,7 +352,7 @@ pub(super) fn check_function_invariants_phis(
             // Local typing already reports empty-input phis.
             continue;
         }
-        let token = inputs[0];
+        let token = inputs[NodeKind::PHI_TOKEN_SLOT];
         let token_kind = graph.value_kind(token);
         if token_kind != ValueKind::PhiToken {
             let (producer, _) = graph.value_definition(token);
@@ -641,7 +641,7 @@ pub(super) fn check_function_invariants_memory_linearity(
     let graph = ctx.function.graph();
     let memory_input = |node: NodeId| {
         graph
-            .nth_input(node, 1)
+            .nth_input(node, NodeKind::CTRL_MEM_SLOT)
             .filter(|&v| graph.value_kind(v) == ValueKind::Memory)
     };
     let mut stack: Vec<ValueId> = Vec::new();
@@ -662,7 +662,9 @@ pub(super) fn check_function_invariants_memory_linearity(
             continue;
         }
         match graph.node_kind(producer) {
-            NodeKind::Store(_) => stack.extend(graph.nth_input(producer, 0)),
+            NodeKind::Store(_) => {
+                stack.extend(graph.nth_input(producer, NodeKind::ACCESS_MEM_SLOT))
+            }
             NodeKind::MemPhi => stack.extend(live_arms(graph, &ctx.domtree, producer)),
             NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
                 stack.extend(memory_input(producer));
@@ -726,11 +728,17 @@ fn check_memory_order(
                     }
                     stores.push(producer);
                     producer = graph
-                        .value_definition(graph.nth_input(producer, 0).expect("a Store has memory"))
+                        .value_definition(
+                            graph
+                                .nth_input(producer, NodeKind::ACCESS_MEM_SLOT)
+                                .expect("a Store has memory"),
+                        )
                         .0;
                 }
                 NodeKind::MemPhi => {
-                    let token = graph.nth_input(producer, 0).expect("a phi has a token");
+                    let token = graph
+                        .nth_input(producer, NodeKind::PHI_TOKEN_SLOT)
+                        .expect("a phi has a token");
                     break graph.value_definition(token).0;
                 }
                 NodeKind::InitialMemory => break tree.root(),
@@ -760,7 +768,7 @@ fn check_memory_order(
 
         // Of the control nodes, exactly the memory readers take Memory there.
         let memory = graph
-            .nth_input(node, 1)
+            .nth_input(node, NodeKind::CTRL_MEM_SLOT)
             .filter(|&v| graph.value_kind(v) == ValueKind::Memory);
         if let (Some(memory), Some(effect)) = (memory, before)
             && origin(memory) != effect
@@ -805,7 +813,9 @@ fn live_arms<'a>(
     tree: &'a DominatorTree<NodeId>,
     phi: NodeId,
 ) -> impl Iterator<Item = ValueId> + 'a {
-    let token = graph.nth_input(phi, 0).expect("a phi has a token");
+    let token = graph
+        .nth_input(phi, NodeKind::PHI_TOKEN_SLOT)
+        .expect("a phi has a token");
     let region = graph.value_definition(token).0;
     graph
         .node_inputs(phi)

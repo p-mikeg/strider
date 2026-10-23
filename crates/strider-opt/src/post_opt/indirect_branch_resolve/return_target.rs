@@ -180,7 +180,9 @@ impl<'f> ReturnTargets<'f> {
                 let producer = function.producer(value);
                 match *function.node_kind(producer) {
                     NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                        let Some((operand, addend)) = crate::const_eval::const_addend(function, producer) else {
+                        let Some((operand, addend)) =
+                            crate::const_eval::const_addend(function, producer)
+                        else {
                             return false;
                         };
                         let Some(offset) = offset.checked_sub(addend) else {
@@ -289,7 +291,7 @@ impl<'f> ReturnTargets<'f> {
     /// region's latest arm.
     fn arms(&mut self, path: Path, phi: NodeId) -> impl Iterator<Item = (Path, ValueId)> + 'f {
         let function = self.function;
-        let region = function.producer(function.node_inputs(phi)[0]);
+        let region = function.producer(function.node_inputs(phi)[NodeKind::PHI_TOKEN_SLOT]);
         let feasible = path.and_then(|point| self.feasible_arm(point, region));
         function
             .phi_data_inputs(phi)
@@ -441,7 +443,9 @@ impl<'f> ReturnTargets<'f> {
             let producer = function.producer(cur);
             match *function.node_kind(producer) {
                 NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                    let Some((operand, addend)) = crate::const_eval::const_addend(function, producer) else {
+                    let Some((operand, addend)) =
+                        crate::const_eval::const_addend(function, producer)
+                    else {
                         break None;
                     };
                     let Some(sum) = accrued.checked_add(addend) else {

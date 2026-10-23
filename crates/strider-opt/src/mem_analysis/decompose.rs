@@ -328,10 +328,11 @@ fn spine_walk_trailed(
 
 /// `value` is the primary return of a `Call` to a known allocator, i.e. a fresh
 /// heap base. `build_call` emits ret-vals before clobbers, so the return
-/// pointer is the first `Call` value output (`outputs[2]`, after control and
-/// memory); only that output is a base, never a clobbered register.
+/// pointer is the first `Call` value output; only that output is a base, never
+/// a clobbered register.
 fn is_allocator_return(function: &Function, value: ValueId, call: NodeId) -> bool {
-    if function.node_outputs(call).get(2) != Some(&value) {
+    let first_value = function.node_kind(call).output_head_len();
+    if function.node_outputs(call).get(first_value) != Some(&value) {
         return false;
     }
     let target = function.node_inputs(call)[NodeKind::CALL_TARGET_SLOT];
@@ -344,7 +345,7 @@ fn is_allocator_return(function: &Function, value: ValueId, call: NodeId) -> boo
     if !is_alloc {
         return false;
     }
-    // `outputs[2]` is the return pointer only when the call actually emits
+    // The first value output is the return pointer only when the call emits
     // one.  A declared return register is not enough: `ret_and_clobber_vns`
     // drops one this function does not track, sliding the first clobber into
     // that slot, and a clobber holds garbage rather than a fresh pointer.
@@ -437,6 +438,7 @@ pub(super) fn allocator_return_base(function: &Function, call: NodeId) -> Option
     if !matches!(function.node_kind(call), NodeKind::Call { .. }) {
         return None;
     }
-    let ret = *function.node_outputs(call).get(2)?;
+    let first_value = function.node_kind(call).output_head_len();
+    let ret = *function.node_outputs(call).get(first_value)?;
     is_allocator_return(function, ret, call).then_some(ret)
 }

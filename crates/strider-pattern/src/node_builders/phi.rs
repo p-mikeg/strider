@@ -42,10 +42,9 @@ impl PhiPat {
         self
     }
 
-    /// The ownership edge: raw slot 0, carrying the owning `Region`'s
-    /// `PhiToken` output.
+    /// The ownership edge, carrying the owning `Region`'s `PhiToken` output.
     pub fn phi_token<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inner = self.inner.input(0, p);
+        self.inner = self.inner.input(NodeKind::PHI_TOKEN_SLOT, p);
         self
     }
 
@@ -98,7 +97,7 @@ pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
 pub struct MemPhiPat(NodePat);
 
 impl MemPhiPat {
-    /// Predecessor `idx`'s incoming memory token, at raw input slot `idx + 1`.
+    /// Predecessor `idx`'s incoming memory token.
     /// The sub-pattern must be a memory producer.
     pub fn phi_input<M: MemPat + 'static>(self, idx: usize, p: M) -> Self {
         Self(self.0.input_mem(NodeKind::MemPhi.input_head_len() + idx, p))
@@ -106,7 +105,7 @@ impl MemPhiPat {
 
     /// See [`PhiPat::phi_token`].
     pub fn phi_token<P: MatchPat + 'static>(self, p: P) -> Self {
-        Self(self.0.input(0, p))
+        Self(self.0.input(NodeKind::PHI_TOKEN_SLOT, p))
     }
 }
 
@@ -120,7 +119,10 @@ impl MatchPat for MemPhiPat {
 impl MemPat for MemPhiPat {}
 
 pub fn mem_phi() -> MemPhiPat {
-    MemPhiPat(NodePat::node(KindSpec::variant_of(&NodeKind::MemPhi)).with_mem_value(0))
+    MemPhiPat(
+        NodePat::node(KindSpec::variant_of(&NodeKind::MemPhi))
+            .with_mem_value(NodeKind::MEM_OUT_SLOT),
+    )
 }
 
 delegate_with_output!(MemPhiPat, 0);
