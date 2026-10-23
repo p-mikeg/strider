@@ -1134,8 +1134,9 @@ file that is not a supported ELF, a microMIPS image among them, which
 `add_elf` refuses with `ValueError` too. A range-checked constructor argument raises
 `ValueError`: `CfgOptions(function_max_size=0)`, a size beside
 `allow_code_before_start_addr=True`, a `known_targets` string other than
-`"return"`, a string `call_other_abis` value and a `call_other_abis` name
-given twice. Every other bad VALUE is a `StriderError`,
+`"return"`, a string `call_other_abis` value, a `call_other_abis` name
+given twice, an empty `data_ranges` range and a `BufferReader` region past
+the end of the address space. Every other bad VALUE is a `StriderError`,
 including `add_elf` / `add_symbol_file` on the same bad paths, an unknown
 `style=`, a reserved capture name and a node id the function does not hold.
 Match readers raise

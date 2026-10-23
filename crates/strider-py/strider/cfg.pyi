@@ -173,7 +173,7 @@ class CfgOptions:
     decoded. The instruction at the entry address decodes even inside one.
     `ElfLifter.analyze` and `ElfLifter.build_cfg` fill it from the ELF's
     mapping symbols when empty.
-    A range that ends at or below its start raises `StriderError`: it names no
+    A range that ends at or below its start raises `ValueError`: it names no
     address, and accepting it silently dropped the pool the caller meant to
     mark.
     """

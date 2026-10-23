@@ -518,12 +518,12 @@ impl PyCfgOptions {
 /// If a range ends at or below its start. `start..end` with `end <= start` is
 /// empty, so it used to be accepted and silently drop the range the caller
 /// meant to name -- the literal pool it marks then decodes as instructions,
-/// which is the failure `data_ranges` exists to prevent. Every other
-/// range-checked ctor argument raises, so this one does too.
+/// which is the failure `data_ranges` exists to prevent. A range-checked ctor
+/// argument raises `ValueError`.
 fn data_ranges_from(ranges: Vec<(u64, u64)>) -> PyResult<strider_cfg::DataRanges> {
     for &(start, end) in &ranges {
         if end <= start {
-            return Err(crate::errors::into_strider_err(anyhow::anyhow!(
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
                 "data_ranges: ({start:#x}, {end:#x}) is empty; a range runs \
                  start..end with end > start"
             )));

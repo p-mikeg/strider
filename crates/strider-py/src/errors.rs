@@ -13,7 +13,9 @@ create_exception!(
      argument the conversion itself rejects (`TypeError` for the wrong type, \
      `OverflowError` for an int out of range, though an `entry` out of range \
      is caught and named through this one), a range-checked constructor \
-     argument such as `CfgOptions(function_max_size=0)` (`ValueError`), and a \
+     argument such as `CfgOptions(function_max_size=0)`, an empty \
+     `data_ranges` range or a `BufferReader` region past the address space \
+     (`ValueError`), and a \
      missing file (`FileNotFoundError`)."
 );
 

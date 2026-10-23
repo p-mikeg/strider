@@ -15,7 +15,8 @@ class BufferReader:
     """
     def __init__(self, base_addr: int, data: Union[bytes, bytearray, Sequence[int]]) -> None:
         """Serve `data` as the bytes mapped starting at `base_addr`. Raises
-        `StriderError` for an invalid region."""
+        `ValueError` for a region that runs past the end of the address
+        space."""
         ...
     def read(self, addr: int, size: int) -> Optional[bytes]:
         """Up to `size` bytes at `addr` (fewer near a region edge, or before a
