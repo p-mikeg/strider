@@ -78,7 +78,7 @@ unresolved_branch [0x8049110.2]
 cfg
   0x80490e0 0 ops goto -> [0x80490e4]
   0x80490e4 69 ops return -> []
-tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8a100:4, u:0x8a900:4]
+tracked [EAX, ECX, EDX, EBX, ESP, EBP, ESI, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17200:4, u:0x41500:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x8a300:4, u:0x8ab00:4]
 frame_address_in_call_register reach=4
 arg 0 [%v9]
 arg 1 [%v16]
@@ -166,7 +166,7 @@ cfg
   0x8049240 11 ops cbranch 0x8049250 -> [0x8049244, 0x8049250]
   0x8049244 12 ops return -> []
   0x8049250 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69700:4, u:0x69900:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69900:4, u:0x69b00:4]
 arg 0 [%v1]
 arg 1 [%v2]
 %v0:ctrl = entry
@@ -188,7 +188,7 @@ cfg
   0x8049260 11 ops cbranch 0x8049270 -> [0x8049264, 0x8049270]
   0x8049264 4 ops return -> []
   0x8049270 12 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69700:4, u:0x69900:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69900:4, u:0x69b00:4]
 arg 0 [%v1]
 arg 1 [%v2]
 %v0:ctrl = entry
@@ -210,7 +210,7 @@ cfg
   0x8049280 12 ops cbranch 0x8049290 -> [0x8049284, 0x8049290]
   0x8049284 12 ops return -> []
   0x8049290 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x18700:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69700:4, u:0x69900:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x18700:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69900:4, u:0x69b00:4]
 arg 0 [%v1]
 arg 1 [%v2]
 %v0:ctrl = entry
@@ -232,7 +232,7 @@ cfg
   0x80492a0 12 ops cbranch 0x80492b0 -> [0x80492a4, 0x80492b0]
   0x80492a4 12 ops return -> []
   0x80492b0 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x18900:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69700:4, u:0x69900:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x18900:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69900:4, u:0x69b00:4]
 arg 0 [%v1]
 arg 1 [%v2]
 %v0:ctrl = entry
@@ -254,7 +254,7 @@ cfg
   0x80492c0 14 ops cbranch 0x80492d0 -> [0x80492c4, 0x80492d0]
   0x80492c4 12 ops return -> []
   0x80492d0 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x18d00:1, u:0x18e00:1, u:0x19000:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69700:4, u:0x69900:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x18d00:1, u:0x18e00:1, u:0x19000:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69900:4, u:0x69b00:4]
 arg 0 [%v2]
 arg 1 [%v1]
 %v0:ctrl = entry
@@ -276,7 +276,7 @@ cfg
   0x80492e0 13 ops cbranch 0x80492f0 -> [0x80492e4, 0x80492f0]
   0x80492e4 12 ops return -> []
   0x80492f0 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x18a00:1, u:0x18c00:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69700:4, u:0x69900:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x18a00:1, u:0x18c00:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69900:4, u:0x69b00:4]
 arg 0 [%v2]
 arg 1 [%v1]
 %v0:ctrl = entry
@@ -298,7 +298,7 @@ cfg
   0x8049300 13 ops cbranch 0x8049310 -> [0x8049304, 0x8049310]
   0x8049304 12 ops return -> []
   0x8049310 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69700:4, u:0x69900:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17f00:1, u:0x18100:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69900:4, u:0x69b00:4]
 arg 0 [%v2]
 arg 1 [%v1]
 %v0:ctrl = entry
@@ -320,7 +320,7 @@ cfg
   0x8049320 12 ops cbranch 0x8049330 -> [0x8049324, 0x8049330]
   0x8049324 12 ops return -> []
   0x8049330 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17e00:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69700:4, u:0x69900:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17e00:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69900:4, u:0x69b00:4]
 arg 0 [%v2]
 arg 1 [%v1]
 %v0:ctrl = entry
@@ -342,7 +342,7 @@ cfg
   0x8049340 11 ops cbranch 0x8049350 -> [0x8049344, 0x8049350]
   0x8049344 12 ops return -> []
   0x8049350 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69700:4, u:0x69900:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69900:4, u:0x69b00:4]
 arg 0 [%v1]
 arg 1 [%v2]
 %v0:ctrl = entry
@@ -364,7 +364,7 @@ cfg
   0x8049360 12 ops cbranch 0x8049370 -> [0x8049364, 0x8049370]
   0x8049364 12 ops return -> []
   0x8049370 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17a00:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69700:4, u:0x69900:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x17a00:1, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x69900:4, u:0x69b00:4]
 arg 0 [%v1]
 arg 1 [%v2]
 %v0:ctrl = entry
@@ -386,7 +386,7 @@ cfg
   0x8049380 10 ops cbranch 0x8049390 -> [0x8049384, 0x8049390]
   0x8049384 12 ops return -> []
   0x8049390 4 ops return -> []
-tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0xb8800:4]
+tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0xb8a00:4]
 arg 0 [%v1]
 arg 1 [%v8]
 %v0:ctrl = entry

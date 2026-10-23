@@ -79,8 +79,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.write_vn(out, value)
     }
 
-    /// `mode = mxcsrRoundingControl(live)` or `fpscrRoundingControl(live)`:
-    /// 0, round to nearest even, under
+    /// `mode = mxcsrRoundingControl(live)`, `fpscrRoundingControl(live)` or
+    /// `fcsrRoundingControl(live)`: 0, round to nearest even, under
     /// [`strider_ir::AssumptionOptions::fp_rounding_mode_is_nearest`], else
     /// `live`.
     fn lift_rounding_mode_control(&mut self, insn: &rsleigh::Insn) -> Result<()> {
