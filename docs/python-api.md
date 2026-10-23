@@ -196,7 +196,9 @@ the positive one:
   Win64) must pass `reg_args_adjoin_stack_args=True`. A pointer to a local is
   taken to stay inside that local; a
   callee reading a pointer from a register its convention preserves is not
-  caught.
+  caught. Code that stores its entry stack pointer (the ARM `-mapcs-frame`
+  frame record) hands it over, so there no stack argument read after a call
+  is found.
 - `return_slots_survive_untracked_writes` (default on): a RAM store whose
   address strider cannot place on the entry stack, and any callee or user-op,
   leave the slots the function saved its return address and entry stack
