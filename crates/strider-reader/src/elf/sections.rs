@@ -758,8 +758,10 @@ pub fn mapping_symbol_data_ranges(obj: &object::File<'_>) -> Vec<std::ops::Range
 ///
 /// The tables are those `.symtab`-linked headers name for `.opd`, an exact
 /// repeat of one `(sh_type, sh_offset, sh_size)` walked once. Empty too when
-/// they name more entries than the relocation walk's budget allows, which
-/// refuses the image.
+/// they name more entries than [`RELOCATION_ENTRY_BUDGET`] times what the
+/// file holds: no descriptor is followed.
+///
+/// [`RELOCATION_ENTRY_BUDGET`]: super::relocations::RELOCATION_ENTRY_BUDGET
 pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> BTreeMap<u64, u64> {
     let mut out = BTreeMap::new();
     if obj.architecture() != object::Architecture::PowerPc64
