@@ -499,7 +499,7 @@ fn for_each_reloc_site<F>(
 /// How many entries the relocation section headers a walk reads may name in
 /// all, as a multiple of what the file holds at its smallest entry. Past it
 /// the headers name the same bytes over and over, and the image is refused.
-const RELOCATION_ENTRY_BUDGET: u64 = 2;
+pub(crate) const RELOCATION_ENTRY_BUDGET: u64 = 2;
 
 /// `obj`'s bytes with each relocation section header a walk reads that
 /// repeats an earlier one's table, its `(sh_type, sh_offset, sh_size)` and on
