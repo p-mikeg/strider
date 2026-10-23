@@ -151,24 +151,17 @@ where
 /// ([`strider_cfg::Cfg::flowing_isa_bit_at_site`]). Probing the live engine again here
 /// would answer for whichever region painted the branch address last, and
 /// [`super::merge::adopt_known_modes`] would then take the wrong `interworking`
-/// verdict.
-/// [`strider_cfg::Cfg::function_isa_bit`] covers an address no indirect branch
-/// was sealed at and every arch with no ISA-mode var.
+/// verdict. Every site is sampled on an arch with an ISA-mode var; on one
+/// without, the bit is `false`.
 pub(super) fn flowing_isa_bits(
     cfg: &strider_cfg::Cfg,
     placeholders: &Anchors,
     switches: &Anchors,
 ) -> FxHashMap<PcodeInsnAddr, bool> {
-    let entry_bit = cfg.function_isa_bit().unwrap_or(false);
     placeholders
         .iter()
         .chain(switches.iter())
-        .map(|(addr, _)| {
-            (
-                *addr,
-                cfg.flowing_isa_bit_at_site(*addr).unwrap_or(entry_bit),
-            )
-        })
+        .map(|(addr, _)| (*addr, cfg.flowing_isa_bit_at_site(*addr).unwrap_or(false)))
         .collect()
 }
 
