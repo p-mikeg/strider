@@ -117,6 +117,7 @@ pub(crate) fn apply_elf_relocations_with(
     layout: &super::sections::ElfSectionLayout,
     writable: &AddressSet,
     executable: &AddressSet,
+    view: &super::dynamic::LoaderView,
 ) -> Result<Vec<MemRegion>> {
     debug_assert!(
         {
@@ -126,8 +127,7 @@ pub(crate) fn apply_elf_relocations_with(
         },
         "two regions share a start"
     );
-    let view = super::dynamic::loader_view(obj);
-    match view {
+    match *view {
         super::dynamic::LoaderView::Unreadable(why) if relocates_code(obj) => anyhow::bail!(
             "the image relocates code, but {why}: what it relocates is unknown, \
              and its code would be served unrelocated. Load it with relocations \
@@ -161,15 +161,19 @@ pub(crate) fn apply_elf_relocations_with(
     };
     // A linked image with a `PT_DYNAMIC` is relocated from the tables its tags
     // place, as its own ELF; anything else from its section headers.
-    let (rewritten, dynamic) = match view {
-        super::dynamic::LoaderView::NotDynamic => (without_repeated_tables(obj)?, false),
-        super::dynamic::LoaderView::Tables { walked } => {
-            ctx.symbols = super::dynamic::dynsym_is_the_loaders(obj);
-            (walked, true)
+    let deduped;
+    let (rewritten, dynamic, holes) = match view {
+        super::dynamic::LoaderView::NotDynamic => {
+            deduped = without_repeated_tables(obj)?;
+            (deduped.as_deref(), false, &[][..])
         }
-        _ => (None, true),
+        super::dynamic::LoaderView::Tables { walked, holes } => {
+            ctx.symbols = super::dynamic::dynsym_is_the_loaders(obj);
+            (walked.as_deref(), true, &holes[..])
+        }
+        _ => (None, true, &[][..]),
     };
-    let rewritten = rewritten.as_deref().map(object::File::parse).transpose()?;
+    let rewritten = rewritten.map(object::File::parse).transpose()?;
     let walked = match (&rewritten, dynamic) {
         (Some(walked), _) => Some(walked),
         (None, false) => Some(obj),
@@ -190,6 +194,9 @@ pub(crate) fn apply_elf_relocations_with(
         if !dynamic {
             relocations_off_dynsym(&mut ctx, walked);
         }
+    }
+    for &(place, info) in holes {
+        hole_place(&mut ctx, place, &info);
     }
     hole_copies(&mut ctx);
     mips_implicit_got(&mut ctx);
@@ -787,6 +794,33 @@ fn hole_copies(ctx: &mut Ctx<'_, '_>) {
     for &(lo, hi) in AddressSet::merged(held).as_slice() {
         let holder = ctx.holding(lo, 1);
         ctx.unmodelled(holder, lo, (hi - lo) as usize, r_type);
+    }
+}
+
+/// A hole over the field a relocation of `info`'s type has at `place`, a
+/// word when its type names none, whether or not the field is writable:
+/// the loader view holes a place it does not model. A marker holes
+/// nothing, and a COPY its object to the end of the mapping.
+fn hole_place(ctx: &mut Ctx<'_, '_>, place: u64, info: &RelocInfo) {
+    let word = if ctx.obj.is_64() { 8 } else { 4 };
+    let width = match classify(ctx.obj.architecture(), info) {
+        Some(Kind::Marker) => return,
+        Some(Kind::Copy) => {
+            note_copy(ctx, place, None, info.type_word());
+            return;
+        }
+        Some(Kind::Compute(_, field)) => field.width().max(word),
+        None => word,
+    };
+    if ctx.holding(place, 1).is_none() {
+        return;
+    }
+    let end = place.saturating_add(width as u64);
+    let mut at = place;
+    while at < end {
+        let piece = (end - at).min(crate::MAX_PATCH_LEN) as usize;
+        ctx.patches.push(Patch::hole(at, piece, info.type_word()));
+        at += piece as u64;
     }
 }
 
@@ -1652,6 +1686,7 @@ mod tests {
                 super::super::sections::RegionSource::Auto,
                 filter,
                 false,
+                &super::super::dynamic::LoaderView::NotDynamic,
             )
             .expect("regions");
         let (mut regions, writable, executable) = (image.regions, image.writable, image.executable);
@@ -1666,11 +1701,27 @@ mod tests {
                 })
                 .collect()
         };
-        apply_elf_relocations_with(&mut regions, &obj, filter, &layout, &writable, &executable)
-            .expect("apply");
+        apply_elf_relocations_with(
+            &mut regions,
+            &obj,
+            filter,
+            &layout,
+            &writable,
+            &executable,
+            &super::super::dynamic::loader_view(&obj),
+        )
+        .expect("apply");
         let once = bytes(&regions);
-        apply_elf_relocations_with(&mut regions, &obj, filter, &layout, &writable, &executable)
-            .expect("re-apply");
+        apply_elf_relocations_with(
+            &mut regions,
+            &obj,
+            filter,
+            &layout,
+            &writable,
+            &executable,
+            &super::super::dynamic::loader_view(&obj),
+        )
+        .expect("re-apply");
         assert_eq!(once, bytes(&regions));
     }
 
