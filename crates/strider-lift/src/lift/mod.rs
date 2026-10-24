@@ -283,14 +283,6 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         found.into_iter().collect()
     }
 
-    /// Every register a `CallOther` in `cfg` touches through its ABI footprint
-    /// instead of its pcode operands: the third source of tracked varnodes,
-    /// beside the decoded instructions and the calling convention. x86-64
-    /// `syscall` reads `R10` and writes `R11`, and SysV gives neither a role.
-    ///
-    /// Silent about what it cannot resolve: an unclassified user-op and an ABI
-    /// name outside this arch's register table are both errors of lifting the
-    /// op, raised there against the op's own name.
     /// The registers the `cfg`'s rounding-mode ops with no input are
     /// ([`strider_target::call_other_abi::rounding_mode_register`]), but for
     /// one an override classifies.
@@ -315,6 +307,14 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         found.into_iter().collect()
     }
 
+    /// Every register a `CallOther` in `cfg` touches through its ABI footprint
+    /// instead of its pcode operands: the third source of tracked varnodes,
+    /// beside the decoded instructions and the calling convention. x86-64
+    /// `syscall` reads `R10` and writes `R11`, and SysV gives neither a role.
+    ///
+    /// Silent about what it cannot resolve: an unclassified user-op and an ABI
+    /// name outside this arch's register table are both errors of lifting the
+    /// op, raised there against the op's own name.
     fn call_other_footprint_vns(
         &self,
         cfg: &strider_cfg::Cfg,
