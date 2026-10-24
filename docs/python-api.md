@@ -203,10 +203,11 @@ the positive one:
   address strider cannot place on the entry stack, and any callee or user-op,
   leave the slots the function saved its return address and entry stack
   pointer in alone. Only return-target verification reads it; off, a return
-  after any call is reported as unverified, and a store through a pointer only
-  a guess reaches is checked against the slot. A constant-address store, under
+  after a user-op, or after a call whose convention does not preserve memory,
+  is reported as unverified, and a store through a pointer only a guess
+  reaches is checked against the slot. A constant-address store, under
   `stack_global_disjoint`, a store through a `noalias_allocators` result and
-  a call whose convention preserves memory still pass.
+  a call whose convention preserves memory pass either way.
 - `distinct_sp_bases_disjoint` (off): a store rooted at an SP base other than
   the entry SP, such as an `sp & -16` frame local, does not alias an incoming
   argument slot. Only incoming-argument detection reads it.

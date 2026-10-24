@@ -143,9 +143,9 @@ class AssumptionOptions:
         analysed code stored at its address, with nothing outside that code
         (a device, another thread, a signal handler) changing it in between.
         A memory-mapped register polled after a write reads as the value
-        written. The floating-point controls other than the rounding mode
-        are still taken to be the IEEE default: float arithmetic rounds to
-        nearest, and x86 MXCSR.FTZ and DAZ, PowerPC FPSCR.NI, OE and UE, ARM
+        written. The floating-point environment outside the conversion
+        rounding mode `fp_rounding_mode_is_nearest` claims is still taken to
+        be the IEEE default: float arithmetic rounds to nearest, and x86 MXCSR.FTZ and DAZ, PowerPC FPSCR.NI, OE and UE, ARM
         FPSCR.FZ, AArch64 FPCR.FZ and MIPS FCSR.FS are clear, so
         `-ffast-math` code, whose startup sets FTZ and DAZ, has no floor
         here. No option lifts either premise.

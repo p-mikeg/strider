@@ -631,9 +631,10 @@ macro_rules! assumption_fields {
             /// memory behaves as RAM and whose floating-point controls are the
             /// IEEE default, forwarding solely what the IR structurally
             /// proves. A memory-mapped register polled after a write still
-            /// reads as the value written, and float arithmetic rounds to
-            /// nearest with MXCSR.FTZ/DAZ, FPSCR.NI/OE/UE, FPSCR.FZ, FPCR.FZ
-            /// and FCSR.FS clear.
+            /// reads as the value written. Outside the conversion rounding
+            /// mode `fp_rounding_mode_is_nearest` claims, float arithmetic
+            /// rounds to nearest with MXCSR.FTZ/DAZ, FPSCR.NI/OE/UE, FPSCR.FZ,
+            /// FPCR.FZ and FCSR.FS clear.
             #[staticmethod]
             #[allow(clippy::too_many_arguments)]
             #[pyo3(signature = (*, $($name = None),*))]
@@ -722,10 +723,11 @@ assumption_fields! {
     /// A RAM store whose address the analysis cannot place on the entry stack,
     /// and any callee or user-op, leave the slots the function saved its
     /// return address and entry stack pointer in alone (default `True`). Read
-    /// by return-target verification alone: off, a return after a call is
-    /// reported as unverified, and a store through a pointer the analysis can
-    /// only guess at is checked against the slot. A store its SP decomposition
-    /// places is checked either way.
+    /// by return-target verification alone: off, a return after a user-op or
+    /// a call whose convention does not preserve memory is reported as
+    /// unverified, and a store through a pointer the analysis can only guess
+    /// at is checked against the slot. A store its SP decomposition places is
+    /// checked either way.
     return_slots_survive_untracked_writes: bool,
 
     /// The mode an ARM register-form `msr` writes to the CPSR control field

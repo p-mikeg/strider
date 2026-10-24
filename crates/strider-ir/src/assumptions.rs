@@ -18,7 +18,8 @@
 /// [`assume_incoming_args_survive_calls`](Self::assume_incoming_args_survive_calls),
 /// without which a stack argument read after a call is not detected as one, and
 /// [`return_slots_survive_untracked_writes`](Self::return_slots_survive_untracked_writes),
-/// without which a return after any call is reported as unverified.  The
+/// without which a return after a user-op or a call that does not preserve
+/// memory is reported as unverified.  The
 /// fourth, [`msr_register_keeps_mode`](Self::msr_register_keeps_mode), fails
 /// only for ARM code that switches mode through a register `msr`, and without
 /// it an interrupt-mask restore the analysis cannot place re-banks `sp` and
@@ -154,8 +155,9 @@ pub struct AssumptionOptions {
     /// A RAM `Store` whose address this analysis cannot place on the entry
     /// stack, and any callee or user-op, leave the stack slots the function
     /// saved its return address and its entry stack pointer in as it found
-    /// them.  Off is the sound answer: a return whose slot an unplaced store
-    /// or a call could reach is then reported as unverified.
+    /// them.  Off is the sound answer: a return whose slot an unplaced store,
+    /// a user-op or a call whose convention does not preserve memory could
+    /// reach is then reported as unverified.
     ///
     /// Read by return-target verification alone, where it covers code that
     /// rewrites its own return slot through a pointer no SP decomposition
@@ -163,10 +165,10 @@ pub struct AssumptionOptions {
     /// the address spine DOES place is checked against the slot whatever this
     /// says; a guessed location is not a placement, so clearing this is what
     /// brings one in.  A constant-address store under
-    /// [`stack_global_disjoint`](Self::stack_global_disjoint), and a store
-    /// through a [`noalias_allocators`](Self::noalias_allocators) result,
-    /// and a call whose convention preserves memory, pass whatever this
-    /// says.  Default ON.
+    /// [`stack_global_disjoint`](Self::stack_global_disjoint), a store
+    /// through a [`noalias_allocators`](Self::noalias_allocators) result and
+    /// a call whose convention preserves memory pass whatever this says.
+    /// Default ON.
     ///
     /// The shape that needs it is an ARM `push {lr}; ... bl ...; pop {pc}`
     /// return: the call in between writes memory the walk cannot place, and
@@ -244,12 +246,13 @@ impl AssumptionOptions {
     /// analysed code stored at its address, and nothing outside that code (a
     /// device, another thread, a signal handler) changes it in between.  A
     /// memory-mapped register polled after a write reads as the value written.
-    /// It also takes the floating-point controls other than the conversions'
-    /// rounding mode to be the IEEE default: float arithmetic, scalar and
-    /// vector, rounds to nearest whatever mode is in force (x87, SSE, PowerPC
-    /// `fadd` and `fmadd`, ARM, AArch64 and MIPS alike), and x86 MXCSR.FTZ
-    /// and DAZ, PowerPC FPSCR.NI, OE and UE, ARM FPSCR.FZ, AArch64 FPCR.FZ
-    /// and MIPS FCSR.FS are clear, so `-ffast-math` code, whose startup sets
+    /// It also takes the floating-point environment to be the IEEE default
+    /// outside the conversion rounding mode
+    /// [`fp_rounding_mode_is_nearest`](Self::fp_rounding_mode_is_nearest)
+    /// claims: float arithmetic, scalar and vector, rounds to nearest
+    /// whatever mode is in force (x87, SSE, PowerPC `fadd` and `fmadd`, ARM,
+    /// AArch64 and MIPS alike), and x86 MXCSR.FTZ and DAZ, PowerPC FPSCR.NI,
+    /// OE and UE, ARM FPSCR.FZ, AArch64 FPCR.FZ and MIPS FCSR.FS are clear, so `-ffast-math` code, whose startup sets
     /// FTZ and DAZ, and code computing under another mode have no floor here.
     /// No field lifts either premise.
     #[must_use]
