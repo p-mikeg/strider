@@ -158,9 +158,12 @@ pub(super) fn check_function_invariants_control_single_use(
 /// An arithmetic node is evaluated at ONE width, which every operand
 /// [`NodeKind::operand_width`] ties to it must carry: the output's, or a
 /// comparison's first operand's (its output is `I1`). A shift's count is
-/// free, as in p-code. A bitcast keeps its byte size, which over the
-/// supported widths is the same claim: no float is one byte, so only `I1`'s
-/// byte size could disagree with its bit width and no bitcast partner has it.
+/// free, as in p-code. A bitcast keeps its byte size, which for a pair its
+/// signature admits (one integer side, one float side) is the same claim: no
+/// float is one byte, so only `I1`'s byte size could disagree with its bit
+/// width and no float can pair with it. On a graph that already breaks the
+/// slot-kind check the two differ, and the extra mismatch joins the kind
+/// error rather than replacing it.
 /// `Extend` / `Truncate` carry a DIRECTION instead and are checked by
 /// [`check_function_invariants_extend_truncate`].
 pub(super) fn check_function_invariants_arith_widths(
