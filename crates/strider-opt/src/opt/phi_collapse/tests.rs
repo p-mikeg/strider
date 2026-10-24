@@ -1021,7 +1021,7 @@ fn masked_join(masks: &[&[u128]]) -> crate::Result<Vec<Vec<Option<u128>>>> {
 /// each to `0x13 & mask`, and runs out inside the next one, which stays.
 #[test]
 fn masks_past_the_peel_budget_stay() -> crate::Result<()> {
-    let budget = 2 * super::PEEL_VISITS_PER_ARM;
+    let budget = 2 * super::masked::PEEL_VISITS_PER_ARM;
     assert_ne!(budget % 3, 0, "the budget runs out inside a mask");
     // Clear of bit 5, where the arms differ, and of bits 6 and 7, which the
     // `x & 0xc0` arm leaves unknown.
