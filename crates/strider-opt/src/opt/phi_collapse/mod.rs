@@ -99,11 +99,11 @@ impl Optimizer for PhiCollapse {
             }
             let mut budget = (edit.node_inputs(phi).len() - 1).saturating_mul(PEEL_VISITS_PER_ARM);
             let phi_out = edit.node_outputs(phi)[0];
-            let masks: Vec<(ValueId, u128, ValueType)> = edit
+            let masks: Vec<(ValueId, u128)> = edit
                 .value_uses(phi_out)
                 .filter_map(|(user, _)| masked_use(edit, user, phi_out))
                 .collect();
-            for (and_out, mask, ty) in masks {
+            for (and_out, mask) in masks {
                 if budget == 0 {
                     break;
                 }
@@ -112,7 +112,7 @@ impl Optimizer for PhiCollapse {
                 }
                 walked.clear();
                 let Some(value) =
-                    masked_phi_value(edit, phi, and_out, mask, ty, &mut walked, &mut budget)?
+                    masked_phi_value(edit, phi, and_out, mask, &mut walked, &mut budget)?
                 else {
                     continue;
                 };
@@ -151,7 +151,7 @@ fn masked_use(
     edit: &crate::EditFunction<'_>,
     user: NodeId,
     phi_out: ValueId,
-) -> Option<(ValueId, u128, ValueType)> {
+) -> Option<(ValueId, u128)> {
     if !matches!(
         edit.node_kind(user),
         NodeKind::IntBinaryOp(IntBinaryOp::And)
@@ -162,7 +162,7 @@ fn masked_use(
     ty.int_mask_u128()?;
     let [a, b] = edit.node_inputs_exact::<2>(user).ok()?;
     let other = if a == phi_out { b } else { a };
-    Some((out, edit.int_const_u128(other)?, ty))
+    Some((out, edit.int_const_u128(other)?))
 }
 
 /// `And(arm, C)` after peeling.
@@ -190,10 +190,13 @@ fn masked_phi_value(
     phi: NodeId,
     and_out: ValueId,
     mask: u128,
-    ty: ValueType,
     walked: &mut Vec<NodeId>,
     budget: &mut usize,
 ) -> Result<Option<ValueId>> {
+    // `masked_use` read `and_out` off a single value output.
+    let ty = edit
+        .value_type_opt(and_out)
+        .expect("the masked And's output is a value");
     let view = &*edit;
     let selves = [view.node_outputs(phi)[0], and_out];
     let mut agreed = None;
