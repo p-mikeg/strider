@@ -6,7 +6,7 @@
 //! forms store fS's bits 0:1 and 5:34 when its exponent is above 896 or it
 //! is zero, else the fraction denormalised to the single's exponent; they
 //! truncate and never round, whatever FPSCR.RN says. Below exponent 874 the
-//! word is undefined and these tests do not look at it. `fmrgew` gives
+//! word is undefined, and the lift stores a signed zero. `fmrgew` gives
 //! FRA[0:31] || FRB[0:31] and `fmrgow` FRA[32:63] || FRB[32:63].
 
 mod common;
@@ -204,6 +204,29 @@ fn single_stores_ignore_the_rounding_mode() {
                         "{arch:?} {name} {d:#018x} fill {fill:#x}"
                     );
                 }
+            }
+        }
+    }
+}
+
+/// Below exponent 874, which the ISA leaves undefined, each store form
+/// writes the double's sign over a zero.
+#[test]
+fn single_stores_below_exponent_874_store_a_signed_zero() {
+    let tiny = [
+        0x3690_0000_0000_0001u64,
+        0x0000_0000_0000_0001,
+        1e-300f64.to_bits(),
+        0x3690_ffff_ffff_ffff,
+    ];
+    for arch in ALL {
+        for (name, words) in STORES {
+            let lifted = store_lift(arch, words, &AssumptionOptions::default());
+            for d in tiny.into_iter().flat_map(|d| [d, d | 1 << 63]) {
+                assert!(d >> 52 & 0x7ff < 874, "{d:#x} is below exponent 874");
+                let got = int(&lifted.run(&[d.into(), 0x8000_0000], 0)[0]);
+                let want = u128::from(d >> 63) << 31;
+                assert_eq!(got, want, "{arch:?} {name} {d:#018x}: got {got:#x}");
             }
         }
     }
