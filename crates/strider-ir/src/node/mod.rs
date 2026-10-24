@@ -3,6 +3,7 @@ mod kind;
 mod ops;
 mod value_kind;
 mod value_type;
+mod width_relation;
 
 #[cfg(test)]
 mod tests;
@@ -17,3 +18,4 @@ pub use value_kind::ValueKind;
 pub use value_type::{
     ValueType, VnTypeExt, complement_limbs, low_bits_mask_u128, shifted_ones_limbs,
 };
+pub use width_relation::{WidthGroups, WidthTie, width_tie};
