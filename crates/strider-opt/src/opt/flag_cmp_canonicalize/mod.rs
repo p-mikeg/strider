@@ -26,8 +26,8 @@
 //! layer).
 
 use crate::{BoxedRule, rewrite_rule};
-use strider_ir::IRViewer;
 use strider_ir::node::{ExtendOp, IntBinaryOp, IntCmpOp, NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::{Function, IRViewer};
 use strider_pattern::{
     Bindings, Capture, CaptureExt, bool_and, bool_not, bool_or, capture_typed, int_add, int_const,
     int_const_with, int_eq, int_lt, int_neg, int_sborrow, int_scarry, int_shl, int_slt, int_xor,
@@ -112,59 +112,51 @@ fn rewrite_at(edit: &mut crate::EditFunction<'_>, root: NodeId) -> Result<Peepho
     Ok(PeepholeRewrite::from_new_value(edit, opt))
 }
 
-/// `M == -N` at `width_src`'s width.  `false` unless all bindings resolve.
-fn neg_relation(
-    binds: &Bindings,
-    func: &strider_ir::Function,
-    m: Capture,
-    n: Capture,
+/// Every capture in `caps` as a `u128`, with `width_src`'s carrier mask.
+/// `None` unless all of them resolve.
+fn uints<const N: usize>(
+    b: &Bindings,
+    f: &Function,
+    caps: [Capture; N],
     width_src: Capture,
-) -> bool {
-    let (Some(m_val), Some(n_val), Some(width)) = (
-        binds.get_uint(m, func),
-        binds.get_uint(n, func),
-        carrier_mask(func, binds, width_src),
-    ) else {
+) -> Option<([u128; N], u128)> {
+    let mut vals = [0u128; N];
+    for (slot, cap) in caps.into_iter().enumerate() {
+        vals[slot] = b.get_uint(cap, f)?;
+    }
+    Some((vals, carrier_mask(f, b, width_src)?))
+}
+
+/// `M == -N` at `width_src`'s width.
+fn neg_relation(b: &Bindings, f: &Function, m: Capture, n: Capture, width_src: Capture) -> bool {
+    let Some(([m, n], mask)) = uints(b, f, [m, n], width_src) else {
         return false;
     };
-    (m_val & width) == (n_val.wrapping_neg() & width)
+    (m & mask) == (n.wrapping_neg() & mask)
 }
 
 /// `N` is not the signed minimum at `width_src`'s width, so `-N` is
-/// representable there.  `false` unless all bindings resolve.
-fn negation_fits(
-    binds: &Bindings,
-    func: &strider_ir::Function,
-    n: Capture,
-    width_src: Capture,
-) -> bool {
-    let (Some(n_val), Some(width)) = (
-        binds.get_uint(n, func),
-        carrier_mask(func, binds, width_src),
-    ) else {
+/// representable there.
+fn negation_fits(b: &Bindings, f: &Function, n: Capture, width_src: Capture) -> bool {
+    let Some(([n], mask)) = uints(b, f, [n], width_src) else {
         return false;
     };
-    n_val & width != width ^ (width >> 1)
+    n & mask != mask ^ (mask >> 1)
 }
 
-/// `M == C1 - N` at `width_src`'s width.  `false` unless all bindings resolve.
+/// `M == C1 - N` at `width_src`'s width.
 fn sub_relation(
-    binds: &Bindings,
-    func: &strider_ir::Function,
+    b: &Bindings,
+    f: &Function,
     m: Capture,
     n: Capture,
     c1: Capture,
     width_src: Capture,
 ) -> bool {
-    let (Some(m_val), Some(n_val), Some(c1_val), Some(width)) = (
-        binds.get_uint(m, func),
-        binds.get_uint(n, func),
-        binds.get_uint(c1, func),
-        carrier_mask(func, binds, width_src),
-    ) else {
+    let Some(([m, n, c1], mask)) = uints(b, f, [m, n, c1], width_src) else {
         return false;
     };
-    (m_val & width) == (c1_val.wrapping_sub(n_val) & width)
+    (m & mask) == (c1.wrapping_sub(n) & mask)
 }
 
 fn build_rules() -> Vec<BoxedRule> {
