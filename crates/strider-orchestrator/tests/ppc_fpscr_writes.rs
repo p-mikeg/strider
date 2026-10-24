@@ -108,7 +108,8 @@ fn run(lifted: &Lifted, s: State, extra: &[u128]) -> State {
     let mut vals: Vec<u128> = (0..32).map(|i| u128::from(get(s.img, i))).collect();
     vals.extend(s.crs.map(u128::from));
     vals.extend(extra);
-    let out = lifted.run(&vals, 0);
+    // Every add and divide here is exact, so the rounding status ops give 0.
+    let out = lifted.run_with(&vals, 0, &|_| Some(0));
     let int = |v: &Val| match v {
         Val::Int(x) => *x,
         other => panic!("an FPSCR bit or CR field is {other:?}"),
