@@ -1145,8 +1145,8 @@ fn incoming_args_survive_calls_toggle_gates_arg_across_call() -> Result<()> {
 
 /// `assume_incoming_args_survive_calls` governs which loads count as incoming
 /// arguments, not what the memory edges say. A load's narrowed memory input is
-/// read afterwards by walks that block at every call, so narrowing it past a
-/// `Call` would hand them a relaxation they do not honour.
+/// read afterwards by walks that honour no call relaxation, so narrowing it
+/// past a `Call` would hand them one.
 #[test]
 fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
     let sp = sp32_vn();
@@ -1167,8 +1167,8 @@ fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
 
     let mut pipeline = cf_rp_pipeline();
     pipeline.add_post_pass(FunctionArgDetect);
-    // Granted, so `alias_cfg` steps the `Call` and only `narrow_cfg` being
-    // pinned to `MemPurpose::Structural` keeps the edge where it is.
+    // Granted, so `alias_cfg` steps the `Call` and only `narrow_cfg` honouring
+    // no call relaxation keeps the edge where it is.
     fg.assume(&crate::AssumptionOptions {
         assume_incoming_args_survive_calls: true,
         ..crate::AssumptionOptions::none()
@@ -1268,44 +1268,52 @@ fn rerunning_the_default_pipeline_keeps_one_carrier_per_stack_arg() -> Result<()
     Ok(())
 }
 
-/// The narrowing names only what holds with every claim off, since
-/// return-target verification, reading the edge afterwards with its claim off,
-/// does not honour `stack_global_disjoint`: even a run claiming it must leave
-/// the global store on the argument load's memory chain, where a floor run
-/// also finds it.
+/// Return-target verification passes a constant-address store under
+/// `stack_global_disjoint` whatever its own claim, so the narrowing may step
+/// past one under that claim, and at the floor leaves it on the chain.
+///
+/// Mutations: leave the edge where it is; honour `stack_global_disjoint`
+/// whatever the function claims.
 #[test]
-fn narrowing_does_not_bake_in_stack_global_disjoint() -> Result<()> {
-    let sp = stack_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(8, 8))
-        .build_fn_single_region()?;
-    let sp_val = b.read_variable(&sp)?;
-    let eight = b.build_int_const(8u64, ValueType::int(64))?;
-    let slot = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(64))?;
-    let global = b.build_int_const(0x4000u64, ValueType::int(64))?;
-    let val = b.build_int_const(7u64, ValueType::int(64))?;
-    b.build_store(global, val, rsleigh::VnSpace::RAM)?;
-    let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(64))?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-    cf_rp_pipeline().run(&mut fg, &crate::OptCtx::new(None))?;
+fn narrowing_honours_stack_global_disjoint() -> Result<()> {
+    for claimed in [false, true] {
+        let sp = stack_vn();
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(8, 8))
+            .build_fn_single_region()?;
+        let sp_val = b.read_variable(&sp)?;
+        let eight = b.build_int_const(8u64, ValueType::int(64))?;
+        let slot =
+            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let global = b.build_int_const(0x4000u64, ValueType::int(64))?;
+        let val = b.build_int_const(7u64, ValueType::int(64))?;
+        b.build_store(global, val, rsleigh::VnSpace::RAM)?;
+        let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        b.build_return(Some(loaded), &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        cf_rp_pipeline().run(&mut fg, &crate::OptCtx::new(None))?;
 
-    // The claim this rewire must not use, made explicitly: the fixture claims
-    // nothing until here.
-    fg.assume(&crate::AssumptionOptions {
-        stack_global_disjoint: true,
-        ..crate::AssumptionOptions::none()
-    });
-    crate::pipeline::run_post(&FunctionArgDetect, &mut fg, &crate::OptCtx::new(None))?;
+        fg.assume(&crate::AssumptionOptions {
+            stack_global_disjoint: claimed,
+            ..crate::AssumptionOptions::none()
+        });
+        crate::pipeline::run_post(&FunctionArgDetect, &mut fg, &crate::OptCtx::new(None))?;
 
-    let load = fg.producer(loaded);
-    let mem = fg.node_inputs(load)[0];
-    assert!(
-        matches!(fg.node_kind(fg.producer(mem)), NodeKind::Store(_)),
-        "the constant-address store must stay on the chain, got {:?}",
-        fg.node_kind(fg.producer(mem)),
-    );
+        let mem = fg.node_inputs(fg.producer(loaded))[0];
+        let kind = fg.node_kind(fg.producer(mem));
+        if claimed {
+            assert!(
+                matches!(kind, NodeKind::InitialMemory),
+                "claimed: the edge must step past the global store, got {kind:?}"
+            );
+        } else {
+            assert!(
+                matches!(kind, NodeKind::Store(_)),
+                "at the floor the global store must stay on the chain, got {kind:?}"
+            );
+        }
+    }
     Ok(())
 }
 
@@ -1325,6 +1333,63 @@ fn detecting_across_call_diamonds_costs_near_linear_work() -> Result<()> {
     assert!(
         big * 100 <= small * 260,
         "doubling the call diamonds took {small} steps to {big}"
+    );
+    Ok(())
+}
+
+/// `noalias_allocators` puts a store through the allocation off the argument
+/// slot, so the narrowing steps past it, but not past the call, which only
+/// detection's own probe steps through, under
+/// `assume_incoming_args_survive_calls`.
+///
+/// Mutations: leave the edge where it is; narrow under
+/// `MemPurpose::IncomingArgs`.
+#[test]
+fn arg_detection_narrows_past_a_heap_store_to_its_allocator() -> Result<()> {
+    const ALLOCATOR: u64 = 0x1000;
+    let sp = sp32_vn();
+    // Without a return register the call has no fresh heap base.
+    let ret_reg = reg_vn(0x00, 4);
+    let mut b = sp_frame(sp)
+        .tracked(ret_reg)
+        .ret(ret_reg)
+        .stack_args(stack_args_at(4, 8))
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    // A frame below the arguments, so the call's own window misses them.
+    let frame = b.build_int_const((-32i64) as u64, ValueType::int(32))?;
+    let call_sp =
+        b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::int(32))?;
+    b.write_variable(&sp, call_sp)?;
+    let target = b.build_int_const(ALLOCATOR, ValueType::int(32))?;
+    let (_, rets) = b.build_call(target, &[], &[ret_reg], 0)?;
+    let value = b.build_int_const(0x22u64, ValueType::int(32))?;
+    b.build_store(rets[0], value, rsleigh::VnSpace::RAM)?;
+    let four = b.build_int_const(4u64, ValueType::int(32))?;
+    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    // Keeps the allocator's pointer live.
+    let sum =
+        b.build_int_binary_operation(loaded, rets[0], IntBinaryOp::Add, ValueType::int(32))?;
+    b.build_return(Some(sum), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    let mut pipeline = cf_rp_pipeline();
+    pipeline.add_post_pass(FunctionArgDetect);
+    fg.assume(&crate::AssumptionOptions {
+        noalias_allocators: [ALLOCATOR].into_iter().collect(),
+        assume_incoming_args_survive_calls: true,
+        ..crate::AssumptionOptions::none()
+    });
+    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+
+    assert_eq!(fg.side_tables().arg_index_to_values(0), [loaded]);
+    let mem_in = fg.node_inputs(fg.producer(loaded))[0];
+    let kind = fg.node_kind(fg.producer(mem_in));
+    assert!(
+        matches!(kind, NodeKind::Call { .. }),
+        "the load's memory predecessor must be the allocator Call, got {kind:?}"
     );
     Ok(())
 }

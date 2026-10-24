@@ -127,10 +127,9 @@ pub struct AssumptionOptions {
     /// [`escape_analysis`](Self::escape_analysis) documents, without that knob
     /// being set, and is likewise inert on a frame that stores its entry SP.
     ///
-    /// `LoadForward`'s narrowing reads the distinct allocation but steps
-    /// through no listed call, incoming-argument detection's narrowing reads a
-    /// heap base as a may-alias opaque pointer, and return-target verification
-    /// passes a store to a listed allocation over the return slot.
+    /// The narrowing of `LoadForward` and incoming-argument detection reads the
+    /// distinct allocation but steps through no listed call, and return-target
+    /// verification passes a store to a listed allocation over the return slot.
     pub noalias_allocators: rustc_hash::FxHashSet<u64>,
     /// When the function's frame is provably private (no stack address escapes
     /// to any callee), forward a spill `Load` across a `Call` and step it past

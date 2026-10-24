@@ -330,6 +330,11 @@
   `noalias_allocators` result, and still through no call a claim makes
   transparent. A jump-table index reloaded past a global write is bounded by
   the check on the first load.
+- `FunctionArgDetect` moves an argument load's memory edge under the same
+  claims as `LoadForward`: past a constant-address store under
+  `stack_global_disjoint` and a store through a `noalias_allocators` result,
+  and through no call a claim makes transparent. In a pipeline without `LoadForward`, two reads of one
+  stack argument with such a store between them are one carrier.
 - With `return_slots_survive_untracked_writes` cleared, return-target
   verification passes a constant-address store under
   `stack_global_disjoint` and a store through a `noalias_allocators`

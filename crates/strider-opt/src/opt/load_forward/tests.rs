@@ -1984,7 +1984,7 @@ fn narrowing_across_a_call_ignores_escape_analysis() -> Result<()> {
 /// `stack_global_disjoint` is a claim every reader of the narrowed edge
 /// honours, so under it the edge steps past the global store.
 ///
-/// Mutation: narrow under `MemPurpose::Structural`.
+/// Mutation: narrow with `stack_global_disjoint` off.
 #[test]
 fn narrowing_past_a_global_store_honours_stack_global_disjoint() -> Result<()> {
     let sp = sp32_vn();
@@ -2025,7 +2025,8 @@ fn narrowing_past_a_global_store_honours_stack_global_disjoint() -> Result<()> {
 /// it past itself only for forwarding, and the narrowed edge, which the
 /// jump-table walk reads with no call relaxation, stops at the call.
 ///
-/// Mutations: narrow under `MemPurpose::Structural`; under `MemPurpose::Forward`.
+/// Mutations: `classify_addr` names no heap class; narrow under
+/// `MemPurpose::Forward`.
 #[test]
 fn narrowing_past_a_heap_store_stops_at_its_allocator() -> Result<()> {
     const ALLOCATOR: u64 = 0x1000;

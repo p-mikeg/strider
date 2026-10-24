@@ -18,7 +18,7 @@
 
 use strider_cfg::RegionTerminator;
 use strider_ir_test_utils::MockRom;
-use strider_orchestrator::opt::AssumptionOptions;
+use strider_orchestrator::opt::{AssumptionOptions, OptimizerPipeline};
 use strider_orchestrator::{AnalyzeOptions, Reason};
 
 mod common;
@@ -33,6 +33,18 @@ fn analyze(
     arms: [u64; 4],
     assumptions: AssumptionOptions,
 ) -> (Vec<Vec<u64>>, Vec<u64>) {
+    let (switches, unresolved, _) = analyze_with(code, arms, assumptions, None);
+    (switches, unresolved)
+}
+
+/// [`analyze`] under `pipeline`, also counting the first stack argument's
+/// carriers.
+fn analyze_with(
+    code: &str,
+    arms: [u64; 4],
+    assumptions: AssumptionOptions,
+    pipeline: Option<OptimizerPipeline>,
+) -> (Vec<Vec<u64>>, Vec<u64>, usize) {
     let code = (0..code.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&code[i..i + 2], 16).expect("hex"))
@@ -45,7 +57,15 @@ fn analyze(
         assumptions,
         ..AnalyzeOptions::default()
     };
-    let result = strider.analyze(BASE, &cc, &opts, None).expect("analyze");
+    let first_stack_arg = cc.arg_passing_regs.len() as u32;
+    let result = strider
+        .analyze(BASE, &cc, &opts, pipeline)
+        .expect("analyze");
+    let carriers = result
+        .function
+        .side_tables()
+        .arg_index_to_values(first_stack_arg)
+        .len();
     let unresolved = result
         .incomplete()
         .of(Reason::UnresolvedBranch)
@@ -64,13 +84,13 @@ fn analyze(
             _ => None,
         })
         .collect();
-    (switches, unresolved)
+    (switches, unresolved, carriers)
 }
 
 /// `stack_global_disjoint` puts the constant-address write off the slot, and
 /// the narrowing honours it.
 ///
-/// Mutation: narrow under `MemPurpose::Structural`.
+/// Mutation: narrow `LoadForward` with `stack_global_disjoint` off.
 #[test]
 fn a_reload_past_a_global_store_is_the_bounded_index() {
     const ARMS: [u64; 4] = [0x40_101f, 0x40_1025, 0x40_102b, 0x40_1031];
@@ -113,4 +133,86 @@ fn a_reload_past_a_call_stays_unbounded() {
     let (switches, unresolved) = analyze(code, ARMS, assumptions);
     assert_eq!(unresolved, [0x40_1016]);
     assert!(switches.is_empty(), "{switches:#x?}");
+}
+
+/// The default pipeline without `LoadForward`, so `FunctionArgDetect`'s is the
+/// only narrowing the loads get.
+fn without_load_forward() -> OptimizerPipeline {
+    use strider_orchestrator::opt::*;
+    let mut p = OptimizerPipeline::new();
+    p.add(ConstantFold::new());
+    p.add(LoadReadOnly);
+    p.add(KnownBits);
+    p.add(FlagCmpCanonicalize::new());
+    p.add(IfCondInversion::new());
+    p.add(PhiCollapse);
+    p.add(RegionCollapse);
+    p.add(DeadBranchElimination);
+    p.add(CfgDetach);
+    p.add_post_pass(CallStackArgCollect);
+    p.add_post_pass(FunctionArgDetect);
+    p
+}
+
+const GLOBAL_STORE_ARMS: [u64; 4] = [0x40_101f, 0x40_1025, 0x40_102b, 0x40_1031];
+const GLOBAL_STORE: &str = "8b44240883f803772ec7042500304000010000008b442408ff24c500204000\
+                            b801000000c3b802000000c3b803000000c3b804000000c331c0c3";
+
+/// Both reads are the first stack argument. Argument detection narrows the
+/// reload past the global write under `stack_global_disjoint`, the two merge
+/// into one carrier, and the bound check bounds the index.
+///
+/// Mutation: narrow `FunctionArgDetect` with `stack_global_disjoint` off.
+#[test]
+fn arg_detection_narrows_a_reload_past_a_global_store() {
+    let (switches, unresolved, carriers) = analyze_with(
+        GLOBAL_STORE,
+        GLOBAL_STORE_ARMS,
+        AssumptionOptions::default(),
+        Some(without_load_forward()),
+    );
+    assert!(unresolved.is_empty(), "{unresolved:#x?}");
+    assert_eq!(switches, [GLOBAL_STORE_ARMS.to_vec()]);
+    assert_eq!(carriers, 1);
+}
+
+/// At the floor the write may be the slot, so neither the detection nor the
+/// narrowing steps past it.
+///
+/// Mutation: honour `stack_global_disjoint` in every purpose whatever the
+/// function claims.
+#[test]
+fn arg_detection_at_the_floor_keeps_the_reload_unbounded() {
+    let (switches, unresolved, carriers) = analyze_with(
+        GLOBAL_STORE,
+        GLOBAL_STORE_ARMS,
+        AssumptionOptions::none(),
+        Some(without_load_forward()),
+    );
+    assert_eq!(unresolved, [0x40_1018]);
+    assert!(switches.is_empty(), "{switches:#x?}");
+    assert_eq!(carriers, 0);
+}
+
+/// The bytes of [`a_reload_past_a_call_stays_unbounded`], reading the first
+/// stack argument, `0x20(%rsp)`, in place of the local. Detection steps the
+/// call under `assume_incoming_args_survive_calls`, so both reads are the
+/// argument, but the narrowing stops at the call.
+///
+/// Mutation: narrow `FunctionArgDetect` under `MemPurpose::IncomingArgs`.
+#[test]
+fn arg_detection_does_not_narrow_a_reload_past_a_call() {
+    const ARMS: [u64; 4] = [0x40_101d, 0x40_1024, 0x40_102b, 0x40_1032];
+    let code = "4883ec188b44242083f803772ce8ee3f00008b442420ff24c500204000\
+                b801000000eb17b802000000eb10b803000000eb09b804000000eb02\
+                31c04883c418c3";
+    let (switches, unresolved, carriers) = analyze_with(
+        code,
+        ARMS,
+        AssumptionOptions::default(),
+        Some(without_load_forward()),
+    );
+    assert_eq!(unresolved, [0x40_1016]);
+    assert!(switches.is_empty(), "{switches:#x?}");
+    assert_eq!(carriers, 2);
 }
