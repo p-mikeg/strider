@@ -88,17 +88,20 @@ fn analyze_with(
 }
 
 /// `stack_global_disjoint` puts the constant-address write off the slot, and
-/// the narrowing honours it.
+/// the narrowing honours it. Without `FunctionArgDetect`, whose narrowing
+/// would merge the reads as well.
 ///
-/// Mutation: narrow `LoadForward` with `stack_global_disjoint` off.
+/// Mutation: `LoadForward` leaves the edge where it is.
 #[test]
 fn a_reload_past_a_global_store_is_the_bounded_index() {
-    const ARMS: [u64; 4] = [0x40_101f, 0x40_1025, 0x40_102b, 0x40_1031];
-    let code = "8b44240883f803772ec7042500304000010000008b442408ff24c500204000\
-                b801000000c3b802000000c3b803000000c3b804000000c331c0c3";
-    let (switches, unresolved) = analyze(code, ARMS, AssumptionOptions::default());
+    let (switches, unresolved, _) = analyze_with(
+        GLOBAL_STORE,
+        GLOBAL_STORE_ARMS,
+        AssumptionOptions::default(),
+        Some(default_less(true, false)),
+    );
     assert!(unresolved.is_empty(), "{unresolved:#x?}");
-    assert_eq!(switches, [ARMS.to_vec()]);
+    assert_eq!(switches, [GLOBAL_STORE_ARMS.to_vec()]);
 }
 
 /// A `call` in place of the write, in a frame no stack address escapes:
@@ -135,9 +138,9 @@ fn a_reload_past_a_call_stays_unbounded() {
     assert!(switches.is_empty(), "{switches:#x?}");
 }
 
-/// The default pipeline without `LoadForward`, so `FunctionArgDetect`'s is the
-/// only narrowing the loads get.
-fn without_load_forward() -> OptimizerPipeline {
+/// The default pipeline with `LoadForward` and `FunctionArgDetect` only where
+/// asked, so a test sees one pass's narrowing alone.
+fn default_less(load_forward: bool, arg_detection: bool) -> OptimizerPipeline {
     use strider_orchestrator::opt::*;
     let mut p = OptimizerPipeline::new();
     p.add(ConstantFold::new());
@@ -149,8 +152,13 @@ fn without_load_forward() -> OptimizerPipeline {
     p.add(RegionCollapse);
     p.add(DeadBranchElimination);
     p.add(CfgDetach);
+    if load_forward {
+        p.add(LoadForward);
+    }
     p.add_post_pass(CallStackArgCollect);
-    p.add_post_pass(FunctionArgDetect);
+    if arg_detection {
+        p.add_post_pass(FunctionArgDetect);
+    }
     p
 }
 
@@ -169,7 +177,7 @@ fn arg_detection_narrows_a_reload_past_a_global_store() {
         GLOBAL_STORE,
         GLOBAL_STORE_ARMS,
         AssumptionOptions::default(),
-        Some(without_load_forward()),
+        Some(default_less(false, true)),
     );
     assert!(unresolved.is_empty(), "{unresolved:#x?}");
     assert_eq!(switches, [GLOBAL_STORE_ARMS.to_vec()]);
@@ -187,7 +195,7 @@ fn arg_detection_at_the_floor_keeps_the_reload_unbounded() {
         GLOBAL_STORE,
         GLOBAL_STORE_ARMS,
         AssumptionOptions::none(),
-        Some(without_load_forward()),
+        Some(default_less(false, true)),
     );
     assert_eq!(unresolved, [0x40_1018]);
     assert!(switches.is_empty(), "{switches:#x?}");
@@ -210,7 +218,7 @@ fn arg_detection_does_not_narrow_a_reload_past_a_call() {
         code,
         ARMS,
         AssumptionOptions::default(),
-        Some(without_load_forward()),
+        Some(default_less(false, true)),
     );
     assert_eq!(unresolved, [0x40_1016]);
     assert!(switches.is_empty(), "{switches:#x?}");
