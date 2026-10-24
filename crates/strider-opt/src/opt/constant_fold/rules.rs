@@ -232,19 +232,19 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
     );
 
     vec![
-        Box::new(add_self_mul),
-        Box::new(add_mul_mul),
-        Box::new(add_self_shl),
-        Box::new(add_mul_shl),
-        Box::new(add_shl_shl),
-        Box::new(sub_self_mul),
-        Box::new(sub_mul_mul),
-        Box::new(sub_self_shl),
-        Box::new(sub_mul_shl),
-        Box::new(sub_shl_mul),
-        Box::new(sub_shl_shl),
-        Box::new(sub_mul_self),
-        Box::new(sub_shl_self),
+        add_self_mul,
+        add_mul_mul,
+        add_self_shl,
+        add_mul_shl,
+        add_shl_shl,
+        sub_self_mul,
+        sub_mul_mul,
+        sub_self_shl,
+        sub_mul_shl,
+        sub_shl_mul,
+        sub_shl_shl,
+        sub_mul_self,
+        sub_shl_self,
     ]
 }
 
