@@ -2,14 +2,16 @@
 //! tests whose answer passes through a node the optimiser does not fold
 //! (`FloatToInt`, any F80 or F128 arithmetic). Float lanes are carried as
 //! `f64`, which is exact for the values these tests use, and 128-bit floats
-//! as their bits ([`super::quad`]).
+//! as their bits ([`super::quad`]). A `FloatToInt` past its range or of a NaN
+//! has no defined answer in p-code, so it evaluates to an arbitrary pattern
+//! that a cone relying on it gets wrong.
 
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Function, IRViewer, IRWalker, ValueType,
 };
 
-use super::quad::{self, DOUBLE, QUAD, SINGLE};
+use super::quad::{self, DOUBLE, HALF, QUAD, SINGLE};
 use super::{inputs_of, producer_kind};
 
 #[derive(Clone, Copy, Debug)]
@@ -73,9 +75,19 @@ fn f64_to_f80(x: f64) -> u128 {
     sign | u128::try_from(exp).unwrap() << 64 | u128::from(mant)
 }
 
+/// An `f64` rounded to a half's bits, nearest even.
+fn f64_to_f16(x: f64) -> u16 {
+    use super::round::{DOUBLE, HALF, Mode};
+    match HALF.convert(DOUBLE, u128::from(x.to_bits()), Mode::Even) {
+        Some(b) => b as u16,
+        None => 0x7e00 | (u16::from(x.is_sign_negative()) << 15),
+    }
+}
+
 /// Rounds an `f64` result to `ty`'s precision, F80 kept at `f64`.
 fn narrow(ty: ValueType, x: f64) -> f64 {
     match width(ty) {
+        16 => f16_to_f64(f64_to_f16(x)),
         32 => f64::from(x as f32),
         64 | 80 => x,
         w => panic!("no float of width {w} in these conversions"),
@@ -85,6 +97,7 @@ fn narrow(ty: ValueType, x: f64) -> f64 {
 /// The format of a float of `ty`.
 fn format(ty: ValueType) -> quad::Format {
     match width(ty) {
+        16 => HALF,
         32 => SINGLE,
         64 => DOUBLE,
         128 => QUAD,
@@ -96,6 +109,7 @@ fn format(ty: ValueType) -> quad::Format {
 fn float_bits(val: Val, ty: ValueType) -> u128 {
     match (val, width(ty)) {
         (Val::Quad(q), _) => q,
+        (Val::Float(x), 16) => u128::from(f64_to_f16(x)),
         (Val::Float(x), 32) => u128::from((x as f32).to_bits()),
         (Val::Float(x), 64) => u128::from(x.to_bits()),
         (val, w) => panic!("{val:?} is no float of width {w}"),
@@ -105,12 +119,16 @@ fn float_bits(val: Val, ty: ValueType) -> u128 {
 /// The float `Val` of `ty` with `bits`.
 fn float_val(bits: u128, ty: ValueType) -> Val {
     match width(ty) {
+        16 => Val::Float(f16_to_f64(bits as u16)),
         32 => Val::Float(f64::from(f32::from_bits(bits as u32))),
         64 => Val::Float(f64::from_bits(bits as u64)),
         128 => Val::Quad(bits),
         w => panic!("no float of width {w} here"),
     }
 }
+
+/// What an undefined `FloatToInt` evaluates to.
+const POISON: u128 = 0x5a5a_5a5a_5a5a_5a5a_5a5a_5a5a_5a5a_5a5a;
 
 /// Evaluates `v`'s cone by each node's p-code meaning, every initial
 /// register reading as `init` (masked to its width).
@@ -176,6 +194,7 @@ fn eval_node(f: &Function, v: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> V
             w => panic!("IntBitsToFloat of width {w}"),
         }),
         NodeKind::FloatBitsToInt => Val::Int(match width(in_ty(0)) {
+            16 => u128::from(f64_to_f16(float(0))),
             32 => u128::from((float(0) as f32).to_bits()),
             128 => bits(0),
             64 => u128::from(float(0).to_bits()),
@@ -197,12 +216,10 @@ fn eval_node(f: &Function, v: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> V
             })
         }
         NodeKind::FloatToInt => {
-            // Out of range or NaN gives the x86 integer indefinite, the sign
-            // bit alone.
             let x = float(0).trunc();
             let bound = 2f64.powi(i32::from(width(ty)) - 1);
             Val::Int(if x.is_nan() || x < -bound || x >= bound {
-                1 << (width(ty) - 1)
+                POISON & mask(ty)
             } else {
                 (x as i128) as u128 & mask(ty)
             })
@@ -211,7 +228,7 @@ fn eval_node(f: &Function, v: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> V
         NodeKind::FloatBinaryOp(op) if wide => Val::Quad(match op {
             FloatBinaryOp::Add => quad::add(QUAD, bits(0), bits(1)),
             FloatBinaryOp::Mul => quad::mul(QUAD, bits(0), bits(1)),
-            FloatBinaryOp::Div => panic!("a 128-bit float division"),
+            FloatBinaryOp::Div => quad::div(QUAD, bits(0), bits(1)),
         }),
         NodeKind::FloatCmpOp(op) if wide => {
             let ord = quad::cmp(QUAD, bits(0), bits(1));
@@ -294,6 +311,13 @@ fn eval_node(f: &Function, v: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> V
                 panic!("{} live predecessors of a Phi", live.len());
             };
             eval_rec(f, ins[i + 1], init)
+        }
+        // A volatile register reads as its initial value.
+        NodeKind::CallOther { .. } if f.call_other_name(f.producer(v)) == Some("read_volatile") => {
+            let vn = f
+                .get_vn_for_value(v)
+                .expect("a volatile read names its register");
+            Val::Int(init(&vn) & mask(ty))
         }
         other => panic!("{other:?} in a conversion of constants"),
     }
@@ -498,6 +522,15 @@ impl Lifted {
     /// The returned registers with `inputs[i]` reading `vals[i]`, every other
     /// initial register byte reading `fill`'s byte at its place.
     pub(crate) fn run(&self, vals: &[u128], fill: u128) -> Vec<Val> {
+        self.rets
+            .iter()
+            .map(|&v| self.eval(v, vals, fill))
+            .collect()
+    }
+
+    /// Any value `v` of the function, initial registers as [`Self::run`] has
+    /// them.
+    pub(crate) fn eval(&self, v: ValueId, vals: &[u128], fill: u128) -> Val {
         let env = |vn: &rsleigh::Vn| -> u128 {
             let size = vn.size as usize;
             let mut out = fill & mask(ValueType::Int(u16::try_from(8 * size).expect("width")));
@@ -517,10 +550,7 @@ impl Lifted {
             }
             out
         };
-        self.rets
-            .iter()
-            .map(|&v| eval_env(&self.f, v, &env))
-            .collect()
+        eval_env(&self.f, v, &env)
     }
 }
 
@@ -547,6 +577,23 @@ pub(crate) fn lift_image(
     inputs: &[&str],
     claims: &strider_orchestrator::opt::AssumptionOptions,
 ) -> Lifted {
+    let opts = strider_orchestrator::AnalyzeOptions {
+        assumptions: claims.clone(),
+        ..Default::default()
+    };
+    lift_image_with(arch, bytes, IMAGE_BASE, rets, inputs, &opts)
+}
+
+/// [`lift_image`] analysed from `entry` (`IMAGE_BASE | 1` for Thumb code)
+/// under `opts`.
+pub(crate) fn lift_image_with(
+    arch: super::Arch,
+    bytes: Vec<u8>,
+    entry: u64,
+    rets: &[&str],
+    inputs: &[&str],
+    opts: &strider_orchestrator::AnalyzeOptions<'_>,
+) -> Lifted {
     const BASE: u64 = IMAGE_BASE;
     let rom: Box<dyn strider_orchestrator::opt::ReadOnlyMemory> = Box::new(
         strider_ir_test_utils::MockRom::raw_bytes(BASE, bytes.clone()),
@@ -568,12 +615,8 @@ pub(crate) fn lift_image(
         })
     });
     let inputs = inputs.iter().map(|r| vn(r)).collect();
-    let opts = strider_orchestrator::AnalyzeOptions {
-        assumptions: claims.clone(),
-        ..Default::default()
-    };
     let f = strider
-        .analyze(BASE, &cc, &opts, None)
+        .analyze(entry, &cc, opts, None)
         .expect("analyze")
         .function;
     let rets = super::returned(&f);
