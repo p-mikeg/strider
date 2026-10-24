@@ -25,26 +25,34 @@ fn signed_min(ty: ValueType) -> i128 {
 /// out-of-range test. Div, Rem and ShiftRight are not safe under
 /// masking-commutativity, so they need the inputs already narrowed to give the
 /// right answer on a caller that passed raw bits.
+/// Whether a shift by `amount` is at or past `ty`'s declared width, where
+/// Sleigh (opbehavior.cc:411) returns 0 for IntLeft / IntRight and
+/// `signbit ? calc_mask : 0` for IntSright.
+///
+/// The DECLARED bit width matches Sleigh's `8 * sizeout` at every type except
+/// `I1`, whose width is 1 while its varnode is a byte;
+/// [`ValueType::get_signed_int`] reads `I1` as 1-bit signed for the same
+/// reason, so an `I1` shift or signed compare answers off strider's boolean
+/// width, not Sleigh's. The lifter emits `I1` only from compares and
+/// `Truncate(..):I1`, so no shift ever reaches it.
+///
+/// Do NOT reduce `amount` modulo the width, nor mask it to `ty` before this
+/// test: either wraps an out-of-range literal back into range, diverging from
+/// Sleigh by the full shift output.
+#[inline]
+#[must_use]
+pub fn shift_out_of_range(amount: u128, ty: ValueType) -> bool {
+    amount >= ty.bit_width() as u128
+}
+
 #[inline]
 pub fn int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) -> Option<u128> {
     let mask = ty.int_mask_u128()?;
-    let bits = ty.bit_width() as u32;
-    // Sleigh (opbehavior.cc:411) returns 0 when the shift amount reaches the
-    // output width for IntLeft/IntRight, and `signbit ? calc_mask : 0` for
-    // IntSright. Guarded at the DECLARED bit width, which matches Sleigh's
-    // `8 * sizeout` at every type except `I1`, whose width is 1 while its
-    // varnode is a byte; `get_signed_int` reads `I1` as 1-bit signed for the
-    // same reason, so an `I1` shift or signed compare answers off strider's
-    // boolean width, not Sleigh's. The lifter emits `I1` only from compares and
-    // `Truncate(..):I1`, so no shift ever reaches it. Do NOT reduce the amount
-    // modulo `bits`, nor mask it to `ty` before this test: either wraps an
-    // out-of-range literal back into range, diverging from Sleigh by the full
-    // shift output.
-    let r_ge_bits = r >= u128::from(bits);
+    let r_ge_bits = shift_out_of_range(r, ty);
     let l = l & mask;
     let r = r & mask;
-    // `shift` is only reached inside the `!r_ge_bits` branch, so `s < bits` and
-    // the truncation is lossless.
+    // `shift` is only reached inside the `!r_ge_bits` branch, so `s` is below
+    // the width and the truncation is lossless.
     #[allow(clippy::cast_possible_truncation)]
     let shift = |s: u128| -> u32 { s as u32 };
     let raw: u128 = match op {
