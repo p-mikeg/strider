@@ -23,10 +23,14 @@ mod vars;
 pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()> {
     match vn.addr_space {
         rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE => Ok(()),
-        _ => Err(anyhow::anyhow!(
-            "a call-class read or write names the varnode {}; only register \
-             and unique varnodes can carry one",
+        space => Err(anyhow::anyhow!(
+            "a call-class read or write names the varnode {}, in space `{}`, \
+             outside register (`{}`) and unique (`{}`) space, the only ones \
+             that can carry one",
             crate::function::vn_str(vn),
+            crate::function::space_str(space),
+            crate::function::space_str(rsleigh::VnSpace::REGISTER),
+            crate::function::space_str(rsleigh::VnSpace::UNIQUE),
         )),
     }
 }

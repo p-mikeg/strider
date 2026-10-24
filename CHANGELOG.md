@@ -93,8 +93,9 @@
 ### Breaking, Rust
 
 - A call output or return varnode outside register and unique space is
-  refused naming it as the IR text spells it (`r:0x1000:4`), where the
-  message spelled the space and the offset apart.
+  refused naming it as the IR text spells it, with the space shortcuts
+  (``r:0x1000:4, in space `r`, outside register (`%`) and unique (`u`)
+  space``), where the message spelled the space and the offset apart.
 - `DecodeEngine::new(arch, reader)`, `Lifter::new(arch, reader)` and
   `Strider::new(arch, reader, rom)` take the `MemReader` and build the arch's
   Sleigh themselves, through the new `SleighArch::sleigh(reader)`; none takes
@@ -1166,10 +1167,12 @@
   does not compute names the relocation type, where it said the address was
   not mapped; a Python `BufferReader` already did.
 - Python: a `flag != 0` branch test folded to the flag's comparison keeps
-  the instruction addresses of the widened flag below the test in that
-  comparison's `asm_fingerprint`, as the `Truncate` spelling of a PowerPC
-  CR-bit test already did. 69 fixture functions gain addresses; none loses
-  one.
+  the addresses of the test's widened flag and operands in that comparison's
+  `asm_fingerprint`, as the `Truncate` spelling of a PowerPC CR-bit test
+  already did. The operands include the shared `IntConst(0)`, whose
+  fingerprint is the union of every fold into it, so a comparison can gain
+  addresses from outside the flag test. Fingerprints gain addresses and
+  lose none.
 
 ### Added, Rust
 
