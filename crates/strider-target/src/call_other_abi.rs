@@ -325,12 +325,8 @@ const PPC_FPCC_VX: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
 /// may set: FPRF (`fp_c`, FPCC), FR, FI, the exceptions and their summaries.
 ///
 /// The scalar float ops the sla spells in p-code (`fadd`, `fmadd`, `frsp`,
-/// `fctiw`, `xsadddp`, ...) are not user ops, so no row reaches them: they set
-/// FPRF, VXSNAN (for any NaN, quiet ones too), ZX, VXZDZ and the summaries
-/// from their operands (the conversions to an integer VXCVI too), XX from
-/// the stale FI, and leave FR, FI, OX, UX, VXISI, VXIDI, VXIMZ and VXSQRT as
-/// the last explicit write (`mtfsf`, `mtfsfi`, `mtfsb0`, `mtfsb1`) left
-/// them, which a later `mffs` or `mcrfs` then reads.
+/// `fctiw`, `xsadddp`, ...) set their bits in p-code instead: FR, FI, OX and
+/// UX from the `float*` rows' ops, the rest from their operands.
 const PPC_FP_RESULT: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     implicit_reads: &[],
     implicit_writes: &[
@@ -724,6 +720,36 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     // deduplicated, so two reads of a running counter stay two values.
     ("moveFromPerformanceMonitorRegister", PURE),
     ("moveToPerformanceMonitorRegister", PURE),
+    // The scalar float ops the sla spells in p-code take FR, FI, OX and UX,
+    // which hang on a rounding it does not compute, from these: each yields
+    // the bit, which the sla writes (FR, FI) or ORs in (OX, UX). `frsp`
+    // spells its own as `floatAdd*` of zero.
+    ("floatAddInexact", PURE),
+    ("floatAddOverflow", PURE),
+    ("floatAddRoundedUp", PURE),
+    ("floatAddUnderflow", PURE),
+    ("floatDivInexact", PURE),
+    ("floatDivOverflow", PURE),
+    ("floatDivRoundedUp", PURE),
+    ("floatDivUnderflow", PURE),
+    ("floatMaddInexact", PURE),
+    ("floatMaddOverflow", PURE),
+    ("floatMaddRoundedUp", PURE),
+    ("floatMaddUnderflow", PURE),
+    ("floatMulInexact", PURE),
+    ("floatMulOverflow", PURE),
+    ("floatMulRoundedUp", PURE),
+    ("floatMulUnderflow", PURE),
+    ("floatSqrtInexact", PURE),
+    ("floatSqrtRoundedUp", PURE),
+    ("floatSubInexact", PURE),
+    ("floatSubOverflow", PURE),
+    ("floatSubRoundedUp", PURE),
+    ("floatSubUnderflow", PURE),
+    ("floatToIntInexact", PURE),
+    ("floatToIntRoundedUp", PURE),
+    ("intToFloatInexact", PURE),
+    ("intToFloatRoundedUp", PURE),
     // `slbmfee` / `slbmfev` / `slbfee.` write RT from the op's output (a fork
     // patch: the stock sla wrote it nowhere) and read the SLB, not RAM.
     ("slbMoveFromEntryESID", PURE),
@@ -740,7 +766,7 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     // folds to the same value.
     //
     // Narrow reach, unlike `wrtee` / `wrteei`: `mtfsf` ITSELF is modelled in
-    // p-code (`ppc_instructions.sinc:2476`, which pins `BIT_25=0 & BIT_16=0`
+    // p-code (`ppc_instructions.sinc:2279`, which pins `BIT_25=0 & BIT_16=0`
     // and emits `packFPSCR` / `unpackFPSCR`), so these `MoveToFPSCRField*`
     // pcodeops exist only in `ppc_isa.sinc`, included only by the
     // `ppc_64_isa*` slaspecs. They therefore fire on the Power ISA 2.06
