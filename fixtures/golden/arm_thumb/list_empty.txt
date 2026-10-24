@@ -6,7 +6,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == main @0x3dd
 cfg
   0x3dc 30 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x134a00:4, u:0x135b00:4, u:0x14b500:4, u:0x1af000:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x133500:4, u:0x134600:4, u:0x14a000:4, u:0x1adb00:4]
 arg 0 [%v6]
 arg 1 [%v9]
 float_arg 0 [%v10]
@@ -32,7 +32,7 @@ return %v0, %v5, %v8, %v9, %v10, %v11, %v12, %v13
 == is_thread_group_empty @0x4ed
 cfg
   0x4ec 41 ops return -> []
-tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x135b00:4, u:0x14b900:4, u:0x160c00:4, u:0x160d00:4, u:0x160f00:4, u:0x161000:1, u:0x161100:1, u:0x161200:1, u:0x161300:1, u:0x161400:1, u:0x161700:4]
+tracked [r0, r1, r2, r3, sp, lr, pc, NG, ZR, CY, OV, tmpNG, tmpZR, tmpCY, tmpOV, shift_carry, TB, ISAModeSwitch, d0, d1, d2, d3, d4, d5, d6, d7, u:0x0:4, u:0x134600:4, u:0x14a400:4, u:0x15f700:4, u:0x15f800:4, u:0x15fa00:4, u:0x15fb00:1, u:0x15fc00:1, u:0x15fd00:1, u:0x15fe00:1, u:0x15ff00:1, u:0x160200:4]
 arg 0 [%v2]
 arg 1 [%v11]
 float_arg 0 [%v12]

@@ -253,21 +253,33 @@ pub fn is_msr_register_mode(preset: crate::ArchPreset, name: &str) -> bool {
 }
 
 /// Whether `name` is the op through which a conversion reads the rounding
-/// mode it rounds by: x86 `mxcsrRoundingControl(rc)` (MXCSR.RC), PowerPC
+/// mode it rounds by: x86 `mxcsrRoundingControl(rc)` (MXCSR.RC) and
+/// `x87RoundingControl(rc)` (the x87 control word's RC), PowerPC
 /// `fpscrRoundingControl(rn)` (FPSCR.RN), ARM `fpscrRoundingControl(rmode)`
 /// (FPSCR.RMode) and MIPS `fcsrRoundingControl(rm)` (FCSR.RM) are their
 /// input, the live mode, or 0 under the claim that the mode is round to
-/// nearest, which 0 is in each encoding. The lifter lowers it to one of the
-/// two, so it has no ABI row, unless a caller override names it, which then
-/// classifies it as any user op and neither claim value applies.
+/// nearest, which 0 is in each encoding. AArch64 `fpcrRoundingControl()`
+/// takes no input and is FPCR ([`rounding_mode_register`]), or 0 under the
+/// claim. The lifter lowers it to one of the two, so it has no ABI row,
+/// unless a caller override names it, which then classifies it as any user
+/// op and neither claim value applies.
 #[must_use]
 pub fn is_rounding_mode_control(preset: crate::ArchPreset, name: &str) -> bool {
     match preset.family() {
-        crate::ArchFamily::X86 => name == "mxcsrRoundingControl",
+        crate::ArchFamily::X86 => name == "mxcsrRoundingControl" || name == "x87RoundingControl",
         crate::ArchFamily::Ppc | crate::ArchFamily::Arm32 => name == "fpscrRoundingControl",
         crate::ArchFamily::Mips => name == "fcsrRoundingControl",
-        crate::ArchFamily::Aarch64 => false,
+        crate::ArchFamily::Aarch64 => name == "fpcrRoundingControl",
     }
+}
+
+/// The register a rounding-mode op with no input is, read only when the
+/// claim is off: AArch64 `fpcrRoundingControl()` is `fpcr`, whose reads the
+/// pspec marks volatile, so a lift under the claim reads none.
+#[must_use]
+pub fn rounding_mode_register(preset: crate::ArchPreset, name: &str) -> Option<&'static str> {
+    (preset.family() == crate::ArchFamily::Aarch64 && name == "fpcrRoundingControl")
+        .then_some("fpcr")
 }
 
 const PURE: CallOtherClass = CallOtherClass::PURE;

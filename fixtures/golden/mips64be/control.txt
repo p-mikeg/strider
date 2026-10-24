@@ -322,7 +322,7 @@ cfg
   0x120000e08 3 ops cbranch 0x120000e20 -> [0x120000e10, 0x120000e20]
   0x120000e10 11 ops cbranch 0x120000e10 -> [0x120000e10, 0x120000e20]
   0x120000e20 6 ops return -> []
-tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1800:1, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0x3400:1, u:0x115400:8, u:0x115500:1, u:0x115600:8]
+tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1800:1, u:0x1c00:8, u:0x1f00:8, u:0x2a00:1, u:0x3400:1, u:0x114500:8, u:0x114600:1, u:0x114700:8]
 arg 0 [%v1]
 %v0:ctrl = entry
 %v1:i64 = initial_var[a0]
