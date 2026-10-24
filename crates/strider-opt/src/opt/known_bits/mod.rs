@@ -55,11 +55,11 @@ enum ConstShift {
 /// Mirrors Sleigh's `OpBehaviorInt{Left,Right}::evaluateBinary`, which return 0
 /// for any shift amount `>= bit_width`.  Masking the amount to `bit_width - 1`
 /// instead would wrap large literal shifts back into range.
-fn classify_const_shift(rhs_kb: KnownBitsFacts, rhs_mask: u128, bit_width: u64) -> ConstShift {
+fn classify_const_shift(rhs_kb: KnownBitsFacts, rhs_mask: u128, ty: ValueType) -> ConstShift {
     if !rhs_kb.all_known(rhs_mask) {
         return ConstShift::Unknown;
     }
-    if rhs_kb.ones >= u128::from(bit_width) {
+    if strider_ir::eval::shift_out_of_range(rhs_kb.ones, ty) {
         return ConstShift::OverWidth;
     }
     ConstShift::InRange(rhs_kb.ones as u32)
@@ -89,7 +89,7 @@ fn shift_known_bits(
         .value_type_opt(rhs)
         .and_then(ValueType::int_mask_u128)
         .unwrap_or(u128::MAX);
-    match classify_const_shift(rhs_kb, rhs_mask, ty.bit_width() as u64) {
+    match classify_const_shift(rhs_kb, rhs_mask, ty) {
         ConstShift::Unknown => None,
         ConstShift::OverWidth => Some(KnownBitsFacts {
             ones: 0,
@@ -120,12 +120,28 @@ fn shift_known_bits(
     }
 }
 
-/// Known bits of `node_id`'s first integer value output.  `None` if it has no
-/// such output, or nothing can be proven about it.
-fn node_known_bits(
+/// Operand facts read from the IR alone: an interned constant, nothing else.
+/// The resolver a one-hop caller passes [`node_known_bits`].
+pub(crate) fn const_only(
+    function: &strider_ir::Function,
+) -> impl Fn(ValueId) -> KnownBitsFacts + '_ {
+    move |v| {
+        function
+            .int_const_u128(v)
+            .zip(function.value_type_opt(v))
+            .and_then(|(k, ty)| KnownBitsFacts::from_const(k, ty))
+            .unwrap_or_default()
+    }
+}
+
+/// Known bits of `node_id`'s first integer value output, reading each
+/// operand's facts through `operand`.  [`analyze`] passes its map; a one-hop
+/// caller passes [`const_only`].  `None` if there is no such output, or
+/// nothing can be proven about it.
+pub(crate) fn node_known_bits(
     function: &strider_ir::Function,
     node_id: NodeId,
-    known: &KnownBitsMap,
+    operand: &dyn Fn(ValueId) -> KnownBitsFacts,
 ) -> Result<Option<(ValueId, KnownBitsFacts)>> {
     let kind = *function.node_kind(node_id);
 
@@ -156,8 +172,8 @@ fn node_known_bits(
                 .graph()
                 .node_inputs_exact::<2>(node_id)
                 .expect("IntBinaryOp has 2 inputs per node signature");
-            let l = known[lhs];
-            let r = known[rhs];
+            let l = operand(lhs);
+            let r = operand(rhs);
             match op {
                 // Every arm masks to `type_mask`, defensively: the graph is
                 // not re-validated mid-pipeline, and an operand's above-width
@@ -191,7 +207,7 @@ fn node_known_bits(
                 .graph()
                 .node_inputs_exact::<1>(node_id)
                 .expect("Truncate has 1 input per node signature");
-            let kb = known[value];
+            let kb = operand(value);
             KnownBitsFacts {
                 ones: kb.ones & type_mask,
                 zeros: kb.zeros & type_mask,
@@ -210,7 +226,7 @@ fn node_known_bits(
             let Some(input_mask) = input_ty.int_mask_u128() else {
                 return Ok(None);
             };
-            let kb = known[value];
+            let kb = operand(value);
             KnownBitsFacts {
                 ones: kb.ones,
                 zeros: kb.zeros | (type_mask ^ input_mask), // upper bits are 0
@@ -229,7 +245,7 @@ fn node_known_bits(
             let Some(input_mask) = input_ty.int_mask_u128() else {
                 return Ok(None);
             };
-            let kb = known[value];
+            let kb = operand(value);
             // Highest bit of the input width.
             let sign_bit = (input_mask >> 1) + 1;
             let upper_mask = type_mask & !input_mask;
@@ -327,7 +343,7 @@ pub fn analyze(function: &strider_ir::Function) -> Result<KnownBitsMap> {
     let mut known: KnownBitsMap = SecondaryMap::new();
     let mut work: Worklist<NodeId> = function.reverse_postorder_filter(|_| true).collect();
     while let Some(node_id) = work.dequeue() {
-        let Some((out, kb)) = node_known_bits(function, node_id, &known)? else {
+        let Some((out, kb)) = node_known_bits(function, node_id, &|v| known[v])? else {
             continue;
         };
         // `kb` is recomputed from scratch each visit and is monotonically more
