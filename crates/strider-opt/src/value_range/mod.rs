@@ -407,32 +407,29 @@ impl<'f> RangeMap<'f> {
         // `Interval::top` there is not a bound. Refusing locally keeps the
         // non-bound out of `const_scale`, which would otherwise turn it into a
         // tight claim (`top(u128::MAX).shr(200)` is "exactly zero").
-        if self
+        let Some(mask) = self
             .function
             .value_type_opt(value)
             .and_then(ValueType::int_mask_u128)
-            .is_none()
-        {
+        else {
             return Interval::top(u128::MAX);
-        }
+        };
+        // Past the gate the mask exists, so the two bail-outs below share it.
+        let top = Interval::top(mask);
         let key = (value, region);
 
         // A cycle, cut by returning top for the back-edge; the frame that
         // opened it still applies its dominating guards.
         match self.memo.get(&key) {
             Some(MemoSlot::Done(iv)) => return *iv,
-            Some(MemoSlot::InProgress) => {
-                let ty = self.function.value_type_opt(value);
-                return Interval::top(type_mask_or_top(ty));
-            }
+            Some(MemoSlot::InProgress) => return top,
             None => {}
         }
 
         // Budget exhausted: top, left out of the memo so a shallower query of
         // the same key still resolves it.
         if self.depth >= MAX_RANGE_DEPTH {
-            let ty = self.function.value_type_opt(value);
-            return Interval::top(type_mask_or_top(ty));
+            return top;
         }
         self.memo.insert(key, MemoSlot::InProgress);
         self.depth += 1;
@@ -454,7 +451,7 @@ impl<'f> RangeMap<'f> {
             match self.const_scale(value) {
                 Some((operand, scale)) => match self.dominating_guard(operand, region) {
                     Some(guard) => {
-                        let width_mask = type_mask_or_top(self.function.value_type_opt(value));
+                        let width_mask = width_mask(self.function, value);
                         let inner = self.resolve_leaf_guarded(operand, Some(guard));
                         scale.apply(inner, width_mask).intersect(leaf)
                     }
@@ -895,7 +892,7 @@ impl<'f> RangeMap<'f> {
             return Some(hit);
         }
         let (operand, scale) = self.const_scale(value)?;
-        let mask = type_mask_or_top(self.function.value_type_opt(value));
+        let mask = width_mask(self.function, value);
         Some((operand, Hop::Scaled(scale, mask)))
     }
 
@@ -1006,7 +1003,7 @@ impl<'f> RangeMap<'f> {
 
     /// [`Self::resolve_leaf`] against an already-computed dominating guard.
     fn resolve_leaf_guarded(&self, value: ValueId, guard: Option<Interval>) -> Interval {
-        let type_mask = type_mask_or_top(self.function.value_type_opt(value));
+        let type_mask = width_mask(self.function, value);
         guard
             .into_iter()
             .chain(self.kb_bounds[value])
