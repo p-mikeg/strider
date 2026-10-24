@@ -1242,3 +1242,28 @@ fn a_right_shift_proves_its_vacated_bits_zero() -> Result<()> {
     assert_eq!((kb.ones, kb.zeros), (0, 0xFFFF_FF00));
     Ok(())
 }
+
+/// Past the `u128` carrier the transfer proves nothing rather than reporting
+/// a mask no `u128` holds: the arm is skipped entirely, so no caller can read
+/// a zeroed mask back as "every bit known".
+#[test]
+fn a_width_past_the_carrier_is_skipped_not_defaulted() -> Result<()> {
+    let wide = ValueType::int(256);
+    let vn = strider_ir_test_utils::reg_vn(0x2000, 32);
+    let (fg, _x) = crate::test_support::make_fn_with_var(vn, |b, x| {
+        let three = b.build_int_const_limbs(&[3], wide)?;
+        b.build_int_binary_operation(x, three, IntBinaryOp::And, wide)
+    })?;
+    let ret = fg
+        .walk_kind(|k| matches!(k, NodeKind::Return))
+        .next()
+        .expect("a Return node");
+    let masked = fg.node_inputs(ret)[2];
+    assert_eq!(fg.value_type_opt(masked), Some(wide));
+    assert!(
+        node_known_bits(&fg, fg.producer(masked), &const_only(&fg))?.is_none(),
+        "an And the carrier cannot hold yields no facts at all"
+    );
+    assert_eq!((analyze(&fg)?[masked].ones, 0), (0, 0));
+    Ok(())
+}

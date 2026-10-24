@@ -2977,3 +2977,63 @@ fn phi_constants_give_up_past_the_cap_on_phis() {
     );
     assert_eq!(super::phi_constants(&f, a, 2), None);
 }
+
+/// `ValueType::int_mask_u128` answers `None` for three unrelated facts -- a
+/// float, a width past the `u128` carrier, and (through `value_type_opt`) an
+/// edge carrying no type -- and each consumer degrades its own way. The tests
+/// below pin the fallback this module picks, at the point that picks it.
+#[test]
+fn an_untracked_width_reads_as_lattice_top() {
+    assert_eq!(super::type_mask_or_top(None), u128::MAX, "no typed edge");
+    assert_eq!(
+        super::type_mask_or_top(Some(ValueType::float(64))),
+        u128::MAX,
+        "a float has no integer modulus"
+    );
+    assert_eq!(
+        super::type_mask_or_top(Some(ValueType::int(256))),
+        u128::MAX,
+        "past the carrier no u128 is the mask"
+    );
+    assert_eq!(
+        super::type_mask_or_top(Some(ValueType::int(32))),
+        0xFFFF_FFFF,
+        "a tracked width is its own mask"
+    );
+}
+
+/// A whole function whose only value is `wide`, at a width past the carrier.
+fn over_carrier_fn() -> (Function, ValueId, NodeId) {
+    let vn = strider_ir_test_utils::reg_vn(0x2000, 32);
+    let (f, wide) = strider_ir_test_utils::make_fn_with_var(vn, |_, x| Ok(x)).unwrap();
+    let entry = f.entry();
+    (f, wide, entry)
+}
+
+/// `range_of` refuses the whole query rather than returning a bound no `u128`
+/// can express: `top(u128::MAX)` is not a claim about the value.
+#[test]
+fn a_range_query_past_the_carrier_answers_unconstrained_top() {
+    let (f, wide, region) = over_carrier_fn();
+    assert_eq!(f.value_type_opt(wide), Some(ValueType::int(256)));
+    assert_eq!(range_at(&f, wide, region), Interval::top(u128::MAX));
+    assert_eq!(super::width_mask(&f, wide), u128::MAX);
+}
+
+/// The sign-bit question degrades to "not proven", never to "proven zero" --
+/// even handed a fact set that claims the bit. A map's bits are masked to a
+/// width the carrier holds, so at a wider type they name a different bit.
+#[test]
+fn an_untracked_width_proves_no_sign_bit() {
+    let (f, wide, _) = over_carrier_fn();
+    let mut known = crate::analyze_known_bits(&f).unwrap();
+    assert!(!super::is_sign_bit_known_zero(&f, wide, &known), "no facts");
+    known[wide] = crate::KnownBitsFacts {
+        ones: 0,
+        zeros: u128::MAX,
+    };
+    assert!(
+        !super::is_sign_bit_known_zero(&f, wide, &known),
+        "a u128 of zeros names no bit of an i256"
+    );
+}
