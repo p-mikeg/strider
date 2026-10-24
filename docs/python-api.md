@@ -893,6 +893,9 @@ Main passes, which `add` takes: `ConstantFold`, `LoadReadOnly`, `KnownBits`,
 `FlagCmpCanonicalize`, `IfCondInversion`, `PhiCollapse`, `RegionCollapse`,
 `DeadBranchElimination`, `CfgDetach`, `LoadForward`. Post-passes, which only
 `add_post` takes: `CallStackArgCollect`, `FunctionArgDetect`. `add_post` also takes a main pass, which then runs once.
+`FunctionArgDetect` moves an argument load's memory edge as `LoadForward`
+does: past a store `stack_global_disjoint` or `noalias_allocators` puts off
+the slot, never through a call a claim makes transparent.
 The `MainOptimizerPass`, `PostOptimizerPass` and `OptimizerPass` type aliases
 name those groups. [optimizations.md](optimizations.md) says what each pass
 does.

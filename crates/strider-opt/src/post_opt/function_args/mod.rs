@@ -40,7 +40,7 @@ impl PostOptimizer for FunctionArgDetect {
         // Detection reads `alias_cfg`; only the rewire reads this one (see
         // `mem_chain_is_dirty`).
         let narrow_cfg = MemAnalyzer::new(MemOptions::for_purpose(
-            MemPurpose::Structural,
+            MemPurpose::TableWalk,
             edit.function(),
         ));
         detect_stack_args(edit, &alias_cfg, &narrow_cfg, stack_args, first_stack_arg);
@@ -170,8 +170,9 @@ fn detect_stack_args(
 ///
 /// Narrows to `narrow_cfg`'s clobber, never `alias_cfg`'s, which piles the
 /// incoming-arg relaxations on top: an edge resting on a relaxation would hand
-/// it to a later walk that does not honour it.  `narrow_cfg` claims nothing
-/// (`MemPurpose::Structural`).
+/// it to a later walk that does not honour it.  `narrow_cfg` is `LoadForward`'s
+/// narrowing row (`MemPurpose::TableWalk`): the function's claims less the call
+/// relaxations.
 fn mem_chain_is_dirty(
     edit: &mut crate::EditFunction<'_>,
     alias_cfg: &MemAnalyzer,
