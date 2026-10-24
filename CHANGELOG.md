@@ -605,8 +605,8 @@
 - Python: AArch64 `fmov` between a general register and an h register
   moves the 16 bits, where it converted the value between half and single
   or double precision.
-- Python: AArch64 `fcvt` to a narrower float, `fcvtn`, `scvtf`, `ucvtf`
-  (the general and scalar forms), ARM `vcvt.f32.f64`, `vcvt.f32.s32`,
+- Python: AArch64 `fcvt` to a narrower float, `fcvtn`, `scvtf` (general and
+  FP register) and `ucvtf` (general register), ARM `vcvt.f32.f64`, `vcvt.f32.s32`,
   `vcvt.f32.u32`, `vcvtb` and `vcvtt`, MIPS `cvt.s.d`, `cvt.s.w`,
   `cvt.s.l` and `cvt.d.l`, and x87 `fst` and `fstp` to a single or a double
   round by the dynamic mode, taken as nearest even under
