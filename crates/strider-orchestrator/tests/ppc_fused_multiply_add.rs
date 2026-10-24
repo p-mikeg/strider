@@ -303,3 +303,74 @@ fn result_reads_only_its_operands() {
     }
     assert_eq!(bad, 0);
 }
+
+/// The ISA's NaN for `<form> f1, A, C, B` when the result is one: FRA, FRB
+/// or FRC, the first that is a NaN, quieted with its sign kept (a single's
+/// fraction cut to 23 bits), else the default QNaN; never negated.
+fn want_nan(f: Form, a: u64, c: u64, b: u64) -> Option<u64> {
+    let is_nan = |x: u64| f64::from_bits(x).is_nan();
+    let cut = if f.single { !0x1fff_ffff } else { u64::MAX };
+    if let Some(&x) = [a, b, c].iter().find(|&&x| is_nan(x)) {
+        return Some((x | 1 << 51) & cut);
+    }
+    let (fa, fc, fb) = (f64::from_bits(a), f64::from_bits(c), f64::from_bits(b));
+    let fb = if f.sub { -fb } else { fb };
+    let p = fa * fc;
+    (p.is_nan() || (p + fb).is_nan()).then_some(0x7ff8_0000_0000_0000)
+}
+
+/// NaN results follow the ISA: the operands' NaNs in FRA, FRB, FRC order,
+/// quieted, signs kept, and the default QNaN for an invalid product or sum.
+#[test]
+fn nan_results_follow_the_isa() {
+    let claims = AssumptionOptions::default();
+    let nans = [
+        0x7ff8_0000_0000_0aaa,
+        0xfff8_0000_0000_0bbb,
+        0x7ff0_0000_0000_0ccc,
+        0xfff4_0000_dead_0001,
+    ];
+    let plain = [
+        2f64.to_bits(),
+        (-3f64).to_bits(),
+        0,
+        1 << 63,
+        f64::INFINITY.to_bits(),
+        f64::NEG_INFINITY.to_bits(),
+    ];
+    let pool: Vec<u64> = nans.iter().chain(&plain).copied().collect();
+    let mut cases = Vec::new();
+    for &a in &pool {
+        for &c in &pool {
+            for &b in &pool {
+                cases.push([a, c, b]);
+            }
+        }
+    }
+    let mut checked = 0;
+    for arch in ARCHES {
+        for f in FORMS {
+            let lifted = lift(arch, f, &claims);
+            for &[a, c, b] in &cases {
+                let Some(want) = want_nan(f, a, c, b) else {
+                    continue;
+                };
+                let got = got(
+                    &lifted,
+                    f64::from_bits(a),
+                    f64::from_bits(c),
+                    f64::from_bits(b),
+                    0,
+                )
+                .to_bits();
+                assert_eq!(
+                    got, want,
+                    "{arch:?} {}: A={a:#x} C={c:#x} B={b:#x}: got {got:#x}",
+                    f.name
+                );
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 10_000, "{checked} NaN results");
+}
