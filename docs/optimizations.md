@@ -133,8 +133,10 @@ errs wide: a spill just above the arguments can come along.
 arguments (loads off the entry stack pointer) and records which value carries
 each one. It also moves the memory edge of each load it examines in an
 incoming-argument slot past the memory definitions that cannot overwrite it,
-using none of the `AssumptionOptions`. Register-passed arguments are recorded
-at lift time, so they are already in place before this pass runs.
+under the claims `LoadForward`'s narrowing honours (`stack_global_disjoint`,
+`noalias_allocators`), and never through a call a claim makes transparent.
+Register-passed arguments are recorded at lift time, so they are already in
+place before this pass runs.
 
 After its post-passes, every run records, for each load and store whose address
 reduces to a base plus a constant, the pair. The base is a stack pointer, or the

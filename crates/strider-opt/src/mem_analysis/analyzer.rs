@@ -23,12 +23,10 @@ pub(crate) enum MemPurpose {
     IncomingArgs,
     /// `CallStackArgCollect`'s outgoing-argument window.
     CallStackArgs,
-    /// The jump-table walk's own steps and `LoadForward`'s narrowing: no call
-    /// relaxation.  The dispatch value the walk reads was forwarded under
-    /// `Forward`'s.
+    /// The jump-table walk's own steps and the narrowing of `LoadForward` and
+    /// `FunctionArgDetect`: no call relaxation.  The dispatch value the walk
+    /// reads was forwarded under `Forward`'s.
     TableWalk,
-    /// Claims nothing: `FunctionArgDetect`'s narrowing.
-    Structural,
 }
 
 #[derive(Clone)]
@@ -51,9 +49,6 @@ pub(crate) struct MemOptions {
     /// ([`MemWalker::in_outgoing_arg_area`]), which the relaxations would
     /// otherwise re-enter.
     pub(super) call_relaxations: bool,
-    /// Whether a heap class may be claimed at all; off, a heap address is an
-    /// [`AddrClass::Anchor`].
-    pub(super) heap_claims: bool,
 }
 
 impl MemOptions {
@@ -63,15 +58,14 @@ impl MemOptions {
         use MemPurpose::*;
         let a = function.assumptions();
         Self {
-            stack_global_disjoint: a.stack_global_disjoint && purpose != Structural,
+            stack_global_disjoint: a.stack_global_disjoint,
             calls_block: !(purpose == IncomingArgs
                 && a.assume_incoming_args_survive_calls
                 && !incoming_area_escapes(function)),
             distinct_sp_bases_disjoint: purpose == IncomingArgs && a.distinct_sp_bases_disjoint,
             escape_analysis: purpose == Forward && a.escape_analysis,
             callee_preserves_stack_args: purpose == Forward && a.callee_preserves_stack_args,
-            call_relaxations: !matches!(purpose, TableWalk | Structural),
-            heap_claims: purpose != Structural,
+            call_relaxations: purpose != TableWalk,
         }
     }
 
@@ -172,7 +166,7 @@ impl MemAnalyzer {
             .as_ref()?
             .get_or_init(|| {
                 MemLayout::build(function).map(|layout| MemIndex {
-                    stores: StoreIndex::build(function, &layout, &self.options),
+                    stores: StoreIndex::build(function, &layout),
                     layout,
                 })
             })
@@ -284,7 +278,7 @@ impl MemAnalyzer {
     }
 
     fn load_sized(&self, function: &Function, load: NodeId) -> SizedAddr {
-        let class = classify_addr(function, function.load_addr(load), &self.options);
+        let class = classify_addr(function, function.load_addr(load));
         let (_, ty) = function
             .single_value_output(load)
             .expect("Load has 1 typed output per node signature");
@@ -298,7 +292,7 @@ impl MemAnalyzer {
     /// The store's address class paired with its stored width.
     pub(super) fn store_sized(&self, function: &Function, store: NodeId) -> SizedAddr {
         SizedAddr {
-            class: classify_addr(function, function.store_addr(store), &self.options),
+            class: classify_addr(function, function.store_addr(store)),
             size: store_value_byte_size(function, function.store_data(store)),
             addr_bits: addr_bit_width(function, function.store_addr(store)),
         }

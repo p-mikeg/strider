@@ -386,7 +386,7 @@ when both IR slots hold the same value.
   `MemPurpose::TableWalk`, the same claims less the call relaxations, because
   the edge `narrow_load_to` rewires is read afterwards by walks that honour no
   call relaxation (the table walk, and return-target verification with its
-  claim off).
+  claim off). `FunctionArgDetect` narrows under the same row.
 
 ## strider-py
 
