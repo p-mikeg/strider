@@ -2610,3 +2610,38 @@ fn overflow_flag_against_zero_folds_to_false() -> Result<()> {
     }
     Ok(())
 }
+
+/// A `Capture` draws its id from a process-wide counter, so a capture minted
+/// inside a rule body renumbers every later rule's captures. Keeping the pool
+/// at the top of each builder is what makes reordering the rules within a
+/// builder a no-op.
+#[test]
+fn every_rule_capture_is_minted_before_the_first_rule() {
+    let src = include_str!("rules.rs");
+    let mut builders = 0;
+    for chunk in src.split("\nfn ").skip(1) {
+        let Some(body) = chunk.strip_prefix("build_") else {
+            continue;
+        };
+        let name = body.split('(').next().unwrap_or_default();
+        let Some(first_rule) = body.find("rewrite_rule(") else {
+            continue;
+        };
+        builders += 1;
+        let minted: Vec<usize> = body
+            .match_indices("Capture::new()")
+            .map(|(at, _)| at)
+            .collect();
+        assert!(
+            !minted.is_empty(),
+            "build_{name} declares rules but mints no capture"
+        );
+        for at in minted {
+            assert!(
+                at < first_rule,
+                "build_{name} mints a capture inside a rule body"
+            );
+        }
+    }
+    assert_eq!(builders, 5, "the rule builders that mint captures");
+}
