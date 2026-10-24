@@ -3703,3 +3703,22 @@ mod refresh_tests {
         Ok(())
     }
 }
+
+/// An address width the ring cannot reduce in makes every overlap test
+/// answer "may alias": the fallback is the conservative direction, and it
+/// must stay that way at each of the three `None` meanings.
+#[test]
+fn an_unreducible_address_width_may_always_alias() {
+    use super::ring::ring_overlap;
+    use strider_ir::node::ValueType;
+    for ty in [None, Some(ValueType::float(64)), Some(ValueType::int(256))] {
+        assert!(
+            ring_overlap(ty, 0, 1, 0x1000, 1),
+            "{ty:?} must not prove disjointness"
+        );
+    }
+    assert!(
+        !ring_overlap(Some(ValueType::int(32)), 0, 1, 0x1000, 1),
+        "a tracked width still separates"
+    );
+}
