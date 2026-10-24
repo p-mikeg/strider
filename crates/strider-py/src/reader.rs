@@ -819,6 +819,18 @@ impl PyLoadedElf {
         }
     }
 
+    /// Whether the first loaded ELF's `EI_DATA` is little-endian.
+    #[getter]
+    fn is_little_endian(&self) -> PyResult<bool> {
+        // Guarded inside: reads the header out of the mapping.
+        match self.elfs.first() {
+            Some(elf) => Ok(object::read::Object::is_little_endian(
+                &elf.checked_file().map_err(into_strider_err)?,
+            )),
+            None => Ok(true),
+        }
+    }
+
     /// Every symbol across every loaded ELF as `dict[str, Symbol]`, keyed by
     /// the name each one resolves under.
     fn symbols(&self) -> PyResult<HashMap<String, PySymbol>> {

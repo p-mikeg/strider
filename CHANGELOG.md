@@ -83,7 +83,9 @@
   raise the re-entrant `StriderError` while an `analyze`, `build_cfg` or
   `add_elf` on the handle is in flight, and `reader()` returns the one
   `BufferReader` the handle decodes through, where each call built a new
-  one over the same regions.
+  one over the same regions. `repr()` still answers meanwhile, without the
+  arch, and `ElfLifter.endianness` reads the first ELF's `EI_DATA`, where
+  it read the arch.
 - `Function.to_dot(pretty=True)` names a `Load` / `Store` space by its sla
   name, where a space outside RAM, register, unique and const read `??`
   and an arch's default code space read `ram` whatever the sla calls it.
