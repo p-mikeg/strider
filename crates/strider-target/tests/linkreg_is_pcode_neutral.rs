@@ -66,7 +66,7 @@ const TWINS: [(u32, &str, &str, TwinAt); 6] = [
     (
         0x4e80_0460,
         "bctar",
-        "ppc_isa.sinc:2237 vs :2232",
+        "ppc_isa.sinc:2263 vs :2258",
         TwinAt::Unreachable,
     ),
     (
