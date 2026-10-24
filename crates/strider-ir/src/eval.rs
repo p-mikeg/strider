@@ -17,14 +17,6 @@ fn signed_min(ty: ValueType) -> i128 {
     }
 }
 
-/// Result masked to `ty`, or `None` when the operation is undefined (division
-/// by zero, `INT_MIN / -1`) or `ty` has no `u128` modulus (a float, or past
-/// 128 bits): every arm below wraps, masks and shifts at 128 bits.
-///
-/// Both operands are masked to `ty` at entry, the shift amount only after its
-/// out-of-range test. Div, Rem and ShiftRight are not safe under
-/// masking-commutativity, so they need the inputs already narrowed to give the
-/// right answer on a caller that passed raw bits.
 /// Whether a shift by `amount` is at or past `ty`'s declared width, where
 /// Sleigh (opbehavior.cc:411) returns 0 for IntLeft / IntRight and
 /// `signbit ? calc_mask : 0` for IntSright.
@@ -45,6 +37,14 @@ pub fn shift_out_of_range(amount: u128, ty: ValueType) -> bool {
     amount >= ty.bit_width() as u128
 }
 
+/// Result masked to `ty`, or `None` when the operation is undefined (division
+/// by zero, `INT_MIN / -1`) or `ty` has no `u128` modulus (a float, or past
+/// 128 bits): every arm below wraps, masks and shifts at 128 bits.
+///
+/// Both operands are masked to `ty` at entry, the shift amount only after its
+/// out-of-range test. Div, Rem and ShiftRight are not safe under
+/// masking-commutativity, so they need the inputs already narrowed to give the
+/// right answer on a caller that passed raw bits.
 #[inline]
 pub fn int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) -> Option<u128> {
     let mask = ty.int_mask_u128()?;

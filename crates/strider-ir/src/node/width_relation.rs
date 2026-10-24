@@ -64,6 +64,7 @@ impl WidthGroups {
 
     /// [`width_tie`] with a `Tied` head joined to `operand`. A head that IS
     /// the operand ties nothing and reads back as `NoHead`.
+    #[must_use]
     pub fn tie(
         &mut self,
         kind: &NodeKind,
