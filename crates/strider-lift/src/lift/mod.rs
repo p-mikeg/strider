@@ -291,6 +291,30 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// Silent about what it cannot resolve: an unclassified user-op and an ABI
     /// name outside this arch's register table are both errors of lifting the
     /// op, raised there against the op's own name.
+    /// The registers the `cfg`'s rounding-mode ops with no input are
+    /// ([`strider_target::call_other_abi::rounding_mode_register`]), but for
+    /// one an override classifies.
+    fn rounding_mode_register_vns(
+        &self,
+        cfg: &strider_cfg::Cfg,
+        overrides: &strider_target::call_other_abi::CallOtherOverrides,
+    ) -> Vec<rsleigh::Vn> {
+        let preset = self.arch().preset();
+        let found: rustc_hash::FxHashSet<rsleigh::Vn> = cfg
+            .regions()
+            .flat_map(|region| region.insns.iter())
+            .map(|wrapped| &wrapped.insn)
+            .filter(|insn| insn.opcode == rsleigh::Opcode::CallOther)
+            .filter_map(|insn| strider_cfg::user_op_of(insn, self.user_op_names()))
+            .filter(|(_, name)| overrides.get(name).is_none())
+            .filter_map(|(_, name)| {
+                strider_target::call_other_abi::rounding_mode_register(preset, name)
+            })
+            .filter_map(|reg| self.sleigh_regs().name_to_vn(reg))
+            .collect();
+        found.into_iter().collect()
+    }
+
     fn call_other_footprint_vns(
         &self,
         cfg: &strider_cfg::Cfg,
@@ -439,6 +463,15 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         for vn in self.call_other_footprint_vns(cfg, cfg_opts.call_other_overrides) {
             if seen.insert(vn) {
                 all_vns.push(vn);
+            }
+        }
+        // A rounding-mode op with no input reads its register only when the
+        // claim is off, so only then is that register tracked.
+        if !claims.fp_rounding_mode_is_nearest {
+            for vn in self.rounding_mode_register_vns(cfg, cfg_opts.call_other_overrides) {
+                if seen.insert(vn) {
+                    all_vns.push(vn);
+                }
             }
         }
         // A register a LOAD / STORE reaches through the REGISTER space is named

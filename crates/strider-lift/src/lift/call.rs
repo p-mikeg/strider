@@ -27,7 +27,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 name,
             )
         {
-            return self.lift_rounding_mode_control(insn);
+            return self.lift_rounding_mode_control(insn, name);
         }
         let class = strider_target::call_other_abi::classify_with(
             self.call_other_overrides,
@@ -79,23 +79,38 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.write_vn(out, value)
     }
 
-    /// `mode = mxcsrRoundingControl(live)`, `fpscrRoundingControl(live)` or
-    /// `fcsrRoundingControl(live)`: 0, round to nearest even, under
+    /// `mode = mxcsrRoundingControl(live)` and its kin
+    /// ([`strider_target::call_other_abi::is_rounding_mode_control`]): 0,
+    /// round to nearest even, under
     /// [`strider_ir::AssumptionOptions::fp_rounding_mode_is_nearest`], else
-    /// `live`.
-    fn lift_rounding_mode_control(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let (Some(out), [_, live]) = (insn.output.as_ref(), insn.inputs.as_slice()) else {
-            anyhow::bail!("a rounding-mode op takes one input and an output");
+    /// `live`, or for an op with no input the register it is
+    /// ([`strider_target::call_other_abi::rounding_mode_register`]).
+    fn lift_rounding_mode_control(&mut self, insn: &rsleigh::Insn, name: &str) -> Result<()> {
+        let Some(out) = insn.output.as_ref() else {
+            anyhow::bail!("a rounding-mode op has an output");
         };
-        let value = if self
+        let nearest = self
             .builder
             .function()
             .assumptions()
-            .fp_rounding_mode_is_nearest
-        {
-            self.builder.build_int_const(0u64, out.int_type()?)?
-        } else {
-            self.read_vn(live)?
+            .fp_rounding_mode_is_nearest;
+        let value = match insn.inputs.as_slice() {
+            _ if nearest => self.builder.build_int_const(0u64, out.int_type()?)?,
+            [_, live] => self.read_vn(live)?,
+            [_] => {
+                let reg = strider_target::call_other_abi::rounding_mode_register(
+                    self.lifter.arch().preset(),
+                    name,
+                )
+                .ok_or_else(|| anyhow!("rounding-mode op {name:?} names no register"))?;
+                let vn = strider_target::calling_convention::vn_for_name(
+                    self.lifter.sleigh_regs(),
+                    reg,
+                )?;
+                anyhow::ensure!(vn.size == out.size, "{name:?} is {reg}, of another size");
+                self.read_vn(&vn)?
+            }
+            _ => anyhow::bail!("a rounding-mode op takes at most one input"),
         };
         self.write_vn(out, value)
     }
