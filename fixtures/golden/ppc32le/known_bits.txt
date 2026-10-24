@@ -6,7 +6,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == kb_or_then_mask @0x100100ec
 cfg
   0x100100ec 29 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x26000:4, u:0x26200:4, u:0x78e00:1, u:0x78f00:4, u:0x79000:1, u:0x79100:4, u:0x79300:4]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x29300:4, u:0x29500:4, u:0x7c100:1, u:0x7c200:4, u:0x7c300:1, u:0x7c400:4, u:0x7c600:4]
 arg 0 [%v12]
 arg 1 [%v18]
 float_arg 0 [%v19]
@@ -39,7 +39,7 @@ return %v0, %v17, %v14, %v18, %v19, %v20, %v21
 == main @0x10010124
 cfg
   0x10010124 32 ops return -> []
-tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x26000:4, u:0x26200:4]
+tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x29300:4, u:0x29500:4]
 arg 1 [%v19]
 arg 2 [%v20]
 arg 3 [%v21]
