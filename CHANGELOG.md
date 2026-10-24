@@ -333,8 +333,10 @@
 - `FunctionArgDetect` moves an argument load's memory edge under the same
   claims as `LoadForward`: past a constant-address store under
   `stack_global_disjoint` and a store through a `noalias_allocators` result,
-  and through no call a claim makes transparent. In a pipeline without `LoadForward`, two reads of one
-  stack argument with such a store between them are one carrier.
+  and through no call a claim makes transparent. In a pipeline without
+  `LoadForward`, two reads of one stack argument with such a store between
+  them are one carrier. Both passes' narrowing now rests on those two claims,
+  which reverses the 0.2.0 entry that they rewire "only on structural facts".
 - With `return_slots_survive_untracked_writes` cleared, return-target
   verification passes a constant-address store under
   `stack_global_disjoint` and a store through a `noalias_allocators`
