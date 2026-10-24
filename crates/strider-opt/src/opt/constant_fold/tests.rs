@@ -2644,4 +2644,42 @@ fn every_rule_capture_is_minted_before_the_first_rule() {
         }
     }
     assert_eq!(builders, 5, "the rule builders that mint captures");
+    // The check above reads one spelling, so a pool reaching a builder by any
+    // other route would pass it unseen.
+    assert!(
+        !src.contains("-> Capture") && !src.contains("Capture::internal"),
+        "every capture here is minted by the literal the check reads"
+    );
+}
+
+/// A coefficient rule computes in `u128`, so every one of them is gated on
+/// the root having a `u128` modulus: the multiply form reads the gate off
+/// the root type, the shift form off `shift_count_in_range`. Past the
+/// carrier `C + 1` and `1 << C` would both be computed in the wrong ring, so
+/// the rules must decline rather than fold.
+#[test]
+fn a_coefficient_rule_declines_past_the_carrier() -> Result<()> {
+    for (width, folds) in [(64u16, true), (256, false)] {
+        let ty = ValueType::int(width);
+        let vn = reg_vn(0x2000, u32::from(width) / 8);
+        for op in [IntBinaryOp::Mul, IntBinaryOp::ShiftLeft] {
+            let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
+                let three = b.build_int_const_limbs(&[3], ty)?;
+                let scaled = b.build_int_binary_operation(x, three, op, ty)?;
+                b.build_int_binary_operation(x, scaled, IntBinaryOp::Add, ty)
+            })?;
+            run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+            let want = if folds {
+                IntBinaryOp::Mul
+            } else {
+                IntBinaryOp::Add
+            };
+            assert_eq!(
+                return_kind(fg.graph())?,
+                NodeKind::IntBinaryOp(want),
+                "x + (x {op:?} 3) at i{width}"
+            );
+        }
+    }
+    Ok(())
 }
