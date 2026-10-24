@@ -10,6 +10,7 @@ pub(crate) struct Format {
     exp: u32,
 }
 
+pub(crate) const HALF: Format = Format { man: 10, exp: 5 };
 pub(crate) const SINGLE: Format = Format { man: 23, exp: 8 };
 pub(crate) const DOUBLE: Format = Format { man: 52, exp: 11 };
 pub(crate) const QUAD: Format = Format { man: 112, exp: 15 };
@@ -232,6 +233,44 @@ pub(crate) fn mul(f: Format, a: u128, b: u128) -> u128 {
                 let m = hi << (128 - s) | lo >> s | u128::from(lo & ((1 << s) - 1) != 0);
                 f.round(na != nb, m, e + s as i32)
             }
+        }
+    }
+}
+
+pub(crate) fn div(f: Format, a: u128, b: u128) -> u128 {
+    match (f.decode(a), f.decode(b)) {
+        (Num::Nan, _)
+        | (_, Num::Nan)
+        | (Num::Inf(_), Num::Inf(_))
+        | (Num::Zero(_), Num::Zero(_)) => f.nan(),
+        (Num::Inf(x), Num::Fin { neg, .. } | Num::Zero(neg))
+        | (Num::Fin { neg: x, .. }, Num::Zero(neg)) => f.inf(x != neg),
+        (Num::Zero(x), Num::Fin { neg, .. } | Num::Inf(neg))
+        | (Num::Fin { neg: x, .. }, Num::Inf(neg)) => f.sign(x != neg),
+        (
+            Num::Fin {
+                neg: na,
+                m: ma,
+                e: ea,
+            },
+            Num::Fin {
+                neg: nb,
+                m: mb,
+                e: eb,
+            },
+        ) => {
+            // 120 quotient bits by long division, the remainder jammed in.
+            let ((mut r, ea), (mb, eb)) = (widen(ma, ea), widen(mb, eb));
+            let mut q = 0u128;
+            for _ in 0..120 {
+                q <<= 1;
+                if r >= mb {
+                    r -= mb;
+                    q |= 1;
+                }
+                r <<= 1;
+            }
+            f.round(na != nb, q | u128::from(r != 0), ea - eb - 119)
         }
     }
 }
