@@ -234,6 +234,64 @@ fn a_nonzero_flag_test_keeps_the_widened_flags_fingerprint() -> Result<()> {
     Ok(())
 }
 
+/// A `Truncate`-spelled CR-bit test whose tested bit holds a flag that is no
+/// comparison, widened through `I8` first, folds to that flag: bit 2 of
+/// `ZeroExtend(ZeroExtend(f:I1):I8) << 2 | ZeroExtend(eq) << 1` is `f`.
+///
+/// Mutation: let `single_bit_term` name only a comparison under a
+/// `ZeroExtend`.
+#[test]
+fn a_truncate_cr_test_folds_to_a_chained_zero_extended_flag() -> Result<()> {
+    use strider_ir::node::ExtendOp;
+    let ty = ValueType::int(32);
+    let mut b = RegisterSet::new().build_fn()?;
+    let entry = b.create_region_all()?;
+    let taken = b.create_region_all()?;
+    let fall = b.create_region_all()?;
+    b.set_entry_region_all(entry)?;
+    b.set_region(entry);
+    let dummy = b.build_int_const(0xF00Du64, ValueType::int(64))?;
+    let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
+    let eight = b.build_int_const(8u64, ty)?;
+    let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+    let flag = build_i1_xor_with_one(&mut b, lt)?;
+    let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
+    let narrow = b.extend_if_needed(flag, ValueType::int(8), ExtendOp::ZeroExtend)?;
+    let wide = b.extend_if_needed(narrow, ty, ExtendOp::ZeroExtend)?;
+    let two = b.build_int_const(2u64, ty)?;
+    let at2 = b.build_int_binary_operation(wide, two, IntBinaryOp::ShiftLeft, ty)?;
+    let eq_w = b.extend_if_needed(eq, ty, ExtendOp::ZeroExtend)?;
+    let one = b.build_int_const(1u64, ty)?;
+    let at1 = b.build_int_binary_operation(eq_w, one, IntBinaryOp::ShiftLeft, ty)?;
+    let pack = b.build_int_binary_operation(at2, at1, IntBinaryOp::Or, ty)?;
+    let shr = b.build_int_binary_operation(pack, two, IntBinaryOp::ShiftRight, ty)?;
+    let cond = b.truncate_if_needed(shr, ValueType::I1)?;
+    b.build_if(cond, taken, fall)?;
+    b.set_region(taken);
+    b.build_return(Some(idx), &[])?;
+    b.set_region(fall);
+    b.build_return(Some(idx), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    crate::pipeline::run_one(
+        &FlagCmpCanonicalize::new(),
+        &mut fg,
+        &crate::OptCtx::new(None),
+    )?;
+    let if_node = fg
+        .walk_kind(|k| matches!(k, NodeKind::If))
+        .next()
+        .expect("If node");
+    let cond = fg.graph().producer(if_cond_output(fg.graph(), if_node));
+    assert_eq!(
+        *fg.node_kind(cond),
+        NodeKind::IntBinaryOp(IntBinaryOp::Xor),
+        "the condition is the flag Xor(Less, 1)"
+    );
+    Ok(())
+}
+
 /// Superset-only contract: the CR-pack instructions' addresses must survive in
 /// the comparison's fingerprint.  Three distinct addresses, because
 /// `replace_value` alone carries the comparison's own and the `Truncate`'s but
