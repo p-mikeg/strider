@@ -476,7 +476,7 @@ mod alias_tests {
         });
         let f = &claimed;
         let options = MemOptions::for_purpose(MemPurpose::IncomingArgs, f);
-        let store_class = classify_addr(f, f.store_addr(store), &options);
+        let store_class = classify_addr(f, f.store_addr(store));
         // The real width the store's own address carries. Passing `None` would
         // model IR the lifter cannot produce, and the wrap guard would then
         // never be exercised by any of these cases.
@@ -1880,63 +1880,6 @@ mod heap_tests {
         Ok(())
     }
 
-    /// The structural analyzer reaching both allocations first must not cost
-    /// the configured one its heap disjointness: both decompose under the
-    /// function's allocator set, and only the policy differs.
-    #[test]
-    fn a_structural_query_first_keeps_heap_disjointness() -> crate::Result<()> {
-        let mut b = builder()?;
-        let p = alloc_call(&mut b, MALLOC)?;
-        let q = alloc_call(&mut b, KMEM_CACHE_ALLOC)?;
-        let two = b.build_int_const(2u64, ValueType::int(64))?;
-        b.build_store(q, two, rsleigh::VnSpace::RAM)?;
-        let loaded = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::int(64))?;
-        b.build_return(Some(loaded), &[])?;
-        let mut fg = built(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
-        let load = fg.producer(loaded);
-        let store = super::only_store(&fg);
-        let mem = fg.node_inputs(load)[0];
-
-        MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::Structural, &fg))
-            .nearest_clobber(&fg, load, mem);
-        assert!(
-            matches!(
-                fg.side_tables().memory_class(p),
-                strider_ir::MemDecomp::Heap(_)
-            ),
-            "the structural walk commits the allocation as heap"
-        );
-        let configured = MemAnalyzer::new(super::call_blocking(&mut fg, false));
-        assert_eq!(
-            configured.verdict(&fg, load, store),
-            AliasVerdict::Disjoint,
-            "two allocations stay disjoint after a structural query"
-        );
-        Ok(())
-    }
-
-    /// A heap phi read structurally first keeps its class for the configured
-    /// analyzer: both decompose under the function's allocator set, and only
-    /// the structural one drops the heap class.
-    #[test]
-    fn a_heap_phi_read_structurally_first_stays_heap_opaque() -> crate::Result<()> {
-        let (mut fg, phi) = walking_pointer()?;
-        let structural = MemOptions::for_purpose(MemPurpose::Structural, &fg);
-        assert!(
-            matches!(
-                classify_addr(&fg, phi, &structural),
-                AddrClass::Anchor { value } if value == phi
-            ),
-            "the structural analyzer claims no heap class"
-        );
-        let configured = super::call_blocking(&mut fg, false);
-        assert!(
-            matches!(classify_addr(&fg, phi, &configured), AddrClass::HeapOpaque),
-            "the configured analyzer still sees heap memory of unknown identity"
-        );
-        Ok(())
-    }
-
     /// One store through a `MALLOC` allocation, unoptimized.
     fn one_heap_store() -> crate::Result<Function> {
         let mut b = builder()?;
@@ -2140,7 +2083,7 @@ mod heap_tests {
             for f in [&mut fg, &mut fa] {
                 f.assume(a);
             }
-            for purpose in [Forward, IncomingArgs, CallStackArgs, TableWalk, Structural] {
+            for purpose in [Forward, IncomingArgs, CallStackArgs, TableWalk] {
                 let analyzer = MemAnalyzer::new(MemOptions::for_purpose(purpose, &fg));
                 // An analyzer keeps the index of the first graph it reads.
                 let analyzer_a = MemAnalyzer::new(MemOptions::for_purpose(purpose, &fa));
@@ -2148,12 +2091,10 @@ mod heap_tests {
                 let global = analyzer.verdict(&fg, from_global, spill) == AliasVerdict::Disjoint;
                 let sp_bases =
                     analyzer.verdict(&fg, from_incoming, to_aligned) == AliasVerdict::Disjoint;
-                let claims = purpose != Structural;
                 let no_call_blocks =
                     purpose == IncomingArgs && a.assume_incoming_args_survive_calls;
                 let escapes = purpose == Forward && a.escape_analysis;
-                let allocator =
-                    !matches!(purpose, TableWalk | Structural) && !a.noalias_allocators.is_empty();
+                let allocator = purpose != TableWalk && !a.noalias_allocators.is_empty();
                 assert_eq!(
                     forwards(&fg, &analyzer, reload, spill),
                     escapes || no_call_blocks,
@@ -2177,12 +2118,11 @@ mod heap_tests {
                 );
                 assert_eq!(
                     heap,
-                    claims && !a.noalias_allocators.is_empty(),
+                    !a.noalias_allocators.is_empty(),
                     "{purpose:?} heap disjointness under {a:?}"
                 );
                 assert_eq!(
-                    global,
-                    claims && a.stack_global_disjoint,
+                    global, a.stack_global_disjoint,
                     "{purpose:?} stack-global disjointness under {a:?}"
                 );
             }
@@ -2286,9 +2226,9 @@ mod arg_window_bounds {
             sp_offset: 8,
             args: saturating_args().expect("declared above"),
         };
-        let structural = MemOptions::for_purpose(MemPurpose::Structural, &fg);
-        let analyzer = MemAnalyzer::new(structural.clone());
-        let window = scan_arg_window(&fg, &analyzer, &structural, &geometry, i128::MAX);
+        let options = MemOptions::for_purpose(MemPurpose::TableWalk, &fg);
+        let analyzer = MemAnalyzer::new(options.clone());
+        let window = scan_arg_window(&fg, &analyzer, &options, &geometry, i128::MAX);
         assert!(
             !window.covers(-8, -4),
             "a window whose first slot saturates owns nothing below it"
@@ -3519,30 +3459,28 @@ mod store_index {
 
     /// Over every prefix of the chain, the index offers a def at least as high
     /// as the highest one the walker says clobbers, for every class of probe,
-    /// both spaces, and every setting the candidates read, structural included.
+    /// both spaces, and every setting the candidates read.
     #[test]
     fn the_index_never_hides_a_clobber() -> crate::Result<()> {
         let mut heap_near_top = 0;
         for seed in 0..60 {
             let (fg, addresses) = random_chain(seed)?;
-            let structural = MemOptions::for_purpose(MemPurpose::Structural, &fg);
+            let table_walk = MemOptions::for_purpose(MemPurpose::TableWalk, &fg);
             let layout = MemLayout::build(&fg).expect("the chain is laid out");
             let configured =
                 MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::CallStackArgs, &fg));
-            let narrow = MemAnalyzer::new(structural.clone());
+            let narrow = MemAnalyzer::new(table_walk.clone());
             heap_near_top += addresses
                 .iter()
                 .filter(|&&a| {
                     matches!(
-                        classify_addr(&fg, a, configured.options()),
+                        classify_addr(&fg, a),
                         AddrClass::HeapRooted { offset, .. } if offset.abs() >= 1 << 30
                     )
                 })
                 .count();
-            let stores = StoreIndex::build(&fg, &layout, configured.options());
-            // Structural puts every heap store in the anchor bucket.
-            let narrow_stores = StoreIndex::build(&fg, &layout, &structural);
-            let mut runs = vec![(&narrow, &narrow_stores, structural.clone())];
+            let stores = StoreIndex::build(&fg, &layout);
+            let mut runs = vec![(&narrow, &stores, table_walk.clone())];
             for sgd in [false, true] {
                 for dsbd in [false, true] {
                     let blocking = MemOptions {
@@ -3567,7 +3505,7 @@ mod store_index {
                     };
                     for size in [1, 4, 8] {
                         let probe = SizedAddr {
-                            class: classify_addr(&fg, addr, analyzer.options()),
+                            class: classify_addr(&fg, addr),
                             size,
                             addr_bits: addr_bit_width(&fg, addr),
                         };
