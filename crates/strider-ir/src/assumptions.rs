@@ -223,7 +223,8 @@ pub struct AssumptionOptions {
     /// float arithmetic, taken to round to nearest either way
     /// ([`AssumptionOptions::none`]), and the conversions lifted as opaque
     /// user ops (the packed VEX and EVEX forms, `roundss` and its kin, the
-    /// AArch64 vector and FP-register `#fbits` forms, the ARM NEON and
+    /// AArch64 vector and FP-register `#fbits` forms and `ucvtf` from an FP
+    /// register, the ARM NEON and
     /// fixed-point `vcvt`, `vrint*` and `frint*`), whose results nothing
     /// folds.  MXCSR.FTZ and DAZ are taken as 0 either way, so under
     /// `-ffast-math`, which sets them at startup, even
