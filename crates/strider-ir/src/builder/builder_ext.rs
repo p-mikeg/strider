@@ -13,7 +13,7 @@ use crate::error::Result;
 use crate::eval;
 use crate::node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeKind,
-    ValueId, ValueKind, ValueType,
+    ValueId, ValueKind, ValueType, complement_limbs, shifted_ones_limbs,
 };
 
 pub trait IRBuilderExt: IRBuilder {
@@ -153,6 +153,26 @@ pub trait IRBuilderExt: IRBuilder {
             .function_mut()
             .intern_int_const_limbs(limbs, output_type);
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
+    }
+
+    /// The `IntConst` of `ty` with the window `[shift, shift + window_bits)`
+    /// cleared and every other bit set: ANDing a container with it preserves
+    /// exactly the bits the window does not cover.
+    ///
+    /// Built limb-wise, so an `I256` / `I512` container (ymm, zmm, aarch64
+    /// SVE `z`) is representable where a `u128` mask would truncate.
+    fn build_window_preserve_mask(
+        &mut self,
+        window_bits: u64,
+        shift: u64,
+        ty: ValueType,
+    ) -> Result<ValueId> {
+        let width_bits = ty.bit_width() as u64;
+        let limbs = complement_limbs(
+            &shifted_ones_limbs(window_bits, shift, width_bits),
+            width_bits,
+        );
+        self.build_int_const_limbs(&limbs, ty)
     }
 
     /// The all-ones `IntConst` of `ty`, at any integer width.
