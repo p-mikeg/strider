@@ -6,7 +6,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == is_thread_group_empty @0x10010218
 cfg
   0x10010218 33 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, xer_so, cr7, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x2b400:8, u:0x2ba00:8, u:0x2bc00:8, u:0x2f400:4, u:0x3d500:8, u:0x3d600:8, u:0x3d700:1, u:0x3d800:1, u:0x3d900:1, u:0x3da00:1, u:0x3db00:1, u:0x3dc00:1, u:0x3dd00:1, u:0x3de00:1, u:0x3df00:1, u:0x5c200:8, u:0x88e00:1, u:0x88f00:8, u:0x89000:8, u:0x89200:8, u:0x89300:8, u:0x89400:1, u:0x89500:8, u:0x89700:8]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, xer_so, cr7, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31a00:8, u:0x32000:8, u:0x32200:8, u:0x35a00:4, u:0x43b00:8, u:0x43c00:8, u:0x43d00:1, u:0x43e00:1, u:0x43f00:1, u:0x44000:1, u:0x44100:1, u:0x44200:1, u:0x44300:1, u:0x44400:1, u:0x44500:1, u:0x5d100:8, u:0x89d00:1, u:0x89e00:8, u:0x89f00:8, u:0x8a100:8, u:0x8a200:8, u:0x8a300:1, u:0x8a400:8, u:0x8a600:8]
 arg 0 [%v5]
 float_arg 0 [%v42]
 float_arg 1 [%v43]
@@ -87,7 +87,7 @@ return %v0, %v6, %v41, %v8, %v42, %v43, %v44, %v45, %v46, %v47, %v48, %v49, %v50
 == main @0x10010244
 cfg
   0x10010244 47 ops return -> []
-tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x2b400:8, u:0x2ba00:8, u:0x2bc00:8, u:0x33000:8, u:0x63700:4]
+tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31a00:8, u:0x32000:8, u:0x32200:8, u:0x39600:8, u:0x64600:4]
 arg 0 [%v16]
 arg 1 [%v21]
 arg 2 [%v29]
