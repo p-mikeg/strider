@@ -4,7 +4,7 @@
 //! with shift/mask operations inserted for the slice.
 
 use anyhow::{anyhow, bail};
-use strider_ir::node::{ValueId, complement_limbs, shifted_ones_limbs};
+use strider_ir::node::ValueId;
 use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, ValueType, VnTypeExt};
 
 use super::FunctionLifter;
@@ -253,11 +253,6 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     ) -> Result<ValueId> {
         let ty = ctx.container_ty;
         let shift_bits = ctx.shift_bits;
-        let width_bits = ty.bit_width() as u64;
-        let container_mask = complement_limbs(
-            &shifted_ones_limbs(u64::from(reg.size) * 8, shift_bits, width_bits),
-            width_bits,
-        );
         let container_val = self.builder.read_variable(&ctx.container_reg)?;
 
         let val_extended = self
@@ -270,7 +265,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             ty,
         )?;
 
-        let container_mask = self.builder.build_int_const_limbs(&container_mask, ty)?;
+        let container_mask =
+            self.builder
+                .build_window_preserve_mask(u64::from(reg.size) * 8, shift_bits, ty)?;
         let preserved = self.builder.build_int_binary_operation(
             container_val,
             container_mask,
