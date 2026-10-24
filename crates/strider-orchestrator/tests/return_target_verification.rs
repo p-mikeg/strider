@@ -620,8 +620,8 @@ fn x86_64_a_write_through_a_pointer_loaded_from_a_global_rests_on_a_claim() {
 /// constant address off the slot: the `ret`'s memory edge steps past it, and
 /// the walk would pass it anyway.
 ///
-/// Mutation: narrow under `MemPurpose::Structural` and drop the
-/// constant-address arm of `off_stack`.
+/// Mutation: narrow `LoadForward` with `stack_global_disjoint` off and drop
+/// the constant-address arm of `off_stack`.
 #[test]
 fn x86_64_a_global_store_rests_on_stack_global_disjoint() {
     // movl $0x1,0x20000 ; ret
