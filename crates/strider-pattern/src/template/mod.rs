@@ -22,7 +22,10 @@ use std::collections::BTreeMap;
 use anyhow::anyhow;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::ValueId as TmplValueId;
-use strider_ir::node::{Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType};
+use strider_ir::node::{
+    Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType, WidthGroups,
+    WidthTie, width_tie,
+};
 use strider_ir::{Function, IRBuilder, IRViewer};
 
 use crate::bindings::Bindings;
@@ -338,37 +341,6 @@ impl ValueTys {
     }
 }
 
-/// Union-find over value vertices, grouping the ones a node evaluates at one
-/// width.
-struct WidthGroups {
-    parent: Vec<u32>,
-}
-
-impl WidthGroups {
-    fn new(len: usize) -> Self {
-        Self {
-            parent: (0..len as u32).collect(),
-        }
-    }
-
-    fn find(&mut self, v: TmplValueId) -> usize {
-        let mut i = v.as_u32() as usize;
-        while self.parent[i] as usize != i {
-            let grandparent = self.parent[self.parent[i] as usize];
-            self.parent[i] = grandparent;
-            i = grandparent as usize;
-        }
-        i
-    }
-
-    fn union(&mut self, a: TmplValueId, b: TmplValueId) {
-        let (ra, rb) = (self.find(a), self.find(b));
-        if ra != rb {
-            self.parent[rb] = ra as u32;
-        }
-    }
-}
-
 /// Whether the slot carries a value, and so a width.
 fn is_value_output(kind: &OutputKindSpec) -> bool {
     matches!(
@@ -442,32 +414,28 @@ fn resolve_value_tys(
         };
         let inputs = consumed_inputs(&template.graph, node_vtx);
         let first_operand = inputs.iter().find(|&&(slot, _)| slot == 0).map(|&(_, v)| v);
+        let out_vtx = first_value_output_vtx(template, node_vtx);
         for &(slot, producer) in &inputs {
-            let head = match kind.operand_width(slot) {
-                OperandWidth::OfOutput => first_value_output_vtx(template, node_vtx),
-                OperandWidth::OfFirstOperand => first_operand,
-                // A conversion pins its input apart from its output.
-                OperandWidth::Conversion(_) => {
+            match groups.tie(&kind, slot, producer, out_vtx, first_operand) {
+                WidthTie::Tied(head) => {
                     tied_by.entry(producer).or_insert((kind, slot));
-                    continue;
+                    tied_by.entry(head).or_insert((kind, slot));
+                }
+                WidthTie::NoHead => {}
+                // A conversion pins its input apart from its output.
+                WidthTie::Conversion(_) => {
+                    tied_by.entry(producer).or_insert((kind, slot));
                 }
                 // A free slot pins it to nothing.
-                OperandWidth::Free => {
+                WidthTie::Free => {
                     tied_by.entry(producer).or_insert((kind, slot));
                     if matches!(kind, NodeKind::IntBinaryOp(op) if op.is_shift())
-                        && let Some(out) = first_value_output_vtx(template, node_vtx)
+                        && let Some(out) = out_vtx
                     {
                         counts.push((producer, out));
                     }
-                    continue;
                 }
-            };
-            let Some(head) = head.filter(|&h| h != producer) else {
-                continue;
-            };
-            groups.union(head, producer);
-            tied_by.entry(producer).or_insert((kind, slot));
-            tied_by.entry(head).or_insert((kind, slot));
+            }
         }
     }
 
@@ -760,16 +728,15 @@ fn check_operand_types(
         if slot == 0 {
             first_ty = Some(got);
         }
-        let want = match kind.operand_width(slot) {
-            OperandWidth::OfOutput => out_ty,
-            OperandWidth::OfFirstOperand => first_ty,
-            OperandWidth::Conversion(c) => {
+        let want = match width_tie(kind, slot, out_ty, first_ty) {
+            WidthTie::Tied(want) => Some(want),
+            WidthTie::Conversion(c) => {
                 if let Some(out) = out_ty {
                     check_conversion(kind, c, got, out)?;
                 }
                 continue;
             }
-            OperandWidth::Free => continue,
+            WidthTie::NoHead | WidthTie::Free => continue,
         };
         if let Some(want) = want
             && want.bit_width() != got.bit_width()
