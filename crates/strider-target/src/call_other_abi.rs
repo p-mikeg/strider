@@ -327,10 +327,10 @@ const PPC_FPCC_VX: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
 /// The scalar float ops the sla spells in p-code (`fadd`, `fmadd`, `frsp`,
 /// `fctiw`, `xsadddp`, ...) are not user ops, so no row reaches them: they set
 /// FPRF, VXSNAN (for any NaN, quiet ones too), ZX, VXZDZ and the summaries
-/// from their operands, XX from the stale FI, and leave FR, FI, OX, UX,
-/// VXISI, VXIDI, VXIMZ, VXSQRT and, for the signed conversions, VXCVI as the
-/// last explicit write (`mtfsf`, `mtfsfi`, `mtfsb0`, `mtfsb1`) left them,
-/// which a later `mffs` or `mcrfs` then reads.
+/// from their operands (the conversions to an integer VXCVI too), XX from
+/// the stale FI, and leave FR, FI, OX, UX, VXISI, VXIDI, VXIMZ and VXSQRT as
+/// the last explicit write (`mtfsf`, `mtfsfi`, `mtfsb0`, `mtfsb1`) left
+/// them, which a later `mffs` or `mcrfs` then reads.
 const PPC_FP_RESULT: CallOtherClass = CallOtherClass::Call(CallOtherAbi {
     implicit_reads: &[],
     implicit_writes: &[

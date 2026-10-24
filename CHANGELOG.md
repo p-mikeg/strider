@@ -433,17 +433,24 @@
 ### Added, Python
 
 - `AssumptionOptions.fp_rounding_mode_is_nearest` (default `True`): the x86
-  SSE rounding mode, MXCSR.RC, the PowerPC FPSCR.RN, the ARM FPSCR.RMode and
-  the MIPS FCSR.RM are round to nearest even at every conversion that rounds
-  by them (`cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`,
-  `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`,
-  the 64-bit `cvtsi2sd` and the scalar VEX forms; `fctid`, `fctiw`,
-  `fctidu`, `fctiwu`, `fcfid*`, `frsp`, `xscvdpspn`; ARM `vcvtr`; MIPS
-  `cvt.w`, `cvt.l`). Off, each one reads the
+  SSE rounding mode, MXCSR.RC, the x87 RC at `fst` and `fstp` to memory, the
+  PowerPC FPSCR.RN, the ARM FPSCR.RMode, the AArch64 FPCR.RMode and the MIPS
+  FCSR.RM are round to nearest even at every conversion that rounds by them
+  (`cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`, `cvtps2pi`,
+  `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`, the 64-bit
+  `cvtsi2sd` and the scalar VEX forms; `fctid`, `fctiw`, `fctidu`,
+  `fctiwu`, `fcfid*`, `frsp`, `xscvdpspn`; ARM `vcvtr`, `vcvt.f32.f64`,
+  `vcvt.f32.s32`, `vcvt.f32.u32`, `vcvtb`, `vcvtt`; AArch64 `fcvt` to a
+  narrower float, `fcvtn`, `scvtf`, `ucvtf`, `bfcvt`; MIPS `cvt.w`, `cvt.l`,
+  `cvt.s`, `cvt.d.l`). Off, each one reads the
   mode and selects among nearest even, down, up and toward zero, so a mode
-  `ldmxcsr`, `mtfsfi`, `vmsr` or `ctc1` sets folds. A MIPS `cvt.w` or
-  `cvt.l` no longer reads FCSR under the claim, which shifts the
-  `InitialVnId`s after it. `AssumptionOptions.none()` clears it; the
+  `ldmxcsr`, `fldcw`, `mtfsfi`, `vmsr` or `ctc1` sets folds; an AArch64
+  FPCR read is volatile, so `msr fpcr` does not. A function holding an ARM
+  `vcvtr` or VFP narrowing or integer-to-single conversion, a MIPS `cvt`
+  or an x87 `fst` to memory tracks the mode register the conversion names
+  (FPSCR, FCSR, the x87 control word) whatever the claim, which shifts the
+  `InitialVnId`s after it; an AArch64 one tracks FPCR only with the claim
+  off. `AssumptionOptions.none()` clears it; the
   lift reads it, so `optimize` refuses to add it. Before, the SSE forms
   rounded to nearest even and `none()` did not lift that premise. MXCSR.FTZ
   and DAZ are still taken as 0. A function holding a rounding SSE
@@ -592,6 +599,26 @@
 - Python: ARM `vcvt` to a 32-bit integer saturates, a NaN giving 0, and
   `vcvtr` rounds by FPSCR.RMode, taken as 0 under
   `fp_rounding_mode_is_nearest`, where it was an opaque op of the wrong bits.
+- Python: AArch64 `fmov` between a general register and an h register
+  moves the 16 bits, where it converted the value between half and single
+  or double precision.
+- Python: AArch64 `fcvt` to a narrower float, `fcvtn`, `scvtf`, `ucvtf`
+  (the general and scalar forms), ARM `vcvt.f32.f64`, `vcvt.f32.s32`,
+  `vcvt.f32.u32`, `vcvtb` and `vcvtt`, MIPS `cvt.s.d`, `cvt.s.w`,
+  `cvt.s.l` and `cvt.d.l`, and x87 `fst` and `fstp` to a single or a double
+  round by the dynamic mode, taken as nearest even under
+  `fp_rounding_mode_is_nearest`, where they rounded to nearest whatever it
+  was. AArch64 `bfcvt`, `bfcvtn` and `bfcvtn2` convert to BFloat16, where
+  they converted to IEEE half; `fcvtxn` rounds to odd; the general `scvtf`
+  and `ucvtf` `#fbits` forms scale by an exact power of two, where the half
+  ones rounded the integer to half first and divided by infinity past `#15`,
+  and `#64` divided by one.
+- Python: ARM `vrintr` and `vrintx` hand their op FPSCR.RMode, bits 22-23,
+  where they passed bits 21-22, so two of them across a `vmsr` switching
+  between nearest and toward -inf deduplicated.
+- Python: x86 `fist`, `fistp`, `fisttp` and every SSE and VEX conversion to
+  an integer give the integer indefinite for a NaN, an infinity or a result
+  past the destination, where they took p-code's undefined `trunc` answer.
 - Python: MIPS float-to-integer conversions saturate to the legacy default
   (the signed maximum for a NaN, an infinity or a value out of range),
   `round` breaks a tie to even, and `cvt.w` and `cvt.l` round by FCSR.RM,
@@ -604,6 +631,12 @@
   default `a*b+c` could read one bit off and `-2^31 * DBL_MAX + inf` read
   NaN; `fmsub.` and `fnmsub.` rounded to single. The VSX `xs*m*sp` and
   `xs*m*qp` ops read their target, the addend or multiplicand.
+- Python: PowerPC `fmadd` and its kin give the ISA's NaN: FRA's, FRB's or
+  FRC's, the first that is one, quieted with its sign (a single's fraction
+  cut to 23 bits), or the default QNaN, where `fmsub` negated a NaN B and
+  the `n` forms negated a NaN result. `mtfsf` and `mtfsfi` raise FX when
+  they set an exception bit outside field 0 that was clear, the usual rule
+  the ISA's programming note keeps; only field 0 takes FX from the image.
 - Python: PowerPC FP record forms set CR1 bit 3 to OX, where they wrote it
   into CR3's EQ bit, and `mtfsb1.` sets CR1. FX rises only when an
   exception bit is newly set, where one left set re-raised it after
@@ -1142,9 +1175,12 @@
   adapter `ElfFileMemReader` and the Python `BufferReader` share.
 - `AssumptionOptions::fp_rounding_mode_is_nearest`, default on, read by the
   lift through the fork's new user ops, each appended after the upstream
-  ones: x86 `mxcsrRoundingControl`, PowerPC and ARM `fpscrRoundingControl`
-  and MIPS `fcsrRoundingControl`
-  (`strider_target::call_other_abi::is_rounding_mode_control`).
+  ones: x86 `mxcsrRoundingControl` and `x87RoundingControl`, PowerPC and ARM
+  `fpscrRoundingControl`, AArch64 `fpcrRoundingControl` and MIPS
+  `fcsrRoundingControl`
+  (`strider_target::call_other_abi::is_rounding_mode_control`). AArch64's
+  takes no input and is FPCR, which the lift reads only with the claim off
+  (`strider_target::call_other_abi::rounding_mode_register`).
 - `strider_pattern::instantiate_guarded`: `instantiate` with a check run
   once every template node's kind is resolved, before the first node is
   created.
