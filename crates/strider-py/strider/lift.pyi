@@ -400,7 +400,9 @@ class ElfLifter(Lifter):
         ...
     @property
     def endianness(self) -> str:
-        """Byte order of the loaded binary: `"little"` or `"big"`."""
+        """Byte order of the loaded binary, as the first ELF's `EI_DATA`
+        gives it: `"little"` or `"big"`. Read off the ELF, so it answers while
+        a call holds the handle."""
         ...
     def functions(self) -> SymbolIter:
         """The function symbols in address order, one per address: aliases of
