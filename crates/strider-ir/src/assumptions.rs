@@ -48,8 +48,9 @@ pub struct AssumptionOptions {
     /// A `Call` on an incoming stack-argument slot's memory chain leaves the
     /// slot as it found it, so the argument is still detectable after the
     /// call.  Reaches which loads count as incoming arguments, never the memory
-    /// edges: a narrowed edge is read afterwards by walks that block at every
-    /// call, so narrowing uses what a call-blocking walk proves.  It holds for
+    /// edges: a narrowed edge is read afterwards by walks that honour no call
+    /// relaxation, so the narrowing steps through no call a claim makes
+    /// transparent.  It holds for
     /// a conforming callee that was not handed a pointer into the incoming
     /// arguments' memory, which starts at the first stack argument, or at the
     /// first register argument's home where the convention keeps the homes
