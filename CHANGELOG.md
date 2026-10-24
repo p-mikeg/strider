@@ -661,6 +661,16 @@
   gave infinity, and `lfs` and its forms keep a signalling NaN signalling,
   so a float copied through an FPR keeps its bits. `xscvdpspn` keeps
   doubleword 1, which the ISA leaves undefined.
+- Python: PowerPC `fadd`, `fsub`, `fmul`, `fdiv`, `fsqrt`, `fmadd` and its
+  kin, `fre`, `fres`, `frsqrte`, `frsqrtes`, `frsp`, the conversions to and
+  from an integer, `xsadddp` and their single and record forms set the
+  FPSCR status they may change. FR, FI, OX and UX each come from an opaque
+  `float*` op (classed pure), XX from FI, and VXISI, VXIDI, VXIMZ, VXSQRT
+  and ZX from the operands; they kept those bits as the last `mtfsf`,
+  `mtfsfi`, `mtfsb0` or `mtfsb1` left them, so a later `mffs` or `mcrfs`
+  folded to a stale value. `fdiv` sets ZX for a finite nonzero dividend
+  alone, where 0/0 set it; `fcfid` sets FPRF; `frin`, `friz`, `frip` and
+  `frim` clear FR and FI and raise VXSNAN for a signalling NaN.
 - Python: x87 `fprem` and `fprem1` lift as the opaque `x87Prem` and
   `x87Prem1`, each with a status op that sets C0-C3. They computed about 0
   and left C0-C3 alone, so glibc's `fmodl` loop tested a stale C2.
