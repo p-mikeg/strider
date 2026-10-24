@@ -1,4 +1,4 @@
-use strider_ir::node::{ExtendOp, NodeId, NodeKind, OperandWidth, ValueId, ValueType};
+use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType, WidthTie, width_tie};
 use strider_ir::{Function, IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
 
@@ -54,19 +54,17 @@ fn operands_carry(
     operands: &[ValueId],
     out: ValueType,
 ) -> Option<()> {
-    let width = |v: ValueId| function.value_type_opt(v).map(ValueType::bit_width);
-    let first = width(*operands.first()?)?;
+    let ty = |v: ValueId| function.value_type_opt(v);
+    let first = ty(*operands.first()?)?;
     operands
         .iter()
         .enumerate()
-        .all(|(slot, &v)| {
-            let want = match kind.operand_width(slot) {
-                OperandWidth::OfOutput => out.bit_width(),
-                OperandWidth::OfFirstOperand => first,
-                OperandWidth::Conversion(_) | OperandWidth::Free => return true,
-            };
-            width(v) == Some(want)
-        })
+        .all(
+            |(slot, &v)| match width_tie(kind, slot, Some(out), Some(first)) {
+                WidthTie::Tied(want) => ty(v).map(ValueType::bit_width) == Some(want.bit_width()),
+                WidthTie::Conversion(_) | WidthTie::Free | WidthTie::NoHead => true,
+            },
+        )
         .then_some(())
 }
 

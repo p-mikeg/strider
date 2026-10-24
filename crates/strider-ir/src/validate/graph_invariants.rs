@@ -4,7 +4,9 @@ use crate::DominatorTree;
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType};
+use crate::node::{
+    Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType, WidthTie, width_tie,
+};
 use crate::schedule::{ScheduleContext, schedule_early};
 use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
 
@@ -156,8 +158,11 @@ pub(super) fn check_function_invariants_control_single_use(
 /// An arithmetic node is evaluated at ONE width, which every operand
 /// [`NodeKind::operand_width`] ties to it must carry: the output's, or a
 /// comparison's first operand's (its output is `I1`). A shift's count is
-/// free, as in p-code. A bitcast keeps its byte size. `Extend` / `Truncate`
-/// are checked by [`check_function_invariants_extend_truncate`].
+/// free, as in p-code. A bitcast keeps its byte size, which over the
+/// supported widths is the same claim: no float is one byte, so only `I1`'s
+/// byte size could disagree with its bit width and no bitcast partner has it.
+/// `Extend` / `Truncate` carry a DIRECTION instead and are checked by
+/// [`check_function_invariants_extend_truncate`].
 pub(super) fn check_function_invariants_arith_widths(
     function: &Function,
     reachable: &NodeIdSet,
@@ -165,81 +170,41 @@ pub(super) fn check_function_invariants_arith_widths(
 ) {
     let graph = function.graph();
     for (node, kind) in function.reachable_kind_iter(reachable) {
-        let width_from_output = match kind.operand_width(0) {
-            OperandWidth::Conversion(Conversion::SameSize) => {
-                let inp = graph
-                    .node_inputs(node)
-                    .into_iter()
-                    .next()
-                    .and_then(|v| function.value_type_opt(v));
-                let outp = graph
-                    .node_outputs(node)
-                    .first()
-                    .and_then(|&o| function.value_type_opt(o));
-                if let (Some(i), Some(o)) = (inp, outp)
-                    && !Conversion::SameSize.admits(i, o)
-                {
-                    errs.push(ValidationError::ArithmeticWidthMismatch {
-                        node,
-                        kind: *kind,
-                        operand_idx: 0,
-                        operand_width: i.bit_width(),
-                        expected_width: o.bit_width(),
-                    });
-                }
-                continue;
-            }
-            OperandWidth::OfOutput => true,
-            OperandWidth::OfFirstOperand => false,
-            OperandWidth::Conversion(Conversion::Widen | Conversion::Narrow)
-            | OperandWidth::Free => continue,
-        };
+        let out = graph
+            .node_outputs(node)
+            .first()
+            .and_then(|&o| function.value_type_opt(o));
         // Carries the real input slot, not a position in the filtered list: a
         // node with an untyped input would otherwise report an index that
         // names a different operand, and read the wrong slot's width rule.
-        let operands: Vec<(usize, usize)> = graph
+        let operands: Vec<(usize, ValueType)> = graph
             .node_inputs(node)
             .into_iter()
             .enumerate()
-            .filter_map(|(slot, v)| function.value_type_opt(v).map(|t| (slot, t.bit_width())))
+            .filter_map(|(slot, v)| function.value_type_opt(v).map(|t| (slot, t)))
             .collect();
-        let expected = if width_from_output {
-            match graph
-                .node_outputs(node)
-                .first()
-                .and_then(|&o| function.value_type_opt(o))
-            {
-                Some(t) => t.bit_width(),
-                None => continue,
-            }
-        } else {
-            match operands.first() {
-                Some(&(_, w)) => w,
-                None => continue,
-            }
-        };
-        for &(slot, w) in operands
-            .iter()
-            .filter(|&&(slot, _)| ties_to_node_width(kind.operand_width(slot)))
-        {
-            if w != expected {
+        let first = operands.first().map(|&(_, t)| t);
+        for &(slot, got) in &operands {
+            let want = match width_tie(kind, slot, out, first) {
+                WidthTie::Tied(want) => want,
+                WidthTie::Conversion(Conversion::SameSize) => match out {
+                    Some(out) => out,
+                    None => continue,
+                },
+                WidthTie::Conversion(Conversion::Widen | Conversion::Narrow)
+                | WidthTie::Free
+                | WidthTie::NoHead => continue,
+            };
+            if got.bit_width() != want.bit_width() {
                 errs.push(ValidationError::ArithmeticWidthMismatch {
                     node,
                     kind: *kind,
                     operand_idx: slot,
-                    operand_width: w,
-                    expected_width: expected,
+                    operand_width: got.bit_width(),
+                    expected_width: want.bit_width(),
                 });
             }
         }
-    }
-}
-
-/// Whether a slot under `rule` carries the node's one evaluation width.
-fn ties_to_node_width(rule: OperandWidth) -> bool {
-    match rule {
-        OperandWidth::OfOutput | OperandWidth::OfFirstOperand => true,
-        OperandWidth::Conversion(_) | OperandWidth::Free => false,
     }
 }
 
