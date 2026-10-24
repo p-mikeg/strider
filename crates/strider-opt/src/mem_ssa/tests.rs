@@ -1075,18 +1075,30 @@ fn the_walk_is_sound_on_random_irreducible_graphs() {
 }
 
 /// The climb names what its definition names, from every def and for every
-/// slot, over random reducible graphs; with no loop it also names what the
-/// path walk does.
+/// slot, over every random graph a layout covers, rewired shapes included;
+/// with no loop it also names what the path walk does.
 #[test]
 fn the_climb_matches_its_definition_on_random_graphs() {
+    let (mut laid_out, mut rewired_laid_out) = (0, 0);
     for seed in 0..300 {
         let allow_loops = seed % 3 != 0;
+        let rewired = seed % 2 == 0;
         let (mut shape, im) = ShapeGen::new(seed, allow_loops);
         shape.body(im, 0);
+        if rewired {
+            shape.rewire_every_third_merge();
+        }
         let ShapeGen {
             fg, slots, values, ..
         } = shape;
-        let layout = MemLayout::build(&fg).expect("a structured graph is reducible");
+        // A rewired merge can enter a loop away from its header, which the
+        // climb declines; the walk covers those in its own test.
+        let Some(layout) = MemLayout::build(&fg) else {
+            assert!(rewired, "seed {seed}: a structured graph is reducible");
+            continue;
+        };
+        laid_out += 1;
+        rewired_laid_out += u32::from(rewired);
         let definition = ByDefinition::new(&fg, &values);
         for &slot in &slots {
             let mut answers = Answers::default();
@@ -1099,7 +1111,8 @@ fn the_climb_matches_its_definition_on_random_graphs() {
                     .expect("every generated def is laid out");
                 let want = definition.nearest(&fg, start, &mut store_at(slot));
                 assert_eq!(got, want, "seed {seed}: from {start:?}");
-                if !allow_loops {
+                assert_sound(&fg, start, got, &mut store_at(slot), seed);
+                if !allow_loops && !rewired {
                     let walked =
                         find_nearest_clobber(&fg, start, &mut store_at(slot), &mut walk_answers);
                     assert_eq!(got, walked, "seed {seed}: the walk from {start:?}");
@@ -1107,6 +1120,76 @@ fn the_climb_matches_its_definition_on_random_graphs() {
             }
         }
     }
+    assert!(
+        laid_out > 200 && rewired_laid_out > 50,
+        "{laid_out} graphs laid out, {rewired_laid_out} of them rewired"
+    );
+}
+
+/// The two engines do not answer the same question on a loop, and the climb is
+/// the one that answers the definition.  Measured over the same corpus as
+/// [`the_climb_matches_its_definition_on_random_graphs`], with a cold
+/// [`WalkAnswers`] per query, so no carried answer is involved: the divergence
+/// is in the engines, not in the memo.  Both answers are sound; the walk's is
+/// never nearer the start than the climb's definition.
+///
+/// A caller may therefore not assume the two are interchangeable, and a
+/// change that makes one total may not use the other as an equality oracle.
+#[test]
+fn the_path_walk_is_not_the_climb_on_a_loop() {
+    let (mut agree, mut differ, mut acyclic_queries) = (0u64, 0u64, 0u64);
+    for seed in 0..300 {
+        let allow_loops = seed % 3 != 0;
+        let rewired = seed % 2 == 0;
+        let (mut shape, im) = ShapeGen::new(seed, allow_loops);
+        shape.body(im, 0);
+        if rewired {
+            shape.rewire_every_third_merge();
+        }
+        let ShapeGen {
+            fg, slots, values, ..
+        } = shape;
+        let Some(layout) = MemLayout::build(&fg) else {
+            continue;
+        };
+        let acyclic = !allow_loops && !rewired;
+        for &slot in &slots {
+            let mut answers = Answers::default();
+            for &v in &values {
+                let start = fg.producer(v);
+                let mut clobbers = store_at(slot);
+                let climbed = layout
+                    .nearest_clobber(&fg, start, &mut EveryDef(&mut clobbers), &mut answers)
+                    .expect("every generated def is laid out");
+                let walked = find_nearest_clobber(
+                    &fg,
+                    start,
+                    &mut store_at(slot),
+                    &mut WalkAnswers::default(),
+                );
+                assert_sound(&fg, start, walked, &mut store_at(slot), seed);
+                acyclic_queries += u64::from(acyclic);
+                if climbed == walked {
+                    agree += 1;
+                    continue;
+                }
+                assert!(
+                    !acyclic,
+                    "seed {seed}: the engines differ from {start:?} with no loop in the graph"
+                );
+                differ += 1;
+            }
+        }
+    }
+    assert!(
+        acyclic_queries > 2_000,
+        "{acyclic_queries} loop-free queries, too few to pin the agreeing half"
+    );
+    assert!(
+        differ > 100 && agree > 10 * differ,
+        "{differ} of {} queries differ",
+        agree + differ
+    );
 }
 
 /// `build` lays out exactly the reducible memory graphs. The edges come from
