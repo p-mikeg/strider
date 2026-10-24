@@ -1173,3 +1173,72 @@ fn a_surviving_cone_node_keeps_its_own_fingerprint() -> Result<()> {
     );
     Ok(())
 }
+
+/// Known bits of `v`'s producer with operand facts read off the IR alone.
+fn one_hop(fg: &strider_ir::Function, v: strider_ir::node::ValueId) -> Option<KnownBitsFacts> {
+    node_known_bits(fg, fg.producer(v), &const_only(fg))
+        .expect("the return value is a value")
+        .map(|(_, kb)| kb)
+}
+
+/// The constant-only resolver answers for an interned constant and defaults
+/// to "no info" for everything else; a one-hop caller needs no map.
+#[test]
+fn the_constant_only_resolver_reads_constants_and_nothing_else() -> Result<()> {
+    let vn = strider_ir_test_utils::reg_vn(0x1000, 4);
+    let (fg, x) = crate::test_support::make_fn_with_var(vn, |b, x| {
+        let k = b.build_int_const(0xF0u64, ValueType::int(32))?;
+        b.build_int_binary_operation(x, k, IntBinaryOp::Or, ValueType::int(32))
+    })?;
+    let resolve = const_only(&fg);
+    let or = fg.producer(
+        fg.node_inputs(
+            fg.walk_kind(|k| matches!(k, NodeKind::Return))
+                .next()
+                .expect("a Return node"),
+        )[2],
+    );
+    let [lhs, rhs] = fg.node_inputs_exact::<2>(or)?;
+    assert_eq!(resolve(rhs).ones, 0xF0, "the interned constant resolves");
+    assert_eq!(resolve(rhs).zeros, 0xFFFF_FF0F);
+    assert_eq!(
+        (resolve(lhs).ones, resolve(lhs).zeros),
+        (0, 0),
+        "a variable has no info"
+    );
+    assert_eq!(resolve(x).ones, 0, "the read-back variable has none either");
+    Ok(())
+}
+
+/// Sleigh yields 0 for a shift at or past the output width, so every bit of
+/// the result is known zero.
+#[test]
+fn a_shift_past_the_width_proves_every_bit_zero() -> Result<()> {
+    let vn = strider_ir_test_utils::reg_vn(0x1000, 4);
+    let (fg, _) = crate::test_support::make_fn_with_var(vn, |b, x| {
+        b.build_const_binop(40, x, IntBinaryOp::ShiftLeft, ValueType::int(32))
+    })?;
+    let ret = fg
+        .walk_kind(|k| matches!(k, NodeKind::Return))
+        .next()
+        .expect("a Return node");
+    let kb = one_hop(&fg, fg.node_inputs(ret)[2]).expect("the shift is tracked");
+    assert_eq!((kb.ones, kb.zeros), (0, 0xFFFF_FFFF));
+    Ok(())
+}
+
+/// A right shift vacates its top bits, whatever the shifted value holds.
+#[test]
+fn a_right_shift_proves_its_vacated_bits_zero() -> Result<()> {
+    let vn = strider_ir_test_utils::reg_vn(0x1000, 4);
+    let (fg, _) = crate::test_support::make_fn_with_var(vn, |b, x| {
+        b.build_const_binop(24, x, IntBinaryOp::ShiftRight, ValueType::int(32))
+    })?;
+    let ret = fg
+        .walk_kind(|k| matches!(k, NodeKind::Return))
+        .next()
+        .expect("a Return node");
+    let kb = one_hop(&fg, fg.node_inputs(ret)[2]).expect("the shift is tracked");
+    assert_eq!((kb.ones, kb.zeros), (0, 0xFFFF_FF00));
+    Ok(())
+}

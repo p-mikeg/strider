@@ -787,6 +787,53 @@ fn a_mask_under_a_shift_keeping_some_of_its_bits_stays() -> crate::Result<()> {
     Ok(())
 }
 
+/// A shift at or past the width yields 0 in p-code, so every bit of the
+/// shifted half is zero and the mask sees only the other one.
+#[test]
+fn a_mask_under_a_shift_past_the_width_folds() -> crate::Result<()> {
+    let (_, ret, saved) = shifted_loop(32)?;
+    assert_eq!(ret, saved);
+    Ok(())
+}
+
+/// The entry writes `(x >> shift) | (y & mask)`, the body
+/// `(z >> shift) | (var & mask)`.
+fn shr_loop(shift: u128, mask: u128) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
+    use strider_ir::IntBinaryOp::{And, Or, ShiftRight};
+    let saved = std::cell::Cell::new(None);
+    let (fg, ret, _) = mask_loop(
+        mask,
+        Some(Box::new(|fb, [x, y, ..]| {
+            let high0 = konst(fb, ShiftRight, shift, x)?;
+            let low = konst(fb, And, mask, y)?;
+            saved.set(Some(low));
+            bin(fb, Or, high0, low)
+        })),
+        Box::new(|fb, ([_, _, z, _], masked)| {
+            let high = konst(fb, ShiftRight, shift, z)?;
+            bin(fb, Or, high, masked)
+        }),
+    )?;
+    Ok((fg, ret, saved.get().expect("entry built")))
+}
+
+/// A right shift vacates its top `shift` bits, so a mask inside them sees
+/// only the other half of the `Or`.
+#[test]
+fn a_mask_above_a_right_shift_folds() -> crate::Result<()> {
+    let (_, ret, saved) = shr_loop(24, 0xffff_0000)?;
+    assert_eq!(ret, saved);
+    Ok(())
+}
+
+/// The same mask reaching below the vacated bits does not.
+#[test]
+fn a_mask_reaching_under_a_right_shift_stays() -> crate::Result<()> {
+    let (fg, ret, _) = shr_loop(8, 0xffff_0000)?;
+    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
+    Ok(())
+}
+
 /// The entry writes `zext(x as i8) | (y & mask)`, the body
 /// `zext(z as i8) | (var & mask)`.
 fn extended_loop(mask: u128) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
