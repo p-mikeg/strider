@@ -729,7 +729,7 @@ fn check_operand_types(
             first_ty = Some(got);
         }
         let want = match width_tie(kind, slot, out_ty, first_ty) {
-            WidthTie::Tied(want) => Some(want),
+            WidthTie::Tied(want) => want,
             WidthTie::Conversion(c) => {
                 if let Some(out) = out_ty {
                     check_conversion(kind, c, got, out)?;
@@ -738,9 +738,7 @@ fn check_operand_types(
             }
             WidthTie::NoHead | WidthTie::Free => continue,
         };
-        if let Some(want) = want
-            && want.bit_width() != got.bit_width()
-        {
+        if want.bit_width() != got.bit_width() {
             anyhow::bail!(
                 "template node {kind:?} takes a {got} operand at input slot {slot}, \
                  where it is evaluated at {want}"

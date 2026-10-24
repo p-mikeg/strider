@@ -208,7 +208,12 @@ fn peel(
 /// with operand facts from the IR alone, so no map is built for one hop.
 fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId) -> u128 {
     let function = edit.function();
-    node_known_bits(function, function.producer(v), &const_only(function))
+    let facts = node_known_bits(function, function.producer(v), &const_only(function));
+    // The transfer errors only where a slot the signature pins to a value does
+    // not hold one, which `validate` rejects; proving nothing is the sound
+    // release answer, not a reason to stop folding.
+    debug_assert!(facts.is_ok(), "known bits of a value off a validated graph");
+    facts
         .ok()
         .flatten()
         .filter(|&(out, _)| out == v)
