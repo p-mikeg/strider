@@ -138,8 +138,26 @@ pub(crate) fn eval(f: &Function, v: ValueId, init: u128) -> Val {
 
 /// [`eval`] with each initial register reading as `env` gives it.
 pub(crate) fn eval_env(f: &Function, v: ValueId, env: &dyn Fn(&rsleigh::Vn) -> u128) -> Val {
+    eval_cx(
+        f,
+        v,
+        &Cx {
+            init: env,
+            opaque: &|_| None,
+        },
+    )
+}
+
+/// What a cone evaluation reads: each initial register, and the value an
+/// opaque `CallOther` of a name yields (`None` for one it cannot evaluate).
+struct Cx<'a> {
+    init: &'a dyn Fn(&rsleigh::Vn) -> u128,
+    opaque: &'a dyn Fn(&str) -> Option<u128>,
+}
+
+fn eval_cx(f: &Function, v: ValueId, cx: &Cx<'_>) -> Val {
     MEMO.with(|m| m.borrow_mut().clear());
-    eval_rec(f, v, env)
+    eval_rec(f, v, cx)
 }
 
 thread_local! {
@@ -149,28 +167,28 @@ thread_local! {
         std::cell::RefCell::default();
 }
 
-fn eval_rec(f: &Function, v: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> Val {
+fn eval_rec(f: &Function, v: ValueId, cx: &Cx<'_>) -> Val {
     if let Some(val) = MEMO.with(|m| m.borrow().get(&v).copied()) {
         return val;
     }
-    let val = eval_node(f, v, init);
+    let val = eval_node(f, v, cx);
     MEMO.with(|m| m.borrow_mut().insert(v, val));
     val
 }
 
-fn eval_node(f: &Function, v: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> Val {
+fn eval_node(f: &Function, v: ValueId, cx: &Cx<'_>) -> Val {
     let ty = f.value_type(v).expect("typed");
     let ins = inputs_of(f, v);
-    let int = |i: usize| match eval_rec(f, ins[i], init) {
+    let int = |i: usize| match eval_rec(f, ins[i], cx) {
         Val::Int(x) => x,
         other => panic!("operand {i} of {:?} is {other:?}", producer_kind(f, v)),
     };
-    let float = |i: usize| match eval_rec(f, ins[i], init) {
+    let float = |i: usize| match eval_rec(f, ins[i], cx) {
         Val::Float(x) => x,
         other => panic!("operand {i} of {:?} is {other:?}", producer_kind(f, v)),
     };
     let in_ty = |i: usize| f.value_type(ins[i]).expect("typed");
-    let bits = |i: usize| float_bits(eval_rec(f, ins[i], init), in_ty(i));
+    let bits = |i: usize| float_bits(eval_rec(f, ins[i], cx), in_ty(i));
     let wide = width(ty) == 128
         || ins.first().is_some_and(|&i| {
             f.value_type(i)
@@ -178,7 +196,7 @@ fn eval_node(f: &Function, v: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> V
         });
     match producer_kind(f, v) {
         NodeKind::IntConst(_) => Val::Int(f.int_const_u128(v).expect("int const")),
-        NodeKind::InitialVar(id) => Val::Int(init(&f.initial_vn(*id)) & mask(ty)),
+        NodeKind::InitialVar(id) => Val::Int((cx.init)(&f.initial_vn(*id)) & mask(ty)),
         NodeKind::FloatConst(bits) => Val::Float(match width(ty) {
             16 => f16_to_f64(*bits as u16),
             32 => f64::from(f32::from_bits(*bits as u32)),
@@ -291,13 +309,8 @@ fn eval_node(f: &Function, v: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> V
             let mut out = 0u128;
             for i in 0..size {
                 let place = if big { size - 1 - i } else { i };
-                let byte = stored_byte(
-                    f,
-                    ins[NodeKind::ACCESS_MEM_SLOT],
-                    addr + i as u128,
-                    big,
-                    init,
-                );
+                let byte =
+                    stored_byte(f, ins[NodeKind::ACCESS_MEM_SLOT], addr + i as u128, big, cx);
                 out |= u128::from(byte) << (8 * place);
             }
             Val::Int(out)
@@ -305,19 +318,27 @@ fn eval_node(f: &Function, v: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> V
         NodeKind::Phi => {
             let preds = inputs_of(f, ins[0]);
             let live: Vec<usize> = (0..preds.len())
-                .filter(|&i| control_live(f, preds[i], init))
+                .filter(|&i| control_live(f, preds[i], cx))
                 .collect();
             let [i] = live[..] else {
                 panic!("{} live predecessors of a Phi", live.len());
             };
-            eval_rec(f, ins[i + 1], init)
+            eval_rec(f, ins[i + 1], cx)
         }
         // A volatile register reads as its initial value.
         NodeKind::CallOther { .. } if f.call_other_name(f.producer(v)) == Some("read_volatile") => {
             let vn = f
                 .get_vn_for_value(v)
                 .expect("a volatile read names its register");
-            Val::Int(init(&vn) & mask(ty))
+            Val::Int((cx.init)(&vn) & mask(ty))
+        }
+        NodeKind::CallOther { .. }
+            if f.call_other_name(f.producer(v))
+                .and_then(cx.opaque)
+                .is_some() =>
+        {
+            let name = f.call_other_name(f.producer(v)).expect("named");
+            Val::Int((cx.opaque)(name).expect("valued") & mask(ty))
         }
         other => panic!("{other:?} in a conversion of constants"),
     }
@@ -325,19 +346,13 @@ fn eval_node(f: &Function, v: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> V
 
 /// The byte at `addr` of the memory `mem`, which only stores this cone
 /// evaluates may have written.
-fn stored_byte(
-    f: &Function,
-    mem: ValueId,
-    addr: u128,
-    big: bool,
-    init: &dyn Fn(&rsleigh::Vn) -> u128,
-) -> u8 {
+fn stored_byte(f: &Function, mem: ValueId, addr: u128, big: bool, cx: &Cx<'_>) -> u8 {
     let mut mem = mem;
     loop {
         let ins = inputs_of(f, mem);
         match producer_kind(f, mem) {
             NodeKind::Store(_) => {
-                let at = match eval_rec(f, ins[NodeKind::ACCESS_ADDR_SLOT], init) {
+                let at = match eval_rec(f, ins[NodeKind::ACCESS_ADDR_SLOT], cx) {
                     Val::Int(x) => x,
                     other => panic!("a store address is {other:?}"),
                 };
@@ -345,7 +360,7 @@ fn stored_byte(
                 let ty = f.value_type(data).expect("typed");
                 let size = u128::from(width(ty) / 8);
                 if (at..at + size).contains(&addr) {
-                    let bits = match eval_rec(f, data, init) {
+                    let bits = match eval_rec(f, data, cx) {
                         Val::Int(x) => x,
                         val => float_bits(val, ty),
                     };
@@ -360,19 +375,19 @@ fn stored_byte(
     }
 }
 
-/// Whether control reaches `c` with every initial register reading `init`.
-fn control_live(f: &Function, c: ValueId, init: &dyn Fn(&rsleigh::Vn) -> u128) -> bool {
+/// Whether control reaches `c` under `cx`.
+fn control_live(f: &Function, c: ValueId, cx: &Cx<'_>) -> bool {
     let node = f.producer(c);
     let ins = inputs_of(f, c);
     match f.node_kind(node) {
         NodeKind::Entry => true,
-        NodeKind::Region => ins.into_iter().any(|p| control_live(f, p, init)),
+        NodeKind::Region => ins.into_iter().any(|p| control_live(f, p, cx)),
         NodeKind::If => {
-            let Val::Int(cond) = eval_rec(f, ins[1], init) else {
+            let Val::Int(cond) = eval_rec(f, ins[1], cx) else {
                 panic!("a float If condition");
             };
             let taken = f.node_outputs(node)[usize::from(cond == 0)];
-            taken == c && control_live(f, ins[0], init)
+            taken == c && control_live(f, ins[0], cx)
         }
         other => panic!("{other:?} on a control path"),
     }
@@ -480,8 +495,25 @@ pub(crate) fn returned_from_under(
     init: u128,
     claims: &strider_orchestrator::opt::AssumptionOptions,
 ) -> u64 {
+    returned_from_with(arch, bytes, base, init, claims, &|_| None)
+}
+
+/// [`returned_from_under`] with each opaque `CallOther` named `n` yielding
+/// `opaque(n)`.
+pub(crate) fn returned_from_with(
+    arch: super::Arch,
+    bytes: Vec<u8>,
+    base: u64,
+    init: u128,
+    claims: &strider_orchestrator::opt::AssumptionOptions,
+    opaque: &dyn Fn(&str) -> Option<u128>,
+) -> u64 {
     let (f, v) = analyze_ret(arch, bytes, base, claims);
-    as_rax(eval(&f, v, init))
+    let cx = Cx {
+        init: &|_| init,
+        opaque,
+    };
+    as_rax(eval_cx(&f, v, &cx))
 }
 
 /// [`returned_from_under`] for the function at each of `entries`, all in one
@@ -522,15 +554,42 @@ impl Lifted {
     /// The returned registers with `inputs[i]` reading `vals[i]`, every other
     /// initial register byte reading `fill`'s byte at its place.
     pub(crate) fn run(&self, vals: &[u128], fill: u128) -> Vec<Val> {
+        self.run_with(vals, fill, &|_| None)
+    }
+
+    /// [`Self::run`] with each opaque `CallOther` named `n` yielding
+    /// `opaque(n)`.
+    pub(crate) fn run_with(
+        &self,
+        vals: &[u128],
+        fill: u128,
+        opaque: &dyn Fn(&str) -> Option<u128>,
+    ) -> Vec<Val> {
         self.rets
             .iter()
-            .map(|&v| self.eval(v, vals, fill))
+            .map(|&v| self.eval_with(v, vals, fill, opaque))
             .collect()
+    }
+
+    /// Returned register `i` when the lift folds it to an integer constant.
+    pub(crate) fn folded(&self, i: usize) -> Option<u128> {
+        self.f.int_const_u128(self.rets[i])
     }
 
     /// Any value `v` of the function, initial registers as [`Self::run`] has
     /// them.
     pub(crate) fn eval(&self, v: ValueId, vals: &[u128], fill: u128) -> Val {
+        self.eval_with(v, vals, fill, &|_| None)
+    }
+
+    /// [`Self::eval`] with opaque `CallOther`s as [`Self::run_with`] has them.
+    fn eval_with(
+        &self,
+        v: ValueId,
+        vals: &[u128],
+        fill: u128,
+        opaque: &dyn Fn(&str) -> Option<u128>,
+    ) -> Val {
         let env = |vn: &rsleigh::Vn| -> u128 {
             let size = vn.size as usize;
             let mut out = fill & mask(ValueType::Int(u16::try_from(8 * size).expect("width")));
@@ -550,7 +609,7 @@ impl Lifted {
             }
             out
         };
-        eval_env(&self.f, v, &env)
+        eval_cx(&self.f, v, &Cx { init: &env, opaque })
     }
 }
 
