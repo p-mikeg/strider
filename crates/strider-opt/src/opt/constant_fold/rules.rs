@@ -35,18 +35,19 @@ pub(super) fn build_rules() -> Vec<crate::BoxedRule> {
 /// match that shape rather than an `IntSub`.
 fn build_factor_rules() -> Vec<crate::BoxedRule> {
     let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+    let mut rules: Vec<crate::BoxedRule> = Vec::new();
 
     // x + x*C -> x*(C + 1)
-    let add_self_mul = rewrite_rule(
+    rules.push(rewrite_rule(
         int_add(var(x), int_mul(var(x), int_const(c1))).when_match(move |edit, ty, binds| {
             ty.int_mask_u128().is_some()
                 && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
         }),
         template::int_mul(var(x), int_const_with!([c1: uint] => c1.wrapping_add(1))),
-    );
+    ));
 
     // x*C1 + x*C2 -> x*(C1 + C2)
-    let add_mul_mul = rewrite_rule(
+    rules.push(rewrite_rule(
         int_add(
             int_mul(var(x), int_const(c1)),
             int_mul(var(x), int_const(c2)),
@@ -59,10 +60,10 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             var(x),
             int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
         ),
-    );
+    ));
 
     // x + (x << C) -> x*(2^C + 1)
-    let add_self_shl = rewrite_rule(
+    rules.push(rewrite_rule(
         int_add(var(x), int_shl(var(x), int_const(c1))).when_match(move |edit, ty, binds| {
             same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
                 && shift_count_in_range(edit.function(), binds, ty, c1)
@@ -71,54 +72,10 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             var(x),
             int_const_with!([c1: uint] => (1u128 << c1).wrapping_add(1)),
         ),
-    );
-
-    // x - x*C -> x*(1 - C)
-    let sub_self_mul = rewrite_rule(
-        int_add(var(x), int_neg(int_mul(var(x), int_const(c1)))).when_match(
-            move |edit, ty, binds| {
-                ty.int_mask_u128().is_some()
-                    && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
-            },
-        ),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint] => 1u128.wrapping_sub(c1)),
-        ),
-    );
-
-    // x*C1 - x*C2 -> x*(C1 - C2)
-    let sub_mul_mul = rewrite_rule(
-        int_add(
-            int_mul(var(x), int_const(c1)),
-            int_neg(int_mul(var(x), int_const(c2))),
-        )
-        .when_match(move |edit, ty, binds| {
-            ty.int_mask_u128().is_some()
-                && same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
-        }),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint, c2: uint] => c1.wrapping_sub(c2)),
-        ),
-    );
-
-    // x - (x << C) -> x*(1 - 2^C)
-    let sub_self_shl = rewrite_rule(
-        int_add(var(x), int_neg(int_shl(var(x), int_const(c1)))).when_match(
-            move |edit, ty, binds| {
-                same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
-                    && shift_count_in_range(edit.function(), binds, ty, c1)
-            },
-        ),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint] => 1u128.wrapping_sub(1u128 << c1)),
-        ),
-    );
+    ));
 
     // x*C1 + (x << C2) -> x*(C1 + 2^C2)
-    let add_mul_shl = rewrite_rule(
+    rules.push(rewrite_rule(
         int_add(
             int_mul(var(x), int_const(c1)),
             int_shl(var(x), int_const(c2)),
@@ -132,10 +89,10 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             var(x),
             int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(1u128 << c2)),
         ),
-    );
+    ));
 
     // (x << C1) + (x << C2) -> x*(2^C1 + 2^C2)
-    let add_shl_shl = rewrite_rule(
+    rules.push(rewrite_rule(
         int_add(
             int_shl(var(x), int_const(c1)),
             int_shl(var(x), int_const(c2)),
@@ -149,10 +106,54 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             var(x),
             int_const_with!([c1: uint, c2: uint] => (1u128 << c1).wrapping_add(1u128 << c2)),
         ),
-    );
+    ));
+
+    // x - x*C -> x*(1 - C)
+    rules.push(rewrite_rule(
+        int_add(var(x), int_neg(int_mul(var(x), int_const(c1)))).when_match(
+            move |edit, ty, binds| {
+                ty.int_mask_u128().is_some()
+                    && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
+            },
+        ),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint] => 1u128.wrapping_sub(c1)),
+        ),
+    ));
+
+    // x*C1 - x*C2 -> x*(C1 - C2)
+    rules.push(rewrite_rule(
+        int_add(
+            int_mul(var(x), int_const(c1)),
+            int_neg(int_mul(var(x), int_const(c2))),
+        )
+        .when_match(move |edit, ty, binds| {
+            ty.int_mask_u128().is_some()
+                && same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
+        }),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint, c2: uint] => c1.wrapping_sub(c2)),
+        ),
+    ));
+
+    // x - (x << C) -> x*(1 - 2^C)
+    rules.push(rewrite_rule(
+        int_add(var(x), int_neg(int_shl(var(x), int_const(c1)))).when_match(
+            move |edit, ty, binds| {
+                same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
+                    && shift_count_in_range(edit.function(), binds, ty, c1)
+            },
+        ),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint] => 1u128.wrapping_sub(1u128 << c1)),
+        ),
+    ));
 
     // x*C1 - (x << C2) -> x*(C1 - 2^C2)
-    let sub_mul_shl = rewrite_rule(
+    rules.push(rewrite_rule(
         int_add(
             int_mul(var(x), int_const(c1)),
             int_neg(int_shl(var(x), int_const(c2))),
@@ -166,10 +167,10 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             var(x),
             int_const_with!([c1: uint, c2: uint] => c1.wrapping_sub(1u128 << c2)),
         ),
-    );
+    ));
 
     // (x << C1) - x*C2 -> x*(2^C1 - C2)
-    let sub_shl_mul = rewrite_rule(
+    rules.push(rewrite_rule(
         int_add(
             int_shl(var(x), int_const(c1)),
             int_neg(int_mul(var(x), int_const(c2))),
@@ -183,39 +184,10 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             var(x),
             int_const_with!([c1: uint, c2: uint] => (1u128 << c1).wrapping_sub(c2)),
         ),
-    );
-
-    // x*C - x -> x*(C - 1)
-    //
-    // `Neg` pins which operand is subtracted, so commutative matching cannot
-    // reach this from the `x - x*C` rule; the bare `x` on the right needs its
-    // own rule, as does the shift form below.
-    let sub_mul_self = rewrite_rule(
-        int_add(int_mul(var(x), int_const(c1)), int_neg(var(x))).when_match(
-            move |edit, ty, binds| {
-                ty.int_mask_u128().is_some()
-                    && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
-            },
-        ),
-        template::int_mul(var(x), int_const_with!([c1: uint] => c1.wrapping_sub(1))),
-    );
-
-    // (x << C) - x -> x*(2^C - 1)
-    let sub_shl_self = rewrite_rule(
-        int_add(int_shl(var(x), int_const(c1)), int_neg(var(x))).when_match(
-            move |edit, ty, binds| {
-                same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
-                    && shift_count_in_range(edit.function(), binds, ty, c1)
-            },
-        ),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint] => (1u128 << c1).wrapping_sub(1)),
-        ),
-    );
+    ));
 
     // (x << C1) - (x << C2) -> x*(2^C1 - 2^C2)
-    let sub_shl_shl = rewrite_rule(
+    rules.push(rewrite_rule(
         int_add(
             int_shl(var(x), int_const(c1)),
             int_neg(int_shl(var(x), int_const(c2))),
@@ -229,23 +201,38 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             var(x),
             int_const_with!([c1: uint, c2: uint] => (1u128 << c1).wrapping_sub(1u128 << c2)),
         ),
-    );
+    ));
 
-    vec![
-        add_self_mul,
-        add_mul_mul,
-        add_self_shl,
-        add_mul_shl,
-        add_shl_shl,
-        sub_self_mul,
-        sub_mul_mul,
-        sub_self_shl,
-        sub_mul_shl,
-        sub_shl_mul,
-        sub_shl_shl,
-        sub_mul_self,
-        sub_shl_self,
-    ]
+    // x*C - x -> x*(C - 1)
+    //
+    // `Neg` pins which operand is subtracted, so commutative matching cannot
+    // reach this from the `x - x*C` rule; the bare `x` on the right needs its
+    // own rule, as does the shift form below.
+    rules.push(rewrite_rule(
+        int_add(int_mul(var(x), int_const(c1)), int_neg(var(x))).when_match(
+            move |edit, ty, binds| {
+                ty.int_mask_u128().is_some()
+                    && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
+            },
+        ),
+        template::int_mul(var(x), int_const_with!([c1: uint] => c1.wrapping_sub(1))),
+    ));
+
+    // (x << C) - x -> x*(2^C - 1)
+    rules.push(rewrite_rule(
+        int_add(int_shl(var(x), int_const(c1)), int_neg(var(x))).when_match(
+            move |edit, ty, binds| {
+                same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
+                    && shift_count_in_range(edit.function(), binds, ty, c1)
+            },
+        ),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint] => (1u128 << c1).wrapping_sub(1)),
+        ),
+    ));
+
+    rules
 }
 
 /// Reassociation and mask-merging: constant-folding across nested
@@ -259,9 +246,10 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         Capture::new(),
         Capture::new(),
     );
+    let mut rules: Vec<crate::BoxedRule> = Vec::new();
 
     // (x + C1) + C2 -> x + (C1 + C2)
-    let rule_add_add = rewrite_rule(
+    rules.push(rewrite_rule(
         int_add(int_add(var(x), int_const(c1)), int_const(c2)).when_match(
             move |edit, ty, binds| {
                 ty.int_mask_u128().is_some()
@@ -272,22 +260,22 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             var(x),
             int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
         ),
-    );
+    ));
 
     // (x & C1) & C2 -> x & (C1 & C2)
-    let rule_and_merge = rewrite_rule(
+    rules.push(rewrite_rule(
         int_and(int_and(var(x), int_const(c1)), int_const(c2)).when_match(
             move |edit, ty, binds| {
                 same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
             },
         ),
         template::int_and(var(x), int_const_with!([c1: uint, c2: uint] => c1 & c2)),
-    );
+    ));
 
     // ((x & C1) | (y & C2)) & C3 -> (x & (C1 & C3)) | (y & (C2 & C3)),
     // gated on some product `Ci & C3` being zero, the case where a disjunct
     // folds away.
-    let rule_and_dist = rewrite_rule(
+    rules.push(rewrite_rule(
         int_and(
             int_or(
                 int_and(var(x), int_const(c1)),
@@ -312,11 +300,11 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             template::int_and(var(x), int_const_with!([c1: uint, c3: uint] => c1 & c3)),
             template::int_and(var(y), int_const_with!([c2: uint, c3: uint] => c2 & c3)),
         ),
-    );
+    ));
 
     // (x | A) & B -> x & B   when A & B == 0: every surviving bit (`B_i = 1`)
     // has `A_i = 0`.
-    let rule_align_or_removal = rewrite_rule(
+    rules.push(rewrite_rule(
         int_and(int_or(var(x), int_const(c1)), int_const(c2)).when_match(move |edit, ty, binds| {
             let (Some(set_bits), Some(mask)) = (
                 binds.get_uint(c1, edit.function()),
@@ -331,7 +319,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
                 && (set_bits & mask) == 0
         }),
         template::int_and(var(x), var(c2)),
-    );
+    ));
 
     // `op(C, x) -> op(x, C)` for each commutative int op.  `.ordered()` is
     // REQUIRED: without it the LHS also matches the already-canonical
@@ -347,23 +335,13 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             )
         };
     }
-    let const_on_right_add = const_on_right!(int_add);
-    let const_on_right_mul = const_on_right!(int_mul);
-    let const_on_right_and = const_on_right!(int_and);
-    let const_on_right_or = const_on_right!(int_or);
-    let const_on_right_xor = const_on_right!(int_xor);
+    rules.push(const_on_right!(int_add));
+    rules.push(const_on_right!(int_mul));
+    rules.push(const_on_right!(int_and));
+    rules.push(const_on_right!(int_or));
+    rules.push(const_on_right!(int_xor));
 
-    vec![
-        rule_add_add,
-        rule_and_merge,
-        rule_and_dist,
-        rule_align_or_removal,
-        const_on_right_add,
-        const_on_right_mul,
-        const_on_right_and,
-        const_on_right_or,
-        const_on_right_xor,
-    ]
+    rules
 }
 
 /// Bitcast, extend/truncate round-trip, and truncate-folding rules.
@@ -374,25 +352,32 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         Capture::new(),
         Capture::new(),
     );
+    let mut rules: Vec<crate::BoxedRule> = Vec::new();
 
     // IntBitsToFloat(FloatBitsToInt(x)) -> x
-    let rule_int_float = rewrite_rule(int_bits_to_float(float_bits_to_int(var(x))), var(x));
+    rules.push(rewrite_rule(
+        int_bits_to_float(float_bits_to_int(var(x))),
+        var(x),
+    ));
 
     // FloatBitsToInt(IntBitsToFloat(x)) -> x
-    let rule_float_int = rewrite_rule(float_bits_to_int(int_bits_to_float(var(x))), var(x));
+    rules.push(rewrite_rule(
+        float_bits_to_int(int_bits_to_float(var(x))),
+        var(x),
+    ));
 
     // A bitcast of a constant is a constant of the same bits, up to the
     // `u64` a `FloatConst` carries, as the builder folds one.
     let fits_u64 =
         |_: &strider_pattern::Matcher, ty: strider_ir::node::ValueType, _: &_| ty.byte_size() <= 8;
-    let int_bits_const = rewrite_rule(
+    rules.push(rewrite_rule(
         int_bits_to_float(int_const(c)).when_match(fits_u64),
         float_const_with!([c: uint] => u64::try_from(c).map_err(|_| strider_pattern::skip())?),
-    );
-    let float_bits_const = rewrite_rule(
+    ));
+    rules.push(rewrite_rule(
         float_bits_to_int(float_const(c)).when_match(fits_u64),
         int_const_with!([c: float_bits] => u128::from(c)),
-    );
+    ));
 
     // Truncate(Extend(x)) -> x, but only when `x`'s type equals the truncate's
     // output type; otherwise this is a real narrowing, not an identity.
@@ -405,8 +390,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             rewrite_rule(pat, var(x))
         }};
     }
-    let zext_round_trip = ext_round_trip!(int_zero_extend);
-    let sext_round_trip = ext_round_trip!(int_sign_extend);
+    rules.push(ext_round_trip!(int_zero_extend));
+    rules.push(ext_round_trip!(int_sign_extend));
 
     // Truncate(Extend(x)) to any other width is one cast: the extend keeps
     // `x`'s bits low, so a narrower truncate is a truncate of `x`, and a wider
@@ -433,14 +418,30 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             ]
         }};
     }
-    let [trunc_of_zext_narrow, trunc_of_zext_wide] = trunc_of_ext!(int_zero_extend);
-    let [trunc_of_sext_narrow, trunc_of_sext_wide] = trunc_of_ext!(int_sign_extend);
+    rules.extend(trunc_of_ext!(int_zero_extend));
+    rules.extend(trunc_of_ext!(int_sign_extend));
+
+    // Nested SAME-kind casts are transitive, so the intermediate width drops out
+    // and the RHS inherits the outer width. MIXED-kind nests (zext of sext, and
+    // vice versa) are not a single cast and are left alone.
+    rules.push(rewrite_rule(
+        int_zero_extend(int_zero_extend(var(x))),
+        template::int_zero_extend(var(x)),
+    ));
+    rules.push(rewrite_rule(
+        int_sign_extend(int_sign_extend(var(x))),
+        template::int_sign_extend(var(x)),
+    ));
+    rules.push(rewrite_rule(
+        int_truncate(int_truncate(var(x))),
+        template::int_truncate(var(x)),
+    ));
 
     // Narrowing through a binop: `Truncate_W(op(SignExt(a), SignExt(b)))` ->
     // `op_W(a, b)`, valid only for ops whose lower W bits don't depend on the
     // upper bits (Add/Sub/Mul/And/Or/Xor). Only the (SignExt, SignExt) Mul
     // permutation is covered.
-    let narrow_mul_through_sext = {
+    rules.push({
         let pat = int_truncate(int_mul(int_sign_extend(var(a)), int_sign_extend(var(b))))
             .when_match(move |edit, ty, bnd| {
                 bnd.get_type(a, edit.function())
@@ -450,7 +451,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
                         .is_some_and(|b_ty| b_ty == ty)
             });
         rewrite_rule(pat, template::int_mul(var(a), var(b)))
-    };
+    });
 
     // Drop the high half of an x86 register-merge Or when truncating to the low
     // half's width: `Truncate_W(Or(And(high_mask, old), And(low_mask, new)))`
@@ -458,7 +459,7 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
     // W. The guard picks the high-mask And by requiring its low-`W` bits to be
     // zero. A single operand orientation suffices: on guard failure the matcher
     // re-drives the `Or`'s operand order.
-    let mk_drop_high_half = {
+    rules.push({
         let guard = move |edit: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
@@ -474,12 +475,12 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             int_truncate(int_or(var(a), int_and(int_const(c), var(b)))).when_match(guard),
             template::int_truncate(var(a)),
         )
-    };
+    });
 
     // `Truncate_W(And(low_W_mask, x)) -> Truncate_W(x)`: the And zeroes bits the
     // truncate discards anyway. One orientation suffices because the `And`'s
     // commutative retry binds `c` to the const on either side.
-    let mk_drop_low_mask_under_truncate = {
+    rules.push({
         let guard = move |edit: &strider_pattern::Matcher,
                           ty: strider_ir::node::ValueType,
                           bnd: &strider_pattern::Bindings| {
@@ -497,42 +498,9 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             int_truncate(int_and(int_const(c), var(x))).when_match(guard),
             template::int_truncate(var(x)),
         )
-    };
+    });
 
-    // Nested SAME-kind casts are transitive, so the intermediate width drops out
-    // and the RHS inherits the outer width. MIXED-kind nests (zext of sext, and
-    // vice versa) are not a single cast and are left alone.
-    let zext_zext = rewrite_rule(
-        int_zero_extend(int_zero_extend(var(x))),
-        template::int_zero_extend(var(x)),
-    );
-    let sext_sext = rewrite_rule(
-        int_sign_extend(int_sign_extend(var(x))),
-        template::int_sign_extend(var(x)),
-    );
-    let trunc_trunc = rewrite_rule(
-        int_truncate(int_truncate(var(x))),
-        template::int_truncate(var(x)),
-    );
-
-    vec![
-        rule_int_float,
-        rule_float_int,
-        int_bits_const,
-        float_bits_const,
-        zext_round_trip,
-        sext_round_trip,
-        trunc_of_zext_narrow,
-        trunc_of_zext_wide,
-        trunc_of_sext_narrow,
-        trunc_of_sext_wide,
-        zext_zext,
-        sext_sext,
-        trunc_trunc,
-        narrow_mul_through_sext,
-        mk_drop_high_half,
-        mk_drop_low_mask_under_truncate,
-    ]
+    rules
 }
 
 /// Algebraic identities for integer binary operations.
