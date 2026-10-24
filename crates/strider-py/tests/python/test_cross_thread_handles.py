@@ -207,3 +207,21 @@ def test_an_add_elf_while_analyze_is_in_flight_merges_nothing():
         assert "helper_a" not in el.symbols()
     lift.add_elf(other)
     assert "helper_a" in el.symbols()
+
+
+def test_an_elf_lifters_repr_and_endianness_answer_while_analyze_is_in_flight():
+    """`repr` never raises, and `endianness` reads the loaded ELF, so neither
+    needs the handle an `analyze` on another thread holds."""
+    el = strider.lift.load_elf(ELF)
+
+    def build(mem):
+        # Deliberate: the constructor `load_elf` calls, which the stub leaves
+        # out, over a reader that can block.
+        args = (el._elf, el.arch, el.cc, mem, el._elf.ro_reader())
+        return strider.lift.ElfLifter(*args)  # type: ignore[call-arg]
+
+    entry = el.symbol(FUNC).address
+    with _analyze_in_flight(build, el.reader(), entry, el.cc) as (lift, _earlier):
+        assert repr(lift) == "ElfLifter(cc=x86_cdecl)"
+        assert lift.endianness == "little"
+    assert repr(lift) == "ElfLifter(arch=x86, cc=x86_cdecl)"
