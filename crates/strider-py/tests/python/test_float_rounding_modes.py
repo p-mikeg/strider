@@ -87,11 +87,10 @@ def test_the_ceiling_and_round_patterns_do_not_match_each_other():
     assert not g.find_all(float_floor(anything()))
 
 
-def test_the_round_pattern_matches_the_x87_lift_that_emits_it():
-    """Unoptimised, `fistp`'s nearest-even conversion is built on one
-    FLOAT_ROUND, the one place in the fixture corpus a rounding op arrives
-    from real bytes."""
-    prog = strider.lift.load_elf(str(fixture_path("x86", "floats")))
+def test_the_round_pattern_matches_the_aarch64_lift_that_emits_it():
+    """Unoptimised, `fcvtzs`'s conversion selects among roundings built on
+    one FLOAT_ROUND, where a rounding op arrives from real bytes."""
+    prog = strider.lift.load_elf(str(fixture_path("aarch64", "floats")))
     g = prog.analyze(
         "float_to_int",
         opts=strider.lift.LifterOptions(
