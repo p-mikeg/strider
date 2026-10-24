@@ -750,6 +750,8 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     ("floatToIntRoundedUp", PURE),
     ("intToFloatInexact", PURE),
     ("intToFloatRoundedUp", PURE),
+    // The FPRF a conversion to an integer leaves undefined (a fork op).
+    ("fpscrUndefined", PURE),
     // `slbmfee` / `slbmfev` / `slbfee.` write RT from the op's output (a fork
     // patch: the stock sla wrote it nowhere) and read the SLB, not RAM.
     ("slbMoveFromEntryESID", PURE),
@@ -761,12 +763,12 @@ static PPC_TABLE: &[(&str, CallOtherClass)] = &[
     //
     // The rows below are NOT inert: each userop is a bare void pcodeop, yet
     // the sla models the FPSCR bits (`ppc_common.sinc:43`) and MSR (`:52`) as
-    // real registers it reads back itself, in `setSummaryFPSCR` (`:1671`) and
+    // real registers it reads back itself, in `setSummaryFPSCR` (`:1736`) and
     // `mfmsr` (`ppc_embedded.sinc:93`). Undeclared, a read either side of one
     // folds to the same value.
     //
     // Narrow reach, unlike `wrtee` / `wrteei`: `mtfsf` ITSELF is modelled in
-    // p-code (`ppc_instructions.sinc:2279`, which pins `BIT_25=0 & BIT_16=0`
+    // p-code (`ppc_instructions.sinc:2218`, which pins `BIT_25=0 & BIT_16=0`
     // and emits `packFPSCR` / `unpackFPSCR`), so these `MoveToFPSCRField*`
     // pcodeops exist only in `ppc_isa.sinc`, included only by the
     // `ppc_64_isa*` slaspecs. They therefore fire on the Power ISA 2.06

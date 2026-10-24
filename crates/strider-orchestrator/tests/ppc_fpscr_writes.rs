@@ -402,14 +402,16 @@ fn fx_rises_only_on_a_new_exception() {
         img: summaries(bits.iter().fold(0, |img, &i| put(img, i, true))),
         crs: [0; 3],
     };
-    let (one, two, zero, nan) = (1.0f64, 2.0f64, 0.0f64, f64::NAN);
+    let (one, two, zero) = (1.0f64, 2.0f64, 0.0f64);
+    let (snan, qnan) = (f64::from_bits(0x7ff0_0000_0000_0001), f64::NAN);
     // (instruction, f2, f3, state before, FX after)
     let fadd = 0xfc22_182au32;
     let fdiv = 0xfc22_1824u32;
     let cases = [
         (fadd, one, two, with(&[OX]), false),
-        (fadd, nan, two, clear, true),
-        (fadd, nan, two, with(&[VXSNAN]), false),
+        (fadd, snan, two, clear, true),
+        (fadd, snan, two, with(&[VXSNAN]), false),
+        (fadd, qnan, two, clear, false),
         (fdiv, one, zero, clear, true),
         (fdiv, one, zero, with(&[ZX]), false),
         (fdiv, one, two, with(&[ZX, OX]), false),
