@@ -14,4 +14,6 @@ pub use ops::{
 };
 pub use strider_graph::{NodeId, UseId, ValueId};
 pub use value_kind::ValueKind;
-pub use value_type::{ValueType, VnTypeExt, low_bits_mask_u128};
+pub use value_type::{
+    ValueType, VnTypeExt, complement_limbs, low_bits_mask_u128, shifted_ones_limbs,
+};
