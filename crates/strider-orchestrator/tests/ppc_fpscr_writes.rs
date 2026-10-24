@@ -1,6 +1,7 @@
 //! PowerPC FPSCR writes (Power ISA 3.0B, Book I 4.2.2 and 4.6.10): FEX and
 //! VX are always the summaries of the bits they cover and cannot be written;
-//! FX rises when an instruction changes an exception bit from 0 to 1; an FP
+//! FX rises when an instruction changes an exception bit from 0 to 1, but
+//! `mtfsf` and `mtfsfi` take field 0's FX and OX from the image; an FP
 //! record form sets CR1 to FX, FEX, VX and OX; `mcrfs` clears the exception
 //! bits it copies; `fcmpu` and `fcmpo` set all four FPCC bits.
 //!
@@ -192,8 +193,22 @@ fn mtfsb_keeps_the_summaries_and_raises_fx_on_a_new_exception() {
     }
 }
 
-/// `mtfsf FM, f3` writes the FM fields from f3's low word; FX only through
-/// field 0, FEX and VX never.
+/// `img` with the fields `mask` covers taken from `new`, as `mtfsf` and
+/// `mtfsfi` write them: FEX and VX stay the summaries, field 0's FX and OX
+/// come from `new`, and an exception bit outside field 0 that `new` sets
+/// from 0 raises FX, the usual rule (Book I 4.6.10's programming note).
+fn write_fields(img: u32, new: u32, mask: u32) -> u32 {
+    let mut out = img & !mask | new & mask;
+    let raised = EXCEPTIONS
+        .iter()
+        .any(|&i| i != OX && mask & bit(i) != 0 && get(new, i) && !get(img, i));
+    if raised {
+        out = put(out, FX, true);
+    }
+    summaries(out)
+}
+
+/// `mtfsf FM, f3` writes the FM fields from f3's low word, FEX and VX never.
 #[test]
 fn mtfsf_recomputes_the_summaries() {
     let cases = states(24, 0x5eed_f5b1);
@@ -217,7 +232,51 @@ fn mtfsf_recomputes_the_summaries() {
                         &cases,
                         &[u128::from(w)],
                         |s| {
-                            let img = summaries(s.img & !mask | (w as u32) & mask);
+                            let img = write_fields(s.img, w as u32, mask);
+                            let mut crs = s.crs;
+                            if dot {
+                                crs[0] = cr1_of(img);
+                            }
+                            State { img, crs }
+                        },
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// `mtfsfi BF, U` writes field BF from U.
+#[test]
+fn mtfsfi_writes_its_field() {
+    let mut cases = states(24, 0x5eed_f5b3);
+    // each exception bit alone, FX clear, so a field that sets one raises it
+    cases.extend(EXCEPTIONS.iter().map(|&i| State {
+        img: summaries(bit(i)) & !bit(FX),
+        crs: [0, 0, 0],
+    }));
+    cases.push(State {
+        img: 0,
+        crs: [0, 0, 0],
+    });
+    for arch in ARCHES {
+        for bf in 0..8u32 {
+            for u in [0u32, 1, 2, 4, 8, 6, 9, 0xf] {
+                // the record form at fields 0 and 1
+                for dot in [false, true].into_iter().filter(|&d| !d || bf < 2) {
+                    let lifted = lift(
+                        arch,
+                        &[0xfc00_010c | bf << 23 | u << 12 | u32::from(dot)],
+                        &[],
+                    );
+                    let mask = 0xf000_0000 >> (4 * bf);
+                    check(
+                        &format!("{arch:?} mtfsfi {bf}, {u}"),
+                        &lifted,
+                        &cases,
+                        &[],
+                        |s| {
+                            let img = write_fields(s.img, u << (28 - 4 * bf), mask);
                             let mut crs = s.crs;
                             if dot {
                                 crs[0] = cr1_of(img);
