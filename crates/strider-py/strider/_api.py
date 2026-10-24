@@ -40,6 +40,8 @@ else:
     LifterOptions = _ext.lift.LifterOptions
     CfgOptions = _ext.cfg.CfgOptions
 
+StriderError = _ext.StriderError
+
 #: What the loaders accept as a filesystem path: a `str`, a `pathlib.Path`,
 #: or any object implementing `__fspath__`.
 StrPath = Union[str, "os.PathLike[str]"]
@@ -393,8 +395,10 @@ class ElfLifter(Lifter):
 
     @property
     def endianness(self) -> str:
-        """Byte order of the loaded binary: `"little"` or `"big"`."""
-        return self.arch.endianness()
+        """Byte order of the loaded binary, as the first ELF's `EI_DATA`
+        gives it: `"little"` or `"big"`. Read off the ELF, so it answers while
+        a call holds the handle."""
+        return "little" if self._elf.is_little_endian else "big"
 
     @property
     def is_arm_be8(self) -> bool:
@@ -405,7 +409,12 @@ class ElfLifter(Lifter):
         return self._elf.is_arm_be8
 
     def __repr__(self) -> str:
-        return f"ElfLifter(arch={self.arch.name()}, cc={self._cc.name()})"
+        try:
+            arch = self.arch.name()
+        except StriderError:
+            # Another call holds the handle; a repr never raises.
+            return f"ElfLifter(cc={self._cc.name()})"
+        return f"ElfLifter(arch={arch}, cc={self._cc.name()})"
 
     def functions(self) -> Iterator["Symbol"]:
         """The function symbols in address order, one per address: aliases of
