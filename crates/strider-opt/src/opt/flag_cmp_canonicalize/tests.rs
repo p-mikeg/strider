@@ -128,10 +128,6 @@ fn ppc_cr_bit_test_canonicalizes_through_a_ne_zero_branch() -> Result<()> {
     Ok(())
 }
 
-/// Superset-only contract: the CR-pack instructions' addresses must survive in
-/// the comparison's fingerprint.  Three distinct addresses, because
-/// `replace_value` alone carries the comparison's own and the `Truncate`'s but
-/// drops `ADDR_PACK`.
 /// The Thumb "true" flag test over a flag that is no comparison, the C of a
 /// `cmp` (`Xor(Less(a, b), 1)`), is the CR-bit arm's one-term pack: it
 /// collapses to the flag and keeps the test's addresses.
@@ -238,6 +234,10 @@ fn a_nonzero_flag_test_keeps_the_widened_flags_fingerprint() -> Result<()> {
     Ok(())
 }
 
+/// Superset-only contract: the CR-pack instructions' addresses must survive in
+/// the comparison's fingerprint.  Three distinct addresses, because
+/// `replace_value` alone carries the comparison's own and the `Truncate`'s but
+/// drops `ADDR_PACK`.
 #[test]
 fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
     use strider_ir::node::ExtendOp;
