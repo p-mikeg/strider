@@ -89,11 +89,15 @@ class AssumptionOptions:
     def msr_register_keeps_mode(self) -> bool: ...
     @property
     def fp_rounding_mode_is_nearest(self) -> bool:
-        """The SSE MXCSR.RC, PowerPC FPSCR.RN, ARM FPSCR.RMode and MIPS FCSR.RM
-        rounding modes are round to nearest even at every conversion that
-        rounds by them. Off, each reads the mode and selects among its four;
-        the fixed-mode forms (`cvtt*`, `fcti*z`, ARM `vcvt`, MIPS `round`,
-        `trunc`, `floor`, `ceil`, every AArch64 `fcvt*`) read none."""
+        """The SSE MXCSR.RC, x87 RC (for `fst` and `fstp`), PowerPC FPSCR.RN,
+        ARM FPSCR.RMode, AArch64 FPCR.RMode and MIPS FCSR.RM rounding modes
+        are round to nearest even at every conversion that rounds by them,
+        narrowing and integer-to-float ones included. Off, each reads the mode
+        and selects among its four; the fixed-mode forms (`cvtt*`, `fcti*z`,
+        ARM `vcvt` to an integer, MIPS `round`, `trunc`, `floor`, `ceil`,
+        AArch64 `fcvt{n,a,m,p,z}{s,u}` and `fcvtxn`) read none, and x87
+        `fist` reads RC either way. Float arithmetic rounds to nearest either
+        way."""
         ...
     def __init__(
         self,

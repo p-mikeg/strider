@@ -24,8 +24,9 @@
 /// it an interrupt-mask restore the analysis cannot place re-banks `sp` and
 /// `lr`.  The fifth,
 /// [`fp_rounding_mode_is_nearest`](Self::fp_rounding_mode_is_nearest), fails
-/// only for code that changes the SSE or PowerPC rounding mode, and without
-/// it every rounding conversion selects among four modes.  A
+/// only for code that changes the SSE, x87, PowerPC, ARM VFP, AArch64 or MIPS
+/// FPU rounding mode, and without it every rounding conversion selects among
+/// four modes.  A
 /// lift holds the claims it is given and `strider_lift`'s `build_ir` none, so
 /// a test runs at the floor unless it claims one.
 ///
@@ -191,29 +192,40 @@ pub struct AssumptionOptions {
     /// (`AnalyzeOptions::assumptions`); added to a lifted function it changes
     /// nothing.  Default ON.
     pub msr_register_keeps_mode: bool,
-    /// The dynamic rounding mode a float-to-integer or narrowing conversion
-    /// rounds by is round to nearest even: x86 MXCSR.RC (bits 13-14) at every
-    /// SSE and VEX conversion that reads it (`cvtsd2si`, `cvtss2si`,
-    /// `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`, `cvtps2pi`, `cvtsd2ss`,
-    /// `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`, the 64-bit `cvtsi2sd`
-    /// and the scalar VEX forms), PowerPC FPSCR.RN at `fctid`, `fctiw`,
-    /// `fctidu`, `fctiwu`, `fcfid`, `fcfids`, `fcfidu`, `fcfidus`, `frsp`
-    /// and `xscvdpspn`, ARM FPSCR.RMode (bits 22-23) at `vcvtr`, and MIPS
-    /// FCSR.RM (bits 0-1) at `cvt.w` and `cvt.l`.  The forms whose rounding
-    /// is fixed (`cvtt*`, `fcti*z`, ARM `vcvt`, MIPS `round`, `trunc`,
-    /// `floor` and `ceil`, and every AArch64 `fcvt*`) read no mode, and the
-    /// x87 stores read the control word whatever this says.  Off, each
-    /// conversion reads the mode and selects among its four, so a mode the
-    /// function sets (`ldmxcsr`, `mtfsfi`, `vmsr`, `ctc1`) folds and an
-    /// unknown one stays a select.
+    /// The dynamic rounding mode a float-to-integer, narrowing or
+    /// integer-to-float conversion rounds by is round to nearest even: x86
+    /// MXCSR.RC (bits 13-14) at every SSE and VEX conversion that reads it
+    /// (`cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`,
+    /// `cvtps2pi`, `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`,
+    /// `cvtsi2ss`, the 64-bit `cvtsi2sd` and the scalar VEX forms), the x87
+    /// control word's RC (bits 10-11) at `fst` and `fstp` to a single or a
+    /// double, PowerPC FPSCR.RN at `fctid`, `fctiw`, `fctidu`, `fctiwu`,
+    /// `fcfid`, `fcfids`, `fcfidu`, `fcfidus`, `frsp` and `xscvdpspn`, ARM
+    /// FPSCR.RMode (bits 22-23) at `vcvtr`, `vcvt.f32.f64`, `vcvt.f32.s32`,
+    /// `vcvt.f32.u32` and `vcvtb` and `vcvtt` to half, AArch64 FPCR.RMode
+    /// (bits 22-23) at `fcvt` to a narrower float, `fcvtn`, `scvtf` and
+    /// `ucvtf` from a general register and `scvtf` from an FP one, and
+    /// `bfcvt` and `bfcvtn`, and MIPS FCSR.RM (bits 0-1) at `cvt.w`, `cvt.l`,
+    /// `cvt.s.d`, `cvt.s.w`, `cvt.s.l` and `cvt.d.l`.  The forms whose
+    /// rounding is fixed (`cvtt*`, `fcti*z`, ARM `vcvt` to an integer, MIPS
+    /// `round`, `trunc`, `floor` and `ceil`, and AArch64
+    /// `fcvt{n,a,m,p,z}{s,u}` and `fcvtxn`) read no mode, and x87 `fist`,
+    /// `fistp` and `frndint` read the control word whatever this says.  Off,
+    /// each conversion reads the mode and selects among its four, so a mode
+    /// the function sets (`ldmxcsr`, `fldcw`, `mtfsfi`, `vmsr`, `ctc1`) folds
+    /// and an unknown one stays a select; an AArch64 FPCR read is volatile,
+    /// so there even one `msr fpcr` sets stays a select.
     ///
     /// Wrong where the code runs under another mode: after `fesetround`, or
     /// a mode a caller set or this analysis cannot place.  Outside it: the
-    /// float arithmetic, taken to round to nearest either way, and the
-    /// conversions lifted as opaque user ops (the packed VEX and EVEX forms,
-    /// `roundss` and its kin), whose results nothing folds.  MXCSR.FTZ and
-    /// DAZ are taken as 0 either way, so under `-ffast-math`, which sets them
-    /// at startup, even [`AssumptionOptions::none`] narrows a denormal wrongly;
+    /// float arithmetic, taken to round to nearest either way
+    /// ([`AssumptionOptions::none`]), and the conversions lifted as opaque
+    /// user ops (the packed VEX and EVEX forms, `roundss` and its kin, the
+    /// AArch64 vector and FP-register `#fbits` forms, the ARM NEON and
+    /// fixed-point `vcvt`, `vrint*` and `frint*`), whose results nothing
+    /// folds.  MXCSR.FTZ and DAZ are taken as 0 either way, so under
+    /// `-ffast-math`, which sets them at startup, even
+    /// [`AssumptionOptions::none`] narrows a denormal wrongly;
     /// so are PowerPC FPSCR.NI, OE and UE, ARM FPSCR.FZ, AArch64 FPCR.FZ and
     /// MIPS FCSR.FS, so code that sets them (non-IEEE mode, flush to zero,
     /// enabled overflow or underflow traps) has no floor here either.
@@ -232,12 +244,14 @@ impl AssumptionOptions {
     /// analysed code stored at its address, and nothing outside that code (a
     /// device, another thread, a signal handler) changes it in between.  A
     /// memory-mapped register polled after a write reads as the value written.
-    /// It also takes the floating-point controls other than the rounding mode
-    /// to be the IEEE default: float arithmetic rounds to nearest, and x86
-    /// MXCSR.FTZ and DAZ, PowerPC FPSCR.NI, OE and UE, ARM FPSCR.FZ, AArch64
-    /// FPCR.FZ and MIPS FCSR.FS are clear, so `-ffast-math` code, whose
-    /// startup sets FTZ and DAZ, has no floor here.  No field lifts either
-    /// premise.
+    /// It also takes the floating-point controls other than the conversions'
+    /// rounding mode to be the IEEE default: float arithmetic, scalar and
+    /// vector, rounds to nearest whatever mode is in force (x87, SSE, PowerPC
+    /// `fadd` and `fmadd`, ARM, AArch64 and MIPS alike), and x86 MXCSR.FTZ
+    /// and DAZ, PowerPC FPSCR.NI, OE and UE, ARM FPSCR.FZ, AArch64 FPCR.FZ
+    /// and MIPS FCSR.FS are clear, so `-ffast-math` code, whose startup sets
+    /// FTZ and DAZ, and code computing under another mode have no floor here.
+    /// No field lifts either premise.
     #[must_use]
     pub fn none() -> Self {
         // Spelled out, not `..Self::default()`: a field added default-on
