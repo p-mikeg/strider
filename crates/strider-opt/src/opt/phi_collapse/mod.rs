@@ -28,11 +28,12 @@
 //! budget is left alone.
 
 use cranelift_entity::SecondaryMap;
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IntBinaryOp};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::{IRBuilderExt, IRViewer, IntBinaryOp};
 
 use crate::const_eval::var_and_const;
 use crate::error::Result;
+use crate::opt::known_bits::{const_only, node_known_bits};
 use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 
 #[cfg(test)]
@@ -284,32 +285,15 @@ fn peel(
     Some((Masked::Of(x), witness))
 }
 
-/// Bits of `v` its producer alone proves zero: a one-hop subset of
-/// `known_bits`' `node_known_bits`, so an over-width `ShiftLeft` proves
-/// nothing here where that proves every bit.
+/// Bits of `v` its producer alone proves zero: the known-bits transfer read
+/// with operand facts from the IR alone, so no map is built for one hop.
 fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId) -> u128 {
-    if let Some(k) = edit.int_const_u128(v) {
-        return !k;
-    }
-    let node = edit.producer(v);
-    match *edit.node_kind(node) {
-        NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-            var_and_const(edit.function(), node).map_or(0, |(_, k)| !k)
-        }
-        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
-            let width = edit.value_type_opt(v).map_or(0, ValueType::bit_width);
-            edit.nth_input(node, 1)
-                .and_then(|count| edit.int_const_u128(count))
-                .filter(|&k| k < width as u128)
-                .map_or(0, |k| (1u128 << k) - 1)
-        }
-        NodeKind::Extend(ExtendOp::ZeroExtend) => edit
-            .nth_input(node, 0)
-            .and_then(|input| edit.value_type_opt(input))
-            .and_then(ValueType::int_mask_u128)
-            .map_or(0, |m| !m),
-        _ => 0,
-    }
+    let function = edit.function();
+    node_known_bits(function, function.producer(v), &const_only(function))
+        .ok()
+        .flatten()
+        .filter(|&(out, _)| out == v)
+        .map_or(0, |(_, kb)| kb.zeros)
 }
 
 enum Outside {
