@@ -206,7 +206,7 @@ pub const fn low_bits_mask_u128(bits: usize) -> u128 {
 ///
 /// Limb-wise so an `I256` / `I512` container mask (ymm / zmm, aarch64 SVE `z`)
 /// is representable; a `u128` mask truncates those silently.
-pub fn shifted_ones_limbs(set_bits: u64, shift: u64, width_bits: u64) -> Vec<u64> {
+pub(crate) fn shifted_ones_limbs(set_bits: u64, shift: u64, width_bits: u64) -> Vec<u64> {
     let limbs = width_bits.div_ceil(64) as usize;
     let (lo, hi) = (shift, shift.saturating_add(set_bits).min(width_bits));
     (0..limbs)
@@ -229,7 +229,7 @@ pub fn shifted_ones_limbs(set_bits: u64, shift: u64, width_bits: u64) -> Vec<u64
 }
 
 /// Bitwise complement of `limbs` within `width_bits`.
-pub fn complement_limbs(limbs: &[u64], width_bits: u64) -> Vec<u64> {
+pub(crate) fn complement_limbs(limbs: &[u64], width_bits: u64) -> Vec<u64> {
     limbs
         .iter()
         .enumerate()
