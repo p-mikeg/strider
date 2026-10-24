@@ -672,7 +672,13 @@
   `mtfsfi`, `mtfsb0` or `mtfsb1` left them, so a later `mffs` or `mcrfs`
   folded to a stale value. `fdiv` sets ZX for a finite nonzero dividend
   alone, where 0/0 set it; `fcfid` sets FPRF; `frin`, `friz`, `frip` and
-  `frim` clear FR and FI and raise VXSNAN for a signalling NaN.
+  `frim` clear FR and FI. FPRF is the result's class in the instruction's
+  precision, C included, which no op wrote, and FU for an infinity, where
+  it was 0. VXSNAN is a signalling NaN's alone, where a quiet one set it;
+  the estimates set no XX; the conversions to an integer leave FPRF
+  unknown (the new opaque `fpscrUndefined`, classed pure), where they kept
+  it; `fcmpu` and `fcmpo` raise VXSNAN, and `fcmpo` VXVC, where they set no
+  exception bit.
 - Python: x87 `fprem` and `fprem1` lift as the opaque `x87Prem` and
   `x87Prem1`, each with a status op that sets C0-C3. They computed about 0
   and left C0-C3 alone, so glibc's `fmodl` loop tested a stale C2.

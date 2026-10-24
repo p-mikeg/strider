@@ -8,7 +8,7 @@ unresolved_branch [0x10010288]
 cfg
   0x10010220 42 ops goto -> [0x10010280]
   0x10010280 4 ops unresolved@0x10010288 -> []
-tracked [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, CTR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31a00:8, u:0x32200:8, u:0x39600:8, u:0x39a00:8, u:0x64600:4, u:0x84b00:4, u:0x84c00:8, u:0x84d00:4, u:0x84e00:8, u:0x85000:8, u:0x85100:8, u:0x89d00:1, u:0x89e00:8, u:0x89f00:8, u:0x8a100:8, u:0x8a200:8, u:0x8a300:1, u:0x8a400:8, u:0x8a600:8]
+tracked [r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, CTR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31200:8, u:0x31a00:8, u:0x38e00:8, u:0x39200:8, u:0x63900:4, u:0x83e00:4, u:0x83f00:8, u:0x84000:4, u:0x84100:8, u:0x84300:8, u:0x84400:8, u:0x89000:1, u:0x89100:8, u:0x89200:8, u:0x89400:8, u:0x89500:8, u:0x89600:1, u:0x89700:8, u:0x89900:8]
 arg 0 [%v5]
 %v0:ctrl = entry
 %v1:mem = initial_memory
@@ -51,7 +51,7 @@ indirect_branch %v0, %v35, %v34
 == main @0x100102a0
 cfg
   0x100102a0 52 ops return -> []
-tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31a00:8, u:0x32000:8, u:0x32200:8, u:0x39600:8, u:0x64600:4]
+tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r12, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31200:8, u:0x31800:8, u:0x31a00:8, u:0x38e00:8, u:0x63900:4]
 arg 1 [%v20]
 arg 2 [%v21]
 arg 3 [%v22]

@@ -6,7 +6,7 @@ assumptions stack_global_disjoint assume_incoming_args_survive_calls return_slot
 == _start @0x100004e0
 cfg
   0x100004e0 21 ops tailcall 0x100004c0 -> []
-tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31a00:8, u:0x32000:8, u:0x32200:8, u:0x85b00:4, u:0x85c00:8, u:0x85d00:4, u:0x85e00:8, u:0x86000:8, u:0x86100:4, u:0x86200:8]
+tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31200:8, u:0x31800:8, u:0x31a00:8, u:0x84e00:4, u:0x84f00:8, u:0x85000:4, u:0x85100:8, u:0x85300:8, u:0x85400:4, u:0x85500:8]
 frame_address_in_call_register reach=unbounded
 arg 0 [%v11]
 arg 1 [%v12]
@@ -89,7 +89,7 @@ return %v44, %v45, %v46, %v47, %v48, %v49, %v50, %v51, %v52, %v53, %v54, %v55, %
 == is_thread_group_empty @0x100006dc
 cfg
   0x100006dc 39 ops return -> []
-tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31a00:8, u:0x32000:8, u:0x32200:8, u:0x84b00:4, u:0x84c00:8, u:0x84d00:4, u:0x84e00:8, u:0x85000:8, u:0x85100:8, u:0x89d00:1, u:0x89e00:8, u:0x89f00:8, u:0x8a100:8, u:0x8a200:8, u:0x8a300:1, u:0x8a400:8, u:0x8a600:8]
+tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31200:8, u:0x31800:8, u:0x31a00:8, u:0x83e00:4, u:0x83f00:8, u:0x84000:4, u:0x84100:8, u:0x84300:8, u:0x84400:8, u:0x89000:1, u:0x89100:8, u:0x89200:8, u:0x89400:8, u:0x89500:8, u:0x89600:1, u:0x89700:8, u:0x89900:8]
 arg 0 [%v12]
 arg 1 [%v35]
 float_arg 0 [%v36]
@@ -165,7 +165,7 @@ return %v0, %v13, %v34, %v35, %v36, %v37, %v38, %v39, %v40, %v41, %v42, %v43, %v
 == main @0x1000072c
 cfg
   0x1000072c 47 ops return -> []
-tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31a00:8, u:0x32000:8, u:0x32200:8, u:0x64600:4]
+tracked [r0, r1, r2, r3, r4, r5, r6, r7, r8, r9, r10, r31, r2Save, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31200:8, u:0x31800:8, u:0x31a00:8, u:0x63900:4]
 arg 0 [%v20]
 arg 1 [%v16]
 arg 2 [%v29]

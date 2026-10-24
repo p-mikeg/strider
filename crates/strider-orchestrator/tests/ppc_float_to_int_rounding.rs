@@ -238,16 +238,16 @@ fn mtfsfi_writes_its_immediate() {
     }
 }
 
-/// `fpscrRoundingControl` is the last user op on every PowerPC preset, so no
-/// other id moved.
+/// `fpscrRoundingControl` and then `fpscrUndefined` are the last user ops on
+/// every PowerPC preset, so no other id moved.
 #[test]
 fn the_rounding_mode_op_is_the_last_user_op() {
     for arch in [Arch::Ppc32be, Arch::Ppc32le, Arch::Ppc64be, Arch::Ppc64le] {
         let (strider, _) = common::strider_over_bytes(arch, vec![0; 4], BASE, None);
         let names = strider.user_op_names();
         assert_eq!(
-            names.last().map(String::as_str),
-            Some("fpscrRoundingControl"),
+            names[names.len() - 2..],
+            ["fpscrRoundingControl", "fpscrUndefined"],
             "{arch:?}"
         );
     }
@@ -475,8 +475,8 @@ fn mtfsfi_of_any_field_keeps_fex_and_vx_the_summaries() {
 
 /// FEX is the OR of the enabled exceptions, and FX rises with VX: with every
 /// bit set on entry and XE cleared, `fadd` keeps FEX set (four enabled
-/// exceptions, which an XOR cancelled); with FX, OX, UX, ZX, XX and FI cleared, an
-/// `fctiwz` of the NaN f1 holds raises VXCVI and with it VX and FX. The
+/// exceptions, which an XOR cancelled); with FX, OX, UX, ZX, XX, FI and VXCVI
+/// cleared, an `fctiwz` of the NaN f1 holds raises VXCVI and with it VX and FX. The
 /// rounding status ops give 0, so no inexact result raises FX.
 #[test]
 fn fpscr_summaries_are_ors_and_fx_follows_vx() {
@@ -500,12 +500,13 @@ fn fpscr_summaries_are_ors_and_fx_follows_vx() {
         0x4e80_0020,
     ]);
     assert_eq!((fex >> 30) & 1, 1, "FEX");
-    // mtfsfi 0, 0; mtfsfi 1, 0; mtfsfi 3, 0; fctiwz f1, f1; mffs f1;
-    // mffprd r3, f1; blr
+    // mtfsfi 0, 0; mtfsfi 1, 0; mtfsfi 3, 0; mtfsfi 5, 0; fctiwz f1, f1;
+    // mffs f1; mffprd r3, f1; blr
     let fx = run(&[
         0xfc00_010c,
         0xfc80_010c,
         0xfd80_010c,
+        0xfe80_010c,
         0xfc20_081e,
         0xfc20_048e,
         0x7c23_0066,
