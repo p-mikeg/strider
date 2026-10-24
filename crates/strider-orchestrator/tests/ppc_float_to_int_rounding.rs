@@ -476,17 +476,19 @@ fn mtfsfi_of_any_field_keeps_fex_and_vx_the_summaries() {
 /// FEX is the OR of the enabled exceptions, and FX rises with VX: with every
 /// bit set on entry and XE cleared, `fadd` keeps FEX set (four enabled
 /// exceptions, which an XOR cancelled); with FX, OX, UX, ZX, XX and FI cleared, an
-/// `fctiwz` of the NaN f1 holds raises VXCVI and with it VX and FX.
+/// `fctiwz` of the NaN f1 holds raises VXCVI and with it VX and FX. The
+/// rounding status ops give 0, so no inexact result raises FX.
 #[test]
 fn fpscr_summaries_are_ors_and_fx_follows_vx() {
     let run = |words: &[u32]| {
         let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-        common::cone::returned_from_under(
+        common::cone::returned_from_with(
             Arch::Ppc64le,
             bytes,
             BASE,
             u128::MAX,
             &AssumptionOptions::none(),
+            &|_| Some(0),
         )
     };
     // mtfsfi 7, 0; fadd f1, f1, f1; mffs f1; mffprd r3, f1; blr
@@ -499,7 +501,7 @@ fn fpscr_summaries_are_ors_and_fx_follows_vx() {
     ]);
     assert_eq!((fex >> 30) & 1, 1, "FEX");
     // mtfsfi 0, 0; mtfsfi 1, 0; mtfsfi 3, 0; fctiwz f1, f1; mffs f1;
-    // mffprd r3, f1; blr (field 3 holds FI, which fctiwz ORs into XX)
+    // mffprd r3, f1; blr
     let fx = run(&[
         0xfc00_010c,
         0xfc80_010c,
