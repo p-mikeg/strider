@@ -115,7 +115,9 @@ impl<'f> ReturnTargets<'f> {
         let mut premises = Vec::new();
         // The one offset from the entry SP a value is claimed at, per path.
         // Per query: an offset a failed probe wrote would otherwise refuse the
-        // right one at the next site.
+        // right one at the next site. Still first-wins WITHIN the query, so of
+        // two contradictory claims on one key the later one fails whichever it
+        // is, and `settled` carries that `false` to every later query.
         let mut claimed: FxHashMap<(Path, ValueId), i128> = FxHashMap::default();
         let mut next = 0;
         while let Some(&(path, claim)) = claims.get(next) {
