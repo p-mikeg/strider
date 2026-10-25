@@ -239,9 +239,11 @@ which wraps a `Graph`. `entry` is a non-optional `NodeId` (a `Function` always
 has one), so `EditFunction::new(&mut Function)` is infallible.
 
 Integer constants: `IntConst(ConstId)` interns through
-`Function::const_interner` into `ConstValue { Bits(u128), Wide(Box<[u64]>) }`
+`Function::const_interner` into `ConstValue { Bits(u64), Wide(Box<[u64]>) }`
 (all int constants, not only wide ones); read via `IRViewer::int_const_u128` /
-`int_const_i128`, never by matching the payload. Interning masks to the declared
+`int_const_i128`, never by matching the payload. Anything past the 64-bit
+carrier is `Wide`, so that path carries every constant over `u64`, not only
+the rare ones over `u128`. Interning masks to the declared
 width before dedup, so equal constants from different paths collapse.
 
 IR trait layering: `IRViewer` (point reads), `IRWalker: IRViewer` (control-aware
