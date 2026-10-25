@@ -477,9 +477,8 @@ mod alias_tests {
         let f = &claimed;
         let options = MemOptions::for_purpose(MemPurpose::IncomingArgs, f);
         let store_class = classify_addr(f, f.store_addr(store));
-        // The real width the store's own address carries. Passing `None` would
-        // model IR the lifter cannot produce, and the wrap guard would then
-        // never be exercised by any of these cases.
+        // The real width the store's own address carries, so the wrap guard is
+        // exercised at the width the lifter produces.
         let addr_bits = addr_bit_width(f, f.store_addr(store));
         alias_verdict(
             SizedAddr {
@@ -2191,7 +2190,7 @@ mod arg_window_bounds {
             load: SizedAddr {
                 class: AddrClass::StackRooted { base, offset: -8 },
                 size: 4,
-                addr_bits: Some(32),
+                addr_bits: 32,
             },
             load_space: rsleigh::VnSpace::RAM,
             private_frame: std::cell::Cell::new(None),
@@ -3175,7 +3174,7 @@ mod comparability_tests {
         SizedAddr {
             class: AddrClass::Constant { addr: 0 },
             size,
-            addr_bits: Some(32),
+            addr_bits: 32,
         }
     }
 
@@ -3205,12 +3204,12 @@ mod comparability_tests {
         let narrow = SizedAddr {
             class: AddrClass::Constant { addr: 0 },
             size: 4,
-            addr_bits: Some(32),
+            addr_bits: 32,
         };
         let wide = SizedAddr {
             class: AddrClass::Constant { addr: 0 },
             size: 8,
-            addr_bits: Some(64),
+            addr_bits: 64,
         };
         // Adjacent under a single 64-bit bound.
         assert!(
