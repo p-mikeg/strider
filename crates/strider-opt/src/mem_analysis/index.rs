@@ -131,7 +131,9 @@ impl Offsets {
         let to = offset.saturating_add(size.max(1) - 1);
         for (&start, widths) in self.starts.range(from..=to) {
             for (width, positions) in widths {
-                if start == offset || start.saturating_add(*width) > offset {
+                // A width is at least one byte, so `start == offset` is
+                // already an end above `offset`.
+                if start.saturating_add(*width) > offset {
                     best = best.max(highest_in(positions, lo, hi));
                 }
             }

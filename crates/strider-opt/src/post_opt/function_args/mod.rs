@@ -96,7 +96,9 @@ fn detect_stack_args(
             continue;
         };
         let load_size = load_ty.byte_size() as i128;
-        let Some(MemExpr { base, offset, .. }) = alias_cfg.decompose(edit.function(), addr) else {
+        let Some(MemExpr { base, offset, .. }) =
+            crate::mem_analysis::decompose(edit.function(), addr)
+        else {
             continue;
         };
         if base != initial_sp {
