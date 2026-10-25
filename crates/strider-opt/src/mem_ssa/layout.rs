@@ -273,7 +273,15 @@ impl MemLayout {
         probe: &mut dyn ClobberProbe,
         answers: &mut Answers,
     ) -> Option<NodeId> {
-        let start = self.position(start)?;
+        let Some(start) = self.position(start) else {
+            // Unreachable from `InitialMemory`, so nothing above it is proven
+            // and the caller bounds the answer at `start` itself.
+            debug_assert!(
+                !cone_clobbers(function, start, probe),
+                "an uncovered cone holds a clobber above the start"
+            );
+            return None;
+        };
         let answer = match self.fast {
             Some(_) => self.climb(function, start, probe, answers),
             None => self.climb_slow(function, start, probe, answers),
@@ -726,6 +734,42 @@ impl Known {
 }
 
 /// The memory defs reachable from `InitialMemory`, in discovery order.
+/// Whether any memory def strictly above `node` clobbers the probed
+/// location.  Vacuous for a node the layout covers, whose cone roots in
+/// `InitialMemory`.
+fn cone_clobbers(function: &Function, node: NodeId, probe: &mut dyn ClobberProbe) -> bool {
+    let preds = |n: NodeId| -> SmallVec<[NodeId; 2]> {
+        match function.node_kind(n) {
+            NodeKind::InitialMemory => SmallVec::new(),
+            NodeKind::MemPhi => function
+                .phi_data_inputs(n)
+                .map(|v| function.producer(v))
+                .collect(),
+            _ => function
+                .memory_input_of(n)
+                .map(|v| function.producer(v))
+                .into_iter()
+                .collect(),
+        }
+    };
+    let mut seen = FxHashSet::default();
+    let mut work: Vec<NodeId> = preds(node).into_vec();
+    while let Some(n) = work.pop() {
+        if !seen.insert(n) {
+            continue;
+        }
+        if !matches!(
+            function.node_kind(n),
+            NodeKind::InitialMemory | NodeKind::MemPhi
+        ) && probe.clobbers(function, n)
+        {
+            return true;
+        }
+        work.extend(preds(n));
+    }
+    false
+}
+
 struct Discovered {
     node: Vec<NodeId>,
     shape: Vec<Shape>,

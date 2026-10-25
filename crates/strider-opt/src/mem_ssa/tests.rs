@@ -403,6 +403,20 @@ fn armless_mem_phi_answers_at_the_chain_start() {
     );
 }
 
+/// A chain hanging off an armless `MemPhi` bounds itself at its start even
+/// though a clobber sits above it: conservative, and unreachable from valid
+/// IR, so the query asserts the cone is clean rather than leaning on it.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "holds a clobber")]
+fn a_clobber_above_an_uncovered_start_is_asserted() {
+    let (mut fg, phi_value) = mem_phi_all_initial(0);
+    let (a, d) = (mk_const(&mut fg, 0x30), mk_const(&mut fg, 0x31));
+    let store_a = mk_store(&mut fg, phi_value, a, d);
+    let store_b = mk_store(&mut fg, store_a, a, d);
+    climb(&fg, &mut alias_set(vec![store_a]), store_b);
+}
+
 #[test]
 fn mem_phi_all_arms_clean_returns_none() {
     let (fg, phi_value) = mem_phi_all_initial(3);
