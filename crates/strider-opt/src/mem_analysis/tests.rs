@@ -3830,3 +3830,104 @@ fn an_unreducible_address_width_may_always_alias() {
         "a tracked width still separates"
     );
 }
+
+/// `LoadForward` keeps the outgoing-argument-window memo across
+/// [`MemAnalyzer::forget_answers`], which drops the per-location answers
+/// alone.  That rests on the direction the staleness runs in: a store address
+/// the window scan could not place was an `Anchor`, which blinds the scan, so
+/// a window scanned before the forward covers at least what one scanned after
+/// it covers.  Covering more only keeps a load from forwarding across the
+/// call.
+#[cfg(test)]
+mod stale_window_is_conservative {
+    use super::*;
+    use strider_ir::node::{ValueId, ValueType};
+    use strider_ir::{IRBuilderExt, IRWalker, IntBinaryOp};
+    use strider_ir_test_utils::{sp_frame, stack_args_at};
+
+    /// A spill, its reload, and one argument store addressed `sp + reload`:
+    /// unplaceable until the reload forwards to the constant it spilled.
+    #[test]
+    fn a_window_scanned_before_a_forward_covers_what_one_after_it_does() -> crate::Result<()> {
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let args = stack_args_at(0, 4).expect("a declared stack-arg layout");
+        let mut b = sp_frame(sp)
+            .stack_args(Some(args))
+            .build_fn_single_region()?;
+        let sp0 = b.read_variable(&sp)?;
+        let i32_ty = ValueType::int(32);
+        let spill_off = b.build_int_const((-16i64) as u64, i32_ty)?;
+        let spill_addr = b.build_int_binary_operation(sp0, spill_off, IntBinaryOp::Add, i32_ty)?;
+        let zero = b.build_int_const(0u64, i32_ty)?;
+        b.build_store(spill_addr, zero, rsleigh::VnSpace::RAM)?;
+        let reload = b.build_load(spill_addr, rsleigh::VnSpace::RAM, i32_ty)?;
+        let arg_addr = b.build_int_binary_operation(sp0, reload, IntBinaryOp::Add, i32_ty)?;
+        let arg = b.build_int_const(0x11u64, i32_ty)?;
+        b.build_store(arg_addr, arg, rsleigh::VnSpace::RAM)?;
+        let target = b.build_int_const(0x1000u64, i32_ty)?;
+        b.build_call_cc(target, None)?;
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        // Collapses `read_variable(sp)` onto the bare `InitialVar`, without
+        // which the call's SP does not decompose and no window is placed.
+        let mut collapse = crate::OptimizerPipeline::new();
+        collapse.add(crate::PhiCollapse);
+        collapse.add(crate::RegionCollapse);
+        collapse.run(&mut fg, &crate::OptCtx::new(None))?;
+
+        let options = super::escaping(&mut fg, false);
+        let probes: Vec<(i128, i128)> = (0..4).map(|k| (k * 4, k * 4 + 4)).collect();
+        let before = window_answers(&fg, &options, &probes);
+
+        // What the forward does to the argument store's address, which the
+        // pipeline's own invalidation then reclassifies.
+        let mut edit = crate::EditFunction::new(&mut fg);
+        assert!(edit.replace_value(reload, zero), "the reload forwards");
+        edit.clean();
+        fg.side_tables().invalidate_analyses();
+        let after = window_answers(&fg, &options, &probes);
+
+        assert_ne!(
+            before, after,
+            "the forward has to move an answer, or the fixture proves nothing"
+        );
+        for (i, (&was, &now)) in before.iter().zip(&after).enumerate() {
+            assert!(
+                was || !now,
+                "slot {i} is the callee's after the forward but not before it"
+            );
+        }
+        Ok(())
+    }
+
+    /// Whether the call's window covers each probe, scanned fresh off the
+    /// graph as it stands.
+    fn window_answers(fg: &Function, options: &MemOptions, probes: &[(i128, i128)]) -> Vec<bool> {
+        let call = fg
+            .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
+            .next()
+            .expect("the fixture has one call");
+        let sp_value: ValueId = fg.node_inputs(call)[NodeKind::CALL_SP_SLOT];
+        let MemExpr {
+            base,
+            offset: sp_offset,
+            ..
+        } = decompose(fg, sp_value).expect("the call's SP is the entry SP");
+        let args = stack_args_at(0, 4).expect("a declared stack-arg layout");
+        let geometry = ArgWindowGeometry {
+            mem_start: fg.memory_input_of(call).expect("a Call has a memory input"),
+            base,
+            lo: sp_offset + args.base_offset,
+            sp_offset,
+            args,
+        };
+        let analyzer = MemAnalyzer::new(options.clone());
+        let hi = probes.iter().map(|&(_, hi)| hi).max().unwrap_or_default();
+        let window = scan_arg_window(fg, &analyzer, options, &geometry, hi);
+        probes
+            .iter()
+            .map(|&(lo, hi)| window.covers(lo, hi))
+            .collect()
+    }
+}
