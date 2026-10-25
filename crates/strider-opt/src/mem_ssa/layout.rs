@@ -57,7 +57,7 @@ pub(crate) trait ClobberProbe {
 
     /// The highest position in `lo..=hi` holding a def that may clobber.  A
     /// superset of the defs [`Self::clobbers`] accepts is enough.
-    fn candidate(&mut self, layout: &MemLayout, lo: u32, hi: u32) -> Option<u32>;
+    fn candidate(&mut self, lo: u32, hi: u32) -> Option<u32>;
 }
 
 /// One location's memoised climb results, by position.  Valid while no def's
@@ -678,7 +678,7 @@ impl MemLayout {
         loop {
             #[cfg(test)]
             step();
-            let c = probe.candidate(self, lo, hi)?;
+            let c = probe.candidate(lo, hi)?;
             debug_assert!((lo..=hi).contains(&c), "candidate {c} outside {lo}..={hi}");
             if self.shape[c as usize] == Shape::Def
                 && probe.clobbers(function, self.node[c as usize])

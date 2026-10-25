@@ -41,7 +41,7 @@ fn collect_stack_args(
         base,
         offset: call_sp_off,
         kind: crate::mem_analysis::MemKind::Stack,
-    }) = alias_cfg.decompose(function, sp_value)
+    }) = crate::mem_analysis::decompose(function, sp_value)
     else {
         return Vec::new();
     };
