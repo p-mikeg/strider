@@ -828,6 +828,115 @@ mod tests {
         );
     }
 
+    /// Two return sites of one function whose verifications both reach the
+    /// stack value `sp + 0x20`.
+    ///
+    /// Arm A loads a frame pointer out of the slot at `sp + 0x60`, which only
+    /// ever held that value, saves `lr` through it and branches back: it
+    /// returns to the caller. Arm B loads one out of the slot at `sp + 0x50`,
+    /// which a store through a spine-less address overwrote with the same
+    /// value: the optimistic walk steps past that store and guesses `0x18`,
+    /// the exhaustive one locates it and finds `sp + 0x20` there, so the site
+    /// does not verify.
+    ///
+    /// The claims are cleared, which is what makes the spine-less store
+    /// address located rather than passed.
+    fn two_sites_claiming_one_stack_value()
+    -> (strider_ir::Function, (NodeId, ValueId), (NodeId, ValueId)) {
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let lr = fake_reg_vn(0x4c, 4);
+        let word = ValueType::int(32);
+        let mut b = strider_ir_test_utils::sp_frame(sp)
+            .tracked(lr)
+            .link_register(lr)
+            .build_fn()
+            .expect("build_fn");
+        let entry = b.create_region_all().expect("entry");
+        let arm_a = b.create_region_all().expect("arm_a");
+        let arm_b = b.create_region_all().expect("arm_b");
+        b.set_entry_region_all(entry).expect("set_entry_region_all");
+        b.record_register_arg_carriers();
+        b.set_region(entry);
+        let sp_val = b.read_variable(&sp).expect("read sp");
+        let lr_val = b.read_variable(&lr).expect("read lr");
+        let at = |b: &mut FunctionBuilder, off: u64| {
+            let c = b.build_int_const(off, word).unwrap();
+            b.build_int_binary_operation(sp_val, c, IntBinaryOp::Add, word)
+                .unwrap()
+        };
+        let slot_b = at(&mut b, 0x50);
+        let indirect = at(&mut b, 0x70);
+        let other = at(&mut b, 0x18);
+        let shared = at(&mut b, 0x20);
+        let slot_a = at(&mut b, 0x60);
+        b.build_store(indirect, slot_b, rsleigh::VnSpace::RAM)
+            .expect("store the address");
+        // `sp + 0x50`, off the address spine: a guess steps past a store
+        // through it, a proof locates it.
+        let opaque = b
+            .build_load(indirect, rsleigh::VnSpace::RAM, word)
+            .expect("load the address");
+        b.build_store(slot_a, shared, rsleigh::VnSpace::RAM)
+            .expect("store A");
+        b.build_store(slot_b, other, rsleigh::VnSpace::RAM)
+            .expect("store B");
+        b.build_store(opaque, shared, rsleigh::VnSpace::RAM)
+            .expect("store through the opaque address");
+        let cond = b
+            .build_int_cmp_operation(shared, other, strider_ir::IntCmpOp::Less, word)
+            .expect("cond");
+        b.build_if(cond, arm_a, arm_b).expect("if");
+
+        let site = |b: &mut FunctionBuilder, region, slot| {
+            b.set_region(region);
+            let frame = b.build_load(slot, rsleigh::VnSpace::RAM, word).unwrap();
+            b.build_store(frame, lr_val, rsleigh::VnSpace::RAM).unwrap();
+            let target = b.build_load(frame, rsleigh::VnSpace::RAM, word).unwrap();
+            (b.build_indirect_branch(target).unwrap(), target)
+        };
+        let a = site(&mut b, arm_a, slot_a);
+        let bb = site(&mut b, arm_b, slot_b);
+        b.set_lift_addr(None);
+        let mut function = b.build().expect("build");
+        function.assume(&strider_ir::AssumptionOptions::none());
+        let mut prep = crate::OptimizerPipeline::new();
+        prep.add(crate::PhiCollapse);
+        prep.add(crate::RegionCollapse);
+        prep.run(&mut function, &crate::OptCtx::new(None))
+            .expect("prep");
+        (function, a, bb)
+    }
+
+    /// One verifier answers each return site the same whichever site it was
+    /// asked about first.
+    ///
+    /// Mutation: lift the contradiction ledger back to struct scope.
+    #[test]
+    fn a_shared_verifier_answers_each_return_site_the_same() {
+        let (f, a, b) = two_sites_claiming_one_stack_value();
+        let alone = |(ret, target): (NodeId, ValueId)| {
+            ReturnTargets::new(&f).returns_to_caller(ret, target)
+        };
+        assert!(alone(a), "fixture: arm A returns to the caller");
+        assert!(!alone(b), "fixture: arm B cannot be shown to");
+
+        let mut first_a = ReturnTargets::new(&f);
+        let a_first = (
+            first_a.returns_to_caller(a.0, a.1),
+            first_a.returns_to_caller(b.0, b.1),
+        );
+        let mut first_b = ReturnTargets::new(&f);
+        let b_first = (
+            first_b.returns_to_caller(b.0, b.1),
+            first_b.returns_to_caller(a.0, a.1),
+        );
+        assert_eq!(
+            (a_first.0, a_first.1),
+            (b_first.1, b_first.0),
+            "one verifier's verdicts depend on the order the sites were asked"
+        );
+    }
+
     /// At I256 the `u128` constant `2^128 - 2` also clears bits 128..256, so
     /// it is arithmetic on the target, not the low-bit ISA-mode mask.
     #[test]
