@@ -36,8 +36,6 @@ pub struct ReturnTargets<'f> {
     settled: FxHashMap<(Path, Claim), bool>,
     doms: Option<DominatorTree<CtrlKey>>,
     feasible: FxHashMap<(CtrlKey, NodeId), Option<usize>>,
-    /// The one offset from the entry SP a value is claimed at, per path.
-    claimed: FxHashMap<(Path, ValueId), i128>,
     guesses: FxHashMap<(Path, ValueId), Option<i128>>,
     stored: FxHashMap<(ValueId, StackAddr, i128), Option<ValueId>>,
     guards: FxHashMap<ValueId, Vec<(NodeId, bool)>>,
@@ -94,7 +92,6 @@ impl<'f> ReturnTargets<'f> {
             settled: FxHashMap::default(),
             doms: None,
             feasible: FxHashMap::default(),
-            claimed: FxHashMap::default(),
             guesses: FxHashMap::default(),
             stored: FxHashMap::default(),
             guards: FxHashMap::default(),
@@ -116,10 +113,14 @@ impl<'f> ReturnTargets<'f> {
         let mut dependents: Vec<Vec<usize>> = vec![Vec::new()];
         let mut failed: Vec<usize> = Vec::new();
         let mut premises = Vec::new();
+        // The one offset from the entry SP a value is claimed at, per path.
+        // Per query: an offset a failed probe wrote would otherwise refuse the
+        // right one at the next site.
+        let mut claimed: FxHashMap<(Path, ValueId), i128> = FxHashMap::default();
         let mut next = 0;
         while let Some(&(path, claim)) = claims.get(next) {
             premises.clear();
-            if !self.premises(path, claim, &mut premises) {
+            if !self.premises(path, claim, &mut claimed, &mut premises) {
                 failed.push(next);
             }
             for &premise in &premises {
@@ -149,7 +150,13 @@ impl<'f> ReturnTargets<'f> {
     }
 
     /// Pushes what `claim` rests on onto `out`; `false` when it fails outright.
-    fn premises(&mut self, path: Path, claim: Claim, out: &mut Vec<(Path, Claim)>) -> bool {
+    fn premises(
+        &mut self,
+        path: Path,
+        claim: Claim,
+        claimed: &mut FxHashMap<(Path, ValueId), i128>,
+        out: &mut Vec<(Path, Claim)>,
+    ) -> bool {
         let function = self.function;
         match claim {
             Claim::Target(target) => {
@@ -171,7 +178,7 @@ impl<'f> ReturnTargets<'f> {
                 }
             }
             Claim::EntrySp { value, offset } => {
-                if *self.claimed.entry((path, value)).or_insert(offset) != offset {
+                if *claimed.entry((path, value)).or_insert(offset) != offset {
                     return false;
                 }
                 if let Some(at) = self.spine(value) {
