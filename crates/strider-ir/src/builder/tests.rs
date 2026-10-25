@@ -2033,6 +2033,68 @@ fn build_int_const_limbs_zero_fills_missing_limbs() -> Result<()> {
     Ok(())
 }
 
+/// Both sides of the 64-bit carrier read back the same through the graph,
+/// unsigned, signed and as bytes, whichever path built the constant.
+#[test]
+fn int_const_carrier_boundaries_read_back_through_both_paths() -> Result<()> {
+    let cases: [(&str, u128, ValueType); 7] = [
+        ("i64_all_ones", u128::from(u64::MAX), ValueType::int(64)),
+        ("bit_64_at_i72", 1u128 << 64, ValueType::int(72)),
+        ("i65_all_ones_at_i72", (1u128 << 65) - 1, ValueType::int(72)),
+        (
+            "negative_at_i80",
+            ((1u128 << 80) - 1) ^ 49,
+            ValueType::int(80),
+        ),
+        (
+            "i127_all_ones_at_i128",
+            (1u128 << 127) - 1,
+            ValueType::int(128),
+        ),
+        ("bit_127_at_i128", 1u128 << 127, ValueType::int(128)),
+        ("i128_all_ones_at_i256", u128::MAX, ValueType::int(256)),
+    ];
+    let mut b = empty_builder()?;
+    for (label, value, ty) in cases {
+        let scalar = b.build_int_const(value, ty)?;
+        let limbed = b.build_int_const_limbs(&[value as u64, (value >> 64) as u64], ty)?;
+        assert_eq!(scalar, limbed, "{label}: one value, one node");
+        assert_eq!(b.function().int_const_u128(scalar), Some(value), "{label}");
+        assert_eq!(
+            b.function().int_const_i128(scalar),
+            ty.get_signed_int(value),
+            "{label}"
+        );
+        let node = b.function().producer(scalar);
+        let want = ty.is_wide_int().then(|| {
+            let mut bytes = value.to_le_bytes().to_vec();
+            bytes.resize(ty.byte_size(), 0);
+            bytes
+        });
+        assert_eq!(b.function().int_const_wide_le_bytes(node), want, "{label}");
+    }
+    Ok(())
+}
+
+/// A value past the `u128` carrier has no scalar reading, signed or not, but
+/// still serialises to the declared width.
+#[test]
+fn int_const_past_the_u128_carrier_reads_only_as_bytes() -> Result<()> {
+    let mut b = empty_builder()?;
+    let ty = ValueType::int(256);
+    // Bit 128 is the first bit no `u128` carries.
+    let v = b.build_int_const_limbs(&[0, 0, 1, 0], ty)?;
+    assert_eq!(b.function().int_const_u128(v), None);
+    assert_eq!(b.function().int_const_i128(v), None);
+    let mut want = vec![0u8; 32];
+    want[16] = 1;
+    assert_eq!(
+        b.function().int_const_wide_le_bytes(b.function().producer(v)),
+        Some(want)
+    );
+    Ok(())
+}
+
 /// Every bit of the type and none above it, at every integer width.
 #[test]
 fn build_all_ones_sets_every_bit_at_every_int_width() -> Result<()> {
