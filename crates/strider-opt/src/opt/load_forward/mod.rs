@@ -26,7 +26,7 @@ use strider_ir::{IRBuilderExt, IRViewer};
 use strider_target::Endianness;
 
 use crate::error::Result;
-use crate::mem_analysis::{AliasVerdict, MemAnalyzer, MemOptions, MemPurpose};
+use crate::mem_analysis::{AliasVerdict, MemAnalyzer, MemOptions, MemPurpose, ReachingDef};
 use crate::pipeline::OptimizationResult;
 
 #[derive(Clone, Copy, Default)]
@@ -99,25 +99,22 @@ fn try_forward_load(
         .expect("a Load has a memory input (slot 0)");
     let (load_value, load_ty) = edit.single_value_output(load)?;
 
-    let clobber_node = alias_cfg.nearest_clobber(edit.function(), load, mem);
+    let reaching = alias_cfg.reaching(edit.function(), load, mem);
     // Shorten the load's memory edge onto the clobber `narrow_cfg` proves so
     // future walks skip the proven-disjoint run.  Never `alias_cfg`'s: the
     // stricter walks that read the edge afterwards would inherit a relaxation
     // they do not honour.
-    let sound_clobber = narrow_cfg.nearest_clobber(edit.function(), load, mem);
+    let sound_clobber = narrow_cfg.reaching(edit.function(), load, mem).node();
     // A moved edge is a change: the load may now be a structural twin of
     // another, and the fixed point must not exit before that merge is seen.
     let narrowed = crate::mem_ssa::narrow_load_to(edit, load, sound_clobber);
     let unforwarded = OptimizationResult::from_changed(narrowed);
 
-    if !matches!(edit.node_kind(clobber_node), NodeKind::Store(_)) {
-        return Ok(unforwarded);
-    }
-
     // Exact match: same location, stored bytes covering the load's range.
-    if alias_cfg.verdict(edit.function(), load, clobber_node) != AliasVerdict::Match {
+    // Read before the rewire above, which moves no address.
+    let ReachingDef::Store(clobber_node, AliasVerdict::Match) = reaching else {
         return Ok(unforwarded);
-    }
+    };
 
     let store_data = edit.store_data(clobber_node);
     let store_data_ty = edit
