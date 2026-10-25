@@ -204,7 +204,8 @@ impl MemAnalyzer {
                     .nearest_clobber(function, start, &mut probe, answers)
             })
             // A start the layout does not cover reaches `InitialMemory` by no
-            // path, so nothing above it is proven and it bounds itself.
+            // path, so nothing above it is proven and it bounds itself: at or
+            // nearer than any clobber in its own cone.
             .unwrap_or(start)
     }
 
