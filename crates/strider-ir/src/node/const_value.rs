@@ -153,6 +153,81 @@ mod tests {
         );
     }
 
+    /// Both sides of the 64-bit carrier: one `ConstId` whichever path
+    /// interned the value, read back masked to the width, serialised
+    /// little-endian.
+    #[test]
+    fn carrier_boundary_values_intern_once_and_read_back() {
+        use crate::node::ValueType;
+        let cases: [(&str, u128, ValueType); 7] = [
+            ("i63_all_ones_at_i64", (1u128 << 63) - 1, ValueType::int(64)),
+            ("i64_all_ones", u128::from(u64::MAX), ValueType::int(64)),
+            ("bit_64_at_i72", 1u128 << 64, ValueType::int(72)),
+            ("i65_all_ones_at_i72", (1u128 << 65) - 1, ValueType::int(72)),
+            (
+                "i70_mixed_at_i80",
+                (1u128 << 69) | 0xDEAD_BEEF,
+                ValueType::int(80),
+            ),
+            (
+                "i127_all_ones_at_i128",
+                (1u128 << 127) - 1,
+                ValueType::int(128),
+            ),
+            ("bit_127_at_i128", 1u128 << 127, ValueType::int(128)),
+        ];
+        for (label, value, ty) in cases {
+            let mut f = test_function();
+            let scalar = f.intern_int_const(value, ty);
+            let limbed = f.intern_int_const_limbs(&[value as u64, (value >> 64) as u64], ty);
+            assert_eq!(scalar, limbed, "{label}: both paths must share one id");
+            assert_eq!(f.const_value(scalar).fits_u128(), Some(value), "{label}");
+            let mut want = value.to_le_bytes().to_vec();
+            want.resize(ty.byte_size(), 0);
+            assert_eq!(
+                f.const_value(scalar).to_le_bytes(ty.byte_size()),
+                want,
+                "{label}"
+            );
+        }
+    }
+
+    /// Past the carrier there is no scalar reading, and the limbs stand.
+    #[test]
+    fn values_past_the_u128_carrier_keep_their_limbs() {
+        use crate::node::ValueType;
+        let mut f = test_function();
+        // Bit 128 is the first bit no `u128` carries.
+        let id = f.intern_int_const_limbs(&[0, 0, 1, 0], ValueType::int(256));
+        assert_eq!(f.const_value(id).fits_u128(), None);
+        let mut want = vec![0u8; 32];
+        want[16] = 1;
+        assert_eq!(f.const_value(id).to_le_bytes(32), want);
+    }
+
+    /// Bits above the declared width are not part of the value, on either
+    /// path, so an over-wide spelling dedups with the masked one.
+    #[test]
+    fn interning_masks_to_the_declared_width_on_both_paths() {
+        use crate::node::ValueType;
+        let cases: [(&str, ValueType); 4] = [
+            ("i1", ValueType::I1),
+            ("i64", ValueType::int(64)),
+            ("i72", ValueType::int(72)),
+            ("i128", ValueType::int(128)),
+        ];
+        for (label, ty) in cases {
+            let mut f = test_function();
+            let masked = ty.wrap_u128(u128::MAX);
+            let saturated = f.intern_int_const(u128::MAX, ty);
+            let exact = f.intern_int_const(masked, ty);
+            let limbed = f.intern_int_const_limbs(&[u64::MAX; 8], ty);
+            assert_eq!(saturated, exact, "{label}: the mask is applied first");
+            assert_eq!(saturated, limbed, "{label}: the limb path masks too");
+            assert_eq!(f.const_value(saturated).fits_u128(), Some(masked), "{label}");
+        }
+    }
+
     #[test]
     fn to_le_bytes_serialises_little_endian() {
         // Bytes 1..=8 little-endian.
