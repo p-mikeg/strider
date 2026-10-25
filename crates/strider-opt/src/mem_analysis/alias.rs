@@ -76,21 +76,14 @@ pub(super) fn offsets_comparable(
     load_off: i128,
     store_off: i128,
 ) -> bool {
-    let bits = match (load.addr_bits, store.addr_bits) {
-        // A missing width is "not known", not "not reduced": the offsets
-        // cannot be shown to share a modulus, so only `MayAlias` is sound.
-        (None, _) | (_, None) => return false,
-        (Some(load_bits), Some(store_bits)) => {
-            // Two reductions at different widths land in different moduli, so
-            // their difference names no distance at all and only `MayAlias` is
-            // sound. Taking one side's width would compute the bound from the
-            // wrong modulus and read a wrapped range as far away.
-            if load_bits != store_bits {
-                return false;
-            }
-            load_bits
-        }
-    };
+    // Two reductions at different widths land in different moduli, so their
+    // difference names no distance at all and only `MayAlias` is sound. Taking
+    // one side's width would compute the bound from the wrong modulus and read
+    // a wrapped range as far away.
+    if load.addr_bits != store.addr_bits {
+        return false;
+    }
+    let bits = load.addr_bits;
     // Past the i128 carrier `wrap_to_addr_width` cannot reduce, so the offsets
     // are the exact sums and compare in integer order. At exactly 128 it DOES
     // reduce, and `1i128 << 127` would overflow, so there is no bound to test.
@@ -109,8 +102,8 @@ pub(super) struct SizedAddr {
     pub(crate) class: AddrClass,
     pub(crate) size: i128,
     /// Bit width of the address expression, for the modular-comparability
-    /// check in [`offsets_comparable`]. `None` disables it.
-    pub(crate) addr_bits: Option<u32>,
+    /// check in [`offsets_comparable`].
+    pub(crate) addr_bits: u32,
 }
 
 pub(super) fn alias_verdict(
