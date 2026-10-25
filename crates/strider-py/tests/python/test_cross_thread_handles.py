@@ -171,10 +171,13 @@ _METHODS = {
     "arch": lambda lift, fn, vn: lift.arch,
     "build_cfg": lambda lift, fn, vn: lift.build_cfg(0x1000),
     "optimize": lambda lift, fn, vn: fn.optimize(),
-    "_rebuild": lambda lift, fn, vn: lift._rebuild(
-        strider.sleigh.SleighArch.x86_64(), strider.reader.BufferReader(0x1000, _ADD_RET)
-    ),
 }
+# Shipped only under the `test-hooks` feature, and the one method here that
+# takes the handle to replace it rather than to read it.
+if hasattr(strider.lift.Lifter, "_rebuild"):
+    _METHODS["_rebuild"] = lambda lift, fn, vn: lift._rebuild(  # type: ignore[attr-defined]
+        strider.sleigh.SleighArch.x86_64(), strider.reader.BufferReader(0x1000, _ADD_RET)
+    )
 
 
 @pytest.mark.parametrize("method", sorted(_METHODS))

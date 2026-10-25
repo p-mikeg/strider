@@ -49,3 +49,6 @@ workspace = true
 # develop` wants.
 [features]
 default = ["pyo3/extension-module"]
+# Hooks only the pytest suite calls, kept out of the shipped wheel: CI turns
+# them on for `maturin develop`, never for `maturin build`.
+test-hooks = []
