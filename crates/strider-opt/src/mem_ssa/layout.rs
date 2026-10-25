@@ -85,7 +85,6 @@ pub(crate) struct MemLayout {
     /// Lowest position of the run of defs ending at the node, each the memory
     /// input of the next and laid out next to it.
     chain_bottom: Vec<u32>,
-    initial: u32,
 }
 
 impl MemLayout {
@@ -195,9 +194,9 @@ impl MemLayout {
             };
         }
 
+        debug_assert_eq!(pos[graph.initial as usize], 0, "InitialMemory leads");
         Some(Self {
             slot,
-            initial: pos[graph.initial as usize],
             node,
             shape,
             preds,
@@ -267,7 +266,8 @@ impl MemLayout {
             let floor = if enc == NONE { 0 } else { enc + 1 };
             let Some(c) = known.highest(self, function, probe, floor, self.end[x as usize]) else {
                 if enc == NONE {
-                    break self.initial;
+                    // `InitialMemory` leads the order.
+                    break 0;
                 }
                 x = self.outermost_clean_loop(function, enc, probe, &mut known);
                 continue;
