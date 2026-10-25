@@ -290,51 +290,40 @@ impl MemAnalyzer {
         }
     }
 
-    /// The node-based counterpart of the class-based [`alias_verdict`].
+    /// The nearest def of `load`'s location backward from `mem`, read as what
+    /// it is to the load.  Read-only; [`crate::mem_ssa::narrow_load_to`] does
+    /// the rewire.
     ///
-    /// Distinct address spaces never alias, even at the same numeric offset,
-    /// so a cross-space pair is `Disjoint` before any offset is compared.
-    /// [`def_clobbers`](MemWalker::def_clobbers) applies the same rule while
-    /// walking; a caller re-checking one pair has to apply it too.
-    pub(crate) fn verdict(
-        &self,
-        function: &Function,
-        load_node: NodeId,
-        store_node: NodeId,
-    ) -> AliasVerdict {
-        if let (NodeKind::Load(load_space), NodeKind::Store(store_space)) = (
-            function.node_kind(load_node),
-            function.node_kind(store_node),
-        ) && load_space != store_space
-        {
-            return AliasVerdict::Disjoint;
-        }
-        alias_verdict(
-            self.load_sized(function, load_node),
-            self.store_sized(function, store_node),
-            &self.options,
-        )
-    }
-
-    /// Read-only; [`crate::mem_ssa::narrow_load_to`] does the rewire.
-    pub(crate) fn nearest_clobber(
-        &self,
-        function: &Function,
-        load: NodeId,
-        mem: ValueId,
-    ) -> NodeId {
+    /// The verdict is the walk's own: the climb stops at the stores
+    /// [`alias_verdict`] calls anything but `Disjoint`, so re-asking it for
+    /// the def it stopped at is the same question answered twice.  Distinct
+    /// address spaces never alias even at the same numeric offset, which the
+    /// climb applies too, but a start its layout does not cover bounds itself
+    /// and can be a store of any space, so the rule is applied here as well.
+    pub(crate) fn reaching(&self, function: &Function, load: NodeId, mem: ValueId) -> ReachingDef {
         let NodeKind::Load(load_space) = *function.node_kind(load) else {
-            unreachable!("nearest_clobber is only called on Load nodes");
+            unreachable!("reaching is only called on Load nodes");
         };
-        let load = self.load_sized(function, load);
-        self.nearest(
+        let probe = self.load_sized(function, load);
+        let node = self.nearest(
             function,
             function.producer(mem),
-            load,
+            probe,
             load_space,
             &self.options,
             true,
-        )
+        );
+        match *function.node_kind(node) {
+            NodeKind::Store(store_space) if store_space != load_space => {
+                ReachingDef::Store(node, AliasVerdict::Disjoint)
+            }
+            NodeKind::Store(_) => ReachingDef::Store(
+                node,
+                alias_verdict(probe, self.store_sized(function, node), &self.options),
+            ),
+            NodeKind::InitialMemory => ReachingDef::Clean(node),
+            _ => ReachingDef::Blocked(node),
+        }
     }
 
     /// The nearest `Store` covering `[offset, offset + probe_size)` relative to
@@ -408,6 +397,27 @@ impl MemAnalyzer {
             node: clobber,
             store_offset,
         })
+    }
+}
+
+/// The nearest def of a load's location, read as what it is to the load.
+pub(crate) enum ReachingDef {
+    /// A `Store`, with its verdict against the load.  Only `Match` names a
+    /// value the load may be forwarded.
+    Store(NodeId, AliasVerdict),
+    /// `InitialMemory`: no def on the chain reaches the location.
+    Clean(NodeId),
+    /// A `Call`, a `MemPhi` or an opaque def: something writes the location
+    /// and the load cannot read what.
+    Blocked(NodeId),
+}
+
+impl ReachingDef {
+    /// The def itself, which is the memory edge a narrowing rewires onto.
+    pub(crate) fn node(self) -> NodeId {
+        match self {
+            Self::Store(node, _) | Self::Clean(node) | Self::Blocked(node) => node,
+        }
     }
 }
 

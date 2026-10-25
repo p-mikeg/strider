@@ -13,7 +13,9 @@ mod ring;
 mod stamp;
 mod walker;
 
-pub(crate) use analyzer::{MemAnalyzer, MemOptions, MemPurpose, store_value_byte_size};
+pub(crate) use analyzer::{
+    MemAnalyzer, MemOptions, MemPurpose, ReachingDef, store_value_byte_size,
+};
 pub(crate) use arg_window::{ArgStoreScan, SlotReach};
 pub(crate) use decompose::{alignment_masked_operand, decompose};
 pub(crate) use ring::{reduce, ring_overlap, slot_key, wrap_to_addr_width};

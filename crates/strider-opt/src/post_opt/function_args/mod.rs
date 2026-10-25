@@ -11,7 +11,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::error::Result;
-use crate::mem_analysis::{MemAnalyzer, MemExpr, MemOptions, MemPurpose};
+use crate::mem_analysis::{MemAnalyzer, MemExpr, MemOptions, MemPurpose, ReachingDef};
 use crate::mem_ssa::narrow_load_to;
 use crate::pipeline::PostOptimizer;
 
@@ -184,10 +184,10 @@ fn mem_chain_is_dirty(
     let mem_token = edit
         .memory_input_of(load)
         .expect("a Load has a memory input (slot 0)");
-    let clobber = alias_cfg.nearest_clobber(edit.function(), load, mem_token);
-    let sound = narrow_cfg.nearest_clobber(edit.function(), load, mem_token);
+    let reaching = alias_cfg.reaching(edit.function(), load, mem_token);
+    let sound = narrow_cfg.reaching(edit.function(), load, mem_token).node();
     narrow_load_to(edit, load, sound);
-    !matches!(edit.node_kind(clobber), NodeKind::InitialMemory)
+    !matches!(reaching, ReachingDef::Clean(_))
 }
 
 #[cfg(test)]
