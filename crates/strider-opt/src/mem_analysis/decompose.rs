@@ -435,9 +435,10 @@ pub(crate) fn alignment_masked_operand(function: &Function, node: NodeId) -> Opt
 
 /// The heap base a `Call` returns if it is a known pure allocator, else `None`.
 pub(super) fn allocator_return_base(function: &Function, call: NodeId) -> Option<ValueId> {
-    if !matches!(function.node_kind(call), NodeKind::Call { .. }) {
-        return None;
-    }
+    debug_assert!(
+        matches!(function.node_kind(call), NodeKind::Call { .. }),
+        "allocator_return_base on a non-Call"
+    );
     let first_value = function.node_kind(call).output_head_len();
     let ret = *function.node_outputs(call).get(first_value)?;
     is_allocator_return(function, ret, call).then_some(ret)
