@@ -2505,11 +2505,17 @@ fn a_guard_on_enclosing_bits_bounds_the_field_inside() {
     assert_eq!((iv.lo, iv.hi), (0, 1));
 }
 
+/// The range at the `Return` of the value [`deep_phi_chain`] returns.
+fn deep_phi_chain_range(n: usize) -> Interval {
+    let (f, returned, ret) = deep_phi_chain(n);
+    range_at(&f, returned, ret)
+}
+
 /// `x = 0` then `n` sequential `if (c < i) { x = i % 7; }` triangles, then
 /// `Return(x)`:
 /// `PhiCollapse` cannot remove the merge phis, so the returned value is a phi
-/// `n` levels deep.  Returns its range at the `Return`.
-fn deep_phi_chain_range(n: usize) -> Interval {
+/// `n` levels deep.  The returned value and the `Return`.
+fn deep_phi_chain(n: usize) -> (Function, ValueId, NodeId) {
     let var = strider_ir_test_utils::reg_vn(0x1000, 4);
     let cvar = strider_ir_test_utils::reg_vn(0x2000, 4);
     let mut b = RegisterSet::new()
@@ -2551,7 +2557,7 @@ fn deep_phi_chain_range(n: usize) -> Interval {
         .next()
         .expect("a Return node");
     let returned = f.node_inputs(ret)[2];
-    range_at(&f, returned, ret)
+    (f, returned, ret)
 }
 
 /// A phi chain past `MAX_RANGE_DEPTH` widens to a sound answer rather than
@@ -2568,6 +2574,61 @@ fn phi_chain_deeper_than_the_budget_stays_sound() {
         iv.lo == 0 && iv.hi >= 6 && iv.stride == 1,
         "unsound range for a capped chain: {iv:?}"
     );
+}
+
+/// A memo entry that outlives the query that wrote it answers what a fresh
+/// analysis of the same key does.
+///
+/// Every frame above a depth or cycle cut folds the cut's `top` into its own
+/// answer, under a key that does not record the cut; keeping those would hand
+/// the degraded answer to the next query, so which jump tables resolve would
+/// depend on the order the sites were visited. A query that cuts therefore
+/// keeps nothing. The 8-level chain is the control: it cuts nothing, so every
+/// answer stays and the comparison is not vacuous.
+///
+/// The cycle is `a = phi(0, b)`, `b = phi(1, a)` converged, where resolving
+/// either re-enters the other.
+///
+/// Mutations: keep the memo past a cut; stop marking either kind of cut.
+#[test]
+fn a_memo_entry_outliving_its_query_is_not_degraded() {
+    let mut cases: Vec<(String, Function, ValueId, NodeId)> = [8usize, 300]
+        .into_iter()
+        .map(|n| {
+            let (f, returned, ret) = deep_phi_chain(n);
+            (format!("a {n}-level chain"), f, returned, ret)
+        })
+        .collect();
+    // Single-input phis in the body region otherwise answer the swap before
+    // the cycle closes.
+    let (mut cyclic, phi_a, header) = swap_loop();
+    canonicalize(&mut cyclic);
+    cases.push(("a converged swap loop".to_owned(), cyclic, phi_a, header));
+
+    for (case, f, value, region) in &cases {
+        let mut map = RangeMap::new(f).unwrap();
+        map.range_of(*value, *region);
+        let kept: Vec<((ValueId, NodeId), Interval)> = map
+            .memo
+            .iter()
+            .filter_map(|(&key, slot)| match slot {
+                super::MemoSlot::Done(iv) => Some((key, *iv)),
+                super::MemoSlot::InProgress => None,
+            })
+            .collect();
+        for ((value, region), kept) in &kept {
+            assert_eq!(
+                *kept,
+                range_at(f, *value, *region),
+                "{case}: the kept answer for {value:?} at {region:?} is not the fresh one"
+            );
+        }
+        assert_eq!(
+            kept.is_empty(),
+            case != "a 8-level chain",
+            "{case}: a query that cuts nothing keeps its answers, one that cuts keeps none"
+        );
+    }
 }
 
 /// A chain within the budget still resolves exactly: the cap must not cost

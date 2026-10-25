@@ -375,6 +375,10 @@ pub struct RangeMap<'f> {
     field_memo: std::cell::RefCell<SecondaryMap<ValueId, Option<Option<BitField>>>>,
     /// Open `range_of` frames, against [`MAX_RANGE_DEPTH`].
     depth: u32,
+    /// Whether the query in flight took a depth or cycle cut. Its frames fold
+    /// the cut's `top` into answers the key does not record the cut in, so
+    /// the memo is dropped rather than handed to the next query.
+    cut: bool,
     /// Every `If`.
     ifs: Vec<NodeId>,
 }
@@ -422,13 +426,17 @@ impl<'f> RangeMap<'f> {
         // opened it still applies its dominating guards.
         match self.memo.get(&key) {
             Some(MemoSlot::Done(iv)) => return *iv,
-            Some(MemoSlot::InProgress) => return top,
+            Some(MemoSlot::InProgress) => {
+                self.cut = true;
+                return top;
+            }
             None => {}
         }
 
         // Budget exhausted: top, left out of the memo so a shallower query of
         // the same key still resolves it.
         if self.depth >= MAX_RANGE_DEPTH {
+            self.cut = true;
             return top;
         }
         self.memo.insert(key, MemoSlot::InProgress);
@@ -463,6 +471,9 @@ impl<'f> RangeMap<'f> {
 
         self.depth -= 1;
         self.memo.insert(key, MemoSlot::Done(result));
+        if self.depth == 0 && std::mem::take(&mut self.cut) {
+            self.memo.clear();
+        }
         result
     }
 
@@ -1588,6 +1599,7 @@ fn build<'f>(
         fields_by_root,
         field_memo: std::cell::RefCell::new(SecondaryMap::new()),
         depth: 0,
+        cut: false,
         ifs,
     }
 }
