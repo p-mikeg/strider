@@ -390,7 +390,7 @@ fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
 }
 
 /// An armless `MemPhi` joins nothing, so no path under it reaches
-/// `InitialMemory` and the walk has no clean bottom to name.  It must answer
+/// `InitialMemory` and the climb has no clean bottom to name.  It must answer
 /// conservatively instead of panicking.
 #[test]
 fn armless_mem_phi_answers_at_the_chain_start() {
@@ -638,7 +638,7 @@ fn loop_header_phi_back_edge_is_dropped_not_a_disagreement() {
 }
 
 /// A loop-header `MemPhi` feeding back to its own output must not diverge the
-/// walk, with or without a real clobber present.
+/// climb, with or without a real clobber present.
 #[test]
 fn cyclic_loop_header_phi_terminates() {
     // All-clean: cut the cycle and reach InitialMemory.
@@ -663,10 +663,9 @@ fn cyclic_loop_header_phi_terminates() {
 }
 
 /// A loop header `outer` whose arms are an exit edge out of an inner loop's
-/// body `inner_body`, the inner header `inner`, and its own back-edge.
-/// `inner_body`'s memo entry cycled to `inner`, which is closed by the time
-/// `outer` reads it on the exit edge, so it degrades to a clobber even though
-/// `inner`'s entry arm reaches `InitialMemory`.  Returns `(function, outer)`.
+/// body `inner_body`, the inner header `inner`, and its own back-edge.  The
+/// inner loop is closed by the time the exit edge is read, and `inner`'s entry
+/// arm reaches `InitialMemory`.  Returns `(function, outer)`.
 fn loop_exit_from_a_closed_inner_loop() -> (Function, ValueId) {
     let (mut fg, im, _store_mem, phi_token) = base_with_store();
     let inner = mk_mem_phi(&mut fg, phi_token, &[im, im]);
