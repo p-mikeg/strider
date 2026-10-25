@@ -9,10 +9,15 @@ pub use builder::{MatcherBuilder, PatNodeRef, PatValueRef};
 pub(crate) use cast_walk_through::cast_levels;
 pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
+/// The builder seam: the verbs of [`MatcherBuilder`] and the types its
+/// signatures name. A downstream `MatchPat` is lowered through them, so they
+/// stay public even where only this crate calls them today.
 pub use vertex::{
-    BindingWalkFn, InputSlot, KindSpec, NodePredicate, OutputKindSpec, PatNode, PatValue,
-    PostMatchFn, SlotMode, WalkCaptures,
+    BindingWalkFn, KindSpec, NodePredicate, OutputKindSpec, PostMatchFn, WalkCaptures,
 };
+/// The vertex payloads behind a [`Pattern`]'s graph. Not the seam: a pattern is
+/// described through the builder, never by handing it a vertex.
+pub(crate) use vertex::{InputSlot, PatNode, PatValue, SlotMode};
 
 use std::cell::OnceCell;
 use std::mem::Discriminant;

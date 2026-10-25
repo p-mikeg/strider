@@ -9,7 +9,10 @@ pub(crate) mod template_pat;
 
 pub use builder::{TemplateBuilder, TmplNodeRef, TmplValueRef};
 pub use ctx::TemplateCtx;
-pub use graph::{Template, TmplNode, TmplNodeKind, TmplOutput, TmplValue};
+pub use graph::Template;
+/// The vertex payloads behind a [`Template`]'s graph. Not the seam: a template
+/// is described through [`TemplateBuilder`], never by handing it a vertex.
+pub(crate) use graph::{TmplNodeKind, TmplOutput, TmplValue};
 
 // Build-side twins of the match-side value-op factories. They share the same
 // typed structs but carry `TemplatePat` constructor bounds, so the
@@ -52,7 +55,7 @@ pub enum TemplateKind {
 /// The output type a template node declares for its value output. All three
 /// resolve at instantiation time.
 #[derive(Clone, Copy)]
-pub enum TemplateTy {
+pub(crate) enum TemplateTy {
     /// No width of its own: the one the node is evaluated at, which is the
     /// rewrite root's output type unless an operand group pins another. A
     /// shift count takes the shift's width, a constant that does not fit it
