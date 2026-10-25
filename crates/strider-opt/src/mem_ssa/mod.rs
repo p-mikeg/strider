@@ -81,7 +81,7 @@ pub(crate) fn find_nearest_clobber(
 }
 
 /// Repoints a `Load`'s memory input onto `clobber`'s memory output, skipping
-/// the proven-disjoint defs in between.  A non-`Load` handle is left alone.
+/// the proven-disjoint defs in between.
 ///
 /// Sound only for a `Load`: it is a pure consumer with no memory output, so
 /// moving its single incoming memory edge is invisible to every other node.
@@ -94,18 +94,18 @@ pub(crate) fn narrow_load_to(
 ) -> bool {
     let rewire = {
         let function = edit.function();
-        if matches!(function.node_kind(load), NodeKind::Load(_)) {
-            let target_mem = function
-                .memory_output_of(clobber)
-                .expect("a clobber node has a memory output");
-            let mem_use = function
-                .node_input_id_at(load, NodeKind::ACCESS_MEM_SLOT)
-                .expect("a Load has a memory input");
-            let cur_mem = function.node_inputs(load)[NodeKind::ACCESS_MEM_SLOT];
-            (cur_mem != target_mem).then_some((mem_use, target_mem))
-        } else {
-            None
-        }
+        debug_assert!(
+            matches!(function.node_kind(load), NodeKind::Load(_)),
+            "narrow_load_to on a non-Load"
+        );
+        let target_mem = function
+            .memory_output_of(clobber)
+            .expect("a clobber node has a memory output");
+        let mem_use = function
+            .node_input_id_at(load, NodeKind::ACCESS_MEM_SLOT)
+            .expect("a Load has a memory input");
+        let cur_mem = function.node_inputs(load)[NodeKind::ACCESS_MEM_SLOT];
+        (cur_mem != target_mem).then_some((mem_use, target_mem))
     };
     if let Some((mem_use, target_mem)) = rewire {
         edit.update_input(mem_use, target_mem);
