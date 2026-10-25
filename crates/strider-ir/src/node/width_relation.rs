@@ -1,5 +1,5 @@
-//! The one reader of [`NodeKind::operand_width`]: where an input slot's width
-//! comes from, and the equivalence classes that answer folds into.
+//! Where an input slot's width comes from, and the equivalence classes that
+//! answer folds into.
 
 use crate::node::{NodeKind, ValueId};
 use crate::node_signature::{Conversion, OperandWidth};
