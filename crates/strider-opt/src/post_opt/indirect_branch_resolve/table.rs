@@ -171,9 +171,11 @@ fn dispatch_domain(
         }
         (Some(hit), constants) => (hit, constants),
     };
+    // `bounded_index` admits an index only at a type with a mask.
     let mask = function
         .value_type_opt(hit.index)
-        .and_then(ValueType::int_mask_u128)?;
+        .and_then(ValueType::int_mask_u128)
+        .expect("a pinned index carries an int type inside the u128 carrier");
     if let Some(constants) = constants {
         let mut ev = super::eval::Evaluator::new(function, rom);
         let order = super::eval::cone_order_pruned(function, hit.index, source);
