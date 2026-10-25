@@ -29,7 +29,7 @@ pub(crate) enum MemPurpose {
     TableWalk,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) struct MemOptions {
     pub(super) stack_global_disjoint: bool,
     /// Whether a `Call` / `CallOther` on the probed location's memory chain
@@ -97,11 +97,16 @@ fn incoming_area_escapes(function: &Function) -> bool {
 /// reaches a store address or a call's SP must [`Self::forget_answers`].
 pub(crate) struct MemAnalyzer {
     options: MemOptions,
-    /// One [`ArgWindow`] per `Call`, scanned on first use.
+    /// One [`ArgWindow`] per `Call`, scanned on first use.  Keyed by the call
+    /// alone: the window is only ever consulted from inside a walk that honours
+    /// the `Call` relaxations, so the only options that reach it are
+    /// [`Self::options`].
     arg_windows: std::cell::RefCell<FxHashMap<NodeId, ArgWindow>>,
     /// Built on the first query, so a caller that asks none builds none.
     index: std::cell::OnceCell<MemIndex>,
-    answers: std::cell::RefCell<FxHashMap<(SizedAddr, rsleigh::VnSpace), Answers>>,
+    /// Keyed by the options too: a walk under the relaxation-free row reaches
+    /// different defs, so its answers are not the configured row's.
+    answers: std::cell::RefCell<FxHashMap<(SizedAddr, rsleigh::VnSpace, MemOptions), Answers>>,
 }
 
 struct MemIndex {
@@ -173,6 +178,10 @@ impl MemAnalyzer {
         options: &MemOptions,
         memoize: bool,
     ) -> NodeId {
+        debug_assert!(
+            *options == self.options || *options == self.options.without_call_relaxations(),
+            "a query runs under the analyzer's row or that row less the call relaxations"
+        );
         let mut walker = MemWalker {
             analyzer: self,
             options,
@@ -188,7 +197,7 @@ impl MemAnalyzer {
         let mut memo = memoize.then(|| self.answers.borrow_mut());
         let mut fresh = Answers::default();
         let answers = match &mut memo {
-            Some(memo) => memo.entry((load, load_space)).or_default(),
+            Some(memo) => memo.entry((load, load_space, options.clone())).or_default(),
             None => &mut fresh,
         };
         index
