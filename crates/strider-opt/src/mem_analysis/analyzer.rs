@@ -12,7 +12,7 @@ use super::index::StoreIndex;
 use super::ring::addr_bit_width;
 use super::walker::MemWalker;
 use super::{AddrClass, AliasVerdict, MemExpr};
-use crate::mem_ssa::{Answers, ClobberProbe, MemLayout, WalkAnswers};
+use crate::mem_ssa::{Answers, ClobberProbe, MemLayout};
 
 /// What a `MemOptions` is for, which decides the claims it honours.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -99,11 +99,9 @@ pub(crate) struct MemAnalyzer {
     options: MemOptions,
     /// One [`ArgWindow`] per `Call`, scanned on first use.
     arg_windows: std::cell::RefCell<FxHashMap<NodeId, ArgWindow>>,
-    /// `None` walks every query instead.
+    /// Absent for an analyzer that keeps none; nothing builds one that way.
     index: Option<std::cell::OnceCell<MemIndex>>,
     answers: std::cell::RefCell<FxHashMap<(SizedAddr, rsleigh::VnSpace), Answers>>,
-    /// The same, for the queries the index does not answer.
-    walk_answers: std::cell::RefCell<FxHashMap<(SizedAddr, rsleigh::VnSpace), WalkAnswers>>,
 }
 
 struct MemIndex {
@@ -143,24 +141,20 @@ impl MemAnalyzer {
             arg_windows: std::cell::RefCell::default(),
             index: Some(std::cell::OnceCell::new()),
             answers: std::cell::RefCell::default(),
-            walk_answers: std::cell::RefCell::default(),
         }
     }
 
-    /// Answers by walking each query's paths, with no index to build: for a
-    /// caller asking a handful of queries of a graph it does not own.
+    /// For a caller asking a handful of queries of a graph it does not own.
+    /// The index is a `OnceCell`, so a caller that asks none builds none, and
+    /// there is nothing left here that [`Self::new`] does not do.
     pub(crate) fn walking(options: MemOptions) -> Self {
-        Self {
-            index: None,
-            ..Self::new(options)
-        }
+        Self::new(options)
     }
 
     /// Drops the memoised answers, for a rewrite that can change a def's
     /// verdict.
     pub(crate) fn forget_answers(&self) {
         self.answers.borrow_mut().clear();
-        self.walk_answers.borrow_mut().clear();
     }
 
     fn index(&self, function: &Function) -> Option<&MemIndex> {
@@ -193,36 +187,25 @@ impl MemAnalyzer {
             load_space,
             private_frame: std::cell::Cell::new(None),
         };
-        if let Some(index) = self.index(function) {
-            let mut probe = IndexProbe {
-                walker: &mut walker,
-                stores: index.stores.as_ref(),
-            };
-            let mut memo = memoize.then(|| self.answers.borrow_mut());
-            let mut fresh = Answers::default();
-            let answers = match &mut memo {
-                Some(memo) => memo.entry((load, load_space)).or_default(),
-                None => &mut fresh,
-            };
-            if let Some(clobber) = index
-                .layout
-                .nearest_clobber(function, start, &mut probe, answers)
-            {
-                return clobber;
-            }
-        }
-        let mut memo = memoize.then(|| self.walk_answers.borrow_mut());
-        let mut fresh = WalkAnswers::default();
-        let answers = match &mut memo {
-            Some(memo) => memo.entry((load, load_space)).or_default(),
-            None => &mut fresh,
-        };
-        crate::mem_ssa::find_nearest_clobber(
-            function,
-            start,
-            &mut |f, d| walker.def_clobbers(f, d),
-            answers,
-        )
+        self.index(function)
+            .and_then(|index| {
+                let mut probe = IndexProbe {
+                    walker: &mut walker,
+                    stores: index.stores.as_ref(),
+                };
+                let mut memo = memoize.then(|| self.answers.borrow_mut());
+                let mut fresh = Answers::default();
+                let answers = match &mut memo {
+                    Some(memo) => memo.entry((load, load_space)).or_default(),
+                    None => &mut fresh,
+                };
+                index
+                    .layout
+                    .nearest_clobber(function, start, &mut probe, answers)
+            })
+            // A start the layout does not cover reaches `InitialMemory` by no
+            // path, so nothing above it is proven and it bounds itself.
+            .unwrap_or(start)
     }
 
     /// [`ArgWindow::covers`] against the memo, scanning `call`'s window on a
