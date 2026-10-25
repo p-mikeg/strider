@@ -2178,9 +2178,7 @@ mod arg_window_bounds {
         let analyzer = MemAnalyzer::new(super::call_blocking(&mut fg, false));
         let MemExpr {
             base, offset: 8, ..
-        } = analyzer
-            .decompose(&fg, fg.node_inputs(call)[3])
-            .expect("the call's SP is the entry SP plus 8")
+        } = decompose(&fg, fg.node_inputs(call)[3]).expect("the call's SP is the entry SP plus 8")
         else {
             panic!("the call's SP is the entry SP plus 8")
         };

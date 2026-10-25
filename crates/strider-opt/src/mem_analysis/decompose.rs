@@ -332,9 +332,13 @@ fn spine_walk_trailed(
 /// a clobbered register.
 fn is_allocator_return(function: &Function, value: ValueId, call: NodeId) -> bool {
     let first_value = function.node_kind(call).output_head_len();
-    if function.node_outputs(call).get(first_value) != Some(&value) {
-        return false;
-    }
+    function.node_outputs(call).get(first_value) == Some(&value)
+        && call_returns_allocation(function, call)
+}
+
+/// `call` is to a known allocator and emits a return value, so its first value
+/// output is a fresh heap base.
+fn call_returns_allocation(function: &Function, call: NodeId) -> bool {
     let target = function.node_inputs(call)[NodeKind::CALL_TARGET_SLOT];
     let is_alloc = function
         .int_const_u128(target)
@@ -441,5 +445,5 @@ pub(super) fn allocator_return_base(function: &Function, call: NodeId) -> Option
     );
     let first_value = function.node_kind(call).output_head_len();
     let ret = *function.node_outputs(call).get(first_value)?;
-    is_allocator_return(function, ret, call).then_some(ret)
+    call_returns_allocation(function, call).then_some(ret)
 }
