@@ -1600,6 +1600,33 @@ fn classify_table_dispatch_sees_a_store_past_the_wrap_onto_a_slot() {
     );
 }
 
+/// Both entries straddle the wrap and a newer store sits six bytes above the
+/// last of them, disjoint from either.  The slot map answers this from its
+/// per-byte `slot_key` claims, which are modular and therefore exact here.
+///
+/// `alias_verdict` is NOT exact here: `offsets_comparable` refuses any pair
+/// more than half the modulus apart in integer order, so the newer store at a
+/// reduced `-2^31` against a probe at `+2^31 - 6` is `MayAlias` and the
+/// memory climb stops on it.  An evaluator asking the shared memory index
+/// alone would defer this site, so this case is what the slot map buys over
+/// the climb.
+#[test]
+fn a_disjoint_newer_store_across_the_wrap_leaves_both_entries() {
+    assert_eq!(
+        classify(
+            &build_stack_table_across_the_wrap(
+                0x7FFF_FFFA,
+                Some((0x8000_0004, ValueType::int(32)))
+            ),
+            None
+        ),
+        Some(ResolvedTargets::table(vec![
+            0x401180u64.into(),
+            0x401190u64.into(),
+        ])),
+    );
+}
+
 /// A two-entry 32-bit table at `(sp + 0x7FFF_FFF0) + 0x20`, the second hop
 /// carrying the probe past `2^31`, stored through one constant each.  No
 /// `ConstantFold`, which would merge the two hops into one constant.
