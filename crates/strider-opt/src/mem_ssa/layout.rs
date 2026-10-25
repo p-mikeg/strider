@@ -7,9 +7,7 @@
 //! dominator.  A clean region passes the dominator's answer through, since
 //! every arm reaches the same dominator or cycles back to the phi; a dirty one
 //! is the boundary, since some arm then names a def that does not dominate the
-//! merge.  On a reducible graph this is the answer of the path walk in the
-//! parent module, except where that walk re-reads a loop node its first visit
-//! resolved under an ancestor no longer open and answers the node itself.
+//! merge.
 //!
 //! Positions are a topological order in which every natural loop is one
 //! contiguous block opened by its header.  A dominator precedes what it
