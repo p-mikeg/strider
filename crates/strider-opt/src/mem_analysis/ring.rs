@@ -6,13 +6,13 @@
 use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{Function, IRViewer};
 
-/// Bit width of an address expression, `None` when `addr` is not a typed value
-/// edge.
-pub(super) fn addr_bit_width(function: &Function, addr: ValueId) -> Option<u32> {
-    function
+/// Bit width of an address expression.  Panics on a non-value edge, which the
+/// node signature of every address operand already rules out.
+pub(super) fn addr_bit_width(function: &Function, addr: ValueId) -> u32 {
+    let ty = function
         .value_type(addr)
-        .ok()
-        .and_then(|ty| u32::try_from(ty.bit_width()).ok())
+        .expect("an address operand is a value edge");
+    u32::try_from(ty.bit_width()).expect("a ValueType width is a u16")
 }
 
 /// `offset` reduced into `ty`'s signed range: machine address arithmetic is
