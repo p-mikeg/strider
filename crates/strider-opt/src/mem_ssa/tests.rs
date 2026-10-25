@@ -952,6 +952,17 @@ impl ByDefinition {
         Self { preds, idom }
     }
 
+    /// The dominator chain of `start`, nearest first, up to `InitialMemory`.
+    fn dom_chain(&self, start: NodeId) -> Vec<NodeId> {
+        let mut chain = vec![start];
+        let mut x = start;
+        while self.idom[&x] != x {
+            x = self.idom[&x];
+            chain.push(x);
+        }
+        chain
+    }
+
     fn nearest(
         &self,
         fg: &Function,
@@ -1130,8 +1141,11 @@ fn the_climb_matches_its_definition_on_random_graphs() {
 /// the one that answers the definition.  Measured over the same corpus as
 /// [`the_climb_matches_its_definition_on_random_graphs`], with a cold
 /// [`WalkAnswers`] per query, so no carried answer is involved: the divergence
-/// is in the engines, not in the memo.  Both answers are sound; the walk's is
-/// never nearer the start than the climb's definition.
+/// is in the engines, not in the memo.  Both answers are sound, and the walk is
+/// the conservative one: its answer dominates the start and the climb's answer
+/// strictly dominates the walk's, so the walk stops at or before the climb and
+/// never past it.  Asserted below, since the ordering is what lets the walk
+/// stand in as a fallback.
 ///
 /// A caller may therefore not assume the two are interchangeable, and a
 /// change that makes one total may not use the other as an equality oracle.
@@ -1153,6 +1167,7 @@ fn the_path_walk_is_not_the_climb_on_a_loop() {
             continue;
         };
         let acyclic = !allow_loops && !rewired;
+        let definition = ByDefinition::new(&fg, &values);
         for &slot in &slots {
             let mut answers = Answers::default();
             for &v in &values {
@@ -1176,6 +1191,14 @@ fn the_path_walk_is_not_the_climb_on_a_loop() {
                 assert!(
                     !acyclic,
                     "seed {seed}: the engines differ from {start:?} with no loop in the graph"
+                );
+                // Both lie on the start's dominator chain, the walk's nearer.
+                let chain = definition.dom_chain(start);
+                let at = |n| chain.iter().position(|&m| m == n);
+                assert!(
+                    matches!((at(walked), at(climbed)), (Some(w), Some(c)) if w < c),
+                    "seed {seed}: from {start:?} the walk {walked:?} is not strictly nearer \
+                     than the climb {climbed:?} on {chain:?}"
                 );
                 differ += 1;
             }
