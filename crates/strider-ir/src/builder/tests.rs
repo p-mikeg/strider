@@ -786,8 +786,9 @@ fn build_call_other_names_a_ram_output_in_the_text_spelling() -> Result<()> {
     Ok(())
 }
 
-/// Any value fitting `u128` interns as `Bits` whatever the declared width, so
+/// Any value fitting `u64` interns as `Bits` whatever the declared width, so
 /// `build_int_const` and `build_int_const_limbs` reach one interned value.
+/// Past the carrier both reach one `Wide`.
 #[test]
 fn fitting_values_intern_as_bits() -> Result<()> {
     use crate::node::const_value::ConstValue;
@@ -811,15 +812,24 @@ fn fitting_values_intern_as_bits() -> Result<()> {
     assert_eq!(b.function().int_const_u128(small), Some(5u128));
     assert_eq!(b.function().value_type(small)?, ValueType::int(128));
 
-    // Exceeds u64, still fits u128, so still `Bits`.
+    // Exceeds u64, so the limbs carry it.
     let big_val: u128 = 1u128 << 100;
     let big = b.build_int_const(big_val, ValueType::int(128))?;
     let big_node = b.function().producer(big);
     let NodeKind::IntConst(big_id) = *b.function().node_kind(big_node) else {
         panic!("expected IntConst");
     };
-    assert_eq!(b.function().const_value(big_id), &ConstValue::Bits(big_val));
+    assert_eq!(
+        b.function().const_value(big_id),
+        &ConstValue::Wide(vec![0, 1 << 36].into_boxed_slice())
+    );
     assert_eq!(b.function().int_const_u128(big), Some(big_val));
+    let big_limbed = b.build_int_const_limbs(&[0, 1 << 36], ValueType::int(128))?;
+    assert_eq!(
+        b.function().producer(big_limbed),
+        big_node,
+        "the limb path reaches the same node past the carrier"
+    );
 
     // Limbs that fit u128 collapse to `Bits` too, though the differing width
     // keeps this a distinct node.
@@ -2089,7 +2099,8 @@ fn int_const_past_the_u128_carrier_reads_only_as_bytes() -> Result<()> {
     let mut want = vec![0u8; 32];
     want[16] = 1;
     assert_eq!(
-        b.function().int_const_wide_le_bytes(b.function().producer(v)),
+        b.function()
+            .int_const_wide_le_bytes(b.function().producer(v)),
         Some(want)
     );
     Ok(())
@@ -2782,7 +2793,7 @@ fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
     };
     assert_eq!(
         b.function().const_value(id),
-        &ConstValue::Bits(u128::from(u64::MAX)),
+        &ConstValue::Bits(u64::MAX),
         "all 64 bits must survive the width mask, got {:?}",
         b.function().const_value(id)
     );
