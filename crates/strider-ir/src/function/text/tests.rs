@@ -709,3 +709,29 @@ fn a_register_order_unlike_the_data_order_prints_in_the_header() {
     );
     assert_eq!(header(strider_target::Endianness::Big), "endian big");
 }
+
+/// One hex spelling whichever arm carries the value. `const_str` is what the
+/// golden pins, and the 64-bit carrier is where the two arms meet.
+#[test]
+fn const_str_spells_a_value_the_same_on_either_arm() {
+    use crate::node::const_value::ConstValue;
+    let cases: [(ConstValue, &str); 5] = [
+        (ConstValue::Bits(0), "0x0"),
+        (ConstValue::Bits(u64::MAX), "0xffffffffffffffff"),
+        (
+            ConstValue::Wide(vec![u64::MAX, 0].into_boxed_slice()),
+            "0xffffffffffffffff",
+        ),
+        (
+            ConstValue::Wide(vec![0, 1].into_boxed_slice()),
+            "0x10000000000000000",
+        ),
+        (
+            ConstValue::Wide(vec![u64::MAX, u64::MAX, 0, 0].into_boxed_slice()),
+            "0xffffffffffffffffffffffffffffffff",
+        ),
+    ];
+    for (value, want) in cases {
+        assert_eq!(super::const_str(&value), want, "{value:?}");
+    }
+}
