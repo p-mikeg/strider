@@ -540,7 +540,7 @@ pub fn capture_typed<P: TemplatePat>(cap: crate::Capture, inner: P) -> CaptureTy
 }
 
 /// An `IntConst` whose value `f` computes at rewrite time, at the width it is
-/// evaluated at ([`TemplateTy::InheritRoot`]).
+/// evaluated at (`TemplateTy::InheritRoot`).
 pub fn int_const_with_fn<F>(f: F) -> ConstWith
 where
     F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u128> + 'static + Send,
@@ -567,7 +567,7 @@ where
 }
 
 /// A `FloatConst` whose IEEE 754 bit pattern `f` computes at rewrite time, at
-/// the width it is evaluated at ([`TemplateTy::InheritRoot`]). A set bit above
+/// the width it is evaluated at (`TemplateTy::InheritRoot`). A set bit above
 /// that width refuses the rewrite.
 pub fn float_const_with_fn<F>(f: F) -> ConstWith
 where

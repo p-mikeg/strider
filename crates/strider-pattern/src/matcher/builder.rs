@@ -207,7 +207,7 @@ impl MatcherBuilder {
     }
 
     /// Existential: `prod` matches *some* input of the node rather than a
-    /// fixed one; see [`InputSlot::Any`](crate::matcher::InputSlot::Any).
+    /// fixed one; the wiring records `InputSlot::Any` for that operand.
     pub fn input_any(&mut self, node: PatNodeRef, prod: PatValueRef) {
         self.wire(node, crate::matcher::InputSlot::Any, prod);
     }
@@ -289,7 +289,9 @@ impl MatcherBuilder {
         out
     }
 
-    /// See [`PatValue::token_fallback`]. Recurses through an alternation, whose
+    /// Sets the vertex's `token_fallback`, widening an `AnyValue` output to
+    /// also accept a valueless node's memory token. Recurses through an
+    /// alternation, whose
     /// arms are matched against the same edge as the alternation itself.
     pub fn set_token_fallback(&mut self, out: PatValueRef) {
         self.out_of(out).token_fallback = true;

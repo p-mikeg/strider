@@ -15,11 +15,11 @@ use crate::template::{TemplateKind, TemplateTy};
 /// payload-less marker saying only "this leaf is a capture, do not synthesise
 /// it"; the capture id and its value resolution live on the produced
 /// [`TmplValue::ValueCapture`].
-pub struct TmplNode {
-    pub kind: TmplNodeKind,
+pub(crate) struct TmplNode {
+    pub(crate) kind: TmplNodeKind,
     /// Parallel to the generic graph's input order; see `graph_ext` for why
     /// the slot rides on the node payload.
-    pub input_slots: Vec<usize>,
+    pub(crate) input_slots: Vec<usize>,
 }
 
 impl HasInputSlots for TmplNode {
@@ -29,7 +29,7 @@ impl HasInputSlots for TmplNode {
     }
 }
 
-pub enum TmplNodeKind {
+pub(crate) enum TmplNodeKind {
     /// Synthesised as fresh IR from a concrete `NodeKind` or a dynamic `Fn`.
     Build(TemplateKind),
     /// A leaf resolving through its
@@ -39,7 +39,7 @@ pub enum TmplNodeKind {
 }
 
 /// The value side of the build graph.
-pub enum TmplValue {
+pub(crate) enum TmplValue {
     /// A built node's output: slot, kind and type.
     TmplOutput(TmplOutput),
     /// Resolves to `bindings.get_value(c)` at instantiation.
@@ -50,17 +50,17 @@ pub enum TmplValue {
 /// (value / memory / control / phi-token) is what lets a multi-output interior
 /// node, such as a `Store` or `Call` whose memory token a later node consumes,
 /// wire the right slot.
-pub struct TmplOutput {
-    pub slot: usize,
-    pub kind: OutputKindSpec,
+pub(crate) struct TmplOutput {
+    pub(crate) slot: usize,
+    pub(crate) kind: OutputKindSpec,
     /// Resolved at instantiation, and meaningful only for value outputs;
     /// memory / control / phi-token slots ignore it.
-    pub ty: TemplateTy,
+    pub(crate) ty: TemplateTy,
 }
 
 impl TmplOutput {
     /// Inherits the rewrite root's type.
-    pub fn value(slot: usize) -> Self {
+    pub(crate) fn value(slot: usize) -> Self {
         Self {
             slot,
             kind: OutputKindSpec::AnyValue,
@@ -68,7 +68,7 @@ impl TmplOutput {
         }
     }
 
-    pub fn memory(slot: usize) -> Self {
+    pub(crate) fn memory(slot: usize) -> Self {
         Self {
             slot,
             kind: OutputKindSpec::Memory,
