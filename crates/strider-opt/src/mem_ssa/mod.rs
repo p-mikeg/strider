@@ -94,7 +94,9 @@ pub(crate) fn narrow_load_to(
 ) -> bool {
     let rewire = {
         let function = edit.function();
-        debug_assert!(
+        // Checked in release too: a `Store` also has a memory input at this
+        // slot, so falling through would rewire one.
+        assert!(
             matches!(function.node_kind(load), NodeKind::Load(_)),
             "narrow_load_to on a non-Load"
         );

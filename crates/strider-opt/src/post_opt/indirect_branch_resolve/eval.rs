@@ -174,7 +174,9 @@ impl<'a> Evaluator<'a> {
                 // Jump targets are constants on the converged graph.
                 let data_ty = f.value_type_opt(data)?;
                 let raw = f.int_const_u128(data)?;
-                debug_assert!(
+                // Checked in release too: `reshape` slices in the space's
+                // byte order, so falling through would fold a wrong target.
+                assert!(
                     matches!(*f.node_kind(node), NodeKind::Load(rsleigh::VnSpace::RAM)),
                     "eval_load off the RAM arm"
                 );
