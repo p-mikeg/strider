@@ -99,8 +99,8 @@ pub(crate) struct MemAnalyzer {
     options: MemOptions,
     /// One [`ArgWindow`] per `Call`, scanned on first use.
     arg_windows: std::cell::RefCell<FxHashMap<NodeId, ArgWindow>>,
-    /// Absent for an analyzer that keeps none; nothing builds one that way.
-    index: Option<std::cell::OnceCell<MemIndex>>,
+    /// Built on the first query, so a caller that asks none builds none.
+    index: std::cell::OnceCell<MemIndex>,
     answers: std::cell::RefCell<FxHashMap<(SizedAddr, rsleigh::VnSpace), Answers>>,
 }
 
@@ -139,16 +139,9 @@ impl MemAnalyzer {
         Self {
             options,
             arg_windows: std::cell::RefCell::default(),
-            index: Some(std::cell::OnceCell::new()),
+            index: std::cell::OnceCell::new(),
             answers: std::cell::RefCell::default(),
         }
-    }
-
-    /// For a caller asking a handful of queries of a graph it does not own.
-    /// The index is a `OnceCell`, so a caller that asks none builds none, and
-    /// there is nothing left here that [`Self::new`] does not do.
-    pub(crate) fn walking(options: MemOptions) -> Self {
-        Self::new(options)
     }
 
     /// Drops the memoised answers, for a rewrite that can change a def's
@@ -157,8 +150,8 @@ impl MemAnalyzer {
         self.answers.borrow_mut().clear();
     }
 
-    fn index(&self, function: &Function) -> Option<&MemIndex> {
-        Some(self.index.as_ref()?.get_or_init(|| {
+    fn index(&self, function: &Function) -> &MemIndex {
+        self.index.get_or_init(|| {
             let layout = MemLayout::build(function);
             MemIndex {
                 stores: layout
@@ -166,7 +159,7 @@ impl MemAnalyzer {
                     .map(|_| StoreIndex::build(function, &layout)),
                 layout,
             }
-        }))
+        })
     }
 
     /// The nearest clobber of `load` backward from `start`'s memory output,
@@ -187,22 +180,20 @@ impl MemAnalyzer {
             load_space,
             private_frame: std::cell::Cell::new(None),
         };
-        self.index(function)
-            .and_then(|index| {
-                let mut probe = IndexProbe {
-                    walker: &mut walker,
-                    stores: index.stores.as_ref(),
-                };
-                let mut memo = memoize.then(|| self.answers.borrow_mut());
-                let mut fresh = Answers::default();
-                let answers = match &mut memo {
-                    Some(memo) => memo.entry((load, load_space)).or_default(),
-                    None => &mut fresh,
-                };
-                index
-                    .layout
-                    .nearest_clobber(function, start, &mut probe, answers)
-            })
+        let index = self.index(function);
+        let mut probe = IndexProbe {
+            walker: &mut walker,
+            stores: index.stores.as_ref(),
+        };
+        let mut memo = memoize.then(|| self.answers.borrow_mut());
+        let mut fresh = Answers::default();
+        let answers = match &mut memo {
+            Some(memo) => memo.entry((load, load_space)).or_default(),
+            None => &mut fresh,
+        };
+        index
+            .layout
+            .nearest_clobber(function, start, &mut probe, answers)
             // A start the layout does not cover reaches `InitialMemory` by no
             // path, so nothing above it is proven and it bounds itself: at or
             // nearer than any clobber in its own cone.
