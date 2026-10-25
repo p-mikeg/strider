@@ -38,6 +38,9 @@ jobs:
       # item only their tests use would warn in the plain build alone.
       - run: cargo clippy -p strider-opt --lib -- -D warnings
       - run: cargo clippy -p strider-reader --lib -- -D warnings
+      # Only the `maturin develop` steps below compile the `test-hooks` code,
+      # and they would catch a hard break but no lint.
+      - run: cargo clippy -p strider-py --all-targets --features test-hooks -- -D warnings
       - run: cargo test --workspace
       # Release too: a `debug_assert` that fires only in debug, and a test that
       # depends on one, both hide from the debug run alone.
@@ -86,6 +89,8 @@ jobs:
           for p in $(cargo metadata --no-deps --format-version 1 | jq -r '.packages[].name'); do
             cargo check -p "$p" --all-targets
           done
+      # Off by default, so no run above reaches it.
+      - run: cargo check -p strider-py --all-targets --features test-hooks
 
   python:
     runs-on: ubuntu-latest
@@ -114,6 +119,10 @@ jobs:
       # `test-hooks` is off in the wheel the `wheel` job builds; the suite
       # needs it to install a reader after the handle exists.
       - run: uv run maturin develop --features test-hooks
+      # A missing feature would leave the hook absent and its test merely
+      # skipped, which no pytest exit code reports.
+      - name: the build carries the test hooks
+        run: uv run python -c "import strider; assert hasattr(strider.lift.Lifter, '_rebuild')"
       - run: uv run pyright
       - run: uv run pytest
       # `pyright` type-checks the examples, it never runs them. They write only
@@ -147,6 +156,10 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv sync --group dev
       - run: uv run maturin develop --release --features test-hooks
+      # A missing feature would leave the hook absent and its test merely
+      # skipped, which no pytest exit code reports.
+      - name: the build carries the test hooks
+        run: uv run python -c "import strider; assert hasattr(strider.lift.Lifter, '_rebuild')"
       - run: uv run pytest
 
   # `maturin develop` drops the extension into the source tree and builds no
