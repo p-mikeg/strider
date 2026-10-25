@@ -99,8 +99,15 @@ fn incoming_area_escapes(function: &Function) -> bool {
 /// Its index, arg windows and per-location answers are read off the graph on
 /// first use and kept for the analyzer's life, so its owner decides how long
 /// they may outlive the graph state they were read from.  Edits that leave
-/// every memory def and its address in place keep them valid; a rewrite that
-/// reaches a store address or a call's SP must [`Self::forget_answers`].
+/// every memory def and its address in place keep all three valid; a rewrite
+/// that reaches a store address or a call's SP must [`Self::forget_answers`],
+/// which drops the answers ALONE.  The other two survive that rewrite by
+/// construction: the index classifies an address a rewrite can still change
+/// as an `Anchor`, which it offers every location, and the same address
+/// blinds a window scan, so a window read off the older graph covers at least
+/// what one read off the newer graph covers
+/// (`tests::stale_window_is_conservative`).  Covering more only keeps a load
+/// from forwarding across the call.
 pub(crate) struct MemAnalyzer {
     options: MemOptions,
     /// One [`ArgWindow`] per `Call`, scanned on first use.  Keyed by the call
@@ -156,7 +163,8 @@ impl MemAnalyzer {
     }
 
     /// Drops the memoised answers, for a rewrite that can change a def's
-    /// verdict.
+    /// verdict.  The index and the arg windows stay; the type doc says why
+    /// each is still sound after the rewrite that owes this call.
     pub(crate) fn forget_answers(&self) {
         self.answers.borrow_mut().clear();
     }
