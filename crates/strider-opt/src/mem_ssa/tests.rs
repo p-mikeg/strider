@@ -1029,6 +1029,21 @@ fn mem_preds(fg: &Function, n: NodeId) -> Vec<NodeId> {
     }
 }
 
+/// The generated defs and their memory successors by index, the form the
+/// brute-force oracles take.  The fixture's own store, left out of `values`,
+/// is a sink off `InitialMemory` and closes no cycle.
+fn succ_graph(fg: &Function, values: &[ValueId]) -> (Vec<NodeId>, Vec<Vec<u32>>) {
+    let nodes: Vec<NodeId> = values.iter().map(|&v| fg.producer(v)).collect();
+    let mut succs = vec![Vec::new(); nodes.len()];
+    for (i, &n) in nodes.iter().enumerate() {
+        for p in mem_preds(fg, n) {
+            let at = nodes.iter().position(|&m| m == p).expect("a generated def");
+            succs[at].push(i as u32);
+        }
+    }
+    (nodes, succs)
+}
+
 /// One nearest-clobber answer is sound iff no def that clobbers the slot and no
 /// `InitialMemory` but `answer` itself reaches `start` without passing it.
 fn assert_sound(
@@ -1086,6 +1101,55 @@ fn the_walk_is_sound_on_random_irreducible_graphs() {
     assert!(
         irreducible > 20,
         "{irreducible} of 40 graphs had no layout, too few to exercise the walk"
+    );
+}
+
+/// The climb names what its definition names on the graphs that have no
+/// position index, from every def and for every slot, asked through the
+/// [`MemLayout::nearest_clobber`] production calls rather than the slow climb
+/// itself.  [`ByDefinition`]'s dominators are the textbook iteration, which
+/// converges on an irreducible graph too; every equality here rests on that,
+/// so it is checked against the brute-force ones rather than assumed.
+#[test]
+fn the_climb_matches_its_definition_on_random_irreducible_graphs() {
+    use strider_ir_test_utils::graph_oracle;
+    let mut irreducible = 0;
+    for seed in 0..300 {
+        let (mut shape, im) = ShapeGen::new(seed, true);
+        shape.body(im, 0);
+        shape.rewire_every_third_merge();
+        let ShapeGen {
+            fg, slots, values, ..
+        } = shape;
+        let layout = MemLayout::build(&fg);
+        if layout.positions().is_some() {
+            continue;
+        }
+        irreducible += 1;
+        let definition = ByDefinition::new(&fg, &values);
+        let (nodes, succs) = succ_graph(&fg, &values);
+        let oracle = graph_oracle::idoms(&graph_oracle::dom_matrix(&succs, 0), 0);
+        for (i, &n) in nodes.iter().enumerate() {
+            let want = oracle[i].map_or(nodes[0], |d| nodes[d as usize]);
+            assert_eq!(definition.idom[&n], want, "seed {seed}: the idom of {n:?}");
+        }
+        for &slot in &slots {
+            let mut answers = Answers::default();
+            for &v in &values {
+                let start = fg.producer(v);
+                let mut clobbers = store_at(slot);
+                let got = layout
+                    .nearest_clobber(&fg, start, &mut EveryDef(&mut clobbers), &mut answers)
+                    .expect("every generated def is laid out");
+                let want = definition.nearest(&fg, start, &mut store_at(slot));
+                assert_eq!(got, want, "seed {seed}: from {start:?}");
+                assert_sound(&fg, start, got, &mut store_at(slot), seed);
+            }
+        }
+    }
+    assert!(
+        irreducible > 150,
+        "{irreducible} of 300 graphs have no position index, too few to pin the slow climb"
     );
 }
 
@@ -1236,16 +1300,7 @@ fn a_layout_exists_iff_the_memory_graph_is_reducible() {
         if seed % 2 == 0 {
             shape.rewire_every_third_merge();
         }
-        // The fixture's own store, left out here, is a sink off
-        // `InitialMemory` and closes no cycle.
-        let nodes: Vec<NodeId> = shape.values.iter().map(|&v| shape.fg.producer(v)).collect();
-        let mut succs = vec![Vec::new(); nodes.len()];
-        for (i, &n) in nodes.iter().enumerate() {
-            for p in mem_preds(&shape.fg, n) {
-                let at = nodes.iter().position(|&m| m == p).expect("a generated def");
-                succs[at].push(i as u32);
-            }
-        }
+        let (nodes, succs) = succ_graph(&shape.fg, &shape.values);
         let want = graph_oracle::is_reducible(&succs, 0);
         assert_eq!(
             MemLayout::build(&shape.fg).positions().is_some(),
