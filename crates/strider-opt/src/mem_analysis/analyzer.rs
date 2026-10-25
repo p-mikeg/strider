@@ -69,9 +69,15 @@ impl MemOptions {
         }
     }
 
+    /// The relaxation-free row: every claim about stepping a `Call` on the
+    /// chain cleared at once, rather than each reader re-applying the mask.
+    /// The allocator relaxation reads the function's claims rather than a
+    /// field of this struct, so [`Self::call_relaxations`] carries it.
     pub(crate) fn without_call_relaxations(&self) -> Self {
         Self {
             call_relaxations: false,
+            escape_analysis: false,
+            callee_preserves_stack_args: false,
             ..self.clone()
         }
     }
