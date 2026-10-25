@@ -1,6 +1,8 @@
 //! `MemAnalyzer`, the per-function memo the alias queries run through, and
 //! its options.
 
+use std::rc::Rc;
+
 use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
@@ -115,8 +117,10 @@ pub(crate) struct MemAnalyzer {
     /// the `Call` relaxations, so the only options that reach it are
     /// [`Self::options`].
     arg_windows: std::cell::RefCell<FxHashMap<NodeId, ArgWindow>>,
-    /// Built on the first query, so a caller that asks none builds none.
-    index: std::cell::OnceCell<MemIndex>,
+    /// Built on the first query, so a caller that asks none builds none, and
+    /// shared with every [`Self::twin`]: the index is a function of the graph
+    /// alone, not of the options, which enter at [`StoreIndex::candidate`].
+    index: Rc<std::cell::OnceCell<MemIndex>>,
     /// Keyed by the options too: a walk under the relaxation-free row reaches
     /// different defs, so its answers are not the configured row's.
     answers: std::cell::RefCell<FxHashMap<(SizedAddr, rsleigh::VnSpace, MemOptions), Answers>>,
@@ -157,8 +161,20 @@ impl MemAnalyzer {
         Self {
             options,
             arg_windows: std::cell::RefCell::default(),
-            index: std::cell::OnceCell::new(),
+            index: Rc::new(std::cell::OnceCell::new()),
             answers: std::cell::RefCell::default(),
+        }
+    }
+
+    /// A second analyzer over the same graph under `options`, sharing this
+    /// one's index so the pair builds it once.  Whichever queries first builds
+    /// it; the type doc says why an index read off the older graph still
+    /// stands, which is the same argument the shared one rests on.  The
+    /// answers and the arg windows are per options and stay apart.
+    pub(crate) fn twin(&self, options: MemOptions) -> Self {
+        Self {
+            index: Rc::clone(&self.index),
+            ..Self::new(options)
         }
     }
 
@@ -280,6 +296,13 @@ impl MemAnalyzer {
 
     pub(crate) fn options(&self) -> &MemOptions {
         &self.options
+    }
+
+    /// Whether the index is already built, which is how a test sees that a
+    /// [`Self::twin`] inherited one rather than building its own.
+    #[cfg(test)]
+    pub(super) fn index_built(&self) -> bool {
+        self.index.get().is_some()
     }
 
     fn load_sized(&self, function: &Function, load: NodeId) -> SizedAddr {
