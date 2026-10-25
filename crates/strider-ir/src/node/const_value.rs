@@ -7,11 +7,27 @@ use cranelift_entity::entity_impl;
 pub struct ConstId(u32);
 entity_impl!(ConstId, "const");
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub enum ConstValue {
     Bits(u64),
     /// Little-endian limbs, `limbs[0]` low.
     Wide(Box<[u64]>),
+}
+
+/// One spelling per value, never per arm: `Bits` within the `u128` carrier,
+/// the limbs past it, whichever variant holds it. A derived `Debug` would
+/// spell a 96-bit constant two ways, and the raw DOT label renders this, so
+/// moving the carrier would move every graph holding one.
+impl core::fmt::Debug for ConstValue {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Bits(v) => f.debug_tuple("Bits").field(v).finish(),
+            Self::Wide(limbs) => match self.fits_u128() {
+                Some(v) => f.debug_tuple("Bits").field(&v).finish(),
+                None => f.debug_tuple("Wide").field(limbs).finish(),
+            },
+        }
+    }
 }
 
 /// `Bits(u64)` keeps the alignment at 8 and leaves `Box`'s non-null niche to
@@ -233,6 +249,74 @@ mod tests {
                 "{label}"
             );
         }
+    }
+
+    /// `Debug` spells a value, not an arm: limb padding and which variant
+    /// holds it must not show. The raw DOT label renders this, so a derived
+    /// `Debug` would move every rendered graph holding a constant over the
+    /// 64-bit carrier.
+    #[test]
+    fn debug_spells_the_value_not_the_arm() {
+        let cases: [(&str, ConstValue, &str); 7] = [
+            ("zero_bits", ConstValue::Bits(0), "Bits(0)"),
+            (
+                "zero_no_limbs",
+                ConstValue::Wide(vec![].into_boxed_slice()),
+                "Bits(0)",
+            ),
+            (
+                "zero_padded",
+                ConstValue::Wide(vec![0, 0, 0, 0].into_boxed_slice()),
+                "Bits(0)",
+            ),
+            (
+                "five_padded",
+                ConstValue::Wide(vec![5, 0, 0, 0].into_boxed_slice()),
+                "Bits(5)",
+            ),
+            (
+                "bit_64",
+                ConstValue::Wide(vec![0, 1].into_boxed_slice()),
+                "Bits(18446744073709551616)",
+            ),
+            // The exact text the raw DOT label carries for a 96-bit mask.
+            (
+                "i96_all_ones",
+                ConstValue::Wide(vec![u64::MAX, u64::from(u32::MAX)].into_boxed_slice()),
+                "Bits(79228162514264337593543950335)",
+            ),
+            (
+                "past_the_carrier",
+                ConstValue::Wide(vec![0, 0, 1, 0].into_boxed_slice()),
+                "Wide([0, 0, 1, 0])",
+            ),
+        ];
+        for (label, value, want) in cases {
+            assert_eq!(format!("{value:?}"), want, "{label}");
+        }
+    }
+
+    /// Every route to one value renders alike, declared width included.
+    #[test]
+    fn interned_values_render_alike_whatever_route_reached_them() {
+        use crate::node::ValueType;
+        let mut f = test_function();
+        let value: u128 = (1u128 << 69) | 0xDEAD_BEEF;
+        let ids = [
+            f.intern_int_const(value, ValueType::int(128)),
+            f.intern_int_const_limbs(&[0xDEAD_BEEF, 1 << 5], ValueType::int(128)),
+            f.intern_int_const_limbs(&[0xDEAD_BEEF, 1 << 5, 0, 0], ValueType::int(256)),
+            f.intern_int_const_limbs(&[0xDEAD_BEEF, 1 << 5], ValueType::int(80)),
+        ];
+        let debugs: Vec<String> = ids
+            .iter()
+            .map(|&id| format!("{:?}", f.const_value(id)))
+            .collect();
+        assert_eq!(debugs[0], "Bits(590295810362441580271)");
+        assert!(
+            debugs.iter().all(|d| *d == debugs[0]),
+            "one value, one Debug spelling: {debugs:?}"
+        );
     }
 
     #[test]
