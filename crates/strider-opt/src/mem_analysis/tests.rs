@@ -2266,6 +2266,84 @@ mod arg_window_bounds {
     }
 }
 
+/// The outgoing-argument window and `CallStackArgCollect` step the same
+/// argument-slot prefix off the same `StackArgs`, which
+/// [`MemWalker::in_outgoing_arg_area`] states but nothing checked.
+#[cfg(test)]
+mod window_matches_collection {
+    use super::*;
+    use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IRWalker, IntBinaryOp};
+    use strider_ir_test_utils::{sp_frame, stack_args_at};
+
+    /// Two argument pushes and a spill in the slot right above them.  Once
+    /// lowered to memory the spill is indistinguishable from a third argument,
+    /// so BOTH prefixes have to take it: a window ending below the collection
+    /// would let a load forward out of a slot the callee owns.
+    #[test]
+    fn a_spill_above_the_arguments_ends_both_prefixes_alike() -> crate::Result<()> {
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let args = stack_args_at(0, 4).expect("a declared stack-arg layout");
+        let mut b = sp_frame(sp)
+            .stack_args(Some(args))
+            .build_fn_single_region()?;
+        let sp0 = b.read_variable(&sp)?;
+        for k in 0..3u64 {
+            let off = b.build_int_const(k * 4, ValueType::int(32))?;
+            let addr =
+                b.build_int_binary_operation(sp0, off, IntBinaryOp::Add, ValueType::int(32))?;
+            let value = b.build_int_const(0x10 + k, ValueType::int(32))?;
+            b.build_store(addr, value, rsleigh::VnSpace::RAM)?;
+        }
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
+        b.build_call_cc(target, None)?;
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+
+        let mut pipeline = crate::test_support::cf_rp_pipeline();
+        pipeline.add_post_pass(crate::CallStackArgCollect);
+        pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+
+        let call = fg
+            .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
+            .next()
+            .expect("the fixture has one call");
+        let collected = fg.node_inputs(call).len() - NodeKind::Call { cc: None }.input_head_len();
+        assert_eq!(collected, 3, "the spill is collected as one more argument");
+
+        let sp_value = fg.node_inputs(call)[NodeKind::CALL_SP_SLOT];
+        let MemExpr {
+            base,
+            offset: sp_offset,
+            ..
+        } = decompose(&fg, sp_value).expect("the call's SP is the entry SP");
+        let options = MemOptions::for_purpose(MemPurpose::Forward, &fg);
+        let analyzer = MemAnalyzer::new(options.clone());
+        let geometry = ArgWindowGeometry {
+            mem_start: fg.memory_input_of(call).expect("a Call has a memory input"),
+            base,
+            lo: sp_offset + args.base_offset,
+            sp_offset,
+            args,
+        };
+        let slot = |k: i128| sp_offset + args.base_offset + k * args.increment;
+        // One slot past the collection, so the window's own end is visible.
+        let window = scan_arg_window(&fg, &analyzer, &options, &geometry, slot(4));
+        for k in 0..collected as i128 {
+            assert!(
+                window.covers(slot(k), slot(k + 1)),
+                "slot {k} is collected, so the callee owns it"
+            );
+        }
+        assert!(
+            !window.covers(slot(collected as i128), slot(collected as i128 + 1)),
+            "the window ends where the collection stops, not above it"
+        );
+        Ok(())
+    }
+}
+
 /// The outgoing-argument window is computed from inside a memory-SSA walk, so
 /// it must not start a walk that can re-enter it.
 #[cfg(test)]
