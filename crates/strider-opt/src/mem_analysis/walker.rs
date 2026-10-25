@@ -100,6 +100,9 @@ impl MemWalker<'_> {
     /// callee nor an opaque pointer can name it.  Assumes valid input (a
     /// fabricated pointer numerically equal to the slot is excluded).
     ///
+    /// A fact, not a claim, so it carries no relaxation mask of its own: each
+    /// caller pairs it with the claim that buys the step.
+    ///
     /// Says nothing about the outgoing-argument window, which the ABI hands to
     /// the callee: pair it with [`Self::in_outgoing_arg_area`] at a `Call`.
     fn frame_is_private(&self, function: &Function) -> bool {
@@ -108,8 +111,7 @@ impl MemWalker<'_> {
         }
         let verdict = match self.load.class {
             AddrClass::StackRooted { base, offset } => {
-                self.options.call_relaxations
-                    && in_own_frame(function, base, offset, self.load.size)
+                in_own_frame(function, base, offset, self.load.size)
                     && !frame_escape::frame_address_escapes_cached(function)
             }
             _ => false,
