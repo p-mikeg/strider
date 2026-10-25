@@ -17,14 +17,36 @@ fn never_alias() -> impl FnMut(&Function, NodeId) -> bool {
     |_function: &Function, _def: NodeId| false
 }
 
-/// Walk from the def that produced `start_mem`.
-fn run(
-    fg: &mut Function,
-    walker: &mut dyn FnMut(&Function, NodeId) -> bool,
+/// Every def a candidate: the climb's answer with no index to lean on.
+struct EveryDef<'a>(&'a mut dyn FnMut(&Function, NodeId) -> bool);
+
+impl ClobberProbe for EveryDef<'_> {
+    fn clobbers(&mut self, function: &Function, def: NodeId) -> bool {
+        (self.0)(function, def)
+    }
+
+    fn candidate(&mut self, _layout: &MemLayout, lo: u32, hi: u32) -> Option<u32> {
+        (lo <= hi).then_some(hi)
+    }
+}
+
+/// The dominator climb from the def that produced `start_mem`, asked the way
+/// `MemAnalyzer::nearest` asks it: a start the layout does not cover bounds
+/// itself.
+fn climb(
+    fg: &Function,
+    clobbers: &mut dyn FnMut(&Function, NodeId) -> bool,
     start_mem: ValueId,
 ) -> NodeId {
+    let layout = MemLayout::build(fg);
+    assert!(
+        layout.positions().is_some(),
+        "a reducible graph is laid out"
+    );
     let start = fg.producer(start_mem);
-    super::find_nearest_clobber(fg, start, walker, &mut WalkAnswers::default())
+    layout
+        .nearest_clobber(fg, start, &mut EveryDef(clobbers), &mut Answers::default())
+        .unwrap_or(start)
 }
 
 fn assert_clean(fg: &Function, r: NodeId) {
@@ -112,15 +134,14 @@ fn linear_chain_with_load(depth: usize) -> (Function, NodeId, ValueId, Vec<Value
     (fg, load, head, store_mems)
 }
 
-/// Walk plus the caller-side `narrow_load_to` rewrite.
+/// The climb plus the caller-side `narrow_load_to` rewrite.
 fn run_load(
     fg: &mut Function,
-    walker: &mut dyn FnMut(&Function, NodeId) -> bool,
+    clobbers: &mut dyn FnMut(&Function, NodeId) -> bool,
     load: NodeId,
 ) -> NodeId {
     let mem = fg.node_inputs(load)[0];
-    let mem_node = fg.producer(mem);
-    let clobber = super::find_nearest_clobber(fg, mem_node, walker, &mut WalkAnswers::default());
+    let clobber = climb(fg, clobbers, mem);
     let mut ctx = crate::EditFunction::new(fg);
     super::narrow_load_to(&mut ctx, load, clobber);
     clobber
@@ -307,19 +328,19 @@ fn narrowing_stops_at_disagreeing_phi_skipping_disjoint_prefix() {
 
 #[test]
 fn initial_memory_with_no_alias_returns_none() {
-    let (mut fg, im_value) = empty_chain();
-    let r = run(&mut fg, &mut never_alias(), im_value);
+    let (fg, im_value) = empty_chain();
+    let r = climb(&fg, &mut never_alias(), im_value);
     assert_clean(&fg, r);
 }
 
 #[test]
 fn linear_chain_finds_nearest_aliasing_store() {
-    let (mut fg, head, store_mems) = linear_store_chain(4);
+    let (fg, head, store_mems) = linear_store_chain(4);
     assert_eq!(store_mems.len(), 4, "four stores in the chain");
     // Second-from-head aliases, so the walk must skip the first store.
     let nearest = store_mems[1];
     let mut walker = alias_set(vec![nearest]);
-    let r = run(&mut fg, &mut walker, head);
+    let r = climb(&fg, &mut walker, head);
     assert_eq!(
         r,
         fg.producer(nearest),
@@ -329,8 +350,8 @@ fn linear_chain_finds_nearest_aliasing_store() {
 
 #[test]
 fn linear_chain_all_clean_returns_none() {
-    let (mut fg, head, _store_mems) = linear_store_chain(5);
-    let r = run(&mut fg, &mut never_alias(), head);
+    let (fg, head, _store_mems) = linear_store_chain(5);
+    let r = climb(&fg, &mut never_alias(), head);
     assert_clean(&fg, r);
 }
 
@@ -373,19 +394,19 @@ fn mem_phi_all_initial(n_arms: usize) -> (Function, ValueId) {
 /// conservatively instead of panicking.
 #[test]
 fn armless_mem_phi_answers_at_the_chain_start() {
-    let (mut fg, phi_value) = mem_phi_all_initial(0);
-    let r = run(&mut fg, &mut never_alias(), phi_value);
+    let (fg, phi_value) = mem_phi_all_initial(0);
+    let r = climb(&fg, &mut never_alias(), phi_value);
     assert_eq!(
         r,
         fg.producer(phi_value),
-        "with nothing proven the walk stops where it started",
+        "with nothing proven the query stops where it started",
     );
 }
 
 #[test]
 fn mem_phi_all_arms_clean_returns_none() {
-    let (mut fg, phi_value) = mem_phi_all_initial(3);
-    let r = run(&mut fg, &mut never_alias(), phi_value);
+    let (fg, phi_value) = mem_phi_all_initial(3);
+    let r = climb(&fg, &mut never_alias(), phi_value);
     assert_clean(&fg, r);
 }
 
@@ -423,7 +444,7 @@ fn mem_phi_disagreeing_arms_returns_phi_boundary() {
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
     let mut walker = alias_set(vec![store_mem]);
-    let r = run(&mut fg, &mut walker, phi_value);
+    let r = climb(&fg, &mut walker, phi_value);
     assert_eq!(
         r,
         fg.producer(phi_value),
@@ -459,7 +480,7 @@ fn mem_phi_agreeing_arms_pass_through_to_shared_store() {
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
     let mut walker = alias_set(vec![store_mem]);
-    let r = run(&mut fg, &mut walker, phi_value);
+    let r = climb(&fg, &mut walker, phi_value);
     assert_eq!(
         r,
         fg.producer(store_mem),
@@ -487,7 +508,7 @@ fn mem_phi_different_clobbers_per_arm_returns_phi_boundary() {
     let phi_value = fg.node_outputs_exact::<1>(phi).unwrap()[0];
 
     let mut walker = alias_set(vec![arm_a, arm_b]);
-    let r = run(&mut fg, &mut walker, phi_value);
+    let r = climb(&fg, &mut walker, phi_value);
     assert_eq!(
         r,
         fg.producer(phi_value),
@@ -535,7 +556,7 @@ fn mem_phi_call_arm_disagrees_returns_phi_boundary() {
     let phi_mem = mk_mem_phi(&mut fg, phi_token, &[call_mem, im]);
 
     let mut walker = alias_set(vec![call_mem]);
-    let r = run(&mut fg, &mut walker, phi_mem);
+    let r = climb(&fg, &mut walker, phi_mem);
     assert_eq!(
         r,
         fg.producer(phi_mem),
@@ -607,8 +628,8 @@ fn loop_header_phi_back_edge_is_dropped_not_a_disagreement() {
 #[test]
 fn cyclic_loop_header_phi_terminates() {
     // All-clean: cut the cycle and reach InitialMemory.
-    let (mut fg, _entry_store_mem, _load, phi_value) = cyclic_loop_chain();
-    let r_clean = run(&mut fg, &mut never_alias(), phi_value);
+    let (fg, _entry_store_mem, _load, phi_value) = cyclic_loop_chain();
+    let r_clean = climb(&fg, &mut never_alias(), phi_value);
     assert_clean(&fg, r_clean);
 
     // One aliasing store below the merge: terminates with a clobber too.
@@ -646,51 +667,8 @@ fn loop_exit_from_a_closed_inner_loop() -> (Function, ValueId) {
     (fg, outer)
 }
 
-/// The degraded arm is a clobber, never a `Cycle` that would let the walk
-/// name the `InitialMemory` it entered.
-#[test]
-fn a_degraded_arm_stops_the_walk_at_the_loop_header() {
-    let (mut fg, outer) = loop_exit_from_a_closed_inner_loop();
-    let r = run(&mut fg, &mut never_alias(), outer);
-    assert_eq!(r, fg.producer(outer), "got {:?}", fg.node_kind(r));
-}
-
-/// Every def a candidate: the climb's answer with no index to lean on.
-struct EveryDef<'a>(&'a mut dyn FnMut(&Function, NodeId) -> bool);
-
-impl ClobberProbe for EveryDef<'_> {
-    fn clobbers(&mut self, function: &Function, def: NodeId) -> bool {
-        (self.0)(function, def)
-    }
-
-    fn candidate(&mut self, _layout: &MemLayout, lo: u32, hi: u32) -> Option<u32> {
-        (lo <= hi).then_some(hi)
-    }
-}
-
-/// The dominator climb from the def that produced `start_mem`.
-fn climb(
-    fg: &Function,
-    clobbers: &mut dyn FnMut(&Function, NodeId) -> bool,
-    start_mem: ValueId,
-) -> NodeId {
-    let layout = MemLayout::build(fg);
-    assert!(
-        layout.positions().is_some(),
-        "a reducible graph is laid out"
-    );
-    layout
-        .nearest_clobber(
-            fg,
-            fg.producer(start_mem),
-            &mut EveryDef(clobbers),
-            &mut Answers::default(),
-        )
-        .expect("the start is laid out")
-}
-
-/// The walk re-reads `inner_body` after the inner loop closed and degrades it
-/// to a clobber; the climb has no such history and finds every path clean.
+/// The climb has no walk history to degrade `inner_body` with: every path out
+/// of the closed inner loop is clean.
 #[test]
 fn the_climb_does_not_degrade_a_closed_inner_loop() {
     let (fg, outer) = loop_exit_from_a_closed_inner_loop();
