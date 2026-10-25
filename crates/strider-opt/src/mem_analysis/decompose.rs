@@ -20,9 +20,8 @@ use super::{MemExpr, MemKind};
 ///
 /// The memo is keyed by `ValueId` alone, so every walk reads the one
 /// allocator set the function holds ([`Function::assumptions`]), which only
-/// grows.  A policy that claims no heap class still sees one here;
-/// [`super::alias::classify_addr`] drops it.  The memo is also the verdict
-/// `strider-pattern`'s region filters read.
+/// grows.  The memo is also the verdict `strider-pattern`'s region filters
+/// read.
 pub(crate) fn decompose(function: &Function, value: ValueId) -> Option<MemExpr> {
     match function.side_tables().memory_class(value) {
         MemDecomp::Stack(_) | MemDecomp::Heap(_) => return resolve_slot(function, value),
