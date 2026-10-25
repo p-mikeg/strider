@@ -18,12 +18,21 @@ pub(super) struct ArgWindow {
     /// non-overlapping.  Whole ABI slots, not store extents: a store narrower
     /// than the slot still hands the callee the rest of it.
     ranges: Vec<(i128, i128)>,
-    /// The slot the prefix could not be shown to end at, from which the callee
-    /// keeps everything above ([`SlotReach::Blinded`]).
-    blind_at: Option<i128>,
-    /// How far the scan looked.  A probe reaching above this is outside what
-    /// the walk decided and needs a wider one.
-    pub(super) known_to: i128,
+    end: WindowEnd,
+}
+
+/// Why the prefix walk stopped, which is what decides a probe above the last
+/// range.
+enum WindowEnd {
+    /// A slot no argument store reaches: the argument list ends below it and
+    /// nothing above it is the callee's.
+    Ends,
+    /// A slot the walk could not see past, from which the callee keeps
+    /// everything above ([`SlotReach::Blinded`]).
+    BlindFrom(i128),
+    /// The requested reach, short of either answer.  A probe above it is
+    /// outside what the walk decided and needs a wider one.
+    ScannedTo(i128),
 }
 
 impl ArgWindow {
@@ -36,7 +45,23 @@ impl ArgWindow {
             .get(self.ranges.partition_point(|&(_, end)| end <= offset))
         {
             Some(&(start, _)) => start < hi,
-            None => self.blind_at.is_some_and(|slot| slot < hi),
+            None => matches!(self.end, WindowEnd::BlindFrom(slot) if slot < hi),
+        }
+    }
+
+    /// Whether the walk looked far enough to answer a probe reaching `hi`.
+    pub(super) fn answers_up_to(&self, hi: i128) -> bool {
+        match self.end {
+            WindowEnd::ScannedTo(to) => hi <= to,
+            WindowEnd::Ends | WindowEnd::BlindFrom(_) => true,
+        }
+    }
+
+    /// How far a short walk looked, `None` when it reached an answer instead.
+    pub(super) fn scanned_to(&self) -> Option<i128> {
+        match self.end {
+            WindowEnd::ScannedTo(to) => Some(to),
+            WindowEnd::Ends | WindowEnd::BlindFrom(_) => None,
         }
     }
 }
@@ -84,8 +109,7 @@ pub(super) fn scan_arg_window(
         if slot_off >= hi {
             return ArgWindow {
                 ranges,
-                blind_at: None,
-                known_to: hi,
+                end: WindowEnd::ScannedTo(hi),
             };
         }
         let store = match scan.reach_at(function, slot_off) {
@@ -107,8 +131,7 @@ pub(super) fn scan_arg_window(
             SlotReach::NotAnArgument => {
                 return ArgWindow {
                     ranges,
-                    blind_at: None,
-                    known_to: i128::MAX,
+                    end: WindowEnd::Ends,
                 };
             }
             // The window cannot be shown to end here, so the callee keeps
@@ -116,8 +139,7 @@ pub(super) fn scan_arg_window(
             SlotReach::Blinded => {
                 return ArgWindow {
                     ranges,
-                    blind_at: Some(slot_off),
-                    known_to: i128::MAX,
+                    end: WindowEnd::BlindFrom(slot_off),
                 };
             }
         };

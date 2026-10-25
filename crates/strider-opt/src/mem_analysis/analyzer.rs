@@ -230,7 +230,7 @@ impl MemAnalyzer {
             .arg_windows
             .borrow()
             .get(&call)
-            .filter(|window| hi <= window.known_to)
+            .filter(|window| window.answers_up_to(hi))
             .map(|window| window.covers(offset, hi));
         if let Some(covered) = cached {
             return covered;
@@ -239,10 +239,16 @@ impl MemAnalyzer {
         // ascending run of probes stops missing on every step: the width
         // scanned above `lo` doubles, so one call rescans O(log range) times
         // instead of once per probe. The growth is measured from `lo` because
-        // `known_to` is an absolute stack offset, normally negative. A window
-        // scanned further is a superset, the same equivalence the
-        // `hi <= known_to` reuse above already relies on.
-        let scan_hi = match self.arg_windows.borrow().get(&call).map(|w| w.known_to) {
+        // the reach is an absolute stack offset, normally negative. A window
+        // scanned further is a superset, the same equivalence the reuse above
+        // already relies on.  Only a short walk is here: one that reached an
+        // answer was reused above.
+        let scan_hi = match self
+            .arg_windows
+            .borrow()
+            .get(&call)
+            .and_then(ArgWindow::scanned_to)
+        {
             Some(prev) if prev > geometry.lo => hi.max(
                 geometry
                     .lo
@@ -253,9 +259,8 @@ impl MemAnalyzer {
         let window = scan_arg_window(function, self, options, geometry, scan_hi);
         let covered = window.covers(offset, hi);
         // The fresh window always reaches at least as far as any it replaces:
-        // the reuse test above consumed every cached entry with
-        // `known_to >= hi`, and this scan's `known_to` is `scan_hi` (`>= hi`)
-        // or `i128::MAX`.
+        // the reuse test above consumed every cached entry that answers `hi`,
+        // and this scan reaches `scan_hi` (`>= hi`) or an answer.
         //
         // Descending probes reuse the first window outright; ascending ones
         // rescan, but against the doubled `scan_hi` above rather than their own
