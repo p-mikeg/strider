@@ -143,12 +143,12 @@ impl Offsets {
 /// Stores rooted at one base, split by address width.
 #[derive(Default)]
 struct Rooted {
-    widths: Keyed<Option<u32>>,
-    offsets: FxHashMap<Option<u32>, Offsets>,
+    widths: Keyed<u32>,
+    offsets: FxHashMap<u32, Offsets>,
 }
 
 impl Rooted {
-    fn push(&mut self, pos: u32, offset: i128, size: i128, bits: Option<u32>) {
+    fn push(&mut self, pos: u32, offset: i128, size: i128, bits: u32) {
         self.widths.push(pos, bits);
         self.offsets
             .entry(bits)
@@ -157,15 +157,12 @@ impl Rooted {
     }
 
     fn highest(&self, probe: &SizedAddr, offset: i128, lo: u32, hi: u32) -> Option<u32> {
-        // Another width, or none at all, is never comparable.
+        // Another width is never comparable.
         let other = self.widths.highest_not(probe.addr_bits, lo, hi);
-        let same = match probe.addr_bits {
-            None => self.widths.highest(lo, hi),
-            Some(bits) => self
-                .offsets
-                .get(&Some(bits))
-                .and_then(|o| o.highest(offset, probe.size, bits, lo, hi)),
-        };
+        let same = self
+            .offsets
+            .get(&probe.addr_bits)
+            .and_then(|o| o.highest(offset, probe.size, probe.addr_bits, lo, hi));
         other.max(same)
     }
 }
