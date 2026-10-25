@@ -32,8 +32,8 @@ use crate::pipeline::OptimizationResult;
 #[derive(Clone, Copy, Default)]
 pub struct LoadForward;
 
-/// One sweep's analyzers, shared by every root for their memory index,
-/// answers and outgoing-argument-window memo.
+/// One sweep's analyzers, shared by every root for the memory index the two
+/// of them share, their answers and their outgoing-argument-window memo.
 ///
 /// The pass only rewires `Load` memory edges and redirects `Load` outputs, so
 /// every memory def keeps its inputs and the index stands.  A store address a
@@ -69,13 +69,14 @@ impl crate::peephole::PeepholePass for LoadForward {
     ) -> Result<crate::peephole::PeepholeRewrite> {
         let cfgs = analyzers.get_or_insert_with(|| {
             let function = edit.function();
+            let alias = MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::Forward, function));
             Analyzers {
-                alias: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::Forward, function)),
                 // `narrow_load_to` rewires for good, and the walks that read
                 // the edge afterwards honour no call relaxation (the jump-table
                 // walk, return-target verification with its claim off), so the
                 // narrowing honours every claim but those.
-                narrow: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::TableWalk, function)),
+                narrow: alias.twin(MemOptions::for_purpose(MemPurpose::TableWalk, function)),
+                alias,
             }
         });
         Ok(crate::peephole::PeepholeRewrite::from_changed(

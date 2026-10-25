@@ -39,7 +39,7 @@ impl PostOptimizer for FunctionArgDetect {
         ));
         // Detection reads `alias_cfg`; only the rewire reads this one (see
         // `mem_chain_is_dirty`).
-        let narrow_cfg = MemAnalyzer::new(MemOptions::for_purpose(
+        let narrow_cfg = alias_cfg.twin(MemOptions::for_purpose(
             MemPurpose::TableWalk,
             edit.function(),
         ));
