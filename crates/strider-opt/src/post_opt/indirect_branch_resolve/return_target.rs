@@ -415,19 +415,7 @@ impl<'f> ReturnTargets<'f> {
 
     /// The stack address the spine of `addr` names.
     fn spine(&self, addr: ValueId) -> Option<StackAddr> {
-        let function = self.function;
-        let MemExpr {
-            base,
-            offset,
-            kind: MemKind::Stack,
-        } = decompose(function, addr)?
-        else {
-            return None;
-        };
-        Some(StackAddr {
-            base: (!function.is_entry_sp(base)).then_some(base),
-            offset,
-        })
+        stack_addr(self.function, decompose(self.function, addr)?)
     }
 
     /// An entry-SP offset `value` may hold along `path`, read off one chain of
@@ -587,10 +575,14 @@ impl<'f> ReturnTargets<'f> {
             .function
             .assumptions()
             .return_slots_survive_untracked_writes;
-        let (written, guessed) = match (self.spine(addr), prove.is_some() && !optimistic) {
+        // One decomposition answers both where the store lands and, when it
+        // lands nowhere on the stack, which region a claim puts it in.
+        let spine = decompose(function, addr);
+        let located = spine.and_then(|e| stack_addr(function, e));
+        let (written, guessed) = match (located, prove.is_some() && !optimistic) {
             (Some(written), _) => (written, false),
             (None, false) => return StoreEffect::Passes,
-            (None, true) if off_stack(function, addr) => return StoreEffect::Passes,
+            (None, true) if off_stack(function, addr, spine) => return StoreEffect::Passes,
             (None, true) => match self.guess(path, addr) {
                 Some(offset) => (StackAddr { base: None, offset }, true),
                 None => return StoreEffect::Clobbers,
@@ -668,13 +660,24 @@ impl<'f> ReturnTargets<'f> {
     }
 }
 
-/// Whether a claim the function holds puts `addr` off the stack: a constant
-/// under `stack_global_disjoint`, or a listed allocator's memory.
-fn off_stack(function: &Function, addr: ValueId) -> bool {
-    if function.int_const_u128(addr).is_some() {
-        return function.assumptions().stack_global_disjoint;
+/// `expr` as a stack address, `None` when it roots anywhere else.
+fn stack_addr(function: &Function, expr: MemExpr) -> Option<StackAddr> {
+    (expr.kind == MemKind::Stack).then(|| StackAddr {
+        base: (!function.is_entry_sp(expr.base)).then_some(expr.base),
+        offset: expr.offset,
+    })
+}
+
+/// Whether a claim the function holds puts `addr`, decomposed to `spine`, off
+/// the stack: a constant under `stack_global_disjoint`, or a listed
+/// allocator's memory.  A constant decomposes to no terminal at all.
+fn off_stack(function: &Function, addr: ValueId, spine: Option<MemExpr>) -> bool {
+    match spine {
+        Some(e) => matches!(e.kind, MemKind::Heap | MemKind::HeapOpaque),
+        None => {
+            function.int_const_u128(addr).is_some() && function.assumptions().stack_global_disjoint
+        }
     }
-    decompose(function, addr).is_some_and(|e| matches!(e.kind, MemKind::Heap | MemKind::HeapOpaque))
 }
 
 /// `value` with every `Xor(_, 1)` of a boolean peeled off, and whether an odd
