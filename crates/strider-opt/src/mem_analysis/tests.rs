@@ -3420,7 +3420,7 @@ mod store_index {
     use super::*;
     use crate::mem_ssa::{MemLayout, Shape};
     use strider_ir::node::ValueType;
-    use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, IntCmpOp};
+    use strider_ir::{FunctionBuilder, IRBuilderExt, IRWalker, IntBinaryOp, IntCmpOp};
     use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, reg_vn, stack_vn_x86 as sp};
 
     use crate::test_support::Rng;
@@ -3652,6 +3652,54 @@ mod store_index {
             }
         }
         assert!(heap_near_top > 0, "no heap probe straddles the top");
+        Ok(())
+    }
+
+    /// A twin inherits its maker's index, and the index is a function of the
+    /// graph alone, so the twin answers what an analyzer with an index of its
+    /// own answers.
+    #[test]
+    fn a_twin_answers_what_its_own_index_would() -> crate::Result<()> {
+        let mut probed = 0usize;
+        for seed in 0..20 {
+            let (fg, addresses) = random_chain(seed)?;
+            let table_walk = MemOptions::for_purpose(MemPurpose::TableWalk, &fg);
+            let alias = MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::CallStackArgs, &fg));
+            let ret = fg
+                .walk_kind(|k| matches!(k, NodeKind::Return))
+                .next()
+                .expect("the chain ends at a Return");
+            let mem_start = fg.node_inputs(ret)[NodeKind::CTRL_MEM_SLOT];
+            let stack_probes: Vec<(ValueId, i128)> = addresses
+                .iter()
+                .filter_map(|&addr| match classify_addr(&fg, addr) {
+                    AddrClass::StackRooted { base, offset } => Some((base, offset)),
+                    _ => None,
+                })
+                .collect();
+            // The maker queries first, so the twin inherits an index built
+            // before it existed.
+            for &(base, offset) in &stack_probes {
+                alias.nearest_sp_clobber(&fg, alias.options(), mem_start, base, offset, 4);
+            }
+            let twin = alias.twin(table_walk.clone());
+            assert!(
+                twin.index_built(),
+                "seed {seed}: the twin built an index its maker already had"
+            );
+            let fresh = MemAnalyzer::new(table_walk.clone());
+            for &(base, offset) in &stack_probes {
+                for size in [1, 4, 8] {
+                    probed += 1;
+                    assert_eq!(
+                        twin.nearest_sp_clobber(&fg, &table_walk, mem_start, base, offset, size),
+                        fresh.nearest_sp_clobber(&fg, &table_walk, mem_start, base, offset, size),
+                        "seed {seed}: the shared index moved the answer at {offset}"
+                    );
+                }
+            }
+        }
+        assert!(probed > 0, "no stack-rooted probe ran");
         Ok(())
     }
 }
