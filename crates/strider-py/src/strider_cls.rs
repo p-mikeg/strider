@@ -627,8 +627,13 @@ impl PyLifter {
         self.rom_obj = None;
     }
 
-    /// INTERNAL, for tests. Rebuild this handle's Sleigh and orchestrator
-    /// state from `arch`/`mem`/`rom`.
+    /// Rebuilds this handle's Sleigh and orchestrator state from
+    /// `arch`/`mem`/`rom`, discarding the engine and the reader it holds.
+    ///
+    /// Only the pytest suite installs a reader after construction, which is
+    /// the one way to close a collectable cycle back onto the handle, so this
+    /// is behind `test-hooks` rather than in the shipped wheel.
+    #[cfg(feature = "test-hooks")]
     #[pyo3(name = "_rebuild", signature = (arch, mem, rom = None))]
     fn rebuild(
         slf: &Bound<'_, Self>,

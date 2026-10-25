@@ -55,10 +55,16 @@ Python (from the workspace root, never from `crates/strider-py`):
 
 ```bash
 uv sync --group dev
-uv run maturin develop
+uv run maturin develop --features test-hooks   # without it, 1 test skips
 uv run pytest
 uv run pyright     # type-checks strider/, its tests and examples; gate is 0 errors
 ```
+
+`test-hooks` is a default-off feature of `strider-py` carrying `_rebuild`,
+which installs a reader after the handle exists: the one way to close a
+collectable cycle back onto it, and nothing a user should reach. CI turns it
+on for both `maturin develop` runs and never for `maturin build`, so it is
+absent from the shipped wheel.
 
 CI also runs every `crates/strider-py/examples/python/*.py` on Python 3.9 and
 3.13, `pytest` against `maturin develop --release`, and checks that a
