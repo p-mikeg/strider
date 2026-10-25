@@ -9,6 +9,38 @@ use super::*;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{Function, IRViewer};
 
+/// The pairwise verdict between two nodes, which production reads off the
+/// climb ([`MemAnalyzer::reaching`]) rather than re-deriving.  Distinct
+/// address spaces never alias even at the same numeric offset.
+#[cfg(test)]
+fn verdict(
+    analyzer: &MemAnalyzer,
+    f: &Function,
+    load_node: NodeId,
+    store_node: NodeId,
+) -> AliasVerdict {
+    if let (NodeKind::Load(load_space), NodeKind::Store(store_space)) =
+        (f.node_kind(load_node), f.node_kind(store_node))
+        && load_space != store_space
+    {
+        return AliasVerdict::Disjoint;
+    }
+    let load_addr = f.load_addr(load_node);
+    let (_, ty) = f
+        .single_value_output(load_node)
+        .expect("Load has 1 typed output per node signature");
+    let load = SizedAddr {
+        class: classify_addr(f, load_addr),
+        size: ty.byte_size() as i128,
+        addr_bits: addr_bit_width(f, load_addr),
+    };
+    alias_verdict(
+        load,
+        analyzer.store_sized(f, store_node),
+        analyzer.options(),
+    )
+}
+
 /// The fixtures below build exactly one `Store`.
 #[cfg(test)]
 fn only_store(f: &Function) -> NodeId {
@@ -695,7 +727,7 @@ mod cfg_tests {
         f.side_tables_mut().set_stack_slot(store_addr, entry_sp, 8);
 
         assert_eq!(
-            cfg.verdict(&f, load, store),
+            verdict(&cfg, &f, load, store),
             AliasVerdict::Match,
             "verdict must classify the store via the side-table SSoT (like def_clobbers), \
              so a non-decomposable store still verifies as an exact match"
@@ -979,7 +1011,7 @@ mod heap_tests {
             .expect("load node");
         let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
         assert_eq!(
-            cfg.verdict(&fg, load, store),
+            verdict(&cfg, &fg, load, store),
             AliasVerdict::Disjoint,
             "two distinct heap allocations never overlap"
         );
@@ -1012,7 +1044,7 @@ mod heap_tests {
             .expect("load");
         let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
         assert_eq!(
-            cfg.verdict(&fg, load, store),
+            verdict(&cfg, &fg, load, store),
             AliasVerdict::Disjoint,
             "a heap object and a stack slot never overlap"
         );
@@ -1040,7 +1072,7 @@ mod heap_tests {
         let load = fg.producer(loaded);
         let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
         assert_eq!(
-            cfg.verdict(&fg, load, store),
+            verdict(&cfg, &fg, load, store),
             AliasVerdict::Disjoint,
             "[p+16) and [p+0) are disjoint ranges in the same allocation"
         );
@@ -1066,7 +1098,7 @@ mod heap_tests {
         let load = fg.producer(loaded);
         let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
         assert_eq!(
-            cfg.verdict(&fg, load, store),
+            verdict(&cfg, &fg, load, store),
             AliasVerdict::MayAlias,
             "an opaque pointer could be this allocation laundered through memory"
         );
@@ -1103,7 +1135,7 @@ mod heap_tests {
         let mem = fg.node_inputs(load)[0];
         let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
         assert_eq!(
-            cfg.nearest_clobber(&fg, load, mem),
+            cfg.reaching(&fg, load, mem).node(),
             store,
             "the allocator call is transparent to the stack slot; the store is the nearest clobber"
         );
@@ -1140,7 +1172,7 @@ mod heap_tests {
         let cfg = MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::TableWalk, &fg));
         assert!(
             matches!(
-                fg.node_kind(cfg.nearest_clobber(&fg, load, mem)),
+                fg.node_kind(cfg.reaching(&fg, load, mem).node()),
                 NodeKind::Call { .. }
             ),
             "the table walk must stop at a listed allocator, not step through it"
@@ -1167,7 +1199,7 @@ mod heap_tests {
         let mem = fg.node_inputs(load)[0];
         let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
         assert_eq!(
-            cfg.nearest_clobber(&fg, load, mem),
+            cfg.reaching(&fg, load, mem).node(),
             call,
             "a load of the fresh allocation stops at the allocator call, not past it"
         );
@@ -1318,7 +1350,7 @@ mod heap_tests {
         let load = fg.producer(reload);
         let mem = fg.node_inputs(load)[0];
         let analyzer = MemAnalyzer::new(super::call_blocking(&mut fg, true));
-        let clobber = analyzer.nearest_clobber(&fg, load, mem);
+        let clobber = analyzer.reaching(&fg, load, mem).node();
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the allocator owns its own argument slot, so the walk must stop on it"
@@ -1390,7 +1422,7 @@ mod heap_tests {
             let load = fg.producer(loaded);
             let mem = fg.node_inputs(load)[0];
             let analyzer = MemAnalyzer::new(super::call_blocking(&mut fg, true));
-            let clobber = analyzer.nearest_clobber(&fg, load, mem);
+            let clobber = analyzer.reaching(&fg, load, mem).node();
             Ok(matches!(fg.node_kind(clobber), NodeKind::Store(_)))
         };
 
@@ -1448,7 +1480,7 @@ mod heap_tests {
             let load = fg.producer(loaded);
             let mem = fg.node_inputs(load)[0];
             let analyzer = MemAnalyzer::new(super::call_blocking(&mut fg, true));
-            let clobber = analyzer.nearest_clobber(&fg, load, mem);
+            let clobber = analyzer.reaching(&fg, load, mem).node();
             Ok(matches!(fg.node_kind(clobber), NodeKind::CallOther { .. }))
         };
 
@@ -1495,7 +1527,7 @@ mod heap_tests {
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
         let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.nearest_clobber(&fg, load, mem);
+        let clobber = analyzer.reaching(&fg, load, mem).node();
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "a slot above the entry SP is the caller's memory, which the \
@@ -1586,7 +1618,7 @@ mod heap_tests {
             .expect("load");
         let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
         assert_eq!(
-            cfg.verdict(&fg, load, store),
+            verdict(&cfg, &fg, load, store),
             AliasVerdict::Disjoint,
             "a store through a phi of allocations cannot reach a stack slot"
         );
@@ -1607,7 +1639,7 @@ mod heap_tests {
         let load = fg.producer(loaded);
         let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
         assert_eq!(
-            cfg.verdict(&fg, load, store),
+            verdict(&cfg, &fg, load, store),
             AliasVerdict::MayAlias,
             "the phi may be exactly the allocation the store wrote"
         );
@@ -2035,7 +2067,7 @@ mod heap_tests {
             [reload, local_reload, from_p, from_global, from_incoming].map(|v| fg.producer(v));
         let (arg_spill, arg_reload) = (store_of(&fa, 11), fa.producer(arg_reload));
         let forwards = |fg: &Function, analyzer: &MemAnalyzer, load: NodeId, spill: NodeId| {
-            analyzer.nearest_clobber(fg, load, fg.node_inputs(load)[0]) == spill
+            analyzer.reaching(fg, load, fg.node_inputs(load)[0]).node() == spill
         };
         let none = AssumptionOptions::none;
         let toggles = [
@@ -2086,10 +2118,10 @@ mod heap_tests {
                 let analyzer = MemAnalyzer::new(MemOptions::for_purpose(purpose, &fg));
                 // An analyzer keeps the index of the first graph it reads.
                 let analyzer_a = MemAnalyzer::new(MemOptions::for_purpose(purpose, &fa));
-                let heap = analyzer.verdict(&fg, from_p, to_q) == AliasVerdict::Disjoint;
-                let global = analyzer.verdict(&fg, from_global, spill) == AliasVerdict::Disjoint;
+                let heap = verdict(&analyzer, &fg, from_p, to_q) == AliasVerdict::Disjoint;
+                let global = verdict(&analyzer, &fg, from_global, spill) == AliasVerdict::Disjoint;
                 let sp_bases =
-                    analyzer.verdict(&fg, from_incoming, to_aligned) == AliasVerdict::Disjoint;
+                    verdict(&analyzer, &fg, from_incoming, to_aligned) == AliasVerdict::Disjoint;
                 let no_call_blocks =
                     purpose == IncomingArgs && a.assume_incoming_args_survive_calls;
                 let escapes = purpose == Forward && a.escape_analysis;
@@ -2278,7 +2310,7 @@ mod arg_window_complexity {
         let mem = fg.node_inputs(load)[0];
         let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
         WALK_STEPS.with(|c| c.set(0));
-        let clobber = analyzer.nearest_clobber(&fg, load, mem);
+        let clobber = analyzer.reaching(&fg, load, mem).node();
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the window scan cannot see past the call before the nearest one, \
@@ -2344,7 +2376,7 @@ mod arg_window_complexity {
         let mem = fg.node_inputs(load)[0];
         let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
         WALK_STEPS.with(|c| c.set(0));
-        let clobber = analyzer.nearest_clobber(&fg, load, mem);
+        let clobber = analyzer.reaching(&fg, load, mem).node();
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the spill sits one slot above the last argument, so the window \
@@ -2484,7 +2516,7 @@ mod arg_window_complexity {
         for value in reloads {
             let load = fg.producer(value);
             let mem = fg.node_inputs(load)[0];
-            let clobber = analyzer.nearest_clobber(&fg, load, mem);
+            let clobber = analyzer.reaching(&fg, load, mem).node();
             assert!(
                 matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
                 "an argument slot is the callee's, so the call keeps it"
@@ -2643,7 +2675,7 @@ mod arg_window_visibility {
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
         let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.nearest_clobber(&fg, load, mem);
+        let clobber = analyzer.reaching(&fg, load, mem).node();
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "sp+4 is g's own argument slot, so g clobbers it; got {:?}",
@@ -2705,7 +2737,7 @@ mod arg_window_visibility {
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
         let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.nearest_clobber(&fg, load, mem);
+        let clobber = analyzer.reaching(&fg, load, mem).node();
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Store(_)),
             "the window ends below the load, so the reload steps through the \
@@ -2767,7 +2799,7 @@ mod arg_window_visibility {
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
         let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.nearest_clobber(&fg, load, mem);
+        let clobber = analyzer.reaching(&fg, load, mem).node();
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the earlier call hides slot 0, so the window cannot be shown to \
@@ -2790,7 +2822,7 @@ mod arg_window_visibility {
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
         let analyzer = MemAnalyzer::new(super::escaping(&mut fg, relaxed));
-        let clobber = analyzer.nearest_clobber(&fg, load, mem);
+        let clobber = analyzer.reaching(&fg, load, mem).node();
         Ok(matches!(fg.node_kind(clobber), NodeKind::Store(_)))
     }
 
@@ -2848,7 +2880,7 @@ mod arg_window_visibility {
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
         let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.nearest_clobber(&fg, load, mem);
+        let clobber = analyzer.reaching(&fg, load, mem).node();
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Store(_)),
             "a private-frame local above the call's SP and below the argument \
@@ -2919,7 +2951,7 @@ mod arg_window_visibility {
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
         let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.nearest_clobber(&fg, load, mem);
+        let clobber = analyzer.reaching(&fg, load, mem).node();
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "sp-8 is the callee's third outgoing argument slot, which the \
@@ -2976,7 +3008,7 @@ mod arg_window_visibility {
         let load = fg.producer(loaded);
         let mem = fg.node_inputs(load)[0];
         let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.nearest_clobber(&fg, load, mem);
+        let clobber = analyzer.reaching(&fg, load, mem).node();
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the upper 4 bytes of argument slot 0 are the callee's, so the \
@@ -3265,7 +3297,7 @@ mod modular_offset_tests {
             .expect("store");
         let analyzer = MemAnalyzer::new(super::call_blocking(&mut fg, false));
         assert_ne!(
-            analyzer.verdict(&fg, load_node, store_node),
+            verdict(&analyzer, &fg, load_node, store_node),
             AliasVerdict::Disjoint,
             "the accesses are two bytes apart mod 2^32 and overlap",
         );
