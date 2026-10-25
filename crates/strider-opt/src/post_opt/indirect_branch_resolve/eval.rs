@@ -58,10 +58,7 @@ impl<'a> Evaluator<'a> {
             slot_maps: FxHashMap::default(),
             // The probe climbs the memory dominator tree, which answers at or
             // nearer than the path walk it replaced.
-            off_segment: MemAnalyzer::walking(MemOptions::for_purpose(
-                MemPurpose::TableWalk,
-                function,
-            )),
+            off_segment: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::TableWalk, function)),
         }
     }
 
