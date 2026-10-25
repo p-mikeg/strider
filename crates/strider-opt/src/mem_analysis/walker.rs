@@ -10,7 +10,7 @@ use super::decompose::allocator_return_base;
 use super::frame::in_own_frame;
 use super::{AddrClass, AliasVerdict, MemExpr, MemKind, frame_escape};
 
-/// The SP-aware [`crate::mem_ssa::find_nearest_clobber`] predicate carrier.
+/// The SP-aware [`crate::mem_ssa::ClobberProbe`] predicate carrier.
 pub(super) struct MemWalker<'a> {
     pub(super) analyzer: &'a MemAnalyzer,
     /// The analyzer's own, or the relaxation-free ones of a window scan.
@@ -35,7 +35,7 @@ thread_local! {
 }
 
 impl MemWalker<'_> {
-    /// The [`crate::mem_ssa::find_nearest_clobber`] predicate: does `def`
+    /// The [`crate::mem_ssa::ClobberProbe::clobbers`] predicate: does `def`
     /// overlap the probed location?
     pub(super) fn def_clobbers(&mut self, function: &Function, def: NodeId) -> bool {
         #[cfg(test)]
