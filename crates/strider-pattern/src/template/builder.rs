@@ -142,8 +142,8 @@ impl TemplateBuilder {
         }
     }
 
-    /// Adds a payload-less [`TmplNodeKind::Capture`] marker producing a
-    /// [`TmplValue::ValueCapture`]. At instantiation it resolves to the LHS
+    /// Adds a payload-less `TmplNodeKind::Capture` marker producing a
+    /// `TmplValue::ValueCapture`. At instantiation it resolves to the LHS
     /// binding for `c`, reused verbatim. Returns only a [`TmplValueRef`], so
     /// an input can never be wired into a capture node.
     pub fn capture(&mut self, c: crate::capture::Capture) -> TmplValueRef {

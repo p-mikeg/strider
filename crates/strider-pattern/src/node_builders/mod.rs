@@ -1,6 +1,6 @@
 //! The IR's memory side-channel (`InitialMemory -> Store -> MemPhi -> Call ->
 //! Load`) is matched like the value and control chains: a memory token is a
-//! real [`PatValue`](crate::matcher::PatValue) carrying
+//! real `PatValue` vertex carrying
 //! [`OutputKindSpec::Memory`](crate::matcher::OutputKindSpec::Memory), so a
 //! memory-side builder's input and produced token are both genuine vertices.
 

@@ -75,9 +75,12 @@ pub struct WalkCaptures {
     pub guaranteed: Vec<crate::capture::Capture>,
 }
 
+// `WalkCaptures` stays public with its fields: it is a parameter of
+// `MatcherBuilder::set_binding_walk`, which the builder seam keeps callable.
+
 /// Where a pattern input sits on its consumer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum InputSlot {
+pub(crate) enum InputSlot {
     /// One IR input slot.
     At(usize),
     /// Any input not taken by a fixed operand (`any_input`). A sub reaches the
@@ -86,36 +89,36 @@ pub enum InputSlot {
     Any,
 }
 
-pub struct PatNode {
-    pub kind: KindSpec,
+pub(crate) struct PatNode {
+    pub(crate) kind: KindSpec,
     /// Binds the matched *node* (`Binding::Node`). Only for value-less roots
     /// (`Return`, `IndirectBranch`, `Switch`, `Unreachable`, `If`) with no
     /// value output vertex to anchor a value capture on. Repeatable: every
     /// listed capture binds that node.
-    pub captures: Vec<crate::capture::Capture>,
+    pub(crate) captures: Vec<crate::capture::Capture>,
     /// Runs before descending into inputs.
-    pub node_predicate: Option<NodePredicate>,
-    pub post_match: Option<PostMatchFn>,
+    pub(crate) node_predicate: Option<NodePredicate>,
+    pub(crate) post_match: Option<PostMatchFn>,
     /// A `when_match` guard sits in `post_match`, so retyping this node's
     /// output to `Control` has to re-run the refusal that guard was admitted
     /// under.
-    pub typed_post_match: bool,
+    pub(crate) typed_post_match: bool,
     /// Runs after `post_match`; may bind.
-    pub binding_walk: Option<BindingWalkFn>,
+    pub(crate) binding_walk: Option<BindingWalkFn>,
     /// Declares what `binding_walk` binds.
-    pub walk_captures: WalkCaptures,
+    pub(crate) walk_captures: WalkCaptures,
     /// Suppresses commutative operand reordering for this node.
-    pub force_ordered: bool,
+    pub(crate) force_ordered: bool,
     /// Marks a `one_of` / `first_of` node: its inputs are independent
     /// alternative sub-patterns tried against the *same* IR node, not operands.
-    pub alternation: bool,
+    pub(crate) alternation: bool,
     /// On an alternation node, `true` cuts to the first arm that matches
     /// (`first_of`); `false` enumerates every matching arm (`one_of`, a union).
-    pub first_match: bool,
+    pub(crate) first_match: bool,
     /// Consumer input slot per input, parallel to the generic graph's input
     /// order. A pattern's inputs are sparse (`call().arg(0, ..)` wires only
     /// raw slot 4), so the original slot is recorded here.
-    pub input_slots: Vec<InputSlot>,
+    pub(crate) input_slots: Vec<InputSlot>,
 }
 
 impl crate::graph_ext::HasInputSlots for PatNode {
@@ -126,12 +129,12 @@ impl crate::graph_ext::HasInputSlots for PatNode {
 }
 
 impl PatNode {
-    pub fn exact(k: NodeKind) -> Self {
+    pub(crate) fn exact(k: NodeKind) -> Self {
         Self::from_kind(KindSpec::Exact(k))
     }
 
     /// No constraints beyond the kind spec.
-    pub fn from_kind(kind: KindSpec) -> Self {
+    pub(crate) fn from_kind(kind: KindSpec) -> Self {
         Self {
             kind,
             captures: Vec::new(),
@@ -148,6 +151,8 @@ impl PatNode {
     }
 }
 
+/// Public for the `PhiToken` arm alone: nothing builds such a vertex yet, and
+/// narrowing this would make the variant dead rather than reserved.
 pub enum OutputKindSpec {
     /// Value, control, memory, or phi-token: the unconstrained wildcard behind
     /// `anything()` / `var()`. A `width` constraint can still narrow it to a value
@@ -162,7 +167,7 @@ pub enum OutputKindSpec {
 
 /// How a value vertex reads its `slot`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SlotMode {
+pub(crate) enum SlotMode {
     /// An anchor position only: as an anchor (a root's sole vertex, or an
     /// operand's producer) it takes the output being matched, whatever its
     /// slot; as a sibling it sits at `slot`.
@@ -173,27 +178,27 @@ pub enum SlotMode {
     Enumerated,
 }
 
-pub struct PatValue {
-    pub slot: usize,
+pub(crate) struct PatValue {
+    pub(crate) slot: usize,
     /// What `slot` means. Sibling `Enumerated` vertices on one node are NOT
     /// injective, unlike an existential input: each enumerates every output
     /// independently, so two of them can settle on the same one.
-    pub slot_mode: SlotMode,
-    pub kind: OutputKindSpec,
-    pub width: Option<u32>,
+    pub(crate) slot_mode: SlotMode,
+    pub(crate) kind: OutputKindSpec,
+    pub(crate) width: Option<u32>,
     /// Where value captures live: `int_add(var(x), ..)` binds `x` here.
     /// Repeatable: `var(x).capture(y)` binds both to the matched value.
-    pub captures: Vec<crate::capture::Capture>,
+    pub(crate) captures: Vec<crate::capture::Capture>,
     /// Widens an `AnyValue` vertex to also accept the memory token of a node
     /// that produces no value output. Set only on an alternation arm at the
     /// root, where nothing consumes the edge.
-    pub token_fallback: bool,
+    pub(crate) token_fallback: bool,
     /// A crate-minted capture pinning ONE vertex consumed at several pattern
     /// slots to a single IR value. Structural sharing alone does not do it:
     /// each slot is matched on its own, so `float_eq(x, x)` would otherwise
     /// accept two different operands. Never a caller's capture, and filtered
     /// out of a `Match`.
-    pub identity: Option<crate::capture::Capture>,
+    pub(crate) identity: Option<crate::capture::Capture>,
 }
 
 impl PatValue {
@@ -212,16 +217,16 @@ impl PatValue {
     }
 
     /// No type or width constraint.
-    pub fn value(slot: usize) -> Self {
+    pub(crate) fn value(slot: usize) -> Self {
         Self::of_kind(slot, OutputKindSpec::AnyValue)
     }
 
-    pub fn control(slot: usize) -> Self {
+    pub(crate) fn control(slot: usize) -> Self {
         Self::of_kind(slot, OutputKindSpec::Control)
     }
 
     /// The IR's memory side channel.
-    pub fn memory(slot: usize) -> Self {
+    pub(crate) fn memory(slot: usize) -> Self {
         Self::of_kind(slot, OutputKindSpec::Memory)
     }
 }
