@@ -90,11 +90,10 @@ pub(crate) struct MemLayout {
 
 impl MemLayout {
     /// The layout of every memory def reachable from `InitialMemory`, or
-    /// `None` when the graph is outside what the climb answers: no unique
-    /// `InitialMemory`, a def fed from outside that reach, or an irreducible
-    /// loop.
+    /// `None` when the memory graph holds an irreducible loop, which the climb
+    /// does not answer.
     pub(crate) fn build(function: &Function) -> Option<Self> {
-        let graph = Discovered::collect(function)?;
+        let graph = Discovered::collect(function);
         let n = graph.node.len();
         let dfs = DepthFirst::from_root(&graph.succs);
         let idom_dfs = graph_algorithms::dominance::immediate_dominators(&dfs.parent, |w| {
@@ -626,15 +625,16 @@ struct Discovered {
 }
 
 impl Discovered {
-    fn collect(function: &Function) -> Option<Self> {
+    fn collect(function: &Function) -> Self {
         let graph = function.graph();
         let mut initials = graph
             .all_node_ids()
             .filter(|&n| matches!(function.node_kind(n), NodeKind::InitialMemory));
-        let initial = initials.next()?;
-        if initials.next().is_some() {
-            return None;
-        }
+        let initial = initials.next().expect("a function has an InitialMemory");
+        debug_assert!(
+            initials.next().is_none(),
+            "InitialMemory is cacheable, so a function holds one"
+        );
         let mut index: SecondaryMap<NodeId, u32> = SecondaryMap::with_default(NONE);
         let mut node = vec![initial];
         index[initial] = 0;
@@ -668,21 +668,21 @@ impl Discovered {
             let mut ps = SmallVec::new();
             for input in inputs {
                 let u = index[function.producer(input)];
-                if u == NONE {
-                    return None;
-                }
+                // Discovery is forward from `InitialMemory`, so a def it
+                // reached has every memory input in reach too.
+                debug_assert_ne!(u, NONE, "a reached def is fed from the reach");
                 ps.push(u);
                 succs[u as usize].push(v as u32);
             }
             preds.push(ps);
         }
-        Some(Self {
+        Self {
             node,
             shape,
             preds,
             succs,
             initial: 0,
-        })
+        }
     }
 }
 
