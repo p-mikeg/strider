@@ -28,8 +28,9 @@ const NONE: u32 = u32::MAX;
 
 #[cfg(test)]
 thread_local! {
-    /// Climb iterations, region-walk visits and candidate asks, the unit the
-    /// scaling tests count beside the def verdicts.
+    /// Climb iterations, dominator and loop skip hops, region-walk visits and
+    /// candidate asks, the unit the scaling tests count beside the def
+    /// verdicts.
     pub(crate) static CLIMB_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
@@ -329,6 +330,8 @@ impl MemLayout {
                 .is_none()
         };
         loop {
+            #[cfg(test)]
+            step();
             let j = self.loop_jump[h as usize];
             if j != NONE && clean(j, probe) {
                 h = j;
@@ -347,6 +350,8 @@ impl MemLayout {
     fn topmost_dominator_above(&self, x: u32, c: u32) -> u32 {
         let mut a = x;
         loop {
+            #[cfg(test)]
+            step();
             let j = self.dom_jump[a as usize];
             if j != a && j > c {
                 a = j;
