@@ -85,8 +85,8 @@ impl crate::peephole::PeepholePass for LoadForward {
 }
 
 /// Two nearest-clobber queries per load, each a climb of the memory dominator
-/// tree over the analyzers' index, or a path walk where the memory graph is
-/// irreducible and has none.  `narrow_load_to` moves the load's edge onto the
+/// tree over the analyzers' index, one dominator at a time where the memory
+/// graph is irreducible and the index carries no position order.  `narrow_load_to` moves the load's edge onto the
 /// structural clobber, which later sweeps start from.
 fn try_forward_load(
     edit: &mut crate::EditFunction<'_>,
