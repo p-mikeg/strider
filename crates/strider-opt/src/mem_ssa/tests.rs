@@ -1073,7 +1073,7 @@ fn assert_sound(
     }
 }
 
-/// Every walk answer is sound over graphs no [`MemLayout`] covers, from every
+/// Every walk answer is sound over graphs with no position index, from every
 /// def and for every slot, with one [`WalkAnswers`] carried across the queries
 /// the way a `LoadForward` sweep asks them.
 #[test]
@@ -1100,7 +1100,7 @@ fn the_walk_is_sound_on_random_irreducible_graphs() {
     }
     assert!(
         irreducible > 20,
-        "{irreducible} of 40 graphs had no layout, too few to exercise the walk"
+        "{irreducible} of 40 graphs are irreducible, too few to exercise the walk"
     );
 }
 
