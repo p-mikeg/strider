@@ -121,7 +121,7 @@ impl ClobberProbe for IndexProbe<'_, '_> {
         self.walker.def_clobbers(function, def)
     }
 
-    fn candidate(&mut self, _layout: &MemLayout, lo: u32, hi: u32) -> Option<u32> {
+    fn candidate(&mut self, lo: u32, hi: u32) -> Option<u32> {
         self.stores
             .expect("only a positioned layout asks for a candidate")
             .candidate(
@@ -273,11 +273,6 @@ impl MemAnalyzer {
             size: store_value_byte_size(function, function.store_data(store)),
             addr_bits: addr_bit_width(function, function.store_addr(store)),
         }
-    }
-
-    /// See the free [`decompose`].
-    pub(crate) fn decompose(&self, function: &Function, value: ValueId) -> Option<MemExpr> {
-        decompose(function, value)
     }
 
     /// The node-based counterpart of the class-based [`alias_verdict`].

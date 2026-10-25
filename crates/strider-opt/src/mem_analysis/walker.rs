@@ -6,7 +6,7 @@ use strider_ir::{Function, IRViewer};
 use super::alias::{SizedAddr, alias_verdict};
 use super::analyzer::{MemAnalyzer, MemOptions};
 use super::arg_window::ArgWindowGeometry;
-use super::decompose::allocator_return_base;
+use super::decompose::{allocator_return_base, decompose};
 use super::frame::in_own_frame;
 use super::{AddrClass, AliasVerdict, MemExpr, MemKind, frame_escape};
 
@@ -178,7 +178,7 @@ impl MemWalker<'_> {
             base: call_base,
             offset: call_sp_off,
             kind: MemKind::Stack,
-        }) = self.analyzer.decompose(function, sp_value)
+        }) = decompose(function, sp_value)
         else {
             // The call's SP is unknown, so the window cannot be placed and any
             // slot might be in it.  A non-stack SP is not a coordinate system

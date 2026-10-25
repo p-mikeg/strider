@@ -25,7 +25,7 @@ impl ClobberProbe for EveryDef<'_> {
         (self.0)(function, def)
     }
 
-    fn candidate(&mut self, _layout: &MemLayout, lo: u32, hi: u32) -> Option<u32> {
+    fn candidate(&mut self, lo: u32, hi: u32) -> Option<u32> {
         (lo <= hi).then_some(hi)
     }
 }
