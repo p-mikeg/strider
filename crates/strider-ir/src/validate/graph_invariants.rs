@@ -556,7 +556,10 @@ pub(super) fn check_function_invariants_consts(
         };
         // Canonical masking: every bit above the declared width is zero.
         let too_wide = match value {
-            crate::node::const_value::ConstValue::Bits(v) => ty.wrap_u128(*v) != *v,
+            crate::node::const_value::ConstValue::Bits(v) => {
+                let v = u128::from(*v);
+                ty.wrap_u128(v) != v
+            }
             crate::node::const_value::ConstValue::Wide(limbs) => {
                 let bits = ty.bit_width();
                 limbs.iter().enumerate().any(|(i, &l)| {
