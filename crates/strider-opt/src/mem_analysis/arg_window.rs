@@ -103,9 +103,7 @@ pub(super) fn scan_arg_window(
     let mut ranges = Vec::new();
     let mut cursor = 0usize;
     loop {
-        let slot_off = geometry
-            .sp_offset
-            .saturating_add(geometry.args.offset_of(cursor));
+        let slot_off = geometry.args.slot_offset(geometry.sp_offset, cursor);
         if slot_off >= hi {
             return ArgWindow {
                 ranges,
@@ -149,9 +147,7 @@ pub(super) fn scan_arg_window(
         // and a range stopping at the store width would answer `false` for a
         // probe there.
         cursor += geometry.args.slots_spanned(store.size(function));
-        let slot_end = geometry
-            .sp_offset
-            .saturating_add(geometry.args.offset_of(cursor));
+        let slot_end = geometry.args.slot_offset(geometry.sp_offset, cursor);
         ranges.push((slot_off, slot_end));
     }
 }

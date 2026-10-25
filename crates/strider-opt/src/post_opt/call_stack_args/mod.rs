@@ -46,10 +46,7 @@ fn collect_stack_args(
         return Vec::new();
     };
 
-    // A probe past the `i128` carrier names no slot.
-    let Some(first_off) = call_sp_off.checked_add(stack_args.offset_of(0)) else {
-        return Vec::new();
-    };
+    let first_off = stack_args.slot_offset(call_sp_off, 0);
     // The arity is unknown, so the window is `[first_off, inf)`. No store on
     // the same base is disjoint from it, so the scan anchors each one, a push
     // below the window included, and no frame is private to it: a cost in
@@ -65,10 +62,17 @@ fn collect_stack_args(
     );
     let mut args = Vec::new();
     let mut cursor = 0usize;
+    let mut previous = None;
     loop {
-        let Some(slot_off) = call_sp_off.checked_add(stack_args.offset_of(cursor)) else {
+        // The same stepper the window walks, so the two prefixes agree.  The
+        // window is bounded by the probe's reach; this series is open above,
+        // so a slot offset that stops advancing (a saturated step past the
+        // carrier) is what ends it.
+        let slot_off = stack_args.slot_offset(call_sp_off, cursor);
+        if previous == Some(slot_off) {
             break;
-        };
+        }
+        previous = Some(slot_off);
         // A slot reached by anything but a whole store of its own ends the
         // prefix: a covering store anchored earlier means the slot was never
         // written as a slot, a def the scan cannot see through leaves nothing
