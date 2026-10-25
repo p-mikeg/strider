@@ -363,8 +363,7 @@ impl MemAnalyzer {
             class: AddrClass::StackRooted { base, offset },
             size: probe_size,
             // `offset` came from `decompose`, so it is already reduced at
-            // the base's width. Passing `None` would make
-            // `offsets_comparable` reject every pair.
+            // the base's width.
             addr_bits: addr_bit_width(function, base),
         };
         // Stack memory lives in RAM, so a same-address store in another space
