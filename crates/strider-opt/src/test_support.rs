@@ -304,8 +304,8 @@ pub(crate) mod memory_shapes {
 
     /// `n` stores over four slots, each followed by a read of a slot never
     /// written, behind a two-entry loop.  The loop is irreducible, so the
-    /// memory graph has no [`crate::mem_ssa::MemLayout`] and every query falls
-    /// back to the path walk.
+    /// memory graph has no position index and every query takes the slow
+    /// climb.
     pub(crate) fn irreducible_store_chain(n: usize) -> crate::Result<strider_ir::Function> {
         const SLOTS: usize = 4;
         shape(|b| {

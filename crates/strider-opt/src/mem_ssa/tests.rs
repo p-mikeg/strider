@@ -674,7 +674,11 @@ fn climb(
     clobbers: &mut dyn FnMut(&Function, NodeId) -> bool,
     start_mem: ValueId,
 ) -> NodeId {
-    let layout = MemLayout::build(fg).expect("a reducible graph is laid out");
+    let layout = MemLayout::build(fg);
+    assert!(
+        layout.positions().is_some(),
+        "a reducible graph is laid out"
+    );
     layout
         .nearest_clobber(
             fg,
@@ -737,7 +741,7 @@ fn an_irreducible_loop_is_not_laid_out() {
     let right = mk_mem_phi(&mut fg, phi_token, &[right_in, left]);
     let use_id = fg.node_input_id_at(fg.producer(left), 2).unwrap();
     fg.graph_mut().update_input(use_id, right);
-    assert!(MemLayout::build(&fg).is_none());
+    assert!(MemLayout::build(&fg).positions().is_none());
 }
 
 /// Random structured memory graphs: sequences of stores, merges of two or
@@ -1067,7 +1071,7 @@ fn the_walk_is_sound_on_random_irreducible_graphs() {
         let ShapeGen {
             fg, slots, values, ..
         } = shape;
-        if MemLayout::build(&fg).is_none() {
+        if MemLayout::build(&fg).positions().is_none() {
             irreducible += 1;
         }
         for &slot in &slots {
@@ -1104,10 +1108,11 @@ fn the_climb_matches_its_definition_on_random_graphs() {
         } = shape;
         // A rewired merge can enter a loop away from its header, which the
         // climb declines; the walk covers those in its own test.
-        let Some(layout) = MemLayout::build(&fg) else {
+        let layout = MemLayout::build(&fg);
+        if layout.positions().is_none() {
             assert!(rewired, "seed {seed}: a structured graph is reducible");
             continue;
-        };
+        }
         laid_out += 1;
         rewired_laid_out += u32::from(rewired);
         let definition = ByDefinition::new(&fg, &values);
@@ -1163,9 +1168,10 @@ fn the_path_walk_is_not_the_climb_on_a_loop() {
         let ShapeGen {
             fg, slots, values, ..
         } = shape;
-        let Some(layout) = MemLayout::build(&fg) else {
+        let layout = MemLayout::build(&fg);
+        if layout.positions().is_none() {
             continue;
-        };
+        }
         let acyclic = !allow_loops && !rewired;
         let definition = ByDefinition::new(&fg, &values);
         for &slot in &slots {
@@ -1241,7 +1247,11 @@ fn a_layout_exists_iff_the_memory_graph_is_reducible() {
             }
         }
         let want = graph_oracle::is_reducible(&succs, 0);
-        assert_eq!(MemLayout::build(&shape.fg).is_some(), want, "seed {seed}");
+        assert_eq!(
+            MemLayout::build(&shape.fg).positions().is_some(),
+            want,
+            "seed {seed}"
+        );
         let cyclic = (0..nodes.len() as u32).any(|v| graph_oracle::reaches(&succs, v, v));
         match (want, seed % 2 == 0) {
             (false, _) => irreducible += 1,
