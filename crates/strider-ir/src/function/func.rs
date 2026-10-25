@@ -157,8 +157,13 @@ impl Function {
         ty: crate::node::ValueType,
     ) -> crate::node::const_value::ConstId {
         let masked = ty.wrap_u128(value);
-        self.const_interner
-            .intern(crate::node::const_value::ConstValue::Bits(masked))
+        match u64::try_from(masked) {
+            Ok(v) => self
+                .const_interner
+                .intern(crate::node::const_value::ConstValue::Bits(v)),
+            // Past the carrier the limb path holds the canonical spelling.
+            Err(_) => self.intern_int_const_limbs(&[masked as u64, (masked >> 64) as u64], ty),
+        }
     }
 
     /// Interns a constant given as little-endian `limbs`.
@@ -183,11 +188,14 @@ impl Function {
             let spare = limb_count * 64 - ty.bit_width();
             *last &= u64::MAX >> spare;
         }
-        let cv = crate::node::const_value::ConstValue::Wide(trimmed.into_boxed_slice());
-        match cv.fits_u128() {
-            Some(v) => self.intern_int_const(v, ty),
-            None => self.const_interner.intern(cv),
-        }
+        // Canonical: a value fitting the carrier is `Bits`, so the scalar and
+        // the limb path reach one id for it.
+        let cv = if trimmed.iter().skip(1).all(|&l| l == 0) {
+            crate::node::const_value::ConstValue::Bits(trimmed.first().copied().unwrap_or(0))
+        } else {
+            crate::node::const_value::ConstValue::Wide(trimmed.into_boxed_slice())
+        };
+        self.const_interner.intern(cv)
     }
 
     /// Panics on an OUT-OF-RANGE id. An id minted by another function's
