@@ -556,6 +556,21 @@ impl StackArgs {
             .saturating_add((n as i128).saturating_mul(self.increment))
     }
 
+    /// Byte offset of the `n`-th stack argument measured from `sp_offset`,
+    /// the call's SP in the probing coordinate system.  The one stepper the
+    /// outgoing-argument window and `CallStackArgCollect` share, so the two
+    /// prefixes cannot drift.
+    ///
+    /// Saturating like [`Self::offset_of`]: stopping short of a slot the ABI
+    /// declares would narrow the window, and a window narrower than the
+    /// region the callee owns is the unsound direction.  A caller stepping an
+    /// unbounded series therefore stops on its own when the offset stops
+    /// advancing.
+    #[must_use]
+    pub fn slot_offset(&self, sp_offset: i128, n: usize) -> i128 {
+        sp_offset.saturating_add(self.offset_of(n))
+    }
+
     /// The slot containing the *start byte* of an access at `offset`:
     /// `floor((offset - base_offset) / increment)`, or `None` below
     /// `base_offset`.
