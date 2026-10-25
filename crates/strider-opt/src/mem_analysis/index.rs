@@ -158,6 +158,11 @@ impl Rooted {
             .push(pos, offset, size);
     }
 
+    /// The highest store rooted here in `lo..=hi`, whatever its offset.
+    fn any(&self, lo: u32, hi: u32) -> Option<u32> {
+        self.widths.highest(lo, hi)
+    }
+
     fn highest(&self, probe: &SizedAddr, offset: i128, lo: u32, hi: u32) -> Option<u32> {
         // Another width is never comparable.
         let other = self.widths.highest_not(probe.addr_bits, lo, hi);
@@ -176,7 +181,6 @@ struct SpaceStores {
     heap_opaque: Vec<u32>,
     heap_any: Vec<u32>,
     stack_any: Keyed<ValueId>,
-    constant_any: Vec<u32>,
     stack: FxHashMap<ValueId, Rooted>,
     heap: FxHashMap<ValueId, Rooted>,
     constant: Rooted,
@@ -231,7 +235,6 @@ impl StoreIndex {
                                 .push(pos, offset, size, bits);
                         }
                         AddrClass::Constant { addr } => {
-                            s.constant_any.push(pos);
                             s.constant.push(pos, addr, size, bits);
                         }
                     }
@@ -276,7 +279,7 @@ impl StoreIndex {
                     b = b.max(s.stack_any.highest_not(base, lo, hi));
                 }
                 if !options.stack_global_disjoint {
-                    b = b.max(highest_in(&s.constant_any, lo, hi));
+                    b = b.max(s.constant.any(lo, hi));
                 }
                 b.max(highest_in(&s.anchor, lo, hi))
             }
