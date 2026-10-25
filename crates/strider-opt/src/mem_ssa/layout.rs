@@ -733,7 +733,6 @@ impl Known {
     }
 }
 
-/// The memory defs reachable from `InitialMemory`, in discovery order.
 /// Whether any memory def strictly above `node` clobbers the probed
 /// location.  Vacuous for a node the layout covers, whose cone roots in
 /// `InitialMemory`.
@@ -770,6 +769,7 @@ fn cone_clobbers(function: &Function, node: NodeId, probe: &mut dyn ClobberProbe
     false
 }
 
+/// The memory defs reachable from `InitialMemory`, in discovery order.
 struct Discovered {
     node: Vec<NodeId>,
     shape: Vec<Shape>,
