@@ -166,15 +166,19 @@ impl<'a> Evaluator<'a> {
         match self.get(f.load_addr(node))? {
             Abs::Const(_) => self.eval_const_node(value),
             Abs::SpRel { base, offset } => {
-                let [mem, _addr] = f.node_inputs_exact::<2>(node).ok()?;
+                let [mem, _addr] = f
+                    .node_inputs_exact::<2>(node)
+                    .expect("a Load carries its memory and its address");
                 let load_size = load_ty.byte_size() as i128;
                 let data = self.reaching_store_data(mem, base, offset, load_size)?;
                 // Jump targets are constants on the converged graph.
                 let data_ty = f.value_type_opt(data)?;
                 let raw = f.int_const_u128(data)?;
-                let NodeKind::Load(space) = *f.node_kind(node) else {
-                    return None;
-                };
+                debug_assert!(
+                    matches!(*f.node_kind(node), NodeKind::Load(rsleigh::VnSpace::RAM)),
+                    "eval_load off the RAM arm"
+                );
+                let space = rsleigh::VnSpace::RAM;
                 Some(Abs::Const(self.reshape(raw, data_ty, load_ty, space)?))
             }
         }
