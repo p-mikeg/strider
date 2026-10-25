@@ -9,18 +9,21 @@ entity_impl!(ConstId, "const");
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConstValue {
-    Bits(u128),
+    Bits(u64),
     /// Little-endian limbs, `limbs[0]` low.
     Wide(Box<[u64]>),
 }
 
-const _: () = assert!(size_of::<ConstValue>() == 32);
+/// `Bits(u64)` keeps the alignment at 8 and leaves `Box`'s non-null niche to
+/// carry the tag, so the enum is exactly its widest payload. A `u128` payload
+/// costs 32: alignment 16, and no niche to hide the tag in.
+const _: () = assert!(size_of::<ConstValue>() == 16);
 
 impl ConstValue {
     /// `Wide` fits only when every limb above the low two is zero.
     pub fn fits_u128(&self) -> Option<u128> {
         match self {
-            Self::Bits(v) => Some(*v),
+            Self::Bits(v) => Some(u128::from(*v)),
             Self::Wide(limbs) => {
                 if limbs.iter().skip(2).all(|&l| l == 0) {
                     let lo = u128::from(*limbs.first().unwrap_or(&0));
@@ -70,9 +73,9 @@ mod tests {
         assert_eq!(*f.const_value(id), ConstValue::Bits(0));
     }
 
-    /// No unmasked `Bits` may slip in via the limb path.
+    /// No unmasked value may slip in via the limb path.
     #[test]
-    fn intern_int_const_limbs_masks_fits_u128_to_width() {
+    fn intern_int_const_limbs_masks_to_width() {
         use crate::node::ValueType;
         let mut f = test_function();
         // Bit 69 is inside I80's width, bit 84 is above it; only 69 survives.
@@ -84,13 +87,13 @@ mod tests {
             limbed, scalar,
             "limb path must mask to width like the scalar path"
         );
-        match f.const_value(limbed) {
-            ConstValue::Bits(v) => {
-                assert_eq!(*v, ValueType::int(80).wrap_u128(value));
-                assert_eq!(ValueType::int(80).wrap_u128(*v), *v, "no bits above width");
-            }
-            other => panic!("expected Bits, got {other:?}"),
-        }
+        let masked = ValueType::int(80).wrap_u128(value);
+        assert_eq!(f.const_value(limbed).fits_u128(), Some(masked));
+        assert_eq!(
+            f.const_value(limbed),
+            &ConstValue::Wide(vec![0, 1 << 5].into_boxed_slice()),
+            "past the carrier the limbs carry the masked value"
+        );
     }
 
     #[test]
@@ -224,14 +227,18 @@ mod tests {
             let limbed = f.intern_int_const_limbs(&[u64::MAX; 8], ty);
             assert_eq!(saturated, exact, "{label}: the mask is applied first");
             assert_eq!(saturated, limbed, "{label}: the limb path masks too");
-            assert_eq!(f.const_value(saturated).fits_u128(), Some(masked), "{label}");
+            assert_eq!(
+                f.const_value(saturated).fits_u128(),
+                Some(masked),
+                "{label}"
+            );
         }
     }
 
     #[test]
     fn to_le_bytes_serialises_little_endian() {
         // Bytes 1..=8 little-endian.
-        let low: u128 = 0x0807_0605_0403_0201;
+        let low: u64 = 0x0807_0605_0403_0201;
         // I80 width: low 8 bytes then zero pad.
         assert_eq!(
             ConstValue::Bits(low).to_le_bytes(10),
@@ -243,7 +250,7 @@ mod tests {
             vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0]
         );
         // I256 width.
-        let wide = ConstValue::Wide(vec![low as u64, 0, 0, 0].into_boxed_slice());
+        let wide = ConstValue::Wide(vec![low, 0, 0, 0].into_boxed_slice());
         let mut expected: Vec<u8> = (1u8..=8).collect();
         expected.extend(std::iter::repeat_n(0u8, 24));
         assert_eq!(wide.to_le_bytes(32), expected);
