@@ -17,9 +17,14 @@
 //! lies above `a` and at most at the end of the outermost loop holding `x` but
 //! not `a`.  A position range with no clobber in it passes every dominator it
 //! covers at once.
+//!
+//! An irreducible memory graph has no such order, so it is laid out in
+//! discovery order with no [`Positions`] and climbed the slow way: one
+//! dominator per iteration, each merge's region walked whole.  Same answer,
+//! same memo, no range to lean on.
 
 use cranelift_entity::SecondaryMap;
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
@@ -72,6 +77,13 @@ pub(crate) struct MemLayout {
     preds: Vec<SmallVec<[u32; 2]>>,
     /// `InitialMemory` is its own immediate dominator.
     idom: Vec<u32>,
+    fast: Option<Positions>,
+}
+
+/// What the index numbers mean when it is a position order: a range of them
+/// is a set of defs the climb can pass at once.  Absent on an irreducible
+/// memory graph, where the index is discovery order.
+pub(crate) struct Positions {
     /// Skip pointer up the dominator tree, `O(log depth)` hops to any
     /// ancestor.
     dom_jump: Vec<u32>,
@@ -88,10 +100,10 @@ pub(crate) struct MemLayout {
 }
 
 impl MemLayout {
-    /// The layout of every memory def reachable from `InitialMemory`, or
-    /// `None` when the memory graph holds an irreducible loop, which the climb
-    /// does not answer.
-    pub(crate) fn build(function: &Function) -> Option<Self> {
+    /// The layout of every memory def reachable from `InitialMemory`.  An
+    /// irreducible memory graph has no position order, so it is laid out in
+    /// discovery order with no [`Positions`].
+    pub(crate) fn build(function: &Function) -> Self {
         let graph = Discovered::collect(function);
         let n = graph.node.len();
         let dfs = DepthFirst::from_root(&graph.succs);
@@ -104,29 +116,33 @@ impl MemLayout {
         let dom_order = graph_algorithms::dominance::DomIntervals::new(&idom_dfs);
         // A retreating edge whose target does not dominate its source enters a
         // loop somewhere other than its header.
-        for (v, preds) in graph.preds.iter().enumerate() {
-            for &u in preds {
+        let reducible = !graph.preds.iter().enumerate().any(|(v, preds)| {
+            preds.iter().any(|&u| {
                 let (dv, du) = (dfs.num[v], dfs.num[u as usize]);
-                if dfs.is_ancestor(dv, du) && !dom_order.dominates(dv, du) {
-                    return None;
-                }
-            }
-        }
-        let loops = LoopForest::new(&graph.preds, &dfs);
-        let (order, block_end) = loops.nested_order(&graph.preds, &dfs, graph.initial)?;
+                dfs.is_ancestor(dv, du) && !dom_order.dominates(dv, du)
+            })
+        });
+        let nested = reducible
+            .then(|| {
+                let loops = LoopForest::new(&graph.preds, &dfs);
+                let (order, block_end) = loops.nested_order(&graph.preds, &dfs, graph.initial)?;
+                Some((loops, order, block_end))
+            })
+            .flatten();
+        let (loops, order, block_end) = match nested {
+            Some((loops, order, block_end)) => (Some(loops), order, block_end),
+            None => (None, (0..n as u32).collect(), Vec::new()),
+        };
 
         let mut pos = vec![NONE; n];
         for (p, &v) in order.iter().enumerate() {
             pos[v as usize] = p as u32;
         }
-        let at = |v: u32| if v == NONE { NONE } else { pos[v as usize] };
         let mut slot = SecondaryMap::with_default(NONE);
         let mut node = Vec::with_capacity(n);
         let mut shape = Vec::with_capacity(n);
         let mut preds: Vec<SmallVec<[u32; 2]>> = Vec::with_capacity(n);
         let mut idom = Vec::with_capacity(n);
-        let mut encl = Vec::with_capacity(n);
-        let mut end = Vec::with_capacity(n);
         for (p, &v) in order.iter().enumerate() {
             let v = v as usize;
             slot[graph.node[v]] = p as u32;
@@ -134,79 +150,103 @@ impl MemLayout {
             shape.push(graph.shape[v]);
             preds.push(graph.preds[v].iter().map(|&u| pos[u as usize]).collect());
             idom.push(pos[dfs.vertex[idom_dfs[dfs.num[v] as usize] as usize] as usize]);
-            encl.push(at(loops.parent[v]));
-            end.push(if loops.is_header[v] {
-                block_end[v]
-            } else {
-                p as u32
-            });
         }
+        debug_assert_eq!(pos[graph.initial as usize], 0, "InitialMemory leads");
 
-        // Parents before children: preorder reaches a dominator first, and an
-        // enclosing header too.
-        let mut dom_depth = vec![0u32; n];
-        let mut dom_jump = vec![NONE; n];
-        let mut loop_depth = vec![0u32; n];
-        let mut loop_jump = vec![NONE; n];
-        for &v in &dfs.vertex {
-            let x = pos[v as usize] as usize;
-            let parent = idom[x] as usize;
-            if parent == x {
-                dom_jump[x] = x as u32;
-            } else {
-                dom_depth[x] = dom_depth[parent] + 1;
-                dom_jump[x] = skip(&dom_depth, &dom_jump, parent as u32);
-            }
-            if loops.is_header[v as usize] {
-                let parent = encl[x];
-                if parent == NONE {
-                    loop_depth[x] = 1;
-                    loop_jump[x] = NONE;
+        let fast = loops.map(|loops| {
+            let at = |v: u32| if v == NONE { NONE } else { pos[v as usize] };
+            let mut encl = Vec::with_capacity(n);
+            let mut end = Vec::with_capacity(n);
+            for (p, &v) in order.iter().enumerate() {
+                let v = v as usize;
+                encl.push(at(loops.parent[v]));
+                end.push(if loops.is_header[v] {
+                    block_end[v]
                 } else {
-                    loop_depth[x] = loop_depth[parent as usize] + 1;
-                    let j = loop_jump[parent as usize];
-                    let jj = if j == NONE {
-                        NONE
+                    p as u32
+                });
+            }
+
+            // Parents before children: preorder reaches a dominator first, and
+            // an enclosing header too.
+            let mut dom_depth = vec![0u32; n];
+            let mut dom_jump = vec![NONE; n];
+            let mut loop_depth = vec![0u32; n];
+            let mut loop_jump = vec![NONE; n];
+            for &v in &dfs.vertex {
+                let x = pos[v as usize] as usize;
+                let parent = idom[x] as usize;
+                if parent == x {
+                    dom_jump[x] = x as u32;
+                } else {
+                    dom_depth[x] = dom_depth[parent] + 1;
+                    dom_jump[x] = skip(&dom_depth, &dom_jump, parent as u32);
+                }
+                if loops.is_header[v as usize] {
+                    let parent = encl[x];
+                    if parent == NONE {
+                        loop_depth[x] = 1;
+                        loop_jump[x] = NONE;
                     } else {
-                        loop_jump[j as usize]
-                    };
-                    let depth = |h: u32| if h == NONE { 0 } else { loop_depth[h as usize] };
-                    loop_jump[x] = if depth(parent) - depth(j) == depth(j) - depth(jj) && j != NONE
-                    {
-                        jj
-                    } else {
-                        parent
-                    };
+                        loop_depth[x] = loop_depth[parent as usize] + 1;
+                        let j = loop_jump[parent as usize];
+                        let jj = if j == NONE {
+                            NONE
+                        } else {
+                            loop_jump[j as usize]
+                        };
+                        let depth = |h: u32| if h == NONE { 0 } else { loop_depth[h as usize] };
+                        loop_jump[x] =
+                            if depth(parent) - depth(j) == depth(j) - depth(jj) && j != NONE {
+                                jj
+                            } else {
+                                parent
+                            };
+                    }
                 }
             }
-        }
 
-        let mut chain_bottom = vec![NONE; n];
-        for p in 0..n {
-            let linked = p > 0
-                && shape[p] == Shape::Def
-                && shape[p - 1] == Shape::Def
-                && preds[p].as_slice() == [p as u32 - 1];
-            chain_bottom[p] = if linked {
-                chain_bottom[p - 1]
-            } else {
-                p as u32
-            };
-        }
+            let mut chain_bottom = vec![NONE; n];
+            for p in 0..n {
+                let linked = p > 0
+                    && shape[p] == Shape::Def
+                    && shape[p - 1] == Shape::Def
+                    && preds[p].as_slice() == [p as u32 - 1];
+                chain_bottom[p] = if linked {
+                    chain_bottom[p - 1]
+                } else {
+                    p as u32
+                };
+            }
 
-        debug_assert_eq!(pos[graph.initial as usize], 0, "InitialMemory leads");
-        Some(Self {
+            Positions {
+                dom_jump,
+                encl,
+                loop_jump,
+                end,
+                chain_bottom,
+            }
+        });
+        Self {
             slot,
             node,
             shape,
             preds,
             idom,
-            dom_jump,
-            encl,
-            loop_jump,
-            end,
-            chain_bottom,
-        })
+            fast,
+        }
+    }
+
+    /// The position index, absent on an irreducible memory graph.
+    pub(crate) fn positions(&self) -> Option<&Positions> {
+        self.fast.as_ref()
+    }
+
+    /// The position index the fast climb reads.
+    fn pos(&self) -> &Positions {
+        self.fast
+            .as_ref()
+            .expect("the fast climb runs on a positioned layout")
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -236,11 +276,82 @@ impl MemLayout {
         answers: &mut Answers,
     ) -> Option<NodeId> {
         let start = self.position(start)?;
-        Some(self.node_at(self.climb(function, start, probe, answers)))
+        let answer = match self.fast {
+            Some(_) => self.climb(function, start, probe, answers),
+            None => self.climb_slow(function, start, probe, answers),
+        };
+        Some(self.node_at(answer))
+    }
+
+    /// The definition, one dominator per iteration: no position order, so
+    /// nothing is passed in a range and each merge's region is walked whole.
+    /// The answers and their memo are the fast climb's.
+    fn climb_slow(
+        &self,
+        function: &Function,
+        start: u32,
+        probe: &mut dyn ClobberProbe,
+        answers: &mut Answers,
+    ) -> u32 {
+        let mut path: SmallVec<[u32; 8]> = SmallVec::new();
+        let mut x = start;
+        let answer = loop {
+            #[cfg(test)]
+            step();
+            if let Some(&a) = answers.nearest.get(&x) {
+                break a;
+            }
+            path.push(x);
+            let stop = match self.shape[x as usize] {
+                Shape::Initial => true,
+                Shape::Phi => self.region_dirty_slow(function, x, probe, answers),
+                Shape::Def => probe.clobbers(function, self.node[x as usize]),
+            };
+            if stop {
+                break x;
+            }
+            x = self.idom[x as usize];
+        };
+        for p in path {
+            answers.nearest.insert(p, answer);
+        }
+        answer
+    }
+
+    /// Whether merge `phi`'s region holds a clobber, over the defs that reach
+    /// it without passing its immediate dominator.
+    fn region_dirty_slow(
+        &self,
+        function: &Function,
+        phi: u32,
+        probe: &mut dyn ClobberProbe,
+        answers: &mut Answers,
+    ) -> bool {
+        if let Some(&d) = answers.dirty.get(&phi) {
+            return d;
+        }
+        let stop = self.idom[phi as usize];
+        let mut work = vec![phi];
+        let mut seen = FxHashSet::default();
+        let mut dirty = false;
+        while let Some(y) = work.pop() {
+            for &p in &self.preds[y as usize] {
+                #[cfg(test)]
+                step();
+                if p == stop || p == phi || !seen.insert(p) {
+                    continue;
+                }
+                work.push(p);
+                dirty |= self.shape[p as usize] == Shape::Def
+                    && probe.clobbers(function, self.node[p as usize]);
+            }
+        }
+        answers.dirty.insert(phi, dirty);
+        dirty
     }
 
     fn is_header(&self, x: u32) -> bool {
-        self.end[x as usize] > x || self.preds[x as usize].contains(&x)
+        self.pos().end[x as usize] > x || self.preds[x as usize].contains(&x)
     }
 
     fn climb(
@@ -262,9 +373,10 @@ impl MemLayout {
             path.push(x);
             // Every def reaching `x` without passing a dominator inside the
             // same loop lies in `floor..=end[x]`.
-            let enc = self.encl[x as usize];
+            let enc = self.pos().encl[x as usize];
             let floor = if enc == NONE { 0 } else { enc + 1 };
-            let Some(c) = known.highest(self, function, probe, floor, self.end[x as usize]) else {
+            let Some(c) = known.highest(self, function, probe, floor, self.pos().end[x as usize])
+            else {
                 if enc == NONE {
                     // `InitialMemory` leads the order.
                     break 0;
@@ -283,7 +395,7 @@ impl MemLayout {
             match self.shape[x as usize] {
                 Shape::Initial => break x,
                 Shape::Phi => {
-                    let clean = if self.end[x as usize] > x {
+                    let clean = if self.pos().end[x as usize] > x {
                         // Every def in the loop block is in the region.
                         if c > x {
                             break 'climb x;
@@ -298,10 +410,10 @@ impl MemLayout {
                     x = self.idom[x as usize];
                 }
                 Shape::Def => {
-                    if (self.chain_bottom[x as usize]..=x).contains(&c) {
+                    if (self.pos().chain_bottom[x as usize]..=x).contains(&c) {
                         break c;
                     }
-                    x = self.idom[self.chain_bottom[x as usize] as usize];
+                    x = self.idom[self.pos().chain_bottom[x as usize] as usize];
                 }
             }
         };
@@ -325,18 +437,18 @@ impl MemLayout {
         let mut h = header;
         let mut clean = |h: u32, probe: &mut dyn ClobberProbe| {
             known
-                .highest(self, function, probe, h + 1, self.end[h as usize])
+                .highest(self, function, probe, h + 1, self.pos().end[h as usize])
                 .is_none()
         };
         loop {
             #[cfg(test)]
             step();
-            let j = self.loop_jump[h as usize];
+            let j = self.pos().loop_jump[h as usize];
             if j != NONE && clean(j, probe) {
                 h = j;
                 continue;
             }
-            let p = self.encl[h as usize];
+            let p = self.pos().encl[h as usize];
             if p != NONE && clean(p, probe) {
                 h = p;
                 continue;
@@ -351,7 +463,7 @@ impl MemLayout {
         loop {
             #[cfg(test)]
             step();
-            let j = self.dom_jump[a as usize];
+            let j = self.pos().dom_jump[a as usize];
             if j != a && j > c {
                 a = j;
                 continue;
@@ -439,7 +551,7 @@ impl MemLayout {
                 frames.pop();
                 // A header's body is the climb's to check, so only a merge's
                 // verdict is whole.
-                if self.end[frame.phi as usize] == frame.phi {
+                if self.pos().end[frame.phi as usize] == frame.phi {
                     answers.dirty.insert(frame.phi, false);
                 }
                 if frames.is_empty() {
@@ -457,7 +569,7 @@ impl MemLayout {
             if let Some(h) = self.outermost_loop_apart(y, frame.phi, frame.stop) {
                 // A whole loop of the region: its block is all in it.
                 if self
-                    .highest_clobber(function, probe, h, self.end[h as usize])
+                    .highest_clobber(function, probe, h, self.pos().end[h as usize])
                     .is_some()
                 {
                     break true;
@@ -492,7 +604,7 @@ impl MemLayout {
                     }
                 },
                 Shape::Def => {
-                    let bottom = self.chain_bottom[y as usize];
+                    let bottom = self.pos().chain_bottom[y as usize];
                     let stop = frame.stop;
                     let reaches_stop = (bottom..=y).contains(&stop);
                     let lowest = if reaches_stop { stop + 1 } else { bottom };
@@ -508,7 +620,7 @@ impl MemLayout {
         if dirty {
             // Every open region contains the one the clobber was found in.
             for frame in frames {
-                if self.end[frame.phi as usize] == frame.phi {
+                if self.pos().end[frame.phi as usize] == frame.phi {
                     answers.dirty.insert(frame.phi, true);
                 }
             }
@@ -519,24 +631,24 @@ impl MemLayout {
     /// The outermost loop whose block holds `y` but neither `phi` nor `stop`.
     fn outermost_loop_apart(&self, y: u32, phi: u32, stop: u32) -> Option<u32> {
         let apart = |h: u32| {
-            let block = h..=self.end[h as usize];
+            let block = h..=self.pos().end[h as usize];
             !block.contains(&phi) && !block.contains(&stop)
         };
         let mut h = if self.is_header(y) {
             y
         } else {
-            self.encl[y as usize]
+            self.pos().encl[y as usize]
         };
         if h == NONE || !apart(h) {
             return None;
         }
         loop {
-            let j = self.loop_jump[h as usize];
+            let j = self.pos().loop_jump[h as usize];
             if j != NONE && apart(j) {
                 h = j;
                 continue;
             }
-            let p = self.encl[h as usize];
+            let p = self.pos().encl[h as usize];
             if p != NONE && apart(p) {
                 h = p;
                 continue;
@@ -813,9 +925,9 @@ impl LoopForest {
     /// block is spliced in where its header falls.
     ///
     /// The graph `preds` encodes must be reducible, with every node reachable
-    /// from `initial`: [`MemLayout::build`] returns `None` before calling this
-    /// on a graph with a retreating edge to a non-dominator or a node outside
-    /// that reach.
+    /// from `initial`: [`MemLayout::build`] lays out in discovery order
+    /// instead of calling this on a graph with a retreating edge to a
+    /// non-dominator or a node outside that reach.
     fn nested_order(
         &self,
         preds: &[SmallVec<[u32; 2]>],

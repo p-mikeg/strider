@@ -99,9 +99,8 @@ pub(crate) struct MemAnalyzer {
     options: MemOptions,
     /// One [`ArgWindow`] per `Call`, scanned on first use.
     arg_windows: std::cell::RefCell<FxHashMap<NodeId, ArgWindow>>,
-    /// `None` walks every query instead; built, `None` inside is a graph
-    /// [`MemLayout`] does not answer, which is walked too.
-    index: Option<std::cell::OnceCell<Option<MemIndex>>>,
+    /// `None` walks every query instead.
+    index: Option<std::cell::OnceCell<MemIndex>>,
     answers: std::cell::RefCell<FxHashMap<(SizedAddr, rsleigh::VnSpace), Answers>>,
     /// The same, for the queries the index does not answer.
     walk_answers: std::cell::RefCell<FxHashMap<(SizedAddr, rsleigh::VnSpace), WalkAnswers>>,
@@ -109,13 +108,14 @@ pub(crate) struct MemAnalyzer {
 
 struct MemIndex {
     layout: MemLayout,
-    stores: StoreIndex,
+    /// Absent without a position index, which is what a range of defs means.
+    stores: Option<StoreIndex>,
 }
 
 /// A [`MemWalker`] asked through a [`StoreIndex`].
 struct IndexProbe<'w, 'a> {
     walker: &'w mut MemWalker<'a>,
-    stores: &'w StoreIndex,
+    stores: Option<&'w StoreIndex>,
 }
 
 impl ClobberProbe for IndexProbe<'_, '_> {
@@ -124,13 +124,15 @@ impl ClobberProbe for IndexProbe<'_, '_> {
     }
 
     fn candidate(&mut self, _layout: &MemLayout, lo: u32, hi: u32) -> Option<u32> {
-        self.stores.candidate(
-            &self.walker.load,
-            self.walker.load_space,
-            self.walker.options,
-            lo,
-            hi,
-        )
+        self.stores
+            .expect("only a positioned layout asks for a candidate")
+            .candidate(
+                &self.walker.load,
+                self.walker.load_space,
+                self.walker.options,
+                lo,
+                hi,
+            )
     }
 }
 
@@ -162,15 +164,15 @@ impl MemAnalyzer {
     }
 
     fn index(&self, function: &Function) -> Option<&MemIndex> {
-        self.index
-            .as_ref()?
-            .get_or_init(|| {
-                MemLayout::build(function).map(|layout| MemIndex {
-                    stores: StoreIndex::build(function, &layout),
-                    layout,
-                })
-            })
-            .as_ref()
+        Some(self.index.as_ref()?.get_or_init(|| {
+            let layout = MemLayout::build(function);
+            MemIndex {
+                stores: layout
+                    .positions()
+                    .map(|_| StoreIndex::build(function, &layout)),
+                layout,
+            }
+        }))
     }
 
     /// The nearest clobber of `load` backward from `start`'s memory output,
@@ -194,7 +196,7 @@ impl MemAnalyzer {
         if let Some(index) = self.index(function) {
             let mut probe = IndexProbe {
                 walker: &mut walker,
-                stores: &index.stores,
+                stores: index.stores.as_ref(),
             };
             let mut memo = memoize.then(|| self.answers.borrow_mut());
             let mut fresh = Answers::default();

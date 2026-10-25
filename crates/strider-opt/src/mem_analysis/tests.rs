@@ -3466,7 +3466,8 @@ mod store_index {
         for seed in 0..60 {
             let (fg, addresses) = random_chain(seed)?;
             let table_walk = MemOptions::for_purpose(MemPurpose::TableWalk, &fg);
-            let layout = MemLayout::build(&fg).expect("the chain is laid out");
+            let layout = MemLayout::build(&fg);
+            assert!(layout.positions().is_some(), "the chain is laid out");
             let configured =
                 MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::CallStackArgs, &fg));
             let narrow = MemAnalyzer::new(table_walk.clone());

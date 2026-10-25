@@ -3,7 +3,7 @@
 //! [`layout`] answers by climbing the memory dominator tree over an index built
 //! once per graph state.  [`find_nearest_clobber`] answers the same question
 //! with no index, by walking the paths back from the start; it is what a caller
-//! without a layout, or a graph the layout does not cover, gets.
+//! that builds no index gets.
 //!
 //! The walk's MemPhi join rule: resolve each predecessor independently.  If all
 //! arms agree (all clean, or all naming the same definition) the merge is
