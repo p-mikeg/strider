@@ -452,9 +452,9 @@ mod tests {
         assert_eq!(reshape(rsleigh::VnSpace::REGISTER), Some(0xEF));
     }
 
-    /// A stack slot map holds RAM stores, so only a RAM load reads it.
+    /// The memory index holds RAM stores, so only a RAM load reads it.
     #[test]
-    fn a_non_ram_load_at_a_stack_address_does_not_read_the_slot_map() {
+    fn a_non_ram_load_at_a_stack_address_does_not_read_the_index() {
         assert_eq!(
             eval_load_over_a_ram_store_at_sp(rsleigh::VnSpace::RAM),
             Some(0x1234)
