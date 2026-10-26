@@ -2809,7 +2809,7 @@ fn stack_array_behind_a_heap_store(allocator: u64, targets: &[u64]) -> Function 
 /// the allocation is an opaque pointer that may overwrite a label, and once the
 /// claim is in force a later run that omits it keeps it.
 #[test]
-fn a_heap_verdict_opens_the_slot_map_only_under_its_claim() {
+fn a_heap_verdict_opens_the_table_only_under_its_claim() {
     const MALLOC: u64 = 0x1000;
     let targets = [0x401190u64, 0x401180u64];
     let mut p = OptimizerPipeline::new();
