@@ -288,3 +288,53 @@ fn uses_return_assertions(function: &strider_ir::Function) {
         );
     }
 }
+
+/// The `Call` register-argument layout the production lifter builds and the
+/// one `CallStackArgCollect` truncates to must agree: the integer arguments in
+/// ABI order, then the float ones, then whatever the pass collected off the
+/// stack.  They are written in four places (the lifter's `build_cc_call`, the
+/// pruned-SSA def/use record, `register_arity`, and the test-only
+/// `build_call_cc`) with nothing linking them; disagreeing by one chops a real
+/// register argument off every `Call` or leaves a stale collected one.
+///
+/// x86-64 System V: six integer and eight float argument registers, and a
+/// stack argument at `[rsp]` at the call.  The constant is what locates the
+/// boundary, so an arity off in either direction moves it.
+///
+/// Mutation: drop the float term from `register_arity`.
+#[test]
+fn a_calls_collected_stack_arg_sits_past_every_register_one() {
+    // sub rsp,8; mov qword [rsp],0x11223344; call ext; add rsp,8; ret; ext: ret
+    let bytes = vec![
+        0x48, 0x83, 0xec, 0x08, 0x48, 0xc7, 0x04, 0x24, 0x44, 0x33, 0x22, 0x11, 0xe8, 0x05, 0x00,
+        0x00, 0x00, 0x48, 0x83, 0xc4, 0x08, 0xc3, 0xc3,
+    ];
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, 0x1000, None);
+    let function = strider
+        .analyze(0x1000, &cc, &Default::default(), None)
+        .expect("analyze")
+        .function;
+    let call = function
+        .walk()
+        .find(|&n| matches!(function.node_kind(n), NodeKind::Call { .. }))
+        .expect("one Call");
+    let inputs = function.node_inputs(call);
+    let registers = NodeKind::Call { cc: None }.input_head_len()
+        + cc.arg_passing_regs.len()
+        + cc.arg_passing_regs_float.len();
+    assert_eq!(
+        (cc.arg_passing_regs.len(), cc.arg_passing_regs_float.len()),
+        (6, 8),
+        "fixture premise: System V passes six integer and eight float arguments"
+    );
+    assert_eq!(
+        inputs.len(),
+        registers + 1,
+        "the head, every register argument, then the one collected stack argument"
+    );
+    assert_eq!(
+        function.int_const_u128(inputs[registers]),
+        Some(0x1122_3344),
+        "the collected argument sits at the first slot past the register ones"
+    );
+}
