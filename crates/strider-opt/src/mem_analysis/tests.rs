@@ -1,4 +1,7 @@
-use super::alias::{SizedAddr, alias_verdict, classify_addr, offsets_comparable, ranges_disjoint};
+use super::alias::{
+    SizedAddr, alias_verdict, classify_addr, modular_offsets, offset_range_verdict,
+    offsets_comparable, ranges_disjoint,
+};
 use super::arg_window::{ArgWindowGeometry, scan_arg_window};
 use super::decompose::{SPINE_STEPS, is_alignment_mask};
 use super::frame::in_own_frame;
@@ -3287,9 +3290,8 @@ mod comparability_tests {
     }
 
     /// A probe spanning more than half the address space leaves no distance
-    /// short enough to tell the two ways round apart, so nothing compares.
-    /// The window probe reaches this width from a `call_sp` and a load offset
-    /// that reduced to opposite ends of the signed range.
+    /// short enough to tell the two ways round apart, so no raw constant pair
+    /// but an equal one compares.
     #[test]
     fn a_probe_wider_than_half_the_modulus_compares_nothing() {
         let wide = probe(3i128 << 30);
@@ -3315,24 +3317,65 @@ mod comparability_tests {
             addr_bits: 32,
         };
         let wide = SizedAddr {
-            class: AddrClass::Constant { addr: 0 },
+            class: AddrClass::Constant { addr: -4 },
             size: 8,
             addr_bits: 64,
         };
         // Adjacent under a single 64-bit bound.
-        assert!(
-            !offsets_comparable(wide, narrow, 0, -4),
-            "a 64-bit and a 32-bit reduction live in different moduli"
-        );
-        assert!(
-            !offsets_comparable(narrow, wide, 0, -4),
-            "and neither order rescues them"
-        );
+        for (load, store) in [(wide, narrow), (narrow, wide)] {
+            assert_eq!(
+                offset_range_verdict(load, store),
+                AliasVerdict::MayAlias,
+                "a 64-bit and a 32-bit reduction live in different moduli"
+            );
+        }
     }
 
     #[test]
     fn an_ordinary_probe_still_compares_nearby_offsets() {
         assert!(offsets_comparable(probe(4), probe(4), 0, 1000));
+    }
+
+    /// A reduced offset takes the ring at every width the carrier holds, a raw
+    /// constant one never does, and past the carrier nothing reduces so the
+    /// exact sums keep integer order.
+    #[test]
+    fn only_reduced_offsets_within_the_carrier_take_the_ring() {
+        let base = ValueId::from_u32(0);
+        for bits in [32u32, 64, 128] {
+            for class in [
+                AddrClass::StackRooted { base, offset: 0 },
+                AddrClass::HeapRooted { base, offset: 0 },
+            ] {
+                assert_eq!(modular_offsets(class, bits), Some(bits), "{class:?}/{bits}");
+            }
+        }
+        let stack = AddrClass::StackRooted { base, offset: 0 };
+        assert_eq!(modular_offsets(stack, 256), None, "past the carrier");
+        assert_eq!(modular_offsets(AddrClass::Constant { addr: 0 }, 32), None);
+    }
+
+    /// The ring places a pair the integer bound refuses: six bytes apart mod
+    /// 2^32, but at opposite ends of the signed range.
+    #[test]
+    fn the_ring_separates_a_pair_across_the_wrap() {
+        let base = ValueId::from_u32(0);
+        let at = |offset: i128| SizedAddr {
+            class: AddrClass::StackRooted { base, offset },
+            size: 4,
+            addr_bits: 32,
+        };
+        assert_eq!(
+            offset_range_verdict(at(0x7FFF_FFFA), at(-0x7FFF_FFFC)),
+            AliasVerdict::Disjoint,
+            "`sp + 0x7FFFFFFA` and `sp + 0x80000004` are six bytes apart"
+        );
+        assert_eq!(
+            offset_range_verdict(at(0x7FFF_FFFE), at(-0x8000_0000)),
+            AliasVerdict::MayAlias,
+            "`sp + 0x7FFFFFFE` and `sp + 0x80000000` are two bytes apart, so \
+             the four-byte accesses overlap"
+        );
     }
 }
 
