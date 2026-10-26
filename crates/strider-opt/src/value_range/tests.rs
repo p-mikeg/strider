@@ -3045,7 +3045,11 @@ fn phi_constants_give_up_past_the_cap_on_phis() {
 /// below pin the fallback this module picks, at the point that picks it.
 #[test]
 fn an_untracked_width_reads_as_lattice_top() {
-    assert_eq!(super::interval::type_mask_or_top(None), u128::MAX, "no typed edge");
+    assert_eq!(
+        super::interval::type_mask_or_top(None),
+        u128::MAX,
+        "no typed edge"
+    );
     assert_eq!(
         super::interval::type_mask_or_top(Some(ValueType::float(64))),
         u128::MAX,

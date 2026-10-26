@@ -203,28 +203,17 @@ impl<'f> RangeMap<'f> {
         let top = Interval::top(mask);
         let phi_node = self.function.producer(value);
         debug_assert_eq!(self.function.node_outputs(phi_node).first(), Some(&value));
-        let data_inputs: Vec<ValueId> = self.function.phi_data_inputs(phi_node).collect();
-        if data_inputs.len() < 2 {
-            return top;
-        }
-
-        // The Region's control inputs line up 1-to-1 with the phi's data
-        // inputs, so each arm is queried in its own effective region: a guard
-        // holding on one incoming path must never apply to an arm bypassing it.
-        let Some(joining_region) = self.find_joining_region(phi_node) else {
+        // Each arm is queried in its own effective region: a guard holding on
+        // one incoming path must never apply to an arm bypassing it.
+        let Some((joining, arms)) = self.phi_arms(phi_node) else {
             return top;
         };
-
-        let arm_regions = self.arm_query_regions(joining_region);
-        if arm_regions.len() != data_inputs.len() {
-            return top;
-        }
 
         // `None` once an arm is top: the union is top too, and the arms taken
         // so far must not survive it, their stride being one only they obey.
         let mut union: Option<Interval> = None;
-        for (arm_region, &arm_val) in arm_regions.iter().zip(data_inputs.iter()) {
-            let arm_range = self.range_of(arm_val, *arm_region);
+        for (edge, arm_val) in arms {
+            let arm_range = self.range_of(arm_val, self.arm_query_region(edge, joining));
             if arm_range.is_top(mask) {
                 union = None;
                 break;
@@ -393,23 +382,12 @@ impl<'f> RangeMap<'f> {
         if !matches!(f.node_kind(phi_node), NodeKind::Phi) {
             return None;
         }
-        let joining = self.find_joining_region(phi_node)?;
+        let (joining, arms) = self.phi_arms(phi_node)?;
         if !self.doms.dominates(joining, region) {
             return None;
         }
-        let data: Vec<ValueId> = f.phi_data_inputs(phi_node).collect();
-        let ctrl: Vec<ValueId> = f
-            .graph()
-            .node_inputs(joining)
-            .iter()
-            .filter(|&v| f.value_kind(v).is_control())
-            .collect();
-        if ctrl.len() != data.len() || data.len() < 2 {
-            return None;
-        }
-        ctrl.iter()
-            .zip(data.iter())
-            .map(|(&edge, &arm)| match f.int_const_u128(arm) {
+        arms.into_iter()
+            .map(|(edge, arm)| match f.int_const_u128(arm) {
                 Some(k) => Some(Interval::dense(k, k)),
                 None => self.edge_bound_on(edge, arm),
             })
@@ -531,26 +509,37 @@ impl<'f> RangeMap<'f> {
         }
     }
 
-    /// Per control input of `joining_region`, the effective query region for
-    /// that arm: the joining region itself for an arm arriving on an If's TRUE
-    /// edge, else the arm's own source Region.
-    fn arm_query_regions(&self, joining_region: NodeId) -> Vec<NodeId> {
-        let g = self.function.graph();
-        // Every `Region` input is a Control edge per the node signature.
-        g.node_inputs(joining_region)
+    /// Per arm of `phi_node`, the control edge it arrives on paired with the
+    /// arm value, in the joining `Region`'s input order, and that `Region`.
+    ///
+    /// `None` unless the phi joins a `Region` whose control inputs line up
+    /// 1-to-1 with its data inputs, the convention every reader of an arm
+    /// order here rests on, and there are at least two of them.
+    fn phi_arms(&self, phi_node: NodeId) -> Option<(NodeId, Vec<(ValueId, ValueId)>)> {
+        let f = self.function;
+        let joining = self.find_joining_region(phi_node)?;
+        let data: Vec<ValueId> = f.phi_data_inputs(phi_node).collect();
+        let ctrl: Vec<ValueId> = f
+            .graph()
+            .node_inputs(joining)
             .iter()
-            .filter(|&v| g.value_kind(v).is_control())
-            .map(|ctrl_val| {
-                let producer = g.producer(ctrl_val);
-                if matches!(g.node_kind(producer), NodeKind::If) {
-                    let if_outputs = g.node_outputs(producer);
-                    if if_outputs.get(NodeKind::IF_TRUE_OUT_SLOT) == Some(&ctrl_val) {
-                        return joining_region;
-                    }
-                }
-                self.ctrl_source_region(ctrl_val)
-            })
-            .collect()
+            .filter(|&v| f.value_kind(v).is_control())
+            .collect();
+        (ctrl.len() == data.len() && data.len() >= 2)
+            .then(|| (joining, ctrl.into_iter().zip(data).collect()))
+    }
+
+    /// The effective query region for the arm arriving on `edge`: the joining
+    /// region itself for an If's TRUE edge, else the arm's own source Region.
+    fn arm_query_region(&self, edge: ValueId, joining_region: NodeId) -> NodeId {
+        let g = self.function.graph();
+        let producer = g.producer(edge);
+        if matches!(g.node_kind(producer), NodeKind::If)
+            && g.node_outputs(producer).get(NodeKind::IF_TRUE_OUT_SLOT) == Some(&edge)
+        {
+            return joining_region;
+        }
+        self.ctrl_source_region(edge)
     }
 
     /// Walks control producers back past `If` / `Call` / `CallOther` to the
