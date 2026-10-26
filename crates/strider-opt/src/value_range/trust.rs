@@ -32,9 +32,9 @@ impl RangeMap<'_> {
         let Some(field) = self.bit_field(value) else {
             return false;
         };
-        self.root_fields(field.root).iter().any(|&of| {
+        self.root_fields(field.root).iter().any(|(of, over)| {
             of.overlaps(field)
-                && self.guards_by_field[&of].iter().any(|&guarded| {
+                && over.iter().any(|&guarded| {
                     guarded != value
                         && self
                             .guard_at(guarded, region)
