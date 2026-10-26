@@ -8,7 +8,7 @@ use strider_ir::{
 };
 
 use crate::mem_analysis::{
-    MemExpr, MemKind, alignment_masked_operand, decompose, ring_overlap, store_value_byte_size,
+    MemExpr, MemKind, decompose, entry_sp_span, ring_overlap, store_value_byte_size,
     wrap_to_addr_width,
 };
 
@@ -640,23 +640,11 @@ impl<'f> ReturnTargets<'f> {
 
     /// The lowest and highest entry-SP offset `at` can stand at.
     fn entry_span(&self, at: StackAddr) -> Option<(i128, i128)> {
-        let function = self.function;
-        let (mut lo, mut hi, mut base) = (at.offset, at.offset, at.base);
-        while let Some(aligned) = base {
-            let and = function.producer(aligned);
-            let operand = alignment_masked_operand(function, and)?;
-            let [l, r] = function.node_inputs_exact::<2>(and).ok()?;
-            let mask = function.int_const_u128(if operand == l { r } else { l })?;
-            let below = self.spine(operand)?;
-            lo = lo.checked_add(
-                below
-                    .offset
-                    .checked_sub((1i128 << mask.trailing_zeros()) - 1)?,
-            )?;
-            hi = hi.checked_add(below.offset)?;
-            base = below.base;
-        }
-        Some((lo, hi))
+        let (lo, hi) = match at.base {
+            None => (0, 0),
+            Some(base) => entry_sp_span(self.function, base)?,
+        };
+        Some((lo.checked_add(at.offset)?, hi.checked_add(at.offset)?))
     }
 }
 

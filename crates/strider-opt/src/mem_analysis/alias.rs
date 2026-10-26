@@ -140,8 +140,8 @@ pub(super) fn alias_verdict(
         // which nothing proves. Unreachable today because `detect_stack_args`
         // is the only reader and filters `base != initial_sp` before probing,
         // so one side is always the entry SP. A second reader needs the
-        // `at_or_below_entry_sp` proof `in_own_frame` does for the same
-        // geometric fact, not this comparison.
+        // `entry_sp_span` proof `in_own_frame` does for the same geometric
+        // fact, not this comparison.
         (StackRooted { base: lb, .. }, StackRooted { base: sb, .. }) => {
             if lb == sb {
                 offset_range_verdict(load, store)
