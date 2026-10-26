@@ -6,7 +6,7 @@ use entity_utils::Worklist;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
-use crate::error::Result;
+use crate::Result;
 use crate::pipeline::OptimizationResult;
 
 /// The producer node of each input of `node`, in input-slot order. Every
@@ -206,7 +206,7 @@ mod tests {
     use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::make_empty_fn;
 
-    use crate::error::Result;
+    use crate::Result;
     use crate::pipeline::OptimizationResult;
 
     /// Records every `try_rewrite` invocation and on match rewires the

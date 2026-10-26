@@ -1,10 +1,10 @@
-pub mod error;
+pub type Result<T> = anyhow::Result<T>;
+
 pub(crate) mod mem_analysis;
 pub(crate) mod mem_ssa;
 pub(crate) mod peephole;
 mod pipeline;
 pub mod rewrite_rule;
-pub use error::Result;
 pub use mem_analysis::refresh_memory_classes;
 pub use rewrite_rule::{BoxedRule, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
 pub use strider_ir::AssumptionOptions;

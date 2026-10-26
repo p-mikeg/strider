@@ -1,6 +1,6 @@
 use super::IfCondInversion;
 use crate::ConstantFold;
-use crate::error::Result;
+use crate::Result;
 use crate::test_support::{find_unique_if, run_to_fixed_point};
 use strider_ir::{IRBuilderExt, IRViewer};
 

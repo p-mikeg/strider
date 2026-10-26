@@ -34,7 +34,7 @@ use strider_pattern::{
     int_zero_extend, one_of, template, var,
 };
 
-use crate::error::Result;
+use crate::Result;
 use crate::opt::width_guards::{carrier_mask, same_width, shift_count_in_range};
 use crate::peephole::{PeepholePass, PeepholeRewrite, SeedOrder, first_matching_rule};
 

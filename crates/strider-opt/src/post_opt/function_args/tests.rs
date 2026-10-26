@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::Result;
+use crate::Result;
 use crate::test_support::cf_rp_pipeline;
 use strider_ir::node::{NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};

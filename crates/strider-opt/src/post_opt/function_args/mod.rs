@@ -10,7 +10,7 @@
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::error::Result;
+use crate::Result;
 use crate::mem_analysis::{MemAnalyzer, MemExpr, MemOptions, MemPurpose, ReachingDef};
 use crate::mem_ssa::narrow_load_to;
 use crate::pipeline::PostOptimizer;
