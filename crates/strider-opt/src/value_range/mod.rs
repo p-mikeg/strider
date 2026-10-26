@@ -936,7 +936,7 @@ fn build<'f>(
         }
         let Some(per_edge) = pred_edges
             .iter()
-            .map(|&e| edge_guard(function, e, known))
+            .map(|e| edge_guards.get(e).copied())
             .collect::<Option<Vec<(ValueId, Interval)>>>()
         else {
             continue;
@@ -985,29 +985,6 @@ fn build<'f>(
         cut: false,
         ifs,
     }
-}
-
-/// The `(value, interval)` an `If`-controlled edge establishes on the value its
-/// condition bounds, or `None` when the edge's producer is not an `If` or its
-/// condition upper-bounds nothing on the taken side.
-fn edge_guard(
-    function: &strider_ir::Function,
-    ctrl_val: ValueId,
-    known: &KnownBitsMap,
-) -> Option<(ValueId, Interval)> {
-    let producer = function.producer(ctrl_val);
-    if !matches!(function.node_kind(producer), NodeKind::If) {
-        return None;
-    }
-    // An `If`'s outputs are `[true_ctrl, false_ctrl]`; without both, "not the
-    // true edge" would not mean the false edge.
-    let outputs = function.node_outputs(producer);
-    if outputs.len() < 2 {
-        return None;
-    }
-    let edge_taken = outputs.first() == Some(&ctrl_val);
-    let cond = function.if_cond(producer);
-    guard_from_compare(function, cond, edge_taken, known)
 }
 
 /// The `(guarded_value, interval)` a bare `Less`/`Sless` condition constrains
