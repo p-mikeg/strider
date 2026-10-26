@@ -36,72 +36,12 @@
 //! not taken: the guard may size the table, and the field then reaches the
 //! next one.
 
-use super::MAX_TABLE_ENTRIES;
-use crate::ReadOnlyMemory;
+use super::{MAX_TABLE_ENTRIES, SiteClassifier};
 use crate::value_range::Interval;
 use strider_cfg::{ResolvedTarget, ResolvedTargets};
 use strider_ir::IRViewer;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
-
-/// The table-dispatch arm, over the dispatch value of an `IndirectBranch` or
-/// the selector of an already-seated `Switch`.
-///
-/// `rom` is the binary's read-only image; `None` disables the rodata arm.  The
-/// stack-pointer varnode and the target endianness come off `function`.
-///
-/// `site` is the `IndirectBranch` or `Switch` being resolved; it scopes the
-/// index-range query to that node, never the first one that happens to share
-/// the dispatch value.
-pub(crate) fn classify_dispatch_value(
-    function: &strider_ir::Function,
-    site: NodeId,
-    target_value: ValueId,
-    rom: Option<&dyn ReadOnlyMemory>,
-    ranges: &mut crate::value_range::RangeMap<'_>,
-    mode_value: Option<ValueId>,
-) -> Option<ResolvedTargets> {
-    // A `Load[reg]` function pointer has no bounded dominator and defers here.
-    let Domain { pinned, values } = dispatch_domain(function, rom, ranges, target_value, site)?;
-
-    let mut ev = super::eval::Evaluator::new(function, rom);
-    let pruned = super::eval::cone_order_pruned(function, target_value, pinned);
-    // The branch's committed ISA mode (an interworking `bx`/`jr`-dispatch),
-    // `(entry & 1)`, evaluated per index so each arm carries its own mode.
-    let mode_pruned = mode_value.map(|mv| super::eval::cone_order_pruned(function, mv, pinned));
-    // `collect::<Option<_>>` bails the moment a value fails to fold, which
-    // fails closed.
-    let targets: Vec<ResolvedTarget> = values
-        .into_iter()
-        .map(|x| {
-            // One memo for both roots: they are siblings over one dispatch
-            // word (`And(word, 1)` and `And(word, ~1)`), so everything under
-            // `word` folds once.
-            ev.begin_index(pinned, x);
-            let addr = ev.eval_root(&pruned, target_value)?;
-            let isa_bit = match (mode_value, &mode_pruned) {
-                // The branch commits an ISA mode per target; that mode MUST fold.
-                // If it does not, fail closed (`?` defers the whole branch),
-                // rather than decode the target in a guessed mode.
-                (Some(mv), Some(order)) => Some(ev.eval_root(order, mv)? != 0),
-                // No mode switch bound to this branch: an in-mode jump table
-                // that inherits the mode flowing into the branch.
-                _ => None,
-            };
-            Some(ResolvedTarget::new(addr, isa_bit))
-        })
-        .collect::<Option<_>>()?;
-    // `table` sorts by `(addr, isa_bit)` and drops exact duplicates, so two
-    // arms left on one address carry opposite modes.  `addr` is
-    // mode-bit-masked, so words `X` and `X | 1` land on one address that way.
-    // A disagreement defers the whole site: `None` is the mode FLOWING into
-    // the branch, which a mode-committing branch contradicts.
-    let seated = ResolvedTargets::table(targets);
-    let arms = seated.arms();
-    // Nothing to enumerate defers the site too: `table([])` is `Withdrawn`,
-    // which would overrule a caller's seed where `None` only defers.
-    (!arms.is_empty() && arms.windows(2).all(|w| w[0].addr != w[1].addr)).then_some(seated)
-}
 
 /// The value the enumeration pins, and the values to pin it to.
 struct Domain {
@@ -109,123 +49,369 @@ struct Domain {
     values: Vec<u128>,
 }
 
-/// What to enumerate for `target`: a bounded index across its range, or the
-/// phi every input of the dispatch cone passes through across its constants.
+/// The value the enumeration pins, the values to pin it to, and the constant
+/// those carry: the index takes `x - rebase` for each `x` in `range`.
 ///
-/// The phi's constants are the values it really takes, where its range is
-/// their hull: an index in `{0, 3, 5}` ranges over `0..=5`.  One outside the
-/// phi's range at the site, or ruled out by an `== k` guard on the way, is
-/// dropped.  They are taken where the phi bounds no index too, as for a jump
-/// to a phi of labels.  Where a bounded index is found as well, a constant
-/// the index range excludes is dropped, since both bound the same runtime
-/// value; where the index does not fold under some constant, the range is
-/// enumerated as it is without them.
-fn dispatch_domain(
-    function: &strider_ir::Function,
-    rom: Option<&dyn ReadOnlyMemory>,
-    ranges: &mut crate::value_range::RangeMap<'_>,
-    target: ValueId,
-    site: NodeId,
-) -> Option<Domain> {
-    let chain = dominator_chain(function, target)?;
-    let source = chain.last().copied().unwrap_or(target);
-    // A constant the site's range or an equality guard on the way excludes
-    // never reaches the branch.
-    let constants = crate::value_range::phi_constants(
-        function,
-        source,
-        usize::try_from(MAX_TABLE_ENTRIES).ok()?,
-    )
-    .map(|mut constants| {
-        let site_range = ranges.range_of(source, site);
-        let ruled_out = ranges.ruled_out(source, site);
-        constants.retain(|k| site_range.contains(*k) && !ruled_out.contains(k));
-        constants
-    });
-    let hit = decompose_index(function, ranges, &chain, site);
-    let (hit, constants) = match (hit, constants) {
-        (None, None) => return None,
-        (None, Some(values)) => {
-            return Some(Domain {
-                pinned: source,
-                values,
-            });
-        }
-        (Some(hit), constants) => (hit, constants),
-    };
-    if let Some(constants) = constants {
-        let mut ev = super::eval::Evaluator::new(function, rom);
-        let order = super::eval::cone_order_pruned(function, hit.index, source);
-        let values: Option<Vec<u128>> = constants
-            .into_iter()
-            .filter_map(|k| {
-                ev.begin_index(source, k);
-                match ev.eval_root(&order, hit.index) {
-                    Some(index) => hit
-                        .range
-                        .contains(u128::from(index).wrapping_add(hit.rebase) & hit.mask)
-                        .then_some(Some(k)),
-                    None => Some(None),
-                }
-            })
-            .collect();
-        if let Some(values) = values {
-            return Some(Domain {
-                pinned: source,
-                values,
-            });
-        }
-    }
-    // `stride` is a KnownBits MUST-divisor of the value spacing, so stepping by
-    // it visits exactly the reachable indices.  A stride wider than `usize` (a
-    // scaled wide-type range) defers rather than silently stepping by 1 and
-    // enumerating the full dense span.
-    let step = usize::try_from(hit.range.stride()).ok()?;
-    let values = (hit.range.lo()..=hit.range.hi())
-        .step_by(step)
-        .map(|x| x.wrapping_sub(hit.rebase) & hit.mask)
-        .collect();
-    Some(Domain {
-        pinned: hit.index,
-        values,
-    })
+/// `rebase` is non-zero where the bound came from a guarded sibling
+/// `Add(index, rebase)` rather than from the index itself, so `range` is in the
+/// sibling's coordinate and the offsets between index and address are checked
+/// there too.
+#[derive(Clone, Copy)]
+struct PinnedIndex {
+    index: ValueId,
+    range: Interval,
+    rebase: u128,
+    /// `index`'s type mask, the width `rebase` wraps at.  Carried because
+    /// only [`bounded_index`], which admits an index only at a type that has
+    /// one, can read it without a fallible second look.
+    mask: u128,
 }
 
-/// The shallowest genuinely-bounded, non-width-only, non-constant value of
-/// `chain`, the values that DOMINATE the target in its variability cone.
-///
-/// Requiring dominance excludes a bypassed sub-branch: in a rotate
-/// `(x<<2) | (x>>30)`, `x>>30` has the tightest interval but does not dominate.
-///
-/// SHALLOWEST here is target-rooted, nearest the dispatch value, not
-/// entry-rooted, and it is the one enumerated rather than the deepest: it sits
-/// just below the address arithmetic with every guard/mask/shift applied, so
-/// enumerating it visits exactly the reachable slots.  A deeper
-/// (further-from-dispatch) node's bound can be looser, and enumerating
-/// out-of-bounds slots defers a branch that should have resolved.
-fn decompose_index(
-    function: &strider_ir::Function,
-    ranges: &mut crate::value_range::RangeMap<'_>,
-    chain: &[ValueId],
-    site: NodeId,
-) -> Option<PinnedIndex> {
-    let hits: Vec<(usize, PinnedIndex)> = chain
-        .iter()
-        .enumerate()
-        .filter_map(|(depth, &v)| bounded_index(function, ranges, site, v).map(|hit| (depth, hit)))
-        .collect();
-    let shallowest = *hits.first()?;
-    // A candidate that strips to a cell of a table the evaluator folds bounds
-    // the table DATA, not the index the address scales.  A narrowing mask on
-    // the cell is what puts its range below its load width and past
-    // `bounded_index`.  Where the chain carries a bounded value BELOW that
-    // load, inside its address, that one is the index; a second mask on the
-    // cell itself is not, so the depth comparison is against the load.
-    let (depth, hit) = foldable_cell_load(function, shallowest.1.index)
-        .and_then(|cell| chain.iter().position(|&v| v == cell))
-        .and_then(|at| hits.iter().copied().find(|&(depth, _)| depth > at))
-        .unwrap_or(shallowest);
-    offsets_keep_range(function, &chain[..depth], hit.index, hit.range).then_some(hit)
+impl SiteClassifier<'_> {
+    /// The table-dispatch arm, over the dispatch value of an `IndirectBranch` or
+    /// the selector of an already-seated `Switch`.
+    ///
+    /// `site` is the `IndirectBranch` or `Switch` being resolved; it scopes the
+    /// index-range query to that node, never the first one that happens to share
+    /// the dispatch value.
+    pub(crate) fn classify_dispatch_value(
+        &mut self,
+        site: NodeId,
+        target_value: ValueId,
+        mode_value: Option<ValueId>,
+    ) -> Option<ResolvedTargets> {
+        let function = self.function();
+        // A `Load[reg]` function pointer has no bounded dominator and defers here.
+        let Domain { pinned, values } = self.dispatch_domain(target_value, site)?;
+
+        let ev = &mut self.eval;
+        let pruned = super::eval::cone_order_pruned(function, target_value, pinned);
+        // The branch's committed ISA mode (an interworking `bx`/`jr`-dispatch),
+        // `(entry & 1)`, evaluated per index so each arm carries its own mode.
+        let mode_pruned = mode_value.map(|mv| super::eval::cone_order_pruned(function, mv, pinned));
+        // `collect::<Option<_>>` bails the moment a value fails to fold, which
+        // fails closed.
+        let targets: Vec<ResolvedTarget> = values
+            .into_iter()
+            .map(|x| {
+                // One memo for both roots: they are siblings over one dispatch
+                // word (`And(word, 1)` and `And(word, ~1)`), so everything under
+                // `word` folds once.
+                ev.begin_index(pinned, x);
+                let addr = ev.eval_root(&pruned, target_value)?;
+                let isa_bit = match (mode_value, &mode_pruned) {
+                    // The branch commits an ISA mode per target; that mode MUST fold.
+                    // If it does not, fail closed (`?` defers the whole branch),
+                    // rather than decode the target in a guessed mode.
+                    (Some(mv), Some(order)) => Some(ev.eval_root(order, mv)? != 0),
+                    // No mode switch bound to this branch: an in-mode jump table
+                    // that inherits the mode flowing into the branch.
+                    _ => None,
+                };
+                Some(ResolvedTarget::new(addr, isa_bit))
+            })
+            .collect::<Option<_>>()?;
+        // `table` sorts by `(addr, isa_bit)` and drops exact duplicates, so two
+        // arms left on one address carry opposite modes.  `addr` is
+        // mode-bit-masked, so words `X` and `X | 1` land on one address that way.
+        // A disagreement defers the whole site: `None` is the mode FLOWING into
+        // the branch, which a mode-committing branch contradicts.
+        let seated = ResolvedTargets::table(targets);
+        let arms = seated.arms();
+        // Nothing to enumerate defers the site too: `table([])` is `Withdrawn`,
+        // which would overrule a caller's seed where `None` only defers.
+        (!arms.is_empty() && arms.windows(2).all(|w| w[0].addr != w[1].addr)).then_some(seated)
+    }
+
+    /// What to enumerate for `target`: a bounded index across its range, or the
+    /// phi every input of the dispatch cone passes through across its constants.
+    ///
+    /// The phi's constants are the values it really takes, where its range is
+    /// their hull: an index in `{0, 3, 5}` ranges over `0..=5`.  One outside the
+    /// phi's range at the site, or ruled out by an `== k` guard on the way, is
+    /// dropped.  They are taken where the phi bounds no index too, as for a jump
+    /// to a phi of labels.  Where a bounded index is found as well, a constant
+    /// the index range excludes is dropped, since both bound the same runtime
+    /// value; where the index does not fold under some constant, the range is
+    /// enumerated as it is without them.
+    fn dispatch_domain(&mut self, target: ValueId, site: NodeId) -> Option<Domain> {
+        let function = self.function();
+        let chain = dominator_chain(function, target)?;
+        let source = chain.last().copied().unwrap_or(target);
+        // A constant the site's range or an equality guard on the way excludes
+        // never reaches the branch.
+        let constants = crate::value_range::phi_constants(
+            function,
+            source,
+            usize::try_from(MAX_TABLE_ENTRIES).ok()?,
+        )
+        .map(|mut constants| {
+            let site_range = self.ranges.range_of(source, site);
+            let ruled_out = self.ranges.ruled_out(source, site);
+            constants.retain(|k| site_range.contains(*k) && !ruled_out.contains(k));
+            constants
+        });
+        let hit = self.decompose_index(&chain, site);
+        let (hit, constants) = match (hit, constants) {
+            (None, None) => return None,
+            (None, Some(values)) => {
+                return Some(Domain {
+                    pinned: source,
+                    values,
+                });
+            }
+            (Some(hit), constants) => (hit, constants),
+        };
+        if let Some(constants) = constants {
+            let order = super::eval::cone_order_pruned(function, hit.index, source);
+            let ev = &mut self.eval;
+            let values: Option<Vec<u128>> = constants
+                .into_iter()
+                .filter_map(|k| {
+                    ev.begin_index(source, k);
+                    match ev.eval_root(&order, hit.index) {
+                        Some(index) => hit
+                            .range
+                            .contains(u128::from(index).wrapping_add(hit.rebase) & hit.mask)
+                            .then_some(Some(k)),
+                        None => Some(None),
+                    }
+                })
+                .collect();
+            if let Some(values) = values {
+                return Some(Domain {
+                    pinned: source,
+                    values,
+                });
+            }
+        }
+        // `stride` is a KnownBits MUST-divisor of the value spacing, so stepping by
+        // it visits exactly the reachable indices.  A stride wider than `usize` (a
+        // scaled wide-type range) defers rather than silently stepping by 1 and
+        // enumerating the full dense span.
+        let step = usize::try_from(hit.range.stride()).ok()?;
+        let values = (hit.range.lo()..=hit.range.hi())
+            .step_by(step)
+            .map(|x| x.wrapping_sub(hit.rebase) & hit.mask)
+            .collect();
+        Some(Domain {
+            pinned: hit.index,
+            values,
+        })
+    }
+
+    /// The shallowest genuinely-bounded, non-width-only, non-constant value of
+    /// `chain`, the values that DOMINATE the target in its variability cone.
+    ///
+    /// Requiring dominance excludes a bypassed sub-branch: in a rotate
+    /// `(x<<2) | (x>>30)`, `x>>30` has the tightest interval but does not dominate.
+    ///
+    /// SHALLOWEST here is target-rooted, nearest the dispatch value, not
+    /// entry-rooted, and it is the one enumerated rather than the deepest: it sits
+    /// just below the address arithmetic with every guard/mask/shift applied, so
+    /// enumerating it visits exactly the reachable slots.  A deeper
+    /// (further-from-dispatch) node's bound can be looser, and enumerating
+    /// out-of-bounds slots defers a branch that should have resolved.
+    fn decompose_index(&mut self, chain: &[ValueId], site: NodeId) -> Option<PinnedIndex> {
+        let function = self.function();
+        let hits: Vec<(usize, PinnedIndex)> = chain
+            .iter()
+            .enumerate()
+            .filter_map(|(depth, &v)| self.bounded_index(site, v).map(|hit| (depth, hit)))
+            .collect();
+        let shallowest = *hits.first()?;
+        // A candidate that strips to a cell of a table the evaluator folds bounds
+        // the table DATA, not the index the address scales.  A narrowing mask on
+        // the cell is what puts its range below its load width and past
+        // `bounded_index`.  Where the chain carries a bounded value BELOW that
+        // load, inside its address, that one is the index; a second mask on the
+        // cell itself is not, so the depth comparison is against the load.
+        let (depth, hit) = foldable_cell_load(function, shallowest.1.index)
+            .and_then(|cell| chain.iter().position(|&v| v == cell))
+            .and_then(|at| hits.iter().copied().find(|&(depth, _)| depth > at))
+            .unwrap_or(shallowest);
+        offsets_keep_range(function, &chain[..depth], hit.index, hit.range).then_some(hit)
+    }
+
+    /// Is `iv`, the range of `value` at `site`, one a table index can be
+    /// enumerated over?  `mask` is the index type's mask.
+    fn enumerable(&mut self, site: NodeId, mask: u128, value: ValueId, iv: Interval) -> bool {
+        index_bound_ok(mask, iv)
+            && !self.is_width_only(site, value, iv)
+            && !self.ranges.guard_left_unconnected(value, site, iv)
+    }
+
+    /// A genuinely-bounded non-constant integer whose bound is a real narrowing,
+    /// not just its type width.  A loaded table ENTRY, bounded only by its load
+    /// width, is excluded: enumerating one folds to bogus targets.
+    ///
+    /// The guard can sit on a sibling `v + k` the dispatch cone does not contain,
+    /// which is what `switch (x)` over a negative case base lowers to once
+    /// ConstantFold has merged `k` into the table base.  `Add` is modular at one
+    /// width, so a bound on the sibling is a bound on `v` pinned `k` lower, and the
+    /// tightest such sibling is taken.
+    ///
+    /// A range [`RangeMap::guard_left_unconnected`] flags is not one.
+    ///
+    /// [`RangeMap::guard_left_unconnected`]: crate::value_range::RangeMap::guard_left_unconnected
+    fn bounded_index(&mut self, site: NodeId, v: ValueId) -> Option<PinnedIndex> {
+        let function = self.function();
+        debug_assert!(
+            function.int_const_u128(v).is_none(),
+            "the dominator chain skips constants"
+        );
+        let ty = function.value_type_opt(v).filter(|t| t.is_integer())?;
+        // A type past the `u128` carrier has no mask, and `index_bound_ok` rejects
+        // every interval there, so nothing below would pass anyway.
+        let mask = ty.int_mask_u128()?;
+        let iv = self.ranges.range_of(v, site);
+        if self.enumerable(site, mask, v, iv) {
+            return Some(PinnedIndex {
+                index: v,
+                range: iv,
+                rebase: 0,
+                mask,
+            });
+        }
+        let siblings: Vec<(ValueId, u128)> = function
+            .value_uses(v)
+            .filter(|&(user, _)| {
+                matches!(
+                    function.node_kind(user),
+                    NodeKind::IntBinaryOp(IntBinaryOp::Add)
+                )
+            })
+            .filter_map(|(user, _)| {
+                let sum = function.first_value_output_of(user)?;
+                let (operand, addend) = strip_commutative_const_scale(function, sum)?;
+                (operand == v && function.value_type_opt(sum) == Some(ty)).then_some((sum, addend))
+            })
+            .collect();
+        siblings
+            .into_iter()
+            .filter_map(|(sum, addend)| {
+                let iv = self.ranges.range_of(sum, site);
+                self.enumerable(site, mask, sum, iv).then_some(PinnedIndex {
+                    index: v,
+                    range: iv,
+                    rebase: addend,
+                    mask,
+                })
+            })
+            .min_by_key(|hit| hit.range.count())
+    }
+
+    /// Is `v`'s range merely its type width rather than a real narrowing?  A raw
+    /// byte load fills its cell width exactly, making it table DATA, not an index,
+    /// unless it is a field read through a pointer ([`loads_a_field`]) that no
+    /// dominating test bounds unread
+    /// ([`RangeMap::cell_test_left_unread`](crate::value_range::RangeMap::cell_test_left_unread)).
+    ///
+    /// Keying on the RANGE rather than on "is it load-derived" is load-bearing: a
+    /// guarded raw load, `if (Load < N) switch(Load)`, is a genuine index even
+    /// though it strips to a `Load`.
+    ///
+    /// Zero-extends, truncates, masks clearing only known-zero bits and constant
+    /// scalings are stripped first ([`strip_to_cell`]), then replayed
+    /// innermost-first over the cell's `1 << w` consecutive values, tracking their
+    /// spacing: a divide collapses the set only by however much it outruns the
+    /// spacing a preceding multiply built up, so `(cell << 2) >> 1` keeps all
+    /// `1 << w`.  A truncate, and then the OUTPUT width, wrap the set
+    /// ([`wrap`]): `zext(i8) << 25` at `I32` has 128 distinct values, not 256,
+    /// and `trunc8(i32)` has 256.  A scale past the `u128` carrier, a floor over
+    /// an unrelated spacing, a wrap that leaves no progression, and a strip
+    /// longer than [`MAX_SCALE_STRIP`] all answer "width-only", which defers the
+    /// site rather than enumerating a cell.
+    /// An unrecognised producer is not a failure: the strip ends there and the
+    /// count is taken at that value's own width.  `w < 128` keeps the shift
+    /// well-defined.
+    fn is_width_only(&mut self, site: NodeId, v: ValueId, iv: Interval) -> bool {
+        let function = self.function();
+        let Some((base, chain)) =
+            strip_to_cell(function, v, |and| self.ranges.identity_mask_operand(and))
+        else {
+            return true;
+        };
+        if self.loads_a_field(site, base) {
+            return self.ranges.cell_test_left_unread(v, base, site, iv);
+        }
+        // Defer, as every other bail here does: with no width there is no cell
+        // count to compare the range against, so nothing disproves table DATA.
+        let Some(w) = function.value_type_opt(base).map(|t| t.bit_width()) else {
+            return true;
+        };
+        if w >= 128 {
+            return true;
+        }
+        let mut count: u128 = 1u128 << w;
+        let mut spacing: u128 = 1;
+        for scale in chain.iter().rev() {
+            match *scale {
+                Scale::Widen(m) => match spacing.checked_mul(m) {
+                    Some(s) => spacing = s,
+                    None => return true,
+                },
+                Scale::Narrow(c) if spacing.is_multiple_of(c) => spacing /= c,
+                Scale::Narrow(c) if c.is_multiple_of(spacing) => {
+                    count = count.div_ceil(c / spacing);
+                    spacing = 1;
+                }
+                // Floor over a spacing that neither divides nor is divided leaves
+                // no arithmetic progression to count.
+                Scale::Narrow(_) => return true,
+                Scale::Wrap(bits) => match wrap(count, spacing, bits) {
+                    Some(wrapped) => (count, spacing) = wrapped,
+                    None => return true,
+                },
+            }
+        }
+        // A widening scale is modular at the output width too.
+        if let Some(out_w) = function.value_type_opt(v).map(|t| t.bit_width()) {
+            match wrap(count, spacing, out_w) {
+                Some((wrapped, _)) => count = wrapped,
+                None => return true,
+            }
+        }
+        iv.count() == count
+    }
+
+    /// Whether `v` is a load through a pointer: its address is no constant, and
+    /// no term it adds ranges at `site` over few enough values to index a table.
+    /// A cell of a table sits at the table's base plus a bounded index, wherever
+    /// the table lives; a field of a struct, or a byte through a pointer, sits at
+    /// an unbounded register or phi plus an offset.
+    fn loads_a_field(&mut self, site: NodeId, v: ValueId) -> bool {
+        let function = self.function();
+        if !matches!(function.node_kind(function.producer(v)), NodeKind::Load(_)) {
+            return false;
+        }
+        let Some(addr) = function.int_inputs(v).next() else {
+            return false;
+        };
+        if function.int_const_u128(addr).is_some() {
+            return false;
+        }
+        let mut stack = vec![addr];
+        let mut steps = MAX_SCALE_STRIP;
+        while let Some(term) = stack.pop() {
+            let Some(left) = steps.checked_sub(1) else {
+                return false;
+            };
+            steps = left;
+            if function.int_const_u128(term).is_some() {
+                continue;
+            }
+            if matches!(
+                function.node_kind(function.producer(term)),
+                NodeKind::IntBinaryOp(IntBinaryOp::Add)
+            ) {
+                stack.extend(function.int_inputs(term));
+            } else if self.ranges.range_of(term, site).count() <= u128::from(MAX_TABLE_ENTRIES) {
+                return false;
+            }
+        }
+        true
+    }
 }
 
 /// The values that dominate `target` in its variability cone, nearest first,
@@ -369,24 +555,6 @@ fn strip_to_cell(
     None
 }
 
-/// The value the enumeration pins, the values to pin it to, and the constant
-/// those carry: the index takes `x - rebase` for each `x` in `range`.
-///
-/// `rebase` is non-zero where the bound came from a guarded sibling
-/// `Add(index, rebase)` rather than from the index itself, so `range` is in the
-/// sibling's coordinate and the offsets between index and address are checked
-/// there too.
-#[derive(Clone, Copy)]
-struct PinnedIndex {
-    index: ValueId,
-    range: Interval,
-    rebase: u128,
-    /// `index`'s type mask, the width `rebase` wraps at.  Carried because
-    /// only [`bounded_index`], which admits an index only at a type that has
-    /// one, can read it without a fallible second look.
-    mask: u128,
-}
-
 /// Whether the constant offsets applied to `index` on its way to the address
 /// keep `range` a contiguous unsigned interval.
 ///
@@ -461,76 +629,6 @@ fn is_base_operand(function: &strider_ir::Function, v: ValueId) -> bool {
     function.int_const_u128(v).is_some() || crate::mem_analysis::decompose(function, v).is_some()
 }
 
-/// A genuinely-bounded non-constant integer whose bound is a real narrowing,
-/// not just its type width.  A loaded table ENTRY, bounded only by its load
-/// width, is excluded: enumerating one folds to bogus targets.
-///
-/// The guard can sit on a sibling `v + k` the dispatch cone does not contain,
-/// which is what `switch (x)` over a negative case base lowers to once
-/// ConstantFold has merged `k` into the table base.  `Add` is modular at one
-/// width, so a bound on the sibling is a bound on `v` pinned `k` lower, and the
-/// tightest such sibling is taken.
-///
-/// A range [`RangeMap::guard_left_unconnected`] flags is not one.
-///
-/// [`RangeMap::guard_left_unconnected`]: crate::value_range::RangeMap::guard_left_unconnected
-fn bounded_index(
-    function: &strider_ir::Function,
-    ranges: &mut crate::value_range::RangeMap<'_>,
-    site: NodeId,
-    v: ValueId,
-) -> Option<PinnedIndex> {
-    debug_assert!(
-        function.int_const_u128(v).is_none(),
-        "the dominator chain skips constants"
-    );
-    let ty = function.value_type_opt(v).filter(|t| t.is_integer())?;
-    // A type past the `u128` carrier has no mask, and `index_bound_ok` rejects
-    // every interval there, so nothing below would pass anyway.
-    let mask = ty.int_mask_u128()?;
-    let enumerable =
-        |ranges: &mut crate::value_range::RangeMap<'_>, value: ValueId, iv: Interval| {
-            index_bound_ok(mask, iv)
-                && !is_width_only(function, ranges, site, value, iv)
-                && !ranges.guard_left_unconnected(value, site, iv)
-        };
-    let iv = ranges.range_of(v, site);
-    if enumerable(ranges, v, iv) {
-        return Some(PinnedIndex {
-            index: v,
-            range: iv,
-            rebase: 0,
-            mask,
-        });
-    }
-    let siblings: Vec<(ValueId, u128)> = function
-        .value_uses(v)
-        .filter(|&(user, _)| {
-            matches!(
-                function.node_kind(user),
-                NodeKind::IntBinaryOp(IntBinaryOp::Add)
-            )
-        })
-        .filter_map(|(user, _)| {
-            let sum = function.first_value_output_of(user)?;
-            let (operand, addend) = strip_commutative_const_scale(function, sum)?;
-            (operand == v && function.value_type_opt(sum) == Some(ty)).then_some((sum, addend))
-        })
-        .collect();
-    siblings
-        .into_iter()
-        .filter_map(|(sum, addend)| {
-            let iv = ranges.range_of(sum, site);
-            enumerable(ranges, sum, iv).then_some(PinnedIndex {
-                index: v,
-                range: iv,
-                rebase: addend,
-                mask,
-            })
-        })
-        .min_by_key(|hit| hit.range.count())
-}
-
 /// Is `iv` a non-empty, enumerable, genuinely-narrowed range under the type
 /// mask `mask`?
 ///
@@ -572,84 +670,6 @@ enum Scale {
 /// bail as an uncountable scale.
 const MAX_SCALE_STRIP: u32 = 64;
 
-/// Is `v`'s range merely its type width rather than a real narrowing?  A raw
-/// byte load fills its cell width exactly, making it table DATA, not an index,
-/// unless it is a field read through a pointer ([`loads_a_field`]) that no
-/// dominating test bounds unread
-/// ([`RangeMap::cell_test_left_unread`](crate::value_range::RangeMap::cell_test_left_unread)).
-///
-/// Keying on the RANGE rather than on "is it load-derived" is load-bearing: a
-/// guarded raw load, `if (Load < N) switch(Load)`, is a genuine index even
-/// though it strips to a `Load`.
-///
-/// Zero-extends, truncates, masks clearing only known-zero bits and constant
-/// scalings are stripped first ([`strip_to_cell`]), then replayed
-/// innermost-first over the cell's `1 << w` consecutive values, tracking their
-/// spacing: a divide collapses the set only by however much it outruns the
-/// spacing a preceding multiply built up, so `(cell << 2) >> 1` keeps all
-/// `1 << w`.  A truncate, and then the OUTPUT width, wrap the set
-/// ([`wrap`]): `zext(i8) << 25` at `I32` has 128 distinct values, not 256,
-/// and `trunc8(i32)` has 256.  A scale past the `u128` carrier, a floor over
-/// an unrelated spacing, a wrap that leaves no progression, and a strip
-/// longer than [`MAX_SCALE_STRIP`] all answer "width-only", which defers the
-/// site rather than enumerating a cell.
-/// An unrecognised producer is not a failure: the strip ends there and the
-/// count is taken at that value's own width.  `w < 128` keeps the shift
-/// well-defined.
-fn is_width_only(
-    function: &strider_ir::Function,
-    ranges: &mut crate::value_range::RangeMap<'_>,
-    site: NodeId,
-    v: ValueId,
-    iv: Interval,
-) -> bool {
-    let Some((base, chain)) = strip_to_cell(function, v, |and| ranges.identity_mask_operand(and))
-    else {
-        return true;
-    };
-    if loads_a_field(function, ranges, site, base) {
-        return ranges.cell_test_left_unread(v, base, site, iv);
-    }
-    // Defer, as every other bail here does: with no width there is no cell
-    // count to compare the range against, so nothing disproves table DATA.
-    let Some(w) = function.value_type_opt(base).map(|t| t.bit_width()) else {
-        return true;
-    };
-    if w >= 128 {
-        return true;
-    }
-    let mut count: u128 = 1u128 << w;
-    let mut spacing: u128 = 1;
-    for scale in chain.iter().rev() {
-        match *scale {
-            Scale::Widen(m) => match spacing.checked_mul(m) {
-                Some(s) => spacing = s,
-                None => return true,
-            },
-            Scale::Narrow(c) if spacing.is_multiple_of(c) => spacing /= c,
-            Scale::Narrow(c) if c.is_multiple_of(spacing) => {
-                count = count.div_ceil(c / spacing);
-                spacing = 1;
-            }
-            // Floor over a spacing that neither divides nor is divided leaves
-            // no arithmetic progression to count.
-            Scale::Narrow(_) => return true,
-            Scale::Wrap(bits) => match wrap(count, spacing, bits) {
-                Some(wrapped) => (count, spacing) = wrapped,
-                None => return true,
-            },
-        }
-    }
-    // A widening scale is modular at the output width too.
-    if let Some(out_w) = function.value_type_opt(v).map(|t| t.bit_width()) {
-        match wrap(count, spacing, out_w) {
-            Some((wrapped, _)) => count = wrapped,
-            None => return true,
-        }
-    }
-    iv.count() == count
-}
-
 /// `count` values `spacing` apart from 0, taken modulo `2^bits`: their count
 /// and spacing, or `None` where that is no arithmetic progression.  Past the
 /// `u128` carrier nothing wraps.
@@ -671,48 +691,6 @@ fn wrap(count: u128, spacing: u128, bits: usize) -> Option<(u128, u128)> {
     let shared = 1u128 << spacing.trailing_zeros().min(bits);
     let full = modulus / shared;
     (count >= full).then_some((full, shared))
-}
-
-/// Whether `v` is a load through a pointer: its address is no constant, and
-/// no term it adds ranges at `site` over few enough values to index a table.
-/// A cell of a table sits at the table's base plus a bounded index, wherever
-/// the table lives; a field of a struct, or a byte through a pointer, sits at
-/// an unbounded register or phi plus an offset.
-fn loads_a_field(
-    function: &strider_ir::Function,
-    ranges: &mut crate::value_range::RangeMap<'_>,
-    site: NodeId,
-    v: ValueId,
-) -> bool {
-    if !matches!(function.node_kind(function.producer(v)), NodeKind::Load(_)) {
-        return false;
-    }
-    let Some(addr) = function.int_inputs(v).next() else {
-        return false;
-    };
-    if function.int_const_u128(addr).is_some() {
-        return false;
-    }
-    let mut stack = vec![addr];
-    let mut steps = MAX_SCALE_STRIP;
-    while let Some(term) = stack.pop() {
-        let Some(left) = steps.checked_sub(1) else {
-            return false;
-        };
-        steps = left;
-        if function.int_const_u128(term).is_some() {
-            continue;
-        }
-        if matches!(
-            function.node_kind(function.producer(term)),
-            NodeKind::IntBinaryOp(IntBinaryOp::Add)
-        ) {
-            stack.extend(function.int_inputs(term));
-        } else if ranges.range_of(term, site).count() <= u128::from(MAX_TABLE_ENTRIES) {
-            return false;
-        }
-    }
-    true
 }
 
 /// `1 << k`, or `None` past the `u128` carrier.

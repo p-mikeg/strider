@@ -1,4 +1,5 @@
 use super::*;
+use crate::ReadOnlyMemory;
 use crate::{ConstantFold, KnownBits, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse};
 use rsleigh::VnSpace;
 use std::sync::Mutex;
@@ -98,10 +99,11 @@ fn classify_with(
 ) -> Option<ResolvedTargets> {
     let mut f = f.clone();
     f.assume(assumptions);
-    let mut ranges = crate::value_range::RangeMap::new(&f).unwrap();
     let branch = sole_indirect_branch(&f);
     let target = f.indirect_branch_target(branch);
-    classify_dispatch_value(&f, branch, target, rom, &mut ranges, mode_value)
+    SiteClassifier::new(&f, rom)
+        .unwrap()
+        .classify_dispatch_value(branch, target, mode_value)
 }
 
 /// [`classify_with`] adding no claim, with no ISA mode: at the sound floor, so
@@ -463,9 +465,11 @@ fn decompose_index_picks_shallowest_narrowed_index() {
     });
     let branch = sole_indirect_branch(&g);
     let target_value = g.indirect_branch_target(branch);
-    let mut ranges = crate::value_range::RangeMap::new(&g).unwrap();
     let chain = dominator_chain(&g, target_value).expect("a dispatch cone");
-    match decompose_index(&g, &mut ranges, &chain, branch) {
+    match SiteClassifier::new(&g, None)
+        .unwrap()
+        .decompose_index(&chain, branch)
+    {
         Some(hit) => assert_eq!(
             (hit.range.lo(), hit.range.hi(), hit.rebase),
             (0, 7, 0),
@@ -2590,11 +2594,11 @@ mod stack_table_cost {
         let targets: Vec<u64> = (0..entries as u64).map(|i| 0x401000 + i * 0x10).collect();
         let (mut fg, _load) = build(&targets, -8 * entries as i64, 8);
         fg.assume(&crate::AssumptionOptions::default());
-        let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
+        let mut sc = SiteClassifier::new(&fg, None).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         let branch = sole_indirect_branch(&fg);
         let target = fg.indirect_branch_target(branch);
-        let result = classify_dispatch_value(&fg, branch, target, None, &mut ranges, None);
+        let result = sc.classify_dispatch_value(branch, target, None);
         let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get);
         let Some(ResolvedTargets::Multiple(ts)) = result else {
             panic!("an {entries}-entry stack array must resolve, got {result:?}");
@@ -2628,11 +2632,11 @@ mod stack_table_cost {
         wire_stack_dispatch(targets.len(), -32, 8, sp_val, &mut b, arg_vn);
         let (mut fg, _load) = finish_stack_array(b.build().unwrap());
         fg.assume(&crate::AssumptionOptions::default());
-        let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
+        let mut sc = SiteClassifier::new(&fg, None).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
         let branch = sole_indirect_branch(&fg);
         let target = fg.indirect_branch_target(branch);
-        let result = classify_dispatch_value(&fg, branch, target, None, &mut ranges, None);
+        let result = sc.classify_dispatch_value(branch, target, None);
         let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get);
         let Some(ResolvedTargets::Multiple(ts)) = result else {
             panic!("the table must resolve past the chain, got {result:?}");
