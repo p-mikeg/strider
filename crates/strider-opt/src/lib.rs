@@ -19,12 +19,6 @@ mod opt;
 mod post_opt;
 #[cfg(test)]
 mod test_support;
-// Public only for tests: `classify_sites` is the production entry.
-#[cfg(any(test, feature = "test-util"))]
-pub mod value_range;
-#[cfg(not(any(test, feature = "test-util")))]
-pub(crate) mod value_range;
-
 #[cfg(any(test, feature = "test-util"))]
 pub use post_opt::indirect_branch_resolve;
 

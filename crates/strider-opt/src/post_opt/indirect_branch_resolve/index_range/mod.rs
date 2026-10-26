@@ -1,4 +1,5 @@
-//! Dominator-scoped per-`(value, region)` integer range analysis.
+//! Dominator-scoped per-`(value, region)` integer range analysis, read by
+//! the jump-table classifier above it and nothing else.
 //!
 //! Interval lattice with five seeds:
 //!

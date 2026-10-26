@@ -16,6 +16,7 @@
 //! and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone instead of the whole
 //! pipeline.
 
+use crate::post_opt::indirect_branch_resolve::index_range;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
@@ -969,7 +970,7 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
                 IntBinaryOp::And,
                 IntBinaryOp::Mul,
                 IntBinaryOp::Or,
-                // A shift by a constant is what `value_range` reads as a
+                // A shift by a constant is what `index_range` reads as a
                 // scaled hop; without one `ScaleOp` and `const_scale` were
                 // unreachable from this generator, and the range oracle below
                 // never exercised them.  The count deliberately reaches the
@@ -1347,7 +1348,7 @@ fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
             p.add(crate::RegionCollapse);
             p.run(&mut f, &crate::OptCtx::new(None)).unwrap();
         }
-        let ranges = std::cell::RefCell::new(crate::value_range::RangeMap::new(&f).unwrap());
+        let ranges = std::cell::RefCell::new(index_range::RangeMap::new(&f).unwrap());
         for _ in 0..64 {
             let word = u128::from(rng.next_u64() as u32) >> rng.below(32);
             let mut bad: Option<String> = None;
@@ -1419,7 +1420,7 @@ fn a_range_contains_every_runtime_value() {
         {
             continue;
         }
-        let mut ranges = crate::value_range::RangeMap::new(&f).unwrap();
+        let mut ranges = index_range::RangeMap::new(&f).unwrap();
         let mut rng = Rng(seed | 1);
         for _ in 0..24 {
             let vec: Vec<u128> = (0..4).map(|_| u128::from(rng.next_u64() % 8)).collect();
@@ -1535,7 +1536,7 @@ fn build_random_state_machine(seed: u64) -> Option<strider_ir::Function> {
 }
 
 /// Every runtime value of a phi of a random state machine lies among the
-/// constants `value_range::phi_constants` names for it and in its range: the
+/// constants `index_range::phi_constants` names for it and in its range: the
 /// table walk enumerates the constants the range holds.  The range can be the
 /// tighter, since an edge guard bounds the arm it carries.
 #[test]
@@ -1560,14 +1561,14 @@ fn a_phi_of_constants_holds_only_its_constants() {
         {
             continue;
         }
-        let mut ranges = crate::value_range::RangeMap::new(&f).unwrap();
+        let mut ranges = index_range::RangeMap::new(&f).unwrap();
         let mut sets: FxHashMap<ValueId, Vec<u128>> = FxHashMap::default();
         for n in strider_ir::IRWalker::walk(&f) {
             if !matches!(f.node_kind(n), NodeKind::Phi) {
                 continue;
             }
             let v = f.node_outputs(n)[0];
-            if let Some(set) = crate::value_range::phi_constants(&f, v, 64) {
+            if let Some(set) = index_range::phi_constants(&f, v, 64) {
                 sets.insert(v, set);
             }
         }
