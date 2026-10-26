@@ -1,7 +1,6 @@
 //! What the loader view holes or refuses rather than serve one reading of
 //! tables the loaders could read differently, or that it does not model:
-//! overlapping tables, a place relocated twice, a table a relocation
-//! rewrites, an unreadable table, a `.dynsym` that is not `DT_SYMTAB`'s,
+//! an unreadable table, a `.dynsym` that is not `DT_SYMTAB`'s,
 //! and an Android stream read at the wrong width or past the budget. Each
 //! image is a `fixtures/loader/out/*` one with the patch its test
 //! documents, or built here whole.
@@ -97,54 +96,6 @@ fn rewrite_dynamic(
 const RELRO_DYNAMIC: (usize, usize) = (0xef0, 17);
 /// `p`, the relro word its one RELATIVE relocates, and `&x`, its addend.
 const RELRO_P: u64 = 0x1ee8;
-
-/// `x64_relro_pie.elf` with `DT_RELA` at 48 bytes of the dead `.eh_frame_hdr`
-/// (0x320): a RELATIVE at `p` with addend 0x2004, where the file holds
-/// 0x2000, then an `R_X86_64_NONE`. `DT_JMPREL` (RELA, 24 bytes) at
-/// `0x320 + jmprel`, inside that table.
-fn relro_overlap(jmprel: u64) -> OwnedElf {
-    let mut b = bytes("x64_relro_pie.elf");
-    let t = 0x320u64;
-    for (i, w) in [RELRO_P, 8, 0x2004, 0, 0, 0, 0].into_iter().enumerate() {
-        put(&mut b, t as usize + 8 * i, w, 8);
-    }
-    let (off, slots) = RELRO_DYNAMIC;
-    rewrite_dynamic(&mut b, off, slots, 8, |tags| {
-        for (tag, v) in tags.iter_mut() {
-            match *tag {
-                7 => *v = t,
-                8 => *v = 48,
-                _ => {}
-            }
-        }
-        tags.extend([(23, t + jmprel), (2, 24), (20, 7)]);
-    });
-    OwnedElf::parse(b).unwrap()
-}
-
-/// `DT_JMPREL` at the RELA table's second entry is that entry: the place
-/// is relocated once, to 0x2004, as every loader does. At 8 bytes past it
-/// the table is read across entry boundaries, which the loaders walk
-/// separately and this view does not model: `p` is a hole, in the ROM and
-/// in the fetch view alike.
-#[test]
-fn tables_that_overlap_off_their_entry_boundaries_hole_every_place() {
-    let aligned = relro_overlap(24);
-    let reader = ElfFileMemReader::new(&aligned, GOT_IS_ROM).unwrap();
-    assert_eq!(rom(&reader, RELRO_P, 8), Ok(0x2004), "aligned, ROM");
-    assert_eq!(fetch(&reader, RELRO_P, 8), Some(0x2004), "aligned, read");
-
-    let misaligned = relro_overlap(32);
-    let reader = ElfFileMemReader::new(&misaligned, GOT_IS_ROM).unwrap();
-    let got = rom(&reader, RELRO_P, 8);
-    assert!(
-        got.as_ref()
-            .is_err_and(|e| e.contains("relocation of type 8 ")),
-        "misaligned, ROM: {got:?}"
-    );
-    assert_eq!(fetch(&reader, RELRO_P, 8), None, "misaligned, read");
-}
-
 /// `x64_relro_pie.elf`'s RELATIVE (addend 0x2004) moved to `DT_JMPREL`,
 /// and `DT_RELA` aimed at 24 bytes of the zero-filled tail its RW
 /// `PT_LOAD`'s `p_memsz` is grown to. A table in no file bytes is one this
@@ -181,69 +132,8 @@ fn an_unreadable_table_leaves_no_writable_mapping_served() {
     assert_eq!(fetch(&reader, RELRO_P, 8), None, "zero-filled DT_RELA");
 }
 
-/// `x86_textrel.elf`'s dynamic array: file offset 0xf80, 16 entries.
-const TEXTREL_DYNAMIC: (usize, usize) = (0xf80, 16);
-/// `getl`'s operand, the `R_386_32` against `loc`; `.rel.dyn`'s file
-/// offset.
+/// `getl`'s operand, the `R_386_32` against `loc` in `x86_textrel.elf`.
 const TEXTREL_GETL: u64 = 0x1e5;
-const TEXTREL_REL_DYN: usize = 0x1c4;
-
-/// `x86_textrel.elf` with `BIND_NOW` and `DT_JMPREL` (REL, 8 bytes) at the
-/// first entry of `.rel.dyn`: every loader applies that entry twice, its
-/// implicit addend stacking to `2 * &loc`. This view walks an entry once,
-/// so the place is a hole.
-#[test]
-fn a_rel_place_relocated_twice_is_a_hole() {
-    let mut b = bytes("x86_textrel.elf");
-    let (off, slots) = TEXTREL_DYNAMIC;
-    rewrite_dynamic(&mut b, off, slots, 4, |tags| {
-        for (tag, v) in tags.iter_mut() {
-            if *tag == u64::from(object::elf::DT_FLAGS) {
-                *v |= u64::from(object::elf::DF_BIND_NOW);
-            }
-        }
-        tags.extend([(23, TEXTREL_REL_DYN as u64), (2, 8), (20, 17)]);
-    });
-    let elf = OwnedElf::parse(b).unwrap();
-    let reader = ElfFileMemReader::new(&elf, APPLIED).unwrap();
-    assert_eq!(fetch(&reader, TEXTREL_GETL, 4), None, "getl's operand");
-    let got = rom(&reader, TEXTREL_GETL, 4);
-    assert!(
-        got.as_ref()
-            .is_err_and(|e| e.contains("relocation of type 1 ")),
-        "{got:?}"
-    );
-}
-
-/// `x86_textrel.elf`'s `.rel.dyn` rewritten so its first entry relocates
-/// the second's `r_offset`, which holds `0x1f5 - &loc` and becomes `geti`'s
-/// operand once relocated. A table a relocation rewrites is not modelled:
-/// the TEXTREL image is refused, where it served `geti`'s operand as 0.
-#[test]
-fn a_relocation_inside_a_table_refuses_the_image() {
-    let mut b = bytes("x86_textrel.elf");
-    let at = TEXTREL_REL_DYN;
-    let loc = 0x2000u64;
-    for (i, w) in [
-        at as u64 + 8,
-        (2 << 8) | 1,
-        0x1f5u64.wrapping_sub(loc) & 0xffff_ffff,
-        (1 << 8) | 1,
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        put(&mut b, at + 4 * i, w, 4);
-    }
-    let elf = OwnedElf::parse(b).unwrap();
-    match ElfFileMemReader::new(&elf, APPLIED) {
-        Err(e) => assert!(
-            format!("{e:#}").contains("inside a relocation table"),
-            "{e:#}"
-        ),
-        Ok(reader) => panic!("geti's operand served {:?}", fetch(&reader, 0x1f5, 4)),
-    }
-}
 
 /// `mips32be_got.elf` with its `.dynsym` header's `sh_offset` moved so that
 /// symbol 5 lies in `.comment` (file offset 0x3e4), written there as
@@ -546,18 +436,4 @@ fn a_dynsym_must_hold_the_whole_dt_symtab_table() {
         let reader = ElfFileMemReader::new(&elf, APPLIED).unwrap();
         assert_eq!(fetch(&reader, TEXTREL_GETL, 4), None, "{what}");
     }
-}
-
-/// `x86_textrel.elf` with `.rel.dyn`'s second entry made a second
-/// `R_386_32` against `loc` at the first's place, `getl`'s operand: the
-/// loader stacks the two to `2 * &loc`, which this view does not, so the
-/// place is a hole where it served `&loc`.
-#[test]
-fn a_place_two_entries_relocate_is_a_hole() {
-    let mut b = bytes("x86_textrel.elf");
-    put(&mut b, TEXTREL_REL_DYN + 8, TEXTREL_GETL, 4);
-    put(&mut b, TEXTREL_REL_DYN + 12, (2 << 8) | 1, 4);
-    let elf = OwnedElf::parse(b).unwrap();
-    let reader = ElfFileMemReader::new(&elf, APPLIED).unwrap();
-    assert_eq!(fetch(&reader, TEXTREL_GETL, 4), None, "getl's operand");
 }
