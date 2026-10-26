@@ -8,7 +8,7 @@ use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IntBinaryOp, IntCmpOp};
 
 use super::interval::{Interval, width_mask};
-use super::{MAX_GUARD_LADDER, RangeMap, single_control_consumer};
+use super::{RangeMap, cast_chain, single_control_consumer};
 
 impl RangeMap<'_> {
     /// Whether `iv`, `value`'s range at `region`, is no tighter than its
@@ -171,24 +171,15 @@ fn excludes_one_value(
     let Ok([a, b]) = f.producer_inputs_exact::<2>(cond) else {
         return false;
     };
-    let mut x = match (f.int_const_u128(a), f.int_const_u128(b)) {
+    let x = match (f.int_const_u128(a), f.int_const_u128(b)) {
         (Some(_), None) => b,
         (None, Some(_)) => a,
         _ => return false,
     };
-    for _ in 0..MAX_GUARD_LADDER {
-        if is_cell(x) {
-            return true;
-        }
-        match f.node_kind(f.producer(x)) {
-            NodeKind::Extend(_) | NodeKind::Truncate => match f.int_inputs(x).next() {
-                Some(inner) => x = inner,
-                None => return false,
-            },
-            _ => return false,
-        }
-    }
-    false
+    cast_chain(f, x, |k| {
+        matches!(k, NodeKind::Extend(_) | NodeKind::Truncate)
+    })
+    .any(is_cell)
 }
 
 /// Whether `root`'s value reads bits of `target`. Past [`MAX_TEST_CONE`]

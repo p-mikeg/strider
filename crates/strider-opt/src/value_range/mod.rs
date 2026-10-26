@@ -409,20 +409,10 @@ impl<'f> RangeMap<'f> {
     fn edge_bound_on(&self, edge: ValueId, arm: ValueId) -> Option<Interval> {
         let (guarded, iv) = *self.edge_guards.get(&edge)?;
         let f = self.function;
-        let mut same = vec![guarded];
-        while same.len() < MAX_GUARD_LADDER as usize {
-            let last = same[same.len() - 1];
-            if !matches!(
-                f.node_kind(f.producer(last)),
-                NodeKind::Extend(ExtendOp::ZeroExtend)
-            ) {
-                break;
-            }
-            let Ok([x]) = f.producer_inputs_exact::<1>(last) else {
-                break;
-            };
-            same.push(x);
-        }
+        let same: Vec<ValueId> = cast_chain(f, guarded, |k| {
+            matches!(k, NodeKind::Extend(ExtendOp::ZeroExtend))
+        })
+        .collect();
         let mut hops: Vec<Hop> = Vec::new();
         let mut cur = arm;
         for _ in 0..MAX_GUARD_LADDER {
@@ -1026,6 +1016,21 @@ fn guard_from_compare(
         (false, false) => Some((guarded, Interval::dense(0, n.min(type_mask)))),
         (true, false) | (false, true) => None,
     }
+}
+
+/// `value` and the values below it through the casts `through` accepts, at
+/// most [`MAX_GUARD_LADDER`] of them.
+fn cast_chain<'a>(
+    f: &'a strider_ir::Function,
+    value: ValueId,
+    through: impl Fn(&NodeKind) -> bool + 'a,
+) -> impl Iterator<Item = ValueId> + 'a {
+    std::iter::successors(Some(value), move |&v| {
+        through(f.node_kind(f.producer(v)))
+            .then(|| f.int_inputs(v).next())
+            .flatten()
+    })
+    .take(MAX_GUARD_LADDER as usize)
 }
 
 /// The one sink of a control edge.  `None` for a dead edge, and `None` if the
