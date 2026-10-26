@@ -176,9 +176,8 @@ impl<'f> RangeMap<'f> {
             match self.const_scale(value) {
                 Some((operand, scale)) => match self.dominating_guard(operand, region) {
                     Some(guard) => {
-                        let width_mask = width_mask(self.function, value);
                         let inner = self.resolve_leaf_guarded(operand, Some(guard));
-                        scale.apply(inner, width_mask).intersect(leaf)
+                        scale.apply(inner, mask).intersect(leaf)
                     }
                     None => leaf,
                 },
@@ -986,14 +985,17 @@ fn guard_from_compare(
         };
 
     let ty = function.value_type_opt(guarded)?;
-    if !ty.is_integer() || ty == ValueType::I1 {
+    // An `IntCmpOp` operand is an integer per the node signature; the mask is
+    // `None` only past 128 bits, where no `u128` is a bound the value is
+    // inside.
+    debug_assert!(ty.is_integer());
+    let type_mask = ty.int_mask_u128()?;
+    if ty == ValueType::I1 {
         return None;
     }
     if op == IntCmpOp::Sless && !is_sign_bit_known_zero(function, guarded, known) {
         return None;
     }
-    // `None` past 128 bits, where no `u128` is a bound the value is inside.
-    let type_mask = ty.int_mask_u128()?;
     // `n` is raw bits, read below as an unsigned endpoint. A NEGATIVE `Sless`
     // constant against a known-non-negative value carries no bound at all: the
     // compare is decided, and reading its two's-complement bits unsigned would
