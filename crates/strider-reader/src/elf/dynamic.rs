@@ -77,21 +77,6 @@ impl Loads {
     fn bytes<'d>(&self, data: &'d [u8], addr: u64, len: u64) -> Option<&'d [u8]> {
         self.rest(data, addr)?.get(..usize::try_from(len).ok()?)
     }
-
-    /// The file offset of `[addr, addr + len)` when one `PT_LOAD` maps all
-    /// of it, the last mapping `addr`, and no later one overlaps it.
-    fn whole(&self, data: &[u8], addr: u64, len: u64) -> Option<usize> {
-        let end = addr.checked_add(len)?;
-        let at = self
-            .0
-            .iter()
-            .rposition(|&(vaddr, filesz, _)| vaddr <= addr && addr - vaddr < filesz)?;
-        let later = self.0[at + 1..]
-            .iter()
-            .any(|&(vaddr, filesz, _)| vaddr < end && addr < vaddr.saturating_add(filesz));
-        let bytes = self.bytes(data, addr, len)?;
-        (!later).then(|| bytes.as_ptr() as usize - data.as_ptr() as usize)
-    }
 }
 
 /// The dynamic array's `(d_tag, d_val)` entries before `DT_NULL`.
@@ -392,16 +377,6 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
     }
 }
 
-fn read_word(b: &[u8], le: bool) -> u64 {
-    b.iter().enumerate().fold(0, |acc, (i, &x)| {
-        if le {
-            acc | (u64::from(x) << (8 * i))
-        } else {
-            (acc << 8) | u64::from(x)
-        }
-    })
-}
-
 fn put_word(b: &mut [u8], v: u64, le: bool) {
     let n = b.len();
     if le {
@@ -607,78 +582,4 @@ fn synthesized<Elf: FileHeader>(
     set(phnum_at + 4, shnum, 2);
     set(phnum_at + 6, 1, 2);
     out
-}
-
-/// Whether the section header `object` takes for `.dynsym` holds the table
-/// `DT_SYMTAB` places, every symbol of it: its address, and the file bytes
-/// of the one `PT_LOAD` mapping all of it, which no later one overlaps.
-/// The table runs to the symbol count `DT_HASH` or `DT_GNU_HASH` gives, and
-/// to the header's `sh_size`, whichever is more. Otherwise a relocation's
-/// symbol index names a table the loader does not read, and no symbol
-/// resolves.
-pub(crate) fn dynsym_is_the_loaders(obj: &object::File<'_>) -> bool {
-    fn of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> bool {
-        use object::read::elf::SectionHeader as _;
-        let endian = f.endian();
-        let Some(Some(tags)) = dynamic_tags_of(f) else {
-            return false;
-        };
-        let index = f.elf_dynamic_symbol_table().section();
-        let (Some(symtab), Ok(sh)) = (
-            tags.get(elf::DT_SYMTAB),
-            f.elf_section_table().section(index),
-        ) else {
-            return false;
-        };
-        let data = f.data();
-        let loads = Loads::of(f);
-        let le = f.is_little_endian();
-        let ent: u64 = if f.is_64() { 24 } else { 16 };
-        let addr: u64 = sh.sh_addr(endian).into();
-        let offset: u64 = sh.sh_offset(endian).into();
-        let size: u64 = sh.sh_size(endian).into();
-        let count = symbol_count(&tags, &loads, data, le, f.is_64()).unwrap_or(0);
-        let len = size.max(count.saturating_mul(ent));
-        index.0 != 0
-            && addr == symtab
-            && loads.whole(data, symtab, len) == usize::try_from(offset).ok()
-    }
-    match obj {
-        object::File::Elf32(f) => of(f),
-        object::File::Elf64(f) => of(f),
-        _ => false,
-    }
-}
-
-/// The symbol count `DT_HASH`'s `nchain` gives, else the one past the last
-/// `DT_GNU_HASH` chain's end; `None` without either, or one that does not
-/// read.
-fn symbol_count(
-    tags: &DynamicTags,
-    loads: &Loads,
-    data: &[u8],
-    le: bool,
-    is_64: bool,
-) -> Option<u64> {
-    let u32_at = |addr: u64| -> Option<u64> { Some(read_word(loads.bytes(data, addr, 4)?, le)) };
-    if let Some(hash) = tags.get(elf::DT_HASH) {
-        return u32_at(hash.checked_add(4)?);
-    }
-    let gnu = tags.get(elf::DT_GNU_HASH)?;
-    let (nbuckets, symoffset, bloom) = (u32_at(gnu)?, u32_at(gnu + 4)?, u32_at(gnu + 8)?);
-    let buckets = gnu + 16 + bloom * if is_64 { 8 } else { 4 };
-    let mut last = 0;
-    for i in 0..nbuckets {
-        last = last.max(u32_at(buckets + 4 * i)?);
-    }
-    if last < symoffset {
-        return Some(symoffset);
-    }
-    let chains = buckets + 4 * nbuckets;
-    loop {
-        if u32_at(chains + 4 * (last - symoffset))? & 1 != 0 {
-            return Some(last + 1);
-        }
-        last += 1;
-    }
 }
