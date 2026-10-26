@@ -570,7 +570,6 @@ impl<'f> ReturnTargets<'f> {
         }
         let addr = function.store_addr(store);
         let data = function.store_data(store);
-        let len = store_value_byte_size(function, data);
         let optimistic = self
             .function
             .assumptions()
@@ -599,21 +598,21 @@ impl<'f> ReturnTargets<'f> {
                 },
             ));
         }
-        self.overlap(function.value_type_opt(addr), written, len, at, size, data)
+        self.overlap(function.value_type_opt(addr), written, at, size, data)
     }
 
-    /// What a store of `len` bytes at `written` does to the `size` bytes at
-    /// `at`, carrying `data` out of an exact hit. `ty` is the address type,
-    /// whose width the offsets wrap at.
+    /// What a store of `data` at `written` does to the `size` bytes at `at`,
+    /// carrying `data` out of an exact hit. `ty` is the address type, whose
+    /// width the offsets wrap at.
     fn overlap(
         &self,
         ty: Option<ValueType>,
         written: StackAddr,
-        len: i128,
         at: StackAddr,
         size: i128,
         data: ValueId,
     ) -> StoreEffect {
+        let len = store_value_byte_size(self.function, data);
         if written.base == at.base {
             return if written.offset == at.offset && len == size {
                 StoreEffect::Writes(data)
