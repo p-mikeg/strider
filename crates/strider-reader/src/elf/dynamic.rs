@@ -5,18 +5,9 @@
 //! and RELR ones). No section header takes part.
 //!
 //! Each table is walked as it lies; an entry two tables share, at one file
-//! address in one entry layout, is walked once. Whatever the loaders could
-//! disagree on, or this walk does not model, is a hole rather than one
-//! reading's bytes:
-//!
-//! * two tables that overlap otherwise, at another entry boundary or of
-//!   another kind: every place either relocates;
-//! * a place inside the dynamic array;
-//! * a place two entries relocate, or one `REL` entry twice, its implicit
-//!   addend then stacking.
-//!
-//! A place inside a table rewrites it before the loader reads it, which is
-//! not modelled: the view is then unreadable.
+//! address in one entry layout, is walked once. GNU ld's ppc32 `DT_RELA`
+//! spans `DT_JMPREL`, and a `REL` entry walked twice would stack its
+//! implicit addend.
 //!
 //! Deliberate choices where loaders differ:
 //!
@@ -103,9 +94,8 @@ impl Loads {
     }
 }
 
-/// The dynamic array's `(d_tag, d_val)` entries before `DT_NULL`, and its
-/// extent, `DT_NULL` included.
-pub(crate) struct DynamicTags(Vec<(u64, u64)>, (u64, u64));
+/// The dynamic array's `(d_tag, d_val)` entries before `DT_NULL`.
+pub(crate) struct DynamicTags(Vec<(u64, u64)>);
 
 impl DynamicTags {
     /// The value of the last `want` entry, which is the one every loader
@@ -160,8 +150,7 @@ fn dynamic_tags_of<Elf: FileHeader>(
         .map(|d| (read(&d[..word]), read(&d[word..])))
         .take_while(|&(t, _)| t != u64::from(elf::DT_NULL))
         .collect();
-    let end = vaddr.saturating_add((entries.len() as u64 + 1) * 2 * word as u64);
-    Some(Some(DynamicTags(entries, (vaddr, end))))
+    Some(Some(DynamicTags(entries)))
 }
 
 /// A relocation table the tags place.
@@ -186,12 +175,8 @@ pub(crate) enum LoaderView {
     /// No `PT_DYNAMIC`, or an object file: the section headers' tables.
     NotDynamic,
     /// The tables the tags place, as an ELF of their own that `object`
-    /// walks as a dynamic table ([`synthesized`]), and the places to hole
-    /// whatever the walk computes there.
-    Tables {
-        walked: Option<Vec<u8>>,
-        holes: Vec<(u64, RelocInfo)>,
-    },
+    /// walks as a dynamic table ([`synthesized`]).
+    Tables { walked: Option<Vec<u8>> },
     /// A table the tags place that cannot be read or decoded, or an array
     /// that cannot be: what it relocates is unknown.
     Unreadable(&'static str),
@@ -221,24 +206,11 @@ pub(crate) fn loader_view(obj: &object::File<'_>) -> LoaderView {
     }
 }
 
-use super::relocations::RelocInfo;
-
-/// One relocation a table holds: its place, its type for a hole, and what
-/// makes it the same entry as another's (`Some(file address)` of a plain
-/// one).
-struct Placed {
-    place: u64,
-    info: RelocInfo,
-    at: Option<u64>,
-}
-
-/// A table, its extent, and its relocations.
+/// A table and its relocations.
 struct Walked<'d> {
     table: Table,
-    extent: (u64, u64),
-    placed: Vec<Placed>,
-    /// A plain table's entries, one slice each.
-    raw: Vec<&'d [u8]>,
+    /// A plain table's entries: `(file address, bytes)` each.
+    raw: Vec<(u64, &'d [u8])>,
     /// A CREL table's bytes; an Android table's entries.
     crel: Option<&'d [u8]>,
     android: Vec<Entry>,
@@ -314,9 +286,7 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
         tables.push(Table::Android { rela, addr, size });
     }
     // RELR words hold `B + A`, `B` modelled 0, as the file has them: a
-    // table is only checked to be there, and its extent is one a place may
-    // not lie in.
-    let mut fixed = vec![tags.1];
+    // table is only checked to be there.
     for (at, size, ent) in [
         (DT_RELR, DT_RELRSZ, DT_RELRENT),
         (DT_ANDROID_RELR, DT_ANDROID_RELRSZ, DT_ANDROID_RELRENT),
@@ -333,7 +303,6 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
         if loads.bytes(data, addr, size).is_none() {
             return LoaderView::Unreadable("a RELR table is in no PT_LOAD");
         }
-        fixed.push((addr, addr.saturating_add(size)));
     }
     // The entries counted against the budget at the smallest entry size of
     // any table, an Android one's being its plain twin's.
@@ -353,16 +322,11 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
         .min()
         .unwrap_or(rel_ent);
     let budget = super::relocations::RELOCATION_ENTRY_BUDGET * data.len() as u64 / smallest;
-    let mips64 = is_64 && f.elf_header().e_machine(f.endian()) == elf::EM_MIPS;
-    let wsize = word as usize;
-    let le = f.is_little_endian();
     let mut entries = 0u64;
     let mut walked = Vec::new();
     for &table in &tables {
         let mut w = Walked {
             table,
-            extent: (0, 0),
-            placed: Vec::new(),
             raw: Vec::new(),
             crel: None,
             android: Vec::new(),
@@ -371,7 +335,6 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
             Table::Plain {
                 addr, size, ent, ..
             } => {
-                w.extent = (addr, addr.saturating_add(size));
                 if size % ent != 0 {
                     false
                 } else if size == 0 {
@@ -379,12 +342,7 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
                 } else if let Some(bytes) = loads.bytes(data, addr, size) {
                     entries += size / ent;
                     for (i, e) in bytes.chunks_exact(ent as usize).enumerate() {
-                        w.placed.push(Placed {
-                            place: read_word(&e[..wsize], le),
-                            info: plain_info(e, wsize, le, mips64),
-                            at: Some(addr + i as u64 * ent),
-                        });
-                        w.raw.push(e);
+                        w.raw.push((addr + i as u64 * ent, e));
                     }
                     true
                 } else {
@@ -393,26 +351,13 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
             }
             Table::Crel { addr } => match loads.rest(data, addr).and_then(crel_entries) {
                 Some(found) => {
-                    w.extent = (
-                        addr,
-                        addr + loads.rest(data, addr).map_or(0, |b| b.len() as u64),
-                    );
                     entries += found.len() as u64;
                     w.crel = loads.rest(data, addr);
-                    w.placed = found
-                        .into_iter()
-                        .map(|(place, r_type)| Placed {
-                            place,
-                            info: type_info(r_type, mips64),
-                            at: None,
-                        })
-                        .collect();
                     true
                 }
                 None => false,
             },
             Table::Android { rela, addr, size } => {
-                w.extent = (addr, addr.saturating_add(size));
                 let limit = budget.saturating_sub(entries);
                 match (!f.elf_header().is_mips64el(f.endian()))
                     .then(|| loads.bytes(data, addr, size))
@@ -421,19 +366,6 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
                 {
                     Some(Ok(found)) => {
                         entries += found.len() as u64;
-                        let info_word = |info: u64| {
-                            let mut b = vec![0u8; 2 * wsize];
-                            put_word(&mut b[wsize..], info, le);
-                            plain_info(&b, wsize, le, mips64)
-                        };
-                        w.placed = found
-                            .iter()
-                            .map(|&(place, info, _)| Placed {
-                                place,
-                                info: info_word(info),
-                                at: None,
-                            })
-                            .collect();
                         w.android = found;
                         true
                     }
@@ -455,104 +387,9 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
         }
         walked.push(w);
     }
-    let Some(holes) = conflicts(&mut walked, &fixed, word) else {
-        return LoaderView::Unreadable("a relocation lands inside a relocation table");
-    };
     LoaderView::Tables {
         walked: (!walked.is_empty()).then(|| synthesized(f, &walked)),
-        holes,
     }
-}
-
-/// Every place to hole, see the module doc; a table any of them condemns
-/// is left with no entries to walk. `None` when a place lies inside a
-/// table, the dynamic array's extent `fixed[0]` aside.
-fn conflicts(
-    walked: &mut [Walked<'_>],
-    fixed: &[(u64, u64)],
-    word: u64,
-) -> Option<Vec<(u64, RelocInfo)>> {
-    let overlaps = |a: (u64, u64), b: (u64, u64)| a.0 < b.1 && b.0 < a.1;
-    let mut condemned = vec![false; walked.len()];
-    for i in 0..walked.len() {
-        for j in i + 1..walked.len() {
-            let (a, b) = (&walked[i], &walked[j]);
-            if !overlaps(a.extent, b.extent) {
-                continue;
-            }
-            let same_layout = match (a.table, b.table) {
-                (
-                    Table::Plain {
-                        sh_type: ta,
-                        addr: aa,
-                        ent: ea,
-                        ..
-                    },
-                    Table::Plain {
-                        sh_type: tb,
-                        addr: ab,
-                        ent: eb,
-                        ..
-                    },
-                ) => ta == tb && ea == eb && aa.abs_diff(ab) % ea == 0,
-                _ => false,
-            };
-            if !same_layout {
-                condemned[i] = true;
-                condemned[j] = true;
-            }
-        }
-        if fixed[1..].iter().any(|&r| overlaps(walked[i].extent, r)) {
-            condemned[i] = true;
-        }
-    }
-    let mut holes = Vec::new();
-    for w in walked.iter() {
-        for p in w.placed.iter().filter(|p| p.info.type_word() != 0) {
-            let field = (p.place, p.place.saturating_add(word));
-            if fixed[1..].iter().any(|&r| overlaps(field, r))
-                || walked.iter().any(|other| overlaps(field, other.extent))
-            {
-                return None;
-            }
-            if overlaps(field, fixed[0]) {
-                holes.push((p.place, p.info));
-            }
-        }
-    }
-    // Places walked twice: by two entries, or by one `REL` entry twice.
-    let mut seen: std::collections::HashMap<u64, Option<u64>> = std::collections::HashMap::new();
-    for (k, w) in walked.iter().enumerate() {
-        if condemned[k] {
-            continue;
-        }
-        let implicit = matches!(
-            w.table,
-            Table::Plain { sh_type, .. } if sh_type == elf::SHT_REL
-        ) || matches!(w.table, Table::Android { rela: false, .. });
-        for p in w.placed.iter().filter(|p| p.info.type_word() != 0) {
-            match seen.insert(p.place, p.at) {
-                None => {}
-                Some(at) if at.is_some() && at == p.at && !implicit => {}
-                Some(_) => holes.push((p.place, p.info)),
-            }
-        }
-    }
-    for (k, w) in walked.iter_mut().enumerate() {
-        if condemned[k] {
-            holes.extend(
-                w.placed
-                    .iter()
-                    .filter(|p| p.info.type_word() != 0)
-                    .map(|p| (p.place, p.info)),
-            );
-            w.placed.clear();
-            w.raw.clear();
-            w.crel = None;
-            w.android.clear();
-        }
-    }
-    Some(holes)
 }
 
 fn read_word(b: &[u8], le: bool) -> u64 {
@@ -571,45 +408,6 @@ fn put_word(b: &mut [u8], v: u64, le: bool) {
         b.copy_from_slice(&v.to_le_bytes()[..n]);
     } else {
         b.copy_from_slice(&v.to_be_bytes()[8 - n..]);
-    }
-}
-
-/// The type of the plain entry `e`, whose `r_info` follows its `r_offset`:
-/// MIPS64's is a symbol word then `r_ssym, r_type3, r_type2, r_type`.
-fn plain_info(e: &[u8], word: usize, le: bool, mips64: bool) -> RelocInfo {
-    if mips64 {
-        let info = &e[word..2 * word];
-        return RelocInfo {
-            r_type: u32::from(info[7]),
-            r_type2: u32::from(info[6]),
-            r_type3: u32::from(info[5]),
-            sym: None,
-            rela_addend: None,
-            generic: None,
-        };
-    }
-    let info = read_word(&e[word..2 * word], le);
-    let r_type = if word == 8 {
-        info as u32
-    } else {
-        (info & 0xff) as u32
-    };
-    type_info(r_type, false)
-}
-
-fn type_info(r_type: u32, mips64: bool) -> RelocInfo {
-    let (r_type, r_type2, r_type3) = if mips64 {
-        (r_type & 0xff, (r_type >> 8) & 0xff, (r_type >> 16) & 0xff)
-    } else {
-        (r_type, 0, 0)
-    };
-    RelocInfo {
-        r_type,
-        r_type2,
-        r_type3,
-        sym: None,
-        rela_addend: None,
-        generic: None,
     }
 }
 
@@ -733,8 +531,8 @@ fn synthesized<Elf: FileHeader>(
                 sh_type, addr, ent, ..
             } => {
                 let mut bytes = Vec::new();
-                for (p, raw) in w.placed.iter().zip(&w.raw) {
-                    if emitted.insert(p.at) {
+                for &(at, raw) in &w.raw {
+                    if emitted.insert(at) {
                         bytes.extend_from_slice(raw);
                     }
                 }
