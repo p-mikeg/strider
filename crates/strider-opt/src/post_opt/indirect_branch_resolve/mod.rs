@@ -599,6 +599,12 @@ mod tests {
             ReturnTargets::new(&f).returns_to_caller(branch, target),
             "sp+0x7FFF_FFFC ends where the slot starts"
         );
+        let (f, branch, target) = lr_saved_across_the_wrap(true, Some(0x7FFF_FFFC));
+        assert!(
+            !ReturnTargets::new(&f).returns_to_caller(branch, target),
+            "the alignment mask can put the slot up to 15 bytes lower, where \
+             that same store reaches it"
+        );
     }
 
     /// A 128-bit frame saving `lr` at `(sp & -16) + 2^127`, the bottom of the
