@@ -84,10 +84,9 @@ pub struct RangeMap<'f> {
     guard_memo: std::cell::RefCell<FxHashMap<(ValueId, NodeId), Option<Interval>>>,
     /// What each `And` with a constant mask is the mask of.
     masks: MaskOperands,
-    /// The guarded values whose [`BitField`] is exactly this one.
-    guards_by_field: FxHashMap<BitField, Vec<ValueId>>,
-    /// The distinct keys of `guards_by_field`, by root.
-    fields_by_root: FxHashMap<ValueId, Vec<BitField>>,
+    /// Per root, each distinct [`BitField`] of it some guarded value is, with
+    /// the guarded values that are exactly that field.
+    fields_by_root: FxHashMap<ValueId, Vec<(BitField, Vec<ValueId>)>>,
     /// [`Self::bit_field`] answers, computed on first ask.
     field_memo: std::cell::RefCell<SecondaryMap<ValueId, Option<Option<BitField>>>>,
     /// Open `range_of` frames, against [`MAX_RANGE_DEPTH`].
@@ -334,11 +333,11 @@ impl<'f> RangeMap<'f> {
             return own;
         };
         let mut met = own;
-        for &of in self.root_fields(field.root) {
+        for (of, over) in self.root_fields(field.root) {
             if !of.encloses(field) {
                 continue;
             }
-            for &guarded in &self.guards_by_field[&of] {
+            for &guarded in over {
                 if guarded != value
                     && let Some(iv) = self.guard_at(guarded, region)
                     && let Some(bound) = of.project(field, iv)
@@ -351,7 +350,7 @@ impl<'f> RangeMap<'f> {
     }
 
     /// The distinct fields of `root` some guarded value is.
-    fn root_fields(&self, root: ValueId) -> &[BitField] {
+    fn root_fields(&self, root: ValueId) -> &[(BitField, Vec<ValueId>)] {
         self.fields_by_root.get(&root).map_or(&[], Vec::as_slice)
     }
 
@@ -926,16 +925,19 @@ fn build<'f>(
         .iter()
         .map(|(&value, by_node)| (value, GuardForest::new(&doms, by_node)))
         .collect();
-    let mut guards_by_field: FxHashMap<BitField, Vec<ValueId>> = FxHashMap::default();
-    let mut fields_by_root: FxHashMap<ValueId, Vec<BitField>> = FxHashMap::default();
+    let mut by_field: FxHashMap<BitField, Vec<ValueId>> = FxHashMap::default();
     for &value in guards.keys() {
         if let Some(field) = bit_field(function, &masks, value) {
-            let guarded = guards_by_field.entry(field).or_default();
-            if guarded.is_empty() {
-                fields_by_root.entry(field.root).or_default().push(field);
-            }
-            guarded.push(value);
+            by_field.entry(field).or_default().push(value);
         }
+    }
+    let mut fields_by_root: FxHashMap<ValueId, Vec<(BitField, Vec<ValueId>)>> =
+        FxHashMap::default();
+    for (field, over) in by_field {
+        fields_by_root
+            .entry(field.root)
+            .or_default()
+            .push((field, over));
     }
     RangeMap {
         function,
@@ -947,7 +949,6 @@ fn build<'f>(
         memo: FxHashMap::default(),
         guard_memo: std::cell::RefCell::new(FxHashMap::default()),
         masks,
-        guards_by_field,
         fields_by_root,
         field_memo: std::cell::RefCell::new(SecondaryMap::new()),
         depth: 0,
