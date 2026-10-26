@@ -5,9 +5,9 @@
 //! An abstract value is either a concrete number or SP-relative, because the SP
 //! is symbolic and a stack address cannot be a pure number.  Four foldings do
 //! the work: ConstFold arithmetic, a constant-address ROM read, an SP-relative
-//! load resolved against the store reaching it, and a `Phi`
-//! whose arms agree.  Any unresolved value, a non-const dispatch result, or a
-//! cycle yields `None`.
+//! load resolved against the store reaching it, and a `Phi` whose arms agree.
+//! Any unresolved value, a non-const dispatch result, or a cycle yields
+//! `None`.
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
