@@ -1,4 +1,5 @@
-//! Whether a stack address lies in the function's own frame.
+//! Entry-SP geometry: the offsets a stack address can stand at, and whether
+//! an access lies in the function's own frame.
 
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, IntBinaryOp};
@@ -27,15 +28,12 @@ use super::ring::wrap_to_addr_width;
 /// BELOW it. `InitialVar(sp)` is exactly it, and masking only clears bits, but
 /// the alignment anchor is a mask of whatever SP-rooted expression the spine was
 /// on, so `(sp + K) & !0xF` sits K bytes ABOVE the entry SP, inside the caller's
-/// frame. The operand is therefore walked down to `InitialVar(sp)` and its
-/// accumulated displacement required to be non-positive.
+/// frame. The base's [`entry_sp_span`] therefore has to top out at or below
+/// zero; how far below is this frame's own business.
 pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, size: i128) -> bool {
-    let rooted_at_entry_sp = function.is_entry_sp(base)
-        || alignment_masked_operand(function, function.producer(base))
-            .is_some_and(|operand| at_or_below_entry_sp(function, operand, 0));
     // The END of the access, not its start: one that begins below the bound and
     // reaches over it touches the caller's block, which a callee may write.
-    rooted_at_entry_sp
+    entry_sp_span(function, base).is_some_and(|(_, hi)| hi <= 0)
         && offset.saturating_add(size)
             <= function
                 .default_cc()
@@ -43,68 +41,75 @@ pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, siz
                 .map_or(0, |args| args.base_offset)
 }
 
-/// Whether `value` is the entry SP displaced by a non-positive amount.
+/// The lowest and highest offset from the entry SP `value` can stand at, or
+/// `None` when no bound follows from its spine.
 ///
-/// Follows the spine shapes [`super::decompose::decompose`] does
-/// (`Add(x, const)` and an alignment `And`), accumulating the constants an
-/// anchor would otherwise discard, and through a `Phi`, where EVERY arm must
-/// qualify because the join could take any of them. The accumulated
-/// displacement is compared at the address width, so a chain that wraps is
-/// judged on the address it really forms. Anything else, a positive
-/// displacement, a revisited value (a loop-carried base) or an exhausted budget
-/// answers `false`, which only ever costs precision.
-fn at_or_below_entry_sp(function: &Function, value: ValueId, acc: i128) -> bool {
+/// Walks the shapes [`super::decompose::decompose`] does (`Add` of a constant
+/// and an alignment `And`) and, unlike it, on through a `Phi`, whose arms
+/// widen the span rather than end the walk: the join holds one of them, so
+/// their union bounds it. A revisited value (a loop-carried base), an
+/// exhausted budget or any other shape answers `None`, which every caller
+/// reads conservatively.
+///
+/// The offsets are read at the ADDRESS width, so a chain that wraps is judged
+/// on the address it really forms.
+///
+/// Overflow: `hi` is checked, because under-reading it would call a caller's
+/// frame our own and would cut bytes off the top of an access range. The
+/// alignment slack only ever lowers `lo` and cannot overflow (at most
+/// `MAX_STEPS` masks of at most `MAX_ALIGN_BITS` each), so it saturates;
+/// `lo` itself is checked, since clamping it at the carrier floor would RAISE
+/// it and cut bytes off the bottom.
+pub(crate) fn entry_sp_span(function: &Function, value: ValueId) -> Option<(i128, i128)> {
     /// A real SP spine is a handful of links; this only bounds a pathological one.
     const MAX_STEPS: usize = 256;
-    let mut work = vec![(value, acc)];
+    let (mut lo, mut hi) = (i128::MAX, i128::MIN);
+    // Per pending value: the offset accrued above it, and how far the masks
+    // above it can lower that.
+    let mut work = vec![(value, 0i128, 0i128)];
     let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
     let mut steps = 0usize;
-    while let Some((cur, acc)) = work.pop() {
+    while let Some((cur, acc, slack)) = work.pop() {
         steps += 1;
         if steps > MAX_STEPS {
-            return false;
+            return None;
         }
         let node = function.producer(cur);
         match *function.node_kind(node) {
-            NodeKind::InitialVar(_) => {
-                // Compare at the ADDRESS width, as `decompose` does: a raw
-                // `i128` sum can be non-positive while the address it stands
-                // for wrapped back above the entry SP, into the caller's frame.
-                if !function.is_entry_sp(cur) || wrap_to_addr_width(function, cur, acc) > 0 {
-                    return false;
-                }
+            NodeKind::InitialVar(_) if function.is_entry_sp(cur) => {
+                let top = wrap_to_addr_width(function, cur, acc);
+                lo = lo.min(top.checked_sub(slack)?);
+                hi = hi.max(top);
             }
-            // Masking only clears bits, so it can only move the base DOWN.
+            // Masking only clears bits, so it can only move the base DOWN, by
+            // at most one alignment less a byte.
             NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-                let Some(operand) = alignment_masked_operand(function, node) else {
-                    return false;
-                };
-                work.push((operand, acc));
+                let operand = alignment_masked_operand(function, node)?;
+                let [l, r] = function.node_inputs_exact::<2>(node).ok()?;
+                let mask = function.int_const_u128(if operand == l { r } else { l })?;
+                let align = 1i128 << mask.trailing_zeros();
+                work.push((operand, acc, slack.saturating_add(align - 1)));
             }
             NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                let Some((next, k)) = crate::const_eval::const_addend(function, node) else {
-                    return false;
-                };
-                let Some(sum) = acc.checked_add(k) else {
-                    return false;
-                };
-                work.push((next, sum));
+                let (next, k) = crate::const_eval::const_addend(function, node)?;
+                work.push((next, acc.checked_add(k)?, slack));
             }
             NodeKind::Phi => {
                 // A revisited value is a loop-carried base: its displacement is
-                // not a constant, so it cannot be shown non-positive.
+                // not a constant, so it bounds nothing.
                 if !seen.insert(cur) {
-                    return false;
+                    return None;
                 }
                 let arms = work.len();
-                work.extend(function.value_inputs(node).map(|arm| (arm, acc)));
+                work.extend(function.value_inputs(node).map(|arm| (arm, acc, slack)));
                 // An arm the walk never reads is a displacement it never bounds.
                 if work.len() == arms {
-                    return false;
+                    return None;
                 }
             }
-            _ => return false,
+            _ => return None,
         }
     }
-    true
+    debug_assert!(lo <= hi, "the walk ends only on an entry-SP terminal");
+    Some((lo, hi))
 }
