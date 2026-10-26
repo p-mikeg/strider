@@ -162,16 +162,16 @@ pub(crate) fn apply_elf_relocations_with(
     // A linked image with a `PT_DYNAMIC` is relocated from the tables its tags
     // place, as its own ELF; anything else from its section headers.
     let deduped;
-    let (rewritten, dynamic, holes) = match view {
+    let (rewritten, dynamic) = match view {
         super::dynamic::LoaderView::NotDynamic => {
             deduped = without_repeated_tables(obj)?;
-            (deduped.as_deref(), false, &[][..])
+            (deduped.as_deref(), false)
         }
-        super::dynamic::LoaderView::Tables { walked, holes } => {
+        super::dynamic::LoaderView::Tables { walked } => {
             ctx.symbols = super::dynamic::dynsym_is_the_loaders(obj);
-            (walked.as_deref(), true, &holes[..])
+            (walked.as_deref(), true)
         }
-        _ => (None, true, &[][..]),
+        _ => (None, true),
     };
     let rewritten = rewritten.map(object::File::parse).transpose()?;
     let walked = match (&rewritten, dynamic) {
@@ -194,9 +194,6 @@ pub(crate) fn apply_elf_relocations_with(
         if !dynamic {
             relocations_off_dynsym(&mut ctx, walked);
         }
-    }
-    for &(place, info) in holes {
-        hole_place(&mut ctx, place, &info);
     }
     hole_copies(&mut ctx);
     mips_implicit_got(&mut ctx);
@@ -794,33 +791,6 @@ fn hole_copies(ctx: &mut Ctx<'_, '_>) {
     for &(lo, hi) in AddressSet::merged(held).as_slice() {
         let holder = ctx.holding(lo, 1);
         ctx.unmodelled(holder, lo, (hi - lo) as usize, r_type);
-    }
-}
-
-/// A hole over the field a relocation of `info`'s type has at `place`, a
-/// word when its type names none, whether or not the field is writable:
-/// the loader view holes a place it does not model. A marker holes
-/// nothing, and a COPY its object to the end of the mapping.
-fn hole_place(ctx: &mut Ctx<'_, '_>, place: u64, info: &RelocInfo) {
-    let word = if ctx.obj.is_64() { 8 } else { 4 };
-    let width = match classify(ctx.obj.architecture(), info) {
-        Some(Kind::Marker) => return,
-        Some(Kind::Copy) => {
-            note_copy(ctx, place, None, info.type_word());
-            return;
-        }
-        Some(Kind::Compute(_, field)) => field.width().max(word),
-        None => word,
-    };
-    if ctx.holding(place, 1).is_none() {
-        return;
-    }
-    let end = place.saturating_add(width as u64);
-    let mut at = place;
-    while at < end {
-        let piece = (end - at).min(crate::MAX_PATCH_LEN) as usize;
-        ctx.patches.push(Patch::hole(at, piece, info.type_word()));
-        at += piece as u64;
     }
 }
 
