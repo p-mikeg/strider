@@ -56,6 +56,13 @@ pub enum ResolvedTargets {
 /// A table's arms: non-empty, sorted by `(addr, isa_bit)`, no exact
 /// duplicate. One address in both ISA modes keeps both; the cfg reports that
 /// clash. Built by [`ResolvedTargets::table`].
+///
+/// The OPPOSITE policy to the one the resolve loop merges two classifications
+/// by (`strider_orchestrator`'s `resolve::merge::combine`), which DROPS an
+/// address two answers proved different modes for. Both are deliberate: a
+/// contradiction between two derivations is untrustworthy, where a table
+/// seating both modes is a clash the cfg exists to report. Neither dedup is
+/// redundant with the other.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Arms(Vec<ResolvedTarget>);
 
