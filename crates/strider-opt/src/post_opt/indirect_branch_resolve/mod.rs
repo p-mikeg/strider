@@ -1,7 +1,7 @@
 //! Classifies the placeholder targets the lifter inserts at `BranchIndirect`
 //! sites.
 //!
-//! [`classify_target`] tries an ordered list of sound recognisers, first match
+//! [`SiteClassifier::classify`] tries an ordered list of sound recognisers, first match
 //! wins: a literal `IntConst` address, an `InitialVar(lr)` return, a
 //! `Load(RAM)` return that [`ReturnTargets::returns_to_caller`] follows back
 //! to the saved link register, then `table::classify_dispatch_value` for
