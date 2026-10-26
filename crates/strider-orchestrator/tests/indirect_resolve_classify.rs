@@ -104,7 +104,7 @@ fn push_target_pop_pc_does_not_resolve_to_link_register() {
     assert_ne!(result, Some(ResolvedTargets::LinkRegister));
 }
 
-// The stack-array dispatch arm (`classify_table_dispatch`, reached via
+// The stack-array dispatch arm (`classify_dispatch_value`, reached via
 // `classify_target` for a Load/And target when an SP varnode is supplied):
 // N constants at contiguous SP-relative offsets, dispatch via
 // `Load[(sp + base) + (idx & MASK) * stride]`, bound = MASK + 1 via
