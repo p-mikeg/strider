@@ -29,12 +29,6 @@ pub(crate) fn wrap_to_addr_width(function: &Function, addr: ValueId, offset: i12
     reduce(function.value_type(addr).ok(), offset)
 }
 
-/// Byte `byte` of an access at `offset`, reduced: bytes past the top of the
-/// signed range are the bytes at its bottom.  `None` past the `i128` carrier.
-pub(crate) fn slot_key(ty: Option<ValueType>, offset: i128, byte: i128) -> Option<i128> {
-    offset.checked_add(byte).map(|at| reduce(ty, at))
-}
-
 /// `[start, end)` as at most two ranges inside the signed range `ty` reduces
 /// offsets into: address arithmetic wraps, so a range running past the top
 /// resumes at the bottom.  `start` is reduced, `end` need not be.
