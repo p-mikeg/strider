@@ -92,6 +92,11 @@ pub(super) fn merge_derived(
 /// ISA mode only where they agree, since a bit contradicted by the other
 /// classification cannot be trusted (see [`merge_isa_bit`]).
 ///
+/// The OPPOSITE policy to [`ResolvedTargets::table`], which KEEPS both modes
+/// of one address so the cfg can report the clash. Both are deliberate, and
+/// this dedup does not make that one redundant: `table` runs after it, over a
+/// set this has already reduced to one entry per address.
+///
 /// `ResolvedTargets` cannot hold "returns AND jumps to X", so mixing
 /// `LinkRegister` with a concrete set LOSES the return successor. The fold
 /// accounts for it: `None` is one of the successors it tracks, so the site
@@ -183,9 +188,9 @@ pub(super) fn drop_contradicted(
 }
 
 /// `arms` as one answer: `Single` only when `from_single`, i.e. the lone
-/// survivor is a `Single` input's target. The cfg seats an out-of-range
-/// `Single` as a tail call but defers an out-of-range arm, so a merge must not
-/// change which. Nothing left is `Withdrawn`: once every target has been
+/// survivor is a `Single` input's target. [`ResolvedTargets::Single`] and
+/// [`ResolvedTargets::Multiple`] own what each shape seats out of range, and
+/// a merge must not change which. Nothing left is `Withdrawn`: once every target has been
 /// contradicted the honest answer is "nothing trustworthy here", where staging
 /// nothing would leave the previous round's answer seated as if it had never
 /// been contradicted.
