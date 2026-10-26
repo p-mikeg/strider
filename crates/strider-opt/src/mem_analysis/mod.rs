@@ -18,7 +18,7 @@ pub(crate) use analyzer::{
 };
 pub(crate) use arg_window::{ArgStoreScan, SlotReach};
 pub(crate) use decompose::{alignment_masked_operand, decompose};
-pub(crate) use ring::{reduce, ring_overlap, slot_key, wrap_to_addr_width};
+pub(crate) use ring::{reduce, ring_overlap, wrap_to_addr_width};
 pub use stamp::refresh_memory_classes;
 pub(crate) use stamp::stamp_all;
 #[cfg(test)]
