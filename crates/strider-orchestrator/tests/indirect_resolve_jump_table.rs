@@ -19,7 +19,6 @@ use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::MockRom;
 use strider_orchestrator::opt::classify_target;
-use strider_orchestrator::opt::value_range::RangeMap;
 
 /// As `indirect_resolve_classify.rs`: a copy of the floor-optimized fixture
 /// claims the defaults first.
@@ -29,12 +28,11 @@ fn classify_target_with_rom(
 ) -> anyhow::Result<Option<ResolvedTargets>> {
     let mut view = view.clone();
     view.assume(&strider_orchestrator::opt::AssumptionOptions::default());
-    let mut ranges = RangeMap::new(&view)?;
     let branch = view
         .walk()
         .find(|&n| matches!(view.node_kind(n), NodeKind::IndirectBranch))
         .expect("fixture has an IndirectBranch placeholder");
-    Ok(classify_target(&view, branch, rom, &mut ranges))
+    classify_target(&view, branch, rom)
 }
 
 use common::indirect_resolve_helpers::{

@@ -22,7 +22,6 @@ use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
 use strider_ir_test_utils::MockRom;
 use strider_orchestrator::AnalyzeOptions;
-use strider_orchestrator::opt::value_range::RangeMap;
 use strider_orchestrator::opt::{ReadOnlyMemory, classify_target};
 
 mod common;
@@ -75,8 +74,7 @@ fn classify(rom: &dyn ReadOnlyMemory) -> Option<ResolvedTargets> {
         .walk()
         .find(|&n| matches!(function.node_kind(n), NodeKind::IndirectBranch))
         .expect("the dispatch");
-    let mut ranges = RangeMap::new(&function).expect("ranges");
-    classify_target(&function, branch, Some(rom), &mut ranges)
+    classify_target(&function, branch, Some(rom)).expect("classify")
 }
 
 /// The arms of `targets`, sorted.
