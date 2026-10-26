@@ -31,8 +31,28 @@ pub use return_target::ReturnTargets;
 /// still spans billions of them.
 pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 
-/// `None` when the dispatch value matches no known sound shape, which defers
-/// the branch.  `rom` is consulted only by the rodata jump-table shape.
+/// `classify` on a classifier built for `function` alone; `classify_sites` is
+/// the production entry, which shares one across the function's sites.
+///
+/// # Errors
+///
+/// The known-bits analysis failing.
+#[cfg(any(test, feature = "test-util"))]
+pub fn classify_target(
+    function: &strider_ir::Function,
+    branch: NodeId,
+    rom: Option<&dyn ReadOnlyMemory>,
+) -> crate::Result<Option<ResolvedTargets>> {
+    Ok(SiteClassifier::new(function, rom)?.classify(branch))
+}
+
+/// One function's dispatch-site recogniser.
+///
+/// Holds the ranges, which hold the function too, so no caller can pair a
+/// function with another one's ranges, nor ask about a site with ranges
+/// scoped to a different one. The memos every site's queries share live here
+/// as well: the abstract evaluator's memory index, and the claims the return
+/// verifier has settled.
 ///
 /// # Soundness
 ///
@@ -56,46 +76,103 @@ pub(crate) const MAX_TABLE_ENTRIES: u64 = 4096;
 /// under `escape_analysis`, `callee_preserves_stack_args` or a listed
 /// allocator.  A dispatch value forwarded that way arrives here folded, so a
 /// claim that is wrong for the input seats a wrong edge.
-#[must_use]
-pub fn classify_target(
-    function: &strider_ir::Function,
-    branch: NodeId,
-    rom: Option<&dyn ReadOnlyMemory>,
-    ranges: &mut crate::value_range::RangeMap<'_>,
-) -> Option<ResolvedTargets> {
-    let target_value = function.indirect_branch_target(branch);
-    // The ISA mode this branch's instruction committed for its target(s), when
-    // it is an interworking branch; carried on the branch as a live input and
-    // evaluated per resolved target below.
-    let mode_value = function.indirect_branch_isa_mode(branch);
-    single_const_target(function, target_value, mode_value)
-        .or_else(|| link_register_return(function, branch, target_value))
-        .or_else(|| {
-            table::classify_dispatch_value(function, branch, target_value, rom, ranges, mode_value)
-        })
+pub struct SiteClassifier<'f> {
+    ranges: crate::value_range::RangeMap<'f>,
+    eval: eval::Evaluator<'f>,
+    returns: ReturnTargets<'f>,
 }
 
-/// The literal target of an `IntConst` dispatch value.  A literal is always a
-/// deterministic function of the pcode, so it is the only possible target.
-fn single_const_target(
-    function: &strider_ir::Function,
-    target_value: ValueId,
-    mode_value: Option<ValueId>,
-) -> Option<ResolvedTargets> {
-    // `int_const_u128` is `Some` only off an `IntConst`.
-    let k = function.int_const_u128(target_value)?;
-    // A committed interworking mode MUST fold to a constant here; if it does
-    // not, fail closed (`?` defers the whole branch) rather than decode the
-    // const target in the flowing mode. Mirrors the table path (table.rs).
-    let isa_bit = match mode_value {
-        Some(mv) => Some(function.int_const_u128(mv)? != 0),
-        None => None,
-    };
-    // Reject rather than truncate a const with its high 64 bits set.
-    Some(ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(
-        u64::try_from(k).ok()?,
-        isa_bit,
-    )))
+impl<'f> SiteClassifier<'f> {
+    /// The recogniser for `function`'s dispatch sites, with nothing computed
+    /// for any of them yet.  `rom` is the binary's read-only image, consulted
+    /// only by the rodata jump-table shape; `None` disables it.
+    ///
+    /// # Errors
+    ///
+    /// The known-bits analysis failing.
+    pub fn new(
+        function: &'f strider_ir::Function,
+        rom: Option<&'f dyn ReadOnlyMemory>,
+    ) -> crate::Result<Self> {
+        Ok(Self {
+            ranges: crate::value_range::RangeMap::new(function)?,
+            eval: eval::Evaluator::new(function, rom),
+            returns: ReturnTargets::new(function),
+        })
+    }
+
+    pub(crate) fn function(&self) -> &'f strider_ir::Function {
+        self.ranges.function()
+    }
+
+    /// The recognisers, in order, against the dispatch value of `branch`:
+    /// a literal `IntConst` address, an `InitialVar(lr)` return, a
+    /// `Load(RAM)` return [`ReturnTargets::returns_to_caller`] follows back
+    /// to the saved link register, then the table arm.  `None` when the
+    /// dispatch value matches no known sound shape, which defers the branch.
+    #[must_use]
+    pub fn classify(&mut self, branch: NodeId) -> Option<ResolvedTargets> {
+        let target_value = self.function().indirect_branch_target(branch);
+        // The ISA mode this branch's instruction committed for its target(s),
+        // when it is an interworking branch; carried on the branch as a live
+        // input and evaluated per resolved target below.
+        let mode_value = self.function().indirect_branch_isa_mode(branch);
+        self.single_const_target(target_value, mode_value)
+            .or_else(|| self.link_register_return(branch, target_value))
+            .or_else(|| self.classify_dispatch_value(branch, target_value, mode_value))
+    }
+
+    /// The literal target of an `IntConst` dispatch value.  A literal is
+    /// always a deterministic function of the pcode, so it is the only
+    /// possible target.
+    fn single_const_target(
+        &self,
+        target_value: ValueId,
+        mode_value: Option<ValueId>,
+    ) -> Option<ResolvedTargets> {
+        let function = self.function();
+        // `int_const_u128` is `Some` only off an `IntConst`.
+        let k = function.int_const_u128(target_value)?;
+        // A committed interworking mode MUST fold to a constant here; if it
+        // does not, fail closed (`?` defers the whole branch) rather than
+        // decode the const target in the flowing mode. Mirrors the table path
+        // (table.rs).
+        let isa_bit = match mode_value {
+            Some(mv) => Some(function.int_const_u128(mv)? != 0),
+            None => None,
+        };
+        // Reject rather than truncate a const with its high 64 bits set.
+        Some(ResolvedTargets::Single(strider_cfg::ResolvedTarget::new(
+            u64::try_from(k).ok()?,
+            isa_bit,
+        )))
+    }
+
+    /// `None` on stack-push ABIs (x86 / x86_64), which have no link register.
+    ///
+    /// A single-register pop into the PC (ARM `ldr pc,[sp],#4`) lifts to a
+    /// `BranchIndirect` over a stack load, not a `Return`, and once a call
+    /// sits between the push and the pop nothing folds that load back to the
+    /// link register.  [`ReturnTargets`] is what separates it from the
+    /// `push X; pop pc` tail call it looks like.
+    fn link_register_return(
+        &mut self,
+        branch: NodeId,
+        target_value: ValueId,
+    ) -> Option<ResolvedTargets> {
+        let function = self.function();
+        let lr = function.default_cc().link_register_vn?;
+        match *function.kind_of_value(strip_isa_mode_mask(function, target_value)) {
+            NodeKind::InitialVar(id) if function.initial_vn(id) == lr => {
+                Some(ResolvedTargets::LinkRegister)
+            }
+            NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => self
+                .returns
+                .returns_to_caller(branch, target_value)
+                .then_some(ResolvedTargets::LinkRegister),
+            _ => None,
+        }
+    }
 }
 
 /// The value under an interworking mask, else `value` unchanged.
@@ -127,30 +204,6 @@ fn strip_isa_mode_mask(function: &strider_ir::Function, value: ValueId) -> Value
         }
     }
     value
-}
-
-/// `None` on stack-push ABIs (x86 / x86_64), which have no link register.
-///
-/// A single-register pop into the PC (ARM `ldr pc,[sp],#4`) lifts to a
-/// `BranchIndirect` over a stack load, not a `Return`, and once a call sits
-/// between the push and the pop nothing folds that load back to the link
-/// register.  [`ReturnTargets`] is what separates it from the `push X; pop pc`
-/// tail call it looks like.
-fn link_register_return(
-    function: &strider_ir::Function,
-    branch: NodeId,
-    target_value: ValueId,
-) -> Option<ResolvedTargets> {
-    let lr = function.default_cc().link_register_vn?;
-    match *function.kind_of_value(strip_isa_mode_mask(function, target_value)) {
-        NodeKind::InitialVar(id) if function.initial_vn(id) == lr => {
-            Some(ResolvedTargets::LinkRegister)
-        }
-        NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => ReturnTargets::new(function)
-            .returns_to_caller(branch, target_value)
-            .then_some(ResolvedTargets::LinkRegister),
-        _ => None,
-    }
 }
 
 /// Every live dispatch site of a function, and what was recovered for each.
@@ -198,24 +251,23 @@ pub fn classify_sites(
     if sites.is_empty() {
         return Ok(ClassifiedSites { sites, resolved });
     }
-    // Computed once, since the graph does not change here.
-    let mut ranges = crate::value_range::RangeMap::new(f)?;
+    // Built once, since the graph does not change here: the ranges, the
+    // evaluator's memory index, and the return verifier's settled claims all
+    // carry from site to site.
+    let mut classifier = SiteClassifier::new(f, rom)?;
     for &node in &sites {
         // A seated `Switch` is re-derived from its retained selector, which
         // reads as a wider table once a loop back-edge through its own arms
         // closes; it carries the mode its instruction commits, so a widened
         // arm is evaluated in its own mode.
         let targets = if matches!(f.node_kind(node), NodeKind::Switch(_)) {
-            table::classify_dispatch_value(
-                f,
+            classifier.classify_dispatch_value(
                 node,
                 f.switch_selector(node),
-                rom,
-                &mut ranges,
                 f.switch_isa_mode(node),
             )
         } else {
-            classify_target(f, node, rom, &mut ranges)
+            classifier.classify(node)
         };
         if let Some(targets) = targets {
             resolved.insert(node, targets);
@@ -242,8 +294,9 @@ mod tests {
         function: &strider_ir::Function,
         target_value: ValueId,
     ) -> Option<ResolvedTargets> {
-        single_const_target(function, target_value, None)
-            .or_else(|| link_register_return(function, function.entry(), target_value))
+        let mut sc = SiteClassifier::new(function, None).expect("SiteClassifier::new");
+        sc.single_const_target(target_value, None)
+            .or_else(|| sc.link_register_return(function.entry(), target_value))
     }
 
     /// An empty region terminated by a Return over the caller-supplied value,
@@ -358,7 +411,8 @@ mod tests {
         builder.set_lift_addr(None);
         let function = builder.build().expect("build");
 
-        assert_eq!(single_const_target(&function, target, Some(mode)), None);
+        let sc = SiteClassifier::new(&function, None).expect("SiteClassifier::new");
+        assert_eq!(sc.single_const_target(target, Some(mode)), None);
     }
 
     #[test]
