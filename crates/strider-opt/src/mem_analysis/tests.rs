@@ -3275,6 +3275,102 @@ mod own_frame_tests {
         );
         Ok(())
     }
+
+    /// `(phi(sp + a, sp + c)) & ~0xF`: the frame pointer of a function that
+    /// adjusts SP on two paths and aligns it once at the join.  `loop_back`
+    /// instead carries the phi into itself, so its displacement is no
+    /// constant.
+    fn phi_frame(a: i64, c: i64, loop_back: bool) -> crate::Result<(Function, ValueId)> {
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let mut b = sp_frame(sp).stack_args(stack_args_at(0, 4)).build_fn()?;
+        let entry = b.create_region_all()?;
+        let arm_a = b.create_region_all()?;
+        let arm_c = b.create_region_all()?;
+        let join = b.create_region_all()?;
+        b.set_entry_region_all(entry)?;
+        b.record_register_arg_carriers();
+
+        let add = |b: &mut strider_ir::FunctionBuilder, v, k: i64| {
+            let c = b.build_int_const(k as u64, ValueType::int(32))?;
+            b.build_int_binary_operation(v, c, IntBinaryOp::Add, ValueType::int(32))
+        };
+
+        b.set_region(entry);
+        let sp_val = b.read_variable(&sp)?;
+        let zero = b.build_int_const(0u64, ValueType::int(32))?;
+        let cond = b.build_int_cmp_operation(
+            sp_val,
+            zero,
+            strider_ir::IntCmpOp::Equal,
+            ValueType::int(32),
+        )?;
+        b.build_if(cond, arm_a, arm_c)?;
+
+        for (region, delta) in [(arm_a, a), (arm_c, c)] {
+            b.set_region(region);
+            let cur = b.read_variable(&sp)?;
+            let next = add(&mut b, cur, delta)?;
+            b.write_variable(&sp, next)?;
+            b.build_branch(join)?;
+        }
+
+        b.set_region(join);
+        let merged = b.read_variable(&sp)?;
+        let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::int(32))?;
+        let anchor =
+            b.build_int_binary_operation(merged, mask, IntBinaryOp::And, ValueType::int(32))?;
+        // A use, so the anchor survives to be asked about.
+        b.build_store(anchor, mask, rsleigh::VnSpace::RAM)?;
+        if loop_back {
+            let exit = b.create_region_all()?;
+            let next = add(&mut b, merged, -16)?;
+            b.write_variable(&sp, next)?;
+            let again = b.build_boolean_const(true);
+            b.build_if(again, join, exit)?;
+            b.set_region(exit);
+        }
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        // The hand-built reads sit behind single-input `VarPhi`s.
+        let mut prep = crate::OptimizerPipeline::new();
+        prep.add(crate::PhiCollapse);
+        prep.add(crate::RegionCollapse);
+        prep.run(&mut fg, &crate::OptCtx::new(None))?;
+        Ok((fg, anchor))
+    }
+
+    /// The entry-SP walk fans out through a `Phi`, so an anchor over one is
+    /// bounded by its WIDEST arm: every arm must sit at or below the entry SP.
+    ///
+    /// `decompose` stops at that same `Phi` instead, so no `MemExpr` ever
+    /// names such an anchor as its base.  Only callers handed a raw base
+    /// reach this shape.
+    #[test]
+    fn a_phi_frame_base_is_bounded_by_every_arm() -> crate::Result<()> {
+        let (fg, anchor) = phi_frame(-32, -64, false)?;
+        assert!(
+            in_own_frame(&fg, anchor, -8, 4),
+            "both arms sit below the entry SP, so the join does too"
+        );
+        assert!(
+            decompose(&fg, anchor).is_none(),
+            "a phi under the anchor is not a spine `decompose` bottoms out"
+        );
+
+        let (fg, anchor) = phi_frame(-32, 0x1000, false)?;
+        assert!(
+            !in_own_frame(&fg, anchor, -8, 4),
+            "one arm inside the caller's frame is enough to lose the bound"
+        );
+
+        let (fg, anchor) = phi_frame(-32, -64, true)?;
+        assert!(
+            !in_own_frame(&fg, anchor, -8, 4),
+            "a loop-carried base has no constant displacement"
+        );
+        Ok(())
+    }
 }
 
 #[cfg(test)]
