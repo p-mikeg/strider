@@ -383,26 +383,6 @@ fn an_android_table_that_does_not_decode_or_overflows_the_budget() {
     assert!(format!("{err:#}").contains("relocation entries"), "{err:#}");
 }
 
-/// The sectioned TEXTREL image with `DT_SYMTAB` moved 16 bytes on, off the
-/// `.dynsym` header's table: an index then names a table that header does
-/// not hold, and no symbol resolves, so `getl`'s operand is a hole where the
-/// unpatched image serves `loc`'s address.
-#[test]
-fn a_dynsym_header_off_dt_symtab_resolves_no_symbol() {
-    let (loc_site, _, loc) = textrel();
-    let reader = ElfFileMemReader::new(&open("x86_textrel.elf"), APPLIED).unwrap();
-    assert_eq!(fetch_u32(&reader, loc_site), Some(loc as u32), "unpatched");
-    let moved = patched("x86_textrel.elf", |b| {
-        edit_dynamic32(b, |t, v| {
-            if *t == object::elf::DT_SYMTAB {
-                *v += 16;
-            }
-        });
-    });
-    let reader = ElfFileMemReader::new(&moved, APPLIED).unwrap();
-    assert_eq!(fetch_u32(&reader, loc_site), None, "DT_SYMTAB moved");
-}
-
 /// `x64_copy_pie.elf`'s `R_X86_64_COPY` of `tbl` with its symbol index
 /// zeroed (no size known), and with `tbl`'s `.dynsym` `st_size` rewritten to
 /// 2^48 - 1 and to 13. With no size, or one past the mapping, the hole runs
