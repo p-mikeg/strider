@@ -5,7 +5,7 @@
 //! An abstract value is either a concrete number or SP-relative, because the SP
 //! is symbolic and a stack address cannot be a pure number.  Four foldings do
 //! the work: ConstFold arithmetic, a constant-address ROM read, an SP-relative
-//! load resolved against the [`SlotMap`] of the stores above it, and a `Phi`
+//! load resolved against the store reaching it, and a `Phi`
 //! whose arms agree.  Any unresolved value, a non-const dispatch result, or a
 //! cycle yields `None`.
 
@@ -14,9 +14,7 @@ use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{IRViewer, ReadOnlyMemory};
 
-use crate::mem_analysis::{
-    MemAnalyzer, MemExpr, MemKind, MemOptions, MemPurpose, reduce, slot_key, store_value_byte_size,
-};
+use crate::mem_analysis::{MemAnalyzer, MemOptions, MemPurpose, reduce};
 
 #[derive(Clone, Copy, PartialEq)]
 enum Abs {
@@ -37,13 +35,9 @@ pub(crate) struct Evaluator<'a> {
     function: &'a strider_ir::Function,
     rom: Option<&'a dyn ReadOnlyMemory>,
     map: FxHashMap<ValueId, Abs>,
-    /// One [`SlotMap`] per probe GROUP, keyed by `(memory token, stack base)`.
-    /// Survives [`Self::begin_index`]: the memory segment above a load does not
-    /// depend on the index.
-    slot_maps: FxHashMap<(ValueId, ValueId), SlotMap>,
-    /// The analyzer answering a probe that lands past its [`SlotMap`]'s
-    /// segment, held so every probe queries under one set of options.
-    off_segment: MemAnalyzer,
+    /// Answers every reaching-store probe, held so they share one memory index
+    /// and one set of options.
+    mem_index: MemAnalyzer,
 }
 
 impl<'a> Evaluator<'a> {
@@ -55,10 +49,9 @@ impl<'a> Evaluator<'a> {
             function,
             rom,
             map: FxHashMap::default(),
-            slot_maps: FxHashMap::default(),
             // The probe climbs the memory dominator tree, which answers at or
             // nearer than the path walk it replaced.
-            off_segment: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::TableWalk, function)),
+            mem_index: MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::TableWalk, function)),
         }
     }
 
@@ -129,7 +122,7 @@ impl<'a> Evaluator<'a> {
                     _ => self.eval_const_node(value),
                 }
             }
-            // Slot maps hold RAM stores.
+            // The memory index answers over RAM stores.
             NodeKind::Load(rsleigh::VnSpace::RAM) => self.eval_load(node, value),
             NodeKind::Phi => self.eval_phi(node),
             _ => self.eval_const_node(value),
@@ -188,9 +181,8 @@ impl<'a> Evaluator<'a> {
     /// The data of the store anchored exactly at the probed slot, or `None`
     /// when the reaching store is elsewhere or is not a store at all.
     ///
-    /// Answered from the probe point's [`SlotMap`] where the segment covers it,
-    /// which is what keeps an n-entry stack table off an O(n) walk per entry;
-    /// past the segment it is the plain [`MemAnalyzer::reaching_store`] query.
+    /// The index is built once per memory token and shared across indices, so
+    /// an n-entry stack table costs no walk per entry.
     fn reaching_store_data(
         &mut self,
         mem: ValueId,
@@ -199,26 +191,9 @@ impl<'a> Evaluator<'a> {
         size: i128,
     ) -> Option<ValueId> {
         let f = self.function;
-        let map = self
-            .slot_maps
-            .entry((mem, base))
-            .or_insert_with(|| SlotMap::build(f, mem, base));
-        let reaching = map.reaching(offset, size);
-        match reaching {
-            Reaching::Store(store) => Some(f.store_data(store)),
-            Reaching::Absent => None,
-            // A map that ran out of budget answers `OffSegment` for everything
-            // past where it stopped, and the fallback below is uncapped.  Defer
-            // the site rather than pay a chain walk per index.
-            Reaching::OffSegment if map.exhausted => None,
-            Reaching::OffSegment => {
-                let hit = self
-                    .off_segment
-                    .reaching_store(f, mem, base, offset, size)?;
-                // The store must be anchored exactly at the probed offset.
-                (hit.store_offset == offset).then(|| hit.data(f))
-            }
-        }
+        let hit = self.mem_index.reaching_store(f, mem, base, offset, size)?;
+        // The store must be anchored exactly at the probed offset.
+        (hit.store_offset == offset).then(|| hit.data(f))
     }
 
     /// `v`, a store's data, as the `load_ty` load in `space` at the store's
@@ -256,194 +231,6 @@ impl<'a> Evaluator<'a> {
             }
         }
         agreed
-    }
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Memory-chain nodes visited building [`SlotMap`]s, the unit the
-    /// stack-table cost test counts alongside `mem_analysis::WALK_STEPS`.
-    pub(crate) static SLOT_MAP_STEPS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
-}
-
-/// One store on the segment, covering some byte.
-#[derive(Clone, Copy)]
-struct Claim {
-    /// Position along the chain, nearest first.
-    rank: u32,
-    /// The store's own anchor offset, which a probe must match exactly.
-    offset: i128,
-    node: NodeId,
-}
-
-/// Chain steps one [`SlotMap`] build may spend across its whole arm tree, and
-/// how deep the arms may nest: a join under a join multiplies the arms, and a
-/// loop's back-edge arm re-enters the token it came from.  Exhausting the step
-/// budget marks the map [`SlotMap::exhausted`] and defers the site; exhausting
-/// the depth leaves that arm incomplete, which falls its probes back to a real
-/// walk.
-pub(crate) const SLOT_MAP_BUDGET: u32 = 4096;
-const MAX_JOIN_DEPTH: u32 = 8;
-
-/// Which store an SP-relative probe at one memory token reaches, for every
-/// offset, without walking the chain per probe.
-///
-/// Covers the straight-line RAM segment above the probe point whose stores all
-/// root at one stack base.  It ends at the first def whose effect is
-/// probe-dependent (a `Call`, a store rooted at another stack base, a global,
-/// or an opaque pointer), because there the reaching store cannot be read off
-/// an offset; probes landing past the end fall back to a real walk.  A
-/// heap-rooted store is stepped over.
-///
-/// A `MemPhi` is path-dependent, not probe-dependent: the segment ends there
-/// too, but each arm gets its own map and a probe past the segment is answered
-/// by agreement across them.  Without that, a probe below a join falls back to
-/// a per-probe walk of the whole chain, which is what the map exists to avoid.
-struct SlotMap {
-    /// Byte offset from the base, reduced by [`slot_key`] -> the nearest
-    /// store covering that byte.
-    claims: FxHashMap<i128, Claim>,
-    /// The base's type, the width [`slot_key`] reduces by.
-    addr_ty: Option<ValueType>,
-    /// The segment bottomed out at `InitialMemory`, so an unclaimed byte has no
-    /// reaching store rather than one beyond the mapped part.
-    complete: bool,
-    /// Per-arm maps of the `MemPhi` the segment ended at, empty otherwise.
-    arms: Vec<SlotMap>,
-    /// The build ran out of [`SLOT_MAP_BUDGET`], so the map stops short of a
-    /// chain it cannot summarize.  Every unmapped probe would fall back to an
-    /// uncapped walk, once per index, so the site defers instead.
-    exhausted: bool,
-}
-
-enum Reaching {
-    /// A store anchored exactly at the probed offset.
-    Store(NodeId),
-    /// No such store, so the probe cannot fold.
-    Absent,
-    /// Past the mapped segment; only a walk can answer.
-    OffSegment,
-}
-
-impl SlotMap {
-    fn build(function: &strider_ir::Function, mem: ValueId, base: ValueId) -> Self {
-        let mut budget = SLOT_MAP_BUDGET;
-        Self::build_within(function, mem, base, &mut budget, 0)
-    }
-
-    fn build_within(
-        function: &strider_ir::Function,
-        mem: ValueId,
-        base: ValueId,
-        budget: &mut u32,
-        depth: u32,
-    ) -> Self {
-        let mut claims: FxHashMap<i128, Claim> = FxHashMap::default();
-        let addr_ty = function.value_type_opt(base);
-        let mut cur = Some(mem);
-        let mut rank = 0u32;
-        let mut complete = false;
-        let mut arms: Vec<SlotMap> = Vec::new();
-        let mut exhausted = false;
-        while let Some(v) = cur {
-            let Some(left) = budget.checked_sub(1) else {
-                exhausted = true;
-                break;
-            };
-            *budget = left;
-            #[cfg(test)]
-            SLOT_MAP_STEPS.with(|c| c.set(c.get() + 1));
-            let node = function.producer(v);
-            match *function.node_kind(node) {
-                NodeKind::InitialMemory => {
-                    complete = true;
-                    break;
-                }
-                NodeKind::MemPhi if depth < MAX_JOIN_DEPTH => {
-                    arms = function
-                        .phi_data_inputs(node)
-                        .collect::<SmallVec<[ValueId; 4]>>()
-                        .into_iter()
-                        .map(|arm| Self::build_within(function, arm, base, budget, depth + 1))
-                        .collect();
-                    break;
-                }
-                NodeKind::Store(space) if space == rsleigh::VnSpace::RAM => {
-                    match crate::mem_analysis::decompose(function, function.store_addr(node)) {
-                        Some(MemExpr {
-                            base: store_base,
-                            offset,
-                            kind: MemKind::Stack,
-                        }) if store_base == base => {
-                            let size = store_value_byte_size(function, function.store_data(node));
-                            for byte in 0..size {
-                                let Some(at) = slot_key(addr_ty, offset, byte) else {
-                                    break;
-                                };
-                                claims.entry(at).or_insert(Claim { rank, offset, node });
-                            }
-                            rank += 1;
-                        }
-                        // No allocation overlaps the stack.
-                        Some(MemExpr {
-                            kind: MemKind::Heap | MemKind::HeapOpaque,
-                            ..
-                        }) => {}
-                        // Another stack base, a global, or an opaque pointer:
-                        // whether it clobbers is the probe's business.
-                        _ => break,
-                    }
-                }
-                // The probed location is RAM (see `MemAnalyzer::reaching_store`),
-                // so another space cannot alias it.
-                NodeKind::Store(_) => {}
-                _ => break,
-            }
-            cur = function.memory_input_of(node);
-        }
-        exhausted |= arms.iter().any(|arm| arm.exhausted);
-        Self {
-            claims,
-            addr_ty,
-            complete,
-            arms,
-            exhausted,
-        }
-    }
-
-    /// A store not anchored at the probe but overlapping it hides everything
-    /// behind it, which is [`Reaching::Absent`] just as a non-matching
-    /// `reaching_store` is `None`.
-    fn reaching(&self, offset: i128, size: i128) -> Reaching {
-        // The nearest store covering any probed byte is the nearest store
-        // overlapping the probe at all.
-        let nearest = (0..size)
-            .filter_map(|byte| self.claims.get(&slot_key(self.addr_ty, offset, byte)?))
-            .min_by_key(|claim| claim.rank);
-        match nearest {
-            Some(claim) if claim.offset == offset => Reaching::Store(claim.node),
-            Some(_) => Reaching::Absent,
-            None if self.complete => Reaching::Absent,
-            None if self.arms.is_empty() => Reaching::OffSegment,
-            None => self.reaching_through_arms(offset, size),
-        }
-    }
-
-    /// The probe folds only if every incoming path reaches the SAME store, so
-    /// the value the load reads does not depend on the path.  An arm that
-    /// cannot answer leaves the whole probe on the walk.
-    fn reaching_through_arms(&self, offset: i128, size: i128) -> Reaching {
-        let mut agreed: Option<NodeId> = None;
-        for arm in &self.arms {
-            match arm.reaching(offset, size) {
-                Reaching::Store(store) if agreed.is_none_or(|prev| prev == store) => {
-                    agreed = Some(store);
-                }
-                Reaching::Store(_) | Reaching::Absent => return Reaching::Absent,
-                Reaching::OffSegment => return Reaching::OffSegment,
-            }
-        }
-        agreed.map_or(Reaching::Absent, Reaching::Store)
     }
 }
 

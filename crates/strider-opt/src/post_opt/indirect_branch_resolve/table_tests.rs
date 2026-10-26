@@ -1601,8 +1601,8 @@ fn classify_table_dispatch_sees_a_store_past_the_wrap_onto_a_slot() {
 }
 
 /// Both entries straddle the wrap and a newer store sits six bytes above the
-/// last of them, disjoint from either.  The slot map answers this from its
-/// per-byte `slot_key` claims, which are modular and therefore exact here.
+/// last of them, disjoint from either.  The probe must read each entry past
+/// that store, which only a modular offset comparison places correctly.
 #[test]
 fn a_disjoint_newer_store_across_the_wrap_leaves_both_entries() {
     assert_eq!(
@@ -1620,8 +1620,7 @@ fn a_disjoint_newer_store_across_the_wrap_leaves_both_entries() {
     );
 }
 
-/// The shared memory climb is exact on that shape too, so the resolution
-/// above does not rest on the slot map: `reaching_store` reaches each table
+/// The same shape at the probe level: `reaching_store` reaches each table
 /// store through the newer one, which `offset_order` places on the ring six
 /// bytes above the last entry instead of 2^32 - 6 below it.
 #[test]
@@ -2578,9 +2577,8 @@ mod stack_table_cost {
     use super::*;
 
     /// Targets and the memory-chain steps `classify_table_dispatch` spends on
-    /// an `entries`-slot stack array from `build`, counting both the per-probe
-    /// walks and the slot-map builds that replace them.  Asserts the resolved
-    /// set, so the cost measurement can never be met by resolving less.
+    /// an `entries`-slot stack array from `build`.  Asserts the resolved set,
+    /// so the cost measurement can never be met by resolving less.
     fn resolve(
         entries: usize,
         build: fn(&[u64], i64, u64) -> (strider_ir::Function, ValueId),
@@ -2590,11 +2588,9 @@ mod stack_table_cost {
         fg.assume(&crate::AssumptionOptions::default());
         let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
-        super::super::super::eval::SLOT_MAP_STEPS.with(|c| c.set(0));
         let result =
             classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, None);
-        let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
-            + super::super::super::eval::SLOT_MAP_STEPS.with(std::cell::Cell::get);
+        let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get);
         let Some(ResolvedTargets::Multiple(ts)) = result else {
             panic!("an {entries}-entry stack array must resolve, got {result:?}");
         };
@@ -2603,12 +2599,12 @@ mod stack_table_cost {
         (resolved, steps)
     }
 
-    /// A chain longer than `SLOT_MAP_BUDGET` above the dispatch: the build
-    /// stops before the table's own stores, so every probe falls off the map.
-    /// The site must defer rather than pay the uncapped fallback walk per index.
+    /// A 4097-def chain between the table's stores and the dispatch, far
+    /// longer than the table.  The shared index answers each probe without
+    /// walking it, so the site resolves at a cost the chain does not set.
     #[test]
-    fn a_budget_exhausted_slot_map_defers_the_site() {
-        let filler = super::super::super::eval::SLOT_MAP_BUDGET as usize + 1;
+    fn a_long_chain_above_the_dispatch_still_resolves() {
+        let filler = 4097usize;
         let targets: Vec<u64> = (0..4u64).map(|i| 0x401000 + i * 0x10).collect();
         let sp = sp64();
         let arg_vn = rsleigh::Vn {
@@ -2622,26 +2618,28 @@ mod stack_table_cost {
             .unwrap();
         let sp_val = b.read_variable(&sp).unwrap();
         wire_stack_stores(&targets, -32, 8, sp_val, &mut b);
-        // Nearer the load than the table, so the budget runs out above it.
+        // Nearer the load than the table, so every probe reaches past it.
         wire_stack_stores(&vec![0u64; filler], -0x10000, 8, sp_val, &mut b);
         wire_stack_dispatch(targets.len(), -32, 8, sp_val, &mut b, arg_vn);
         let (mut fg, _load) = finish_stack_array(b.build().unwrap());
         fg.assume(&crate::AssumptionOptions::default());
         let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
-        super::super::super::eval::SLOT_MAP_STEPS.with(|c| c.set(0));
         let result =
             classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, None);
-        let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get)
-            + super::super::super::eval::SLOT_MAP_STEPS.with(std::cell::Cell::get);
+        let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get);
+        let Some(ResolvedTargets::Multiple(ts)) = result else {
+            panic!("the table must resolve past the chain, got {result:?}");
+        };
         assert_eq!(
-            result, None,
-            "an exhausted slot map must defer the site, not grind a walk per index"
+            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
+            targets,
+            "every slot resolves to its own label"
         );
         assert!(
-            steps < 2 * filler as u64,
-            "the deferral must cost one truncated build, not one chain walk per \
-             index: {steps} steps over a {filler}-def chain"
+            steps < filler as u64,
+            "the probes must not walk the chain: {steps} steps over a \
+             {filler}-def chain"
         );
     }
 
