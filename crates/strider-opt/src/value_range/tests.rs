@@ -15,8 +15,8 @@ fn new_clamps_the_stride_and_empty_counts_nothing() {
     for (lo, hi) in [(0, 0), (3, 9), (5, 2)] {
         assert_eq!(Interval::new(lo, hi, 0), Interval::new(lo, hi, 1));
     }
-    assert!(super::EMPTY.is_empty());
-    assert_eq!(super::EMPTY.count(), 0);
+    assert!(super::interval::EMPTY.is_empty());
+    assert_eq!(super::interval::EMPTY.count(), 0);
 }
 
 /// The AP-join keeps the coarsest spacing every element of both sides obeys: a
@@ -69,7 +69,7 @@ fn union_of_single_elements_keeps_the_gap_as_the_stride() {
 #[test]
 fn union_with_an_empty_side_is_the_other_side() {
     for empty in [
-        super::EMPTY,
+        super::interval::EMPTY,
         Interval::new(9, 3, 1),
         Interval::new(255, 0, 7),
     ] {
@@ -2014,7 +2014,7 @@ fn intersect_finds_the_first_common_residue() {
 /// provably dead code. `mul`/`shl` already preserve emptiness.
 #[test]
 fn shr_and_udiv_preserve_emptiness() {
-    let empty = super::EMPTY;
+    let empty = super::interval::EMPTY;
     for k in [0, 1, 7, 127] {
         assert!(empty.shr(k).is_empty(), "shr {k}");
     }
