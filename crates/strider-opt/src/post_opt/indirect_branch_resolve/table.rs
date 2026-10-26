@@ -36,8 +36,8 @@
 //! not taken: the guard may size the table, and the field then reaches the
 //! next one.
 
+use super::index_range::Interval;
 use super::{MAX_TABLE_ENTRIES, SiteClassifier};
-use crate::value_range::Interval;
 use strider_cfg::{ResolvedTarget, ResolvedTargets};
 use strider_ir::IRViewer;
 use strider_ir::IntBinaryOp;
@@ -140,7 +140,7 @@ impl SiteClassifier<'_> {
         let source = chain.last().copied().unwrap_or(target);
         // A constant the site's range or an equality guard on the way excludes
         // never reaches the branch.
-        let constants = crate::value_range::phi_constants(
+        let constants = super::index_range::phi_constants(
             function,
             source,
             usize::try_from(MAX_TABLE_ENTRIES).ok()?,
@@ -253,7 +253,7 @@ impl SiteClassifier<'_> {
     ///
     /// A range [`RangeMap::guard_left_unconnected`] flags is not one.
     ///
-    /// [`RangeMap::guard_left_unconnected`]: crate::value_range::RangeMap::guard_left_unconnected
+    /// [`RangeMap::guard_left_unconnected`]: super::index_range::RangeMap::guard_left_unconnected
     fn bounded_index(&mut self, site: NodeId, v: ValueId) -> Option<PinnedIndex> {
         let function = self.function();
         debug_assert!(
@@ -305,7 +305,7 @@ impl SiteClassifier<'_> {
     /// byte load fills its cell width exactly, making it table DATA, not an index,
     /// unless it is a field read through a pointer ([`Self::loads_a_field`]) that no
     /// dominating test bounds unread
-    /// ([`RangeMap::cell_test_left_unread`](crate::value_range::RangeMap::cell_test_left_unread)).
+    /// ([`RangeMap::cell_test_left_unread`](super::index_range::RangeMap::cell_test_left_unread)).
     ///
     /// Keying on the RANGE rather than on "is it load-derived" is load-bearing: a
     /// guarded raw load, `if (Load < N) switch(Load)`, is a genuine index even
