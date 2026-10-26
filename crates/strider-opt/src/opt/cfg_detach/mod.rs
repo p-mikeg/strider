@@ -9,7 +9,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::walk::cfg_reachable;
 
-use crate::error::Result;
+use crate::Result;
 use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::Result;
+use crate::Result;
 use crate::pipeline::OptCtx;
 use crate::test_support::{assert_returns_const, make_fn};
 use strider_ir::IRWalker;
