@@ -88,7 +88,7 @@ fn masked_table_target(
     table_target(fb, masked, stride, base)
 }
 
-/// `classify_table_dispatch` on the sole `IndirectBranch`, over freshly
+/// [`classify_dispatch_value`] on the sole `IndirectBranch`, over freshly
 /// computed ranges, on a copy of `f` claiming `assumptions` as well.
 fn classify_with(
     f: &Function,
@@ -99,7 +99,9 @@ fn classify_with(
     let mut f = f.clone();
     f.assume(assumptions);
     let mut ranges = crate::value_range::RangeMap::new(&f).unwrap();
-    classify_table_dispatch(&f, sole_indirect_branch(&f), rom, &mut ranges, mode_value)
+    let branch = sole_indirect_branch(&f);
+    let target = f.indirect_branch_target(branch);
+    classify_dispatch_value(&f, branch, target, rom, &mut ranges, mode_value)
 }
 
 /// [`classify_with`] adding no claim, with no ISA mode: at the sound floor, so
@@ -1757,13 +1759,15 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
 
 /// The interval carrier is a `u128`, so a wider type's "top" is not top and
 /// every interval at that type looks narrowed.  Enumerating one would pin an
-/// index whose real value set the range never covered.
+/// index whose real value set the range never covered.  `bounded_index` keeps
+/// one out by taking the type mask, which a wider type has none of.
 #[test]
-fn index_bound_ok_rejects_types_past_the_u128_carrier() {
+fn an_index_bound_needs_a_type_inside_the_u128_carrier() {
     let iv = crate::value_range::Interval::dense(0, 7);
-    assert!(index_bound_ok(ValueType::int(32), iv));
-    assert!(!index_bound_ok(ValueType::int(256), iv));
-    assert!(!index_bound_ok(ValueType::int(512), iv));
+    let mask = |bits| ValueType::int(bits).int_mask_u128();
+    assert!(mask(32).is_some_and(|mask| index_bound_ok(mask, iv)));
+    assert_eq!(mask(256), None);
+    assert_eq!(mask(512), None);
 }
 
 /// A table cell read as the low byte of a wider load, `zext(trunc8(load32))`
@@ -2576,7 +2580,7 @@ fn classify_table_dispatch_evaluates_each_dispatch_load_once_per_index() {
 mod stack_table_cost {
     use super::*;
 
-    /// Targets and the memory-chain steps `classify_table_dispatch` spends on
+    /// Targets and the memory-chain steps [`classify_dispatch_value`] spends on
     /// an `entries`-slot stack array from `build`.  Asserts the resolved set,
     /// so the cost measurement can never be met by resolving less.
     fn resolve(
@@ -2588,8 +2592,9 @@ mod stack_table_cost {
         fg.assume(&crate::AssumptionOptions::default());
         let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
-        let result =
-            classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, None);
+        let branch = sole_indirect_branch(&fg);
+        let target = fg.indirect_branch_target(branch);
+        let result = classify_dispatch_value(&fg, branch, target, None, &mut ranges, None);
         let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get);
         let Some(ResolvedTargets::Multiple(ts)) = result else {
             panic!("an {entries}-entry stack array must resolve, got {result:?}");
@@ -2625,8 +2630,9 @@ mod stack_table_cost {
         fg.assume(&crate::AssumptionOptions::default());
         let mut ranges = crate::value_range::RangeMap::new(&fg).unwrap();
         crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
-        let result =
-            classify_table_dispatch(&fg, sole_indirect_branch(&fg), None, &mut ranges, None);
+        let branch = sole_indirect_branch(&fg);
+        let target = fg.indirect_branch_target(branch);
+        let result = classify_dispatch_value(&fg, branch, target, None, &mut ranges, None);
         let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get);
         let Some(ResolvedTargets::Multiple(ts)) = result else {
             panic!("the table must resolve past the chain, got {result:?}");

@@ -9,7 +9,7 @@
 //! Resolving this requires cross-region stack-load forwarding (`LoadForward`
 //! across the function's region graph), routed through the IR-level
 //! resolver's unified table-dispatch arm
-//! (`indirect_branch_resolve::table::classify_table_dispatch`, SP-rooted
+//! (`indirect_branch_resolve::table::classify_dispatch_value`, SP-rooted
 //! base). Cfg-time the builder defers every `BranchIndirect` via
 //! `UnresolvedIndirectBranch`; the IR-level resolver has cross-region
 //! visibility plus `LoadForward` results and resolves the dispatch to

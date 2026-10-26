@@ -44,22 +44,11 @@ use strider_ir::IRViewer;
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 
+/// The table-dispatch arm, over the dispatch value of an `IndirectBranch` or
+/// the selector of an already-seated `Switch`.
+///
 /// `rom` is the binary's read-only image; `None` disables the rodata arm.  The
 /// stack-pointer varnode and the target endianness come off `function`.
-#[must_use]
-pub(crate) fn classify_table_dispatch(
-    function: &strider_ir::Function,
-    branch: NodeId,
-    rom: Option<&dyn ReadOnlyMemory>,
-    ranges: &mut crate::value_range::RangeMap<'_>,
-    mode_value: Option<ValueId>,
-) -> Option<ResolvedTargets> {
-    let target_value = function.indirect_branch_target(branch);
-    classify_dispatch_value(function, branch, target_value, rom, ranges, mode_value)
-}
-
-/// `classify_table_dispatch` against an explicit dispatch value, so an
-/// already-seated `Switch` can be re-derived from its selector.
 ///
 /// `site` is the `IndirectBranch` or `Switch` being resolved; it scopes the
 /// index-range query to that node, never the first one that happens to share
@@ -82,7 +71,7 @@ pub(crate) fn classify_dispatch_value(
     let mode_pruned = mode_value.map(|mv| super::eval::cone_order_pruned(function, mv, pinned));
     // `collect::<Option<_>>` bails the moment a value fails to fold, which
     // fails closed.
-    let mut targets: Vec<ResolvedTarget> = values
+    let targets: Vec<ResolvedTarget> = values
         .into_iter()
         .map(|x| {
             // One memo for both roots: they are siblings over one dispatch
@@ -102,23 +91,16 @@ pub(crate) fn classify_dispatch_value(
             Some(ResolvedTarget::new(addr, isa_bit))
         })
         .collect::<Option<_>>()?;
-    targets.sort_by_key(|t| t.addr);
-    // `addr` is mode-bit-masked, so words `X` and `X | 1` land on one address
-    // carrying opposite modes.  A disagreement defers the whole site: `None`
-    // is the mode FLOWING into the branch, which a mode-committing branch
-    // contradicts.
-    let mut deduped: Vec<ResolvedTarget> = Vec::with_capacity(targets.len());
-    for target in targets {
-        match deduped.last() {
-            Some(kept) if kept.addr == target.addr => {
-                if kept.isa_bit != target.isa_bit {
-                    return None;
-                }
-            }
-            _ => deduped.push(target),
-        }
-    }
-    (!deduped.is_empty()).then(|| ResolvedTargets::table(deduped))
+    // `table` sorts by `(addr, isa_bit)` and drops exact duplicates, so two
+    // arms left on one address carry opposite modes.  `addr` is
+    // mode-bit-masked, so words `X` and `X | 1` land on one address that way.
+    // A disagreement defers the whole site: `None` is the mode FLOWING into
+    // the branch, which a mode-committing branch contradicts.
+    let seated = ResolvedTargets::table(targets);
+    let arms = seated.arms();
+    // Nothing to enumerate defers the site too: `table([])` is `Withdrawn`,
+    // which would overrule a caller's seed where `None` only defers.
+    (!arms.is_empty() && arms.windows(2).all(|w| w[0].addr != w[1].addr)).then_some(seated)
 }
 
 /// The value the enumeration pins, and the values to pin it to.
@@ -171,11 +153,6 @@ fn dispatch_domain(
         }
         (Some(hit), constants) => (hit, constants),
     };
-    // `bounded_index` admits an index only at a type with a mask.
-    let mask = function
-        .value_type_opt(hit.index)
-        .and_then(ValueType::int_mask_u128)
-        .expect("a pinned index carries an int type inside the u128 carrier");
     if let Some(constants) = constants {
         let mut ev = super::eval::Evaluator::new(function, rom);
         let order = super::eval::cone_order_pruned(function, hit.index, source);
@@ -186,7 +163,7 @@ fn dispatch_domain(
                 match ev.eval_root(&order, hit.index) {
                     Some(index) => hit
                         .range
-                        .contains(u128::from(index).wrapping_add(hit.rebase) & mask)
+                        .contains(u128::from(index).wrapping_add(hit.rebase) & hit.mask)
                         .then_some(Some(k)),
                     None => Some(None),
                 }
@@ -206,7 +183,7 @@ fn dispatch_domain(
     let step = usize::try_from(hit.range.stride()).ok()?;
     let values = (hit.range.lo()..=hit.range.hi())
         .step_by(step)
-        .map(|x| x.wrapping_sub(hit.rebase) & mask)
+        .map(|x| x.wrapping_sub(hit.rebase) & hit.mask)
         .collect();
     Some(Domain {
         pinned: hit.index,
@@ -302,9 +279,7 @@ fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<V
             // the real index stops dominating the target.  `decompose` accepts
             // `sp + const` and alignment masks but rejects `sp & 0xF`, which is
             // a bounded VALUE and must stay a candidate index.
-            if function.int_const_u128(p).is_some()
-                || crate::mem_analysis::decompose(function, p).is_some()
-            {
+            if is_base_operand(function, p) {
                 continue;
             }
             has_var_input = true;
@@ -406,6 +381,10 @@ struct PinnedIndex {
     index: ValueId,
     range: Interval,
     rebase: u128,
+    /// `index`'s type mask, the width `rebase` wraps at.  Carried because
+    /// only [`bounded_index`], which admits an index only at a type that has
+    /// one, can read it without a fallible second look.
+    mask: u128,
 }
 
 /// Whether the constant offsets applied to `index` on its way to the address
@@ -501,12 +480,17 @@ fn bounded_index(
     site: NodeId,
     v: ValueId,
 ) -> Option<PinnedIndex> {
-    let ty = function
-        .value_type_opt(v)
-        .filter(|t| t.is_integer() && function.int_const_u128(v).is_none())?;
+    debug_assert!(
+        function.int_const_u128(v).is_none(),
+        "the dominator chain skips constants"
+    );
+    let ty = function.value_type_opt(v).filter(|t| t.is_integer())?;
+    // A type past the `u128` carrier has no mask, and `index_bound_ok` rejects
+    // every interval there, so nothing below would pass anyway.
+    let mask = ty.int_mask_u128()?;
     let enumerable =
         |ranges: &mut crate::value_range::RangeMap<'_>, value: ValueId, iv: Interval| {
-            index_bound_ok(ty, iv)
+            index_bound_ok(mask, iv)
                 && !is_width_only(function, ranges, site, value, iv)
                 && !ranges.guard_left_unconnected(value, site, iv)
         };
@@ -516,6 +500,7 @@ fn bounded_index(
             index: v,
             range: iv,
             rebase: 0,
+            mask,
         });
     }
     let siblings: Vec<(ValueId, u128)> = function
@@ -540,19 +525,20 @@ fn bounded_index(
                 index: v,
                 range: iv,
                 rebase: addend,
+                mask,
             })
         })
         .min_by_key(|hit| hit.range.count())
 }
 
-/// Is `iv` a non-empty, enumerable, genuinely-narrowed range at `ty`?
+/// Is `iv` a non-empty, enumerable, genuinely-narrowed range under the type
+/// mask `mask`?
 ///
-/// A type past 128 bits is rejected outright: the interval's `u128` carrier
-/// cannot represent its top, so every interval there would read as narrowed.
-fn index_bound_ok(ty: strider_ir::node::ValueType, iv: Interval) -> bool {
-    ty.int_mask_u128().is_some_and(|mask| {
-        !iv.is_empty() && iv.hi() < mask && iv.count() <= u128::from(MAX_TABLE_ENTRIES)
-    })
+/// A type past 128 bits has no mask and never reaches here: the interval's
+/// `u128` carrier cannot represent its top, so every interval there would read
+/// as narrowed.
+fn index_bound_ok(mask: u128, iv: Interval) -> bool {
+    !iv.is_empty() && iv.hi() < mask && iv.count() <= u128::from(MAX_TABLE_ENTRIES)
 }
 
 /// The variable operand and the constant of a non-commutative binop whose RHS
