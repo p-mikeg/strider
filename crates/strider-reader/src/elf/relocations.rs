@@ -157,7 +157,6 @@ pub(crate) fn apply_elf_relocations_with(
         got: BTreeMap::new(),
         copies: Vec::new(),
         patches: Vec::new(),
-        symbols: true,
     };
     // A linked image with a `PT_DYNAMIC` is relocated from the tables its tags
     // place, as its own ELF; anything else from its section headers.
@@ -167,10 +166,7 @@ pub(crate) fn apply_elf_relocations_with(
             deduped = without_repeated_tables(obj)?;
             (deduped.as_deref(), false)
         }
-        super::dynamic::LoaderView::Tables { walked } => {
-            ctx.symbols = super::dynamic::dynsym_is_the_loaders(obj);
-            (walked.as_deref(), true)
-        }
+        super::dynamic::LoaderView::Tables { walked } => (walked.as_deref(), true),
         _ => (None, true),
     };
     let rewritten = rewritten.map(object::File::parse).transpose()?;
@@ -232,10 +228,6 @@ struct Ctx<'a, 'd> {
     copies: Vec<(u64, u64, u32)>,
     /// Every patch the walk records, in record order.
     patches: Vec<Patch>,
-    /// Whether a relocation's symbol index names a table the loader reads:
-    /// for a dynamic image, `.dynsym` must be the `DT_SYMTAB` table. Else no
-    /// symbol resolves.
-    symbols: bool,
 }
 
 impl<'a> Ctx<'a, '_> {
@@ -733,10 +725,7 @@ fn apply_one_relocation(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo, p
         Some(Kind::Marker) => {}
         Some(Kind::Compute(value, field)) => apply_classified(ctx, site, r, pair, value, field),
         Some(Kind::Copy) => {
-            let size = r
-                .sym
-                .filter(|_| ctx.symbols)
-                .and_then(|idx| symbol_size(ctx.obj, idx));
+            let size = r.sym.and_then(|idx| symbol_size(ctx.obj, idx));
             note_copy(ctx, site.addr, size, r.type_word());
         }
         None => apply_plain(ctx, site, r),
@@ -857,7 +846,6 @@ fn apply_plain(ctx: &mut Ctx<'_, '_>, site: RelocSite, r: &RelocInfo) {
     // An `Absolute` target, an immediate with no symbol, has no `S` to add.
     let Some(target) = r
         .sym
-        .filter(|_| ctx.symbols)
         .and_then(|idx| resolve_symbol_target(obj, ctx.layout, idx))
     else {
         ctx.unmodelled(holder, field_addr, size_bytes, r.type_word());
@@ -980,7 +968,7 @@ fn compute_classified(
     let raw = if thumb_le { swap_halfwords(raw) } else { raw };
     // `S` exists only for a symbol target, and only a value reading it asks.
     let target = match (value_kind.reads_symbol(), r.sym) {
-        (true, Some(idx)) if ctx.symbols => Some(resolve_symbol_target(obj, layout, idx)?),
+        (true, Some(idx)) => Some(resolve_symbol_target(obj, layout, idx)?),
         (true, _) => return None,
         (false, _) => None,
     };
@@ -1499,9 +1487,8 @@ fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
         hole(ctx, addr);
     }
 
-    // Only a `.dynsym` that is `DT_SYMTAB`'s table says which entries the
-    // loader leaves as they are.
-    let dynsym = obj.dynamic_symbol_table().filter(|_| ctx.symbols);
+    // `.dynsym` says which entries the loader leaves as they are.
+    let dynsym = obj.dynamic_symbol_table();
     let globals = tags.symtabno.saturating_sub(tags.gotsym);
     for i in 0..globals {
         let Some(addr) = tags.local_gotno.checked_add(i).and_then(slot) else {

@@ -1,11 +1,10 @@
-//! What the loader view holes or refuses rather than serve one reading of
-//! tables the loaders could read differently, or that it does not model:
-//! an unreadable table, a `.dynsym` that is not `DT_SYMTAB`'s,
-//! and an Android stream read at the wrong width or past the budget. Each
+//! What the loader view refuses rather than serve one reading of tables
+//! the loaders could read differently, or that it does not model: an
+//! unreadable table, and an Android stream read at the wrong width or
+//! past the budget. Each
 //! image is a `fixtures/loader/out/*` one with the patch its test
 //! documents, or built here whole.
 
-use object::{Object, ObjectSection, ObjectSymbol};
 use rsleigh::{MemReader, VnAddr, VnSpace};
 use strider_reader::elf::RelocationMode;
 use strider_reader::{ElfFileMemReader, OwnedElf, ReadOnlyMemory};
@@ -130,48 +129,6 @@ fn an_unreadable_table_leaves_no_writable_mapping_served() {
     let elf = OwnedElf::parse(b).unwrap();
     let reader = ElfFileMemReader::new(&elf, APPLIED).unwrap();
     assert_eq!(fetch(&reader, RELRO_P, 8), None, "zero-filled DT_RELA");
-}
-
-/// `getl`'s operand, the `R_386_32` against `loc` in `x86_textrel.elf`.
-const TEXTREL_GETL: u64 = 0x1e5;
-
-/// `mips32be_got.elf` with its `.dynsym` header's `sh_offset` moved so that
-/// symbol 5 lies in `.comment` (file offset 0x3e4), written there as
-/// defined in `.text` at the lazy stub `ext_call`'s GOT entry holds.
-/// `DT_SYMTAB` still places the table where `ext_call` and `ext_var` are
-/// imports, so their global entries stay holes.
-#[test]
-fn a_mips_global_got_entry_reads_only_dt_symtabs_dynsym() {
-    let mut b = bytes("mips32be_got.elf");
-    let sh = |i: usize| 0x880 + 40 * i;
-    assert_eq!(
-        u32::from_be_bytes(b[sh(6) + 4..sh(6) + 8].try_into().unwrap()),
-        object::elf::SHT_DYNSYM
-    );
-    // Elf32_Sym: st_name, st_value, st_size, st_info, st_other, st_shndx.
-    let sym = [
-        0u32.to_be_bytes().as_slice(),
-        &0x4003a0u32.to_be_bytes(),
-        &0u32.to_be_bytes(),
-        &[0x12, 0],
-        &8u16.to_be_bytes(),
-    ]
-    .concat();
-    b[0x3e4..0x3e4 + 16].copy_from_slice(&sym);
-    b[sh(6) + 16..sh(6) + 20].copy_from_slice(&(0x3e4u32 - 5 * 16).to_be_bytes());
-    let elf = OwnedElf::parse(b).unwrap();
-    let reader = ElfFileMemReader::new(&elf, GOT_IS_ROM).unwrap();
-    for (addr, what) in [(0x4103dc, "ext_var"), (0x4103e0, "ext_call")] {
-        let mut word = [0u8; 4];
-        let got = ReadOnlyMemory::read(&reader, addr, &mut word).map_err(|e| e.to_string());
-        assert!(
-            got.as_ref().is_err_and(|e| e.contains(&format!(
-                "relocation of type {} ",
-                object::elf::R_MIPS_GLOB_DAT
-            ))),
-            "{what}: {got:?} {word:02x?}"
-        );
-    }
 }
 
 /// SLEB128 of `v`.
@@ -399,41 +356,4 @@ fn an_android_stream_is_counted_at_its_entry_size() {
     let elf = OwnedElf::parse(f).unwrap();
     let err = ElfFileMemReader::new(&elf, GOT_IS_ROM).expect_err("past the budget");
     assert!(format!("{err:#}").contains("relocation entries"), "{err:#}");
-}
-
-/// `x86_textrel.elf` with its `.dynsym` header's `sh_size` grown to 0x400,
-/// past the end of the `PT_LOAD` mapping it though still in the file, and
-/// with `DT_GNU_HASH`'s `symoffset` raised to 2^24, so the
-/// table the hash names runs past them: either way the loader's table is
-/// not the bytes the header holds, and `loc` does not resolve, where the
-/// unpatched image patches `getl`'s operand to `&loc`.
-#[test]
-fn a_dynsym_must_hold_the_whole_dt_symtab_table() {
-    let original = bytes("x86_textrel.elf");
-    let obj = object::File::parse(&original[..]).unwrap();
-    let dynsym = obj.section_by_name(".dynsym").unwrap().index().0;
-    let gnu_hash = obj
-        .section_by_name(".gnu.hash")
-        .unwrap()
-        .file_range()
-        .unwrap()
-        .0;
-    let loc = obj
-        .dynamic_symbols()
-        .find(|s| s.name() == Ok("loc"))
-        .unwrap()
-        .address();
-    let shoff = le32(&original, 0x20) as usize;
-    let reader =
-        ElfFileMemReader::new(&OwnedElf::parse(original.clone()).unwrap(), APPLIED).unwrap();
-    assert_eq!(fetch(&reader, TEXTREL_GETL, 4), Some(loc), "unpatched");
-    let mut long = original.clone();
-    put(&mut long, shoff + 40 * dynsym + 20, 0x400, 4);
-    let mut hashed = original;
-    put(&mut hashed, gnu_hash as usize + 4, 0x0100_0000, 4);
-    for (what, b) in [("sh_size", long), ("DT_GNU_HASH", hashed)] {
-        let elf = OwnedElf::parse(b).unwrap();
-        let reader = ElfFileMemReader::new(&elf, APPLIED).unwrap();
-        assert_eq!(fetch(&reader, TEXTREL_GETL, 4), None, "{what}");
-    }
 }
