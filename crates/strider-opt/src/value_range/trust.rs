@@ -14,7 +14,7 @@ impl RangeMap<'_> {
     /// Whether `iv`, `value`'s range at `region`, is no tighter than its
     /// KnownBits bound while a guard dominating `region` bounds bits of the
     /// same root that `value` overlaps, but in a way
-    /// [`BitField::project`] does not carry to `value`.
+    /// [`BitField::project`](super::bit_field::BitField::project) does not carry to `value`.
     ///
     /// That guard may be the one sizing a table `value` indexes, in a shape
     /// this module does not read, and the KnownBits bound of a bit field is

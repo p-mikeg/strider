@@ -62,7 +62,7 @@ struct PinnedIndex {
     range: Interval,
     rebase: u128,
     /// `index`'s type mask, the width `rebase` wraps at.  Carried because
-    /// only [`bounded_index`], which admits an index only at a type that has
+    /// only [`SiteClassifier::bounded_index`], which admits an index only at a type that has
     /// one, can read it without a fallible second look.
     mask: u128,
 }
@@ -303,7 +303,7 @@ impl SiteClassifier<'_> {
 
     /// Is `v`'s range merely its type width rather than a real narrowing?  A raw
     /// byte load fills its cell width exactly, making it table DATA, not an index,
-    /// unless it is a field read through a pointer ([`loads_a_field`]) that no
+    /// unless it is a field read through a pointer ([`Self::loads_a_field`]) that no
     /// dominating test bounds unread
     /// ([`RangeMap::cell_test_left_unread`](crate::value_range::RangeMap::cell_test_left_unread)).
     ///
