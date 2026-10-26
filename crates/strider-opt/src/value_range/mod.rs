@@ -36,7 +36,7 @@ mod tests;
 pub use interval::Interval;
 
 use bit_field::{BitField, MaskOperands, bit_field};
-use interval::{Hop, ScaleOp, type_mask_or_top, width_mask};
+use interval::{Hop, ScaleOp, width_mask};
 
 /// Cast hops either guard ladder ([`RangeMap::dominating_guard`],
 /// [`RangeMap::edge_bound_on`]) walks before giving up.  A real index sits one
@@ -167,7 +167,7 @@ impl<'f> RangeMap<'f> {
         // across the scale, so an unguarded `byte * 4` would resolve as a
         // 256-case index.
         let result = if matches!(self.function.node_kind(producer), NodeKind::Phi) {
-            self.resolve_phi(producer, region)
+            self.resolve_phi(value, mask, region)
         } else if let Some(operand) = self.masks.identity[value] {
             let leaf = self.resolve_leaf(value, region);
             self.range_of(operand, region).intersect(leaf)
@@ -196,57 +196,48 @@ impl<'f> RangeMap<'f> {
 
     /// `region` applies only to a guard on the phi's own output; each arm is
     /// queried in its own effective region.
-    fn resolve_phi(&mut self, phi_node: NodeId, region: NodeId) -> Interval {
+    ///
+    /// `value` is the phi's one output and `mask` its width mask, both already
+    /// in hand in the [`Self::range_of`] frame below which this runs.
+    fn resolve_phi(&mut self, value: ValueId, mask: u128, region: NodeId) -> Interval {
+        let top = Interval::top(mask);
+        let phi_node = self.function.producer(value);
+        debug_assert_eq!(self.function.node_outputs(phi_node).first(), Some(&value));
         let data_inputs: Vec<ValueId> = self.function.phi_data_inputs(phi_node).collect();
-
-        let Some(phi_value) = self
-            .function
-            .graph()
-            .node_outputs(phi_node)
-            .first()
-            .copied()
-        else {
-            return Interval::top(u128::MAX);
-        };
-        let ty = self.function.value_type_opt(phi_value);
-        let type_mask = type_mask_or_top(ty);
-
         if data_inputs.len() < 2 {
-            return Interval::top(type_mask);
+            return top;
         }
 
         // The Region's control inputs line up 1-to-1 with the phi's data
         // inputs, so each arm is queried in its own effective region: a guard
         // holding on one incoming path must never apply to an arm bypassing it.
         let Some(joining_region) = self.find_joining_region(phi_node) else {
-            return Interval::top(type_mask);
+            return top;
         };
 
         let arm_regions = self.arm_query_regions(joining_region);
         if arm_regions.len() != data_inputs.len() {
-            return Interval::top(type_mask);
+            return top;
         }
 
-        let mut result: Option<Interval> = None;
+        // `None` once an arm is top: the union is top too, and the arms taken
+        // so far must not survive it, their stride being one only they obey.
+        let mut union: Option<Interval> = None;
         for (arm_region, &arm_val) in arm_regions.iter().zip(data_inputs.iter()) {
             let arm_range = self.range_of(arm_val, *arm_region);
-            if arm_range.is_top(type_mask) {
-                // The union is top, but a guard on the phi's own output still
-                // bounds it at the query point whichever arm the value took.
-                // The fallback is a fresh top: `arm_range` may carry a stride
-                // only this arm obeys.
-                return self
-                    .dominating_guard(phi_value, region)
-                    .unwrap_or_else(|| Interval::top(type_mask));
+            if arm_range.is_top(mask) {
+                union = None;
+                break;
             }
-            result = Some(result.map_or(arm_range, |acc| acc.union(arm_range)));
+            union = Some(union.map_or(arm_range, |acc| acc.union(arm_range)));
         }
 
-        let union = result.expect("union has >= 1 arm by the guards above");
-        // A guard holding at the query point is valid for every arm.
-        match self.dominating_guard(phi_value, region) {
-            Some(guard) => union.intersect(guard),
-            None => union,
+        // A guard holding at the query point is valid for every arm, and is
+        // all that bounds the phi once one of them is top.
+        match (union, self.dominating_guard(value, region)) {
+            (Some(union), Some(guard)) => union.intersect(guard),
+            (Some(union), None) => union,
+            (None, guard) => guard.unwrap_or(top),
         }
     }
 
