@@ -15,9 +15,9 @@ use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{Function, IRViewer};
 
 use super::AddrClass;
-use super::alias::{SizedAddr, classify_addr};
+use super::alias::{SizedAddr, classify_addr, modular_offsets};
 use super::analyzer::{MemOptions, store_value_byte_size};
-use super::ring::{addr_bit_width, comparable_distance};
+use super::ring::{addr_bit_width, comparable_distance, ring_overlap_at, ring_window};
 use crate::mem_ssa::{MemLayout, Shape};
 
 const NONE: u32 = u32::MAX;
@@ -113,28 +113,58 @@ impl Offsets {
     }
 
     /// The highest store in `lo..=hi` whose verdict against `[offset, offset +
-    /// size)` at `bits` can be anything but `Disjoint`.
-    fn highest(&self, offset: i128, size: i128, bits: u32, lo: u32, hi: u32) -> Option<u32> {
-        // Past half the modulus two offsets name no distance, and at exactly
-        // 128 bits none is comparable (see `offsets_comparable`).
+    /// size)` at `bits` can be anything but `Disjoint`.  `modular` is
+    /// [`modular_offsets`]: offsets that compare on the ring take a probe
+    /// window that wraps with them, and the exact ring test per store.
+    fn highest(
+        &self,
+        offset: i128,
+        size: i128,
+        bits: u32,
+        modular: bool,
+        lo: u32,
+        hi: u32,
+    ) -> Option<u32> {
+        let all = || highest_in(&self.all, lo, hi);
+        // At exactly 128 bits no two offsets are comparable and a ring window
+        // does not fit `i128`; an unbounded probe no range test separates
+        // (see `offsets_comparable`).
         if bits == 128 || offset.saturating_add(size) == i128::MAX {
-            return highest_in(&self.all, lo, hi);
+            return all();
         }
-        if bits < 128 {
-            let bound = comparable_distance(bits, size.max(self.max_size));
-            if offset.abs_diff(self.min_start) > bound || offset.abs_diff(self.max_start) > bound {
-                return highest_in(&self.all, lo, hi);
-            }
-        }
-        let mut best = highest_in(&self.unbounded, lo, hi);
         let from = offset.saturating_sub(self.max_size.max(1) - 1);
         let to = offset.saturating_add(size.max(1) - 1);
-        for (&start, widths) in self.starts.range(from..=to) {
-            for (width, positions) in widths {
-                // A width is at least one byte, so `start == offset` is
-                // already an end above `offset`.
-                if start.saturating_add(*width) > offset {
-                    best = best.max(highest_in(positions, lo, hi));
+        let windows = if modular {
+            match ring_window(bits, from, to) {
+                Some(windows) => windows,
+                None => return all(),
+            }
+        } else {
+            // Past the carrier the offsets are exact sums with no bound.
+            if bits < 128 {
+                let bound = comparable_distance(bits, size.max(self.max_size));
+                if offset.abs_diff(self.min_start) > bound
+                    || offset.abs_diff(self.max_start) > bound
+                {
+                    return all();
+                }
+            }
+            [Some((from, to)), None]
+        };
+        let mut best = highest_in(&self.unbounded, lo, hi);
+        for (window_lo, window_hi) in windows.into_iter().flatten() {
+            for (&start, widths) in self.starts.range(window_lo..=window_hi) {
+                for (width, positions) in widths {
+                    let hits = if modular {
+                        ring_overlap_at(bits, start, *width, offset, size)
+                    } else {
+                        // A width is at least one byte, so `start == offset`
+                        // is already an end above `offset`.
+                        start.saturating_add(*width) > offset
+                    };
+                    if hits {
+                        best = best.max(highest_in(positions, lo, hi));
+                    }
                 }
             }
         }
@@ -166,10 +196,11 @@ impl Rooted {
     fn highest(&self, probe: &SizedAddr, offset: i128, lo: u32, hi: u32) -> Option<u32> {
         // Another width is never comparable.
         let other = self.widths.highest_not(probe.addr_bits, lo, hi);
+        let modular = modular_offsets(probe.class, probe.addr_bits).is_some();
         let same = self
             .offsets
             .get(&probe.addr_bits)
-            .and_then(|o| o.highest(offset, probe.size, probe.addr_bits, lo, hi));
+            .and_then(|o| o.highest(offset, probe.size, probe.addr_bits, modular, lo, hi));
         other.max(same)
     }
 }

@@ -6,7 +6,7 @@ use strider_ir::{Function, IRViewer};
 use super::AddrClass::*;
 use super::analyzer::MemOptions;
 use super::decompose::decompose;
-use super::ring::comparable_distance;
+use super::ring::{comparable_distance, ring_overlap_at};
 use super::{AddrClass, AliasVerdict, MemExpr, MemKind};
 
 pub(super) fn classify_addr(function: &Function, addr: ValueId) -> AddrClass {
@@ -38,51 +38,68 @@ pub(super) fn ranges_disjoint(a_off: i128, a_size: i128, b_off: i128, b_size: i1
     a_end <= b_off || b_end <= a_off
 }
 
+/// Whether offsets of `class` at `bits` are congruences mod 2^`bits` that
+/// compare on the ring rather than in integer order.
+///
+/// `wrap_to_addr_width` reduces a `StackRooted` / `HeapRooted` offset into the
+/// address type's signed range, which is exact mod 2^w but not
+/// order-preserving across the top of that range: two addresses two bytes
+/// apart mod 2^32 reduce to `+2147483646` and `-2147483648`, which an interval
+/// test reads as nearly 2^32 apart.  On the ring every distance places, by the
+/// rule the jump-table evaluator's per-byte `slot_key` already uses.
+///
+/// A `Constant` offset is the raw unsigned address instead, so its wrap is the
+/// one at 0 / 2^w and [`offsets_comparable`]'s bound is written for that half
+/// of the circle.  Whether a global access running past 2^w back to 0 is a
+/// real shape is unmeasured, so it keeps the bound.
+///
+/// Past the `i128` carrier nothing reduces, so the offsets are exact sums that
+/// cannot wrap and integer order is the MORE precise test: `None` there too.
+pub(super) fn modular_offsets(class: AddrClass, bits: u32) -> Option<u32> {
+    matches!(class, StackRooted { .. } | HeapRooted { .. })
+        .then_some(bits)
+        .filter(|&bits| bits <= 128)
+}
+
 /// Only the same-base `StackRooted`, same-base `HeapRooted`, and
 /// `Constant`/`Constant` arms of [`alias_verdict`] reach here; each carries an
 /// offset, so the unwraps hold.
-fn offset_range_verdict(load: SizedAddr, store: SizedAddr) -> AliasVerdict {
+pub(super) fn offset_range_verdict(load: SizedAddr, store: SizedAddr) -> AliasVerdict {
     let load_off = load.class.offset().expect("offset-bearing load class");
     let store_off = store.class.offset().expect("offset-bearing store class");
-    if !offsets_comparable(load, store, load_off, store_off) {
-        AliasVerdict::MayAlias
-    } else if load_off == store_off {
-        AliasVerdict::Match
-    } else if ranges_disjoint(load_off, load.size, store_off, store.size) {
+    // Two offsets at different widths are values mod different powers of two,
+    // so their difference names no distance at all, on the ring or in integer
+    // order. Taking one side's width would read a wrapped range as far away.
+    if load.addr_bits != store.addr_bits {
+        return AliasVerdict::MayAlias;
+    }
+    if load_off == store_off {
+        return AliasVerdict::Match;
+    }
+    let disjoint = match modular_offsets(load.class, load.addr_bits) {
+        Some(bits) => !ring_overlap_at(bits, load_off, load.size, store_off, store.size),
+        None => {
+            offsets_comparable(load, store, load_off, store_off)
+                && ranges_disjoint(load_off, load.size, store_off, store.size)
+        }
+    };
+    if disjoint {
         AliasVerdict::Disjoint
     } else {
         AliasVerdict::MayAlias
     }
 }
 
-/// Whether the two offsets can be compared in integer order.
-///
-/// `wrap_to_addr_width` reduces a `StackRooted` / `HeapRooted` offset into the
-/// address type's signed range, which is correct mod 2^w but not
-/// order-preserving across the wrap: two addresses two bytes apart mod 2^32
-/// reduce to `+2147483646` and `-2147483648`, which any interval test reads as
-/// nearly 2^32 apart. Whenever the distance exceeds half the modulus the true
-/// distance is the short way round, and only `MayAlias` is sound.
-///
-/// A `Constant` offset is the raw unsigned address, not a reduced one, so the
-/// same bound cuts a different pair: two globals adjacent across the 0 / 2^w
-/// wrap (`0xFFFF_FFF0` against `0x10`) read as far apart and stay `MayAlias`.
-/// A modular distance, `min((a - b) mod 2^w, (b - a) mod 2^w)`, would place
-/// every pair of either class; this bound places the half of the circle each
-/// class is written for.
+/// Whether two offsets [`modular_offsets`] leaves in integer order lie close
+/// enough to compare there: within half the modulus, less the wider access,
+/// of each other.  The widths agree, which the caller has checked.
 pub(super) fn offsets_comparable(
     load: SizedAddr,
     store: SizedAddr,
     load_off: i128,
     store_off: i128,
 ) -> bool {
-    // Two reductions at different widths land in different moduli, so their
-    // difference names no distance at all and only `MayAlias` is sound. Taking
-    // one side's width would compute the bound from the wrong modulus and read
-    // a wrapped range as far away.
-    if load.addr_bits != store.addr_bits {
-        return false;
-    }
+    debug_assert_eq!(load.addr_bits, store.addr_bits, "one modulus per pair");
     let bits = load.addr_bits;
     // Past the i128 carrier `wrap_to_addr_width` cannot reduce, so the offsets
     // are the exact sums and compare in integer order. At exactly 128 it DOES

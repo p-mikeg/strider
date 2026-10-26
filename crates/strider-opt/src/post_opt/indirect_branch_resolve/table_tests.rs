@@ -1603,13 +1603,6 @@ fn classify_table_dispatch_sees_a_store_past_the_wrap_onto_a_slot() {
 /// Both entries straddle the wrap and a newer store sits six bytes above the
 /// last of them, disjoint from either.  The slot map answers this from its
 /// per-byte `slot_key` claims, which are modular and therefore exact here.
-///
-/// `alias_verdict` is NOT exact here: `offsets_comparable` refuses any pair
-/// more than half the modulus apart in integer order, so the newer store at a
-/// reduced `-2^31` against a probe at `+2^31 - 6` is `MayAlias` and the
-/// memory climb stops on it.  An evaluator asking the shared memory index
-/// alone would defer this site, so this case is what the slot map buys over
-/// the climb.
 #[test]
 fn a_disjoint_newer_store_across_the_wrap_leaves_both_entries() {
     assert_eq!(
@@ -1625,6 +1618,42 @@ fn a_disjoint_newer_store_across_the_wrap_leaves_both_entries() {
             0x401190u64.into(),
         ])),
     );
+}
+
+/// The shared memory climb is exact on that shape too, so the resolution
+/// above does not rest on the slot map: `reaching_store` reaches each table
+/// store through the newer one, which `offset_order` places on the ring six
+/// bytes above the last entry instead of 2^32 - 6 below it.
+#[test]
+fn the_shared_climb_reaches_past_a_disjoint_store_across_the_wrap() {
+    use crate::mem_analysis::{MemAnalyzer, MemOptions, MemPurpose, decompose};
+
+    let f = build_stack_table_across_the_wrap(0x7FFF_FFFA, Some((0x8000_0004, ValueType::int(32))));
+    let load = f
+        .walk()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::Load(_)))
+        .expect("the dispatch load");
+    let mem = f.node_inputs(load)[NodeKind::ACCESS_MEM_SLOT];
+    let newest = f
+        .walk_kind(|k| matches!(k, NodeKind::Store(_)))
+        .last()
+        .expect("the newer store");
+    let base = decompose(&f, f.store_addr(newest))
+        .expect("an SP-rooted store")
+        .base;
+    let analyzer = MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::TableWalk, &f));
+    // The two entries, reduced: `sp + 0x7FFF_FFFA` and `sp + 0x7FFF_FFFE`.
+    for (offset, target) in [(0x7FFF_FFFAi128, 0x401190u128), (0x7FFF_FFFE, 0x401180)] {
+        let hit = analyzer
+            .reaching_store(&f, mem, base, offset, 4)
+            .expect("the entry's own store");
+        assert_eq!(hit.store_offset, offset, "anchored at the probed entry");
+        assert_eq!(
+            f.int_const_u128(hit.data(&f)),
+            Some(target),
+            "entry at {offset:#x} still holds its target"
+        );
+    }
 }
 
 /// A two-entry 32-bit table at `(sp + 0x7FFF_FFF0) + 0x20`, the second hop
