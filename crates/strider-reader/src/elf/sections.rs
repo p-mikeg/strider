@@ -92,18 +92,23 @@ pub enum LoadFilter {
 }
 
 impl LoadFilter {
-    /// PT_LOAD only. Exec beats write for the fetch role, since a firmware image
-    /// can ship a single RWX PT_LOAD.
-    fn segment_accepts(self, p_flags: u32) -> bool {
-        let is_writable = p_flags & object::elf::PF_W != 0;
-        let is_exec = p_flags & object::elf::PF_X != 0;
+    /// Exec beats write for the fetch role, since a firmware image can ship a
+    /// single RWX PT_LOAD. A writable mapping the GOT lives in is taken whole,
+    /// and `collect_regions` cuts the rest of it back out.
+    fn accepts(self, is_writable: bool, is_exec: bool) -> bool {
         match self {
             LoadFilter::CodeAndReadOnly => is_exec || !is_writable,
             LoadFilter::ImmutableOnly => !is_writable,
-            // The GOT lives in a writable PT_LOAD, so the whole mapping is
-            // taken and `collect_regions` cuts the rest of it back out.
             LoadFilter::ImmutableAndRelocatedGot | LoadFilter::AllAllocatable => true,
         }
+    }
+
+    /// PT_LOAD only, see [`accepts`](Self::accepts).
+    fn segment_accepts(self, p_flags: u32) -> bool {
+        self.accepts(
+            p_flags & object::elf::PF_W != 0,
+            p_flags & object::elf::PF_X != 0,
+        )
     }
 
     /// Sections always require `SHF_ALLOC` and reject `SHF_TLS`; `SHF_WRITE` /
@@ -114,18 +119,10 @@ impl LoadFilter {
     /// a non-empty `.tdata` at its `sh_addr`, 0 in a `.o`, at an address that
     /// means nothing and that the rebase deliberately leaves unmapped.
     fn section_accepts(self, sh_flags: u64) -> bool {
-        let is_alloc = sh_flags & u64::from(object::elf::SHF_ALLOC) != 0;
-        let is_tls = sh_flags & u64::from(object::elf::SHF_TLS) != 0;
-        if !is_alloc || is_tls {
-            return false;
-        }
-        let is_exec = sh_flags & u64::from(object::elf::SHF_EXECINSTR) != 0;
-        let is_writable = sh_flags & u64::from(object::elf::SHF_WRITE) != 0;
-        match self {
-            LoadFilter::CodeAndReadOnly => is_exec || !is_writable,
-            LoadFilter::ImmutableOnly => !is_writable,
-            LoadFilter::ImmutableAndRelocatedGot | LoadFilter::AllAllocatable => true,
-        }
+        let bit = |f: u32| sh_flags & u64::from(f) != 0;
+        bit(object::elf::SHF_ALLOC)
+            && !bit(object::elf::SHF_TLS)
+            && self.accepts(bit(object::elf::SHF_WRITE), bit(object::elf::SHF_EXECINSTR))
     }
 }
 
@@ -272,20 +269,14 @@ impl Walk {
 pub fn without_ranges(regions: Vec<MemRegion>, ranges: &AddressSet) -> Vec<MemRegion> {
     let mut kept = Vec::with_capacity(regions.len());
     for region in regions {
-        let (mut lo, end) = (region.start_addr(), region.end_addr());
-        for &(w_lo, w_hi) in ranges.overlapping(lo, end) {
-            if w_lo > lo {
-                kept.push(region.slice(lo, w_lo));
-            }
-            lo = lo.max(w_hi);
+        let (start, end) = (region.start_addr(), region.end_addr());
+        // An uncut region is kept whole: `collapse_equal_starts` runs over the
+        // output, so a slice's start must still be the original's.
+        if ranges.overlapping(start, end).is_empty() {
+            kept.push(region);
+            continue;
         }
-        if lo < end {
-            kept.push(if lo == region.start_addr() {
-                region
-            } else {
-                region.slice(lo, end)
-            });
-        }
+        ranges.pieces_outside(start, end, |lo, hi| kept.push(region.slice(lo, hi)));
     }
     kept
 }
@@ -318,18 +309,23 @@ impl AddressSet {
     fn merged_without(ranges: Vec<(u64, u64)>, cut_out: &Self) -> Self {
         let merged = Self::merged(ranges);
         let mut out: Vec<(u64, u64)> = Vec::with_capacity(merged.0.len());
-        for (mut lo, hi) in merged.0 {
-            for &(k_lo, k_hi) in cut_out.overlapping(lo, hi) {
-                if k_lo > lo {
-                    out.push((lo, k_lo));
-                }
-                lo = lo.max(k_hi);
-            }
-            if lo < hi {
-                out.push((lo, hi));
-            }
+        for (lo, hi) in merged.0 {
+            cut_out.pieces_outside(lo, hi, |lo, hi| out.push((lo, hi)));
         }
         Self(out)
+    }
+
+    /// Each piece of `[lo, hi)` this set does not hold, ascending, to `f`.
+    fn pieces_outside(&self, mut lo: u64, hi: u64, mut f: impl FnMut(u64, u64)) {
+        for &(c_lo, c_hi) in self.overlapping(lo, hi) {
+            if c_lo > lo {
+                f(lo, c_lo);
+            }
+            lo = lo.max(c_hi);
+        }
+        if lo < hi {
+            f(lo, hi);
+        }
     }
 
     /// The ranges overlapping `[lo, hi)`: a binary search, which holds
