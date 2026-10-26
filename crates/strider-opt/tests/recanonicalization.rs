@@ -128,13 +128,29 @@ fn clean_does_not_merge_when_output_type_differs() {
     assert_eq!(truncs(&fg), 2, "both truncs survive");
 }
 
+/// Three passes document a pipeline-order precondition in their module docs
+/// (`FlagCmpCanonicalize` after `ConstantFold` and before `IfCondInversion`,
+/// `LoadForward` after `PhiCollapse`), which only the ORDER here enforces.
+/// A reorder still converges, on a less canonical shape, so nothing but
+/// `golden` would catch it, and only indirectly.
 #[test]
-fn default_pipeline_has_ten_inloop_passes() {
+fn default_pipeline_runs_its_passes_in_the_documented_order() {
     let p = strider_opt::default_pipeline();
+    let main: Vec<&str> = p.passes().iter().map(|pass| pass.name()).collect();
     assert_eq!(
-        p.passes().len(),
-        10,
-        "DedupNodes removed -> 10 in-loop passes"
+        main,
+        [
+            "ConstantFold",
+            "LoadReadOnly",
+            "KnownBits",
+            "FlagCmpCanonicalize",
+            "IfCondInversion",
+            "PhiCollapse",
+            "RegionCollapse",
+            "DeadBranchElimination",
+            "CfgDetach",
+            "LoadForward",
+        ]
     );
     let post: Vec<&str> = p.post_passes().iter().map(|pass| pass.name()).collect();
     assert_eq!(post, ["CallStackArgCollect", "FunctionArgDetect"]);
