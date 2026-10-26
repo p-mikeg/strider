@@ -8,7 +8,6 @@ use strider_cfg::ResolvedTargets;
 use strider_ir::node::NodeKind;
 use strider_ir::{IRViewer, IRWalker};
 use strider_orchestrator::opt::classify_target;
-use strider_orchestrator::opt::value_range::RangeMap;
 
 /// The fixture's sole `IndirectBranch` placeholder. `classify_target` takes
 /// the branch node itself: it derives the dispatch target from the branch's
@@ -24,13 +23,7 @@ fn sole_branch(f: &strider_ir::Function) -> strider_ir::node::NodeId {
 fn classify_target_bare(view: &strider_ir::Function) -> anyhow::Result<Option<ResolvedTargets>> {
     let mut view = view.clone();
     view.assume(&strider_orchestrator::opt::AssumptionOptions::default());
-    let mut ranges = RangeMap::new(&view)?;
-    Ok(classify_target(
-        &view,
-        sole_branch(&view),
-        None,
-        &mut ranges,
-    ))
+    classify_target(&view, sole_branch(&view), None)
 }
 
 use common::indirect_resolve_helpers::{
