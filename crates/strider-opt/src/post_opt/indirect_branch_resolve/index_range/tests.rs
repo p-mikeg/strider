@@ -6,8 +6,8 @@ use strider_ir::{
 };
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR};
 
+use super::Interval;
 use super::RangeMap;
-use crate::value_range::Interval;
 
 /// The stride is at least 1 by construction, and emptiness has one name.
 #[test]
@@ -520,11 +520,11 @@ fn guard_propagates_through_shift_right() {
 fn scaled_range_scans_the_operand_guards_once() {
     let g = guarded_scaled(8, IntBinaryOp::Div, 2);
     let mut ranges = RangeMap::new(&g.f).unwrap();
-    crate::value_range::GUARD_SCANS.with(|c| c.set(0));
+    super::GUARD_SCANS.with(|c| c.set(0));
     let iv = ranges.range_of(g.ret, g.true_node);
     assert_eq!((iv.lo, iv.hi), (0, 3));
     assert_eq!(
-        crate::value_range::GUARD_SCANS.with(std::cell::Cell::get),
+        super::GUARD_SCANS.with(std::cell::Cell::get),
         2,
         "one scan for the scaled value, one for its operand"
     );
@@ -2256,14 +2256,14 @@ fn a_guard_lookup_does_not_scale_with_guard_count() {
             k,
             "each If's true edge bounds the value"
         );
-        crate::value_range::GUARD_PROBES.with(|c| c.set(0));
+        super::GUARD_PROBES.with(|c| c.set(0));
         let iv = ranges.range_of(idx, leaf);
         assert_eq!(
             (iv.lo, iv.hi),
             (0, 999),
             "the outermost guard is idx < 1000"
         );
-        probes.push(crate::value_range::GUARD_PROBES.with(std::cell::Cell::get));
+        probes.push(super::GUARD_PROBES.with(std::cell::Cell::get));
     }
     assert_eq!(
         probes[0], probes[1],
@@ -2325,12 +2325,12 @@ fn guard_lookups_over_sequential_sites_cost_linear_total() {
     fn probes(n: usize) -> u64 {
         let (f, sites) = build_guard_sequence(n);
         let mut ranges = RangeMap::new(&f).unwrap();
-        crate::value_range::GUARD_PROBES.with(|c| c.set(0));
+        super::GUARD_PROBES.with(|c| c.set(0));
         for &(value, node) in &sites {
             let iv = ranges.range_of(value, node);
             assert_eq!((iv.lo, iv.hi), (0, 7), "each site's own guard holds");
         }
-        crate::value_range::GUARD_PROBES.with(std::cell::Cell::get)
+        super::GUARD_PROBES.with(std::cell::Cell::get)
     }
     let small = probes(40);
     let large = probes(320);

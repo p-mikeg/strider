@@ -22,6 +22,11 @@ use strider_cfg::ResolvedTargets;
 use crate::ReadOnlyMemory;
 
 pub(crate) mod eval;
+// Public only for tests: `classify_sites` is the production entry.
+#[cfg(any(test, feature = "test-util"))]
+pub mod index_range;
+#[cfg(not(any(test, feature = "test-util")))]
+pub(crate) mod index_range;
 mod return_target;
 pub(crate) mod table;
 
@@ -77,7 +82,7 @@ pub fn classify_target(
 /// allocator.  A dispatch value forwarded that way arrives here folded, so a
 /// claim that is wrong for the input seats a wrong edge.
 pub struct SiteClassifier<'f> {
-    ranges: crate::value_range::RangeMap<'f>,
+    ranges: index_range::RangeMap<'f>,
     eval: eval::Evaluator<'f>,
     returns: ReturnTargets<'f>,
 }
@@ -95,7 +100,7 @@ impl<'f> SiteClassifier<'f> {
         rom: Option<&'f dyn ReadOnlyMemory>,
     ) -> crate::Result<Self> {
         Ok(Self {
-            ranges: crate::value_range::RangeMap::new(function)?,
+            ranges: index_range::RangeMap::new(function)?,
             eval: eval::Evaluator::new(function, rom),
             returns: ReturnTargets::new(function),
         })
