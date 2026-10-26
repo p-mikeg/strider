@@ -19,7 +19,7 @@ use smallvec::SmallVec;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
-use crate::error::Result;
+use crate::Result;
 use crate::opt::cfg_detach::strip_dead_predecessors;
 use crate::peephole::{PeepholePass, PeepholeRewrite, run_peephole};
 use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
@@ -73,6 +73,7 @@ impl PeepholePass for DbeFold {
         let Some(selection) = constant_selection(edit, root) else {
             return Ok(PeepholeRewrite::NoChange);
         };
+        let root_is_if = matches!(edit.node_kind(root), NodeKind::If);
         // An `Unreachable` on the dead arm anchors the memory of an exit-free
         // control cycle the fold would orphan.  Coarser than
         // `live_side_escapes` below: a dead arm that is a bare `Unreachable`
@@ -80,7 +81,7 @@ impl PeepholePass for DbeFold {
         // point: declining costs one unfolded branch, folding wrongly costs a
         // store.  `if (const) .. else abort();` still folds, its dead arm
         // reaching the `Unreachable` through the `Call`.
-        if matches!(edit.node_kind(root), NodeKind::If)
+        if root_is_if
             && selection.dead.iter().any(|&dead| {
                 edit.value_uses(dead)
                     .any(|(node, _)| matches!(edit.node_kind(node), NodeKind::Unreachable))
@@ -93,7 +94,7 @@ impl PeepholePass for DbeFold {
         }
         // The constant selector is the proof for taking this arm, so its
         // fingerprint must survive `kill_node` cascade-culling its cone.
-        let selector_slot = if matches!(edit.node_kind(root), NodeKind::If) {
+        let selector_slot = if root_is_if {
             NodeKind::IF_COND_SLOT
         } else {
             NodeKind::SWITCH_SELECTOR_SLOT

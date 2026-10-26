@@ -12,8 +12,8 @@
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRBuilderExt, IRViewer, IntBinaryOp};
 
+use crate::Result;
 use crate::const_eval::var_and_const;
-use crate::error::Result;
 use crate::opt::known_bits::{const_only, node_known_bits};
 use crate::pipeline::OptimizationResult;
 

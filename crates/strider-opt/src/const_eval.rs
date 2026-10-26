@@ -6,7 +6,7 @@ use strider_ir::eval;
 
 /// Decodes `ty` bytes at `addr` into an integer masked to `ty`. `None` for
 /// widths > 16 bytes, an unmapped read, or a non-integer `ty`.
-pub(crate) fn read_rom_const(
+fn read_rom_const(
     rom: &dyn ReadOnlyMemory,
     addr: u64,
     ty: ValueType,

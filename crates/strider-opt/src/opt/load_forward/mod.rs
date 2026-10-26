@@ -25,7 +25,7 @@ use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
 use strider_ir::{IRBuilderExt, IRViewer};
 use strider_target::Endianness;
 
-use crate::error::Result;
+use crate::Result;
 use crate::mem_analysis::{AliasVerdict, MemAnalyzer, MemOptions, MemPurpose, ReachingDef};
 use crate::pipeline::OptimizationResult;
 

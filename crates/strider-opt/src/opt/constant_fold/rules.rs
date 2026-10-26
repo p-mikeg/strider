@@ -1,8 +1,8 @@
 use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
 
 use crate::EditFunction;
+use crate::Result;
 use crate::const_eval::eval_node_const;
-use crate::error::Result;
 use crate::opt::width_guards::{same_width, shift_count_in_range};
 use crate::rewrite_rule;
 use smallvec::SmallVec;

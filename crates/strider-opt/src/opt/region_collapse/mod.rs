@@ -12,7 +12,7 @@
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
-use crate::error::Result;
+use crate::Result;
 use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
 
 #[cfg(test)]
