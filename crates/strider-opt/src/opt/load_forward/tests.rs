@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::Result;
+use crate::Result;
 use crate::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};

@@ -1,7 +1,7 @@
 use strider_ir::node::{NodeId, NodeKind};
 use strider_ir::{IRBuilderExt, IRViewer, ReadOnlyMemory};
 
-use crate::error::Result;
+use crate::Result;
 use crate::pipeline::OptCtx;
 
 /// Resolves `Load` nodes with constant addresses against a

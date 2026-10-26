@@ -1,6 +1,6 @@
 use strider_ir::node::{NodeId, NodeKind};
 
-use crate::error::Result;
+use crate::Result;
 use crate::peephole::{PeepholePass, PeepholeRewrite, first_matching_rule};
 
 pub(crate) mod eval_float;

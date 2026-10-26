@@ -4,7 +4,7 @@ use entity_utils::{DenseEntitySet, Worklist};
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType, low_bits_mask_u128};
 use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 
-use crate::error::Result;
+use crate::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
 
 #[cfg(test)]

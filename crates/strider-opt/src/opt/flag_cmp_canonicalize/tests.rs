@@ -1,5 +1,5 @@
 use super::FlagCmpCanonicalize;
-use crate::error::Result;
+use crate::Result;
 use strider_ir::{IRBuilderExt, IRViewer};
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
