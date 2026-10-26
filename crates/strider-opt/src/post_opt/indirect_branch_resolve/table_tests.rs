@@ -404,7 +404,7 @@ fn classify_table_dispatch_resolves_guarded_shift_narrowed_loaded_index() {
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
     let mut g = b.build().unwrap();
-    // `value_range` assumes converged IR.
+    // `index_range` assumes converged IR.
     {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
@@ -744,7 +744,7 @@ fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
     b.set_lift_addr(None);
 
     let mut function = b.build().unwrap();
-    // `value_range` assumes converged IR, so collapse this fixture's
+    // `index_range` assumes converged IR, so collapse this fixture's
     // single-predecessor dispatch region and trivial phis first; otherwise the
     // `idx < 4` guard never reaches the dispatch index.
     {
@@ -1767,7 +1767,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
 /// one out by taking the type mask, which a wider type has none of.
 #[test]
 fn an_index_bound_needs_a_type_inside_the_u128_carrier() {
-    let iv = crate::value_range::Interval::dense(0, 7);
+    let iv = super::super::index_range::Interval::dense(0, 7);
     let mask = |bits| ValueType::int(bits).int_mask_u128();
     assert!(mask(32).is_some_and(|mask| index_bound_ok(mask, iv)));
     assert_eq!(mask(256), None);
@@ -1914,7 +1914,7 @@ fn classify_table_dispatch_resolves_a_bitfield_index_under_its_guard() {
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
     let mut g = b.build().unwrap();
-    // `value_range` assumes converged IR.
+    // `index_range` assumes converged IR.
     {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
@@ -1971,7 +1971,7 @@ fn classify_guarded_dispatch(
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
     let mut g = b.build().unwrap();
-    // `value_range` assumes converged IR.
+    // `index_range` assumes converged IR.
     {
         let mut p = crate::OptimizerPipeline::new();
         p.add(crate::PhiCollapse);
