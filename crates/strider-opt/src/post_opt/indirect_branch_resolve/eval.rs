@@ -122,8 +122,10 @@ impl<'a> Evaluator<'a> {
                     _ => self.eval_const_node(value),
                 }
             }
-            // The memory index answers over RAM stores.
-            NodeKind::Load(rsleigh::VnSpace::RAM) => self.eval_load(node, value),
+            // The memory index answers over RAM stores.  The space travels with
+            // the call: `reshape` slices in it, so reading it back off the node
+            // could fold a wrong target.
+            NodeKind::Load(space @ rsleigh::VnSpace::RAM) => self.eval_load(node, value, space),
             NodeKind::Phi => self.eval_phi(node),
             _ => self.eval_const_node(value),
         }
@@ -152,7 +154,7 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    fn eval_load(&mut self, node: NodeId, value: ValueId) -> Option<Abs> {
+    fn eval_load(&mut self, node: NodeId, value: ValueId, space: rsleigh::VnSpace) -> Option<Abs> {
         let f = self.function;
         let load_ty = f.value_type_opt(value)?;
         match self.get(f.load_addr(node))? {
@@ -166,13 +168,6 @@ impl<'a> Evaluator<'a> {
                 // Jump targets are constants on the converged graph.
                 let data_ty = f.value_type_opt(data)?;
                 let raw = f.int_const_u128(data)?;
-                // Checked in release too: `reshape` slices in the space's
-                // byte order, so falling through would fold a wrong target.
-                assert!(
-                    matches!(*f.node_kind(node), NodeKind::Load(rsleigh::VnSpace::RAM)),
-                    "eval_load off the RAM arm"
-                );
-                let space = rsleigh::VnSpace::RAM;
                 Some(Abs::Const(self.reshape(raw, data_ty, load_ty, space)?))
             }
         }

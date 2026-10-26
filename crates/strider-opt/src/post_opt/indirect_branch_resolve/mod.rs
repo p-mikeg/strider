@@ -4,7 +4,7 @@
 //! [`classify_target`] tries an ordered list of sound recognisers, first match
 //! wins: a literal `IntConst` address, an `InitialVar(lr)` return, a
 //! `Load(RAM)` return that [`ReturnTargets::returns_to_caller`] follows back
-//! to the saved link register, then `table::classify_table_dispatch` for
+//! to the saved link register, then `table::classify_dispatch_value` for
 //! rodata jump tables and on-stack label arrays.  No match leaves the target
 //! unresolved.
 //!
@@ -70,7 +70,9 @@ pub fn classify_target(
     let mode_value = function.indirect_branch_isa_mode(branch);
     single_const_target(function, target_value, mode_value)
         .or_else(|| link_register_return(function, branch, target_value))
-        .or_else(|| table::classify_table_dispatch(function, branch, rom, ranges, mode_value))
+        .or_else(|| {
+            table::classify_dispatch_value(function, branch, target_value, rom, ranges, mode_value)
+        })
 }
 
 /// The literal target of an `IntConst` dispatch value.  A literal is always a
@@ -80,9 +82,7 @@ fn single_const_target(
     target_value: ValueId,
     mode_value: Option<ValueId>,
 ) -> Option<ResolvedTargets> {
-    if !matches!(function.kind_of_value(target_value), NodeKind::IntConst(_)) {
-        return None;
-    }
+    // `int_const_u128` is `Some` only off an `IntConst`.
     let k = function.int_const_u128(target_value)?;
     // A committed interworking mode MUST fold to a constant here; if it does
     // not, fail closed (`?` defers the whole branch) rather than decode the
