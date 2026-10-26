@@ -762,12 +762,7 @@ pub fn mapping_symbol_data_ranges(obj: &object::File<'_>) -> Vec<std::ops::Range
 /// An unlinked `.opd` holds zeros, so the relocations are the only record of
 /// the entry; `S` is rebased through `layout` exactly as a patch's is.
 ///
-/// The tables are those `.symtab`-linked headers name for `.opd`, an exact
-/// repeat of one `(sh_type, sh_offset, sh_size)` walked once. Empty too when
-/// they name more entries than [`RELOCATION_ENTRY_BUDGET`] times what the
-/// file holds: no descriptor is followed.
-///
-/// [`RELOCATION_ENTRY_BUDGET`]: super::relocations::RELOCATION_ENTRY_BUDGET
+/// The tables are those `.symtab`-linked headers name for `.opd`.
 pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> BTreeMap<u64, u64> {
     let mut out = BTreeMap::new();
     if obj.architecture() != object::Architecture::PowerPc64
@@ -779,7 +774,7 @@ pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> 
         return out;
     };
     let base = layout.section_base(&opd);
-    for (offset, r_type, sym, addend) in opd_relocations(f, opd.index().0).unwrap_or_default() {
+    for (offset, r_type, sym, addend) in opd_relocations(f, opd.index().0) {
         if r_type != object::elf::R_PPC64_ADDR64 || sym == 0 {
             continue;
         }
@@ -804,37 +799,25 @@ pub(crate) fn opd_entries(obj: &object::File<'_>, layout: &ElfSectionLayout) -> 
 }
 
 /// `(r_offset, r_type, r_sym, r_addend)` of every relocation against the
-/// section `target`, see [`opd_entries`]; `None` past the budget.
+/// section `target`, see [`opd_entries`].
 fn opd_relocations(
     f: &object::read::elf::ElfFile64<'_, object::Endianness>,
     target: usize,
-) -> Option<Vec<(u64, u32, u32, i64)>> {
+) -> Vec<(u64, u32, u32, i64)> {
     use object::read::elf::{Rel as _, Rela as _, SectionHeader as _};
     let endian = f.endian();
     let data = f.data();
     let symtab = f.elf_symbol_table().section();
-    let file_len = data.len() as u64;
-    let mut seen = std::collections::HashSet::new();
-    let (mut entries, mut smallest) = (0u64, 16u64);
     let mut out = Vec::new();
     for sh in f.elf_section_table().iter() {
         let ty = sh.sh_type(endian);
-        let entry: u64 = match ty {
-            object::elf::SHT_REL => 16,
-            object::elf::SHT_RELA => 24,
-            object::elf::SHT_CREL => 1,
-            _ => continue,
-        };
-        if sh.link(endian) != symtab
+        if !matches!(
+            ty,
+            object::elf::SHT_REL | object::elf::SHT_RELA | object::elf::SHT_CREL
+        ) || sh.link(endian) != symtab
             || sh.sh_info(endian) as usize != target
-            || !seen.insert((ty, sh.sh_offset(endian), sh.sh_size(endian)))
         {
             continue;
-        }
-        entries = entries.saturating_add(sh.sh_size(endian) / entry);
-        smallest = smallest.min(entry);
-        if entries > super::relocations::RELOCATION_ENTRY_BUDGET * file_len / smallest {
-            return None;
         }
         if let Ok(Some((rela, _))) = sh.rela(endian, data) {
             out.extend(rela.iter().map(|e| {
@@ -860,7 +843,7 @@ fn opd_relocations(
             );
         }
     }
-    Some(out)
+    out
 }
 
 /// ppc64 ELFv1 function descriptors.
