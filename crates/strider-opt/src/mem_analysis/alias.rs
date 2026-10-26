@@ -45,8 +45,7 @@ pub(super) fn ranges_disjoint(a_off: i128, a_size: i128, b_off: i128, b_size: i1
 /// address type's signed range, which is exact mod 2^w but not
 /// order-preserving across the top of that range: two addresses two bytes
 /// apart mod 2^32 reduce to `+2147483646` and `-2147483648`, which an interval
-/// test reads as nearly 2^32 apart.  On the ring every distance places, by the
-/// rule the jump-table evaluator's per-byte `slot_key` already uses.
+/// test reads as nearly 2^32 apart.  On the ring every distance places.
 ///
 /// A `Constant` offset is the raw unsigned address instead, so its wrap is the
 /// one at 0 / 2^w and [`offsets_comparable`]'s bound is written for that half
