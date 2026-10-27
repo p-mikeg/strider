@@ -162,6 +162,21 @@ pub enum NodeKind {
     New,
 }
 
+bitflags::bitflags! {
+    /// What a [`NodeKind`] is, as one row per variant in `NodeKind::flags`.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    struct KindFlags: u8 {
+        /// The graph may dedup nodes of this kind.
+        const CACHEABLE = 1 << 0;
+        /// Synthesised without a contributing machine instruction.
+        const FINGERPRINT_EXEMPT = 1 << 1;
+        /// Carries a `Control` input or output.
+        const CONTROL = 1 << 2;
+        /// Must survive unused although it carries no control.
+        const EFFECTFUL = 1 << 3;
+    }
+}
+
 impl NodeKind {
     /// Input slot of a `Load` / `Store` address.
     pub const ACCESS_ADDR_SLOT: usize = 1;
@@ -317,47 +332,7 @@ impl NodeKind {
     /// Whether the graph may dedup nodes of this kind.
     #[inline]
     pub fn is_cacheable(&self) -> bool {
-        match self {
-            // Identity is fully determined by the payload plus the inputs.
-            Self::Entry
-            | Self::InitialMemory
-            | Self::InitialVar(..)
-            | Self::Load(..)
-            | Self::Store(..)
-            | Self::IntConst(..)
-            | Self::IntUnaryOp(..)
-            | Self::IntBinaryOp(..)
-            | Self::IntCmpOp(..)
-            | Self::Truncate
-            | Self::Popcount
-            | Self::Lzcount
-            | Self::Extend(..)
-            | Self::FloatConst(..)
-            | Self::FloatBinaryOp(..)
-            | Self::FloatUnaryOp(..)
-            | Self::FloatCmpOp(..)
-            | Self::IntToFloat
-            | Self::FloatToInt
-            | Self::FloatToFloat
-            | Self::IntBitsToFloat
-            | Self::FloatBitsToInt => true,
-
-            // Inputs grow after construction.
-            Self::Region
-            | Self::Phi
-            | Self::MemPhi
-            // Each occurrence is a distinct event.
-            | Self::If
-            | Self::Return
-            | Self::IndirectBranch
-            | Self::Unreachable
-            | Self::Switch(_)
-            | Self::Call { .. }
-            | Self::CallOther { .. }
-            // Opaque per-occurrence identity.
-            | Self::CPoolRef
-            | Self::New => false,
-        }
+        self.flags().contains(KindFlags::CACHEABLE)
     }
 
     /// Exempt from the non-empty asm-fingerprint invariant: region headers,
@@ -365,85 +340,13 @@ impl NodeKind {
     /// instruction.
     #[inline]
     pub fn asm_fingerprint_exempt(&self) -> bool {
-        match self {
-            Self::Entry
-            | Self::InitialMemory
-            | Self::InitialVar(..)
-            | Self::Region
-            | Self::Phi
-            | Self::MemPhi => true,
-
-            Self::If
-            | Self::Switch(_)
-            | Self::Load(..)
-            | Self::Store(..)
-            | Self::IntConst(..)
-            | Self::IntUnaryOp(..)
-            | Self::IntBinaryOp(..)
-            | Self::IntCmpOp(..)
-            | Self::Truncate
-            | Self::Popcount
-            | Self::Lzcount
-            | Self::Extend(..)
-            | Self::FloatConst(..)
-            | Self::FloatBinaryOp(..)
-            | Self::FloatUnaryOp(..)
-            | Self::FloatCmpOp(..)
-            | Self::IntToFloat
-            | Self::FloatToInt
-            | Self::FloatToFloat
-            | Self::IntBitsToFloat
-            | Self::FloatBitsToInt
-            | Self::Return
-            | Self::IndirectBranch
-            | Self::Unreachable
-            | Self::Call { .. }
-            | Self::CallOther { .. }
-            | Self::CPoolRef
-            | Self::New => false,
-        }
+        self.flags().contains(KindFlags::FINGERPRINT_EXEMPT)
     }
 
     /// Whether the node carries a `Control` input or output.
     #[inline]
     pub fn has_control_flow(&self) -> bool {
-        match self {
-            Self::Entry
-            | Self::Region
-            | Self::If
-            | Self::Switch(_)
-            | Self::Return
-            | Self::Call { .. }
-            | Self::CallOther { .. }
-            | Self::IndirectBranch
-            | Self::Unreachable => true,
-
-            Self::InitialMemory
-            | Self::InitialVar(..)
-            | Self::MemPhi
-            | Self::Phi
-            | Self::Load(..)
-            | Self::Store(..)
-            | Self::IntConst(..)
-            | Self::IntUnaryOp(..)
-            | Self::IntBinaryOp(..)
-            | Self::IntCmpOp(..)
-            | Self::Truncate
-            | Self::Popcount
-            | Self::Lzcount
-            | Self::Extend(..)
-            | Self::FloatConst(..)
-            | Self::FloatBinaryOp(..)
-            | Self::FloatUnaryOp(..)
-            | Self::FloatCmpOp(..)
-            | Self::IntToFloat
-            | Self::FloatToInt
-            | Self::FloatToFloat
-            | Self::IntBitsToFloat
-            | Self::FloatBitsToInt
-            | Self::CPoolRef
-            | Self::New => false,
-        }
+        self.flags().contains(KindFlags::CONTROL)
     }
 
     /// Whether the node must survive even with all outputs unused.
@@ -452,11 +355,51 @@ impl NodeKind {
     /// aliasing reasoning this does not do. `Load` and `MemPhi` do not.
     #[inline]
     pub fn has_side_effects(&self) -> bool {
-        self.has_control_flow()
-            || matches!(
-                self,
-                NodeKind::Store(_) | NodeKind::CPoolRef | NodeKind::New
-            )
+        self.flags()
+            .intersects(KindFlags::CONTROL.union(KindFlags::EFFECTFUL))
+    }
+
+    /// The one row per variant the four predicates above read.
+    #[inline]
+    const fn flags(&self) -> KindFlags {
+        use KindFlags as F;
+        match self {
+            Self::Entry => F::CACHEABLE.union(F::FINGERPRINT_EXEMPT).union(F::CONTROL),
+            Self::InitialMemory | Self::InitialVar(..) => F::CACHEABLE.union(F::FINGERPRINT_EXEMPT),
+            Self::Region => F::FINGERPRINT_EXEMPT.union(F::CONTROL),
+            // Inputs grow after construction, so identity is not fixed.
+            Self::MemPhi | Self::Phi => F::FINGERPRINT_EXEMPT,
+            // Each occurrence is a distinct event.
+            Self::If
+            | Self::Switch(_)
+            | Self::Call { .. }
+            | Self::CallOther { .. }
+            | Self::Return
+            | Self::IndirectBranch
+            | Self::Unreachable => F::CONTROL,
+            Self::Store(..) => F::CACHEABLE.union(F::EFFECTFUL),
+            // Opaque per-occurrence identity.
+            Self::CPoolRef | Self::New => F::EFFECTFUL,
+            // Identity is fully determined by the payload plus the inputs.
+            Self::Load(..)
+            | Self::IntConst(..)
+            | Self::IntUnaryOp(..)
+            | Self::IntBinaryOp(..)
+            | Self::IntCmpOp(..)
+            | Self::Truncate
+            | Self::Popcount
+            | Self::Lzcount
+            | Self::Extend(..)
+            | Self::FloatConst(..)
+            | Self::FloatBinaryOp(..)
+            | Self::FloatUnaryOp(..)
+            | Self::FloatCmpOp(..)
+            | Self::IntToFloat
+            | Self::FloatToInt
+            | Self::FloatToFloat
+            | Self::IntBitsToFloat
+            | Self::FloatBitsToInt => F::CACHEABLE,
+        }
     }
 
     /// Whether a pattern may try both operand orderings at this node.
