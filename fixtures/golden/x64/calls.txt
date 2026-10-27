@@ -460,9 +460,10 @@ float_arg 7 [%v21]
 %v21:i128 = initial_var[XMM7]
 %v22:ctrl, %v23:mem, %v24:i64<RAX>, %v25:i64<RDX>, %v26:i128<XMM0>, %v27:i128<XMM1>, %v28:i80<ST0>, %v29:i80<ST1>, %v30:i64<RCX>, %v31:i64<RSI>, %v32:i64<RDI>, %v33:i64<R8>, %v34:i64<R9>, %v35:i8<CF>, %v36:i8<PF>, %v37:i8<ZF>, %v38:i8<SF>, %v39:i8<OF>, %v40:i64<RIP>, %v41:i128<XMM2>, %v42:i128<XMM3>, %v43:i128<XMM4>, %v44:i128<XMM5>, %v45:i128<XMM6>, %v46:i128<XMM7> = call %v0, %v6, %v7, %v4, %v8, %v9, %v10, %v11, %v12, %v13, %v14, %v15, %v16, %v17, %v18, %v19, %v20, %v21
 %v47:i32 = truncate %v24
-%v48:i32 = int.add %v47, %v47
-%v49:i64 = extend.zero %v48
-return %v22, %v23, %v49, %v25, %v26, %v27, %v28, %v29
+%v48:i32 = iconst[0x2]
+%v49:i32 = int.mul %v47, %v48
+%v50:i64 = extend.zero %v49
+return %v22, %v23, %v50, %v25, %v26, %v27, %v28, %v29
 
 == nested_3deep @0x401290
 cfg

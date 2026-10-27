@@ -1188,9 +1188,10 @@ float_arg 7 [%v38]
 %v70:i64 = int.add %v68, %v69
 %v71:mem = store[r] %v67, %v70, %v66
 %v72:i32 = load[r] %v71, %v65
-%v73:i32 = int.add %v72, %v72
-%v74:i64 = extend.zero %v73
-return %v39, %v71, %v74, %v42, %v43, %v44, %v45, %v46
+%v73:i32 = iconst[0x2]
+%v74:i32 = int.mul %v72, %v73
+%v75:i64 = extend.zero %v74
+return %v39, %v71, %v75, %v42, %v43, %v44, %v45, %v46
 
 == main @0x210894
 cfg
