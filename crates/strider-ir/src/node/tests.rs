@@ -154,6 +154,37 @@ fn asm_fingerprint_exempt_matches_legacy() {
     }
 }
 
+/// Independent restatement of `has_side_effects`, spelled out per variant
+/// rather than derived from `has_control_flow`.
+fn legacy_has_side_effects(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::Entry
+            | NodeKind::Region
+            | NodeKind::If
+            | NodeKind::Switch(_)
+            | NodeKind::Call { .. }
+            | NodeKind::CallOther { .. }
+            | NodeKind::Return
+            | NodeKind::IndirectBranch
+            | NodeKind::Unreachable
+            | NodeKind::Store(_)
+            | NodeKind::CPoolRef
+            | NodeKind::New
+    )
+}
+
+#[test]
+fn has_side_effects_matches_legacy() {
+    for k in every_node_kind() {
+        assert_eq!(
+            k.has_side_effects(),
+            legacy_has_side_effects(&k),
+            "has_side_effects disagrees with legacy for {k:?}"
+        );
+    }
+}
+
 #[test]
 fn same_value_distinct_width_shares_const_id_distinct_node() {
     use crate::node::{NodeKind, ValueType};
