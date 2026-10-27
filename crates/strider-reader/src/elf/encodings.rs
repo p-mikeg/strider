@@ -148,17 +148,35 @@ pub(crate) enum Field {
 }
 
 impl Field {
-    /// Bytes at `r_offset` the field reads and patches.
+    /// Bytes at `r_offset` the field reads and patches. Exhaustive: a new
+    /// variant read at the wrong width would patch its neighbour's bytes.
     pub(crate) fn width(self) -> usize {
         match self {
             Field::Data { bytes, .. } => usize::from(bytes),
             Field::PpcHalf16(_) | Field::PpcHalf16Ds(_) => 2,
-            _ => 4,
+            Field::A64Branch26
+            | Field::A64Imm19
+            | Field::A64Imm14
+            | Field::A64Adr { .. }
+            | Field::A64Lo12 { .. }
+            | Field::A64Movw { .. }
+            | Field::ArmBranch24 { .. }
+            | Field::ArmPrel31
+            | Field::ArmMovw { .. }
+            | Field::ThumbBranch { .. }
+            | Field::ThumbMovw { .. }
+            | Field::PpcBranch24
+            | Field::PpcBranch14
+            | Field::Mips26
+            | Field::MipsHalf16(_)
+            | Field::MipsPc16 => 4,
         }
     }
 
     /// A branch displacement, which carries no address the program can compare
     /// against null. `A64Imm19` is not one: it is also a literal load's.
+    ///
+    /// Not exhaustive on purpose: "not a branch" is the conservative answer.
     pub(crate) fn is_branch(self) -> bool {
         matches!(
             self,
@@ -466,6 +484,8 @@ pub(crate) fn implicit_addend(field: Field, raw: u64) -> Option<i64> {
         Field::MipsPc16 => sext((raw & 0xffff) << 2, 18),
         // `R_MIPS_26`'s addend depends on the symbol's binding; see `encode`.
         Field::Mips26 => ((raw & 0x03ff_ffff) << 2) as i64,
+        // Not exhaustive on purpose: a field no arm names is on a RELA-only
+        // arch, which carries its addend in the entry.
         _ => return None,
     })
 }
