@@ -716,8 +716,8 @@ impl MemRegionsLookupTable {
     }
 }
 
-/// Instruction fetch: [`MemRegionsLookupTable::read`], erring with
-/// [`MemRegionsLookupTable::unmapped`] where it serves nothing.
+/// Instruction fetch: [`MemRegionsLookupTable::read`], erring with what a
+/// failed read served nothing for.
 impl rsleigh::MemReader for MemRegionsLookupTable {
     type Err = MemReadError;
 
