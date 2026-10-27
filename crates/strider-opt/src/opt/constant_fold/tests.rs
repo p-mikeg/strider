@@ -2251,6 +2251,43 @@ fn factor_add_self_mul() -> Result<()> {
     assert_mul_with_const(&fg, x, 3, ValueType::int(64))
 }
 
+/// x + x -> x*2: both sides take the alternation's bare arm.
+#[test]
+fn factor_add_self_self() -> Result<()> {
+    let (mut fg, x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
+        b.build_int_binary_operation(x, x, IntBinaryOp::Add, ValueType::int(64))
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_mul_with_const(&fg, x, 2, ValueType::int(64))
+}
+
+/// x*3 + x*3 -> x*6. The bare arm would also match, binding `x` to the whole
+/// product and leaving a `Mul` behind; the product arm is listed first so the
+/// coefficient is collected instead.
+#[test]
+fn factor_add_equal_products_collects_the_coefficient() -> Result<()> {
+    let (mut fg, x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
+        let c3 = b.build_int_const(3u64, ValueType::int(64)).unwrap();
+        let m = b.build_int_binary_operation(x, c3, IntBinaryOp::Mul, ValueType::int(64))?;
+        b.build_int_binary_operation(m, m, IntBinaryOp::Add, ValueType::int(64))
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_mul_with_const(&fg, x, 6, ValueType::int(64))
+}
+
+/// x - x -> 0, which the identity rule reaches before the difference rule
+/// would build an `x*0`.
+#[test]
+fn factor_sub_self_self_is_zero() -> Result<()> {
+    let (mut fg, _x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
+        b.build_sub_as_add_neg(x, x, ValueType::int(64))
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    let val = return_value(fg.graph())?;
+    assert_eq!(fg.int_const_u128(val), Some(0));
+    Ok(())
+}
+
 /// x*3 + x*5 -> x*8
 #[test]
 fn factor_add_mul_mul() -> Result<()> {
