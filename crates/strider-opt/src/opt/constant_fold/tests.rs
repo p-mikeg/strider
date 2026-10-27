@@ -505,6 +505,34 @@ fn reassoc_add_add_consts() -> Result<()> {
 }
 
 #[test]
+fn reassoc_mul_mul_consts() -> Result<()> {
+    // (x * 3) * 4 -> x * 12
+    let vn = reg_vn(0x1000, 8);
+    let (mut fg, x) = make_fn_with_var(vn, |b, x| {
+        let c3 = b.build_int_const(3u64, ValueType::int(64)).unwrap();
+        let c4 = b.build_int_const(4u64, ValueType::int(64)).unwrap();
+        let inner = b.build_int_binary_operation(x, c3, IntBinaryOp::Mul, ValueType::int(64))?;
+        b.build_int_binary_operation(inner, c4, IntBinaryOp::Mul, ValueType::int(64))
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_mul_with_const(&fg, x, 12, ValueType::int(64))
+}
+
+#[test]
+fn reassoc_mul_mul_consts_wrap() -> Result<()> {
+    // (x * (2^64 - 1)) * 3 -> x * (2^64 - 3)
+    let vn = reg_vn(0x1000, 8);
+    let (mut fg, x) = make_fn_with_var(vn, |b, x| {
+        let big = b.build_int_const(u64::MAX, ValueType::int(64)).unwrap();
+        let c3 = b.build_int_const(3u64, ValueType::int(64)).unwrap();
+        let inner = b.build_int_binary_operation(x, big, IntBinaryOp::Mul, ValueType::int(64))?;
+        b.build_int_binary_operation(inner, c3, IntBinaryOp::Mul, ValueType::int(64))
+    })?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    assert_mul_with_const(&fg, x, u128::from(u64::MAX) - 2, ValueType::int(64))
+}
+
+#[test]
 fn reassoc_add_sub_consts() -> Result<()> {
     // (x - 3) + 4 -> x + 1
     let vn = reg_vn(0x1000, 8);
@@ -2176,6 +2204,33 @@ fn reassoc_add_skips_past_128_bits() -> Result<()> {
     Ok(())
 }
 
+/// The same hole on the `Mul` side: at `I256` both `2^64` operands fit in
+/// `u128`, but `wrapping_mul` carries out at 128 bits, so `2^64 * 2^64` becomes
+/// `0` instead of `2^128` and `(x * 2^64) * 2^64` would fold to `x * 0`. The
+/// rule's own width guard and the template's refusal to intern a `u128` past
+/// 128 bits each stop it; lifting both is what makes this fold.
+#[test]
+fn reassoc_mul_skips_past_128_bits() -> Result<()> {
+    // 2^64, as I256 limbs (little-endian u64s).
+    let two_64 = [0u64, 1, 0, 0];
+    let mut fg = make_fn(|b| {
+        let addr = b.build_int_const(0xF00Du64, ValueType::int(64))?;
+        let x = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(256))?;
+        let c1 = b.build_int_const_limbs(&two_64, ValueType::int(256))?;
+        let inner = b.build_int_binary_operation(x, c1, IntBinaryOp::Mul, ValueType::int(256))?;
+        let c2 = b.build_int_const_limbs(&two_64, ValueType::int(256))?;
+        b.build_int_binary_operation(inner, c2, IntBinaryOp::Mul, ValueType::int(256))
+    })?;
+    let outcome =
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?;
+    assert!(
+        !outcome.changed(),
+        "an I256 mul-reassociation must not fold: the product does not fit the \
+         u128 the rule computes in"
+    );
+    Ok(())
+}
+
 /// Int const-eval computes in `u128`: shift amounts reduce modulo 128 and the
 /// overflow arms detect at 128 bits, so no fold may run past that width.
 #[test]
@@ -2263,7 +2318,9 @@ fn factor_add_self_self() -> Result<()> {
 
 /// x*3 + x*3 -> x*6. The bare arm would also match, binding `x` to the whole
 /// product and leaving a `Mul` behind; the product arm is listed first so the
-/// coefficient is collected instead.
+/// coefficient is collected instead. Reordering the arms still reaches x*6,
+/// because the mul reassociation collapses the `(x*3)*2` that fallthrough
+/// would build.
 #[test]
 fn factor_add_equal_products_collects_the_coefficient() -> Result<()> {
     let (mut fg, x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
@@ -2470,6 +2527,75 @@ fn linear_coeff(
         }
         _ => None,
     }
+}
+
+/// `(x * C1) * C2` combines its coefficients with `wrapping_mul`, i.e. modulo
+/// `2^128`. Brute-forced at every width the carrier holds: the width's modulus
+/// divides `2^128`, so the result must equal the product computed in that
+/// width directly.
+#[test]
+fn reassoc_mul_is_exact_at_every_carrier_width() -> Result<()> {
+    let widths = [
+        ValueType::I1,
+        ValueType::int(8),
+        ValueType::int(16),
+        ValueType::int(24),
+        ValueType::int(32),
+        ValueType::int(64),
+        ValueType::int(80),
+        ValueType::int(128),
+    ];
+    for ty in widths {
+        let bits = ty.bit_width();
+        let mask = if bits >= 128 {
+            u128::MAX
+        } else {
+            (1u128 << bits) - 1
+        };
+        for &c1 in &edge_coefficients(bits) {
+            for &c2 in &edge_coefficients(bits) {
+                let (mut fg, base) = nested_mul_shape(ty, c1, c2)?;
+                run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+                let got = linear_coeff(&fg, return_value(fg.graph())?, base)
+                    .map(|k| k & mask)
+                    .ok_or_else(|| {
+                        anyhow!("{ty:?} with ({c1:#x}, {c2:#x}) left a shape that is no multiple of the base")
+                    })?;
+                assert_eq!(got, c1.wrapping_mul(c2) & mask, "{ty:?} ({c1:#x}, {c2:#x})");
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `(base * c1) * c2` over a base of type `ty`, returning the function and the
+/// base value. At `I1` the base is a comparison, as in [`factor_shape`].
+fn nested_mul_shape(
+    ty: ValueType,
+    c1: u128,
+    c2: u128,
+) -> Result<(strider_ir::Function, strider_ir::node::ValueId)> {
+    let byte_size = u32::try_from(if ty == ValueType::I1 {
+        8
+    } else {
+        ty.byte_size()
+    })?;
+    let mut captured = None;
+    let (fg, x) = make_fn_with_var(reg_vn(0x1000, byte_size), |b, x| {
+        let base = if ty == ValueType::I1 {
+            let zero = b.build_int_const(0u64, ValueType::int(64))?;
+            let cmp = b.build_int_cmp_operation(x, zero, IntCmpOp::Equal, ValueType::int(64))?;
+            captured = Some(cmp);
+            cmp
+        } else {
+            x
+        };
+        let k1 = b.build_int_const(c1, ty)?;
+        let inner = b.build_int_binary_operation(base, k1, IntBinaryOp::Mul, ty)?;
+        let k2 = b.build_int_const(c2, ty)?;
+        b.build_int_binary_operation(inner, k2, IntBinaryOp::Mul, ty)
+    })?;
+    Ok((fg, captured.unwrap_or(x)))
 }
 
 /// The four non-shift factoring forms, as `(c1, c2)` pairs of coefficients on
