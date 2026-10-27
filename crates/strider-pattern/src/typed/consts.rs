@@ -92,6 +92,7 @@ fn const_template(v: u128, ty: TemplateTy) -> ConstWith {
         kind: TemplateKind::FnIntConst(Box::new(move |_ctx| Ok(v))),
         ty,
         caps: Vec::new(),
+        opt_caps: Vec::new(),
     }
 }
 
@@ -491,6 +492,8 @@ pub struct ConstWith {
     /// Captures the closure reads, declared so the rewrite coverage check sees
     /// them; the `*_const_with!` macros fill this from their capture list.
     caps: Vec<crate::Capture>,
+    /// Those of them read as an `Option`, from the list's `kind?` entries.
+    opt_caps: Vec<crate::Capture>,
 }
 
 impl ConstWith {
@@ -500,6 +503,14 @@ impl ConstWith {
         self.caps = caps;
         self
     }
+
+    /// Declares the captures the closure resolves to an `Option`, which the
+    /// coverage check lets bind on only some alternation arms.
+    #[must_use]
+    pub fn declaring_optional(mut self, caps: Vec<crate::Capture>) -> Self {
+        self.opt_caps = caps;
+        self
+    }
 }
 
 impl TemplatePat for ConstWith {
@@ -507,6 +518,9 @@ impl TemplatePat for ConstWith {
         let o = b.dynamic_leaf(self.kind);
         for c in self.caps {
             b.declare_capture(c);
+        }
+        for c in self.opt_caps {
+            b.declare_optional_capture(c);
         }
         // `InheritRoot` is already the leaf default, so it needs no override.
         match self.ty {
@@ -551,6 +565,7 @@ where
         kind: TemplateKind::FnIntConst(Box::new(f)),
         ty: TemplateTy::InheritRoot,
         caps: Vec::new(),
+        opt_caps: Vec::new(),
     }
 }
 
@@ -563,6 +578,7 @@ where
         kind: TemplateKind::FnIntConst(Box::new(move |ctx| Ok(u128::from(f(ctx)?)))),
         ty: TemplateTy::Fixed(ValueType::I1),
         caps: Vec::new(),
+        opt_caps: Vec::new(),
     }
 }
 
@@ -577,6 +593,7 @@ where
         kind: TemplateKind::Fn(Box::new(move |ctx| Ok(NodeKind::FloatConst(f(ctx)?)))),
         ty: TemplateTy::InheritRoot,
         caps: Vec::new(),
+        opt_caps: Vec::new(),
     }
 }
 
