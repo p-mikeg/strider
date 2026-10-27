@@ -313,18 +313,16 @@ arg 0 [%v2]
 %v17:i64 = int.add %v16, %v14
 %v18:i64 = iconst[0xf0f0f0f0f0f0f0f]
 %v19:i64 = int.and %v17, %v18
-%v20:i64 = iconst[0x101]
+%v20:i64 = iconst[0x101010101010101]
 %v21:i64 = int.mul %v19, %v20
-%v22:i64 = iconst[0x10001]
-%v23:i64 = int.mul %v21, %v22
-%v24:i64 = iconst[0x100000001]
-%v25:i64 = int.mul %v23, %v24
-%v26:i64 = iconst[0x38]
-%v27:i64 = int.shift_right %v25, %v26
-%v28:i64 = iconst[0xff]
-%v29:i64 = int.and %v27, %v28
-%v30:i64 = iconst[0x20]
-%v31:i64 = int.shift_left %v23, %v30
-%v32:i64 = initial_var[f0]
-%v33:i64 = initial_var[f2]
-return %v0, %v1, %v29, %v31, %v32, %v33
+%v22:i64 = iconst[0x38]
+%v23:i64 = int.shift_right %v21, %v22
+%v24:i64 = iconst[0xff]
+%v25:i64 = int.and %v23, %v24
+%v26:i64 = iconst[0x1010101]
+%v27:i64 = int.mul %v19, %v26
+%v28:i64 = iconst[0x20]
+%v29:i64 = int.shift_left %v27, %v28
+%v30:i64 = initial_var[f0]
+%v31:i64 = initial_var[f2]
+return %v0, %v1, %v25, %v29, %v30, %v31
