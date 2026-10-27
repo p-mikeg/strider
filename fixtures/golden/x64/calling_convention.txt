@@ -1116,6 +1116,7 @@ float_arg 7 [%v24]
 %v25:ctrl, %v26:mem, %v27:i64<RAX>, %v28:i64<RDX>, %v29:i128<XMM0>, %v30:i128<XMM1>, %v31:i80<ST0>, %v32:i80<ST1>, %v33:i64<RCX>, %v34:i64<RSI>, %v35:i64<RDI>, %v36:i64<R8>, %v37:i64<R9>, %v38:i8<CF>, %v39:i8<PF>, %v40:i8<ZF>, %v41:i8<SF>, %v42:i8<OF>, %v43:i64<RIP>, %v44:i128<XMM2>, %v45:i128<XMM3>, %v46:i128<XMM4>, %v47:i128<XMM5>, %v48:i128<XMM6>, %v49:i128<XMM7> = call %v0, %v10, %v11, %v8, %v3, %v12, %v13, %v14, %v15, %v16, %v17, %v18, %v19, %v20, %v21, %v22, %v23, %v24
 %v50:i32 = truncate %v27
 %v51:mem = store[r] %v26, %v2, %v50
-%v52:i32 = int.add %v50, %v50
-%v53:i64 = extend.zero %v52
-return %v25, %v51, %v53, %v28, %v29, %v30, %v31, %v32
+%v52:i32 = iconst[0x2]
+%v53:i32 = int.mul %v50, %v52
+%v54:i64 = extend.zero %v53
+return %v25, %v51, %v54, %v28, %v29, %v30, %v31, %v32

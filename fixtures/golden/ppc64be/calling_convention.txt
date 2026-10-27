@@ -1850,10 +1850,11 @@ float_arg 24 [%v53]
 %v95:mem = store[r] %v55, %v93, %v94
 %v96:mem = store[r] %v95, %v19, %v94
 %v97:i64 = extend.zero %v94
-%v98:i64 = int.add %v97, %v97
-%v99:i32 = truncate %v98
-%v100:i64 = extend.sign %v99
-return %v54, %v96, %v100, %v97, %v58, %v59, %v60, %v61, %v62, %v63, %v64, %v65, %v66, %v67, %v68, %v69, %v70, %v71, %v72, %v73
+%v98:i64 = iconst[0x2]
+%v99:i64 = int.mul %v97, %v98
+%v100:i32 = truncate %v99
+%v101:i64 = extend.sign %v100
+return %v54, %v96, %v101, %v97, %v58, %v59, %v60, %v61, %v62, %v63, %v64, %v65, %v66, %v67, %v68, %v69, %v70, %v71, %v72, %v73
 
 == main @0x10010dd4
 cfg

@@ -170,8 +170,9 @@ arg 2 [%v10]
 %v9:i32 = initial_var[EDX]
 %v10:i32 = initial_var[ECX]
 %v11:ctrl, %v12:mem, %v13:i32<EAX>, %v14:i32<EDX>, %v15:i80<ST0>, %v16:i80<ST1>, %v17:i128<XMM0>, %v18:i32<ECX>, %v19:i8<CF>, %v20:i8<PF>, %v21:i8<ZF>, %v22:i8<SF>, %v23:i8<OF>, %v24:i32<EIP> = call %v0, %v6, %v7, %v4, %v8, %v9, %v10
-%v25:i32 = int.add %v13, %v13
-return %v11, %v12, %v25, %v14, %v15, %v16, %v17
+%v25:i32 = iconst[0x2]
+%v26:i32 = int.mul %v13, %v25
+return %v11, %v12, %v26, %v14, %v15, %v16, %v17
 
 == nested_3deep @0x401180
 cfg

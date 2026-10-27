@@ -770,8 +770,9 @@ arg 2 [%v12]
 %v12:i32 = initial_var[ECX]
 %v13:ctrl, %v14:mem, %v15:i32<EAX>, %v16:i32<EDX>, %v17:i80<ST0>, %v18:i80<ST1>, %v19:i128<XMM0>, %v20:i32<ECX>, %v21:i8<CF>, %v22:i8<PF>, %v23:i8<ZF>, %v24:i8<SF>, %v25:i8<OF>, %v26:i32<EIP> = call %v0, %v9, %v10, %v7, %v3, %v11, %v12
 %v27:mem = store[r] %v14, %v2, %v15
-%v28:i32 = int.add %v15, %v15
-return %v13, %v27, %v28, %v16, %v17, %v18, %v19
+%v28:i32 = iconst[0x2]
+%v29:i32 = int.mul %v15, %v28
+return %v13, %v27, %v29, %v16, %v17, %v18, %v19
 
 == main @0x401500
 cfg
