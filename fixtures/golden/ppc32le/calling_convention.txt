@@ -1356,8 +1356,9 @@ float_arg 19 [%v50]
 %v88:i32 = int.add %v86, %v87
 %v89:mem = store[r] %v85, %v88, %v53
 %v90:i32 = load[r] %v89, %v84
-%v91:i32 = int.add %v90, %v90
-return %v51, %v89, %v91, %v86, %v55, %v56, %v57
+%v91:i32 = iconst[0x2]
+%v92:i32 = int.mul %v90, %v91
+return %v51, %v89, %v92, %v86, %v55, %v56, %v57
 
 == main @0x10010948
 cfg
