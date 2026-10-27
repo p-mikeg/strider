@@ -58,15 +58,16 @@ impl FunctionBuilder {
         Ok(())
     }
 
-    /// Anchors `target_value` on an `IndirectBranch` placeholder. Terminates
-    /// the current region.
+    /// Test-only: [`Self::build_indirect_branch_with_mode`] with no mode bit.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn build_indirect_branch(&mut self, target_value: ValueId) -> Result<NodeId> {
         self.build_indirect_branch_with_mode(target_value, None)
     }
 
-    /// [`Self::build_indirect_branch`] carrying the interworking ISA-mode bit
-    /// `isa_mode` the branch's instruction commits (slot 3), so the resolver can
-    /// decode each resolved target in it. `None` for a non-switching branch.
+    /// Anchors `target_value` on an `IndirectBranch` placeholder, carrying the
+    /// interworking ISA-mode bit `isa_mode` the branch's instruction commits
+    /// (slot 3), so the resolver can decode each resolved target in it. `None`
+    /// for a non-switching branch. Terminates the current region.
     pub fn build_indirect_branch_with_mode(
         &mut self,
         target_value: ValueId,
@@ -120,17 +121,18 @@ impl FunctionBuilder {
         self.link_region(false_region, false_ctrl_id, res.memory, res.region_id)
     }
 
-    /// One `Control` output per arm, wired to that arm's region in order, with
-    /// the case addresses in a fresh switch table. Output `i` is taken
-    /// when `address == arms[i].1`. Requires `arms` non-empty, and terminates
-    /// the current region.
+    /// Test-only: [`Self::build_switch_with_mode`] with no mode bit.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn build_switch(&mut self, address: ValueId, arms: &[(RegionId, u64)]) -> Result<NodeId> {
         self.build_switch_with_mode(address, None, arms)
     }
 
-    /// [`Self::build_switch`] carrying the ISA-mode bit `isa_mode` the dispatch
-    /// instruction commits (slot 2), so re-deriving the table can decode each
-    /// arm in its own mode. `None` for a non-switching dispatch.
+    /// One `Control` output per arm, wired to that arm's region in order, with
+    /// the case addresses in a fresh switch table. Output `i` is taken when
+    /// `address == arms[i].1`. Requires `arms` non-empty, and terminates the
+    /// current region. `isa_mode` is the ISA-mode bit the dispatch instruction
+    /// commits (slot 2), so re-deriving the table can decode each arm in its
+    /// own mode; `None` for a non-switching dispatch.
     pub fn build_switch_with_mode(
         &mut self,
         address: ValueId,
