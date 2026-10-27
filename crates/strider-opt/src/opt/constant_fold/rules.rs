@@ -3,7 +3,7 @@ use super::eval_float::{eval_float_binary, eval_float_cmp, eval_float_unary};
 use crate::EditFunction;
 use crate::Result;
 use crate::const_eval::eval_node_const;
-use crate::opt::width_guards::{same_width, shift_count_in_range};
+use crate::opt::width_guards::same_width;
 use crate::rewrite_rule;
 use smallvec::SmallVec;
 use strider_ir::node::{NodeId, ValueId};
@@ -13,7 +13,7 @@ use strider_pattern::{
     bool_not, float_bits_to_int, float_const, float_const_with, int_add, int_and,
     int_bits_to_float, int_const, int_const_with, int_mul, int_neg, int_or, int_sborrow,
     int_scarry, int_shl, int_shr, int_sign_extend, int_sshr, int_sub, int_truncate, int_xor,
-    int_zero_extend, template, var,
+    int_zero_extend, one_of, template, var,
 };
 
 /// Every constant-fold rule, in application order.
@@ -27,212 +27,84 @@ pub(super) fn build_rules() -> Vec<crate::BoxedRule> {
     rules
 }
 
-/// Collecting a value against itself: `x + x*C` and friends become one `Mul`.
-/// The coefficient is computed in `u128`, so the root's type must have a
-/// `u128` modulus (see [`shift_count_in_range`]).
+/// Collecting a value against itself: `x + x`, `x*C1 + x*C2` and everything
+/// between become one `Mul`. Each side is the same alternation, `x*C`, `x<<C`
+/// or bare `x`, contributing the coefficient `C`, `2^C` or 1. The sum is
+/// computed in `u128`, so the root's type must have a `u128` modulus.
 ///
-/// Subtraction arrives lowered to `Add(a, Neg(b))`, so the difference forms
-/// match that shape rather than an `IntSub`.
+/// Subtraction arrives lowered to `Add(a, Neg(b))`, so the difference form
+/// matches that shape rather than an `IntSub`.
 fn build_factor_rules() -> Vec<crate::BoxedRule> {
-    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
-    let mut rules: Vec<crate::BoxedRule> = Vec::new();
-
-    // x + x*C -> x*(C + 1)
-    rules.push(rewrite_rule(
-        int_add(var(x), int_mul(var(x), int_const(c1))).when_match(move |edit, ty, binds| {
-            ty.int_mask_u128().is_some()
-                && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
-        }),
-        template::int_mul(var(x), int_const_with!([c1: uint] => c1.wrapping_add(1))),
-    ));
-
-    // x*C1 + x*C2 -> x*(C1 + C2)
-    rules.push(rewrite_rule(
-        int_add(
-            int_mul(var(x), int_const(c1)),
-            int_mul(var(x), int_const(c2)),
-        )
-        .when_match(move |edit, ty, binds| {
-            ty.int_mask_u128().is_some()
-                && same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
-        }),
-        template::int_mul(
+    let (x, c1, c2, z1, z2) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
+    // The product and shift arms come first so a match binds the coefficient
+    // rather than swallowing the whole product into `x` through the bare arm,
+    // which would leave the inner `Mul` standing. An arm whose continuation
+    // fails still falls through: `one_of` is a union, not a cut.
+    let term = move |c, z| {
+        one_of![
+            int_mul(var(x), int_const(c)),
+            int_shl(var(x), int_const(z)),
             var(x),
-            int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
-        ),
-    ));
+        ]
+    };
+    // The per-arm width preconditions, each vacuous where its arm did not
+    // fire: a coefficient must be as wide as the root, and a shift count must
+    // name a bit of it.
+    let widths = move |edit: &strider_pattern::Matcher,
+                       ty: strider_ir::node::ValueType,
+                       binds: &strider_pattern::Bindings| {
+        let f = edit.function();
+        let w = ty.bit_width();
+        ty.int_mask_u128().is_some()
+            && same_width(f, binds, &[x]) == Some(w)
+            && [c1, c2]
+                .iter()
+                .all(|&c| binds.get_type(c, f).is_none_or(|t| t.bit_width() == w))
+            && [z1, z2]
+                .iter()
+                .all(|&z| binds.get_uint(z, f).is_none_or(|n| n < w as u128))
+    };
 
-    // x + (x << C) -> x*(2^C + 1)
-    rules.push(rewrite_rule(
-        int_add(var(x), int_shl(var(x), int_const(c1))).when_match(move |edit, ty, binds| {
-            same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
-                && shift_count_in_range(edit.function(), binds, ty, c1)
-        }),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint] => (1u128 << c1).wrapping_add(1)),
+    vec![
+        // one_of(x, x*C1, x<<Z1) + one_of(x, x*C2, x<<Z2)
+        rewrite_rule(
+            int_add(term(c1, z1), term(c2, z2)).when_match(widths),
+            template::int_mul(
+                var(x),
+                int_const_with!([c1: uint?, z1: uint?, c2: uint?, z2: uint?] =>
+                    coefficient(c1, z1).wrapping_add(coefficient(c2, z2))),
+            ),
         ),
-    ));
+        // The same difference. `Neg` pins which side is subtracted, so
+        // commutative matching cannot reach it from the sum.
+        rewrite_rule(
+            int_add(term(c1, z1), int_neg(term(c2, z2))).when_match(widths),
+            template::int_mul(
+                var(x),
+                int_const_with!([c1: uint?, z1: uint?, c2: uint?, z2: uint?] =>
+                    coefficient(c1, z1).wrapping_sub(coefficient(c2, z2))),
+            ),
+        ),
+    ]
+}
 
-    // x*C1 + (x << C2) -> x*(C1 + 2^C2)
-    rules.push(rewrite_rule(
-        int_add(
-            int_mul(var(x), int_const(c1)),
-            int_shl(var(x), int_const(c2)),
-        )
-        .when_match(move |edit, ty, binds| {
-            ty.int_mask_u128().is_some()
-                && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
-                && shift_count_in_range(edit.function(), binds, ty, c2)
-        }),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(1u128 << c2)),
-        ),
-    ));
-
-    // (x << C1) + (x << C2) -> x*(2^C1 + 2^C2)
-    rules.push(rewrite_rule(
-        int_add(
-            int_shl(var(x), int_const(c1)),
-            int_shl(var(x), int_const(c2)),
-        )
-        .when_match(move |edit, ty, binds| {
-            same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
-                && shift_count_in_range(edit.function(), binds, ty, c1)
-                && shift_count_in_range(edit.function(), binds, ty, c2)
-        }),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint, c2: uint] => (1u128 << c1).wrapping_add(1u128 << c2)),
-        ),
-    ));
-
-    // x - x*C -> x*(1 - C)
-    rules.push(rewrite_rule(
-        int_add(var(x), int_neg(int_mul(var(x), int_const(c1)))).when_match(
-            move |edit, ty, binds| {
-                ty.int_mask_u128().is_some()
-                    && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
-            },
-        ),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint] => 1u128.wrapping_sub(c1)),
-        ),
-    ));
-
-    // x*C1 - x*C2 -> x*(C1 - C2)
-    rules.push(rewrite_rule(
-        int_add(
-            int_mul(var(x), int_const(c1)),
-            int_neg(int_mul(var(x), int_const(c2))),
-        )
-        .when_match(move |edit, ty, binds| {
-            ty.int_mask_u128().is_some()
-                && same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
-        }),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint, c2: uint] => c1.wrapping_sub(c2)),
-        ),
-    ));
-
-    // x - (x << C) -> x*(1 - 2^C)
-    rules.push(rewrite_rule(
-        int_add(var(x), int_neg(int_shl(var(x), int_const(c1)))).when_match(
-            move |edit, ty, binds| {
-                same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
-                    && shift_count_in_range(edit.function(), binds, ty, c1)
-            },
-        ),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint] => 1u128.wrapping_sub(1u128 << c1)),
-        ),
-    ));
-
-    // x*C1 - (x << C2) -> x*(C1 - 2^C2)
-    rules.push(rewrite_rule(
-        int_add(
-            int_mul(var(x), int_const(c1)),
-            int_neg(int_shl(var(x), int_const(c2))),
-        )
-        .when_match(move |edit, ty, binds| {
-            ty.int_mask_u128().is_some()
-                && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
-                && shift_count_in_range(edit.function(), binds, ty, c2)
-        }),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint, c2: uint] => c1.wrapping_sub(1u128 << c2)),
-        ),
-    ));
-
-    // (x << C1) - x*C2 -> x*(2^C1 - C2)
-    rules.push(rewrite_rule(
-        int_add(
-            int_shl(var(x), int_const(c1)),
-            int_neg(int_mul(var(x), int_const(c2))),
-        )
-        .when_match(move |edit, ty, binds| {
-            ty.int_mask_u128().is_some()
-                && same_width(edit.function(), binds, &[x, c2]) == Some(ty.bit_width())
-                && shift_count_in_range(edit.function(), binds, ty, c1)
-        }),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint, c2: uint] => (1u128 << c1).wrapping_sub(c2)),
-        ),
-    ));
-
-    // (x << C1) - (x << C2) -> x*(2^C1 - 2^C2)
-    rules.push(rewrite_rule(
-        int_add(
-            int_shl(var(x), int_const(c1)),
-            int_neg(int_shl(var(x), int_const(c2))),
-        )
-        .when_match(move |edit, ty, binds| {
-            same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
-                && shift_count_in_range(edit.function(), binds, ty, c1)
-                && shift_count_in_range(edit.function(), binds, ty, c2)
-        }),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint, c2: uint] => (1u128 << c1).wrapping_sub(1u128 << c2)),
-        ),
-    ));
-
-    // x*C - x -> x*(C - 1)
-    //
-    // `Neg` pins which operand is subtracted, so commutative matching cannot
-    // reach this from the `x - x*C` rule; the bare `x` on the right needs its
-    // own rule, as does the shift form below.
-    rules.push(rewrite_rule(
-        int_add(int_mul(var(x), int_const(c1)), int_neg(var(x))).when_match(
-            move |edit, ty, binds| {
-                ty.int_mask_u128().is_some()
-                    && same_width(edit.function(), binds, &[x, c1]) == Some(ty.bit_width())
-            },
-        ),
-        template::int_mul(var(x), int_const_with!([c1: uint] => c1.wrapping_sub(1))),
-    ));
-
-    // (x << C) - x -> x*(2^C - 1)
-    rules.push(rewrite_rule(
-        int_add(int_shl(var(x), int_const(c1)), int_neg(var(x))).when_match(
-            move |edit, ty, binds| {
-                same_width(edit.function(), binds, &[x]) == Some(ty.bit_width())
-                    && shift_count_in_range(edit.function(), binds, ty, c1)
-            },
-        ),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint] => (1u128 << c1).wrapping_sub(1)),
-        ),
-    ));
-
-    rules
+/// What one side of a factor rule multiplies `x` by: the bound constant of an
+/// `x*C` arm, `2^C` for an `x<<C` arm, or 1 for the bare `x`. Exactly one arm
+/// fires, so at most one of the two binds, and the guard has already put the
+/// shift count below the root's width.
+fn coefficient(mul: Option<u128>, shift: Option<u128>) -> u128 {
+    debug_assert!(mul.is_none() || shift.is_none(), "one arm fires per side");
+    match (mul, shift) {
+        (Some(c), _) => c,
+        (None, Some(z)) => 1u128 << z,
+        (None, None) => 1,
+    }
 }
 
 /// Reassociation and mask-merging: constant-folding across nested
