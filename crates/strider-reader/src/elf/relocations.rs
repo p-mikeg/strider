@@ -1112,6 +1112,7 @@ fn i386_got_absolute(region: &MemRegion, p: u64) -> Option<bool> {
 
 /// The file-initial `width`-byte field at `addr`, which `region` holds whole.
 fn read_field(region: &MemRegion, addr: u64, width: usize, endian_le: bool) -> u64 {
+    debug_assert!(width <= 8, "a field wider than the carrier");
     let off = (addr - region.start_addr()) as usize;
     let field = &region.raw()[off..off + width];
     let mut raw = 0u64;
