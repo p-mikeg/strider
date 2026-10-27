@@ -24,7 +24,10 @@
 //!     `in_ty.ok_or_else(strider_pattern::skip)?` where it is required.
 //!
 //! A missing binding raises [`MissingBinding`](crate::MissingBinding) tagged
-//! with the entry's `kind` token.
+//! with the entry's `kind` token. Writing the kind `kind?` instead yields an
+//! `Option` and no error, for a capture an alternation binds on only some
+//! arms; the rewrite coverage check is relaxed to match, so an entry is
+//! spelled `?` only where the body really handles `None`.
 
 /// Bracket-list grammar is in the module docs.
 #[macro_export]
@@ -35,6 +38,7 @@ macro_rules! int_const_with {
             Ok({ $body })
         })
         .declaring($crate::__const_with_caps!($($caps)*))
+        .declaring_optional($crate::__const_with_opt_caps!($($caps)*))
     };
 }
 
@@ -47,6 +51,7 @@ macro_rules! bool_const_with {
             Ok({ $body })
         })
         .declaring($crate::__const_with_caps!($($caps)*))
+        .declaring_optional($crate::__const_with_opt_caps!($($caps)*))
     };
 }
 
@@ -59,6 +64,7 @@ macro_rules! float_const_with {
             Ok({ $body })
         })
         .declaring($crate::__const_with_caps!($($caps)*))
+        .declaring_optional($crate::__const_with_opt_caps!($($caps)*))
     };
 }
 
@@ -72,6 +78,11 @@ macro_rules! float_const_with {
 #[macro_export]
 macro_rules! __const_with_bindings {
     ($ctx:ident;) => {};
+    // `name: kind?`: `None` where the binding is absent.
+    ($ctx:ident; $name:ident : $kind:ident ? $(, $($rest:tt)*)?) => {
+        let $name = $crate::__const_with_extract!($ctx, $name, $kind).ok();
+        $( $crate::__const_with_bindings!($ctx; $($rest)*); )?
+    };
     ($ctx:ident; $name:ident : $kind:ident $(, $($rest:tt)*)?) => {
         let $name = $crate::__const_with_extract!($ctx, $name, $kind)?;
         $( $crate::__const_with_bindings!($ctx; $($rest)*); )?
@@ -92,6 +103,10 @@ macro_rules! __const_with_caps {
     () => {
         ::std::vec::Vec::new()
     };
+    // A `kind?` entry is declared by `__const_with_opt_caps!` instead.
+    ($name:ident : $kind:ident ? $(, $($rest:tt)*)?) => {
+        $crate::__const_with_caps!($($($rest)*)?)
+    };
     ($name:ident : $kind:ident $(, $($rest:tt)*)?) => {{
         let mut caps: ::std::vec::Vec<$crate::Capture> =
             $crate::__const_with_caps!($($($rest)*)?);
@@ -100,6 +115,28 @@ macro_rules! __const_with_caps {
     }};
     ($cap:ident $(, $($rest:tt)*)?) => {
         $crate::__const_with_caps!($($($rest)*)?)
+    };
+}
+
+/// The `name: kind?` entries of a capture list, source order, the complement
+/// of what [`__const_with_caps`] collects.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __const_with_opt_caps {
+    () => {
+        ::std::vec::Vec::new()
+    };
+    ($name:ident : $kind:ident ? $(, $($rest:tt)*)?) => {{
+        let mut caps: ::std::vec::Vec<$crate::Capture> =
+            $crate::__const_with_opt_caps!($($($rest)*)?);
+        caps.insert(0, $name);
+        caps
+    }};
+    ($name:ident : $kind:ident $(, $($rest:tt)*)?) => {
+        $crate::__const_with_opt_caps!($($($rest)*)?)
+    };
+    ($cap:ident $(, $($rest:tt)*)?) => {
+        $crate::__const_with_opt_caps!($($($rest)*)?)
     };
 }
 
