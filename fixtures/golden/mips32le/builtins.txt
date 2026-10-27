@@ -245,17 +245,17 @@ arg 0 [%v2]
 %v17:i32 = int.add %v16, %v14
 %v18:i32 = iconst[0xf0f0f0f]
 %v19:i32 = int.and %v17, %v18
-%v20:i32 = iconst[0x101]
+%v20:i32 = iconst[0x1010101]
 %v21:i32 = int.mul %v19, %v20
-%v22:i32 = iconst[0x10001]
-%v23:i32 = int.mul %v21, %v22
-%v24:i32 = iconst[0x18]
-%v25:i32 = int.shift_right %v23, %v24
+%v22:i32 = iconst[0x18]
+%v23:i32 = int.shift_right %v21, %v22
+%v24:i32 = iconst[0x101]
+%v25:i32 = int.mul %v19, %v24
 %v26:i32 = iconst[0x10]
-%v27:i32 = int.shift_left %v21, %v26
+%v27:i32 = int.shift_left %v25, %v26
 %v28:i64 = initial_var[f0_1]
 %v29:i64 = initial_var[f2_3]
-return %v0, %v1, %v25, %v27, %v28, %v29
+return %v0, %v1, %v23, %v27, %v28, %v29
 
 == __popcountdi2 @0x400880
 cfg
@@ -296,14 +296,14 @@ arg 1 [%v2]
 %v30:i32 = int.add %v29, %v28
 %v31:i32 = int.and %v30, %v18
 %v32:i32 = int.add %v19, %v31
-%v33:i32 = iconst[0x101]
+%v33:i32 = iconst[0x1010101]
 %v34:i32 = int.mul %v32, %v33
-%v35:i32 = iconst[0x10001]
-%v36:i32 = int.mul %v34, %v35
-%v37:i32 = iconst[0x18]
-%v38:i32 = int.shift_right %v36, %v37
+%v35:i32 = iconst[0x18]
+%v36:i32 = int.shift_right %v34, %v35
+%v37:i32 = iconst[0x101]
+%v38:i32 = int.mul %v32, %v37
 %v39:i32 = iconst[0x10]
-%v40:i32 = int.shift_left %v34, %v39
+%v40:i32 = int.shift_left %v38, %v39
 %v41:i64 = initial_var[f0_1]
 %v42:i64 = initial_var[f2_3]
-return %v0, %v1, %v38, %v40, %v41, %v42
+return %v0, %v1, %v36, %v40, %v41, %v42
