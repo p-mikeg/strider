@@ -267,10 +267,15 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
     // -capture error is not a skip, so it aborts the whole pipeline for that
     // function. Reject at construction instead: deterministic, and independent
     // of which binary the rule is later run against.
+    //
+    // A capture the RHS declared OPTIONAL reads as `Option`, so an arm that
+    // leaves it unbound is a value the body handles, not a failure. Mere
+    // presence is then enough, which still catches a capture no arm binds.
     let lhs_caps = lhs.guaranteed_captures()?;
     let present: rustc_hash::FxHashSet<Capture> = lhs.bound_captures().collect();
+    let optional: rustc_hash::FxHashSet<Capture> = rhs.optional_captures().collect();
     for cap in rhs.referenced_captures() {
-        if !lhs_caps.contains(&cap) {
+        if !(lhs_caps.contains(&cap) || optional.contains(&cap) && present.contains(&cap)) {
             return if present.contains(&cap) {
                 Err(anyhow::anyhow!(
                     "RHS references Capture id={} that the LHS binds only on SOME \
@@ -1462,6 +1467,76 @@ mod tests {
         edit.clean();
         drop(edit);
         strider_ir::validate::validate(&function).unwrap();
+    }
+
+    /// `x + one_of![x*C, x]`, with the coefficient read as an `Option`: `None`
+    /// is the bare arm, which binds no constant.
+    #[test]
+    fn an_optional_capture_reads_whichever_arm_fired() {
+        use strider_pattern::{int_mul, one_of, var};
+
+        let (x, c1) = (Capture::new(), Capture::new());
+        for (scale, want) in [(Some(3u64), 3u128), (None, 1u128)] {
+            let vn = reg_vn(0x1000, 8);
+            let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+            let region = b.create_region_all().unwrap();
+            b.set_entry_region_all(region).unwrap();
+            b.set_region(region);
+            b.set_lift_addr(Some(0x10));
+            let v = b.read_variable(&vn).unwrap();
+            let rhs = match scale {
+                Some(k) => {
+                    let k = b.build_int_const(k, ValueType::int(64)).unwrap();
+                    b.build_int_binary_operation(v, k, IntBinaryOp::Mul, ValueType::int(64))
+                        .unwrap()
+                }
+                None => v,
+            };
+            let sum = b
+                .build_int_binary_operation(v, rhs, IntBinaryOp::Add, ValueType::int(64))
+                .unwrap();
+            b.build_return(Some(sum), &[]).unwrap();
+            b.set_lift_addr(None);
+            let mut function = b.build().unwrap();
+            let root = function.producer(sum);
+
+            let rule = rewrite_rule(
+                int_add(var(x), one_of![int_mul(var(x), int_const(c1)), var(x)]),
+                int_const_with!([c1: uint?] => c1.unwrap_or(1)),
+            );
+            let mut edit = EditFunction::new(&mut function);
+            let new = rule(&mut edit, root).unwrap().expect("the rule must fire");
+            assert_eq!(edit.function().int_const_u128(new), Some(want));
+            edit.clean();
+            drop(edit);
+            strider_ir::validate::validate(&function).unwrap();
+        }
+    }
+
+    /// The relaxation is opt-in: the same partially binding capture read
+    /// WITHOUT the `?` is still refused at construction.
+    #[test]
+    fn a_required_capture_bound_on_some_arms_is_still_refused() {
+        use strider_pattern::{MatchPat, TemplatePat, int_mul, one_of, var};
+
+        let (x, c1, absent) = (Capture::new(), Capture::new(), Capture::new());
+        let lhs = || int_add(var(x), one_of![int_mul(var(x), int_const(c1)), var(x)]);
+        let err = super::rewrite_rule_runtime(
+            lhs().into_pattern(),
+            TemplatePat::into_template(int_const_with!([c1: uint] => c1)),
+        )
+        .map(|_| ())
+        .expect_err("a required capture must still be guaranteed");
+        assert!(err.to_string().contains("only on SOME"), "{err}");
+
+        // An optional capture no arm binds at all is still a typo, not a None.
+        let err = super::rewrite_rule_runtime(
+            lhs().into_pattern(),
+            TemplatePat::into_template(int_const_with!([absent: uint?] => absent.unwrap_or(0))),
+        )
+        .map(|_| ())
+        .expect_err("an unmentioned capture must be refused even as optional");
+        assert!(err.to_string().contains("does not bind"), "{err}");
     }
 
     /// `store [p] = 5; return *p + 7` under `[load + k -> k, load -> 5]`: the

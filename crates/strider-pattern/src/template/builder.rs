@@ -43,6 +43,7 @@ impl SealNode for TmplNodeKind {
 pub struct TemplateBuilder {
     core: StagedGraph<TmplNodeKind, TmplValue>,
     declared_captures: Vec<crate::Capture>,
+    optional_captures: Vec<crate::Capture>,
     /// The first refused verb, reported by [`Template::root`].
     rejected: Option<String>,
 }
@@ -58,6 +59,7 @@ impl TemplateBuilder {
         Self {
             core: StagedGraph::new(),
             declared_captures: Vec::new(),
+            optional_captures: Vec::new(),
             rejected: None,
         }
     }
@@ -67,6 +69,14 @@ impl TemplateBuilder {
     /// see it and an LHS that never binds it errors mid-rewrite instead.
     pub fn declare_capture(&mut self, c: crate::Capture) {
         self.declared_captures.push(c);
+    }
+
+    /// Declares a capture the closure reads as an `Option`, so it may bind on
+    /// only some alternation arms. The coverage check still refuses one the
+    /// LHS mentions nowhere.
+    pub fn declare_optional_capture(&mut self, c: crate::Capture) {
+        self.declared_captures.push(c);
+        self.optional_captures.push(c);
     }
 
     /// One value output at slot 0. A template node is built, so it names a
@@ -159,7 +169,12 @@ impl TemplateBuilder {
     /// On a cyclic staged graph (a builder bug).
     pub fn finish(self) -> Template {
         let graph = self.core.seal().expect("cyclic staged template graph");
-        Template::from_graph(graph, self.declared_captures, self.rejected)
+        Template::from_graph(
+            graph,
+            self.declared_captures,
+            self.optional_captures,
+            self.rejected,
+        )
     }
 
     fn add_built_output(&mut self, node: TmplNodeRef, out: TmplOutput) -> TmplValueRef {

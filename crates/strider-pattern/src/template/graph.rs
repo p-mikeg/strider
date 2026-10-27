@@ -84,6 +84,9 @@ pub struct Template {
     /// vertex, so only the declaration makes them visible to the coverage
     /// check.
     declared_captures: Vec<Capture>,
+    /// The subset of `declared_captures` the closure reads as an `Option`, so
+    /// the coverage check asks only that the LHS mention them.
+    optional_captures: Vec<Capture>,
     /// Why the builder refused the template, reported by [`Self::root`].
     rejected: Option<String>,
 }
@@ -94,11 +97,13 @@ impl Template {
     pub(crate) fn from_graph(
         graph: Graph<TmplNode, TmplValue, NeverCacheable>,
         declared_captures: Vec<Capture>,
+        optional_captures: Vec<Capture>,
         rejected: Option<String>,
     ) -> Self {
         Self {
             graph,
             declared_captures,
+            optional_captures,
             rejected,
         }
     }
@@ -132,6 +137,13 @@ impl Template {
                 },
             })
             .chain(self.declared_captures.iter().copied())
+    }
+
+    /// The referenced captures the closure reads as an `Option`. The coverage
+    /// check asks only that the LHS bind these somewhere, not on every
+    /// alternation arm.
+    pub fn optional_captures(&self) -> impl Iterator<Item = Capture> + '_ {
+        self.optional_captures.iter().copied()
     }
 }
 
