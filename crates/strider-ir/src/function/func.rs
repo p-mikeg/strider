@@ -694,6 +694,11 @@ mod function_skeleton_tests {
     #[test]
     fn assume_drops_the_memos_only_when_it_adds_a_claim() {
         let mut f = test_function();
+        assert_eq!(
+            f.assumptions(),
+            &crate::AssumptionOptions::none(),
+            "a fresh function claims nothing"
+        );
         let v = f.node_outputs(f.entry())[0];
         let memoized = |f: &super::Function| {
             f.side_tables().memory_decomp(v).1.is_some() && f.side_tables().frame_escape().is_some()
@@ -714,6 +719,19 @@ mod function_skeleton_tests {
         f.side_tables().set_frame_escape(true);
         f.assume(&listed);
         assert!(memoized(&f), "a claim in force adds nothing");
+        f.assume(&crate::AssumptionOptions {
+            stack_global_disjoint: true,
+            ..crate::AssumptionOptions::none()
+        });
+        assert_eq!(
+            f.assumptions(),
+            &crate::AssumptionOptions {
+                stack_global_disjoint: true,
+                ..listed.clone()
+            },
+            "a second set joins the first, withdrawing nothing"
+        );
+        assert!(!memoized(&f), "and the new claim drops the memos");
     }
 }
 
