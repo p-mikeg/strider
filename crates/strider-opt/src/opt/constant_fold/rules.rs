@@ -134,6 +134,20 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
         ),
     ));
 
+    // (x * C1) * C2 -> x * (C1 * C2)
+    rules.push(rewrite_rule(
+        int_mul(int_mul(var(x), int_const(c1)), int_const(c2)).when_match(
+            move |edit, ty, binds| {
+                ty.int_mask_u128().is_some()
+                    && same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
+            },
+        ),
+        template::int_mul(
+            var(x),
+            int_const_with!([c1: uint, c2: uint] => c1.wrapping_mul(c2)),
+        ),
+    ));
+
     // (x & C1) & C2 -> x & (C1 & C2)
     rules.push(rewrite_rule(
         int_and(int_and(var(x), int_const(c1)), int_const(c2)).when_match(
