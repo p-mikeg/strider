@@ -377,15 +377,6 @@ fn loader_view_of<Elf: FileHeader>(f: &object::read::elf::ElfFile<'_, Elf>) -> L
     }
 }
 
-fn put_word(b: &mut [u8], v: u64, le: bool) {
-    let n = b.len();
-    if le {
-        b.copy_from_slice(&v.to_le_bytes()[..n]);
-    } else {
-        b.copy_from_slice(&v.to_be_bytes()[8 - n..]);
-    }
-}
-
 /// `(r_offset, r_type)` of each entry of the CREL stream at the start of
 /// `data`, `None` when it does not decode.
 fn crel_entries(data: &[u8]) -> Option<Vec<(u64, u32)>> {
@@ -490,7 +481,7 @@ fn synthesized<Elf: FileHeader>(
     let is_64 = f.is_64();
     let put = |out: &mut Vec<u8>, v: u64, n: usize| {
         let mut b = vec![0u8; n];
-        put_word(&mut b, v, le);
+        crate::bytes::write_uint(&mut b, v, le);
         out.extend_from_slice(&b);
     };
     let word = if is_64 { 8 } else { 4 };
@@ -574,7 +565,8 @@ fn synthesized<Elf: FileHeader>(
     } else {
         (0x1c, 0x20, 0x2c)
     };
-    let mut set = |at: usize, v: u64, n: usize| put_word(&mut out[at..at + n], v, le);
+    let mut set =
+        |at: usize, v: u64, n: usize| crate::bytes::write_uint(&mut out[at..at + n], v, le);
     set(phoff_at, 0, word);
     set(shoff_at, shoff, word);
     set(phnum_at, 0, 2);

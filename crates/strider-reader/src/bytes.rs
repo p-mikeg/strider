@@ -212,3 +212,15 @@ impl FileBytes {
         self.as_slice().len()
     }
 }
+
+/// `out.len()` bytes of `value`, lowest first under `le` and
+/// most-significant first otherwise, truncated to that width.
+pub(crate) fn write_uint(out: &mut [u8], value: u64, le: bool) {
+    let n = out.len();
+    debug_assert!(n <= 8, "a field wider than the carrier");
+    if le {
+        out.copy_from_slice(&value.to_le_bytes()[..n]);
+    } else {
+        out.copy_from_slice(&value.to_be_bytes()[8 - n..]);
+    }
+}
