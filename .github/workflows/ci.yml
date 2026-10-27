@@ -11,6 +11,9 @@ on:
 env:
   CARGO_TERM_COLOR: always
   # A broken intra-doc link is a wrong doc, and the workspace passes today.
+  # The doc runs below pass --document-private-items because --no-deps alone
+  # documents public items only, so a broken link on a pub(crate) or
+  # pub(super) item is never resolved and never reported.
   RUSTDOCFLAGS: -D rustdoc::broken_intra_doc_links
 
 jobs:
@@ -62,10 +65,10 @@ jobs:
         run: |
           git status --porcelain
           test -z "$(git status --porcelain)"
-      - run: cargo doc --workspace --no-deps
+      - run: cargo doc --workspace --no-deps --document-private-items
       # The `test-util`-gated items, which the workspace doc build leaves out.
-      - run: cargo doc -p strider-opt --no-deps --features test-util
-      - run: cargo doc -p strider-reader --no-deps --features test-util
+      - run: cargo doc -p strider-opt --no-deps --features test-util --document-private-items
+      - run: cargo doc -p strider-reader --no-deps --features test-util --document-private-items
 
   # The floor `Cargo.toml` declares. Without a job on it the declaration rots:
   # a dependency or a syntax feature can raise the real minimum silently.
