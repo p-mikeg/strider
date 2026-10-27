@@ -39,9 +39,10 @@ impl Function {
         self.to_text_with(fingerprints, &vn_str)
     }
 
-    /// [`Self::to_text`], spelling each varnode `names` holds a register for
-    /// as that register (`RDI` for `%:0x38:8`); any other keeps its
-    /// `space:offset:size` form.
+    /// Test-only: [`Self::to_text`], spelling each varnode `names` holds a
+    /// register for as that register (`RDI` for `%:0x38:8`); any other keeps
+    /// its `space:offset:size` form.
+    #[cfg(any(test, feature = "test-util"))]
     pub fn to_text_named(&self, fingerprints: bool, names: &strider_target::ArchNames) -> String {
         let regs = names.regs();
         self.to_text_with(fingerprints, &|vn: &rsleigh::Vn| {
