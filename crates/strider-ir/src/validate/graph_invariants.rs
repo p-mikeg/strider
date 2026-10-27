@@ -77,80 +77,73 @@ pub(super) fn check_function_invariants_data_cycles(
     }
 }
 
+/// The first two live [`NodeKind::Entry`] and [`NodeKind::InitialMemory`]
+/// nodes; only the first two of each decide the verdict.
+#[derive(Default)]
+pub(super) struct UniqueKinds {
+    entry: (Option<NodeId>, Option<NodeId>),
+    initial_memory: (Option<NodeId>, Option<NodeId>),
+}
+
+pub(super) fn note_unique_kinds(seen: &mut UniqueKinds, node: NodeId, kind: &NodeKind) {
+    let slot = match kind {
+        NodeKind::Entry => &mut seen.entry,
+        NodeKind::InitialMemory => &mut seen.initial_memory,
+        _ => return,
+    };
+    if slot.0.is_none() {
+        slot.0 = Some(node);
+    } else if slot.1.is_none() {
+        slot.1 = Some(node);
+    }
+}
+
 /// At most one live [`NodeKind::Entry`] and one live
 /// [`NodeKind::InitialMemory`]. Neither is required.
-pub(super) fn check_function_invariants_uniqueness(
-    function: &Function,
-    reachable: &NodeIdSet,
-    errs: &mut Vec<ValidationError>,
-) {
-    let graph = function.graph();
-    // Only the first two of each kind matter.
-    let mut entry: (Option<NodeId>, Option<NodeId>) = (None, None);
-    let mut initial_memory: (Option<NodeId>, Option<NodeId>) = (None, None);
-
-    let record = |slot: &mut (Option<NodeId>, Option<NodeId>), node: NodeId| {
-        if slot.0.is_none() {
-            slot.0 = Some(node);
-        } else if slot.1.is_none() {
-            slot.1 = Some(node);
-        }
-    };
-
-    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
-        match kind {
-            NodeKind::Entry => record(&mut entry, node),
-            NodeKind::InitialMemory => record(&mut initial_memory, node),
-            _ => {}
-        }
-    }
-
-    if let (Some(first), Some(second)) = entry {
+pub(super) fn check_unique_kinds(seen: &UniqueKinds, errs: &mut Vec<ValidationError>) {
+    if let (Some(first), Some(second)) = seen.entry {
         errs.push(ValidationError::MultipleEntryNodes { first, second });
     }
-    if let (Some(first), Some(second)) = initial_memory {
+    if let (Some(first), Some(second)) = seen.initial_memory {
         errs.push(ValidationError::MultipleInitialMemoryNodes { first, second });
     }
 }
 
 /// Every reachable `Region` needs at least one predecessor.
-pub(super) fn check_function_invariants_region(
+pub(super) fn check_region(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in reachable.iter().map(|n| (n, graph.node_kind(n))) {
-        if !matches!(kind, NodeKind::Region) {
-            continue;
-        }
-        if graph.node_inputs(node).is_empty() {
-            errs.push(ValidationError::EmptyRegionPredecessors { region: node });
-        }
+    if !matches!(kind, NodeKind::Region) {
+        return;
+    }
+    if graph.node_inputs(node).is_empty() {
+        errs.push(ValidationError::EmptyRegionPredecessors { region: node });
     }
 }
 
 /// Every reachable node's `Control` output must have exactly one consumer.
-pub(super) fn check_function_invariants_control_single_use(
+pub(super) fn check_control_single_use(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, _kind) in function.reachable_kind_iter(reachable) {
-        for &value in function.node_outputs(node) {
-            if function.value_kind(value) != ValueKind::Control {
-                continue;
+    for &value in function.node_outputs(node) {
+        if function.value_kind(value) != ValueKind::Control {
+            continue;
+        }
+        // Peek at most two uses to classify 0 / 1 / many.
+        let mut uses = graph.value_uses(value);
+        match (uses.next(), uses.next()) {
+            (None, _) => errs.push(ValidationError::UnusedControlOutput { node, value }),
+            (Some(_), Some(_)) => {
+                errs.push(ValidationError::ReusedControlOutput { node, value });
             }
-            // Peek at most two uses to classify 0 / 1 / many.
-            let mut uses = graph.value_uses(value);
-            match (uses.next(), uses.next()) {
-                (None, _) => errs.push(ValidationError::UnusedControlOutput { node, value }),
-                (Some(_), Some(_)) => {
-                    errs.push(ValidationError::ReusedControlOutput { node, value });
-                }
-                (Some(_), None) => {}
-            }
+            (Some(_), None) => {}
         }
     }
 }
@@ -165,212 +158,207 @@ pub(super) fn check_function_invariants_control_single_use(
 /// slot-kind check the two differ, and the extra mismatch joins the kind
 /// error rather than replacing it.
 /// `Extend` / `Truncate` carry a DIRECTION instead and are checked by
-/// [`check_function_invariants_extend_truncate`].
-pub(super) fn check_function_invariants_arith_widths(
+/// [`check_extend_truncate`].
+pub(super) fn check_arith_widths(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        let out = graph
-            .node_outputs(node)
-            .first()
-            .and_then(|&o| function.value_type_opt(o));
-        // Carries the real input slot, not a position in the filtered list: a
-        // node with an untyped input would otherwise report an index that
-        // names a different operand, and read the wrong slot's width rule.
-        let operands: Vec<(usize, ValueType)> = graph
-            .node_inputs(node)
-            .into_iter()
-            .enumerate()
-            .filter_map(|(slot, v)| function.value_type_opt(v).map(|t| (slot, t)))
-            .collect();
-        let first = operands.first().map(|&(_, t)| t);
-        for &(slot, got) in &operands {
-            let want = match width_tie(kind, slot, out, first) {
-                WidthTie::Tied(want) => want,
-                WidthTie::Conversion(Conversion::SameSize) => match out {
-                    Some(out) => out,
-                    None => continue,
-                },
-                WidthTie::Conversion(Conversion::Widen | Conversion::Narrow)
-                | WidthTie::Free
-                | WidthTie::NoHead => continue,
-            };
-            if got.bit_width() != want.bit_width() {
-                errs.push(ValidationError::ArithmeticWidthMismatch {
-                    node,
-                    kind: *kind,
-                    operand_idx: slot,
-                    operand_width: got.bit_width(),
-                    expected_width: want.bit_width(),
-                });
-            }
+    let out = graph
+        .node_outputs(node)
+        .first()
+        .and_then(|&o| function.value_type_opt(o));
+    // Carries the real input slot, not a position in the filtered list: a
+    // node with an untyped input would otherwise report an index that
+    // names a different operand, and read the wrong slot's width rule.
+    let operands: Vec<(usize, ValueType)> = graph
+        .node_inputs(node)
+        .into_iter()
+        .enumerate()
+        .filter_map(|(slot, v)| function.value_type_opt(v).map(|t| (slot, t)))
+        .collect();
+    let first = operands.first().map(|&(_, t)| t);
+    for &(slot, got) in &operands {
+        let want = match width_tie(kind, slot, out, first) {
+            WidthTie::Tied(want) => want,
+            WidthTie::Conversion(Conversion::SameSize) => match out {
+                Some(out) => out,
+                None => continue,
+            },
+            WidthTie::Conversion(Conversion::Widen | Conversion::Narrow)
+            | WidthTie::Free
+            | WidthTie::NoHead => continue,
+        };
+        if got.bit_width() != want.bit_width() {
+            errs.push(ValidationError::ArithmeticWidthMismatch {
+                node,
+                kind: *kind,
+                operand_idx: slot,
+                operand_width: got.bit_width(),
+                expected_width: want.bit_width(),
+            });
         }
     }
 }
 
 /// `Extend` must strictly widen its input; `Truncate` must strictly narrow it.
-pub(super) fn check_function_invariants_extend_truncate(
+pub(super) fn check_extend_truncate(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        let conversion = match kind.operand_width(0) {
-            OperandWidth::Conversion(c @ (Conversion::Widen | Conversion::Narrow)) => c,
-            OperandWidth::Conversion(Conversion::SameSize)
-            | OperandWidth::OfOutput
-            | OperandWidth::OfFirstOperand
-            | OperandWidth::Free => continue,
-        };
-        let (Some(in_value), Some(&out_value)) = (
-            graph.node_inputs(node).into_iter().next(),
-            graph.node_outputs(node).first(),
-        ) else {
-            continue;
-        };
-        let (Some(in_ty), Some(out_ty)) = (
-            function.value_type_opt(in_value),
-            function.value_type_opt(out_value),
-        ) else {
-            continue;
-        };
-        let (in_width, out_width) = (in_ty.bit_width(), out_ty.bit_width());
-        if !conversion.admits(in_ty, out_ty) {
-            errs.push(ValidationError::ExtendTruncateWidthDirection {
-                node,
-                kind: *kind,
-                in_width,
-                out_width,
-            });
-        }
+    let conversion = match kind.operand_width(0) {
+        OperandWidth::Conversion(c @ (Conversion::Widen | Conversion::Narrow)) => c,
+        OperandWidth::Conversion(Conversion::SameSize)
+        | OperandWidth::OfOutput
+        | OperandWidth::OfFirstOperand
+        | OperandWidth::Free => return,
+    };
+    let (Some(in_value), Some(&out_value)) = (
+        graph.node_inputs(node).into_iter().next(),
+        graph.node_outputs(node).first(),
+    ) else {
+        return;
+    };
+    let (Some(in_ty), Some(out_ty)) = (
+        function.value_type_opt(in_value),
+        function.value_type_opt(out_value),
+    ) else {
+        return;
+    };
+    let (in_width, out_width) = (in_ty.bit_width(), out_ty.bit_width());
+    if !conversion.admits(in_ty, out_ty) {
+        errs.push(ValidationError::ExtendTruncateWidthDirection {
+            node,
+            kind: *kind,
+            in_width,
+            out_width,
+        });
     }
 }
 
 /// Every reachable [`NodeKind::Switch`] needs a table of this function's, at
 /// least one control output, and one case address per control output.
-pub(super) fn check_function_invariants_switch(
+pub(super) fn check_switch(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        let NodeKind::Switch(id) = *kind else {
-            continue;
-        };
-        let Some(targets) = function.switch_table(id) else {
-            errs.push(ValidationError::DanglingSwitchTableId { node, id });
-            continue;
-        };
-        let n_out = graph.node_outputs(node).len();
-        if n_out == 0 {
-            // Never the only error: `Switch`'s signature head is one Control,
-            // so `local_typing`'s arity check reports
-            // `NodeOutputCountMismatch` for the same node in the same call.
-            // Kept because it names WHICH arity rule a zero-arm `Switch`
-            // breaks, which the generic count does not.
-            errs.push(ValidationError::EmptySwitchTargets { node });
-        } else if n_out != targets.len() {
-            errs.push(ValidationError::SwitchTargetArityMismatch {
-                node,
-                outputs: n_out,
-                targets: targets.len(),
-            });
-        }
+    let NodeKind::Switch(id) = *kind else {
+        return;
+    };
+    let Some(targets) = function.switch_table(id) else {
+        errs.push(ValidationError::DanglingSwitchTableId { node, id });
+        return;
+    };
+    let n_out = graph.node_outputs(node).len();
+    if n_out == 0 {
+        // Never the only error: `Switch`'s signature head is one Control,
+        // so `local_typing`'s arity check reports
+        // `NodeOutputCountMismatch` for the same node in the same call.
+        // Kept because it names WHICH arity rule a zero-arm `Switch`
+        // breaks, which the generic count does not.
+        errs.push(ValidationError::EmptySwitchTargets { node });
+    } else if n_out != targets.len() {
+        errs.push(ValidationError::SwitchTargetArityMismatch {
+            node,
+            outputs: n_out,
+            targets: targets.len(),
+        });
     }
 }
 
 /// Every reachable [`NodeKind::Call`] override names a convention of this
 /// function's.
-pub(super) fn check_function_invariants_call_cc(
+pub(super) fn check_call_cc(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        if let NodeKind::Call { cc: Some(id) } = *kind
-            && function.cc(id).is_none()
-        {
-            errs.push(ValidationError::DanglingCcId { node, id });
-        }
+    if let NodeKind::Call { cc: Some(id) } = *kind
+        && function.cc(id).is_none()
+    {
+        errs.push(ValidationError::DanglingCcId { node, id });
     }
 }
 
 /// Every `Phi` / `MemPhi` takes its dispatch token (`input[0]`) from a
 /// `Region`'s `PhiToken` output, and has one value input per predecessor of
 /// that owning `Region`.
-pub(super) fn check_function_invariants_phis(
+pub(super) fn check_phis(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        let is_phi = matches!(kind, NodeKind::Phi | NodeKind::MemPhi);
-        if !is_phi {
-            continue;
-        }
+    let is_phi = matches!(kind, NodeKind::Phi | NodeKind::MemPhi);
+    if !is_phi {
+        return;
+    }
 
-        let inputs = graph.node_inputs(node);
-        if inputs.is_empty() {
-            // Local typing already reports empty-input phis.
-            continue;
-        }
-        let token = inputs[NodeKind::PHI_TOKEN_SLOT];
-        let token_kind = graph.value_kind(token);
-        if token_kind != ValueKind::PhiToken {
-            let (producer, _) = graph.value_definition(token);
-            errs.push(ValidationError::PhiTokenNotFromRegion {
-                phi: node,
-                producer,
-                producer_kind: token_kind,
-            });
-            continue;
-        }
+    let inputs = graph.node_inputs(node);
+    if inputs.is_empty() {
+        // Local typing already reports empty-input phis.
+        return;
+    }
+    let token = inputs[NodeKind::PHI_TOKEN_SLOT];
+    let token_kind = graph.value_kind(token);
+    if token_kind != ValueKind::PhiToken {
+        let (producer, _) = graph.value_definition(token);
+        errs.push(ValidationError::PhiTokenNotFromRegion {
+            phi: node,
+            producer,
+            producer_kind: token_kind,
+        });
+        return;
+    }
 
-        let (owner, _idx) = graph.value_definition(token);
-        if !matches!(graph.node_kind(owner), NodeKind::Region) {
-            errs.push(ValidationError::PhiTokenNotFromRegion {
-                phi: node,
-                producer: owner,
-                producer_kind: token_kind,
-            });
-            continue;
-        }
+    let (owner, _idx) = graph.value_definition(token);
+    if !matches!(graph.node_kind(owner), NodeKind::Region) {
+        errs.push(ValidationError::PhiTokenNotFromRegion {
+            phi: node,
+            producer: owner,
+            producer_kind: token_kind,
+        });
+        return;
+    }
 
-        let expected_preds = graph.node_inputs(owner).len();
-        let actual_values = inputs.len() - 1;
-        if expected_preds != actual_values {
-            errs.push(ValidationError::PhiValueArityMismatch {
-                phi: node,
-                owner_region: owner,
-                expected_predecessors: expected_preds,
-                actual_values,
-            });
-        }
+    let expected_preds = graph.node_inputs(owner).len();
+    let actual_values = inputs.len() - 1;
+    if expected_preds != actual_values {
+        errs.push(ValidationError::PhiValueArityMismatch {
+            phi: node,
+            owner_region: owner,
+            expected_predecessors: expected_preds,
+            actual_values,
+        });
+    }
 
-        // Every value input must carry the phi's own output type. `MemPhi` is
-        // exempt: Memory tokens have no value type.
-        if matches!(kind, NodeKind::Phi) {
-            let phi_out_ty = function
-                .first_value_output_of(node)
-                .and_then(|o| function.value_type_opt(o));
-            if let Some(out_ty) = phi_out_ty {
-                for (i, inp) in inputs.iter().enumerate().skip(1) {
-                    if let Some(in_ty) = graph.value_kind(inp).as_value()
-                        && in_ty != out_ty
-                    {
-                        errs.push(ValidationError::PhiInputTypeMismatch {
-                            phi: node,
-                            input_index: i,
-                            output_ty: out_ty,
-                            input_ty: in_ty,
-                        });
-                    }
+    // Every value input must carry the phi's own output type. `MemPhi` is
+    // exempt: Memory tokens have no value type.
+    if matches!(kind, NodeKind::Phi) {
+        let phi_out_ty = function
+            .first_value_output_of(node)
+            .and_then(|o| function.value_type_opt(o));
+        if let Some(out_ty) = phi_out_ty {
+            for (i, inp) in inputs.iter().enumerate().skip(1) {
+                if let Some(in_ty) = graph.value_kind(inp).as_value()
+                    && in_ty != out_ty
+                {
+                    errs.push(ValidationError::PhiInputTypeMismatch {
+                        phi: node,
+                        input_index: i,
+                        output_ty: out_ty,
+                        input_ty: in_ty,
+                    });
                 }
             }
         }
@@ -379,18 +367,17 @@ pub(super) fn check_function_invariants_phis(
 
 /// Every reachable, non-exempt node carries at least one asm-fingerprint
 /// contributor.
-pub(super) fn check_function_invariants_asm_fingerprints(
+pub(super) fn check_asm_fingerprint(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        if kind.asm_fingerprint_exempt() {
-            continue;
-        }
-        if function.side_tables().asm_fingerprint_is_empty(node) {
-            errs.push(ValidationError::MissingAsmFingerprint { node, kind: *kind });
-        }
+    if kind.asm_fingerprint_exempt() {
+        return;
+    }
+    if function.side_tables().asm_fingerprint_is_empty(node) {
+        errs.push(ValidationError::MissingAsmFingerprint { node, kind: *kind });
     }
 }
 
@@ -404,55 +391,54 @@ pub(super) fn check_function_invariants_asm_fingerprints(
 /// memory chain reaches is entry-reachable, is false: `PhiCollapse` can make
 /// two stores identical, and the node cache subsumes one into the other,
 /// leaving a corpse that still consumes the chain.
-pub(super) fn check_function_invariants_memory_chain(
+pub(super) fn check_memory_chain(
     function: &Function,
     reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        if !matches!(kind, NodeKind::Store(_)) {
+    if !matches!(kind, NodeKind::Store(_)) {
+        return;
+    }
+    for &out in graph.node_outputs(node) {
+        if graph.value_kind(out) != ValueKind::Memory {
             continue;
         }
-        for &out in graph.node_outputs(node) {
-            if graph.value_kind(out) != ValueKind::Memory {
-                continue;
-            }
-            let anchored = graph
-                .value_uses(out)
-                .any(|(consumer, _)| reachable.contains(consumer));
-            if !anchored {
-                errs.push(ValidationError::OrphanedMemoryOutput { node, kind: *kind });
-            }
+        let anchored = graph
+            .value_uses(out)
+            .any(|(consumer, _)| reachable.contains(consumer));
+        if !anchored {
+            errs.push(ValidationError::OrphanedMemoryOutput { node, kind: *kind });
         }
     }
 }
 
 /// Every reachable `InitialVar(id)` names a minted varnode and is typed as the
 /// integer of that varnode's size.
-pub(super) fn check_function_invariants_initial_vars(
+pub(super) fn check_initial_vars(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        let NodeKind::InitialVar(id) = *kind else {
-            continue;
-        };
-        let Some(vn) = function.initial_vn_opt(id) else {
-            errs.push(ValidationError::DanglingInitialVnId { node, id });
-            continue;
-        };
-        let Some(&out) = graph.node_outputs(node).first() else {
-            continue; // arity reported elsewhere
-        };
-        let ValueKind::Typed(ty) = graph.value_kind(out) else {
-            continue;
-        };
-        if ValueType::int_from_bytes(vn.size).ok() != Some(ty) {
-            errs.push(ValidationError::InitialVarTypeMismatch { node, vn, ty });
-        }
+    let NodeKind::InitialVar(id) = *kind else {
+        return;
+    };
+    let Some(vn) = function.initial_vn_opt(id) else {
+        errs.push(ValidationError::DanglingInitialVnId { node, id });
+        return;
+    };
+    let Some(&out) = graph.node_outputs(node).first() else {
+        return; // arity reported elsewhere
+    };
+    let ValueKind::Typed(ty) = graph.value_kind(out) else {
+        return;
+    };
+    if ValueType::int_from_bytes(vn.size).ok() != Some(ty) {
+        errs.push(ValidationError::InitialVarTypeMismatch { node, vn, ty });
     }
 }
 
@@ -517,66 +503,65 @@ pub(super) fn check_function_invariants_side_indices(
 /// value fits the node's declared output width, and every reachable
 /// `FloatConst` is declared at most 8 bytes wide and carries no bits above
 /// that width.
-pub(super) fn check_function_invariants_consts(
+pub(super) fn check_consts(
     function: &Function,
-    reachable: &NodeIdSet,
+    node: NodeId,
+    kind: &NodeKind,
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    for (node, kind) in function.reachable_kind_iter(reachable) {
-        if let NodeKind::FloatConst(bits) = *kind {
-            let Some(&out) = graph.node_outputs(node).first() else {
-                continue; // arity reported elsewhere
-            };
-            let ValueKind::Typed(ty) = graph.value_kind(out) else {
-                continue;
-            };
-            if ty.is_float() {
-                if ty.byte_size() > 8 {
-                    errs.push(ValidationError::FloatConstUnrepresentableType { node, ty });
-                } else if ty.mask_float_bits(bits) != bits {
-                    errs.push(ValidationError::FloatConstWidthMismatch { node, bits });
-                }
-            }
-            continue;
-        }
-        let NodeKind::IntConst(id) = *kind else {
-            continue;
-        };
-        let Some(value) = function.const_interner.get(id) else {
-            errs.push(ValidationError::DanglingConstId { node, id });
-            continue;
-        };
-        let outputs = graph.node_outputs(node);
-        let Some(&out) = outputs.first() else {
-            continue; // arity reported elsewhere
+    if let NodeKind::FloatConst(bits) = *kind {
+        let Some(&out) = graph.node_outputs(node).first() else {
+            return; // arity reported elsewhere
         };
         let ValueKind::Typed(ty) = graph.value_kind(out) else {
-            continue;
+            return;
         };
-        // Canonical masking: every bit above the declared width is zero.
-        let too_wide = match value {
-            crate::node::const_value::ConstValue::Bits(v) => {
-                let v = u128::from(*v);
-                ty.wrap_u128(v) != v
+        if ty.is_float() {
+            if ty.byte_size() > 8 {
+                errs.push(ValidationError::FloatConstUnrepresentableType { node, ty });
+            } else if ty.mask_float_bits(bits) != bits {
+                errs.push(ValidationError::FloatConstWidthMismatch { node, bits });
             }
-            crate::node::const_value::ConstValue::Wide(limbs) => {
-                let bits = ty.bit_width();
-                limbs.iter().enumerate().any(|(i, &l)| {
-                    let low = i * 64;
-                    // The limb the width ends inside keeps its low `bits - low`
-                    // bits; whole limbs above it must be zero.
-                    match bits.checked_sub(low) {
-                        None | Some(0) => l != 0,
-                        Some(spare) if spare < 64 => (l >> spare) != 0,
-                        _ => false,
-                    }
-                })
-            }
-        };
-        if too_wide {
-            errs.push(ValidationError::ConstWidthMismatch { node, id });
         }
+        return;
+    }
+    let NodeKind::IntConst(id) = *kind else {
+        return;
+    };
+    let Some(value) = function.const_interner.get(id) else {
+        errs.push(ValidationError::DanglingConstId { node, id });
+        return;
+    };
+    let outputs = graph.node_outputs(node);
+    let Some(&out) = outputs.first() else {
+        return; // arity reported elsewhere
+    };
+    let ValueKind::Typed(ty) = graph.value_kind(out) else {
+        return;
+    };
+    // Canonical masking: every bit above the declared width is zero.
+    let too_wide = match value {
+        crate::node::const_value::ConstValue::Bits(v) => {
+            let v = u128::from(*v);
+            ty.wrap_u128(v) != v
+        }
+        crate::node::const_value::ConstValue::Wide(limbs) => {
+            let bits = ty.bit_width();
+            limbs.iter().enumerate().any(|(i, &l)| {
+                let low = i * 64;
+                // The limb the width ends inside keeps its low `bits - low`
+                // bits; whole limbs above it must be zero.
+                match bits.checked_sub(low) {
+                    None | Some(0) => l != 0,
+                    Some(spare) if spare < 64 => (l >> spare) != 0,
+                    _ => false,
+                }
+            })
+        }
+    };
+    if too_wide {
+        errs.push(ValidationError::ConstWidthMismatch { node, id });
     }
 }
 
