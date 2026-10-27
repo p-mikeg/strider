@@ -119,7 +119,43 @@ fn local_typing_wrong_output_kind() {
 }
 
 // Entry and InitialMemory are cacheable, so no legal construction path can
-// mint a duplicate. The two tests below pin that dedup instead.
+// mint a duplicate. The two tests below pin that dedup instead, and the one
+// after them drives the guard itself.
+
+/// Only the first two of each kind decide the verdict, and one of each is
+/// legal.
+#[test]
+fn unique_kinds_reports_the_second_of_each() {
+    use super::graph_invariants::{UniqueKinds, check_unique_kinds, note_unique_kinds};
+    use cranelift_entity::EntityRef;
+
+    let n = NodeId::new;
+    let mut seen = UniqueKinds::default();
+    let mut errs = Vec::new();
+    note_unique_kinds(&mut seen, n(0), &NodeKind::Entry);
+    note_unique_kinds(&mut seen, n(1), &NodeKind::InitialMemory);
+    note_unique_kinds(&mut seen, n(2), &NodeKind::Region);
+    check_unique_kinds(&seen, &mut errs);
+    assert!(errs.is_empty(), "one of each is legal; got {errs:?}");
+
+    note_unique_kinds(&mut seen, n(3), &NodeKind::Entry);
+    note_unique_kinds(&mut seen, n(4), &NodeKind::InitialMemory);
+    note_unique_kinds(&mut seen, n(5), &NodeKind::Entry);
+    check_unique_kinds(&seen, &mut errs);
+    assert_eq!(errs.len(), 2, "a third Entry adds nothing; got {errs:?}");
+    assert!(
+        matches!(errs[0], ValidationError::MultipleEntryNodes { first, second }
+            if first == n(0) && second == n(3)),
+        "got {:?}",
+        errs[0]
+    );
+    assert!(
+        matches!(errs[1], ValidationError::MultipleInitialMemoryNodes { first, second }
+            if first == n(1) && second == n(4)),
+        "got {:?}",
+        errs[1]
+    );
+}
 
 #[test]
 fn graph_invariants_entry_dedupes_on_repeated_create() {

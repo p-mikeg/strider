@@ -14,15 +14,12 @@ mod local_typing;
 mod tests;
 
 use graph_invariants::{
-    check_function_invariants_arith_widths, check_function_invariants_asm_fingerprints,
-    check_function_invariants_availability, check_function_invariants_call_cc,
-    check_function_invariants_consts, check_function_invariants_control_single_use,
-    check_function_invariants_data_cycles, check_function_invariants_extend_truncate,
-    check_function_invariants_initial_vars, check_function_invariants_memory_chain,
-    check_function_invariants_memory_linearity, check_function_invariants_phis,
-    check_function_invariants_region, check_function_invariants_side_indices,
-    check_function_invariants_switch, check_function_invariants_terminator_reachable,
-    check_function_invariants_uniqueness,
+    UniqueKinds, check_arith_widths, check_asm_fingerprint, check_call_cc, check_consts,
+    check_control_single_use, check_extend_truncate, check_function_invariants_availability,
+    check_function_invariants_data_cycles, check_function_invariants_memory_linearity,
+    check_function_invariants_side_indices, check_function_invariants_terminator_reachable,
+    check_initial_vars, check_memory_chain, check_phis, check_region, check_switch,
+    check_unique_kinds, note_unique_kinds,
 };
 use local_typing::check_local_typing;
 
@@ -40,22 +37,25 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     let reachable: NodeIdSet = walk.into_visited();
     let mut errs: Vec<ValidationError> = Vec::new();
 
-    for (node, _kind) in function.reachable_kind_iter(&reachable) {
+    // Everything checked one node at a time, in one scan of the reachable set.
+    let mut seen = UniqueKinds::default();
+    for (node, kind) in function.reachable_kind_iter(&reachable) {
         check_local_typing(function.graph(), node, &mut errs);
+        note_unique_kinds(&mut seen, node, kind);
+        check_region(function, node, kind, &mut errs);
+        check_control_single_use(function, node, &mut errs);
+        check_phis(function, node, kind, &mut errs);
+        check_consts(function, node, kind, &mut errs);
+        check_initial_vars(function, node, kind, &mut errs);
+        check_extend_truncate(function, node, kind, &mut errs);
+        check_arith_widths(function, node, kind, &mut errs);
+        check_switch(function, node, kind, &mut errs);
+        check_call_cc(function, node, kind, &mut errs);
+        check_asm_fingerprint(function, node, kind, &mut errs);
+        check_memory_chain(function, &reachable, node, kind, &mut errs);
     }
+    check_unique_kinds(&seen, &mut errs);
 
-    check_function_invariants_uniqueness(function, &reachable, &mut errs);
-    check_function_invariants_region(function, &reachable, &mut errs);
-    check_function_invariants_control_single_use(function, &reachable, &mut errs);
-    check_function_invariants_phis(function, &reachable, &mut errs);
-    check_function_invariants_consts(function, &reachable, &mut errs);
-    check_function_invariants_initial_vars(function, &reachable, &mut errs);
-    check_function_invariants_extend_truncate(function, &reachable, &mut errs);
-    check_function_invariants_arith_widths(function, &reachable, &mut errs);
-    check_function_invariants_switch(function, &reachable, &mut errs);
-    check_function_invariants_call_cc(function, &reachable, &mut errs);
-    check_function_invariants_asm_fingerprints(function, &reachable, &mut errs);
-    check_function_invariants_memory_chain(function, &reachable, &mut errs);
     check_function_invariants_data_cycles(function, &reachable, &mut errs);
     check_function_invariants_side_indices(function, &reachable, &mut errs);
     check_function_invariants_terminator_reachable(function, &mut errs);
