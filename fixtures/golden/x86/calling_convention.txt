@@ -887,8 +887,9 @@ arg 0 [%v6]
 %v15:i32 = iconst[0x401500]
 %v16:ctrl, %v17:mem, %v18:i32<EAX>, %v19:i32<EDX>, %v20:i80<ST0>, %v21:i80<ST1>, %v22:i128<XMM0>, %v23:i8<CF>, %v24:i8<PF>, %v25:i8<ZF>, %v26:i8<SF>, %v27:i8<OF>, %v28:i32<EIP> = call %v0, %v14, %v15, %v12, %v6
 %v29:mem = store[r] %v17, %v2, %v18
-%v30:i32 = int.add %v18, %v18
-return %v16, %v29, %v30, %v19, %v20, %v21, %v22
+%v30:i32 = iconst[0x2]
+%v31:i32 = int.mul %v18, %v30
+return %v16, %v29, %v31, %v19, %v20, %v21, %v22
 
 == main @0x401530
 cfg
