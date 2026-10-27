@@ -697,11 +697,8 @@ fn got_regions(got: &BTreeMap<u64, (u64, usize)>, endian_le: bool) -> Result<Vec
         if width == 0 || width > 8 {
             anyhow::bail!("GOT slot at {addr:#x} has width {width}, not 1..=8");
         }
-        let bytes = if endian_le {
-            value.to_le_bytes()[..width].to_vec()
-        } else {
-            value.to_be_bytes()[8 - width..].to_vec()
-        };
+        let mut bytes = vec![0u8; width];
+        crate::bytes::write_uint(&mut bytes, value, endian_le);
         match &mut run {
             Some((start, data)) if *start + data.len() as u64 == addr => data.extend(bytes),
             _ => {
