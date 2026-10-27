@@ -75,12 +75,7 @@ impl Patch {
         let mut bytes = [0u8; 8];
         // Truncation to the field width; signedness is irrelevant for
         // fixed-width 2's-complement bit patterns.
-        if endian_le {
-            bytes[..size_bytes].copy_from_slice(&value.to_le_bytes()[..size_bytes]);
-        } else {
-            // Low N bytes, most-significant first.
-            bytes[..size_bytes].copy_from_slice(&value.to_be_bytes()[8 - size_bytes..]);
-        }
+        bytes::write_uint(&mut bytes[..size_bytes], value, endian_le);
         Some(Self {
             addr,
             len: size_bytes as u8,
@@ -711,7 +706,7 @@ impl MemRegionsLookupTable {
     }
 
     /// Why a read at `addr` served nothing.
-    pub fn unmapped(&self, addr: u64) -> anyhow::Error {
+    fn unmapped(&self, addr: u64) -> anyhow::Error {
         match self.unmodelled_relocation_at(addr) {
             Some(r_type) => anyhow::anyhow!(
                 "address {addr:#x} holds a relocation of type {r_type} this loader does not compute"
