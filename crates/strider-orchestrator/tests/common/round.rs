@@ -98,8 +98,13 @@ impl Fmt {
         let sh = q - e;
         let (mut n, inexact, above_half, half) = if sh <= 0 {
             (m << -sh, false, false, false)
-        } else if sh >= 128 {
+        } else if sh > 128 {
+            // `m` is below `2^128`, so less than half an ulp is left.
             (0, true, false, false)
+        } else if sh == 128 {
+            // All of `m` is the remainder, and `1 << sh` would overflow.
+            let h = 1u128 << 127;
+            (0, true, m > h, m == h)
         } else {
             let rem = m & ((1 << sh) - 1);
             let h = 1u128 << (sh - 1);
