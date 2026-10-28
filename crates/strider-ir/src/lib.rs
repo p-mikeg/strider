@@ -8,7 +8,6 @@
     )
 )]
 
-mod assumptions;
 mod builder;
 mod control_flow_view;
 pub use control_flow_view::{
@@ -19,7 +18,7 @@ pub mod eval;
 mod function;
 #[cfg(any(test, feature = "test-util"))]
 pub use function::cc_ret_and_clobber_vns;
-pub use function::{EditFunction, Function, MemDecomp, MemoryId, SideTables};
+pub use function::{AssumptionOptions, EditFunction, Function, MemDecomp, MemoryId, SideTables};
 pub mod graph;
 pub use graph::Graph;
 pub mod node;
@@ -38,7 +37,6 @@ mod test_cfgs;
 
 pub use crate::error::Result;
 pub use crate::node::const_value::ConstId;
-pub use assumptions::AssumptionOptions;
 pub use builder::{FunctionBuilder, IRBuilder, IRBuilderExt};
 pub use node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, VnTypeExt,
