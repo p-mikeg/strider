@@ -3,7 +3,8 @@ use strider_ir::node::ValueType;
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{
-    InputSlot, KindSpec, MatcherBuilder, NodePredicate, PatNodeRef, PatValueRef, Pattern,
+    BindingWalkFn, InputSlot, KindSpec, MatcherBuilder, NodePredicate, PatNodeRef, PatValueRef,
+    Pattern, WalkCaptures,
 };
 
 use super::{MemPat, SubCompiler};
@@ -82,6 +83,15 @@ pub(crate) struct NodePat {
     /// ([`crate::matcher::SlotMode::Pinned`]).
     pin_anchor_slot: bool,
     outputs: Vec<OutputSpec>,
+    /// Control-output vertices beyond the anchor, `(slot, capture)`: the two
+    /// arms of an `If`. Declared ahead of `outputs`.
+    control_outputs: Vec<(usize, Option<Capture>)>,
+    /// Replayed onto the builder at `lower`, refusing the sealed pattern.
+    refusal: Option<String>,
+    /// Nodes a binding walk's own pattern adds to the seal's cap.
+    nested_nodes: usize,
+    /// `(index into `control_outputs`, the walk, what it binds)`.
+    binding_walk: Option<(usize, BindingWalkFn, WalkCaptures)>,
 }
 
 impl NodePat {
@@ -96,6 +106,10 @@ impl NodePat {
             input_widths: Vec::new(),
             pin_anchor_slot: false,
             outputs: Vec::new(),
+            control_outputs: Vec::new(),
+            refusal: None,
+            nested_nodes: 0,
+            binding_walk: None,
         }
     }
 
@@ -223,6 +237,39 @@ impl NodePat {
         self
     }
 
+    /// A control-output vertex at `slot`, bound to `c`. Sibling to the anchor
+    /// and addressable by [`Self::with_binding_walk`], which numbers these in
+    /// declaration order.
+    pub(crate) fn with_control_output(mut self, slot: usize, c: Option<Capture>) -> Self {
+        self.control_outputs.push((slot, c));
+        self
+    }
+
+    /// See [`MatcherBuilder::reject`]. `None` leaves the pattern matchable.
+    pub(crate) fn rejecting(mut self, why: Option<String>) -> Self {
+        self.refusal = why;
+        self
+    }
+
+    /// See [`MatcherBuilder::add_nested_nodes`].
+    pub(crate) fn with_nested_nodes(mut self, nodes: usize) -> Self {
+        self.nested_nodes = nodes;
+        self
+    }
+
+    /// Attaches `f` to the `nth` [`Self::with_control_output`] vertex, after
+    /// the sibling outputs are staged. See
+    /// [`MatcherBuilder::set_binding_walk`].
+    pub(crate) fn with_binding_walk(
+        mut self,
+        nth: usize,
+        f: BindingWalkFn,
+        captures: WalkCaptures,
+    ) -> Self {
+        self.binding_walk = Some((nth, f, captures));
+        self
+    }
+
     /// Lowers into `b`, returning the staged node and its anchor output (the
     /// value/memory/control output this pattern nests through, or `None` for a
     /// node-rooted kind like `Return` / `If`).
@@ -237,7 +284,15 @@ impl NodePat {
             input_widths,
             pin_anchor_slot,
             outputs,
+            control_outputs,
+            refusal,
+            nested_nodes,
+            binding_walk,
         } = self;
+        if let Some(why) = refusal {
+            b.reject(why);
+        }
+        b.add_nested_nodes(nested_nodes);
         let node = b.node(kind);
         let anchor_out = match anchor {
             AnchorKind::Value(slot) => {
@@ -263,7 +318,20 @@ impl NodePat {
             }
             b.wire(node, slot, o);
         }
+        let ctrl_outs: Vec<PatValueRef> = control_outputs
+            .into_iter()
+            .map(|(slot, c)| {
+                let out = b.control_output(node, slot);
+                if let Some(c) = c {
+                    b.capture_output(out, c);
+                }
+                out
+            })
+            .collect();
         lower_outputs(b, node, outputs);
+        if let Some((nth, f, captures)) = binding_walk {
+            b.set_binding_walk(ctrl_outs[nth], f, captures);
+        }
         if let Some(factory) = node_predicate {
             b.set_node_predicate_at(node, factory());
         }
