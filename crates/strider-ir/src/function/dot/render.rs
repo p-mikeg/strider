@@ -38,7 +38,8 @@ impl ::dot::GraphDotDumper for FunctionDotDumper<'_> {
                 v.sort_unstable_by_key(|n| n.as_u32());
                 v
             }
-            None => crate::walk::walk_graph(self.function.graph(), self.entry).collect::<Vec<_>>(),
+            None => crate::walk::walk_graph(self.function.graph(), self.function.entry())
+                .collect::<Vec<_>>(),
         }
     }
 
@@ -219,7 +220,7 @@ impl FunctionDotDumper<'_> {
                 } else {
                     state.get_dot_id(self.function.graph(), parent_id)
                 }
-            } else if *self.function.node_kind(parent_id) == NodeKind::If {
+            } else if parent_kind == NodeKind::If {
                 // The If may not have rendered yet, so make the branch virtual
                 // eagerly rather than landing this edge on the If diamond.
                 let (_, output_index) = self.function.value_definition(parent_value);
