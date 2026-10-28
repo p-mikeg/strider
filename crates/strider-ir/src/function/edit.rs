@@ -59,7 +59,7 @@ pub struct EditFunction<'g> {
     generation: u64,
     /// Nodes created, resurrected or re-walked into the live set.
     live_entries: u64,
-    /// [`Self::postorder`] and the [`Self::edits`] reading it was walked at.
+    /// [`Self::live_postorder`] and the [`Self::edits`] reading it was walked at.
     order_memo: std::cell::RefCell<Option<(u64, Vec<NodeId>)>>,
     /// Def-use post-order walks actually performed, the unit the order-memo
     /// test counts.
@@ -165,7 +165,7 @@ impl<'g> EditFunction<'g> {
     ///
     /// Walked once per [`Self::edits`] reading, so the passes of one pipeline
     /// iteration that leave the graph alone share one walk.
-    pub fn postorder(&self) -> Vec<NodeId> {
+    pub fn live_postorder(&self) -> Vec<NodeId> {
         let at = self.edits();
         let mut memo = self.order_memo.borrow_mut();
         if memo.as_ref().is_none_or(|&(stamp, _)| stamp != at) {
@@ -182,29 +182,29 @@ impl<'g> EditFunction<'g> {
     }
 
     /// Every producer precedes its consumers unless the use closes a def-use
-    /// cycle.  Same entry-global contract as [`Self::postorder`].
-    pub fn reverse_postorder(&self) -> Vec<NodeId> {
-        let mut v = self.postorder();
+    /// cycle.  Same entry-global contract as [`Self::live_postorder`].
+    pub fn live_reverse_postorder(&self) -> Vec<NodeId> {
+        let mut v = self.live_postorder();
         v.reverse();
         v
     }
 
     /// Same reachable SET as `Self::walk_kind`; only the ORDER differs (RPO).
-    pub fn reverse_postorder_filter<'a>(
+    pub fn live_reverse_postorder_filter<'a>(
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
-        self.reverse_postorder()
+        self.live_reverse_postorder()
             .into_iter()
             .filter(move |&n| pred(self.function.node_kind(n)))
     }
 
-    /// Post-order counterpart of [`Self::reverse_postorder_filter`].
-    pub fn postorder_filter<'a>(
+    /// Post-order counterpart of [`Self::live_reverse_postorder_filter`].
+    pub fn live_postorder_filter<'a>(
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
-        self.postorder()
+        self.live_postorder()
             .into_iter()
             .filter(move |&n| pred(self.function.node_kind(n)))
     }
@@ -818,8 +818,8 @@ mod tests {
         let add = function.producer(sum);
 
         let mut ctx = EditFunction::new(&mut function);
-        let first = ctx.postorder();
-        let second = ctx.postorder();
+        let first = ctx.live_postorder();
+        let second = ctx.live_postorder();
         assert_eq!(first, second);
         assert_eq!(
             ctx.postorder_walks.get(),
@@ -833,7 +833,7 @@ mod tests {
             1,
             "a fresh node is not read until the order is asked for again"
         );
-        let after_create = ctx.postorder();
+        let after_create = ctx.live_postorder();
         assert_eq!(
             ctx.postorder_walks.get(),
             2,
@@ -846,12 +846,12 @@ mod tests {
 
         let slot = ctx.function().node_input_id_at(add, 1).unwrap();
         ctx.update_input(slot, three);
-        ctx.postorder();
+        ctx.live_postorder();
         assert_eq!(ctx.postorder_walks.get(), 3, "a moved use re-walks");
         let two_node = ctx.producer(two);
         ctx.clean();
         assert!(
-            !ctx.postorder().contains(&two_node),
+            !ctx.live_postorder().contains(&two_node),
             "the re-walk after the orphan is culled drops it"
         );
         assert_eq!(ctx.postorder_walks.get(), 4, "a killed node re-walks");
@@ -1210,7 +1210,7 @@ mod tests {
             "the Neg has an input, so it is not a root"
         );
         assert!(
-            ctx.postorder().contains(&orphan_node),
+            ctx.live_postorder().contains(&orphan_node),
             "the cached postorder visits the resurrected node"
         );
 
@@ -1286,7 +1286,7 @@ mod tests {
             "outer Neg has an input, so it is not a root"
         );
 
-        let post = ctx.postorder();
+        let post = ctx.live_postorder();
         for n in [k_node, inner_node, outer_node] {
             assert!(
                 post.contains(&n),
@@ -1335,7 +1335,7 @@ mod tests {
             "the resurrected input-less const is a root"
         );
         assert!(
-            ctx.postorder().contains(&orphan_node),
+            ctx.live_postorder().contains(&orphan_node),
             "the cached postorder visits the resurrected node"
         );
     }

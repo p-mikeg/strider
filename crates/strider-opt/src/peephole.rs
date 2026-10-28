@@ -129,9 +129,11 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     // non-confluent rule pair into an error rather than a hang.
     let seed: Vec<NodeId> = match pass.seed_order() {
         SeedOrder::ReversePostorder => edit
-            .reverse_postorder_filter(|k| pass.matches_kind(k))
+            .live_reverse_postorder_filter(|k| pass.matches_kind(k))
             .collect(),
-        SeedOrder::Postorder => edit.postorder_filter(|k| pass.matches_kind(k)).collect(),
+        SeedOrder::Postorder => edit
+            .live_postorder_filter(|k| pass.matches_kind(k))
+            .collect(),
     };
     // Fresh nodes get fresh `NodeId`s, which the worklist's dedup cannot
     // collapse, so a non-confluent rule pair spins forever; the budget turns
