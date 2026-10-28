@@ -25,23 +25,41 @@ pub fn cc_ret_and_clobber_vns(
 
 /// A lifted function: structural [`Graph`] plus per-function overlay state.
 /// Always has an entry node; `Clone` is a deep, independent copy.
+///
+/// The overlay is grouped by kind, so where a field lives says what it is:
+/// the facts the function rests on, settled once and touched by no operation,
+/// then the payload tables a node's own id indexes into, and the id-keyed
+/// tables plus graph-derived memos of [`SideTables`].
 #[derive(Clone)]
 pub struct Function {
     graph: Graph,
+    /// The root of [`Self::graph`]; [`Self::compact`] rewrites it with the
+    /// arena, so it is an id, not a fact.
     entry: NodeId,
 
+    // The facts.  None is keyed by an arena id, so [`Self::compact`] leaves
+    // them alone, and none is derived from the graph, so
+    // `SideTables::invalidate_analyses` never clears one.  A derived,
+    // clearable verdict is a memo and belongs in the memo group instead.
     /// The convention this function was built under.
     default_cc: strider_target::BuiltCallingConvention,
+    /// The byte order of each space's loads and stores.
     byte_order: strider_target::ByteOrder,
-    /// Every tracked varnode, value-deduped, in `(space, offset, size)` order.
-    vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
+    /// The claims in force: every set [`Self::assume`] added, none before the
+    /// first.  A claim is withdrawn by nothing.
+    assumptions: crate::AssumptionOptions,
+    /// The highest offset from the entry SP of a stack address held, at some
+    /// `Call`, in a register the call clobbers, or `None` when no call held
+    /// one.  Recorded once, by `FunctionBuilder::build`.  The call node carries
+    /// no such value, so this is the only record that a callee may have
+    /// received it.
+    call_register_frame_reach: Option<i128>,
 
     side_tables: SideTables,
-    /// The claims in force: every set [`Self::assume`] added, none before the
-    /// first.  Holds no id, so compaction leaves it alone, and no analysis
-    /// invalidation clears it.
-    assumptions: crate::AssumptionOptions,
 
+    // The payload tables a `NodeKind`'s own id indexes into, collected by
+    // `gc_payload_tables` at compaction, plus the varnodes `InitialVnId`
+    // indexes, whose ids compaction leaves alone.
     /// Every integer-constant value referenced by an `IntConst(id)` node,
     /// deduped by value.
     pub(crate) const_interner: entity_utils::EntityInterner<
@@ -55,6 +73,8 @@ pub struct Function {
     call_ccs: entity_utils::EntityInterner<CcId, strider_target::BuiltCallingConvention>,
     /// Sleigh user-op name by `CallOther` `user_op_id`.
     call_other_names: FxHashMap<u64, String>,
+    /// Every tracked varnode, value-deduped, in `(space, offset, size)` order.
+    vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 }
 
 impl Function {
@@ -88,14 +108,15 @@ impl Function {
             entry,
             default_cc,
             byte_order: byte_order.into(),
-            vn_interner,
-            side_tables: SideTables::new(),
             // A function claims nothing until `assume` adds some.
             assumptions: crate::AssumptionOptions::none(),
+            call_register_frame_reach: None,
+            side_tables: SideTables::new(),
             const_interner: entity_utils::EntityInterner::default(),
             switch_tables: cranelift_entity::PrimaryMap::new(),
             call_ccs: entity_utils::EntityInterner::default(),
             call_other_names: FxHashMap::default(),
+            vn_interner,
         }
     }
 
@@ -130,6 +151,29 @@ impl Function {
     #[inline]
     pub fn assumptions(&self) -> &crate::AssumptionOptions {
         &self.assumptions
+    }
+
+    /// Whether some `Call` saw a stack address in a register it clobbers.
+    #[inline]
+    pub fn frame_address_in_call_register(&self) -> bool {
+        self.call_register_frame_reach.is_some()
+    }
+
+    /// The highest offset from the entry SP of a stack address some `Call`
+    /// saw in a register it clobbers: `i128::MAX` when one has no constant
+    /// offset from it, `None` when no call saw one.
+    #[inline]
+    pub fn call_register_frame_reach(&self) -> Option<i128> {
+        self.call_register_frame_reach
+    }
+
+    /// Records a stack address at offset `reach` from the entry SP in a
+    /// register a call clobbers (`i128::MAX` for no constant offset); the
+    /// highest recorded is kept.
+    #[inline]
+    pub(crate) fn record_call_register_frame_reach(&mut self, reach: i128) {
+        let held = &mut self.call_register_frame_reach;
+        *held = Some(held.map_or(reach, |r| r.max(reach)));
     }
 
     /// Adds `claims` to the claims in force, withdrawing none, and drops the
@@ -756,20 +800,42 @@ mod compact_tests {
             .create_node(NodeKind::IntConst(id), [], [ValueKind::Typed(ty)])
     }
 
-    /// The call fact and the claims in force name no id, and survive as they
-    /// are.
+    /// Every fact names no id and is derived from no graph, so compaction and
+    /// invalidation leave all of them, and `assume` touches only the claims.
+    /// The destructuring stops compiling when a field joins [`Function`], so
+    /// the pinning below is extended with it or the new field is named `_`.
     #[test]
-    fn compact_keeps_the_call_fact_and_the_claims() {
+    fn compact_and_invalidation_keep_every_fact() {
         let mut f = test_function();
+        let before = f.clone();
         let listed = crate::AssumptionOptions {
             noalias_allocators: [0x4000].into_iter().collect(),
             ..crate::AssumptionOptions::none()
         };
+        f.record_call_register_frame_reach(-8);
         f.assume(&listed);
-        f.side_tables_mut().record_call_register_frame_reach(-8);
+
+        f.side_tables().invalidate_analyses();
         f.compact().expect("compact succeeds on a valid function");
-        assert_eq!(f.side_tables().call_register_frame_reach(), Some(-8));
-        assert_eq!(f.assumptions(), &listed);
+
+        let Function {
+            graph: _,
+            entry: _,
+            default_cc,
+            byte_order,
+            assumptions,
+            call_register_frame_reach,
+            side_tables: _,
+            const_interner: _,
+            switch_tables: _,
+            call_ccs: _,
+            call_other_names: _,
+            vn_interner: _,
+        } = &f;
+        assert_eq!(*default_cc, before.default_cc);
+        assert_eq!(*byte_order, before.byte_order);
+        assert_eq!(*assumptions, listed);
+        assert_eq!(*call_register_frame_reach, Some(-8));
     }
 
     #[test]
