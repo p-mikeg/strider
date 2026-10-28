@@ -7,8 +7,14 @@
 //! them, so a change to what the lift writes has to be made here as well. A
 //! def recorded that the lift never writes only costs a dead phi; one the lift
 //! writes and this misses loses the phi and miscompiles. Debug builds catch
-//! that half: every write routes through
+//! that half for every write the lift itself makes: each routes through
 //! [`FunctionLifter::write_variable`], which asserts the mirror covers it.
+//! [`strider_ir::FunctionBuilder::build_call`]'s post-call SP rebind is the
+//! one production write outside that funnel, made in strider-ir, which cannot
+//! reach the guard. [`FunctionLifter::record_cc_call_effects`] records SP for every call, and
+//! [`crate::lift::Lifter::check_override_cc`] pins an override's stack pointer
+//! to the function's, so the varnode the rebind writes is always one the
+//! mirror recorded.
 //!
 //! The read half has the opposite polarity: a read it misses can drop a needed
 //! phi, so it over-approximates, and it governs UNIQUE temporaries alone.
