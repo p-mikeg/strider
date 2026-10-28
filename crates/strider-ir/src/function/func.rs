@@ -294,7 +294,7 @@ impl Function {
 
     /// A no-op when `vn` is untracked.
     #[inline]
-    pub fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
+    pub(crate) fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
         if let Some(vn_id) = self.vn_id_of(&vn) {
             self.side_tables.value_vn.insert(value, vn_id);
         }
@@ -346,7 +346,7 @@ impl Function {
 
     /// `None` for an id this function never minted.
     #[inline]
-    pub fn switch_table(&self, id: SwitchTableId) -> Option<&[u64]> {
+    pub(crate) fn switch_table(&self, id: SwitchTableId) -> Option<&[u64]> {
         self.switch_tables.get(id).map(Vec::as_slice)
     }
 
