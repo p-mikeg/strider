@@ -82,6 +82,7 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
     }
 }
 
+#[derive(Debug)]
 pub struct ValidationErrors(pub Vec<ValidationError>);
 
 #[derive(Debug, thiserror::Error)]
@@ -357,12 +358,6 @@ pub enum ValidationError {
         outputs: usize,
         targets: usize,
     },
-}
-
-impl std::fmt::Debug for ValidationErrors {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("ValidationErrors").field(&self.0).finish()
-    }
 }
 
 impl std::fmt::Display for ValidationErrors {
