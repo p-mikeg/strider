@@ -2645,6 +2645,12 @@ macro_rules! builder_slot_methods {
     };
 }
 
+/// `Option::clone` behind a generic, so a `Copy` store does not trip
+/// `clone_on_copy`.
+fn cloned_opt<T: Clone>(v: &Option<T>) -> Option<T> {
+    v.clone()
+}
+
 // Every node-rooted builder is the same skeleton over a different operand
 // field-set, generated here from a compact spec so the `.when()` wiring and
 // capture handling live in ONE place.
@@ -2659,9 +2665,13 @@ macro_rules! builder_slot_methods {
 //   * `mem_value` produces both, so it nests in either position.
 //   * `node` is node-rooted only: same build as `mem`, no nestable compile.
 //
-// Field kinds: `pat` / `mem` (one operand slot), `multi` (an indexed operand
-// vector, the named compile fn deciding value or memory operand), `scalar`
-// (Copy), `scalar_clone`, `scalar_inner` (a Py wrapper stored via `.inner`),
+// Field kinds: `pat` (one operand slot, the row naming the fn that compiles
+// the handle: `compile_operand_match` for a value operand,
+// `compile_operand_mem` for a memory one, `pattern_for_operand` for a whole
+// nested `Pattern` the core matches at the node the slot forward-walks to),
+// `pat_list` (a `pat` whose setter coerces a list into a `one_of`), `multi`
+// (an indexed operand vector, the named compile fn deciding value or memory
+// operand), `scalar`, `scalar_inner` (a Py wrapper stored via `.inner`),
 // `flag` (no-arg bool setter), and `region` (the four address-region setters,
 // recorded in call order).
 
@@ -2675,25 +2685,16 @@ macro_rules! node_builder {
             $($acc)*
         }
     };
-    (@members $inner:ident [ $($acc:tt)* ] { pat $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
+    (@members $inner:ident [ $($acc:tt)* ] { pat $name:ident($c:ident): $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Option<Py<PyAny>>, ] $($rest)*);
     };
     (@members $inner:ident [ $($acc:tt)* ] { pat_list $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@members $inner [ $($acc)* $name: Option<Py<PyAny>>, ] $($rest)*);
-    };
-    (@members $inner:ident [ $($acc:tt)* ] { pattern $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@members $inner [ $($acc)* $name: Option<Py<PyAny>>, ] $($rest)*);
-    };
-    (@members $inner:ident [ $($acc:tt)* ] { mem $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Option<Py<PyAny>>, ] $($rest)*);
     };
     (@members $inner:ident [ $($acc:tt)* ] { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Vec<($idx, Py<PyAny>)>, ] $($rest)*);
     };
     (@members $inner:ident [ $($acc:tt)* ] { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@members $inner [ $($acc)* $name: Option<$store>, ] $($rest)*);
-    };
-    (@members $inner:ident [ $($acc:tt)* ] { scalar_clone $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Option<$store>, ] $($rest)*);
     };
     (@members $inner:ident [ $($acc:tt)* ] { scalar_inner $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal } $($rest:tt)*) => {
@@ -2709,30 +2710,16 @@ macro_rules! node_builder {
     // Bound to a `let` first: an `if let` scrutinee keeps the `Ref` alive for
     // the body, where compiling the operand runs Python (`__index__`) that can
     // re-enter a setter and take `borrow_mut`.
-    (@apply $self:ident, $py:ident, $b:ident, { pat $name:ident: $m:ident = $doc:literal }) => {
+    (@apply $self:ident, $py:ident, $b:ident, { pat $name:ident($c:ident): $m:ident = $doc:literal }) => {
         let __slot = clone_opt($py, &$self.inner.borrow().$name);
         if let Some(__p) = __slot {
-            $b = $b.$m(compile_operand_match(__p.bind($py))?);
+            $b = $b.$m($c(__p.bind($py))?);
         }
     };
     (@apply $self:ident, $py:ident, $b:ident, { pat_list $name:ident: $m:ident = $doc:literal }) => {
         let __slot = clone_opt($py, &$self.inner.borrow().$name);
         if let Some(__p) = __slot {
             $b = $b.$m(compile_operand_match(__p.bind($py))?);
-        }
-    };
-    // A whole nested `Pattern`, not a sub-pattern operand: the core matches it
-    // at the node the slot forward-walks to.
-    (@apply $self:ident, $py:ident, $b:ident, { pattern $name:ident: $m:ident = $doc:literal }) => {
-        let __slot = clone_opt($py, &$self.inner.borrow().$name);
-        if let Some(__p) = __slot {
-            $b = $b.$m(pattern_for_operand(__p.bind($py))?);
-        }
-    };
-    (@apply $self:ident, $py:ident, $b:ident, { mem $name:ident: $m:ident = $doc:literal }) => {
-        let __slot = clone_opt($py, &$self.inner.borrow().$name);
-        if let Some(__p) = __slot {
-            $b = $b.$m(compile_operand_mem(__p.bind($py))?);
         }
     };
     (@apply $self:ident, $py:ident, $b:ident, { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal }) => {
@@ -2748,12 +2735,7 @@ macro_rules! node_builder {
         }
     };
     (@apply $self:ident, $py:ident, $b:ident, { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {
-        if let Some(__v) = $self.inner.borrow().$name {
-            $b = $b.$m(__v);
-        }
-    };
-    (@apply $self:ident, $py:ident, $b:ident, { scalar_clone $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {
-        if let Some(__v) = $self.inner.borrow().$name.clone() {
+        if let Some(__v) = cloned_opt(&$self.inner.borrow().$name) {
             $b = $b.$m(__v);
         }
     };
@@ -2821,46 +2803,32 @@ macro_rules! node_builder {
         }
     };
 
-    (@traverse $inner:ident, $visit:ident, { pat $name:ident: $m:ident = $doc:literal }) => {
+    (@traverse $inner:ident, $visit:ident, { pat $name:ident($c:ident): $m:ident = $doc:literal }) => {
         if let Some(__p) = $inner.$name.as_ref() { $visit.call(__p)?; }
     };
     (@traverse $inner:ident, $visit:ident, { pat_list $name:ident: $m:ident = $doc:literal }) => {
-        if let Some(__p) = $inner.$name.as_ref() { $visit.call(__p)?; }
-    };
-    (@traverse $inner:ident, $visit:ident, { pattern $name:ident: $m:ident = $doc:literal }) => {
-        if let Some(__p) = $inner.$name.as_ref() { $visit.call(__p)?; }
-    };
-    (@traverse $inner:ident, $visit:ident, { mem $name:ident: $m:ident = $doc:literal }) => {
         if let Some(__p) = $inner.$name.as_ref() { $visit.call(__p)?; }
     };
     (@traverse $inner:ident, $visit:ident, { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal }) => {
         for (_, __p) in &$inner.$name { $visit.call(__p)?; }
     };
     (@traverse $inner:ident, $visit:ident, { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
-    (@traverse $inner:ident, $visit:ident, { scalar_clone $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
     (@traverse $inner:ident, $visit:ident, { scalar_inner $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
     (@traverse $inner:ident, $visit:ident, { flag $name:ident: $m:ident = $doc:literal }) => {};
     (@traverse $inner:ident, $visit:ident, { region $name:ident }) => {};
 
     // Mirrors `@traverse`: every slot reported there has to be droppable here,
     // or a cycle through it is uncollectable.
-    (@clear $inner:ident, { pat $name:ident: $m:ident = $doc:literal }) => {
+    (@clear $inner:ident, { pat $name:ident($c:ident): $m:ident = $doc:literal }) => {
         $inner.$name = None;
     };
     (@clear $inner:ident, { pat_list $name:ident: $m:ident = $doc:literal }) => {
-        $inner.$name = None;
-    };
-    (@clear $inner:ident, { pattern $name:ident: $m:ident = $doc:literal }) => {
-        $inner.$name = None;
-    };
-    (@clear $inner:ident, { mem $name:ident: $m:ident = $doc:literal }) => {
         $inner.$name = None;
     };
     (@clear $inner:ident, { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal }) => {
         $inner.$name.clear();
     };
     (@clear $inner:ident, { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
-    (@clear $inner:ident, { scalar_clone $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
     (@clear $inner:ident, { scalar_inner $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
     (@clear $inner:ident, { flag $name:ident: $m:ident = $doc:literal }) => {};
     (@clear $inner:ident, { region $name:ident }) => {};
@@ -2875,7 +2843,7 @@ macro_rules! node_builder {
             $($acc)*
         }
     };
-    (@setters $ty:ident [ $($acc:tt)* ] { pat $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
+    (@setters $ty:ident [ $($acc:tt)* ] { pat $name:ident($c:ident): $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@setters $ty [ $($acc)*
             #[doc = $doc]
             fn $name<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
@@ -2897,24 +2865,6 @@ macro_rules! node_builder {
             }
         ] $($rest)*);
     };
-    (@setters $ty:ident [ $($acc:tt)* ] { pattern $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@setters $ty [ $($acc)*
-            #[doc = $doc]
-            fn $name<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-                slf.inner.borrow_mut().$name = Some(p);
-                slf
-            }
-        ] $($rest)*);
-    };
-    (@setters $ty:ident [ $($acc:tt)* ] { mem $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@setters $ty [ $($acc)*
-            #[doc = $doc]
-            fn $name<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-                slf.inner.borrow_mut().$name = Some(p);
-                slf
-            }
-        ] $($rest)*);
-    };
     (@setters $ty:ident [ $($acc:tt)* ] { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal } $($rest:tt)*) => {
         node_builder!(@setters $ty [ $($acc)*
             #[doc = $doc]
@@ -2930,15 +2880,6 @@ macro_rules! node_builder {
         ] $($rest)*);
     };
     (@setters $ty:ident [ $($acc:tt)* ] { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@setters $ty [ $($acc)*
-            #[doc = $doc]
-            fn $name<'py>(slf: PyRef<'py, Self>, $arg: $set) -> PyRef<'py, Self> {
-                slf.inner.borrow_mut().$name = Some($arg);
-                slf
-            }
-        ] $($rest)*);
-    };
-    (@setters $ty:ident [ $($acc:tt)* ] { scalar_clone $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal } $($rest:tt)*) => {
         node_builder!(@setters $ty [ $($acc)*
             #[doc = $doc]
             fn $name<'py>(slf: PyRef<'py, Self>, $arg: $set) -> PyRef<'py, Self> {
@@ -3178,8 +3119,8 @@ node_builder! {
     fields: [
         { scalar_inner space(crate::sleigh::PyVnSpace => rsleigh::VnSpace): space(s)
             = "Restrict the match to a specific memory space." },
-        { pat addr: addr = "Constrain the load's address operand." },
-        { mem mem: mem
+        { pat addr(compile_operand_match): addr = "Constrain the load's address operand." },
+        { pat mem(compile_operand_mem): mem
             = "Constrain the load's memory predecessor (a memory-producing sub-pattern)." },
         { scalar bit_width(u32 => u32): bit_width(n) = "Filter loads by value width in bits." },
         { region region },
@@ -3207,11 +3148,11 @@ node_builder! {
     root: mem,
     slots: [any_input, input, output],
     fields: [
-        { pat addr: addr = "Constrain the store's address operand." },
-        { pat data: data = "Constrain the store's stored-value operand." },
+        { pat addr(compile_operand_match): addr = "Constrain the store's address operand." },
+        { pat data(compile_operand_match): data = "Constrain the store's stored-value operand." },
         { scalar_inner space(crate::sleigh::PyVnSpace => rsleigh::VnSpace): space(s)
             = "Restrict the match to a specific memory space." },
-        { mem mem: mem = "Constrain the store's memory predecessor." },
+        { pat mem(compile_operand_mem): mem = "Constrain the store's memory predecessor." },
         { scalar bit_width(u32 => u32): bit_width(n) = "Filter stores by data width in bits." },
         { region region },
     ],
@@ -3498,11 +3439,11 @@ node_builder! {
     fields: [
         { scalar user_op_id(u64 => u64): user_op_id(v)
             = "Constrain the matched node's user-op id." },
-        { scalar_clone name(String => String): name(n)
+        { scalar name(String => String): name(n)
             = "Constrain the matched node's user-op name." },
-        { pat ctrl: ctrl
+        { pat ctrl(compile_operand_match): ctrl
             = "Match the CallOther's control predecessor (`inputs[0]`)." },
-        { mem mem: mem
+        { pat mem(compile_operand_mem): mem
             = "Match the CallOther's memory predecessor (`inputs[1]`); \
                takes a memory producer (store / mem_phi / call / call_other)." },
         { multi args(usize): arg(compile_operand_match)
@@ -3524,7 +3465,7 @@ node_builder! {
     root: node,
     slots: [any_input, input],
     fields: [
-        { pat ctrl: ctrl
+        { pat ctrl(compile_operand_match): ctrl
             = "Match `p` against the Return's direct ctrl predecessor (`inputs[0]`)." },
         { multi ret_vals(usize): ret_val(compile_operand_match)
             = "Constrain the return value at position `idx`, raw input slot `idx + 2`." },
@@ -3547,9 +3488,9 @@ node_builder! {
                operand, including a raw int, which matches a branch to that \
                literal address. A list of them matches any one entry; an empty \
                list matches nothing." },
-        { pat ctrl: ctrl
+        { pat ctrl(compile_operand_match): ctrl
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
-        { mem mem: mem
+        { pat mem(compile_operand_mem): mem
             = "Constrain the node's memory predecessor (`inputs[1]`)." },
     ],
     ctor: indirect_branch = "Start an `IndirectBranch` pattern builder.",
@@ -3565,7 +3506,7 @@ node_builder! {
     root: node,
     slots: [any_input, input],
     fields: [
-        { pat ctrl: ctrl
+        { pat ctrl(compile_operand_match): ctrl
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
     ],
     ctor: unreachable = "Start an `Unreachable` pattern builder.",
@@ -3587,7 +3528,7 @@ node_builder! {
                pattern operand, including a raw int, which matches that literal \
                value. A list of them matches any one entry; an empty list \
                matches nothing." },
-        { pat ctrl: ctrl
+        { pat ctrl(compile_operand_match): ctrl
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
     ],
     ctor: switch = "Start a `Switch` pattern builder.",
@@ -3603,12 +3544,12 @@ node_builder! {
     root: node,
     slots: [any_input, input, output],
     fields: [
-        { pat cond: cond = "Constrain the If's condition operand." },
-        { pat ctrl: ctrl
+        { pat cond(compile_operand_match): cond = "Constrain the If's condition operand." },
+        { pat ctrl(compile_operand_match): ctrl
             = "Match `p` against the If's direct ctrl predecessor (`inputs[0]`)." },
-        { pattern true_branch: with_true
+        { pat true_branch(pattern_for_operand): with_true
             = "Match the unique consumer of the If's true output." },
-        { pattern false_branch: with_false
+        { pat false_branch(pattern_for_operand): with_false
             = "Match the unique consumer of the If's false output." },
         { scalar_inner capture_true(PyCapture => Capture): capture_true(c)
             = "Bind the If's true control-output value to `c`, the edge \
@@ -3987,7 +3928,7 @@ node_builder! {
         { multi inputs(usize): phi_input(compile_operand_match)
             = "Constrain the value arriving from predecessor `idx`, raw input \
                slot `idx + 1`. `.input(i, p)` addresses the raw slot instead." },
-        { pat phi_token: phi_token
+        { pat phi_token(compile_operand_match): phi_token
             = "Constrain the phi's ownership edge, the PhiToken input at raw \
                slot 0 (the owning Region's PhiToken output), which \
                `.input(0, p)` also names. A typed sub can never bind it \
@@ -4019,7 +3960,7 @@ node_builder! {
             = "Constrain the memory token arriving from predecessor `idx`, raw \
                input slot `idx + 1`. `.input(i, p)` addresses the raw slot \
                instead, and takes a value operand." },
-        { pat phi_token: phi_token
+        { pat phi_token(compile_operand_match): phi_token
             = "Constrain the MemPhi's ownership edge, the PhiToken input at \
                raw slot 0 (the owning Region's PhiToken output), which \
                `.input(0, p)` also names. See PhiPat.phi_token for the \
