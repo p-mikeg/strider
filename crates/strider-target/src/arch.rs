@@ -671,12 +671,10 @@ impl SleighArch {
     ///
     /// # Errors
     ///
-    /// A volatile range outside the REGISTER space, or a name `regs` does not
-    /// declare.
-    pub fn volatile_register_ranges(
-        &self,
-        regs: &rsleigh::SleighRegs,
-    ) -> crate::Result<Vec<core::ops::Range<u64>>> {
+    /// A volatile range outside the REGISTER space, or a name this arch's
+    /// register table does not declare.
+    pub fn volatile_register_ranges(&self) -> crate::Result<Vec<core::ops::Range<u64>>> {
+        let regs = self.names().regs();
         let pspec = self.pspec();
         let mut ranges = Vec::new();
         for range in pspec.volatile_ranges {
@@ -926,7 +924,7 @@ mod tests {
         for preset in ArchPreset::ALL {
             let arch = preset.arch();
             let regs = arch.probe_regs();
-            let ranges = arch.volatile_register_ranges(&regs).expect("resolves");
+            let ranges = arch.volatile_register_ranges().expect("resolves");
             let volatile = |name: &str| {
                 let vn = regs.name_to_vn(name).expect(name);
                 let end = vn.addr_off + u64::from(vn.size);
