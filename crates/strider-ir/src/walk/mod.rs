@@ -242,7 +242,7 @@ impl GraphWalkInfo {
 
     /// Every producer before its consumers unless the use closes a def-use
     /// cycle (a loop's `Region` or phi), a root first.
-    pub fn reverse_postorder(&self, graph: &Graph) -> Vec<NodeId> {
+    pub(crate) fn reverse_postorder(&self, graph: &Graph) -> Vec<NodeId> {
         let mut rpo: Vec<_> = self.postorder(graph).collect();
         rpo.reverse();
         rpo
