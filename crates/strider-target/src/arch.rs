@@ -41,12 +41,13 @@ impl Endianness {
     /// container.off)` bytes above the LSB.
     #[must_use]
     pub fn slice_shift_bits(self, reg: &rsleigh::Vn, container: &rsleigh::Vn) -> Option<u64> {
-        let within = reg.addr_off.checked_sub(container.addr_off)?;
+        if !vn_container::vn_contains(container, reg) {
+            return None;
+        }
+        let within = reg.addr_off - container.addr_off;
         let bytes = match self {
             Self::Little => within,
-            Self::Big => u64::from(container.size)
-                .checked_sub(u64::from(reg.size))?
-                .checked_sub(within)?,
+            Self::Big => u64::from(container.size) - u64::from(reg.size) - within,
         };
         bytes.checked_mul(8)
     }
@@ -104,11 +105,20 @@ mod endianness_tests {
         let high = reg(4, 4);
         assert_eq!(Little.slice_shift_bits(&reg(0, 1), &high), None);
         assert_eq!(Big.slice_shift_bits(&reg(0, 1), &high), None);
-        // Starting inside but overhanging the end: only the big-endian arm
-        // subtracts the sizes, so only it can see this one.
+        // Starting inside but overhanging the end.
         let container = reg(0, 4);
         assert_eq!(Big.slice_shift_bits(&reg(0, 8), &container), None);
         assert_eq!(Big.slice_shift_bits(&reg(2, 4), &container), None);
+        assert_eq!(Little.slice_shift_bits(&reg(0, 8), &container), None);
+        assert_eq!(Little.slice_shift_bits(&reg(2, 4), &container), None);
+        // Same offsets in another space are not the same bytes.
+        let unique = Vn {
+            addr_off: 0,
+            addr_space: VnSpace::UNIQUE,
+            size: 1,
+        };
+        assert_eq!(Little.slice_shift_bits(&unique, &container), None);
+        assert_eq!(Big.slice_shift_bits(&unique, &container), None);
     }
 
     #[test]
