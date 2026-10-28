@@ -311,3 +311,13 @@ pub(crate) fn integer_inputs(bits: u32, signed: bool, dst: Fmt) -> Vec<i128> {
     out.dedup();
     out
 }
+
+/// `got` against the reference a rounding test computed: a value matches
+/// exactly, and no value means the answer must be a NaN of `dst`, whose
+/// payload p-code leaves unspecified.
+pub(crate) fn check_against(dst: Fmt, got: u128, want: Option<u128>, what: &str) {
+    match want {
+        Some(w) => assert_eq!(got, w, "{what}: got {got:#x}, want {w:#x}"),
+        None => assert!(dst.is_nan(got), "{what}: {got:#x} is no NaN"),
+    }
+}
