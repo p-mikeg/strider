@@ -215,8 +215,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // exactly what is written.
             Opcode::Store => {
                 let declared = self.lifter.declared_reg_vns();
-                if let Some(vn) = super::pcode_consts::register_store_target(insn, consts, declared)
-                {
+                if let Some(vn) = super::pcode_consts::register_slot_of(insn, consts, declared) {
                     self.add_def(&vn, r, defs, exp);
                 } else if super::pcode_consts::is_register_space_access(insn) {
                     for vn in

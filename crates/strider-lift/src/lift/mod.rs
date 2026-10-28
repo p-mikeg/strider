@@ -260,15 +260,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             let mut consts = pcode_consts::PcodeConsts::default();
             for wrapped in &region.insns {
                 consts.observe(wrapped.addr, &wrapped.insn);
-                let slot = match wrapped.insn.opcode {
-                    rsleigh::Opcode::Store => {
-                        pcode_consts::register_store_target(&wrapped.insn, &consts, declared)
-                    }
-                    rsleigh::Opcode::Load => {
-                        pcode_consts::register_load_source(&wrapped.insn, &consts, declared)
-                    }
-                    _ => None,
-                };
+                let slot = pcode_consts::register_slot_of(&wrapped.insn, &consts, declared);
                 if let Some(vn) = slot.and_then(|s| vn_container::smallest_enclosing(declared, &s))
                 {
                     found.insert(vn);
