@@ -120,26 +120,25 @@ fn mask_to(v: u128, size_bytes: u32) -> u128 {
     v & strider_ir::node::low_bits_mask_u128(size_bytes.saturating_mul(8) as usize)
 }
 
-/// The register a STORE writes, when it addresses the REGISTER space and its
-/// address resolves. `None` for an ordinary memory store, and for a register
-/// store this cannot name, where the lift takes its opaque path rather than
-/// writing the wrong register.
-pub(crate) fn register_store_target(
+/// The register a STORE writes or a LOAD reads, when it addresses the
+/// REGISTER space and its address resolves. `None` for an ordinary memory
+/// access, for any other opcode, and for a register access this cannot name,
+/// where the lift takes its opaque path rather than naming the wrong
+/// register.
+///
+/// The width comes off the opcode: a STORE's is the value it stores, a LOAD's
+/// its output, which is what the value is read into.
+pub(crate) fn register_slot_of(
     insn: &rsleigh::Insn,
     consts: &PcodeConsts,
     declared: &[rsleigh::Vn],
 ) -> Option<rsleigh::Vn> {
-    register_slot(insn, consts, declared, insn.inputs.get(2)?.size)
-}
-
-/// The register a LOAD reads, on the same terms as [`register_store_target`].
-/// Width comes from the output, which is what the value is read into.
-pub(crate) fn register_load_source(
-    insn: &rsleigh::Insn,
-    consts: &PcodeConsts,
-    declared: &[rsleigh::Vn],
-) -> Option<rsleigh::Vn> {
-    register_slot(insn, consts, declared, insn.output.as_ref()?.size)
+    let size = match insn.opcode {
+        rsleigh::Opcode::Store => insn.inputs.get(2)?.size,
+        rsleigh::Opcode::Load => insn.output.as_ref()?.size,
+        _ => return None,
+    };
+    register_slot(insn, consts, declared, size)
 }
 
 /// Whether `insn` addresses the REGISTER space at all, independent of whether
