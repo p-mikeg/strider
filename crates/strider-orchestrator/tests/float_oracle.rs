@@ -132,3 +132,25 @@ fn quad_arithmetic_digest() {
     }
     assert_eq!(h, 2_093_867_834_129_376_716, "quad arithmetic digest");
 }
+
+#[test]
+fn a_reference_value_must_match_exactly() {
+    round::check_against(DOUBLE, 0x1234, Some(0x1234), "equal");
+}
+
+#[test]
+#[should_panic(expected = "wrong: got 0x1235, want 0x1234")]
+fn a_reference_value_rejects_another() {
+    round::check_against(DOUBLE, 0x1235, Some(0x1234), "wrong");
+}
+
+#[test]
+fn no_reference_value_demands_a_nan() {
+    round::check_against(DOUBLE, DOUBLE.nan(), None, "nan");
+}
+
+#[test]
+#[should_panic(expected = "not-a-nan: 0x0 is no NaN")]
+fn no_reference_value_rejects_a_number() {
+    round::check_against(DOUBLE, 0, None, "not-a-nan");
+}
