@@ -618,6 +618,14 @@
   zero-op `hb`, with nothing reported in `Cfg.incomplete`. The mirror case
   dropped a real `Store`. The IT-block state keeps degrading, as a `noflow`
   commit covers one address.
+- ARM: every arm of a resolved indirect branch (a jump table, a `mov pc, rX`,
+  whether the caller seeded it or `analyze`'s own resolver did) now carries
+  the ThumbEE mode live at the dispatch, as a direct edge does. It took the
+  entry's defaults plus the ISA-mode bit alone, so a dispatch inside a
+  ThumbEE region handed its arms `TEEMode=0`, which was then written over the
+  live paint: the arm decoded as plain Thumb, inventing a `Store` for
+  `stmia r2!,{r0}` where ThumbEE has a zero-op `hb`, with nothing reported in
+  `Cfg.incomplete`. The IT-block state keeps degrading here too.
 - Rust: `strider_target::Endianness::slice_shift_bits` returns the `None` its
   doc promises for a varnode outside the container on the little-endian arm
   too, where it compared neither the sizes nor the address space and answered
