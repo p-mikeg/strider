@@ -4,6 +4,7 @@
 //! [`Bindings`](crate::Bindings) at instantiation, so a `Template` is
 //! buildable by construction.
 
+use rustc_hash::FxHashSet;
 use strider_graph::{Graph, NeverCacheable, NodeId};
 
 use crate::capture::Capture;
@@ -80,12 +81,13 @@ impl TmplOutput {
 /// Materialised by [`instantiate`](crate::template::instantiate).
 pub struct Template {
     pub(crate) graph: Graph<TmplNode, TmplValue, NeverCacheable>,
-    /// Captures a `*_const_with!` closure reads at instantiation. They have no
-    /// vertex, so only the declaration makes them visible to the coverage
-    /// check.
+    /// Captures a `*_const_with!` closure reads at instantiation and cannot
+    /// do without. They have no vertex, so only the declaration makes them
+    /// visible to the coverage check.
     declared_captures: Vec<Capture>,
-    /// The subset of `declared_captures` the closure reads as an `Option`, so
-    /// the coverage check asks only that the LHS mention them.
+    /// Captures a closure reads as an `Option`, disjoint from
+    /// `declared_captures`, so the coverage check asks only that the LHS
+    /// mention them.
     optional_captures: Vec<Capture>,
     /// Why the builder refused the template, reported by [`Self::root`].
     rejected: Option<String>,
@@ -120,9 +122,9 @@ impl Template {
         crate::graph_ext::derive_root(&self.graph)
     }
 
-    /// Drives the rewrite engine's construction-time coverage check, which
-    /// confirms the LHS binds every capture the RHS references.
-    pub fn referenced_captures(&self) -> impl Iterator<Item = Capture> + '_ {
+    /// Captures the RHS cannot instantiate without: a value vertex, an output
+    /// type inheriting a binding's width, or a non-`Option` declaration.
+    fn required_captures(&self) -> impl Iterator<Item = Capture> + '_ {
         self.graph
             .all_value_ids()
             .filter_map(|v| match self.graph.value_kind_ref(v) {
@@ -139,11 +141,25 @@ impl Template {
             .chain(self.declared_captures.iter().copied())
     }
 
-    /// The referenced captures the closure reads as an `Option`. The coverage
-    /// check asks only that the LHS bind these somewhere, not on every
-    /// alternation arm.
+    /// Drives the rewrite engine's construction-time coverage check, which
+    /// confirms the LHS binds every capture the RHS references.
+    pub fn referenced_captures(&self) -> impl Iterator<Item = Capture> + '_ {
+        self.required_captures()
+            .chain(self.optional_captures.iter().copied())
+    }
+
+    /// The referenced captures no use needs bound. The coverage check asks
+    /// only that the LHS bind these somewhere, not on every alternation arm.
+    ///
+    /// A declaration relaxes one closure's own read, so a capture some OTHER
+    /// use needs is subtracted here: an arm that leaves it unbound would pass
+    /// construction and then fail `instantiate`, which is not a skip.
     pub fn optional_captures(&self) -> impl Iterator<Item = Capture> + '_ {
-        self.optional_captures.iter().copied()
+        let required: FxHashSet<Capture> = self.required_captures().collect();
+        self.optional_captures
+            .iter()
+            .copied()
+            .filter(move |c| !required.contains(c))
     }
 }
 
