@@ -52,81 +52,57 @@ fn next_pcode_addr(addr: PcodeInsnAddr, lift_res: &rsleigh::LiftRes) -> Result<P
     })
 }
 
-/// The reader had no bytes at this address, as opposed to Sleigh rejecting the
-/// bytes it did get.
-#[derive(Debug)]
-pub(super) struct UnmappedAddr(pub(super) u64);
-
-impl std::fmt::Display for UnmappedAddr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:#x} is not mapped", self.0)
-    }
+/// Why a decode produced no instruction, carried as the `anyhow` payload the
+/// triage sites read back.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum DecodeFailure {
+    /// The reader had no bytes here, as opposed to Sleigh rejecting the bytes
+    /// it did get.
+    Unmapped(u64),
+    /// No instruction decodes here: Sleigh rejected the bytes, or
+    /// [`crate::CfgOptions::data_ranges`] marks them as data.
+    NotCode { addr: u64, marked_data: bool },
+    /// A seeded arm's code fell through past the function's end.
+    PastEnd(PcodeInsnAddr),
 }
 
-impl std::error::Error for UnmappedAddr {}
-
-/// No instruction decodes at this address: Sleigh rejected the bytes, or
-/// [`crate::CfgOptions::data_ranges`] marks them as data.
-#[derive(Debug)]
-pub(super) struct NotCode {
-    pub(super) addr: u64,
-    pub(super) marked_data: bool,
-}
-
-impl std::fmt::Display for NotCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        if self.marked_data {
-            write!(f, "{:#x} is marked as data", self.addr)
-        } else {
-            write!(f, "{:#x} does not decode", self.addr)
+impl DecodeFailure {
+    /// The machine address the verdict names, whatever address the decode was
+    /// asked to start from: a region's sequential decode fails several
+    /// instructions past its own start, and the two sites that mean "at the
+    /// address I asked for" compare this against theirs.
+    pub(super) fn addr(self) -> u64 {
+        match self {
+            Self::Unmapped(addr) | Self::NotCode { addr, .. } => addr,
+            Self::PastEnd(at) => at.machine_addr.addr,
         }
     }
 }
 
-impl std::error::Error for NotCode {}
-
-/// The [`NotCode`] verdict for the instruction at `addr`, `None` for any other
-/// failure, or for one at another address.
-pub(super) fn not_code_at(err: &anyhow::Error, addr: PcodeInsnAddr) -> Option<&NotCode> {
-    err.downcast_ref::<NotCode>()
-        .filter(|n| n.addr == addr.machine_addr.addr)
-}
-
-/// The address `err` holds no instruction at, whatever address the decode was
-/// asked to start from: a region's sequential decode fails several
-/// instructions past its own start.
-pub(super) fn not_code_addr(err: &anyhow::Error) -> Option<u64> {
-    err.downcast_ref::<NotCode>().map(|n| n.addr)
-}
-
-/// The address `err` could not read, wherever the decode started.
-pub(super) fn unmapped_addr(err: &anyhow::Error) -> Option<u64> {
-    err.downcast_ref::<UnmappedAddr>().map(|u| u.0)
-}
-
-/// A seeded arm's code fell through past the function's end, at this address.
-#[derive(Debug)]
-pub(super) struct PastEnd(pub(super) PcodeInsnAddr);
-
-impl std::fmt::Display for PastEnd {
+impl std::fmt::Display for DecodeFailure {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "a seeded arm's code falls through past the function's end at {:#x}",
-            self.0.machine_addr.addr
-        )
+        match self {
+            Self::Unmapped(addr) => write!(f, "{addr:#x} is not mapped"),
+            Self::NotCode {
+                addr,
+                marked_data: true,
+            } => write!(f, "{addr:#x} is marked as data"),
+            Self::NotCode {
+                addr,
+                marked_data: false,
+            } => write!(f, "{addr:#x} does not decode"),
+            Self::PastEnd(at) => write!(
+                f,
+                "a seeded arm's code falls through past the function's end at {:#x}",
+                at.machine_addr.addr
+            ),
+        }
     }
 }
 
-impl std::error::Error for PastEnd {}
+impl std::error::Error for DecodeFailure {}
 
-/// Where `err` ran past the function's end, if that is why it failed.
-pub(super) fn past_end_addr(err: &anyhow::Error) -> Option<PcodeInsnAddr> {
-    err.downcast_ref::<PastEnd>().map(|p| p.0)
-}
-
-/// Whether `err` is a decode the reader could not supply the bytes for, at
-/// `addr` or partway into the instruction there.
+/// The decode verdict `err` carries, `None` for any other failure.
 ///
 /// Read at both ends of a failed decode: [`RegionBuilder::build`] seals its
 /// region and seats a stub when a sequential fall-through lands on unmapped
@@ -134,9 +110,8 @@ pub(super) fn past_end_addr(err: &anyhow::Error) -> Option<PcodeInsnAddr> {
 /// Any other failure is Sleigh rejecting bytes it fully read, and the region
 /// under construction is then real code whose extent is unknown; a stub seated
 /// at its start would discard it.
-pub(super) fn is_unmapped_start(err: &anyhow::Error, addr: PcodeInsnAddr) -> bool {
-    err.downcast_ref::<UnmappedAddr>()
-        .is_some_and(|u| u.0 == addr.machine_addr.addr)
+pub(super) fn decode_failure(err: &anyhow::Error) -> Option<DecodeFailure> {
+    err.downcast_ref::<DecodeFailure>().copied()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -386,12 +361,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 | rsleigh::error::GenericError::Base(
                     rsleigh::error::BaseError::DataUnavailErr
                     | rsleigh::error::BaseError::PartiallyInitializedInsn,
-                ) => anyhow::Error::new(UnmappedAddr(addr)).context(msg),
+                ) => anyhow::Error::new(DecodeFailure::Unmapped(addr)).context(msg),
                 // Every decode Sleigh rejects (`BadDataError`, an unimplemented
                 // constructor) surfaces as a C++ exception.
                 rsleigh::error::GenericError::Base(
                     rsleigh::error::BaseError::UnexpectedCppException(_),
-                ) => anyhow::Error::new(NotCode {
+                ) => anyhow::Error::new(DecodeFailure::NotCode {
                     addr,
                     marked_data: false,
                 })
@@ -408,7 +383,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         if addr == self.builder.start_addr.addr {
             return self.lift_one(addr);
         }
-        let data = || NotCode {
+        let data = || DecodeFailure::NotCode {
             addr,
             marked_data: true,
         };
@@ -972,16 +947,18 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     // drops the arm, as running past the end does, unless a
                     // call before them seals it.
                     let off_arm = self.builder.descent.is_some();
-                    let unmapped = is_unmapped_start(&e, cur_addr);
+                    let here =
+                        decode_failure(&e).filter(|f| f.addr() == cur_addr.machine_addr.addr);
+                    let unmapped = matches!(here, Some(DecodeFailure::Unmapped(_)));
                     if unmapped && !off_arm {
                         return self.seal_at_unmapped_fallthrough(cur_addr);
                     }
-                    let (marked_data, reason) = if unmapped {
-                        (false, crate::Reason::UnmappedTarget)
-                    } else if let Some(n) = not_code_at(&e, cur_addr) {
-                        (n.marked_data, crate::Reason::UndecodableTarget)
-                    } else {
-                        return Err(e);
+                    let (marked_data, reason) = match here {
+                        Some(DecodeFailure::Unmapped(_)) => (false, crate::Reason::UnmappedTarget),
+                        Some(DecodeFailure::NotCode { marked_data, .. }) => {
+                            (marked_data, crate::Reason::UndecodableTarget)
+                        }
+                        _ => return Err(e),
                     };
                     if self.seal_at_call_not_returning(cur_addr, reason)? {
                         return Ok(());
@@ -1251,7 +1228,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Only a [`crate::FunctionBound::Size`] end gets here. An open bound puts
     /// only addresses below the entry out of range, no region it decodes
     /// starts there, and a fall-through only moves up. Off a seeded arm it is
-    /// a [`PastEnd`] `Err`, which drops the arm: a real arm stays inside the
+    /// a [`DecodeFailure::PastEnd`] `Err`, which drops the arm: a real arm stays inside the
     /// function.
     fn seal_past_function_end(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
         let advanced_past_start = cur_addr.machine_addr.addr != self.start_addr.machine_addr.addr;
@@ -1259,7 +1236,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             return Ok(false);
         }
         if self.builder.descent.is_some() {
-            return Err(PastEnd(cur_addr).into());
+            return Err(DecodeFailure::PastEnd(cur_addr).into());
         }
         self.seal_at_fallthrough_stub(cur_addr)?;
         self.builder

@@ -3,9 +3,7 @@ mod region_builder;
 mod split;
 
 pub(crate) use flow::{FlowCommit, FlowContext, FlowVars};
-use region_builder::{
-    RegionBuilder, is_unmapped_start, not_code_addr, not_code_at, past_end_addr, unmapped_addr,
-};
+use region_builder::{DecodeFailure, RegionBuilder, decode_failure};
 
 use std::collections::BTreeMap;
 
@@ -846,12 +844,13 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // whose first instruction does not exist has nothing to analyse,
         // so it stays an `Err`.
         if !is_arm && let Some(parent) = parent_region {
-            let reason = if is_unmapped_start(&e, address) {
-                Some(crate::Reason::UnmappedTarget)
-            } else if seeded_by.is_none() && not_code_at(&e, address).is_some() {
-                Some(crate::Reason::UndecodableTarget)
-            } else {
-                None
+            let here = decode_failure(&e).filter(|f| f.addr() == address.machine_addr.addr);
+            let reason = match here {
+                Some(DecodeFailure::Unmapped(_)) => Some(crate::Reason::UnmappedTarget),
+                Some(DecodeFailure::NotCode { .. }) if seeded_by.is_none() => {
+                    Some(crate::Reason::UndecodableTarget)
+                }
+                _ => None,
             };
             if let Some(reason) = reason {
                 self.incomplete.insert(address, reason);
@@ -867,22 +866,22 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // failure carrying its own address (past the end, unmapped, not code)
         // is named there; any other names the item itself.
         if seeded_by.is_some() {
-            let (at, reason) = if is_unmapped_start(&e, address) {
-                (address, crate::Reason::UnmappedTarget)
-            } else if let Some(gap) = unmapped_addr(&e) {
-                (
+            let (at, reason) = match decode_failure(&e) {
+                // The unmapped byte IS the one asked for: report the pcode
+                // address, which carries the insn index the gap address cannot.
+                Some(DecodeFailure::Unmapped(gap)) if gap == address.machine_addr.addr => {
+                    (address, crate::Reason::UnmappedTarget)
+                }
+                Some(DecodeFailure::Unmapped(gap)) => (
                     PcodeInsnAddr::at_machine_start(gap),
                     crate::Reason::UnmappedTarget,
-                )
-            } else if let Some(end) = past_end_addr(&e) {
-                (end, crate::Reason::PastFunctionEnd)
-            } else if let Some(bad) = not_code_addr(&e) {
-                (
+                ),
+                Some(DecodeFailure::PastEnd(end)) => (end, crate::Reason::PastFunctionEnd),
+                Some(DecodeFailure::NotCode { addr: bad, .. }) => (
                     PcodeInsnAddr::at_machine_start(bad),
                     crate::Reason::UndecodableTarget,
-                )
-            } else {
-                (address, crate::Reason::UndecodableTarget)
+                ),
+                None => (address, crate::Reason::UndecodableTarget),
             };
             self.incomplete.insert(at, reason);
         }
