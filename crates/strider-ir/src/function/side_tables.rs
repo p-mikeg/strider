@@ -4,7 +4,6 @@ use cranelift_entity::{SecondaryMap, entity_impl};
 use entity_utils::{EntityInterner, UnionDag};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::AssumptionOptions;
 use crate::graph::NodeIdRemap;
 use crate::node::{NodeId, ValueId};
 
@@ -89,10 +88,6 @@ pub struct SideTables {
     /// one.  The call node carries no such value, so this is the only record
     /// that a callee may have received it.
     call_register_frame_reach: Option<i128>,
-    /// The claims in force: every set `Function::assume` added, none before
-    /// the first.  The memory classes and the frame-escape verdict were
-    /// computed under them.
-    assumptions: AssumptionOptions,
 }
 
 impl SideTables {
@@ -107,8 +102,6 @@ impl SideTables {
             initial_var_index: FxHashMap::default(),
             frame_escape: Cell::default(),
             call_register_frame_reach: None,
-            // A function claims nothing until `Function::assume` adds some.
-            assumptions: AssumptionOptions::none(),
         }
     }
 
@@ -242,26 +235,6 @@ impl SideTables {
         self.frame_escape.set(None);
     }
 
-    /// The claims in force; see [`crate::Function::assume`].
-    #[inline]
-    pub fn assumptions(&self) -> &AssumptionOptions {
-        &self.assumptions
-    }
-
-    /// Merges `claims` into the claims in force; none is withdrawn.  A claim
-    /// stays in force once stated, even one inert on its own
-    /// (`callee_preserves_stack_args`).  Returns whether it added one, in
-    /// which case the caller owes [`Self::invalidate_analyses`], as
-    /// [`crate::Function::assume`] pays it.
-    #[must_use]
-    pub(crate) fn assume(&mut self, claims: &AssumptionOptions) -> bool {
-        if self.assumptions.holds_all(claims) {
-            return false;
-        }
-        self.assumptions.union_with(claims);
-        true
-    }
-
     /// Memoized frame-escape verdict, or `None` when not yet computed.
     #[inline]
     pub fn frame_escape(&self) -> Option<bool> {
@@ -349,8 +322,6 @@ impl SideTables {
             frame_escape,
             // Holds no id: a fact about the lifted calls.
             call_register_frame_reach: _,
-            // Holds no id: every set `Function::assume` added.
-            assumptions: _,
         } = self;
         asm_fingerprints.remap(|old| remap.node_old_to_new(old));
         // Both the slot key and its interned base are ValueIds, so the map and
@@ -457,55 +428,15 @@ mod tests {
         assert_eq!(st.frame_escape(), None, "clear invalidates the memo");
     }
 
-    /// A fresh table claims nothing; a merge says whether it added a claim,
-    /// and leaves the memos to the caller.
     #[test]
-    fn assume_merges_and_says_whether_it_added() {
-        let mut st = SideTables::new();
-        assert_eq!(
-            st.assumptions(),
-            &AssumptionOptions::none(),
-            "a fresh table holds no claim"
-        );
-        let (base, v) = (ValueId::new(0), ValueId::new(1));
-        st.set_stack_slot(v, base, -8);
-        assert!(
-            !st.assume(&AssumptionOptions::none()),
-            "the floor adds nothing"
-        );
-        let listed = AssumptionOptions {
-            noalias_allocators: [0x1000].into_iter().collect(),
-            ..AssumptionOptions::none()
-        };
-        st.set_frame_escape(true);
-        assert!(st.assume(&listed));
-        assert_eq!(st.assumptions(), &listed);
-        assert!(st.memory_decomp(v).1.is_some(), "the memo is the caller's");
-        assert_eq!(st.frame_escape(), Some(true));
-        assert!(!st.assume(&listed), "a claim in force adds nothing");
-        assert!(!st.assume(&AssumptionOptions::none()));
-        assert_eq!(
-            st.assumptions(),
-            &listed,
-            "a narrower set withdraws nothing"
-        );
-    }
-
-    #[test]
-    fn invalidate_analyses_drops_the_memos_and_keeps_the_claims() {
-        let mut st = SideTables::new();
-        let listed = AssumptionOptions {
-            noalias_allocators: [0x1000].into_iter().collect(),
-            ..AssumptionOptions::none()
-        };
-        assert!(st.assume(&listed));
+    fn invalidate_analyses_drops_the_memos() {
+        let st = SideTables::new();
         let (base, v) = (ValueId::new(0), ValueId::new(1));
         st.set_stack_slot(v, base, -8);
         st.set_frame_escape(true);
         st.invalidate_analyses();
         assert_eq!(st.memory_decomp(v), (MemDecomp::Unknown, None));
         assert_eq!(st.frame_escape(), None);
-        assert_eq!(st.assumptions(), &listed, "the claims survive");
     }
 
     // The union is order-independent, deduplicating and never dropping an entry.
