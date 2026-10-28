@@ -2547,11 +2547,7 @@ fn reassoc_mul_is_exact_at_every_carrier_width() -> Result<()> {
     ];
     for ty in widths {
         let bits = ty.bit_width();
-        let mask = if bits >= 128 {
-            u128::MAX
-        } else {
-            (1u128 << bits) - 1
-        };
+        let mask = width_mask(bits);
         for &c1 in &edge_coefficients(bits) {
             for &c2 in &edge_coefficients(bits) {
                 let (mut fg, base) = nested_mul_shape(ty, c1, c2)?;
@@ -2608,6 +2604,27 @@ enum FactorForm {
     SubMul,
 }
 
+/// One side of a factoring shape: which arm of the rule's alternation it
+/// takes.
+#[derive(Clone, Copy, Debug)]
+enum FactorArm {
+    Bare,
+    Mul(u128),
+    Shl(u128),
+}
+
+impl FactorArm {
+    /// What the arm multiplies the base by, in `u128`: the rule's own
+    /// `coefficient`, independently written.
+    fn coefficient(self) -> u128 {
+        match self {
+            FactorArm::Bare => 1,
+            FactorArm::Mul(c) => c,
+            FactorArm::Shl(z) => 1u128 << z,
+        }
+    }
+}
+
 /// Builds one factoring shape over a base of type `ty`, returning the function
 /// and the base value. At `I1` the base is a comparison, the only non-constant
 /// one-bit value a test can produce.
@@ -2616,6 +2633,22 @@ fn factor_shape(
     ty: ValueType,
     c1: u128,
     c2: u128,
+) -> Result<(strider_ir::Function, strider_ir::node::ValueId)> {
+    let (left, right, subtract) = match form {
+        FactorForm::AddSelf => (FactorArm::Bare, FactorArm::Mul(c1), false),
+        FactorForm::SubSelf => (FactorArm::Bare, FactorArm::Mul(c1), true),
+        FactorForm::AddMul => (FactorArm::Mul(c1), FactorArm::Mul(c2), false),
+        FactorForm::SubMul => (FactorArm::Mul(c1), FactorArm::Mul(c2), true),
+    };
+    factor_arms_shape(ty, left, right, subtract)
+}
+
+/// `left(base) + right(base)`, or their difference, over a base of type `ty`.
+fn factor_arms_shape(
+    ty: ValueType,
+    left: FactorArm,
+    right: FactorArm,
+    subtract: bool,
 ) -> Result<(strider_ir::Function, strider_ir::node::ValueId)> {
     let byte_size = u32::try_from(if ty == ValueType::I1 {
         8
@@ -2632,35 +2665,96 @@ fn factor_shape(
         } else {
             x
         };
-        let k1 = b.build_int_const(c1, ty)?;
-        let m1 = b.build_int_binary_operation(base, k1, IntBinaryOp::Mul, ty)?;
-        match form {
-            FactorForm::AddSelf => b.build_int_binary_operation(base, m1, IntBinaryOp::Add, ty),
-            FactorForm::SubSelf => b.build_sub_as_add_neg(base, m1, ty),
-            FactorForm::AddMul | FactorForm::SubMul => {
-                let k2 = b.build_int_const(c2, ty)?;
-                let m2 = b.build_int_binary_operation(base, k2, IntBinaryOp::Mul, ty)?;
-                match form {
-                    FactorForm::AddMul => {
-                        b.build_int_binary_operation(m1, m2, IntBinaryOp::Add, ty)
-                    }
-                    _ => b.build_sub_as_add_neg(m1, m2, ty),
+        let mut arm = |a: FactorArm| -> Result<strider_ir::node::ValueId> {
+            let (k, op) = match a {
+                FactorArm::Bare => return Ok(base),
+                FactorArm::Mul(c) => (c, IntBinaryOp::Mul),
+                FactorArm::Shl(z) => (z, IntBinaryOp::ShiftLeft),
+            };
+            let k = b.build_int_const(k, ty)?;
+            b.build_int_binary_operation(base, k, op, ty)
+        };
+        let (l, r) = (arm(left)?, arm(right)?);
+        if subtract {
+            b.build_sub_as_add_neg(l, r, ty)
+        } else {
+            b.build_int_binary_operation(l, r, IntBinaryOp::Add, ty)
+        }
+    })?;
+    Ok((fg, captured.unwrap_or(x)))
+}
+
+/// Every ordered pairing of the rule's three arms, summed and differenced, at
+/// four widths. The shift arm's coefficient is `1 << Z`, the one that grows
+/// with the root's width, so each width also runs its own largest in-range
+/// count.
+#[test]
+fn factor_arm_pairs_fold_at_every_width() -> Result<()> {
+    for ty in [
+        ValueType::int(8),
+        ValueType::int(16),
+        ValueType::int(32),
+        ValueType::int(128),
+    ] {
+        let bits = ty.bit_width();
+        let mask = width_mask(bits);
+        let arms = [
+            FactorArm::Bare,
+            FactorArm::Mul(3),
+            FactorArm::Mul(mask),
+            FactorArm::Shl(1),
+            FactorArm::Shl(bits as u128 - 1),
+        ];
+        for left in arms {
+            for right in arms {
+                for subtract in [false, true] {
+                    let (l, r) = (left.coefficient(), right.coefficient());
+                    let want = if subtract {
+                        l.wrapping_sub(r)
+                    } else {
+                        l.wrapping_add(r)
+                    } & mask;
+                    let (mut fg, base) = factor_arms_shape(ty, left, right, subtract)?;
+                    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+                    let val = return_value(fg.graph())?;
+                    let root = fg.producer(val);
+                    let what = format!(
+                        "{left:?} {} {right:?} at {ty:?}",
+                        if subtract { '-' } else { '+' }
+                    );
+                    // Every unfolded shape roots at the `Add` the rule
+                    // matches, so this is what says the rule fired.
+                    assert!(
+                        !matches!(fg.node_kind(root), NodeKind::IntBinaryOp(IntBinaryOp::Add)),
+                        "{what} did not collapse: {:?}",
+                        fg.node_kind(root)
+                    );
+                    let got = linear_coeff(&fg, val, base)
+                        .map(|k| k & mask)
+                        .ok_or_else(|| {
+                            anyhow!("{what} left a shape that is no multiple of the base")
+                        })?;
+                    assert_eq!(got, want, "{what}");
                 }
             }
         }
-    })?;
-    let base = captured.unwrap_or(x);
-    Ok((fg, base))
+    }
+    Ok(())
+}
+
+/// The all-ones value of a `bits`-wide integer.
+fn width_mask(bits: usize) -> u128 {
+    if bits >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << bits) - 1
+    }
 }
 
 /// Edge coefficients at `bits`: 0, 1, 2, the width's max and max-1, and its
 /// sign bit.
 fn edge_coefficients(bits: usize) -> Vec<u128> {
-    let mask = if bits >= 128 {
-        u128::MAX
-    } else {
-        (1u128 << bits) - 1
-    };
+    let mask = width_mask(bits);
     let mut cs = vec![0, 1, 2, mask, mask.wrapping_sub(1), 1u128 << (bits - 1)];
     cs.iter_mut().for_each(|c| *c &= mask);
     cs.sort_unstable();
@@ -2687,11 +2781,7 @@ fn factor_coefficients_are_exact_at_every_carrier_width() -> Result<()> {
     ];
     for ty in widths {
         let bits = ty.bit_width();
-        let mask = if bits >= 128 {
-            u128::MAX
-        } else {
-            (1u128 << bits) - 1
-        };
+        let mask = width_mask(bits);
         for &c1 in &edge_coefficients(bits) {
             for &c2 in &edge_coefficients(bits) {
                 for form in [AddSelf, AddMul, SubSelf, SubMul] {
