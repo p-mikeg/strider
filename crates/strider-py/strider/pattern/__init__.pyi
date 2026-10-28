@@ -7,8 +7,9 @@ match-only affordances `.when()`, commutativity, `.of_width()`,
 in a `Template` operand raises `StriderError` naming its constructor.
 
 Compiling and matching a pattern is native recursion, so a query refuses
-a pattern the thread running it cannot recurse through: one of more than 256
-nodes, counting those nested through `true_branch` / `false_branch`, or one
+a pattern the thread running it cannot recurse through: one past the
+matcher's node cap, counting those nested through `true_branch` /
+`false_branch`, or one
 nested deeper than the thread's stack allows, raises `StriderError` instead of
 overflowing. A `threading.Thread` with a reduced `stack_size` accepts less
 nesting than the main thread.
