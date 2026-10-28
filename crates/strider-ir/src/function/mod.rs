@@ -1,6 +1,7 @@
 mod assumptions;
 pub(crate) mod dot;
 mod edit;
+mod facts;
 mod func;
 mod side_tables;
 mod text;
