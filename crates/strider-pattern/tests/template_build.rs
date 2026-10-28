@@ -370,7 +370,7 @@ fn instantiate_add_with_rhs_slot_err(r_slot: usize) -> String {
 fn instantiate_noncontiguous_raw_template_slots_errors() {
     let msg = instantiate_add_with_rhs_slot_err(2);
     assert!(
-        msg.contains("slot"),
+        msg.contains("non-contiguous input slots [0, 2]"),
         "error should name the slot-contiguity violation; got: {msg}"
     );
 }
@@ -594,7 +594,7 @@ fn a_gapped_template_output_slot_is_refused() {
     let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::int(64))
         .expect_err("a gapped output slot must be refused");
     assert!(
-        err.to_string().contains("non-contiguous output slots"),
+        err.to_string().contains("non-contiguous output slots [1]"),
         "{err}"
     );
 }
