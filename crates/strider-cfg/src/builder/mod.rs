@@ -417,12 +417,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             .region_graph
             .node_weight_mut(parent)
             .ok_or_else(|| anyhow!("invalid region index {parent:?}"))?;
-        let super::types::RegionTerminator::Switch {
-            target_vn,
-            targets,
-            addr: dispatch,
-        } = &mut region.terminator
-        else {
+        if !matches!(
+            region.terminator,
+            super::types::RegionTerminator::Switch { .. }
+        ) {
             // An x86 branch to an address one prefix into an instruction (a
             // `je` over a `lock`) re-enters the same instruction's decode, and
             // the edge is exact where that instruction is the owner's FIRST:
@@ -435,27 +433,19 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 self.incomplete.insert(addr, crate::Reason::InteriorTarget);
             }
             return Ok(());
-        };
+        }
         // One arm per seating, not every arm at the address: a table can name
         // one address in both ISA modes, and each arm enqueues its own work
         // item, so dropping them all at the first would leave the second
-        // nothing to consume and read as the no-arm violation below.
-        let seated = targets
-            .iter()
-            .position(|t| t.addr == addr.machine_addr.addr);
+        // nothing to consume and read as the no-arm violation the demote
+        // inside `drop_switch_arms_at` exists to avoid.
+        let dropped = region
+            .terminator
+            .drop_switch_arms_at(addr.machine_addr.addr, true);
         debug_assert!(
-            seated.is_some(),
+            dropped,
             "seated interior target {addr:?} names no arm of the Switch that routed it",
         );
-        if let Some(i) = seated {
-            targets.remove(i);
-        }
-        if targets.is_empty() {
-            region.terminator = super::types::RegionTerminator::UnresolvedIndirectBranch {
-                target_vn: *target_vn,
-                addr: *dispatch,
-            };
-        }
         // Reported whether or not an arm went with it: this path wires no edge,
         // so anything unsaid here leaves the site an arm short in silence.
         self.incomplete.insert(addr, crate::Reason::InteriorTarget);
@@ -726,24 +716,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let Some(region) = self.region_graph.node_weight_mut(site) else {
             return;
         };
-        let crate::RegionTerminator::Switch {
-            targets,
-            target_vn,
-            addr,
-        } = &mut region.terminator
-        else {
+        if !region
+            .terminator
+            .drop_switch_arms_at(target.machine_addr.addr, false)
+        {
             return;
-        };
-        let before = targets.len();
-        targets.retain(|t| t.addr != target.machine_addr.addr);
-        if targets.len() == before {
-            return;
-        }
-        if targets.is_empty() {
-            region.terminator = crate::RegionTerminator::UnresolvedIndirectBranch {
-                target_vn: *target_vn,
-                addr: *addr,
-            };
         }
         self.remove_arm_edge(site, target);
     }
