@@ -139,19 +139,26 @@ impl FlowVars {
         Ok(())
     }
 
-    /// `base` with the flow var named `var` set to `bit`, used to bake a
-    /// resolved interworking target's ISA mode into the context it decodes in.
-    /// Returns a clone of `base` unchanged when `var` is not a flow var of this
-    /// sla, or `base` is not one of our contexts.
+    /// `base` with the flow var named `var` set to `value`, used to carry a
+    /// live committed value onto an edge Sleigh never flowed along. Returns a
+    /// clone of `base` unchanged when `var` is not a flow var of this sla, or
+    /// `base` is not one of our contexts.
     #[must_use]
-    pub fn with_mode_bit(&self, base: &FlowContext, var: &str, bit: bool) -> FlowContext {
+    pub fn with_var(&self, base: &FlowContext, var: &str, value: u32) -> FlowContext {
         let mut ctx = base.clone();
         if let Some(i) = self.vars.iter().position(|name| name == var)
             && let Some(slot) = ctx.0.get_mut(i)
         {
-            *slot = u32::from(bit);
+            *slot = value;
         }
         ctx
+    }
+
+    /// [`Self::with_var`] for a one-bit var, which bakes a resolved
+    /// interworking target's ISA mode into the context it decodes in.
+    #[must_use]
+    pub fn with_mode_bit(&self, base: &FlowContext, var: &str, bit: bool) -> FlowContext {
+        self.with_var(base, var, u32::from(bit))
     }
 
     /// The vars where `have` disagrees with `want`, as `(name, want value)`.
@@ -220,6 +227,15 @@ mod tests {
             FlowContext(vec![1, 5])
         );
         assert_eq!(vars.with_mode_bit(&base, "nope", true), base);
+    }
+
+    /// The general setter is not a bit-setter: a flowing committed var wider
+    /// than one bit carries its whole value.
+    #[test]
+    fn with_var_sets_the_whole_value() {
+        let vars = arm_like();
+        let base = FlowContext(vec![0, 5]);
+        assert_eq!(vars.with_var(&base, "itmode", 9), FlowContext(vec![0, 9]));
     }
 
     /// A context built for another `FlowVars` (an empty one, say) must not
