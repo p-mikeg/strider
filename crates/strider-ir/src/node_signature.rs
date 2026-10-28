@@ -172,6 +172,12 @@ impl SlotList {
         }
         self.head.get(idx).copied().or(self.tail)
     }
+
+    /// [`Self::at`] with the slot's ordinal within a repeating tail, `None`
+    /// for a fixed head slot, so no caller re-derives the head length.
+    pub(crate) fn at_indexed(&self, idx: usize) -> Option<(Slot, Option<usize>)> {
+        Some((self.at(idx)?, idx.checked_sub(self.head.len())))
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

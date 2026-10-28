@@ -235,23 +235,20 @@ impl FunctionDotDumper<'_> {
             }
         };
 
-        let (label, color) = edge_style(self, node, idx);
+        let (label, tail_idx, color) = edge_style(self, node, idx);
 
-        // Call inputs are [ctrl, mem, target, sp, args...], so arg N is at
-        // 4 + N.  CallOther has no target slot, so its args start at 2.
-        let owned_label: Option<String> = if matches!(kind, NodeKind::Call { .. }) && idx == 3 {
-            Some("sp".to_owned())
-        } else if matches!(kind, NodeKind::Call { .. }) && idx >= 4 {
-            Some(format!("arg{}", idx - 4))
-        } else if matches!(kind, NodeKind::CallOther { .. }) && idx >= 2 {
-            Some(format!("arg{}", idx - 2))
-        } else if matches!(kind, NodeKind::CPoolRef | NodeKind::New) {
-            Some(format!("ref{idx}"))
-        } else if matches!(kind, NodeKind::Return) && idx >= 2 {
-            // Slots 2.. are the convention's return registers in ABI order.
-            self.return_ret_name(idx)
-        } else {
-            pred_index(kind, idx).map(|pred| format!("pred{pred}"))
+        // Every repeating input is `<slot name><ordinal>`, the ordinal from
+        // the signature's own head length. Two kinds read better otherwise:
+        // a `Return`'s tail slots are the convention's return registers in ABI
+        // order, and a control predecessor is named by its ordinal among the
+        // `Region`'s arms, which is what pairs it with a `Phi` input.
+        let owned_label: Option<String> = match tail_idx {
+            Some(_) if matches!(kind, NodeKind::Return) => self.return_ret_name(idx),
+            Some(n) if matches!(kind, NodeKind::Region | NodeKind::Phi | NodeKind::MemPhi) => {
+                Some(format!("pred{n}"))
+            }
+            Some(n) => Some(format!("{label}{n}")),
+            None => None,
         };
         let label_str: &str = owned_label.as_deref().unwrap_or(label);
 
@@ -267,15 +264,5 @@ impl FunctionDotDumper<'_> {
         if state.renders_per_use(self.function.graph(), parent_id) {
             self.emit_const_node(parent_id, &parent_dot_id, out);
         }
-    }
-}
-
-/// Predecessor index for an input that pairs across Region / Phi / MemPhi at a
-/// common join.  `None` for any other input.
-fn pred_index(kind: NodeKind, idx: usize) -> Option<usize> {
-    match kind {
-        NodeKind::Region => Some(idx),
-        NodeKind::Phi | NodeKind::MemPhi if idx >= 1 => Some(idx - 1),
-        _ => None,
     }
 }
