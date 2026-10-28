@@ -401,9 +401,9 @@ enum MockRomShape {
     Limited { addr: u64, size: usize, value: u64 },
     /// Serves every `(addr, size)`.
     AlwaysAnswer { value: u64 },
-    /// A byte run starting at `base`, served with no endianness swap and no
-    /// size cap.
-    RawBytes { base: u64, bytes: Vec<u8> },
+    /// Byte runs, each served verbatim from its own base with no endianness
+    /// swap and no size cap. A read must sit wholly inside one run.
+    Regions { runs: Vec<(u64, Vec<u8>)> },
 }
 
 impl MockRom {
@@ -444,8 +444,15 @@ impl MockRom {
 
     /// `bytes` verbatim from `base`; a read straying outside the run errors.
     pub fn raw_bytes(base: u64, bytes: Vec<u8>) -> Self {
+        Self::regions([(base, bytes)])
+    }
+
+    /// Several byte runs at once; a read must sit wholly inside one of them.
+    pub fn regions(runs: impl IntoIterator<Item = (u64, Vec<u8>)>) -> Self {
         Self {
-            shape: MockRomShape::RawBytes { base, bytes },
+            shape: MockRomShape::Regions {
+                runs: runs.into_iter().collect(),
+            },
         }
     }
 }
@@ -488,26 +495,31 @@ impl MockRom {
             } => (addr == *a && size == *s).then_some(*value),
             MockRomShape::AlwaysAnswer { value } => Some(*value),
             // Served bytewise by `read`.
-            MockRomShape::RawBytes { .. } => None,
+            MockRomShape::Regions { .. } => None,
         }
     }
 }
 
 impl ReadOnlyMemory for MockRom {
     fn read(&self, addr: u64, buf: &mut [u8]) -> Result<()> {
-        if let MockRomShape::RawBytes { base, bytes } = &self.shape {
-            let start =
-                usize::try_from(addr.checked_sub(*base).ok_or_else(|| {
-                    anyhow::anyhow!("MockRom: {addr:#x} below the base {base:#x}")
-                })?)?;
-            let end = start
-                .checked_add(buf.len())
-                .ok_or_else(|| anyhow::anyhow!("MockRom: read length overflow"))?;
-            let src = bytes
-                .get(start..end)
-                .ok_or_else(|| anyhow::anyhow!("MockRom: {addr:#x} unmapped"))?;
-            buf.copy_from_slice(src);
-            return Ok(());
+        if let MockRomShape::Regions { runs } = &self.shape {
+            for (base, bytes) in runs {
+                let Some(start) = addr
+                    .checked_sub(*base)
+                    .and_then(|o| usize::try_from(o).ok())
+                else {
+                    continue;
+                };
+                let Some(src) = start
+                    .checked_add(buf.len())
+                    .and_then(|end| bytes.get(start..end))
+                else {
+                    continue;
+                };
+                buf.copy_from_slice(src);
+                return Ok(());
+            }
+            anyhow::bail!("MockRom: {addr:#x} unmapped");
         }
         let size = buf.len();
         // Every shape resolves to a `u64`, so a wider read is unserviceable.
@@ -661,4 +673,57 @@ pub fn single_initial_var() -> (Function, rsleigh::Vn) {
     let mut t = Tb::with_vars(&[reg]);
     let v = t.read_var(&reg);
     (t.ret_val(v), reg)
+}
+
+#[cfg(test)]
+mod rom_tests {
+    use strider_ir::ReadOnlyMemory;
+
+    use super::MockRom;
+
+    const A: u64 = 0x1000;
+    const B: u64 = 0x2000;
+
+    fn two() -> MockRom {
+        MockRom::regions([(A, vec![1, 2, 3, 4]), (B, vec![9, 8])])
+    }
+
+    fn read(rom: &MockRom, addr: u64, n: usize) -> Option<Vec<u8>> {
+        let mut buf = vec![0u8; n];
+        rom.read(addr, &mut buf).ok().map(|()| buf)
+    }
+
+    #[test]
+    fn every_region_is_served() {
+        let rom = two();
+        assert_eq!(read(&rom, A, 4), Some(vec![1, 2, 3, 4]));
+        assert_eq!(read(&rom, A + 2, 2), Some(vec![3, 4]));
+        assert_eq!(read(&rom, B, 2), Some(vec![9, 8]));
+        assert_eq!(read(&rom, B + 1, 1), Some(vec![8]));
+    }
+
+    #[test]
+    fn a_read_overrunning_a_region_is_unmapped() {
+        // It must not fall through to a later region, nor wrap.
+        let rom = two();
+        assert_eq!(read(&rom, A + 2, 4), None);
+        assert_eq!(read(&rom, A + 4, 1), None);
+        assert_eq!(read(&rom, B + 2, 1), None);
+    }
+
+    #[test]
+    fn an_address_outside_every_region_is_unmapped() {
+        let rom = two();
+        assert_eq!(read(&rom, A - 1, 1), None);
+        assert_eq!(read(&rom, 0x1800, 1), None);
+        assert_eq!(read(&rom, 0x3000, 1), None);
+    }
+
+    #[test]
+    fn raw_bytes_is_one_region() {
+        let rom = MockRom::raw_bytes(A, vec![7, 7]);
+        assert_eq!(read(&rom, A, 2), Some(vec![7, 7]));
+        assert_eq!(read(&rom, A - 1, 1), None);
+        assert_eq!(read(&rom, A + 1, 2), None);
+    }
 }
