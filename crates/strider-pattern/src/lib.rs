@@ -32,7 +32,8 @@ pub use matcher::match_pat::{
     CaptureExt, Captured, Guarded, Limited, MatchPat, OfWidth, Ordered, ValueTy,
 };
 pub use matcher::{
-    CastMask, JoinConstraint, JoinPredicateFn, JoinedMatch, Matcher, Pattern, PostMatchFn,
+    CastMask, JoinConstraint, JoinPredicateFn, JoinedMatch, MAX_PATTERN_NODES, Matcher, Pattern,
+    PostMatchFn,
 };
 pub use node_builders::{
     CallOtherPat, CallPat, EntryPat, FunctionArgClass, FunctionArgPat, IfPat, IndirectBranchPat,
