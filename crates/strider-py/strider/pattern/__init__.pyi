@@ -51,12 +51,16 @@ ValueTy = Literal[
     "I80", "I96", "I112", "I128", "I256", "I512", "F16", "F32", "F64", "F80",
     "F128",
 ]
+#: Every `ValueTy`, lowercase spellings then uppercase.
+VALUE_TYPES: tuple[ValueTy, ...]
 
 #: Integer-comparison names accepted by `int_cmp`: the `IntCmpOp` variants, the
 #: strings `Match.op` reads back.
 IntCmpOpName = Literal[
     "Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow",
 ]
+#: Every `IntCmpOpName`, in the order `int_cmp` lists them.
+INT_CMP_OPS: tuple[IntCmpOpName, ...]
 
 #: Integer binary-op names accepted by `int_binary`: the `IntBinaryOp`
 #: variants.
@@ -64,23 +68,31 @@ IntBinaryOpName = Literal[
     "Add", "And", "Or", "Xor", "Div", "Sdiv", "Rem", "Srem",
     "ShiftRight", "SShiftRight", "ShiftLeft", "Mul",
 ]
+#: Every `IntBinaryOpName`, in the order `int_binary` lists them.
+INT_BINARY_OPS: tuple[IntBinaryOpName, ...]
 
 #: Boolean binary-op names accepted by `bool_binary`, the `I1` subset of
 #: `IntBinaryOpName`.
 BoolBinaryOpName = Literal[
     "And", "Or", "Xor",
 ]
+#: Every `BoolBinaryOpName`, in the order `bool_binary` lists them.
+BOOL_BINARY_OPS: tuple[BoolBinaryOpName, ...]
 
 #: Float binary-op names accepted by `float_binary`: the `FloatBinaryOp`
 #: variants.
 FloatBinaryOpName = Literal[
     "Add", "Mul", "Div",
 ]
+#: Every `FloatBinaryOpName`, in the order `float_binary` lists them.
+FLOAT_BINARY_OPS: tuple[FloatBinaryOpName, ...]
 
 #: Widening-operation names accepted by `int_extend`: the `ExtendOp` variants.
 ExtendOpName = Literal[
     "ZeroExtend", "SignExtend",
 ]
+#: Every `ExtendOpName`, in the order `int_extend` lists them.
+EXTEND_OPS: tuple[ExtendOpName, ...]
 
 class Match:
     """One result of a query: the nodes a pattern matched and what each
