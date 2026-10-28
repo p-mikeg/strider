@@ -2303,10 +2303,14 @@ fn lookup_op<Op: Copy>(
 // `parse_extend_op` have consumers outside this module.
 macro_rules! op_parser {
     (
-        $vis:vis $fn:ident, $ty:ty, $op_kind:literal,
+        $vis:vis $fn:ident, $names:ident, $ty:ty, $op_kind:literal,
         variants = [$($variant:ident),+ $(,)?]
         $(, rest_unreachable = $msg:literal)? $(,)?
     ) => {
+        /// Every name the parser accepts, published to Python so its
+        /// `Literal` alias is this list rather than a second copy of it.
+        pub(crate) const $names: &[&str] = &[$(stringify!($variant)),+];
+
         $vis fn $fn(name: &str) -> PyResult<$ty> {
             use $ty as Op;
             static VARIANTS: &[$ty] = &[$(Op::$variant),+];
@@ -2323,6 +2327,7 @@ macro_rules! op_parser {
 
 op_parser!(
     pub(crate) parse_int_cmp_op,
+    INT_CMP_OPS,
     strider_ir::IntCmpOp,
     "IntCmpOp",
     variants = [Equal, Less, Sless, Carry, Scarry, Sborrow]
@@ -2330,6 +2335,7 @@ op_parser!(
 
 op_parser!(
     parse_int_binary_op,
+    INT_BINARY_OPS,
     strider_ir::IntBinaryOp,
     "IntBinaryOp",
     variants = [
@@ -2350,6 +2356,7 @@ op_parser!(
 
 op_parser!(
     parse_bool_binary_op,
+    BOOL_BINARY_OPS,
     strider_ir::IntBinaryOp,
     "boolean binary op",
     variants = [And, Or, Xor],
@@ -2358,6 +2365,7 @@ op_parser!(
 
 op_parser!(
     parse_float_binary_op,
+    FLOAT_BINARY_OPS,
     strider_ir::FloatBinaryOp,
     "FloatBinaryOp",
     variants = [Add, Mul, Div]
@@ -2365,6 +2373,7 @@ op_parser!(
 
 op_parser!(
     pub(crate) parse_extend_op,
+    EXTEND_OPS,
     strider_ir::ExtendOp,
     "ExtendOp",
     variants = [ZeroExtend, SignExtend]
@@ -4414,6 +4423,30 @@ pub fn float_binary(op: &str, l: Py<PyAny>, r: Py<PyAny>) -> PyResult<PyFloatBin
 }
 
 pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    // The rosters the `Literal` type aliases in `strider/__init__.py` are
+    // built from: each is the list its own parser accepts, so neither can
+    // drift from the Rust enum behind it.
+    for (name, roster) in [
+        ("INT_CMP_OPS", INT_CMP_OPS),
+        ("INT_BINARY_OPS", INT_BINARY_OPS),
+        ("BOOL_BINARY_OPS", BOOL_BINARY_OPS),
+        ("FLOAT_BINARY_OPS", FLOAT_BINARY_OPS),
+        ("EXTEND_OPS", EXTEND_OPS),
+    ] {
+        m.add(name, pyo3::types::PyTuple::new_bound(py, roster))?;
+    }
+    // Lowercase (the `FromStr` spelling) then uppercase (what the readers
+    // emit), which is the order the stub lists and the parity test compares.
+    let widths = strider_ir::ValueType::SUPPORTED;
+    let value_types: Vec<String> = widths
+        .iter()
+        .map(|t| t.to_string())
+        .chain(widths.iter().map(|t| format!("{t:?}")))
+        .collect();
+    m.add(
+        "VALUE_TYPES",
+        pyo3::types::PyTuple::new_bound(py, value_types),
+    )?;
     m.add_class::<PyCapture>()?;
     m.add_class::<PyPat>()?;
     m.add_class::<PyIntBinaryPat>()?;
