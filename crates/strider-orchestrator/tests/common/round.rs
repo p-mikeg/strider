@@ -51,12 +51,17 @@ impl Fmt {
         (1 << (self.exp - 1)) - 1
     }
 
-    fn sign(self, neg: bool) -> u128 {
+    pub(crate) fn sign(self, neg: bool) -> u128 {
         u128::from(neg) << (self.bits() - 1)
     }
 
     pub(crate) fn inf(self, neg: bool) -> u128 {
         self.sign(neg) | ((1 << self.exp) - 1) << self.man
+    }
+
+    /// A quiet NaN; the payload is unspecified.
+    pub(crate) fn nan(self) -> u128 {
+        self.inf(false) | 1 << (self.man - 1)
     }
 
     fn max_finite(self, neg: bool) -> u128 {

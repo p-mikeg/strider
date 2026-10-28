@@ -11,7 +11,8 @@ use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Function, IRViewer, IRWalker, ValueType,
 };
 
-use super::quad::{self, DOUBLE, HALF, QUAD, SINGLE};
+use super::quad::{self, QUAD};
+use super::round::{DOUBLE, Fmt, HALF, SINGLE};
 use super::{inputs_of, producer_kind};
 
 #[derive(Clone, Copy, Debug)]
@@ -77,7 +78,7 @@ fn f64_to_f80(x: f64) -> u128 {
 
 /// An `f64` rounded to a half's bits, nearest even.
 fn f64_to_f16(x: f64) -> u16 {
-    use super::round::{DOUBLE, HALF, Mode};
+    use super::round::Mode;
     match HALF.convert(DOUBLE, u128::from(x.to_bits()), Mode::Even) {
         Some(b) => b as u16,
         None => 0x7e00 | (u16::from(x.is_sign_negative()) << 15),
@@ -95,7 +96,7 @@ fn narrow(ty: ValueType, x: f64) -> f64 {
 }
 
 /// The format of a float of `ty`.
-fn format(ty: ValueType) -> quad::Format {
+fn format(ty: ValueType) -> Fmt {
     match width(ty) {
         16 => HALF,
         32 => SINGLE,
