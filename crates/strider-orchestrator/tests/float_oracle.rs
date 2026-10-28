@@ -112,8 +112,12 @@ fn quad_arithmetic_digest() {
     for a in &s {
         eat(quad::neg(QUAD, *a));
         eat(quad::from_int(QUAD, *a as i128));
-        eat(quad::convert(QUAD, quad::DOUBLE, *a));
-        eat(quad::convert(quad::DOUBLE, QUAD, *a & u128::from(u64::MAX)));
+        eat(quad::convert(QUAD, round::DOUBLE, *a));
+        eat(quad::convert(
+            round::DOUBLE,
+            QUAD,
+            *a & u128::from(u64::MAX),
+        ));
         for b in &s {
             eat(quad::add(QUAD, *a, *b));
             eat(quad::mul(QUAD, *a, *b));
