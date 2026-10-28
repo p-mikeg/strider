@@ -5,27 +5,53 @@ use std::fmt;
 
 use crate::PcodeInsnAddr;
 
-/// Why an [`Incompleteness`] names an address.
-///
-/// The first two name a dispatch SITE, the key
-/// [`CfgOptions::known_targets`](crate::CfgOptions::known_targets) seeds; the
-/// other five a branch TARGET, which a direct edge reaches too.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Reason {
+/// Emits [`Reason`], its [`Reason::ALL`] roster and its [`Reason::name`]
+/// spellings from one row list, so a reason cannot reach the enum without
+/// reaching the roster Python publishes.
+macro_rules! reasons {
+    ($($(#[$doc:meta])* $variant:ident => $name:literal,)+) => {
+        /// Why an [`Incompleteness`] names an address.
+        ///
+        /// The first two name a dispatch SITE, the key
+        /// [`CfgOptions::known_targets`](crate::CfgOptions::known_targets)
+        /// seeds; the other five a branch TARGET, which a direct edge reaches
+        /// too.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum Reason {
+            $($(#[$doc])* $variant,)+
+        }
+
+        impl Reason {
+            /// Every reason, in the order one address's entries sort.
+            pub const ALL: [Reason; [$(stringify!($variant),)+].len()] =
+                [$(Reason::$variant,)+];
+
+            /// The spelling Python and the golden files use.
+            #[must_use]
+            pub fn name(self) -> &'static str {
+                match self {
+                    $(Self::$variant => $name,)+
+                }
+            }
+        }
+    };
+}
+
+reasons! {
     /// An indirect branch with no complete successor set. A CFG build names
     /// every dispatch it left without an edge. An analysis names a live
     /// placeholder, a seated `Switch` whose selector stopped deriving, a site
     /// still growing at the round cap, one whose answer lost a proved
     /// successor, narrowed or was withdrawn, and a return whose target is not
     /// provably the caller's and the caller did not seed.
-    UnresolvedBranch,
+    UnresolvedBranch => "unresolved_branch",
     /// A seated answer nothing verified. A CFG build names every seat. An
     /// analysis names a `Switch` holding exactly the caller's seed, every
     /// `TailCall` seat, a `Return` seat the caller made (where a failed
     /// re-check of it lands too), a p-code `RETURN` the caller seeded whose
     /// target is not provably the caller's, and an arm seated on a mode only
     /// its siblings' seed proved.
-    UnverifiedSeed,
+    UnverifiedSeed => "unverified_seed",
     /// Reached in two ISA modes: one region owns the bytes, so the losing
     /// edge's path decodes in the other mode. Held per p-code index, so a
     /// clash noted mid-instruction is its own entry.
@@ -36,12 +62,12 @@ pub enum Reason {
     /// reaches without a seeded arm wins over an arm, and the `Switch` loses
     /// every arm at that address, in both modes; any other pair is won by
     /// work-queue order, so neither decode is trusted.
-    IsaModeConflict,
+    IsaModeConflict => "isa_mode_conflict",
     /// Interior to a region but off every boundary one can start at (a MIPS
     /// delay slot too), or a region start a later decode stepped over. A
     /// direct branch keeps an inexact edge to the owning region; a `Switch`
     /// arm is dropped.
-    InteriorTarget,
+    InteriorTarget => "interior_target",
     /// No bytes back it: the edge leaves through an empty `TailCall` stub. The
     /// address is the instruction that could not be read whole, so a MIPS
     /// branch whose delay slot is unmapped names itself. An unmapped seeded
@@ -53,7 +79,7 @@ pub enum Reason {
     /// address is reported either way, and it says nothing about the table's
     /// bound, where an arm whose own decode runs into the bytes does. An
     /// unmapped ENTRY fails the whole build instead.
-    UnmappedTarget,
+    UnmappedTarget => "unmapped_target",
     /// Holds no instruction: bytes Sleigh rejects, or
     /// [`CfgOptions::data_ranges`](crate::CfgOptions::data_ranges) marks. A
     /// branch leaves through a `TailCall` stub; a fall-through past a call
@@ -67,7 +93,7 @@ pub enum Reason {
     /// already left here keeps it, as for [`Self::UnmappedTarget`]. The start
     /// of an arm, or of a region off one, whose decode fails for a reason no
     /// other variant names is named here too.
-    UndecodableTarget,
+    UndecodableTarget => "undecodable_target",
     /// Where a fall-through ran off a
     /// [`FunctionBound::Size`](crate::FunctionBound::Size) end, at the first
     /// address after the last instruction decoded: the end itself unless that
@@ -85,35 +111,10 @@ pub enum Reason {
     /// names it. Never under [`FunctionBound::Open`](crate::FunctionBound::Open):
     /// only an address below the entry is out of range there, and a
     /// fall-through moves up.
-    PastFunctionEnd,
+    PastFunctionEnd => "past_function_end",
 }
 
 impl Reason {
-    /// Every reason, in the order one address's entries sort.
-    pub const ALL: [Reason; 7] = [
-        Reason::UnresolvedBranch,
-        Reason::UnverifiedSeed,
-        Reason::IsaModeConflict,
-        Reason::InteriorTarget,
-        Reason::UnmappedTarget,
-        Reason::UndecodableTarget,
-        Reason::PastFunctionEnd,
-    ];
-
-    /// The spelling Python and the golden files use.
-    #[must_use]
-    pub fn name(self) -> &'static str {
-        match self {
-            Reason::UnresolvedBranch => "unresolved_branch",
-            Reason::UnverifiedSeed => "unverified_seed",
-            Reason::IsaModeConflict => "isa_mode_conflict",
-            Reason::InteriorTarget => "interior_target",
-            Reason::UnmappedTarget => "unmapped_target",
-            Reason::UndecodableTarget => "undecodable_target",
-            Reason::PastFunctionEnd => "past_function_end",
-        }
-    }
-
     /// Whether the address is a dispatch site rather than a branch target.
     #[must_use]
     pub fn is_site(self) -> bool {
@@ -198,6 +199,21 @@ mod tests {
             assert!(!set.is_empty(), "{reason:?}");
             assert_eq!(set.of(reason).collect::<Vec<_>>(), [at(0x1000)]);
         }
+    }
+
+    /// `ALL` is generated from the roster rows, so it cannot miss a variant;
+    /// what the rows still fix is the ORDER, and the doc promises the site
+    /// reasons are the leading run of it. Not `ALL == sorted`: `Ord` is
+    /// derived from the same row order, so that would hold whatever it is.
+    #[test]
+    fn the_site_reasons_are_the_leading_run_of_all() {
+        let sites = Reason::ALL.iter().filter(|r| r.is_site()).count();
+        assert!(sites > 0, "no site reason");
+        assert!(
+            Reason::ALL[..sites].iter().all(|r| r.is_site()),
+            "the site reasons must lead: {:?}",
+            Reason::ALL
+        );
     }
 
     #[test]
