@@ -9,9 +9,10 @@
 use strider_ir::IRViewer;
 use strider_ir::node::{FunctionArgSource, NodeKind};
 
-use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
 use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
+use crate::node_builders::delegate_node_pat;
+use crate::node_builders::node_pat::NodePat;
 
 /// Which index space [`FunctionArgPat::index`] refers to. Integer and float
 /// arguments are numbered separately, so the caller states the class.
@@ -24,12 +25,22 @@ pub enum FunctionArgClass {
     Any,
 }
 
-#[derive(Default)]
 pub struct FunctionArgPat {
     source: Option<FunctionArgSource>,
     class: FunctionArgClass,
     index: Option<u32>,
-    captures: Vec<Capture>,
+    inner: NodePat,
+}
+
+impl Default for FunctionArgPat {
+    fn default() -> Self {
+        Self {
+            source: None,
+            class: FunctionArgClass::default(),
+            index: None,
+            inner: NodePat::value(KindSpec::Any, 0),
+        }
+    }
 }
 
 impl FunctionArgPat {
@@ -52,27 +63,16 @@ impl FunctionArgPat {
         self
     }
 
-    /// Binds the carrier's value output. Repeatable: every capture binds it.
-    pub fn capture(mut self, c: Capture) -> Self {
-        self.captures.push(c);
-        self
-    }
-
-    /// Returns the value output at slot 0.
-    fn lower(self, b: &mut MatcherBuilder) -> PatValueRef {
+    /// Index, class and source carry no cross-binding state, so one node
+    /// predicate covers them all and short-circuits before child recursion.
+    fn lower(self) -> NodePat {
         let FunctionArgPat {
             source,
             class,
             index,
-            captures,
+            inner,
         } = self;
-        let node = b.node(KindSpec::Any);
-        let value_out = b.value_output(node, 0);
-
-        // Index, class and source carry no cross-binding state, so one node
-        // predicate covers them all and short-circuits before child recursion.
-        b.set_node_predicate(
-            value_out,
+        inner.with_node_predicate(move || {
             Box::new(move |matcher, node| {
                 let f = matcher.function();
                 if !is_carrier(f, node, class, index) {
@@ -103,20 +103,16 @@ impl FunctionArgPat {
                     }
                     _ => false,
                 }
-            }),
-        );
-        for c in captures {
-            b.capture_output(value_out, c);
-        }
-        value_out
+            })
+        })
     }
 
     pub fn build(self) -> Pattern {
-        let mut b = MatcherBuilder::new();
-        self.lower(&mut b);
-        b.finish()
+        self.lower().build()
     }
 }
+
+delegate_node_pat!(FunctionArgPat, inner, [capture]);
 
 /// Whether `node` produces a carrier of `class` at `index`, `index` `None`
 /// accepting any position within the class.
@@ -147,7 +143,7 @@ fn is_carrier(
 
 impl MatchPat for FunctionArgPat {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.lower(b)
+        self.lower().compile_anchored(b)
     }
 }
 
