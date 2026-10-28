@@ -214,8 +214,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // Both guards are unreachable through `container_of` ->
         // `largest_container_in`, which guarantees containment; together they
         // turn a malformed Sleigh spec into a clean lift failure rather than
-        // corrupt IR, in release and debug alike.  A `None` here is the
-        // big-endian arm's subtraction going below zero.
+        // corrupt IR, in release and debug alike.
         let Some(shift_bits) = self
             .lifter
             .arch()
