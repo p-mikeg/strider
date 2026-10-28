@@ -92,18 +92,19 @@ pub(super) fn role_color(role: SlotRole) -> &'static str {
     }
 }
 
-/// `(label, color)` for the edge into `consumer`'s `input_idx`-th slot, both
-/// driven by the consumer's expected signature.
+/// `(label, ordinal within a repeating tail, color)` for the edge into
+/// `consumer`'s `input_idx`-th slot, all three driven by the consumer's
+/// expected signature.
 pub(super) fn edge_style(
     dumper: &FunctionDotDumper<'_>,
     consumer: NodeId,
     input_idx: usize,
-) -> (&'static str, &'static str) {
+) -> (&'static str, Option<usize>, &'static str) {
     let kind = dumper.function.node_kind(consumer);
     let sig = expected_signature(kind);
-    match sig.inputs.at(input_idx) {
-        Some(slot) => (slot.name, role_color(slot.role)),
-        None => ("", "#cccccc"),
+    match sig.inputs.at_indexed(input_idx) {
+        Some((slot, tail_idx)) => (slot.name, tail_idx, role_color(slot.role)),
+        None => ("", None, "#cccccc"),
     }
 }
 
