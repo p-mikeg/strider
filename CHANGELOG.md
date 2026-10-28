@@ -599,6 +599,16 @@
 
 ### Fixed
 
+- ARM: a direct edge to an address the build recorded no `inst_next` for
+  (every forward `b`, and every conditional whose fall-through terminates
+  before the taken target) now carries the ThumbEE mode live at the branch.
+  It carried only the ISA-mode bit, so `TEEMode`, which the sla declares
+  flowing, degraded to the entry default AND was written over the live paint
+  at the target: after an `enterx`, a forward branch decoded its target as
+  plain Thumb, inventing a `Store` for `stmia r2!,{r0}` where ThumbEE has a
+  zero-op `hb`, with nothing reported in `Cfg.incomplete`. The mirror case
+  dropped a real `Store`. The IT-block state keeps degrading, as a `noflow`
+  commit covers one address.
 - Rust: `strider_target::Endianness::slice_shift_bits` returns the `None` its
   doc promises for a varnode outside the container on the little-endian arm
   too, where it compared neither the sizes nor the address space and answered

@@ -148,3 +148,117 @@ fn an_edge_into_an_it_block_is_reported_not_silently_decided() {
          in-block path disagrees with, so it must be reported; got {clashes:?}",
     );
 }
+
+/// A direct edge whose target is no `inst_next` this build recorded: every
+/// forward `b`, and every conditional whose fall-through terminates first.
+/// `enqueue` cannot snapshot such an address, so it rebuilds the context from
+/// the function mode and the parent's ISA-mode bit.
+///
+/// `TEEMode` is FLOWING, so the live ThumbEE paint has to come with it. Left
+/// out, it degraded to the entry default AND `pin_at` wrote that default over
+/// the live paint, decoding 0xc201 at the target as a plain-Thumb
+/// `stmia r2!,{r0}` and inventing a `Store`, with nothing reported incomplete.
+///
+/// `enterx` commits `TEEMode=1` at 0x1004, so the `b.n` region decodes in
+/// ThumbEE; 0x1008 is no `inst_next` (0x1004 and 0x1006 are), so it takes the
+/// fallback arm.
+#[test]
+fn a_forward_branch_carries_the_live_thumbee_mode() {
+    let code = vec![
+        0xbf, 0xf3, 0x1f, 0x8f, // 0x1000: enterx -> TEEMode=1 at 0x1004
+        0x00, 0xe0, // 0x1004: b.n 0x1008
+        0x00, 0x00, // 0x1006: never decoded
+        0x01, 0xc2, // 0x1008: ThumbEE `hb #1`, zero-op
+        0x70, 0x47, // 0x100a: bx lr
+    ];
+    let mut eng = thumb(code);
+    let cfg = build(&mut eng, 0x1000, 12);
+
+    // Silent: the wrong decode is a clean answer, so only the shape says so.
+    assert!(
+        cfg.incomplete().is_empty(),
+        "premise: nothing here is reported incomplete; got {:?}",
+        cfg.incomplete(),
+    );
+    let at = cfg
+        .regions()
+        .find(|r| r.start_addr.machine_addr.addr == 0x1008)
+        .expect("a region starts at the branch target 0x1008");
+    assert_eq!(
+        (at.insns.len(), at.empty_span_len),
+        (0, 2),
+        "0x1008 is not the zero-op ThumbEE `hb`: {:?}",
+        opcodes_at(&cfg, 0x1008),
+    );
+    assert!(
+        !opcodes_at(&cfg, 0x1008).contains(&rsleigh::Opcode::Store),
+        "the branch target decoded as a plain-Thumb store, so the live \
+         ThumbEE mode did not cross the forward edge: {:?}",
+        opcodes_at(&cfg, 0x1008),
+    );
+}
+
+/// The mirror: a plain-Thumb region must not hand its target a mode it is not
+/// in. Entered at 0x1004 the `enterx` is never decoded, so 0x1008 is the
+/// `stmia` with its `Store` -- on an engine whose earlier build painted
+/// `TEEMode=1` across those very bytes.
+#[test]
+fn a_plain_thumb_forward_branch_does_not_acquire_thumbee() {
+    let code = vec![
+        0xbf, 0xf3, 0x1f, 0x8f, // 0x1000: enterx -> TEEMode=1 at 0x1004
+        0x00, 0xe0, // 0x1004: b.n 0x1008
+        0x00, 0x00, // 0x1006: never decoded
+        0x01, 0xc2, // 0x1008: plain-Thumb `stmia r2!,{r0}`
+        0x70, 0x47, // 0x100a: bx lr
+    ];
+    let mut eng = thumb(code);
+    let thumbee = build(&mut eng, 0x1000, 12);
+    assert!(
+        !opcodes_at(&thumbee, 0x1008).contains(&rsleigh::Opcode::Store),
+        "premise: under ThumbEE the same bytes carry no store",
+    );
+
+    let plain = build(&mut eng, 0x1004, 8);
+    assert!(
+        opcodes_at(&plain, 0x1008).contains(&rsleigh::Opcode::Store),
+        "the branch target lost its store, so a ThumbEE mode this build is \
+         not in reached it: {:?}",
+        opcodes_at(&plain, 0x1008),
+    );
+}
+
+/// The IT-block state must keep degrading. `condit` is `noflow`: carrying the
+/// value live at the branch would predicate the target, which ARM calls
+/// UNPREDICTABLE, and a `cond_shft` the next instruction shifts again can land
+/// on a `cond_full` no constructor covers and fail the decode outright.
+///
+/// `itt eq` predicates 0x1002, whose `b.n` lowers to a skip-CBRANCH plus the
+/// branch itself: the branch's own region re-lifts 0x1002, so the live IT state
+/// is what sits at its last decoded instruction.
+#[test]
+fn a_forward_branch_does_not_carry_the_it_state() {
+    let code = vec![
+        0x04, 0xbf, // 0x1000: itt eq
+        0x02, 0xe0, // 0x1002: beq 0x100a
+        0x70, 0x47, // 0x1004: bxeq lr
+        0x70, 0x47, // 0x1006: bx lr
+        0x00, 0x00, // 0x1008: never decoded
+        0x00, 0x20, // 0x100a: movs r0, #0
+        0x70, 0x47, // 0x100c: bx lr
+    ];
+    let mut eng = thumb(code.clone());
+    let reached = build(&mut eng, 0x1000, 14);
+
+    // The same instruction decoded with no IT block in front of it.
+    let mut eng = thumb(code);
+    let bare = build(&mut eng, 0x100a, 4);
+    assert!(
+        !opcodes_at(&bare, 0x100a).is_empty(),
+        "premise: 0x100a decodes on its own",
+    );
+    assert_eq!(
+        opcodes_at(&reached, 0x100a),
+        opcodes_at(&bare, 0x100a),
+        "the branch target was predicated by the IT state live at the branch",
+    );
+}
