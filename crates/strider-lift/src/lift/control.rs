@@ -19,7 +19,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         &mut self,
         region_id: strider_cfg::RegionId,
         target_vn: &rsleigh::Vn,
-        targets: &[u64],
+        targets: &[strider_cfg::ResolvedTarget],
         region_map: &super::RegionMap,
         switch_addr: strider_cfg::PcodeInsnAddr,
     ) -> Result<()> {
@@ -32,7 +32,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // One pass over the successor list, not one per target: a wide kernel
         // dispatch table is re-scanned on every re-lift round otherwise.
         let by_start = self.cfg.switch_arm_regions(region_id);
-        for &target in targets {
+        for target in targets {
+            // A target's `isa_bit` is the callee's concern, applied when the
+            // arm's own region is decoded, not by this node.
+            let target = target.addr;
             let machine_addr = strider_cfg::MachineInsnAddr::from(target);
             let cfg_region = by_start
                 .get(&strider_cfg::PcodeInsnAddr::at_machine_start(
