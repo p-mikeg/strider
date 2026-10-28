@@ -490,89 +490,32 @@ fn check_arch(dir: &str) {
     );
 }
 
-#[test]
-fn x86() {
-    check_arch("x86");
+/// One `#[test]` per `FIXTURE_ARCHES` row, named after its fixture
+/// directory, plus that list as `ARCHES`.
+macro_rules! golden_tests {
+    ($($arch:ident),* $(,)?) => {
+        const ARCHES: &[&str] = &[$(stringify!($arch)),*];
+        $(
+            #[test]
+            fn $arch() {
+                check_arch(stringify!($arch));
+            }
+        )*
+    };
 }
 
-#[test]
-fn x86_kernel() {
-    check_arch("x86_kernel");
-}
+golden_tests!(
+    x86, x86_kernel, x64, aarch64, aarch64be, arm, arm_be, arm_be8, arm_thumb, mips32le, mips32be,
+    mips64le, mips64be, ppc32be, ppc32le, ppc64be, ppc64le,
+);
 
+/// A roster row with no test above never writes its golden directory, so
+/// the list the macro takes must be the roster itself.
 #[test]
-fn x64() {
-    check_arch("x64");
-}
-
-#[test]
-fn aarch64() {
-    check_arch("aarch64");
-}
-
-#[test]
-fn aarch64be() {
-    check_arch("aarch64be");
-}
-
-#[test]
-fn arm() {
-    check_arch("arm");
-}
-
-#[test]
-fn arm_be() {
-    check_arch("arm_be");
-}
-
-#[test]
-fn arm_be8() {
-    check_arch("arm_be8");
-}
-
-#[test]
-fn arm_thumb() {
-    check_arch("arm_thumb");
-}
-
-#[test]
-fn mips32le() {
-    check_arch("mips32le");
-}
-
-#[test]
-fn mips32be() {
-    check_arch("mips32be");
-}
-
-#[test]
-fn mips64le() {
-    check_arch("mips64le");
-}
-
-#[test]
-fn mips64be() {
-    check_arch("mips64be");
-}
-
-#[test]
-fn ppc32be() {
-    check_arch("ppc32be");
-}
-
-#[test]
-fn ppc32le() {
-    check_arch("ppc32le");
-}
-
-#[test]
-fn ppc64be() {
-    check_arch("ppc64be");
-}
-
-#[test]
-fn ppc64le() {
-    check_arch("ppc64le");
+fn every_roster_arch_has_a_test() {
+    let mut named: Vec<&str> = ARCHES.to_vec();
+    named.sort_unstable();
+    assert_eq!(roster_dirs(), named, "a #[test] per FIXTURE_ARCHES row");
 }
 
 /// Only an arch's test writes its golden directory, so this fails until a
