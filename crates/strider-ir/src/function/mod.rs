@@ -6,7 +6,6 @@ mod text;
 pub use side_tables::{MemDecomp, MemoryId, SideTables};
 
 pub use edit::EditFunction;
-pub use edit::FunctionState;
 pub use func::Function;
 #[cfg(any(test, feature = "test-util"))]
 pub use func::cc_ret_and_clobber_vns;
