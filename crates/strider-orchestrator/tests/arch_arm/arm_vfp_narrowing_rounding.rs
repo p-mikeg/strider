@@ -180,14 +180,12 @@ fn check(c: &Conv, l: &Lifted, rm: u32, mode: Mode, what: &str) {
                     if top { s0 >> 16 } else { s0 & 0xffff }
                 }
             };
-            match want {
-                Some(w) => assert_eq!(got, w, "{what} {} rm {rm} {b:#x}: got {got:#x}", c.asm),
-                None => assert!(
-                    dst.is_nan(got),
-                    "{what} {} {b:#x}: {got:#x} is no NaN",
-                    c.asm
-                ),
-            }
+            common::round::check_against(
+                dst,
+                got,
+                want,
+                &format!("{what} {} rm {rm} {b:#x}", c.asm),
+            );
         }
     }
 }

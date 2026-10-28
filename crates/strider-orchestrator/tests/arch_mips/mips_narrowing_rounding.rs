@@ -114,14 +114,12 @@ fn check(c: &Conv, l: &Lifted, rm: u32, mode: Mode, what: &str) {
             // the other FCSR bits set or clear with the fill
             let fcsr = (fill & 0xffff_fffc) | u128::from(rm);
             let got = int(&l.run(&[b, fcsr], fill)[0]) & ((1 << width) - 1);
-            match want {
-                Some(w) => assert_eq!(got, w, "{what} {} rm {rm} {b:#x}: got {got:#x}", c.asm),
-                None => assert!(
-                    c.dst.is_nan(got),
-                    "{what} {} {b:#x}: {got:#x} is no NaN",
-                    c.asm
-                ),
-            }
+            common::round::check_against(
+                c.dst,
+                got,
+                want,
+                &format!("{what} {} rm {rm} {b:#x}", c.asm),
+            );
         }
     }
 }
