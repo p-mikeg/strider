@@ -192,6 +192,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Enqueue `addr` as a *direct* successor of the region at `source_addr`
     /// (branch or fall-through), capturing the context Sleigh flowed to it.
     ///
+    /// `flowing` is the parent region's live value for each of its arch's
+    /// FLOWING committed vars (`RegionBuilder::flowing_commits`), empty for
+    /// the entry, which has no parent to carry anything from.
+    ///
     /// The item inherits the region's [`Self::descent`]: an address a direct
     /// edge names is code only when that region is, and a region decoded off a
     /// seeded arm is only as certain as the arm.
@@ -200,6 +204,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         parent: Option<NodeIndex>,
         addr: PcodeInsnAddr,
         isa_mode: Option<u32>,
+        flowing: &[(&'static str, u32)],
     ) {
         // Per-instruction decode state (ARM/Thumb ITSTATE, MIPS16 register-list
         // iteration) flows only to `inst_next`, and the edges between an IT
@@ -217,7 +222,18 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 .flow_vars
                 .snapshot(&self.engine.sleigh, addr.machine_addr.addr)
         } else {
-            self.function_mode.clone()
+            // The baseline is the entry's pspec defaults, and a FLOWING
+            // committed var must not degrade to them: it was painted forward
+            // to persist, and `pin_at` would write the default over the live
+            // paint. An ARM `enterx` ahead of a forward `b` lost its ThumbEE
+            // mode that way, and the target decoded as a plain-Thumb store.
+            // A `noflow` var does degrade, being confined to one address:
+            // carrying a live IT state forward predicates the code after it.
+            let mut ctx = self.function_mode.clone();
+            for &(name, value) in flowing {
+                ctx = self.engine.flow_vars.with_var(&ctx, name, value);
+            }
+            ctx
         };
         // A direct edge switches no ISA mode, so the child decodes in the
         // mode its parent region decoded in, which need not be the entry's.
@@ -783,7 +799,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     fn drain(&mut self) -> Result<Vec<(NodeIndex, anyhow::Error)>> {
         let entry = self.start_pcode_addr();
         let mode = self.isa_mode_of(&self.function_mode);
-        self.enqueue(None, entry, mode);
+        self.enqueue(None, entry, mode, &[]);
         let mut lost_successor = Vec::new();
         while let Some(WorkItem {
             parent: parent_region,
@@ -1768,10 +1784,11 @@ mod tests {
         );
     }
 
-    /// A direct edge reads nothing of the engine: the ISA mode is the parent
-    /// region's, and a snapshot of the target would both cost a read per flow
-    /// var per edge and answer with whatever a previous `build_cfg` on this
-    /// engine committed there.
+    /// A direct edge reads nothing of the engine AT ITS TARGET: the ISA mode
+    /// is the parent region's and the flowing commits are read at the parent's
+    /// own last address, where a snapshot of the target would both cost a read
+    /// per flow var per edge and answer with whatever a previous `build_cfg`
+    /// on this engine committed there.
     #[test]
     fn enqueue_reads_no_context_off_a_commit_point() {
         use crate::builder::flow::CONTEXT_READS;
@@ -1787,7 +1804,7 @@ mod tests {
         let opts = crate::CfgOptions::default();
         let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
         CONTEXT_READS.with(|n| n.set(0));
-        b.enqueue(None, addr(0x1000, 0), Some(1));
+        b.enqueue(None, addr(0x1000, 0), Some(1), &[]);
         assert_eq!(CONTEXT_READS.with(std::cell::Cell::get), 0);
         let var = arch.isa_mode_var().expect("ARM has an ISA-mode var");
         assert_eq!(
@@ -1832,7 +1849,7 @@ mod tests {
         // where this build committed.
         let opts = crate::CfgOptions::default();
         let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
-        b.enqueue(None, addr(0x1040, 0), None);
+        b.enqueue(None, addr(0x1040, 0), None, &[]);
         assert_eq!(
             b.engine
                 .flow_vars
@@ -1844,7 +1861,7 @@ mod tests {
         // The same address once this build has decoded into it: its own commit
         // is what the edges inside a split IT block need.
         b.committed_next.insert(0x1040);
-        b.enqueue(None, addr(0x1040, 0), None);
+        b.enqueue(None, addr(0x1040, 0), None, &[]);
         assert_eq!(
             b.engine
                 .flow_vars
@@ -1887,7 +1904,7 @@ mod tests {
         let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
         // Vouched for, and still not read: nothing re-derived it.
         b.committed_next.insert(0x1040);
-        b.enqueue(None, addr(0x1040, 0), None);
+        b.enqueue(None, addr(0x1040, 0), None, &[]);
         assert_eq!(
             b.engine
                 .flow_vars
