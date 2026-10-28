@@ -42,13 +42,6 @@ fn lane(q: u128, width: u32, k: u32) -> u128 {
     q >> (width * k) & ((1 << width) - 1)
 }
 
-fn check_float(dst: Fmt, got: u128, want: Option<u128>, what: &str) {
-    match want {
-        Some(w) => assert_eq!(got, w, "{what}: got {got:#x}, want {w:#x}"),
-        None => assert!(dst.is_nan(got), "{what}: {got:#x} is no NaN"),
-    }
-}
-
 /// fmov (general) between a general register and an h register.
 #[test]
 fn fmov_between_a_gpr_and_an_h_register_moves_the_bits() {
@@ -150,7 +143,7 @@ fn run_narrow(n: &Narrow, l: &Lifted, rm: u32, mode: Mode, what: &str) {
         for fill in [0, u128::MAX] {
             let q = int(&l.run(&[packed, fpcr(rm)], fill)[0]);
             for (k, &b) in group.iter().enumerate() {
-                check_float(
+                common::round::check_against(
                     n.dst,
                     lane(q, n.dst.bits(), k as u32),
                     n.dst.convert(n.src, b, mode),
