@@ -17,6 +17,7 @@
 //! t0..t4 are reachable; enumerating the operand as if it were the index seats
 //! x1, x2 and x3 too.
 use crate::common;
+use strider_ir_test_utils::MockRom;
 
 const TEXT_BASE: u64 = 0x401000;
 const TEXT: &[u8] = &[
@@ -36,28 +37,19 @@ const RODATA: &[u8] = &[
     0x54, 0x10, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
-struct Rom;
-impl strider_orchestrator::opt::ReadOnlyMemory for Rom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        for (base, bytes) in [(TEXT_BASE, TEXT), (RODATA_BASE, RODATA)] {
-            if let Some(off) = addr.checked_sub(base)
-                && let Ok(off) = usize::try_from(off)
-                && let Some(src) = bytes.get(off..off + buf.len())
-            {
-                buf.copy_from_slice(src);
-                return Ok(());
-            }
-        }
-        anyhow::bail!("unmapped {addr:#x}")
-    }
-}
-
 #[test]
 fn an_operand_below_an_offset_is_not_enumerated_as_the_index() {
     let mut bytes = TEXT.to_vec();
     bytes.extend(std::iter::repeat_n(0xccu8, 32));
-    let (mut s, cc) =
-        common::strider_over_bytes(common::Arch::X64, bytes, TEXT_BASE, Some(Box::new(Rom)));
+    let (mut s, cc) = common::strider_over_bytes(
+        common::Arch::X64,
+        bytes,
+        TEXT_BASE,
+        Some(Box::new(MockRom::regions([
+            (TEXT_BASE, TEXT.to_vec()),
+            (RODATA_BASE, RODATA.to_vec()),
+        ]))),
+    );
     let r = s
         .analyze(
             0x40100d,
