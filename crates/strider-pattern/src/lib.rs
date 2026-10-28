@@ -8,18 +8,18 @@
     )
 )]
 
-pub mod bindings;
-pub mod capture;
-pub mod error;
+pub(crate) mod bindings;
+pub(crate) mod capture;
+pub(crate) mod error;
 pub(crate) mod graph_ext;
 pub mod node_builders;
 pub(crate) mod staging;
 #[macro_use]
 mod macros_impl;
-pub mod match_result;
+pub(crate) mod match_result;
 pub mod matcher;
 pub mod template;
-pub mod typed;
+pub(crate) mod typed;
 
 use strider_ir::IRViewer;
 use strider_ir::node::ValueKind;
