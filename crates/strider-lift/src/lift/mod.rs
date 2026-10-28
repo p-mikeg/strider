@@ -156,24 +156,24 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         self.engine.user_op_names()
     }
 
-    /// [`strider_target::BuiltCallingConvention::check_addr_size`] against this
-    /// engine's `ram`: all a per-address override gets. A preset or Python
+    /// [`strider_target::BuiltCallingConvention::validate`] and
+    /// [`strider_target::BuiltCallingConvention::check_addr_size`] against
+    /// this engine's `ram`: every convention reaching the lift, default or
+    /// per-address override, is checked by one rule. A preset or Python
     /// `custom` is validated already; a Rust struct literal is not.
     pub(crate) fn check_cc(&self, cc: &strider_target::BuiltCallingConvention) -> Result<()> {
-        cc.check_addr_size(self.arch().names().ram_addr_size())
+        cc.validate()
+            .and_then(|()| cc.check_addr_size(self.arch().names().ram_addr_size()))
             .map_err(|e| anyhow!("{:?}: {e}", self.arch().preset()))
     }
 
-    /// The function default: [`strider_target::BuiltCallingConvention::validate`]
-    /// and [`Self::check_cc`]. A struct literal reaches the lift otherwise
-    /// unchecked.
+    /// [`Self::check_cc`], naming the function's own convention in the error.
     pub(crate) fn check_default_cc(
         &self,
         cc: &strider_target::BuiltCallingConvention,
     ) -> Result<()> {
-        cc.validate()
-            .map_err(|e| anyhow!("{:?}: default convention: {e}", self.arch().preset()))?;
         self.check_cc(cc)
+            .map_err(|e| anyhow!("default convention: {e}"))
     }
 
     #[must_use]
