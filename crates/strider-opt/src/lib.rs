@@ -8,7 +8,7 @@ pub mod rewrite_rule;
 pub use mem_analysis::refresh_memory_classes;
 pub use rewrite_rule::{BoxedRule, apply_rules_count, rewrite_rule, rewrite_rule_runtime};
 pub use strider_ir::AssumptionOptions;
-pub use strider_ir::{EditFunction, FunctionState};
+pub use strider_ir::EditFunction;
 
 mod const_eval;
 #[cfg(test)]
