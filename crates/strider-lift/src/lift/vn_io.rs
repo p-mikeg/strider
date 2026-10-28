@@ -61,6 +61,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         match space {
             rsleigh::VnSpace::CONST => self.builder.build_int_const(vn.addr_off, vn.int_type()?),
             rsleigh::VnSpace::REGISTER if self.lifter.is_volatile(vn) => self.read_volatile(vn),
+            // The two arms spell `vn_container::is_aliasable_space` out: a
+            // function cannot be a pattern, and a guard reads worse here.
             rsleigh::VnSpace::UNIQUE | rsleigh::VnSpace::REGISTER => self.read_reg_vn(vn),
             rsleigh::VnSpace::RAM => {
                 let addr = self.build_addr_const(space, vn.addr_off, "RAM space")?;
@@ -122,7 +124,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// return an undefined InitialVar.
     fn find_largest_fitting_register(&self, reg: &rsleigh::Vn) -> Result<rsleigh::Vn> {
         let space = reg.addr_space;
-        if space != rsleigh::VnSpace::REGISTER && space != rsleigh::VnSpace::UNIQUE {
+        if !vn_container::is_aliasable_space(space) {
             bail!("unsupported varnode space {space:?}");
         }
         // `container_of` returns `reg` unchanged when nothing tracked contains

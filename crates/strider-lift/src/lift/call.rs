@@ -183,13 +183,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // its output in ram, which no output slot can carry. A memory
             // clobber already advances the chain over the write, so drop the
             // slot rather than fail the function.
-            Some(vn)
-                if abi.clobbers_memory
-                    && !matches!(
-                        vn.addr_space,
-                        rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
-                    ) =>
-            {
+            Some(vn) if abi.clobbers_memory && !vn_container::is_aliasable_space(vn.addr_space) => {
                 None
             }
             other => other,

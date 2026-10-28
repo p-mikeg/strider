@@ -1,6 +1,14 @@
 use rustc_hash::FxHashMap;
 
-fn is_aliasable_space(space: rsleigh::VnSpace) -> bool {
+/// The two spaces whose varnodes overlap, so a read or write of one may name
+/// part of another: REGISTER (x86 `eax` inside `rax`) and UNIQUE (a Sleigh
+/// temporary sliced by a later op). Every other space is flat, and the
+/// container machinery in this crate answers `None` there.
+///
+/// The one place the list lives: a tracked universe that disagreed with it
+/// would drop the varnodes the lift then fails to read.
+#[must_use]
+pub fn is_aliasable_space(space: rsleigh::VnSpace) -> bool {
     space == rsleigh::VnSpace::REGISTER || space == rsleigh::VnSpace::UNIQUE
 }
 
