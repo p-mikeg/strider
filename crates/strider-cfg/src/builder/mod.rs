@@ -105,9 +105,7 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// one site says nothing about the same address reached from another.
     pub(super) undecodable_seeded: Vec<(Option<NodeIndex>, crate::UndecodableTarget)>,
     /// The ISA mode each region was decoded in.  Read by the conflict checks
-    /// in [`Self::explore`] and `RegionBuilder::note_isa_mode_clash` (the
-    /// self-wired edges `explore` never sees), and carried across a region
-    /// split.
+    /// in [`Self::note_isa_mode_clash`], and carried across a region split.
     pub(super) region_isa_mode: BTreeMap<NodeIndex, u32>,
     /// The ISA-mode bit flowing into each indirect-branch site, sampled at the
     /// site's seal; see [`Self::sample_flowing_isa_bit`].
@@ -159,6 +157,36 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             function_mode,
             descent: None,
         }
+    }
+
+    /// Reports `addr` as reached in two ISA modes when `want` differs from
+    /// the mode the region `existing` decoded in, and says whether it did.
+    ///
+    /// An address an existing region owns is reused and the arriving edge's
+    /// mode dropped, so for bytes reachable in two ISA modes the first arrival
+    /// to decode them wins: under the LIFO work queue, the last-enqueued edge.
+    /// Which one that is depends on queue order, so the loser's path would
+    /// silently decode in the wrong ISA; recording the clash is what keeps the
+    /// answer honest.
+    ///
+    /// Every seal that wires its own edge needs this too: that edge never
+    /// passes through [`Self::explore`], so the check there never sees it and
+    /// an ARM region running into a Thumb-decoded region would reach the
+    /// caller as a clean answer.
+    pub(super) fn note_isa_mode_clash(
+        &mut self,
+        addr: PcodeInsnAddr,
+        existing: NodeIndex,
+        want: Option<u32>,
+    ) -> bool {
+        let clash = matches!(
+            (want, self.region_isa_mode.get(&existing)),
+            (Some(want), Some(&decoded)) if want != decoded
+        );
+        if clash {
+            self.incomplete.insert(addr, crate::Reason::IsaModeConflict);
+        }
+        clash
     }
 
     /// Enqueue `addr` as a *direct* successor of the region at `source_addr`
@@ -557,24 +585,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         seeded_by: Option<ArmSeed>,
     ) -> Result<()> {
         if let Some((region_id, region)) = self.find_region_containing_addr(addr) {
-            // An address an existing region owns is reused and this edge's
-            // `carried` mode dropped, so for bytes reachable in two ISA modes
-            // the first arrival to decode them wins: under the LIFO work queue,
-            // the last-enqueued edge. Which one that is depends on queue order,
-            // so the loser's path would silently decode in the wrong ISA;
-            // recording the clash is what keeps the answer honest.
-            let mode_clash = match (
-                self.isa_mode_of(&carried),
-                self.region_isa_mode.get(&region_id),
-            ) {
-                (Some(want), Some(&decoded)) => want != decoded,
-                _ => false,
-            };
             let is_start = region.start_addr == addr;
             let is_boundary = region.contains_insn_at(addr);
-            if mode_clash {
-                self.incomplete.insert(addr, crate::Reason::IsaModeConflict);
-            }
+            let want = self.isa_mode_of(&carried);
+            let mode_clash = self.note_isa_mode_clash(addr, region_id, want);
             let parent_region_id = parent_region
                 .ok_or_else(|| anyhow!("non-entry work-queue item has no parent edge"))?;
             if mode_clash && seeded_by.is_some_and(|s| s.is_arm(parent_region, addr)) {
