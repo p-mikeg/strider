@@ -533,7 +533,7 @@ impl PyFunction {
     /// memory predecessors.
     fn mem_walk(slf: Py<Self>, py: Python<'_>) -> PyResult<Vec<crate::node::PyNode>> {
         let ids: Vec<u32> = slf.borrow(py).with_read_value(|function| {
-            strider_ir::walk::memory_reachable(function, function.entry())
+            strider_ir::walk::memory_reachable(function)
                 .into_iter()
                 .map(|n| n.as_u32())
                 .collect()
