@@ -173,10 +173,16 @@ mod endianness_tests {
     }
 }
 
-/// Emits `ArchPreset` and the [`ArchPreset::ALL`] roster from one variant
-/// list, so a roster cannot omit a variant.
+/// Emits `ArchPreset`, its [`ArchPreset::ALL`] roster and every per-preset
+/// fact from one row list, so no roster can omit a preset and no per-preset
+/// answer can drift from the variant it belongs to. Each row's doc lands on
+/// the variant and on its constructor alike.
 macro_rules! arch_presets {
-    ($($(#[$doc:meta])* $variant:ident),+ $(,)?) => {
+    ($(
+        $(#[$doc:meta])*
+        $variant:ident => $name:literal, $ctor:ident, $family:ident,
+                          $sla:ident, $pspec:ident, $endian:ident;
+    )+) => {
         /// One variant per [`SleighArch`] preset.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub enum ArchPreset {
@@ -186,83 +192,100 @@ macro_rules! arch_presets {
         impl ArchPreset {
             /// Every variant.
             pub const ALL: &'static [ArchPreset] = &[$(ArchPreset::$variant,)+];
+
+            /// The [`SleighArch`] constructor's name, e.g. `"x86_64"` or
+            /// `"arm_be_kernel"`.
+            #[must_use]
+            pub const fn name(self) -> &'static str {
+                match self { $(Self::$variant => $name,)+ }
+            }
+
+            /// The family this preset belongs to, which keys the
+            /// [`DecodeFacts`] table.
+            #[must_use]
+            pub(crate) const fn family(self) -> ArchFamily {
+                match self { $(Self::$variant => ArchFamily::$family,)+ }
+            }
+
+            /// The arch this preset names, inverse of [`SleighArch::preset`].
+            ///
+            /// Only the roster-sweeping tests need the inverse; a caller
+            /// holding a preset names the constructor directly.
+            #[cfg(any(test, feature = "test-util"))]
+            #[must_use]
+            pub fn arch(self) -> SleighArch {
+                match self { $(Self::$variant => SleighArch::$ctor(),)+ }
+            }
+        }
+
+        impl SleighArch {
+            $(
+                $(#[$doc])*
+                pub fn $ctor() -> SleighArch {
+                    SleighArch {
+                        sla_spec: rsleigh::sla_spec::$sla,
+                        pspec: rsleigh::pspec::$pspec,
+                        endianness: Endianness::$endian,
+                        preset: ArchPreset::$variant,
+                    }
+                }
+            )+
         }
     };
 }
 
 arch_presets! {
-    X86,
-    X86_64,
-    Arm,
-    ArmBe,
-    /// BE8 ARM (little-endian instructions, big-endian data), i.e. modern
-    /// ARMv6+ big-endian.
-    ArmBeKernel,
-    ArmThumb,
-    Aarch64,
-    Aarch64Be,
-    MipsBe32,
-    MipsLe32,
-    MipsBe64,
-    MipsLe64,
-    Ppc32Be,
-    Ppc32Le,
-    Ppc64Be,
-    Ppc64Le,
-}
-
-impl ArchPreset {
-    /// The arch this preset names, inverse of [`SleighArch::preset`].
+    X86 => "x86", x86, X86, SLA_SPEC_X86, PSPEC_X86, Little;
+    X86_64 => "x86_64", x86_64, X86, SLA_SPEC_X86_64, PSPEC_X86_64, Little;
+    /// ARM 32-bit little-endian, non-Thumb.
+    Arm => "arm", arm, Arm32, SLA_SPEC_ARM8_LE, PSPEC_ARMT, Little;
+    /// Legacy **BE32** ARM 32-bit: big-endian instructions AND data,
+    /// pre-ARMv6.
     ///
-    /// Exhaustive, so a new variant fails to compile until it has a
-    /// constructor.  Only the roster-sweeping tests need the inverse; a
-    /// caller holding a preset names the constructor directly.
-    #[cfg(any(test, feature = "test-util"))]
-    #[must_use]
-    pub fn arch(self) -> SleighArch {
-        match self {
-            Self::X86 => SleighArch::x86(),
-            Self::X86_64 => SleighArch::x86_64(),
-            Self::Arm => SleighArch::arm(),
-            Self::ArmBe => SleighArch::arm_be(),
-            Self::ArmBeKernel => SleighArch::arm_be_kernel(),
-            Self::ArmThumb => SleighArch::arm_thumb(),
-            Self::Aarch64 => SleighArch::aarch64(),
-            Self::Aarch64Be => SleighArch::aarch64be(),
-            Self::MipsBe32 => SleighArch::mipsbe32(),
-            Self::MipsLe32 => SleighArch::mipsle32(),
-            Self::MipsBe64 => SleighArch::mipsbe64(),
-            Self::MipsLe64 => SleighArch::mipsle64(),
-            Self::Ppc32Be => SleighArch::ppc32be(),
-            Self::Ppc32Le => SleighArch::ppc32le(),
-            Self::Ppc64Be => SleighArch::ppc64be(),
-            Self::Ppc64Le => SleighArch::ppc64le(),
-        }
-    }
-
-    /// The [`SleighArch`] constructor's name, e.g. `"x86_64"` or
-    /// `"arm_be_kernel"`.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::X86 => "x86",
-            Self::X86_64 => "x86_64",
-            Self::Arm => "arm",
-            Self::ArmBe => "arm_be",
-            Self::ArmBeKernel => "arm_be_kernel",
-            Self::ArmThumb => "arm_thumb",
-            Self::Aarch64 => "aarch64",
-            Self::Aarch64Be => "aarch64be",
-            Self::MipsBe32 => "mipsbe32",
-            Self::MipsLe32 => "mipsle32",
-            Self::MipsBe64 => "mipsbe64",
-            Self::MipsLe64 => "mipsle64",
-            Self::Ppc32Be => "ppc32be",
-            Self::Ppc32Le => "ppc32le",
-            Self::Ppc64Be => "ppc64be",
-            Self::Ppc64Le => "ppc64le",
-        }
-    }
+    /// Modern ARMv6+ big-endian Linux is **BE8** (little-endian
+    /// instructions, big-endian data, flagged `EF_ARM_BE8`), not BE32.
+    /// This spec byte-reverses every instruction word and fails almost
+    /// every decode on such a binary; use [`SleighArch::arm_be_kernel`].
+    ///
+    /// The sla still decodes NEON, which no BE32 core has (ARMv7 removed
+    /// BE32), and disagrees with itself on lane order there: a lane load
+    /// or store (`vld1.32 {d0[0]}`) addresses lane 0 at the D register's
+    /// high word, a core-register `vmov` (`vmov.32 r0, d0[0]`) at its low
+    /// word.  NEON lane values under this preset are not meaningful.
+    ArmBe => "arm_be", arm_be, Arm32, SLA_SPEC_ARM8_BE, PSPEC_ARMT, Big;
+    /// **BE8** ARM 32-bit (GHIDRA's `ARM:LEBE:32`): little-endian
+    /// instructions, big-endian data, i.e. modern ARMv6+ big-endian.
+    /// Every ARMv6+ big-endian Linux target, kernel and userland, is this.
+    ///
+    /// `SLA_SPEC_ARM8_BE8` is `SLA_SPEC_ARM8_LE` with the transfers
+    /// whose bytes depend on the data order, the `vld1` / `vst1`
+    /// multiple-element forms, made one per element.
+    ArmBeKernel => "arm_be_kernel", arm_be_kernel, Arm32, SLA_SPEC_ARM8_BE8, PSPEC_ARMT, Big;
+    /// ARM 32-bit `-mthumb`: Cortex-M pspec defaults over the full-ARM-state
+    /// sla, so ARM state stays reachable (`arm-linux-gnueabihf-gcc -mthumb`).
+    ArmThumb => "arm_thumb", arm_thumb, Arm32, SLA_SPEC_ARM8_LE, PSPEC_ARMCORTEX, Little;
+    Aarch64 => "aarch64", aarch64, Aarch64, SLA_SPEC_AARCH64, PSPEC_AARCH64, Little;
+    Aarch64Be => "aarch64be", aarch64be, Aarch64, SLA_SPEC_AARCH64BE, PSPEC_AARCH64, Big;
+    MipsBe32 => "mipsbe32", mipsbe32, Mips, SLA_SPEC_MIPS32BE, PSPEC_MIPS32, Big;
+    MipsLe32 => "mipsle32", mipsle32, Mips, SLA_SPEC_MIPS32LE, PSPEC_MIPS32, Little;
+    /// Linux N64 ABI (`mips64-linux-gnuabi64-gcc`).
+    MipsBe64 => "mipsbe64", mipsbe64, Mips, SLA_SPEC_MIPS64BE, PSPEC_MIPS64, Big;
+    /// Linux N64 ABI (`mips64el-linux-gnuabi64-gcc`).
+    MipsLe64 => "mipsle64", mipsle64, Mips, SLA_SPEC_MIPS64LE, PSPEC_MIPS64, Little;
+    /// `powerpc-linux-gnu-gcc`, System V 32-bit ABI.
+    Ppc32Be => "ppc32be", ppc32be, Ppc, SLA_SPEC_PPC_32_BE, PSPEC_PPC_32, Big;
+    /// `powerpc-linux-gnu-gcc -mlittle-endian`.
+    Ppc32Le => "ppc32le", ppc32le, Ppc, SLA_SPEC_PPC_32_LE, PSPEC_PPC_32, Little;
+    /// `powerpc64-linux-gnu-gcc`, ELFv1 ABI with function descriptors.
+    /// Needs the Power ISA + Altivec sla spec: the stripped `PPC_64_BE`
+    /// spec rejects Power7+ scalar ops (`popcntw`, `popcntd`, `cntlzd`,
+    /// `cnttzd`) and Altivec vector ops with `Unable to resolve
+    /// constructor`.
+    Ppc64Be => "ppc64be", ppc64be, Ppc, SLA_SPEC_PPC_64_ISA_ALTIVEC_BE, PSPEC_PPC_64, Big;
+    /// `powerpc64le-linux-gnu-gcc`, ELFv2 ABI: no function descriptors and
+    /// no dot-prefixed symbols.  Power ISA + Altivec sla spec, see
+    /// [`SleighArch::ppc64be`].
+    Ppc64Le => "ppc64le", ppc64le, Ppc, SLA_SPEC_PPC_64_ISA_ALTIVEC_LE, PSPEC_PPC_64, Little;
 }
 
 /// The family a preset belongs to, which keys the [`DecodeFacts`] table.
@@ -273,20 +296,6 @@ pub(crate) enum ArchFamily {
     Aarch64,
     Mips,
     Ppc,
-}
-
-impl ArchPreset {
-    /// Exhaustive, so a new preset joins a family before it compiles.
-    #[must_use]
-    pub(crate) const fn family(self) -> ArchFamily {
-        match self {
-            Self::X86 | Self::X86_64 => ArchFamily::X86,
-            Self::Arm | Self::ArmBe | Self::ArmBeKernel | Self::ArmThumb => ArchFamily::Arm32,
-            Self::Aarch64 | Self::Aarch64Be => ArchFamily::Aarch64,
-            Self::MipsBe32 | Self::MipsLe32 | Self::MipsBe64 | Self::MipsLe64 => ArchFamily::Mips,
-            Self::Ppc32Be | Self::Ppc32Le | Self::Ppc64Be | Self::Ppc64Le => ArchFamily::Ppc,
-        }
-    }
 }
 
 /// What decoding and lifting know about one family, each field the answer of
@@ -447,20 +456,6 @@ pub struct SleighArch {
     pspec: rsleigh::pspec::PSpec,
     endianness: Endianness,
     pub(crate) preset: ArchPreset,
-}
-
-macro_rules! arch_ctor {
-    ($(#[$doc:meta])* $name:ident => $sla:ident, $pspec:ident, $endian:ident, $preset:ident) => {
-        $(#[$doc])*
-        pub fn $name() -> SleighArch {
-            SleighArch {
-                sla_spec: rsleigh::sla_spec::$sla,
-                pspec: rsleigh::pspec::$pspec,
-                endianness: Endianness::$endian,
-                preset: ArchPreset::$preset,
-            }
-        }
-    };
 }
 
 impl SleighArch {
@@ -716,105 +711,6 @@ impl SleighArch {
             .map(|var| (var, u32::from(entry_addr & 1 == 1)))
     }
 
-    arch_ctor! {
-        x86_64 => SLA_SPEC_X86_64, PSPEC_X86_64, Little, X86_64
-    }
-
-    arch_ctor! {
-        x86 => SLA_SPEC_X86, PSPEC_X86, Little, X86
-    }
-
-    arch_ctor! {
-        mipsbe32 => SLA_SPEC_MIPS32BE, PSPEC_MIPS32, Big, MipsBe32
-    }
-
-    arch_ctor! {
-        mipsle32 => SLA_SPEC_MIPS32LE, PSPEC_MIPS32, Little, MipsLe32
-    }
-
-    arch_ctor! {
-        /// ARM 32-bit little-endian, non-Thumb.
-        arm => SLA_SPEC_ARM8_LE, PSPEC_ARMT, Little, Arm
-    }
-
-    arch_ctor! {
-        aarch64 => SLA_SPEC_AARCH64, PSPEC_AARCH64, Little, Aarch64
-    }
-
-    arch_ctor! {
-        aarch64be => SLA_SPEC_AARCH64BE, PSPEC_AARCH64, Big, Aarch64Be
-    }
-
-    arch_ctor! {
-        /// Linux N64 ABI (`mips64-linux-gnuabi64-gcc`).
-        mipsbe64 => SLA_SPEC_MIPS64BE, PSPEC_MIPS64, Big, MipsBe64
-    }
-
-    arch_ctor! {
-        /// Linux N64 ABI (`mips64el-linux-gnuabi64-gcc`).
-        mipsle64 => SLA_SPEC_MIPS64LE, PSPEC_MIPS64, Little, MipsLe64
-    }
-
-    arch_ctor! {
-        /// `powerpc-linux-gnu-gcc`, System V 32-bit ABI.
-        ppc32be => SLA_SPEC_PPC_32_BE, PSPEC_PPC_32, Big, Ppc32Be
-    }
-
-    arch_ctor! {
-        /// `powerpc-linux-gnu-gcc -mlittle-endian`.
-        ppc32le => SLA_SPEC_PPC_32_LE, PSPEC_PPC_32, Little, Ppc32Le
-    }
-
-    arch_ctor! {
-        /// `powerpc64-linux-gnu-gcc`, ELFv1 ABI with function descriptors.
-        /// Needs the Power ISA + Altivec sla spec: the stripped `PPC_64_BE`
-        /// spec rejects Power7+ scalar ops (`popcntw`, `popcntd`, `cntlzd`,
-        /// `cnttzd`) and Altivec vector ops with `Unable to resolve
-        /// constructor`.
-        ppc64be => SLA_SPEC_PPC_64_ISA_ALTIVEC_BE, PSPEC_PPC_64, Big, Ppc64Be
-    }
-
-    arch_ctor! {
-        /// `powerpc64le-linux-gnu-gcc`, ELFv2 ABI: no function descriptors and
-        /// no dot-prefixed symbols.  Power ISA + Altivec sla spec, see
-        /// `ppc64be`.
-        ppc64le => SLA_SPEC_PPC_64_ISA_ALTIVEC_LE, PSPEC_PPC_64, Little, Ppc64Le
-    }
-
-    arch_ctor! {
-        /// ARM 32-bit `-mthumb`: Cortex-M pspec defaults over the full-ARM-state
-        /// sla, so ARM state stays reachable (`arm-linux-gnueabihf-gcc -mthumb`).
-        arm_thumb => SLA_SPEC_ARM8_LE, PSPEC_ARMCORTEX, Little, ArmThumb
-    }
-
-    arch_ctor! {
-        /// Legacy **BE32** ARM 32-bit: big-endian instructions AND data,
-        /// pre-ARMv6.
-        ///
-        /// Modern ARMv6+ big-endian Linux is **BE8** (little-endian
-        /// instructions, big-endian data, flagged `EF_ARM_BE8`), not BE32.
-        /// This spec byte-reverses every instruction word and fails almost
-        /// every decode on such a binary; use [`SleighArch::arm_be_kernel`].
-        ///
-        /// The sla still decodes NEON, which no BE32 core has (ARMv7 removed
-        /// BE32), and disagrees with itself on lane order there: a lane load
-        /// or store (`vld1.32 {d0[0]}`) addresses lane 0 at the D register's
-        /// high word, a core-register `vmov` (`vmov.32 r0, d0[0]`) at its low
-        /// word.  NEON lane values under this preset are not meaningful.
-        arm_be => SLA_SPEC_ARM8_BE, PSPEC_ARMT, Big, ArmBe
-    }
-
-    arch_ctor! {
-        /// **BE8** ARM 32-bit (GHIDRA's `ARM:LEBE:32`): little-endian
-        /// instructions, big-endian data.  Every ARMv6+ big-endian Linux
-        /// target, kernel and userland, is this.
-        ///
-        /// `SLA_SPEC_ARM8_BE8` is `SLA_SPEC_ARM8_LE` with the transfers
-        /// whose bytes depend on the data order, the `vld1` / `vst1`
-        /// multiple-element forms, made one per element.
-        arm_be_kernel => SLA_SPEC_ARM8_BE8, PSPEC_ARMT, Big, ArmBeKernel
-    }
-
     /// This arch's register table, a copy of [`SleighArch::names`]'s.
     #[cfg(any(test, feature = "test-util"))]
     #[must_use]
@@ -863,6 +759,41 @@ mod tests {
             "a Thumb function symbol carries the Thumb bit"
         );
         assert_eq!(SleighArch::arm_thumb().isa_mode_var(), Some("TMode"));
+    }
+
+    /// The family each preset belongs to, spelled out. Every other family
+    /// test reads the expected answer THROUGH `family()`, so a preset in the
+    /// wrong family moves both sides and survives; this one does not.
+    #[test]
+    fn every_preset_is_in_its_own_family() {
+        use super::{ArchFamily, ArchPreset};
+        let cases: &[(ArchPreset, ArchFamily)] = &[
+            (ArchPreset::X86, ArchFamily::X86),
+            (ArchPreset::X86_64, ArchFamily::X86),
+            (ArchPreset::Arm, ArchFamily::Arm32),
+            (ArchPreset::ArmBe, ArchFamily::Arm32),
+            (ArchPreset::ArmBeKernel, ArchFamily::Arm32),
+            (ArchPreset::ArmThumb, ArchFamily::Arm32),
+            (ArchPreset::Aarch64, ArchFamily::Aarch64),
+            (ArchPreset::Aarch64Be, ArchFamily::Aarch64),
+            (ArchPreset::MipsBe32, ArchFamily::Mips),
+            (ArchPreset::MipsLe32, ArchFamily::Mips),
+            (ArchPreset::MipsBe64, ArchFamily::Mips),
+            (ArchPreset::MipsLe64, ArchFamily::Mips),
+            (ArchPreset::Ppc32Be, ArchFamily::Ppc),
+            (ArchPreset::Ppc32Le, ArchFamily::Ppc),
+            (ArchPreset::Ppc64Be, ArchFamily::Ppc),
+            (ArchPreset::Ppc64Le, ArchFamily::Ppc),
+        ];
+        for preset in ArchPreset::ALL {
+            assert!(
+                cases.iter().any(|(p, _)| p == preset),
+                "{preset:?} has no pinned family"
+            );
+        }
+        for (preset, family) in cases {
+            assert_eq!(preset.family(), *family, "{preset:?}");
+        }
     }
 
     /// Every preset carries the mode it decodes with, and only the ARM and
@@ -966,8 +897,8 @@ mod tests {
         }
     }
 
-    /// Every constructor stamps its own discriminator, so a copy-paste in
-    /// `arch_ctor!` cannot make two presets indistinguishable.
+    /// Every constructor stamps its own roster row's preset, so a copy-paste in
+    /// the roster cannot make two presets indistinguishable.
     #[test]
     fn preset_round_trips_through_its_constructor() {
         for preset in super::ArchPreset::ALL {
