@@ -10,12 +10,11 @@ _PRESETS = sorted(
 )
 
 
-def test_the_preset_list_is_found():
-    assert _PRESETS == sorted([
-        "aarch64", "aarch64be", "arm", "arm_be", "arm_be_kernel", "arm_thumb",
-        "mipsbe32", "mipsbe64", "mipsle32", "mipsle64", "ppc32be", "ppc32le",
-        "ppc64be", "ppc64le", "x86", "x86_64",
-    ])
+def test_every_rust_preset_is_bound():
+    """`ARCH_PRESETS` is `ArchPreset::ALL`; the classmethods come from a
+    hand-written list in `strider-py`, and this is what compares the two.
+    A preset added in Rust and forgotten here fails loudly."""
+    assert _PRESETS == sorted(strider.sleigh.ARCH_PRESETS)
 
 
 @pytest.mark.parametrize("name", _PRESETS)
