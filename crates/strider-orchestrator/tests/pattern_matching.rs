@@ -10,6 +10,9 @@
     clippy::useless_conversion
 )]
 
+#[macro_use]
+mod common;
+
 #[path = "pattern_matching/support/mod.rs"]
 mod support;
 
@@ -21,3 +24,9 @@ mod if_pat_symmetric;
 
 #[path = "pattern_matching/ssa.rs"]
 mod ssa;
+
+#[path = "pattern_matching/complex_patterns.rs"]
+mod complex_patterns;
+
+#[path = "pattern_matching/patterns.rs"]
+mod patterns;

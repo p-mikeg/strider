@@ -1,0 +1,244 @@
+//! `classify_target` against OPTIMISED IR built from synthetic machine code:
+//! the same graph shapes the orchestrator hands it in production. Fixture
+//! builders live in `common::indirect_resolve_helpers`.
+
+use crate::common;
+
+use strider_cfg::ResolvedTargets;
+use strider_ir::node::NodeKind;
+use strider_ir::{IRViewer, IRWalker};
+use strider_orchestrator::opt::classify_target;
+
+/// The fixture's sole `IndirectBranch` placeholder. `classify_target` takes
+/// the branch node itself: it derives the dispatch target from the branch's
+/// slot-2 input and scopes the range query to it.
+fn sole_branch(f: &strider_ir::Function) -> strider_ir::node::NodeId {
+    f.walk()
+        .find(|&n| matches!(f.node_kind(n), NodeKind::IndirectBranch))
+        .expect("fixture has an IndirectBranch placeholder")
+}
+
+/// The verdicts below were pinned under the default claims; the fixtures are
+/// optimized at the floor, so a copy claims them first.
+fn classify_target_bare(view: &strider_ir::Function) -> anyhow::Result<Option<ResolvedTargets>> {
+    let mut view = view.clone();
+    view.assume(&strider_orchestrator::opt::AssumptionOptions::default());
+    classify_target(&view, sole_branch(&view), None)
+}
+
+use crate::common::indirect_resolve_helpers::{
+    build_bx_lr_scenario, build_initial_var_target_scenario_x86_64,
+    build_int_const_target_scenario_via_stack, build_pop_pc_via_stack_load_forward_scenario,
+    build_push_target_pop_pc_scenario, build_stack_array_dispatch_scenario,
+};
+
+/// ARM `bx lr` lifts to a placeholder IndirectBranch whose value-input is
+/// `InitialVar(lr_vn)`, the shape the LinkRegister arm matches.
+#[test]
+fn initial_var_lr_to_link_register() {
+    let (function, _target, _lr_vn) = build_bx_lr_scenario();
+    let result = classify_target_bare(&function).expect("classify");
+    assert_eq!(result, Some(ResolvedTargets::LinkRegister));
+}
+
+/// Negative companion to the LinkRegister arm: producer `InitialVar(other_vn)`
+/// (a non-LR register) must classify as `None` regardless of whether a link
+/// register is configured. x86_64 `jmp *rax` with no LR configured.
+#[test]
+fn initial_var_non_lr_returns_none() {
+    let (function, _target) = build_initial_var_target_scenario_x86_64();
+    let result = classify_target_bare(&function).expect("classify");
+    assert_eq!(result, None);
+}
+
+/// `tmp = load[sp]; sp += 4; bx tmp` (ARM `pop {pc}`): after `LoadForward`
+/// resolves the load against the push's stack store, the loaded value is
+/// structurally `InitialVar(lr)`, so the LinkRegister arm matches on that
+/// structural shape alone. Pins ARM `pop {pc}`.
+///
+/// Soundness across iterations rests on the classifier only ever adding
+/// known targets: a later iteration cannot retract an edge an earlier one
+/// seated, so the fixed point is monotone.
+#[test]
+fn pop_pc_resolves_via_stack_load_forward_to_link_register() {
+    let (function, _target, _lr_vn) = build_pop_pc_via_stack_load_forward_scenario();
+    let result = classify_target_bare(&function).expect("classify");
+    assert_eq!(
+        result,
+        Some(ResolvedTargets::LinkRegister),
+        "LoadForward must turn pop pc's target into InitialVar(lr); \
+         classifier must then recognise it as LinkRegister",
+    );
+}
+
+/// `push 0x1000; pop pc` lifts to `Load(IntSub(InitialVar(sp), 4))` before
+/// optimisation. After `LoadForward` the load resolves to the stored constant,
+/// NOT `InitialVar(lr)`, so this must classify as `Single(0x1000)` (a tail
+/// call), not `LinkRegister`.
+///
+/// Classification runs against the optimised (post-LoadForward) graph rather
+/// than the raw load shape: taking `Load[InitialVar(sp) + K]` for a return
+/// classifies this shape as LinkRegister, wiring a return where the program
+/// tail-calls.
+#[test]
+fn push_target_pop_pc_does_not_resolve_to_link_register() {
+    let target = 0x1000u64;
+    let (function, _target, _lr_vn) = build_push_target_pop_pc_scenario(target);
+    let result = classify_target_bare(&function).expect("classify");
+    assert_eq!(
+        result,
+        Some(ResolvedTargets::Single(target.into())),
+        "push K; pop pc must classify as Single(K), NOT LinkRegister; \
+         that's the soundness gate that killed the prior heuristic",
+    );
+    // Explicit negative check too, so a regression reintroducing the unsound
+    // heuristic fails with a directly-named assertion, not just an equality
+    // mismatch.
+    assert_ne!(result, Some(ResolvedTargets::LinkRegister));
+}
+
+// The stack-array dispatch arm (`classify_dispatch_value`, reached via
+// `classify_target` for a Load/And target when an SP varnode is supplied):
+// N constants at contiguous SP-relative offsets, dispatch via
+// `Load[(sp + base) + (idx & MASK) * stride]`, bound = MASK + 1 via
+// KnownBits. The classifier sorts its output, so assertions compare
+// against the sorted target set.
+
+/// 2 targets, base offset -16, stride 8. KnownBits bounds `idx & 1` to
+/// `[0, 2)` so the arm reads exactly 2 entries.
+#[test]
+fn stack_array_two_targets_resolves_to_multiple() {
+    let targets = [0x401190u64, 0x401180u64];
+    let (function, _target, _sp) = build_stack_array_dispatch_scenario(&targets, -16, 8);
+    let result = classify_target_bare(&function).expect("classify");
+    let mut expected = targets.to_vec();
+    expected.sort_unstable();
+    assert_eq!(
+        result,
+        Some(ResolvedTargets::table(
+            expected.into_iter().map(strider_cfg::ResolvedTarget::from)
+        ))
+    );
+}
+
+/// 4 targets, wider mask (`idx & 3`), bound 4. Guards against a
+/// truncate-to-2 regression the 2-target test above wouldn't catch.
+#[test]
+fn stack_array_four_targets_resolves_to_multiple() {
+    let targets = [0x401_0a0u64, 0x401_0b0, 0x401_0c0, 0x401_0d0];
+    let (function, _target, _sp) = build_stack_array_dispatch_scenario(&targets, -32, 8);
+    let result = classify_target_bare(&function).expect("classify");
+    let mut expected = targets.to_vec();
+    expected.sort_unstable();
+    assert_eq!(
+        result,
+        Some(ResolvedTargets::table(
+            expected.into_iter().map(strider_cfg::ResolvedTarget::from)
+        ))
+    );
+}
+
+/// `push K; pop rax; jmp *rax` collapses to `IntConst(K)` and classifies as
+/// `Single(K)`. Calling `classify_target` twice on the same unchanged graph
+/// must produce the same verdict. Guards against a future cache (e.g. of
+/// `KnownBitsMap`) added across calls without invalidation; two calls on an
+/// unchanged graph would otherwise still agree by luck.
+#[test]
+fn classify_target_is_idempotent_on_unchanged_graph() {
+    let (function, _target) = build_int_const_target_scenario_via_stack(0x0000_0123);
+    let first = classify_target_bare(&function).expect("classify #1");
+    let second = classify_target_bare(&function).expect("classify #2");
+    assert_eq!(
+        first, second,
+        "two consecutive classify_target calls on an unchanged graph must agree",
+    );
+    assert_eq!(first, Some(ResolvedTargets::Single(0x0000_0123.into())));
+}
+
+// Soundness gate: a `br x30` following a `bl` (which clobbers x30 with the
+// return address) must not classify as LinkRegister at the full-function IR
+// level. After the stable optimiser runs, x30's value at the branch site is
+// the Call's clobber output, not `InitialVar(x30)`. The rebuild-driven
+// full-function classifier sees that clobber directly, since it is a value
+// already in the graph.
+
+/// AArch64: `bl 0x1010` (clobbers x30 with the return address) followed by
+/// `br x30`. After optimisation, x30's value at the branch site is the
+/// Call's clobber output, not `InitialVar(x30)`.
+fn build_lr_clobbered_by_call_scenario()
+-> (strider_ir::Function, strider_ir::node::ValueId, rsleigh::Vn) {
+    use rsleigh::mem_readers::BufMemReader;
+    use strider_cfg::{CfgOptions, MachineInsnAddr};
+    use strider_orchestrator::Lifter;
+    use strider_target::{CallingConvention, SleighArch};
+
+    // AArch64 LE byte encoding:
+    //   bl +0x10  (target = 0x1010)  ->  0x94000004 -> 04 00 00 94
+    //   br x30                       ->  0xD61F03C0 -> C0 03 1F D6
+    let base = 0x1000u64;
+    let mut bytes: Vec<u8> = vec![
+        0x04, 0x00, 0x00, 0x94, // bl 0x1010
+        0xC0, 0x03, 0x1F, 0xD6, // br x30
+    ];
+    // Pad so Sleigh lookahead past br x30 doesn't trip DataUnavailErr.
+    bytes.extend(std::iter::repeat_n(0x00u8, 64));
+
+    let arch = SleighArch::aarch64();
+    let reader = BufMemReader::new(bytes, base);
+
+    let mut strider = Lifter::new(arch, reader).expect("Lifter::new");
+    let cc = CallingConvention::aarch64_aapcs64()
+        .build(strider.sleigh_regs())
+        .expect("build cc");
+    let lr_vn = cc
+        .link_register_vn
+        .expect("AArch64 AAPCS has a link register");
+
+    // The cfg builder defers every indirect branch, so `br x30` reaches the
+    // IR as an UnresolvedIndirectBranch placeholder.
+    let cfg = strider
+        .build_cfg(MachineInsnAddr::from(base), &CfgOptions::default())
+        .expect("cfg build");
+
+    let outcome = strider.build_ir(&cfg, cc).expect("build_ir");
+    let mut function = outcome.function;
+
+    // Run the pipeline so x30's value at the branch site reflects the
+    // Call's clobber output, not InitialVar.
+    let p = strider_orchestrator::opt::default_pipeline();
+    p.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
+        .expect("optimizer pipeline");
+
+    assert_eq!(
+        outcome.unresolved_branches.len(),
+        1,
+        "lr-clobber fixture must have exactly one IR-level placeholder (the br x30)",
+    );
+
+    let target = common::indirect_resolve_helpers::orchestrator::target_value_input(&function)
+        .expect("lr-clobber fixture must have one IndirectBranch placeholder after optimisation");
+    (function, target, lr_vn)
+}
+
+/// Soundness gate: a `br x30` after a `bl` (which clobbers x30) must not
+/// classify as LinkRegister. `bl 0x1010` from 0x1000 writes the return
+/// address 0x1004 into x30; after ConstantFold the Call's x30 clobber
+/// resolves to `IntConst(0x1004)`, so the branch must classify as
+/// `Single(0x1004)` (the literal return address), not LinkRegister.
+#[test]
+fn bx_lr_after_call_does_not_classify_as_link_register() {
+    let (function, _target, _lr_vn) = build_lr_clobbered_by_call_scenario();
+    let result = classify_target_bare(&function).expect("classify");
+    assert_ne!(
+        result,
+        Some(ResolvedTargets::LinkRegister),
+        "br x30 after a bl (which clobbers x30) must NOT classify as \
+         LinkRegister: x30 holds the bl's return address, not InitialVar(lr)",
+    );
+    assert_eq!(
+        result,
+        Some(ResolvedTargets::Single(0x1004.into())),
+        "classify_target must resolve br x30 to Single(0x1004), the literal \
+         return address that bl wrote into x30",
+    );
+}
