@@ -956,7 +956,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                         decode_failure(&e).filter(|f| f.addr() == cur_addr.machine_addr.addr);
                     let unmapped = matches!(here, Some(DecodeFailure::Unmapped(_)));
                     if unmapped && !off_arm {
-                        return self.seal_at_unmapped_fallthrough(cur_addr);
+                        return self.seal_and_report(cur_addr, crate::Reason::UnmappedTarget);
                     }
                     let (marked_data, reason) = match here {
                         Some(DecodeFailure::Unmapped(_)) => (false, crate::Reason::UnmappedTarget),
@@ -969,10 +969,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                         return Ok(());
                     }
                     if marked_data && !off_arm {
-                        self.seal_at_fallthrough_stub(cur_addr)?;
-                        self.builder
-                            .incomplete
-                            .insert(cur_addr, crate::Reason::UndecodableTarget);
+                        self.seal_and_report(cur_addr, crate::Reason::UndecodableTarget)?;
                         return Ok(());
                     }
                     return Err(e);
@@ -992,18 +989,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             // first instruction, where `insn_index` may be mid-pcode after a
             // CondBranch-into-pcode).
             if cur_addr.machine_addr != self.start_addr.machine_addr {
-                if self.insns.is_empty() {
-                    // Only the zero-pcode-op instruction at `start_addr` is
-                    // behind us: both seals below produce an empty region, whose
-                    // span is those bytes.
-                    self.empty_span_len = u32::try_from(
-                        cur_addr
-                            .machine_addr
-                            .addr
-                            .saturating_sub(self.start_addr.machine_addr.addr),
-                    )
-                    .unwrap_or(0);
-                }
+                // Only a zero-pcode-op instruction at `start_addr` can be
+                // behind us: both seals below produce an empty region, whose
+                // span is those bytes.
+                self.note_empty_span_to(cur_addr);
                 // Falling through, real or nop alike, into an address that
                 // already starts a region: seal here and edge to it rather than
                 // decoding those bytes a second time.
@@ -1099,19 +1088,29 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
     }
 
-    /// Seals the region at a fall-through into bytes the reader has none of,
-    /// wiring the [`Builder::tail_call_stub`] a direct branch to the same
-    /// address gets and reporting it as [`crate::Reason::UnmappedTarget`].
-    ///
-    /// The decode never started, so everything behind `cur_addr` is a whole
-    /// region; a function abutting the end of the mapped image costs its
-    /// trailing edge rather than the whole lift.
-    fn seal_at_unmapped_fallthrough(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
+    /// Seals the region with a `TailCall` stub at `cur_addr` and reports
+    /// that address as `reason`: every stub seal names the address it could
+    /// not go on from.
+    fn seal_and_report(&mut self, cur_addr: PcodeInsnAddr, reason: crate::Reason) -> Result<()> {
         self.seal_at_fallthrough_stub(cur_addr)?;
-        self.builder
-            .incomplete
-            .insert(cur_addr, crate::Reason::UnmappedTarget);
+        self.builder.incomplete.insert(cur_addr, reason);
         Ok(())
+    }
+
+    /// Records the bytes behind `cur_addr` as this region's span, for a seal
+    /// that will produce an EMPTY region: only a zero-pcode-op instruction at
+    /// `start_addr` can be behind it, and the region then carries no insn to
+    /// derive its extent from. A no-op once anything has been decoded.
+    fn note_empty_span_to(&mut self, cur_addr: PcodeInsnAddr) {
+        if self.insns.is_empty() {
+            self.empty_span_len = u32::try_from(
+                cur_addr
+                    .machine_addr
+                    .addr
+                    .saturating_sub(self.start_addr.machine_addr.addr),
+            )
+            .unwrap_or(0);
+        }
     }
 
     /// Ends the region at its last `Call` / `CallIndirect` as `NoReturn` when
@@ -1204,15 +1203,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Seals the region onto a [`Builder::tail_call_stub`] at `cur_addr`, where
     /// the fall-through found nothing to decode.
     fn seal_at_fallthrough_stub(&mut self, cur_addr: PcodeInsnAddr) -> Result<()> {
-        if self.insns.is_empty() {
-            self.empty_span_len = u32::try_from(
-                cur_addr
-                    .machine_addr
-                    .addr
-                    .saturating_sub(self.start_addr.machine_addr.addr),
-            )
-            .unwrap_or(0);
-        }
+        self.note_empty_span_to(cur_addr);
         let region = self.finish_current_region(RegionTerminator::Unconditional)?;
         let stub = self.builder.tail_call_stub(cur_addr)?;
         self.builder.region_graph.add_edge(region, stub, ());
@@ -1243,10 +1234,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         if self.builder.descent.is_some() {
             return Err(DecodeFailure::PastEnd(cur_addr).into());
         }
-        self.seal_at_fallthrough_stub(cur_addr)?;
-        self.builder
-            .incomplete
-            .insert(cur_addr, crate::Reason::PastFunctionEnd);
+        self.seal_and_report(cur_addr, crate::Reason::PastFunctionEnd)?;
         Ok(true)
     }
 }
