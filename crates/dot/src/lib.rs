@@ -320,23 +320,18 @@ pub(crate) fn dot_node_count(dot: &str) -> usize {
 pub struct GraphDot<G: GraphDotDumper> {
     dumper: G,
     style: DotStyle,
-    name: String,
 }
 
 impl<G: GraphDotDumper> GraphDot<G> {
     /// The emitted digraph is named `"G"`.
     pub fn new(dumper: G, style: DotStyle) -> Self {
-        Self {
-            dumper,
-            style,
-            name: "G".to_string(),
-        }
+        Self { dumper, style }
     }
 
     /// # Errors
     /// Forwards any error from [`GraphDotDumper::dump_as_dot`].
     pub fn as_dot(&self) -> anyhow::Result<String> {
-        let mut dot = DotEmitter::new(&self.name, &self.style);
+        let mut dot = DotEmitter::new("G", &self.style);
         let mut state = self.dumper.create_initial_state();
         for node in self.dumper.iter_nodes() {
             self.dumper
