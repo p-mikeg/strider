@@ -294,14 +294,14 @@ impl graph_algorithms::walk::GraphRef for MemorySuccs<'_> {
 ///
 /// Consumers that merely read the final token without touching memory (a
 /// `Return`'s memory input, an `IndirectBranch`'s memory slot) are excluded.
-/// Empty when no `InitialMemory` is reachable from `entry`.
+/// Empty when no `InitialMemory` is reachable from the entry.
 ///
 /// The walk follows structural use-lists, so on a NON-compacted graph the
-/// result can include a memory op that is not itself reachable from `entry`,
+/// result can include a memory op that is not itself reachable from it,
 /// e.g. a dead `Store` still consuming the live token.
-pub fn memory_reachable(function: &Function, entry: NodeId) -> Vec<NodeId> {
+pub fn memory_reachable(function: &Function) -> Vec<NodeId> {
     let graph = function.graph();
-    let live = GraphWalkInfo::compute_full(graph, entry).live_nodes;
+    let live = GraphWalkInfo::compute_full(graph, function.entry()).live_nodes;
     let Some(root) = function
         .reachable_kind_iter(&live)
         .find(|(_, k)| matches!(k, NodeKind::InitialMemory))
@@ -1041,9 +1041,8 @@ mod tests {
         // the root-finding pass would never see `InitialMemory`.
         b.build_return(None, &[]).unwrap();
 
-        let entry = b.entry();
         let f = b.function();
-        let mem = memory_reachable(f, entry);
+        let mem = memory_reachable(f);
 
         for &n in &mem {
             let k = f.node_kind(n);
@@ -1088,9 +1087,8 @@ mod tests {
     fn memory_reachable_finds_the_entry_mem_phi_with_no_memory_ops() {
         let mut b = builder_with_region().unwrap();
         b.build_return(None, &[]).unwrap();
-        let entry = b.entry();
         let f = b.function();
-        let mem = memory_reachable(f, entry);
+        let mem = memory_reachable(f);
 
         assert!(
             mem.iter()
@@ -1145,11 +1143,10 @@ mod tests {
         b.set_region(r3);
         b.build_return(None, &[]).unwrap();
 
-        let entry = b.entry();
         let f = b.function();
 
         // Reaching the assertions below IS the termination proof.
-        let mem = memory_reachable(f, entry);
+        let mem = memory_reachable(f);
 
         assert!(
             mem.iter()
