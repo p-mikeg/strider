@@ -37,6 +37,10 @@ pub struct Function {
     vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 
     side_tables: SideTables,
+    /// The claims in force: every set [`Self::assume`] added, none before the
+    /// first.  Holds no id, so compaction leaves it alone, and no analysis
+    /// invalidation clears it.
+    assumptions: crate::AssumptionOptions,
 
     /// Every integer-constant value referenced by an `IntConst(id)` node,
     /// deduped by value.
@@ -86,6 +90,8 @@ impl Function {
             byte_order: byte_order.into(),
             vn_interner,
             side_tables: SideTables::new(),
+            // A function claims nothing until `assume` adds some.
+            assumptions: crate::AssumptionOptions::none(),
             const_interner: entity_utils::EntityInterner::default(),
             switch_tables: cranelift_entity::PrimaryMap::new(),
             call_ccs: entity_utils::EntityInterner::default(),
@@ -123,7 +129,7 @@ impl Function {
     /// here while the graph does not rest on it.
     #[inline]
     pub fn assumptions(&self) -> &crate::AssumptionOptions {
-        self.side_tables.assumptions()
+        &self.assumptions
     }
 
     /// Adds `claims` to the claims in force, withdrawing none, and drops the
@@ -138,9 +144,11 @@ impl Function {
     /// which only the lift reads, are recorded without effect when assumed
     /// after it.
     pub fn assume(&mut self, claims: &crate::AssumptionOptions) {
-        if self.side_tables.assume(claims) {
-            self.side_tables.invalidate_analyses();
+        if self.assumptions.holds_all(claims) {
+            return;
         }
+        self.assumptions.union_with(claims);
+        self.side_tables.invalidate_analyses();
     }
 
     /// Interns `value` masked to `ty`'s width.
