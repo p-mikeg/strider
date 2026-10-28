@@ -640,21 +640,22 @@ fn collect_inputs(
             ));
         }
     }
-    // The keys must be exactly `0..len`, or the dense `into_values()` shifts
-    // later slots down onto the wrong IR input index.
-    if inputs_by_slot
-        .keys()
-        .enumerate()
-        .any(|(i, &slot)| i != slot)
-    {
-        let slots: Vec<usize> = inputs_by_slot.keys().copied().collect();
+    densify(inputs_by_slot, "input")
+}
+
+/// The keys must be exactly `0..len`, or the dense `into_values()` shifts
+/// later slots down onto the wrong IR index, and the signature check then
+/// validates the wrong slot. `what` names the side for the diagnostic.
+fn densify<T>(by_slot: BTreeMap<usize, T>, what: &str) -> anyhow::Result<Vec<T>> {
+    if by_slot.keys().enumerate().any(|(i, &slot)| i != slot) {
+        let slots: Vec<usize> = by_slot.keys().copied().collect();
         return Err(anyhow!(
-            "template node has non-contiguous input slots {slots:?}, \
+            "template node has non-contiguous {what} slots {slots:?}, \
              expected 0..{} (raw-builder mis-wire)",
-            inputs_by_slot.len()
+            by_slot.len()
         ));
     }
-    Ok(inputs_by_slot.into_values().collect())
+    Ok(by_slot.into_values().collect())
 }
 
 /// Maps an `OutputKindSpec` to its [`ValueKind`].
@@ -786,18 +787,7 @@ fn output_kinds_for(
             by_slot.insert(o.slot, resolved_output_kind(o, out_vtx, value_tys));
         }
     }
-    // As in `collect_inputs`: the dense `into_values()` would shift a later
-    // slot down onto the wrong IR output index, and the signature check above
-    // would then validate the wrong slot.
-    if by_slot.keys().enumerate().any(|(i, &slot)| i != slot) {
-        let slots: Vec<usize> = by_slot.keys().copied().collect();
-        return Err(anyhow!(
-            "template node has non-contiguous output slots {slots:?}, \
-             expected 0..{} (raw-builder mis-wire)",
-            by_slot.len()
-        ));
-    }
-    Ok(by_slot.into_values().collect())
+    densify(by_slot, "output")
 }
 
 #[cfg(test)]
