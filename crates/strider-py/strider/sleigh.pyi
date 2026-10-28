@@ -7,6 +7,9 @@ from typing import Optional
 
 __all__: list[str]
 
+#: Every architecture preset, the names `SleighArch`'s classmethods carry.
+ARCH_PRESETS: tuple[str, ...]
+
 class SleighArch:
     """A target architecture: instruction-set specification plus byte order.
 
