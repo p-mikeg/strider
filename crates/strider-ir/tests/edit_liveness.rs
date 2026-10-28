@@ -415,3 +415,32 @@ fn live_of_kind_filters_without_walking() {
     expected.sort_unstable_by_key(|n| n.index());
     assert_eq!(consts, expected, "exactly the two IntConsts");
 }
+
+/// The cached live walk and the trait's fresh entry walk answer differently,
+/// which is why the inherent pair carries the `live_` prefix: before the
+/// rename both were `reverse_postorder_filter` with the same signature, and
+/// Rust picked the inherent one silently.
+#[test]
+fn the_live_walk_sees_a_fresh_root_the_entry_walk_cannot() {
+    use strider_ir::{IRBuilderExt, IRWalker};
+
+    let mut function = {
+        let mut b = RegisterSet::new().build_fn_single_region().unwrap();
+        b.build_return(None, &[]).unwrap();
+        b.build().unwrap()
+    };
+    let mut edit = EditFunction::new(&mut function);
+    edit.cull_dead();
+    let kv = edit.build_int_const(5u64, ValueType::int(64)).unwrap();
+    let fresh = edit.producer(kv);
+
+    let is_const = |k: &NodeKind| matches!(k, NodeKind::IntConst(_));
+    let live: Vec<_> = edit.live_reverse_postorder_filter(is_const).collect();
+    assert_eq!(live, vec![fresh], "the new root is live");
+
+    let walked: Vec<_> = IRWalker::reverse_postorder_filter(&edit, is_const).collect();
+    assert!(
+        walked.is_empty(),
+        "nothing consumes the new node, so the entry walk cannot reach it: {walked:?}"
+    );
+}

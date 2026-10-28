@@ -45,7 +45,7 @@ pub(crate) fn strip_dead_predecessors(
     // The cached live set covers the same nodes as a fresh walk, so reuse
     // its RPO rather than re-walking.
     let regions: Vec<NodeId> = edit
-        .reverse_postorder_filter(|k| matches!(k, NodeKind::Region))
+        .live_reverse_postorder_filter(|k| matches!(k, NodeKind::Region))
         .collect();
     for region in regions {
         for (idx, input) in edit.node_inputs(region).into_iter().enumerate() {
