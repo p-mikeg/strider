@@ -599,6 +599,12 @@
 
 ### Fixed
 
+- Rust: `strider_target::Endianness::slice_shift_bits` returns the `None` its
+  doc promises for a varnode outside the container on the little-endian arm
+  too, where it compared neither the sizes nor the address space and answered
+  `Some` for an overhanging or foreign-space slice. No analysis path reached
+  it with such a pair; the two guards reading it were dead on every
+  little-endian preset.
 - A `per_address_ccs` override whose stack pointer is not the analysed
   function's is refused (`StriderError` from `Lifter.analyze`, `Err` from
   `strider_lift::Lifter::build_ir_with`), where the lift accepted it and
