@@ -107,7 +107,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         for o in override_call_targets(cfg, lifter.sleigh().default_code_space())
             .filter_map(|addr| per_address_ccs.get(&addr))
         {
-            lifter.check_cc(o)?;
+            lifter.check_override_cc(o, cc.stack_vn)?;
             let args = o.arg_passing_regs.iter().chain(&o.arg_passing_regs_float);
             super::track_vns(&mut all_vns, &mut seen, args.copied());
         }
