@@ -35,8 +35,8 @@ impl InitialVnId {
     }
 }
 
-/// A `Switch`'s case-address table. Resolve via
-/// [`crate::Function::switch_table`].
+/// A `Switch`'s case-address table, resolved by the crate-internal
+/// `Function::switch_table`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SwitchTableId(u32);
 entity_impl!(SwitchTableId, "switch_table");
@@ -331,7 +331,7 @@ impl NodeKind {
 
     /// Whether the graph may dedup nodes of this kind.
     #[inline]
-    pub fn is_cacheable(&self) -> bool {
+    pub(crate) fn is_cacheable(&self) -> bool {
         self.flags().contains(KindFlags::CACHEABLE)
     }
 
@@ -345,7 +345,7 @@ impl NodeKind {
 
     /// Whether the node carries a `Control` input or output.
     #[inline]
-    pub fn has_control_flow(&self) -> bool {
+    pub(crate) fn has_control_flow(&self) -> bool {
         self.flags().contains(KindFlags::CONTROL)
     }
 
@@ -354,7 +354,7 @@ impl NodeKind {
     /// `Store` counts: removing it is dead-store elimination, which needs
     /// aliasing reasoning this does not do. `Load` and `MemPhi` do not.
     #[inline]
-    pub fn has_side_effects(&self) -> bool {
+    pub(crate) fn has_side_effects(&self) -> bool {
         self.flags()
             .intersects(KindFlags::CONTROL.union(KindFlags::EFFECTFUL))
     }

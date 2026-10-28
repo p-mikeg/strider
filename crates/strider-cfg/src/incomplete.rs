@@ -117,7 +117,7 @@ reasons! {
 impl Reason {
     /// Whether the address is a dispatch site rather than a branch target.
     #[must_use]
-    pub fn is_site(self) -> bool {
+    pub(crate) fn is_site(self) -> bool {
         matches!(self, Reason::UnresolvedBranch | Reason::UnverifiedSeed)
     }
 }
