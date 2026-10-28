@@ -2544,6 +2544,49 @@ mod tests {
         assert_eq!(classify(crate::ArchPreset::X86_64, "swi"), Some(stub));
     }
 
+    /// The three exact tables must be name-disjoint per preset: the lookup
+    /// chain takes the first answer, so a name in two of them leaves the
+    /// later row dead, and every other table test passes, because each only
+    /// checks the answer that wins.
+    #[test]
+    fn no_name_is_classified_by_two_tables_on_one_preset() {
+        let mut names: Vec<&str> = Vec::new();
+        for row in ARCH_SPECIFIC_TABLE {
+            names.extend(row.op_names);
+        }
+        names.extend(PPC_TABLE.iter().map(|(n, _)| *n));
+        names.extend(ARCH_INDEPENDENT_TABLE.iter().map(|(n, _)| *n));
+        names.sort_unstable();
+        names.dedup();
+        assert!(
+            names.len() > 200,
+            "the table scan found only {}",
+            names.len()
+        );
+
+        let mut clashes = Vec::new();
+        for preset in crate::ArchPreset::ALL {
+            for name in &names {
+                let mut hits = Vec::new();
+                if classify_arch_specific(*preset, name).is_some() {
+                    hits.push("ARCH_SPECIFIC_TABLE");
+                }
+                if classify_arch_independent(name).is_some() {
+                    hits.push("ARCH_INDEPENDENT_TABLE");
+                }
+                if preset.family() == crate::ArchFamily::Ppc
+                    && PPC_TABLE.iter().any(|(n, _)| n == name)
+                {
+                    hits.push("PPC_TABLE");
+                }
+                if hits.len() > 1 {
+                    clashes.push(format!("{preset:?}/{name}: {}", hits.join(" shadows ")));
+                }
+            }
+        }
+        assert!(clashes.is_empty(), "{}", clashes.join("\n"));
+    }
+
     /// Arch-independence read off the table itself: every row answers the same
     /// under every preset, save where an arch-specific row deliberately
     /// shadows the name.
