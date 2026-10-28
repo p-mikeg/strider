@@ -1063,9 +1063,10 @@ fn fetch_serves(reader: &ElfFileMemReader, addr: u64) -> bool {
 
 /// `llvm-objcopy --strip-sections` leaves `ld.so` its `PT_DYNAMIC`, whose
 /// `DT_REL` still places the `.rel.dyn` that relocates code, and that table
-/// is walked. No `.dynsym` header says the `DT_SYMTAB` table is the one the
-/// indices mean, so `loc`'s and `imp`'s operands are both holes, where the
-/// sectioned twin patches `loc`'s.
+/// is walked. `object` builds its dynamic symbol table from an `SHT_DYNSYM`
+/// section header alone, so a stripped image has none and a relocation
+/// reading a symbol resolves nothing: `loc`'s and `imp`'s operands are both
+/// holes, where the sectioned twin patches `loc`'s.
 #[test]
 fn a_textrel_image_without_section_headers_is_relocated_from_its_tags() {
     let twin = open("x86_textrel.elf");
