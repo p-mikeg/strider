@@ -172,7 +172,9 @@ class LifterOptions:
     the calling convention for a callee, keyed by the direct-call target
     address rather than the call site: on ppc64 ELFv2 a call sharing the
     callee's TOC targets `Symbol.local_entry`, which only `ElfLifter.analyze`
-    adds for a key at `Symbol.address`. `pipeline`, when set,
+    adds for a key at `Symbol.address`. An override's `stack_pointer` must be
+    the analysed function's own, or `analyze` raises `StriderError`: the
+    override describes a callee, not another frame. `pipeline`, when set,
     replaces the default optimizer pipeline for the calls these options drive.
     """
 

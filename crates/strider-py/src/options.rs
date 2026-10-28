@@ -854,7 +854,9 @@ pub struct PyLifterOptions {
     #[pyo3(get)]
     pub compact: bool,
     /// Per-target-address calling-convention overrides (preset or custom
-    /// CCs accepted); `None`/omitted means no overrides.
+    /// CCs accepted); `None`/omitted means no overrides. An override's
+    /// `stack_pointer` must be the analysed function's own, or `analyze`
+    /// raises: the override describes a callee, not another frame.
     /// Shared so the table and its resolution both survive `_with_cfg`; see
     /// [`PerAddressCcs`].
     pub per_address_ccs: Option<std::sync::Arc<PerAddressCcs>>,
