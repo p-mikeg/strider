@@ -63,7 +63,7 @@ where
 /// [`Default`], so a memo added here is dropped with the rest and no caller
 /// has to remember it.  A field only belongs here if its `Default` means "not
 /// yet computed" and the graph alone can recompute it; a fact the graph does
-/// not derive is not one of these.
+/// not derive belongs with the claims on `Function` instead.
 #[derive(Clone, Default)]
 struct AnalysisMemos {
     /// SP-decomposition memo keyed by the value whose address cone was
@@ -146,15 +146,11 @@ pub struct SideTables {
     /// (`StaleInitialVarIndex`).
     pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
     memos: RefCell<AnalysisMemos>,
-    /// The highest offset from the entry SP of a stack address held, at some
-    /// `Call`, in a register the call clobbers, or `None` when no call held
-    /// one.  The call node carries no such value, so this is the only record
-    /// that a callee may have received it.
-    call_register_frame_reach: Option<i128>,
 }
 
 impl SideTables {
-    /// Crate-private so no caller can reset the claims to `none()`.
+    /// Crate-private so no caller can wipe the tables through
+    /// [`Function::side_tables_mut`](crate::Function::side_tables_mut).
     pub(crate) fn new() -> Self {
         Self {
             asm_fingerprints: UnionDag::default(),
@@ -162,7 +158,6 @@ impl SideTables {
             arg_index_to_values: FxHashMap::default(),
             initial_var_index: FxHashMap::default(),
             memos: RefCell::default(),
-            call_register_frame_reach: None,
         }
     }
 
@@ -322,31 +317,6 @@ impl SideTables {
         self.memos.borrow_mut().frame_escape = None;
     }
 
-    /// Whether some `Call` saw a stack address in a register it clobbers.
-    #[inline]
-    pub fn frame_address_in_call_register(&self) -> bool {
-        self.call_register_frame_reach.is_some()
-    }
-
-    /// The highest offset from the entry SP of a stack address some `Call`
-    /// saw in a register it clobbers: `i128::MAX` when one has no constant
-    /// offset from it, `None` when no call saw one.
-    #[inline]
-    pub fn call_register_frame_reach(&self) -> Option<i128> {
-        self.call_register_frame_reach
-    }
-
-    /// Records a stack address at offset `reach` from the entry SP in a
-    /// register a call clobbers (`i128::MAX` for no constant offset); the
-    /// highest recorded is kept.
-    #[inline]
-    pub(crate) fn record_call_register_frame_reach(&mut self, reach: i128) {
-        self.call_register_frame_reach = Some(
-            self.call_register_frame_reach
-                .map_or(reach, |r| r.max(reach)),
-        );
-    }
-
     /// Unordered.
     pub fn asm_fingerprint(&self, id: NodeId) -> FxHashSet<u64> {
         let mut set = FxHashSet::default();
@@ -388,8 +358,6 @@ impl SideTables {
             arg_index_to_values,
             initial_var_index,
             memos,
-            // Holds no id: a fact about the lifted calls.
-            call_register_frame_reach: _,
         } = self;
         asm_fingerprints.remap(|old| remap.node_old_to_new(old));
         memos.get_mut().remap(remap);

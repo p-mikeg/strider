@@ -315,14 +315,14 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool, vn_name: VnName<'_
     }
     out.push('\n');
     render_claims(&mut out, f.assumptions());
-    let st = f.side_tables();
-    match st.call_register_frame_reach() {
+    match f.call_register_frame_reach() {
         None => {}
         Some(i128::MAX) => out.push_str("frame_address_in_call_register reach=unbounded\n"),
         Some(reach) => {
             let _ = writeln!(out, "frame_address_in_call_register reach={reach}");
         }
     }
+    let st = f.side_tables();
     render_args(&mut out, &names, "arg", st.iter_arg_indices(), |i| {
         st.arg_index_to_values(i)
     });

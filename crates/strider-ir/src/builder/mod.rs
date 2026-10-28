@@ -156,9 +156,7 @@ impl FunctionBuilder {
     pub fn build(mut self) -> crate::Result<crate::Function> {
         crate::validate::validate(&self.function).map_err(|e| e.report(&self.function))?;
         if let Some(reach) = frame_reach(&self.function, &self.call_register_values) {
-            self.function
-                .side_tables_mut()
-                .record_call_register_frame_reach(reach);
+            self.function.record_call_register_frame_reach(reach);
         }
         Ok(self.function)
     }
