@@ -172,11 +172,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Re-imposes this region's ISA mode at `addr` when a change point wrote
     /// over it. The read is free; only a genuine drift pays for the write.
     fn hold_isa_mode(&mut self, addr: u64) -> Result<()> {
-        let (Some(want), Some(var)) = (self.isa_mode, self.builder.arch.isa_mode_var()) else {
+        let (Some(want), Some(var)) = (self.isa_mode, self.builder.engine.arch.isa_mode_var())
+        else {
             return Ok(());
         };
-        if self.builder.sleigh.get_context_at(addr, var)? != want {
-            self.builder.sleigh.set_context_at(addr, var, want)?;
+        if self.builder.engine.sleigh.get_context_at(addr, var)? != want {
+            self.builder.engine.sleigh.set_context_at(addr, var, want)?;
         }
         Ok(())
     }
@@ -196,7 +197,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// which is how gcc `-march=armv4t`'s `movne lr,pc; bxne r3` loses its call
     /// (`LRset` is committed at the `bx`).
     fn hold_transients(&mut self, addr: u64) -> Result<()> {
-        let defaults = self.builder.transient_defaults;
+        let defaults = &self.builder.engine.transient_defaults;
         if defaults.is_empty() {
             return Ok(());
         }
@@ -216,8 +217,11 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
         let mut wrote = false;
         for &(name, default) in defaults {
-            if self.builder.sleigh.get_context_at(addr, name)? != default {
-                self.builder.sleigh.set_context_at(addr, name, default)?;
+            if self.builder.engine.sleigh.get_context_at(addr, name)? != default {
+                self.builder
+                    .engine
+                    .sleigh
+                    .set_context_at(addr, name, default)?;
                 wrote = true;
             }
         }
@@ -234,19 +238,19 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// at the slot's own address, so the slot takes the branch's ISA mode and
     /// the `noflow` defaults, plus what the branch itself commits there.
     fn hold_delay_slot(&mut self, addr: u64, len: usize) -> Result<bool> {
-        if !self.builder.arch.has_delay_slots() {
+        if !self.builder.engine.arch.has_delay_slots() {
             return Ok(false);
         }
-        let isa = self.isa_mode.zip(self.builder.arch.isa_mode_var());
-        let defaults = self.builder.transient_defaults;
+        let isa = self.isa_mode.zip(self.builder.engine.arch.isa_mode_var());
+        let defaults = &self.builder.engine.transient_defaults;
         let end = addr.saturating_add(len as u64);
         let mut wrote = false;
         // Every MIPS encoding is a whole number of 16-bit words.
         for at in (addr.saturating_add(2)..end).step_by(2) {
             let isa_var = isa.map(|(want, var)| (var, want));
             for (name, want) in isa_var.into_iter().chain(defaults.iter().copied()) {
-                if self.builder.sleigh.get_context_at(at, name)? != want {
-                    self.builder.sleigh.set_context_at(at, name, want)?;
+                if self.builder.engine.sleigh.get_context_at(at, name)? != want {
+                    self.builder.engine.sleigh.set_context_at(at, name, want)?;
                     wrote = true;
                 }
             }
@@ -280,7 +284,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Re-lifting is cheap: `Sleigh` memoises recently-parsed instructions,
     /// and `oneInstruction` applies a cached parse's commits too.
     fn rederive_flow(&mut self, at: u64, from: u64) -> Result<()> {
-        let vars = self.builder.flow_commit_defaults;
+        let vars = &self.builder.engine.flow_commit_defaults;
         if vars.is_empty() {
             return Ok(());
         }
@@ -288,10 +292,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         for &(name, flow, default) in vars {
             let want = match flow {
                 FlowCommit::NoFlow => default,
-                FlowCommit::Flowing => self.builder.sleigh.get_context_at(from, name)?,
+                FlowCommit::Flowing => self.builder.engine.sleigh.get_context_at(from, name)?,
             };
-            if self.builder.sleigh.get_context_at(at, name)? != want {
-                self.builder.sleigh.set_context_at(at, name, want)?;
+            if self.builder.engine.sleigh.get_context_at(at, name)? != want {
+                self.builder.engine.sleigh.set_context_at(at, name, want)?;
                 wrote = true;
             }
         }
@@ -348,7 +352,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
 
     /// One Sleigh decode at `addr`, in whatever context the engine holds there.
     fn lift_unheld(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
-        self.builder.sleigh.lift_one(addr).map_err(|e| {
+        self.builder.engine.sleigh.lift_one(addr).map_err(|e| {
             // Display, not Debug: the error's `Debug` nests its source's, which
             // for a reader error carries a captured backtrace.
             let msg = format!("sleigh could not lift {addr:#x}: {e}");
@@ -411,7 +415,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         branch_insn_addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<PcodeInsnAddr> {
-        let default_code_space = self.builder.sleigh.default_code_space();
+        let default_code_space = self.builder.engine.sleigh.default_code_space();
 
         match branch_target_var.addr_space {
             // An out-of-range index must NOT slip through: the build loop
@@ -560,7 +564,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
         let target_no_return =
-            crate::direct_call_target(insn, self.builder.sleigh.default_code_space())
+            crate::direct_call_target(insn, self.builder.engine.sleigh.default_code_space())
                 .is_some_and(|target| self.builder.options.no_return_targets.contains(&target));
         if target_no_return {
             self.finish_current_region(RegionTerminator::NoReturn)?;
@@ -686,14 +690,15 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// answers, plus the PowerPC traps whose TO mask covers every relation.  An
     /// unexpected input shape falls through to `Continue` rather than erroring.
     fn process_call_other(&mut self, insn: &rsleigh::Insn) -> Result<InsnOutcome> {
-        let name = crate::user_op_of(insn, self.builder.user_op_names).map(|(_, name)| name);
+        let name =
+            crate::user_op_of(insn, &self.builder.engine.user_op_names).map(|(_, name)| name);
         let overridden = name.and_then(|n| self.builder.options.call_other_overrides.get(n));
         let terminates = match overridden {
             // A caller override states what this binary's build of the op does,
             // which includes the trap masks the built-in rule below reads.
             Some(lookup) => lookup.is_no_return(),
             None => {
-                let preset = self.builder.arch.preset();
+                let preset = self.builder.engine.arch.preset();
                 let class = name.and_then(|n| strider_target::call_other_abi::classify(preset, n));
                 // A PowerPC trap firing on every relation ends the region: the
                 // table classes the family conservatively because a narrower TO
@@ -1433,7 +1438,7 @@ mod tests {
     fn default_code_space_is_absolute_machine_address() {
         let mut engine = make_engine();
         let mut b = make_builder(0x1000, &mut engine);
-        let default_cs = b.sleigh.default_code_space();
+        let default_cs = b.engine.sleigh.default_code_space();
         let vn = code_space_vn(default_cs, 0xabc0);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
         let lift = fake_lift_res(1);

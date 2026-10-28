@@ -61,10 +61,11 @@ impl ArmSeed {
 /// either decodes a new region or routes an edge to an existing one. A branch
 /// landing mid-region splits that region in two.
 pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
-    pub(super) sleigh: &'a mut rsleigh::Sleigh<R>,
+    /// The engine this build decodes on: its Sleigh, its arch, its flowing
+    /// context vars and its per-preset default tables, each documented there.
+    pub(super) engine: &'a mut DecodeEngine<R>,
     pub(super) start_addr: MachineInsnAddr,
     pub(super) options: &'a CfgOptions<'a>,
-    pub(super) arch: strider_target::SleighArch,
     pub(super) region_graph: RegionGraph,
     /// Which region owns an address.
     pub(super) index: RegionIndex,
@@ -73,10 +74,6 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// LIFO for seeded arms, drained only once no direct edge is left; see
     /// [`Self::next_work_item`].
     pub(super) seeded_queue: Vec<WorkItem>,
-    /// Indexed by `user_op_id`.
-    pub(super) user_op_names: &'a [String],
-    /// The sla's flowing context vars.
-    pub(super) flow_vars: &'a FlowVars,
     /// This function's constant ISA mode, the base context a strider-resolved
     /// target decodes in ([`Self::enqueue_resolved`]).
     pub(super) function_mode: FlowContext,
@@ -98,16 +95,6 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// bytes rather than a stale one, but it is not necessarily the context the
     /// owning region decodes `addr` in.
     pub(super) committed_next: rustc_hash::FxHashSet<u64>,
-    /// Each var in `SleighArch::flow_commit_vars` with its flow class and its
-    /// pspec default, so a value an EARLIER build committed can be erased
-    /// before this build's own decode re-derives it.
-    pub(super) flow_commit_defaults: &'a [(&'static str, FlowCommit, u32)],
-    /// The pspec default of each `noflow` var that changes a decode
-    /// ([`strider_target::SleighArch::transient_decode_vars`]). A `globalset`
-    /// of one commits at exactly one address and outlives the build that
-    /// made it, so every decode resets them unless the instruction flowing
-    /// into it committed them.
-    pub(super) transient_defaults: &'a [(&'static str, u32)],
     /// The seeded arm the region under construction descends from, which every
     /// edge it enqueues inherits.
     pub(super) descent: Option<ArmSeed>,
@@ -152,20 +139,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         function_mode: FlowContext,
         options: &'a CfgOptions<'a>,
     ) -> Self {
-        let DecodeEngine {
-            sleigh,
-            arch,
-            flow_vars,
-            transient_defaults,
-            flow_commit_defaults,
-            user_op_names,
-            ..
-        } = engine;
         Self {
-            sleigh,
+            engine,
             start_addr: start_addr.into(),
             options,
-            arch: *arch,
             region_graph: RegionGraph::new(),
             index: RegionIndex::default(),
             work_queue: Vec::new(),
@@ -179,11 +156,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             committed_next: rustc_hash::FxHashSet::default(),
             link_register_seated: Vec::new(),
             tail_call_seated: Vec::new(),
-            user_op_names,
-            flow_vars,
             function_mode,
-            transient_defaults,
-            flow_commit_defaults,
             descent: None,
         }
     }
@@ -209,10 +182,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // commit). An arch naming no `flow_commit_vars` re-derives nothing, and
         // its out-of-band `is_benign_prefix_reentry` decode commits too, so it
         // takes the function's own baseline, as `enqueue_resolved` does.
-        let mut carried = if !self.flow_commit_defaults.is_empty()
+        let mut carried = if !self.engine.flow_commit_defaults.is_empty()
             && self.committed_next.contains(&addr.machine_addr.addr)
         {
-            self.flow_vars.snapshot(self.sleigh, addr.machine_addr.addr)
+            self.engine
+                .flow_vars
+                .snapshot(&self.engine.sleigh, addr.machine_addr.addr)
         } else {
             self.function_mode.clone()
         };
@@ -221,8 +196,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // Never the engine's value at the parent's start: an interworking
         // call commits the mode at its target, and a callee below the caller
         // paints forward over the caller's own bytes.
-        if let (Some(var), Some(mode)) = (self.arch.isa_mode_var(), isa_mode) {
-            carried = self.flow_vars.with_mode_bit(&carried, var, mode != 0);
+        if let (Some(var), Some(mode)) = (self.engine.arch.isa_mode_var(), isa_mode) {
+            carried = self
+                .engine
+                .flow_vars
+                .with_mode_bit(&carried, var, mode != 0);
         }
         self.work_queue.push(WorkItem {
             parent,
@@ -248,8 +226,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         branch_site: PcodeInsnAddr,
     ) {
         let flowing = self.sample_flowing_isa_bit(branch_site);
-        let carried = match (self.arch.isa_mode_var(), isa_bit.or(flowing)) {
-            (Some(var), Some(bit)) => self.flow_vars.with_mode_bit(&self.function_mode, var, bit),
+        let carried = match (self.engine.arch.isa_mode_var(), isa_bit.or(flowing)) {
+            (Some(var), Some(bit)) => {
+                self.engine
+                    .flow_vars
+                    .with_mode_bit(&self.function_mode, var, bit)
+            }
             _ => self.function_mode.clone(),
         };
         self.seeded_queue.push(WorkItem {
@@ -331,9 +313,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// mode, the clash check and the entry-mode degrade are all this question
     /// asked at different contexts.
     fn isa_mode_of(&self, ctx: &FlowContext) -> Option<u32> {
-        self.arch
+        self.engine
+            .arch
             .isa_mode_var()
-            .and_then(|var| self.flow_vars.value_of(ctx, var))
+            .and_then(|var| self.engine.flow_vars.value_of(ctx, var))
     }
 
     /// Records, and returns, the ISA-mode bit flowing into the indirect branch
@@ -345,7 +328,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// [`crate::flowing_isa_bit_at`] again after the build answers for whichever
     /// region painted the address last. `None` on an arch with no ISA-mode var.
     pub(super) fn sample_flowing_isa_bit(&mut self, site: PcodeInsnAddr) -> Option<bool> {
-        self.arch.isa_mode_var()?;
+        self.engine.arch.isa_mode_var()?;
         if let Some(&bit) = self.flowing_isa_bits.get(&site) {
             return Some(bit);
         }
@@ -354,8 +337,12 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let entry_bit = self
             .isa_mode_of(&self.function_mode)
             .is_some_and(|v| v != 0);
-        let bit =
-            crate::flowing_isa_bit_at(&self.arch, self.sleigh, site.machine_addr.addr, entry_bit);
+        let bit = crate::flowing_isa_bit_at(
+            &self.engine.arch,
+            &self.engine.sleigh,
+            site.machine_addr.addr,
+            entry_bit,
+        );
         self.flowing_isa_bits.insert(site, bit);
         Some(bit)
     }
@@ -503,7 +490,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // snapshot LOCAL rather than a coincidence of two per-preset tables:
         // whatever `flow_commit_vars` grows to, a throwaway decode cannot run
         // where a snapshot is believed.
-        if self.arch.isa_mode_var().is_some() || !self.flow_commit_defaults.is_empty() {
+        if self.engine.arch.isa_mode_var().is_some() || !self.engine.flow_commit_defaults.is_empty()
+        {
             return false;
         }
         let Some(region) = self.region_graph.node_weight(owner) else {
@@ -534,7 +522,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             .filter(|i| i.addr.machine_addr.addr == start)
             .map(|i| i.insn.clone())
             .collect();
-        let Ok(tail) = self.sleigh.lift_one(target) else {
+        let Ok(tail) = self.engine.sleigh.lift_one(target) else {
             return false;
         };
         // `checked_add`, so a tail ending at the top of the address space
@@ -552,7 +540,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         ops.iter()
             .filter(|op| {
                 op.opcode != rsleigh::Opcode::CallOther
-                    || !crate::user_op_of(op, self.user_op_names)
+                    || !crate::user_op_of(op, &self.engine.user_op_names)
                         .is_some_and(|(_, name)| name == "LOCK" || name == "UNLOCK")
             })
             .cloned()
@@ -618,7 +606,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             self.region_graph.add_edge(parent_region_id, target, ());
             return Ok(());
         }
-        if !self.flow_vars.is_empty() {
+        if !self.engine.flow_vars.is_empty() {
             // Undoes a sibling region's forward-hold clobber of this address.
             //
             // Several sla context vars alias the ISA-mode bit (ARM `TMode`,
@@ -628,8 +616,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             // below opens with a `lift_one` on this same address, and that
             // repair runs unconditionally where one here would be gated on
             // `pin_at` having written at all.
-            self.flow_vars
-                .pin_at(self.sleigh, addr.machine_addr.addr, &carried)?;
+            self.engine.flow_vars.pin_at(
+                &mut self.engine.sleigh,
+                addr.machine_addr.addr,
+                &carried,
+            )?;
         }
         let isa_mode = self.isa_mode_of(&carried);
         self.descent = seeded_by;
@@ -964,7 +955,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             link_register_seated: self.link_register_seated,
             tail_call_seated: self.tail_call_seated,
             flowing_isa_bits: self.flowing_isa_bits,
-            space_ids: self.sleigh.space_ids(),
+            space_ids: self.engine.sleigh.space_ids(),
         })
     }
 }
@@ -1809,7 +1800,8 @@ mod tests {
         assert_eq!(CONTEXT_READS.with(std::cell::Cell::get), 0);
         let var = arch.isa_mode_var().expect("ARM has an ISA-mode var");
         assert_eq!(
-            b.flow_vars
+            b.engine
+                .flow_vars
                 .value_of(&b.work_queue.last().expect("queued").carried, var),
             Some(1),
             "the child carries the parent's mode",
@@ -1851,7 +1843,8 @@ mod tests {
         let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
         b.enqueue(None, addr(0x1040, 0), None);
         assert_eq!(
-            b.flow_vars
+            b.engine
+                .flow_vars
                 .value_of(&b.work_queue.last().expect("queued").carried, victim),
             Some(clean),
             "a commit this build never made must not be carried",
@@ -1862,7 +1855,8 @@ mod tests {
         b.committed_next.insert(0x1040);
         b.enqueue(None, addr(0x1040, 0), None);
         assert_eq!(
-            b.flow_vars
+            b.engine
+                .flow_vars
                 .value_of(&b.work_queue.last().expect("queued").carried, victim),
             Some(stale),
             "this build's own commit IS carried",
@@ -1904,7 +1898,8 @@ mod tests {
         b.committed_next.insert(0x1040);
         b.enqueue(None, addr(0x1040, 0), None);
         assert_eq!(
-            b.flow_vars
+            b.engine
+                .flow_vars
                 .value_of(&b.work_queue.last().expect("queued").carried, &victim),
             Some(clean),
             "a snapshot was trusted on an arch that re-derives nothing",
@@ -2388,13 +2383,13 @@ mod tests {
     fn re_deriving_committed_context_bars_the_reentry_probe() {
         // 0x1000 je 0x1003 ; 0x1002 lock xadd %ecx,(%eax) ; mov %ecx,%eax ; ret
         const LOCK_REENTRY: [u8; 9] = [0x74, 0x01, 0xf0, 0x0f, 0xc1, 0x08, 0x89, 0xc8, 0xc3];
-        let interior = |lent: &'static [(&'static str, super::FlowCommit, u32)]| {
+        let interior = |lent: Vec<(&'static str, super::FlowCommit, u32)>| {
             let arch = strider_target::SleighArch::x86();
             let reader = rsleigh::mem_readers::BufMemReader::new(LOCK_REENTRY.to_vec(), 0x1000);
             let mut engine = crate::DecodeEngine::new(arch, reader).expect("decode engine");
             let opts = crate::CfgOptions::default();
-            let mut b = engine.builder(0x1000u64.into(), &opts).expect("builder");
-            b.flow_commit_defaults = lent;
+            let b = engine.builder(0x1000u64.into(), &opts).expect("builder");
+            b.engine.flow_commit_defaults = lent;
             b.build()
                 .expect("build")
                 .incomplete()
@@ -2403,7 +2398,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert!(
-            interior(&[]).is_empty(),
+            interior(Vec::new()).is_empty(),
             "with nothing to re-derive the probe runs and the reentry is exact",
         );
         // `segover` is a real x86 flowing var (`ia.sinc:411`) that no
@@ -2411,7 +2406,7 @@ mod tests {
         // what is under test is the guard, not this var. It has to exist in
         // the sla, because `rederive_flow` reads every name it is lent.
         assert_eq!(
-            interior(&[("segover", super::FlowCommit::Flowing, 0)]),
+            interior(vec![("segover", super::FlowCommit::Flowing, 0)]),
             vec![0x1003],
             "with committed context to re-derive the probe must be barred, so the \
              reentry falls back to being reported as interior",
