@@ -169,6 +169,40 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
     }
 
+    /// Enqueues `addr` as a direct successor of `region`, carrying what this
+    /// region decoded in: its ISA mode and its live flowing commits.
+    fn enqueue(&mut self, region: NodeIndex, addr: PcodeInsnAddr) -> Result<()> {
+        let flowing = self.flowing_commits()?;
+        self.builder
+            .enqueue(Some(region), addr, self.isa_mode, &flowing);
+        Ok(())
+    }
+
+    /// Each FLOWING [`strider_target::SleighArch::flow_commit_vars`] var's
+    /// value at [`Self::last_lift`], the last address this builder decoded.
+    ///
+    /// That address is this build's own: [`Self::rederive_flow`] re-derived it
+    /// as the predecessor's `inst_next`, or [`Builder::explore`] pinned it as
+    /// the region's first. It is therefore what would have flowed on had
+    /// Sleigh flowed to the successor at all, which is what an edge to an
+    /// address no `inst_next` recorded needs in place of a snapshot.
+    ///
+    /// A [`FlowCommit::NoFlow`] var is left out: its commit covers one
+    /// address, so nothing of it flows off the edge, and painting a live IT
+    /// state onto the target predicates it.
+    fn flowing_commits(&self) -> Result<Vec<(&'static str, u32)>> {
+        let Some(from) = self.last_lift else {
+            return Ok(Vec::new());
+        };
+        self.builder
+            .engine
+            .flow_commit_defaults
+            .iter()
+            .filter(|&&(_, class, _)| class == FlowCommit::Flowing)
+            .map(|&(name, ..)| Ok((name, self.builder.engine.sleigh.get_context_at(from, name)?)))
+            .collect()
+    }
+
     /// Re-imposes this region's ISA mode at `addr` when a change point wrote
     /// over it. The read is free; only a genuine drift pays for the write.
     fn hold_isa_mode(&mut self, addr: u64) -> Result<()> {
@@ -624,8 +658,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         };
         let region = self.finish_current_region(terminator)?;
         if !is_tail_call {
-            self.builder
-                .enqueue(Some(region), branch_target_addr, self.isa_mode);
+            self.enqueue(region, branch_target_addr)?;
         }
         Ok(InsnOutcome::RegionClosed)
     }
@@ -678,7 +711,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 let stub = self.builder.tail_call_stub(successor)?;
                 self.builder.region_graph.add_edge(region, stub, ());
             } else {
-                self.builder.enqueue(Some(region), successor, self.isa_mode);
+                self.enqueue(region, successor)?;
             }
         }
         Ok(InsnOutcome::RegionClosed)
@@ -995,7 +1028,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // PhiCollapse), so this costs only build time.
                 if self.insns.is_empty() || is_zero_op {
                     let region = self.finish_current_region(RegionTerminator::Unconditional)?;
-                    self.builder.enqueue(Some(region), cur_addr, self.isa_mode);
+                    self.enqueue(region, cur_addr)?;
                     return Ok(());
                 }
             }
