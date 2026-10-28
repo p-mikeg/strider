@@ -4389,82 +4389,26 @@ pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
         "VALUE_TYPES",
         pyo3::types::PyTuple::new_bound(py, value_types),
     )?;
-    m.add_class::<PyCapture>()?;
-    m.add_class::<PyPat>()?;
-    m.add_class::<PyIntBinaryPat>()?;
-    m.add_class::<PyFloatBinaryPat>()?;
-    m.add_class::<PyBoolBinaryPat>()?;
-    m.add_class::<PyCallPat>()?;
-    m.add_class::<PyOutputSlot>()?;
-    m.add_class::<PyCallOtherPat>()?;
-    m.add_class::<PyRetPat>()?;
-    m.add_class::<PyIndirectBranchPat>()?;
-    m.add_class::<PyUnreachablePat>()?;
-    m.add_class::<PySwitchPat>()?;
-    m.add_class::<PyIfPat>()?;
-    m.add_class::<PyLoadPat>()?;
-    m.add_class::<PyStorePat>()?;
-    m.add_class::<PyPhiPat>()?;
-    m.add_class::<PyMemPhiPat>()?;
-    m.add_class::<PyFunctionArgPat>()?;
-    m.add_class::<PyEntryPat>()?;
-    m.add_class::<PyRegionPat>()?;
-    m.add_class::<PyCastMask>()?;
-
-    macro_rules! add_fn {
-        ($name:ident) => {
-            m.add_function(wrap_pyfunction!($name, m)?)?;
-        };
-    }
-    add_fn!(any_);
-    add_fn!(var);
-    add_fn!(value_of_width);
-    add_fn!(inputs_of_width);
-    add_fn!(bool_inputs);
-    add_fn!(int_const);
-    add_fn!(int_const_any_width);
-    add_fn!(bool_const);
-    add_fn!(float_const);
-    add_fn!(any_int);
-    add_fn!(any_bool);
-    add_fn!(any_float);
-    add_fn!(initial_var);
-    add_fn!(initial_var_for);
-    add_fn!(one_of);
-    add_fn!(first_of);
-    add_fn!(function_arg);
-    add_fn!(any_function_arg);
-    add_fn!(function_arg_float);
-    add_fn!(function_arg_reg);
-    add_fn!(function_arg_stack);
-    add_fn!(phi);
-    add_fn!(phi_for);
-    add_fn!(mem_phi);
-    add_fn!(entry);
-    add_fn!(region);
-    add_fn!(predicate);
+    bind!(m;
+        classes [
+            PyCapture, PyPat, PyIntBinaryPat, PyFloatBinaryPat, PyBoolBinaryPat,
+            PyCallPat, PyOutputSlot, PyCallOtherPat, PyRetPat, PyIndirectBranchPat,
+            PyUnreachablePat, PySwitchPat, PyIfPat, PyLoadPat, PyStorePat, PyPhiPat,
+            PyMemPhiPat, PyFunctionArgPat, PyEntryPat, PyRegionPat, PyCastMask,
+        ];
+        fns [
+            any_, var, value_of_width, inputs_of_width, bool_inputs, int_const,
+            int_const_any_width, bool_const, float_const, any_int, any_bool, any_float,
+            initial_var, initial_var_for, one_of, first_of, function_arg,
+            any_function_arg, function_arg_float, function_arg_reg, function_arg_stack,
+            phi, phi_for, mem_phi, entry, region, predicate, float_is_nan, float_le,
+            load, store, call, call_other, ret, indirect_branch, unreachable, switch,
+            if_, int_binary, bool_binary, float_binary, any_int_binary, any_int_unary,
+            any_int_cmp, any_bool_binary, any_float_binary, any_float_unary,
+            any_float_cmp,
+        ];
+    );
     register_value_ops(m)?;
-    add_fn!(float_is_nan);
-    add_fn!(float_le);
-    add_fn!(load);
-    add_fn!(store);
-    add_fn!(call);
-    add_fn!(call_other);
-    add_fn!(ret);
-    add_fn!(indirect_branch);
-    add_fn!(unreachable);
-    add_fn!(switch);
-    add_fn!(if_);
-    add_fn!(int_binary);
-    add_fn!(bool_binary);
-    add_fn!(float_binary);
-    add_fn!(any_int_binary);
-    add_fn!(any_int_unary);
-    add_fn!(any_int_cmp);
-    add_fn!(any_bool_binary);
-    add_fn!(any_float_binary);
-    add_fn!(any_float_unary);
-    add_fn!(any_float_cmp);
 
     register_constraints(py, m)?;
     Ok(())
@@ -4474,19 +4418,10 @@ pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 /// resolves by attribute.
 fn register_constraints(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let m = PyModule::new_bound(py, "constraints")?;
-    m.add_class::<PyJoinConstraint>()?;
-    m.add_class::<PyJoinPredicate>()?;
-
-    macro_rules! add_fn {
-        ($name:ident) => {
-            m.add_function(wrap_pyfunction!($name, &m)?)?;
-        };
-    }
-    add_fn!(dominates);
-    add_fn!(phi_input_from_edge);
-    add_fn!(negate);
-    add_fn!(any_of);
-    add_fn!(all_of);
+    bind!(&m;
+        classes [PyJoinConstraint, PyJoinPredicate];
+        fns [dominates, phi_input_from_edge, negate, any_of, all_of];
+    );
 
     parent.add_submodule(&m)?;
     // The `sys.modules` entry that `import strider.pattern.constraints` needs

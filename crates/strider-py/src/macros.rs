@@ -44,3 +44,12 @@ macro_rules! forall_preset {
 }
 
 pub(crate) use forall_preset;
+
+/// Registers a module's `#[pyclass]`es and free functions. `$m` is whatever
+/// `wrap_pyfunction!` wants: `m` for a `&Bound`, `&m` for an owned one.
+macro_rules! bind {
+    ($m:expr; $(classes [$($c:ty),* $(,)?];)? $(fns [$($f:ident),* $(,)?];)?) => {{
+        $($( $m.add_class::<$c>()?; )*)?
+        $($( $m.add_function(pyo3::wrap_pyfunction!($f, $m)?)?; )*)?
+    }};
+}
