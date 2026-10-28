@@ -1424,10 +1424,12 @@ fn is_ifunc(st_info: u8) -> bool {
 ///   which the loader replaces before the program runs or on the first call.
 ///
 /// The local entries hold `B + value`, `B` modelled 0, and stay as the file
-/// has them. Without `.dynsym`, or with one that is not `DT_SYMTAB`'s table,
-/// no symbol can be checked, so every global entry is a hole, and a dynamic image missing one of the tags that place
-/// the GOT makes every `.got` word one. A hole names `R_MIPS_GLOB_DAT`, the
-/// relocation that covers the same kind of entry outside the primary GOT.
+/// has them. `object` builds its dynamic symbol table from an `SHT_DYNSYM`
+/// SECTION HEADER alone, so a section-stripped image has none and no symbol
+/// can be checked: every global entry is a hole, as it is for a dynamic image
+/// missing one of the tags that place the GOT, which makes every `.got` word
+/// one. A hole names `R_MIPS_GLOB_DAT`, the relocation that covers the same
+/// kind of entry outside the primary GOT.
 fn mips_implicit_got(ctx: &mut Ctx<'_, '_>) {
     let obj = ctx.obj;
     if !matches!(obj.architecture(), A::Mips | A::Mips64)
