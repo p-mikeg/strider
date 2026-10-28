@@ -185,7 +185,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// as the predecessor's `inst_next`, or [`Builder::explore`] pinned it as
     /// the region's first. It is therefore what would have flowed on had
     /// Sleigh flowed to the successor at all, which is what an edge to an
-    /// address no `inst_next` recorded needs in place of a snapshot.
+    /// address no `inst_next` recorded needs in place of a snapshot: a direct
+    /// edge taking [`Builder::enqueue`]'s fallback, and every
+    /// [`Builder::enqueue_resolved`] arm.
     ///
     /// A [`FlowCommit::NoFlow`] var is left out: its commit covers one
     /// address, so nothing of it flows off the edge, and painting a live IT
@@ -871,12 +873,16 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // them; decoding the lower arm first gives `explore` a region to
                 // recognise a higher over-read arm as interior to, which drops it
                 // instead of decoding a second region inside that instruction.
+                // Read at the branch site, which is still the last address
+                // decoded, exactly where `sample_flowing_isa_bit` sampled.
+                let flowing = self.flowing_commits()?;
                 for target in arms.iter().rev() {
                     self.builder.enqueue_resolved(
                         Some(region),
                         PcodeInsnAddr::at_machine_start(target.addr),
                         target.isa_bit,
                         addr,
+                        &flowing,
                     );
                 }
             }
