@@ -108,14 +108,13 @@ pub(super) fn edge_style(
 }
 
 pub struct FunctionDotDumper<'a> {
-    pub(crate) entry: NodeId,
     pub(crate) function: &'a Function,
     /// The arch's register and space names, all a label reads.
     pub(crate) names: &'a strider_target::ArchNames,
     /// Carrier node -> arg tags.
     pub(crate) node_to_arg_indices: FxHashMap<NodeId, Vec<ArgTag>>,
     /// Restrict the render to the induced subgraph over these nodes; `None`
-    /// renders everything reachable from `entry`.
+    /// renders everything reachable from the function's entry.
     pub(crate) nodes: Option<FxHashSet<NodeId>>,
     /// Focus of a neighbourhood render, drawn with a highlight border.
     pub(crate) center: Option<NodeId>,

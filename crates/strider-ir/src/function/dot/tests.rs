@@ -12,9 +12,8 @@ fn int_const_node(f: &mut Function, v: u128, ty: ValueType) -> NodeId {
         .create_node(NodeKind::IntConst(id), [], [ValueKind::Typed(ty)])
 }
 
-fn make_dumper(function: &Function, entry: NodeId) -> FunctionDotDumper<'_> {
+fn make_dumper(function: &Function) -> FunctionDotDumper<'_> {
     FunctionDotDumper {
-        entry,
         function,
         names: strider_target::SleighArch::x86_64().names(),
         node_to_arg_indices: build_arg_reverse_map(function),
@@ -23,18 +22,15 @@ fn make_dumper(function: &Function, entry: NodeId) -> FunctionDotDumper<'_> {
     }
 }
 
-fn render(function: &Function, entry: NodeId) -> String {
-    render_with_state(function, entry).0
+fn render(function: &Function) -> String {
+    render_with_state(function).0
 }
 
 /// [`render`] plus the dumper state, for the `dot id -> NodeId` mapping, which
 /// only this test needs: the emitter loop is `GraphDot::as_dot`'s, which drops
 /// the state.
-fn render_with_state(
-    function: &Function,
-    entry: NodeId,
-) -> (String, super::FunctionDotDumperState) {
-    let dumper = make_dumper(function, entry);
+fn render_with_state(function: &Function) -> (String, super::FunctionDotDumperState) {
+    let dumper = make_dumper(function);
     let mut out = ::dot::DotEmitter::new("G", &::dot::DotStyle::empty());
     let mut state = dumper.create_initial_state();
     for node in dumper.iter_nodes() {
@@ -49,9 +45,8 @@ fn render_with_state(
 #[test]
 fn phi_without_an_output_labels_rather_than_panicking() {
     let mut f = test_function();
-    let entry = f.entry();
     let phi = f.graph_mut().create_node(NodeKind::Phi, [], []);
-    let dumper = make_dumper(&f, entry);
+    let dumper = make_dumper(&f);
     assert_eq!(dumper.pretty_label(phi), "φ Val");
 }
 
@@ -93,7 +88,7 @@ fn render_float_const_beyond_f64_shows_raw_bits() {
         f.graph_mut()
             .create_node(NodeKind::Return, [ctrl, mem_value, c_value], []);
 
-        let dot = render(&f, entry);
+        let dot = render(&f);
         assert!(
             dot.contains(suffix),
             "{ty} const must render as {suffix}: {dot}"
@@ -131,7 +126,7 @@ fn render_int_const_wide_shows_value_not_debug() {
     f.graph_mut()
         .create_node(NodeKind::Return, [ctrl, mem_value, wide_value], []);
 
-    let dot = render(&f, entry);
+    let dot = render(&f);
     assert!(
         dot.contains(":i256"),
         "wide const must render with a u256 suffix, got: {dot}"
@@ -211,18 +206,17 @@ fn dot_output_diamond_is_deterministic() {
     f.graph_mut()
         .create_node(NodeKind::Return, [false_ctrl], []);
 
-    let first = render(&f, entry);
-    let second = render(&f, entry);
+    let first = render(&f);
+    let second = render(&f);
     assert_eq!(first, second);
 }
 
 #[test]
 fn dot_output_has_digraph_wrapper() {
     let mut f = test_function();
-    let entry = f
-        .graph_mut()
+    f.graph_mut()
         .create_node(NodeKind::Entry, [], [ValueKind::Control]);
-    let dot = render(&f, entry);
+    let dot = render(&f);
     assert!(
         dot.trim_start().starts_with("digraph"),
         "must start with 'digraph':\n{dot}"
@@ -249,7 +243,7 @@ fn all_edge_endpoints_are_declared() {
     f.graph_mut().create_node(NodeKind::Return, [tc], []);
     f.graph_mut().create_node(NodeKind::Return, [fc], []);
 
-    let dot = render(&f, entry);
+    let dot = render(&f);
 
     // The id is the part before the first space on a `"id" [label=...]` line.
     let declared: std::collections::HashSet<&str> = dot
@@ -292,7 +286,7 @@ fn linear_chain_node_and_edge_count() {
     let [cs_ctrl, _] = f.node_outputs_exact::<2>(cs).unwrap();
     f.graph_mut().create_node(NodeKind::Return, [cs_ctrl], []);
 
-    let dot = render(&f, entry);
+    let dot = render(&f);
     assert_eq!(
         node_decls(&dot).len(),
         3,
@@ -319,7 +313,7 @@ fn if_node_produces_exactly_two_branch_virtual_nodes() {
     f.graph_mut().create_node(NodeKind::Return, [tc], []);
     f.graph_mut().create_node(NodeKind::Return, [fc], []);
 
-    let dot = render(&f, entry);
+    let dot = render(&f);
 
     let if_true_count = count_lines(&dot, |l| l.contains("if.true") && l.contains("[label="));
     let if_false_count = count_lines(&dot, |l| l.contains("if.false") && l.contains("[label="));
@@ -357,7 +351,7 @@ fn dot_id_maps_back_to_its_ir_node_including_duplicated_consts() {
     }
     f.graph_mut().create_node(NodeKind::Return, add_values, []);
 
-    let (dot, state) = render_with_state(&f, entry);
+    let (dot, state) = render_with_state(&f);
 
     let const_ids: Vec<&str> = state
         .dot_to_node()
@@ -404,7 +398,7 @@ fn mem_phi_label_is_phi_mem() {
     f.graph_mut()
         .create_node(NodeKind::Return, [entry_ctrl, mp_value], []);
 
-    let dot = render(&f, entry);
+    let dot = render(&f);
     assert!(
         dot.contains("φ Mem"),
         "MemPhi label must be 'φ Mem':\n{dot}"
@@ -427,7 +421,7 @@ fn int_const_label_contains_value_and_type() {
     f.graph_mut()
         .create_node(NodeKind::Return, [entry_ctrl, c_value], []);
 
-    let dot = render(&f, entry);
+    let dot = render(&f);
     assert!(
         dot.contains("0xdeadbeef"),
         "hex value must be in label:\n{dot}"
@@ -474,7 +468,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
     f.graph_mut()
         .create_node(NodeKind::Return, [cs_false_ctrl], []);
 
-    let dumper = make_dumper(&f, entry);
+    let dumper = make_dumper(&f);
 
     let style = ::dot::DotStyle::empty();
     let mut emitter = ::dot::DotEmitter::new("test", &style);
@@ -553,7 +547,7 @@ fn render_call_with_clobbered_output_uses_synthetic_label_when_slice_short() {
         .create_node(NodeKind::Return, [call_ctrl, call_mem, clob_value], []);
 
     // The output carries no `value_vn` tag, so it falls back to `outN`.
-    let dot = render(&f, entry);
+    let dot = render(&f);
     assert!(
         dot.contains("out2"),
         "expected synthetic out2 label, got:\n{dot}"
@@ -582,7 +576,7 @@ fn call_other_label_includes_resolved_name() {
     f.graph_mut()
         .create_node(NodeKind::Return, [co_ctrl, co_mem], []);
 
-    let dot = render(&f, entry);
+    let dot = render(&f);
     assert!(
         dot.contains("setISAMode #62"),
         "label must show resolved name and id together:\n{dot}",
@@ -612,7 +606,7 @@ fn call_other_label_falls_back_to_id_when_name_missing() {
     f.graph_mut()
         .create_node(NodeKind::Return, [co_ctrl, co_mem], []);
 
-    let dot = render(&f, entry);
+    let dot = render(&f);
     assert!(
         dot.contains("CallOther #7"),
         "label must show the bare id when no name is recorded:\n{dot}",
@@ -664,7 +658,7 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
         .create_node(NodeKind::Return, [region_ctrl, store_mem], []);
 
     // No stack_offset entry: the addr edge must be present.
-    let dot_no_offset = render(&f, entry);
+    let dot_no_offset = render(&f);
 
     assert!(
         dot_no_offset.contains("0x10"),
@@ -676,7 +670,7 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
     f.side_tables_mut()
         .set_stack_slot(addr_value, addr_value, 0x10_i128);
 
-    let dot_with_offset = render(&f, entry);
+    let dot_with_offset = render(&f);
 
     assert!(
         dot_with_offset.contains("base sp + 16"),
@@ -724,12 +718,12 @@ fn load_keeps_addr_edge_and_labels_base_sp_offset() {
     f.graph_mut()
         .create_node(NodeKind::Return, [entry_ctrl, load_value], []);
 
-    let dot_no_offset = render(&f, entry);
+    let dot_no_offset = render(&f);
     let edges_no_offset = edge_lines(&dot_no_offset).len();
 
     f.side_tables_mut()
         .set_stack_slot(addr_value, addr_value, -8_i128);
-    let dot_with_offset = render(&f, entry);
+    let dot_with_offset = render(&f);
 
     assert!(
         dot_with_offset.contains("base sp - 8"),
@@ -769,7 +763,7 @@ fn function_arg_node_label_includes_arg_index() {
     f.graph_mut()
         .create_node(NodeKind::Return, [entry_ctrl, iv_value], []);
 
-    let dot = render(&f, entry);
+    let dot = render(&f);
 
     assert!(
         dot.contains("[arg 0]"),
@@ -856,7 +850,7 @@ fn render_two_pred_join_with_phi_memphi() -> String {
     f.graph_mut()
         .create_node(NodeKind::Return, [join_ctrl, mp_value, phi_value], []);
 
-    render(&f, entry)
+    render(&f)
 }
 
 #[test]
@@ -1046,9 +1040,9 @@ fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
     f.graph_mut()
         .create_node(NodeKind::Return, [ctrl, memv, a2v], []);
 
-    let dumper = make_dumper(&f, entry);
-
-    let dot = dumper.neighborhood_dot(add1, 3, 12, 100, false).unwrap();
+    let dot = make_dumper(&f)
+        .neighborhood_dot(add1, 3, 12, 100, false)
+        .unwrap();
     let decl = node_decls(&dot)
         .into_iter()
         .find(|l| {
@@ -1062,7 +1056,9 @@ fn neighborhood_center_is_highlighted_and_navigable_even_when_const() {
     );
 
     // A const centre: the SAME box for both consumers, under its NodeId.
-    let dot = dumper.neighborhood_dot(k, 3, 12, 100, false).unwrap();
+    let dot = make_dumper(&f)
+        .neighborhood_dot(k, 3, 12, 100, false)
+        .unwrap();
     let kid = k.as_u32().to_string();
     let decls: Vec<_> = node_decls(&dot)
         .into_iter()
@@ -1111,8 +1107,7 @@ fn neighborhood_duplicates_shared_const_per_use() {
     let a2v = f.node_outputs(add2)[0];
     let center = mk_add(&mut f, a1v, a2v);
 
-    let entry = f.entry();
-    let dumper = make_dumper(&f, entry);
+    let dumper = make_dumper(&f);
     let dot = dumper.neighborhood_dot(center, 3, 12, 100, false).unwrap();
 
     let sevens = node_decls(&dot)
@@ -1163,7 +1158,7 @@ fn function_float_arg_node_label_is_distinct_from_the_integer_index() {
     f.graph_mut()
         .create_node(NodeKind::Return, [entry_ctrl, int_value, float_value], []);
 
-    let dot = render(&f, entry);
+    let dot = render(&f);
 
     assert!(
         dot.contains("[float arg 0]"),

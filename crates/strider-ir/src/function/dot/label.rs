@@ -4,7 +4,7 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
 /// A REGISTER varnode matching a named register renders as that name (`"RAX"`);
 /// anything else as `<space>[0x<off>]:<size>`, or `0x<off>:<size>` for CONST.
-pub(crate) fn vn_to_display_name(names: &strider_target::ArchNames, vn: &rsleigh::Vn) -> String {
+fn vn_to_display_name(names: &strider_target::ArchNames, vn: &rsleigh::Vn) -> String {
     names.vn(*vn).to_string()
 }
 
