@@ -314,27 +314,11 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     #[cfg(any(test, feature = "test-injectors"))]
     pub fn remove_node_input(&mut self, node_id: NodeId, index: u32) -> bool {
         let index = index as usize;
-        let inputs = &self.store.nodes[node_id].inputs;
-        let slice = inputs.as_slice(&self.store.input_pool);
-        let Some(&delete_use_id) = slice.get(index) else {
-            return false;
-        };
-        // After the bounds check: invalidating first would evict a node whose
-        // structure never changed, and this path never re-inserts it.
-        self.cache.invalidate(node_id);
-
-        self.store.nodes[node_id]
-            .inputs
-            .remove(index, &mut self.store.input_pool);
-        let tail: SmallVec<[UseId; 4]> = self.store.nodes[node_id]
-            .inputs
-            .as_slice(&self.store.input_pool)[index..]
-            .into();
-        for use_id in tail {
-            self.store.inputs[use_id].input_index -= 1;
+        let in_range = index < self.store.node_input_uses(node_id).len();
+        if in_range {
+            self.remove_node_inputs_batch(node_id, [index]);
         }
-        self.store.unlink_use_from_value_list(delete_use_id);
-        true
+        in_range
     }
 
     /// Removes the inputs at `indices` and compacts the rest: O(D) for a node's
