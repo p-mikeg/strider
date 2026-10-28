@@ -1,4 +1,4 @@
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 
 use cranelift_entity::{SecondaryMap, entity_impl};
 use entity_utils::{EntityInterner, UnionDag};
@@ -56,8 +56,81 @@ where
     dst
 }
 
+/// Everything the analyses derive from the graph, and nothing else.
+///
+/// What makes a field one of these is the clearing rule:
+/// [`SideTables::invalidate_analyses`] replaces the whole struct with its
+/// [`Default`], so a memo added here is dropped with the rest and no caller
+/// has to remember it.  A field only belongs here if its `Default` means "not
+/// yet computed" and the graph alone can recompute it; a fact the graph does
+/// not derive is not one of these.
+#[derive(Clone, Default)]
+struct AnalysisMemos {
+    /// SP-decomposition memo keyed by the value whose address cone was
+    /// analysed.  A [`MemDecomp::Stack`] resolves through `memory_interner` to
+    /// `(base, offset)`, where `base` is the SP-derived terminal and the offset
+    /// is in bytes relative to it: two accesses are the same slot iff they
+    /// share both.
+    memory_offsets: SecondaryMap<ValueId, MemDecomp>,
+    memory_interner: EntityInterner<MemoryId, (ValueId, i128)>,
+    /// Whole-function frame-escape verdict, or `None` when not computed.
+    frame_escape: Option<bool>,
+}
+
+impl AnalysisMemos {
+    /// Carries the memory classes through a compaction and drops the verdicts
+    /// a compacted graph has to re-derive.
+    fn remap(&mut self, remap: &NodeIdRemap) {
+        // Every field named, so one added later states what compaction does
+        // to it.
+        let Self {
+            memory_offsets,
+            memory_interner,
+            frame_escape,
+        } = self;
+        // Both the slot key and its interned base are ValueIds, so the map and
+        // the interner have to be rebuilt together.
+        let mut new_interner: EntityInterner<MemoryId, (ValueId, i128)> = EntityInterner::new();
+        let mut new_slots: SecondaryMap<ValueId, MemDecomp> = SecondaryMap::new();
+        for (old_value, slot) in memory_offsets.iter() {
+            let Some(new_value) = remap.value_old_to_new(old_value) else {
+                continue;
+            };
+            let new_slot = match *slot {
+                MemDecomp::Unknown => continue,
+                MemDecomp::NotMemory => MemDecomp::NotMemory,
+                MemDecomp::Stack(id) | MemDecomp::Heap(id) => {
+                    let Some(&(old_base, off)) = memory_interner.get(id) else {
+                        continue;
+                    };
+                    let Some(new_base) = remap.value_old_to_new(old_base) else {
+                        continue;
+                    };
+                    let new_id = new_interner.intern((new_base, off));
+                    if matches!(*slot, MemDecomp::Heap(_)) {
+                        MemDecomp::Heap(new_id)
+                    } else {
+                        MemDecomp::Stack(new_id)
+                    }
+                }
+            };
+            new_slots[new_value] = new_slot;
+        }
+        *memory_offsets = new_slots;
+        *memory_interner = new_interner;
+        // Recomputed off the compacted graph on next demand.
+        *frame_escape = None;
+    }
+}
+
 /// Per-function data keyed by arena ids (or the CC arg index) that is not part
-/// of the graph's structural identity.
+/// of the graph's structural identity, plus the memo group the analyses fill
+/// in.
+///
+/// What makes a field one of the tables below is that compaction has to say
+/// something about it: every one is keyed by an id the remap translates, and
+/// nothing clears them.  The derived, clearable verdicts live in `memos`
+/// instead.
 #[derive(Clone)]
 pub struct SideTables {
     /// Machine-instruction addresses whose lifting or rewrite contributed to
@@ -68,21 +141,11 @@ pub struct SideTables {
     /// Per-class CC argument index to the carrier nodes' output values
     /// (`InitialVar` for register args, `Load` for stack args).
     arg_index_to_values: FxHashMap<(ArgClass, u32), Vec<ValueId>>,
-    /// SP-decomposition memo keyed by the value whose address cone was
-    /// analysed.  A [`MemDecomp::Stack`] resolves through `memory_interner` to
-    /// `(base, offset)`, where `base` is the SP-derived terminal and the offset
-    /// is in bytes relative to it: two accesses are the same slot iff they
-    /// share both.
-    memory_offsets: RefCell<SecondaryMap<ValueId, MemDecomp>>,
-    memory_interner: RefCell<EntityInterner<MemoryId, (ValueId, i128)>>,
     /// `InitialVnId` to `InitialVar(id)` node index. Accessors trust it; the
     /// validator re-checks reachable entries against the node's kind
     /// (`StaleInitialVarIndex`).
     pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
-    /// Whole-function frame-escape verdict, or `None` when not computed.
-    /// Cleared by [`Self::invalidate_analyses`], after every post-pass, and on
-    /// compaction.
-    frame_escape: Cell<Option<bool>>,
+    memos: RefCell<AnalysisMemos>,
     /// The highest offset from the entry SP of a stack address held, at some
     /// `Call`, in a register the call clobbers, or `None` when no call held
     /// one.  The call node carries no such value, so this is the only record
@@ -97,10 +160,8 @@ impl SideTables {
             asm_fingerprints: UnionDag::default(),
             value_vn: FxHashMap::default(),
             arg_index_to_values: FxHashMap::default(),
-            memory_offsets: RefCell::default(),
-            memory_interner: RefCell::default(),
             initial_var_index: FxHashMap::default(),
-            frame_escape: Cell::default(),
+            memos: RefCell::default(),
             call_register_frame_reach: None,
         }
     }
@@ -178,7 +239,7 @@ impl SideTables {
 
     #[inline]
     pub fn memory_class(&self, value: ValueId) -> MemDecomp {
-        self.memory_offsets.borrow()[value]
+        self.memos.borrow().memory_offsets[value]
     }
 
     /// `(base, byte offset from base)`.  `None` when unknown or provably not
@@ -193,11 +254,10 @@ impl SideTables {
     /// lookup.
     #[inline]
     pub fn memory_decomp(&self, value: ValueId) -> (MemDecomp, Option<(ValueId, i128)>) {
-        let class = self.memory_offsets.borrow()[value];
+        let memos = self.memos.borrow();
+        let class = memos.memory_offsets[value];
         let slot = match class {
-            MemDecomp::Stack(id) | MemDecomp::Heap(id) => {
-                self.memory_interner.borrow().get(id).copied()
-            }
+            MemDecomp::Stack(id) | MemDecomp::Heap(id) => memos.memory_interner.get(id).copied(),
             MemDecomp::Unknown | MemDecomp::NotMemory => None,
         };
         (class, slot)
@@ -206,50 +266,60 @@ impl SideTables {
     /// `offset` is in bytes from `base`.
     #[inline]
     pub fn set_stack_slot(&self, value: ValueId, base: ValueId, offset: i128) {
-        let id = self.memory_interner.borrow_mut().intern((base, offset));
-        self.memory_offsets.borrow_mut()[value] = MemDecomp::Stack(id);
+        self.set_slot(value, base, offset, MemDecomp::Stack);
     }
 
     /// `offset` is in bytes from the heap `base` (an allocator's return
     /// pointer). Distinct from [`Self::set_stack_slot`] only in the region tag.
     #[inline]
     pub fn set_heap_slot(&self, value: ValueId, base: ValueId, offset: i128) {
-        let id = self.memory_interner.borrow_mut().intern((base, offset));
-        self.memory_offsets.borrow_mut()[value] = MemDecomp::Heap(id);
+        self.set_slot(value, base, offset, MemDecomp::Heap);
+    }
+
+    #[inline]
+    fn set_slot(
+        &self,
+        value: ValueId,
+        base: ValueId,
+        offset: i128,
+        region: fn(MemoryId) -> MemDecomp,
+    ) {
+        let memos = &mut *self.memos.borrow_mut();
+        let id = memos.memory_interner.intern((base, offset));
+        memos.memory_offsets[value] = region(id);
     }
 
     /// Negative memo entry: `value` is provably not memory-rooted (neither
     /// stack- nor heap-rooted).
     #[inline]
     pub fn set_not_memory(&self, value: ValueId) {
-        self.memory_offsets.borrow_mut()[value] = MemDecomp::NotMemory;
+        self.memos.borrow_mut().memory_offsets[value] = MemDecomp::NotMemory;
     }
 
-    /// Drops every graph-derived memo (the memory classes, invalidating all
-    /// [`MemoryId`]s, and the frame-escape verdict), keeping the claims.
-    /// A caller that rewires an address value's producers owes the call.
+    /// Drops the memo group as a whole (the memory classes, invalidating all
+    /// [`MemoryId`]s, and the frame-escape verdict), keeping the tables and
+    /// the claims.  A caller that rewires an address value's producers owes
+    /// the call.
     #[inline]
     pub fn invalidate_analyses(&self) {
-        self.memory_offsets.borrow_mut().clear();
-        *self.memory_interner.borrow_mut() = EntityInterner::new();
-        self.frame_escape.set(None);
+        *self.memos.borrow_mut() = AnalysisMemos::default();
     }
 
     /// Memoized frame-escape verdict, or `None` when not yet computed.
     #[inline]
     pub fn frame_escape(&self) -> Option<bool> {
-        self.frame_escape.get()
+        self.memos.borrow().frame_escape
     }
 
     #[inline]
     pub fn set_frame_escape(&self, escapes: bool) {
-        self.frame_escape.set(Some(escapes));
+        self.memos.borrow_mut().frame_escape = Some(escapes);
     }
 
     /// Invalidates the frame-escape verdict alone, keeping the memory classes.
     #[inline]
     pub fn clear_frame_escape(&self) {
-        self.frame_escape.set(None);
+        self.memos.borrow_mut().frame_escape = None;
     }
 
     /// Whether some `Call` saw a stack address in a register it clobbers.
@@ -316,49 +386,13 @@ impl SideTables {
             asm_fingerprints,
             value_vn,
             arg_index_to_values,
-            memory_offsets,
-            memory_interner,
             initial_var_index,
-            frame_escape,
+            memos,
             // Holds no id: a fact about the lifted calls.
             call_register_frame_reach: _,
         } = self;
         asm_fingerprints.remap(|old| remap.node_old_to_new(old));
-        // Both the slot key and its interned base are ValueIds, so the map and
-        // the interner have to be rebuilt together.
-        let (new_slots, new_interner) = {
-            let old_slots = memory_offsets.borrow();
-            let old_interner = memory_interner.borrow();
-            let mut new_interner: EntityInterner<MemoryId, (ValueId, i128)> = EntityInterner::new();
-            let mut new_slots: SecondaryMap<ValueId, MemDecomp> = SecondaryMap::new();
-            for (old_value, slot) in old_slots.iter() {
-                let Some(new_value) = remap.value_old_to_new(old_value) else {
-                    continue;
-                };
-                let new_slot = match *slot {
-                    MemDecomp::Unknown => continue,
-                    MemDecomp::NotMemory => MemDecomp::NotMemory,
-                    MemDecomp::Stack(id) | MemDecomp::Heap(id) => {
-                        let Some(&(old_base, off)) = old_interner.get(id) else {
-                            continue;
-                        };
-                        let Some(new_base) = remap.value_old_to_new(old_base) else {
-                            continue;
-                        };
-                        let new_id = new_interner.intern((new_base, off));
-                        if matches!(*slot, MemDecomp::Heap(_)) {
-                            MemDecomp::Heap(new_id)
-                        } else {
-                            MemDecomp::Stack(new_id)
-                        }
-                    }
-                };
-                new_slots[new_value] = new_slot;
-            }
-            (new_slots, new_interner)
-        };
-        *memory_offsets.get_mut() = new_slots;
-        *memory_interner.get_mut() = new_interner;
+        memos.get_mut().remap(remap);
         // `InitialVnId`s are stable across compaction, so only the arena-id
         // coordinate of the next two maps needs translating.
         *value_vn = remap_hashmap(value_vn, |old_value, vn_id| {
@@ -369,8 +403,6 @@ impl SideTables {
         *initial_var_index = remap_hashmap(initial_var_index, |vn_id, old_id| {
             remap.node_old_to_new(old_id).map(|new_id| (vn_id, new_id))
         });
-        // Recomputed off the compacted graph on next demand.
-        frame_escape.set(None);
         // An index whose carriers all vanish is dropped.
         *arg_index_to_values = remap_hashmap(arg_index_to_values, |key, old_values| {
             let mapped: Vec<ValueId> = old_values
@@ -437,6 +469,42 @@ mod tests {
         st.invalidate_analyses();
         assert_eq!(st.memory_decomp(v), (MemDecomp::Unknown, None));
         assert_eq!(st.frame_escape(), None);
+    }
+
+    /// The reset is the whole group, not a list of fields, so a memo added to
+    /// [`AnalysisMemos`] is dropped without `invalidate_analyses` naming it.
+    /// The destructuring stops compiling when a field joins the group, so the
+    /// pinning below is extended with it.
+    #[test]
+    fn invalidate_analyses_resets_every_memo_field() {
+        let st = SideTables::new();
+        let (base, v) = (ValueId::new(0), ValueId::new(1));
+        st.set_stack_slot(v, base, -8);
+        st.set_frame_escape(true);
+        {
+            let memos = st.memos.borrow();
+            let AnalysisMemos {
+                memory_offsets,
+                memory_interner,
+                frame_escape,
+            } = &*memos;
+            assert!(memory_offsets.iter().any(|(_, c)| *c != MemDecomp::Unknown));
+            assert!(!memory_interner.is_empty());
+            assert!(frame_escape.is_some());
+        }
+
+        st.invalidate_analyses();
+
+        let memos = st.memos.borrow();
+        let AnalysisMemos {
+            memory_offsets,
+            memory_interner,
+            frame_escape,
+        } = &*memos;
+        assert!(memory_offsets.iter().all(|(_, c)| *c == MemDecomp::Unknown));
+        // A surviving entry would outlive the class that named it.
+        assert!(memory_interner.is_empty());
+        assert!(frame_escape.is_none());
     }
 
     // The union is order-independent, deduplicating and never dropping an entry.
