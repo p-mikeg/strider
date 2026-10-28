@@ -1,0 +1,90 @@
+//! An address two edges reach in different ISA modes is decoded once, in
+//! whichever mode won the work queue, so the losing edge's arm is not the
+//! instruction stream it believes. The round that decoded it fed the
+//! classifier, so a later round rebuilt without that edge must not launder the
+//! report away.
+
+use strider_cfg::{CfgOptions, PcodeInsnAddr, ResolvedTarget, ResolvedTargets};
+use strider_orchestrator::AnalyzeOptions;
+
+use crate::common;
+
+use crate::common::put_le32;
+
+const BASE: u64 = 0x1000;
+/// Reached as ARM by one seeded arm and as Thumb by the other.
+const CLASH: u64 = 0x1020;
+
+/// ARM at 0x1000:
+///
+/// ```text
+/// 1000  cmp r0, #0
+/// 1004  beq 0x1014
+/// 1008  bx r0             ; the seeded site
+/// 1014  add pc, pc, #0    ; a constant dispatch to 0x101c
+/// 101c  bx lr
+/// 1020  the clash target
+/// ```
+///
+/// Everything unwritten is `bx lr`, so no stray decode runs away.
+fn bytes() -> Vec<u8> {
+    let mut bytes = vec![0u8; 0x60];
+    for i in 0..0x18 {
+        put_le32(&mut bytes, BASE, BASE + i * 4, 0xe12f_ff1e); // bx lr
+    }
+    put_le32(&mut bytes, BASE, 0x1000, 0xe350_0000); // cmp r0, #0
+    put_le32(&mut bytes, BASE, 0x1004, 0x0a00_0002); // beq 0x1014
+    put_le32(&mut bytes, BASE, 0x1008, 0xe12f_ff10); // bx r0
+    put_le32(&mut bytes, BASE, 0x1014, 0xe28f_f000); // add pc, pc, #0
+    // ARM `mov r4, r0, ror #14`; its low halfword is Thumb `bx lr`, so the
+    // clash target terminates cleanly whichever mode decodes it.
+    put_le32(&mut bytes, BASE, CLASH, 0xe1a0_4770);
+    bytes
+}
+
+/// The seed names one address twice, once per ISA mode, so seating it decodes
+/// `CLASH` in one mode and reaches it in the other. The loop then withdraws
+/// the site, and the constant dispatch at 0x1014 forces a re-lift whose
+/// cfg no longer carries the clashing edge at all.
+#[test]
+fn a_conflict_one_round_raised_survives_a_later_round_that_does_not() {
+    let mut known = rustc_hash::FxHashMap::default();
+    known.insert(
+        PcodeInsnAddr::at_machine_start(0x1008),
+        ResolvedTargets::table(vec![
+            ResolvedTarget::new(CLASH, Some(false)),
+            ResolvedTarget::new(CLASH, Some(true)),
+        ]),
+    );
+    let opts = AnalyzeOptions {
+        cfg: CfgOptions {
+            known_targets: &known,
+            ..CfgOptions::default()
+        },
+        ..Default::default()
+    };
+
+    let (mut strider, cc) = common::strider_over_bytes(common::Arch::Arm, bytes(), BASE, None);
+    let result = strider
+        .analyze(BASE, &cc, &opts, None)
+        .expect("a mode clash is a result, not an error");
+
+    assert!(
+        !result
+            .cfg
+            .regions()
+            .any(|r| r.start_addr.machine_addr.addr == CLASH),
+        "precondition: the final cfg must no longer reach {CLASH:#x} at all, \
+         or nothing was laundered and the test proves nothing",
+    );
+    assert_eq!(
+        result
+            .incomplete()
+            .of(strider_orchestrator::Reason::IsaModeConflict)
+            .map(|a| a.machine_addr.addr)
+            .collect::<Vec<_>>(),
+        vec![CLASH],
+        "the round that decoded {CLASH:#x} twice fed the classifier; a later \
+         round rebuilt without that edge cannot launder the report",
+    );
+}
