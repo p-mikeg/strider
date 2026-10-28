@@ -1,7 +1,7 @@
 #![cfg_attr(test, allow(clippy::type_complexity))]
 
-pub mod arch;
-pub mod arch_names;
+pub(crate) mod arch;
+pub(crate) mod arch_names;
 pub mod call_other_abi;
 pub mod calling_convention;
 
