@@ -39,7 +39,7 @@ impl KnownBitsFacts {
     }
 
     /// Upper bound on the runtime value: every bit that could be 1, set.
-    pub fn max_value(self, type_mask: u128) -> u128 {
+    pub(crate) fn max_value(self, type_mask: u128) -> u128 {
         (!self.zeros) & type_mask
     }
 }

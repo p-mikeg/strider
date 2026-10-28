@@ -56,7 +56,7 @@ impl ValueKind {
     }
 
     #[inline]
-    pub fn is_memory(self) -> bool {
+    pub(crate) fn is_memory(self) -> bool {
         self == Self::Memory
     }
 

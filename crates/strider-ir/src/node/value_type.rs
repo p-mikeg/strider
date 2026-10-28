@@ -23,7 +23,7 @@ macro_rules! supported_widths {
 
             /// Whether this width is one of [`Self::SUPPORTED`].
             #[inline]
-            pub const fn is_supported(self) -> bool {
+            pub(crate) const fn is_supported(self) -> bool {
                 match self {
                     Self::Int(w) => matches!(w, $($i)|*),
                     Self::Float(w) => matches!(w, $($f)|*),
@@ -73,7 +73,7 @@ impl ValueType {
     }
 
     /// The float type of an `n`-byte varnode.
-    pub fn float_from_bytes(n: u32) -> crate::error::Result<Self> {
+    pub(crate) fn float_from_bytes(n: u32) -> crate::error::Result<Self> {
         Self::from_bytes(n, Self::Float)
             .ok_or_else(|| anyhow!("unsupported float varnode size: {n} bytes"))
     }
@@ -113,7 +113,7 @@ impl ValueType {
 
     /// An integer too wide for `u64`.
     #[inline]
-    pub const fn is_wide_int(self) -> bool {
+    pub(crate) const fn is_wide_int(self) -> bool {
         matches!(self, Self::Int(w) if w > 64)
     }
 

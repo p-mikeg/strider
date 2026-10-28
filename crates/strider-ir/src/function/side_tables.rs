@@ -270,7 +270,7 @@ impl SideTables {
     /// register a call clobbers (`i128::MAX` for no constant offset); the
     /// highest recorded is kept.
     #[inline]
-    pub fn record_call_register_frame_reach(&mut self, reach: i128) {
+    pub(crate) fn record_call_register_frame_reach(&mut self, reach: i128) {
         self.call_register_frame_reach = Some(
             self.call_register_frame_reach
                 .map_or(reach, |r| r.max(reach)),
@@ -300,7 +300,7 @@ impl SideTables {
 
     /// Links `src`'s fingerprint under `dst`'s. A live alias, not a copy:
     /// contributors added to `src` afterwards are `dst`'s too.
-    pub fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
+    pub(crate) fn extend_asm_fingerprint_from(&mut self, dst: NodeId, src: NodeId) {
         if dst == src {
             return;
         }
