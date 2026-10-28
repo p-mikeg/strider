@@ -2587,6 +2587,48 @@ mod tests {
         assert!(clashes.is_empty(), "{}", clashes.join("\n"));
     }
 
+    /// The same first-answer-wins rule WITHIN `ARCH_SPECIFIC_TABLE`:
+    /// `classify_arch_specific` is a `find_map`, so a second row matching one
+    /// preset is dead and the test above cannot see it, calling the
+    /// classifier once per (preset, name). Several names sit in more than one
+    /// row, kept apart by scope alone.
+    #[test]
+    fn no_arch_specific_row_shadows_another_on_one_preset() {
+        let mut names: Vec<&str> = ARCH_SPECIFIC_TABLE
+            .iter()
+            .flat_map(|row| row.op_names.iter().copied())
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        let rows_holding = |name: &str| {
+            ARCH_SPECIFIC_TABLE
+                .iter()
+                .filter(move |row| row.op_names.contains(&name))
+                .count()
+        };
+        // Without a name in two rows nothing could ever clash, and widening
+        // one row's scope would leave this green.
+        assert!(
+            names.iter().filter(|n| rows_holding(n) > 1).count() >= 3,
+            "premise: several names must sit in more than one row",
+        );
+
+        let mut clashes = Vec::new();
+        for preset in crate::ArchPreset::ALL {
+            for name in &names {
+                let matching: Vec<&'static [&'static str]> = ARCH_SPECIFIC_TABLE
+                    .iter()
+                    .filter(|row| row.scope.contains(*preset) && row.op_names.contains(name))
+                    .map(|row| row.op_names)
+                    .collect();
+                if matching.len() > 1 {
+                    clashes.push(format!("{preset:?}/{name}: {matching:?}"));
+                }
+            }
+        }
+        assert!(clashes.is_empty(), "{}", clashes.join("\n"));
+    }
+
     /// Arch-independence read off the table itself: every row answers the same
     /// under every preset, save where an arch-specific row deliberately
     /// shadows the name.
