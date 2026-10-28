@@ -851,24 +851,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(InsnOutcome::RegionClosed)
     }
 
-    /// Records `addr` as reached in two ISA modes when the region already
-    /// owning it decoded in another.
-    ///
-    /// Every seal that wires its own edge needs this: the edge never passes
-    /// through [`Builder::explore`], so the clash check there never sees it and
-    /// an ARM region running into a Thumb-decoded region would reach the caller
-    /// as a clean answer.
-    fn note_isa_mode_clash(&mut self, addr: PcodeInsnAddr, existing: NodeIndex) {
-        if let (Some(mode), Some(&decoded)) =
-            (self.isa_mode, self.builder.region_isa_mode.get(&existing))
-            && mode != decoded
-        {
-            self.builder
-                .incomplete
-                .insert(addr, crate::Reason::IsaModeConflict);
-        }
-    }
-
     fn finish_current_region(&mut self, terminator: RegionTerminator) -> Result<NodeIndex> {
         let mut insns = std::mem::take(&mut self.insns);
         insns.shrink_to_fit();
@@ -910,7 +892,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             // A pcode index inside the current machine instruction already
             // starting a region is exactly where two ISA decodes of one address
             // produce different pcode sequences.
-            self.note_isa_mode_clash(addr, existing_region_id);
+            let want = self.isa_mode;
+            self.builder
+                .note_isa_mode_clash(addr, existing_region_id, want);
             let region = self.finish_current_region(RegionTerminator::Unconditional)?;
             self.builder
                 .region_graph
@@ -995,7 +979,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // partition, which `RegionIndex::containing` resolves by
                 // walking down past the greatest start.
                 if let Some(existing) = self.builder.index.get(cur_addr) {
-                    self.note_isa_mode_clash(cur_addr, existing);
+                    let want = self.isa_mode;
+                    self.builder.note_isa_mode_clash(cur_addr, existing, want);
                     let region = self.finish_current_region(RegionTerminator::Unconditional)?;
                     self.builder.region_graph.add_edge(region, existing, ());
                     return Ok(());
