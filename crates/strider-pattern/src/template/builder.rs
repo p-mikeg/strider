@@ -73,9 +73,9 @@ impl TemplateBuilder {
 
     /// Declares a capture the closure reads as an `Option`, so it may bind on
     /// only some alternation arms. The coverage check still refuses one the
-    /// LHS mentions nowhere.
+    /// LHS mentions nowhere, and the relaxation drops away if another use in
+    /// the same template needs `c` bound.
     pub fn declare_optional_capture(&mut self, c: crate::Capture) {
-        self.declared_captures.push(c);
         self.optional_captures.push(c);
     }
 

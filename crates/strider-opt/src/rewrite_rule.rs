@@ -1539,6 +1539,65 @@ mod tests {
         assert!(err.to_string().contains("does not bind"), "{err}");
     }
 
+    /// The relaxation is per capture USE, not template-wide: one closure
+    /// reading `c1` as an `Option` must not excuse a second use of `c1` that
+    /// has no `None` to fall back to.
+    #[test]
+    fn an_optional_declaration_does_not_relax_a_required_use() {
+        use strider_pattern::{
+            MatchPat, TemplatePat, capture_typed, int_mul, one_of, template, var,
+        };
+
+        let (x, c1) = (Capture::new(), Capture::new());
+        let lhs = || int_add(var(x), one_of![int_mul(var(x), int_const(c1)), var(x)]);
+        let refused = |use_kind, rhs| {
+            let err = match super::rewrite_rule_runtime(lhs().into_pattern(), rhs) {
+                Ok(_) => panic!("{use_kind} must be refused"),
+                Err(e) => e,
+            };
+            assert!(
+                err.to_string().contains("only on SOME"),
+                "{use_kind}: {err}"
+            );
+        };
+
+        // A value vertex: `var(c1)` reuses the binding itself.
+        refused(
+            "a value vertex",
+            TemplatePat::into_template(template::int_add(
+                var(c1),
+                int_const_with!([c1: uint?] => c1.unwrap_or(1)),
+            )),
+        );
+        // An output type: `InheritBinding` reads `c1`'s WIDTH, with no Option.
+        refused(
+            "an InheritBinding output type",
+            TemplatePat::into_template(capture_typed(
+                c1,
+                int_const_with!([c1: uint?] => c1.unwrap_or(1)),
+            )),
+        );
+        // A second closure in the same template reading it without the `?`.
+        refused(
+            "a second closure's required read",
+            TemplatePat::into_template(template::int_add(
+                int_const_with!([c1: uint?] => c1.unwrap_or(1)),
+                int_const_with!([c1: uint] => c1),
+            )),
+        );
+
+        // The purely optional read stays accepted, so the three above are not
+        // rejecting every template that mentions `c1`.
+        assert!(
+            super::rewrite_rule_runtime(
+                lhs().into_pattern(),
+                TemplatePat::into_template(int_const_with!([c1: uint?] => c1.unwrap_or(1))),
+            )
+            .is_ok(),
+            "a capture read only as an Option must still be accepted"
+        );
+    }
+
     /// `store [p] = 5; return *p + 7` under `[load + k -> k, load -> 5]`: the
     /// first rule culls the load, and the second, which pins no input, would
     /// still match it and stamp its address onto the live `5`.
