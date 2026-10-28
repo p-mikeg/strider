@@ -134,6 +134,47 @@ pub enum RegionTerminator {
     },
 }
 
+impl RegionTerminator {
+    /// The deferral a dispatch at `addr` on `target_vn` seals as: no outgoing
+    /// edge, and the resolver re-derives the site.
+    pub(crate) fn defer(target_vn: rsleigh::Vn, addr: PcodeInsnAddr) -> Self {
+        Self::UnresolvedIndirectBranch { target_vn, addr }
+    }
+
+    /// Drops the `Switch` arms whose target is `machine_addr`, the FIRST only
+    /// when `first_only`: a table can name one address in both ISA modes, and
+    /// each arm enqueues its own work item, so a per-arm seating consumes one
+    /// while a per-address withdrawal takes them all.
+    ///
+    /// A table left with no arm demotes to [`Self::defer`]: a zero-arm
+    /// `Switch` fails the whole function's lift, which is the outcome
+    /// dropping an arm exists to avoid. Returns whether an arm went; `false`
+    /// for every other terminator.
+    pub(crate) fn drop_switch_arms_at(&mut self, machine_addr: u64, first_only: bool) -> bool {
+        let Self::Switch {
+            target_vn,
+            targets,
+            addr,
+        } = self
+        else {
+            return false;
+        };
+        let before = targets.len();
+        if first_only {
+            if let Some(i) = targets.iter().position(|t| t.addr == machine_addr) {
+                targets.remove(i);
+            }
+        } else {
+            targets.retain(|t| t.addr != machine_addr);
+        }
+        let dropped = targets.len() != before;
+        if targets.is_empty() {
+            *self = Self::defer(*target_vn, *addr);
+        }
+        dropped
+    }
+}
+
 /// A basic block: maximal straight-line pcode entered only at `start_addr` and
 /// left only at the terminator.  Ends on a `Branch`, `CondBranch`, `Return`, or
 /// `BranchIndirect` opcode, on a no-return `Call`/`CallOther`/`CallIndirect`,

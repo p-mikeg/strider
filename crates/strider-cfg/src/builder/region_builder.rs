@@ -746,10 +746,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         // placeholder `Return(target_value)` anchoring the value for that
         // resolver to inspect.  No outgoing edge.
         let Some(resolved) = resolved else {
-            self.finish_current_region(RegionTerminator::UnresolvedIndirectBranch {
-                target_vn,
-                addr,
-            })?;
+            self.finish_current_region(RegionTerminator::defer(target_vn, addr))?;
             return Ok(InsnOutcome::RegionClosed);
         };
         // An in-function single target is a degenerate table.  A one-arm
@@ -794,10 +791,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             }
             // Nothing trustworthy: deferred exactly as a site with no answer.
             crate::ResolvedTargets::Withdrawn => {
-                self.finish_current_region(RegionTerminator::UnresolvedIndirectBranch {
-                    target_vn,
-                    addr,
-                })?;
+                self.finish_current_region(RegionTerminator::defer(target_vn, addr))?;
             }
             crate::ResolvedTargets::Multiple(arms) => {
                 // An out-of-range arm has no per-target tail-call escape; one
@@ -825,10 +819,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     }
                 }
                 if deferred {
-                    self.finish_current_region(RegionTerminator::UnresolvedIndirectBranch {
-                        target_vn,
-                        addr,
-                    })?;
+                    self.finish_current_region(RegionTerminator::defer(target_vn, addr))?;
                     return Ok(InsnOutcome::RegionClosed);
                 }
                 let region = self.finish_current_region(RegionTerminator::Switch {
