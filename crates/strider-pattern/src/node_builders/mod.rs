@@ -186,6 +186,79 @@ pub fn defer_drop<T: Send + 'static>(value: T) {
     }
 }
 
+/// Renders a sealed pattern's vertices in DECLARATION order, one line per pat
+/// node and one per output vertex and wired input.
+///
+/// Vertex order is observable: [`root_output_vertex_for`] picks among a node's
+/// output vertices and [`anchor_repeats`] compares vertex identity, so a
+/// lowering that declares the same vertices in another order is a behaviour
+/// change, not a refactor. A builder moved onto [`NodePat`](node_pat::NodePat)
+/// must reproduce this string.
+///
+/// [`root_output_vertex_for`]: crate::matcher::walk::root_output_vertex_for
+/// [`anchor_repeats`]: crate::matcher::walk::anchor_repeats
+#[cfg(test)]
+pub(crate) fn staged_shape(pat: &crate::Pattern) -> String {
+    use crate::matcher::{KindSpec, OutputKindSpec};
+    use std::fmt::Write as _;
+
+    let g = &pat.graph;
+    let mut out = String::new();
+    for n in g.all_node_ids() {
+        let k = g.node_kind(n);
+        let kind = match &k.kind {
+            KindSpec::Any => "Any".to_string(),
+            KindSpec::Variant(_) => "Variant".to_string(),
+            KindSpec::Exact(e) => format!("Exact({e:?})"),
+        };
+        let _ = writeln!(
+            out,
+            "n{} {kind} caps={} pred={} walk={} walk_caps={}/{} alt={}/{} ordered={}",
+            n.as_u32(),
+            k.captures.len(),
+            u8::from(k.node_predicate.is_some()),
+            u8::from(k.binding_walk.is_some()),
+            k.walk_captures.bound.len(),
+            k.walk_captures.guaranteed.len(),
+            u8::from(k.alternation),
+            u8::from(k.first_match),
+            u8::from(k.force_ordered),
+        );
+        for &v in g.node_outputs(n) {
+            let o = g.value_kind_ref(v);
+            let kind = match o.kind {
+                OutputKindSpec::Any => "Any",
+                OutputKindSpec::AnyValue => "AnyValue",
+                OutputKindSpec::Value(_) => "Value",
+                OutputKindSpec::Control => "Control",
+                OutputKindSpec::Memory => "Memory",
+                OutputKindSpec::PhiToken => "PhiToken",
+            };
+            let _ = writeln!(
+                out,
+                "  out v{} {kind} slot={} mode={:?} width={:?} caps={} ident={} token={}",
+                v.as_u32(),
+                o.slot,
+                o.slot_mode,
+                o.width,
+                o.captures.len(),
+                u8::from(o.identity.is_some()),
+                u8::from(o.token_fallback),
+            );
+        }
+        for (slot, v) in k.input_slots.iter().zip(g.node_inputs(n)) {
+            let _ = writeln!(out, "  in {slot:?} <- v{}", v.as_u32());
+        }
+    }
+    let _ = writeln!(
+        out,
+        "root={:?} total_nodes={}",
+        pat.root().map(|r| r.as_u32()).map_err(|e| e.to_string()),
+        pat.total_nodes(),
+    );
+    out
+}
+
 /// A sub-pattern that produces a memory token, so it can be chained into a
 /// consumer's memory input slot. The lowering itself is
 /// [`crate::matcher::match_pat::MatchPat::compile_mem`]; this bound is what
