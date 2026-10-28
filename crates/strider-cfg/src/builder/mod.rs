@@ -262,22 +262,29 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// ISA-mode var set to what the branch commits: an interworking branch's own
     /// bit (`isa_bit`), else the mode flowing INTO the branch, so a `mov pc` in a
     /// Thumb region of an otherwise-ARM function keeps Thumb.
+    ///
+    /// `flowing` is the branch site's live value for each FLOWING committed var
+    /// (`RegionBuilder::flowing_commits`), applied over the function mode as
+    /// [`Self::enqueue`] applies it: such a var was painted forward to persist,
+    /// so degrading it to the entry default would write that default over the
+    /// live paint at the target. A `noflow` var does degrade, as there it is
+    /// confined to the one address its commit covers.
     pub(super) fn enqueue_resolved(
         &mut self,
         parent: Option<NodeIndex>,
         addr: PcodeInsnAddr,
         isa_bit: Option<bool>,
         branch_site: PcodeInsnAddr,
+        flowing: &[(&'static str, u32)],
     ) {
-        let flowing = self.sample_flowing_isa_bit(branch_site);
-        let carried = match (self.engine.arch.isa_mode_var(), isa_bit.or(flowing)) {
-            (Some(var), Some(bit)) => {
-                self.engine
-                    .flow_vars
-                    .with_mode_bit(&self.function_mode, var, bit)
-            }
-            _ => self.function_mode.clone(),
-        };
+        let mut carried = self.function_mode.clone();
+        for &(name, value) in flowing {
+            carried = self.engine.flow_vars.with_var(&carried, name, value);
+        }
+        let flowing_isa = self.sample_flowing_isa_bit(branch_site);
+        if let (Some(var), Some(bit)) = (self.engine.arch.isa_mode_var(), isa_bit.or(flowing_isa)) {
+            carried = self.engine.flow_vars.with_mode_bit(&carried, var, bit);
+        }
         self.seeded_queue.push(WorkItem {
             parent,
             addr,
