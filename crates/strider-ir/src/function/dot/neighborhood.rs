@@ -79,7 +79,7 @@ impl FunctionDotDumper<'_> {
     /// # Errors
     /// Propagates a `pretty_label` IO error.
     pub fn neighborhood_dot(
-        &self,
+        self,
         center: NodeId,
         depth: usize,
         hub_cap: usize,
@@ -97,12 +97,9 @@ impl FunctionDotDumper<'_> {
             &consumers,
         );
         let restricted = FunctionDotDumper {
-            entry: self.entry,
-            function: self.function,
-            names: self.names,
-            node_to_arg_indices: self.node_to_arg_indices.clone(),
             nodes: Some(set),
             center: Some(center),
+            ..self
         };
         ::dot::GraphDot::new(restricted, ::dot::DotStyle::dark())
             .as_dot()

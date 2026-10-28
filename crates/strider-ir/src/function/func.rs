@@ -543,7 +543,6 @@ impl Function {
         names: &'a strider_target::ArchNames,
     ) -> crate::function::dot::FunctionDotDumper<'a> {
         crate::function::dot::FunctionDotDumper {
-            entry: self.entry,
             function: self,
             names,
             node_to_arg_indices: crate::function::dot::build_arg_reverse_map(self),
