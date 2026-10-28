@@ -59,6 +59,17 @@ forall_preset!(
     ]
 );
 
-pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PySleighArch>()
+pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add_class::<PySleighArch>()?;
+    // The roster the classmethods above are checked against: a preset added
+    // to `arch_presets!` reaches Python only through that hand-written list,
+    // and nothing else compares the two.
+    m.add(
+        "ARCH_PRESETS",
+        pyo3::types::PyTuple::new_bound(
+            py,
+            strider_target::ArchPreset::ALL.iter().map(|p| p.name()),
+        ),
+    )?;
+    Ok(())
 }
