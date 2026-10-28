@@ -20,11 +20,11 @@ use strider_ir::node::{NodeId, NodeKind, SwitchTableId, ValueType};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, PatNodeRef, PatValueRef, Pattern, WalkCaptures};
+use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern, WalkCaptures};
 use crate::typed::int_const;
 
 use super::MemPat;
-use super::node_pat::{NodePat, OutputSpec, control_compiler, lower_outputs};
+use super::node_pat::NodePat;
 
 /// Walks from a matched If to a control output's single consumer and matches
 /// a sub-pattern there.
@@ -467,16 +467,10 @@ delegate_node_pat!(SwitchPat, 0, [capture, build, input, any_input]);
 /// `.with_true(q)` / `.with_false(r)` forward-walk from the matched If's
 /// control output to its single consumer and match there. Both fail the match
 /// when that output has zero or several consumers.
-#[derive(Default)]
 pub struct IfPat {
-    cond: Option<crate::node_builders::SubCompiler>,
-    ctrl: Option<crate::node_builders::SubCompiler>,
-    /// Sparse raw input slots, `InputSlot::Any` for the existentials.
-    inputs: Vec<(crate::matcher::InputSlot, crate::node_builders::SubCompiler)>,
-    outputs: Vec<OutputSpec>,
+    inner: NodePat,
     true_branch: Option<BranchWalk>,
     false_branch: Option<BranchWalk>,
-    captures: Vec<Capture>,
     capture_true: Option<Capture>,
     capture_false: Option<Capture>,
     /// Per branch slot, so replacing a branch drops the captures the
@@ -490,41 +484,33 @@ pub struct IfPat {
     branch_refusal: [Option<String>; 2],
 }
 
+impl Default for IfPat {
+    fn default() -> Self {
+        Self {
+            inner: NodePat::node(KindSpec::Exact(NodeKind::If)),
+            true_branch: None,
+            false_branch: None,
+            capture_true: None,
+            capture_false: None,
+            branch_captures: Default::default(),
+            branch_nodes: [0; 2],
+            branch_refusal: [None, None],
+        }
+    }
+}
+
 impl IfPat {
     /// Input [`NodeKind::IF_COND_SLOT`]; [`NodeKind::CTRL_SLOT`] is the ctrl
     /// predecessor.
     pub fn cond<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.cond = Some(crate::node_builders::SubCompiler::new(move |b| {
-            p.compile(b)
-        }));
+        self.inner = self.inner.input(NodeKind::IF_COND_SLOT, p);
         self
     }
 
     /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
     /// control edge.
     pub fn ctrl<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.ctrl = Some(control_compiler(p));
-        self
-    }
-
-    /// Raw input slot `slot`, unshifted. Slot numbering is per node kind, laid
-    /// out by the IR's `expected_signature`; the named accessors above are the
-    /// intended surface and this is the escape hatch beneath them.
-    pub fn input<P: MatchPat + 'static>(mut self, slot: usize, p: P) -> Self {
-        self.inputs.push((
-            crate::matcher::InputSlot::At(slot),
-            crate::node_builders::SubCompiler::new(move |b| p.compile(b)),
-        ));
-        self
-    }
-
-    /// See [`CallPat::any_input`]. An `If` has two inputs, the control
-    /// predecessor and the condition.
-    pub fn any_input<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inputs.push((
-            crate::matcher::InputSlot::Any,
-            crate::node_builders::SubCompiler::new(move |b| p.compile(b)),
-        ));
+        self.inner = self.inner.input_control(NodeKind::CTRL_SLOT, p);
         self
     }
 
@@ -606,12 +592,6 @@ impl IfPat {
         self
     }
 
-    /// Repeatable: every capture binds the matched `If` node.
-    pub fn capture(mut self, c: Capture) -> Self {
-        self.captures.push(c);
-        self
-    }
-
     /// Binds control output slot 0, propagated into the outer `Match`. Unlike
     /// the successor `Region`, this value survives single-input-region
     /// collapse, so it is the stable handle for the edge join constraints.
@@ -627,77 +607,49 @@ impl IfPat {
     }
 
     pub fn build(self) -> Pattern {
-        let mut b = MatcherBuilder::new();
-        self.lower(&mut b);
-        b.finish()
+        self.lower().build()
     }
 
-    fn lower(self, b: &mut MatcherBuilder) -> PatNodeRef {
+    fn lower(self) -> NodePat {
         let IfPat {
-            cond,
-            ctrl,
-            inputs,
-            outputs,
+            inner,
             true_branch,
             false_branch,
-            captures,
             capture_true,
             capture_false,
             branch_captures,
             branch_nodes,
             branch_refusal,
         } = self;
-        if let Some(why) = branch_refusal.into_iter().flatten().next() {
-            b.reject(why);
+        let inner = inner
+            .with_control_output(NodeKind::IF_TRUE_OUT_SLOT, capture_true)
+            .with_control_output(NodeKind::IF_FALSE_OUT_SLOT, capture_false)
+            .rejecting(branch_refusal.into_iter().flatten().next())
+            .with_nested_nodes(branch_nodes[0].saturating_add(branch_nodes[1]));
+        if true_branch.is_none() && false_branch.is_none() {
+            return inner;
         }
-        b.add_nested_nodes(branch_nodes[0].saturating_add(branch_nodes[1]));
-        let node = b.node(KindSpec::Exact(NodeKind::If));
-        let true_out = b.control_output(node, 0);
-        let false_out = b.control_output(node, 1);
-        if let Some(c) = capture_true {
-            b.capture_output(true_out, c);
-        }
-        if let Some(c) = capture_false {
-            b.capture_output(false_out, c);
-        }
-
-        if let Some(cond) = cond {
-            let c = cond.call(&mut *b);
-            b.input(node, NodeKind::IF_COND_SLOT, c);
-        }
-        if let Some(ctrl) = ctrl {
-            let c = ctrl.call(&mut *b);
-            b.input(node, NodeKind::CTRL_SLOT, c);
-        }
-        for (slot, compile) in inputs {
-            let o = compile.call(&mut *b);
-            b.wire(node, slot, o);
-        }
-        lower_outputs(b, node, outputs);
         // The forward-walks bind into the enclosing match, so they ride the
         // binding walk rather than the node predicate, which runs before the
         // condition's own captures exist.
-        if true_branch.is_some() || false_branch.is_some() {
-            b.set_binding_walk(
-                true_out,
-                // Nested, not sequential: the false walk runs inside each true
-                // configuration, so a false rejection re-drives the true branch.
-                Box::new(
-                    move |m, if_node, bnd, k| match (&true_branch, &false_branch) {
-                        (Some(tb), Some(fb)) => tb(m, if_node, bnd, &mut |b| fb(m, if_node, b, k)),
-                        (Some(w), None) | (None, Some(w)) => w(m, if_node, bnd, k),
-                        (None, None) => k(bnd),
-                    },
-                ),
-                merged_branch_captures(branch_captures),
-            );
-        }
-        for c in captures {
-            b.capture_node(node, c);
-        }
-        node
+        inner.with_binding_walk(
+            NodeKind::IF_TRUE_OUT_SLOT,
+            // Nested, not sequential: the false walk runs inside each true
+            // configuration, so a false rejection re-drives the true branch.
+            Box::new(
+                move |m, if_node, bnd, k| match (&true_branch, &false_branch) {
+                    (Some(tb), Some(fb)) => tb(m, if_node, bnd, &mut |b| fb(m, if_node, b, k)),
+                    (Some(w), None) | (None, Some(w)) => w(m, if_node, bnd, k),
+                    (None, None) => k(bnd),
+                },
+            ),
+            merged_branch_captures(branch_captures),
+        )
     }
 }
+
+delegate_with_output!(IfPat, inner);
+delegate_node_pat!(IfPat, inner, [capture, input, any_input]);
 
 /// One declaration covering both branch walks, which ride a single
 /// `binding_walk`.
@@ -708,27 +660,11 @@ fn merged_branch_captures([t, f]: [WalkCaptures; 2]) -> WalkCaptures {
     }
 }
 
-impl WithOutput for IfPat {
-    fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
-        self.outputs.push(OutputSpec::capture(slot, c));
-        self
-    }
-    fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
-        self.outputs.push(OutputSpec::width(slot, bits));
-        self
-    }
-    fn output_ty(mut self, slot: Option<usize>, ty: ValueType) -> Self {
-        self.outputs.push(OutputSpec::ty(slot, ty));
-        self
-    }
-}
-
 impl MatchPat for IfPat {
     /// Node-rooted: the two control outputs stay sibling vertices and an `Any`
     /// output is synthesized for an alternation or existential slot to wire.
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let node = self.lower(b);
-        b.any_value_output(node)
+        self.lower().compile_alt_arm(b)
     }
 }
 
