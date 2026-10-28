@@ -25,7 +25,7 @@ bitflags::bitflags! {
 }
 
 /// Persistent edit bookkeeping owned by an [`EditFunction`] for its lifetime.
-pub struct FunctionState {
+pub(crate) struct FunctionState {
     /// Entry-reachable and not culled.
     live_nodes: DenseEntitySet<NodeId>,
     /// Input-less source nodes, iterated in ascending-`NodeId` order.
