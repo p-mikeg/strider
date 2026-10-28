@@ -158,9 +158,11 @@ impl<R: rsleigh::MemReader> Lifter<R> {
 
     /// [`strider_target::BuiltCallingConvention::validate`] and
     /// [`strider_target::BuiltCallingConvention::check_addr_size`] against
-    /// this engine's `ram`: every convention reaching the lift, default or
-    /// per-address override, is checked by one rule. A preset or Python
-    /// `custom` is validated already; a Rust struct literal is not.
+    /// this engine's `ram`: the intra-convention half of what every
+    /// convention reaching the lift is checked by, default
+    /// ([`Self::check_default_cc`]) or per-address override
+    /// ([`Self::check_override_cc`]). A preset or Python `custom` is
+    /// validated already; a Rust struct literal is not.
     pub(crate) fn check_cc(&self, cc: &strider_target::BuiltCallingConvention) -> Result<()> {
         cc.validate()
             .and_then(|()| cc.check_addr_size(self.arch().names().ram_addr_size()))
@@ -174,6 +176,33 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ) -> Result<()> {
         self.check_cc(cc)
             .map_err(|e| anyhow!("default convention: {e}"))
+    }
+
+    /// [`Self::check_cc`] plus the one CROSS-convention rule: a per-address
+    /// override must name `stack_vn`, the stack pointer of the function it is
+    /// used in. `strider_ir::FunctionBuilder::build_call` applies the post-call
+    /// adjust to the FUNCTION's stack pointer while the clobber split
+    /// ([`strider_target::BuiltCallingConvention::ret_and_clobber_vns`]) and
+    /// the def-site mirror read the OVERRIDE's, so two names leave the
+    /// function's SP a clobber: its writeback overwrites the adjust with the
+    /// opaque `Call` output and every stack offset past the call is lost.
+    /// Analysis never leaves the function, and SP is its frame anchor, so an
+    /// override renaming it describes another frame.
+    pub(crate) fn check_override_cc(
+        &self,
+        cc: &strider_target::BuiltCallingConvention,
+        stack_vn: rsleigh::Vn,
+    ) -> Result<()> {
+        self.check_cc(cc)?;
+        if cc.stack_vn != stack_vn {
+            return Err(anyhow!(
+                "{:?}: per-address convention's stack pointer {:?} is not the \
+                 lifted function's {stack_vn:?}",
+                self.arch().preset(),
+                cc.stack_vn,
+            ));
+        }
+        Ok(())
     }
 
     #[must_use]
