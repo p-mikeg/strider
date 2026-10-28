@@ -13,6 +13,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use strider_ir_test_utils::MockRom;
 
 use strider_ir::IRWalker;
 use strider_ir::node::NodeKind;
@@ -56,26 +57,6 @@ fn chain(levels: u64) -> (Vec<u8>, Vec<u8>) {
     (text, tables)
 }
 
-struct Rom {
-    text: Vec<u8>,
-    tables: Vec<u8>,
-}
-
-impl strider_orchestrator::opt::ReadOnlyMemory for Rom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        for (base, bytes) in [(BASE, &self.text), (TABLES, &self.tables)] {
-            if let Some(off) = addr.checked_sub(base)
-                && let Ok(off) = usize::try_from(off)
-                && let Some(src) = bytes.get(off..off + buf.len())
-            {
-                buf.copy_from_slice(src);
-                return Ok(());
-            }
-        }
-        anyhow::bail!("unmapped {addr:#x}")
-    }
-}
-
 /// Counts pipeline runs over a function holding more than one dispatch site:
 /// every full round after the first, and nothing narrower.
 #[derive(Clone)]
@@ -102,7 +83,7 @@ fn a_chain_of_tables_seats_one_level_per_round() {
         common::Arch::X64,
         text.clone(),
         BASE,
-        Some(Box::new(Rom { text, tables })),
+        Some(Box::new(MockRom::regions([(BASE, text), (TABLES, tables)]))),
     );
     let wide_runs = Arc::new(AtomicUsize::new(0));
     let mut pipeline = strider_orchestrator::opt::default_pipeline();
@@ -203,7 +184,7 @@ fn a_table_the_whole_function_bounds_tighter_seats_the_tighter_answer() {
         common::Arch::X64,
         text.clone(),
         BASE,
-        Some(Box::new(Rom { text, tables })),
+        Some(Box::new(MockRom::regions([(BASE, text), (TABLES, tables)]))),
     );
     let result = strider
         .analyze(

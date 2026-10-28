@@ -17,6 +17,7 @@
 //! 1009c           (arm) bx lr
 //! ```
 use crate::common;
+use strider_ir_test_utils::MockRom;
 
 const BASE: u64 = 0x10054;
 const TEXT: &[u8] = &[
@@ -27,29 +28,18 @@ const TEXT: &[u8] = &[
     0x02, 0x20, 0x70, 0x47, 0x03, 0x20, 0x70, 0x47, 0x1e, 0xff, 0x2f, 0xe1,
 ];
 
-struct Rom;
-impl strider_orchestrator::opt::ReadOnlyMemory for Rom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let off = usize::try_from(
-            addr.checked_sub(BASE)
-                .ok_or_else(|| anyhow::anyhow!("low"))?,
-        )?;
-        let src = TEXT
-            .get(off..off + buf.len())
-            .ok_or_else(|| anyhow::anyhow!("high"))?;
-        buf.copy_from_slice(src);
-        Ok(())
-    }
-}
-
 /// The machine enters 0x10094 / 0x10098 in Thumb, since their table words are
 /// odd. Seated without that mode they decode as ARM (`ldrbmi r2, [r0, -r2]!`).
 #[test]
 fn widened_thumb_arms_keep_their_mode() {
     let mut bytes = TEXT.to_vec();
     bytes.extend(std::iter::repeat_n(0u8, 64));
-    let (mut s, cc) =
-        common::strider_over_bytes(common::Arch::Arm, bytes, BASE, Some(Box::new(Rom)));
+    let (mut s, cc) = common::strider_over_bytes(
+        common::Arch::Arm,
+        bytes,
+        BASE,
+        Some(Box::new(MockRom::raw_bytes(BASE, TEXT.to_vec()))),
+    );
     let r = s
         .analyze(
             0x10058,
