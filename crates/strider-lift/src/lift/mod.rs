@@ -682,7 +682,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 .region_graph()
                 .node_weight(cfg_rid)
                 .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
-            let special_terminator = SpecialTerm::from_terminator(&region.terminator);
+            let terminator = &region.terminator;
             self.pcode_consts.reset();
             for wrapped_insn in &region.insns {
                 // Observed BEFORE the skip, and reset per region above, because
@@ -691,10 +691,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 // register write can land where no phi was placed for it.
                 self.pcode_consts
                     .observe(wrapped_insn.addr, &wrapped_insn.insn);
-                if special_terminator
-                    .as_ref()
-                    .is_some_and(|s| s.skips_opcode(wrapped_insn.insn.opcode))
-                {
+                if skips_opcode(terminator, wrapped_insn.insn.opcode) {
                     continue;
                 }
                 self.process_insn(cfg_rid, &wrapped_insn.insn, wrapped_insn.addr, region_map)?;
@@ -737,21 +734,24 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                         )
                     });
             self.with_lift_addr(term_addr, |s| {
-                match special_terminator {
-                    Some(SpecialTerm::UnresolvedIndirect { target_vn, addr }) => {
-                        s.handle_unresolved_indirect_branch(&target_vn, addr)?;
+                match terminator {
+                    strider_cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
+                        s.handle_unresolved_indirect_branch(target_vn, *addr)?
                     }
-                    Some(SpecialTerm::Switch(target_vn, targets, switch_addr)) => {
-                        s.handle_switch(cfg_rid, &target_vn, &targets, region_map, switch_addr)?;
+                    strider_cfg::RegionTerminator::Switch {
+                        target_vn,
+                        targets,
+                        addr,
+                    } => s.handle_switch(cfg_rid, target_vn, targets, region_map, *addr)?,
+                    // A target's `isa_bit` (the callee's ISA mode on an
+                    // interworking tail call) is the callee function's own
+                    // concern, applied when it is analyzed at its entry, not
+                    // while lifting this caller.
+                    strider_cfg::RegionTerminator::TailCall { target } => {
+                        s.handle_tail_call(target.addr)?;
                     }
-                    Some(SpecialTerm::TailCall(target)) => {
-                        s.handle_tail_call(target)?;
-                    }
-                    None => {
-                        if noreturn_call {
-                            s.builder.build_unreachable()?;
-                        }
-                    }
+                    _ if noreturn_call => s.builder.build_unreachable()?,
+                    _ => {}
                 }
                 Ok(())
             })?;
@@ -787,74 +787,30 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 }
 
-/// Marks a region whose terminator pcode insn the per-instruction loop must
-/// skip, so the post-loop dispatch can lift it via a dedicated handler.
-enum SpecialTerm {
-    /// Emits an `IndirectBranch` placeholder anchoring the dispatch varnode.
-    UnresolvedIndirect {
-        target_vn: rsleigh::Vn,
-        addr: strider_cfg::PcodeInsnAddr,
-    },
-    /// Resolved jump table; lifts to a single `Switch` node with one control
-    /// output per target.  Carries the dispatch address so the resolver can
-    /// re-derive and widen an already-seated site.
-    Switch(rsleigh::Vn, Vec<u64>, strider_cfg::PcodeInsnAddr),
-    /// Branch out of the function, past its `FunctionBound`.  Lifts to
-    /// `Call(IntConst(target)) + Return`.  The synthetic conditional-tail-call
-    /// stub region carries this too, but has zero insns to skip.
-    TailCall(u64),
-}
-
-impl SpecialTerm {
-    fn from_terminator(t: &strider_cfg::RegionTerminator) -> Option<Self> {
-        match t {
-            strider_cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
-                Some(SpecialTerm::UnresolvedIndirect {
-                    target_vn: *target_vn,
-                    addr: *addr,
-                })
-            }
-            strider_cfg::RegionTerminator::Switch {
-                target_vn,
-                targets,
-                addr,
-            } => Some(SpecialTerm::Switch(
-                *target_vn,
-                targets.iter().map(|t| t.addr).collect(),
-                *addr,
-            )),
-            // A target's `isa_bit` (the callee's ISA mode on an interworking
-            // tail call) is the callee function's own concern, applied when it
-            // is analyzed at its entry, not while lifting this caller.
-            strider_cfg::RegionTerminator::TailCall { target } => {
-                Some(SpecialTerm::TailCall(target.addr))
-            }
-            _ => None,
-        }
-    }
-
-    /// `TailCall` skips `BranchIndirect` as well as `Branch`: a `known_targets`
-    /// resolution pointing out of the function marks the `jmp reg` a tail call,
-    /// and processing the `BranchIndirect` would emit an `IndirectBranch` and
-    /// terminate the region, failing `handle_tail_call`'s `build_call`.  A
-    /// `CondBranch` never lives in a TailCall region: it keeps its own
-    /// terminator, and the stub regions on its out-of-bounds arms have no insns.
-    ///
-    /// Skipping by opcode alone is safe by region closure: `Branch` and
-    /// `BranchIndirect`, the only opcodes skipped, close the region in
-    /// `RegionBuilder::process_new_insn`, so at most one appears per region and
-    /// it is always the trailing entry, never an inner pcode op.  (`Call` /
-    /// `CallIndirect` / `CallOther` can close it too, but are never skipped.)
-    fn skips_opcode(&self, opcode: rsleigh::Opcode) -> bool {
-        match self {
-            SpecialTerm::UnresolvedIndirect { .. } | SpecialTerm::Switch(..) => {
-                opcode == rsleigh::Opcode::BranchIndirect
-            }
-            SpecialTerm::TailCall(..) => matches!(
-                opcode,
-                rsleigh::Opcode::Branch | rsleigh::Opcode::BranchIndirect
-            ),
-        }
+/// Whether the per-instruction loop must skip `opcode`, leaving the region's
+/// terminator to the post-loop dispatch below.
+///
+/// `TailCall` skips `BranchIndirect` as well as `Branch`: a `known_targets`
+/// resolution pointing out of the function marks the `jmp reg` a tail call,
+/// and processing the `BranchIndirect` would emit an `IndirectBranch` and
+/// terminate the region, failing `handle_tail_call`'s `build_call`.  A
+/// `CondBranch` never lives in a TailCall region: it keeps its own
+/// terminator, and the stub regions on its out-of-bounds arms have no insns.
+///
+/// Skipping by opcode alone is safe by region closure: `Branch` and
+/// `BranchIndirect`, the only opcodes skipped, close the region in
+/// `RegionBuilder::process_new_insn`, so at most one appears per region and
+/// it is always the trailing entry, never an inner pcode op.  (`Call` /
+/// `CallIndirect` / `CallOther` can close it too, but are never skipped.)
+fn skips_opcode(terminator: &strider_cfg::RegionTerminator, opcode: rsleigh::Opcode) -> bool {
+    match terminator {
+        strider_cfg::RegionTerminator::UnresolvedIndirectBranch { .. }
+        | strider_cfg::RegionTerminator::Switch { .. } => opcode == rsleigh::Opcode::BranchIndirect,
+        strider_cfg::RegionTerminator::TailCall { .. } => matches!(
+            opcode,
+            rsleigh::Opcode::Branch | rsleigh::Opcode::BranchIndirect
+        ),
+        _ => false,
     }
 }
 

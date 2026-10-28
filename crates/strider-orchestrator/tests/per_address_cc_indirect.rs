@@ -59,7 +59,7 @@ fn x86_64_indirect_jmp_to_const_bytes() -> (Vec<u8>, u64, u64) {
     (bs, 0x1000, 0x9000)
 }
 
-/// `SpecialTerm::TailCall::skips_opcode` covers `BranchIndirect` alongside
+/// `skips_opcode` covers `BranchIndirect` alongside
 /// `Branch`/`CondBranch`: lifting a `BranchIndirect` insn in the per-insn loop
 /// emits an `IndirectBranch` and terminates the region, after which
 /// `handle_tail_call` panics with "attempted to insert into terminated
