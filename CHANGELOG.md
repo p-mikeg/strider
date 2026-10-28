@@ -599,6 +599,15 @@
 
 ### Fixed
 
+- Rust: a capture one `*_const_with!` closure reads as an `Option` no longer
+  relaxes the rewrite coverage check for every OTHER use of it in the same
+  RHS. A value vertex (`var(c)`), an output type inheriting the binding's
+  width (`capture_typed(c, ..)`) and a second closure's non-`Option` read
+  have no `None` to fall back to, so an LHS alternation binding `c` on only
+  some arms is refused at construction again. It was accepted, and the arm
+  that bound nothing then failed `instantiate` mid-rewrite, which is not a
+  skip: it aborted the pipeline for the whole function, on whichever binary
+  first reached that arm.
 - ARM: a direct edge to an address the build recorded no `inst_next` for
   (every forward `b`, and every conditional whose fall-through terminates
   before the taken target) now carries the ThumbEE mode live at the branch.
