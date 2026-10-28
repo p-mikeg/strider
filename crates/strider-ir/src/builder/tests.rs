@@ -3071,7 +3071,7 @@ fn a_stack_address_in_a_clobbered_register_at_a_call_is_recorded() -> Result<()>
         b.extend_if_needed(low, ValueType::int(64), ExtendOp::ZeroExtend)
     })?;
     // It has no constant offset from the entry SP.
-    assert_eq!(f.side_tables().call_register_frame_reach(), Some(i128::MAX));
+    assert_eq!(f.call_register_frame_reach(), Some(i128::MAX));
     Ok(())
 }
 
@@ -3085,7 +3085,7 @@ fn a_held_stack_address_with_a_scaled_index_is_unplaced() -> Result<()> {
         let scaled = b.build_int_binary_operation(idx, four, IntBinaryOp::Mul, ty)?;
         b.build_int_binary_operation(sp, scaled, IntBinaryOp::Add, ty)
     })?;
-    assert_eq!(f.side_tables().call_register_frame_reach(), Some(i128::MAX));
+    assert_eq!(f.call_register_frame_reach(), Some(i128::MAX));
     Ok(())
 }
 
@@ -3100,7 +3100,7 @@ fn a_held_stack_address_records_its_offset_from_the_entry_sp() -> Result<()> {
         let eight = b.build_int_const(8u64, ty)?;
         b.build_int_binary_operation(frame, eight, IntBinaryOp::Add, ty)
     })?;
-    assert_eq!(f.side_tables().call_register_frame_reach(), Some(-16));
+    assert_eq!(f.call_register_frame_reach(), Some(-16));
     Ok(())
 }
 
@@ -3109,7 +3109,7 @@ fn a_clobbered_register_holding_no_stack_address_is_not_recorded() -> Result<()>
     let f = call_with_register_holding(true, false, |b, _| {
         b.build_int_const(0x1234u64, ValueType::int(64))
     })?;
-    assert!(!f.side_tables().frame_address_in_call_register());
+    assert!(!f.frame_address_in_call_register());
     Ok(())
 }
 
@@ -3121,7 +3121,7 @@ fn a_stack_address_in_a_preserved_register_is_not_recorded() -> Result<()> {
         let k = b.build_int_const((-16i64) as u64, ValueType::int(64))?;
         b.build_int_binary_operation(sp, k, IntBinaryOp::Add, ValueType::int(64))
     })?;
-    assert!(!f.side_tables().frame_address_in_call_register());
+    assert!(!f.frame_address_in_call_register());
     Ok(())
 }
 
@@ -3132,6 +3132,6 @@ fn a_stack_address_in_an_internal_register_is_not_recorded() -> Result<()> {
         let k = b.build_int_const((-16i64) as u64, ValueType::int(64))?;
         b.build_int_binary_operation(sp, k, IntBinaryOp::Add, ValueType::int(64))
     })?;
-    assert!(!f.side_tables().frame_address_in_call_register());
+    assert!(!f.frame_address_in_call_register());
     Ok(())
 }

@@ -87,14 +87,13 @@ pub(crate) fn frame_address_escapes_cached(function: &Function) -> bool {
 }
 
 fn frame_address_escapes(function: &Function) -> bool {
-    function.side_tables().frame_address_in_call_register() || any_exposed(function, |_| true)
+    function.frame_address_in_call_register() || any_exposed(function, |_| true)
 }
 
 /// Whether a stack address that may point at or above `area_start` bytes past
 /// the entry SP (the incoming-argument memory) escapes; see the module doc.
 pub(crate) fn incoming_area_escapes(function: &Function, area_start: i128) -> bool {
     if function
-        .side_tables()
         .call_register_frame_reach()
         .is_some_and(|reach| reach >= area_start)
     {
