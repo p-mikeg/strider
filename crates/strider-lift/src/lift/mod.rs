@@ -232,12 +232,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         cfg.regions()
             .flat_map(|region| region.insns.iter())
             .flat_map(|wrapped| wrapped.insn.all_vns())
-            .filter(|vn| {
-                matches!(
-                    vn.addr_space,
-                    rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
-                )
-            })
+            .filter(|vn| vn_container::is_aliasable_space(vn.addr_space))
             .collect::<rustc_hash::FxHashSet<rsleigh::Vn>>()
             .into_iter()
             .collect()
@@ -352,12 +347,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // caller built by hand can name any space.
         found
             .into_iter()
-            .filter(|vn| {
-                matches!(
-                    vn.addr_space,
-                    rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
-                )
-            })
+            .filter(|vn| vn_container::is_aliasable_space(vn.addr_space))
             .collect()
     }
 
@@ -1153,12 +1143,7 @@ mod tests {
         assert!(!tracked.is_empty(), "the lift tracks something");
         let stray: Vec<_> = tracked
             .iter()
-            .filter(|vn| {
-                !matches!(
-                    vn.addr_space,
-                    rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE
-                )
-            })
+            .filter(|vn| !vn_container::is_aliasable_space(vn.addr_space))
             .map(|vn| (vn.addr_space.shortcut(), vn.addr_off, vn.size))
             .collect();
         assert!(
