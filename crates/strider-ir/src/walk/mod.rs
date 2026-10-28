@@ -1270,7 +1270,7 @@ mod tests {
 
         let edit = crate::EditFunction::new(f);
         let rpo: Vec<u32> = edit
-            .reverse_postorder()
+            .live_reverse_postorder()
             .iter()
             .map(|n| n.index() as u32)
             .collect();
