@@ -1,6 +1,7 @@
 pub(crate) mod builder;
 mod cast_walk_through;
 pub(crate) mod graph;
+pub use graph::MAX_PATTERN_NODES;
 pub(crate) mod match_pat;
 pub(crate) mod vertex;
 pub(crate) mod walk;
