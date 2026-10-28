@@ -140,7 +140,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // for a misspelling rather than erroring, so a one-directional check
         // would pass vacuously while the mode bit is never captured.
         let isa_mode_switch_vn = isa_mode_switch_vn(arch, sleigh_regs)?;
-        let volatile_ranges = arch.volatile_register_ranges(sleigh_regs)?;
+        let volatile_ranges = arch.volatile_register_ranges()?;
         Ok(Self {
             engine,
             declared_reg_vns,
