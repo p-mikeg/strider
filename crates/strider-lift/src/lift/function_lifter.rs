@@ -94,18 +94,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
         call_other_overrides: &'a strider_target::call_other_abi::CallOtherOverrides,
     ) -> Result<Self> {
-        // Membership set over `all_vns`: callers pass hundreds of per-address
-        // CCs, and a linear scan per override register is quadratic in the
-        // tracked set.  The Vec stays the SSoT for ORDER.
         let mut seen: rustc_hash::FxHashSet<rsleigh::Vn> = all_vns.iter().copied().collect();
-        let mut track = |vns: &mut Vec<rsleigh::Vn>, v: rsleigh::Vn| {
-            if seen.insert(v) {
-                vns.push(v);
-            }
-        };
         // The lifter is the SSoT for tracking SP: a function may never name
         // SP yet still need it tracked for stack analysis.
-        track(&mut all_vns, cc.stack_vn);
+        super::track_vns(&mut all_vns, &mut seen, [cc.stack_vn]);
         // `FunctionBuilder::new` seeds the function's OWN convention only, so
         // an override's argument registers would be untracked: an integer one
         // fails the lift outright in `read_vns`, a float one gaps
@@ -116,9 +108,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .filter_map(|addr| per_address_ccs.get(&addr))
         {
             lifter.check_cc(o)?;
-            for &v in o.arg_passing_regs.iter().chain(&o.arg_passing_regs_float) {
-                track(&mut all_vns, v);
-            }
+            let args = o.arg_passing_regs.iter().chain(&o.arg_passing_regs_float);
+            super::track_vns(&mut all_vns, &mut seen, args.copied());
         }
         // `FunctionBuilder::new` seeds the CC registers and `Function::new`
         // drops enclosed sub-registers, so the function's `all_vns()` is the
