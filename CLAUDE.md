@@ -389,7 +389,7 @@ when both IR slots hold the same value.
   controls (MXCSR.FTZ/DAZ, FPSCR.NI/OE/UE, FZ, FS) are the IEEE default. It is
   the floor, not the only sound setting: `callee_preserves_stack_args` is inert
   without `escape_analysis` or a listed allocator. Per-field detail is on the struct
-  (`crates/strider-ir/src/assumptions.rs`). `LoadForward` is two analyzers: the
+  (`crates/strider-ir/src/function/assumptions.rs`). `LoadForward` is two analyzers: the
   `alias` one is `MemPurpose::Forward` over `assumptions`, the `narrow` one
   `MemPurpose::TableWalk`, the same claims less the call relaxations, because
   the edge `narrow_load_to` rewires is read afterwards by walks that honour no
