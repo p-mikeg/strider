@@ -20,6 +20,10 @@ fn per_address_cc_integer_arg_registers_are_seeded() {
     let edi = lifter.sleigh_regs().name_to_vn("EDI").expect("EDI");
     let mut override_cc = cc.clone();
     override_cc.arg_passing_regs = vec![edi];
+    // cdecl preserves EDI, and `validate` refuses a register that is both.
+    override_cc
+        .callee_saved_regs
+        .retain(|v| !vn_container::vn_contains(v, &edi));
     let mut per_address_ccs = rustc_hash::FxHashMap::default();
     per_address_ccs.insert(0x1006u64, override_cc);
     let opts = strider_cfg::CfgOptions::default();
@@ -62,6 +66,10 @@ fn an_override_this_function_never_calls_seeds_nothing() {
     let edi = lifter.sleigh_regs().name_to_vn("EDI").expect("EDI");
     let mut override_cc = cc.clone();
     override_cc.arg_passing_regs = vec![edi];
+    // cdecl preserves EDI, and `validate` refuses a register that is both.
+    override_cc
+        .callee_saved_regs
+        .retain(|v| !vn_container::vn_contains(v, &edi));
     let mut per_address_ccs = rustc_hash::FxHashMap::default();
     // 0x9000 is not a call target of this function.
     per_address_ccs.insert(0x9000u64, override_cc);
@@ -105,6 +113,10 @@ fn a_tail_calls_override_argument_registers_are_seeded() {
     let edi = lifter.sleigh_regs().name_to_vn("EDI").expect("EDI");
     let mut override_cc = cc.clone();
     override_cc.arg_passing_regs = vec![edi];
+    // cdecl preserves EDI, and `validate` refuses a register that is both.
+    override_cc
+        .callee_saved_regs
+        .retain(|v| !vn_container::vn_contains(v, &edi));
     let mut per_address_ccs = rustc_hash::FxHashMap::default();
     per_address_ccs.insert(0x1003u64, override_cc);
     let opts = strider_cfg::CfgOptions {
