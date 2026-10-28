@@ -771,7 +771,11 @@ pub fn if_else() -> IfPat {
 
 #[cfg(test)]
 mod tests {
-    use super::if_else;
+    use super::{MatcherBuilder, entry, if_else, ret};
+    use crate::capture::Capture;
+    use crate::node_builders::{WithOutput, staged_shape};
+    use crate::typed::{anything, int_const, var};
+    use strider_ir::node::ValueType;
 
     #[test]
     fn if_pattern_has_two_control_output_vertices() {
@@ -780,6 +784,105 @@ mod tests {
             pat.control_output_count(),
             2,
             "If pattern must declare two control-output vertices"
+        );
+    }
+
+    /// Characterizes `IfPat`'s lowering: which vertices it declares, in which
+    /// order, carrying which captures. The two control outputs come before the
+    /// condition's own cone, the binding walk rides `true_out`, and the node
+    /// captures land last. Reordering any of that changes which vertex
+    /// `root_output_vertex_for` picks, so this string is the contract a
+    /// re-homed lowering has to reproduce.
+    #[test]
+    fn if_lowering_declares_its_vertices_in_a_pinned_order() {
+        let (t, f, n, out) = (
+            Capture::new(),
+            Capture::new(),
+            Capture::new(),
+            Capture::new(),
+        );
+        let pat = if_else()
+            .cond(int_const(1u128))
+            .ctrl(entry())
+            .capture_true(t)
+            .capture_false(f)
+            .capture(n)
+            .capture_output(Some(0), out)
+            .output_width(None, 32)
+            .output_ty(Some(1), ValueType::I1)
+            .with_true(ret().capture(Capture::new()).build())
+            .with_false(entry().capture(Capture::new()).build())
+            .build();
+        same_shape(
+            &staged_shape(&pat),
+            "\
+n0 Exact(Entry) caps=0 pred=0 walk=0 walk_caps=0/0 alt=0/0 ordered=0
+  out v0 Control slot=0 mode=Loose width=None caps=0 ident=0 token=0
+n1 Variant caps=0 pred=1 walk=0 walk_caps=0/0 alt=0/0 ordered=0
+  out v1 AnyValue slot=0 mode=Loose width=None caps=0 ident=0 token=0
+n2 Exact(If) caps=1 pred=0 walk=1 walk_caps=2/2 alt=0/0 ordered=0
+  out v2 Control slot=0 mode=Loose width=None caps=1 ident=0 token=0
+  out v3 Control slot=1 mode=Loose width=None caps=1 ident=0 token=0
+  out v4 Any slot=0 mode=Pinned width=None caps=1 ident=0 token=0
+  out v5 Any slot=0 mode=Enumerated width=Some(32) caps=0 ident=0 token=0
+  out v6 Value slot=1 mode=Pinned width=None caps=0 ident=0 token=0
+  in At(1) <- v1
+  in At(0) <- v0
+root=Ok(2) total_nodes=5
+",
+        );
+    }
+
+    /// Seal numbers every operand cone ahead of the `If` that consumes it, in
+    /// the reverse of the order `lower` wired them, so which operand `lower`
+    /// compiles first decides every vertex id. Pinned because those ids are
+    /// what `anchor_repeats` compares.
+    #[test]
+    fn if_lowering_stages_every_operand_cone_before_the_if_node() {
+        let pat = if_else()
+            .cond(var(Capture::new()))
+            .input(0, anything())
+            .any_input(anything())
+            .build();
+        same_shape(
+            &staged_shape(&pat),
+            "\
+n0 Any caps=0 pred=0 walk=0 walk_caps=0/0 alt=0/0 ordered=0
+  out v0 Any slot=0 mode=Loose width=None caps=0 ident=0 token=0
+n1 Any caps=0 pred=0 walk=0 walk_caps=0/0 alt=0/0 ordered=0
+  out v1 Any slot=0 mode=Loose width=None caps=0 ident=0 token=0
+n2 Any caps=0 pred=0 walk=0 walk_caps=0/0 alt=0/0 ordered=0
+  out v2 Any slot=0 mode=Loose width=None caps=1 ident=0 token=0
+n3 Exact(If) caps=0 pred=0 walk=0 walk_caps=0/0 alt=0/0 ordered=0
+  out v3 Control slot=0 mode=Loose width=None caps=0 ident=0 token=0
+  out v4 Control slot=1 mode=Loose width=None caps=0 ident=0 token=0
+  in At(1) <- v2
+  in At(0) <- v1
+  in Any <- v0
+root=Ok(3) total_nodes=4
+",
+        );
+    }
+
+    /// Diffs line by line: `assert_eq!` on two long strings escapes them into
+    /// one unreadable line.
+    #[track_caller]
+    fn same_shape(got: &str, want: &str) {
+        assert_eq!(
+            got.lines().collect::<Vec<_>>(),
+            want.lines().collect::<Vec<_>>()
+        );
+    }
+
+    /// A refused branch pattern refuses the whole `If`, and its nodes still
+    /// count against the cap.
+    #[test]
+    fn if_lowering_replays_a_branch_refusal() {
+        let refused = MatcherBuilder::new().finish();
+        let pat = if_else().with_false(refused).build();
+        assert!(
+            staged_shape(&pat).contains("root=Err("),
+            "a refused branch pattern must refuse the If"
         );
     }
 }
