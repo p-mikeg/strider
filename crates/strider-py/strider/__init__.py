@@ -98,30 +98,14 @@ _p.CaptureKey = _t.Union[_p.Capture, str]  # type: ignore[attr-defined]
 _p.constraints.ConstraintLike = _t.Union[  # type: ignore[attr-defined]
     _p.constraints.JoinConstraint, _p.constraints.JoinPredicate
 ]
-_p.ValueTy = _t.Literal[  # type: ignore[attr-defined]
-    "i1", "i8", "i16", "i24", "i32", "i40", "i48", "i56", "i64", "i72",
-    "i80", "i96", "i112", "i128", "i256", "i512", "f16", "f32", "f64", "f80",
-    "f128",
-    "I1", "I8", "I16", "I24", "I32", "I40", "I48", "I56", "I64", "I72",
-    "I80", "I96", "I112", "I128", "I256", "I512", "F16", "F32", "F64", "F80",
-    "F128",
-]
-_p.IntCmpOpName = _t.Literal[  # type: ignore[attr-defined]
-    "Equal", "Less", "Sless", "Carry", "Scarry", "Sborrow",
-]
-_p.IntBinaryOpName = _t.Literal[  # type: ignore[attr-defined]
-    "Add", "And", "Or", "Xor", "Div", "Sdiv", "Rem", "Srem",
-    "ShiftRight", "SShiftRight", "ShiftLeft", "Mul",
-]
-_p.BoolBinaryOpName = _t.Literal[  # type: ignore[attr-defined]
-    "And", "Or", "Xor",
-]
-_p.FloatBinaryOpName = _t.Literal[  # type: ignore[attr-defined]
-    "Add", "Mul", "Div",
-]
-_p.ExtendOpName = _t.Literal[  # type: ignore[attr-defined]
-    "ZeroExtend", "SignExtend",
-]
+# Each alias is the roster Rust publishes, the way `IncompleteReason` below
+# is: the names a parser accepts, never a second copy of them.
+_p.ValueTy = _t.Literal[_p.VALUE_TYPES]  # type: ignore[attr-defined]
+_p.IntCmpOpName = _t.Literal[_p.INT_CMP_OPS]  # type: ignore[attr-defined]
+_p.IntBinaryOpName = _t.Literal[_p.INT_BINARY_OPS]  # type: ignore[attr-defined]
+_p.BoolBinaryOpName = _t.Literal[_p.BOOL_BINARY_OPS]  # type: ignore[attr-defined]
+_p.FloatBinaryOpName = _t.Literal[_p.FLOAT_BINARY_OPS]  # type: ignore[attr-defined]
+_p.ExtendOpName = _t.Literal[_p.EXTEND_OPS]  # type: ignore[attr-defined]
 _export(
     _p, "PatLike", "ValueLike", "MemLike", "CaptureKey", "ValueTy",
     "IntCmpOpName", "IntBinaryOpName", "BoolBinaryOpName", "FloatBinaryOpName",
