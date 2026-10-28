@@ -1,7 +1,7 @@
 use strider_ir::{IRBuilderExt, VnTypeExt};
 
 use crate::lift::FunctionLifter;
-use crate::lift::pcode_consts::{opaque_clobber_set, register_load_source, register_store_target};
+use crate::lift::pcode_consts::{opaque_clobber_set, register_slot_of};
 use crate::lift::pcode_util::{Result, require_output_vn};
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
@@ -12,7 +12,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let space = crate::lift::pcode_util::decode_space_id(insn)?;
         if space == rsleigh::VnSpace::REGISTER {
             let declared = self.lifter.declared_reg_vns();
-            if let Some(source) = register_load_source(insn, &self.pcode_consts, declared) {
+            if let Some(source) = register_slot_of(insn, &self.pcode_consts, declared) {
                 let out_vn = *require_output_vn(insn)?;
                 let value = self.read_vn(&source)?;
                 return self.write_vn(&out_vn, value);
@@ -34,7 +34,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let space = crate::lift::pcode_util::decode_space_id(insn)?;
         if space == rsleigh::VnSpace::REGISTER {
             let declared = self.lifter.declared_reg_vns();
-            if let Some(target) = register_store_target(insn, &self.pcode_consts, declared) {
+            if let Some(target) = register_slot_of(insn, &self.pcode_consts, declared) {
                 let data = self.read_input(insn, 2)?;
                 return self.write_vn(&target, data);
             }
