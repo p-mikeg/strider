@@ -181,8 +181,9 @@ impl FunctionBuilder {
             variables[vn_id] = value.into();
         }
 
-        require_memory_kind(self.function(), memory)?;
-        require_control_kind(self.function(), control)?;
+        // Minted two statements up with these exact kinds.
+        debug_assert!(self.function().value_kind(memory).is_memory());
+        debug_assert!(self.function().value_kind(control).is_control());
         Ok(self.regions.push(Region {
             terminated: false,
             control_node,
