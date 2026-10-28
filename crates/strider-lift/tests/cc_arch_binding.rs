@@ -20,14 +20,35 @@ fn lift_built_at(
     build: impl FnOnce(&rsleigh::SleighRegs) -> anyhow::Result<BuiltCallingConvention>,
     over: Option<(u64, Cc)>,
 ) -> anyhow::Result<()> {
+    let built_over = over.map(|(addr, o)| {
+        (
+            addr,
+            move |regs: &rsleigh::SleighRegs| -> anyhow::Result<_> { o.build(regs) },
+        )
+    });
+    lift_over_built_at(arch, code, build, built_over)
+}
+
+/// [`lift_built_at`], with the per-address override built by `build_over`
+/// rather than from a preset, so an override no constructor would produce
+/// still reaches the lift.
+fn lift_over_built_at(
+    arch: Sa,
+    code: &[u8],
+    build: impl FnOnce(&rsleigh::SleighRegs) -> anyhow::Result<BuiltCallingConvention>,
+    over: Option<(
+        u64,
+        impl FnOnce(&rsleigh::SleighRegs) -> anyhow::Result<BuiltCallingConvention>,
+    )>,
+) -> anyhow::Result<()> {
     let mut lifter = strider_lift::lift::Lifter::new(
         arch,
         rsleigh::mem_readers::BufMemReader::new(code.to_vec(), 0x1000),
     )?;
     let built = build(lifter.sleigh_regs())?;
     let mut per_address_ccs = rustc_hash::FxHashMap::default();
-    if let Some((addr, o)) = over {
-        per_address_ccs.insert(addr, o.build(lifter.sleigh_regs())?);
+    if let Some((addr, build_over)) = over {
+        per_address_ccs.insert(addr, build_over(lifter.sleigh_regs())?);
     }
     let cfg = lifter.build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())?;
     lifter.build_ir_with(
@@ -184,4 +205,28 @@ fn a_default_convention_that_fails_validate_is_refused() {
     let err = format!("{err:#}");
     assert!(err.contains("default convention: "), "got: {err}");
     assert!(err.contains("callee_saved_regs"), "got: {err}");
+}
+
+/// The same rule as [`a_default_convention_that_fails_validate_is_refused`],
+/// for an override: `check_cc` is all a per-address convention gets, and a
+/// Rust struct literal is the one way to build an unvalidated one.
+#[test]
+fn a_per_address_convention_that_fails_validate_is_refused() {
+    let code = [0xe8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0xc3];
+    let arg_also_saved = |regs: &rsleigh::SleighRegs| -> anyhow::Result<BuiltCallingConvention> {
+        let mut cc = Cc::x86_64_systemv().build(regs)?;
+        cc.callee_saved_regs.push(cc.arg_passing_regs[0]);
+        Ok(cc)
+    };
+    let err = lift_over_built_at(
+        Sa::x86_64(),
+        &code,
+        |regs| Cc::x86_64_systemv().build(regs),
+        Some((0x1006, arg_also_saved)),
+    )
+    .expect_err("a register the callee both receives and preserves must be refused");
+    assert!(
+        format!("{err:#}").contains("callee_saved_regs"),
+        "got: {err:#}"
+    );
 }
