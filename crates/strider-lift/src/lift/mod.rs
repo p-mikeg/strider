@@ -438,32 +438,22 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // always scanned fresh.  `FunctionLifter::new` adds the stack vn; the
         // lifter is the SSoT for that.
         let mut all_vns = self.find_all_unique_vns(cfg);
-        // A user-op's implicit footprint is named by neither the pcode nor the
-        // convention, so it must be seeded before the universe is frozen.  Set
-        // membership, not a scan: the Vec is the SSoT for order only.
         let mut seen: rustc_hash::FxHashSet<rsleigh::Vn> = all_vns.iter().copied().collect();
-        for vn in self.call_other_footprint_vns(cfg, cfg_opts.call_other_overrides) {
-            if seen.insert(vn) {
-                all_vns.push(vn);
-            }
-        }
+        // A user-op's implicit footprint is named by neither the pcode nor the
+        // convention, so it must be seeded before the universe is frozen.
+        let footprint = self.call_other_footprint_vns(cfg, cfg_opts.call_other_overrides);
+        track_vns(&mut all_vns, &mut seen, footprint);
         // A rounding-mode op with no input reads its register only when the
         // claim is off, so only then is that register tracked.
         if !claims.fp_rounding_mode_is_nearest {
-            for vn in self.rounding_mode_register_vns(cfg, cfg_opts.call_other_overrides) {
-                if seen.insert(vn) {
-                    all_vns.push(vn);
-                }
-            }
+            let rounding = self.rounding_mode_register_vns(cfg, cfg_opts.call_other_overrides);
+            track_vns(&mut all_vns, &mut seen, rounding);
         }
         // A register a LOAD / STORE reaches through the REGISTER space is named
         // by a computed address rather than a pcode operand, so it is invisible
         // to `find_all_unique_vns` and has to be seeded here too.
-        for vn in self.register_space_vns(cfg) {
-            if seen.insert(vn) {
-                all_vns.push(vn);
-            }
-        }
+        let register_space = self.register_space_vns(cfg);
+        track_vns(&mut all_vns, &mut seen, register_space);
         let mut driver = FunctionLifter::new(
             self,
             cc,
@@ -776,6 +766,26 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             }
         }
         Ok(())
+    }
+}
+
+/// Appends the varnodes of `vns` that `seen` does not already hold.
+///
+/// `seen` is a membership set, not a scan over `order`: a caller passes
+/// hundreds of per-address conventions and a linear scan per register would
+/// be quadratic in the tracked set. Neither the dedup nor the order is
+/// load-bearing downstream -- `Function::new` dedups into containers and
+/// SORTS, which is what fixes `InitialVnId` numbering -- so what matters
+/// here is only that every source reaches the list.
+pub(crate) fn track_vns(
+    order: &mut Vec<rsleigh::Vn>,
+    seen: &mut rustc_hash::FxHashSet<rsleigh::Vn>,
+    vns: impl IntoIterator<Item = rsleigh::Vn>,
+) {
+    for vn in vns {
+        if seen.insert(vn) {
+            order.push(vn);
+        }
     }
 }
 
