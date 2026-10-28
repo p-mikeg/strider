@@ -34,6 +34,17 @@ fn render_html(n: usize) -> String {
     gd.as_html_from_dot().expect("html emit succeeded")
 }
 
+#[test]
+fn graph_dot_names_its_digraph_g() {
+    let gd = GraphDot::new(TestDumper { n: 2 }, DotStyle::dark());
+    let dot = gd.as_dot().expect("dot emit succeeded");
+    assert!(
+        dot.starts_with("digraph \"G\" {\n"),
+        "GraphDot must emit a digraph named G; got: {}",
+        &dot[..dot.len().min(32)]
+    );
+}
+
 struct FailingDumper;
 
 impl GraphDotDumper for FailingDumper {
