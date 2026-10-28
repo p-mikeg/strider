@@ -22,23 +22,7 @@
 //! Each table is followed by words that are not code addresses, so an index
 //! bound past the guard names garbage.
 use crate::common;
-
-struct Rom(&'static [(u64, &'static [u8])]);
-
-impl strider_orchestrator::opt::ReadOnlyMemory for Rom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        for &(base, bytes) in self.0 {
-            if let Some(off) = addr.checked_sub(base)
-                && let Ok(off) = usize::try_from(off)
-                && let Some(src) = bytes.get(off..off + buf.len())
-            {
-                buf.copy_from_slice(src);
-                return Ok(());
-            }
-        }
-        anyhow::bail!("unmapped {addr:#x}")
-    }
-}
+use strider_ir_test_utils::MockRom;
 
 /// Every seated `Switch` arm and the unresolved report of analysing `entry`.
 fn analyze(
@@ -53,7 +37,14 @@ fn analyze(
         bytes.resize(off, 0);
         bytes.extend_from_slice(data);
     }
-    let (mut s, cc) = common::strider_over_bytes(arch, bytes, base, Some(Box::new(Rom(sections))));
+    let (mut s, cc) = common::strider_over_bytes(
+        arch,
+        bytes,
+        base,
+        Some(Box::new(MockRom::regions(
+            sections.iter().map(|&(base, bytes)| (base, bytes.to_vec())),
+        ))),
+    );
     let r = s
         .analyze(
             entry,

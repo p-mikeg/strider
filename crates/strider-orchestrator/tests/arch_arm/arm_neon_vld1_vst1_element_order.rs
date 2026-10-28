@@ -6,13 +6,13 @@
 //! for any element size with little-endian data.
 
 use crate::common;
+use strider_ir_test_utils::MockRom;
 
 use std::collections::BTreeMap;
 
 use crate::common::Arch;
 use strider_ir::node::{IntBinaryOp, NodeKind};
 use strider_ir::{Function, IRViewer, IRWalker};
-use strider_orchestrator::opt::ReadOnlyMemory;
 use strider_target::Endianness;
 
 const BASE: u64 = 0x1000;
@@ -21,20 +21,6 @@ const DATA: u64 = 0x2000;
 const DATA_BYTES: [u8; 16] = [
     0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xf0, 0x0f,
 ];
-
-struct Rom;
-
-impl ReadOnlyMemory for Rom {
-    fn read(&self, addr: u64, buf: &mut [u8]) -> anyhow::Result<()> {
-        let at = addr
-            .checked_sub(DATA)
-            .and_then(|a| usize::try_from(a).ok())
-            .filter(|&a| a + buf.len() <= DATA_BYTES.len())
-            .ok_or_else(|| anyhow::anyhow!("{addr:#x} is not read-only"))?;
-        buf.copy_from_slice(&DATA_BYTES[at..at + buf.len()]);
-        Ok(())
-    }
-}
 
 fn analyze(arch: Arch, body: &[u32]) -> Function {
     // BE8 keeps instructions little-endian; only BE32 stores them big-endian.
@@ -46,7 +32,12 @@ fn analyze(arch: Arch, body: &[u32]) -> Function {
     let mut words = body.to_vec();
     words.push(0xe12f_ff1e); // bx lr
     let bytes = common::words_image(&words, code_order);
-    let (mut strider, cc) = common::strider_over_bytes(arch, bytes, BASE, Some(Box::new(Rom)));
+    let (mut strider, cc) = common::strider_over_bytes(
+        arch,
+        bytes,
+        BASE,
+        Some(Box::new(MockRom::raw_bytes(DATA, DATA_BYTES.to_vec()))),
+    );
     strider
         .analyze(BASE, &cc, &Default::default(), None)
         .expect("analyze")
