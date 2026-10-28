@@ -1171,3 +1171,113 @@ fn function_float_arg_node_label_is_distinct_from_the_integer_index() {
         "exactly one node carries the integer arg 0 label:\n{dot}",
     );
 }
+
+/// The raw neighbourhood is the raw dumper restricted, not a second emitter,
+/// so it declares its nodes in the same ascending-id order the pretty
+/// restricted render uses. An `FxHashSet` iteration order does not.
+#[test]
+fn raw_neighborhood_declares_its_nodes_in_id_order() {
+    use crate::node::IntBinaryOp;
+
+    let mut f = test_function();
+    let ty = ValueType::int(32);
+    let c0 = int_const_node(&mut f, 1, ty);
+    let mut prev = f.node_outputs(c0)[0];
+    // A chain long enough that a hash set's order is unlikely to be ascending.
+    for k in 2u128..24 {
+        let cn = int_const_node(&mut f, k, ty);
+        let c = f.node_outputs(cn)[0];
+        let add = f.graph_mut().create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::Add),
+            [prev, c],
+            [ValueKind::Typed(ty)],
+        );
+        prev = f.node_outputs(add)[0];
+    }
+    let center = f.producer(prev);
+    let entry = f.entry();
+    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let mem = crate::function::test_initial_memory(&f);
+    let [memv] = f.node_outputs_exact::<1>(mem).unwrap();
+    f.graph_mut()
+        .create_node(NodeKind::Return, [ctrl, memv, prev], []);
+
+    let dot = f
+        .raw_neighborhood_dot(center, 40, 1000, 1000, true)
+        .expect("raw neighborhood");
+    let ids: Vec<u32> = node_decls(&dot)
+        .iter()
+        .filter_map(|l| l.trim().strip_prefix("\"n"))
+        .filter_map(|l| l.split('"').next())
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    assert!(ids.len() > 5, "too few node declarations: {ids:?}\n{dot}");
+    let mut sorted = ids.clone();
+    sorted.sort_unstable();
+    assert_eq!(ids, sorted, "raw neighbourhood node order:\n{dot}");
+
+    // The centre, and only the centre, carries the gold border.
+    let gold: Vec<&str> = node_decls(&dot)
+        .into_iter()
+        .filter(|l| l.contains("#ffcc00"))
+        .collect();
+    assert_eq!(gold.len(), 1, "exactly one highlighted box:\n{dot}");
+    assert!(
+        gold[0].contains(&format!("\"n{}\"", center.as_u32())),
+        "the centre is the highlighted box: {}",
+        gold[0]
+    );
+}
+
+/// A budgeted raw neighbourhood draws no edge to a node it did not declare:
+/// Graphviz would otherwise mint an unlabelled box for the missing end.
+#[test]
+fn raw_neighborhood_draws_no_edge_out_of_view() {
+    use crate::node::IntBinaryOp;
+
+    let mut f = test_function();
+    let ty = ValueType::int(32);
+    let c0 = int_const_node(&mut f, 1, ty);
+    let mut prev = f.node_outputs(c0)[0];
+    for k in 2u128..24 {
+        let cn = int_const_node(&mut f, k, ty);
+        let c = f.node_outputs(cn)[0];
+        let add = f.graph_mut().create_node(
+            NodeKind::IntBinaryOp(IntBinaryOp::Add),
+            [prev, c],
+            [ValueKind::Typed(ty)],
+        );
+        prev = f.node_outputs(add)[0];
+    }
+    let center = f.producer(prev);
+    let entry = f.entry();
+    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let mem = crate::function::test_initial_memory(&f);
+    let [memv] = f.node_outputs_exact::<1>(mem).unwrap();
+    f.graph_mut()
+        .create_node(NodeKind::Return, [ctrl, memv, prev], []);
+
+    // A budget well under the function's node count, so the walk is cut.
+    let dot = f
+        .raw_neighborhood_dot(center, 40, 1000, 6, true)
+        .expect("raw neighborhood");
+    let declared: Vec<&str> = node_decls(&dot)
+        .iter()
+        .filter_map(|l| l.trim().split('"').nth(1))
+        .collect();
+    assert!(declared.len() <= 6, "budget not honoured: {declared:?}");
+    let edges = edge_lines(&dot);
+    assert!(
+        !edges.is_empty(),
+        "the cut neighbourhood kept no edge:\n{dot}"
+    );
+    for edge in edges {
+        let mut ends = edge.split('"').skip(1).step_by(2);
+        let (from, to) = (ends.next().expect("from"), ends.next().expect("to"));
+        assert!(
+            declared.contains(&from),
+            "edge from undeclared {from}: {edge}"
+        );
+        assert!(declared.contains(&to), "edge to undeclared {to}: {edge}");
+    }
+}
