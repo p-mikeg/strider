@@ -7,6 +7,23 @@
 
 use strider_ir::AssumptionOptions;
 
+/// Every claim at once, written out with no `..`: a field added to the
+/// struct stops this compiling, which is what keeps [`each_claim`] the whole
+/// list rather than most of it.
+fn every_claim() -> AssumptionOptions {
+    AssumptionOptions {
+        stack_global_disjoint: true,
+        assume_incoming_args_survive_calls: true,
+        distinct_sp_bases_disjoint: true,
+        callee_preserves_stack_args: true,
+        noalias_allocators: [0x1000].into_iter().collect(),
+        escape_analysis: true,
+        return_slots_survive_untracked_writes: true,
+        msr_register_keeps_mode: true,
+        fp_rounding_mode_is_nearest: true,
+    }
+}
+
 /// Every claim on its own, by field name, in declaration order.
 fn each_claim() -> Vec<(&'static str, AssumptionOptions)> {
     let none = AssumptionOptions::none;
@@ -116,6 +133,11 @@ fn omitted_by_names_every_field_in_declaration_order() {
     for (_, claim) in each_claim() {
         all.union_with(&claim);
     }
+    assert_eq!(
+        all,
+        every_claim(),
+        "`each_claim` is one row per field and no more"
+    );
     assert_eq!(
         all.omitted_by(&AssumptionOptions::none()),
         vec![
