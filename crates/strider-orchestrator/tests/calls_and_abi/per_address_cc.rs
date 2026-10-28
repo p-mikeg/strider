@@ -1,0 +1,115 @@
+//! A Call whose target is in `per_address_ccs` is built with the override CC.
+//! An all-preserving override still leaves clobber outputs behind: Sleigh
+//! temporaries (UNIQUE / RAM) survive the by-name `callee_saved` filter.
+
+use rustc_hash::FxHashMap;
+use strider_ir::IRViewer;
+
+use rsleigh::mem_readers::BufMemReader;
+use strider_ir::node::NodeKind;
+use strider_orchestrator::{AnalyzeOptions, Strider};
+use strider_target::{CallingConvention as TargetCC, SleighArch};
+
+use crate::common::x86_64_call_then_ret;
+
+#[test]
+fn call_to_overridden_address_has_zero_clobber_outputs() {
+    let (bytes, entry, call_target) = x86_64_call_then_ret();
+    let arch = SleighArch::x86_64();
+    let reader = BufMemReader::new(bytes, entry);
+    let mut strider = Strider::new(arch, reader, None).unwrap();
+    let regs = strider.sleigh_regs();
+    let cc = TargetCC::x86_64_systemv().build(regs).unwrap();
+
+    let mut overrides: FxHashMap<u64, strider_target::BuiltCallingConvention> =
+        FxHashMap::default();
+    overrides.insert(
+        call_target,
+        TargetCC::x86_64_systemv()
+            .preserves_all()
+            .build(regs)
+            .unwrap(),
+    );
+    let opts = AnalyzeOptions {
+        per_address_ccs: &overrides,
+        ..AnalyzeOptions::default()
+    };
+
+    let bfg = strider.analyze(entry, &cc, &opts, None).unwrap().function;
+
+    let call_id = bfg
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call { .. }))
+        .expect("function lifts to one Call");
+    let outs = bfg.node_outputs(call_id);
+    // With the all-preserving override, the only tracked variables that
+    // survive its callee_saved filter are Sleigh-generated temporaries
+    // (UNIQUE / RAM) the by-name list can't reach, so the clobber count
+    // must come in well below the full SystemV set.
+    assert_ne!(
+        bfg.get_cc(call_id),
+        bfg.default_cc(),
+        "override CC must be recorded on the Call (effective CC differs from default)"
+    );
+    let tagged_outputs = outs.iter().skip(2).count();
+    assert!(
+        outs.iter()
+            .skip(2)
+            .all(|&v| bfg.get_vn_for_value(v).is_some()),
+        "every ret-val / clobber output must carry its varnode tag"
+    );
+    let (ret, clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.get_cc(call_id));
+    assert_eq!(
+        outs.len(),
+        2 + ret.len() + clob.len(),
+        "Call's outputs = Control + Memory + the override's ret-val/clobber slots"
+    );
+    let (default_ret, default_clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
+    let default_total = default_ret.len() + default_clob.len();
+    assert!(
+        tagged_outputs < default_total,
+        "override tagged output count ({}) must be strictly smaller than \
+         function-default total (ret_vals={} + clobbers={} = {})",
+        tagged_outputs,
+        default_ret.len(),
+        default_clob.len(),
+        default_total,
+    );
+}
+
+/// Counterpart to the above: WITHOUT an override, the same Call
+/// emits the full SystemV clobber shape.
+#[test]
+fn call_without_override_uses_function_default_clobber_set() {
+    let (bytes, entry, _call_target) = x86_64_call_then_ret();
+    let arch = SleighArch::x86_64();
+    let reader = BufMemReader::new(bytes, entry);
+    let mut strider = Strider::new(arch, reader, None).unwrap();
+    let regs = strider.sleigh_regs();
+    let cc = TargetCC::x86_64_systemv().build(regs).unwrap();
+
+    let bfg = strider
+        .analyze(entry, &cc, &AnalyzeOptions::default(), None)
+        .unwrap()
+        .function;
+
+    let call_id = bfg
+        .graph()
+        .all_node_ids()
+        .find(|n| matches!(bfg.node_kind(*n), NodeKind::Call { .. }))
+        .expect("function lifts to one Call");
+    assert_eq!(
+        bfg.get_cc(call_id),
+        bfg.default_cc(),
+        "no override -> effective CC is the function default"
+    );
+    let outs = bfg.node_outputs(call_id);
+    let (rv, clob) = strider_ir::cc_ret_and_clobber_vns(&bfg, bfg.default_cc());
+    let expected = 2 + rv.len() + clob.len();
+    assert_eq!(
+        outs.len(),
+        expected,
+        "default Call: Control + Memory + ret-val slots + clobber slots"
+    );
+}
