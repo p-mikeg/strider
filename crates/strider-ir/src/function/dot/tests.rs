@@ -1281,3 +1281,55 @@ fn raw_neighborhood_draws_no_edge_out_of_view() {
         assert!(declared.contains(&to), "edge to undeclared {to}: {edge}");
     }
 }
+
+/// A variadic input's edge label is the signature's own tail name plus the
+/// ordinal within the tail, so neither the name nor the head length is
+/// re-derived in the renderer.
+#[test]
+fn variadic_edge_labels_come_from_the_signature() {
+    let sig = crate::node_signature::expected_signature(&NodeKind::Call { cc: None });
+    let tail = sig.inputs.at(sig.inputs.head_len()).expect("a tail slot");
+
+    let mut f = test_function();
+    let entry = f
+        .graph_mut()
+        .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+    let init_mem = f
+        .graph_mut()
+        .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+    let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+    let [mem] = f.node_outputs_exact::<1>(init_mem).unwrap();
+    let ty = ValueType::int(64);
+    let target_n = int_const_node(&mut f, 0x1000, ty);
+    let target = f.node_outputs(target_n)[0];
+    let sp_n = int_const_node(&mut f, 0x20, ty);
+    let sp = f.node_outputs(sp_n)[0];
+    let a0_n = int_const_node(&mut f, 0x11, ty);
+    let a0 = f.node_outputs(a0_n)[0];
+    let a1_n = int_const_node(&mut f, 0x22, ty);
+    let a1 = f.node_outputs(a1_n)[0];
+    let call = f.graph_mut().create_node(
+        NodeKind::Call { cc: None },
+        [ctrl, mem, target, sp, a0, a1],
+        [ValueKind::Control, ValueKind::Memory],
+    );
+    let [call_ctrl, call_mem] = f.node_outputs_exact::<2>(call).unwrap();
+    f.graph_mut()
+        .create_node(NodeKind::Return, [call_ctrl, call_mem], []);
+
+    let dot = render(&f);
+    for n in 0..2 {
+        let want = format!("label=\"{}{n}\"", tail.name);
+        assert!(
+            dot.contains(&want),
+            "a Call's argument {n} must be labelled {want}:\n{dot}"
+        );
+    }
+    // The fixed head slot before the tail is named by the signature too.
+    let head_last = sig.inputs.at(sig.inputs.head_len() - 1).expect("head slot");
+    assert!(
+        dot.contains(&format!("label=\"{}\"", head_last.name)),
+        "the last head slot must be labelled {}:\n{dot}",
+        head_last.name
+    );
+}
