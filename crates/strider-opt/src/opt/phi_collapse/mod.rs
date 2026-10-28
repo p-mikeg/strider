@@ -45,7 +45,7 @@ impl Optimizer for PhiCollapse {
     ) -> Result<OptimizationResult> {
         let reachable = strider_ir::walk::cfg_reachable(edit.function().graph(), edit.entry());
         let phis: Vec<NodeId> = edit
-            .reverse_postorder_filter(|k| matches!(k, NodeKind::Phi | NodeKind::MemPhi))
+            .live_reverse_postorder_filter(|k| matches!(k, NodeKind::Phi | NodeKind::MemPhi))
             .filter(|&phi| {
                 edit.nth_input(phi, NodeKind::PHI_TOKEN_SLOT)
                     .is_some_and(|token| reachable.contains(edit.producer(token)))
