@@ -945,8 +945,9 @@ const MAX_PATTERN_NESTING: u32 = 512;
 /// Depth alone does not bound the work: a `Pat` used in two operands
 /// (`q = int_add(q, q)`) lowers once per use, so each level of reuse doubles
 /// the boxed sub-patterns, and every one of them is built before anything is
-/// staged for the matcher's own node cap to refuse. Well past that cap (256
-/// nodes), so no pattern a query can run is refused here.
+/// staged for the matcher's own node cap to refuse. Well past
+/// [`strider_pattern::MAX_PATTERN_NODES`], so no pattern a query can run is
+/// refused here.
 const MAX_COMPILE_STEPS: u64 = 4096;
 
 /// Fraction of the stack left below the outermost guard that one compile may
