@@ -599,6 +599,15 @@
 
 ### Fixed
 
+- A `per_address_ccs` override whose stack pointer is not the analysed
+  function's is refused (`StriderError` from `Lifter.analyze`, `Err` from
+  `strider_lift::Lifter::build_ir_with`), where the lift accepted it and
+  produced wrong IR: the clobber split and the def-site mirror honoured the
+  override's register while the post-call adjust was applied to the
+  function's, so the function's stack pointer became a call clobber and its
+  writeback replaced the adjust with the opaque `Call` output. Every stack
+  offset past such a call was lost. An override that keeps the function's
+  stack pointer, which is every one a real ABI needs, is unaffected.
 - Python: AArch64 `fcvt{n,a,m,p,z}{s,u}` round to nearest even, to nearest
   away from zero, down, up or toward zero as the mnemonic says, where every
   one truncated, and saturate to the destination's range, a NaN giving 0;
