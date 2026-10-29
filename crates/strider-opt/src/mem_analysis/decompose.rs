@@ -9,7 +9,8 @@
 //! conservatively as "not a provable terminal".
 
 use rustc_hash::FxHashMap;
-use strider_ir::node::{NodeId, NodeKind, ValueId, low_bits_mask_u128};
+use strider_ir::eval::mask_below;
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{Function, IRViewer, IntBinaryOp, MemDecomp};
 
 use super::ring::wrap_to_addr_width;
@@ -391,8 +392,8 @@ pub(super) fn is_alignment_mask(m: u128, width_bits: usize) -> bool {
     // `sp & 0xFFFF_FFF0` at I64 truncates to the low 4 GiB; neither is `sp`
     // rounded down, and treating either as a stack base lets
     // `stack_global_disjoint` call it disjoint from a constant it may equal.
-    let width_mask = low_bits_mask_u128(width_bits);
-    m & width_mask == width_mask & !low_bits_mask_u128(tz as usize)
+    let width_mask = mask_below(width_bits as u32);
+    m & width_mask == width_mask & !mask_below(tz)
 }
 
 /// The operands of a node whose signature fixes its arity at two.

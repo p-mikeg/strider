@@ -6,6 +6,7 @@ use crate::const_eval::eval_node_const;
 use crate::opt::width_guards::same_width;
 use crate::rewrite_rule;
 use smallvec::SmallVec;
+use strider_ir::eval;
 use strider_ir::node::{NodeId, ValueId};
 use strider_ir::{IRBuilderExt, IRViewer};
 use strider_pattern::{
@@ -102,7 +103,7 @@ fn coefficient(mul: Option<u128>, shift: Option<u128>) -> u128 {
     debug_assert!(mul.is_none() || shift.is_none(), "one arm fires per side");
     match (mul, shift) {
         (Some(c), _) => c,
-        (None, Some(z)) => 1u128 << z,
+        (None, Some(z)) => eval::bit(z.min(128) as u32),
         (None, None) => 1,
     }
 }
