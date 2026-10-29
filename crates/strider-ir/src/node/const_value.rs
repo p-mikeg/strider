@@ -123,8 +123,8 @@ mod tests {
         ];
         for (label, v) in cases {
             let mut g = test_function();
-            let id1 = g.const_interner.intern(v.clone());
-            let id2 = g.const_interner.intern(v);
+            let id1 = g.side_tables_mut().const_interner.intern(v.clone());
+            let id2 = g.side_tables_mut().const_interner.intern(v);
             assert_eq!(
                 id1, id2,
                 "{label}: interning the same value must return the same id"
@@ -144,8 +144,8 @@ mod tests {
         ];
         for (label, a, b) in cases {
             let mut g = test_function();
-            let id_a = g.const_interner.intern(a);
-            let id_b = g.const_interner.intern(b);
+            let id_a = g.side_tables_mut().const_interner.intern(a);
+            let id_b = g.side_tables_mut().const_interner.intern(b);
             assert_ne!(id_a, id_b, "{label}: distinct values must get distinct ids");
         }
     }
@@ -154,7 +154,7 @@ mod tests {
     fn const_value_lookup_returns_stored_value() {
         let mut g = test_function();
         let v = ConstValue::Wide(vec![0x1234, 0x5678, 0x9abc, 0xdef0].into_boxed_slice());
-        let id = g.const_interner.intern(v.clone());
+        let id = g.side_tables_mut().const_interner.intern(v.clone());
         assert_eq!(g.const_value(id), &v);
     }
 
