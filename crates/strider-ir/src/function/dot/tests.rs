@@ -1331,3 +1331,93 @@ fn variadic_edge_labels_come_from_the_signature() {
         head_last.name
     );
 }
+
+/// The raw label spells a value, not a storage form: limb padding and which
+/// construction path reached it must not show. Rendered graphs are compared
+/// across builds, so this text is an artifact of the renderer, not of the
+/// stored `UBig`.
+#[test]
+fn const_label_spells_the_value_not_the_storage() {
+    use dashu_int::UBig;
+
+    use super::raw::const_label;
+    let i256 = ValueType::int(256);
+    let cases: [(&str, UBig, Option<ValueType>, &str); 8] = [
+        ("zero", UBig::ZERO, None, "Bits(0)"),
+        ("zero_no_limbs", UBig::from_words(&[]), None, "Bits(0)"),
+        (
+            "zero_padded",
+            UBig::from_words(&[0, 0, 0, 0]),
+            Some(i256),
+            "Bits(0)",
+        ),
+        (
+            "five_padded",
+            UBig::from_words(&[5, 0, 0, 0]),
+            Some(i256),
+            "Bits(5)",
+        ),
+        (
+            "bit_64",
+            UBig::from_words(&[0, 1]),
+            Some(ValueType::int(128)),
+            "Bits(18446744073709551616)",
+        ),
+        // The exact text the raw DOT label carries for a 96-bit mask.
+        (
+            "i96_all_ones",
+            UBig::from_words(&[u64::MAX, u64::from(u32::MAX)]),
+            Some(ValueType::int(96)),
+            "Bits(79228162514264337593543950335)",
+        ),
+        (
+            "past_the_carrier",
+            UBig::from_words(&[0, 0, 1, 0]),
+            Some(i256),
+            "Wide([0, 0, 1, 0])",
+        ),
+        // `as_words` trims the two dead top limbs; the declared width is what
+        // says how many the value spans.
+        (
+            "zero_top_limbs_are_padded_back",
+            UBig::from_words(&[u64::MAX, u64::MAX, u64::MAX, 0, 0, 0]),
+            Some(ValueType::int(512)),
+            "Wide([18446744073709551615, 18446744073709551615, 18446744073709551615, 0, 0, 0, 0, 0])",
+        ),
+    ];
+    for (label, value, ty, want) in cases {
+        assert_eq!(const_label(&value, ty), want, "{label}");
+    }
+}
+
+/// Every route to one value renders alike, declared width included.
+#[test]
+fn interned_values_render_alike_whatever_route_reached_them() {
+    use super::raw::const_label;
+    let mut f = test_function();
+    let value: u128 = (1u128 << 69) | 0xDEAD_BEEF;
+    let cases = [
+        (f.intern_int_const(value, ValueType::int(128)), 128),
+        (
+            f.intern_int_const_limbs(&[0xDEAD_BEEF, 1 << 5], ValueType::int(128)),
+            128,
+        ),
+        (
+            f.intern_int_const_limbs(&[0xDEAD_BEEF, 1 << 5, 0, 0], ValueType::int(256)),
+            256,
+        ),
+        (
+            f.intern_int_const_limbs(&[0xDEAD_BEEF, 1 << 5], ValueType::int(80)),
+            80,
+        ),
+    ];
+    let labels: Vec<String> = cases
+        .iter()
+        .map(|&(id, bits)| const_label(f.const_value(id), Some(ValueType::int(bits))))
+        .collect();
+    assert_eq!(labels[0], "Bits(590295810362441580271)");
+    assert!(
+        labels.iter().all(|d| *d == labels[0]),
+        "one value, one label: {labels:?}"
+    );
+}

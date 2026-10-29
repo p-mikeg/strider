@@ -49,6 +49,9 @@ memmap2 = "0.9.11"
 
 petgraph = "0.8.3"
 rustc-hash = "2"
+# The IR's integer-constant storage: a small-value-optimised arbitrary-
+# precision unsigned integer. MSRV 1.68, below the workspace's 1.91.
+dashu-int = "0.4.3"
 thiserror = "2.0.18"
 anyhow = "1.0"
 itertools = { version = "0.13.0", default-features = false }

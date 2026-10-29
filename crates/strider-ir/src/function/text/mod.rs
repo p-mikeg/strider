@@ -1,11 +1,11 @@
 use std::fmt::Write as _;
 
 use cranelift_entity::SecondaryMap;
+use dashu_int::UBig;
 use entity_utils::set::DenseEntitySet;
 
 use crate::IRViewer;
 use crate::function::Function;
-use crate::node::const_value::{ConstRead, ConstValue};
 use crate::node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeId,
     NodeKind, ValueId, ValueKind,
@@ -623,12 +623,12 @@ fn vn_list(vns: &[rsleigh::Vn], vn_name: VnName<'_>) -> String {
 }
 
 /// Hex, high limb first.
-fn const_str(value: &ConstValue) -> String {
-    match value.get_value() {
-        ConstRead::Val(v) => format!("{v:#x}"),
-        ConstRead::Wide(limbs) => {
-            debug_assert!(limbs.iter().any(|&l| l != 0), "an all-zero Wide reads Val");
-            let mut high = limbs.iter().rev().skip_while(|&&limb| limb == 0);
+fn const_str(value: &UBig) -> String {
+    match u128::try_from(value) {
+        Ok(v) => format!("{v:#x}"),
+        Err(_) => {
+            // `as_words` carries no trailing zero limb, so the top one is live.
+            let mut high = value.as_words().iter().rev();
             let Some(top) = high.next() else {
                 return "0x0".to_owned();
             };
