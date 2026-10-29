@@ -617,10 +617,11 @@ mod compact_tests {
     /// id 0) forces the live one's id to shift.
     #[test]
     fn compact_gcs_and_remaps_surviving_wide_const() {
-        use crate::node::ValueType;
-        use crate::node::const_value::ConstValue;
+        use dashu_int::UBig;
 
-        // High limb set, so it stays `Wide`.
+        use crate::node::ValueType;
+
+        // High limb set, so it stays past the carrier.
         const LIVE_LIMBS: [u64; 4] = [
             0x1122_3344_5566_7788,
             0x99AA_BBCC_DDEE_FF00,
@@ -663,7 +664,7 @@ mod compact_tests {
         };
         assert_eq!(
             f.const_value(new_id),
-            &ConstValue::wide(LIVE_LIMBS.to_vec().into_boxed_slice()),
+            &UBig::from_words(&LIVE_LIMBS),
             "GC'd + remapped const id must still resolve to its value",
         );
     }
