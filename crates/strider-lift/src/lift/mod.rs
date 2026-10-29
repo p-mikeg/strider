@@ -81,6 +81,11 @@ pub struct Lifter<R: rsleigh::MemReader> {
     isa_mode_switch_vn: Option<rsleigh::Vn>,
     /// [`strider_target::SleighArch::volatile_register_ranges`].
     volatile_ranges: Vec<core::ops::Range<u64>>,
+    /// [`strider_target::SleighArch::internal_registers`] resolved against
+    /// this engine's registers, dropping any name the sla does not declare.
+    /// Arch and sleigh are fixed for the engine's lifetime, so the answer is
+    /// too; resolving it per function lift just rebuilt the same list.
+    internal_register_vns: Vec<rsleigh::Vn>,
 }
 
 /// The `ISAModeSwitch` register of `regs`, `None` exactly where `arch` has no
@@ -144,12 +149,18 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // would pass vacuously while the mode bit is never captured.
         let isa_mode_switch_vn = isa_mode_switch_vn(arch, sleigh_regs)?;
         let volatile_ranges = arch.volatile_register_ranges()?;
+        let internal_register_vns = arch
+            .internal_registers()
+            .iter()
+            .filter_map(|name| sleigh_regs.name_to_vn(name))
+            .collect();
         Ok(Self {
             engine,
             declared_reg_vns,
             space_ids,
             isa_mode_switch_vn,
             volatile_ranges,
+            internal_register_vns,
         })
     }
 
@@ -221,6 +232,11 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     #[must_use]
     pub fn sleigh_regs(&self) -> &'static rsleigh::SleighRegs {
         self.arch().names().regs()
+    }
+
+    /// This engine's resolved [`strider_target::SleighArch::internal_registers`].
+    pub(crate) fn internal_register_vns(&self) -> &[rsleigh::Vn] {
+        &self.internal_register_vns
     }
 
     /// Whether `vn` shares a byte with a volatile register.
