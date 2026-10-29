@@ -337,18 +337,10 @@ impl crate::Function {
         limbs: &[u64],
         ty: crate::node::ValueType,
     ) -> crate::node::const_value::ConstId {
-        let limb_count = ty.byte_size().div_ceil(8);
-        let mut trimmed: Vec<u64> = limbs.iter().copied().take(limb_count).collect();
-        trimmed.resize(limb_count, 0);
-        if let Some(last) = trimmed.last_mut() {
-            // Bits above the declared width are not part of the value.
-            // `limb_count` is `ceil(bits / 64)`, so `spare` is below 64.
-            let spare = limb_count * 64 - ty.bit_width();
-            *last &= u64::MAX >> spare;
-        }
-        // `wide` collapses a value the carrier holds, so the scalar and the
-        // limb path reach one id for it.
-        let cv = crate::node::const_value::ConstValue::wide(trimmed.into_boxed_slice());
+        // `mask` trims and zero-pads to `ty`'s limbs, and `wide` collapses a
+        // value the carrier holds, so the scalar and the limb path reach one
+        // id for it.
+        let cv = crate::node::const_value::ConstValue::wide(limbs.into()).mask(ty);
         self.side_tables_mut().const_interner.intern(cv)
     }
 
