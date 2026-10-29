@@ -1,8 +1,10 @@
+use cranelift_entity::{PrimaryMap, SecondaryMap};
 use entity_utils::{EntityInterner, UnionDag};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::graph::NodeIdRemap;
-use crate::node::{NodeId, ValueId};
+use crate::graph::{Graph, NodeIdRemap};
+use crate::node::const_value::ConstId;
+use crate::node::{CcId, NodeId, NodeKind, SwitchTableId, ValueId};
 
 /// The ABI class a function argument was passed in; stack arguments continue
 /// the `Integer` index space after the register ones. Indices are positional
@@ -58,13 +60,12 @@ pub struct SideTables {
     pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
     /// Every integer-constant value referenced by an `IntConst(id)` node,
     /// deduped by value.
-    pub(crate) const_interner:
-        EntityInterner<crate::node::const_value::ConstId, crate::node::const_value::ConstValue>,
+    pub(crate) const_interner: EntityInterner<ConstId, crate::node::const_value::ConstValue>,
     /// Case addresses of each `Switch(id)`, one per control output.
-    pub(crate) switch_tables: cranelift_entity::PrimaryMap<crate::node::SwitchTableId, Vec<u64>>,
+    pub(crate) switch_tables: PrimaryMap<SwitchTableId, Vec<u64>>,
     /// Override conventions referenced by `Call { cc: Some(id) }`, deduped by
     /// value.
-    pub(crate) call_ccs: EntityInterner<crate::node::CcId, strider_target::BuiltCallingConvention>,
+    pub(crate) call_ccs: EntityInterner<CcId, strider_target::BuiltCallingConvention>,
     /// Sleigh user-op name by `CallOther` `user_op_id`.
     pub(crate) call_other_names: FxHashMap<u64, String>,
     /// Every tracked varnode, value-deduped, in `(space, offset, size)` order.
@@ -83,7 +84,7 @@ impl SideTables {
             arg_index_to_values: FxHashMap::default(),
             initial_var_index: FxHashMap::default(),
             const_interner: EntityInterner::default(),
-            switch_tables: cranelift_entity::PrimaryMap::new(),
+            switch_tables: PrimaryMap::new(),
             call_ccs: EntityInterner::default(),
             call_other_names: FxHashMap::default(),
             vn_interner,
@@ -189,6 +190,68 @@ impl SideTables {
             return;
         }
         self.asm_fingerprints.union(dst, src);
+    }
+
+    /// Rebuilds the constant interner, the switch tables and the call
+    /// conventions over only the entries surviving nodes reference, rewriting
+    /// each node's id in place.  Mark-and-sweep over ids that live inside
+    /// `NodeKind`, so it mints its own translation rather than consuming a
+    /// [`NodeIdRemap`], and drops an entry by liveness, which a key
+    /// translation cannot.
+    ///
+    /// Only safe after `Graph::retain_reachable_stale_cache` has settled the
+    /// arena.
+    pub(crate) fn gc_payload_tables(&mut self, graph: &mut Graph) {
+        // Every field named, so one added later states whether it is
+        // collected.
+        let Self {
+            // Node- and value-keyed: `Self::remap` translates these.
+            asm_fingerprints: _,
+            value_vn: _,
+            arg_index_to_values: _,
+            initial_var_index: _,
+            const_interner,
+            switch_tables,
+            call_ccs,
+            // Keyed by a `user_op_id`, which names every `CallOther` carrying
+            // it, live or not.
+            call_other_names: _,
+            // Keyed by an `InitialVnId`: the tracked varnodes are the
+            // function's own, not a surviving node's.
+            vn_interner: _,
+        } = self;
+        let mut consts: EntityInterner<ConstId, crate::node::const_value::ConstValue> =
+            EntityInterner::default();
+        let mut const_ids: FxHashMap<ConstId, ConstId> = FxHashMap::default();
+        let mut tables: PrimaryMap<SwitchTableId, Vec<u64>> = PrimaryMap::new();
+        let mut table_ids: SecondaryMap<SwitchTableId, Option<SwitchTableId>> = SecondaryMap::new();
+        let mut ccs: EntityInterner<CcId, strider_target::BuiltCallingConvention> =
+            EntityInterner::default();
+        let mut cc_ids: SecondaryMap<CcId, Option<CcId>> = SecondaryMap::new();
+        let nodes: Vec<NodeId> = graph.all_node_ids().collect();
+        for node in nodes {
+            match graph.node_kind_mut(node) {
+                NodeKind::IntConst(id) => {
+                    let old = *id;
+                    *id = *const_ids
+                        .entry(old)
+                        .or_insert_with(|| consts.intern(const_interner[old].clone()));
+                }
+                NodeKind::Switch(id) => {
+                    let old = *id;
+                    *id = *table_ids[old]
+                        .get_or_insert_with(|| tables.push(switch_tables[old].clone()));
+                }
+                NodeKind::Call { cc: Some(id) } => {
+                    let old = *id;
+                    *id = *cc_ids[old].get_or_insert_with(|| ccs.intern(call_ccs[old].clone()));
+                }
+                _ => {}
+            }
+        }
+        *const_interner = consts;
+        *switch_tables = tables;
+        *call_ccs = ccs;
     }
 
     /// Remaps every arena-id key / value after a compaction; an entry whose
