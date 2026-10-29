@@ -1,6 +1,6 @@
 use crate::IRViewer;
 use crate::IRWalker;
-use crate::function::side_tables::SideTables;
+use crate::function::side_tables::FuncSideTables;
 use crate::graph::{Graph, NodeIdRemap};
 use crate::node::{NodeId, NodeKind, ValueId};
 
@@ -25,7 +25,7 @@ pub fn cc_ret_and_clobber_vns(
 ///
 /// The overlay is grouped by kind, so where a field lives says what it is:
 /// the facts the function rests on, settled once and touched by no operation,
-/// then every id-keyed payload table in [`SideTables`], then the memos the
+/// then every id-keyed payload table in [`FuncSideTables`], then the memos the
 /// analyses derive from the graph and [`Self::invalidate_analyses`] drops.
 #[derive(Clone)]
 pub struct Function {
@@ -52,7 +52,7 @@ pub struct Function {
     /// received it.
     call_register_frame_reach: Option<i128>,
 
-    side_tables: SideTables,
+    side_tables: FuncSideTables,
 
     /// What the analyses derived from the graph.  Written through a shared
     /// borrow, so an analysis holding `&Function` fills them in, and dropped
@@ -94,7 +94,7 @@ impl Function {
             // A function claims nothing until `assume` adds some.
             assumptions: crate::AssumptionOptions::none(),
             call_register_frame_reach: None,
-            side_tables: SideTables::new(vn_interner),
+            side_tables: FuncSideTables::new(vn_interner),
             memos: std::cell::RefCell::default(),
         }
     }
@@ -110,12 +110,12 @@ impl Function {
     }
 
     #[inline]
-    pub fn side_tables(&self) -> &SideTables {
+    pub fn side_tables(&self) -> &FuncSideTables {
         &self.side_tables
     }
 
     #[inline]
-    pub fn side_tables_mut(&mut self) -> &mut SideTables {
+    pub fn side_tables_mut(&mut self) -> &mut FuncSideTables {
         &mut self.side_tables
     }
 
