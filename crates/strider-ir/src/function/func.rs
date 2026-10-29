@@ -2,7 +2,6 @@ use rustc_hash::FxHashMap;
 
 use crate::IRViewer;
 use crate::IRWalker;
-use crate::function::facts::FunctionFacts;
 use crate::function::side_tables::SideTables;
 use crate::graph::{Graph, NodeIdRemap};
 use crate::node::const_value::ConstId;
@@ -28,9 +27,9 @@ pub fn cc_ret_and_clobber_vns(
 /// Always has an entry node; `Clone` is a deep, independent copy.
 ///
 /// The overlay is grouped by kind, so where a field lives says what it is:
-/// the facts the function rests on (`facts`, which only [`Self::assume`] ever
-/// adds to), the payload tables a node's own id indexes into, and the
-/// id-keyed tables plus graph-derived memos of [`SideTables`].
+/// the facts the function rests on, settled once and touched by no operation,
+/// then the payload tables a node's own id indexes into, and the id-keyed
+/// tables plus graph-derived memos of [`SideTables`].
 #[derive(Clone)]
 pub struct Function {
     graph: Graph,
@@ -38,7 +37,23 @@ pub struct Function {
     /// arena, so it is an id, not a fact.
     entry: NodeId,
 
-    facts: FunctionFacts,
+    // The facts.  None is keyed by an arena id, so [`Self::compact`] leaves
+    // them alone, and none is derived from the graph, so
+    // `SideTables::invalidate_analyses` never clears one.  A derived,
+    // clearable verdict is a memo and belongs in the memo group instead.
+    /// The convention this function was built under.
+    default_cc: strider_target::BuiltCallingConvention,
+    /// The byte order of each space's loads and stores.
+    byte_order: strider_target::ByteOrder,
+    /// The claims in force: every set [`Self::assume`] added, none before the
+    /// first.  A claim is withdrawn by nothing.
+    assumptions: crate::AssumptionOptions,
+    /// The highest offset from the entry SP of a stack address held, at some
+    /// `Call`, in a register the call clobbers, or `None` when no call held
+    /// one.  Recorded once, by `FunctionBuilder::build`.  The call node carries
+    /// no such value, so this is the only record that a callee may have
+    /// received it.
+    call_register_frame_reach: Option<i128>,
 
     side_tables: SideTables,
 
@@ -91,13 +106,11 @@ impl Function {
         Self {
             graph,
             entry,
-            facts: FunctionFacts {
-                default_cc,
-                byte_order: byte_order.into(),
-                // A function claims nothing until `assume` adds some.
-                assumptions: crate::AssumptionOptions::none(),
-                call_register_frame_reach: None,
-            },
+            default_cc,
+            byte_order: byte_order.into(),
+            // A function claims nothing until `assume` adds some.
+            assumptions: crate::AssumptionOptions::none(),
+            call_register_frame_reach: None,
             side_tables: SideTables::new(),
             const_interner: entity_utils::EntityInterner::default(),
             switch_tables: cranelift_entity::PrimaryMap::new(),
@@ -137,13 +150,13 @@ impl Function {
     /// here while the graph does not rest on it.
     #[inline]
     pub fn assumptions(&self) -> &crate::AssumptionOptions {
-        &self.facts.assumptions
+        &self.assumptions
     }
 
     /// Whether some `Call` saw a stack address in a register it clobbers.
     #[inline]
     pub fn frame_address_in_call_register(&self) -> bool {
-        self.facts.call_register_frame_reach.is_some()
+        self.call_register_frame_reach.is_some()
     }
 
     /// The highest offset from the entry SP of a stack address some `Call`
@@ -151,7 +164,7 @@ impl Function {
     /// offset from it, `None` when no call saw one.
     #[inline]
     pub fn call_register_frame_reach(&self) -> Option<i128> {
-        self.facts.call_register_frame_reach
+        self.call_register_frame_reach
     }
 
     /// Records a stack address at offset `reach` from the entry SP in a
@@ -159,7 +172,7 @@ impl Function {
     /// highest recorded is kept.
     #[inline]
     pub(crate) fn record_call_register_frame_reach(&mut self, reach: i128) {
-        let held = &mut self.facts.call_register_frame_reach;
+        let held = &mut self.call_register_frame_reach;
         *held = Some(held.map_or(reach, |r| r.max(reach)));
     }
 
@@ -175,10 +188,10 @@ impl Function {
     /// which only the lift reads, are recorded without effect when assumed
     /// after it.
     pub fn assume(&mut self, claims: &crate::AssumptionOptions) {
-        if self.facts.assumptions.holds_all(claims) {
+        if self.assumptions.holds_all(claims) {
             return;
         }
-        self.facts.assumptions.union_with(claims);
+        self.assumptions.union_with(claims);
         self.side_tables.invalidate_analyses();
     }
 
@@ -254,20 +267,20 @@ impl Function {
 
     #[inline]
     pub fn default_cc(&self) -> &strider_target::BuiltCallingConvention {
-        &self.facts.default_cc
+        &self.default_cc
     }
 
     /// The data byte order. A REGISTER-space access follows
     /// [`Self::byte_order`]'s instead.
     #[inline]
     pub fn endianness(&self) -> strider_target::Endianness {
-        self.facts.byte_order.data
+        self.byte_order.data
     }
 
     /// The byte order of each space's loads and stores.
     #[inline]
     pub fn byte_order(&self) -> strider_target::ByteOrder {
-        self.facts.byte_order
+        self.byte_order
     }
 
     /// The tracked varnodes in `InitialVnId` order.
@@ -299,7 +312,7 @@ impl Function {
     /// NO tracked-container projection.
     #[inline]
     pub fn ret_val_regs(&self) -> Vec<rsleigh::Vn> {
-        let cc = &self.facts.default_cc;
+        let cc = &self.default_cc;
         cc.ret_val_regs
             .iter()
             .chain(cc.ret_val_regs_float.iter())
@@ -310,7 +323,7 @@ impl Function {
     /// The stack-pointer varnode of this function's convention.
     #[inline]
     pub(crate) fn stack_vn(&self) -> rsleigh::Vn {
-        self.facts.default_cc.stack_vn
+        self.default_cc.stack_vn
     }
 
     /// At most one vn per value, so the meaning of the tag follows from the
@@ -342,7 +355,7 @@ impl Function {
     pub fn get_cc(&self, node_id: NodeId) -> &strider_target::BuiltCallingConvention {
         match *self.node_kind(node_id) {
             NodeKind::Call { cc: Some(id) } => &self.call_ccs[id],
-            _ => &self.facts.default_cc,
+            _ => &self.default_cc,
         }
     }
 
@@ -442,7 +455,7 @@ impl Function {
     pub fn is_entry_sp(&self, value: ValueId) -> bool {
         matches!(
             *self.node_kind(self.producer(value)),
-            NodeKind::InitialVar(id) if self.initial_vn(id) == self.facts.default_cc.stack_vn
+            NodeKind::InitialVar(id) if self.initial_vn(id) == self.default_cc.stack_vn
         )
     }
 
@@ -451,7 +464,7 @@ impl Function {
     /// container).  Does NOT filter by liveness: the returned node may already
     /// have been culled.
     pub fn initial_sp(&self) -> Option<NodeId> {
-        let sp_id = self.vn_id_of(&self.facts.default_cc.stack_vn)?;
+        let sp_id = self.vn_id_of(&self.default_cc.stack_vn)?;
         self.side_tables.initial_var_index.get(&sp_id).copied()
     }
 
@@ -789,12 +802,12 @@ mod compact_tests {
 
     /// Every fact names no id and is derived from no graph, so compaction and
     /// invalidation leave all of them, and `assume` touches only the claims.
-    /// The destructuring stops compiling when a field joins the group, so the
-    /// pinning below is extended with it.
+    /// The destructuring stops compiling when a field joins [`Function`], so
+    /// the pinning below is extended with it or the new field is named `_`.
     #[test]
     fn compact_and_invalidation_keep_every_fact() {
         let mut f = test_function();
-        let before = f.facts.clone();
+        let before = f.clone();
         let listed = crate::AssumptionOptions {
             noalias_allocators: [0x4000].into_iter().collect(),
             ..crate::AssumptionOptions::none()
@@ -805,12 +818,20 @@ mod compact_tests {
         f.side_tables().invalidate_analyses();
         f.compact().expect("compact succeeds on a valid function");
 
-        let crate::function::facts::FunctionFacts {
+        let Function {
+            graph: _,
+            entry: _,
             default_cc,
             byte_order,
             assumptions,
             call_register_frame_reach,
-        } = &f.facts;
+            side_tables: _,
+            const_interner: _,
+            switch_tables: _,
+            call_ccs: _,
+            call_other_names: _,
+            vn_interner: _,
+        } = &f;
         assert_eq!(*default_cc, before.default_cc);
         assert_eq!(*byte_order, before.byte_order);
         assert_eq!(*assumptions, listed);
