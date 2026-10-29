@@ -111,12 +111,6 @@ impl ValueType {
         matches!(self, Self::Float(_))
     }
 
-    /// An integer too wide for `u64`.
-    #[inline]
-    pub const fn is_wide_int(self) -> bool {
-        matches!(self, Self::Int(w) if w > 64)
-    }
-
     /// `v` reduced to this type's width, `v mod 2^width`: exact at every
     /// integer width, since past 128 bits a `u128` is already below `2^width`.
     /// A float has no integer bits: 0.
@@ -265,7 +259,6 @@ mod tests {
             assert_eq!(ty.is_float(), ty.to_string().starts_with('f'));
             assert_eq!(ty.is_integer(), !ty.is_float());
             assert_eq!(ty.is_bool(), ty == ValueType::I1);
-            assert_eq!(ty.is_wide_int(), ty.is_integer() && ty.bit_width() > 64);
             assert_eq!(ty.byte_size(), ty.bit_width().div_ceil(8));
             let bits = u16::try_from(ty.bit_width()).unwrap();
             let bytes = u32::try_from(ty.byte_size()).unwrap();
@@ -459,7 +452,7 @@ mod tests {
         // I48 fits u64, so it is not wide.
         assert_eq!(T::int(48).byte_size(), 6);
         assert_eq!(T::int(48).bit_width(), 48);
-        assert!(!T::int(48).is_wide_int());
+        assert!(T::int(48).bit_width() <= 64);
         assert_eq!(T::int(48).int_mask_u128(), Some((1u128 << 48) - 1));
         assert_eq!(T::int(48).get_signed_int((1u128 << 48) - 1), Some(-1i128));
     }
