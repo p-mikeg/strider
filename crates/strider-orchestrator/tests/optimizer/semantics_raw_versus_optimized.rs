@@ -19,7 +19,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::common::fixtures::Fixture;
 use crate::common::{Arch, lift_for_pipeline};
-use strider_ir::{Function, ReadOnlyMemory};
+use strider_ir::{Function, ReadOnlyMemory, UBig};
 use strider_ir_test_utils::interp::{
     self, CallRecord, Divergence, EntryVar, Env, Outcome, Slot, mix,
 };
@@ -58,20 +58,20 @@ fn on_interp_stack(body: impl FnOnce() + Send) {
     });
 }
 
-fn entry_value(e: EntryVar, stack_vn: rsleigh::Vn, seed: u64, small: bool) -> u128 {
+fn entry_value(e: EntryVar, stack_vn: rsleigh::Vn, seed: u64, small: bool) -> UBig {
     if e.vn == stack_vn {
-        return u128::from(STACK_BASE);
+        return UBig::from(STACK_BASE);
     }
     let x = mix(seed ^ e.vn.addr_off.rotate_left(17)) ^ mix(u64::from(e.vn.size) << 40);
     if small {
-        u128::from(x % 16)
+        UBig::from(x % 16)
     } else {
-        u128::from(x) | (u128::from(mix(x)) << 64)
+        UBig::from(u128::from(x) | (u128::from(mix(x)) << 64))
     }
 }
 
 fn environment<'a>(
-    entry: &'a dyn Fn(EntryVar) -> u128,
+    entry: &'a dyn Fn(EntryVar) -> UBig,
     rom: &'a dyn ReadOnlyMemory,
     seed: u64,
 ) -> Env<'a> {

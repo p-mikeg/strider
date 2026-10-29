@@ -14,7 +14,7 @@ use std::ops::Range;
 
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::walk::NodeIdSet;
-use strider_ir::{Function, IRViewer};
+use strider_ir::{Function, IRViewer, UBig};
 use strider_ir_test_utils::interp::{self, Divergence, EntryVar, Env, Outcome, Slot};
 use strider_ir_test_utils::{Rng, graph_oracle};
 
@@ -674,13 +674,13 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
             let rax0 = interp::mix((g as u64) ^ ((k as u64) << 32));
             let rcx0 = interp::mix(rax0);
             let sim = simulate(blocks, edi, rax0, rcx0);
-            let entry = |e: EntryVar| -> u128 {
+            let entry = |e: EntryVar| -> UBig {
                 match e.vn {
-                    v if v == rdi => u128::from(edi),
-                    v if v == rax => u128::from(rax0),
-                    v if v == rcx => u128::from(rcx0),
-                    v if v == rsp => STACK,
-                    _ => 0,
+                    v if v == rdi => UBig::from(edi),
+                    v if v == rax => UBig::from(rax0),
+                    v if v == rcx => UBig::from(rcx0),
+                    v if v == rsp => UBig::from(STACK),
+                    _ => UBig::ZERO,
                 }
             };
             let env = Env {
@@ -703,7 +703,7 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
                     if v == f.node_inputs(node)[1]
                         && !matches!(f.node_kind(f.producer(v)), NodeKind::IntConst(_)) =>
                 {
-                    ifs.push(c != 0);
+                    ifs.push(*c != UBig::ZERO);
                 }
                 _ => {}
             })
@@ -719,7 +719,7 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
                 ) => {
                     assert_eq!(
                         values[slot],
-                        Slot::Known(u128::from(want)),
+                        Slot::Known(UBig::from(want)),
                         "seed {g}, edi {edi:#x}\n{blocks:?}"
                     );
                     tally.returned += 1;
