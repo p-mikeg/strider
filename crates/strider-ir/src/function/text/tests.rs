@@ -710,24 +710,18 @@ fn a_register_order_unlike_the_data_order_prints_in_the_header() {
     assert_eq!(header(strider_target::Endianness::Big), "endian big");
 }
 
-/// One hex spelling whichever arm carries the value. `const_str` is what the
-/// golden pins, and the 64-bit carrier is where the two arms meet.
+/// One hex spelling however the value was spelled. `const_str` is what the
+/// golden pins, and the 64-bit carrier is where the paths meet.
 #[test]
-fn const_str_spells_a_value_the_same_on_either_arm() {
-    use crate::node::const_value::ConstValue;
-    let cases: [(ConstValue, &str); 5] = [
-        (ConstValue::bits(0), "0x0"),
-        (ConstValue::bits(u64::MAX), "0xffffffffffffffff"),
+fn const_str_spells_a_value_the_same_however_it_was_built() {
+    use dashu_int::UBig;
+    let cases: [(UBig, &str); 5] = [
+        (UBig::ZERO, "0x0"),
+        (UBig::from(u64::MAX), "0xffffffffffffffff"),
+        (UBig::from_words(&[u64::MAX, 0]), "0xffffffffffffffff"),
+        (UBig::from_words(&[0, 1]), "0x10000000000000000"),
         (
-            ConstValue::wide(vec![u64::MAX, 0].into_boxed_slice()),
-            "0xffffffffffffffff",
-        ),
-        (
-            ConstValue::wide(vec![0, 1].into_boxed_slice()),
-            "0x10000000000000000",
-        ),
-        (
-            ConstValue::wide(vec![u64::MAX, u64::MAX, 0, 0].into_boxed_slice()),
+            UBig::from_words(&[u64::MAX, u64::MAX, 0, 0]),
             "0xffffffffffffffffffffffffffffffff",
         ),
     ];
