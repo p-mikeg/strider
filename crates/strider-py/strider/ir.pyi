@@ -59,14 +59,14 @@ class Node:
         """This node's signed constant value, sign-extended at its declared
         width. `None` when it is not an integer constant, and `None` at any
         declared width over 128 bits (`I256`, `I512`) even for a small value,
-        since there is no signed carrier: read those with `uint()` or
-        `wide_const_bytes()`. A boolean constant is a 1-bit integer, so `True`
+        since there is no signed carrier: read those with `uint()`, which has
+        no width cap. A boolean constant is a 1-bit integer, so `True`
         reads back as `-1`."""
         ...
     def uint(self) -> Optional[int]:
-        """This node's unsigned constant value, masked to its declared width.
-        `None` when it is not an integer constant or its magnitude exceeds
-        128 bits (use `wide_const_bytes()` for those)."""
+        """This node's unsigned constant value, masked to its declared width,
+        at any width: a Python `int` is arbitrary-precision. `None` only when
+        it is not an integer constant."""
         ...
     def boolean(self) -> Optional[bool]:
         """This node's boolean constant value, else `None`."""
@@ -89,11 +89,6 @@ class Node:
     def outputs(self) -> list[Node]:
         """The consumers of this node's outputs, in output-slot then use order.
         A consumer appears once per edge it draws from this node."""
-        ...
-    def wide_const_bytes(self) -> Optional[bytes]:
-        """The little-endian bytes of a wide integer constant (any width over
-        64 bits: `I72`, `I80`, `I96`, `I112`, `I128`, `I256`, `I512`), else
-        `None`."""
         ...
     def call_other_name(self) -> Optional[str]:
         """The user-op name attached to a `CallOther` node, else `None`.

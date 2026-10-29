@@ -557,7 +557,6 @@ _ZERO_ARG_RETURNS = {
         ("Node", "boolean"): "Optional[bool]",
         ("Node", "vn"): "Optional[Vn]",
         ("Node", "value_type"): "Optional[str]",
-        ("Node", "wide_const_bytes"): "Optional[bytes]",
         ("Node", "call_other_name"): "Optional[str]",
         ("Function", "cfg"): "Cfg",
         ("Function", "clone"): "Function",

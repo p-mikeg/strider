@@ -4,6 +4,9 @@
 
 ### Breaking, Python
 
+- `Node.wide_const_bytes()` is gone. `Node.uint()` reads a constant at any
+  declared width, a Python `int` being arbitrary-precision, so the bytes
+  escape hatch had nothing left to carry.
 - `Lifter.visualize` is gone: `strider.explore.visualize(target, *, host=,
   port=, depth=, whole=, background=)` is the one entry. It takes `host` and
   the rest by keyword only, and a negative `depth` raises `ValueError`, where
