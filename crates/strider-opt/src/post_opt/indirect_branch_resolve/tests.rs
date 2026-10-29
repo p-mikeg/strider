@@ -196,7 +196,7 @@ fn classify_initial_var_with_non_matching_vn_returns_none() {
 
 #[test]
 fn classify_initial_var_with_lr_unset_returns_none() {
-    // InitialVar(lr_vn) with `link_register_vn = None`, the x86 case.
+    // InitialVar(lr_vn) with `link_register = None`, the x86 case.
     let lr_vn = fake_reg_vn(0x4c, 4);
     let mut builder = RegisterSet::new()
         .tracked(lr_vn)

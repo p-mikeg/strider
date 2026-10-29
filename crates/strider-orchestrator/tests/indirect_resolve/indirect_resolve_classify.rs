@@ -190,9 +190,7 @@ fn build_lr_clobbered_by_call_scenario()
     let cc = CallingConvention::aarch64_aapcs64()
         .build(strider.sleigh_regs())
         .expect("build cc");
-    let lr_vn = cc
-        .link_register_vn
-        .expect("AArch64 AAPCS has a link register");
+    let lr_vn = cc.link_register.expect("AArch64 AAPCS has a link register");
 
     // The cfg builder defers every indirect branch, so `br x30` reaches the
     // IR as an UnresolvedIndirectBranch placeholder.
