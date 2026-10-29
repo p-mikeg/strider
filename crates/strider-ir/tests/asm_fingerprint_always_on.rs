@@ -26,13 +26,13 @@ fn default_validate_flags_missing_asm_fingerprint() {
     let mem_value = function.node_outputs(mem).iter().copied().next().unwrap();
 
     // Consts and Add are not fingerprint-exempt, and are left unstamped.
-    let a_id = function.intern_int_const(1, ValueType::int(64));
+    let a_id = function.intern_int_const(1u64, ValueType::int(64));
     let a = function.graph_mut().create_node(
         NodeKind::IntConst(a_id),
         [],
         [ValueKind::Typed(ValueType::int(64))],
     );
-    let b_id = function.intern_int_const(2, ValueType::int(64));
+    let b_id = function.intern_int_const(2u64, ValueType::int(64));
     let b = function.graph_mut().create_node(
         NodeKind::IntConst(b_id),
         [],

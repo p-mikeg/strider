@@ -22,7 +22,7 @@ mod tests {
     #[test]
     fn intern_int_const_on_a_float_type_does_not_panic() {
         let mut f = test_function();
-        let id = f.intern_int_const(0, ValueType::float(64));
+        let id = f.intern_int_const(0u64, ValueType::float(64));
         assert_eq!(*f.const_value(id), UBig::ZERO);
     }
 

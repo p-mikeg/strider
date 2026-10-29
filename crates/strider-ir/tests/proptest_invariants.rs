@@ -60,7 +60,7 @@ proptest! {
             return Ok(());
         };
         use strider_ir::node::{NodeKind, ValueKind, ValueType};
-        let id = fg.intern_int_const(42, ValueType::int(32));
+        let id = fg.intern_int_const(42u64, ValueType::int(32));
         let a = fg.graph_mut().create_node(
             NodeKind::IntConst(id),
             [],
