@@ -1,6 +1,6 @@
 use super::FlagCmpCanonicalize;
 use crate::Result;
-use strider_ir::{IRBuilderExt, IRViewer};
+use strider_ir::{IRBuilderExt, IRViewer, UBig};
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, Graph, IRWalker, IntBinaryOp, IntCmpOp, IntUnaryOp};
@@ -1496,60 +1496,71 @@ fn sless_of_oversized_left_shift_is_not_a_sign_bit_test() -> Result<()> {
     Ok(())
 }
 
-/// The residue and the sign-bit mask are both computed in `u128`, so a declared
-/// width past that carrier cannot be represented.  All three rules must
-/// decline.
+/// The residue and the sign-bit mask are computed at the declared width, so
+/// all three rules reach an `I256` compare and the constants they mint carry
+/// every limb.
 #[test]
-fn wide_const_rewrites_skip_past_128_bits() -> Result<()> {
+fn wide_const_rewrites_reach_past_128_bits() -> Result<()> {
     let ty = ValueType::int(256);
-    let shapes: [fn(&mut FunctionBuilder, ValueId) -> Result<ValueId>; 3] = [
-        |b, x| {
-            let c1 = b.build_int_const(1u64, ValueType::int(256))?;
-            let add = b.build_int_binary_operation(x, c1, IntBinaryOp::Add, ValueType::int(256))?;
-            let c2 = b.build_int_const(0u64, ValueType::int(256))?;
-            b.build_int_cmp_operation(add, c2, IntCmpOp::Equal, ValueType::int(256))
-        },
-        |b, x| {
-            let neg = b.build_int_unary_operation(x, IntUnaryOp::Neg, ValueType::int(256))?;
-            let c = b.build_int_const(1u64, ValueType::int(256))?;
-            b.build_int_cmp_operation(neg, c, IntCmpOp::Equal, ValueType::int(256))
-        },
-        |b, x| {
-            let c = b.build_int_const(1u64, ValueType::int(256))?;
-            let shl =
-                b.build_int_binary_operation(x, c, IntBinaryOp::ShiftLeft, ValueType::int(256))?;
-            let zero = b.build_int_const(0u64, ValueType::int(256))?;
-            b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ValueType::int(256))
-        },
+    let all_ones = (UBig::ONE << 256usize) - UBig::ONE;
+    // `Equal(Add(x, 1), 0)` and `Equal(Neg(x), 1)` both solve to `x == -1`;
+    // `Sless(ShiftLeft(x, 1), 0)` tests bit 254 of `x`.
+    type Shape = fn(&mut FunctionBuilder, ValueId) -> Result<ValueId>;
+    let shapes: [(Shape, UBig); 3] = [
+        (
+            |b, x| {
+                let c1 = b.build_int_const(1u64, ValueType::int(256))?;
+                let add =
+                    b.build_int_binary_operation(x, c1, IntBinaryOp::Add, ValueType::int(256))?;
+                let c2 = b.build_int_const(0u64, ValueType::int(256))?;
+                b.build_int_cmp_operation(add, c2, IntCmpOp::Equal, ValueType::int(256))
+            },
+            all_ones.clone(),
+        ),
+        (
+            |b, x| {
+                let neg = b.build_int_unary_operation(x, IntUnaryOp::Neg, ValueType::int(256))?;
+                let c = b.build_int_const(1u64, ValueType::int(256))?;
+                b.build_int_cmp_operation(neg, c, IntCmpOp::Equal, ValueType::int(256))
+            },
+            all_ones.clone(),
+        ),
+        (
+            |b, x| {
+                let c = b.build_int_const(1u64, ValueType::int(256))?;
+                let shl = b.build_int_binary_operation(
+                    x,
+                    c,
+                    IntBinaryOp::ShiftLeft,
+                    ValueType::int(256),
+                )?;
+                let zero = b.build_int_const(0u64, ValueType::int(256))?;
+                b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ValueType::int(256))
+            },
+            UBig::ONE << 254usize,
+        ),
     ];
 
-    for (i, build_cond) in shapes.into_iter().enumerate() {
+    for (i, (build_cond, want)) in shapes.into_iter().enumerate() {
         let (mut fg, _, cond) = build_if_over_load(ty, |b, x| {
             let cond = build_cond(b, x)?;
             Ok((cond, cond))
         })?;
-
-        let before = fg.producer(cond);
-        let before_inputs: Vec<_> = fg.node_inputs(before).into_iter().collect();
+        let _ = cond;
         let outcome = crate::pipeline::run_one(
             &FlagCmpCanonicalize::new(),
             &mut fg,
             &crate::OptCtx::new(None),
         )?;
+        assert!(outcome.changed(), "shape {i}: I256 compare must rewrite");
+        let minted: Vec<UBig> = fg
+            .walk()
+            .filter(|&n| matches!(fg.node_kind(n), NodeKind::IntConst(_)))
+            .filter_map(|n| fg.int_const(fg.node_outputs(n)[0]).cloned())
+            .collect();
         assert!(
-            !outcome.changed(),
-            "shape {i}: I256 compare must not rewrite"
-        );
-        let if_node = fg
-            .walk_kind(|k| matches!(k, NodeKind::If))
-            .next()
-            .expect("If");
-        let after = fg.producer(fg.if_cond(if_node));
-        assert_eq!(after, before, "shape {i}: condition node must survive");
-        assert_eq!(
-            fg.node_inputs(after).into_iter().collect::<Vec<_>>(),
-            before_inputs,
-            "shape {i}: condition operands must be untouched"
+            minted.contains(&want),
+            "shape {i}: the rewrite must mint the 256-bit constant; got {minted:?}"
         );
     }
     Ok(())

@@ -28,7 +28,7 @@
 use crate::{BoxedRule, rewrite_rule};
 use strider_ir::eval;
 use strider_ir::node::{ExtendOp, IntBinaryOp, IntCmpOp, NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{Function, IRViewer};
+use strider_ir::{Function, IRViewer, UBig};
 use strider_pattern::{
     Bindings, Capture, CaptureExt, bool_and, bool_not, bool_or, capture_typed, int_add, int_const,
     int_const_with, int_eq, int_lt, int_neg, int_sborrow, int_scarry, int_shl, int_slt, int_xor,
@@ -36,7 +36,7 @@ use strider_pattern::{
 };
 
 use crate::Result;
-use crate::opt::width_guards::{carrier_mask, same_width, shift_count_in_range};
+use crate::opt::width_guards::{int_type, same_width, shift_count_in_range};
 use crate::peephole::{PeepholePass, PeepholeRewrite, SeedOrder, first_matching_rule};
 
 #[derive(Clone)]
@@ -113,36 +113,41 @@ fn rewrite_at(edit: &mut crate::EditFunction<'_>, root: NodeId) -> Result<Peepho
     Ok(PeepholeRewrite::from_new_value(edit, opt))
 }
 
-/// Every capture in `caps` as a `u128`, with `width_src`'s carrier mask.
-/// `None` unless all of them resolve.
+/// Every capture in `caps` as a `UBig`, with the integer type `width_src`
+/// carries. `None` unless all of them resolve.
 fn uints<const N: usize>(
     b: &Bindings,
     f: &Function,
     caps: [Capture; N],
     width_src: Capture,
-) -> Option<([u128; N], u128)> {
-    let mut vals = [0u128; N];
-    for (slot, cap) in caps.into_iter().enumerate() {
-        vals[slot] = b.get_uint(cap, f)?;
+) -> Option<([UBig; N], ValueType)> {
+    let mut vals: Vec<UBig> = Vec::with_capacity(N);
+    for cap in caps {
+        vals.push(b.get_uint(cap, f)?);
     }
-    Some((vals, carrier_mask(f, b, width_src)?))
+    Some((vals.try_into().ok()?, int_type(f, b, width_src)?))
+}
+
+/// `-v` at `ty`, which is total for an integer `ty`.
+fn negate(v: &UBig, ty: ValueType) -> UBig {
+    eval::complement(v, ty) + UBig::ONE
 }
 
 /// `M == -N` at `width_src`'s width.
 fn neg_relation(b: &Bindings, f: &Function, m: Capture, n: Capture, width_src: Capture) -> bool {
-    let Some(([m, n], mask)) = uints(b, f, [m, n], width_src) else {
+    let Some(([m, n], ty)) = uints(b, f, [m, n], width_src) else {
         return false;
     };
-    (m & mask) == (n.wrapping_neg() & mask)
+    eval::mask(&m, ty) == eval::mask(&negate(&n, ty), ty)
 }
 
 /// `N` is not the signed minimum at `width_src`'s width, so `-N` is
 /// representable there.
 fn negation_fits(b: &Bindings, f: &Function, n: Capture, width_src: Capture) -> bool {
-    let Some(([n], mask)) = uints(b, f, [n], width_src) else {
+    let Some(([n], ty)) = uints(b, f, [n], width_src) else {
         return false;
     };
-    n & mask != mask ^ (mask >> 1)
+    eval::mask(&n, ty) != UBig::ONE << (ty.bit_width() - 1)
 }
 
 /// `M == C1 - N` at `width_src`'s width.
@@ -154,10 +159,10 @@ fn sub_relation(
     c1: Capture,
     width_src: Capture,
 ) -> bool {
-    let Some(([m, n, c1], mask)) = uints(b, f, [m, n, c1], width_src) else {
+    let Some(([m, n, c1], ty)) = uints(b, f, [m, n, c1], width_src) else {
         return false;
     };
-    (m & mask) == (c1.wrapping_sub(n) & mask)
+    eval::mask(&m, ty) == eval::mask(&(c1 + negate(&n, ty)), ty)
 }
 
 fn build_rules() -> Vec<BoxedRule> {
@@ -348,7 +353,7 @@ fn build_rules() -> Vec<BoxedRule> {
         )
         .when_match(move |edit, _ty, binds| negation_fits(binds, edit.function(), n, a))
     };
-    let neg_n = || capture_typed(a, int_const_with!([n: uint] => n.wrapping_neg()));
+    let neg_n = || capture_typed(a, int_const_with!([n: uint, ty] => negate(&n, ty)));
     rules.extend(ge_lt_pair!(scarry_nv(), template::int_slt(var(a), neg_n())));
     // Offset-base sibling, `cmp X, N` on `X = Add(b, C1)` (a loop's `i + 1`),
     // after ConstantFold reassociated the flag operand `Add(X, -N)` into
@@ -409,13 +414,16 @@ fn build_rules() -> Vec<BoxedRule> {
     // folds before this rule can reach the inner `Equal`.
     rules.push(rewrite_rule(
         int_eq(int_add(var(a), int_const(n)), int_const(m)).when_match(move |edit, _ty, binds| {
-            carrier_mask(edit.function(), binds, a).is_some()
+            int_type(edit.function(), binds, a).is_some()
                 && same_width(edit.function(), binds, &[a, n, m]).is_some()
         }),
         template::int_eq(
             var(a),
             // The fresh const takes `a`'s width, not the `Equal` root's `I1`.
-            capture_typed(a, int_const_with!([n: uint, m: uint] => m.wrapping_sub(n))),
+            capture_typed(
+                a,
+                int_const_with!([n: uint, m: uint, ty] => m + negate(&n, ty)),
+            ),
         ),
     ));
 
@@ -435,12 +443,12 @@ fn build_rules() -> Vec<BoxedRule> {
     // bijection, so it moves across `Equal` value-preservingly.
     rules.push(rewrite_rule(
         int_eq(int_neg(var(a)), int_const(m)).when_match(move |edit, _ty, binds| {
-            carrier_mask(edit.function(), binds, a).is_some()
+            int_type(edit.function(), binds, a).is_some()
                 && same_width(edit.function(), binds, &[a, m]).is_some()
         }),
         template::int_eq(
             var(a),
-            capture_typed(a, int_const_with!([m: uint] => m.wrapping_neg())),
+            capture_typed(a, int_const_with!([m: uint, ty] => negate(&m, ty))),
         ),
     ));
 
@@ -466,7 +474,12 @@ fn build_rules() -> Vec<BoxedRule> {
                         // width the guard bounds `n` against; the `Sless`
                         // slot-0 type is a second width that only a validated
                         // graph agrees with.
-                        int_const_with!([n: uint, ty] => eval::bit(ty.bit_width() as u32 - 1 - n as u32)),
+                        int_const_with!([n: uint, ty] => eval::ones_at(
+                            1,
+                            ty.bit_width()
+                                - 1
+                                - usize::try_from(&n).map_err(|_| strider_pattern::skip())?,
+                        )),
                     ),
                 ),
             ),

@@ -20,7 +20,25 @@ use strider_pattern::{
 };
 
 use strider_ir::IntCmpOp;
+use strider_ir::UBig;
 use strider_ir::node::{NodeId, NodeKind};
+
+/// A single-bit (power-of-two, nonzero) value.
+fn is_single_bit(n: &UBig) -> bool {
+    *n != UBig::ZERO && (n & (n.clone() - UBig::ONE)) == UBig::ZERO
+}
+
+/// Each hit's `cap` as a `u128`; every offset and mask read here is small.
+fn small_uints(
+    hits: &[strider_pattern::Match],
+    cap: Capture,
+    function: &strider_ir::Function,
+) -> Vec<u128> {
+    hits.iter()
+        .filter_map(|h| h.bindings().get_uint(cap, function))
+        .filter_map(|v| u128::try_from(&v).ok())
+        .collect()
+}
 
 fn finish<P: MatchPat>(p: P) -> Pattern {
     p.into_pattern().ignore_casts_mask(cast_mask())
@@ -33,7 +51,7 @@ fn single_bit_int_const(iv: Capture) -> impl MatchPat {
         let Some(n) = b.get_uint(iv, ctx.function()) else {
             return false;
         };
-        n != 0 && n.is_power_of_two()
+        is_single_bit(&n)
     })
 }
 
@@ -104,10 +122,7 @@ fn read_struct_fields_assertions(function: &strider_ir::Function) {
     let off = Capture::new();
     let off_pat = finish(field_load_at_offset(base, off));
     let hits = m.find_all(&off_pat).unwrap();
-    let offsets: Vec<u128> = hits
-        .iter()
-        .filter_map(|h| h.bindings().get_uint(off, function))
-        .collect();
+    let offsets: Vec<u128> = small_uints(&hits, off, function);
     assert!(
         offsets.iter().any(|&n| n == 4 || n == 8),
         "expected at least one Load(base + {{4,8}}); got offsets {offsets:?}"
@@ -137,10 +152,7 @@ fn write_struct_fields_assertions(function: &strider_ir::Function) {
             .build(),
     );
     let hits = m.find_all(&pat).unwrap();
-    let offsets: Vec<u128> = hits
-        .iter()
-        .filter_map(|h| h.bindings().get_uint(off, function))
-        .collect();
+    let offsets: Vec<u128> = small_uints(&hits, off, function);
     assert!(
         offsets.iter().any(|&n| n == 4 || n == 8),
         "expected >=1 Store(base + {{4,8}}); got offsets {offsets:?}"
@@ -178,10 +190,7 @@ fn nested_struct_field_assertions(function: &strider_ir::Function) {
     // Either the offset got captured, or the compiler folded a zero offset
     // to bare `Load(base)`; both are fine. But when captured, it must be
     // nonzero (inner.x sits at padding + offsetof(Inner, x) >= 4).
-    let offsets: Vec<u128> = hits
-        .iter()
-        .filter_map(|h| h.bindings().get_uint(off, function))
-        .collect();
+    let offsets: Vec<u128> = small_uints(&hits, off, function);
     if !offsets.is_empty() {
         assert!(
             offsets.iter().any(|&n| n != 0),
@@ -223,8 +232,8 @@ fn bit_test_zero_assertions(function: &strider_ir::Function) {
             .get_uint(mask, function)
             .expect("every hit binds the mask");
         assert!(
-            n.is_power_of_two() && n != 0,
-            "captured mask {n:#x} is not a single-bit value"
+            is_single_bit(&n),
+            "captured mask {n} is not a single-bit value"
         );
     }
 }
@@ -338,10 +347,7 @@ fn call_with_field_arg_assertions(function: &strider_ir::Function) {
     // `s->handler` lives at offset 16 in `struct S { int a, b, c, flags;
     // int *handler; }` on 32-bit pointer arches, or 32 with the extra
     // padding on 64-bit ones; both comfortably under 256.
-    let offsets: Vec<u128> = hits
-        .iter()
-        .filter_map(|h| h.bindings().get_uint(off, function))
-        .collect();
+    let offsets: Vec<u128> = small_uints(&hits, off, function);
     assert!(
         offsets.iter().any(|&n| n < 256),
         "no captured field-load offset is in 0..256; got {offsets:?}"
@@ -553,12 +559,10 @@ fn complex_dispatch_assertions(function: &strider_ir::Function) {
 
     // Distinct offsets prove multiple fields are accessed, not the same
     // one repeatedly.
-    let offsets: std::collections::HashSet<u128> = m
-        .find_all(&pat)
-        .unwrap()
-        .iter()
-        .filter_map(|h| h.bindings().get_uint(off, function))
-        .collect();
+    let offsets: std::collections::HashSet<u128> =
+        small_uints(&m.find_all(&pat).unwrap(), off, function)
+            .into_iter()
+            .collect();
     assert!(
         offsets.len() >= 2,
         "expected >=2 distinct Load offsets in complex_dispatch; got {offsets:?}"
