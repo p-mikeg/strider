@@ -18,6 +18,7 @@
 
 use crate::post_opt::indirect_branch_resolve::index_range;
 use rustc_hash::{FxHashMap, FxHashSet};
+use strider_ir::UBig;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
 use strider_ir_test_utils::interp::{self, EntryVar, Outcome, Slot};
@@ -1210,8 +1211,12 @@ fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
             .build_fn_single_region()
             .unwrap();
         b.set_lift_addr(Some(0xA0));
-        let c1 = b.build_int_const_limbs(&w1, ValueType::int(256)).unwrap();
-        let c2 = b.build_int_const_limbs(&w2, ValueType::int(256)).unwrap();
+        let c1 = b
+            .build_int_const(UBig::from_words(&w1), ValueType::int(256))
+            .unwrap();
+        let c2 = b
+            .build_int_const(UBig::from_words(&w2), ValueType::int(256))
+            .unwrap();
         let v = b
             .build_int_binary_operation(c1, c2, op, ValueType::int(256))
             .unwrap();

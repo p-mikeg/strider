@@ -139,21 +139,6 @@ pub trait IRBuilderExt: IRBuilder {
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
     }
 
-    /// `limbs` is little-endian. Missing limbs are zero, limbs past the type's
-    /// width are ignored and bits above it dropped; a value that fits `u128`
-    /// interns as `build_int_const` would.
-    fn build_int_const_limbs(&mut self, limbs: &[u64], output_type: ValueType) -> Result<ValueId> {
-        if !output_type.is_integer() {
-            return Err(anyhow!(
-                "build_int_const_limbs called with non-integer type {output_type:?}"
-            ));
-        }
-        let id = self
-            .function_mut()
-            .intern_int_const_limbs(limbs, output_type);
-        Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
-    }
-
     /// The `IntConst` of `ty` with the window `[shift, shift + window_bits)`
     /// cleared and every other bit set: ANDing a container with it preserves
     /// exactly the bits the window does not cover.

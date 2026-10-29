@@ -388,6 +388,8 @@ mod tests {
     //! Fixtures are built inline: `strider_ir_test_utils` links a separate
     //! compilation of strider-ir, so its `Function` is a different type here.
 
+    use dashu_int::UBig;
+
     use crate::builder::IRBuilderExt;
     use crate::node::ValueType;
     use crate::{FunctionBuilder, IRViewer, IRWalker, IntBinaryOp};
@@ -454,7 +456,9 @@ mod tests {
             let cc = strider_target::BuiltCallingConvention::default();
             let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
                 .expect("FunctionBuilder::new");
-            let v = b.build_int_const_limbs(limbs, ty).expect("const");
+            let v = b
+                .build_int_const(UBig::from_words(limbs), ty)
+                .expect("const");
             crate::eval::le_bytes(b.int_const(v).expect("an int const"), ty)
         };
         // Bytes 1..=8 little-endian.
