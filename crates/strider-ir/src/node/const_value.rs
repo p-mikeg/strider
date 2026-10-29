@@ -1,8 +1,8 @@
 use cranelift_entity::entity_impl;
 
-/// Opaque; read the value through [`crate::IRViewer::int_const_u128`],
-/// [`crate::IRViewer::int_const_i128`] or
-/// [`crate::IRViewer::int_const_wide_le_bytes`].
+/// Opaque; read the value through [`crate::IRViewer::int_const`] or its
+/// width-aware forms [`crate::IRViewer::int_const_u128`] and
+/// [`crate::IRViewer::int_const_i128`].
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ConstId(u32);
 entity_impl!(ConstId, "const");

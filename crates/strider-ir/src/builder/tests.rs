@@ -2075,13 +2075,15 @@ fn int_const_carrier_boundaries_read_back_through_both_paths() -> Result<()> {
             ty.get_signed_int(value),
             "{label}"
         );
-        let node = b.function().producer(scalar);
         let want = ty.is_wide_int().then(|| {
             let mut bytes = value.to_le_bytes().to_vec();
             bytes.resize(ty.byte_size(), 0);
             bytes
         });
-        assert_eq!(b.function().int_const_wide_le_bytes(node), want, "{label}");
+        let got = ty
+            .is_wide_int()
+            .then(|| crate::eval::le_bytes(b.function().int_const(scalar).unwrap(), ty));
+        assert_eq!(got, want, "{label}");
     }
     Ok(())
 }
@@ -2099,9 +2101,8 @@ fn int_const_past_the_u128_carrier_reads_only_as_bytes() -> Result<()> {
     let mut want = vec![0u8; 32];
     want[16] = 1;
     assert_eq!(
-        b.function()
-            .int_const_wide_le_bytes(b.function().producer(v)),
-        Some(want)
+        crate::eval::le_bytes(b.function().int_const(v).unwrap(), ty),
+        want
     );
     Ok(())
 }
