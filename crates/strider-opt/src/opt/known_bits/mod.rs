@@ -1,7 +1,8 @@
 use cranelift_entity::SecondaryMap;
 use entity_utils::{DenseEntitySet, Worklist};
 
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType, low_bits_mask_u128};
+use strider_ir::eval::mask_below;
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 
 use crate::Result;
@@ -98,7 +99,7 @@ fn shift_known_bits(
         ConstShift::InRange(shift) => {
             let (shifted_ones, shifted_zeros) = match dir {
                 ShiftDir::Left => {
-                    let lower_mask = (1u128 << shift).wrapping_sub(1) & type_mask;
+                    let lower_mask = mask_below(shift) & type_mask;
                     (
                         (l.ones << shift) & type_mask,
                         ((l.zeros << shift) & type_mask) | lower_mask,
@@ -280,7 +281,7 @@ pub(crate) fn node_known_bits(
             // (`opbehavior.cc:791`); only `I1` differs from `bit_width`.
             let max_val = (input_ty.byte_size() * 8) as u64;
             let bits_needed = (u64::BITS - max_val.leading_zeros()) as usize;
-            let upper_zeros = type_mask & !low_bits_mask_u128(bits_needed);
+            let upper_zeros = type_mask & !mask_below(bits_needed as u32);
             KnownBitsFacts {
                 ones: 0,
                 zeros: upper_zeros,
