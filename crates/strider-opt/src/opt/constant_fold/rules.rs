@@ -453,7 +453,7 @@ fn const_eval_rule(edit: &mut EditFunction<'_>, root: NodeId) -> Result<Option<V
     if !ty.is_integer() {
         return Ok(None);
     }
-    let Some(k) = eval_node_const(f, out, &|v| f.int_const_u128(v), None) else {
+    let Some(k) = eval_node_const(f, out, &|v| f.int_const(v).cloned(), None) else {
         return Ok(None);
     };
     let operands: SmallVec<[NodeId; 2]> = f

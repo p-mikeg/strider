@@ -12,18 +12,18 @@
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{IRViewer, ReadOnlyMemory};
+use strider_ir::{IRViewer, ReadOnlyMemory, UBig};
 
 use crate::mem_analysis::{MemAnalyzer, MemOptions, MemPurpose, reduce};
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 enum Abs {
-    Const(u128),
+    Const(UBig),
     SpRel { base: ValueId, offset: i128 },
 }
 
 impl Abs {
-    fn as_const(self) -> Option<u128> {
+    fn as_const(&self) -> Option<&UBig> {
         match self {
             Abs::Const(c) => Some(c),
             Abs::SpRel { .. } => None,
@@ -62,7 +62,7 @@ impl<'a> Evaluator<'a> {
     /// dispatch load and everything under it.
     pub(crate) fn begin_index(&mut self, idx_value: ValueId, idx: u128) {
         self.map.clear();
-        self.map.insert(idx_value, Abs::Const(idx));
+        self.map.insert(idx_value, Abs::Const(UBig::from(idx)));
     }
 
     /// Evaluates `dispatch` over `order` against the open index.
@@ -78,11 +78,11 @@ impl<'a> Evaluator<'a> {
             let a = self.eval_node(val)?;
             self.map.insert(val, a);
         }
-        u64::try_from(self.map.get(&dispatch).copied()?.as_const()?).ok()
+        u64::try_from(self.map.get(&dispatch)?.as_const()?).ok()
     }
 
-    fn get(&self, value: ValueId) -> Option<Abs> {
-        self.map.get(&value).copied()
+    fn get(&self, value: ValueId) -> Option<&Abs> {
+        self.map.get(&value)
     }
 
     fn eval_node(&mut self, value: ValueId) -> Option<Abs> {
@@ -102,12 +102,10 @@ impl<'a> Evaluator<'a> {
         let out_ty = f.value_type_opt(value);
         let ins: SmallVec<[ValueId; 2]> = f.value_inputs(node).collect();
         match kind {
-            NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add) => self.eval_add(
-                value,
-                self.get(*ins.first()?)?,
-                self.get(*ins.get(1)?)?,
-                out_ty?,
-            ),
+            NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::Add) => {
+                let (l, r) = (self.get(*ins.first()?)?, self.get(*ins.get(1)?)?);
+                self.eval_add(value, l, r, out_ty?)
+            }
             // A fresh opaque SP base at offset 0, matching `decompose`'s And arm.
             NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And) => {
                 let Some(sp_operand) = crate::mem_analysis::alignment_masked_operand(f, node)
@@ -133,20 +131,20 @@ impl<'a> Evaluator<'a> {
 
     /// The const-domain fold, for every kind with no `SpRel` layering.
     fn eval_const_node(&self, value: ValueId) -> Option<Abs> {
-        let resolve = |v| self.get(v).and_then(Abs::as_const);
+        let resolve = |v| self.get(v)?.as_const().cloned();
         crate::const_eval::eval_node_const(self.function, value, &resolve, self.rom).map(Abs::Const)
     }
 
-    fn eval_add(&self, value: ValueId, l: Abs, r: Abs, ty: ValueType) -> Option<Abs> {
+    fn eval_add(&self, value: ValueId, l: &Abs, r: &Abs, ty: ValueType) -> Option<Abs> {
         match (l, r) {
             (Abs::Const(_), Abs::Const(_)) => self.eval_const_node(value),
             (Abs::SpRel { base, offset }, Abs::Const(c))
             | (Abs::Const(c), Abs::SpRel { base, offset }) => {
                 // Signed, so a negative frame offset subtracts correctly;
                 // reduced, so the probe names the slot `decompose` does.
-                let delta = ty.get_signed_int(c)?;
+                let delta = ty.get_signed_int(u128::try_from(c).ok()?)?;
                 Some(Abs::SpRel {
-                    base,
+                    base: *base,
                     offset: reduce(Some(ty), offset.wrapping_add(delta)),
                 })
             }
@@ -157,7 +155,7 @@ impl<'a> Evaluator<'a> {
     fn eval_load(&mut self, node: NodeId, value: ValueId, space: rsleigh::VnSpace) -> Option<Abs> {
         let f = self.function;
         let load_ty = f.value_type_opt(value)?;
-        match self.get(f.load_addr(node))? {
+        match self.get(f.load_addr(node))?.clone() {
             Abs::Const(_) => self.eval_const_node(value),
             Abs::SpRel { base, offset } => {
                 let [mem, _addr] = f
@@ -167,7 +165,7 @@ impl<'a> Evaluator<'a> {
                 let data = self.reaching_store_data(mem, base, offset, load_size)?;
                 // Jump targets are constants on the converged graph.
                 let data_ty = f.value_type_opt(data)?;
-                let raw = f.int_const_u128(data)?;
+                let raw = f.int_const(data)?.clone();
                 Some(Abs::Const(self.reshape(raw, data_ty, load_ty, space)?))
             }
         }
@@ -196,11 +194,11 @@ impl<'a> Evaluator<'a> {
     /// than the store, a same-size type mismatch, and any non-integer pair.
     fn reshape(
         &self,
-        v: u128,
+        v: UBig,
         data_ty: ValueType,
         load_ty: ValueType,
         space: rsleigh::VnSpace,
-    ) -> Option<u128> {
+    ) -> Option<UBig> {
         if data_ty == load_ty {
             return Some(v);
         }
@@ -208,7 +206,8 @@ impl<'a> Evaluator<'a> {
         {
             let order = self.function.byte_order();
             let shift_bits = crate::const_eval::slice_shift_bits(order, space, data_ty, load_ty)?;
-            return load_ty.get_unsigned_int(v >> shift_bits);
+            let shift = usize::try_from(shift_bits).ok()?;
+            return Some(strider_ir::eval::mask(&(v >> shift), load_ty));
         }
         None
     }
@@ -218,10 +217,10 @@ impl<'a> Evaluator<'a> {
         let arms: SmallVec<[ValueId; 4]> = self.function.value_inputs(node).collect();
         let mut agreed: Option<Abs> = None;
         for arm in arms {
-            let v = self.get(arm)?;
-            match agreed {
+            let v = self.get(arm)?.clone();
+            match &agreed {
                 None => agreed = Some(v),
-                Some(prev) if prev == v => {}
+                Some(prev) if *prev == v => {}
                 Some(_) => return None,
             }
         }
@@ -287,6 +286,7 @@ pub(crate) fn cone_order_pruned(
 #[cfg(test)]
 mod tests {
     use super::{Evaluator, cone_order, cone_order_pruned};
+    use strider_ir::UBig;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
@@ -442,9 +442,19 @@ mod tests {
         b.set_lift_addr(None);
         let function = b.build().expect("build");
         let ev = Evaluator::new(&function, None);
-        let reshape = |space| ev.reshape(0xDEAD_BEEF, ValueType::int(32), ValueType::int(8), space);
-        assert_eq!(reshape(rsleigh::VnSpace::RAM), Some(0xDE));
-        assert_eq!(reshape(rsleigh::VnSpace::REGISTER), Some(0xEF));
+        let reshape = |space| {
+            ev.reshape(
+                UBig::from(0xDEAD_BEEFu32),
+                ValueType::int(32),
+                ValueType::int(8),
+                space,
+            )
+        };
+        assert_eq!(reshape(rsleigh::VnSpace::RAM), Some(UBig::from(0xDEu8)));
+        assert_eq!(
+            reshape(rsleigh::VnSpace::REGISTER),
+            Some(UBig::from(0xEFu8))
+        );
     }
 
     /// The memory index holds RAM stores, so only a RAM load reads it.

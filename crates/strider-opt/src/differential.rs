@@ -1188,12 +1188,11 @@ fn the_pipeline_preserves_cfg_semantics() {
 
 // Targeted proofs.
 
-/// `op(C1, C2)` at I256 with both constants past the u128 carrier. The
-/// pipeline leaves such an operand unfolded, so what the run must
-/// preserve is the operation and both operands' limbs, unswapped by
-/// const-on-right and untruncated by the u128 carrier.
+/// `op(C1, C2)` at I256 with both constants past the u128 carrier. The fold
+/// runs at the declared width, so the result carries all four limbs, none of
+/// them lost to a 128-bit carrier.
 #[test]
-fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
+fn a_wide_constant_folds_across_every_limb() {
     fn le_limbs(f: &strider_ir::Function, v: ValueId) -> Vec<u64> {
         let ty = f.value_kind(v).as_value().expect("a typed value");
         assert!(ty.bit_width() > 64, "{v:?} is not a wide constant");
@@ -1204,7 +1203,13 @@ fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
     }
     let w1 = [1u64, 2, 3, 4];
     let w2 = [5u64, 6, 7, 8];
-    for op in [IntBinaryOp::And, IntBinaryOp::Add, IntBinaryOp::Xor] {
+    // No limb carries, so each result limb is the op of the two input limbs.
+    let cases = [
+        (IntBinaryOp::And, [1u64, 2, 3, 0]),
+        (IntBinaryOp::Add, [6, 8, 10, 12]),
+        (IntBinaryOp::Xor, [4, 4, 4, 12]),
+    ];
+    for (op, expected) in cases {
         let var = reg_vn(0x1000, 32);
         let mut b = RegisterSet::new()
             .tracked(var)
@@ -1228,18 +1233,15 @@ fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
             .unwrap_or_else(|e| panic!("{op:?}: {e:#}"));
         let ret = return_values(&f);
         assert_eq!(ret.len(), 1, "{op:?}: return arity");
-        let node = f.producer(ret[0]);
-        assert_eq!(
-            *f.node_kind(node),
-            NodeKind::IntBinaryOp(op),
-            "{op:?}: the wide operation is gone\n{}",
+        assert!(
+            matches!(f.node_kind(f.producer(ret[0])), NodeKind::IntConst(_)),
+            "{op:?}: the wide operation must fold\n{}",
             f.to_text(false)
         );
-        let ins = f.node_inputs(node);
         assert_eq!(
-            [le_limbs(&f, ins[0]), le_limbs(&f, ins[1])],
-            [w1.to_vec(), w2.to_vec()],
-            "{op:?}: operand limbs\n{}",
+            le_limbs(&f, ret[0]),
+            expected.to_vec(),
+            "{op:?}: result limbs\n{}",
             f.to_text(false)
         );
     }
