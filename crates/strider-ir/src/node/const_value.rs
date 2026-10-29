@@ -151,44 +151,22 @@ mod tests {
     /// past it.
     #[test]
     fn get_value_cases() {
-        let both_limbs = (u128::from(u64::MAX) << 64) | u128::from(u64::MAX);
-        let cases: [(&str, ConstValue, ConstRead<'_>); 6] = [
-            (
-                "bits",
-                ConstValue::Bits(0xDEAD_BEEF),
-                ConstRead::Val(0xDEAD_BEEF),
-            ),
-            (
-                "padded_limbs",
-                ConstValue::Wide(vec![1, 0, 0, 0].into_boxed_slice()),
-                ConstRead::Val(1),
-            ),
-            (
-                "all_zero_limbs",
-                ConstValue::Wide(vec![0, 0, 0, 0].into_boxed_slice()),
-                ConstRead::Val(0),
-            ),
-            (
-                "no_limbs",
-                ConstValue::Wide(vec![].into_boxed_slice()),
-                ConstRead::Val(0),
-            ),
-            // Both limbs nonzero and the carrier exactly full.
-            (
-                "u128_max",
-                ConstValue::Wide(vec![u64::MAX, u64::MAX].into_boxed_slice()),
-                ConstRead::Val(both_limbs),
-            ),
-            // A nonzero limb at index 2 puts the value over 128 bits.
-            (
-                "past_the_carrier",
-                ConstValue::Wide(vec![0, 0, 1, 0].into_boxed_slice()),
-                ConstRead::Wide(&[0, 0, 1, 0]),
-            ),
-        ];
-        for (label, value, want) in cases {
-            assert_eq!(value.get_value(), want, "{label}");
-        }
+        let wide = |l: &[u64]| ConstValue::Wide(l.to_vec().into_boxed_slice());
+        let bits = ConstValue::Bits(0xDEAD_BEEF);
+        assert_eq!(bits.get_value(), ConstRead::Val(0xDEAD_BEEF));
+        assert_eq!(wide(&[1, 0, 0, 0]).get_value(), ConstRead::Val(1));
+        assert_eq!(wide(&[0, 0, 0, 0]).get_value(), ConstRead::Val(0));
+        assert_eq!(wide(&[]).get_value(), ConstRead::Val(0));
+        // Both limbs nonzero, the carrier exactly full.
+        assert_eq!(
+            wide(&[u64::MAX, u64::MAX]).get_value(),
+            ConstRead::Val(u128::MAX)
+        );
+        // A nonzero limb at index 2 puts the value over 128 bits.
+        assert_eq!(
+            wide(&[0, 0, 1, 0]).get_value(),
+            ConstRead::Wide(&[0, 0, 1, 0])
+        );
     }
 
     /// Both sides of the 64-bit carrier: one `ConstId` whichever path
