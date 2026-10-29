@@ -92,6 +92,24 @@ impl PyNode {
     }
 }
 
+/// A `UBig` as a Python `int`, which is unbounded, so no width caps what a
+/// constant reaches Python with.
+fn ubig_to_py_int(py: Python<'_>, v: &strider_ir::UBig) -> PyResult<Py<PyAny>> {
+    if let Ok(narrow) = u128::try_from(v) {
+        return Ok(narrow.into_py(py));
+    }
+    Ok(py
+        .get_type_bound::<pyo3::types::PyInt>()
+        .call_method1(
+            "from_bytes",
+            (
+                pyo3::types::PyBytes::new_bound(py, &v.to_le_bytes()),
+                "little",
+            ),
+        )?
+        .unbind())
+}
+
 /// The unsigned integer constant a node's value output holds, if any. For
 /// reading a bound capture without constructing a `PyNode`.
 pub(crate) fn uint_of(function: &strider_ir::Function, node_id: u32) -> Option<u128> {
@@ -224,7 +242,7 @@ impl PyNode {
     /// Integer constant value, sign-extended at the declared width. `None`
     /// when the value output isn't an integer `IntConst`, or is declared wider
     /// than 128 bits: an `I256` / `I512` holding a small value still answers
-    /// `None` here, unlike `uint` (use `wide_const_bytes()` for those).
+    /// `None` here, unlike `uint`, which has no width cap.
     /// Booleans are 1-bit integers, so a bool constant surfaces as `0` / `-1`.
     pub(crate) fn sint(&self, py: Python<'_>) -> PyResult<Option<i128>> {
         self.with_node(py, |function, nid| {
@@ -232,14 +250,15 @@ impl PyNode {
         })
     }
 
-    /// Integer constant value, masked to the declared width. `None` when the
-    /// value output isn't an integer `IntConst`, or holds a value that does
-    /// not fit in 128 bits. An `I256` / `I512` constant small enough to fit
-    /// still reads back here, unlike `sint`.
-    pub(crate) fn uint(&self, py: Python<'_>) -> PyResult<Option<u128>> {
-        self.with_node(py, |function, nid| {
-            Self::value_output(function, nid).and_then(|value| function.int_const_u128(value))
-        })
+    /// Integer constant value, masked to the declared width, at any width: a
+    /// Python `int` is arbitrary-precision, so `I256` / `I512` read back here
+    /// like any other. `None` when the value output isn't an integer
+    /// `IntConst`.
+    pub(crate) fn uint(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        let value = self.with_node(py, |function, nid| {
+            Self::value_output(function, nid).and_then(|v| function.int_const(v).cloned())
+        })?;
+        value.map(|v| ubig_to_py_int(py, &v)).transpose()
     }
 
     /// Boolean constant value, or `None` when the value output isn't an
@@ -299,26 +318,6 @@ impl PyNode {
             addrs.sort_unstable();
             addrs
         })
-    }
-
-    /// Raw little-endian bytes of a wide integer constant, one per byte of the
-    /// declared width (9 for I72, 10 for I80, 12 for I96, 14 for I112, 16 for
-    /// I128, 32 for I256, 64 for I512), or `None` for a narrow constant and
-    /// any non-const kind.
-    fn wide_const_bytes<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Option<Bound<'py, pyo3::types::PyBytes>>> {
-        let raw = self.with_node(py, |function, nid| {
-            let value = function.first_value_output_of(nid)?;
-            let ty = function.value_kind(value).as_value()?;
-            // Narrow constants are `None`, whatever the value.
-            if !ty.is_wide_int() {
-                return None;
-            }
-            Some(strider_ir::eval::le_bytes(function.int_const(value)?, ty))
-        })?;
-        Ok(raw.map(|b| pyo3::types::PyBytes::new_bound(py, &b)))
     }
 
     /// The user-op name attached to a `CallOther` node, else `None`.
