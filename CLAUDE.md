@@ -109,7 +109,7 @@ Strider:
   evaluator, `ExpectedValueKind::admits` the one slot-kind check and
   `NodeKind::operand_width` the one operand-width rule. Integer constants are
   stored as `dashu-int`'s `UBig`, the one external production dependency past
-  rsleigh; `eval`'s `mask` / `all_ones` / `complement` / `words` are what hold
+  rsleigh; `eval`'s `mask` / `all_ones` / `complement` are what hold
   an unbounded `UBig` to a declared width. `AssumptionOptions`
   lives here (strider-opt re-exports it) because a `Function` holds the claims
   in force.
@@ -212,7 +212,7 @@ how their `tests/` integration targets get a feature (`test-util`,
 - Calls: `Call { cc: Option<CcId> }` (`None` is `default_cc`),
   `CallOther { user_op_id }`.
 - Memory: `Load(VnSpace)`, `Store(VnSpace)`.
-- Integer (incl. booleans): `IntConst(ConstId)`, `IntUnaryOp`, `IntBinaryOp`,
+- Integer (incl. booleans): `IntConst(IntConstId)`, `IntUnaryOp`, `IntBinaryOp`,
   `IntCmpOp`, `Truncate`, `Extend(ExtendOp)`, `Popcount`, `Lzcount`.
 - Float: `FloatConst(u64)`, `FloatUnaryOp`, `FloatBinaryOp`, `FloatCmpOp`.
 - Conversions: `IntToFloat`, `FloatToInt`, `FloatToFloat`, `IntBitsToFloat`,
@@ -238,23 +238,24 @@ width a Sleigh varnode or temporary carries needs an entry. `bit_width(I1) ==
 1` (the one case where width != byte_size*8); `int_from_bytes(1) -> I8`, never
 `I1`. `Debug` spells `I32`, `Display` `i32`.
 
-`expected_signature` (`node_signature.rs`) is the SSoT for each kind's slot
+`expected_signature` (`node/signature.rs`) is the SSoT for each kind's slot
 kinds. `Graph` holds only structure; per-function overlay (entry, `default_cc`,
 `byte_order`, tracked varnodes, interners, side-tables) lives on `Function`,
 which wraps a `Graph`. `entry` is a non-optional `NodeId` (a `Function` always
 has one), so `EditFunction::new(&mut Function)` is infallible.
 
-Integer constants: `IntConst(ConstId)` interns through
+Integer constants: `IntConst(IntConstId)` interns through
 `Function::const_interner` into a `dashu_int::UBig` (all int constants, not
 only wide ones); read via `IRViewer::int_const_u128` / `int_const_i128`, never
 off the `UBig`. `UBig` is unsigned and unbounded, so two's-complement at a
 declared width stays strider's rule: interning masks to the width
 (`eval::mask`) before dedup, and `UBig` normalises one value to one form, so
-equal constants from different paths collapse. `eval::words` pads
-`UBig::as_words` back to the limbs the type spans, which `as_words` trims. The
-raw DOT label's `Bits(..)` / `Wide(..)` spelling is the renderer's
-(`function/dot/raw.rs`), not a `Debug` impl: rendered graphs are compared
-across builds.
+equal constants from different paths collapse. `eval::le_bytes` pads
+`UBig::to_le_bytes` back to the bytes the type spans, which `to_le_bytes`
+trims. Both DOT labels spell the value and no storage form: the raw one its
+decimal (`function/dot/raw.rs`), the pretty one `const {v:#x}:<ty>`
+(`function/dot/label.rs`). Rendered graphs are compared across builds, so that
+text is the renderer's, not a `Debug` impl.
 
 IR trait layering: `IRViewer` (point reads), `IRWalker: IRViewer` (control-aware
 walks), `IRBuilder: IRViewer` (`create_node` / `create_node_attributed`),
