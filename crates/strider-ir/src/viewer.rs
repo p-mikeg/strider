@@ -462,43 +462,30 @@ mod tests {
     /// arm of the stored value.
     #[test]
     fn int_const_wide_le_bytes_serialises_little_endian() {
-        // Bytes 1..=8 little-endian.
-        let low: u64 = 0x0807_0605_0403_0201;
-        let mut i256_past_carrier = vec![0u8; 32];
-        i256_past_carrier[16] = 1;
-        let cases: [(&str, &[u64], ValueType, Vec<u8>); 4] = [
-            (
-                "i80_pads",
-                &[low],
-                ValueType::int(80),
-                vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0],
-            ),
-            (
-                "i128_pads",
-                &[low],
-                ValueType::int(128),
-                vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0],
-            ),
-            ("i256_pads", &[low, 0, 0, 0], ValueType::int(256), {
-                let mut want: Vec<u8> = (1u8..=8).collect();
-                want.extend(std::iter::repeat_n(0u8, 24));
-                want
-            }),
-            // Bit 128 is the first bit no `u128` carries.
-            (
-                "i256_past_the_carrier",
-                &[0, 0, 1, 0],
-                ValueType::int(256),
-                i256_past_carrier,
-            ),
-        ];
-        for (label, limbs, ty, want) in cases {
+        let bytes = |limbs: &[u64], ty: ValueType| {
             let cc = strider_target::BuiltCallingConvention::default();
             let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
                 .expect("FunctionBuilder::new");
             let v = b.build_int_const_limbs(limbs, ty).expect("const");
             let node = b.producer(v);
-            assert_eq!(b.int_const_wide_le_bytes(node), Some(want), "{label}");
-        }
+            b.int_const_wide_le_bytes(node).expect("wide le bytes")
+        };
+        // Bytes 1..=8 little-endian.
+        let low: u64 = 0x0807_0605_0403_0201;
+        let mut i256 = vec![1u8, 2, 3, 4, 5, 6, 7, 8];
+        i256.resize(32, 0);
+        let mut past_carrier = vec![0u8; 32];
+        past_carrier[16] = 1;
+        assert_eq!(
+            bytes(&[low], ValueType::int(80)),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0]
+        );
+        assert_eq!(
+            bytes(&[low], ValueType::int(128)),
+            vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0]
+        );
+        assert_eq!(bytes(&[low, 0, 0, 0], ValueType::int(256)), i256);
+        // Bit 128 is the first bit no `u128` carries.
+        assert_eq!(bytes(&[0, 0, 1, 0], ValueType::int(256)), past_carrier);
     }
 }
