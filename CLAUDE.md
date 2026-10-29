@@ -107,7 +107,10 @@ Strider:
 
 - `strider-ir`: the sea-of-nodes IR. `strider_ir::eval` is the one integer
   evaluator, `ExpectedValueKind::admits` the one slot-kind check and
-  `NodeKind::operand_width` the one operand-width rule. `AssumptionOptions`
+  `NodeKind::operand_width` the one operand-width rule. Integer constants are
+  stored as `dashu-int`'s `UBig`, the one external production dependency past
+  rsleigh; `eval`'s `mask` / `all_ones` / `complement` / `words` are what hold
+  an unbounded `UBig` to a declared width. `AssumptionOptions`
   lives here (strider-opt re-exports it) because a `Function` holds the claims
   in force.
 - `strider-target`: target descriptions (`SleighArch`,
@@ -157,6 +160,7 @@ strider-target     -> vn-container
 strider-cfg        -> strider-target, dot
 strider-ir         -> strider-graph, strider-target, read-only-memory, dot,
                       entity-utils, graph-algorithms, vn-container
+                      (+ external dashu-int)
 strider-reader     -> read-only-memory
 strider-lift       -> strider-cfg, strider-ir, strider-target,
                       graph-algorithms, vn-container
@@ -181,7 +185,9 @@ Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 `entity-utils`, `read-only-memory`, `strider-graph`, `vn-container`. Notably
 `strider-cfg` is IR-free, `strider-reader` depends only on `read-only-memory`,
 and the orchestrator reaches `strider-pattern` and `dot` only from its tests
-and examples. External `petgraph` is a production dependency of `strider-cfg`,
+and examples. External `dashu-int` is a production dependency of `strider-ir`
+alone, the arbitrary-precision unsigned integer behind `const_interner`.
+External `petgraph` is a production dependency of `strider-cfg`,
 `strider-lift` and `strider-pattern`, and a dev-dependency of `graph-algorithms`
 and `strider-ir`, whose dominance tests check against `simple_fast`;
 graph-algorithms' walk tests also check `acyclic_postorder`'s cycle verdict
@@ -239,12 +245,16 @@ which wraps a `Graph`. `entry` is a non-optional `NodeId` (a `Function` always
 has one), so `EditFunction::new(&mut Function)` is infallible.
 
 Integer constants: `IntConst(ConstId)` interns through
-`Function::const_interner` into `ConstValue { Bits(u64), Wide(Box<[u64]>) }`
-(all int constants, not only wide ones); read via `IRViewer::int_const_u128` /
-`int_const_i128`, never by matching the payload. Anything past the 64-bit
-carrier is `Wide`, so that path carries every constant over `u64`, not only
-the rare ones over `u128`. Interning masks to the declared
-width before dedup, so equal constants from different paths collapse.
+`Function::const_interner` into a `dashu_int::UBig` (all int constants, not
+only wide ones); read via `IRViewer::int_const_u128` / `int_const_i128`, never
+off the `UBig`. `UBig` is unsigned and unbounded, so two's-complement at a
+declared width stays strider's rule: interning masks to the width
+(`eval::mask`) before dedup, and `UBig` normalises one value to one form, so
+equal constants from different paths collapse. `eval::words` pads
+`UBig::as_words` back to the limbs the type spans, which `as_words` trims. The
+raw DOT label's `Bits(..)` / `Wide(..)` spelling is the renderer's
+(`function/dot/raw.rs`), not a `Debug` impl: rendered graphs are compared
+across builds.
 
 IR trait layering: `IRViewer` (point reads), `IRWalker: IRViewer` (control-aware
 walks), `IRBuilder: IRViewer` (`create_node` / `create_node_attributed`),

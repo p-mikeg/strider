@@ -2,6 +2,7 @@
 //! the active region or the SSA variable table.
 
 use anyhow::anyhow;
+use dashu_int::UBig;
 
 use crate::IRViewer;
 use crate::builder::IRBuilder;
@@ -11,7 +12,6 @@ use crate::builder::checks::{
 };
 use crate::error::Result;
 use crate::eval;
-use crate::node::const_value::ConstValue;
 use crate::node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeKind,
     ValueId, ValueKind, ValueType, shifted_ones_limbs,
@@ -169,23 +169,24 @@ pub trait IRBuilderExt: IRBuilder {
         ty: ValueType,
     ) -> Result<ValueId> {
         let window = shifted_ones_limbs(window_bits, shift, ty.bit_width() as u64);
-        let preserve = ConstValue::wide(window.into_boxed_slice()).complement(ty);
+        let preserve = crate::eval::complement(&UBig::from_words(&window), ty);
         self.build_const_value(preserve, ty)
     }
 
     /// The all-ones `IntConst` of `ty`, at any integer width.
     fn build_all_ones(&mut self, ty: ValueType) -> Result<ValueId> {
-        self.build_const_value(ConstValue::all_ones(ty), ty)
+        self.build_const_value(crate::eval::all_ones(ty), ty)
     }
 
     /// The `IntConst` of `value` masked to `ty`.
-    fn build_const_value(&mut self, value: ConstValue, ty: ValueType) -> Result<ValueId> {
+    fn build_const_value(&mut self, value: UBig, ty: ValueType) -> Result<ValueId> {
         require_integer_type(ty)?;
+        let masked = crate::eval::mask(&value, ty);
         let id = self
             .function_mut()
             .side_tables_mut()
             .const_interner
-            .intern(value.mask(ty));
+            .intern(masked);
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], ty))
     }
 

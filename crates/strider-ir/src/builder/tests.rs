@@ -787,11 +787,11 @@ fn build_call_other_names_a_ram_output_in_the_text_spelling() -> Result<()> {
 }
 
 /// Any value fitting `u64` interns as `Bits` whatever the declared width, so
-/// `build_int_const` and `build_int_const_limbs` reach one interned value.
-/// Past the carrier both reach one `Wide`.
+/// `build_int_const` and `build_int_const_limbs` reach one interned value,
+/// on both sides of the carrier.
 #[test]
-fn fitting_values_intern_as_bits() -> Result<()> {
-    use crate::node::const_value::ConstValue;
+fn scalar_and_limb_paths_reach_one_interned_value() -> Result<()> {
+    use dashu_int::UBig;
     let sp = reg_vn(0x7000, 8);
     let mut b = raw_builder(
         vec![],
@@ -808,7 +808,7 @@ fn fitting_values_intern_as_bits() -> Result<()> {
     let NodeKind::IntConst(small_id) = *b.function().node_kind(small_node) else {
         panic!("expected IntConst");
     };
-    assert_eq!(b.function().const_value(small_id), &ConstValue::bits(5));
+    assert_eq!(b.function().const_value(small_id), &UBig::from(5u64));
     assert_eq!(b.function().int_const_u128(small), Some(5u128));
     assert_eq!(b.function().value_type(small)?, ValueType::int(128));
 
@@ -821,7 +821,7 @@ fn fitting_values_intern_as_bits() -> Result<()> {
     };
     assert_eq!(
         b.function().const_value(big_id),
-        &ConstValue::wide(vec![0, 1 << 36].into_boxed_slice())
+        &UBig::from_words(&[0, 1 << 36])
     );
     assert_eq!(b.function().int_const_u128(big), Some(big_val));
     let big_limbed = b.build_int_const_limbs(&[0, 1 << 36], ValueType::int(128))?;
@@ -1928,7 +1928,7 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
 /// original limbs.
 #[test]
 fn build_int_const_limbs_round_trips_through_graph() -> Result<()> {
-    use crate::node::const_value::ConstValue;
+    use dashu_int::UBig;
     let cases: [(&str, Vec<u64>, ValueType); 2] = [
         (
             "u256_round_trips_through_graph",
@@ -1953,7 +1953,7 @@ fn build_int_const_limbs_round_trips_through_graph() -> Result<()> {
         };
         assert_eq!(
             b.function().const_value(id),
-            &ConstValue::wide(limbs.into_boxed_slice()),
+            &UBig::from_words(&limbs),
             "{label}"
         );
     }
@@ -2022,7 +2022,7 @@ fn build_int_const_limbs_accepts_any_int_type() -> Result<()> {
 /// count is the same constant, and the same node, as the zero-padded one.
 #[test]
 fn build_int_const_limbs_zero_fills_missing_limbs() -> Result<()> {
-    use crate::node::const_value::ConstValue;
+    use dashu_int::UBig;
     let mut b = builder_with_region()?;
     let short = b.build_int_const_limbs(&[5], ValueType::int(256))?;
     let padded = b.build_int_const_limbs(&[5, 0, 0, 0], ValueType::int(256))?;
@@ -2038,7 +2038,7 @@ fn build_int_const_limbs_zero_fills_missing_limbs() -> Result<()> {
     };
     assert_eq!(
         b.function().const_value(id),
-        &ConstValue::wide(vec![u64::MAX, u64::MAX, u64::MAX, 0].into_boxed_slice())
+        &UBig::from_words(&[u64::MAX, u64::MAX, u64::MAX, 0])
     );
     Ok(())
 }
@@ -2109,7 +2109,6 @@ fn int_const_past_the_u128_carrier_reads_only_as_bytes() -> Result<()> {
 /// Every bit of the type and none above it, at every integer width.
 #[test]
 fn build_all_ones_sets_every_bit_at_every_int_width() -> Result<()> {
-    use crate::node::const_value::ConstRead;
     let mut b = builder_with_region()?;
     for ty in ValueType::SUPPORTED.into_iter().filter(|t| t.is_integer()) {
         let ones = b.build_all_ones(ty)?;
@@ -2117,10 +2116,13 @@ fn build_all_ones_sets_every_bit_at_every_int_width() -> Result<()> {
         let NodeKind::IntConst(id) = *b.function().node_kind(b.function().producer(ones)) else {
             panic!("expected an IntConst at {ty:?}");
         };
-        let set: u32 = match b.function().const_value(id).get_value() {
-            ConstRead::Val(v) => v.count_ones(),
-            ConstRead::Wide(limbs) => limbs.iter().map(|l| l.count_ones()).sum(),
-        };
+        let set: u32 = b
+            .function()
+            .const_value(id)
+            .as_words()
+            .iter()
+            .map(|l| l.count_ones())
+            .sum();
         assert_eq!(set as usize, ty.bit_width(), "{ty:?}");
         assert_eq!(
             b.function().int_const_u128(ones),
@@ -2703,18 +2705,18 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
     Ok(())
 }
 
-/// Every fitting value is `Bits`, I80 included, and reads back at the declared
+/// Every fitting value reads back as a scalar, I80 included, at the declared
 /// width.
 #[test]
-fn small_valued_i80_const_interns_as_bits() -> Result<()> {
-    use crate::node::const_value::ConstValue;
+fn small_valued_i80_const_interns_once() -> Result<()> {
+    use dashu_int::UBig;
     let mut b = empty_builder()?;
     let via_small = b.build_int_const(5u64, ValueType::int(80))?;
     let node = b.function().producer(via_small);
     let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
         panic!("expected IntConst");
     };
-    assert_eq!(b.function().const_value(id), &ConstValue::bits(5));
+    assert_eq!(b.function().const_value(id), &UBig::from(5u64));
     assert_eq!(b.function().value_type(via_small)?, ValueType::int(80));
     assert_eq!(b.function().int_const_u128(via_small), Some(5u128));
 
@@ -2727,11 +2729,11 @@ fn small_valued_i80_const_interns_as_bits() -> Result<()> {
     Ok(())
 }
 
-/// Limbs that fit `u128` canonicalise to `Bits`, so the limb path and the
-/// scalar path share one `ConstId` for the same value.
+/// Limbs that fit `u128` normalise, so the limb path and the scalar path
+/// share one `ConstId` for the same value.
 #[test]
-fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
-    use crate::node::const_value::ConstValue;
+fn small_valued_i256_limbs_canonicalise_to_the_scalar() -> Result<()> {
+    use dashu_int::UBig;
     let mut b = empty_builder()?;
     let via_limbs = b.build_int_const_limbs(&[5, 0, 0, 0], ValueType::int(256))?;
     let node = b.function().producer(via_limbs);
@@ -2740,8 +2742,8 @@ fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
     };
     assert_eq!(
         b.function().const_value(id),
-        &ConstValue::bits(5),
-        "small-valued I256 limbs must canonicalise to Bits, got {:?}",
+        &UBig::from(5u64),
+        "small-valued I256 limbs must normalise to the scalar, got {:?}",
         b.function().const_value(id)
     );
     assert_eq!(b.function().value_type(via_limbs)?, ValueType::int(256));
@@ -2759,7 +2761,7 @@ fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
 /// Interning masks to the declared width, so 3 at I1 becomes 1.
 #[test]
 fn i1_const_payload_masks_to_one_bit() -> Result<()> {
-    use crate::node::const_value::ConstValue;
+    use dashu_int::UBig;
     let mut b = empty_builder()?;
     let v = b.build_int_const(3u64, ValueType::I1)?;
     let node = b.function().producer(v);
@@ -2768,7 +2770,7 @@ fn i1_const_payload_masks_to_one_bit() -> Result<()> {
     };
     assert_eq!(
         b.function().const_value(id),
-        &ConstValue::bits(1),
+        &UBig::ONE,
         "value 3 at I1 must mask to 1, got {:?}",
         b.function().const_value(id)
     );
@@ -2784,7 +2786,7 @@ fn i1_const_payload_masks_to_one_bit() -> Result<()> {
 /// Masking at exactly the carrier's width is the identity.
 #[test]
 fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
-    use crate::node::const_value::ConstValue;
+    use dashu_int::UBig;
     let mut b = empty_builder()?;
     let v = b.build_int_const(u64::MAX, ValueType::int(64))?;
     let node = b.function().producer(v);
@@ -2793,7 +2795,7 @@ fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
     };
     assert_eq!(
         b.function().const_value(id),
-        &ConstValue::bits(u64::MAX),
+        &UBig::from(u64::MAX),
         "all 64 bits must survive the width mask, got {:?}",
         b.function().const_value(id)
     );

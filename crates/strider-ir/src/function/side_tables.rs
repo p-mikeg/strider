@@ -1,4 +1,5 @@
 use cranelift_entity::{PrimaryMap, SecondaryMap};
+use dashu_int::UBig;
 use entity_utils::{EntityInterner, UnionDag};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -6,6 +7,11 @@ use crate::IRViewer;
 use crate::graph::{Graph, NodeIdRemap};
 use crate::node::const_value::ConstId;
 use crate::node::{CcId, NodeId, NodeKind, SwitchTableId, ValueId};
+
+/// A pointer, a length and a capacity, with values up to two limbs held
+/// inline: an interned `u64` constant costs no allocation. A layout
+/// regression shows up here.
+const _: () = assert!(size_of::<UBig>() == 24);
 
 /// The ABI class a function argument was passed in; stack arguments continue
 /// the `Integer` index space after the register ones. Indices are positional
@@ -60,8 +66,10 @@ pub struct FuncSideTables {
     /// (`StaleInitialVarIndex`).
     pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
     /// Every integer-constant value referenced by an `IntConst(id)` node,
-    /// deduped by value.
-    pub(crate) const_interner: EntityInterner<ConstId, crate::node::const_value::ConstValue>,
+    /// deduped by value. Unbounded and unsigned; the declared width is the
+    /// node's output type, and `crate::eval::mask` is what holds a stored
+    /// value to it.
+    pub(crate) const_interner: EntityInterner<ConstId, UBig>,
     /// Case addresses of each `Switch(id)`, one per control output.
     pub(crate) switch_tables: PrimaryMap<SwitchTableId, Vec<u64>>,
     /// Override conventions referenced by `Call { cc: Some(id) }`, deduped by
@@ -221,8 +229,7 @@ impl FuncSideTables {
             // function's own, not a surviving node's.
             vn_interner: _,
         } = self;
-        let mut consts: EntityInterner<ConstId, crate::node::const_value::ConstValue> =
-            EntityInterner::default();
+        let mut consts: EntityInterner<ConstId, UBig> = EntityInterner::default();
         let mut const_ids: FxHashMap<ConstId, ConstId> = FxHashMap::default();
         let mut tables: PrimaryMap<SwitchTableId, Vec<u64>> = PrimaryMap::new();
         let mut table_ids: SecondaryMap<SwitchTableId, Option<SwitchTableId>> = SecondaryMap::new();
@@ -313,22 +320,15 @@ impl crate::Function {
         value: u128,
         ty: crate::node::ValueType,
     ) -> crate::node::const_value::ConstId {
-        let masked = ty.wrap_u128(value);
-        match u64::try_from(masked) {
-            Ok(v) => self
-                .side_tables_mut()
-                .const_interner
-                .intern(crate::node::const_value::ConstValue::bits(v)),
-            // Past the carrier the limb path holds the canonical spelling.
-            Err(_) => self.intern_int_const_limbs(&[masked as u64, (masked >> 64) as u64], ty),
-        }
+        let v = crate::eval::mask(&UBig::from(value), ty);
+        self.side_tables_mut().const_interner.intern(v)
     }
 
     /// Interns a constant given as little-endian `limbs`.
     ///
-    /// Trimmed to the limbs `ty` actually spans first: dedup is by stored
-    /// representation, so an over-long or over-wide spelling of a value would
-    /// otherwise intern as a second, unequal constant.
+    /// Masked to `ty` first: dedup is by stored value, and `UBig` normalises
+    /// one value to one form, so a short, exact or zero-padded spelling of it
+    /// reaches one id.
     ///
     /// A non-integer `ty` masks to zero, exactly as in
     /// [`intern_int_const`](Self::intern_int_const).
@@ -337,20 +337,14 @@ impl crate::Function {
         limbs: &[u64],
         ty: crate::node::ValueType,
     ) -> crate::node::const_value::ConstId {
-        // `mask` trims and zero-pads to `ty`'s limbs, and `wide` collapses a
-        // value the carrier holds, so the scalar and the limb path reach one
-        // id for it.
-        let cv = crate::node::const_value::ConstValue::wide(limbs.into()).mask(ty);
-        self.side_tables_mut().const_interner.intern(cv)
+        let v = crate::eval::mask(&UBig::from_words(limbs), ty);
+        self.side_tables_mut().const_interner.intern(v)
     }
 
     /// Panics on an OUT-OF-RANGE id. An id minted by another function's
     /// interner that happens to be in range returns this one's value for that
     /// index instead, which `validate`'s `DanglingConstId` also cannot see.
-    pub(crate) fn const_value(
-        &self,
-        id: crate::node::const_value::ConstId,
-    ) -> &crate::node::const_value::ConstValue {
+    pub(crate) fn const_value(&self, id: crate::node::const_value::ConstId) -> &UBig {
         &self.side_tables().const_interner[id]
     }
 

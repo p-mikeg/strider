@@ -28,6 +28,7 @@ graph-algorithms.workspace = true
 strider-graph.workspace = true
 read-only-memory.workspace = true
 cranelift-entity.workspace = true
+dashu-int.workspace = true
 rsleigh.workspace = true
 vn-container.workspace = true
 strider-target.workspace = true
