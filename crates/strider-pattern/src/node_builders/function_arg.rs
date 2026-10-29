@@ -1,5 +1,5 @@
 //! Matches the function-argument *carrier* node the `FunctionArgDetect`
-//! post-pass records in `SideTables::arg_index_to_values`: an `InitialVar(vn)`
+//! post-pass records in `FuncSideTables::arg_index_to_values`: an `InitialVar(vn)`
 //! for a register-passed arg, a `Load` for a stack-passed one.
 //!
 //! The kind spec has to be [`KindSpec::Any`], since no discriminant separates

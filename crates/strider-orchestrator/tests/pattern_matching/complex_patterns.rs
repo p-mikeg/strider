@@ -62,7 +62,7 @@ fn field_load_at_offset(base: Capture, offset: Capture) -> impl MatchPat {
 }
 
 /// Matches any carrier node registered for function arg `arg_index` in the
-/// `SideTables::arg_index_to_values` side-table, by checking the matched node's
+/// `FuncSideTables::arg_index_to_values` side-table, by checking the matched node's
 /// primary output against the carriers' outputs. Drop-in for expressions
 /// like `call().arg(i, arg_carrier_pat(g, N))`.
 fn arg_carrier_pat(function: &strider_ir::Function, arg_index: u32) -> impl MatchPat + 'static {
