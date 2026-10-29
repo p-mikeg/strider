@@ -431,6 +431,51 @@ fn int_const_label_contains_value_and_type() {
     assert!(dot.contains("i32"), "type must be in label:\n{dot}");
 }
 
+/// The pretty label is the hex value plus the declared type, at a width the
+/// `u128` carrier holds and at one past it alike.
+#[test]
+fn pretty_const_label_is_the_hex_value_and_the_type_at_every_width() {
+    fn render_one(value: impl Into<UBig>, ty: ValueType) -> String {
+        let mut f = test_function();
+        let entry = f
+            .graph_mut()
+            .create_node(NodeKind::Entry, [], [ValueKind::Control]);
+        let id = f.intern_int_const(value, ty);
+        let c = f
+            .graph_mut()
+            .create_node(NodeKind::IntConst(id), [], [ValueKind::Typed(ty)]);
+        let [c_value] = f.node_outputs_exact::<1>(c).unwrap();
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        f.graph_mut()
+            .create_node(NodeKind::Return, [entry_ctrl, c_value], []);
+        render(&f)
+    }
+
+    let narrow = render_one(0xdead_beef_u128, ValueType::int(32));
+    assert!(
+        narrow.contains("const 0xdeadbeef:i32"),
+        "narrow label:\n{narrow}"
+    );
+    // Over 64 bits, still within the `u128` carrier.
+    let i72 = render_one(UBig::from_words(&[0xdead_beef, 0xff]), ValueType::int(72));
+    assert!(
+        i72.contains("const 0xff00000000deadbeef:i72"),
+        "i72 label:\n{i72}"
+    );
+    // Bit 128 set: no `u128` carries it.
+    let wide = render_one(
+        UBig::from_words(&[0xdead_beef, 0, 1, 0]),
+        ValueType::int(256),
+    );
+    assert!(
+        wide.contains("const 0x1000000000000000000000000deadbeef:i256"),
+        "wide label:\n{wide}"
+    );
+    // Zero at a wide width: the hex trim must not render an empty value.
+    let zero = render_one(UBig::ZERO, ValueType::int(256));
+    assert!(zero.contains("const 0x0:i256"), "zero label:\n{zero}");
+}
+
 /// The branch virtuals must be wired even when a branch successor renders
 /// *before* the `If` itself.
 #[test]
