@@ -177,7 +177,7 @@ fn raw_dot_is_one_node_per_reachable_node_no_inlining() {
         zombie.as_u32()
     );
     assert!(
-        dot.contains("IntConst(#") && dot.contains("Bits(2748)"),
+        dot.contains("IntConst(#") && dot.contains("= 2748"),
         "the reachable constant is a standalone node, not inlined, got dot:\n{dot}"
     );
     assert!(
@@ -1343,52 +1343,32 @@ fn const_label_spells_the_value_not_the_storage() {
     use dashu_int::UBig;
 
     use super::raw::const_label;
-    let i256 = ValueType::int(256);
-    let cases: [(&str, UBig, Option<ValueType>, &str); 8] = [
-        ("zero", UBig::ZERO, None, "Bits(0)"),
-        ("zero_no_limbs", UBig::from_words(&[]), None, "Bits(0)"),
-        (
-            "zero_padded",
-            UBig::from_words(&[0, 0, 0, 0]),
-            Some(i256),
-            "Bits(0)",
-        ),
-        (
-            "five_padded",
-            UBig::from_words(&[5, 0, 0, 0]),
-            Some(i256),
-            "Bits(5)",
-        ),
-        (
-            "bit_64",
-            UBig::from_words(&[0, 1]),
-            Some(ValueType::int(128)),
-            "Bits(18446744073709551616)",
-        ),
+    let cases: [(&str, UBig, &str); 8] = [
+        ("zero", UBig::ZERO, "0"),
+        ("zero_no_limbs", UBig::from_words(&[]), "0"),
+        ("zero_padded", UBig::from_words(&[0, 0, 0, 0]), "0"),
+        ("five_padded", UBig::from_words(&[5, 0, 0, 0]), "5"),
+        ("bit_64", UBig::from_words(&[0, 1]), "18446744073709551616"),
         // The exact text the raw DOT label carries for a 96-bit mask.
         (
             "i96_all_ones",
             UBig::from_words(&[u64::MAX, u64::from(u32::MAX)]),
-            Some(ValueType::int(96)),
-            "Bits(79228162514264337593543950335)",
+            "79228162514264337593543950335",
         ),
         (
             "past_the_carrier",
             UBig::from_words(&[0, 0, 1, 0]),
-            Some(i256),
-            "Wide([0, 0, 1, 0])",
+            "340282366920938463463374607431768211456",
         ),
-        // `as_words` trims the two dead top limbs; the declared width is what
-        // says how many the value spans.
+        // `as_words` trims the two dead top limbs: a value, not a limb count.
         (
             "zero_top_limbs_are_padded_back",
             UBig::from_words(&[u64::MAX, u64::MAX, u64::MAX, 0, 0, 0]),
-            Some(ValueType::int(512)),
-            "Wide([18446744073709551615, 18446744073709551615, 18446744073709551615, 0, 0, 0, 0, 0])",
+            "6277101735386680763835789423207666416102355444464034512895",
         ),
     ];
-    for (label, value, ty, want) in cases {
-        assert_eq!(const_label(&value, ty), want, "{label}");
+    for (label, value, want) in cases {
+        assert_eq!(const_label(&value), want, "{label}");
     }
 }
 
@@ -1421,9 +1401,9 @@ fn interned_values_render_alike_whatever_route_reached_them() {
     ];
     let labels: Vec<String> = cases
         .iter()
-        .map(|&(id, bits)| const_label(f.const_value(id), Some(ValueType::int(bits))))
+        .map(|&(id, _bits)| const_label(f.const_value(id)))
         .collect();
-    assert_eq!(labels[0], "Bits(590295810362441580271)");
+    assert_eq!(labels[0], "590295810362441580271");
     assert!(
         labels.iter().all(|d| *d == labels[0]),
         "one value, one label: {labels:?}"
