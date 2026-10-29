@@ -3,8 +3,8 @@
 
 use crate::IRViewer;
 use crate::function::Function;
+use crate::node::signature::ExpectedValueKind;
 use crate::node::{NodeId, ValueId, ValueKind, ValueType};
-use crate::node_signature::ExpectedValueKind;
 use crate::schedule::ScheduleContext;
 use crate::walk::NodeIdSet;
 

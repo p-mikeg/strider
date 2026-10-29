@@ -1,5 +1,5 @@
 use super::*;
-use crate::node_signature::every_node_kind;
+use crate::node::signature::every_node_kind;
 use cranelift_entity::EntityRef;
 
 #[test]

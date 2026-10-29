@@ -515,7 +515,7 @@ fn every_node_kind_prints() {
         strider_target::Endianness::Big,
         Vec::new(),
     );
-    let mut kinds = crate::node_signature::every_node_kind();
+    let mut kinds = crate::node::signature::every_node_kind();
     kinds.push(NodeKind::Call {
         cc: Some(crate::node::CcId::new(3)),
     });
