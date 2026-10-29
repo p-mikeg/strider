@@ -14,7 +14,7 @@ use crate::error::Result;
 use crate::eval;
 use crate::node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeKind,
-    ValueId, ValueKind, ValueType, shifted_ones_limbs,
+    ValueId, ValueKind, ValueType,
 };
 
 pub trait IRBuilderExt: IRBuilder {
@@ -160,17 +160,16 @@ pub trait IRBuilderExt: IRBuilder {
     /// cleared and every other bit set: ANDing a container with it preserves
     /// exactly the bits the window does not cover.
     ///
-    /// Built limb-wise, so an `I256` / `I512` container (ymm, zmm, aarch64
-    /// SVE `z`) is representable where a `u128` mask would truncate.
+    /// The window is clipped by `ty`, not by its own arithmetic: whatever of
+    /// it lies above the width is simply not part of the value.
     fn build_window_preserve_mask(
         &mut self,
         window_bits: u64,
         shift: u64,
         ty: ValueType,
     ) -> Result<ValueId> {
-        let window = shifted_ones_limbs(window_bits, shift, ty.bit_width() as u64);
-        let preserve = crate::eval::complement(&UBig::from_words(&window), ty);
-        self.build_const_value(preserve, ty)
+        let window = eval::ones_at(window_bits as usize, shift as usize);
+        self.build_const_value(eval::complement(&window, ty), ty)
     }
 
     /// The all-ones `IntConst` of `ty`, at any integer width.

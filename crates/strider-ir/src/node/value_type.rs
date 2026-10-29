@@ -187,33 +187,6 @@ impl ValueType {
     }
 }
 
-/// Little-endian `u64` limbs of a `width_bits`-wide value whose bits
-/// `[shift, shift + set_bits)` are set.
-///
-/// Limb-wise so an `I256` / `I512` container mask (ymm / zmm, aarch64 SVE `z`)
-/// is representable; a `u128` mask truncates those silently.
-pub(crate) fn shifted_ones_limbs(set_bits: u64, shift: u64, width_bits: u64) -> Vec<u64> {
-    let limbs = width_bits.div_ceil(64) as usize;
-    let (lo, hi) = (shift, shift.saturating_add(set_bits).min(width_bits));
-    (0..limbs)
-        .map(|i| {
-            let base = i as u64 * 64;
-            let start = lo.saturating_sub(base).min(64);
-            let end = hi.saturating_sub(base).min(64);
-            if end > start {
-                let below_end = if end == 64 {
-                    u64::MAX
-                } else {
-                    (1u64 << end) - 1
-                };
-                below_end & !((1u64 << start) - 1)
-            } else {
-                0
-            }
-        })
-        .collect()
-}
-
 /// `I32` / `F64`: the spelling Python's `Node.value_type()` returns.
 impl std::fmt::Debug for ValueType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -270,20 +243,7 @@ impl VnTypeExt for rsleigh::Vn {
 
 #[cfg(test)]
 mod tests {
-    use dashu_int::UBig;
-
-    use super::{ValueType, shifted_ones_limbs};
-
-    /// The mask preserving every bit of `ty` the window does not cover.
-    fn preserve(set_bits: u64, shift: u64, ty: ValueType) -> UBig {
-        let window = shifted_ones_limbs(set_bits, shift, ty.bit_width() as u64);
-        crate::eval::complement(&UBig::from_words(&window), ty)
-    }
-
-    fn preserve_u128(set_bits: u64, shift: u64, ty: ValueType) -> u128 {
-        let v = preserve(set_bits, shift, ty);
-        u128::try_from(&v).unwrap_or_else(|_| panic!("past the carrier: {:?}", v.as_words()))
-    }
+    use super::ValueType;
 
     /// Every spelling and size fact agrees, type by type, and the list is
     /// exactly the widths the vendored sla specs carry.
@@ -546,152 +506,6 @@ mod tests {
         assert_eq!(
             ValueType::int(128).get_unsigned_int(u128::MAX),
             Some(u128::MAX)
-        );
-    }
-
-    fn as_u128(limbs: &[u64]) -> u128 {
-        assert!(limbs.len() <= 2, "as_u128 on a >128-bit mask");
-        limbs
-            .iter()
-            .enumerate()
-            .fold(0u128, |acc, (i, l)| acc | (u128::from(*l) << (i * 64)))
-    }
-
-    /// The positioned mask selects exactly the bits reg occupies.
-    #[test]
-    fn positioned_mask_isolates_reg_bits_inside_16byte_container() {
-        let q0 = shifted_ones_limbs(128, 0, 128);
-        assert_eq!(as_u128(&q0), u128::MAX, "container mask is all-ones");
-        assert_eq!(
-            as_u128(&shifted_ones_limbs(32, 0, 128)),
-            0xFFFF_FFFF,
-            "s0 occupies bits 0..32"
-        );
-        let d0 = shifted_ones_limbs(64, 0, 128);
-        assert_eq!(
-            as_u128(&d0),
-            0xFFFF_FFFF_FFFF_FFFF,
-            "d0 occupies bits 0..64"
-        );
-        // The AArch64 SIMD upper-half hot spot.
-        let upper8 = shifted_ones_limbs(64, 64, 128);
-        assert_eq!(
-            as_u128(&upper8),
-            0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
-            "the 8-byte sub at offset 8 occupies bits 64..128"
-        );
-        assert_eq!(as_u128(&d0) & as_u128(&upper8), 0, "disjoint");
-        assert_eq!(as_u128(&d0) | as_u128(&upper8), as_u128(&q0), "covering");
-    }
-
-    /// The preserve mask keeps exactly the bits that don't belong to reg.
-    #[test]
-    fn container_mask_for_upper_half_write_keeps_lower_half() {
-        assert_eq!(
-            preserve_u128(64, 64, ValueType::int(128)),
-            0x0000_0000_0000_0000_FFFF_FFFF_FFFF_FFFF,
-            "an upper-8 write preserves the lower 8 bytes of q0"
-        );
-    }
-
-    /// Same, for the shift-0 lower-half write.
-    #[test]
-    fn container_mask_for_lower_half_write_keeps_upper_half() {
-        assert_eq!(
-            preserve_u128(64, 0, ValueType::int(128)),
-            0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
-            "a d0 (lower 8) write preserves the upper 8 bytes of q0"
-        );
-    }
-
-    /// Pins the invariant that makes preserve-then-let-Sleigh-zero exact: the
-    /// scalar write's positioned mask and the zero-writes' positioned masks
-    /// are disjoint and together tile the container, so after all of them the
-    /// container is fully determined with no stale bits and no gaps.
-    ///
-    /// Over the container the lifter really builds masks for: the AArch64
-    /// register table puts `s0` in the 32-byte `z0` (`SIMD_SIZE = 32`), not a
-    /// 16-byte `V0`, so this exercises the multi-limb path.
-    #[test]
-    fn aarch64_scalar_fp_write_then_upper_zero_tiles_the_container() {
-        // `fmov s0,w0` lifts to `s0 = Copy(w0)` plus zero-writes tiling the
-        // rest of `z0`: observed as 4 bytes at offset 4, then 8 each at 8, 16
-        // and 24.
-        const Z0_BITS: u64 = 256;
-        let pieces = [
-            shifted_ones_limbs(32, 0, Z0_BITS),
-            shifted_ones_limbs(32, 32, Z0_BITS),
-            shifted_ones_limbs(64, 64, Z0_BITS),
-            shifted_ones_limbs(64, 128, Z0_BITS),
-            shifted_ones_limbs(64, 192, Z0_BITS),
-        ];
-        for (i, a) in pieces.iter().enumerate() {
-            for b in &pieces[i + 1..] {
-                assert!(
-                    a.iter().zip(b).all(|(x, y)| x & y == 0),
-                    "the scalar write and each zero-fill must be disjoint"
-                );
-            }
-        }
-        let union = pieces.iter().fold(vec![0u64; 4], |acc, m| {
-            acc.iter().zip(m).map(|(a, b)| a | b).collect()
-        });
-        assert_eq!(
-            union,
-            shifted_ones_limbs(Z0_BITS, 0, Z0_BITS),
-            "s0 and the zero-fills tile the full z0 container"
-        );
-    }
-
-    /// Exercises every shift count the LE formula produces.
-    #[test]
-    fn container_mask_byte_subregs_in_4byte_container() {
-        let cases: [(u64, u32); 4] = [
-            (0, 0xFFFF_FF00),
-            (8, 0xFFFF_00FF),
-            (16, 0xFF00_FFFF),
-            (24, 0x00FF_FFFF),
-        ];
-        for (shift, expected) in cases {
-            assert_eq!(
-                preserve_u128(8, shift, ValueType::int(32)),
-                u128::from(expected),
-                "byte-sub at shift {shift}: expected container_mask 0x{expected:08x}"
-            );
-        }
-    }
-
-    /// Every container width the sub-register path builds masks for.
-    #[test]
-    fn mask_covers_only_the_declared_width() {
-        for bytes in [1u64, 2, 4, 6, 8, 10, 12, 14, 16] {
-            let bits = bytes * 8;
-            let mask = as_u128(&shifted_ones_limbs(bits, 0, 128));
-            let want = if bits == 128 {
-                u128::MAX
-            } else {
-                (1u128 << bits) - 1
-            };
-            assert_eq!(mask, want, "{bytes}-byte mask is the low {bits} bits");
-        }
-    }
-
-    /// ymm / zmm / SVE `z`: the widths a `u128` mask could not hold.
-    #[test]
-    fn wide_container_masks_are_representable_as_limbs() {
-        assert_eq!(shifted_ones_limbs(64, 0, 256), vec![u64::MAX, 0, 0, 0]);
-        assert_eq!(
-            crate::eval::words(&preserve(64, 0, ValueType::int(256)), ValueType::int(256)),
-            vec![0, u64::MAX, u64::MAX, u64::MAX],
-        );
-        assert_eq!(
-            shifted_ones_limbs(256, 128, 512),
-            vec![0, 0, u64::MAX, u64::MAX, u64::MAX, u64::MAX, 0, 0],
-        );
-        assert_eq!(
-            preserve(512, 0, ValueType::int(512)),
-            UBig::ZERO,
-            "the full-width mask complements to zero"
         );
     }
 }
