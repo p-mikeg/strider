@@ -941,13 +941,13 @@ fn call_stack_arg_collect_uses_override_when_present() -> Result<()> {
         callee_saved_regs: vec![],
         ret_val_regs: vec![],
         ret_val_regs_float: vec![],
-        stack_vn: sp,
+        stack_ptr: sp,
         stack_args: Some(strider_target::StackArgs {
             base_offset: 0,
             increment: 4,
         }),
         ret_stack_pop: 0,
-        link_register_vn: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
         ..Default::default()

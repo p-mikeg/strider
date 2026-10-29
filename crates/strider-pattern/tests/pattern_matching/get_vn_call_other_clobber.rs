@@ -42,10 +42,10 @@ fn build_call_with_cc_override_records_empty_clobber_list() {
         callee_saved_regs: callee_saved,
         ret_val_regs: vec![],
         ret_val_regs_float: vec![],
-        stack_vn: rsp,
+        stack_ptr: rsp,
         stack_args: None,
         ret_stack_pop: 0,
-        link_register_vn: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
         ..Default::default()

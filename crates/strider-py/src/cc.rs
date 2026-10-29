@@ -192,15 +192,15 @@ impl PyCallingConvention {
             callee_saved_regs: callee_vns,
             ret_val_regs: ret_vns,
             ret_val_regs_float: ret_float_vns,
-            stack_vn: sp_vn,
+            stack_ptr: sp_vn,
             stack_args,
             ret_stack_pop,
-            link_register_vn: lr_vn,
+            link_register: lr_vn,
             preserves_memory,
             preserves_all_registers: false,
             // A custom convention makes no entry-register promise; only the
             // presets that carry an ABI guarantee do.
-            entry_address_vn: None,
+            entry_address: None,
             reg_args_adjoin_stack_args,
         };
         built.validate().map_err(crate::errors::into_strider_err)?;

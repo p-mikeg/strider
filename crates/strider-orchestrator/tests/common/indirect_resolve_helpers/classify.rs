@@ -702,9 +702,7 @@ pub(crate) fn build_bx_lr_scenario() -> (Function, strider_ir::node::ValueId, rs
     let cc = CallingConvention::aarch64_aapcs64()
         .build(strider.sleigh_regs())
         .expect("build cc");
-    let lr_vn = cc
-        .link_register_vn
-        .expect("AArch64 AAPCS has a link register");
+    let lr_vn = cc.link_register.expect("AArch64 AAPCS has a link register");
 
     let cfg = strider
         .build_cfg(

@@ -29,11 +29,11 @@ fn raw_builder(
         callee_saved_regs: callee_saved.to_vec(),
         ret_val_regs: ret_val.to_vec(),
         ret_val_regs_float: Vec::new(),
-        stack_vn: stack_vn
-            .unwrap_or_else(|| strider_target::BuiltCallingConvention::default().stack_vn),
+        stack_ptr: stack_vn
+            .unwrap_or_else(|| strider_target::BuiltCallingConvention::default().stack_ptr),
         stack_args: None,
         ret_stack_pop,
-        link_register_vn: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
         ..Default::default()
@@ -41,8 +41,8 @@ fn raw_builder(
     // Mirror the lifter and track the stack vn: `build_call` reads SP from the
     // variable table.
     let mut tracked = tracked;
-    if !tracked.contains(&cc.stack_vn) {
-        tracked.push(cc.stack_vn);
+    if !tracked.contains(&cc.stack_ptr) {
+        tracked.push(cc.stack_ptr);
     }
     FunctionBuilder::new(tracked, cc, endianness)
 }
@@ -507,13 +507,13 @@ fn build_call_cc_float_args_are_positional_slices() -> Result<()> {
         callee_saved_regs: vec![q0, r0, sp],
         ret_val_regs: vec![],
         ret_val_regs_float: vec![],
-        stack_vn: sp,
+        stack_ptr: sp,
         stack_args: None,
         ret_stack_pop: 0,
-        link_register_vn: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        entry_address_vn: None,
+        entry_address: None,
         reg_args_adjoin_stack_args: false,
     };
     let mut b = FunctionBuilder::new(vec![q0, r0, sp], cc, strider_target::Endianness::Little)?;
@@ -2319,7 +2319,7 @@ mod build_call_with_cc {
         let cc = BuiltCallingConvention {
             arg_passing_regs: vec![rdi, rsi],
             arg_passing_regs_float: vec![xmm0, xmm1],
-            stack_vn: rsp,
+            stack_ptr: rsp,
             ..Default::default()
         };
         let mut b = FunctionBuilder::new(
@@ -2373,7 +2373,7 @@ mod build_call_with_cc {
         };
         let cc = BuiltCallingConvention {
             arg_passing_regs_float: vec![xmm0, xmm0_lo, xmm1],
-            stack_vn: rsp,
+            stack_ptr: rsp,
             ..Default::default()
         };
         let mut b =
@@ -2412,7 +2412,7 @@ mod build_call_with_cc {
         let xmm0 = regs.name_to_vn("XMM0").unwrap();
         let xmm1 = regs.name_to_vn("XMM1").unwrap();
         let cc = BuiltCallingConvention {
-            stack_vn: rsp,
+            stack_ptr: rsp,
             ..Default::default()
         };
         let mut b =
@@ -2426,7 +2426,7 @@ mod build_call_with_cc {
         // XMM1 was never seeded, so ABI float position 1 has no SSA slot.
         let override_cc = BuiltCallingConvention {
             arg_passing_regs_float: vec![xmm0, xmm1, xmm0],
-            stack_vn: rsp,
+            stack_ptr: rsp,
             ..Default::default()
         };
         let call = b.build_call_cc(addr, Some(&override_cc)).unwrap();
@@ -2472,10 +2472,10 @@ mod build_call_with_cc {
             callee_saved_regs: callee_saved,
             ret_val_regs: vec![],
             ret_val_regs_float: vec![],
-            stack_vn: rsp,
+            stack_ptr: rsp,
             stack_args: None,
             ret_stack_pop: 0,
-            link_register_vn: None,
+            link_register: None,
             preserves_memory: false,
             preserves_all_registers: false,
             ..Default::default()
@@ -2860,10 +2860,10 @@ fn register_args_recorded_at_builder_entry() -> Result<()> {
         callee_saved_regs: vec![],
         ret_val_regs: vec![rdi],
         ret_val_regs_float: vec![],
-        stack_vn: sp,
+        stack_ptr: sp,
         stack_args: None,
         ret_stack_pop: 0,
-        link_register_vn: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
         ..Default::default()
@@ -2902,10 +2902,10 @@ fn register_arg_subregister_recorded_by_tracked_container() -> Result<()> {
         callee_saved_regs: vec![],
         ret_val_regs: vec![],
         ret_val_regs_float: vec![],
-        stack_vn: sp,
+        stack_ptr: sp,
         stack_args: None,
         ret_stack_pop: 0,
-        link_register_vn: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
         ..Default::default()
@@ -3041,7 +3041,7 @@ fn call_with_register_holding(
     let (rax, rbx) = (reg_vn(0x0, 8), reg_vn(0x18, 8));
     let cc = strider_target::BuiltCallingConvention {
         callee_saved_regs: vec![rbx],
-        stack_vn: sp,
+        stack_ptr: sp,
         ..Default::default()
     };
     let mut b = FunctionBuilder::new(vec![rax, rbx, sp], cc, strider_target::Endianness::Little)?;

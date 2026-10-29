@@ -1450,13 +1450,13 @@ mod heap_tests {
                 callee_saved_regs: Vec::new(),
                 ret_val_regs: vec![ret_reg()],
                 ret_val_regs_float: Vec::new(),
-                stack_vn: sp(),
+                stack_ptr: sp(),
                 stack_args: None,
                 ret_stack_pop: 0,
-                link_register_vn: None,
+                link_register: None,
                 preserves_memory,
                 preserves_all_registers: false,
-                entry_address_vn: None,
+                entry_address: None,
                 reg_args_adjoin_stack_args: false,
             };
             let mut b = FunctionBuilder::new(

@@ -182,7 +182,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     }
 
     /// [`Self::check_cc`] plus the one CROSS-convention rule: a per-address
-    /// override must name `stack_vn`, the stack pointer of the function it is
+    /// override must name `stack_ptr`, the stack pointer of the function it is
     /// used in. `strider_ir::FunctionBuilder::build_call` applies the post-call
     /// adjust to the FUNCTION's stack pointer while the clobber split
     /// ([`strider_target::BuiltCallingConvention::ret_and_clobber_vns`]) and
@@ -197,12 +197,12 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         stack_vn: rsleigh::Vn,
     ) -> Result<()> {
         self.check_cc(cc)?;
-        if cc.stack_vn != stack_vn {
+        if cc.stack_ptr != stack_vn {
             return Err(anyhow!(
                 "{:?}: per-address convention's stack pointer {:?} is not the \
                  lifted function's {stack_vn:?}",
                 self.arch().preset(),
-                cc.stack_vn,
+                cc.stack_ptr,
             ));
         }
         Ok(())
@@ -588,7 +588,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         Ok(region_map)
     }
 
-    /// Binds [`strider_target::BuiltCallingConvention::entry_address_vn`] to
+    /// Binds [`strider_target::BuiltCallingConvention::entry_address`] to
     /// the entry address, so the prologue that turns it into the TOC / GOT
     /// pointer folds to a constant.
     ///
@@ -597,7 +597,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// that never reads the register before writing it, the prologue that reads
     /// it being above the entry.
     fn bind_entry_address_register(&mut self) -> Result<()> {
-        let Some(vn) = self.builder.function().default_cc().entry_address_vn else {
+        let Some(vn) = self.builder.function().default_cc().entry_address else {
             return Ok(());
         };
         // Untracked means the function never names it, so nothing reads it.

@@ -615,7 +615,7 @@ fn random_control_flow_lifts_to_what_the_code_computes() {
             .expect("systemv");
         // RCX is the fourth SysV argument register.
         let (rdi, rcx) = (cc.arg_passing_regs[0], cc.arg_passing_regs[3]);
-        let (rax, rsp) = (cc.ret_val_regs[0], cc.stack_vn);
+        let (rax, rsp) = (cc.ret_val_regs[0], cc.stack_ptr);
         let cfg = lifter
             .build_cfg(base.into(), &strider_cfg::CfgOptions::default())
             .unwrap_or_else(|e| panic!("seed {g}: cfg: {e:#}\n{blocks:?}"));

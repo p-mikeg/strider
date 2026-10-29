@@ -516,7 +516,7 @@ fn check(
         seen.insert(format!("{preset}: {what}"));
     };
 
-    if regs.name_to_vn(&proto.stack_pointer) != Some(cc.stack_vn) {
+    if regs.name_to_vn(&proto.stack_pointer) != Some(cc.stack_ptr) {
         note(format!(
             "stack pointer {} in the cspec",
             proto.stack_pointer
@@ -540,7 +540,7 @@ fn check(
 
     let unaffected: Vec<(String, rsleigh::Vn)> = resolve(regs, pairing.cspec, &proto.unaffected)
         .into_iter()
-        .filter(|(_, vn)| *vn != cc.stack_vn)
+        .filter(|(_, vn)| *vn != cc.stack_ptr)
         .collect();
     let saved = named(regs, &cc.callee_saved_regs);
     let (theirs, ours) = (byte_set(&unaffected), byte_set(&saved));
