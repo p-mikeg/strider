@@ -40,7 +40,7 @@ def test_function_has_no_id_keyed_readers():
     a = _analyze_add()
     assert not hasattr(a, "node_kind")
     assert not hasattr(a, "asm_fingerprint")
-    assert not hasattr(a, "wide_const_bytes")
+    assert not hasattr(a, "uint")
     assert not hasattr(a, "call_other_name")
 
 

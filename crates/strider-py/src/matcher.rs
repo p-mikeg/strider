@@ -340,7 +340,7 @@ match_getters! {
     #[doc = "The capture's value as an unsigned `int`; raises if unbound or not an integer node."]
     "uint" uint,
     #[doc = "The unsigned value, or `None`."]
-    "uint_opt" uint_opt : u128 = uint;
+    "uint_opt" uint_opt : Py<PyAny> = uint;
 
     #[doc = "The signed value, sign-interpreted at the node's width; raises if unbound or not an integer node."]
     "sint" int_,
@@ -376,9 +376,14 @@ impl PyBoundCapture {
         CaptureKey::Capture(self.cap.bind(py).clone())
     }
 
-    /// The match's `uint_opt` for this capture.
+    /// The match's `uint_opt` for this capture, within the `u128` the value
+    /// comparison carries. `None` past it, as for a non-constant binding.
     fn unsigned(&self, py: Python<'_>) -> PyResult<Option<u128>> {
-        self.match_.borrow(py).uint_opt(py, self.key(py))
+        Ok(self
+            .match_
+            .borrow(py)
+            .uint_opt(py, self.key(py))?
+            .and_then(|v| v.extract::<u128>(py).ok()))
     }
 
     /// The match's `sint_opt` for this capture.
@@ -412,10 +417,10 @@ impl PyBoundCapture {
         self.match_.borrow(py).has(py, self.key(py))
     }
 
-    fn __int__(&self, py: Python<'_>) -> PyResult<u128> {
+    fn __int__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.match_.borrow(py).uint(py, self.key(py))
     }
-    fn __index__(&self, py: Python<'_>) -> PyResult<u128> {
+    fn __index__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.__int__(py)
     }
     /// Equal to an int matching the captured constant at its width, in either
