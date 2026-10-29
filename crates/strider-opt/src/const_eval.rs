@@ -69,71 +69,63 @@ fn operands_carry(
         .then_some(())
 }
 
-/// `ty` when a `u128` spans it. The resolver hands constants over as `u128`
-/// and this returns one, so a wider type cannot be evaluated here even though
-/// [`eval`] itself is total.
-fn in_carrier(ty: ValueType) -> Option<ValueType> {
-    ty.int_mask_u128().map(|_| ty)
-}
-
-/// `v` back in the carrier.
-fn carrier(v: UBig) -> Option<u128> {
-    u128::try_from(&v).ok()
-}
-
 /// The constant value of `value`, given `resolve` for its inputs' constants.
 /// `None` for anything not foldable to one integer constant. Does NOT handle
 /// `Phi` or any stack-relative address.
 pub(crate) fn eval_node_const(
     function: &Function,
     value: ValueId,
-    resolve: &dyn Fn(ValueId) -> Option<u128>,
+    resolve: &dyn Fn(ValueId) -> Option<UBig>,
     rom: Option<&dyn ReadOnlyMemory>,
-) -> Option<u128> {
+) -> Option<UBig> {
     let node = function.producer(value);
     let kind = *function.node_kind(node);
     let out_ty = function.value_type_opt(value);
     let ins = function.node_inputs(node);
     match kind {
-        NodeKind::IntConst(_) => function.int_const_u128(value),
+        NodeKind::IntConst(_) => function.int_const(value).cloned(),
         NodeKind::IntBinaryOp(op) => {
-            let ty = in_carrier(out_ty?)?;
+            let ty = out_ty?;
             let (l, r) = (ins.get(0).copied()?, ins.get(1).copied()?);
             operands_carry(function, &kind, &[l, r], ty)?;
-            let (l, r) = (UBig::from(resolve(l)?), UBig::from(resolve(r)?));
-            eval::int_binary(op, &l, &r, ty).and_then(carrier)
+            eval::int_binary(op, &resolve(l)?, &resolve(r)?, ty)
         }
         NodeKind::IntUnaryOp(op) => {
-            let ty = in_carrier(out_ty?)?;
+            let ty = out_ty?;
             let v = ins.get(0).copied()?;
             // Checked like the binary arm: `IntUnaryOp` pins its operand to
             // the output width, and `validate` rejects a node that does not,
             // but this folds mid-pipeline where nothing has validated yet.
             operands_carry(function, &kind, &[v], ty)?;
-            eval::int_unary(op, &UBig::from(resolve(v)?), ty).and_then(carrier)
+            eval::int_unary(op, &resolve(v)?, ty)
         }
         NodeKind::Truncate | NodeKind::Extend(ExtendOp::ZeroExtend) => {
-            out_ty?.get_unsigned_int(resolve(ins.get(0).copied()?)?)
+            // `eval::mask` answers 0 for a float, so the refusal is explicit.
+            let ty = out_ty.filter(|t| t.is_integer())?;
+            Some(eval::mask(&resolve(ins.get(0).copied()?)?, ty))
         }
         NodeKind::Extend(ExtendOp::SignExtend) => {
-            let in_ty = in_carrier(function.value_type_opt(ins.get(0).copied()?)?)?;
-            let out_ty = in_carrier(out_ty?)?;
-            eval::sign_extend(&UBig::from(resolve(ins[0])?), in_ty, out_ty).and_then(carrier)
+            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
+            eval::sign_extend(&resolve(ins[0])?, in_ty, out_ty?)
         }
         NodeKind::Popcount => {
-            let in_ty = in_carrier(function.value_type_opt(ins.get(0).copied()?)?)?;
-            eval::popcount(&UBig::from(resolve(ins[0])?), in_ty).and_then(carrier)
+            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
+            eval::popcount(&resolve(ins[0])?, in_ty)
         }
         NodeKind::Lzcount => {
-            let in_ty = in_carrier(function.value_type_opt(ins.get(0).copied()?)?)?;
-            eval::lzcount(&UBig::from(resolve(ins[0])?), in_ty).and_then(carrier)
+            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
+            eval::lzcount(&resolve(ins[0])?, in_ty)
         }
         NodeKind::IntCmpOp(op) => {
             let (l, r) = (ins.get(0).copied()?, ins.get(1).copied()?);
-            let in_ty = in_carrier(function.value_type_opt(l)?)?;
+            let in_ty = function.value_type_opt(l)?;
             operands_carry(function, &kind, &[l, r], in_ty)?;
-            let (l, r) = (UBig::from(resolve(l)?), UBig::from(resolve(r)?));
-            Some(u128::from(eval::int_cmp(op, &l, &r, in_ty)?))
+            Some(UBig::from(u8::from(eval::int_cmp(
+                op,
+                &resolve(l)?,
+                &resolve(r)?,
+                in_ty,
+            )?)))
         }
         // Only a RAM load reads the image.  A register / unique / const-space
         // load names a different address space.  A nested load reaches here
@@ -142,8 +134,8 @@ pub(crate) fn eval_node_const(
         // recurses into another node.
         NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => {
             let rom = rom?;
-            let addr = u64::try_from(resolve(function.load_addr(node))?).ok()?;
-            read_rom_const(rom, addr, out_ty?, function.endianness())
+            let addr = u64::try_from(&resolve(function.load_addr(node))?).ok()?;
+            read_rom_const(rom, addr, out_ty?, function.endianness()).map(UBig::from)
         }
         _ => None,
     }
@@ -169,15 +161,56 @@ pub(crate) fn const_addend(function: &Function, add: NodeId) -> Option<(ValueId,
 #[cfg(test)]
 mod tests {
     use super::eval_node_const;
+    use strider_ir::UBig;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IRViewer};
 
     #[test]
     fn folds_add_of_two_constants() {
         let (function, sum) = build_add_5_100();
-        let resolve = |v| function.int_const_u128(v);
+        let resolve = |v| function.int_const(v).cloned();
         let got = eval_node_const(&function, sum, &resolve, None);
-        assert_eq!(got, Some(105));
+        assert_eq!(got, Some(UBig::from(105u8)));
+    }
+
+    /// `(2^256 - 1) + 2` at I256 is 1: the fold masks at the declared width,
+    /// not at a 128-bit carrier, where the same sum would be 1 for the wrong
+    /// reason and the operands would not even be readable.
+    #[test]
+    fn folds_an_i256_add_that_wraps_at_256_bits() {
+        use strider_ir::IntBinaryOp;
+        use strider_ir_test_utils::make_empty_fn;
+        let ty = ValueType::int(256);
+        let mut built = None;
+        let function = make_empty_fn(|b| {
+            let near_max = b.build_int_const((UBig::ONE << 256usize) - UBig::from(3u8), ty)?;
+            let two = b.build_int_const(2u8, ty)?;
+            let sum = b.build_int_binary_operation(near_max, two, IntBinaryOp::Add, ty)?;
+            let wrapped = b.build_int_binary_operation(sum, two, IntBinaryOp::Add, ty)?;
+            built = Some((sum, wrapped));
+            Ok(wrapped)
+        })
+        .expect("make_empty_fn");
+        let (sum, wrapped) = built.expect("built");
+        let resolve = |v| function.int_const(v).cloned();
+        assert_eq!(
+            eval_node_const(&function, sum, &resolve, None),
+            Some((UBig::ONE << 256usize) - UBig::ONE),
+            "no wrap yet"
+        );
+        // `resolve` only reads constants, so feed the inner sum back by hand.
+        let outer = |v| {
+            if v == sum {
+                Some((UBig::ONE << 256usize) - UBig::ONE)
+            } else {
+                function.int_const(v).cloned()
+            }
+        };
+        assert_eq!(
+            eval_node_const(&function, wrapped, &outer, None),
+            Some(UBig::ONE),
+            "(2^256 - 1) + 2 wraps to 1 at I256"
+        );
     }
 
     /// The ROM answers for RAM. A register-space load names a different address
@@ -198,11 +231,11 @@ mod tests {
         .expect("make_empty_fn");
         let (ram, reg) = loads.expect("loads set");
         let rom = MockRom::fixed_table(&[(0x2000, 0xDEAD)]);
-        let resolve = |v| function.int_const_u128(v);
+        let resolve = |v| function.int_const(v).cloned();
 
         assert_eq!(
             eval_node_const(&function, ram, &resolve, Some(&rom)),
-            Some(0xDEAD),
+            Some(UBig::from(0xDEADu16)),
             "a RAM load still folds"
         );
         assert_eq!(
