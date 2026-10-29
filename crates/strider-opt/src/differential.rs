@@ -11,6 +11,11 @@
 //! `CallOther`, `Switch` or float node, so `LoadForward`, the memory and
 //! SP-alias analyses and every float fold are outside what this checks.
 //!
+//! The DAG generator draws every width of [`TYPES`], `I256` and `I512`
+//! included, so folding past the `u128` carrier is checked here. The CFG
+//! generator stays at `I8` / `I32`, because the index-range oracles below
+//! read its runtime values in the carrier.
+//!
 //! Four environment variables scale a run past the committed default:
 //! `FUZZ_N` seeds, `FUZZ_START` the first of them, `FUZZ_STEPS` nodes per DAG,
 //! and `FUZZ_PASS` runs `cf` / `kb` / `flag` alone instead of the whole
@@ -35,6 +40,8 @@ pub(crate) const TYPES: &[(u32, ValueType)] = &[
     (8, ValueType::int(64)),
     (9, ValueType::int(72)),
     (16, ValueType::int(128)),
+    (32, ValueType::int(256)),
+    (64, ValueType::int(512)),
 ];
 
 /// The `u128` carrier mask, for the index-range oracles below, whose values
@@ -42,6 +49,14 @@ pub(crate) const TYPES: &[(u32, ValueType)] = &[
 fn mask(ty: ValueType) -> u128 {
     ty.int_mask_u128()
         .expect("an index-range oracle draws integers of at most 128 bits")
+}
+
+/// A random value spanning every limb of `ty`.
+fn wide_random(rng: &mut Rng, ty: ValueType) -> UBig {
+    let words: Vec<u64> = (0..ty.bit_width().div_ceil(64))
+        .map(|_| rng.next_u64())
+        .collect();
+    UBig::from_words(&words)
 }
 
 /// `a - b` in `ty`'s two's-complement ring.
@@ -87,7 +102,7 @@ impl Gen<'_> {
             10 => m - UBig::from(self.rng.u128() % 4),
             11 => UBig::ONE << self.rng.below(w),
             12 => eval::complement(&((UBig::ONE << self.rng.below(8)) - UBig::ONE), ty),
-            _ => UBig::from(self.rng.u128()),
+            _ => wide_random(self.rng, ty),
         };
         eval::mask(&c, ty)
     }
@@ -704,7 +719,7 @@ fn input_value(rng: &mut Rng, ty: ValueType) -> UBig {
         4 => UBig::from(rng.u128() % 8),
         5 => m - UBig::from(rng.u128() % 8),
         6 => UBig::ONE << rng.below(w),
-        _ => UBig::from(rng.u128()),
+        _ => wide_random(rng, ty),
     };
     eval::mask(&v, ty)
 }
@@ -832,6 +847,44 @@ fn the_pipeline_preserves_dag_semantics() {
     assert!(
         compared >= n as usize * 450,
         "only {compared} value comparisons over {n} seeds"
+    );
+}
+
+/// The DAG fuzzer is blind to wide arithmetic unless the generator emits it,
+/// and a green run proves nothing about a width no seed reaches.
+#[test]
+fn the_dag_generator_emits_wide_values() {
+    let (mut seeds, mut wide_rets, mut rets, mut wide_ops) = (0usize, 0usize, 0usize, 0usize);
+    for seed in 0..DEFAULT_FUZZ_SEEDS {
+        let (f, _) = build_random_fn(seed, 25);
+        let wide = |v: ValueId| {
+            f.value_type_opt(v)
+                .is_some_and(|t| t.is_integer() && t.bit_width() > 128)
+        };
+        let here = return_values(&f).into_iter().filter(|&v| wide(v)).count();
+        rets += return_values(&f).len();
+        wide_rets += here;
+        seeds += usize::from(here > 0);
+        wide_ops += strider_ir::IRWalker::walk(&f)
+            .filter(|&n| {
+                matches!(
+                    f.node_kind(n),
+                    NodeKind::IntBinaryOp(_) | NodeKind::IntCmpOp(_) | NodeKind::IntUnaryOp(_)
+                ) && f.node_inputs(n).into_iter().any(wide)
+            })
+            .count();
+    }
+    eprintln!("seeds {seeds} wide_rets {wide_rets} of {rets} wide_ops {wide_ops}");
+    // Measured at the committed seed count: 185 of 300 seeds, 866 of 6598
+    // returned values and 1737 wide operations. The floors sit near half of
+    // that, and the ceiling keeps the narrow paths a majority.
+    assert!(
+        seeds * 2 >= DEFAULT_FUZZ_SEEDS as usize && wide_ops >= 800,
+        "seeds {seeds} wide_rets {wide_rets} wide_ops {wide_ops}"
+    );
+    assert!(
+        wide_rets * 2 <= rets,
+        "wide values crowded out the narrow ones"
     );
 }
 
