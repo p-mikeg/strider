@@ -1,5 +1,5 @@
 use strider_ir::node::{NodeKind, ValueKind, ValueType as T};
-use strider_ir::{ConstId, EditFunction, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
+use strider_ir::{EditFunction, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntConstId};
 use strider_ir_test_utils::make_empty_fn;
 
 use strider_ir::Function;
@@ -221,7 +221,7 @@ fn template_wires_multi_output_interior_memory_node() {
     let mem0 = b.memory_output(mem0_node, 0);
 
     // FnIntConst interns real values into the target function at instantiation.
-    // A raw `IntConst` leaf is refused: its ConstId is another function's.
+    // A raw `IntConst` leaf is refused: its IntConstId is another function's.
     let addr = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
         Ok(0x100u128)
     })));
@@ -386,12 +386,12 @@ fn instantiate_duplicate_raw_template_slot_errors() {
     );
 }
 
-/// A `ConstId` indexes one function's interner, so an `IntConst` carried in
+/// A `IntConstId` indexes one function's interner, so an `IntConst` carried in
 /// from a `NodeKind` names whatever that id is in the rewritten function.
 #[test]
 fn a_raw_int_const_leaf_is_refused() {
     let mut b = TemplateBuilder::new();
-    let _ = b.leaf(NodeKind::IntConst(ConstId::from_u32(5)));
+    let _ = b.leaf(NodeKind::IntConst(IntConstId::from_u32(5)));
     let tpl = b.finish();
 
     let mut fx = make_empty_fn(|bld| bld.build_int_const(0u64, T::int(64))).unwrap();
@@ -401,7 +401,7 @@ fn a_raw_int_const_leaf_is_refused() {
     let err = instantiate(&tpl, &mut ef, &bindings, lhs_root, &[lhs_root], T::int(64))
         .expect_err("a raw IntConst leaf must be refused")
         .to_string();
-    assert!(err.contains("ConstId"), "{err}");
+    assert!(err.contains("IntConstId"), "{err}");
 }
 
 /// A template that references a capture the LHS never bound must fail
@@ -763,7 +763,7 @@ fn a_raw_node_off_its_signature_is_refused() {
     }
 }
 
-/// A `Fn` closure's `IntConst` is refused as an `Exact` one is: its `ConstId`
+/// A `Fn` closure's `IntConst` is refused as an `Exact` one is: its `IntConstId`
 /// was interned at another width, or by another function.
 #[test]
 fn a_fn_leaf_returning_an_int_const_is_refused() {

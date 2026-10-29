@@ -1,4 +1,3 @@
-pub(crate) mod const_value;
 mod kind;
 mod ops;
 mod value_kind;
@@ -9,7 +8,7 @@ mod width_relation;
 mod tests;
 
 pub use crate::node_signature::{Conversion, ExpectedValueKind, OperandWidth};
-pub use kind::{CcId, FunctionArgSource, InitialVnId, NodeKind, SwitchTableId};
+pub use kind::{CcId, FunctionArgSource, InitialVnId, IntConstId, NodeKind, SwitchTableId};
 pub use ops::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };

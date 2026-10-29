@@ -284,7 +284,7 @@ impl Function {
         let new_entry = remap.node_old_to_new(entry);
         self.side_tables.remap(&remap);
         self.memos.get_mut().remap(&remap);
-        // The dedup cache keys on `NodeKind`, which carries the `ConstId`, so
+        // The dedup cache keys on `NodeKind`, which carries the `IntConstId`, so
         // the id rewrite MUST precede the cache rebuild.
         self.side_tables.gc_payload_tables(&mut self.graph);
         self.graph.rebuild_cache();
