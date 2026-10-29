@@ -17,7 +17,7 @@
 use crate::common::{Arch, driver_for_reader};
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, FunctionBound, MachineInsnAddr};
-use strider_ir::Function;
+use strider_ir::{Function, UBig, ValueType, eval};
 use strider_ir_test_utils::interp::{self, EntryVar, Env, Outcome, Slot};
 
 const BASE: u64 = 0x1000;
@@ -65,9 +65,9 @@ fn lift(arch: Arch, words: &[u32]) -> ([Function; 2], rsleigh::Vn) {
 fn returned(f: &Function, r3: rsleigh::Vn, x: u32) -> u32 {
     let entry = |e: EntryVar| {
         if e.vn.addr_space == r3.addr_space && e.vn.addr_off == r3.addr_off {
-            u128::from(x)
+            UBig::from(x)
         } else {
-            0x5a5a_5a5a
+            UBig::from(0x5a5a_5a5au32)
         }
     };
     let env = Env {
@@ -79,7 +79,7 @@ fn returned(f: &Function, r3: rsleigh::Vn, x: u32) -> u32 {
     };
     match interp::run(f, &env) {
         Ok(Outcome::Return { values, .. }) => match values.first() {
-            Some(Slot::Known(v)) => u32::try_from(*v & 0xffff_ffff).unwrap(),
+            Some(Slot::Known(v)) => u32::try_from(&eval::mask(v, ValueType::int(32))).unwrap(),
             other => panic!("return slot {other:?}"),
         },
         other => panic!("run: {other:?}"),

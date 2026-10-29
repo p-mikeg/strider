@@ -18,6 +18,8 @@ strider-target = { workspace = true }
 # `EntityRef::index` for `assert_live_matches_reachable`; `interp`'s value
 # maps.
 cranelift-entity.workspace = true
+# `interp`'s integer carrier, at the declared width.
+dashu-int.workspace = true
 rsleigh.workspace = true
 # `graph_oracle`, re-exported from the `test-util` feature.
 graph-algorithms = { workspace = true, features = ["test-util"] }
