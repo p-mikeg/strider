@@ -529,7 +529,7 @@ pub(super) fn check_consts(
     let NodeKind::IntConst(id) = *kind else {
         return;
     };
-    let Some(value) = function.const_interner.get(id) else {
+    let Some(value) = function.side_tables().const_interner.get(id) else {
         errs.push(ValidationError::DanglingConstId { node, id });
         return;
     };

@@ -431,7 +431,7 @@ fn render_payload(
         }
         NodeKind::IntConst(id) => {
             // The interner probe first: `int_const_u128` panics on a dangling id.
-            let _ = match f.const_interner.get(id) {
+            let _ = match f.side_tables().const_interner.get(id) {
                 None => write!(out, "[?]"),
                 Some(stored) => match f
                     .node_outputs(node)

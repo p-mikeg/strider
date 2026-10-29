@@ -83,7 +83,7 @@ impl FunctionDotDumper<'_> {
             NodeKind::IntConst(id) => {
                 let out_ty = self.out_type(node);
                 // A dangling id (malformed graph) labels rather than panics.
-                match self.function.const_interner.get(*id) {
+                match self.function.side_tables().const_interner.get(*id) {
                     None => format!("const <dangling const {id:?}>"),
                     Some(_) if out_ty.is_some_and(|t| t.is_wide_int()) => {
                         // Stored little-endian; render high->low.

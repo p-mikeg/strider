@@ -1113,7 +1113,8 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
     let mut s = spine();
     // A 4-limb wide value under an I64 output: bits set above the width.
     let id =
-        s.f.const_interner
+        s.f.side_tables_mut()
+            .const_interner
             .intern(ConstValue::Wide(vec![0, 0, 0, 1].into_boxed_slice()));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
@@ -1135,7 +1136,10 @@ fn graph_invariants_const_bits_above_declared_width_detected() {
     use crate::node::const_value::ConstValue;
     let mut s = spine();
     // An unmasked `Bits` value overflowing its declared I8 width.
-    let id = s.f.const_interner.intern(ConstValue::Bits(0x1FF));
+    let id =
+        s.f.side_tables_mut()
+            .const_interner
+            .intern(ConstValue::Bits(0x1FF));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
@@ -1158,7 +1162,8 @@ fn graph_invariants_wide_const_filling_a_partial_top_limb_is_accepted() {
     use crate::node::const_value::ConstValue;
     let mut s = spine();
     let id =
-        s.f.const_interner
+        s.f.side_tables_mut()
+            .const_interner
             .intern(ConstValue::Wide(vec![0, 0xFF].into_boxed_slice()));
     let ok = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
@@ -1183,7 +1188,8 @@ fn graph_invariants_wide_const_one_bit_over_a_partial_width_detected() {
     use crate::node::const_value::ConstValue;
     let mut s = spine();
     let id =
-        s.f.const_interner
+        s.f.side_tables_mut()
+            .const_interner
             .intern(ConstValue::Wide(vec![0, 0x1FF].into_boxed_slice()));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),

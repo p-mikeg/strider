@@ -28,8 +28,8 @@ pub fn cc_ret_and_clobber_vns(
 ///
 /// The overlay is grouped by kind, so where a field lives says what it is:
 /// the facts the function rests on, settled once and touched by no operation,
-/// then the payload tables a node's own id indexes into, and the id-keyed
-/// tables plus graph-derived memos of [`SideTables`].
+/// then every id-keyed payload table plus the graph-derived memos, both in
+/// [`SideTables`].
 #[derive(Clone)]
 pub struct Function {
     graph: Graph,
@@ -56,25 +56,6 @@ pub struct Function {
     call_register_frame_reach: Option<i128>,
 
     side_tables: SideTables,
-
-    // The payload tables a `NodeKind`'s own id indexes into, collected by
-    // `gc_payload_tables` at compaction, plus the varnodes `InitialVnId`
-    // indexes, whose ids compaction leaves alone.
-    /// Every integer-constant value referenced by an `IntConst(id)` node,
-    /// deduped by value.
-    pub(crate) const_interner: entity_utils::EntityInterner<
-        crate::node::const_value::ConstId,
-        crate::node::const_value::ConstValue,
-    >,
-    /// Case addresses of each `Switch(id)`, one per control output.
-    switch_tables: cranelift_entity::PrimaryMap<SwitchTableId, Vec<u64>>,
-    /// Override conventions referenced by `Call { cc: Some(id) }`, deduped by
-    /// value.
-    call_ccs: entity_utils::EntityInterner<CcId, strider_target::BuiltCallingConvention>,
-    /// Sleigh user-op name by `CallOther` `user_op_id`.
-    call_other_names: FxHashMap<u64, String>,
-    /// Every tracked varnode, value-deduped, in `(space, offset, size)` order.
-    vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 }
 
 impl Function {
@@ -111,12 +92,7 @@ impl Function {
             // A function claims nothing until `assume` adds some.
             assumptions: crate::AssumptionOptions::none(),
             call_register_frame_reach: None,
-            side_tables: SideTables::new(),
-            const_interner: entity_utils::EntityInterner::default(),
-            switch_tables: cranelift_entity::PrimaryMap::new(),
-            call_ccs: entity_utils::EntityInterner::default(),
-            call_other_names: FxHashMap::default(),
-            vn_interner,
+            side_tables: SideTables::new(vn_interner),
         }
     }
 
@@ -211,6 +187,7 @@ impl Function {
         let masked = ty.wrap_u128(value);
         match u64::try_from(masked) {
             Ok(v) => self
+                .side_tables
                 .const_interner
                 .intern(crate::node::const_value::ConstValue::Bits(v)),
             // Past the carrier the limb path holds the canonical spelling.
@@ -247,7 +224,7 @@ impl Function {
         } else {
             crate::node::const_value::ConstValue::Wide(trimmed.into_boxed_slice())
         };
-        self.const_interner.intern(cv)
+        self.side_tables.const_interner.intern(cv)
     }
 
     /// Panics on an OUT-OF-RANGE id. An id minted by another function's
@@ -257,7 +234,7 @@ impl Function {
         &self,
         id: crate::node::const_value::ConstId,
     ) -> &crate::node::const_value::ConstValue {
-        &self.const_interner[id]
+        &self.side_tables.const_interner[id]
     }
 
     #[inline]
@@ -285,27 +262,27 @@ impl Function {
 
     /// The tracked varnodes in `InitialVnId` order.
     pub fn all_vns(&self) -> &[rsleigh::Vn] {
-        self.vn_interner.values_as_slice()
+        self.side_tables.vn_interner.values_as_slice()
     }
 
     /// Panics on an out-of-range id.
     pub fn initial_vn(&self, id: crate::node::InitialVnId) -> rsleigh::Vn {
-        self.vn_interner[id]
+        self.side_tables.vn_interner[id]
     }
 
     /// Non-panicking [`Self::initial_vn`].
     pub(crate) fn initial_vn_opt(&self, id: crate::node::InitialVnId) -> Option<rsleigh::Vn> {
-        self.vn_interner.get(id).copied()
+        self.side_tables.vn_interner.get(id).copied()
     }
 
     /// `None` when `vn` is not tracked.
     pub fn vn_id_of(&self, vn: &rsleigh::Vn) -> Option<crate::node::InitialVnId> {
-        self.vn_interner.key_of(vn)
+        self.side_tables.vn_interner.key_of(vn)
     }
 
     /// In allocation order.
     pub(crate) fn vn_ids(&self) -> impl Iterator<Item = crate::node::InitialVnId> + '_ {
-        self.vn_interner.keys()
+        self.side_tables.vn_interner.keys()
     }
 
     /// Integer then float, in ABI order, at each register's declared width with
@@ -354,7 +331,7 @@ impl Function {
     #[inline]
     pub fn get_cc(&self, node_id: NodeId) -> &strider_target::BuiltCallingConvention {
         match *self.node_kind(node_id) {
-            NodeKind::Call { cc: Some(id) } => &self.call_ccs[id],
+            NodeKind::Call { cc: Some(id) } => &self.side_tables.call_ccs[id],
             _ => &self.default_cc,
         }
     }
@@ -362,7 +339,7 @@ impl Function {
     /// `None` for an id this function never minted.
     #[inline]
     pub fn cc(&self, id: CcId) -> Option<&strider_target::BuiltCallingConvention> {
-        self.call_ccs.get(id)
+        self.side_tables.call_ccs.get(id)
     }
 
     /// Replaces any prior override on `call`.
@@ -371,7 +348,7 @@ impl Function {
     ///
     /// If `call` is not a `Call`.
     pub fn set_call_cc(&mut self, call: NodeId, cc: strider_target::BuiltCallingConvention) {
-        let id = self.call_ccs.intern(cc);
+        let id = self.side_tables.call_ccs.intern(cc);
         match self.graph.node_kind_mut(call) {
             NodeKind::Call { cc } => *cc = Some(id),
             other => panic!("set_call_cc on {call:?}, a {other:?}"),
@@ -391,12 +368,12 @@ impl Function {
     /// `None` for an id this function never minted.
     #[inline]
     pub(crate) fn switch_table(&self, id: SwitchTableId) -> Option<&[u64]> {
-        self.switch_tables.get(id).map(Vec::as_slice)
+        self.side_tables.switch_tables.get(id).map(Vec::as_slice)
     }
 
     /// A fresh table for a `Switch` about to be created.
     pub fn add_switch_table(&mut self, targets: Vec<u64>) -> SwitchTableId {
-        self.switch_tables.push(targets)
+        self.side_tables.switch_tables.push(targets)
     }
 
     /// The name of a `CallOther`'s user-op, Sleigh's or `read_volatile`;
@@ -404,16 +381,20 @@ impl Function {
     #[inline]
     pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
         match *self.node_kind(node_id) {
-            NodeKind::CallOther { user_op_id } => {
-                self.call_other_names.get(&user_op_id).map(String::as_str)
-            }
+            NodeKind::CallOther { user_op_id } => self
+                .side_tables
+                .call_other_names
+                .get(&user_op_id)
+                .map(String::as_str),
             _ => None,
         }
     }
 
     /// Names every `CallOther { user_op_id }`, present and future.
     pub fn set_call_other_name(&mut self, user_op_id: u64, name: impl Into<String>) {
-        self.call_other_names.insert(user_op_id, name.into());
+        self.side_tables
+            .call_other_names
+            .insert(user_op_id, name.into());
     }
 
     /// The `(base, byte offset)` of a Store/Load's address.  `None` when `node`
@@ -535,7 +516,7 @@ impl Function {
         Ok(remap)
     }
 
-    /// Rebuilds [`Self::const_interner`], the switch tables and the call
+    /// Rebuilds the constant interner, the switch tables and the call
     /// conventions over only the entries surviving nodes reference, rewriting
     /// each node's id in place.
     ///
@@ -559,26 +540,27 @@ impl Function {
             match self.graph.node_kind_mut(node) {
                 NodeKind::IntConst(id) => {
                     let old = *id;
-                    *id = *const_ids
-                        .entry(old)
-                        .or_insert_with(|| consts.intern(self.const_interner[old].clone()));
+                    *id = *const_ids.entry(old).or_insert_with(|| {
+                        consts.intern(self.side_tables.const_interner[old].clone())
+                    });
                 }
                 NodeKind::Switch(id) => {
                     let old = *id;
-                    *id = *table_ids[old]
-                        .get_or_insert_with(|| tables.push(self.switch_tables[old].clone()));
+                    *id = *table_ids[old].get_or_insert_with(|| {
+                        tables.push(self.side_tables.switch_tables[old].clone())
+                    });
                 }
                 NodeKind::Call { cc: Some(id) } => {
                     let old = *id;
-                    *id =
-                        *cc_ids[old].get_or_insert_with(|| ccs.intern(self.call_ccs[old].clone()));
+                    *id = *cc_ids[old]
+                        .get_or_insert_with(|| ccs.intern(self.side_tables.call_ccs[old].clone()));
                 }
                 _ => {}
             }
         }
-        self.const_interner = consts;
-        self.switch_tables = tables;
-        self.call_ccs = ccs;
+        self.side_tables.const_interner = consts;
+        self.side_tables.switch_tables = tables;
+        self.side_tables.call_ccs = ccs;
     }
 
     /// The pretty renderer, naming registers and spaces through `names`.
@@ -826,11 +808,6 @@ mod compact_tests {
             assumptions,
             call_register_frame_reach,
             side_tables: _,
-            const_interner: _,
-            switch_tables: _,
-            call_ccs: _,
-            call_other_names: _,
-            vn_interner: _,
         } = &f;
         assert_eq!(*default_cc, before.default_cc);
         assert_eq!(*byte_order, before.byte_order);
@@ -1317,6 +1294,55 @@ mod compact_tests {
         assert_eq!(surviving.len(), 1);
         let node = f.graph().producer(surviving[0]);
         assert!(matches!(f.node_kind(node), NodeKind::InitialVar(_)));
+    }
+
+    /// Compaction drops a dead call convention and renumbers the live one in
+    /// place, exactly as it does for the constants and the switch tables.
+    #[test]
+    fn compact_gcs_unreferenced_call_cc() {
+        use crate::node::CcId;
+
+        let arch = strider_target::SleighArch::x86_64();
+        let regs = arch.probe_regs();
+        let live = strider_target::CallingConvention::x86_64_systemv()
+            .build(&regs)
+            .unwrap();
+
+        let mut f = test_function();
+        let entry = f.entry();
+        let mem = test_initial_memory(&f);
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        let call = f.graph_mut().create_node(
+            NodeKind::Call { cc: None },
+            [entry_ctrl, mem_value],
+            [ValueKind::Control, ValueKind::Memory],
+        );
+        // Interned first, then replaced, so id 0 is referenced by nothing.
+        f.set_call_cc(call, strider_target::BuiltCallingConvention::default());
+        f.set_call_cc(call, live.clone());
+        assert_eq!(
+            *f.node_kind(call),
+            NodeKind::Call {
+                cc: Some(CcId::from_u32(1))
+            }
+        );
+        let [call_ctrl, call_mem] = f.node_outputs_exact::<2>(call).unwrap();
+        f.graph_mut()
+            .create_node(NodeKind::Return, [call_ctrl, call_mem], []);
+
+        let remap = f.compact().expect("compact must succeed");
+        let new_call = remap.node_old_to_new(call).expect("the Call survives");
+
+        assert_eq!(
+            *f.node_kind(new_call),
+            NodeKind::Call {
+                cc: Some(CcId::from_u32(0))
+            },
+            "the live convention must renumber into the dead one's slot"
+        );
+        assert_eq!(f.get_cc(new_call).stack_args, live.stack_args);
+        assert_eq!(f.cc(CcId::from_u32(1)), None, "the dead one must be gone");
     }
 
     #[test]
