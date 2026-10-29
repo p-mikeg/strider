@@ -16,7 +16,7 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let v_stack = t.load_ram(addr_stack, ValueType::int(64));
     let v_heap = t.load_ram(addr_heap, ValueType::int(64));
     let sum = t.add(v_stack, v_heap);
-    let mut function = t.ret_val(sum);
+    let function = t.ret_val(sum);
 
     let loads: Vec<NodeId> = function
         .walk()
@@ -43,12 +43,8 @@ fn two_loads_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let stack_base = function.node_inputs(stack_node)[1];
     let heap_base = function.node_inputs(heap_node)[1];
     // The slot is value-keyed on the address; `stack_offset(node)` derives from it.
-    function
-        .side_tables_mut()
-        .set_stack_slot(stack_base, stack_base, 0x10);
-    function
-        .side_tables_mut()
-        .set_heap_slot(heap_base, heap_base, 0);
+    function.set_stack_slot(stack_base, stack_base, 0x10);
+    function.set_heap_slot(heap_base, heap_base, 0);
     (function, stack_node, heap_node)
 }
 
@@ -62,7 +58,7 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     t.store_ram(addr_stack, data);
     t.store_ram(addr_heap, data);
     let v = t.load_ram(addr_stack, ValueType::int(64));
-    let mut function = t.ret_val(v);
+    let function = t.ret_val(v);
 
     let stores: Vec<NodeId> = function
         .walk()
@@ -88,12 +84,8 @@ fn two_stores_one_stack() -> (strider_ir::Function, NodeId, NodeId) {
     let stack_base = function.node_inputs(stack_store)[1];
     let heap_base = function.node_inputs(heap_store)[1];
     // The slot is value-keyed on the address; `stack_offset(node)` derives from it.
-    function
-        .side_tables_mut()
-        .set_stack_slot(stack_base, stack_base, 0x10);
-    function
-        .side_tables_mut()
-        .set_heap_slot(heap_base, heap_base, 0);
+    function.set_stack_slot(stack_base, stack_base, 0x10);
+    function.set_heap_slot(heap_base, heap_base, 0);
     (function, stack_store, heap_store)
 }
 
@@ -109,7 +101,7 @@ fn loads_stack_heap_plain() -> (strider_ir::Function, NodeId, NodeId, NodeId) {
     let v2 = t.load_ram(a_plain, ValueType::int(64));
     let s0 = t.add(v0, v1);
     let sum = t.add(s0, v2);
-    let mut function = t.ret_val(sum);
+    let function = t.ret_val(sum);
 
     let by_addr = |want: u128| -> NodeId {
         function
@@ -121,12 +113,8 @@ fn loads_stack_heap_plain() -> (strider_ir::Function, NodeId, NodeId, NodeId) {
     let (stack_load, heap_load, plain_load) = (by_addr(0x1000), by_addr(0x2000), by_addr(0x3000));
     let stack_base = function.node_inputs(stack_load)[1];
     let heap_base = function.node_inputs(heap_load)[1];
-    function
-        .side_tables_mut()
-        .set_stack_slot(stack_base, stack_base, 0x10);
-    function
-        .side_tables_mut()
-        .set_heap_slot(heap_base, heap_base, 0x20);
+    function.set_stack_slot(stack_base, stack_base, 0x10);
+    function.set_heap_slot(heap_base, heap_base, 0x20);
     (function, stack_load, heap_load, plain_load)
 }
 

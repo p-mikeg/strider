@@ -192,10 +192,10 @@ mod decompose_tests {
             )
         ));
         if let Some(MemExpr { base, offset, .. }) = r1 {
-            fg.side_tables_mut().set_stack_slot(addr, base, offset);
+            fg.set_stack_slot(addr, base, offset);
         }
         assert_eq!(
-            fg.side_tables().memory_slot_resolved(addr).map(|(_, o)| o),
+            fg.memory_slot_resolved(addr).map(|(_, o)| o),
             Some(-4),
             "committed slot must round-trip"
         );
@@ -727,7 +727,7 @@ mod cfg_tests {
         // Stand in for the run's closing stamp: record `[sp+8]` even though the raw
         // address folded to an opaque shape.
         let store_addr = f.store_addr(store);
-        f.side_tables_mut().set_stack_slot(store_addr, entry_sp, 8);
+        f.set_stack_slot(store_addr, entry_sp, 8);
 
         assert_eq!(
             verdict(&cfg, &f, load, store),
@@ -841,10 +841,7 @@ mod heap_tests {
 
         assert!(decompose(&fg, addr).is_none());
         assert!(
-            matches!(
-                fg.side_tables().memory_class(addr),
-                strider_ir::MemDecomp::NotMemory
-            ),
+            matches!(fg.memory_class(addr), strider_ir::MemDecomp::NotMemory),
             "the negative verdict must reach the memo"
         );
         let hits = strider_pattern::Matcher::new(&fg)
@@ -3891,7 +3888,7 @@ mod refresh_tests {
     /// Every live `Load` / `Store` address, with its memory class.
     fn classes(fg: &Function) -> Vec<MemDecomp> {
         fg.walk_kind(|k| matches!(k, NodeKind::Load(_) | NodeKind::Store(_)))
-            .map(|n| fg.side_tables().memory_class(fg.node_inputs(n)[1]))
+            .map(|n| fg.memory_class(fg.node_inputs(n)[1]))
             .collect()
     }
 
@@ -3901,7 +3898,7 @@ mod refresh_tests {
             .walk_kind(|k| matches!(k, NodeKind::Store(_)))
             .find(|&n| fg.int_const_u128(fg.store_data(n)) == Some(1))
             .expect("the heap store");
-        fg.side_tables().memory_class(fg.store_addr(store))
+        fg.memory_class(fg.store_addr(store))
     }
 
     /// No live access is left unclassified after a run or after a rewrite.
@@ -4072,7 +4069,7 @@ mod stale_window_is_conservative {
         let mut edit = crate::EditFunction::new(&mut fg);
         assert!(edit.replace_value(reload, zero), "the reload forwards");
         edit.clean();
-        fg.side_tables().invalidate_analyses();
+        fg.invalidate_analyses();
         let after = window_answers(&fg, &options, &probes);
 
         assert_ne!(

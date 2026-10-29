@@ -46,7 +46,7 @@ impl RegionFilter {
         let Some(addr) = function.access_address(node) else {
             return matches!(self, RegionFilter::Any);
         };
-        let (class, slot) = function.side_tables().memory_decomp(addr);
+        let (class, slot) = function.memory_decomp(addr);
         match self {
             RegionFilter::Any => true,
             RegionFilter::Heap => matches!(class, MemDecomp::Heap(_)),

@@ -667,8 +667,7 @@ fn store_keeps_addr_edge_and_labels_base_sp_offset() {
 
     let edge_count_no_offset = edge_lines(&dot_no_offset).len();
 
-    f.side_tables_mut()
-        .set_stack_slot(addr_value, addr_value, 0x10_i128);
+    f.set_stack_slot(addr_value, addr_value, 0x10_i128);
 
     let dot_with_offset = render(&f);
 
@@ -721,8 +720,7 @@ fn load_keeps_addr_edge_and_labels_base_sp_offset() {
     let dot_no_offset = render(&f);
     let edges_no_offset = edge_lines(&dot_no_offset).len();
 
-    f.side_tables_mut()
-        .set_stack_slot(addr_value, addr_value, -8_i128);
+    f.set_stack_slot(addr_value, addr_value, -8_i128);
     let dot_with_offset = render(&f);
 
     assert!(

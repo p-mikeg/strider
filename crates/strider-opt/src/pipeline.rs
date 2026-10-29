@@ -127,13 +127,13 @@ pub fn run_one_unvalidated(
 ) -> crate::Result<OptimizationResult> {
     // As `run` starts: a memo an edit since the last run can have outdated is
     // dropped.
-    function.side_tables().invalidate_analyses();
+    function.invalidate_analyses();
     let mut edit = crate::EditFunction::new(function);
     edit.cull_dead();
     let result = apply_checked(pass, &mut edit, octx)?;
     edit.clean();
     if result.changed() {
-        edit.function().side_tables().invalidate_analyses();
+        edit.function().invalidate_analyses();
     }
     Ok(result)
 }
@@ -185,9 +185,9 @@ fn apply_post(
     pass.apply(edit, ctx)?;
     edit.clean();
     if edit.edits() == edits {
-        edit.function().side_tables().clear_frame_escape();
+        edit.function().clear_frame_escape();
     } else {
-        edit.function().side_tables().invalidate_analyses();
+        edit.function().invalidate_analyses();
     }
     Ok(())
 }
@@ -337,7 +337,7 @@ impl OptimizerPipeline {
         const MAX_ITERS: u32 = 1024;
         // A memo left by an earlier run or an edit since is dropped: a rewrite
         // can move the address it names.
-        function.side_tables().invalidate_analyses();
+        function.invalidate_analyses();
         // Scoped so the borrow of `function` ends before validation.
         let converged = {
             let mut edit = crate::EditFunction::new(function);
@@ -387,7 +387,7 @@ impl OptimizerPipeline {
                     // Drain so the next pass sees a culled graph, and drop the
                     // memos a rewrite can invalidate.
                     edit.clean();
-                    edit.function().side_tables().invalidate_analyses();
+                    edit.function().invalidate_analyses();
                 }
             }
             if !changed {
@@ -579,16 +579,14 @@ mod tests {
 
         let mut function = one_const_fn(5);
         let returned = crate::test_support::return_value(function.graph())?;
-        function
-            .side_tables()
-            .set_stack_slot(returned, returned, 16);
+        function.set_stack_slot(returned, returned, 16);
         assert!(
-            function.side_tables().memory_decomp(returned).1.is_some(),
+            function.memory_decomp(returned).1.is_some(),
             "the memo is installed"
         );
         crate::pipeline::run_one(&NoOp, &mut function, &OptCtx::new(None))?;
         assert!(
-            function.side_tables().memory_decomp(returned).1.is_none(),
+            function.memory_decomp(returned).1.is_none(),
             "run_one must drop a memo an earlier edit left"
         );
         Ok(())
@@ -599,12 +597,10 @@ mod tests {
     fn run_resets_the_memory_analysis() -> crate::Result<()> {
         let mut function = one_const_fn(5);
         let returned = crate::test_support::return_value(function.graph())?;
-        function
-            .side_tables()
-            .set_stack_slot(returned, returned, 16);
+        function.set_stack_slot(returned, returned, 16);
         super::OptimizerPipeline::new().run(&mut function, &OptCtx::new(None))?;
         assert!(
-            function.side_tables().memory_decomp(returned).1.is_none(),
+            function.memory_decomp(returned).1.is_none(),
             "run must drop a memo an earlier edit left"
         );
         Ok(())
@@ -650,7 +646,7 @@ mod tests {
                 _ctx: &OptCtx<'_>,
             ) -> crate::Result<super::OptimizationResult> {
                 let old = crate::test_support::return_value(edit.function().graph())?;
-                edit.function().side_tables().set_stack_slot(old, old, 16);
+                edit.function().set_stack_slot(old, old, 16);
                 let value = edit.build_int_const(9u64, ValueType::int(64))?;
                 edit.absorb_fingerprint(value, old);
                 edit.replace_value(old, value);
@@ -661,7 +657,7 @@ mod tests {
         let mut function = one_const_fn(5);
         let returned = crate::test_support::return_value(function.graph())?;
         crate::pipeline::run_one(&StampsThenRewrites, &mut function, &OptCtx::new(None))?;
-        assert!(function.side_tables().memory_decomp(returned).1.is_none());
+        assert!(function.memory_decomp(returned).1.is_none());
         Ok(())
     }
 
@@ -682,11 +678,9 @@ mod tests {
 
         let mut function = one_const_fn(5);
         let returned = crate::test_support::return_value(function.graph())?;
-        function
-            .side_tables()
-            .set_stack_slot(returned, returned, 16);
+        function.set_stack_slot(returned, returned, 16);
         super::run_post(&NoOpPost, &mut function, &OptCtx::new(None))?;
-        assert!(function.side_tables().memory_decomp(returned).1.is_some());
+        assert!(function.memory_decomp(returned).1.is_some());
         Ok(())
     }
 
@@ -714,13 +708,13 @@ mod tests {
         }
 
         let mut function = folding_fn();
-        function.side_tables().set_frame_escape(true);
+        function.set_frame_escape(true);
         super::run_post(
             &RewiresThroughFunctionMut,
             &mut function,
             &OptCtx::new(None),
         )?;
-        assert_eq!(function.side_tables().frame_escape(), None);
+        assert_eq!(function.frame_escape(), None);
         Ok(())
     }
 

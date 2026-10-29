@@ -23,21 +23,18 @@ use super::{MemExpr, MemKind};
 /// grows.  The memo is also the verdict `strider-pattern`'s region filters
 /// read.
 pub(crate) fn decompose(function: &Function, value: ValueId) -> Option<MemExpr> {
-    match function.side_tables().memory_class(value) {
+    match function.memory_class(value) {
         MemDecomp::Stack(_) | MemDecomp::Heap(_) => return resolve_slot(function, value),
         MemDecomp::NotMemory => return None,
         MemDecomp::Unknown => {}
     }
     let result = spine_walk(function, value);
     match result {
-        Some(e) => {
-            let st = function.side_tables();
-            match e.kind {
-                MemKind::Stack => st.set_stack_slot(value, e.base, e.offset),
-                MemKind::Heap | MemKind::HeapOpaque => st.set_heap_slot(value, e.base, e.offset),
-            }
-        }
-        None => function.side_tables().set_not_memory(value),
+        Some(e) => match e.kind {
+            MemKind::Stack => function.set_stack_slot(value, e.base, e.offset),
+            MemKind::Heap | MemKind::HeapOpaque => function.set_heap_slot(value, e.base, e.offset),
+        },
+        None => function.set_not_memory(value),
     }
     result
 }
@@ -80,7 +77,6 @@ fn spine_walk(function: &Function, value: ValueId) -> Option<MemExpr> {
 
 /// Commits `root`'s verdict for every node of its trail.
 fn commit_trail(function: &Function, trail: &[(ValueId, i128)], root: Option<MemExpr>) {
-    let st = function.side_tables();
     match root {
         Some(root) => {
             for &(v, acc) in trail {
@@ -90,9 +86,9 @@ fn commit_trail(function: &Function, trail: &[(ValueId, i128)], root: Option<Mem
                 };
                 let offset = wrap_to_addr_width(function, v, offset);
                 match root.kind {
-                    MemKind::Stack => st.set_stack_slot(v, root.base, offset),
+                    MemKind::Stack => function.set_stack_slot(v, root.base, offset),
                     MemKind::Heap | MemKind::HeapOpaque => {
-                        st.set_heap_slot(v, root.base, offset);
+                        function.set_heap_slot(v, root.base, offset);
                     }
                 }
             }
@@ -102,7 +98,7 @@ fn commit_trail(function: &Function, trail: &[(ValueId, i128)], root: Option<Mem
         // can fit where the whole one does not.
         None => {
             for &(v, _) in trail {
-                st.set_not_memory(v);
+                function.set_not_memory(v);
             }
         }
     }
@@ -172,9 +168,9 @@ fn phi_names_an_allocation(function: &Function, root: ValueId) -> bool {
     propagate(&mut allocated, &holders);
     for (i, &v) in nodes.iter().enumerate() {
         if allocated[i] && !opaque[i] {
-            function.side_tables().set_heap_slot(v, v, 0);
+            function.set_heap_slot(v, v, 0);
         } else {
-            function.side_tables().set_not_memory(v);
+            function.set_not_memory(v);
         }
     }
     allocated[0] && !opaque[0]
@@ -224,7 +220,7 @@ fn spine_walk_trailed(
             trail.push((cur, acc));
         }
         // A committed verdict short-circuits the walk.
-        match function.side_tables().memory_class(cur) {
+        match function.memory_class(cur) {
             MemDecomp::Stack(_) | MemDecomp::Heap(_) => {
                 let Some(hit) = resolve_slot(function, cur) else {
                     trail.clear();
@@ -363,7 +359,7 @@ fn call_returns_allocation(function: &Function, call: NodeId) -> bool {
 /// the set of allocations its arms hold, which is what
 /// [`phi_names_an_allocation`] commits.
 fn resolve_slot(function: &Function, value: ValueId) -> Option<MemExpr> {
-    let (class, slot) = function.side_tables().memory_decomp(value);
+    let (class, slot) = function.memory_decomp(value);
     let (base, offset) = slot?;
     let kind = match class {
         MemDecomp::Stack(_) => MemKind::Stack,

@@ -78,11 +78,11 @@ fn is_frame_addr(function: &Function, v: ValueId) -> bool {
 /// Cached [`frame_address_escapes`]. The verdict is a pure function of the
 /// current graph; the optimizer clears the memo after every mutating pass.
 pub(crate) fn frame_address_escapes_cached(function: &Function) -> bool {
-    if let Some(escapes) = function.side_tables().frame_escape() {
+    if let Some(escapes) = function.frame_escape() {
         return escapes;
     }
     let escapes = frame_address_escapes(function);
-    function.side_tables().set_frame_escape(escapes);
+    function.set_frame_escape(escapes);
     escapes
 }
 
@@ -344,19 +344,19 @@ mod tests {
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
 
-        assert_eq!(fg.side_tables().frame_escape(), None, "cold");
+        assert_eq!(fg.frame_escape(), None, "cold");
         assert!(!super::frame_address_escapes_cached(&fg));
-        assert_eq!(fg.side_tables().frame_escape(), Some(false), "warmed");
+        assert_eq!(fg.frame_escape(), Some(false), "warmed");
 
         // Poisoning proves the cached bit is consulted, not recomputed.
-        fg.side_tables().set_frame_escape(true);
+        fg.set_frame_escape(true);
         assert!(
             super::frame_address_escapes_cached(&fg),
             "returns the cached bit"
         );
 
         // Clearing forces a fresh, correct recompute.
-        fg.side_tables().clear_frame_escape();
+        fg.clear_frame_escape();
         assert!(!super::frame_address_escapes_cached(&fg));
         Ok(())
     }
