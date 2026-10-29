@@ -141,6 +141,38 @@ fn bit_not_rejects_a_saturated_mask_past_the_carrier() {
     a::none(&function, int_not(anything()).into_pattern());
 }
 
+/// A true I256 all-ones IS the complement's mask, and `int_const_all_ones`
+/// is what names it: no `u128` literal reaches that value.
+#[test]
+fn bit_not_matches_a_true_all_ones_past_the_carrier() {
+    use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, UBig};
+    let ty = ValueType::int(256);
+    let function = strider_ir_test_utils::make_empty_fn(|b| {
+        let v = b.build_int_const(5u64, ty)?;
+        let ones = b.build_int_const((UBig::ONE << 256usize) - UBig::ONE, ty)?;
+        let nv = b.build_int_binary_operation(v, ones, IntBinaryOp::Xor, ty)?;
+        b.truncate_if_needed(nv, ValueType::int(64))
+    })
+    .expect("build graph");
+    a::matches(&function, int_not(anything()).into_pattern(), 1);
+}
+
+/// A constant whose value is past `u128` is still a constant: the leaf
+/// reads it at its declared width, so `any_int_const` finds it.
+#[test]
+fn any_int_const_matches_a_value_past_the_carrier() {
+    use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, UBig};
+    let ty = ValueType::int(256);
+    let function = strider_ir_test_utils::make_empty_fn(|b| {
+        let v = b.build_int_const(UBig::from_words(&[1, 2, 3, 4]), ty)?;
+        b.truncate_if_needed(v, ValueType::int(64))
+    })
+    .expect("build graph");
+    a::matches(&function, any_int_const().into_pattern(), 1);
+}
+
 /// `float_unary(op, x)` is the op-valued form of `float_neg` and friends.
 #[test]
 fn float_unary_matches_the_op_it_names() {

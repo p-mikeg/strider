@@ -1,3 +1,4 @@
+use strider_ir::UBig;
 use strider_ir::node::{NodeKind, ValueKind, ValueType as T};
 use strider_ir::{EditFunction, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntConstId};
 use strider_ir_test_utils::make_empty_fn;
@@ -223,10 +224,12 @@ fn template_wires_multi_output_interior_memory_node() {
     // FnIntConst interns real values into the target function at instantiation.
     // A raw `IntConst` leaf is refused: its IntConstId is another function's.
     let addr = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
-        Ok(0x100u128)
+        Ok(UBig::from(0x100u32))
     })));
     b.set_value_ty(addr, T::int(64));
-    let data = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| Ok(42u128))));
+    let data = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(UBig::from(42u8))
+    })));
     b.set_value_ty(data, T::int(64));
 
     // Store inputs are [mem, addr, data]; its lone output is the memory token.
@@ -345,8 +348,12 @@ fn int_const_any_width_negative_i128_template_rhs() {
 /// the resulting error's message.
 fn instantiate_add_with_rhs_slot_err(r_slot: usize) -> String {
     let mut b = TemplateBuilder::new();
-    let l = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| Ok(5))));
-    let r = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| Ok(7))));
+    let l = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(UBig::from(5u8))
+    })));
+    let r = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(UBig::from(7u8))
+    })));
     let add_node = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
     b.input(add_node, 0, l);
     b.input(add_node, r_slot, r);
@@ -442,22 +449,23 @@ fn const_with_closure_captures_are_reported_as_referenced() {
         "a capture vertex is reported"
     );
 
-    let closure_rhs = strider_pattern::int_const_with!([k: uint] => k + 1).into_template();
+    let closure_rhs = strider_pattern::int_const_with!([k: uint] => k + UBig::ONE).into_template();
     assert_eq!(
         closure_rhs.referenced_captures().collect::<Vec<_>>(),
         vec![k],
         "a capture read only inside the closure is reported too"
     );
 
-    let bool_rhs = strider_pattern::bool_const_with!([k: uint] => k == 0).into_template();
+    let bool_rhs = strider_pattern::bool_const_with!([k: uint] => k == UBig::ZERO).into_template();
     assert_eq!(bool_rhs.referenced_captures().collect::<Vec<_>>(), vec![k]);
 
-    let float_rhs = strider_pattern::float_const_with!([k: uint] => k as u64).into_template();
+    let float_rhs = strider_pattern::float_const_with!([k: uint] => u64::try_from(&k).unwrap_or(0))
+        .into_template();
     assert_eq!(float_rhs.referenced_captures().collect::<Vec<_>>(), vec![k]);
 
     // The graph-derived idents are not captures.
     let derived =
-        strider_pattern::int_const_with!([ty] => u128::from(ty.bit_width() as u64)).into_template();
+        strider_pattern::int_const_with!([ty] => UBig::from(ty.bit_width())).into_template();
     assert_eq!(derived.referenced_captures().count(), 0);
 }
 
@@ -660,7 +668,7 @@ fn store_then_load(
     let mem_node = b.node(NodeKind::InitialMemory);
     let mem = b.memory_output(mem_node, 0);
     let addr = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
-        Ok(0x100u128)
+        Ok(UBig::from(0x100u32))
     })));
     b.set_value_ty(addr, T::int(64));
     let store = b.node(NodeKind::Store(space));

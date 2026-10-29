@@ -338,7 +338,9 @@ fn an_untyped_output_no_node_consumes_is_refused() {
     let lhs = crate::int_add(var(x), crate::int_const(1u128)).into_pattern();
     let mut b = super::TemplateBuilder::new();
     let l = b.capture(x);
-    let r = b.dynamic_leaf(super::TemplateKind::FnIntConst(Box::new(|_| Ok(2))));
+    let r = b.dynamic_leaf(super::TemplateKind::FnIntConst(Box::new(|_| {
+        Ok(strider_ir::UBig::from(2u8))
+    })));
     let add = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
     b.input(add, 0, l);
     b.input(add, 1, r);

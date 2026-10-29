@@ -1,3 +1,4 @@
+use strider_ir::UBig;
 use strider_ir::node::ValueType;
 use strider_pattern::*;
 
@@ -31,7 +32,7 @@ fn var_binds_to_matched_output() {
 
     let v = Capture::new();
     let m = a::first(&function, int_const(42u128).capture(v).into_pattern());
-    assert_eq!(m.bindings().get_uint(v, &function), Some(42));
+    assert_eq!(m.bindings().get_uint(v, &function), Some(UBig::from(42u8)));
 }
 
 #[test]
@@ -142,7 +143,7 @@ fn any_int_matches_a_non_constant_node() {
     let function = t.ret_val(loaded);
 
     let c = Capture::new();
-    let read: Vec<Option<u128>> = Matcher::new(&function)
+    let read: Vec<Option<UBig>> = Matcher::new(&function)
         .find_all(&any_int().capture(c).into_pattern())
         .unwrap()
         .iter()
@@ -213,7 +214,10 @@ fn int_const_capture_binds_the_matched_value() {
     let function = Tb::empty().ret_const(123);
     let iv = Capture::new();
     let m = a::unique(&function, int_const(iv).into_pattern());
-    assert_eq!(m.bindings().get_uint(iv, &function), Some(123));
+    assert_eq!(
+        m.bindings().get_uint(iv, &function),
+        Some(UBig::from(123u8))
+    );
 }
 #[test]
 fn float_const_capture_binds_the_matched_bits() {

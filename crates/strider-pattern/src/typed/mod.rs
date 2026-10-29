@@ -10,10 +10,10 @@ pub mod wildcards;
 
 pub use alternation::{AltSlot, BoxedAlt, OneOf, boxed_alt};
 pub use consts::{
-    AnyBoolConst, AnyFloatConst, AnyIntConst, BoolConstArg, FloatConstArg, IntConstAnyWidth,
-    IntConstAnyWidthArg, IntConstArg, any_bool_const, any_float_const, any_int_const, bool_const,
-    bool_const_with_fn, capture_typed, float_const, float_const_with_fn, int_const,
-    int_const_any_width, int_const_with_fn,
+    AnyBoolConst, AnyFloatConst, AnyIntConst, BoolConstArg, FloatConstArg, IntConstAllOnes,
+    IntConstAnyWidth, IntConstAnyWidthArg, IntConstArg, any_bool_const, any_float_const,
+    any_int_const, bool_const, bool_const_with_fn, capture_typed, float_const, float_const_with_fn,
+    int_const, int_const_all_ones, int_const_any_width, int_const_with_fn,
 };
 pub use value_ops::{
     any_bool_binary, any_float_binary, any_float_cmp, any_float_unary, any_int_binary, any_int_cmp,

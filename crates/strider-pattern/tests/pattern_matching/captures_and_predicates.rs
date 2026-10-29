@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use strider_ir::IRViewer;
+use strider_ir::UBig;
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a, shapes};
@@ -20,7 +21,7 @@ fn var_used_three_times_enforces_all() {
             int_add(int_add(var(x), var(x)), var(x)).into_pattern(),
             x
         ),
-        Some(7),
+        Some(UBig::from(7u8)),
     );
 }
 #[test]
@@ -125,7 +126,7 @@ fn get_int_const_returns_value() {
             int_add(var(x), int_const(3u128)).into_pattern(),
             x
         ),
-        Some(5)
+        Some(UBig::from(5u8))
     );
 }
 

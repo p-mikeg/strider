@@ -1,3 +1,4 @@
+use strider_ir::UBig;
 use strider_ir::node::ValueType;
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -346,10 +347,22 @@ fn variant_any_composes_with_value_capture() {
             "the op-variant capture composes with the value captures either way",
         );
     }
-    assert_eq!(hits[0].bindings().get_uint(lv, &function), Some(100));
-    assert_eq!(hits[0].bindings().get_uint(rv, &function), Some(50));
-    assert_eq!(hits[1].bindings().get_uint(lv, &function), Some(50));
-    assert_eq!(hits[1].bindings().get_uint(rv, &function), Some(100));
+    assert_eq!(
+        hits[0].bindings().get_uint(lv, &function),
+        Some(UBig::from(100u8))
+    );
+    assert_eq!(
+        hits[0].bindings().get_uint(rv, &function),
+        Some(UBig::from(50u8))
+    );
+    assert_eq!(
+        hits[1].bindings().get_uint(lv, &function),
+        Some(UBig::from(50u8))
+    );
+    assert_eq!(
+        hits[1].bindings().get_uint(rv, &function),
+        Some(UBig::from(100u8))
+    );
 }
 
 #[test]

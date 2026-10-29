@@ -1,3 +1,4 @@
+use strider_ir::UBig;
 use strider_ir::node::NodeKind;
 use strider_ir::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
 use strider_pattern::matcher::{KindSpec, MatcherBuilder, PatValueRef};
@@ -97,12 +98,16 @@ fn commutative_capture_reports_both_operand_bindings() {
         int_add(anything().capture(k), anything()).into_pattern(),
         2,
     );
-    let mut bound: Vec<Option<u128>> = hits
+    let mut bound: Vec<Option<UBig>> = hits
         .iter()
         .map(|m| m.bindings().get_uint(k, &function))
         .collect();
     // Enumeration order is pinned: natural ordering first, then swapped.
-    assert_eq!(bound, vec![Some(5), Some(3)], "both operands must bind");
+    assert_eq!(
+        bound,
+        vec![Some(UBig::from(5u8)), Some(UBig::from(3u8))],
+        "both operands must bind"
+    );
     bound.sort_unstable();
     bound.dedup();
     assert_eq!(bound.len(), 2, "the two bindings must be DISTINCT");
@@ -119,7 +124,10 @@ fn commutative_capture_identical_operands_dedups_to_one() {
         int_add(anything().capture(k), anything()).into_pattern(),
         1,
     );
-    assert_eq!(hits[0].bindings().get_uint(k, &function), Some(5));
+    assert_eq!(
+        hits[0].bindings().get_uint(k, &function),
+        Some(UBig::from(5u8))
+    );
 }
 
 /// Arrangements MULTIPLY across nested commutative nodes: `int_add(int_add(w,x),
@@ -150,14 +158,14 @@ fn nested_commutative_arrangements_multiply() {
     let hits = a::matches(&function, pat, 8);
 
     // 8 hits must mean 8 different binding maps, not one map reported 8 times.
-    let mut seen: Vec<(u128, u128, u128, u128)> = hits
+    let mut seen: Vec<(UBig, UBig, UBig, UBig)> = hits
         .iter()
         .map(|m| {
             let g = |c| m.bindings().get_uint(c, &function).expect("bound const");
             (g(w), g(x), g(y), g(z))
         })
         .collect();
-    seen.sort_unstable();
+    seen.sort();
     seen.dedup();
     assert_eq!(
         seen.len(),
@@ -168,12 +176,16 @@ fn nested_commutative_arrangements_multiply() {
     // Each inner pair stays together (the outer swap carries both), never a
     // cross-node mix.
     for (wv, xv, yv, zv) in &seen {
-        let mut left = [*wv, *xv];
-        let mut right = [*yv, *zv];
-        left.sort_unstable();
-        right.sort_unstable();
+        let pair = |a: &UBig, b: &UBig| {
+            let mut p = [a.clone(), b.clone()];
+            p.sort();
+            p
+        };
+        let (left, right) = (pair(wv, xv), pair(yv, zv));
+        let lo = [UBig::from(3u8), UBig::from(5u8)];
+        let hi = [UBig::from(7u8), UBig::from(9u8)];
         assert!(
-            (left == [3, 5] && right == [7, 9]) || (left == [7, 9] && right == [3, 5]),
+            (left == lo && right == hi) || (left == hi && right == lo),
             "operands must not migrate across the inner nodes: {wv},{xv} / {yv},{zv}"
         );
     }
@@ -194,7 +206,7 @@ fn ordered_capture_reports_only_the_pinned_ordering() {
     );
     assert_eq!(
         hits[0].bindings().get_uint(k, &function),
-        Some(5),
+        Some(UBig::from(5u8)),
         "ordered() pins the capture to operand slot 0",
     );
 }
@@ -210,7 +222,10 @@ fn non_commutative_capture_stays_single() {
         int_div(anything().capture(k), anything()).into_pattern(),
         1,
     );
-    assert_eq!(hits[0].bindings().get_uint(k, &function), Some(20));
+    assert_eq!(
+        hits[0].bindings().get_uint(k, &function),
+        Some(UBig::from(20u8))
+    );
 }
 
 /// `matches()` is lazy: `.next()` yields the natural ordering without
@@ -228,7 +243,7 @@ fn matches_iterator_yields_natural_ordering_first() {
         .expect("at least one hit");
     assert_eq!(
         first.bindings().get_uint(k, &function),
-        Some(5),
+        Some(UBig::from(5u8)),
         "the first hit must be the natural operand ordering",
     );
 }
@@ -506,7 +521,7 @@ fn commutative_swap_matches_identical_operand_with_identity_capture() {
     let x = Capture::new();
     assert_eq!(
         a::unique_uint(&function, int_add(var(x), var(x)).into_pattern(), x),
-        Some(5)
+        Some(UBig::from(5u8))
     );
 }
 
@@ -530,7 +545,7 @@ fn child_when_match_rejection_still_tries_swapped_order() {
     let m = a::unique(&function, int_add(guarded, int_const(2u128)).into_pattern());
     assert_eq!(
         m.bindings().get_uint(c, &function),
-        Some(3),
+        Some(UBig::from(3u8)),
         "swap retry must rebind the guarded child to the 3-operand",
     );
 }
@@ -557,7 +572,7 @@ fn root_when_match_rejection_redrives_swap() {
     let m = a::unique(&function, pat);
     assert_eq!(
         m.bindings().get_uint(l, &function),
-        Some(3),
+        Some(UBig::from(3u8)),
         "root guard rejection must re-drive the swapped operand order",
     );
 }
@@ -609,7 +624,7 @@ fn unary_parent_guard_redrives_commutative_child() {
     let m = a::unique(&function, pat);
     assert_eq!(
         m.bindings().get_uint(x, &function),
-        Some(3),
+        Some(UBig::from(3u8)),
         "unary-parent guard must re-drive the commutative child's operand order",
     );
 }
@@ -1194,5 +1209,8 @@ fn an_existential_wildcard_skips_the_slot_the_roaming_operand_took() {
     b.input_any(node, rest);
     let _out = b.value_output(node, 0);
     let hits = a::matches(&function, b.finish(), 1);
-    assert_eq!(hits[0].bindings().get_uint(k, &function), Some(3));
+    assert_eq!(
+        hits[0].bindings().get_uint(k, &function),
+        Some(UBig::from(3u8))
+    );
 }
