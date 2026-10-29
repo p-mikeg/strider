@@ -22,6 +22,7 @@ use cranelift_entity::SecondaryMap;
 use rustc_hash::FxHashMap;
 
 use strider_ir::DominatorTree;
+use strider_ir::eval;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir::{IRViewer, IRWalker, IntBinaryOp, IntCmpOp};
 
@@ -830,7 +831,7 @@ fn build<'f>(
             // `k` trailing known-zero bits means a multiple of `2^k`, capped to
             // the range so the stride stays a valid divisor.
             let tz = kb.zeros.trailing_ones().min(127);
-            let stride = (1u128 << tz).min(max_val.max(1));
+            let stride = eval::bit(tz).min(max_val.max(1));
             if max_val < type_mask || stride > 1 {
                 kb_bounds[value_id] = Some(Interval::new(0, max_val, stride));
             }

@@ -5,6 +5,34 @@
 
 use crate::node::{IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType};
 
+/// Bit `n` of the `u128` carrier, 0 at and past its top: the saturating form
+/// of `1u128 << n`, which panics there.
+#[inline]
+#[must_use]
+pub const fn bit(n: u32) -> u128 {
+    if n >= 128 { 0 } else { 1u128 << n }
+}
+
+/// The low `bits` bits set, saturating to `u128::MAX` at and past the
+/// carrier. A type's own mask is [`ValueType::int_mask_u128`].
+#[inline]
+#[must_use]
+pub const fn mask_below(bits: u32) -> u128 {
+    if bits >= 128 {
+        u128::MAX
+    } else {
+        (1u128 << bits) - 1
+    }
+}
+
+/// The top bit of a `bits`-wide integer: 0 at width 0, and past the carrier,
+/// where the carrier does not hold it.
+#[inline]
+#[must_use]
+pub const fn sign_bit(bits: u32) -> u128 {
+    bit(bits.wrapping_sub(1))
+}
+
 /// The signed minimum representable in `ty`'s bit width, or `i128::MIN` at
 /// 128 bits.
 #[inline]
@@ -204,6 +232,48 @@ pub fn lzcount(v: u128, in_ty: ValueType) -> Option<u128> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Saturating where `1u128 << n` panics, so a width past the carrier
+    /// answers rather than aborting.
+    #[test]
+    fn width_helpers_saturate_at_the_carrier() {
+        assert_eq!(bit(0), 1);
+        assert_eq!(bit(127), 1u128 << 127);
+        assert_eq!(bit(128), 0);
+        assert_eq!(bit(512), 0);
+        assert_eq!(mask_below(0), 0);
+        assert_eq!(mask_below(1), 1);
+        assert_eq!(mask_below(64), u128::from(u64::MAX));
+        assert_eq!(mask_below(127), u128::MAX >> 1);
+        assert_eq!(mask_below(128), u128::MAX);
+        assert_eq!(mask_below(512), u128::MAX);
+        assert_eq!(sign_bit(0), 0);
+        assert_eq!(sign_bit(1), 1);
+        assert_eq!(sign_bit(8), 0x80);
+        assert_eq!(sign_bit(128), 1u128 << 127);
+        assert_eq!(sign_bit(256), 0);
+    }
+
+    /// One mask per width, whichever spelling reaches it.
+    #[test]
+    fn the_three_helpers_agree_at_every_supported_width() {
+        for ty in ValueType::SUPPORTED.into_iter().filter(|t| t.is_integer()) {
+            let bits = ty.bit_width() as u32;
+            assert_eq!(
+                ty.int_mask_u128().unwrap_or(u128::MAX),
+                mask_below(bits),
+                "{ty:?}"
+            );
+            if bits < 128 {
+                assert_eq!(mask_below(bits) + 1, bit(bits), "{ty:?}");
+            }
+            assert_eq!(
+                mask_below(bits) & !(mask_below(bits) >> 1),
+                sign_bit(bits.min(128)),
+                "{ty:?}"
+            );
+        }
+    }
 
     /// The width bail these helpers rely on lives in `get_unsigned_int` /
     /// `get_signed_int`, not in the helpers themselves.
