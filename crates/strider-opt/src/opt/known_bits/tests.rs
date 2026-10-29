@@ -1251,7 +1251,7 @@ fn a_width_past_the_carrier_is_skipped_not_defaulted() -> Result<()> {
     let wide = ValueType::int(256);
     let vn = strider_ir_test_utils::reg_vn(0x2000, 32);
     let (fg, _x) = crate::test_support::make_fn_with_var(vn, |b, x| {
-        let three = b.build_int_const_limbs(&[3], wide)?;
+        let three = b.build_int_const(3u64, wide)?;
         b.build_int_binary_operation(x, three, IntBinaryOp::And, wide)
     })?;
     let ret = fg
