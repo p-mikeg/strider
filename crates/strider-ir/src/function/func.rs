@@ -663,7 +663,7 @@ mod compact_tests {
         };
         assert_eq!(
             f.const_value(new_id),
-            &ConstValue::Wide(LIVE_LIMBS.to_vec().into_boxed_slice()),
+            &ConstValue::wide(LIVE_LIMBS.to_vec().into_boxed_slice()),
             "GC'd + remapped const id must still resolve to its value",
         );
     }
