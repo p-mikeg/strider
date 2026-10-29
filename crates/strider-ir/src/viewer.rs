@@ -1,6 +1,7 @@
 use anyhow::anyhow;
 
 use crate::function::Function;
+use crate::node::const_value::ConstRead;
 use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
 /// Each generated method reads a fixed input slot, panicking on the arity the
@@ -123,7 +124,9 @@ pub trait IRViewer {
         let NodeKind::IntConst(id) = *self.kind_of_value(value) else {
             return None;
         };
-        let v = self.function().const_value(id).fits_u128()?;
+        let ConstRead::Val(v) = self.function().const_value(id).get_value() else {
+            return None;
+        };
         Some(ty.wrap_u128(v))
     }
 
@@ -149,7 +152,14 @@ pub trait IRViewer {
         let NodeKind::IntConst(id) = *self.node_kind(node) else {
             return None;
         };
-        Some(self.function().const_value(id).to_le_bytes(ty.byte_size()))
+        let mut out = vec![0u8; ty.byte_size()];
+        let src: Vec<u8> = match self.function().const_value(id).get_value() {
+            ConstRead::Val(v) => v.to_le_bytes().to_vec(),
+            ConstRead::Wide(limbs) => limbs.iter().flat_map(|l| l.to_le_bytes()).collect(),
+        };
+        let n = out.len().min(src.len());
+        out[..n].copy_from_slice(&src[..n]);
+        Some(out)
     }
 
     /// [`Self::int_const_u128`] under an `I1` guard.
@@ -446,5 +456,49 @@ mod tests {
             [ValueKind::Typed(ValueType::int(64))],
         );
         assert_eq!(f.access_address(load), None);
+    }
+
+    /// Little-endian, zero-extended to the declared byte size, from either
+    /// arm of the stored value.
+    #[test]
+    fn int_const_wide_le_bytes_serialises_little_endian() {
+        // Bytes 1..=8 little-endian.
+        let low: u64 = 0x0807_0605_0403_0201;
+        let mut i256_past_carrier = vec![0u8; 32];
+        i256_past_carrier[16] = 1;
+        let cases: [(&str, &[u64], ValueType, Vec<u8>); 4] = [
+            (
+                "i80_pads",
+                &[low],
+                ValueType::int(80),
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0],
+            ),
+            (
+                "i128_pads",
+                &[low],
+                ValueType::int(128),
+                vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0],
+            ),
+            ("i256_pads", &[low, 0, 0, 0], ValueType::int(256), {
+                let mut want: Vec<u8> = (1u8..=8).collect();
+                want.extend(std::iter::repeat_n(0u8, 24));
+                want
+            }),
+            // Bit 128 is the first bit no `u128` carries.
+            (
+                "i256_past_the_carrier",
+                &[0, 0, 1, 0],
+                ValueType::int(256),
+                i256_past_carrier,
+            ),
+        ];
+        for (label, limbs, ty, want) in cases {
+            let cc = strider_target::BuiltCallingConvention::default();
+            let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
+                .expect("FunctionBuilder::new");
+            let v = b.build_int_const_limbs(limbs, ty).expect("const");
+            let node = b.producer(v);
+            assert_eq!(b.int_const_wide_le_bytes(node), Some(want), "{label}");
+        }
     }
 }
