@@ -122,7 +122,7 @@ impl Net {
         );
         if reverse {
             // Zombies ahead of the live nodes shift every arena id.
-            let id = f.intern_int_const(0xdead, ValueType::int(64));
+            let id = f.intern_int_const(0xdeadu64, ValueType::int(64));
             let zombie = f.graph_mut().create_node(NodeKind::IntConst(id), [], [I64]);
             let [z] = f.node_outputs_exact::<1>(zombie).unwrap();
             f.graph_mut()

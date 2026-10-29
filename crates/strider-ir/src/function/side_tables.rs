@@ -307,7 +307,9 @@ impl FuncSideTables {
 /// The reader and writer vocabulary over the tables above, which is what
 /// the rest of the crate sees of them.
 impl crate::Function {
-    /// Interns `value` masked to `ty`'s width.
+    /// Interns `value` masked to `ty`'s width. `Into<UBig>` takes every
+    /// unsigned primitive and a `UBig` itself, so one entry point serves a
+    /// narrow literal and a value past the `u128` carrier alike.
     ///
     /// `ty` must be an integer type; a float one masks to zero, so every value
     /// interns as `0`. Not asserted: the resulting `IntConst` carries a float
@@ -317,10 +319,10 @@ impl crate::Function {
     /// front and returns `Err`.
     pub fn intern_int_const(
         &mut self,
-        value: u128,
+        value: impl Into<UBig>,
         ty: crate::node::ValueType,
     ) -> crate::node::const_value::ConstId {
-        let v = crate::eval::mask(&UBig::from(value), ty);
+        let v = crate::eval::mask(&value.into(), ty);
         self.side_tables_mut().const_interner.intern(v)
     }
 

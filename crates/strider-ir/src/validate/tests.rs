@@ -667,7 +667,7 @@ fn graph_invariants_mem_phi_arity_mismatch() {
 fn local_typing_rejects_wrong_output_count() {
     let mut s = spine();
     // IntConst with two outputs instead of one.
-    let id = s.f.intern_int_const(0, ValueType::int(64));
+    let id = s.f.intern_int_const(0u64, ValueType::int(64));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
@@ -1860,7 +1860,7 @@ fn local_typing_unsupported_width_detected_on_floats_and_surplus_outputs() {
         [ValueKind::Typed(ValueType::Float(12))],
     );
     let [float_value] = s.f.node_outputs_exact::<1>(float).unwrap();
-    let id = s.f.intern_int_const(5, ValueType::int(32));
+    let id = s.f.intern_int_const(5u64, ValueType::int(32));
     let surplus = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
