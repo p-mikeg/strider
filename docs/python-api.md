@@ -611,7 +611,7 @@ isinstance(p.entry(), p.InputPat)     # False
 node kind: `Call` inputs are `[ctrl, mem, target, sp, arg0, ...]`, `Load`'s are
 `[mem, addr]`, `If`'s are `[ctrl, cond]`, while `Call` OUTPUTS are
 `[ctrl, mem, result, ...clobbers]` and `Load`'s are `[value]`. The IR's
-`expected_signature` (`crates/strider-ir/src/node_signature.rs`) is the source
+`expected_signature` (`crates/strider-ir/src/node/signature.rs`) is the source
 of truth. They are the escape hatch beneath the named accessors, not a
 replacement for them. What a slot holds decides what can bind it: only an
 untyped wildcard (`var` / `anything`) reaches a control, memory or phi-token
