@@ -12,7 +12,8 @@ use std::cell::RefCell;
 
 use rustc_hash::FxHashSet;
 
-use strider_ir::node::{NodeId, NodeKind, ValueType, low_bits_mask_u128};
+use strider_ir::eval::{mask_below, sign_bit};
+use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{ConstId, IRViewer};
 
 use crate::capture::Capture;
@@ -108,8 +109,8 @@ fn fits_width(v: u128, w: usize) -> bool {
     if w >= 128 {
         return true;
     }
-    let above = v & !low_bits_mask_u128(w);
-    above == 0 || ((v >> (w - 1)) & 1 == 1 && above == !low_bits_mask_u128(w))
+    let above = v & !mask_below(w as u32);
+    above == 0 || ((v >> (w - 1)) & 1 == 1 && above == !mask_below(w as u32))
 }
 
 /// True when `v` is a value at `out_ty` that `stored`, an `out_ty`-wide
@@ -122,7 +123,7 @@ fn value_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
     if output_width == 0 {
         return false;
     }
-    let output_mask = low_bits_mask_u128(output_width);
+    let output_mask = mask_below(output_width as u32);
     // `v` must itself BE a value at the width it is compared at, or a search
     // for `0x1234` matches a stored `0x34` on the low bits they share.
     if (stored & output_mask) == (v & output_mask) && fits_width(v, output_width) {
@@ -138,12 +139,12 @@ fn value_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
         if w > output_width {
             break;
         }
-        let w_mask = low_bits_mask_u128(w);
+        let w_mask = mask_below(w as u32);
         let low = stored & w_mask;
         if low != (v & w_mask) || !fits_width(v, w) {
             continue;
         }
-        let sign_bit_w = if w >= 128 { 0 } else { 1u128 << (w - 1) };
+        let sign_bit_w = sign_bit(w as u32);
         let above_w_mask = output_mask & !w_mask;
         let above = stored & above_w_mask;
         if above == 0 {
