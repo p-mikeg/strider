@@ -214,23 +214,6 @@ pub(crate) fn shifted_ones_limbs(set_bits: u64, shift: u64, width_bits: u64) -> 
         .collect()
 }
 
-/// Bitwise complement of `limbs` within `width_bits`.
-pub(crate) fn complement_limbs(limbs: &[u64], width_bits: u64) -> Vec<u64> {
-    limbs
-        .iter()
-        .enumerate()
-        .map(|(i, limb)| {
-            let live = (width_bits.saturating_sub(i as u64 * 64)).min(64);
-            let live_mask = if live == 64 {
-                u64::MAX
-            } else {
-                (1u64 << live) - 1
-            };
-            !limb & live_mask
-        })
-        .collect()
-}
-
 /// `I32` / `F64`: the spelling Python's `Node.value_type()` returns.
 impl std::fmt::Debug for ValueType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -287,7 +270,21 @@ impl VnTypeExt for rsleigh::Vn {
 
 #[cfg(test)]
 mod tests {
-    use super::{ValueType, complement_limbs, shifted_ones_limbs};
+    use super::{ValueType, shifted_ones_limbs};
+    use crate::node::const_value::{ConstRead, ConstValue};
+
+    /// The mask preserving every bit of `ty` the window does not cover.
+    fn preserve(set_bits: u64, shift: u64, ty: ValueType) -> ConstValue {
+        let window = shifted_ones_limbs(set_bits, shift, ty.bit_width() as u64);
+        ConstValue::wide(window.into_boxed_slice()).complement(ty)
+    }
+
+    fn preserve_u128(set_bits: u64, shift: u64, ty: ValueType) -> u128 {
+        match preserve(set_bits, shift, ty).get_value() {
+            ConstRead::Val(v) => v,
+            ConstRead::Wide(limbs) => panic!("past the carrier: {limbs:?}"),
+        }
+    }
 
     /// Every spelling and size fact agrees, type by type, and the list is
     /// exactly the widths the vendored sla specs carry.
@@ -591,9 +588,8 @@ mod tests {
     /// The preserve mask keeps exactly the bits that don't belong to reg.
     #[test]
     fn container_mask_for_upper_half_write_keeps_lower_half() {
-        let container_mask = complement_limbs(&shifted_ones_limbs(64, 64, 128), 128);
         assert_eq!(
-            as_u128(&container_mask),
+            preserve_u128(64, 64, ValueType::int(128)),
             0x0000_0000_0000_0000_FFFF_FFFF_FFFF_FFFF,
             "an upper-8 write preserves the lower 8 bytes of q0"
         );
@@ -602,9 +598,8 @@ mod tests {
     /// Same, for the shift-0 lower-half write.
     #[test]
     fn container_mask_for_lower_half_write_keeps_upper_half() {
-        let container_mask = complement_limbs(&shifted_ones_limbs(64, 0, 128), 128);
         assert_eq!(
-            as_u128(&container_mask),
+            preserve_u128(64, 0, ValueType::int(128)),
             0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
             "a d0 (lower 8) write preserves the upper 8 bytes of q0"
         );
@@ -659,9 +654,8 @@ mod tests {
             (24, 0x00FF_FFFF),
         ];
         for (shift, expected) in cases {
-            let mask = complement_limbs(&shifted_ones_limbs(8, shift, 32), 32);
             assert_eq!(
-                as_u128(&mask),
+                preserve_u128(8, shift, ValueType::int(32)),
                 u128::from(expected),
                 "byte-sub at shift {shift}: expected container_mask 0x{expected:08x}"
             );
@@ -686,20 +680,18 @@ mod tests {
     /// ymm / zmm / SVE `z`: the widths a `u128` mask could not hold.
     #[test]
     fn wide_container_masks_are_representable_as_limbs() {
-        let ymm_low8 = shifted_ones_limbs(64, 0, 256);
-        assert_eq!(ymm_low8, vec![u64::MAX, 0, 0, 0]);
+        assert_eq!(shifted_ones_limbs(64, 0, 256), vec![u64::MAX, 0, 0, 0]);
         assert_eq!(
-            complement_limbs(&ymm_low8, 256),
-            vec![0, u64::MAX, u64::MAX, u64::MAX],
+            preserve(64, 0, ValueType::int(256)).get_value(),
+            ConstRead::Wide(&[0, u64::MAX, u64::MAX, u64::MAX]),
         );
-        let zmm_mid32 = shifted_ones_limbs(256, 128, 512);
         assert_eq!(
-            zmm_mid32,
+            shifted_ones_limbs(256, 128, 512),
             vec![0, 0, u64::MAX, u64::MAX, u64::MAX, u64::MAX, 0, 0],
         );
         assert_eq!(
-            complement_limbs(&shifted_ones_limbs(512, 0, 512), 512),
-            vec![0; 8],
+            preserve(512, 0, ValueType::int(512)).get_value(),
+            ConstRead::Val(0),
             "the full-width mask complements to zero"
         );
     }
