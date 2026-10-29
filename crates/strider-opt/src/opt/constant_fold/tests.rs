@@ -433,29 +433,25 @@ fn assert_sub_with_const(
     Ok(())
 }
 
-/// A unary-fold rule binds `v: uint`, and an I256 `Wide` const does not fit
-/// `u128`, so `get_uint` returns `None`. That must be a clean skip, not a hard
-/// "missing binding for capture of kind uint" error aborting the pass.
+/// `Neg` of an I256 const past the `u128` carrier folds at the declared
+/// width: the result is `2^256 - v`, not anything a 128-bit carrier holds.
 #[test]
-fn unary_fold_skips_wide_const_cleanly() -> Result<()> {
+fn unary_fold_folds_wide_const() -> Result<()> {
+    let ty = ValueType::int(256);
+    let v = UBig::from_words(&[1, 2, 3, 4]);
     let mut fg = make_fn(|b| {
         // Non-zero high limb, so the value cannot fit u128.
-        let c = b.build_int_const(UBig::from_words(&[1, 2, 3, 4]), ValueType::int(256))?;
-        b.build_int_unary_operation(c, IntUnaryOp::Neg, ValueType::int(256))
+        let c = b.build_int_const(v.clone(), ty)?;
+        b.build_int_unary_operation(c, IntUnaryOp::Neg, ty)
     })?;
     let outcome =
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?;
-    assert!(
-        !outcome.changed(),
-        "wide-const unary fold must skip, leaving the IR untouched"
-    );
+    assert!(outcome.changed(), "wide-const unary fold must fold");
     let ret = return_value(fg.graph())?;
-    assert!(
-        matches!(
-            fg.node_kind(fg.producer(ret)),
-            NodeKind::IntUnaryOp(IntUnaryOp::Neg)
-        ),
-        "the Neg node must remain (fold skipped)"
+    assert_eq!(
+        fg.int_const(ret),
+        Some(&((UBig::ONE << 256usize) - v)),
+        "Neg at I256 is the two's complement at 256 bits"
     );
     Ok(())
 }
@@ -1646,26 +1642,30 @@ fn build_unary_with_wide_const_input(
     Ok(fg)
 }
 
-/// `eval::popcount` / `eval::lzcount` mask through `get_unsigned_int`, which gives
-/// up past 128 bits.  That must be a clean skip, not an error propagated out of
-/// the pass.
+/// `eval::popcount` / `eval::lzcount` count within the input's declared
+/// width, so a const input past 128 bits folds, counting over all of it.
+/// The input is `0xFF`.
 #[test]
-fn fold_count_op_wide_const_input_skips_cleanly_cases() -> Result<()> {
+fn fold_count_op_wide_const_input_cases() -> Result<()> {
     #[rustfmt::skip]
     let cases = [
-        ("fold_lzcount_u128_input_skips_cleanly", NodeKind::Lzcount, ValueType::int(128)),
-        ("fold_lzcount_u256_input_skips_cleanly", NodeKind::Lzcount, ValueType::int(256)),
-        ("fold_popcount_u128_input_skips_cleanly", NodeKind::Popcount, ValueType::int(128)),
-        ("fold_popcount_u256_input_skips_cleanly", NodeKind::Popcount, ValueType::int(256)),
+        ("fold_lzcount_u128_input", NodeKind::Lzcount, ValueType::int(128), 120u64),
+        ("fold_lzcount_u256_input", NodeKind::Lzcount, ValueType::int(256), 248),
+        ("fold_popcount_u128_input", NodeKind::Popcount, ValueType::int(128), 8),
+        ("fold_popcount_u256_input", NodeKind::Popcount, ValueType::int(256), 8),
     ];
-    for (case, kind, wide_ty) in cases {
+    for (case, kind, wide_ty, expected) in cases {
         let mut fg = build_unary_with_wide_const_input(kind, wide_ty, ValueType::int(64))?;
-        let result =
-            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None));
+        let outcome =
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?;
         assert!(
-            result.is_ok(),
-            "{case}: ConstantFold must not error on {kind:?}({wide_ty:?} const), got {:?}",
-            result.err(),
+            outcome.changed(),
+            "{case}: ConstantFold must fold {kind:?}({wide_ty:?} const)"
+        );
+        assert_eq!(
+            fg.int_const_u128(return_value(fg.graph())?),
+            Some(u128::from(expected)),
+            "{case}: counted over the declared width"
         );
     }
     Ok(())
@@ -2230,39 +2230,122 @@ fn reassoc_mul_skips_past_128_bits() -> Result<()> {
     Ok(())
 }
 
-/// Int const-eval computes in `u128`: shift amounts reduce modulo 128 and the
-/// overflow arms detect at 128 bits, so no fold may run past that width.
+/// Int const-eval computes in `UBig` at the declared width: shifts, the
+/// overflow arms and the signed compares all run past 128 bits.
 #[test]
-fn int_const_eval_skips_past_128_bits() -> Result<()> {
+fn int_const_eval_folds_past_128_bits() -> Result<()> {
+    let i256 = ValueType::int(256);
+
     // `1 << 130` at I256 is 2^130, not `1 << (130 - 128)`.
     let mut fg = make_fn(|b| {
-        let l = b.build_int_const(1u64, ValueType::int(256))?;
-        let r = b.build_int_const(130u64, ValueType::int(256))?;
-        b.build_int_binary_operation(l, r, IntBinaryOp::ShiftLeft, ValueType::int(256))
+        let l = b.build_int_const(1u64, i256)?;
+        let r = b.build_int_const(130u64, i256)?;
+        b.build_int_binary_operation(l, r, IntBinaryOp::ShiftLeft, i256)
     })?;
-    let outcome =
-        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?;
-    assert!(!outcome.changed(), "I256 shift must not fold");
+    assert!(
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?
+            .changed(),
+        "I256 shift must fold"
+    );
+    assert_eq!(
+        fg.int_const(return_value(fg.graph())?),
+        Some(&(UBig::ONE << 130usize)),
+        "1 << 130 at I256"
+    );
 
     // `Carry(2^128 - 1, 1)` overflows 128 bits but not 256.
     let mut fg = make_fn(|b| {
-        let l = b.build_int_const(u128::MAX, ValueType::int(256))?;
-        let r = b.build_int_const(1u64, ValueType::int(256))?;
-        b.build_int_cmp_operation(l, r, IntCmpOp::Carry, ValueType::int(256))
+        let l = b.build_int_const(u128::MAX, i256)?;
+        let r = b.build_int_const(1u64, i256)?;
+        b.build_int_cmp_operation(l, r, IntCmpOp::Carry, i256)
     })?;
-    let outcome =
-        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?;
-    assert!(!outcome.changed(), "I256 Carry must not fold");
+    assert!(
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?
+            .changed(),
+        "I256 Carry must fold"
+    );
+    assert_eq!(
+        fg.int_const_u128(return_value(fg.graph())?),
+        Some(0),
+        "2^128 - 1 plus 1 does not carry out of 256 bits"
+    );
 
-    // A signed compare past the carrier must SKIP, not abort the pass.
+    // A signed compare past the carrier reads the I256 sign bit.
     let mut fg = make_fn(|b| {
-        let l = b.build_int_const(1u64, ValueType::int(256))?;
-        let r = b.build_int_const(2u64, ValueType::int(256))?;
-        b.build_int_cmp_operation(l, r, IntCmpOp::Sless, ValueType::int(256))
+        let l = b.build_int_const(UBig::ONE << 255usize, i256)?;
+        let r = b.build_int_const(2u64, i256)?;
+        b.build_int_cmp_operation(l, r, IntCmpOp::Sless, i256)
+    })?;
+    assert!(
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?
+            .changed(),
+        "I256 Sless must fold"
+    );
+    assert_eq!(
+        fg.int_const_u128(return_value(fg.graph())?),
+        Some(1),
+        "2^255 at I256 is INT_MIN, below 2"
+    );
+    Ok(())
+}
+
+/// Signed division at I256: `INT_MIN / -1` is still undefined, and a wide
+/// negative dividend divides as two's complement at 256 bits.
+#[test]
+fn int_const_eval_sdiv_past_128_bits() -> Result<()> {
+    let i256 = ValueType::int(256);
+    let min = UBig::ONE << 255usize;
+    let all_ones = (UBig::ONE << 256usize) - UBig::ONE;
+
+    // -(2^200) / 4 == -(2^198).
+    let mut fg = make_fn(|b| {
+        let l = b.build_int_const((UBig::ONE << 256usize) - (UBig::ONE << 200usize), i256)?;
+        let r = b.build_int_const(4u64, i256)?;
+        b.build_int_binary_operation(l, r, IntBinaryOp::Sdiv, i256)
+    })?;
+    assert!(
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?
+            .changed(),
+        "I256 Sdiv must fold"
+    );
+    assert_eq!(
+        fg.int_const(return_value(fg.graph())?),
+        Some(&((UBig::ONE << 256usize) - (UBig::ONE << 198usize))),
+        "-(2^200) / 4 at I256"
+    );
+
+    // INT_MIN / -1 has no I256 result.
+    let mut fg = make_fn(|b| {
+        let l = b.build_int_const(min, i256)?;
+        let r = b.build_int_const(all_ones, i256)?;
+        b.build_int_binary_operation(l, r, IntBinaryOp::Sdiv, i256)
     })?;
     let outcome =
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?;
-    assert!(!outcome.changed(), "I256 Sless must not fold");
+    assert!(!outcome.changed(), "I256 INT_MIN / -1 has no value");
+    Ok(())
+}
+
+/// `SignExtend` from I256 to I512 copies the I256 sign bit across the top
+/// 256 bits.
+#[test]
+fn int_const_eval_sign_extend_to_512_bits() -> Result<()> {
+    let (i256, i512) = (ValueType::int(256), ValueType::int(512));
+    let mut fg = make_fn(|b| {
+        // -(2^130) at I256.
+        let v = b.build_int_const((UBig::ONE << 256usize) - (UBig::ONE << 130usize), i256)?;
+        b.extend_if_needed(v, i512, strider_ir::ExtendOp::SignExtend)
+    })?;
+    assert!(
+        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?
+            .changed(),
+        "I256 -> I512 sign extend must fold"
+    );
+    assert_eq!(
+        fg.int_const(return_value(fg.graph())?),
+        Some(&((UBig::ONE << 512usize) - (UBig::ONE << 130usize))),
+        "-(2^130) at I512"
+    );
     Ok(())
 }
 
