@@ -14,18 +14,24 @@ pub enum ConstValue {
     Wide(Box<[u64]>),
 }
 
-/// One spelling per value, never per arm: `Bits` within the `u128` carrier,
-/// the limbs past it, whichever variant holds it. A derived `Debug` would
-/// spell a 96-bit constant two ways, and the raw DOT label renders this, so
-/// moving the carrier would move every graph holding one.
+/// A value read through [`ConstValue::get_value`]: one reading per value,
+/// never per arm.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConstRead<'a> {
+    /// Within the `u128` carrier.
+    Val(u128),
+    /// Past it, little-endian limbs, `limbs[0]` low.
+    Wide(&'a [u64]),
+}
+
+/// One spelling per value, never per arm. A derived `Debug` would spell a
+/// 96-bit constant two ways, and the raw DOT label renders this, so moving
+/// the carrier would move every graph holding one.
 impl core::fmt::Debug for ConstValue {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Bits(v) => f.debug_tuple("Bits").field(v).finish(),
-            Self::Wide(limbs) => match self.fits_u128() {
-                Some(v) => f.debug_tuple("Bits").field(&v).finish(),
-                None => f.debug_tuple("Wide").field(limbs).finish(),
-            },
+        match self.get_value() {
+            ConstRead::Val(v) => f.debug_tuple("Bits").field(&v).finish(),
+            ConstRead::Wide(limbs) => f.debug_tuple("Wide").field(&limbs).finish(),
         }
     }
 }
@@ -36,38 +42,21 @@ impl core::fmt::Debug for ConstValue {
 const _: () = assert!(size_of::<ConstValue>() == 16);
 
 impl ConstValue {
-    /// `Wide` fits only when every limb above the low two is zero.
-    pub fn fits_u128(&self) -> Option<u128> {
+    /// The one read. `Wide` answers `Val` too whenever it fits, which is
+    /// every limb above the low two being zero.
+    pub fn get_value(&self) -> ConstRead<'_> {
         match self {
-            Self::Bits(v) => Some(u128::from(*v)),
+            Self::Bits(v) => ConstRead::Val(u128::from(*v)),
             Self::Wide(limbs) => {
                 if limbs.iter().skip(2).all(|&l| l == 0) {
-                    let lo = u128::from(*limbs.first().unwrap_or(&0));
+                    let lo = u128::from(limbs.first().copied().unwrap_or(0));
                     let hi = u128::from(limbs.get(1).copied().unwrap_or(0));
-                    Some((hi << 64) | lo)
+                    ConstRead::Val((hi << 64) | lo)
                 } else {
-                    None
+                    ConstRead::Wide(limbs)
                 }
             }
         }
-    }
-
-    /// Little-endian bytes zero-extended / truncated to `byte_size`.
-    pub fn to_le_bytes(&self, byte_size: usize) -> Vec<u8> {
-        let mut out = vec![0u8; byte_size];
-        match self {
-            Self::Bits(v) => {
-                let b = v.to_le_bytes();
-                let n = byte_size.min(b.len());
-                out[..n].copy_from_slice(&b[..n]);
-            }
-            Self::Wide(limbs) => {
-                let bytes: Vec<u8> = limbs.iter().flat_map(|limb| limb.to_le_bytes()).collect();
-                let n = byte_size.min(bytes.len());
-                out[..n].copy_from_slice(&bytes[..n]);
-            }
-        }
-        out
     }
 }
 
@@ -104,7 +93,7 @@ mod tests {
             "limb path must mask to width like the scalar path"
         );
         let masked = ValueType::int(80).wrap_u128(value);
-        assert_eq!(f.const_value(limbed).fits_u128(), Some(masked));
+        assert_eq!(f.const_value(limbed).get_value(), ConstRead::Val(masked));
         assert_eq!(
             f.const_value(limbed),
             &ConstValue::Wide(vec![0, 1 << 5].into_boxed_slice()),
@@ -158,23 +147,52 @@ mod tests {
         assert_eq!(g.const_value(id), &v);
     }
 
+    /// `Val` up to the carrier whichever variant holds the value, `Wide` only
+    /// past it.
     #[test]
-    fn fits_u128_cases() {
-        assert_eq!(ConstValue::Bits(0xDEAD_BEEF).fits_u128(), Some(0xDEAD_BEEF));
-        assert_eq!(
-            ConstValue::Wide(vec![1, 0, 0, 0].into_boxed_slice()).fits_u128(),
-            Some(1)
-        );
-        // A nonzero limb at index 2 puts the value over 128 bits.
-        assert_eq!(
-            ConstValue::Wide(vec![0, 0, 1, 0].into_boxed_slice()).fits_u128(),
-            None
-        );
+    fn get_value_cases() {
+        let both_limbs = (u128::from(u64::MAX) << 64) | u128::from(u64::MAX);
+        let cases: [(&str, ConstValue, ConstRead<'_>); 6] = [
+            (
+                "bits",
+                ConstValue::Bits(0xDEAD_BEEF),
+                ConstRead::Val(0xDEAD_BEEF),
+            ),
+            (
+                "padded_limbs",
+                ConstValue::Wide(vec![1, 0, 0, 0].into_boxed_slice()),
+                ConstRead::Val(1),
+            ),
+            (
+                "all_zero_limbs",
+                ConstValue::Wide(vec![0, 0, 0, 0].into_boxed_slice()),
+                ConstRead::Val(0),
+            ),
+            (
+                "no_limbs",
+                ConstValue::Wide(vec![].into_boxed_slice()),
+                ConstRead::Val(0),
+            ),
+            // Both limbs nonzero and the carrier exactly full.
+            (
+                "u128_max",
+                ConstValue::Wide(vec![u64::MAX, u64::MAX].into_boxed_slice()),
+                ConstRead::Val(both_limbs),
+            ),
+            // A nonzero limb at index 2 puts the value over 128 bits.
+            (
+                "past_the_carrier",
+                ConstValue::Wide(vec![0, 0, 1, 0].into_boxed_slice()),
+                ConstRead::Wide(&[0, 0, 1, 0]),
+            ),
+        ];
+        for (label, value, want) in cases {
+            assert_eq!(value.get_value(), want, "{label}");
+        }
     }
 
     /// Both sides of the 64-bit carrier: one `ConstId` whichever path
-    /// interned the value, read back masked to the width, serialised
-    /// little-endian.
+    /// interned the value, read back masked to the width.
     #[test]
     fn carrier_boundary_values_intern_once_and_read_back() {
         use crate::node::ValueType;
@@ -200,12 +218,9 @@ mod tests {
             let scalar = f.intern_int_const(value, ty);
             let limbed = f.intern_int_const_limbs(&[value as u64, (value >> 64) as u64], ty);
             assert_eq!(scalar, limbed, "{label}: both paths must share one id");
-            assert_eq!(f.const_value(scalar).fits_u128(), Some(value), "{label}");
-            let mut want = value.to_le_bytes().to_vec();
-            want.resize(ty.byte_size(), 0);
             assert_eq!(
-                f.const_value(scalar).to_le_bytes(ty.byte_size()),
-                want,
+                f.const_value(scalar).get_value(),
+                ConstRead::Val(value),
                 "{label}"
             );
         }
@@ -218,10 +233,10 @@ mod tests {
         let mut f = test_function();
         // Bit 128 is the first bit no `u128` carries.
         let id = f.intern_int_const_limbs(&[0, 0, 1, 0], ValueType::int(256));
-        assert_eq!(f.const_value(id).fits_u128(), None);
-        let mut want = vec![0u8; 32];
-        want[16] = 1;
-        assert_eq!(f.const_value(id).to_le_bytes(32), want);
+        assert_eq!(
+            f.const_value(id).get_value(),
+            ConstRead::Wide(&[0, 0, 1, 0])
+        );
     }
 
     /// Bits above the declared width are not part of the value, on either
@@ -244,8 +259,8 @@ mod tests {
             assert_eq!(saturated, exact, "{label}: the mask is applied first");
             assert_eq!(saturated, limbed, "{label}: the limb path masks too");
             assert_eq!(
-                f.const_value(saturated).fits_u128(),
-                Some(masked),
+                f.const_value(saturated).get_value(),
+                ConstRead::Val(masked),
                 "{label}"
             );
         }
@@ -317,26 +332,5 @@ mod tests {
             debugs.iter().all(|d| *d == debugs[0]),
             "one value, one Debug spelling: {debugs:?}"
         );
-    }
-
-    #[test]
-    fn to_le_bytes_serialises_little_endian() {
-        // Bytes 1..=8 little-endian.
-        let low: u64 = 0x0807_0605_0403_0201;
-        // I80 width: low 8 bytes then zero pad.
-        assert_eq!(
-            ConstValue::Bits(low).to_le_bytes(10),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0]
-        );
-        // I128 width.
-        assert_eq!(
-            ConstValue::Bits(low).to_le_bytes(16),
-            vec![1, 2, 3, 4, 5, 6, 7, 8, 0, 0, 0, 0, 0, 0, 0, 0]
-        );
-        // I256 width.
-        let wide = ConstValue::Wide(vec![low, 0, 0, 0].into_boxed_slice());
-        let mut expected: Vec<u8> = (1u8..=8).collect();
-        expected.extend(std::iter::repeat_n(0u8, 24));
-        assert_eq!(wide.to_le_bytes(32), expected);
     }
 }
