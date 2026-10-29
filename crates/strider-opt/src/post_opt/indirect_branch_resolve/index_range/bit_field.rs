@@ -3,6 +3,7 @@
 
 use cranelift_entity::SecondaryMap;
 
+use strider_ir::eval::{bit, mask_below};
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IntBinaryOp};
 
@@ -125,11 +126,11 @@ impl BitField {
             lo if at_top => digits(lo),
             _ => return None,
         };
-        let width_max = u128::MAX >> (128 - inner.width);
+        let width_max = mask_below(inner.width);
         Some(Interval::new(
             lo << inner.shift,
             digits(iv.hi).min(width_max) << inner.shift,
-            1u128 << inner.shift,
+            bit(inner.shift),
         ))
     }
 }

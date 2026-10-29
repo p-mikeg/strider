@@ -4,6 +4,7 @@
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use strider_ir::eval::mask_below;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IntBinaryOp, IntCmpOp};
 
@@ -272,10 +273,7 @@ fn operand_demand(f: &strider_ir::Function, v: ValueId, demand: u128) -> Vec<(Va
         m ^ (m >> 1)
     };
     // Bit `i` of a sum or product depends on operand bits `0..=i` only.
-    let at_or_below = match 128 - demand.leading_zeros() {
-        128 => u128::MAX,
-        n => (1u128 << n) - 1,
-    };
+    let at_or_below = mask_below(128 - demand.leading_zeros());
     let shift = inputs
         .get(1)
         .and_then(|&k| f.int_const_u128(k))

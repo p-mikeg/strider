@@ -26,6 +26,7 @@
 //! layer).
 
 use crate::{BoxedRule, rewrite_rule};
+use strider_ir::eval;
 use strider_ir::node::{ExtendOp, IntBinaryOp, IntCmpOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, IRViewer};
 use strider_pattern::{
@@ -465,7 +466,7 @@ fn build_rules() -> Vec<BoxedRule> {
                         // width the guard bounds `n` against; the `Sless`
                         // slot-0 type is a second width that only a validated
                         // graph agrees with.
-                        int_const_with!([n: uint, ty] => 1u128 << (ty.bit_width() as u128 - 1 - n)),
+                        int_const_with!([n: uint, ty] => eval::bit(ty.bit_width() as u32 - 1 - n as u32)),
                     ),
                 ),
             ),

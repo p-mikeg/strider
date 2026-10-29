@@ -41,6 +41,7 @@ use super::{MAX_TABLE_ENTRIES, SiteClassifier};
 use strider_cfg::{ResolvedTarget, ResolvedTargets};
 use strider_ir::IRViewer;
 use strider_ir::IntBinaryOp;
+use strider_ir::eval;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 
 /// The value the enumeration pins, and the values to pin it to.
@@ -343,7 +344,7 @@ impl SiteClassifier<'_> {
         if w >= 128 {
             return true;
         }
-        let mut count: u128 = 1u128 << w;
+        let mut count: u128 = eval::bit(w as u32);
         let mut spacing: u128 = 1;
         for scale in chain.iter().rev() {
             match *scale {
@@ -688,7 +689,7 @@ fn wrap(count: u128, spacing: u128, bits: usize) -> Option<(u128, u128)> {
     }
     // `spacing * i` covers every multiple of the power of two shared with the
     // modulus, once `i` runs over that many consecutive values.
-    let shared = 1u128 << spacing.trailing_zeros().min(bits);
+    let shared = eval::bit(spacing.trailing_zeros().min(bits));
     let full = modulus / shared;
     (count >= full).then_some((full, shared))
 }

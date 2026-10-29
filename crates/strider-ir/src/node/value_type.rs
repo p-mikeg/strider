@@ -123,7 +123,7 @@ impl ValueType {
     #[inline]
     pub const fn wrap_u128(self, v: u128) -> u128 {
         match self {
-            Self::Int(w) => v & low_bits_mask_u128(w as usize),
+            Self::Int(w) => v & crate::eval::mask_below(w as u32),
             Self::Float(_) => 0,
         }
     }
@@ -133,7 +133,7 @@ impl ValueType {
     #[inline]
     pub const fn int_mask_u128(self) -> Option<u128> {
         match self {
-            Self::Int(w) if w <= 128 => Some(low_bits_mask_u128(w as usize)),
+            Self::Int(w) if w <= 128 => Some(crate::eval::mask_below(w as u32)),
             Self::Int(_) | Self::Float(_) => None,
         }
     }
@@ -162,11 +162,9 @@ impl ValueType {
             return None;
         }
         let masked = val & mask;
-        if bits == 128 {
-            return Some(masked as i128);
-        }
-        let sign_bit = 1u128 << (bits - 1);
-        if (masked & sign_bit) != 0 {
+        // At 128 bits `!mask` is 0, so the sign arm is the plain cast.
+        let sign = crate::eval::sign_bit(bits as u32);
+        if (masked & sign) != 0 {
             Some((masked | !mask) as i128)
         } else {
             Some(masked as i128)
@@ -186,18 +184,6 @@ impl ValueType {
         }
         let ty = of_bits(digits.parse().ok()?);
         ty.is_supported().then_some(ty)
-    }
-}
-
-/// The low `bits` bits of the `u128` carrier, saturating to `u128::MAX` at
-/// 128 and past: a raw bit helper. A type's own mask is
-/// [`ValueType::int_mask_u128`].
-#[inline]
-pub const fn low_bits_mask_u128(bits: usize) -> u128 {
-    if bits >= 128 {
-        u128::MAX
-    } else {
-        (1u128 << bits) - 1
     }
 }
 
