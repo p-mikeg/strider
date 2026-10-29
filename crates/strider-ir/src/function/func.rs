@@ -1,10 +1,7 @@
-use rustc_hash::FxHashMap;
-
 use crate::IRViewer;
 use crate::IRWalker;
 use crate::function::side_tables::SideTables;
 use crate::graph::{Graph, NodeIdRemap};
-use crate::node::const_value::ConstId;
 use crate::node::{CcId, NodeId, NodeKind, SwitchTableId, ValueId};
 
 /// Deterministic ordering key for a tracked varnode.
@@ -513,7 +510,7 @@ impl Function {
         self.memos.get_mut().remap(&remap);
         // The dedup cache keys on `NodeKind`, which carries the `ConstId`, so
         // the id rewrite MUST precede the cache rebuild.
-        self.gc_payload_tables();
+        self.side_tables.gc_payload_tables(&mut self.graph);
         self.graph.rebuild_cache();
         self.entry = new_entry.ok_or_else(|| {
             anyhow::anyhow!(
@@ -521,53 +518,6 @@ impl Function {
             )
         })?;
         Ok(remap)
-    }
-
-    /// Rebuilds the constant interner, the switch tables and the call
-    /// conventions over only the entries surviving nodes reference, rewriting
-    /// each node's id in place.
-    ///
-    /// Only safe after [`Graph::retain_reachable_stale_cache`] has settled the arena.
-    fn gc_payload_tables(&mut self) {
-        let mut consts: entity_utils::EntityInterner<
-            ConstId,
-            crate::node::const_value::ConstValue,
-        > = entity_utils::EntityInterner::default();
-        let mut const_ids: FxHashMap<ConstId, ConstId> = FxHashMap::default();
-        let mut tables: cranelift_entity::PrimaryMap<SwitchTableId, Vec<u64>> =
-            cranelift_entity::PrimaryMap::new();
-        let mut table_ids: cranelift_entity::SecondaryMap<SwitchTableId, Option<SwitchTableId>> =
-            cranelift_entity::SecondaryMap::new();
-        let mut ccs: entity_utils::EntityInterner<CcId, strider_target::BuiltCallingConvention> =
-            entity_utils::EntityInterner::default();
-        let mut cc_ids: cranelift_entity::SecondaryMap<CcId, Option<CcId>> =
-            cranelift_entity::SecondaryMap::new();
-        let nodes: Vec<NodeId> = self.graph.all_node_ids().collect();
-        for node in nodes {
-            match self.graph.node_kind_mut(node) {
-                NodeKind::IntConst(id) => {
-                    let old = *id;
-                    *id = *const_ids.entry(old).or_insert_with(|| {
-                        consts.intern(self.side_tables.const_interner[old].clone())
-                    });
-                }
-                NodeKind::Switch(id) => {
-                    let old = *id;
-                    *id = *table_ids[old].get_or_insert_with(|| {
-                        tables.push(self.side_tables.switch_tables[old].clone())
-                    });
-                }
-                NodeKind::Call { cc: Some(id) } => {
-                    let old = *id;
-                    *id = *cc_ids[old]
-                        .get_or_insert_with(|| ccs.intern(self.side_tables.call_ccs[old].clone()));
-                }
-                _ => {}
-            }
-        }
-        self.side_tables.const_interner = consts;
-        self.side_tables.switch_tables = tables;
-        self.side_tables.call_ccs = ccs;
     }
 
     /// The pretty renderer, naming registers and spaces through `names`.
