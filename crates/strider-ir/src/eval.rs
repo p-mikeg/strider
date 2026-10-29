@@ -3,26 +3,14 @@
 //! Each function answers `None` where the operation is undefined or the width
 //! has no `u128` modulus: a float, or an integer past 128 bits.
 //!
-//! [`mask`], [`all_ones`], [`complement`], [`ones_at`] and [`words`] are the
-//! exceptions: they work at any declared width over the [`UBig`] the interner
-//! stores.
+//! [`mask`], [`all_ones`], [`complement`] and [`ones_at`] are the exceptions:
+//! they work at any declared width over the [`UBig`] the interner stores.
 //! `UBig` is unbounded, so two's-complement-at-a-declared-width is strider's
 //! rule, and it lives here.
 
-use dashu_int::{UBig, Word};
+use dashu_int::UBig;
 
 use crate::node::{IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType};
-
-/// [`words`] answers `Vec<u64>` off `UBig::as_words`, which is `&[Word]`. The
-/// two are the same type only where `Word` is 64 bits; a 32-bit target fails
-/// here rather than silently.
-const _: () = assert!(size_of::<Word>() == 8);
-
-/// Limbs a `ty`-wide value spans.
-#[inline]
-fn limb_count(ty: ValueType) -> usize {
-    ty.bit_width().div_ceil(64)
-}
 
 /// `v` with every bit above `ty`'s width cleared. A float has no integer
 /// bits: 0, as [`ValueType::wrap_u128`] gives.
@@ -64,17 +52,6 @@ pub fn ones_at(bits: usize, shift: usize) -> UBig {
 pub fn le_bytes(v: &UBig, ty: ValueType) -> Vec<u8> {
     let mut out = vec![0u8; ty.byte_size()];
     let src = v.to_le_bytes();
-    let n = out.len().min(src.len());
-    out[..n].copy_from_slice(&src[..n]);
-    out
-}
-
-/// `v`'s little-endian limbs, `limbs[0]` low, zero-padded to the limbs `ty`
-/// spans: `UBig::as_words` drops its own trailing zero limbs.
-#[must_use]
-pub fn words(v: &UBig, ty: ValueType) -> Vec<u64> {
-    let mut out = vec![0u64; limb_count(ty)];
-    let src = v.as_words();
     let n = out.len().min(src.len());
     out[..n].copy_from_slice(&src[..n]);
     out
@@ -450,14 +427,14 @@ mod tests {
     fn wide_container_masks_are_representable() {
         let i256 = ValueType::int(256);
         let i512 = ValueType::int(512);
-        assert_eq!(words(&ones_at(64, 0), i256), vec![u64::MAX, 0, 0, 0]);
+        assert_eq!(ones_at(64, 0), UBig::from_words(&[u64::MAX, 0, 0, 0]));
         assert_eq!(
-            words(&preserve(64, 0, i256), i256),
-            vec![0, u64::MAX, u64::MAX, u64::MAX],
+            preserve(64, 0, i256),
+            UBig::from_words(&[0, u64::MAX, u64::MAX, u64::MAX]),
         );
         assert_eq!(
-            words(&ones_at(256, 128), i512),
-            vec![0, 0, u64::MAX, u64::MAX, u64::MAX, u64::MAX, 0, 0],
+            ones_at(256, 128),
+            UBig::from_words(&[0, 0, u64::MAX, u64::MAX, u64::MAX, u64::MAX, 0, 0]),
         );
         assert_eq!(
             preserve(512, 0, i512),
@@ -486,10 +463,10 @@ mod tests {
             "a window entirely above i32"
         );
         let i256 = ValueType::int(256);
-        assert_eq!(words(&preserve(0, 0, i256), i256), vec![u64::MAX; 4]);
+        assert_eq!(preserve(0, 0, i256), UBig::from_words(&[u64::MAX; 4]));
         assert_eq!(
-            words(&preserve(128, 192, i256), i256),
-            vec![u64::MAX, u64::MAX, u64::MAX, 0],
+            preserve(128, 192, i256),
+            UBig::from_words(&[u64::MAX, u64::MAX, u64::MAX, 0]),
             "the window runs off the top of i256"
         );
     }
@@ -531,9 +508,9 @@ mod tests {
             v,
             "complement is an involution at I256"
         );
-        assert_eq!(words(&all_ones(i256), i256), vec![u64::MAX; 4]);
+        assert_eq!(all_ones(i256), UBig::from_words(&[u64::MAX; 4]));
         let i512 = ValueType::int(512);
-        assert_eq!(words(&all_ones(i512), i512), vec![u64::MAX; 8]);
+        assert_eq!(all_ones(i512), UBig::from_words(&[u64::MAX; 8]));
         // A value spelled wider than its type keeps only the declared bits.
         assert_eq!(
             mask(&UBig::from_words(&[u64::MAX; 8]), i256),
@@ -574,23 +551,29 @@ mod tests {
         }
     }
 
-    /// `words` pads to the type's limbs where `as_words` trims, and truncates
-    /// nothing a masked value holds.
+    /// `le_bytes` pads to the type's bytes where `to_le_bytes` trims, and
+    /// truncates nothing a masked value holds.
     #[test]
-    fn words_pads_to_the_declared_limb_count() {
-        assert_eq!(words(&UBig::ZERO, ValueType::int(256)), vec![0, 0, 0, 0]);
+    fn le_bytes_pads_to_the_declared_byte_count() {
+        assert_eq!(le_bytes(&UBig::ZERO, ValueType::int(256)), vec![0u8; 32]);
+        let mut five_256 = vec![0u8; 32];
+        five_256[0] = 5;
+        assert_eq!(le_bytes(&UBig::from(5u64), ValueType::int(256)), five_256);
         assert_eq!(
-            words(&UBig::from(5u64), ValueType::int(256)),
-            vec![5, 0, 0, 0]
+            le_bytes(&UBig::from(5u64), ValueType::int(64)),
+            vec![5, 0, 0, 0, 0, 0, 0, 0]
         );
-        assert_eq!(words(&UBig::from(5u64), ValueType::int(64)), vec![5]);
-        assert_eq!(words(&UBig::ZERO, ValueType::I1), vec![0]);
+        assert_eq!(le_bytes(&UBig::ZERO, ValueType::I1), vec![0]);
+        let mut wide = vec![0u8; 64];
+        wide[0] = 1;
+        wide[8] = 2;
+        wide[16] = 3;
         assert_eq!(
-            words(
+            le_bytes(
                 &UBig::from_words(&[1, 2, 3, 0, 0, 0, 0, 0]),
                 ValueType::int(512)
             ),
-            vec![1, 2, 3, 0, 0, 0, 0, 0]
+            wide
         );
     }
 

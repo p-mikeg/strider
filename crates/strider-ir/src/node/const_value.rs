@@ -133,10 +133,7 @@ mod tests {
         assert_eq!(u128::try_from(&wide(&[u64::MAX, u64::MAX])), Ok(u128::MAX));
         // A nonzero limb at index 2 puts the value over 128 bits.
         assert!(u128::try_from(&wide(&[0, 0, 1, 0])).is_err());
-        assert_eq!(
-            crate::eval::words(&wide(&[0, 0, 1, 0]), ValueType::int(256)),
-            vec![0, 0, 1, 0]
-        );
+        assert_eq!(wide(&[0, 0, 1, 0]), UBig::ONE << 128, "bit 128 alone");
     }
 
     /// Both sides of the 64-bit carrier: one `ConstId` whichever path
@@ -177,10 +174,7 @@ mod tests {
         // Bit 128 is the first bit no `u128` carries.
         let id = f.intern_int_const(UBig::from_words(&[0, 0, 1, 0]), ValueType::int(256));
         assert!(u128::try_from(f.const_value(id)).is_err());
-        assert_eq!(
-            crate::eval::words(f.const_value(id), ValueType::int(256)),
-            vec![0, 0, 1, 0]
-        );
+        assert_eq!(*f.const_value(id), UBig::ONE << 128);
     }
 
     /// Bits above the declared width are not part of the value, on either
