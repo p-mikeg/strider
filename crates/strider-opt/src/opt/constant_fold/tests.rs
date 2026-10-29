@@ -1,5 +1,6 @@
 use super::*;
 use anyhow::anyhow;
+use strider_ir::UBig;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp,
@@ -439,7 +440,7 @@ fn assert_sub_with_const(
 fn unary_fold_skips_wide_const_cleanly() -> Result<()> {
     let mut fg = make_fn(|b| {
         // Non-zero high limb, so the value cannot fit u128.
-        let c = b.build_int_const_limbs(&[1, 2, 3, 4], ValueType::int(256))?;
+        let c = b.build_int_const(UBig::from_words(&[1, 2, 3, 4]), ValueType::int(256))?;
         b.build_int_unary_operation(c, IntUnaryOp::Neg, ValueType::int(256))
     })?;
     let outcome =
@@ -2159,7 +2160,7 @@ fn all_ones_rules_skip_past_128_bits() -> Result<()> {
             let mut fg = make_fn(|b| {
                 let addr = b.build_int_const(0xF00Du64, ValueType::int(64))?;
                 let x = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(256))?;
-                let c = b.build_int_const_limbs(&limbs, ValueType::int(256))?;
+                let c = b.build_int_const(UBig::from_words(&limbs), ValueType::int(256))?;
                 b.build_int_binary_operation(x, c, op, ValueType::int(256))
             })?;
             let outcome =
@@ -2184,14 +2185,13 @@ fn all_ones_rules_skip_past_128_bits() -> Result<()> {
 /// of `2^128`, and `(x + 2^127) + 2^127` folds to `x + 0`, i.e. to `x`.
 #[test]
 fn reassoc_add_skips_past_128_bits() -> Result<()> {
-    // 2^127, as I256 limbs (little-endian u64s).
-    let half = [0u64, 1u64 << 63, 0, 0];
+    let half: u128 = 1 << 127;
     let mut fg = make_fn(|b| {
         let addr = b.build_int_const(0xF00Du64, ValueType::int(64))?;
         let x = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(256))?;
-        let c1 = b.build_int_const_limbs(&half, ValueType::int(256))?;
+        let c1 = b.build_int_const(half, ValueType::int(256))?;
         let inner = b.build_int_binary_operation(x, c1, IntBinaryOp::Add, ValueType::int(256))?;
-        let c2 = b.build_int_const_limbs(&half, ValueType::int(256))?;
+        let c2 = b.build_int_const(half, ValueType::int(256))?;
         b.build_int_binary_operation(inner, c2, IntBinaryOp::Add, ValueType::int(256))
     })?;
     let outcome =
@@ -2211,14 +2211,13 @@ fn reassoc_add_skips_past_128_bits() -> Result<()> {
 /// 128 bits each stop it; lifting both is what makes this fold.
 #[test]
 fn reassoc_mul_skips_past_128_bits() -> Result<()> {
-    // 2^64, as I256 limbs (little-endian u64s).
-    let two_64 = [0u64, 1, 0, 0];
+    let two_64: u128 = 1 << 64;
     let mut fg = make_fn(|b| {
         let addr = b.build_int_const(0xF00Du64, ValueType::int(64))?;
         let x = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(256))?;
-        let c1 = b.build_int_const_limbs(&two_64, ValueType::int(256))?;
+        let c1 = b.build_int_const(two_64, ValueType::int(256))?;
         let inner = b.build_int_binary_operation(x, c1, IntBinaryOp::Mul, ValueType::int(256))?;
-        let c2 = b.build_int_const_limbs(&two_64, ValueType::int(256))?;
+        let c2 = b.build_int_const(two_64, ValueType::int(256))?;
         b.build_int_binary_operation(inner, c2, IntBinaryOp::Mul, ValueType::int(256))
     })?;
     let outcome =
@@ -2247,7 +2246,7 @@ fn int_const_eval_skips_past_128_bits() -> Result<()> {
 
     // `Carry(2^128 - 1, 1)` overflows 128 bits but not 256.
     let mut fg = make_fn(|b| {
-        let l = b.build_int_const_limbs(&[u64::MAX, u64::MAX, 0, 0], ValueType::int(256))?;
+        let l = b.build_int_const(u128::MAX, ValueType::int(256))?;
         let r = b.build_int_const(1u64, ValueType::int(256))?;
         b.build_int_cmp_operation(l, r, IntCmpOp::Carry, ValueType::int(256))
     })?;
@@ -2468,7 +2467,7 @@ fn factor_declines_a_wide_count_out_of_range() -> Result<()> {
     use strider_ir::node::ValueKind;
     for limbs in [[64, 0, 0, 0], [0, 0, 1, 0]] {
         let (mut fg, _x) = make_fn_with_var(reg_vn(0x1000, 8), |b, x| {
-            let count = b.build_int_const_limbs(&limbs, ValueType::int(256))?;
+            let count = b.build_int_const(UBig::from_words(&limbs), ValueType::int(256))?;
             let shl = b.create_node(
                 NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
                 [x, count],
@@ -2917,7 +2916,7 @@ fn a_coefficient_rule_declines_past_the_carrier() -> Result<()> {
         let vn = reg_vn(0x2000, u32::from(width) / 8);
         for op in [IntBinaryOp::Mul, IntBinaryOp::ShiftLeft] {
             let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
-                let three = b.build_int_const_limbs(&[3], ty)?;
+                let three = b.build_int_const(3u64, ty)?;
                 let scaled = b.build_int_binary_operation(x, three, op, ty)?;
                 b.build_int_binary_operation(x, scaled, IntBinaryOp::Add, ty)
             })?;

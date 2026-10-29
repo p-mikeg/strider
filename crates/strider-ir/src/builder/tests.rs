@@ -1,3 +1,5 @@
+use dashu_int::UBig;
+
 use super::*;
 use crate::IRViewer;
 use anyhow::anyhow;
@@ -786,12 +788,10 @@ fn build_call_other_names_a_ram_output_in_the_text_spelling() -> Result<()> {
     Ok(())
 }
 
-/// Any value fitting `u64` interns as `Bits` whatever the declared width, so
-/// `build_int_const` and `build_int_const_limbs` reach one interned value,
-/// on both sides of the carrier.
+/// One interned value whichever spelling reaches `build_int_const`, on both
+/// sides of the carrier.
 #[test]
-fn scalar_and_limb_paths_reach_one_interned_value() -> Result<()> {
-    use dashu_int::UBig;
+fn every_spelling_reaches_one_interned_value() -> Result<()> {
     let sp = reg_vn(0x7000, 8);
     let mut b = raw_builder(
         vec![],
@@ -824,16 +824,16 @@ fn scalar_and_limb_paths_reach_one_interned_value() -> Result<()> {
         &UBig::from_words(&[0, 1 << 36])
     );
     assert_eq!(b.function().int_const_u128(big), Some(big_val));
-    let big_limbed = b.build_int_const_limbs(&[0, 1 << 36], ValueType::int(128))?;
+    let big_limbed = b.build_int_const(UBig::from_words(&[0, 1 << 36]), ValueType::int(128))?;
     assert_eq!(
         b.function().producer(big_limbed),
         big_node,
-        "the limb path reaches the same node past the carrier"
+        "a `from_words` spelling reaches the same node past the carrier"
     );
 
     // Limbs that fit u128 collapse to `Bits` too, though the differing width
     // keeps this a distinct node.
-    let small2 = b.build_int_const_limbs(&[5, 0, 0, 0], ValueType::int(256))?;
+    let small2 = b.build_int_const(UBig::from_words(&[5, 0, 0, 0]), ValueType::int(256))?;
     let small2_node = b.function().producer(small2);
     let NodeKind::IntConst(small2_id) = *b.function().node_kind(small2_node) else {
         panic!("expected IntConst");
@@ -1927,8 +1927,7 @@ fn set_lift_addr_attributes_node_to_current_addr() -> Result<()> {
 /// A value genuinely past `u128` interns as `Wide` and reads back as the
 /// original limbs.
 #[test]
-fn build_int_const_limbs_round_trips_through_graph() -> Result<()> {
-    use dashu_int::UBig;
+fn a_wide_const_round_trips_through_graph() -> Result<()> {
     let cases: [(&str, Vec<u64>, ValueType); 2] = [
         (
             "u256_round_trips_through_graph",
@@ -1943,7 +1942,7 @@ fn build_int_const_limbs_round_trips_through_graph() -> Result<()> {
     ];
     let mut b = builder_with_region()?;
     for (label, limbs, ty) in cases {
-        let value = b.build_int_const_limbs(&limbs, ty)?;
+        let value = b.build_int_const(UBig::from_words(&limbs), ty)?;
         let node = b.function().producer(value);
         let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
             panic!(
@@ -1977,19 +1976,19 @@ fn int_const_i128_sign_extends_and_rejects_non_const() -> Result<()> {
 }
 
 #[test]
-fn build_int_const_limbs_dedups_repeated_values() -> Result<()> {
+fn a_wide_const_dedups_repeated_values() -> Result<()> {
     let mut b = builder_with_region()?;
     let limbs = [42u64, 0, 0, 0x8000_0000_0000_0000];
-    let o1 = b.build_int_const_limbs(&limbs, ValueType::int(256))?;
-    let o2 = b.build_int_const_limbs(&limbs, ValueType::int(256))?;
+    let o1 = b.build_int_const(UBig::from_words(&limbs), ValueType::int(256))?;
+    let o2 = b.build_int_const(UBig::from_words(&limbs), ValueType::int(256))?;
     let n1 = b.function().producer(o1);
     let n2 = b.function().producer(o2);
     assert_eq!(n1, n2, "structural dedup must reuse the same NodeId");
     Ok(())
 }
 
-/// A value fitting `u128` is accepted at the widest types without the limb
-/// path.
+/// A value fitting `u128` is accepted at the widest types without a wide
+/// spelling.
 #[test]
 fn build_int_const_accepts_u256_and_u512() -> Result<()> {
     let mut b = builder_with_region()?;
@@ -2001,19 +2000,19 @@ fn build_int_const_accepts_u256_and_u512() -> Result<()> {
     Ok(())
 }
 
-/// A narrow type takes limbs too, interning what the `u128` path interns; a
-/// float type is refused.
+/// A narrow type takes a wide spelling too, interning what the scalar one
+/// interns; a float type is refused.
 #[test]
-fn build_int_const_limbs_accepts_any_int_type() -> Result<()> {
+fn a_wide_spelling_at_a_narrow_int_type() -> Result<()> {
     let mut b = builder_with_region()?;
-    let limbs = b.build_int_const_limbs(&[0x1_0000_0005, 7], ValueType::int(32))?;
+    let limbs = b.build_int_const(UBig::from_words(&[0x1_0000_0005, 7]), ValueType::int(32))?;
     let scalar = b.build_int_const(0x1_0000_0005u64, ValueType::int(32))?;
     assert_eq!(b.function().int_const_u128(limbs), Some(5));
     assert_eq!(b.function().int_const_u128(scalar), Some(5));
     assert_eq!(limbs, scalar, "one node for one narrow constant");
     let err = b
-        .build_int_const_limbs(&[1], ValueType::float(64))
-        .expect_err("a float type has no limbs");
+        .build_int_const(UBig::from_words(&[1]), ValueType::float(64))
+        .expect_err("a float type has no integer bits");
     assert!(err.to_string().contains("non-integer type"), "got: {err}");
     Ok(())
 }
@@ -2021,18 +2020,17 @@ fn build_int_const_limbs_accepts_any_int_type() -> Result<()> {
 /// Missing high limbs read as zero: a slice shorter than the type's limb
 /// count is the same constant, and the same node, as the zero-padded one.
 #[test]
-fn build_int_const_limbs_zero_fills_missing_limbs() -> Result<()> {
-    use dashu_int::UBig;
+fn missing_high_limbs_read_as_zero() -> Result<()> {
     let mut b = builder_with_region()?;
-    let short = b.build_int_const_limbs(&[5], ValueType::int(256))?;
-    let padded = b.build_int_const_limbs(&[5, 0, 0, 0], ValueType::int(256))?;
+    let short = b.build_int_const(UBig::from_words(&[5]), ValueType::int(256))?;
+    let padded = b.build_int_const(UBig::from_words(&[5, 0, 0, 0]), ValueType::int(256))?;
     assert_eq!(short, padded, "one constant, one node");
     assert_eq!(b.function().int_const_u128(short), Some(5));
-    let low = b.build_int_const_limbs(&[u64::MAX], ValueType::int(512))?;
+    let low = b.build_int_const(UBig::from_words(&[u64::MAX]), ValueType::int(512))?;
     assert_eq!(b.function().int_const_u128(low), Some(u128::from(u64::MAX)));
-    let empty = b.build_int_const_limbs(&[], ValueType::int(512))?;
+    let empty = b.build_int_const(UBig::from_words(&[]), ValueType::int(512))?;
     assert_eq!(b.function().int_const_u128(empty), Some(0));
-    let three = b.build_int_const_limbs(&[u64::MAX; 3], ValueType::int(256))?;
+    let three = b.build_int_const(UBig::from_words(&[u64::MAX; 3]), ValueType::int(256))?;
     let NodeKind::IntConst(id) = *b.function().node_kind(b.function().producer(three)) else {
         panic!("expected an IntConst");
     };
@@ -2067,7 +2065,8 @@ fn int_const_carrier_boundaries_read_back_through_both_paths() -> Result<()> {
     let mut b = empty_builder()?;
     for (label, value, ty) in cases {
         let scalar = b.build_int_const(value, ty)?;
-        let limbed = b.build_int_const_limbs(&[value as u64, (value >> 64) as u64], ty)?;
+        let limbed =
+            b.build_int_const(UBig::from_words(&[value as u64, (value >> 64) as u64]), ty)?;
         assert_eq!(scalar, limbed, "{label}: one value, one node");
         assert_eq!(b.function().int_const_u128(scalar), Some(value), "{label}");
         assert_eq!(
@@ -2095,7 +2094,7 @@ fn int_const_past_the_u128_carrier_reads_only_as_bytes() -> Result<()> {
     let mut b = empty_builder()?;
     let ty = ValueType::int(256);
     // Bit 128 is the first bit no `u128` carries.
-    let v = b.build_int_const_limbs(&[0, 0, 1, 0], ty)?;
+    let v = b.build_int_const(UBig::from_words(&[0, 0, 1, 0]), ty)?;
     assert_eq!(b.function().int_const_u128(v), None);
     assert_eq!(b.function().int_const_i128(v), None);
     let mut want = vec![0u8; 32];
@@ -2140,8 +2139,8 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
     use crate::validate::validate;
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let value = b.build_int_const_limbs(
-        &[0x1234_5678, 0, 0, 0x8000_0000_0000_0000],
+    let value = b.build_int_const(
+        UBig::from_words(&[0x1234_5678, 0, 0, 0x8000_0000_0000_0000]),
         ValueType::int(256),
     )?;
     b.set_lift_addr(None);
@@ -2191,9 +2190,9 @@ fn int_const_wide_validates_clean_when_built_via_intern() -> Result<()> {
 fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     let mut b = builder_with_region()?;
     b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let _live = b.build_int_const_limbs(&[1, 1, 1, 1], ValueType::int(256))?;
+    let _live = b.build_int_const(UBig::from_words(&[1, 1, 1, 1]), ValueType::int(256))?;
     // Never wired into the reachable graph, so `compact()` should drop it.
-    let _zombie = b.build_int_const_limbs(&[2, 2, 2, 2], ValueType::int(256))?;
+    let _zombie = b.build_int_const(UBig::from_words(&[2, 2, 2, 2]), ValueType::int(256))?;
     b.set_lift_addr(None);
     let mem_node = b
         .function()
@@ -2710,7 +2709,6 @@ fn call_ret_val_split_outputs_and_accessor() -> Result<()> {
 /// width.
 #[test]
 fn small_valued_i80_const_interns_once() -> Result<()> {
-    use dashu_int::UBig;
     let mut b = empty_builder()?;
     let via_small = b.build_int_const(5u64, ValueType::int(80))?;
     let node = b.function().producer(via_small);
@@ -2734,9 +2732,8 @@ fn small_valued_i80_const_interns_once() -> Result<()> {
 /// share one `ConstId` for the same value.
 #[test]
 fn small_valued_i256_limbs_canonicalise_to_the_scalar() -> Result<()> {
-    use dashu_int::UBig;
     let mut b = empty_builder()?;
-    let via_limbs = b.build_int_const_limbs(&[5, 0, 0, 0], ValueType::int(256))?;
+    let via_limbs = b.build_int_const(UBig::from_words(&[5, 0, 0, 0]), ValueType::int(256))?;
     let node = b.function().producer(via_limbs);
     let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
         panic!("expected IntConst");
@@ -2762,7 +2759,6 @@ fn small_valued_i256_limbs_canonicalise_to_the_scalar() -> Result<()> {
 /// Interning masks to the declared width, so 3 at I1 becomes 1.
 #[test]
 fn i1_const_payload_masks_to_one_bit() -> Result<()> {
-    use dashu_int::UBig;
     let mut b = empty_builder()?;
     let v = b.build_int_const(3u64, ValueType::I1)?;
     let node = b.function().producer(v);
@@ -2787,7 +2783,6 @@ fn i1_const_payload_masks_to_one_bit() -> Result<()> {
 /// Masking at exactly the carrier's width is the identity.
 #[test]
 fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
-    use dashu_int::UBig;
     let mut b = empty_builder()?;
     let v = b.build_int_const(u64::MAX, ValueType::int(64))?;
     let node = b.function().producer(v);

@@ -633,7 +633,10 @@ mod compact_tests {
         let entry = f.entry();
         let mem = test_initial_memory(&f);
         // Interned first, so dropping it shifts the surviving const's id.
-        let dropped_id = f.intern_int_const_limbs(&[0xAAAA_BBBB, 0, 0, 1], ValueType::int(256));
+        let dropped_id = f.intern_int_const(
+            UBig::from_words(&[0xAAAA_BBBB, 0, 0, 1]),
+            ValueType::int(256),
+        );
         let _zombie = f.graph_mut().create_node(
             NodeKind::IntConst(dropped_id),
             [],
@@ -644,7 +647,7 @@ mod compact_tests {
         let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
 
         // The live wide const, referenced by a reachable Return.
-        let live_id = f.intern_int_const_limbs(&LIVE_LIMBS, ValueType::int(256));
+        let live_id = f.intern_int_const(UBig::from_words(&LIVE_LIMBS), ValueType::int(256));
         let wide_node = f.graph_mut().create_node(
             NodeKind::IntConst(live_id),
             [],
