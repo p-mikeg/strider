@@ -76,7 +76,7 @@ fn try_fold_const_load_at(
     rom: &dyn ReadOnlyMemory,
 ) -> Result<bool> {
     let (data_value, ty) = edit.single_value_output(node_id)?;
-    let resolve = |v| edit.function().int_const_u128(v);
+    let resolve = |v| edit.function().int_const(v).cloned();
     let Some(masked) =
         crate::const_eval::eval_node_const(edit.function(), data_value, &resolve, Some(rom))
     else {
