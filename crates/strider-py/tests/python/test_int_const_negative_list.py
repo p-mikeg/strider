@@ -48,7 +48,11 @@ def _two_wide_consts_function():
 
 def test_the_graph_holds_both_all_ones_widths():
     f = _two_wide_consts_function()
-    wide = [f.node(n).uint() for n in f.node_ids() if f.node(n).wide_const_bytes()]
+    wide = [
+        f.node(n).uint()
+        for n in f.node_ids()
+        if f.node(n).kind() == "IntConst" and f.node(n).value_type() == "I128"
+    ]
     assert ALL_ONES_128 in wide
     assert ALL_ONES_64 in wide
 

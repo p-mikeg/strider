@@ -426,8 +426,8 @@ n.kind()                       # "IntBinaryOp(Add)", "IntConst", "Load(RAM)"
 n.op()                         # "Add" / "Less" / ... or None for op-less kinds
 n.value_type()                 # "I64" / "I1" / "F64" / ... or None
 n.inputs(), n.outputs()        # neighbouring nodes (Node handles, not ids)
-n.uint(), n.sint(), n.boolean(), n.float_bits()   # constants
-n.wide_const_bytes()           # little-endian bytes of a constant over 64 bits
+n.uint(), n.sint(), n.boolean(), n.float_bits()   # constants; uint() reads
+                               # every width, sint() stops at 128 bits
 n.call_other_name()            # a CallOther's user-op name, else None
 n.vn()                         # the varnode this node names: an InitialVar's entry
                                # register, a Call's return register (its FIRST value
