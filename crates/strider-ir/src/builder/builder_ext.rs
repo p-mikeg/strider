@@ -11,9 +11,10 @@ use crate::builder::checks::{
 };
 use crate::error::Result;
 use crate::eval;
+use crate::node::const_value::ConstValue;
 use crate::node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeKind,
-    ValueId, ValueKind, ValueType, complement_limbs, shifted_ones_limbs,
+    ValueId, ValueKind, ValueType, shifted_ones_limbs,
 };
 
 pub trait IRBuilderExt: IRBuilder {
@@ -167,17 +168,25 @@ pub trait IRBuilderExt: IRBuilder {
         shift: u64,
         ty: ValueType,
     ) -> Result<ValueId> {
-        let width_bits = ty.bit_width() as u64;
-        let limbs = complement_limbs(
-            &shifted_ones_limbs(window_bits, shift, width_bits),
-            width_bits,
-        );
-        self.build_int_const_limbs(&limbs, ty)
+        let window = shifted_ones_limbs(window_bits, shift, ty.bit_width() as u64);
+        let preserve = ConstValue::wide(window.into_boxed_slice()).complement(ty);
+        self.build_const_value(preserve, ty)
     }
 
     /// The all-ones `IntConst` of `ty`, at any integer width.
     fn build_all_ones(&mut self, ty: ValueType) -> Result<ValueId> {
-        self.build_int_const_limbs(&vec![u64::MAX; ty.bit_width().div_ceil(64)], ty)
+        self.build_const_value(ConstValue::all_ones(ty), ty)
+    }
+
+    /// The `IntConst` of `value` masked to `ty`.
+    fn build_const_value(&mut self, value: ConstValue, ty: ValueType) -> Result<ValueId> {
+        require_integer_type(ty)?;
+        let id = self
+            .function_mut()
+            .side_tables_mut()
+            .const_interner
+            .intern(value.mask(ty));
+        Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], ty))
     }
 
     /// Strict: both operands must already carry `output_type`, a shift's count
