@@ -1256,7 +1256,7 @@ fn a_truncate_of_an_extend_is_one_cast() -> Result<()> {
             );
             for x in 0..=0xffu128 {
                 let env = interp::Env {
-                    entry: &|_| x,
+                    entry: &|_| UBig::from(x),
                     rom: None,
                     seed: 0,
                     step_budget: 100,

@@ -12,7 +12,7 @@ use crate::common::{Arch, driver_for_reader};
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, FunctionBound, MachineInsnAddr};
 use strider_ir::node::NodeKind;
-use strider_ir::{Function, IRViewer, IRWalker, IntCmpOp};
+use strider_ir::{Function, IRViewer, IRWalker, IntCmpOp, UBig, ValueType, eval};
 use strider_ir_test_utils::interp::{self, EntryVar, Env, Outcome, Slot};
 
 const BASE: u64 = 0x1000;
@@ -363,11 +363,11 @@ fn returned(f: &Function, reg: rsleigh::Vn, stack: rsleigh::Vn, x: u128, width: 
     let noise = 0x5a5a_a5a5_c3c3_3c3c_0f0f_f0f0_9696_6969u128 & !mask(width);
     let entry = |e: EntryVar| {
         if e.vn.addr_space == reg.addr_space && e.vn.addr_off == reg.addr_off {
-            noise | (x & mask(width))
+            UBig::from(noise | (x & mask(width)))
         } else if e.vn == stack {
-            STACK
+            UBig::from(STACK)
         } else {
-            0
+            UBig::ZERO
         }
     };
     let env = Env {
@@ -379,7 +379,7 @@ fn returned(f: &Function, reg: rsleigh::Vn, stack: rsleigh::Vn, x: u128, width: 
     };
     match interp::run(f, &env) {
         Ok(Outcome::Return { values, .. }) => match values.first() {
-            Some(Slot::Known(v)) => *v & 0xffff_ffff,
+            Some(Slot::Known(v)) => u128::try_from(&eval::mask(v, ValueType::int(32))).unwrap(),
             other => panic!("return slot {other:?}"),
         },
         other => panic!("run: {other:?}"),

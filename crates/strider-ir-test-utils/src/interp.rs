@@ -3,13 +3,16 @@
 //!
 //! A CONSISTENCY oracle: both graphs run here, so a misconception it shares
 //! with a pass is invisible. It is written apart from `strider-opt`'s constant
-//! folder so the two do not share one.
+//! folder, and from `strider_ir::eval` which that folder calls, so the two do
+//! not share one: every integer operation below is computed here, over
+//! `strider_ir::eval`'s width helpers alone.
 //!
 //! It runs integer arithmetic, compares, casts, phis, RAM and REGISTER-space
 //! loads and stores, and `If` / `Switch` / `Region` control including loops; a
 //! run that outlasts [`Env::step_budget`] is [`Outcome::Diverge`]. Floats,
-//! `CallOther`, `IndirectBranch`, other spaces and values wider than 128 bits
-//! are [`Unsupported`].
+//! `CallOther`, `IndirectBranch` and other spaces are [`Unsupported`].
+//! Integers run at the declared width, the two past the `u128` carrier
+//! included.
 //!
 //! A `Call` is an opaque callee. Call `k` of a run (from 1) puts
 //! `hash(seed, k, target, varnode)` in each register it clobbers and leaves
@@ -27,6 +30,8 @@ use std::ops::RangeInclusive;
 use std::rc::Rc;
 
 use cranelift_entity::SecondaryMap;
+use dashu_int::{IBig, UBig};
+use strider_ir::eval;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
     ExtendOp, Function, IRViewer, IRWalker, IntBinaryOp, IntCmpOp, IntUnaryOp, ReadOnlyMemory,
@@ -46,7 +51,7 @@ pub struct EntryVar {
 /// What a run starts from.
 pub struct Env<'a> {
     /// Each entry register's value; the interpreter masks it to the width.
-    pub entry: &'a dyn Fn(EntryVar) -> u128,
+    pub entry: &'a dyn Fn(EntryVar) -> UBig,
     /// What an unwritten byte reads, before and after any call: a callee
     /// cannot write read-only memory.
     pub rom: Option<&'a dyn ReadOnlyMemory>,
@@ -66,7 +71,7 @@ pub struct Unsupported(pub String);
 /// A returned value or a call argument.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Slot {
-    Known(u128),
+    Known(UBig),
     /// A division by zero, `INT_MIN / -1`, or a value computed from one. Any
     /// value refines it.
     Undefined,
@@ -75,7 +80,7 @@ pub enum Slot {
 }
 
 impl Slot {
-    fn of(r: Eval<Option<u128>>) -> Self {
+    fn of(r: Eval<Option<UBig>>) -> Self {
         match r {
             Ok(Some(x)) => Self::Known(x),
             Ok(None) => Self::Undefined,
@@ -88,7 +93,7 @@ impl Slot {
     #[must_use]
     pub fn admits(&self, opt: &Self) -> Option<bool> {
         match self {
-            Self::Known(x) => Some(*opt == Self::Known(*x)),
+            Self::Known(x) => Some(matches!(opt, Self::Known(y) if y == x)),
             Self::Undefined => Some(true),
             Self::Unsupported(_) => None,
         }
@@ -98,6 +103,7 @@ impl Slot {
 /// A call as its callee saw it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallRecord {
+    /// The callee's address, the low 128 bits of the target value.
     pub target: u128,
     pub args: Vec<Slot>,
     /// Bytes written since the previous call that clobbers memory, outside
@@ -178,7 +184,7 @@ pub fn run(f: &Function, env: &Env<'_>) -> Result<Outcome, Unsupported> {
 pub fn run_observed(
     f: &Function,
     env: &Env<'_>,
-    observe: &mut dyn FnMut(NodeId, ValueId, u128),
+    observe: &mut dyn FnMut(NodeId, ValueId, &UBig),
 ) -> Result<Outcome, Unsupported> {
     let mut m = Machine::new(f, env);
     let mut ctrl = f.node_outputs(f.entry())[0];
@@ -195,23 +201,23 @@ pub fn run_observed(
                 if matches!(f.node_kind(test), NodeKind::IntCmpOp(_)) {
                     for operand in f.node_inputs(test) {
                         if let Some(v) = m.int(operand)? {
-                            observe(node, operand, v);
+                            observe(node, operand, &v);
                         }
                     }
                 }
                 let Some(c) = m.int(cond)? else {
                     return Ok(Outcome::Diverge(Divergence::UndefinedBranch));
                 };
-                observe(node, cond, c);
+                observe(node, cond, &c);
                 // Output 0 is the taken arm.
-                ctrl = f.node_outputs(node)[usize::from(c == 0)];
+                ctrl = f.node_outputs(node)[usize::from(c == UBig::ZERO)];
             }
             NodeKind::Switch(_) => {
                 let Some(selector) = m.int(f.node_inputs(node)[NodeKind::SWITCH_SELECTOR_SLOT])?
                 else {
                     return Ok(Outcome::Diverge(Divergence::UndefinedBranch));
                 };
-                ctrl = f.node_outputs(node)[m.switch_arm(node, selector)?];
+                ctrl = f.node_outputs(node)[m.switch_arm(node, &selector)?];
             }
             NodeKind::Call { .. } => {
                 m.call(node)?;
@@ -241,10 +247,10 @@ struct Machine<'a, 'e> {
     env: &'a Env<'e>,
     live: strider_ir::walk::NodeIdSet,
     /// Values that change as control moves: phis, memory phis, call outputs.
-    now: SecondaryMap<ValueId, Option<Eval<Option<u128>>>>,
+    now: SecondaryMap<ValueId, Option<Eval<Option<UBig>>>>,
     mem_now: SecondaryMap<ValueId, Option<Eval<Rc<Mem>>>>,
     /// Every other value, over the current `now` and `mem_now`.
-    ints: SecondaryMap<ValueId, Option<Option<u128>>>,
+    ints: SecondaryMap<ValueId, Option<Option<UBig>>>,
     mems: SecondaryMap<ValueId, Option<Rc<Mem>>>,
     calls: Vec<CallRecord>,
 }
@@ -304,7 +310,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     /// over a value that is replaced is stale.
     fn settle(
         &mut self,
-        ints: Vec<(ValueId, Eval<Option<u128>>)>,
+        ints: Vec<(ValueId, Eval<Option<UBig>>)>,
         mems: Vec<(ValueId, Eval<Rc<Mem>>)>,
     ) {
         let mut replaced = false;
@@ -322,39 +328,33 @@ impl<'a, 'e> Machine<'a, 'e> {
 
     /// `None` is an undefined value: a division by zero or `INT_MIN / -1`, or
     /// anything computed from one.
-    fn int(&mut self, v: ValueId) -> Eval<Option<u128>> {
+    fn int(&mut self, v: ValueId) -> Eval<Option<UBig>> {
         if let Some(r) = &self.now[v] {
             return r.clone();
         }
-        if let Some(r) = self.ints[v] {
-            return Ok(r);
+        if let Some(r) = &self.ints[v] {
+            return Ok(r.clone());
         }
         let f = self.f;
         let node = f.producer(v);
         let ty = int_type(f, v)?;
-        let m = ty
-            .int_mask_u128()
-            .expect("int_type admits at most 128 bits");
         let ins: Vec<ValueId> = f.node_inputs(node).into_iter().collect();
         let r = match *f.node_kind(node) {
-            NodeKind::IntConst(_) => match f.int_const_u128(v) {
-                Some(c) => Some(c),
-                None => return unsupported("a constant wider than 128 bits"),
-            },
+            NodeKind::IntConst(_) => Some(f.int_const(v).expect("an interned constant").clone()),
             NodeKind::InitialVar(id) => {
                 let var = EntryVar {
                     index: id.index(),
                     vn: f.initial_vn(id),
                     ty,
                 };
-                Some((self.env.entry)(var) & m)
+                Some(eval::mask(&(self.env.entry)(var), ty))
             }
             NodeKind::IntBinaryOp(op) => {
                 let (a, b) = (self.int(ins[0])?, self.int(ins[1])?);
-                a.zip(b).and_then(|(a, b)| binary(op, a, b, ty))
+                a.zip(b).and_then(|(a, b)| binary(op, &a, &b, ty))
             }
             NodeKind::IntUnaryOp(IntUnaryOp::Neg) => {
-                self.int(ins[0])?.map(|a| a.wrapping_neg() & m)
+                self.int(ins[0])?.map(|a| unsigned(-IBig::from(a), ty))
             }
             NodeKind::IntCmpOp(op) => {
                 let t = int_type(f, ins[0])?;
@@ -362,20 +362,23 @@ impl<'a, 'e> Machine<'a, 'e> {
                     return unsupported("a compare of mismatched widths");
                 }
                 let (a, b) = (self.int(ins[0])?, self.int(ins[1])?);
-                a.zip(b).map(|(a, b)| u128::from(compare(op, a, b, t)))
+                a.zip(b)
+                    .map(|(a, b)| UBig::from(u8::from(compare(op, &a, &b, t))))
             }
-            NodeKind::Truncate => self.int(ins[0])?.map(|a| a & m),
+            NodeKind::Truncate => self.int(ins[0])?.map(|a| eval::mask(&a, ty)),
             NodeKind::Extend(ExtendOp::ZeroExtend) => self.int(ins[0])?,
             NodeKind::Extend(ExtendOp::SignExtend) => {
                 let t = int_type(f, ins[0])?;
-                self.int(ins[0])?.map(|a| (signed(a, t) as u128) & m)
+                self.int(ins[0])?.map(|a| unsigned(signed(&a, t), ty))
             }
-            NodeKind::Popcount => self.int(ins[0])?.map(|a| u128::from(a.count_ones()) & m),
+            NodeKind::Popcount => self
+                .int(ins[0])?
+                .map(|a| eval::mask(&UBig::from(a.count_ones()), ty)),
             NodeKind::Lzcount => {
                 // Over the input's bytes, as Sleigh counts: an `I1` counts 8.
-                let bits = (int_type(f, ins[0])?.byte_size() * 8) as u32;
+                let bits = int_type(f, ins[0])?.byte_size() * 8;
                 self.int(ins[0])?
-                    .map(|a| u128::from(a.leading_zeros() - (128 - bits)) & m)
+                    .map(|a| eval::mask(&UBig::from(bits - significant_bits(&a)), ty))
             }
             NodeKind::Load(space) => {
                 if !modelled(space) {
@@ -385,12 +388,12 @@ impl<'a, 'e> Machine<'a, 'e> {
                 let Some(at) = self.int(ins[NodeKind::ACCESS_ADDR_SLOT])? else {
                     return unsupported("a load from an undefined address");
                 };
-                Some(self.load(&mem, space, at as u64, ty))
+                Some(self.load(&mem, space, low_u64(&at), ty))
             }
             // A phi or call output not in `now` has not been produced yet.
             other => return unsupported(format!("{} as a value", label(&other))),
         };
-        self.ints[v] = Some(r);
+        self.ints[v] = Some(r.clone());
         Ok(r)
     }
 
@@ -419,7 +422,8 @@ impl<'a, 'e> Machine<'a, 'e> {
                 let Some(data) = self.int(data_in)? else {
                     return unsupported("a store of an undefined value");
                 };
-                let size = int_type(f, data_in)?.bit_width().div_ceil(8);
+                let data_ty = int_type(f, data_in)?;
+                let size = data_ty.bit_width().div_ceil(8);
                 // A state only this store reads leaves the cache and is
                 // updated in place; one with other readers is copied.
                 if f.value_has_one_use(prev_in) && self.mem_now[prev_in].is_none() {
@@ -427,7 +431,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 }
                 let mut mem = Rc::unwrap_or_clone(prev);
                 // Little-endian value bytes, then into address order.
-                let mut bytes = data.to_le_bytes()[..size].to_vec();
+                let mut bytes = eval::le_bytes(&data, data_ty)[..size].to_vec();
                 if f.byte_order().of(space) == Endianness::Big {
                     bytes.reverse();
                 }
@@ -436,8 +440,9 @@ impl<'a, 'e> Machine<'a, 'e> {
                 } else {
                     &mut mem.written
                 };
+                let at = low_u64(&at);
                 for (i, byte) in bytes.into_iter().enumerate() {
-                    space_bytes.insert((at as u64).wrapping_add(i as u64), byte);
+                    space_bytes.insert(at.wrapping_add(i as u64), byte);
                 }
                 Rc::new(mem)
             }
@@ -447,11 +452,11 @@ impl<'a, 'e> Machine<'a, 'e> {
         Ok(mem)
     }
 
-    fn load(&self, mem: &Mem, space: rsleigh::VnSpace, at: u64, ty: ValueType) -> u128 {
+    fn load(&self, mem: &Mem, space: rsleigh::VnSpace, at: u64, ty: ValueType) -> UBig {
         let size = ty.bit_width().div_ceil(8);
-        let mut bytes: Vec<u8> = (0..size)
+        let mut bytes: Vec<u8> = (0..size as u64)
             .map(|i| {
-                let addr = at.wrapping_add(i as u64);
+                let addr = at.wrapping_add(i);
                 if space == rsleigh::VnSpace::REGISTER {
                     self.register_byte(mem, addr)
                 } else {
@@ -462,8 +467,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         if self.f.byte_order().of(space) == Endianness::Big {
             bytes.reverse();
         }
-        bytes.resize(16, 0);
-        ty.wrap_u128(u128::from_le_bytes(bytes.try_into().expect("16 bytes")))
+        eval::mask(&UBig::from_le_bytes(&bytes), ty)
     }
 
     fn byte(&self, mem: &Mem, addr: u64) -> u8 {
@@ -500,16 +504,16 @@ impl<'a, 'e> Machine<'a, 'e> {
             .collect()
     }
 
-    fn switch_arm(&self, node: NodeId, selector: u128) -> Eval<usize> {
+    fn switch_arm(&self, node: NodeId, selector: &UBig) -> Eval<usize> {
         // An interworking dispatch carries its ISA mode in the selector's low
         // bit.
         let interworking = self.f.switch_isa_mode(node).is_some();
+        // `UBig` has no `Not`: clearing the low bit is a round trip through 1.
+        let even = (selector.clone() >> 1usize) << 1usize;
         self.f
             .switch_targets(node)
             .iter()
-            .position(|&t| {
-                u128::from(t) == selector || (interworking && u128::from(t) == selector & !1)
-            })
+            .position(|&t| UBig::from(t) == *selector || (interworking && UBig::from(t) == even))
             .map_or_else(|| unsupported("a switch selector naming no arm"), Ok)
     }
 
@@ -522,6 +526,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         let Some(target) = self.int(ins[NodeKind::CALL_TARGET_SLOT])? else {
             return unsupported("a call to an undefined target");
         };
+        let target = low_u128(&target);
         // The callee reads none of them, so an unsupported one does not stop
         // the run.
         let args = ins[NodeKind::Call { cc: None }.input_head_len()..]
@@ -559,7 +564,7 @@ impl<'a, 'e> Machine<'a, 'e> {
                 let value = int_type(f, out).map(|ty| {
                     let high = u128::from(noise(seed, k, key));
                     let low = u128::from(noise(seed, k ^ (target as u64), key));
-                    Some(ty.wrap_u128((high << 64) | low))
+                    Some(eval::mask(&UBig::from((high << 64) | low), ty))
                 });
                 (out, value)
             })
@@ -571,7 +576,7 @@ impl<'a, 'e> Machine<'a, 'e> {
     fn ret(
         &mut self,
         node: NodeId,
-        observe: &mut dyn FnMut(NodeId, ValueId, u128),
+        observe: &mut dyn FnMut(NodeId, ValueId, &UBig),
     ) -> Eval<Outcome> {
         let f = self.f;
         let ins: Vec<ValueId> = f.node_inputs(node).into_iter().collect();
@@ -579,7 +584,7 @@ impl<'a, 'e> Machine<'a, 'e> {
         let mut values = Vec::with_capacity(ins.len() - head);
         for &v in &ins[head..] {
             let value = Slot::of(self.int(v));
-            if let Slot::Known(x) = value {
+            if let Slot::Known(x) = &value {
                 observe(node, v, x);
             }
             values.push(value);
@@ -619,60 +624,103 @@ fn modelled(space: rsleigh::VnSpace) -> bool {
 
 fn int_type(f: &Function, v: ValueId) -> Eval<ValueType> {
     match f.value_type_opt(v) {
-        Some(ty) if ty.is_integer() && ty.bit_width() <= 128 => Ok(ty),
+        Some(ty) if ty.is_integer() => Ok(ty),
         Some(ty) => unsupported(format!("a {ty} value")),
         None => unsupported("a control, memory or token edge as a value"),
     }
 }
 
-fn signed(v: u128, ty: ValueType) -> i128 {
-    ty.get_signed_int(v)
-        .expect("an integer of at most 128 bits")
+/// An address, which is 64 bits whatever the value it was computed in.
+fn low_u64(v: &UBig) -> u64 {
+    v.as_words().first().copied().unwrap_or(0)
 }
 
-fn binary(op: IntBinaryOp, a: u128, b: u128, ty: ValueType) -> Option<u128> {
-    let m = ty.int_mask_u128()?;
-    let w = ty.bit_width() as u32;
-    Some(match op {
-        IntBinaryOp::Add => a.wrapping_add(b) & m,
-        IntBinaryOp::Mul => a.wrapping_mul(b) & m,
+/// A call target: an address, kept in the carrier the record declares.
+fn low_u128(v: &UBig) -> u128 {
+    let w = v.as_words();
+    u128::from(w.first().copied().unwrap_or(0)) | (u128::from(w.get(1).copied().unwrap_or(0)) << 64)
+}
+
+/// Bits up to and including `v`'s highest set one, 0 for zero.
+fn significant_bits(v: &UBig) -> usize {
+    let bytes = v.to_le_bytes();
+    bytes
+        .iter()
+        .rposition(|&b| b != 0)
+        .map_or(0, |i| i * 8 + (8 - bytes[i].leading_zeros() as usize))
+}
+
+/// `v` read as two's complement at `ty`'s width.
+fn signed(v: &UBig, ty: ValueType) -> IBig {
+    let m = eval::mask(v, ty);
+    let half = UBig::ONE << (ty.bit_width() - 1);
+    if m >= half {
+        IBig::from(m) - (IBig::from(half) << 1usize)
+    } else {
+        IBig::from(m)
+    }
+}
+
+/// `v` wrapped into `ty`'s two's-complement ring.
+fn unsigned(v: IBig, ty: ValueType) -> UBig {
+    v & eval::all_ones(ty)
+}
+
+fn signed_min(ty: ValueType) -> IBig {
+    -(IBig::ONE << (ty.bit_width() - 1))
+}
+
+fn signed_max(ty: ValueType) -> IBig {
+    (IBig::ONE << (ty.bit_width() - 1)) - IBig::ONE
+}
+
+fn binary(op: IntBinaryOp, a: &UBig, b: &UBig, ty: ValueType) -> Option<UBig> {
+    let w = ty.bit_width();
+    // The count keeps its own width; p-code clears the result once it reaches
+    // the output's. A count no `usize` holds is past every width.
+    let count = usize::try_from(b).ok().filter(|&s| s < w);
+    let raw = match op {
+        IntBinaryOp::Add => a + b,
+        IntBinaryOp::Mul => a * b,
         IntBinaryOp::And => a & b,
         IntBinaryOp::Or => a | b,
         IntBinaryOp::Xor => a ^ b,
-        // The count keeps its own width; p-code clears the result once it
-        // reaches the output's.
-        IntBinaryOp::ShiftLeft => {
-            if b >= u128::from(w) {
-                0
-            } else {
-                (a << b) & m
-            }
-        }
-        IntBinaryOp::ShiftRight => {
-            if b >= u128::from(w) {
-                0
-            } else {
-                a >> b
-            }
-        }
+        IntBinaryOp::ShiftLeft => match count {
+            Some(s) => a.clone() << s,
+            None => UBig::ZERO,
+        },
+        IntBinaryOp::ShiftRight => match count {
+            Some(s) => a.clone() >> s,
+            None => UBig::ZERO,
+        },
         IntBinaryOp::SShiftRight => {
             let sa = signed(a, ty);
-            if b >= u128::from(w) {
-                if sa < 0 { m } else { 0 }
-            } else {
-                ((sa >> b) as u128) & m
+            match count {
+                Some(s) => unsigned(sa >> s, ty),
+                None => {
+                    if sa < IBig::ZERO {
+                        eval::all_ones(ty)
+                    } else {
+                        UBig::ZERO
+                    }
+                }
             }
         }
-        IntBinaryOp::Div => a.checked_div(b)?,
-        IntBinaryOp::Rem => a.checked_rem(b)?,
+        IntBinaryOp::Div => {
+            if *b == UBig::ZERO {
+                return None;
+            }
+            a / b
+        }
+        IntBinaryOp::Rem => {
+            if *b == UBig::ZERO {
+                return None;
+            }
+            a % b
+        }
         IntBinaryOp::Sdiv | IntBinaryOp::Srem => {
             let (sa, sb) = (signed(a, ty), signed(b, ty));
-            let min = if w == 128 {
-                i128::MIN
-            } else {
-                -(1i128 << (w - 1))
-            };
-            if sb == 0 || (sa == min && sb == -1) {
+            if sb == IBig::ZERO || (sa == signed_min(ty) && sb == IBig::NEG_ONE) {
                 return None;
             }
             let q = if op == IntBinaryOp::Sdiv {
@@ -680,32 +728,31 @@ fn binary(op: IntBinaryOp, a: u128, b: u128, ty: ValueType) -> Option<u128> {
             } else {
                 sa % sb
             };
-            (q as u128) & m
+            unsigned(q, ty)
         }
-    })
+    };
+    Some(eval::mask(&raw, ty))
 }
 
-fn compare(op: IntCmpOp, a: u128, b: u128, ty: ValueType) -> bool {
-    let w = ty.bit_width() as u32;
-    let (sa, sb) = (signed(a, ty), signed(b, ty));
-    let (min, max) = if w == 128 {
-        (i128::MIN, i128::MAX)
-    } else {
-        (-(1i128 << (w - 1)), (1i128 << (w - 1)) - 1)
-    };
+fn compare(op: IntCmpOp, a: &UBig, b: &UBig, ty: ValueType) -> bool {
     match op {
         IntCmpOp::Equal => a == b,
         IntCmpOp::Less => a < b,
-        IntCmpOp::Sless => sa < sb,
-        IntCmpOp::Carry => a.checked_add(b).is_none_or(|s| ty.wrap_u128(s) != s),
-        IntCmpOp::Scarry => sa.checked_add(sb).is_none_or(|s| s < min || s > max),
-        IntCmpOp::Sborrow => sa.checked_sub(sb).is_none_or(|s| s < min || s > max),
+        IntCmpOp::Sless => signed(a, ty) < signed(b, ty),
+        IntCmpOp::Carry => a + b > eval::all_ones(ty),
+        IntCmpOp::Scarry => {
+            let sum = signed(a, ty) + signed(b, ty);
+            sum < signed_min(ty) || sum > signed_max(ty)
+        }
+        IntCmpOp::Sborrow => {
+            let diff = signed(a, ty) - signed(b, ty);
+            diff < signed_min(ty) || diff > signed_max(ty)
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Slot::Known;
     use super::*;
     use crate::{MockRom, RegisterSet, make_empty_fn, make_empty_fn_endian, reg_vn};
     use strider_ir::node::ValueKind;
@@ -713,8 +760,12 @@ mod tests {
 
     const SEED: u64 = 7;
 
+    fn known(v: u64) -> Slot {
+        Slot::Known(UBig::from(v))
+    }
+
     fn env<'a>(
-        entry: &'a dyn Fn(EntryVar) -> u128,
+        entry: &'a dyn Fn(EntryVar) -> UBig,
         rom: Option<&'a dyn ReadOnlyMemory>,
     ) -> Env<'a> {
         Env {
@@ -750,7 +801,7 @@ mod tests {
             Ok(b.function().node_outputs(node)[0])
         })
         .expect("a shift with a wider count is valid IR");
-        assert_eq!(returned(&f, &env(&|_| 0, None)), vec![Known(0)]);
+        assert_eq!(returned(&f, &env(&|_| UBig::ZERO, None)), vec![known(0)]);
     }
 
     /// Sleigh counts over the input's bytes, so an `I1` counts over 8 bits, as
@@ -763,8 +814,53 @@ mod tests {
                 b.build_lzcount(v, ValueType::int(8))
             })
             .unwrap();
-            assert_eq!(returned(&f, &env(&|_| 0, None)), vec![Known(zeros)]);
+            assert_eq!(
+                returned(&f, &env(&|_| UBig::ZERO, None)),
+                vec![known(zeros)]
+            );
         }
+    }
+
+    /// Integers run at the declared width: a value the `u128` carrier cannot
+    /// hold is computed, stored, reloaded and counted, not refused.
+    #[test]
+    fn an_i256_runs_at_its_declared_width() {
+        let i256 = ValueType::int(256);
+        let x = reg_vn(0x1000, 32);
+        let mut b = RegisterSet::new()
+            .tracked(x)
+            .build_fn_single_region()
+            .unwrap();
+        let v = b.read_variable(&x).unwrap();
+        let bit200 = UBig::ONE << 200usize;
+        let c = b.build_int_const(bit200.clone(), i256).unwrap();
+        let sum = b
+            .build_int_binary_operation(v, c, IntBinaryOp::Add, i256)
+            .unwrap();
+        let eight = b.build_int_const(8u32, i256).unwrap();
+        let arith = b
+            .build_int_binary_operation(v, eight, IntBinaryOp::SShiftRight, i256)
+            .unwrap();
+        let lz = b.build_lzcount(sum, ValueType::int(32)).unwrap();
+        let at = b.build_int_const(0x5000u64, ValueType::int(64)).unwrap();
+        b.build_store(at, sum, rsleigh::VnSpace::RAM).unwrap();
+        let back = b.build_load(at, rsleigh::VnSpace::RAM, i256).unwrap();
+        b.build_return(None, &[sum, arith, back, lz]).unwrap();
+        let f = b.build().unwrap();
+        // The top bit alone, which no `u128` holds.
+        let top = UBig::ONE << 255usize;
+        let want = top.clone() + bit200;
+        // -2^255 >> 8 is -2^247: every bit from 247 up.
+        let shifted = strider_ir::eval::complement(&((UBig::ONE << 247usize) - UBig::ONE), i256);
+        assert_eq!(
+            returned(&f, &env(&|_| top.clone(), None)),
+            vec![
+                Slot::Known(want.clone()),
+                Slot::Known(shifted),
+                Slot::Known(want),
+                known(0),
+            ]
+        );
     }
 
     /// `i = start; do i += step while i != stop; return i`.
@@ -800,8 +896,8 @@ mod tests {
     #[test]
     fn a_loop_runs_until_it_exits() {
         assert_eq!(
-            returned(&counting_loop(0, 1, 5), &env(&|_| 0, None)),
-            vec![Known(5)]
+            returned(&counting_loop(0, 1, 5), &env(&|_| UBig::ZERO, None)),
+            vec![known(5)]
         );
     }
 
@@ -809,7 +905,7 @@ mod tests {
     #[test]
     fn a_loop_past_the_step_budget_diverges() {
         assert_eq!(
-            run(&counting_loop(1, 2, 0), &env(&|_| 0, None)),
+            run(&counting_loop(1, 2, 0), &env(&|_| UBig::ZERO, None)),
             Ok(Outcome::Diverge(Divergence::StepBudget))
         );
     }
@@ -825,8 +921,8 @@ mod tests {
             })
             .unwrap();
             assert_eq!(
-                returned(&f, &env(&|_| 0, None)),
-                vec![Known(first)],
+                returned(&f, &env(&|_| UBig::ZERO, None)),
+                vec![known(first)],
                 "{endianness:?}"
             );
         }
@@ -844,7 +940,10 @@ mod tests {
             b.build_load(at, rsleigh::VnSpace::REGISTER, ValueType::int(16))
         })
         .unwrap();
-        assert_eq!(returned(&f, &env(&|_| 0, None)), vec![Known(0x3344)]);
+        assert_eq!(
+            returned(&f, &env(&|_| UBig::ZERO, None)),
+            vec![known(0x3344)]
+        );
     }
 
     #[test]
@@ -856,8 +955,8 @@ mod tests {
         })
         .unwrap();
         assert_eq!(
-            returned(&f, &env(&|_| 0, Some(&rom))),
-            vec![Known(0x0403_0201)]
+            returned(&f, &env(&|_| UBig::ZERO, Some(&rom))),
+            vec![known(0x0403_0201)]
         );
     }
 
@@ -881,10 +980,10 @@ mod tests {
             .unwrap();
         b.build_return(None, &[kept, lost]).unwrap();
         let f = b.build().unwrap();
-        match run(&f, &env(&|_| 0, Some(&rom))).expect("the function runs") {
+        match run(&f, &env(&|_| UBig::ZERO, Some(&rom))).expect("the function runs") {
             Outcome::Return { values, calls, .. } => {
-                let noise_byte = u128::from(noise(SEED, 0x5000, 1) as u8);
-                assert_eq!(values, vec![Known(0x5a), Known(noise_byte)]);
+                let noise_byte = u64::from(noise(SEED, 0x5000, 1) as u8);
+                assert_eq!(values, vec![known(0x5a), known(noise_byte)]);
                 assert_eq!(
                     calls,
                     vec![CallRecord {
@@ -920,21 +1019,21 @@ mod tests {
     #[test]
     fn a_switch_takes_the_arm_its_selector_names() {
         assert_eq!(
-            returned(&two_way_switch(), &env(&|_| 0x200, None)),
-            vec![Known(2)]
+            returned(&two_way_switch(), &env(&|_| UBig::from(0x200u64), None)),
+            vec![known(2)]
         );
         assert_eq!(
-            run(&two_way_switch(), &env(&|_| 0x300, None)),
+            run(&two_way_switch(), &env(&|_| UBig::from(0x300u64), None)),
             Err(Unsupported("a switch selector naming no arm".into()))
         );
     }
 
     #[test]
     fn a_raw_slot_admits_only_what_refines_it() {
-        assert_eq!(Known(1).admits(&Known(1)), Some(true));
-        assert_eq!(Known(1).admits(&Slot::Undefined), Some(false));
-        assert_eq!(Slot::Undefined.admits(&Known(7)), Some(true));
-        assert_eq!(Slot::Unsupported(String::new()).admits(&Known(7)), None);
+        assert_eq!(known(1).admits(&known(1)), Some(true));
+        assert_eq!(known(1).admits(&Slot::Undefined), Some(false));
+        assert_eq!(Slot::Undefined.admits(&known(7)), Some(true));
+        assert_eq!(Slot::Unsupported(String::new()).admits(&known(7)), None);
     }
 
     #[test]
@@ -951,7 +1050,7 @@ mod tests {
             .unwrap();
         let float = b.build_float_const(0, ValueType::float(32));
         b.build_return(None, &[undefined, float]).unwrap();
-        let values = returned(&b.build().unwrap(), &env(&|_| 5, None));
+        let values = returned(&b.build().unwrap(), &env(&|_| UBig::from(5u64), None));
         assert_eq!(values[0], Slot::Undefined);
         assert!(matches!(values[1], Slot::Unsupported(_)), "{values:?}");
     }
@@ -969,7 +1068,7 @@ mod tests {
         .unwrap();
         let env = Env {
             private: Some(0x7000..=0x7fff),
-            ..env(&|_| 0, None)
+            ..env(&|_| UBig::ZERO, None)
         };
         match run(&f, &env).expect("the function runs") {
             Outcome::Return { writes, .. } => {
@@ -998,9 +1097,9 @@ mod tests {
         let f = b.build().unwrap();
         let written = BTreeMap::from([(0x5000, 0xab)]);
         assert_eq!(
-            run(&f, &env(&|_| 0, None)),
+            run(&f, &env(&|_| UBig::ZERO, None)),
             Ok(Outcome::Return {
-                values: vec![Known(0xab)],
+                values: vec![known(0xab)],
                 writes: written.clone(),
                 calls: vec![CallRecord {
                     target: 0x9000,
@@ -1057,7 +1156,10 @@ mod tests {
         ];
         b.build_return(None, &out).unwrap();
         let f = b.build().unwrap();
-        assert_eq!(returned(&f, &env(&|_| 0, None)), vec![Known(2), Known(1)]);
+        assert_eq!(
+            returned(&f, &env(&|_| UBig::ZERO, None)),
+            vec![known(2), known(1)]
+        );
     }
 
     /// A trap reports what its optional memory input wrote after the last
@@ -1088,7 +1190,7 @@ mod tests {
         let stored = edit.function().node_outputs(store)[0];
         edit.add_node_input(trap, stored);
         assert_eq!(
-            run(&f, &env(&|_| 0, None)),
+            run(&f, &env(&|_| UBig::ZERO, None)),
             Ok(Outcome::Unreachable {
                 writes: BTreeMap::from([(0x5001, 0xcd)]),
                 calls: vec![CallRecord {
@@ -1123,12 +1225,19 @@ mod tests {
         b.build_return(None, &[zero]).unwrap();
         let f = b.build().unwrap();
         let mut seen = Vec::new();
-        run_observed(&f, &env(&|_| 3, None), &mut |at, _, value| {
-            seen.push((label(f.node_kind(at)), value));
-        })
+        run_observed(
+            &f,
+            &env(&|_| UBig::from(3u64), None),
+            &mut |at, _, value| {
+                seen.push((label(f.node_kind(at)), value.clone()));
+            },
+        )
         .expect("the function runs");
-        let expected = [("If", 3), ("If", 10), ("If", 1), ("Return", 3)];
-        assert_eq!(seen, expected.map(|(kind, value)| (kind.to_owned(), value)));
+        let expected = [("If", 3u64), ("If", 10), ("If", 1), ("Return", 3)];
+        assert_eq!(
+            seen,
+            expected.map(|(kind, value)| (kind.to_owned(), UBig::from(value)))
+        );
     }
 
     #[test]
@@ -1155,7 +1264,7 @@ mod tests {
         }
         let f = b.build().unwrap();
         assert_eq!(
-            run(&f, &env(&|_| 5, None)),
+            run(&f, &env(&|_| UBig::from(5u64), None)),
             Ok(Outcome::Diverge(Divergence::UndefinedBranch))
         );
     }
