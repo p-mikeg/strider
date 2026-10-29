@@ -1196,7 +1196,7 @@ fn the_pipeline_preserves_cfg_semantics() {
 fn a_wide_constant_does_not_ping_pong_across_const_on_right() {
     fn le_limbs(f: &strider_ir::Function, v: ValueId) -> Vec<u64> {
         let ty = f.value_kind(v).as_value().expect("a typed value");
-        assert!(ty.is_wide_int(), "{v:?} is not a wide constant");
+        assert!(ty.bit_width() > 64, "{v:?} is not a wide constant");
         strider_ir::eval::le_bytes(f.int_const(v).expect("an int const"), ty)
             .chunks_exact(8)
             .map(|c| u64::from_le_bytes(c.try_into().unwrap()))

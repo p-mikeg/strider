@@ -471,7 +471,7 @@ fn wide_mask_bytes(d: &FunctionLifter<'_, TestReader>, and_val: ValueId) -> Opti
         .find_map(|input| {
             let ty = f.value_kind(input).as_value()?;
             // The narrow operands are not masks; only the wide constant is.
-            if !ty.is_wide_int() {
+            if ty.bit_width() <= 64 {
                 return None;
             }
             Some(strider_ir::eval::le_bytes(f.int_const(input)?, ty))
