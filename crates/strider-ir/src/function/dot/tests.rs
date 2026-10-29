@@ -1,3 +1,5 @@
+use dashu_int::UBig;
+
 use super::*;
 use crate::function::Function;
 use crate::function::test_function;
@@ -113,8 +115,8 @@ fn render_int_const_wide_shows_value_not_debug() {
     let [ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
     let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
     // Limbs are little-endian; the high limb keeps this genuinely Wide.
-    let id = f.intern_int_const_limbs(
-        &[0x1234, 0xabcd, 0, 0x8000_0000_0000_0000],
+    let id = f.intern_int_const(
+        UBig::from_words(&[0x1234, 0xabcd, 0, 0x8000_0000_0000_0000]),
         ValueType::int(256),
     );
     let wide = f.graph_mut().create_node(
@@ -1399,15 +1401,21 @@ fn interned_values_render_alike_whatever_route_reached_them() {
     let cases = [
         (f.intern_int_const(value, ValueType::int(128)), 128),
         (
-            f.intern_int_const_limbs(&[0xDEAD_BEEF, 1 << 5], ValueType::int(128)),
+            f.intern_int_const(
+                UBig::from_words(&[0xDEAD_BEEF, 1 << 5]),
+                ValueType::int(128),
+            ),
             128,
         ),
         (
-            f.intern_int_const_limbs(&[0xDEAD_BEEF, 1 << 5, 0, 0], ValueType::int(256)),
+            f.intern_int_const(
+                UBig::from_words(&[0xDEAD_BEEF, 1 << 5, 0, 0]),
+                ValueType::int(256),
+            ),
             256,
         ),
         (
-            f.intern_int_const_limbs(&[0xDEAD_BEEF, 1 << 5], ValueType::int(80)),
+            f.intern_int_const(UBig::from_words(&[0xDEAD_BEEF, 1 << 5]), ValueType::int(80)),
             80,
         ),
     ];

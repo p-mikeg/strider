@@ -26,18 +26,18 @@ mod tests {
         assert_eq!(*f.const_value(id), UBig::ZERO);
     }
 
-    /// No unmasked value may slip in via the limb path.
+    /// No unmasked value may slip in via a `from_words` spelling.
     #[test]
-    fn intern_int_const_limbs_masks_to_width() {
+    fn interning_from_words_masks_to_width() {
         let mut f = test_function();
         // Bit 69 is inside I80's width, bit 84 is above it; only 69 survives.
         let hi: u64 = (1 << 5) | (1 << 20);
         let value = u128::from(hi) << 64;
-        let limbed = f.intern_int_const_limbs(&[0, hi], ValueType::int(80));
+        let limbed = f.intern_int_const(UBig::from_words(&[0, hi]), ValueType::int(80));
         let scalar = f.intern_int_const(value, ValueType::int(80));
         assert_eq!(
             limbed, scalar,
-            "limb path must mask to width like the scalar path"
+            "a from_words spelling must mask to width like a scalar one"
         );
         let masked = ValueType::int(80).wrap_u128(value);
         assert_eq!(u128::try_from(f.const_value(limbed)), Ok(masked));
@@ -163,7 +163,8 @@ mod tests {
         for (label, value, ty) in cases {
             let mut f = test_function();
             let scalar = f.intern_int_const(value, ty);
-            let limbed = f.intern_int_const_limbs(&[value as u64, (value >> 64) as u64], ty);
+            let limbed =
+                f.intern_int_const(UBig::from_words(&[value as u64, (value >> 64) as u64]), ty);
             assert_eq!(scalar, limbed, "{label}: both paths must share one id");
             assert_eq!(u128::try_from(f.const_value(scalar)), Ok(value), "{label}");
         }
@@ -174,7 +175,7 @@ mod tests {
     fn values_past_the_u128_carrier_keep_their_limbs() {
         let mut f = test_function();
         // Bit 128 is the first bit no `u128` carries.
-        let id = f.intern_int_const_limbs(&[0, 0, 1, 0], ValueType::int(256));
+        let id = f.intern_int_const(UBig::from_words(&[0, 0, 1, 0]), ValueType::int(256));
         assert!(u128::try_from(f.const_value(id)).is_err());
         assert_eq!(
             crate::eval::words(f.const_value(id), ValueType::int(256)),
@@ -197,7 +198,7 @@ mod tests {
             let masked = ty.wrap_u128(u128::MAX);
             let saturated = f.intern_int_const(u128::MAX, ty);
             let exact = f.intern_int_const(masked, ty);
-            let limbed = f.intern_int_const_limbs(&[u64::MAX; 8], ty);
+            let limbed = f.intern_int_const(UBig::from_words(&[u64::MAX; 8]), ty);
             assert_eq!(saturated, exact, "{label}: the mask is applied first");
             assert_eq!(saturated, limbed, "{label}: the limb path masks too");
             assert_eq!(

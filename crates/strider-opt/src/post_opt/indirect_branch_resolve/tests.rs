@@ -2,6 +2,7 @@
 //! match arms are exercised in isolation.
 
 use super::*;
+use strider_ir::UBig;
 use strider_ir::node::{IntBinaryOp, NodeKind, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn as fake_reg_vn};
@@ -717,7 +718,9 @@ fn a_shared_verifier_answers_each_return_site_the_same() {
 fn a_mask_past_the_u128_carrier_is_not_the_isa_mode_mask() {
     let wide = ValueType::int(256);
     let (function, masked) = empty_graph_returning(|fb| {
-        let target = fb.build_int_const_limbs(&[1, 2, 3, 4], wide).unwrap();
+        let target = fb
+            .build_int_const(UBig::from_words(&[1, 2, 3, 4]), wide)
+            .unwrap();
         let low_bit_clear = fb.build_int_const(u128::MAX ^ 1, wide).unwrap();
         fb.build_int_binary_operation(target, low_bit_clear, IntBinaryOp::And, wide)
             .unwrap()
