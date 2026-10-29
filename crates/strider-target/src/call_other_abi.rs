@@ -1,26 +1,27 @@
 use crate::calling_convention::regs_to_vns;
 use CallOtherClass::NoOp;
 
-/// Vn-resolved [`CallOtherAbi`].
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct BuiltCallOtherAbi {
-    pub implicit_reads: Vec<rsleigh::Vn>,
-    pub implicit_writes: Vec<rsleigh::Vn>,
-    pub clobbers_memory: bool,
-    pub no_return: bool,
-}
-
 /// Per-user-op ABI covering the ISA-fixed effects Sleigh's pcode does NOT
-/// encode.  Sleigh emits `CALLOTHER(user_op_id, args)` with an optional
-/// `output`; this fills in the implicit channel around it.
+/// encode, carrying each register list as `L`.  Sleigh emits
+/// `CALLOTHER(user_op_id, args)` with an optional `output`; this fills in the
+/// implicit channel around it.
+///
+/// The two instantiations are [`CallOtherAbi`], which names registers as
+/// static Sleigh strings, and [`BuiltCallOtherAbi`], the same footprint with
+/// those names resolved to varnodes.  [`CallOtherAbi::build`] is that
+/// substitution and nothing else.
+///
+/// `Copy` only when `L` is, which keeps [`CallOtherAbi`] usable in the `const`
+/// table rows while the `Vec`-carrying [`BuiltCallOtherAbi`] stays
+/// move-or-clone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CallOtherAbi {
-    /// Read beyond Sleigh's pcode-explicit `inputs[1..]`.  Exact Sleigh
-    /// register names, case-sensitive.
-    pub implicit_reads: &'static [&'static str],
+pub struct OpAbi<L> {
+    /// Read beyond Sleigh's pcode-explicit `inputs[1..]`.  Named form: exact
+    /// Sleigh register names, case-sensitive.
+    pub implicit_reads: L,
 
     /// Written or scratch-clobbered beyond Sleigh's pcode-explicit `output`.
-    pub implicit_writes: &'static [&'static str],
+    pub implicit_writes: L,
 
     /// Whether the op advances the IR's memory edge: `false` for pure compute
     /// (rdtsc, NEON/SVE), `true` for anything touching memory (atomics,
@@ -33,6 +34,12 @@ pub struct CallOtherAbi {
     /// empty-footprint case.
     pub no_return: bool,
 }
+
+/// A user-op ABI as static register-name slices.
+pub type CallOtherAbi = OpAbi<&'static [&'static str]>;
+
+/// Vn-resolved [`CallOtherAbi`].
+pub type BuiltCallOtherAbi = OpAbi<Vec<rsleigh::Vn>>;
 
 impl CallOtherAbi {
     /// Resolves the name-based footprint against `sleigh_regs`.
