@@ -2,6 +2,7 @@ use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType, WidthTie,
 use strider_ir::{Function, IRViewer, ReadOnlyMemory};
 use strider_target::Endianness;
 
+use strider_ir::UBig;
 use strider_ir::eval;
 
 /// Decodes `ty` bytes at `addr` into an integer masked to `ty`. `None` for
@@ -68,6 +69,18 @@ fn operands_carry(
         .then_some(())
 }
 
+/// `ty` when a `u128` spans it. The resolver hands constants over as `u128`
+/// and this returns one, so a wider type cannot be evaluated here even though
+/// [`eval`] itself is total.
+fn in_carrier(ty: ValueType) -> Option<ValueType> {
+    ty.int_mask_u128().map(|_| ty)
+}
+
+/// `v` back in the carrier.
+fn carrier(v: UBig) -> Option<u128> {
+    u128::try_from(&v).ok()
+}
+
 /// The constant value of `value`, given `resolve` for its inputs' constants.
 /// `None` for anything not foldable to one integer constant. Does NOT handle
 /// `Phi` or any stack-relative address.
@@ -84,45 +97,43 @@ pub(crate) fn eval_node_const(
     match kind {
         NodeKind::IntConst(_) => function.int_const_u128(value),
         NodeKind::IntBinaryOp(op) => {
-            let ty = out_ty?;
+            let ty = in_carrier(out_ty?)?;
             let (l, r) = (ins.get(0).copied()?, ins.get(1).copied()?);
             operands_carry(function, &kind, &[l, r], ty)?;
-            eval::int_binary(op, resolve(l)?, resolve(r)?, ty)
+            let (l, r) = (UBig::from(resolve(l)?), UBig::from(resolve(r)?));
+            eval::int_binary(op, &l, &r, ty).and_then(carrier)
         }
         NodeKind::IntUnaryOp(op) => {
-            let ty = out_ty?;
+            let ty = in_carrier(out_ty?)?;
             let v = ins.get(0).copied()?;
             // Checked like the binary arm: `IntUnaryOp` pins its operand to
             // the output width, and `validate` rejects a node that does not,
             // but this folds mid-pipeline where nothing has validated yet.
             operands_carry(function, &kind, &[v], ty)?;
-            eval::int_unary(op, resolve(v)?, ty)
+            eval::int_unary(op, &UBig::from(resolve(v)?), ty).and_then(carrier)
         }
         NodeKind::Truncate | NodeKind::Extend(ExtendOp::ZeroExtend) => {
             out_ty?.get_unsigned_int(resolve(ins.get(0).copied()?)?)
         }
         NodeKind::Extend(ExtendOp::SignExtend) => {
-            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
-            eval::sign_extend(resolve(ins[0])?, in_ty, out_ty?)
+            let in_ty = in_carrier(function.value_type_opt(ins.get(0).copied()?)?)?;
+            let out_ty = in_carrier(out_ty?)?;
+            eval::sign_extend(&UBig::from(resolve(ins[0])?), in_ty, out_ty).and_then(carrier)
         }
         NodeKind::Popcount => {
-            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
-            eval::popcount(resolve(ins[0])?, in_ty)
+            let in_ty = in_carrier(function.value_type_opt(ins.get(0).copied()?)?)?;
+            eval::popcount(&UBig::from(resolve(ins[0])?), in_ty).and_then(carrier)
         }
         NodeKind::Lzcount => {
-            let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
-            eval::lzcount(resolve(ins[0])?, in_ty)
+            let in_ty = in_carrier(function.value_type_opt(ins.get(0).copied()?)?)?;
+            eval::lzcount(&UBig::from(resolve(ins[0])?), in_ty).and_then(carrier)
         }
         NodeKind::IntCmpOp(op) => {
             let (l, r) = (ins.get(0).copied()?, ins.get(1).copied()?);
-            let in_ty = function.value_type_opt(l)?;
+            let in_ty = in_carrier(function.value_type_opt(l)?)?;
             operands_carry(function, &kind, &[l, r], in_ty)?;
-            Some(u128::from(eval::int_cmp(
-                op,
-                resolve(l)?,
-                resolve(r)?,
-                in_ty,
-            )?))
+            let (l, r) = (UBig::from(resolve(l)?), UBig::from(resolve(r)?));
+            Some(u128::from(eval::int_cmp(op, &l, &r, in_ty)?))
         }
         // Only a RAM load reads the image.  A register / unique / const-space
         // load names a different address space.  A nested load reaches here
