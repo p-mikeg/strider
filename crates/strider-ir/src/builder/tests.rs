@@ -808,7 +808,7 @@ fn fitting_values_intern_as_bits() -> Result<()> {
     let NodeKind::IntConst(small_id) = *b.function().node_kind(small_node) else {
         panic!("expected IntConst");
     };
-    assert_eq!(b.function().const_value(small_id), &ConstValue::Bits(5));
+    assert_eq!(b.function().const_value(small_id), &ConstValue::bits(5));
     assert_eq!(b.function().int_const_u128(small), Some(5u128));
     assert_eq!(b.function().value_type(small)?, ValueType::int(128));
 
@@ -821,7 +821,7 @@ fn fitting_values_intern_as_bits() -> Result<()> {
     };
     assert_eq!(
         b.function().const_value(big_id),
-        &ConstValue::Wide(vec![0, 1 << 36].into_boxed_slice())
+        &ConstValue::wide(vec![0, 1 << 36].into_boxed_slice())
     );
     assert_eq!(b.function().int_const_u128(big), Some(big_val));
     let big_limbed = b.build_int_const_limbs(&[0, 1 << 36], ValueType::int(128))?;
@@ -1953,7 +1953,7 @@ fn build_int_const_limbs_round_trips_through_graph() -> Result<()> {
         };
         assert_eq!(
             b.function().const_value(id),
-            &ConstValue::Wide(limbs.into_boxed_slice()),
+            &ConstValue::wide(limbs.into_boxed_slice()),
             "{label}"
         );
     }
@@ -2038,7 +2038,7 @@ fn build_int_const_limbs_zero_fills_missing_limbs() -> Result<()> {
     };
     assert_eq!(
         b.function().const_value(id),
-        &ConstValue::Wide(vec![u64::MAX, u64::MAX, u64::MAX, 0].into_boxed_slice())
+        &ConstValue::wide(vec![u64::MAX, u64::MAX, u64::MAX, 0].into_boxed_slice())
     );
     Ok(())
 }
@@ -2109,7 +2109,7 @@ fn int_const_past_the_u128_carrier_reads_only_as_bytes() -> Result<()> {
 /// Every bit of the type and none above it, at every integer width.
 #[test]
 fn build_all_ones_sets_every_bit_at_every_int_width() -> Result<()> {
-    use crate::node::const_value::ConstValue;
+    use crate::node::const_value::ConstRead;
     let mut b = builder_with_region()?;
     for ty in ValueType::SUPPORTED.into_iter().filter(|t| t.is_integer()) {
         let ones = b.build_all_ones(ty)?;
@@ -2117,9 +2117,9 @@ fn build_all_ones_sets_every_bit_at_every_int_width() -> Result<()> {
         let NodeKind::IntConst(id) = *b.function().node_kind(b.function().producer(ones)) else {
             panic!("expected an IntConst at {ty:?}");
         };
-        let set: u32 = match b.function().const_value(id) {
-            ConstValue::Bits(v) => v.count_ones(),
-            ConstValue::Wide(limbs) => limbs.iter().map(|l| l.count_ones()).sum(),
+        let set: u32 = match b.function().const_value(id).get_value() {
+            ConstRead::Val(v) => v.count_ones(),
+            ConstRead::Wide(limbs) => limbs.iter().map(|l| l.count_ones()).sum(),
         };
         assert_eq!(set as usize, ty.bit_width(), "{ty:?}");
         assert_eq!(
@@ -2714,7 +2714,7 @@ fn small_valued_i80_const_interns_as_bits() -> Result<()> {
     let NodeKind::IntConst(id) = *b.function().node_kind(node) else {
         panic!("expected IntConst");
     };
-    assert_eq!(b.function().const_value(id), &ConstValue::Bits(5));
+    assert_eq!(b.function().const_value(id), &ConstValue::bits(5));
     assert_eq!(b.function().value_type(via_small)?, ValueType::int(80));
     assert_eq!(b.function().int_const_u128(via_small), Some(5u128));
 
@@ -2740,7 +2740,7 @@ fn small_valued_i256_limbs_canonicalise_to_bits() -> Result<()> {
     };
     assert_eq!(
         b.function().const_value(id),
-        &ConstValue::Bits(5),
+        &ConstValue::bits(5),
         "small-valued I256 limbs must canonicalise to Bits, got {:?}",
         b.function().const_value(id)
     );
@@ -2768,7 +2768,7 @@ fn i1_const_payload_masks_to_one_bit() -> Result<()> {
     };
     assert_eq!(
         b.function().const_value(id),
-        &ConstValue::Bits(1),
+        &ConstValue::bits(1),
         "value 3 at I1 must mask to 1, got {:?}",
         b.function().const_value(id)
     );
@@ -2793,7 +2793,7 @@ fn i64_const_at_exactly_64_bits_keeps_all_bits() -> Result<()> {
     };
     assert_eq!(
         b.function().const_value(id),
-        &ConstValue::Bits(u64::MAX),
+        &ConstValue::bits(u64::MAX),
         "all 64 bits must survive the width mask, got {:?}",
         b.function().const_value(id)
     );

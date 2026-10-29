@@ -1188,7 +1188,7 @@ fn the_pipeline_preserves_cfg_semantics() {
 // Targeted proofs.
 
 /// `op(C1, C2)` at I256 with both constants past the u128 carrier. The
-/// pipeline leaves a `ConstValue::Wide` operand unfolded, so what the run must
+/// pipeline leaves such an operand unfolded, so what the run must
 /// preserve is the operation and both operands' limbs, unswapped by
 /// const-on-right and untruncated by the u128 carrier.
 #[test]

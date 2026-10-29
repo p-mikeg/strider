@@ -318,7 +318,7 @@ impl crate::Function {
             Ok(v) => self
                 .side_tables_mut()
                 .const_interner
-                .intern(crate::node::const_value::ConstValue::Bits(v)),
+                .intern(crate::node::const_value::ConstValue::bits(v)),
             // Past the carrier the limb path holds the canonical spelling.
             Err(_) => self.intern_int_const_limbs(&[masked as u64, (masked >> 64) as u64], ty),
         }
@@ -346,13 +346,9 @@ impl crate::Function {
             let spare = limb_count * 64 - ty.bit_width();
             *last &= u64::MAX >> spare;
         }
-        // Canonical: a value fitting the carrier is `Bits`, so the scalar and
-        // the limb path reach one id for it.
-        let cv = if trimmed.iter().skip(1).all(|&l| l == 0) {
-            crate::node::const_value::ConstValue::Bits(trimmed.first().copied().unwrap_or(0))
-        } else {
-            crate::node::const_value::ConstValue::Wide(trimmed.into_boxed_slice())
-        };
+        // `wide` collapses a value the carrier holds, so the scalar and the
+        // limb path reach one id for it.
+        let cv = crate::node::const_value::ConstValue::wide(trimmed.into_boxed_slice());
         self.side_tables_mut().const_interner.intern(cv)
     }
 
