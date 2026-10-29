@@ -7,8 +7,17 @@ use cranelift_entity::entity_impl;
 pub struct ConstId(u32);
 entity_impl!(ConstId, "const");
 
+/// An integer constant of any supported width. Built through
+/// [`ConstValue::bits`] / [`ConstValue::wide`], read through
+/// [`ConstValue::get_value`].
 #[derive(Clone, PartialEq, Eq, Hash)]
-pub enum ConstValue {
+pub struct ConstValue(Repr);
+
+/// Private, so the only way in is through the constructors and the only way
+/// out is [`ConstValue::get_value`]: one value has one `Repr`, which is what
+/// the interner dedups by.
+#[derive(Clone, PartialEq, Eq, Hash)]
+enum Repr {
     Bits(u64),
     /// Little-endian limbs, `limbs[0]` low.
     Wide(Box<[u64]>),
@@ -37,17 +46,34 @@ impl core::fmt::Debug for ConstValue {
 }
 
 /// `Bits(u64)` keeps the alignment at 8 and leaves `Box`'s non-null niche to
-/// carry the tag, so the enum is exactly its widest payload. A `u128` payload
+/// carry the tag, so `Repr` is exactly its widest payload. A `u128` payload
 /// costs 32: alignment 16, and no niche to hide the tag in.
 const _: () = assert!(size_of::<ConstValue>() == 16);
 
 impl ConstValue {
+    /// A value the 64-bit carrier holds.
+    pub fn bits(v: u64) -> Self {
+        Self(Repr::Bits(v))
+    }
+
+    /// Little-endian `limbs`, `limbs[0]` low, masked to the declared width by
+    /// the caller. A value the carrier holds collapses to [`Self::bits`], so
+    /// the scalar and the limb path reach one value and the interner gives
+    /// them one id.
+    pub fn wide(limbs: Box<[u64]>) -> Self {
+        if limbs.iter().skip(1).all(|&l| l == 0) {
+            Self::bits(limbs.first().copied().unwrap_or(0))
+        } else {
+            Self(Repr::Wide(limbs))
+        }
+    }
+
     /// The one read. `Wide` answers `Val` too whenever it fits, which is
     /// every limb above the low two being zero.
     pub fn get_value(&self) -> ConstRead<'_> {
-        match self {
-            Self::Bits(v) => ConstRead::Val(u128::from(*v)),
-            Self::Wide(limbs) => {
+        match &self.0 {
+            Repr::Bits(v) => ConstRead::Val(u128::from(*v)),
+            Repr::Wide(limbs) => {
                 if limbs.iter().skip(2).all(|&l| l == 0) {
                     let lo = u128::from(limbs.first().copied().unwrap_or(0));
                     let hi = u128::from(limbs.get(1).copied().unwrap_or(0));
@@ -75,7 +101,7 @@ mod tests {
         use crate::node::ValueType;
         let mut f = test_function();
         let id = f.intern_int_const(0, ValueType::float(64));
-        assert_eq!(*f.const_value(id), ConstValue::Bits(0));
+        assert_eq!(*f.const_value(id), ConstValue::bits(0));
     }
 
     /// No unmasked value may slip in via the limb path.
@@ -96,7 +122,7 @@ mod tests {
         assert_eq!(f.const_value(limbed).get_value(), ConstRead::Val(masked));
         assert_eq!(
             f.const_value(limbed),
-            &ConstValue::Wide(vec![0, 1 << 5].into_boxed_slice()),
+            &ConstValue::wide(vec![0, 1 << 5].into_boxed_slice()),
             "past the carrier the limbs carry the masked value"
         );
     }
@@ -104,10 +130,10 @@ mod tests {
     #[test]
     fn intern_dedups_equal_values() {
         let cases: [(&str, ConstValue); 2] = [
-            ("intern_dedups_equal_bits", ConstValue::Bits(0xABCD)),
+            ("intern_dedups_equal_bits", ConstValue::bits(0xABCD)),
             (
                 "intern_dedups_equal_wide",
-                ConstValue::Wide(vec![1, 2, 3, 4].into_boxed_slice()),
+                ConstValue::wide(vec![1, 2, 3, 4].into_boxed_slice()),
             ),
         ];
         for (label, v) in cases {
@@ -124,11 +150,11 @@ mod tests {
     #[test]
     fn intern_assigns_distinct_ids_for_distinct_values() {
         let cases: [(&str, ConstValue, ConstValue); 2] = [
-            ("distinct_bits", ConstValue::Bits(1), ConstValue::Bits(2)),
+            ("distinct_bits", ConstValue::bits(1), ConstValue::bits(2)),
             (
                 "distinct_wide",
-                ConstValue::Wide(vec![1, 0, 0, 0].into_boxed_slice()),
-                ConstValue::Wide(vec![2, 0, 0, 0].into_boxed_slice()),
+                ConstValue::wide(vec![1, 0, 0, 0].into_boxed_slice()),
+                ConstValue::wide(vec![2, 0, 0, 0].into_boxed_slice()),
             ),
         ];
         for (label, a, b) in cases {
@@ -142,7 +168,7 @@ mod tests {
     #[test]
     fn const_value_lookup_returns_stored_value() {
         let mut g = test_function();
-        let v = ConstValue::Wide(vec![0x1234, 0x5678, 0x9abc, 0xdef0].into_boxed_slice());
+        let v = ConstValue::wide(vec![0x1234, 0x5678, 0x9abc, 0xdef0].into_boxed_slice());
         let id = g.side_tables_mut().const_interner.intern(v.clone());
         assert_eq!(g.const_value(id), &v);
     }
@@ -151,8 +177,8 @@ mod tests {
     /// past it.
     #[test]
     fn get_value_cases() {
-        let wide = |l: &[u64]| ConstValue::Wide(l.to_vec().into_boxed_slice());
-        let bits = ConstValue::Bits(0xDEAD_BEEF);
+        let wide = |l: &[u64]| ConstValue::wide(l.to_vec().into_boxed_slice());
+        let bits = ConstValue::bits(0xDEAD_BEEF);
         assert_eq!(bits.get_value(), ConstRead::Val(0xDEAD_BEEF));
         assert_eq!(wide(&[1, 0, 0, 0]).get_value(), ConstRead::Val(1));
         assert_eq!(wide(&[0, 0, 0, 0]).get_value(), ConstRead::Val(0));
@@ -251,36 +277,36 @@ mod tests {
     #[test]
     fn debug_spells_the_value_not_the_arm() {
         let cases: [(&str, ConstValue, &str); 7] = [
-            ("zero_bits", ConstValue::Bits(0), "Bits(0)"),
+            ("zero_bits", ConstValue::bits(0), "Bits(0)"),
             (
                 "zero_no_limbs",
-                ConstValue::Wide(vec![].into_boxed_slice()),
+                ConstValue::wide(vec![].into_boxed_slice()),
                 "Bits(0)",
             ),
             (
                 "zero_padded",
-                ConstValue::Wide(vec![0, 0, 0, 0].into_boxed_slice()),
+                ConstValue::wide(vec![0, 0, 0, 0].into_boxed_slice()),
                 "Bits(0)",
             ),
             (
                 "five_padded",
-                ConstValue::Wide(vec![5, 0, 0, 0].into_boxed_slice()),
+                ConstValue::wide(vec![5, 0, 0, 0].into_boxed_slice()),
                 "Bits(5)",
             ),
             (
                 "bit_64",
-                ConstValue::Wide(vec![0, 1].into_boxed_slice()),
+                ConstValue::wide(vec![0, 1].into_boxed_slice()),
                 "Bits(18446744073709551616)",
             ),
             // The exact text the raw DOT label carries for a 96-bit mask.
             (
                 "i96_all_ones",
-                ConstValue::Wide(vec![u64::MAX, u64::from(u32::MAX)].into_boxed_slice()),
+                ConstValue::wide(vec![u64::MAX, u64::from(u32::MAX)].into_boxed_slice()),
                 "Bits(79228162514264337593543950335)",
             ),
             (
                 "past_the_carrier",
-                ConstValue::Wide(vec![0, 0, 1, 0].into_boxed_slice()),
+                ConstValue::wide(vec![0, 0, 1, 0].into_boxed_slice()),
                 "Wide([0, 0, 1, 0])",
             ),
         ];

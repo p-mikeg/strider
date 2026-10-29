@@ -1115,7 +1115,7 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
     let id =
         s.f.side_tables_mut()
             .const_interner
-            .intern(ConstValue::Wide(vec![0, 0, 0, 1].into_boxed_slice()));
+            .intern(ConstValue::wide(vec![0, 0, 0, 1].into_boxed_slice()));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
@@ -1139,7 +1139,7 @@ fn graph_invariants_const_bits_above_declared_width_detected() {
     let id =
         s.f.side_tables_mut()
             .const_interner
-            .intern(ConstValue::Bits(0x1FF));
+            .intern(ConstValue::bits(0x1FF));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
@@ -1164,7 +1164,7 @@ fn graph_invariants_wide_const_filling_a_partial_top_limb_is_accepted() {
     let id =
         s.f.side_tables_mut()
             .const_interner
-            .intern(ConstValue::Wide(vec![0, 0xFF].into_boxed_slice()));
+            .intern(ConstValue::wide(vec![0, 0xFF].into_boxed_slice()));
     let ok = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
@@ -1190,7 +1190,7 @@ fn graph_invariants_wide_const_one_bit_over_a_partial_width_detected() {
     let id =
         s.f.side_tables_mut()
             .const_interner
-            .intern(ConstValue::Wide(vec![0, 0x1FF].into_boxed_slice()));
+            .intern(ConstValue::wide(vec![0, 0x1FF].into_boxed_slice()));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
