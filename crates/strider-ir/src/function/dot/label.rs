@@ -85,13 +85,11 @@ impl FunctionDotDumper<'_> {
                 // A dangling id (malformed graph) labels rather than panics.
                 match self.function.side_tables().const_interner.get(*id) {
                     None => format!("const <dangling const {id:?}>"),
-                    Some(_) if out_ty.is_some_and(|t| t.is_wide_int()) => {
-                        // Stored little-endian; render high->low.
+                    Some(cv) if out_ty.is_some_and(|t| t.is_wide_int()) => {
+                        // Stored little-endian; render high->low. The leading
+                        // zeros go, so the width-padded form buys nothing.
                         let bits = out_ty.map_or(0, ValueType::bit_width);
-                        let bytes = self
-                            .function
-                            .int_const_wide_le_bytes(node)
-                            .unwrap_or_default();
+                        let bytes = cv.to_le_bytes();
                         let raw: String = bytes.iter().rev().map(|b| format!("{b:02x}")).collect();
                         let hex = raw.trim_start_matches('0');
                         let hex = if hex.is_empty() { "0" } else { hex };
