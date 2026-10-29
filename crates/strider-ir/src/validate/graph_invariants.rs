@@ -541,23 +541,7 @@ pub(super) fn check_consts(
         return;
     };
     // Canonical masking: every bit above the declared width is zero.
-    let too_wide = match value.get_value() {
-        crate::node::const_value::ConstRead::Val(v) => ty.wrap_u128(v) != v,
-        crate::node::const_value::ConstRead::Wide(limbs) => {
-            let bits = ty.bit_width();
-            limbs.iter().enumerate().any(|(i, &l)| {
-                let low = i * 64;
-                // The limb the width ends inside keeps its low `bits - low`
-                // bits; whole limbs above it must be zero.
-                match bits.checked_sub(low) {
-                    None | Some(0) => l != 0,
-                    Some(spare) if spare < 64 => (l >> spare) != 0,
-                    _ => false,
-                }
-            })
-        }
-    };
-    if too_wide {
+    if *value != crate::eval::mask(value, ty) {
         errs.push(ValidationError::ConstWidthMismatch { node, id });
     }
 }

@@ -270,20 +270,19 @@ impl VnTypeExt for rsleigh::Vn {
 
 #[cfg(test)]
 mod tests {
+    use dashu_int::UBig;
+
     use super::{ValueType, shifted_ones_limbs};
-    use crate::node::const_value::{ConstRead, ConstValue};
 
     /// The mask preserving every bit of `ty` the window does not cover.
-    fn preserve(set_bits: u64, shift: u64, ty: ValueType) -> ConstValue {
+    fn preserve(set_bits: u64, shift: u64, ty: ValueType) -> UBig {
         let window = shifted_ones_limbs(set_bits, shift, ty.bit_width() as u64);
-        ConstValue::wide(window.into_boxed_slice()).complement(ty)
+        crate::eval::complement(&UBig::from_words(&window), ty)
     }
 
     fn preserve_u128(set_bits: u64, shift: u64, ty: ValueType) -> u128 {
-        match preserve(set_bits, shift, ty).get_value() {
-            ConstRead::Val(v) => v,
-            ConstRead::Wide(limbs) => panic!("past the carrier: {limbs:?}"),
-        }
+        let v = preserve(set_bits, shift, ty);
+        u128::try_from(&v).unwrap_or_else(|_| panic!("past the carrier: {:?}", v.as_words()))
     }
 
     /// Every spelling and size fact agrees, type by type, and the list is
@@ -682,16 +681,16 @@ mod tests {
     fn wide_container_masks_are_representable_as_limbs() {
         assert_eq!(shifted_ones_limbs(64, 0, 256), vec![u64::MAX, 0, 0, 0]);
         assert_eq!(
-            preserve(64, 0, ValueType::int(256)).get_value(),
-            ConstRead::Wide(&[0, u64::MAX, u64::MAX, u64::MAX]),
+            crate::eval::words(&preserve(64, 0, ValueType::int(256)), ValueType::int(256)),
+            vec![0, u64::MAX, u64::MAX, u64::MAX],
         );
         assert_eq!(
             shifted_ones_limbs(256, 128, 512),
             vec![0, 0, u64::MAX, u64::MAX, u64::MAX, u64::MAX, 0, 0],
         );
         assert_eq!(
-            preserve(512, 0, ValueType::int(512)).get_value(),
-            ConstRead::Val(0),
+            preserve(512, 0, ValueType::int(512)),
+            UBig::ZERO,
             "the full-width mask complements to zero"
         );
     }
