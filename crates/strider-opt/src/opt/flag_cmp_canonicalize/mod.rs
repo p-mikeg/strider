@@ -128,9 +128,10 @@ fn uints<const N: usize>(
     Some((vals.try_into().ok()?, int_type(f, b, width_src)?))
 }
 
-/// `-v` at `ty`, which is total for an integer `ty`.
+/// `-v` at `ty`: the complement plus one, held inside the width, so `-0` is
+/// 0 rather than the modulus.
 fn negate(v: &UBig, ty: ValueType) -> UBig {
-    eval::complement(v, ty) + UBig::ONE
+    eval::mask(&(eval::complement(v, ty) + UBig::ONE), ty)
 }
 
 /// `M == -N` at `width_src`'s width.
