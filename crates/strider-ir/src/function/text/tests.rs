@@ -716,18 +716,18 @@ fn a_register_order_unlike_the_data_order_prints_in_the_header() {
 fn const_str_spells_a_value_the_same_on_either_arm() {
     use crate::node::const_value::ConstValue;
     let cases: [(ConstValue, &str); 5] = [
-        (ConstValue::Bits(0), "0x0"),
-        (ConstValue::Bits(u64::MAX), "0xffffffffffffffff"),
+        (ConstValue::bits(0), "0x0"),
+        (ConstValue::bits(u64::MAX), "0xffffffffffffffff"),
         (
-            ConstValue::Wide(vec![u64::MAX, 0].into_boxed_slice()),
+            ConstValue::wide(vec![u64::MAX, 0].into_boxed_slice()),
             "0xffffffffffffffff",
         ),
         (
-            ConstValue::Wide(vec![0, 1].into_boxed_slice()),
+            ConstValue::wide(vec![0, 1].into_boxed_slice()),
             "0x10000000000000000",
         ),
         (
-            ConstValue::Wide(vec![u64::MAX, u64::MAX, 0, 0].into_boxed_slice()),
+            ConstValue::wide(vec![u64::MAX, u64::MAX, 0, 0].into_boxed_slice()),
             "0xffffffffffffffffffffffffffffffff",
         ),
     ];
