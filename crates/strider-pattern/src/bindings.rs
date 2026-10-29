@@ -157,9 +157,14 @@ impl Bindings {
     // control-flow binding, or a producer whose `NodeKind` is the wrong
     // shape.
 
-    /// Masked to the output type's bit width.
-    pub fn get_uint(&self, c: Capture, function: &strider_ir::Function) -> Option<u128> {
-        function.int_const_u128(self.get_value(c)?)
+    /// Masked to the output type's bit width. Unbounded: a constant at any
+    /// declared width comes back whole.
+    pub fn get_uint(
+        &self,
+        c: Capture,
+        function: &strider_ir::Function,
+    ) -> Option<strider_ir::UBig> {
+        function.int_const(self.get_value(c)?).cloned()
     }
 
     /// Sign-extended from the output type's bit width.
@@ -317,7 +322,32 @@ mod tests {
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert!(bindings.bind_capture(v, Binding::Value(c)));
-        assert_eq!(bindings.get_uint(v, &function), Some(7));
+        assert_eq!(
+            bindings.get_uint(v, &function),
+            Some(strider_ir::UBig::from(7u8))
+        );
+    }
+
+    /// The reader is unbounded: a 4-limb `I256` constant comes back whole,
+    /// not as a `None` a carrier width would answer.
+    #[test]
+    fn get_uint_reads_a_constant_past_the_carrier() {
+        use strider_ir::UBig;
+        let wide = UBig::from_words(&[1, 2, 3, 4]);
+        let mut c_value = None;
+        let function = make_empty_fn(|b| {
+            let c = b
+                .build_int_const(wide.clone(), ValueType::int(256))
+                .unwrap();
+            c_value = Some(c);
+            Ok(c)
+        })
+        .expect("build graph");
+
+        let mut bindings = Bindings::default();
+        let v = Capture::new();
+        assert!(bindings.bind_capture(v, Binding::Value(c_value.unwrap())));
+        assert_eq!(bindings.get_uint(v, &function), Some(wide));
     }
 
     #[test]
