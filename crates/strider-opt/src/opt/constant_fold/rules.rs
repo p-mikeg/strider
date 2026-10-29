@@ -6,6 +6,7 @@ use crate::const_eval::eval_node_const;
 use crate::opt::width_guards::same_width;
 use crate::rewrite_rule;
 use smallvec::SmallVec;
+use strider_ir::UBig;
 use strider_ir::eval;
 use strider_ir::node::{NodeId, ValueId};
 use strider_ir::{IRBuilderExt, IRViewer};
@@ -83,7 +84,7 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
                 .all(|&c| binds.get_type(c, f).is_none_or(|t| t.bit_width() == w))
             && [z1, z2]
                 .iter()
-                .all(|&z| binds.get_uint(z, f).is_none_or(|n| n < w as u128))
+                .all(|&z| binds.get_uint(z, f).is_none_or(|n| n < UBig::from(w)))
     };
 
     vec![
@@ -93,7 +94,7 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             template::int_mul(
                 var(x),
                 int_const_with!([c1: uint?, z1: uint?, c2: uint?, z2: uint?] =>
-                    coefficient(c1, z1).wrapping_add(coefficient(c2, z2))),
+                    coefficient(c1, z1) + coefficient(c2, z2)),
             ),
         ),
         // The same difference. `Neg` pins which side is subtracted, so
@@ -102,8 +103,12 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
             int_add(term(c1, z1), int_neg(term(c2, z2))).when_match(widths),
             template::int_mul(
                 var(x),
-                int_const_with!([c1: uint?, z1: uint?, c2: uint?, z2: uint?] =>
-                    coefficient(c1, z1).wrapping_sub(coefficient(c2, z2))),
+                // Two's-complement negation of the subtrahend; the
+                // intern masks the sum back to `ty`.
+                int_const_with!([c1: uint?, z1: uint?, c2: uint?, z2: uint?, ty] =>
+                    coefficient(c1, z1)
+                        + eval::complement(&coefficient(c2, z2), ty)
+                        + UBig::ONE),
             ),
         ),
     ]
@@ -113,12 +118,14 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
 /// `x*C` arm, `2^C` for an `x<<C` arm, or 1 for the bare `x`. Exactly one arm
 /// fires, so at most one of the two binds, and the guard has already put the
 /// shift count below the root's width.
-fn coefficient(mul: Option<u128>, shift: Option<u128>) -> u128 {
+fn coefficient(mul: Option<UBig>, shift: Option<UBig>) -> UBig {
     debug_assert!(mul.is_none() || shift.is_none(), "one arm fires per side");
     match (mul, shift) {
         (Some(c), _) => c,
-        (None, Some(z)) => eval::bit(z.min(128) as u32),
-        (None, None) => 1,
+        (None, Some(z)) => {
+            UBig::ONE << usize::try_from(&z).expect("the guard bounds the count by the width")
+        }
+        (None, None) => UBig::ONE,
     }
 }
 
@@ -143,10 +150,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
                     && same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
             },
         ),
-        template::int_add(
-            var(x),
-            int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
-        ),
+        template::int_add(var(x), int_const_with!([c1: uint, c2: uint] => c1 + c2)),
     ));
 
     // (x * C1) * C2 -> x * (C1 * C2)
@@ -157,10 +161,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
                     && same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
             },
         ),
-        template::int_mul(
-            var(x),
-            int_const_with!([c1: uint, c2: uint] => c1.wrapping_mul(c2)),
-        ),
+        template::int_mul(var(x), int_const_with!([c1: uint, c2: uint] => c1 * c2)),
     ));
 
     // (x & C1) & C2 -> x & (C1 & C2)
@@ -195,7 +196,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             if same_width(edit.function(), binds, &[x, y, c1, c2, c3]) != Some(ty.bit_width()) {
                 return false;
             }
-            (v1 & v3) == 0 || (v2 & v3) == 0
+            (&v1 & &v3) == UBig::ZERO || (&v2 & &v3) == UBig::ZERO
         }),
         template::int_or(
             template::int_and(var(x), int_const_with!([c1: uint, c3: uint] => c1 & c3)),
@@ -217,7 +218,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             // without width agreement the disjointness test runs in the
             // wrong modulus.
             same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
-                && (set_bits & mask) == 0
+                && (set_bits & mask) == UBig::ZERO
         }),
         template::int_and(var(x), var(c2)),
     ));
@@ -273,11 +274,11 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
         |_: &strider_pattern::Matcher, ty: strider_ir::node::ValueType, _: &_| ty.byte_size() <= 8;
     rules.push(rewrite_rule(
         int_bits_to_float(int_const(c)).when_match(fits_u64),
-        float_const_with!([c: uint] => u64::try_from(c).map_err(|_| strider_pattern::skip())?),
+        float_const_with!([c: uint] => u64::try_from(&c).map_err(|_| strider_pattern::skip())?),
     ));
     rules.push(rewrite_rule(
         float_bits_to_int(float_const(c)).when_match(fits_u64),
-        int_const_with!([c: float_bits] => u128::from(c)),
+        int_const_with!([c: float_bits] => UBig::from(c)),
     ));
 
     // Truncate(Extend(x)) -> x, but only when `x`'s type equals the truncate's
@@ -367,10 +368,8 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             let Some(c_val) = bnd.get_uint(c, edit.function()) else {
                 return false;
             };
-            let Some(low_mask) = ty.int_mask_u128() else {
-                return false;
-            };
-            c_val & low_mask == 0
+            // A float truncate has no integer bits to clear.
+            ty.is_integer() && eval::mask(&c_val, ty) == UBig::ZERO
         };
         rewrite_rule(
             int_truncate(int_or(var(a), int_and(int_const(c), var(b)))).when_match(guard),
@@ -388,12 +387,10 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
             let Some(c_val) = bnd.get_uint(c, edit.function()) else {
                 return false;
             };
-            let Some(low_mask) = ty.int_mask_u128() else {
-                return false;
-            };
-            // The mask must cover at least the low W bits; anything beyond that
-            // is fine since the truncate drops those bits.
-            c_val & low_mask == low_mask
+            // The mask must cover at least the low W bits; anything beyond
+            // that is fine since the truncate drops those bits. A float
+            // truncate has no integer bits at all.
+            ty.is_integer() && eval::mask(&c_val, ty) == eval::all_ones(ty)
         };
         rewrite_rule(
             int_truncate(int_and(int_const(c), var(x))).when_match(guard),
@@ -407,16 +404,13 @@ fn build_bitcast_extend_rules() -> Vec<crate::BoxedRule> {
 /// Algebraic identities for integer binary operations.
 fn build_identity_rules() -> Vec<crate::BoxedRule> {
     let (x, c) = (Capture::new(), Capture::new());
-    // All-ones is output-width-dependent, so compare `c` against the per-match
-    // output type rather than a fixed constant. Past the `u128` carrier the mask
-    // saturates, so match on `Some` rather than comparing the `Option`s.
+    // All-ones is output-width-dependent, so compare `c` against the
+    // per-match output type rather than a fixed constant. A float type has no
+    // all-ones, and `eval::all_ones` answers 0 there, so it is refused here.
     let is_all_ones = move |edit: &strider_pattern::Matcher,
                             ty: strider_ir::node::ValueType,
                             b: &strider_pattern::Bindings| {
-        matches!(
-            (b.get_uint(c, edit.function()), ty.get_unsigned_int(u128::MAX)),
-            (Some(v), Some(all_ones)) if v == all_ones
-        )
+        ty.is_integer() && b.get_uint(c, edit.function()) == Some(eval::all_ones(ty))
     };
     // x & all_ones -> x
     let all_ones_rule = rewrite_rule(

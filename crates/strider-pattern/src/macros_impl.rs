@@ -8,7 +8,7 @@
 //! Bracket-list grammar. Each entry is `name: kind`, where `kind` picks the
 //! extractor:
 //!
-//!   * `uint`: `Bindings::get_uint`, yielding `u128`.
+//!   * `uint`: `Bindings::get_uint`, yielding `UBig`.
 //!   * `float_bits`: `Bindings::get_float_bits`, yielding `u64`.
 //!   * `int_unary_op`
 //!   * `float_binary_op` / `float_unary_op` / `float_cmp_op`

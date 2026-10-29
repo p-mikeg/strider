@@ -1,3 +1,4 @@
+use strider_ir::UBig;
 use strider_ir::node::ValueType as T;
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IntBinaryOp,
@@ -836,8 +837,12 @@ fn combinators_filter_and_guard() {
     let pat = int_add(var(c), anything()).into_pattern();
     let hits = Matcher::new(&fx).find_all(&pat).unwrap();
     assert_eq!(hits.len(), 2);
-    let bound: Vec<Option<u128>> = hits.iter().map(|m| m.bindings().get_uint(c, &fx)).collect();
-    assert_eq!(bound, vec![Some(5), Some(1)], "natural ordering first");
+    let bound: Vec<Option<UBig>> = hits.iter().map(|m| m.bindings().get_uint(c, &fx)).collect();
+    assert_eq!(
+        bound,
+        vec![Some(UBig::from(5u8)), Some(UBig::from(1u8))],
+        "natural ordering first"
+    );
 }
 
 #[test]
