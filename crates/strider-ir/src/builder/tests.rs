@@ -2230,7 +2230,7 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
         .side_tables_mut()
         .extend_asm_fingerprint(ret, &[SENTINEL_LIFT_ADDR]);
 
-    let pre = b.function().const_interner.len();
+    let pre = b.function().side_tables().const_interner.len();
     assert_eq!(
         pre, 2,
         "before compact, both wide consts are in the interner"
@@ -2239,7 +2239,7 @@ fn compact_gcs_unreferenced_wide_consts() -> Result<()> {
     let mut bfg = b.build()?;
     bfg.compact()?;
 
-    let post = bfg.const_interner.len();
+    let post = bfg.side_tables().const_interner.len();
     assert_eq!(
         post, 1,
         "compact must drop the unreferenced zombie wide const; got {post} entries"
