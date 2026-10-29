@@ -46,7 +46,7 @@ where
 /// [`Function`]: crate::Function
 /// [`Function::compact`]: crate::Function::compact
 #[derive(Clone)]
-pub struct SideTables {
+pub struct FuncSideTables {
     /// Machine-instruction addresses whose lifting or rewrite contributed to
     /// each node's value.
     asm_fingerprints: UnionDag<NodeId, u64>,
@@ -73,7 +73,7 @@ pub struct SideTables {
     pub(crate) vn_interner: EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 }
 
-impl SideTables {
+impl FuncSideTables {
     /// Crate-private so no caller can wipe the tables through
     /// [`Function::side_tables_mut`](crate::Function::side_tables_mut).
     /// `vn_interner` is the one table seeded at birth: `InitialVnId`
@@ -533,7 +533,7 @@ mod tests {
     // The union is order-independent, deduplicating and never dropping an entry.
     #[test]
     fn extend_asm_fingerprint_unions_deduped() {
-        let mut st = SideTables::new(EntityInterner::default());
+        let mut st = FuncSideTables::new(EntityInterner::default());
         let n = NodeId::new(3);
 
         // Seed from empty; contributors may arrive unsorted.
