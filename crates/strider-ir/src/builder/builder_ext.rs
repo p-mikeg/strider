@@ -127,17 +127,15 @@ pub trait IRBuilderExt: IRBuilder {
             .expect("I1 is always an integer type")
     }
 
-    /// Masks `val` to the type's width. Handles any value fitting `u128`,
-    /// whatever the declared width.
-    fn build_int_const(&mut self, val: impl Into<u128>, output_type: ValueType) -> Result<ValueId> {
+    /// Masks `val` to the type's width, at any width: `Into<UBig>` takes
+    /// every unsigned primitive and a `UBig` itself.
+    fn build_int_const(&mut self, val: impl Into<UBig>, output_type: ValueType) -> Result<ValueId> {
         if !output_type.is_integer() {
             return Err(anyhow!(
                 "build_int_const called with non-integer type {output_type:?}"
             ));
         }
-        let id = self
-            .function_mut()
-            .intern_int_const(val.into(), output_type);
+        let id = self.function_mut().intern_int_const(val, output_type);
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
     }
 
@@ -169,24 +167,12 @@ pub trait IRBuilderExt: IRBuilder {
         ty: ValueType,
     ) -> Result<ValueId> {
         let window = eval::ones_at(window_bits as usize, shift as usize);
-        self.build_const_value(eval::complement(&window, ty), ty)
+        self.build_int_const(eval::complement(&window, ty), ty)
     }
 
     /// The all-ones `IntConst` of `ty`, at any integer width.
     fn build_all_ones(&mut self, ty: ValueType) -> Result<ValueId> {
-        self.build_const_value(crate::eval::all_ones(ty), ty)
-    }
-
-    /// The `IntConst` of `value` masked to `ty`.
-    fn build_const_value(&mut self, value: UBig, ty: ValueType) -> Result<ValueId> {
-        require_integer_type(ty)?;
-        let masked = crate::eval::mask(&value, ty);
-        let id = self
-            .function_mut()
-            .side_tables_mut()
-            .const_interner
-            .intern(masked);
-        Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], ty))
+        self.build_int_const(eval::all_ones(ty), ty)
     }
 
     /// Strict: both operands must already carry `output_type`, a shift's count
