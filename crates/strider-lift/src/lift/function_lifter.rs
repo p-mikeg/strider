@@ -134,14 +134,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .collect();
         let mut builder =
             strider_ir::FunctionBuilder::new(all_vns.clone(), cc, lifter.arch().byte_order())?;
-        builder.set_internal_registers(
-            lifter
-                .arch()
-                .internal_registers()
-                .iter()
-                .filter_map(|name| lifter.sleigh_regs().name_to_vn(name))
-                .collect(),
-        );
+        // Owned, because borrowing would put a lifetime on `FunctionBuilder`.
+        builder.set_internal_registers(lifter.internal_register_vns().to_vec());
         let queries = all_vns.iter().copied().chain(cc_regs);
         let container_map =
             vn_container::ContainerMap::build(builder.function().all_vns(), queries);
