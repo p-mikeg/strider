@@ -673,13 +673,13 @@ fn cc_fields(
         callee_saved_regs,
         ret_val_regs,
         ret_val_regs_float,
-        stack_vn,
+        stack_ptr: stack_vn,
         stack_args,
         ret_stack_pop,
-        link_register_vn,
+        link_register: link_register_vn,
         preserves_memory,
         preserves_all_registers,
-        entry_address_vn,
+        entry_address: entry_address_vn,
         reg_args_adjoin_stack_args,
     } = cc;
     vec![

@@ -579,7 +579,7 @@ fn every_node_kind_prints() {
 #[test]
 fn named_text_respells_each_register_varnode_and_nothing_else() {
     let mut net = Net::new(vec![reg(0), reg(0x38)]);
-    net.default_cc.link_register_vn = Some(reg(0x38));
+    net.default_cc.link_register = Some(reg(0x38));
     let x = net.initial_var(reg(0x38));
     let target = net.int(0x40_1000, ValueType::int(64), 0x1000);
     let call = net.plain(
@@ -592,8 +592,8 @@ fn named_text_respells_each_register_varnode_and_nothing_else() {
         call,
         strider_target::BuiltCallingConvention {
             ret_val_regs: vec![reg(0)],
-            link_register_vn: Some(reg(0x38)),
-            entry_address_vn: Some(reg(0)),
+            link_register: Some(reg(0x38)),
+            entry_address: Some(reg(0)),
             ..Default::default()
         },
     ));

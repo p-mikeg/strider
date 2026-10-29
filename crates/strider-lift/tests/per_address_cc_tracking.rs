@@ -107,8 +107,8 @@ fn an_overridden_calls_post_call_sp_is_its_own_adjust() {
 #[test]
 fn an_override_renaming_the_stack_pointer_is_refused() {
     let r = lift_sp_join(|regs, o| {
-        o.stack_vn = regs.name_to_vn("RBP").expect("RBP");
-        o.callee_saved_regs.retain(|v| *v != o.stack_vn);
+        o.stack_ptr = regs.name_to_vn("RBP").expect("RBP");
+        o.callee_saved_regs.retain(|v| *v != o.stack_ptr);
     });
     let Err(e) = r else {
         panic!("an override must not rename the stack pointer");

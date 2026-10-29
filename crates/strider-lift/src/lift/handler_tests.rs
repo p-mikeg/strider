@@ -37,14 +37,14 @@ pub(super) fn empty_cc() -> strider_target::BuiltCallingConvention {
         callee_saved_regs: Vec::new(),
         ret_val_regs: Vec::new(),
         ret_val_regs_float: Vec::new(),
-        stack_vn: Vn {
+        stack_ptr: Vn {
             size: 4,
             addr_off: 0x9000,
             addr_space: VnSpace::REGISTER,
         },
         stack_args: None,
         ret_stack_pop: 0,
-        link_register_vn: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
         ..Default::default()
@@ -88,7 +88,7 @@ pub(super) fn with_test_lifter_tracking_arch(
 }
 
 /// Caller-provided CC instead of `empty_cc()`.  The projection tests need this:
-/// the other helpers seed `empty_cc`'s `stack_vn` (0x9000) into the tracked
+/// the other helpers seed `empty_cc`'s `stack_ptr` (0x9000) into the tracked
 /// set, and a test CC that neither owns nor callee-saves it would misclassify
 /// it as an extra clobber, polluting exact clobber-list assertions.
 pub(super) fn with_test_lifter_cc(

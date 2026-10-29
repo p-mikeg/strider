@@ -628,7 +628,7 @@ fn presets_resolved_registers_have_expected_size() {
             .iter()
             .chain(saved_int)
             .chain(&built.ret_val_regs)
-            .chain(std::iter::once(&built.stack_vn))
+            .chain(std::iter::once(&built.stack_ptr))
         {
             assert_eq!(
                 vn.size, c.reg_size_bytes,
@@ -702,14 +702,14 @@ fn presets_stack_pointer_and_arg_offsets() {
         let sp = regs
             .name_to_vn(c.stack_ptr_name)
             .unwrap_or_else(|| panic!("{}: {} must resolve", c.name, c.stack_ptr_name));
-        assert_eq!(built.stack_vn, sp, "{}: stack_vn", c.name);
+        assert_eq!(built.stack_ptr, sp, "{}: stack_ptr", c.name);
         for (label, set) in [
             ("arg_passing_regs", &built.arg_passing_regs),
             ("callee_saved_regs", &built.callee_saved_regs),
             ("ret_val_regs", &built.ret_val_regs),
         ] {
             assert!(
-                !set.contains(&built.stack_vn),
+                !set.contains(&built.stack_ptr),
                 "{}: stack pointer must not appear in {label}",
                 c.name,
             );
@@ -747,7 +747,7 @@ fn build_returns_error_for_unknown_register_name() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
     for bad_name in &["NOTAREG", "", "rax_FAKE"] {
         let cc = CallingConvention {
-            stack_ptr_reg_name: "RSP",
+            stack_ptr: "RSP",
             arg_passing_regs: std::slice::from_ref(bad_name),
             arg_passing_regs_float: &[],
             callee_saved_regs: &[],
@@ -755,10 +755,10 @@ fn build_returns_error_for_unknown_register_name() {
             ret_val_regs_float: &[],
             stack_args: None,
             ret_stack_pop: 0,
-            link_register_reg_name: None,
+            link_register: None,
             preserves_memory: false,
             preserves_all_registers: false,
-            entry_address_reg_name: None,
+            entry_address: None,
             reg_args_adjoin_stack_args: false,
         };
         let result = cc.build(&regs);
@@ -777,7 +777,7 @@ fn build_returns_error_for_unknown_register_name() {
 fn build_returns_error_even_when_some_names_are_valid() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
     let cc = CallingConvention {
-        stack_ptr_reg_name: "RSP",
+        stack_ptr: "RSP",
         arg_passing_regs: &["RDI", "NOT_A_REG", "RSI"],
         arg_passing_regs_float: &[],
         callee_saved_regs: &[],
@@ -785,10 +785,10 @@ fn build_returns_error_even_when_some_names_are_valid() {
         ret_val_regs_float: &[],
         stack_args: None,
         ret_stack_pop: 0,
-        link_register_reg_name: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        entry_address_reg_name: None,
+        entry_address: None,
         reg_args_adjoin_stack_args: false,
     };
     assert!(
@@ -902,11 +902,11 @@ fn link_reg_cases() -> Vec<LinkRegCase> {
     ]
 }
 
-/// Every link-register ISA preset resolves `link_register_vn` to the arch's
+/// Every link-register ISA preset resolves `link_register` to the arch's
 /// LR under the documented Sleigh name.  Pinning all of them catches a typo or
-/// rename in any one `link_register_reg_name`.
+/// rename in any one `link_register`.
 #[test]
-fn link_register_vn_set_for_link_register_presets() {
+fn link_register_set_for_link_register_presets() {
     for c in link_reg_cases() {
         let Some(expected_name) = c.expected_lr_name else {
             continue;
@@ -922,9 +922,9 @@ fn link_register_vn_set_for_link_register_presets() {
             )
         });
         assert_eq!(
-            built.link_register_vn,
+            built.link_register,
             Some(expected_vn),
-            "{}: link_register_vn must be the {:?} varnode",
+            "{}: link_register must be the {:?} varnode",
             c.name,
             expected_name,
         );
@@ -933,7 +933,7 @@ fn link_register_vn_set_for_link_register_presets() {
 
 /// Stack-push ISAs (x86, x86_64) keep the return address on the stack.
 #[test]
-fn link_register_vn_none_for_stack_push_presets() {
+fn link_register_none_for_stack_push_presets() {
     for c in link_reg_cases() {
         if c.expected_lr_name.is_some() {
             continue;
@@ -943,22 +943,22 @@ fn link_register_vn_none_for_stack_push_presets() {
             .build(&regs)
             .unwrap_or_else(|e| panic!("{}: build failed: {e:?}", c.name));
         assert!(
-            built.link_register_vn.is_none(),
-            "{}: link_register_vn must be None on stack-push ISAs, got {:?}",
+            built.link_register.is_none(),
+            "{}: link_register must be None on stack-push ISAs, got {:?}",
             c.name,
-            built.link_register_vn,
+            built.link_register,
         );
     }
 }
 
-/// An unknown `stack_ptr_reg_name` errors like any other unknown register.
+/// An unknown `stack_ptr` errors like any other unknown register.
 /// The SP name has its own lookup path in `build()`, separate from
 /// `regs_to_vns`.
 #[test]
 fn build_returns_error_for_unknown_stack_pointer_name() {
     let regs = regs_for(crate::arch::SleighArch::x86_64());
     let cc = CallingConvention {
-        stack_ptr_reg_name: "NOT_A_SP",
+        stack_ptr: "NOT_A_SP",
         arg_passing_regs: &[],
         arg_passing_regs_float: &[],
         callee_saved_regs: &[],
@@ -966,10 +966,10 @@ fn build_returns_error_for_unknown_stack_pointer_name() {
         ret_val_regs_float: &[],
         stack_args: None,
         ret_stack_pop: 0,
-        link_register_reg_name: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
-        entry_address_reg_name: None,
+        entry_address: None,
         reg_args_adjoin_stack_args: false,
     };
     let result = cc.build(&regs);
@@ -1181,13 +1181,13 @@ fn validate_rejects_negative_stack_arg_base_offset() {
         callee_saved_regs: vec![],
         ret_val_regs: vec![],
         ret_val_regs_float: vec![],
-        stack_vn: sp,
+        stack_ptr: sp,
         stack_args: Some(StackArgs {
             base_offset: -8,
             increment: 8,
         }),
         ret_stack_pop: 0,
-        link_register_vn: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
         ..Default::default()
@@ -1419,7 +1419,7 @@ fn only_elfv2_and_mips_carry_an_entry_address_register() {
         let regs = regs_for(arch());
         let built = cc().build(&regs).expect(name);
         assert_eq!(
-            built.entry_address_vn,
+            built.entry_address,
             expected.map(|r| vn_for_name(&regs, r).expect(r)),
             "{name}",
         );
