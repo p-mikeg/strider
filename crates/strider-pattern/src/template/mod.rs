@@ -321,11 +321,11 @@ pub fn instantiate_guarded<B: IRBuilder>(
     root_value.ok_or_else(|| anyhow!("root template node never materialised"))
 }
 
-/// A `ConstId` indexes one function's interner at one width, so a template
+/// A `IntConstId` indexes one function's interner at one width, so a template
 /// constant is interned at instantiation, at the node's resolved width.
 fn raw_int_const() -> anyhow::Error {
     anyhow!(
-        "template IntConst built from a NodeKind carries a ConstId interned \
+        "template IntConst built from a NodeKind carries a IntConstId interned \
          elsewhere; build it with int_const or TemplateKind::FnIntConst"
     )
 }

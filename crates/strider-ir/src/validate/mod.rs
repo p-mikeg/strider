@@ -207,7 +207,7 @@ pub enum ValidationError {
     )]
     DanglingConstId {
         node: NodeId,
-        id: crate::node::const_value::ConstId,
+        id: crate::node::IntConstId,
     },
 
     #[error(
@@ -216,7 +216,7 @@ pub enum ValidationError {
     )]
     ConstWidthMismatch {
         node: NodeId,
-        id: crate::node::const_value::ConstId,
+        id: crate::node::IntConstId,
     },
 
     #[error(
