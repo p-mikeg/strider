@@ -134,8 +134,8 @@ fn render_int_const_wide_shows_value_not_debug() {
         "wide const must render with a u256 suffix, got: {dot}"
     );
     assert!(
-        !dot.contains("ConstId"),
-        "wide const must not render as the Debug fallback (ConstId(...)), got: {dot}"
+        !dot.contains("IntConstId"),
+        "wide const must not render as the Debug fallback (IntConstId(...)), got: {dot}"
     );
     assert!(
         dot.contains("abcd") && dot.contains("1234"),

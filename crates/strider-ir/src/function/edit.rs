@@ -757,7 +757,7 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function);
 
         let node = ctx.create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -872,7 +872,7 @@ mod tests {
 
         // An off-spine chain x -> y, consumed by nothing entry-reachable.
         let x = ctx.create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -1103,7 +1103,7 @@ mod tests {
         let mut ctx = EditFunction::new(&mut function);
 
         let node = ctx.create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -1111,7 +1111,7 @@ mod tests {
         assert!(!ctx.is_live(node));
 
         let recreated = ctx.create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -1632,9 +1632,7 @@ mod tests {
         let mut consts = Vec::new();
         for i in 0..FANIN {
             let k = ctx.create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(
-                    (0xC0 + i as u64) as usize,
-                )),
+                NodeKind::IntConst(crate::node::IntConstId::new((0xC0 + i as u64) as usize)),
                 [],
                 [ValueKind::Typed(ValueType::int(64))],
             );

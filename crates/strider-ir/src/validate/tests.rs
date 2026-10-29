@@ -908,11 +908,11 @@ fn indirect_branch_with_control_memory_and_value_validates() {
 
 #[test]
 fn graph_invariants_dangling_const_id_detected() {
-    use crate::node::const_value::ConstId;
+    use crate::node::IntConstId;
     use cranelift_entity::EntityRef;
     let mut s = spine();
     // IntConst pointing at an id that was never interned.
-    let bogus_id = ConstId::new(99);
+    let bogus_id = IntConstId::new(99);
     let bogus = s.f.graph_mut().create_node(
         NodeKind::IntConst(bogus_id),
         [],

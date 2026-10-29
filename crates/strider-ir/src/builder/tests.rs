@@ -838,7 +838,7 @@ fn every_spelling_reaches_one_interned_value() -> Result<()> {
     let NodeKind::IntConst(small2_id) = *b.function().node_kind(small2_node) else {
         panic!("expected IntConst");
     };
-    assert_eq!(small2_id, small_id, "value 5 must share one ConstId");
+    assert_eq!(small2_id, small_id, "value 5 must share one IntConstId");
     Ok(())
 }
 
@@ -1794,7 +1794,7 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
     let mut b = empty_builder()?;
     let count_before = b.function().graph().all_node_ids().count();
     let node_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new((42_u64) as usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new((42_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::int(64))],
     );
@@ -1835,7 +1835,7 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     b.build_return(Some(val), &[])?;
     b.set_lift_addr(None);
     let extra = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new((99_u64) as usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new((99_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::int(64))],
     );
@@ -1853,12 +1853,12 @@ fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
 fn consecutive_inplace_optimizations_compose() -> Result<()> {
     let mut b = empty_builder()?;
     let a = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new((1_u64) as usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new((1_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::int(64))],
     );
     let b_id = b.function_mut().graph_mut().create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new((2_u64) as usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new((2_u64) as usize)),
         std::iter::empty(),
         [ValueKind::Typed(ValueType::int(64))],
     );
@@ -2577,14 +2577,14 @@ mod build_call_with_cc {
         let entry = b.entry();
 
         let r1 = b.function_mut().graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new((1_u64) as usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new((1_u64) as usize)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::int(64))],
         );
         assert_eq!(b.entry(), entry, "entry() stable after first mutation");
 
         let r2 = b.function_mut().graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new((2_u64) as usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new((2_u64) as usize)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -2611,7 +2611,7 @@ mod build_call_with_cc {
         // unreachable nodes.
         for k in 1u64..=5 {
             b.function_mut().graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new((k) as usize)),
+                NodeKind::IntConst(crate::node::IntConstId::new((k) as usize)),
                 std::iter::empty(),
                 [ValueKind::Typed(ValueType::int(64))],
             );
@@ -2728,7 +2728,7 @@ fn small_valued_i80_const_interns_once() -> Result<()> {
 }
 
 /// Limbs that fit `u128` normalise, so the limb path and the scalar path
-/// share one `ConstId` for the same value.
+/// share one `IntConstId` for the same value.
 #[test]
 fn small_valued_i256_limbs_canonicalise_to_the_scalar() -> Result<()> {
     let mut b = empty_builder()?;
@@ -2750,7 +2750,7 @@ fn small_valued_i256_limbs_canonicalise_to_the_scalar() -> Result<()> {
     let NodeKind::IntConst(i64_id) = *b.function().node_kind(i64_node) else {
         panic!("expected IntConst");
     };
-    assert_eq!(i64_id, id, "value 5 must share one ConstId");
+    assert_eq!(i64_id, id, "value 5 must share one IntConstId");
     assert_ne!(i64_node, node, "different widths must be distinct nodes");
     Ok(())
 }

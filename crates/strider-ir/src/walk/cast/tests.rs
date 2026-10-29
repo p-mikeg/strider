@@ -122,7 +122,7 @@ fn cast_mask_of_float_bits_to_int() {
 fn cast_mask_of_returns_empty_for_non_cast_kinds() {
     let non_casts = [
         NodeKind::Entry,
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
         NodeKind::IntBinaryOp(IntBinaryOp::Add),
         NodeKind::IntBinaryOp(IntBinaryOp::Mul),
         NodeKind::IntUnaryOp(IntUnaryOp::Neg),
