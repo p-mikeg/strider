@@ -1,3 +1,4 @@
+use dashu_int::UBig;
 use expect_test::{Expect, expect};
 
 use crate::IRViewer;
@@ -469,8 +470,8 @@ fn wide_and_float_constants() {
     let mut net = Net::new(Vec::new());
     let wide = net.node(
         |f| {
-            NodeKind::IntConst(f.intern_int_const_limbs(
-                &[0x1122_3344_5566_7788, 0, 0, 0x8000_0000_0000_0000],
+            NodeKind::IntConst(f.intern_int_const(
+                UBig::from_words(&[0x1122_3344_5566_7788, 0, 0, 0x8000_0000_0000_0000]),
                 ValueType::int(256),
             ))
         },

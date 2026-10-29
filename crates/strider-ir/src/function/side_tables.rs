@@ -326,23 +326,6 @@ impl crate::Function {
         self.side_tables_mut().const_interner.intern(v)
     }
 
-    /// Interns a constant given as little-endian `limbs`.
-    ///
-    /// Masked to `ty` first: dedup is by stored value, and `UBig` normalises
-    /// one value to one form, so a short, exact or zero-padded spelling of it
-    /// reaches one id.
-    ///
-    /// A non-integer `ty` masks to zero, exactly as in
-    /// [`intern_int_const`](Self::intern_int_const).
-    pub fn intern_int_const_limbs(
-        &mut self,
-        limbs: &[u64],
-        ty: crate::node::ValueType,
-    ) -> crate::node::const_value::ConstId {
-        let v = crate::eval::mask(&UBig::from_words(limbs), ty);
-        self.side_tables_mut().const_interner.intern(v)
-    }
-
     /// Panics on an OUT-OF-RANGE id. An id minted by another function's
     /// interner that happens to be in range returns this one's value for that
     /// index instead, which `validate`'s `DanglingConstId` also cannot see.
