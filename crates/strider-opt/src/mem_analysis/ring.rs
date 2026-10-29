@@ -3,6 +3,7 @@
 //! offset as it is and an overlap test answers `true`; at or past the carrier,
 //! a split leaves the range whole.
 
+use strider_ir::eval::mask_below;
 use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{Function, IRViewer};
 
@@ -64,15 +65,6 @@ pub(super) fn comparable_distance(bits: u32, span: i128) -> u128 {
         .unsigned_abs()
 }
 
-/// Low `bits` set, for `bits` at most 128.
-fn width_mask(bits: u32) -> u128 {
-    if bits >= 128 {
-        u128::MAX
-    } else {
-        (1u128 << bits) - 1
-    }
-}
-
 /// `v` sign-extended from bit `bits`, i.e. reduced into the signed range of
 /// that width.  `bits` is below 128; at 128 the value already is its own
 /// reduction.
@@ -105,7 +97,7 @@ pub(crate) fn ring_overlap(
 /// [`ring_overlap`] at an address width given as bits (at most 128), which is
 /// what the alias verdict and the store index carry.
 pub(super) fn ring_overlap_at(bits: u32, a: i128, a_len: i128, b: i128, b_len: i128) -> bool {
-    masked_overlap(width_mask(bits), a, a_len, b, b_len)
+    masked_overlap(mask_below(bits), a, a_len, b, b_len)
 }
 
 /// The inclusive window `[lo, hi]` as the ranges of reduced offsets it covers,
@@ -114,7 +106,7 @@ pub(super) fn ring_overlap_at(bits: u32, a: i128, a_len: i128, b: i128, b_len: i
 /// where `1i128 << bits` still holds the modulus.
 pub(super) fn ring_window(bits: u32, lo: i128, hi: i128) -> Option<[Option<(i128, i128)>; 2]> {
     debug_assert!(lo <= hi, "a window runs upwards");
-    if (hi as u128).wrapping_sub(lo as u128) >= width_mask(bits) {
+    if (hi as u128).wrapping_sub(lo as u128) >= mask_below(bits) {
         return None;
     }
     let (lo, hi) = (sign_extend(bits, lo), sign_extend(bits, hi));

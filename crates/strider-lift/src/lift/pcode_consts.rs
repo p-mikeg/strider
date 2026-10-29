@@ -117,7 +117,7 @@ impl PcodeConsts {
 }
 
 fn mask_to(v: u128, size_bytes: u32) -> u128 {
-    v & strider_ir::node::low_bits_mask_u128(size_bytes.saturating_mul(8) as usize)
+    v & strider_ir::eval::mask_below(size_bytes.saturating_mul(8))
 }
 
 /// The register a STORE writes or a LOAD reads, when it addresses the
