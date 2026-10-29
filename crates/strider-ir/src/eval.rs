@@ -3,8 +3,9 @@
 //! Each function answers `None` where the operation is undefined or the width
 //! has no `u128` modulus: a float, or an integer past 128 bits.
 //!
-//! [`mask`], [`all_ones`], [`complement`] and [`words`] are the exceptions:
-//! they work at any declared width over the [`UBig`] the interner stores.
+//! [`mask`], [`all_ones`], [`complement`], [`ones_at`] and [`words`] are the
+//! exceptions: they work at any declared width over the [`UBig`] the interner
+//! stores.
 //! `UBig` is unbounded, so two's-complement-at-a-declared-width is strider's
 //! rule, and it lives here.
 
@@ -46,6 +47,15 @@ pub fn all_ones(ty: ValueType) -> UBig {
 #[must_use]
 pub fn complement(v: &UBig, ty: ValueType) -> UBig {
     all_ones(ty) ^ mask(v, ty)
+}
+
+/// A run of `bits` ones at `[shift, shift + bits)`, 0 at `bits == 0`.
+///
+/// Unbounded: a caller wanting it inside a type masks with [`mask`] or
+/// [`complement`].
+#[must_use]
+pub fn ones_at(bits: usize, shift: usize) -> UBig {
+    ((UBig::ONE << bits) - UBig::ONE) << shift
 }
 
 /// `v`'s little-endian bytes, zero-extended to the bytes `ty` spans:
@@ -300,6 +310,188 @@ mod tests {
 
     fn set_bits(v: &UBig) -> usize {
         v.as_words().iter().map(|l| l.count_ones() as usize).sum()
+    }
+
+    /// `v` in the `u128` carrier; panics past it.
+    fn carrier(v: &UBig) -> u128 {
+        u128::try_from(v).unwrap_or_else(|_| panic!("past the carrier: {:?}", v.as_words()))
+    }
+
+    /// [`crate::IRBuilderExt::build_window_preserve_mask`]'s value: every bit
+    /// of `ty` the window does not cover.
+    fn preserve(set_bits: usize, shift: usize, ty: ValueType) -> UBig {
+        complement(&ones_at(set_bits, shift), ty)
+    }
+
+    fn preserve_u128(set_bits: usize, shift: usize, ty: ValueType) -> u128 {
+        carrier(&preserve(set_bits, shift, ty))
+    }
+
+    /// The positioned mask selects exactly the bits reg occupies.
+    #[test]
+    fn positioned_mask_isolates_reg_bits_inside_16byte_container() {
+        let q0 = ones_at(128, 0);
+        assert_eq!(carrier(&q0), u128::MAX, "container mask is all-ones");
+        assert_eq!(
+            carrier(&ones_at(32, 0)),
+            0xFFFF_FFFF,
+            "s0 occupies bits 0..32"
+        );
+        let d0 = ones_at(64, 0);
+        assert_eq!(
+            carrier(&d0),
+            0xFFFF_FFFF_FFFF_FFFF,
+            "d0 occupies bits 0..64"
+        );
+        // The AArch64 SIMD upper-half hot spot.
+        let upper8 = ones_at(64, 64);
+        assert_eq!(
+            carrier(&upper8),
+            0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
+            "the 8-byte sub at offset 8 occupies bits 64..128"
+        );
+        assert_eq!(carrier(&d0) & carrier(&upper8), 0, "disjoint");
+        assert_eq!(carrier(&d0) | carrier(&upper8), carrier(&q0), "covering");
+    }
+
+    /// The preserve mask keeps exactly the bits that don't belong to reg.
+    #[test]
+    fn container_mask_for_upper_half_write_keeps_lower_half() {
+        assert_eq!(
+            preserve_u128(64, 64, ValueType::int(128)),
+            0x0000_0000_0000_0000_FFFF_FFFF_FFFF_FFFF,
+            "an upper-8 write preserves the lower 8 bytes of q0"
+        );
+    }
+
+    /// Same, for the shift-0 lower-half write.
+    #[test]
+    fn container_mask_for_lower_half_write_keeps_upper_half() {
+        assert_eq!(
+            preserve_u128(64, 0, ValueType::int(128)),
+            0xFFFF_FFFF_FFFF_FFFF_0000_0000_0000_0000,
+            "a d0 (lower 8) write preserves the upper 8 bytes of q0"
+        );
+    }
+
+    /// Pins the invariant that makes preserve-then-let-Sleigh-zero exact: the
+    /// scalar write's positioned mask and the zero-writes' positioned masks
+    /// are disjoint and together tile the container, so after all of them the
+    /// container is fully determined with no stale bits and no gaps.
+    ///
+    /// Over the container the lifter really builds masks for: the AArch64
+    /// register table puts `s0` in the 32-byte `z0` (`SIMD_SIZE = 32`), not a
+    /// 16-byte `V0`, so this exercises the multi-limb path.
+    #[test]
+    fn aarch64_scalar_fp_write_then_upper_zero_tiles_the_container() {
+        // `fmov s0,w0` lifts to `s0 = Copy(w0)` plus zero-writes tiling the
+        // rest of `z0`: observed as 4 bytes at offset 4, then 8 each at 8, 16
+        // and 24.
+        const Z0_BITS: usize = 256;
+        let pieces = [
+            ones_at(32, 0),
+            ones_at(32, 32),
+            ones_at(64, 64),
+            ones_at(64, 128),
+            ones_at(64, 192),
+        ];
+        for (i, a) in pieces.iter().enumerate() {
+            for b in &pieces[i + 1..] {
+                assert_eq!(
+                    a & b,
+                    UBig::ZERO,
+                    "the scalar write and each zero-fill must be disjoint"
+                );
+            }
+        }
+        let union = pieces.iter().fold(UBig::ZERO, |acc, m| acc | m);
+        assert_eq!(
+            union,
+            ones_at(Z0_BITS, 0),
+            "s0 and the zero-fills tile the full z0 container"
+        );
+    }
+
+    /// Exercises every shift count the LE formula produces.
+    #[test]
+    fn container_mask_byte_subregs_in_4byte_container() {
+        let cases: [(usize, u32); 4] = [
+            (0, 0xFFFF_FF00),
+            (8, 0xFFFF_00FF),
+            (16, 0xFF00_FFFF),
+            (24, 0x00FF_FFFF),
+        ];
+        for (shift, expected) in cases {
+            assert_eq!(
+                preserve_u128(8, shift, ValueType::int(32)),
+                u128::from(expected),
+                "byte-sub at shift {shift}: expected container_mask 0x{expected:08x}"
+            );
+        }
+    }
+
+    /// Every container width the sub-register path builds masks for.
+    #[test]
+    fn mask_covers_only_the_declared_width() {
+        for bytes in [1usize, 2, 4, 6, 8, 10, 12, 14, 16] {
+            let bits = bytes * 8;
+            let mask = carrier(&ones_at(bits, 0));
+            let want = if bits == 128 {
+                u128::MAX
+            } else {
+                (1u128 << bits) - 1
+            };
+            assert_eq!(mask, want, "{bytes}-byte mask is the low {bits} bits");
+        }
+    }
+
+    /// ymm / zmm / SVE `z`: the widths a `u128` mask could not hold.
+    #[test]
+    fn wide_container_masks_are_representable() {
+        let i256 = ValueType::int(256);
+        let i512 = ValueType::int(512);
+        assert_eq!(words(&ones_at(64, 0), i256), vec![u64::MAX, 0, 0, 0]);
+        assert_eq!(
+            words(&preserve(64, 0, i256), i256),
+            vec![0, u64::MAX, u64::MAX, u64::MAX],
+        );
+        assert_eq!(
+            words(&ones_at(256, 128), i512),
+            vec![0, 0, u64::MAX, u64::MAX, u64::MAX, u64::MAX, 0, 0],
+        );
+        assert_eq!(
+            preserve(512, 0, i512),
+            UBig::ZERO,
+            "the full-width mask complements to zero"
+        );
+    }
+
+    /// The window is clipped by the type, not by its own arithmetic.
+    #[test]
+    fn a_window_past_the_width_or_empty() {
+        let i32_ = ValueType::int(32);
+        assert_eq!(ones_at(0, 0), UBig::ZERO);
+        assert_eq!(ones_at(0, 300), UBig::ZERO);
+        assert_eq!(preserve_u128(0, 0, i32_), 0xFFFF_FFFF, "empty window");
+        assert_eq!(preserve_u128(0, 24, i32_), 0xFFFF_FFFF, "empty, shifted");
+        assert_eq!(
+            preserve_u128(16, 24, i32_),
+            0x00FF_FFFF,
+            "the half of the window above i32 clears nothing"
+        );
+        assert_eq!(preserve_u128(64, 0, i32_), 0, "a window wider than i32");
+        assert_eq!(
+            preserve_u128(8, 32, i32_),
+            0xFFFF_FFFF,
+            "a window entirely above i32"
+        );
+        let i256 = ValueType::int(256);
+        assert_eq!(words(&preserve(0, 0, i256), i256), vec![u64::MAX; 4]);
+        assert_eq!(
+            words(&preserve(128, 192, i256), i256),
+            vec![u64::MAX, u64::MAX, u64::MAX, 0],
+            "the window runs off the top of i256"
+        );
     }
 
     /// Total at every supported integer width, the two past the `u128`
