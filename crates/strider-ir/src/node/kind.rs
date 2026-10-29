@@ -1,7 +1,7 @@
 use std::ops::RangeInclusive;
 
+use crate::node::signature::{Conversion, ExpectedValueKind, OperandWidth};
 use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
-use crate::node_signature::{Conversion, ExpectedValueKind, OperandWidth};
 use cranelift_entity::entity_impl;
 
 /// Where a function argument is passed.
@@ -237,7 +237,7 @@ impl NodeKind {
     /// the shift.
     #[must_use]
     pub fn input_head_len(&self) -> usize {
-        crate::node_signature::expected_signature(self)
+        crate::node::signature::expected_signature(self)
             .inputs
             .head_len()
     }
@@ -246,7 +246,7 @@ impl NodeKind {
     /// first value output.
     #[must_use]
     pub fn output_head_len(&self) -> usize {
-        crate::node_signature::expected_signature(self)
+        crate::node::signature::expected_signature(self)
             .outputs
             .head_len()
     }
@@ -254,7 +254,7 @@ impl NodeKind {
     /// The value kind output slot `idx` admits, `None` past the arity bound.
     #[must_use]
     pub fn expected_output_kind(&self, idx: usize) -> Option<ExpectedValueKind> {
-        crate::node_signature::expected_signature(self)
+        crate::node::signature::expected_signature(self)
             .outputs
             .at(idx)
             .map(|s| s.kind)
@@ -263,7 +263,7 @@ impl NodeKind {
     /// The value kind input slot `idx` admits, `None` past the arity bound.
     #[must_use]
     pub fn expected_input_kind(&self, idx: usize) -> Option<ExpectedValueKind> {
-        crate::node_signature::expected_signature(self)
+        crate::node::signature::expected_signature(self)
             .inputs
             .at(idx)
             .map(|s| s.kind)
@@ -273,7 +273,7 @@ impl NodeKind {
     /// `usize::MAX`.
     #[must_use]
     pub fn input_arity(&self) -> RangeInclusive<usize> {
-        let inputs = crate::node_signature::expected_signature(self).inputs;
+        let inputs = crate::node::signature::expected_signature(self).inputs;
         inputs.head_len()..=inputs.max_len()
     }
 

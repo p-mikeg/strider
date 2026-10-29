@@ -1,8 +1,8 @@
 //! Where an input slot's width comes from, and the equivalence classes that
 //! answer folds into.
 
+use crate::node::signature::{Conversion, OperandWidth};
 use crate::node::{NodeKind, ValueId};
-use crate::node_signature::{Conversion, OperandWidth};
 
 /// Where input slot's width comes from, over whatever a caller uses to stand
 /// for a value: a vertex id, or the type itself.
