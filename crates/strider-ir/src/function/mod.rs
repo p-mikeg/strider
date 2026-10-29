@@ -2,9 +2,11 @@ mod assumptions;
 pub(crate) mod dot;
 mod edit;
 mod func;
+mod memos;
 mod side_tables;
 mod text;
-pub use side_tables::{MemDecomp, MemoryId, SideTables};
+pub use memos::{MemDecomp, MemoryId};
+pub use side_tables::SideTables;
 
 pub use assumptions::AssumptionOptions;
 pub use edit::EditFunction;
