@@ -3018,3 +3018,36 @@ fn a_coefficient_rule_declines_past_the_carrier() -> Result<()> {
     }
     Ok(())
 }
+
+/// The `const_on_right` swap is held off `(C1, C2)` by a guard asking
+/// whether `x` binds a constant. A value reader answers that off a carrier
+/// width, so a 4-limb `I256` constant reads as a variable and the swap fires
+/// in BOTH orientations, forever. The guard is structural, so it does not.
+#[test]
+fn the_swap_guard_sees_a_constant_wider_than_the_carrier() -> Result<()> {
+    use strider_pattern::{Capture, MatchPat, Matcher, int_add, var};
+    let ty = ValueType::int(256);
+    let wide = UBig::from_words(&[1, 2, 3, 4]);
+    let fg = make_fn(|b| {
+        let c1 = b.build_int_const(wide.clone(), ty)?;
+        let c2 = b.build_int_const(UBig::from_words(&[5, 6, 7, 8]), ty)?;
+        b.build_int_binary_operation(c1, c2, IntBinaryOp::Add, ty)
+    })?;
+    let x = Capture::new();
+    let pat = int_add(var(Capture::new()), var(x)).into_pattern();
+    let hits = Matcher::new(&fg).find_all(&pat)?;
+    // Both operand orders, so both wide constants reach the guard.
+    assert_eq!(hits.len(), 2, "the Add commutes over two wide constants");
+    for hit in &hits {
+        let binds = hit.bindings();
+        assert!(
+            binds.get_value(x).is_some(),
+            "the probe must bind an operand"
+        );
+        assert!(
+            !super::rules::binds_no_int_const(binds, &fg, x),
+            "a 4-limb I256 constant is a constant, whatever carrier reads it"
+        );
+    }
+    Ok(())
+}
