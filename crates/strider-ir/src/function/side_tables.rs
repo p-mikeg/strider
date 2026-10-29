@@ -123,14 +123,17 @@ impl AnalysisMemos {
     }
 }
 
-/// Per-function data keyed by arena ids (or the CC arg index) that is not part
-/// of the graph's structural identity, plus the memo group the analyses fill
-/// in.
+/// Every id-keyed payload table of a [`Function`] and nothing else, plus the
+/// memo group the analyses fill in.  None of it is part of the graph's
+/// structural identity.
 ///
 /// What makes a field one of the tables below is that compaction has to say
-/// something about it: every one is keyed by an id the remap translates, and
-/// nothing clears them.  The derived, clearable verdicts live in `memos`
-/// instead.
+/// something about it: an arena id the remap translates, or a payload id
+/// [`Function::compact`] renumbers.  Nothing clears them; the derived,
+/// clearable verdicts live in `memos` instead.
+///
+/// [`Function`]: crate::Function
+/// [`Function::compact`]: crate::Function::compact
 #[derive(Clone)]
 pub struct SideTables {
     /// Machine-instruction addresses whose lifting or rewrite contributed to
@@ -145,18 +148,38 @@ pub struct SideTables {
     /// validator re-checks reachable entries against the node's kind
     /// (`StaleInitialVarIndex`).
     pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
+    /// Every integer-constant value referenced by an `IntConst(id)` node,
+    /// deduped by value.
+    pub(crate) const_interner:
+        EntityInterner<crate::node::const_value::ConstId, crate::node::const_value::ConstValue>,
+    /// Case addresses of each `Switch(id)`, one per control output.
+    pub(crate) switch_tables: cranelift_entity::PrimaryMap<crate::node::SwitchTableId, Vec<u64>>,
+    /// Override conventions referenced by `Call { cc: Some(id) }`, deduped by
+    /// value.
+    pub(crate) call_ccs: EntityInterner<crate::node::CcId, strider_target::BuiltCallingConvention>,
+    /// Sleigh user-op name by `CallOther` `user_op_id`.
+    pub(crate) call_other_names: FxHashMap<u64, String>,
+    /// Every tracked varnode, value-deduped, in `(space, offset, size)` order.
+    pub(crate) vn_interner: EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
     memos: RefCell<AnalysisMemos>,
 }
 
 impl SideTables {
     /// Crate-private so no caller can wipe the tables through
     /// [`Function::side_tables_mut`](crate::Function::side_tables_mut).
-    pub(crate) fn new() -> Self {
+    /// `vn_interner` is the one table seeded at birth: `InitialVnId`
+    /// numbering is fixed by [`Function::new`](crate::Function::new).
+    pub(crate) fn new(vn_interner: EntityInterner<crate::node::InitialVnId, rsleigh::Vn>) -> Self {
         Self {
             asm_fingerprints: UnionDag::default(),
             value_vn: FxHashMap::default(),
             arg_index_to_values: FxHashMap::default(),
             initial_var_index: FxHashMap::default(),
+            const_interner: EntityInterner::default(),
+            switch_tables: cranelift_entity::PrimaryMap::new(),
+            call_ccs: EntityInterner::default(),
+            call_other_names: FxHashMap::default(),
+            vn_interner,
             memos: RefCell::default(),
         }
     }
@@ -357,6 +380,15 @@ impl SideTables {
             value_vn,
             arg_index_to_values,
             initial_var_index,
+            // Payload ids, not arena ids: `Function::gc_payload_tables`
+            // renumbers these against the compacted graph.
+            const_interner: _,
+            switch_tables: _,
+            call_ccs: _,
+            // Keyed by a `user_op_id` and an `InitialVnId`, both stable
+            // across compaction.
+            call_other_names: _,
+            vn_interner: _,
             memos,
         } = self;
         asm_fingerprints.remap(|old| remap.node_old_to_new(old));
@@ -391,7 +423,7 @@ mod tests {
     /// state.
     #[test]
     fn memory_decomp_returns_class_and_slot_together() {
-        let st = SideTables::new();
+        let st = SideTables::new(EntityInterner::default());
         let base = ValueId::new(0);
         let stack = ValueId::new(1);
         let heap = ValueId::new(2);
@@ -418,7 +450,7 @@ mod tests {
 
     #[test]
     fn frame_escape_round_trips_and_clears() {
-        let st = SideTables::new();
+        let st = SideTables::new(EntityInterner::default());
         assert_eq!(st.frame_escape(), None, "cold: not yet computed");
         st.set_frame_escape(true);
         assert_eq!(st.frame_escape(), Some(true));
@@ -430,7 +462,7 @@ mod tests {
 
     #[test]
     fn invalidate_analyses_drops_the_memos() {
-        let st = SideTables::new();
+        let st = SideTables::new(EntityInterner::default());
         let (base, v) = (ValueId::new(0), ValueId::new(1));
         st.set_stack_slot(v, base, -8);
         st.set_frame_escape(true);
@@ -445,7 +477,7 @@ mod tests {
     /// pinning below is extended with it.
     #[test]
     fn invalidate_analyses_resets_every_memo_field() {
-        let st = SideTables::new();
+        let st = SideTables::new(EntityInterner::default());
         let (base, v) = (ValueId::new(0), ValueId::new(1));
         st.set_stack_slot(v, base, -8);
         st.set_frame_escape(true);
@@ -478,7 +510,7 @@ mod tests {
     // The union is order-independent, deduplicating and never dropping an entry.
     #[test]
     fn extend_asm_fingerprint_unions_deduped() {
-        let mut st = SideTables::new();
+        let mut st = SideTables::new(EntityInterner::default());
         let n = NodeId::new(3);
 
         // Seed from empty; contributors may arrive unsorted.

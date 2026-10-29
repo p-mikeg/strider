@@ -68,7 +68,7 @@ impl<'a> RawFunctionDumper<'a> {
         let mut s = format!("n{}  {kind_str}", node.as_u32());
 
         if let NodeKind::IntConst(id) = kind {
-            let value = match f.const_interner.get(*id) {
+            let value = match f.side_tables().const_interner.get(*id) {
                 Some(cv) => format!("{cv:?}"),
                 None => format!("<dangling const {id:?}>"),
             };
