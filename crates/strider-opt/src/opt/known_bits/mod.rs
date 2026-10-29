@@ -1,9 +1,9 @@
 use cranelift_entity::SecondaryMap;
 use entity_utils::{DenseEntitySet, Worklist};
 
-use strider_ir::eval::mask_below;
+use strider_ir::eval;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
-use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
+use strider_ir::{ExtendOp, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, UBig};
 
 use crate::Result;
 use crate::pipeline::{OptimizationResult, Optimizer};
@@ -18,30 +18,42 @@ pub type KnownBitsMap = SecondaryMap<ValueId, KnownBitsFacts>;
 /// Known-bit lattice for one output.  `ones` and `zeros` are masked to the
 /// output type's width and must never overlap: `ones & zeros == 0`, and a bit
 /// in neither set is unknown.
-#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
 pub struct KnownBitsFacts {
-    pub(crate) ones: u128,
-    pub(crate) zeros: u128,
+    pub(crate) ones: UBig,
+    pub(crate) zeros: UBig,
 }
 
 impl KnownBitsFacts {
-    /// `None` for untracked types, meaning fully unknown, not a known zero.
-    fn from_const(val: u128, ty: ValueType) -> Option<Self> {
-        let type_mask = ty.int_mask_u128()?;
-        let masked = ty.get_unsigned_int(val)?;
+    /// `None` for a float, which has no integer bits.
+    fn from_const(val: &UBig, ty: ValueType) -> Option<Self> {
+        if !ty.is_integer() {
+            return None;
+        }
+        let masked = eval::mask(val, ty);
         Some(KnownBitsFacts {
+            zeros: eval::complement(&masked, ty),
             ones: masked,
-            zeros: type_mask ^ masked,
         })
     }
 
-    fn all_known(self, type_mask: u128) -> bool {
-        (self.ones | self.zeros) & type_mask == type_mask
+    /// Whether every bit of `ty` is determined.  False for a float, whose
+    /// zero-width bit set would otherwise read as fully known.
+    fn all_known(&self, ty: ValueType) -> bool {
+        ty.is_integer() && eval::mask(&(&self.ones | &self.zeros), ty) == eval::all_ones(ty)
+    }
+
+    /// The known-zero bits within the `u128` carrier, for a caller whose own
+    /// question is a `u128` one.
+    pub(crate) fn zeros_u128(&self) -> u128 {
+        u128::try_from(self.zeros.clone().split_bits(128).0).expect("128 bits fit a u128")
     }
 
     /// Upper bound on the runtime value: every bit that could be 1, set.
-    pub(crate) fn max_value(self, type_mask: u128) -> u128 {
-        (!self.zeros) & type_mask
+    /// `type_mask` is a width the carrier holds, so bits above it are not part
+    /// of the answer.
+    pub(crate) fn max_value(&self, type_mask: u128) -> u128 {
+        !self.zeros_u128() & type_mask
     }
 }
 
@@ -56,14 +68,22 @@ enum ConstShift {
 /// Mirrors Sleigh's `OpBehaviorInt{Left,Right}::evaluateBinary`, which return 0
 /// for any shift amount `>= bit_width`.  Masking the amount to `bit_width - 1`
 /// instead would wrap large literal shifts back into range.
-fn classify_const_shift(rhs_kb: KnownBitsFacts, rhs_mask: u128, ty: ValueType) -> ConstShift {
-    if !rhs_kb.all_known(rhs_mask) {
+fn classify_const_shift(
+    rhs_kb: &KnownBitsFacts,
+    rhs_ty: Option<ValueType>,
+    ty: ValueType,
+) -> ConstShift {
+    if !rhs_ty.is_some_and(|rhs_ty| rhs_kb.all_known(rhs_ty)) {
         return ConstShift::Unknown;
     }
-    if strider_ir::eval::shift_out_of_range(rhs_kb.ones, ty) {
+    // A count no `u128` holds is past every supported width.
+    let Ok(amount) = u128::try_from(&rhs_kb.ones) else {
+        return ConstShift::OverWidth;
+    };
+    if eval::shift_out_of_range(amount, ty) {
         return ConstShift::OverWidth;
     }
-    ConstShift::InRange(rhs_kb.ones as u32)
+    ConstShift::InRange(amount as u32)
 }
 
 #[derive(Clone, Copy)]
@@ -77,45 +97,42 @@ enum ShiftDir {
 /// unknown, meaning fully unknown.
 fn shift_known_bits(
     function: &strider_ir::Function,
-    l: KnownBitsFacts,
+    l: &KnownBitsFacts,
     rhs: ValueId,
-    rhs_kb: KnownBitsFacts,
+    rhs_kb: &KnownBitsFacts,
     ty: ValueType,
     dir: ShiftDir,
 ) -> Option<KnownBitsFacts> {
-    // Callers already gated on `ty.int_mask_u128()`; this re-derivation never
-    // fails.
-    let type_mask = ty.int_mask_u128()?;
-    let rhs_mask = function
-        .value_type_opt(rhs)
-        .and_then(ValueType::int_mask_u128)
-        .unwrap_or(u128::MAX);
-    match classify_const_shift(rhs_kb, rhs_mask, ty) {
+    match classify_const_shift(rhs_kb, function.value_type_opt(rhs), ty) {
         ConstShift::Unknown => None,
         ConstShift::OverWidth => Some(KnownBitsFacts {
-            ones: 0,
-            zeros: type_mask,
+            ones: UBig::ZERO,
+            zeros: eval::all_ones(ty),
         }),
         ConstShift::InRange(shift) => {
+            let shift = shift as usize;
             let (shifted_ones, shifted_zeros) = match dir {
                 ShiftDir::Left => {
-                    let lower_mask = mask_below(shift) & type_mask;
+                    // Vacated low bits.
+                    let lower_mask = eval::mask(&eval::ones_at(shift, 0), ty);
                     (
-                        (l.ones << shift) & type_mask,
-                        ((l.zeros << shift) & type_mask) | lower_mask,
+                        eval::mask(&(&l.ones << shift), ty),
+                        eval::mask(&(&l.zeros << shift), ty) | lower_mask,
                     )
                 }
                 ShiftDir::Right => {
-                    let upper_mask = !(type_mask >> shift) & type_mask;
+                    // Vacated high bits; `shift` is below the width here.
+                    let upper_mask = eval::ones_at(shift, ty.bit_width() - shift);
                     (
-                        (l.ones & type_mask) >> shift,
-                        ((l.zeros & type_mask) >> shift) | upper_mask,
+                        eval::mask(&l.ones, ty) >> shift,
+                        (eval::mask(&l.zeros, ty) >> shift) | upper_mask,
                     )
                 }
             };
+            let zeros = shifted_zeros & eval::complement(&shifted_ones, ty);
             Some(KnownBitsFacts {
                 ones: shifted_ones,
-                zeros: shifted_zeros & !shifted_ones,
+                zeros,
             })
         }
     }
@@ -128,7 +145,7 @@ pub(crate) fn const_only(
 ) -> impl Fn(ValueId) -> KnownBitsFacts + '_ {
     move |v| {
         function
-            .int_const_u128(v)
+            .int_const(v)
             .zip(function.value_type_opt(v))
             .and_then(|(k, ty)| KnownBitsFacts::from_const(k, ty))
             .unwrap_or_default()
@@ -155,13 +172,14 @@ pub(crate) fn node_known_bits(
     };
     let out_kind = function.value_kind(out);
     let ty = out_kind.as_value_or_err()?;
-    let Some(type_mask) = ty.int_mask_u128() else {
+    if !ty.is_integer() {
         return Ok(None);
-    };
+    }
+    let type_mask = eval::all_ones(ty);
 
     let kb = match kind {
         NodeKind::IntConst(_) => match function
-            .int_const_u128(out)
+            .int_const(out)
             .and_then(|v| KnownBitsFacts::from_const(v, ty))
         {
             Some(kb) => kb,
@@ -180,23 +198,23 @@ pub(crate) fn node_known_bits(
                 // not re-validated mid-pipeline, and an operand's above-width
                 // known bits must not leak into these facts.
                 IntBinaryOp::And => KnownBitsFacts {
-                    ones: l.ones & r.ones & type_mask,
-                    zeros: (l.zeros | r.zeros) & type_mask,
+                    ones: &l.ones & &r.ones & &type_mask,
+                    zeros: (&l.zeros | &r.zeros) & &type_mask,
                 },
                 IntBinaryOp::Or => KnownBitsFacts {
-                    ones: (l.ones | r.ones) & type_mask,
-                    zeros: l.zeros & r.zeros & type_mask,
+                    ones: (&l.ones | &r.ones) & &type_mask,
+                    zeros: &l.zeros & &r.zeros & &type_mask,
                 },
                 IntBinaryOp::Xor => KnownBitsFacts {
-                    ones: ((l.ones & r.zeros) | (l.zeros & r.ones)) & type_mask,
-                    zeros: ((l.ones & r.ones) | (l.zeros & r.zeros)) & type_mask,
+                    ones: ((&l.ones & &r.zeros) | (&l.zeros & &r.ones)) & &type_mask,
+                    zeros: ((&l.ones & &r.ones) | (&l.zeros & &r.zeros)) & &type_mask,
                 },
                 IntBinaryOp::ShiftLeft => {
-                    return Ok(shift_known_bits(function, l, rhs, r, ty, ShiftDir::Left)
+                    return Ok(shift_known_bits(function, &l, rhs, &r, ty, ShiftDir::Left)
                         .map(|facts| (out, facts)));
                 }
                 IntBinaryOp::ShiftRight => {
-                    return Ok(shift_known_bits(function, l, rhs, r, ty, ShiftDir::Right)
+                    return Ok(shift_known_bits(function, &l, rhs, &r, ty, ShiftDir::Right)
                         .map(|facts| (out, facts)));
                 }
                 _ => return Ok(None),
@@ -210,8 +228,8 @@ pub(crate) fn node_known_bits(
                 .expect("Truncate has 1 input per node signature");
             let kb = operand(value);
             KnownBitsFacts {
-                ones: kb.ones & type_mask,
-                zeros: kb.zeros & type_mask,
+                ones: &kb.ones & &type_mask,
+                zeros: &kb.zeros & &type_mask,
             }
         }
 
@@ -222,15 +240,16 @@ pub(crate) fn node_known_bits(
                 .expect("Extend has 1 input per node signature");
             let input_kind = function.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
-            // An untracked input width must bail, not default `input_mask` to
-            // 0: that would mark every bit known-zero.
-            let Some(input_mask) = input_ty.int_mask_u128() else {
+            // A float input has no integer bits to widen, and an all-zero
+            // `input_mask` would mark every bit known-zero.
+            if !input_ty.is_integer() {
                 return Ok(None);
-            };
+            }
+            let input_mask = eval::all_ones(input_ty);
             let kb = operand(value);
             KnownBitsFacts {
+                zeros: &kb.zeros | eval::complement(&input_mask, ty), // upper bits are 0
                 ones: kb.ones,
-                zeros: kb.zeros | (type_mask ^ input_mask), // upper bits are 0
             }
         }
 
@@ -243,27 +262,28 @@ pub(crate) fn node_known_bits(
                 .expect("Extend has 1 input per node signature");
             let input_kind = function.value_kind(value);
             let input_ty = input_kind.as_value_or_err()?;
-            let Some(input_mask) = input_ty.int_mask_u128() else {
+            if !input_ty.is_integer() {
                 return Ok(None);
-            };
+            }
+            let input_mask = eval::all_ones(input_ty);
             let kb = operand(value);
             // Highest bit of the input width.
-            let sign_bit = (input_mask >> 1) + 1;
-            let upper_mask = type_mask & !input_mask;
-            if kb.ones & sign_bit != 0 {
+            let sign_bit = eval::ones_at(1, input_ty.bit_width() - 1);
+            let upper_mask = eval::complement(&input_mask, ty);
+            if &kb.ones & &sign_bit != UBig::ZERO {
                 KnownBitsFacts {
-                    ones: (kb.ones & input_mask) | upper_mask,
-                    zeros: kb.zeros & input_mask,
+                    ones: (&kb.ones & &input_mask) | upper_mask,
+                    zeros: &kb.zeros & &input_mask,
                 }
-            } else if kb.zeros & sign_bit != 0 {
+            } else if &kb.zeros & &sign_bit != UBig::ZERO {
                 KnownBitsFacts {
-                    ones: kb.ones & input_mask,
-                    zeros: (kb.zeros & input_mask) | upper_mask,
+                    ones: &kb.ones & &input_mask,
+                    zeros: (&kb.zeros & &input_mask) | upper_mask,
                 }
             } else {
                 KnownBitsFacts {
-                    ones: kb.ones & input_mask,
-                    zeros: kb.zeros & input_mask,
+                    ones: &kb.ones & &input_mask,
+                    zeros: &kb.zeros & &input_mask,
                 }
             }
         }
@@ -281,10 +301,9 @@ pub(crate) fn node_known_bits(
             // (`opbehavior.cc:791`); only `I1` differs from `bit_width`.
             let max_val = (input_ty.byte_size() * 8) as u64;
             let bits_needed = (u64::BITS - max_val.leading_zeros()) as usize;
-            let upper_zeros = type_mask & !mask_below(bits_needed as u32);
             KnownBitsFacts {
-                ones: 0,
-                zeros: upper_zeros,
+                ones: UBig::ZERO,
+                zeros: eval::complement(&eval::ones_at(bits_needed, 0), ty),
             }
         }
 
@@ -293,8 +312,8 @@ pub(crate) fn node_known_bits(
 
     // Overlapping ones/zeros can only mean a transfer-function bug.
     debug_assert_eq!(
-        kb.ones & kb.zeros,
-        0,
+        &kb.ones & &kb.zeros,
+        UBig::ZERO,
         "node_known_bits produced overlapping ones/zeros: {kb:?}",
     );
 
@@ -344,7 +363,7 @@ pub fn analyze(function: &strider_ir::Function) -> Result<KnownBitsMap> {
     let mut known: KnownBitsMap = SecondaryMap::new();
     let mut work: Worklist<NodeId> = function.reverse_postorder_filter(|_| true).collect();
     while let Some(node_id) = work.dequeue() {
-        let Some((out, kb)) = node_known_bits(function, node_id, &|v| known[v])? else {
+        let Some((out, kb)) = node_known_bits(function, node_id, &|v| known[v].clone())? else {
             continue;
         };
         // `kb` is recomputed from scratch each visit and is monotonically more
@@ -374,15 +393,11 @@ impl Optimizer for KnownBits {
         let known = analyze(edit.function())?;
 
         // Collect first so the mutating loop below can take `&mut edit`.
-        let to_fold: Vec<(ValueId, ValueType, u128)> = known
+        let to_fold: Vec<(ValueId, ValueType, UBig)> = known
             .iter()
-            .filter_map(|(value, &kb)| {
+            .filter_map(|(value, kb)| {
                 let ty = edit.value_type_opt(value)?;
-                if !ty.is_integer() {
-                    return None;
-                }
-                let type_mask = ty.int_mask_u128()?;
-                if !kb.all_known(type_mask) {
+                if !kb.all_known(ty) {
                     return None;
                 }
                 // Folding an existing IntConst would be a no-op.
@@ -390,7 +405,7 @@ impl Optimizer for KnownBits {
                 if matches!(*edit.node_kind(producer), NodeKind::IntConst(_)) {
                     return None;
                 }
-                Some((value, ty, kb.ones))
+                Some((value, ty, kb.ones.clone()))
             })
             .collect();
 
@@ -406,7 +421,7 @@ impl Optimizer for KnownBits {
         // ever a fold's old producer, so the dedup pool is stable across the
         // rewire pass either way.
         let mut folds: Vec<(ValueId, ValueId)> = Vec::with_capacity(to_fold.len());
-        for &(value, ty, ones) in &to_fold {
+        for (value, ty, ones) in to_fold {
             folds.push((value, edit.build_int_const(ones, ty)?));
         }
 
