@@ -39,9 +39,10 @@ use crate::matcher::OutputKindSpec;
 
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind> + Send>;
 
-/// The `u128` return caps the expressible range: an output wider than `I128`
-/// skips the rewrite rather than interning a truncated constant.
-pub type TemplateKindFnIntConst = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<u128> + Send>;
+/// Unbounded: the value is interned at the resolved output width, whatever
+/// that width is.
+pub type TemplateKindFnIntConst =
+    Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<strider_ir::UBig> + Send>;
 
 /// How a template node materialises into fresh IR.
 pub enum TemplateKind {
@@ -49,8 +50,8 @@ pub enum TemplateKind {
     /// The closure returns the `NodeKind` to materialise, given a
     /// [`TemplateCtx`]; an `IntConst` is refused, as under `Exact`.
     Fn(TemplateKindFn),
-    /// The closure computes a `u128` at rewrite time, interned at the
-    /// resolved output width.
+    /// The closure computes a [`strider_ir::UBig`] at rewrite time, interned
+    /// at the resolved output width.
     FnIntConst(TemplateKindFnIntConst),
 }
 
@@ -213,10 +214,10 @@ pub fn instantiate_guarded<B: IRBuilder>(
                 // wrapping back into range, as the lifter's count does.
                 if first_value_output_vtx(template, vtx)
                     .is_some_and(|o| value_tys.saturated_counts.contains(&o))
-                    && value_ty.wrap_u128(v) != v
+                    && strider_ir::eval::mask(&v, value_ty) != v
                 {
-                    let bits = u128::try_from(value_ty.bit_width()).expect("bit width fits u128");
-                    v = value_ty.wrap_u128(v) | bits;
+                    v = strider_ir::eval::mask(&v, value_ty)
+                        | strider_ir::UBig::from(value_ty.bit_width());
                 }
                 intern_fn_int_const(builder, value_ty, v)?
             }
@@ -602,19 +603,15 @@ fn resolve_binding_tys(
 }
 
 /// Masks `v` to `value_ty`'s width and stores it.
-/// The closure computed `v` in `u128`, so a carry or borrow out of bit 127 is
-/// lost. That is the declared width's own modulus up to `I128`, and the WRONG
-/// one past it: `2^127 + 2^127` reads back as `0` rather than `2^128`. Skip the
-/// rewrite instead of interning a truncated constant. A float `value_ty` has no
-/// integer literal to intern at all, and skips for the same reason: the caller
-/// gave a float-typed root an integer constant, which is the rule's mistake,
-/// not a graph error to surface downstream.
+/// A float `value_ty` has no integer literal to intern: the caller gave a
+/// float-typed root an integer constant, which is the rule's mistake, not a
+/// graph error to surface downstream, so it skips the rewrite.
 fn intern_fn_int_const<B: IRBuilder>(
     builder: &mut B,
     value_ty: ValueType,
-    v: u128,
+    v: strider_ir::UBig,
 ) -> anyhow::Result<NodeKind> {
-    if value_ty.bit_width() > 128 || !value_ty.is_integer() {
+    if !value_ty.is_integer() {
         return Err(crate::skip());
     }
     Ok(NodeKind::IntConst(

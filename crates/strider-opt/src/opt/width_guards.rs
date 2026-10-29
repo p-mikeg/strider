@@ -22,25 +22,23 @@ pub(crate) fn same_width(f: &Function, b: &Bindings, caps: &[Capture]) -> Option
 }
 
 /// Whether `cap` binds a shift count `1 << count` can be built from at `ty`:
-/// `ty` has a `u128` modulus and the count is below its width.
+/// an integer `ty` whose width the count names a bit of.
 ///
-/// A count is an ordinary constant, so an `I64` shift can name 200, and
-/// `1u128 << 200` panics. The modulus matters as for every coefficient: the
-/// arithmetic runs in `u128`, where an `I256` `C = 2^128 - 1` gives `C + 1 ==
-/// 0`, not `2^128`.
+/// A count is an ordinary constant, so an `I64` shift can name 200. A float
+/// `ty` has no shift at all.
 pub(crate) fn shift_count_in_range(
     f: &Function,
     b: &Bindings,
     ty: ValueType,
     cap: Capture,
 ) -> bool {
-    ty.int_mask_u128().is_some()
+    ty.is_integer()
         && b.get_uint(cap, f)
-            .is_some_and(|count| count < ty.bit_width() as u128)
+            .is_some_and(|count| count < strider_ir::UBig::from(ty.bit_width()))
 }
 
-/// The all-ones mask of `cap`'s type, or `None` for a float or past the
-/// `u128` the constant arithmetic computes in.
-pub(crate) fn carrier_mask(f: &Function, b: &Bindings, cap: Capture) -> Option<u128> {
-    b.get_type(cap, f)?.int_mask_u128()
+/// `cap`'s type when that is an integer one, `None` for a float or an
+/// unbound / untyped capture.
+pub(crate) fn int_type(f: &Function, b: &Bindings, cap: Capture) -> Option<ValueType> {
+    b.get_type(cap, f).filter(|t| t.is_integer())
 }

@@ -1,3 +1,4 @@
+use strider_ir::UBig;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_pattern::*;
@@ -194,7 +195,7 @@ fn each_match_has_its_own_bindings() {
     // sit on operands, so each root matches as (lhs,rhs) and as (rhs,lhs).
     assert_eq!(hits.len(), 6);
 
-    let raw: Vec<(u128, u128)> = hits
+    let raw: Vec<(UBig, UBig)> = hits
         .iter()
         .map(|m| {
             (
@@ -203,7 +204,7 @@ fn each_match_has_its_own_bindings() {
             )
         })
         .collect();
-    let distinct: std::collections::HashSet<(u128, u128)> = raw.iter().copied().collect();
+    let distinct: std::collections::HashSet<(UBig, UBig)> = raw.iter().cloned().collect();
     assert_eq!(
         distinct.len(),
         6,
@@ -212,12 +213,23 @@ fn each_match_has_its_own_bindings() {
 
     // Normalised by operand order, the three source `int_add`s come back, each
     // contributing its pair twice, once per ordering.
-    let mut got: Vec<(u128, u128)> = raw
+    let mut got: Vec<(UBig, UBig)> = raw
         .into_iter()
         .map(|(l, r)| if l < r { (l, r) } else { (r, l) })
         .collect();
     got.sort();
-    assert_eq!(got, vec![(1, 2), (1, 2), (3, 4), (3, 4), (5, 6), (5, 6)]);
+    let pair = |a: u8, b: u8| (UBig::from(a), UBig::from(b));
+    assert_eq!(
+        got,
+        vec![
+            pair(1, 2),
+            pair(1, 2),
+            pair(3, 4),
+            pair(3, 4),
+            pair(5, 6),
+            pair(5, 6)
+        ]
+    );
 }
 
 #[test]
@@ -484,7 +496,7 @@ fn find_joined_intersects_on_shared_capture_node_id() {
     assert_eq!(s1, s2);
 
     let k_val = inner[0].bindings().get_uint(k, &function).expect("K bound");
-    assert_eq!(k_val, 8);
+    assert_eq!(k_val, UBig::from(8u8));
 }
 
 /// A joined tuple exists only when all three patterns bind the shared capture

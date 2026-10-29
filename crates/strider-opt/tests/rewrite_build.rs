@@ -78,10 +78,7 @@ fn reassoc_rule_nests_computed_const_in_add() {
 
     let rule = rewrite_rule(
         int_add(int_add(var(x), int_const(c1)), int_const(c2)),
-        template::int_add(
-            var(x),
-            int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
-        ),
+        template::int_add(var(x), int_const_with!([c1: uint, c2: uint] => c1 + c2)),
     );
 
     let outer_root = {
@@ -181,3 +178,48 @@ fn rewrite_rule_runtime_accepts_capture_bound_on_every_arm() {
 //     let p: strider_pattern::Pattern = var(c).into_pattern();
 //     rewrite_rule_runtime(lhs, p);
 //     // error[E0308]: expected `Template`, found `Pattern`
+
+/// A computed template constant is interned at the declared width, so a
+/// rewrite at `I256` mints every limb instead of skipping past a carrier.
+#[test]
+fn computed_const_is_interned_at_an_i256_width() {
+    use strider_ir::UBig;
+    let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+    let ty = T::int(256);
+    let big = UBig::from_words(&[1, 2, 3, 4]);
+
+    let (mut fx, _xval) = make_fn_with_var(reg_vn(0, 32), |b, xv| {
+        let one = b.build_int_const(big.clone(), ty)?;
+        let inner = b.build_int_binary_operation(xv, one, IntBinaryOp::Add, ty)?;
+        let two = b.build_int_const(UBig::from_words(&[5, 6, 7, 8]), ty)?;
+        b.build_int_binary_operation(inner, two, IntBinaryOp::Add, ty)
+    })
+    .unwrap();
+
+    let rule = rewrite_rule(
+        int_add(int_add(var(x), int_const(c1)), int_const(c2)),
+        template::int_add(var(x), int_const_with!([c1: uint, c2: uint] => c1 + c2)),
+    );
+
+    let outer_root = {
+        let m = Matcher::new(&fx);
+        let pat = int_add(int_add(var(x), int_const(c1)), int_const(c2)).into_pattern();
+        let hits = m.find_all(&pat).unwrap();
+        assert!(!hits.is_empty(), "the I256 reassoc LHS must match");
+        hits[0].root()
+    };
+
+    let mut ctx = EditFunction::new(&mut fx);
+    assert!(
+        rule(&mut ctx, outer_root).unwrap().is_some(),
+        "the I256 reassoc rule must fire"
+    );
+    // No limb carries, so the sum is limb-wise.
+    let want = UBig::from_words(&[6, 8, 10, 12]);
+    let minted = ctx.function().walk().any(|n| {
+        let f = ctx.function();
+        matches!(f.node_kind(n), NodeKind::IntConst(_))
+            && f.int_const(f.node_outputs(n)[0]) == Some(&want)
+    });
+    assert!(minted, "the rewrite must intern the 256-bit sum");
+}

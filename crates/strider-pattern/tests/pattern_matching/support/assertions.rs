@@ -51,7 +51,11 @@ pub(crate) fn matches_both_orders(function: &Function, order_a: Pattern, order_b
 /// Reads `cap` back as an unsigned constant. `None` when the bound value is
 /// not an `IntConst`.
 #[track_caller]
-pub(crate) fn unique_uint(function: &Function, pat: Pattern, cap: Capture) -> Option<u128> {
+pub(crate) fn unique_uint(
+    function: &Function,
+    pat: Pattern,
+    cap: Capture,
+) -> Option<strider_ir::UBig> {
     unique(function, pat).bindings().get_uint(cap, function)
 }
 

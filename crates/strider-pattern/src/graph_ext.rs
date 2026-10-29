@@ -410,8 +410,8 @@ mod tests {
             return match rng.below(2) {
                 0 => b.capture(Capture::new()),
                 _ => {
-                    let v = rng.below(4) as u128;
-                    b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(move |_| Ok(v))))
+                    let v = strider_ir::UBig::from(rng.below(4));
+                    b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(move |_| Ok(v.clone()))))
                 }
             };
         }

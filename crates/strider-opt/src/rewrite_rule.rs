@@ -352,7 +352,7 @@ mod tests {
     //! Every fixture builds a BUILT `Function` (entry set).
 
     use strider_ir::node::{NodeKind, ValueType};
-    use strider_ir::{EditFunction, IRBuilderExt, IRViewer, IntBinaryOp};
+    use strider_ir::{EditFunction, IRBuilderExt, IRViewer, IntBinaryOp, UBig};
     use strider_ir_test_utils::{RegisterSet, reg_vn};
 
     use super::rewrite_rule;
@@ -447,7 +447,7 @@ mod tests {
         assert!(function.side_tables().asm_fingerprint_is_empty(root));
         let nodes_before = function.graph().all_node_ids().count();
 
-        let rule = rewrite_rule(initial_var_for(vn), int_const_with!([] => 3u128));
+        let rule = rewrite_rule(initial_var_for(vn), int_const_with!([] => UBig::from(3u8)));
         let mut edit = EditFunction::new(&mut function);
         edit.cull_dead();
         let err = rule(&mut edit, root).expect_err("an unattributable build must be refused");
@@ -468,7 +468,7 @@ mod tests {
         let skips = rewrite_rule(initial_var_for(vn), declined());
         let skips_late = rewrite_rule(
             initial_var_for(vn),
-            template::int_add(declined(), int_const_with!([] => 1u128)),
+            template::int_add(declined(), int_const_with!([] => UBig::ONE)),
         );
         let mut edit = EditFunction::new(&mut function);
         edit.cull_dead();
@@ -524,7 +524,7 @@ mod tests {
 
         let rule = rewrite_rule(
             int_add(int_const(c1), int_const(c2)),
-            int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
+            int_const_with!([c1: uint, c2: uint] => c1 + c2),
         );
 
         // Mirror the pipeline construction path so the cached live/roots
@@ -603,10 +603,7 @@ mod tests {
 
         let rule = rewrite_rule(
             int_add(int_add(var(x), int_const(c1)), int_const(c2)),
-            template::int_add(
-                var(x),
-                int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
-            ),
+            template::int_add(var(x), int_const_with!([c1: uint, c2: uint] => c1 + c2)),
         );
 
         let mut edit = EditFunction::new(&mut function);
@@ -859,10 +856,7 @@ mod tests {
 
         let rule = rewrite_rule(
             int_add(int_add(var(x), int_const(c1)), int_const(c2)),
-            template::int_add(
-                var(x),
-                int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
-            ),
+            template::int_add(var(x), int_const_with!([c1: uint, c2: uint] => c1 + c2)),
         );
 
         let mut edit = EditFunction::new(&mut function);
@@ -912,11 +906,11 @@ mod tests {
         // Both match `var + <const>`; only the first may take effect.
         let first = rewrite_rule(
             int_add(var(x1), int_const(c1)),
-            int_const_with!([c1: uint] => c1.wrapping_add(10)),
+            int_const_with!([c1: uint] => c1 + UBig::from(10u8)),
         );
         let second = rewrite_rule(
             int_add(var(x2), int_const(c2)),
-            int_const_with!([c2: uint] => c2.wrapping_add(20)),
+            int_const_with!([c2: uint] => c2 + UBig::from(20u8)),
         );
 
         let mut edit = EditFunction::new(&mut function);
@@ -969,10 +963,7 @@ mod tests {
 
         let rule = rewrite_rule(
             int_add(int_add(var(x), int_const(c1)), int_const(c2)),
-            template::int_add(
-                var(x),
-                int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
-            ),
+            template::int_add(var(x), int_const_with!([c1: uint, c2: uint] => c1 + c2)),
         );
 
         let mut edit = EditFunction::new(&mut function);
@@ -1028,7 +1019,7 @@ mod tests {
         let rhs = {
             let mut tb = TemplateBuilder::new();
             let a = tb.capture(addr_cap);
-            let data = tb.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| Ok(7u128))));
+            let data = tb.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| Ok(UBig::from(7u8)))));
             tb.set_value_ty(data, VT::int(64));
             // The store needs an incoming memory token; this leaf is
             // input-less, so it becomes a root.
@@ -1164,10 +1155,7 @@ mod tests {
 
         let rule = rewrite_rule(
             int_add(int_add(var(x), int_const(c1)), int_const(c2)),
-            template::int_add(
-                var(x),
-                int_const_with!([c1: uint, c2: uint] => c1.wrapping_add(c2)),
-            ),
+            template::int_add(var(x), int_const_with!([c1: uint, c2: uint] => c1 + c2)),
         );
 
         let mut edit = EditFunction::new(&mut function);
@@ -1502,7 +1490,7 @@ mod tests {
 
             let rule = rewrite_rule(
                 int_add(var(x), one_of![int_mul(var(x), int_const(c1)), var(x)]),
-                int_const_with!([c1: uint?] => c1.unwrap_or(1)),
+                int_const_with!([c1: uint?] => c1.unwrap_or(UBig::ONE)),
             );
             let mut edit = EditFunction::new(&mut function);
             let new = rule(&mut edit, root).unwrap().expect("the rule must fire");
@@ -1532,7 +1520,9 @@ mod tests {
         // An optional capture no arm binds at all is still a typo, not a None.
         let err = super::rewrite_rule_runtime(
             lhs().into_pattern(),
-            TemplatePat::into_template(int_const_with!([absent: uint?] => absent.unwrap_or(0))),
+            TemplatePat::into_template(
+                int_const_with!([absent: uint?] => absent.unwrap_or(UBig::ZERO)),
+            ),
         )
         .map(|_| ())
         .expect_err("an unmentioned capture must be refused even as optional");
@@ -1566,7 +1556,7 @@ mod tests {
             "a value vertex",
             TemplatePat::into_template(template::int_add(
                 var(c1),
-                int_const_with!([c1: uint?] => c1.unwrap_or(1)),
+                int_const_with!([c1: uint?] => c1.unwrap_or(UBig::ONE)),
             )),
         );
         // An output type: `InheritBinding` reads `c1`'s WIDTH, with no Option.
@@ -1574,14 +1564,14 @@ mod tests {
             "an InheritBinding output type",
             TemplatePat::into_template(capture_typed(
                 c1,
-                int_const_with!([c1: uint?] => c1.unwrap_or(1)),
+                int_const_with!([c1: uint?] => c1.unwrap_or(UBig::ONE)),
             )),
         );
         // A second closure in the same template reading it without the `?`.
         refused(
             "a second closure's required read",
             TemplatePat::into_template(template::int_add(
-                int_const_with!([c1: uint?] => c1.unwrap_or(1)),
+                int_const_with!([c1: uint?] => c1.unwrap_or(UBig::ONE)),
                 int_const_with!([c1: uint] => c1),
             )),
         );
@@ -1591,7 +1581,7 @@ mod tests {
         assert!(
             super::rewrite_rule_runtime(
                 lhs().into_pattern(),
-                TemplatePat::into_template(int_const_with!([c1: uint?] => c1.unwrap_or(1))),
+                TemplatePat::into_template(int_const_with!([c1: uint?] => c1.unwrap_or(UBig::ONE))),
             )
             .is_ok(),
             "a capture read only as an Option must still be accepted"

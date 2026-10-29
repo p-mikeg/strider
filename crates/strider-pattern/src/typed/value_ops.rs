@@ -12,14 +12,14 @@ use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
-use crate::matcher::match_pat::{CaptureExt, MatchPat, Pre};
+use crate::matcher::match_pat::{MatchPat, Pre};
 use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef};
 use crate::template::template_pat::TemplatePat;
 use crate::template::{TemplateBuilder, TmplValueRef};
 use crate::typed::builder_like::{
     compile_bool_binary, compile_int_binary, compile_two_input, compile_unary_kind,
 };
-use crate::typed::consts::{int_const, int_const_with_fn};
+use crate::typed::consts::{int_const_all_ones, int_const_with_fn};
 
 // The `*Fixed` structs and their lowered-shape siblings (`Sub`, `BitNot`,
 // `FloatSub`, `FloatLe`, ...) stay hand-written: their lowerings differ.
@@ -166,20 +166,24 @@ pub struct BitNot<I> {
 
 impl<I: MatchPat> MatchPat for BitNot<I> {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        // `u128::MAX` at I256 / I512 is `2^128 - 1`, not all-ones, so past
-        // the carrier it would match a constant that is not the complement's.
-        // Reject those widths: a true I256 / I512 all-ones is unreadable
-        // through `int_const_u128` anyway.
-        let all_ones = int_const(u128::MAX).when_match(|_m, ty, _b| ty.bit_width() <= 128);
-        int_xor(self.inner, all_ones).compile(b)
+        // All-ones is the matched width's own, which no `u128` literal
+        // names past I128.
+        int_xor(self.inner, int_const_all_ones()).compile(b)
     }
 }
 
 impl<I: TemplatePat> TemplatePat for BitNot<I> {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         let i = self.inner.compile(b);
-        let ones_out =
-            int_const_with_fn(|ctx| ctx.root_ty.int_mask_u128().ok_or_else(crate::skip)).compile(b);
+        // `eval::all_ones` answers 0 for a float, which is not a
+        // complement's mask, so a float root skips the rewrite.
+        let ones_out = int_const_with_fn(|ctx| {
+            ctx.root_ty
+                .is_integer()
+                .then(|| strider_ir::eval::all_ones(ctx.root_ty))
+                .ok_or_else(crate::skip)
+        })
+        .compile(b);
         b.binary(IntBinaryOp::Xor, i, ones_out)
     }
 }
