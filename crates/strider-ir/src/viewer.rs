@@ -113,18 +113,31 @@ pub trait IRViewer {
         g.node_kind(g.producer(value_id))
     }
 
-    /// The constant `value` holds, masked to its declared width. `None` for a
-    /// non-constant, or for an `I256`/`I512` value exceeding `u128`.
-    fn int_const_u128(&self, value: ValueId) -> Option<u128> {
-        let ty = self.value_kind(value).as_value()?;
-        if !ty.is_integer() {
+    /// The constant an integer-typed `value` holds. `None` for a value no
+    /// `IntConst` produces, and for a non-integer type.
+    ///
+    /// The one read: the width-aware forms are
+    /// [`Self::int_const_u128`], [`Self::int_const_i128`] and
+    /// [`crate::eval::le_bytes`] / [`crate::eval::words`] over the answer.
+    fn int_const(&self, value: ValueId) -> Option<&dashu_int::UBig> {
+        if !self.value_kind(value).as_value()?.is_integer() {
             return None;
         }
         let NodeKind::IntConst(id) = *self.kind_of_value(value) else {
             return None;
         };
-        let v = u128::try_from(self.function().const_value(id)).ok()?;
-        Some(ty.wrap_u128(v))
+        Some(self.function().const_value(id))
+    }
+
+    /// [`Self::int_const`] within the `u128` carrier. `None` for an
+    /// `I256`/`I512` value exceeding it.
+    fn int_const_u128(&self, value: ValueId) -> Option<u128> {
+        let ty = self.value_kind(value).as_value()?;
+        let v = u128::try_from(self.int_const(value)?).ok()?;
+        // Both intern paths mask to the declared width and `validate` reports
+        // `ConstWidthMismatch` on anything above it, so this cannot narrow.
+        debug_assert_eq!(ty.wrap_u128(v), v, "unmasked stored constant");
+        Some(v)
     }
 
     /// [`Self::int_const_u128`] sign-extended from its declared width.
@@ -135,25 +148,6 @@ pub trait IRViewer {
     fn int_const_i128(&self, value: ValueId) -> Option<i128> {
         let v = self.int_const_u128(value)?;
         self.value_kind(value).as_value()?.get_signed_int(v)
-    }
-
-    /// Little-endian bytes of a constant whose declared type is wider than
-    /// `u64`, zero-extended to that type's byte size. `None` for a narrower
-    /// declared type, whatever the value.
-    fn int_const_wide_le_bytes(&self, node: crate::node::NodeId) -> Option<Vec<u8>> {
-        let [out] = self.node_outputs_exact::<1>(node).ok()?;
-        let ty = self.value_kind(out).as_value()?;
-        if !ty.is_wide_int() {
-            return None;
-        }
-        let NodeKind::IntConst(id) = *self.node_kind(node) else {
-            return None;
-        };
-        let mut out = vec![0u8; ty.byte_size()];
-        let src: Box<[u8]> = self.function().const_value(id).to_le_bytes();
-        let n = out.len().min(src.len());
-        out[..n].copy_from_slice(&src[..n]);
-        Some(out)
     }
 
     /// [`Self::int_const_u128`] under an `I1` guard.
@@ -452,17 +446,16 @@ mod tests {
         assert_eq!(f.access_address(load), None);
     }
 
-    /// Little-endian, zero-extended to the declared byte size, from either
-    /// arm of the stored value.
+    /// Little-endian, zero-extended to the declared byte size, whichever
+    /// path built the stored value.
     #[test]
-    fn int_const_wide_le_bytes_serialises_little_endian() {
+    fn le_bytes_serialises_little_endian_at_the_declared_width() {
         let bytes = |limbs: &[u64], ty: ValueType| {
             let cc = strider_target::BuiltCallingConvention::default();
             let mut b = FunctionBuilder::new(Vec::new(), cc, strider_target::Endianness::Little)
                 .expect("FunctionBuilder::new");
             let v = b.build_int_const_limbs(limbs, ty).expect("const");
-            let node = b.producer(v);
-            b.int_const_wide_le_bytes(node).expect("wide le bytes")
+            crate::eval::le_bytes(b.int_const(v).expect("an int const"), ty)
         };
         // Bytes 1..=8 little-endian.
         let low: u64 = 0x0807_0605_0403_0201;
