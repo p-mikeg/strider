@@ -1332,7 +1332,7 @@ fn raw_neighborhood_draws_no_edge_out_of_view() {
 /// re-derived in the renderer.
 #[test]
 fn variadic_edge_labels_come_from_the_signature() {
-    let sig = crate::node_signature::expected_signature(&NodeKind::Call { cc: None });
+    let sig = crate::node::signature::expected_signature(&NodeKind::Call { cc: None });
     let tail = sig.inputs.at(sig.inputs.head_len()).expect("a tail slot");
 
     let mut f = test_function();

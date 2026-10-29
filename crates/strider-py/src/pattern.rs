@@ -2595,7 +2595,7 @@ macro_rules! builder_slot_methods {
             /// Match `p` against raw input slot `idx`. Slot 0 is not uniform
             /// across kinds: `Call` is `[ctrl, mem, target, sp, arg0, ...]`,
             /// `Load` is `[mem, addr]`, `If` is `[ctrl, cond]`. The IR's
-            /// `expected_signature` (`strider-ir/src/node_signature.rs`) is
+            /// `expected_signature` (`strider-ir/src/node/signature.rs`) is
             /// the source of truth. This is the escape hatch beneath the named
             /// accessors, not a replacement for them.
             fn input<'py>(
@@ -2616,7 +2616,7 @@ macro_rules! builder_slot_methods {
             /// numbering is per kind and asymmetric with the inputs: a `Call`
             /// is `[ctrl, mem, result, ...clobbers]` while a `Load` is
             /// `[value]`. The IR's `expected_signature`
-            /// (`strider-ir/src/node_signature.rs`) is the source of truth.
+            /// (`strider-ir/src/node/signature.rs`) is the source of truth.
             /// Returns a terminal taking one of `.capture(c)`,
             /// `.of_width(w)`, `.of_type("i64")`.
             ///

@@ -25,7 +25,6 @@ pub mod graph;
 pub use graph::Graph;
 pub mod node;
 pub use graph::Inputs;
-mod node_signature;
 mod region;
 mod schedule;
 /// The int-constant type [`IRViewer::int_const`] answers and

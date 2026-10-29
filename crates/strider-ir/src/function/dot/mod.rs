@@ -3,8 +3,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
+use crate::node::signature::{SlotRole, expected_signature};
 use crate::node::{NodeId, NodeKind, ValueId};
-use crate::node_signature::{SlotRole, expected_signature};
 
 pub(crate) mod label;
 mod neighborhood;
