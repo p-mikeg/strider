@@ -28,6 +28,9 @@ pub use graph::Inputs;
 mod node_signature;
 mod region;
 mod schedule;
+/// The int-constant type [`IRViewer::int_const`] answers and
+/// [`IRBuilderExt::build_int_const`] takes, so a caller can name it.
+pub use ::dashu_int::UBig;
 pub use ::read_only_memory::ReadOnlyMemory;
 pub use schedule::early_position;
 pub mod validate;
