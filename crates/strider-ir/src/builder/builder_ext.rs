@@ -74,7 +74,10 @@ pub trait IRBuilderExt: IRBuilder {
         // carrier cannot hold the sign bits, so a real `Extend` is emitted.
         if let Some(v) = self.int_const_u128(value_id) {
             let folded = match op {
-                ExtendOp::SignExtend => eval::sign_extend(v, curr_output_type, output_type),
+                ExtendOp::SignExtend => {
+                    eval::sign_extend(&UBig::from(v), curr_output_type, output_type)
+                        .and_then(|k| u128::try_from(&k).ok())
+                }
                 ExtendOp::ZeroExtend => output_type.get_unsigned_int(v),
             };
             if let Some(k) = folded {

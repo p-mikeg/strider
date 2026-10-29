@@ -8,7 +8,8 @@
 
 use strider_ir::node::{NodeKind, ValueId};
 use strider_ir::{
-    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Function, IRViewer, IRWalker, ValueType,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Function, IRViewer, IRWalker, UBig,
+    ValueType,
 };
 
 use super::quad::{self, QUAD};
@@ -20,6 +21,11 @@ pub(crate) enum Val {
     Int(u128),
     Float(f64),
     Quad(u128),
+}
+
+/// An `eval` answer in the `u128` this interpreter carries.
+fn ev(v: Option<UBig>) -> u128 {
+    u128::try_from(&v.expect("eval must answer")).expect("past the carrier")
 }
 
 fn width(ty: ValueType) -> u16 {
@@ -225,8 +231,11 @@ fn eval_node(f: &Function, v: ValueId, cx: &Cx<'_>) -> Val {
         }
         NodeKind::FloatToFloat => Val::Float(narrow(ty, float(0))),
         NodeKind::IntToFloat => {
-            let x = strider_ir::eval::sign_extend(int(0), in_ty(0), ValueType::int(128))
-                .expect("sign extend") as i128;
+            let x = ev(strider_ir::eval::sign_extend(
+                &UBig::from(int(0)),
+                in_ty(0),
+                ValueType::int(128),
+            )) as i128;
             // Rounded once, to the destination's own precision.
             Val::Float(match width(ty) {
                 128 => return Val::Quad(quad::from_int(QUAD, x)),
@@ -289,19 +298,27 @@ fn eval_node(f: &Function, v: ValueId, cx: &Cx<'_>) -> Val {
                 FloatCmpOp::Less => l < r,
             }))
         }
-        NodeKind::IntBinaryOp(op) => {
-            Val::Int(strider_ir::eval::int_binary(*op, int(0), int(1), ty).expect("int binary"))
-        }
+        NodeKind::IntBinaryOp(op) => Val::Int(ev(strider_ir::eval::int_binary(
+            *op,
+            &UBig::from(int(0)),
+            &UBig::from(int(1)),
+            ty,
+        ))),
         NodeKind::IntCmpOp(op) => Val::Int(u128::from(
-            strider_ir::eval::int_cmp(*op, int(0), int(1), in_ty(0)).expect("int cmp"),
+            strider_ir::eval::int_cmp(*op, &UBig::from(int(0)), &UBig::from(int(1)), in_ty(0))
+                .expect("int cmp"),
         )),
-        NodeKind::IntUnaryOp(op) => {
-            Val::Int(strider_ir::eval::int_unary(*op, int(0), ty).expect("int unary"))
-        }
+        NodeKind::IntUnaryOp(op) => Val::Int(ev(strider_ir::eval::int_unary(
+            *op,
+            &UBig::from(int(0)),
+            ty,
+        ))),
         NodeKind::Extend(ExtendOp::ZeroExtend) => Val::Int(int(0)),
-        NodeKind::Extend(ExtendOp::SignExtend) => {
-            Val::Int(strider_ir::eval::sign_extend(int(0), in_ty(0), ty).expect("sign extend"))
-        }
+        NodeKind::Extend(ExtendOp::SignExtend) => Val::Int(ev(strider_ir::eval::sign_extend(
+            &UBig::from(int(0)),
+            in_ty(0),
+            ty,
+        ))),
         NodeKind::Truncate => Val::Int(int(0) & mask(ty)),
         NodeKind::Load(space) => {
             let addr = int(NodeKind::ACCESS_ADDR_SLOT);
