@@ -152,7 +152,8 @@ run: `add` is
 `int_add`, a bare string is no longer a capture operand (`Capture` is), and
 `hit.const_uint(c)` is `hit.uint(c)`. A `Node` was renamed the same way --
 `const_uint` / `const_int` / `const_bool` are `uint` / `sint` / `boolean` --
-and `wide_const_bytes()` returns `bytes`. `hit[c]` returns a `BoundCapture`, so
+and `wide_const_bytes()` is gone, `uint()` reading every width.
+`hit[c]` returns a `BoundCapture`, so
 `hit[c] is None` is always false; test `c in hit`. `prog.symbol(name)` returns a
 `Symbol` (`name`, `address`, `size`, `end`, `is_function`, `region`,
 `is_thumb`) where 0.1.0 returned a bare address, so arithmetic on one needs
