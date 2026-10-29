@@ -1,10 +1,10 @@
 //! Constant-literal typed builders.
 //!
-//! `int_const`'s match is width-masked, so `int_const(u128::MAX)` matches a
-//! width-relative all-ones constant up to I128. At I256 and I512 the mask
-//! saturates at 128 bits, so a constant whose value still fits `u128` matches
-//! on its low 128 bits, while one past `u128` (an all-ones among them) never
-//! does and the query silently returns nothing.
+//! `int_const`'s match is width-masked at the constant's own declared width,
+//! so `int_const(u128::MAX)` matches a width-relative all-ones constant up to
+//! I128 and, at I256 and I512, the constant `2^128 - 1` those widths spell
+//! out. A true all-ones there is [`int_const_all_ones`], which no `u128`
+//! literal names.
 //! `int_const_any_width` additionally recognises the value held at a narrower
 //! width and widened into the constant's type, by zero or by sign extension.
 
@@ -12,7 +12,8 @@ use std::cell::RefCell;
 
 use rustc_hash::FxHashSet;
 
-use strider_ir::eval::{mask_below, sign_bit};
+use strider_ir::UBig;
+use strider_ir::eval::{self, mask_below, sign_bit};
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{IRViewer, IntConstId};
 
@@ -43,14 +44,13 @@ pub struct IntConst {
 }
 
 /// The stored value of `node`'s first value output, with that output's type.
-/// `None` for an I256/I512 value too wide for `u128`.
-fn first_int_const_value(f: &strider_ir::Function, node: NodeId) -> Option<(u128, ValueType)> {
+fn first_int_const_value(f: &strider_ir::Function, node: NodeId) -> Option<(&UBig, ValueType)> {
     let out = f
         .node_outputs(node)
         .iter()
         .copied()
         .find(|&o| f.value_kind(o).as_value().is_some())?;
-    let stored = f.int_const_u128(out)?;
+    let stored = f.int_const(out)?;
     let ty = f.value_kind(out).as_value().expect("checked via find");
     Some((stored, ty))
 }
@@ -60,7 +60,7 @@ fn first_int_const_value(f: &strider_ir::Function, node: NodeId) -> Option<(u128
 fn int_const_leaf(
     b: &mut MatcherBuilder,
     pin: Option<ValueType>,
-    pred: impl Fn(u128, ValueType) -> bool + 'static + Send,
+    pred: impl Fn(&UBig, ValueType) -> bool + 'static + Send,
 ) -> PatValueRef {
     let o = b.leaf(KindSpec::variant_of(&NodeKind::IntConst(
         IntConstId::from_u32(0),
@@ -79,18 +79,35 @@ fn int_const_leaf(
 
 impl MatchPat for IntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let v = self.v;
+        let v = UBig::from(self.v);
         int_const_leaf(b, None, move |stored, ty| {
-            ty.wrap_u128(stored) == ty.wrap_u128(v)
+            eval::mask(stored, ty) == eval::mask(&v, ty)
         })
     }
+}
+
+/// Every bit of the constant's own output type set, at any declared width.
+/// Match-only: no `u128` literal names an I256 or I512 all-ones.
+pub struct IntConstAllOnes;
+
+impl MatchPat for IntConstAllOnes {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        int_const_leaf(b, None, |stored, ty| {
+            ty.is_integer() && *stored == eval::all_ones(ty)
+        })
+    }
+}
+
+/// The all-ones constant of whatever integer width it is matched at.
+pub fn int_const_all_ones() -> IntConstAllOnes {
+    IntConstAllOnes
 }
 
 /// Build-side twin for a value known at pattern-build time, interned at the
 /// resolved output width.
 fn const_template(v: u128, ty: TemplateTy) -> ConstWith {
     ConstWith {
-        kind: TemplateKind::FnIntConst(Box::new(move |_ctx| Ok(v))),
+        kind: TemplateKind::FnIntConst(Box::new(move |_ctx| Ok(strider_ir::UBig::from(v)))),
         ty,
         caps: Vec::new(),
         opt_caps: Vec::new(),
@@ -169,8 +186,10 @@ pub struct IntConstAnyWidth {
 impl MatchPat for IntConstAnyWidth {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let v: u128 = i128::from(self.v) as u128;
+        // `value_at_some_width` works in the `u128` the query literal is
+        // given in, so a stored value past it is no extension of one.
         int_const_leaf(b, None, move |stored, out_ty| {
-            value_at_some_width(stored, out_ty, v)
+            u128::try_from(stored).is_ok_and(|s| value_at_some_width(s, out_ty, v))
         })
     }
 }
@@ -191,9 +210,8 @@ impl MatchPat for IntConstAnyWidthAnyOf {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
         let values = self.values;
         int_const_leaf(b, None, move |stored, out_ty| {
-            values
-                .iter()
-                .any(|&v| value_at_some_width(stored, out_ty, v))
+            u128::try_from(stored)
+                .is_ok_and(|s| values.iter().any(|&v| value_at_some_width(s, out_ty, v)))
         })
     }
 }
@@ -256,11 +274,11 @@ pub struct BoolConst {
 
 impl MatchPat for BoolConst {
     fn compile(self, builder: &mut MatcherBuilder) -> PatValueRef {
-        let expected: u128 = u128::from(self.b);
+        let expected = UBig::from(u8::from(self.b));
         // KindSpec::Exact won't work: NodeKind::IntConst(IntConstId) stores an
         // opaque interned id, and the same value in two different Functions
         // gets different IntConstIds. Hence Variant prefilter plus a value read.
-        int_const_leaf(builder, Some(ValueType::I1), move |v, _ty| v == expected)
+        int_const_leaf(builder, Some(ValueType::I1), move |v, _ty| *v == expected)
     }
 }
 
@@ -345,14 +363,11 @@ pub fn float_const<A: FloatConstArg>(bits: A) -> A::Pat {
     bits.into_float_const()
 }
 
-/// Any integer constant whose value fits `u128` (I1..I128 always; I256/I512
-/// only when their high limbs are zero). Match-only.
+/// Any integer constant, at any declared width. Match-only.
 pub struct AnyIntConst;
 
 impl MatchPat for AnyIntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        // The width filter is implicit: `first_int_const_value` returns `None`
-        // for an I256/I512 with nonzero high limbs, so the predicate never runs.
         int_const_leaf(b, None, move |_v, _ty| true)
     }
 }
@@ -405,18 +420,23 @@ impl MatchPat for IntConstAnyOf {
         // so the masked set is built once per width met rather than scanning the
         // candidates for each.
         let set = self.set;
-        let by_width: RefCell<Vec<(usize, FxHashSet<u128>)>> = RefCell::new(Vec::new());
+        let by_width: RefCell<Vec<(usize, FxHashSet<UBig>)>> = RefCell::new(Vec::new());
         int_const_leaf(b, None, move |stored, ty| {
             let bits = ty.bit_width();
             let mut cache = by_width.borrow_mut();
             let masked = match cache.iter().find(|(w, _)| *w == bits) {
                 Some((_, s)) => s,
                 None => {
-                    cache.push((bits, set.iter().map(|&v| ty.wrap_u128(v)).collect()));
+                    cache.push((
+                        bits,
+                        set.iter()
+                            .map(|&v| eval::mask(&UBig::from(v), ty))
+                            .collect(),
+                    ));
                     &cache[cache.len() - 1].1
                 }
             };
-            masked.contains(&ty.wrap_u128(stored))
+            masked.contains(&eval::mask(stored, ty))
         })
     }
 }
@@ -558,11 +578,9 @@ pub fn capture_typed<P: TemplatePat>(cap: crate::Capture, inner: P) -> CaptureTy
 /// evaluated at (`TemplateTy::InheritRoot`).
 pub fn int_const_with_fn<F>(f: F) -> ConstWith
 where
-    F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<u128> + 'static + Send,
+    F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<strider_ir::UBig> + 'static + Send,
 {
     ConstWith {
-        // FnIntConst interns the full u128 at the resolved output width, so
-        // large I128 constants survive a rewrite.
         kind: TemplateKind::FnIntConst(Box::new(f)),
         ty: TemplateTy::InheritRoot,
         caps: Vec::new(),
@@ -576,7 +594,9 @@ where
     F: Fn(&crate::TemplateCtx<'_>) -> anyhow::Result<bool> + 'static + Send,
 {
     ConstWith {
-        kind: TemplateKind::FnIntConst(Box::new(move |ctx| Ok(u128::from(f(ctx)?)))),
+        kind: TemplateKind::FnIntConst(Box::new(move |ctx| {
+            Ok(strider_ir::UBig::from(u8::from(f(ctx)?)))
+        })),
         ty: TemplateTy::Fixed(ValueType::I1),
         caps: Vec::new(),
         opt_caps: Vec::new(),

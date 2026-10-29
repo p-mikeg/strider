@@ -213,8 +213,12 @@ mod tests {
     #[test]
     fn binary_builder_wires_two_inputs_and_one_output() {
         let mut b = TemplateBuilder::new();
-        let x = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| Ok(5))));
-        let k = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| Ok(1))));
+        let x = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| {
+            Ok(strider_ir::UBig::from(5u8))
+        })));
+        let k = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| {
+            Ok(strider_ir::UBig::ONE)
+        })));
         let _sum = b.binary(IntBinaryOp::Add, x, k);
         let t = b.finish();
         assert_eq!(t.graph.all_node_ids().count(), 3);
@@ -229,7 +233,9 @@ mod tests {
         // buildable node stays `Build(_)` producing a `TmplOutput(_)`.
         let c = crate::capture::Capture::new();
         let mut b = TemplateBuilder::new();
-        let _built = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| Ok(5))));
+        let _built = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| {
+            Ok(strider_ir::UBig::from(5u8))
+        })));
         let _cap = b.capture(c);
         let t = b.finish();
 

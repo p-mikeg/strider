@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use strider_ir::UBig;
 use strider_ir::node::{NodeId, NodeKind, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
 use strider_ir_test_utils::RegisterSet;
@@ -797,7 +798,7 @@ fn phi_input_from_edge_selects_the_arm_merged_from_that_edge() {
             .iter()
             .find_map(|hit| hit.bindings().get_uint(v, &function))
             .unwrap(),
-        10,
+        UBig::from(10u8),
         "the true arm merges 10"
     );
 }

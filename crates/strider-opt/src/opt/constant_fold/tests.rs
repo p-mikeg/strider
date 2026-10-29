@@ -2150,30 +2150,48 @@ fn fold_i128_interner_backed_add_round_trip() -> Result<()> {
     Ok(())
 }
 
-/// The all-ones arm reads `c` through `u128`, where an `I256` all-ones and an
-/// `I256` `2^128` are indistinguishable.  Neither may take it.
+/// The all-ones arm compares `c` against its own declared width's all-ones,
+/// so an `I256` `2^128` is not it and an `I256` all-ones is.
 #[test]
-fn all_ones_rules_skip_past_128_bits() -> Result<()> {
-    let wide_cases = [[0, 0, 1, 0], [u64::MAX; 4]];
+fn all_ones_rules_read_the_declared_width() -> Result<()> {
+    let ty = ValueType::int(256);
     for op in [IntBinaryOp::And, IntBinaryOp::Or] {
-        for limbs in wide_cases {
-            let mut fg = make_fn(|b| {
-                let addr = b.build_int_const(0xF00Du64, ValueType::int(64))?;
-                let x = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(256))?;
-                let c = b.build_int_const(UBig::from_words(&limbs), ValueType::int(256))?;
-                b.build_int_binary_operation(x, c, op, ValueType::int(256))
-            })?;
-            let outcome =
-                crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?;
-            assert!(
-                !outcome.changed(),
-                "{op:?} with the I256 constant {limbs:?} must not fold"
-            );
-            assert!(
-                matches!(return_kind(fg.graph())?, NodeKind::IntBinaryOp(got) if got == op),
-                "{op:?} node must remain"
-            );
-        }
+        // `2^128`: all-ones only to a saturating 128-bit mask.
+        let mut fg = make_fn(|b| {
+            let addr = b.build_int_const(0xF00Du64, ValueType::int(64))?;
+            let x = b.build_load(addr, rsleigh::VnSpace::RAM, ty)?;
+            let c = b.build_int_const(UBig::from_words(&[0, 0, 1, 0]), ty)?;
+            b.build_int_binary_operation(x, c, op, ty)
+        })?;
+        let outcome =
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?;
+        assert!(
+            !outcome.changed(),
+            "{op:?} with an I256 2^128 is no identity"
+        );
+
+        // The real all-ones: `x & ~0 -> x`, `x | ~0 -> ~0`.
+        let mut fg = make_fn(|b| {
+            let addr = b.build_int_const(0xF00Du64, ValueType::int(64))?;
+            let x = b.build_load(addr, rsleigh::VnSpace::RAM, ty)?;
+            let c = b.build_int_const(UBig::from_words(&[u64::MAX; 4]), ty)?;
+            b.build_int_binary_operation(x, c, op, ty)
+        })?;
+        let outcome =
+            crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?;
+        assert!(
+            outcome.changed(),
+            "{op:?} with an I256 all-ones is an identity"
+        );
+        let want = match op {
+            IntBinaryOp::And => NodeKind::Load(rsleigh::VnSpace::RAM),
+            _ => NodeKind::IntConst(strider_ir::node::IntConstId::from_u32(0)),
+        };
+        assert!(
+            std::mem::discriminant(&return_kind(fg.graph())?) == std::mem::discriminant(&want),
+            "{op:?} must collapse to {want:?}, got {:?}",
+            return_kind(fg.graph())?
+        );
     }
     Ok(())
 }
