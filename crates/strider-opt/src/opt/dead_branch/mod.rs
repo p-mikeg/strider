@@ -119,7 +119,7 @@ struct Selection {
 
 /// `None` for anything but an `If` or `Switch` with a constant selector, and
 /// for a `Switch` whose constant no arm lists: its arms need not cover every
-/// dispatch value (`node_signature.rs`), as at a site the resolver seated
+/// dispatch value (`node/signature.rs`), as at a site the resolver seated
 /// early holding one arm.  The fold and [`EscapeOracle`] both read this, so
 /// they agree on which arms are dead.
 fn constant_selection(edit: &crate::EditFunction<'_>, node: NodeId) -> Option<Selection> {
