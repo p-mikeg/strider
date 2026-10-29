@@ -80,33 +80,11 @@ impl FunctionDotDumper<'_> {
                 Some(var) => format!("φ {}", self.vn_to_name(&var)),
             },
 
-            NodeKind::IntConst(id) => {
-                let out_ty = self.out_type(node);
-                // A dangling id (malformed graph) labels rather than panics.
-                match self.function.side_tables().const_interner.get(*id) {
-                    None => format!("const <dangling const {id:?}>"),
-                    Some(cv) if out_ty.is_some_and(|t| t.is_wide_int()) => {
-                        // Stored little-endian; render high->low. The leading
-                        // zeros go, so the width-padded form buys nothing.
-                        let bits = out_ty.map_or(0, ValueType::bit_width);
-                        let bytes = cv.to_le_bytes();
-                        let raw: String = bytes.iter().rev().map(|b| format!("{b:02x}")).collect();
-                        let hex = raw.trim_start_matches('0');
-                        let hex = if hex.is_empty() { "0" } else { hex };
-                        format!("const 0x{hex}:i{bits}")
-                    }
-                    Some(_) => {
-                        let ty = self.out_type_suffix(node, ":");
-                        // Read through the accessor, not the interned payload.
-                        let v = self
-                            .function
-                            .first_value_output_of(node)
-                            .and_then(|o| self.function.int_const_u128(o))
-                            .unwrap_or(0);
-                        format!("const {v:#x}{ty}")
-                    }
-                }
-            }
+            // A dangling id (malformed graph) labels rather than panics.
+            NodeKind::IntConst(id) => match self.function.side_tables().const_interner.get(*id) {
+                None => format!("const <dangling const {id:?}>"),
+                Some(cv) => format!("const {cv:#x}{}", self.out_type_suffix(node, ":")),
+            },
             NodeKind::FloatConst(bits) => match self.out_type(node) {
                 Some(ValueType::Float(32)) => {
                     let v = f32::from_bits(*bits as u32);
