@@ -468,7 +468,14 @@ fn wide_mask_bytes(d: &FunctionLifter<'_, TestReader>, and_val: ValueId) -> Opti
     let f = d.builder.function();
     f.node_inputs(f.producer(and_val))
         .into_iter()
-        .find_map(|input| f.int_const_wide_le_bytes(f.producer(input)))
+        .find_map(|input| {
+            let ty = f.value_kind(input).as_value()?;
+            // The narrow operands are not masks; only the wide constant is.
+            if !ty.is_wide_int() {
+                return None;
+            }
+            Some(strider_ir::eval::le_bytes(f.int_const(input)?, ty))
+        })
 }
 
 /// A function mixing a 256-bit and a 128-bit VEX form pulls `ZMM0` into the

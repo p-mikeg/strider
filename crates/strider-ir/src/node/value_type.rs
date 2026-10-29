@@ -113,7 +113,7 @@ impl ValueType {
 
     /// An integer too wide for `u64`.
     #[inline]
-    pub(crate) const fn is_wide_int(self) -> bool {
+    pub const fn is_wide_int(self) -> bool {
         matches!(self, Self::Int(w) if w > 64)
     }
 
