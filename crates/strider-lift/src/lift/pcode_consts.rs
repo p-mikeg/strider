@@ -23,6 +23,7 @@ use rustc_hash::FxHashMap;
 use strider_cfg::MachineInsnAddr;
 use strider_cfg::PcodeInsnAddr;
 use strider_ir::IntBinaryOp;
+use strider_ir::UBig;
 use strider_ir::node::ValueType;
 
 /// Keyed by the varnode's full identity: two temporaries can share an offset
@@ -112,7 +113,11 @@ impl PcodeConsts {
             _ => return None,
         };
         let ty = ValueType::int_from_bytes(insn.output.as_ref()?.size).ok()?;
-        strider_ir::eval::int_binary(op, l, r, ty)
+        // This table carries values as `u128`, so a wider output has nothing
+        // to fold even though `eval` itself is total.
+        ty.int_mask_u128()?;
+        let (l, r) = (UBig::from(l), UBig::from(r));
+        u128::try_from(&strider_ir::eval::int_binary(op, &l, &r, ty)?).ok()
     }
 }
 

@@ -1,14 +1,16 @@
-//! Integer evaluation at a declared width, in the `u128` carrier.
+//! Integer evaluation at a declared width, over the [`UBig`] the interner
+//! stores.
 //!
-//! Each function answers `None` where the operation is undefined or the width
-//! has no `u128` modulus: a float, or an integer past 128 bits.
-//!
-//! [`mask`], [`all_ones`], [`complement`] and [`ones_at`] are the exceptions:
-//! they work at any declared width over the [`UBig`] the interner stores.
 //! `UBig` is unbounded, so two's-complement-at-a-declared-width is strider's
-//! rule, and it lives here.
+//! rule, and it lives here: every function below is total at every declared
+//! integer width. `None` means only that the operation is undefined (divide
+//! by zero, `INT_MIN / -1`) or that `ty` is a float, which has no integer
+//! bits.
+//!
+//! [`bit`], [`mask_below`] and [`sign_bit`] are the exception: they are the
+//! `u128`-carrier width helpers [`ValueType`]'s own accessors are built from.
 
-use dashu_int::UBig;
+use dashu_int::{IBig, UBig};
 
 use crate::node::{IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType};
 
@@ -85,16 +87,37 @@ pub const fn sign_bit(bits: u32) -> u128 {
     bit(bits.wrapping_sub(1))
 }
 
-/// The signed minimum representable in `ty`'s bit width, or `i128::MIN` at
-/// 128 bits.
-#[inline]
-fn signed_min(ty: ValueType) -> i128 {
-    let bits = ty.bit_width() as u32;
-    if bits >= 128 {
-        i128::MIN
-    } else {
-        -(1i128 << (bits - 1))
+/// `v` read as two's complement at `ty`'s width; `None` for a float.
+fn signed(v: &UBig, ty: ValueType) -> Option<IBig> {
+    if !ty.is_integer() {
+        return None;
     }
+    let bits = ty.bit_width();
+    debug_assert!(bits > 0, "a supported integer width is at least 1");
+    let m = mask(v, ty);
+    // `m` is below `2^bits`, so the sign bit is set exactly when `m` reaches
+    // half the modulus.
+    let half = UBig::ONE << bits.saturating_sub(1);
+    Some(if m >= half {
+        IBig::from(m) - IBig::from(half << 1)
+    } else {
+        IBig::from(m)
+    })
+}
+
+/// `v` wrapped into `ty`'s two's-complement ring.
+fn unsigned(v: IBig, ty: ValueType) -> UBig {
+    v & all_ones(ty)
+}
+
+/// The least value `ty` holds in two's complement.
+fn signed_min(ty: ValueType) -> IBig {
+    -(IBig::ONE << ty.bit_width().saturating_sub(1))
+}
+
+/// The greatest value `ty` holds in two's complement.
+fn signed_max(ty: ValueType) -> IBig {
+    (IBig::ONE << ty.bit_width().saturating_sub(1)) - IBig::ONE
 }
 
 /// Whether a shift by `amount` is at or past `ty`'s declared width, where
@@ -102,10 +125,9 @@ fn signed_min(ty: ValueType) -> i128 {
 /// `signbit ? calc_mask : 0` for IntSright.
 ///
 /// The DECLARED bit width matches Sleigh's `8 * sizeout` at every type except
-/// `I1`, whose width is 1 while its varnode is a byte;
-/// [`ValueType::get_signed_int`] reads `I1` as 1-bit signed for the same
-/// reason, so an `I1` shift or signed compare answers off strider's boolean
-/// width, not Sleigh's. The lifter emits `I1` only from compares and
+/// `I1`, whose width is 1 while its varnode is a byte; this module reads `I1`
+/// as 1-bit signed for the same reason, so an `I1` shift or signed compare
+/// answers off strider's boolean width, not Sleigh's. The lifter emits `I1` only from compares and
 /// `Truncate(..):I1`, so no shift ever reaches it.
 ///
 /// Do NOT reduce `amount` modulo the width, nor mask it to `ty` before this
@@ -118,167 +140,168 @@ pub fn shift_out_of_range(amount: u128, ty: ValueType) -> bool {
 }
 
 /// Result masked to `ty`, or `None` when the operation is undefined (division
-/// by zero, `INT_MIN / -1`) or `ty` has no `u128` modulus (a float, or past
-/// 128 bits): every arm below wraps, masks and shifts at 128 bits.
+/// by zero, `INT_MIN / -1`) or `ty` is a float.
 ///
 /// Both operands are masked to `ty` at entry, the shift amount only after its
 /// out-of-range test. Div, Rem and ShiftRight are not safe under
 /// masking-commutativity, so they need the inputs already narrowed to give the
 /// right answer on a caller that passed raw bits.
 #[inline]
-pub fn int_binary(op: IntBinaryOp, l: u128, r: u128, ty: ValueType) -> Option<u128> {
-    let mask = ty.int_mask_u128()?;
-    let r_ge_bits = shift_out_of_range(r, ty);
-    let l = l & mask;
-    let r = r & mask;
-    // `shift` is only reached inside the `!r_ge_bits` branch, so `s` is below
-    // the width and the truncation is lossless.
-    #[allow(clippy::cast_possible_truncation)]
-    let shift = |s: u128| -> u32 { s as u32 };
-    let raw: u128 = match op {
-        IntBinaryOp::Add => l.wrapping_add(r),
-        IntBinaryOp::Mul => l.wrapping_mul(r),
+pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<UBig> {
+    if !ty.is_integer() {
+        return None;
+    }
+    // The shift count, `None` once at or past the width: a count no `usize`
+    // holds is past every supported width.
+    let shift = u128::try_from(r)
+        .ok()
+        .filter(|&a| !shift_out_of_range(a, ty))
+        .and_then(|a| usize::try_from(a).ok());
+    let l = mask(l, ty);
+    let r = mask(r, ty);
+    let raw: UBig = match op {
+        IntBinaryOp::Add => l + r,
+        IntBinaryOp::Mul => l * r,
         IntBinaryOp::And => l & r,
         IntBinaryOp::Or => l | r,
         IntBinaryOp::Xor => l ^ r,
-        IntBinaryOp::ShiftLeft => {
-            if r_ge_bits {
-                0
-            } else {
-                l.wrapping_shl(shift(r)) & mask
-            }
-        }
-        IntBinaryOp::ShiftRight => {
-            if r_ge_bits {
-                0
-            } else {
-                l.wrapping_shr(shift(r))
-            }
-        }
+        IntBinaryOp::ShiftLeft => match shift {
+            Some(s) => l << s,
+            None => UBig::ZERO,
+        },
+        IntBinaryOp::ShiftRight => match shift {
+            Some(s) => l >> s,
+            None => UBig::ZERO,
+        },
         IntBinaryOp::SShiftRight => {
-            let sl = ty.get_signed_int(l)?;
-            if r_ge_bits {
-                if sl < 0 { mask } else { 0 }
-            } else {
-                sl.wrapping_shr(shift(r)) as u128 & mask
+            let sl = signed(&l, ty)?;
+            match shift {
+                // `IBig`'s shift is arithmetic: it floors, so it sign-fills.
+                Some(s) => unsigned(sl >> s, ty),
+                None => {
+                    if sl < IBig::ZERO {
+                        all_ones(ty)
+                    } else {
+                        UBig::ZERO
+                    }
+                }
             }
         }
         IntBinaryOp::Div => {
-            if r == 0 {
+            if r == UBig::ZERO {
                 return None;
             }
             l / r
         }
         IntBinaryOp::Sdiv => {
-            let sl = ty.get_signed_int(l)?;
-            let sr = ty.get_signed_int(r)?;
-            if sr == 0 {
+            let (sl, sr) = (signed(&l, ty)?, signed(&r, ty)?);
+            if sr == IBig::ZERO || (sl == signed_min(ty) && sr == IBig::NEG_ONE) {
+                // INT_MIN / -1 is undefined at every signed width: the
+                // mathematical result is one past the top of `ty`.
                 return None;
             }
-            // INT_MIN / -1 is undefined at every signed width. At narrow widths
-            // the i128 division looks well-defined (2^31 fits), but masking back
-            // to `ty` wraps it to INT_MIN, not the mathematical result.
-            let int_min = signed_min(ty);
-            if sl == int_min && sr == -1 {
-                return None;
-            }
-            sl.wrapping_div(sr) as u128 & mask
+            // `IBig` division truncates toward zero, as Sleigh's Sdiv does.
+            unsigned(sl / sr, ty)
         }
         IntBinaryOp::Rem => {
-            if r == 0 {
+            if r == UBig::ZERO {
                 return None;
             }
             l % r
         }
         IntBinaryOp::Srem => {
-            let sl = ty.get_signed_int(l)?;
-            let sr = ty.get_signed_int(r)?;
-            if sr == 0 {
-                return None;
-            }
+            let (sl, sr) = (signed(&l, ty)?, signed(&r, ty)?);
             // INT_MIN % -1 is mathematically 0, but hardware idiv raises #DE.
             // Treat it as undefined, matching the Sdiv arm.
-            let int_min = signed_min(ty);
-            if sl == int_min && sr == -1 {
+            if sr == IBig::ZERO || (sl == signed_min(ty) && sr == IBig::NEG_ONE) {
                 return None;
             }
-            sl.wrapping_rem(sr) as u128 & mask
+            // The remainder takes the dividend's sign, as Sleigh's Srem does.
+            unsigned(sl % sr, ty)
         }
     };
-    Some(raw & mask)
+    Some(mask(&raw, ty))
 }
 
-/// `None` for a float, or past the `u128` carrier, where the overflow arms
-/// would detect at 128 bits rather than at `ty`'s declared width.
+/// `None` for a float.
 #[inline]
-pub fn int_cmp(op: IntCmpOp, l: u128, r: u128, ty: ValueType) -> Option<bool> {
-    // Unsigned arms compare raw u128s, so a narrow IntConst carrying high bits
-    // beyond the type width would compare wrong without this mask. The signed
-    // arms re-mask via get_signed_int, so the double-mask is idempotent there.
-    let mask = ty.int_mask_u128()?;
-    let l = l & mask;
-    let r = r & mask;
-
-    let signed = |v: u128| ty.get_signed_int(v);
-    let bits = ty.bit_width() as u32;
-    // Shifting both operands to the top of the host width turns width-`bits`
-    // overflow into host-width overflow, so stdlib's overflow flag works at
-    // every width. `top == 0` at 128 bits degrades to a plain i128/u128
-    // overflowing op.
-    let top = 128u32.saturating_sub(bits);
+pub fn int_cmp(op: IntCmpOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<bool> {
+    if !ty.is_integer() {
+        return None;
+    }
+    // A narrow IntConst carrying high bits beyond the type width would compare
+    // wrong unmasked. The signed arms re-mask via `signed`, so the double-mask
+    // is idempotent there.
+    let l = mask(l, ty);
+    let r = mask(r, ty);
 
     Some(match op {
         IntCmpOp::Equal => l == r,
         IntCmpOp::Less => l < r,
-        IntCmpOp::Sless => signed(l)? < signed(r)?,
-        IntCmpOp::Carry => (l << top).overflowing_add(r << top).1,
-        IntCmpOp::Scarry => (signed(l)? << top).overflowing_add(signed(r)? << top).1,
-        IntCmpOp::Sborrow => (signed(l)? << top).overflowing_sub(signed(r)? << top).1,
+        IntCmpOp::Sless => signed(&l, ty)? < signed(&r, ty)?,
+        // The exact sum / difference against `ty`'s range: an overflow is a
+        // result the width cannot hold.
+        IntCmpOp::Carry => l + r > all_ones(ty),
+        IntCmpOp::Scarry => {
+            let sum = signed(&l, ty)? + signed(&r, ty)?;
+            sum > signed_max(ty) || sum < signed_min(ty)
+        }
+        IntCmpOp::Sborrow => {
+            let diff = signed(&l, ty)? - signed(&r, ty)?;
+            diff > signed_max(ty) || diff < signed_min(ty)
+        }
     })
 }
 
-/// `op` applied to `v` at `ty`'s width; `None` for a float or past 128 bits.
+/// `op` applied to `v` at `ty`'s width; `None` for a float.
 #[inline]
-pub fn int_unary(op: IntUnaryOp, v: u128, ty: ValueType) -> Option<u128> {
-    let raw = match op {
-        IntUnaryOp::Neg => v.wrapping_neg(),
-    };
-    ty.get_unsigned_int(raw)
+pub fn int_unary(op: IntUnaryOp, v: &UBig, ty: ValueType) -> Option<UBig> {
+    if !ty.is_integer() {
+        return None;
+    }
+    Some(match op {
+        IntUnaryOp::Neg => unsigned(-IBig::from(mask(v, ty)), ty),
+    })
 }
 
-/// `v`, read signed at `in_ty`, at `out_ty`; `None` when either is a float or
-/// past 128 bits.
+/// `v`, read signed at `in_ty`, at `out_ty`; `None` when either is a float.
 #[inline]
-pub fn sign_extend(v: u128, in_ty: ValueType, out_ty: ValueType) -> Option<u128> {
-    let signed = in_ty.get_signed_int(v)? as u128;
-    out_ty.get_unsigned_int(signed)
+pub fn sign_extend(v: &UBig, in_ty: ValueType, out_ty: ValueType) -> Option<UBig> {
+    let s = signed(v, in_ty)?;
+    if !out_ty.is_integer() {
+        return None;
+    }
+    Some(unsigned(s, out_ty))
 }
 
-/// The set bits of `v` within `in_ty`'s width; `None` for a float or past 128
-/// bits.
+/// The set bits of `v` within `in_ty`'s width; `None` for a float.
 #[inline]
-pub fn popcount(v: u128, in_ty: ValueType) -> Option<u128> {
-    let masked = in_ty.get_unsigned_int(v)?;
-    Some(u128::from(masked.count_ones()))
+pub fn popcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
+    if !in_ty.is_integer() {
+        return None;
+    }
+    Some(UBig::from(mask(v, in_ty).count_ones()))
 }
 
-/// Leading-zero count within `in_ty`'s width, not the host's; `None` past 128
-/// bits.
+/// Leading-zero count within `in_ty`'s width, not the host's; `None` for a
+/// float.
 ///
 /// Counts over `8 * byte_size`, which is what `opbehavior.cc:791` does
 /// (`count_leading_zeros(in1) - 8*(sizeof(uintb) - sizein)`). Only `I1`
 /// separates that from `bit_width`.
 #[inline]
-pub fn lzcount(v: u128, in_ty: ValueType) -> Option<u128> {
-    let masked = in_ty.get_unsigned_int(v)?;
-    let bits = (in_ty.byte_size() * 8) as u32;
-    Some(if masked == 0 {
-        u128::from(bits)
-    } else if bits == 128 {
-        u128::from(masked.leading_zeros())
-    } else {
-        u128::from((masked << (128 - bits)).leading_zeros())
-    })
+pub fn lzcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
+    if !in_ty.is_integer() {
+        return None;
+    }
+    let masked = mask(v, in_ty);
+    // `as_words` trims the high zero limbs, so the top live limb carries the
+    // significant-bit count.
+    let words = masked.as_words();
+    let used = words.last().map_or(0, |top| {
+        words.len() * u64::BITS as usize - top.leading_zeros() as usize
+    });
+    Some(UBig::from((in_ty.byte_size() * 8).saturating_sub(used)))
 }
 
 #[cfg(test)]
@@ -287,6 +310,11 @@ mod tests {
 
     fn set_bits(v: &UBig) -> usize {
         v.as_words().iter().map(|l| l.count_ones() as usize).sum()
+    }
+
+    /// A `u128` as an operand.
+    fn u(v: u128) -> UBig {
+        UBig::from(v)
     }
 
     /// `v` in the `u128` carrier; panics past it.
@@ -619,16 +647,105 @@ mod tests {
         }
     }
 
-    /// The width bail these helpers rely on lives in `get_unsigned_int` /
-    /// `get_signed_int`, not in the helpers themselves.
+    /// Total past the `u128` carrier: the width arm that used to refuse here
+    /// is gone, so each answers at the declared width.
     #[test]
-    fn width_past_the_u128_carrier_does_not_fold() {
-        assert_eq!(lzcount(1, ValueType::int(256)), None);
-        assert_eq!(popcount(1, ValueType::int(256)), None);
-        assert_eq!(int_unary(IntUnaryOp::Neg, 1, ValueType::int(512)), None);
+    fn width_past_the_u128_carrier_folds() {
+        let i256 = ValueType::int(256);
+        let i512 = ValueType::int(512);
+        assert_eq!(lzcount(&u(1), i256), Some(UBig::from(255u32)));
+        assert_eq!(popcount(&u(1), i256), Some(UBig::ONE));
         assert_eq!(
-            sign_extend(1, ValueType::int(256), ValueType::int(512)),
-            None
+            int_unary(IntUnaryOp::Neg, &u(1), i512),
+            Some(all_ones(i512))
+        );
+        assert_eq!(sign_extend(&u(1), i256, i512), Some(UBig::ONE));
+        assert_eq!(
+            sign_extend(&all_ones(i256), i256, i512),
+            Some(all_ones(i512)),
+            "-1 at I256 sign-extends to -1 at I512"
+        );
+        assert_eq!(
+            int_binary(IntBinaryOp::ShiftLeft, &u(1), &u(130), i256),
+            Some(UBig::ONE << 130usize),
+            "a shift in range at I256 is not reduced modulo the carrier"
+        );
+        assert_eq!(
+            int_cmp(IntCmpOp::Carry, &all_ones(ValueType::int(128)), &u(1), i256),
+            Some(false),
+            "2^128 fits I256, so the add does not carry out"
+        );
+    }
+
+    /// A float answers `None` everywhere, which `mask` alone cannot say: it
+    /// returns zero for one.
+    #[test]
+    fn a_float_type_refuses_every_integer_op() {
+        let f64_ = ValueType::float(64);
+        let i32_ = ValueType::int(32);
+        assert_eq!(int_binary(IntBinaryOp::Add, &u(1), &u(1), f64_), None);
+        assert_eq!(int_cmp(IntCmpOp::Equal, &u(1), &u(1), f64_), None);
+        assert_eq!(int_unary(IntUnaryOp::Neg, &u(1), f64_), None);
+        assert_eq!(sign_extend(&u(1), f64_, i32_), None);
+        assert_eq!(sign_extend(&u(1), i32_, f64_), None);
+        assert_eq!(popcount(&u(1), f64_), None);
+        assert_eq!(lzcount(&u(1), f64_), None);
+    }
+
+    /// `IBig`'s division truncates toward zero and its remainder takes the
+    /// dividend's sign, which is what Sleigh's Sdiv / Srem do; flooring
+    /// instead would give -4 and +1 here.
+    #[test]
+    fn signed_division_truncates_toward_zero() {
+        let i8_ = ValueType::int(8);
+        // -7 / 2 == -3, -7 % 2 == -1.
+        assert_eq!(
+            int_binary(IntBinaryOp::Sdiv, &u(0xF9), &u(2), i8_),
+            Some(u(0xFD))
+        );
+        assert_eq!(
+            int_binary(IntBinaryOp::Srem, &u(0xF9), &u(2), i8_),
+            Some(u(0xFF))
+        );
+        // 7 / -2 == -3, 7 % -2 == +1.
+        assert_eq!(
+            int_binary(IntBinaryOp::Sdiv, &u(7), &u(0xFE), i8_),
+            Some(u(0xFD))
+        );
+        assert_eq!(
+            int_binary(IntBinaryOp::Srem, &u(7), &u(0xFE), i8_),
+            Some(u(1))
+        );
+    }
+
+    /// Every result is reduced to `ty`, including at a width whose top limb
+    /// is only partly live.
+    #[test]
+    fn int_binary_masks_its_result_to_the_width() {
+        assert_eq!(
+            int_binary(IntBinaryOp::Add, &u(0xFF), &u(1), ValueType::int(8)),
+            Some(UBig::ZERO),
+            "the carry out of I8 is dropped"
+        );
+        let i72 = ValueType::int(72);
+        assert_eq!(
+            int_binary(IntBinaryOp::Add, &all_ones(i72), &u(1), i72),
+            Some(UBig::ZERO),
+            "I72 wraps at bit 72, not at the limb boundary"
+        );
+        assert_eq!(
+            int_binary(IntBinaryOp::ShiftLeft, &u(1), &u(71), i72),
+            Some(UBig::ONE << 71usize),
+        );
+        let i112 = ValueType::int(112);
+        assert_eq!(
+            int_binary(IntBinaryOp::Mul, &(UBig::ONE << 111usize), &u(2), i112),
+            Some(UBig::ZERO),
+            "I112 wraps at bit 112"
+        );
+        assert_eq!(
+            int_binary(IntBinaryOp::Add, &all_ones(i112), &u(2), i112),
+            Some(UBig::ONE),
         );
     }
 
@@ -637,33 +754,36 @@ mod tests {
     #[test]
     fn an_out_of_range_shift_amount_saturates_rather_than_wrapping() {
         assert_eq!(
-            int_binary(IntBinaryOp::ShiftLeft, 1, 0x100, ValueType::int(8)),
-            Some(0)
+            int_binary(IntBinaryOp::ShiftLeft, &u(1), &u(0x100), ValueType::int(8)),
+            Some(UBig::ZERO)
         );
     }
 
     #[test]
     fn unary_neg_masks_to_width() {
-        assert_eq!(int_unary(IntUnaryOp::Neg, 1, ValueType::int(8)), Some(0xFF));
+        assert_eq!(
+            int_unary(IntUnaryOp::Neg, &u(1), ValueType::int(8)),
+            Some(u(0xFF))
+        );
     }
 
     #[test]
     fn sign_extend_i8_to_i32() {
         assert_eq!(
-            sign_extend(0x80, ValueType::int(8), ValueType::int(32)),
-            Some(0xFFFF_FF80)
+            sign_extend(&u(0x80), ValueType::int(8), ValueType::int(32)),
+            Some(u(0xFFFF_FF80))
         );
     }
 
     #[test]
     fn popcount_masks_input_width() {
-        assert_eq!(popcount(0x1FF, ValueType::int(8)), Some(8));
+        assert_eq!(popcount(&u(0x1FF), ValueType::int(8)), Some(u(8)));
     }
 
     #[test]
     fn lzcount_zero_is_width_and_msb_is_zero() {
-        assert_eq!(lzcount(0, ValueType::int(8)), Some(8));
-        assert_eq!(lzcount(0x80, ValueType::int(8)), Some(0));
+        assert_eq!(lzcount(&u(0), ValueType::int(8)), Some(u(8)));
+        assert_eq!(lzcount(&u(0x80), ValueType::int(8)), Some(UBig::ZERO));
     }
 
     /// `expected == None` means the fold must skip.
@@ -696,7 +816,14 @@ mod tests {
             Case { case: "int_binary_unsigned_shr_unmasked_u8", op: IntBinaryOp::ShiftRight, l: 0x1FF, r: 1, ty: ValueType::int(8), expected: Some(0x7F) },
         ];
         for c in &cases {
-            assert_eq!(int_binary(c.op, c.l, c.r, c.ty), c.expected, "{}", c.case);
+            assert_eq!(
+                int_binary(c.op, &u(c.l), &u(c.r), c.ty)
+                    .as_ref()
+                    .map(carrier),
+                c.expected,
+                "{}",
+                c.case
+            );
         }
     }
 
@@ -709,11 +836,14 @@ mod tests {
         // Sleigh: `1 < 8` and `signbit_negative(1, 1 byte) == false`, so `1 >> 1`
         // is 0; strider takes the `r >= bits` branch over a negative `l`.
         assert_eq!(
-            int_binary(IntBinaryOp::SShiftRight, 1, 1, ValueType::I1),
-            Some(1),
+            int_binary(IntBinaryOp::SShiftRight, &u(1), &u(1), ValueType::I1),
+            Some(UBig::ONE),
         );
         // Sleigh reads both bytes as 1 and 0; strider reads the 1-bit `l` as -1.
-        assert_eq!(int_cmp(IntCmpOp::Sless, 1, 0, ValueType::I1), Some(true));
+        assert_eq!(
+            int_cmp(IntCmpOp::Sless, &u(1), &u(0), ValueType::I1),
+            Some(true)
+        );
     }
 
     /// Input-masking guards, all at I8.
@@ -737,7 +867,7 @@ mod tests {
         ];
         for c in &cases {
             assert_eq!(
-                int_cmp(c.op, c.l, c.r, ValueType::int(8)).unwrap(),
+                int_cmp(c.op, &u(c.l), &u(c.r), ValueType::int(8)).unwrap(),
                 c.expected,
                 "{}: {}",
                 c.case,
@@ -770,7 +900,7 @@ mod tests {
         ];
         for c in &cases {
             assert_eq!(
-                int_cmp(c.op, c.l, c.r, ValueType::int(128)).unwrap(),
+                int_cmp(c.op, &u(c.l), &u(c.r), ValueType::int(128)).unwrap(),
                 c.expected,
                 "{}: {}",
                 c.case,
@@ -800,7 +930,14 @@ mod tests {
             Case { case: "sshr_neg_one_i8", op: IntBinaryOp::SShiftRight, l: 0x80, r: 1, ty: ValueType::int(8), expected: Some(0xC0) },
         ];
         for c in &cases {
-            assert_eq!(int_binary(c.op, c.l, c.r, c.ty), c.expected, "{}", c.case);
+            assert_eq!(
+                int_binary(c.op, &u(c.l), &u(c.r), c.ty)
+                    .as_ref()
+                    .map(carrier),
+                c.expected,
+                "{}",
+                c.case
+            );
         }
     }
 
@@ -838,7 +975,9 @@ mod tests {
         ];
         for c in &cases {
             assert_eq!(
-                int_binary(c.op, c.l, c.r, c.ty),
+                int_binary(c.op, &u(c.l), &u(c.r), c.ty)
+                    .as_ref()
+                    .map(carrier),
                 c.expected,
                 "{}: {}",
                 c.case,
