@@ -5,7 +5,7 @@ use entity_utils::set::DenseEntitySet;
 
 use crate::IRViewer;
 use crate::function::Function;
-use crate::node::const_value::ConstValue;
+use crate::node::const_value::{ConstRead, ConstValue};
 use crate::node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeId,
     NodeKind, ValueId, ValueKind,
@@ -624,9 +624,10 @@ fn vn_list(vns: &[rsleigh::Vn], vn_name: VnName<'_>) -> String {
 
 /// Hex, high limb first.
 fn const_str(value: &ConstValue) -> String {
-    match value {
-        ConstValue::Bits(bits) => format!("{bits:#x}"),
-        ConstValue::Wide(limbs) => {
+    match value.get_value() {
+        ConstRead::Val(v) => format!("{v:#x}"),
+        ConstRead::Wide(limbs) => {
+            debug_assert!(limbs.iter().any(|&l| l != 0), "an all-zero Wide reads Val");
             let mut high = limbs.iter().rev().skip_while(|&&limb| limb == 0);
             let Some(top) = high.next() else {
                 return "0x0".to_owned();
