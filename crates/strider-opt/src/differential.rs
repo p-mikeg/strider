@@ -18,9 +18,9 @@
 
 use crate::post_opt::indirect_branch_resolve::index_range;
 use rustc_hash::{FxHashMap, FxHashSet};
-use strider_ir::UBig;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp};
+use strider_ir::{UBig, eval};
 use strider_ir_test_utils::interp::{self, EntryVar, Outcome, Slot};
 use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
@@ -37,9 +37,16 @@ pub(crate) const TYPES: &[(u32, ValueType)] = &[
     (16, ValueType::int(128)),
 ];
 
+/// The `u128` carrier mask, for the index-range oracles below, whose values
+/// are `I32` and `I64` throughout.
 fn mask(ty: ValueType) -> u128 {
     ty.int_mask_u128()
-        .expect("the differential draws integers of at most 128 bits")
+        .expect("an index-range oracle draws integers of at most 128 bits")
+}
+
+/// `a - b` in `ty`'s two's-complement ring.
+fn wrapping_sub(a: &UBig, b: &UBig, ty: ValueType) -> UBig {
+    eval::mask(&(a + eval::complement(b, ty) + UBig::ONE), ty)
 }
 
 pub(crate) struct Gen<'r> {
@@ -63,26 +70,26 @@ impl Gen<'_> {
         tys.sort_by_key(|t| t.bit_width());
         tys[self.rng.below(tys.len())]
     }
-    fn special(&mut self, ty: ValueType) -> u128 {
-        let m = mask(ty);
-        let w = ty.bit_width() as u128;
+    fn special(&mut self, ty: ValueType) -> UBig {
+        let m = eval::all_ones(ty);
+        let w = ty.bit_width();
         let c = match self.rng.below(14) {
-            0 => 0,
-            1 => 1,
-            2 => 2,
+            0 => UBig::ZERO,
+            1 => UBig::ONE,
+            2 => UBig::from(2u8),
             3 => m,
-            4 => m >> 1,
-            5 => (m >> 1) + 1,
-            6 => w - 1,
-            7 => w,
-            8 => w + 1,
-            9 => self.rng.u128() % 16,
-            10 => m - (self.rng.u128() % 4),
-            11 => 1u128 << (self.rng.below(w as usize)),
-            12 => !((1u128 << self.rng.below(8)) - 1),
-            _ => self.rng.u128(),
+            4 => m >> 1usize,
+            5 => (m >> 1usize) + UBig::ONE,
+            6 => UBig::from(w - 1),
+            7 => UBig::from(w),
+            8 => UBig::from(w + 1),
+            9 => UBig::from(self.rng.u128() % 16),
+            10 => m - UBig::from(self.rng.u128() % 4),
+            11 => UBig::ONE << self.rng.below(w),
+            12 => eval::complement(&((UBig::ONE << self.rng.below(8)) - UBig::ONE), ty),
+            _ => UBig::from(self.rng.u128()),
         };
-        c & m
+        eval::mask(&c, ty)
     }
     fn konst(&mut self, b: &mut FunctionBuilder, ty: ValueType) -> ValueId {
         let c = self.special(ty);
@@ -106,7 +113,7 @@ impl Gen<'_> {
         let nonconst: Vec<ValueId> = pool
             .iter()
             .copied()
-            .filter(|&v| b.function().int_const_u128(v).is_none())
+            .filter(|&v| b.function().int_const(v).is_none())
             .collect();
         if nonconst.is_empty() {
             self.val(b, ty)
@@ -133,7 +140,7 @@ impl Gen<'_> {
             13 => {
                 // Sleigh IntNeg lowered: complement.
                 let x = self.var_or_val(b, ty);
-                let ones = b.build_int_const(mask(ty), ty).unwrap();
+                let ones = b.build_int_const(eval::all_ones(ty), ty).unwrap();
                 let v = b
                     .build_int_binary_operation(x, ones, IntBinaryOp::Xor, ty)
                     .unwrap();
@@ -337,18 +344,17 @@ impl Gen<'_> {
     }
 
     fn const_cmp_shape(&mut self, b: &mut FunctionBuilder, ty: ValueType) {
-        let m = mask(ty);
         let a = self.var_or_val(b, ty);
         let n = self.special(ty);
         let out = match self.rng.below(6) {
             0 | 1 => {
                 // Or(Less(a,N), Equal(Add(a,M),0)), HI dual
                 let mv = if self.rng.chance(70) {
-                    n.wrapping_neg() & m
+                    wrapping_sub(&UBig::ZERO, &n, ty)
                 } else {
                     self.special(ty)
                 };
-                let nc = b.build_int_const(n, ty).unwrap();
+                let nc = b.build_int_const(n.clone(), ty).unwrap();
                 let mc = b.build_int_const(mv, ty).unwrap();
                 let z = b.build_int_const(0u128, ty).unwrap();
                 let lt = self.cmp(b, a, nc, IntCmpOp::Less, ty);
@@ -367,13 +373,13 @@ impl Gen<'_> {
             2 | 3 => {
                 let c1 = self.special(ty);
                 let c2 = if self.rng.chance(70) {
-                    c1.wrapping_sub(n) & m
+                    wrapping_sub(&c1, &n, ty)
                 } else {
                     self.special(ty)
                 };
                 let c1c = b.build_int_const(c1, ty).unwrap();
                 let c2c = b.build_int_const(c2, ty).unwrap();
-                let nc = b.build_int_const(n, ty).unwrap();
+                let nc = b.build_int_const(n.clone(), ty).unwrap();
                 let z = b.build_int_const(0u128, ty).unwrap();
                 let x = b
                     .build_int_binary_operation(a, c1c, IntBinaryOp::Add, ty)
@@ -687,19 +693,20 @@ pub(crate) fn return_values(f: &strider_ir::Function) -> Vec<ValueId> {
     g.node_inputs(ret).into_iter().skip(2).collect()
 }
 
-fn input_value(rng: &mut Rng, ty: ValueType) -> u128 {
-    let m = mask(ty);
-    let w = ty.bit_width() as u32;
-    (match rng.below(10) {
-        0 => 0,
+fn input_value(rng: &mut Rng, ty: ValueType) -> UBig {
+    let m = eval::all_ones(ty);
+    let w = ty.bit_width();
+    let v = match rng.below(10) {
+        0 => UBig::ZERO,
         1 => m,
-        2 => 1u128 << (w - 1),
-        3 => (1u128 << (w - 1)) - 1,
-        4 => rng.u128() % 8,
-        5 => m - rng.u128() % 8,
-        6 => 1u128 << rng.below(w as usize),
-        _ => rng.u128(),
-    }) & m
+        2 => UBig::ONE << (w - 1),
+        3 => (UBig::ONE << (w - 1)) - UBig::ONE,
+        4 => UBig::from(rng.u128() % 8),
+        5 => m - UBig::from(rng.u128() % 8),
+        6 => UBig::ONE << rng.below(w),
+        _ => UBig::from(rng.u128()),
+    };
+    eval::mask(&v, ty)
 }
 
 /// Returns the number of compared (trial, return value) pairs, or a
@@ -715,28 +722,14 @@ pub(crate) fn check_seed(
     let rets = return_values(&f);
     let mut rng = Rng(seed ^ 0xDEAD_BEEF_1234_5678 | 1);
     let ntrials = 48;
-    let mut vectors: Vec<Vec<u128>> = Vec::new();
+    let mut vectors: Vec<Vec<u64>> = Vec::new();
     for _ in 0..ntrials {
-        vectors.push((0..8).map(|_| rng.u128()).collect());
+        vectors.push((0..8).map(|_| rng.next_u64()).collect());
     }
-    // Map every input index to a width-appropriate special value.
-    let mut rng2 = Rng(seed ^ 0x1357_9BDF | 1);
-    let specials: Vec<Vec<u128>> = (0..ntrials)
-        .map(|_| {
-            (0..8)
-                .map(|_| input_value(&mut rng2, ValueType::int(128)))
-                .collect()
-        })
-        .collect();
-    // Even trials draw each entry register through `input_value`, odd ones
-    // take a special value the interpreter masks to its width.
-    let entry = |t: usize, e: EntryVar| {
-        if t.is_multiple_of(2) {
-            input_value(&mut Rng(vectors[t][e.index] as u64 | 1), e.ty)
-        } else {
-            specials[t][e.index]
-        }
-    };
+    // Each entry register is drawn at ITS OWN width: a seed drawn at the
+    // carrier and masked down leaves every wide register's high limbs zero,
+    // which is the arithmetic this checks.
+    let entry = |t: usize, e: EntryVar| input_value(&mut Rng(vectors[t][e.index] | 1), e.ty);
     let returned = |f: &strider_ir::Function, t: usize| match run_cfg(f, &|e| entry(t, e)) {
         Ok(Outcome::Return { values, .. }) => Ok(values),
         other => Err(format!("trial {t} ended {other:?}")),
@@ -765,7 +758,7 @@ pub(crate) fn check_seed(
                 Some(true) => compared += usize::from(matches!(want, Slot::Known(_))),
                 Some(false) => {
                     return Err(format!(
-                        "seed {seed}: ret {k} trial {t}: want {want:x?} got {got:x?}; entry seeds {:x?}\nBEFORE:\n{before_text}\nAFTER:\n{}",
+                        "seed {seed}: ret {k} trial {t}: want {want:?} got {got:?}; entry seeds {:x?}\nBEFORE:\n{before_text}\nAFTER:\n{}",
                         &vectors[t][..4],
                         f.to_text(false)
                     ));
@@ -873,7 +866,7 @@ fn the_op_rosters_keep_their_seeded_order() {
 /// The reference runs' environment. The budget is high enough that `Diverge`
 /// means a loop, not a long finite run, so the CFG comparison can assert on
 /// it.
-fn reference_env(entry: &dyn Fn(EntryVar) -> u128) -> interp::Env<'_> {
+fn reference_env(entry: &dyn Fn(EntryVar) -> UBig) -> interp::Env<'_> {
     interp::Env {
         entry,
         rom: None,
@@ -885,7 +878,7 @@ fn reference_env(entry: &dyn Fn(EntryVar) -> u128) -> interp::Env<'_> {
 
 fn run_cfg(
     f: &strider_ir::Function,
-    entry: &dyn Fn(EntryVar) -> u128,
+    entry: &dyn Fn(EntryVar) -> UBig,
 ) -> Result<Outcome, interp::Unsupported> {
     interp::run(f, &reference_env(entry))
 }
@@ -1086,13 +1079,11 @@ fn the_pipeline_preserves_cfg_semantics() {
                 let before_text = f.to_text(false);
                 let mut outcomes = Vec::new();
                 let mut rng = Rng(seed | 1);
-                let vecs: Vec<Vec<u128>> = (0..16)
-                    .map(|_| (0..4).map(|_| u128::from(rng.next_u64())).collect())
+                let vecs: Vec<Vec<u64>> = (0..16)
+                    .map(|_| (0..4).map(|_| rng.next_u64()).collect())
                     .collect();
                 for vec in &vecs {
-                    let want = run_cfg(&f, &|e| {
-                        input_value(&mut Rng(vec[e.index] as u64 | 1), e.ty)
-                    })
+                    let want = run_cfg(&f, &|e| input_value(&mut Rng(vec[e.index] | 1), e.ty))
                     .map_err(|why| {
                         format!("seed {seed}: inputs {vec:?} before the pipeline: {why:?}\n{before_text}")
                     })?;
@@ -1109,10 +1100,8 @@ fn the_pipeline_preserves_cfg_semantics() {
                             f.to_text(false)
                         )
                     };
-                    let got = run_cfg(&f, &|e| {
-                        input_value(&mut Rng(vec[e.index] as u64 | 1), e.ty)
-                    })
-                    .map_err(|why| dump(format!("after the pipeline: {why:?}")))?;
+                    let got = run_cfg(&f, &|e| input_value(&mut Rng(vec[e.index] | 1), e.ty))
+                        .map_err(|why| dump(format!("after the pipeline: {why:?}")))?;
                     match want {
                         Outcome::Return { .. } => {
                             cmp += 1;
@@ -1360,26 +1349,34 @@ fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
         for _ in 0..64 {
             let word = u128::from(rng.next_u64() as u32) >> rng.below(32);
             let mut bad: Option<String> = None;
-            interp::run_observed(&f, &reference_env(&|_| word), &mut |at, v, val| {
-                if !matches!(f.node_kind(at), NodeKind::Return)
-                    || f.value_type_opt(v).is_none_or(|t| !t.is_integer())
-                {
-                    return;
-                }
-                let iv = ranges.borrow_mut().range_of(v, at);
-                checks += 1;
-                if !iv.is_top(mask(f.value_type_opt(v).unwrap())) {
-                    nontop += 1;
-                }
-                let ok =
-                    iv.lo() <= val && val <= iv.hi() && (val - iv.lo()).is_multiple_of(iv.stride());
-                if !ok && bad.is_none() {
-                    bad = Some(format!(
-                        "seed {seed}: w={word:#x} {v:?}={val:#x} outside {iv:?}\n{}",
-                        f.to_text(false)
-                    ));
-                }
-            })
+            interp::run_observed(
+                &f,
+                &reference_env(&|_| UBig::from(word)),
+                &mut |at, v, val| {
+                    if !matches!(f.node_kind(at), NodeKind::Return)
+                        || f.value_type_opt(v).is_none_or(|t| !t.is_integer())
+                    {
+                        return;
+                    }
+                    // `index_range` works in the carrier; every value here is
+                    // `I32` or `I64`.
+                    let val = u128::try_from(val).expect("a value inside the carrier");
+                    let iv = ranges.borrow_mut().range_of(v, at);
+                    checks += 1;
+                    if !iv.is_top(mask(f.value_type_opt(v).unwrap())) {
+                        nontop += 1;
+                    }
+                    let ok = iv.lo() <= val
+                        && val <= iv.hi()
+                        && (val - iv.lo()).is_multiple_of(iv.stride());
+                    if !ok && bad.is_none() {
+                        bad = Some(format!(
+                            "seed {seed}: w={word:#x} {v:?}={val:#x} outside {iv:?}\n{}",
+                            f.to_text(false)
+                        ));
+                    }
+                },
+            )
             .unwrap_or_else(|why| panic!("seed {seed}: the reference interpreter: {why:?}"));
             runs += 1;
             if let Some(why) = bad {
@@ -1431,14 +1428,15 @@ fn a_range_contains_every_runtime_value() {
         let mut ranges = index_range::RangeMap::new(&f).unwrap();
         let mut rng = Rng(seed | 1);
         for _ in 0..24 {
-            let vec: Vec<u128> = (0..4).map(|_| u128::from(rng.next_u64() % 8)).collect();
+            let vec: Vec<UBig> = (0..4).map(|_| UBig::from(rng.next_u64() % 8)).collect();
             let mut bad: Option<String> = None;
-            interp::run_observed(&f, &reference_env(&|e| vec[e.index]), &mut |at, v, val| {
+            interp::run_observed(&f, &reference_env(&|e| vec[e.index].clone()), &mut |at, v, val| {
                 if f.value_type_opt(v)
                     .is_none_or(|t| !t.is_integer() || t == ValueType::I1)
                 {
                     return;
                 }
+                let val = u128::try_from(val).expect("a value inside the carrier");
                 let iv = ranges.range_of(v, at);
                 checks += 1;
                 let m = f.value_type_opt(v).unwrap().int_mask_u128().expect("at most 128 bits");
@@ -1590,10 +1588,11 @@ fn a_phi_of_constants_holds_only_its_constants() {
         for _ in 0..8 {
             let x = u128::from(rng.next_u64() % 10);
             let mut bad: Option<String> = None;
-            interp::run_observed(&f, &reference_env(&|_| x), &mut |at, v, val| {
+            interp::run_observed(&f, &reference_env(&|_| UBig::from(x)), &mut |at, v, val| {
                 let Some(set) = sets.get(&v) else {
                     return;
                 };
+                let val = u128::try_from(val).expect("a value inside the carrier");
                 checks += 1;
                 let iv = ranges.range_of(v, at);
                 let out = ruled_out

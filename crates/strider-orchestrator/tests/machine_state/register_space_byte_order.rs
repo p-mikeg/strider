@@ -16,7 +16,7 @@
 use rsleigh::mem_readers::BufMemReader;
 use strider_cfg::{CfgOptions, MachineInsnAddr};
 use strider_ir::node::NodeKind;
-use strider_ir::{Function, ReadOnlyMemory};
+use strider_ir::{Function, ReadOnlyMemory, UBig};
 use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::MockRom;
 use strider_ir_test_utils::interp::{self, EntryVar, Env, Outcome, Slot};
@@ -97,7 +97,7 @@ fn run_on(
         at_entry
             .iter()
             .find(|(vn, _)| *vn == var.vn)
-            .map_or(0, |&(_, v)| v)
+            .map_or(UBig::ZERO, |&(_, v)| UBig::from(v))
     };
     let env = Env {
         entry: &entry,
@@ -110,7 +110,11 @@ fn run_on(
         .iter()
         .map(|f| match interp::run(f, &env).expect("the function runs") {
             Outcome::Return { values, writes, .. } => match values.as_slice() {
-                [Slot::Known(a), Slot::Known(b), ..] => (*a, *b, writes),
+                [Slot::Known(a), Slot::Known(b), ..] => (
+                    u128::try_from(a).expect("a register value"),
+                    u128::try_from(b).expect("a register value"),
+                    writes,
+                ),
                 other => panic!("{arch:?}: the first two returns are not known: {other:?}"),
             },
             other => panic!("{arch:?}: ended {other:?}"),
