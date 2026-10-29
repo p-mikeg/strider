@@ -622,23 +622,9 @@ fn vn_list(vns: &[rsleigh::Vn], vn_name: VnName<'_>) -> String {
     format!("[{}]", items.join(", "))
 }
 
-/// Hex, high limb first.
+/// Hex, at any width.
 fn const_str(value: &UBig) -> String {
-    match u128::try_from(value) {
-        Ok(v) => format!("{v:#x}"),
-        Err(_) => {
-            // `as_words` carries no trailing zero limb, so the top one is live.
-            let mut high = value.as_words().iter().rev();
-            let Some(top) = high.next() else {
-                return "0x0".to_owned();
-            };
-            let mut s = format!("{top:#x}");
-            for limb in high {
-                let _ = write!(s, "{limb:016x}");
-            }
-            s
-        }
-    }
+    format!("{value:#x}")
 }
 
 /// The claims that are on, in declaration order, as one `assumptions` line;
