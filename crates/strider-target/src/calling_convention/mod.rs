@@ -29,16 +29,26 @@ pub fn regs_to_vns(
         .collect()
 }
 
-/// A calling convention as static register-name slices.
+/// A calling convention carrying each register as `R` and each register list
+/// as `L`.
+///
+/// The two instantiations are [`CallingConvention`], which names registers as
+/// static Sleigh strings, and [`BuiltCallingConvention`], the same convention
+/// with every one of those names resolved to a varnode.
+/// [`CallingConvention::build`] is that substitution and nothing else, so a
+/// field means the same thing on both.
+///
+/// `Copy` only when `R` and `L` are, which keeps [`CallingConvention`] usable
+/// in a `const` preset while the `Vec`-carrying [`BuiltCallingConvention`]
+/// stays move-or-clone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CallingConvention {
-    stack_ptr_reg_name: &'static str,
+pub struct Cc<R, L> {
     /// In register-positional order, which is not source-argument order: ARM
     /// AAPCS, MIPS O32 and 32-bit SysV PowerPC all start a 64-bit integer
     /// argument at an even position of this list, skipping an odd one (PPC32
     /// pairs r5:r6, leaving r4), so from the first 64-bit argument onward
     /// position *n* names a register the caller may never have written.
-    arg_passing_regs: &'static [&'static str],
+    pub arg_passing_regs: L,
     /// Float / vector argument registers, in positional order, from a register
     /// file `arg_passing_regs` never names (`XMM0..7` on x86-64 SysV, `q0..7`
     /// on AAPCS64, `d0..7` on AAPCS-VFP, `$f12`/`$f14` on MIPS O32, `f1..13`
@@ -46,74 +56,44 @@ pub struct CallingConvention {
     /// PowerPC).  Where the float and vector banks are physically distinct, as
     /// on PowerPC, the vector window is appended so the float positions stay
     /// put, and the `*_linux_kernel` flavours drop it.  Empty where floats are
-    /// stack-passed (i386 cdecl).
+    /// stack-passed (i386 cdecl).  Legitimately overlaps `ret_val_regs_float`:
+    /// `XMM0` / `d0` / `f1` are both.
     ///
     /// Adding an entry RENUMBERS the `Call`'s flat argument list: every
     /// collected stack argument moves up one slot, so a public `call().arg(n)`
     /// query reads a different operand.  `FunctionBuilder::new` also tracks
     /// each entry on EVERY function, whether or not the function names it.
-    arg_passing_regs_float: &'static [&'static str],
+    pub arg_passing_regs_float: L,
     /// Excludes the stack pointer.  The float half matters as much as the
     /// integer one: without the entries covering it, a post-call read of a
     /// register the callee really preserved resolves to a `Call` output
     /// instead of to the incoming value.
-    callee_saved_regs: &'static [&'static str],
+    pub callee_saved_regs: L,
     /// In positional order.
-    ret_val_regs: &'static [&'static str],
-    /// Float return registers (`q0` on aarch64, `XMM0` on x86_64, `d0` on ARM
-    /// AAPCS hard-float (VFP), the `f0_1` pair on MIPS O32).
-    ret_val_regs_float: &'static [&'static str],
-    /// `None` when the convention passes no arguments on the stack.
-    stack_args: Option<StackArgs>,
-    /// Net byte change the callee's `ret` inflicts on the caller's SP: the
-    /// pointer size (4 / 8) on stack-push ISAs where `ret` pops the return
-    /// address, 0 on link-register ISAs where the call never touches SP.
-    ret_stack_pop: i64,
-    /// Register holding the return address across a call; `None` on
-    /// stack-push ISAs (x86, x86_64), where it lives on the stack.
-    link_register_reg_name: Option<&'static str>,
-    /// `true` if calls under this convention preserve memory. `false` for
-    /// every standard ABI; set by [`Self::preserves_all`] for transparent
-    /// hooks (Linux-kernel `__fentry__` / `mcount`).
-    preserves_memory: bool,
-    /// `true` if a call clobbers NO register (every register callee-saved).
-    /// Set by [`Self::preserves_all`] / [`Self::preserves_regs`]; false for
-    /// every real ABI.
-    preserves_all_registers: bool,
-    /// Resolved into [`BuiltCallingConvention::entry_address_vn`].
-    entry_address_reg_name: Option<&'static str>,
-    /// See [`BuiltCallingConvention::reg_args_adjoin_stack_args`].
-    reg_args_adjoin_stack_args: bool,
-}
-
-/// A [`CallingConvention`] with its register names resolved to varnodes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct BuiltCallingConvention {
-    /// In positional order.
-    pub arg_passing_regs: Vec<rsleigh::Vn>,
-    /// Float / vector argument registers, in positional order, from a register
-    /// file `arg_passing_regs` never names.  Legitimately overlaps
-    /// `ret_val_regs_float`: `XMM0` / `d0` / `f1` are both.
-    pub arg_passing_regs_float: Vec<rsleigh::Vn>,
-    /// Excludes the stack pointer.
-    pub callee_saved_regs: Vec<rsleigh::Vn>,
-    /// In positional order.
-    pub ret_val_regs: Vec<rsleigh::Vn>,
-    /// In positional order.
-    pub ret_val_regs_float: Vec<rsleigh::Vn>,
-    /// Shares no byte with the five register lists above.
-    pub stack_vn: rsleigh::Vn,
+    pub ret_val_regs: L,
+    /// Float return registers, in positional order (`q0` on aarch64, `XMM0` on
+    /// x86_64, `d0` on ARM AAPCS hard-float (VFP), the `f0_1` pair on MIPS
+    /// O32).
+    pub ret_val_regs_float: L,
+    /// The stack pointer.  Shares no byte with the five register lists above.
+    pub stack_ptr: R,
     /// `None` when the convention passes no arguments on the stack.
     pub stack_args: Option<StackArgs>,
-    /// Net byte change the callee's `ret` inflicts on the caller's SP: `8` on
-    /// x86_64 (pops the return address), `0` on link-register ISAs.
+    /// Net byte change the callee's `ret` inflicts on the caller's SP: the
+    /// pointer size (4 on x86, 8 on x86_64) on stack-push ISAs where `ret`
+    /// pops the return address, 0 on link-register ISAs where the call never
+    /// touches SP.
     pub ret_stack_pop: i64,
-    /// `None` on stack-push ISAs (x86, x86_64).
-    pub link_register_vn: Option<rsleigh::Vn>,
-    /// `true` for zero-side-effect hooks like `__fentry__` / `mcount`.
+    /// Register holding the return address across a call; `None` on
+    /// stack-push ISAs (x86, x86_64), where it lives on the stack.
+    pub link_register: Option<R>,
+    /// `true` if calls under this convention preserve memory. `false` for
+    /// every standard ABI; set by [`Self::preserves_all`] for transparent
+    /// zero-side-effect hooks (Linux-kernel `__fentry__` / `mcount`).
     pub preserves_memory: bool,
-    /// `true` if a call clobbers NO register (every register callee-saved),
-    /// as for `__fentry__` / `mcount`.
+    /// `true` if a call clobbers NO register (every register callee-saved), as
+    /// for `__fentry__` / `mcount`.  Set by [`Self::preserves_all`] /
+    /// [`Self::preserves_regs`]; false for every real ABI.
     pub preserves_all_registers: bool,
     /// The register the ABI guarantees holds the function's own entry address
     /// on entry to it: PPC64 ELFv2 `r12` (2.2.2.1) and MIPS abicalls `t9`,
@@ -121,7 +101,7 @@ pub struct BuiltCallingConvention {
     /// to the entry address. `None` where the ABI promises nothing, ELFv1
     /// included: there the analogue is the descriptor's TOC word, which is not
     /// a register contract.
-    pub entry_address_vn: Option<rsleigh::Vn>,
+    pub entry_address: Option<R>,
     /// The register arguments have stack homes just below the stack
     /// arguments, one `stack_args` slot each in register order, so a
     /// by-value argument the ABI splits between registers and the stack, and
@@ -131,8 +111,14 @@ pub struct BuiltCallingConvention {
     pub reg_args_adjoin_stack_args: bool,
 }
 
+/// A calling convention as static register-name slices.
+pub type CallingConvention = Cc<&'static str, &'static [&'static str]>;
+
+/// A [`CallingConvention`] with its register names resolved to varnodes.
+pub type BuiltCallingConvention = Cc<rsleigh::Vn, Vec<rsleigh::Vn>>;
+
 /// The trivial convention for synthetic / mock graphs that have no real
-/// target ABI: everything empty, plus a synthetic `stack_vn`.
+/// target ABI: everything empty, plus a synthetic `stack_ptr`.
 impl Default for BuiltCallingConvention {
     fn default() -> Self {
         Self {
@@ -141,18 +127,54 @@ impl Default for BuiltCallingConvention {
             callee_saved_regs: Vec::new(),
             ret_val_regs: Vec::new(),
             ret_val_regs_float: Vec::new(),
-            stack_vn: rsleigh::Vn {
+            stack_ptr: rsleigh::Vn {
                 addr_off: SYNTHETIC_STACK_VN_OFFSET,
                 addr_space: rsleigh::VnSpace::REGISTER,
                 size: 8,
             },
             stack_args: None,
             ret_stack_pop: 0,
-            link_register_vn: None,
+            link_register: None,
             preserves_memory: false,
             preserves_all_registers: false,
-            entry_address_vn: None,
+            entry_address: None,
             reg_args_adjoin_stack_args: false,
+        }
+    }
+}
+
+impl<R, L: Default> Cc<R, L> {
+    /// Returns a variant of this convention that clobbers nothing: every
+    /// register callee-saved and memory unchanged, with no arguments or
+    /// return value. Models a transparent hook (`__fentry__` / `mcount`)
+    /// invoked under `self`'s stack/link-register geometry.
+    pub fn preserves_all(self) -> Self {
+        Self {
+            arg_passing_regs: L::default(),
+            arg_passing_regs_float: L::default(),
+            ret_val_regs: L::default(),
+            ret_val_regs_float: L::default(),
+            stack_args: None,
+            preserves_memory: true,
+            preserves_all_registers: true,
+            ..self
+        }
+    }
+
+    /// Like [`Self::preserves_all`] but leaves memory clobberable: registers
+    /// are all preserved, memory is not.
+    ///
+    /// Keeps `arg_passing_regs` and `stack_args`, unlike `preserves_all`: the
+    /// callee may write memory, so the escape-based load-forwarding gate has
+    /// to see a frame address handed to it. Dropping the argument registers
+    /// would hide that escape and forward a spill across the call.
+    pub fn preserves_regs(self) -> Self {
+        Self {
+            ret_val_regs: L::default(),
+            ret_val_regs_float: L::default(),
+            preserves_memory: false,
+            preserves_all_registers: true,
+            ..self
         }
     }
 }
@@ -226,9 +248,9 @@ impl BuiltCallingConvention {
         tracked_vns: &[rsleigh::Vn],
         container_of: impl Fn(&rsleigh::Vn) -> rsleigh::Vn,
     ) -> (Vec<rsleigh::Vn>, Vec<rsleigh::Vn>) {
-        let stack_vn = self.stack_vn;
+        let stack_ptr = self.stack_ptr;
         let is_clobbered = |v: &rsleigh::Vn| {
-            !self.preserves_all_registers && !self.preserves_all_bytes_of(v) && *v != stack_vn
+            !self.preserves_all_registers && !self.preserves_all_bytes_of(v) && *v != stack_ptr
         };
 
         let ret_containers: Vec<rsleigh::Vn> = self
@@ -327,31 +349,6 @@ impl BuiltCallingConvention {
         )
     }
 
-    /// The Vn-resolved [`CallingConvention::preserves_all`].
-    pub fn preserves_all(self) -> Self {
-        Self {
-            arg_passing_regs: Vec::new(),
-            arg_passing_regs_float: Vec::new(),
-            ret_val_regs: Vec::new(),
-            ret_val_regs_float: Vec::new(),
-            stack_args: None,
-            preserves_memory: true,
-            preserves_all_registers: true,
-            ..self
-        }
-    }
-
-    /// The Vn-resolved [`CallingConvention::preserves_regs`].
-    pub fn preserves_regs(self) -> Self {
-        Self {
-            ret_val_regs: Vec::new(),
-            ret_val_regs_float: Vec::new(),
-            preserves_memory: false,
-            preserves_all_registers: true,
-            ..self
-        }
-    }
-
     /// Checks the canonical ABI invariants.  Advisory: every field is `pub`
     /// and [`Default`] builds one directly, so a convention reaching the
     /// lifter has not necessarily been through here.
@@ -363,9 +360,9 @@ impl BuiltCallingConvention {
     ///   `arg_passing_regs_float`, `ret_val_regs`, and `ret_val_regs_float`
     /// - `ret_val_regs` and `ret_val_regs_float` are disjoint
     /// - `arg_passing_regs` and `arg_passing_regs_float` are disjoint
-    /// - `stack_vn` shares no byte with any of the five register lists
+    /// - `stack_ptr` shares no byte with any of the five register lists
     /// - no duplicates within any single list
-    /// - a `Some` `link_register_vn` is also in `callee_saved_regs` (the
+    /// - a `Some` `link_register` is also in `callee_saved_regs` (the
     ///   deliberate link-register tradeoff)
     /// - `ret_stack_pop >= 0`
     /// - a `Some` `stack_args` has `increment > 0` and `base_offset >= 0`
@@ -446,12 +443,12 @@ impl BuiltCallingConvention {
             ("ret_val_regs", &self.ret_val_regs),
             ("ret_val_regs_float", &self.ret_val_regs_float),
         ] {
-            if let Some(vn) = first_overlapping(list, std::slice::from_ref(&self.stack_vn)) {
+            if let Some(vn) = first_overlapping(list, std::slice::from_ref(&self.stack_ptr)) {
                 return Err(anyhow::anyhow!(
                     "BuiltCallingConvention: varnode {vn:?} in {list_name} shares \
                      bytes with the stack pointer {:?} (the SP is implicit and must \
                      not be in any reg list)",
-                    self.stack_vn,
+                    self.stack_ptr,
                 ));
             }
             if let Some(vn) = first_dup(list) {
@@ -460,11 +457,11 @@ impl BuiltCallingConvention {
                 ));
             }
         }
-        if let Some(lr) = self.link_register_vn
+        if let Some(lr) = self.link_register
             && !self.callee_saved_regs.contains(&lr)
         {
             return Err(anyhow::anyhow!(
-                "BuiltCallingConvention: link_register_vn {lr:?} must also \
+                "BuiltCallingConvention: link_register {lr:?} must also \
                  be present in callee_saved_regs, the deliberate tradeoff \
                  that makes InitialVar(lr) propagate through call sites)",
             ));
@@ -504,16 +501,16 @@ impl BuiltCallingConvention {
     ///
     /// # Errors
     ///
-    /// `stack_vn` is not `addr_size` bytes, a stack-arg slot is not one
-    /// `stack_vn` wide, or a convention with no link register pops less than
+    /// `stack_ptr` is not `addr_size` bytes, a stack-arg slot is not one
+    /// `stack_ptr` wide, or a convention with no link register pops less than
     /// the return address its `call` pushed.
     pub fn check_addr_size(&self, addr_size: u32) -> Result<()> {
-        let sp = self.stack_vn.size;
+        let sp = self.stack_ptr.size;
         if sp != addr_size {
             return Err(anyhow::anyhow!(
                 "BuiltCallingConvention: stack pointer {:?} is {sp} bytes, and this \
                  arch's addresses are {addr_size}: the convention describes another arch",
-                self.stack_vn,
+                self.stack_ptr,
             ));
         }
         if let Some(sa) = self.stack_args
@@ -525,7 +522,7 @@ impl BuiltCallingConvention {
                 sa.increment,
             ));
         }
-        if self.link_register_vn.is_none() && self.ret_stack_pop < i64::from(sp) {
+        if self.link_register.is_none() && self.ret_stack_pop < i64::from(sp) {
             return Err(anyhow::anyhow!(
                 "BuiltCallingConvention: ret_stack_pop {} is less than the {sp}-byte \
                  return address a `call` pushes with no link register",
@@ -623,7 +620,7 @@ fn clamp_to_usize(n: i128) -> usize {
 /// Base for `x86_cdecl` and `x86_linux_kernel`, which differ only in
 /// `arg_passing_regs`.
 const X86_CDECL_BASE: CallingConvention = CallingConvention {
-    stack_ptr_reg_name: "ESP",
+    stack_ptr: "ESP",
     arg_passing_regs: &[],
     // Intel386 psABI: scalar floats go on the stack like every other cdecl
     // argument.  Its SSE class (`__m128`) is NOT modelled, though the psABI
@@ -650,10 +647,10 @@ const X86_CDECL_BASE: CallingConvention = CallingConvention {
     // The plain `ret`; see `x86_cdecl` for callees that pop more.
     ret_stack_pop: 4,
     // `call` pushes the return address.
-    link_register_reg_name: None,
+    link_register: None,
     preserves_memory: false,
     preserves_all_registers: false,
-    entry_address_reg_name: None,
+    entry_address: None,
     reg_args_adjoin_stack_args: false,
 };
 
@@ -673,7 +670,7 @@ const PPC_SCALAR_RET_F: &[&str] = &["f1", "f2"];
 /// `stack_args.base_offset` (ELFv1's 48-byte linkage area vs ELFv2's 32, each
 /// plus the 64-byte parameter save area) and in `ret_val_regs_float`.
 const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
-    stack_ptr_reg_name: "r1",
+    stack_ptr: "r1",
     arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
     // ELFv1 3.2.3 / ELFv2 2.2.3.1: floating-point arguments in f1..f13.  The
     // f1..f8 window is the 32-bit SysV rule (`powerpc_sysv32`).
@@ -742,10 +739,10 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
         increment: 8,
     }),
     ret_stack_pop: 0,
-    link_register_reg_name: Some("LR"),
+    link_register: Some("LR"),
     preserves_memory: false,
     preserves_all_registers: false,
-    entry_address_reg_name: None,
+    entry_address: None,
     reg_args_adjoin_stack_args: true,
 };
 
@@ -755,7 +752,7 @@ const POWERPC64_ELF_BASE: CallingConvention = CallingConvention {
 /// 0.  Byte-order independent: pairs with `arm`, `arm_be`, `arm_be_kernel`,
 /// and `arm_thumb`.  r0/r1 double as the pair for 64-bit returns.
 const ARM_AAPCS_VFP_BASE: CallingConvention = CallingConvention {
-    stack_ptr_reg_name: "sp",
+    stack_ptr: "sp",
     arg_passing_regs: &["r0", "r1", "r2", "r3"],
     // AAPCS-VFP (IHI 0042 6.1.2.1) allocates ONE bank of 16 single-precision
     // slots s0..s15, aliased as d0..d7. A `double` at float position j lands in
@@ -803,17 +800,17 @@ const ARM_AAPCS_VFP_BASE: CallingConvention = CallingConvention {
     ret_stack_pop: 0,
     // `bl` writes the return address to `lr` (= `r14`); Sleigh registers it
     // lowercase.
-    link_register_reg_name: Some("lr"),
+    link_register: Some("lr"),
     preserves_memory: false,
     preserves_all_registers: false,
-    entry_address_reg_name: None,
+    entry_address: None,
     reg_args_adjoin_stack_args: true,
 };
 
 /// Base for `mips_o32` and `mips_n64`; n64 widens both argument banks,
 /// narrows the callee-saved float set, and drops the shadow space.
 const MIPS_O32_BASE: CallingConvention = CallingConvention {
-    stack_ptr_reg_name: "sp",
+    stack_ptr: "sp",
     arg_passing_regs: &["a0", "a1", "a2", "a3"],
     // O32 passes at most two float arguments, in $f12 and $f14; $f13 / $f15
     // are the odd halves of those double pairs, never argument slots of their
@@ -854,14 +851,14 @@ const MIPS_O32_BASE: CallingConvention = CallingConvention {
     ret_stack_pop: 0,
     // `jal`/`jalr` writes the return address to `$ra` (`$31`); Sleigh's mips32
     // register table names it lowercase `ra`.
-    link_register_reg_name: Some("ra"),
+    link_register: Some("ra"),
     preserves_memory: false,
     preserves_all_registers: false,
     // The abicalls (PIC) contract: a call through `jalr t9` leaves the callee's
     // own address in t9, and the prologue adds it to a link-time constant to
     // form `gp`.  `-mno-abicalls` code never reads t9 at entry, so the binding
     // is inert rather than wrong there.
-    entry_address_reg_name: Some("t9"),
+    entry_address: Some("t9"),
     reg_args_adjoin_stack_args: true,
 };
 
@@ -872,7 +869,7 @@ impl CallingConvention {
         // x86-64 System V.  RSP is not listed callee-saved: `ret` pops the return
         // address, so the caller observes SP shifted by `ret_stack_pop`.
         CallingConvention {
-            stack_ptr_reg_name: "RSP",
+            stack_ptr: "RSP",
             arg_passing_regs: &["RDI", "RSI", "RDX", "RCX", "R8", "R9"],
             // psABI 3.2.3: SSE-class arguments in XMM0..XMM7.  X87-class
             // (`long double`) arguments go on the stack, so ST0/ST1 are
@@ -900,10 +897,10 @@ impl CallingConvention {
             }),
             ret_stack_pop: 8,
             // `call` pushes the return address.
-            link_register_reg_name: None,
+            link_register: None,
             preserves_memory: false,
             preserves_all_registers: false,
-            entry_address_reg_name: None,
+            entry_address: None,
             reg_args_adjoin_stack_args: false,
         }
     }
@@ -924,7 +921,7 @@ impl CallingConvention {
         // spill across such a call.  `x8` is still a `Call` clobber, so the
         // register itself is never stale.
         CallingConvention {
-            stack_ptr_reg_name: "sp",
+            stack_ptr: "sp",
             arg_passing_regs: &["x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7"],
             // AAPCS64 6.4.1: SIMD/FP arguments in v0..v7, listed in their
             // widest form so an s/d/q access slices out of one container.
@@ -953,10 +950,10 @@ impl CallingConvention {
             ret_stack_pop: 0,
             // `lr` is an alias for `x30`, and Sleigh's aarch64 table only
             // registers `x30`.
-            link_register_reg_name: Some("x30"),
+            link_register: Some("x30"),
             preserves_memory: false,
             preserves_all_registers: false,
-            entry_address_reg_name: None,
+            entry_address: None,
             reg_args_adjoin_stack_args: false,
         }
     }
@@ -1037,7 +1034,7 @@ impl CallingConvention {
         // PowerPC convention.  Stack args start at 8: a 4-byte back-chain plus a
         // 4-byte LR save.  r3/r4 double as the pair for 64-bit returns.
         CallingConvention {
-            stack_ptr_reg_name: "r1",
+            stack_ptr: "r1",
             arg_passing_regs: &["r3", "r4", "r5", "r6", "r7", "r8", "r9", "r10"],
             // SysV PPC32: floating-point arguments in f1..f8, then the AltiVec
             // supplement's vector arguments in v2..v13 (`vs34`-`vs45`), the
@@ -1076,10 +1073,10 @@ impl CallingConvention {
             ret_stack_pop: 0,
             // `bl` writes the return address to the `LR` SPR; Sleigh's PPC
             // table names it uppercase.
-            link_register_reg_name: Some("LR"),
+            link_register: Some("LR"),
             preserves_memory: false,
             preserves_all_registers: false,
-            entry_address_reg_name: None,
+            entry_address: None,
             reg_args_adjoin_stack_args: false,
         }
     }
@@ -1125,7 +1122,7 @@ impl CallingConvention {
             // the function's own address in r12, which the two-instruction
             // prologue turns into the TOC pointer. ELFv1 has no such register
             // contract, hence the override here rather than in the base.
-            entry_address_reg_name: Some("r12"),
+            entry_address: Some("r12"),
             ..POWERPC64_ELF_BASE
         }
     }
@@ -1155,71 +1152,26 @@ impl CallingConvention {
     /// does not resolve, then on the first
     /// [`BuiltCallingConvention::validate`] violation.
     pub fn build(self, sleigh_regs: &rsleigh::SleighRegs) -> Result<BuiltCallingConvention> {
-        let arg_passing_regs = regs_to_vns(sleigh_regs, self.arg_passing_regs)?;
-        let arg_passing_regs_float = regs_to_vns(sleigh_regs, self.arg_passing_regs_float)?;
-        let callee_saved_regs = regs_to_vns(sleigh_regs, self.callee_saved_regs)?;
-        let ret_val_regs = regs_to_vns(sleigh_regs, self.ret_val_regs)?;
-        let ret_val_regs_float = regs_to_vns(sleigh_regs, self.ret_val_regs_float)?;
-        let stack_vn = vn_for_name(sleigh_regs, self.stack_ptr_reg_name)?;
-        let link_register_vn = self
-            .link_register_reg_name
-            .map(|name| vn_for_name(sleigh_regs, name))
-            .transpose()?;
-        let entry_address_vn = self
-            .entry_address_reg_name
-            .map(|name| vn_for_name(sleigh_regs, name))
-            .transpose()?;
+        // Field order here is the short-circuit order the doc promises.
+        let one = |name| vn_for_name(sleigh_regs, name);
+        let list = |names| regs_to_vns(sleigh_regs, names);
         let built = BuiltCallingConvention {
-            arg_passing_regs,
-            arg_passing_regs_float,
-            callee_saved_regs,
-            ret_val_regs,
-            ret_val_regs_float,
-            stack_vn,
+            arg_passing_regs: list(self.arg_passing_regs)?,
+            arg_passing_regs_float: list(self.arg_passing_regs_float)?,
+            callee_saved_regs: list(self.callee_saved_regs)?,
+            ret_val_regs: list(self.ret_val_regs)?,
+            ret_val_regs_float: list(self.ret_val_regs_float)?,
+            stack_ptr: one(self.stack_ptr)?,
             stack_args: self.stack_args,
             ret_stack_pop: self.ret_stack_pop,
-            link_register_vn,
+            link_register: self.link_register.map(one).transpose()?,
             preserves_memory: self.preserves_memory,
             preserves_all_registers: self.preserves_all_registers,
-            entry_address_vn,
+            entry_address: self.entry_address.map(one).transpose()?,
             reg_args_adjoin_stack_args: self.reg_args_adjoin_stack_args,
         };
         built.validate()?;
         Ok(built)
-    }
-
-    /// Returns a variant of this convention that clobbers nothing: every
-    /// register callee-saved and memory unchanged, with no arguments or
-    /// return value. Models a transparent hook (`__fentry__` / `mcount`)
-    /// invoked under `self`'s stack/link-register geometry.
-    pub fn preserves_all(self) -> Self {
-        Self {
-            arg_passing_regs: &[],
-            arg_passing_regs_float: &[],
-            ret_val_regs: &[],
-            ret_val_regs_float: &[],
-            stack_args: None,
-            preserves_memory: true,
-            preserves_all_registers: true,
-            ..self
-        }
-    }
-
-    /// Like [`Self::preserves_all`] but leaves memory clobberable: registers
-    /// are all preserved, memory is not.
-    ///
-    /// Keeps `arg_passing_regs` and `stack_args`, unlike `preserves_all`: the
-    /// callee may write memory, so the escape-based load-forwarding gate has
-    /// to see a frame address handed to it. Dropping the argument registers
-    /// would hide that escape and forward a spill across the call.
-    pub fn preserves_regs(self) -> Self {
-        Self {
-            ret_val_regs: &[],
-            ret_val_regs_float: &[],
-            preserves_memory: false,
-            preserves_all_registers: true,
-            ..self
-        }
     }
 
     /// Returns the Linux kernel-internal CC for x86 32-bit (`-mregparm=3`).

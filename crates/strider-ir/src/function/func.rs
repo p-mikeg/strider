@@ -212,7 +212,7 @@ impl Function {
     /// The stack-pointer varnode of this function's convention.
     #[inline]
     pub(crate) fn stack_vn(&self) -> rsleigh::Vn {
-        self.default_cc.stack_vn
+        self.default_cc.stack_ptr
     }
 
     /// The `(base, byte offset)` of a Store/Load's address.  `None` when `node`
@@ -232,7 +232,7 @@ impl Function {
     pub fn is_entry_sp(&self, value: ValueId) -> bool {
         matches!(
             *self.node_kind(self.producer(value)),
-            NodeKind::InitialVar(id) if self.initial_vn(id) == self.default_cc.stack_vn
+            NodeKind::InitialVar(id) if self.initial_vn(id) == self.default_cc.stack_ptr
         )
     }
 

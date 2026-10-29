@@ -464,7 +464,7 @@ fn check(cases: &[Case], xs: impl Fn(&Case) -> Vec<u128>) {
         if sext((case.n as u128) & mask(case.width), case.width) == case.n {
             assert_canonical(case, opt);
         }
-        let stack = opt.default_cc().stack_vn;
+        let stack = opt.default_cc().stack_ptr;
         for x in xs(case) {
             let compared = x.wrapping_add(case.pre_add) & mask(case.width);
             let want = u128::from(case.cond.holds(sext(compared, case.width), case.n));
