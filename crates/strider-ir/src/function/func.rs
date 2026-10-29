@@ -2,7 +2,7 @@ use crate::IRViewer;
 use crate::IRWalker;
 use crate::function::side_tables::SideTables;
 use crate::graph::{Graph, NodeIdRemap};
-use crate::node::{CcId, NodeId, NodeKind, SwitchTableId, ValueId};
+use crate::node::{NodeId, NodeKind, ValueId};
 
 /// Deterministic ordering key for a tracked varnode.
 pub(crate) fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
@@ -174,72 +174,6 @@ impl Function {
         self.invalidate_analyses();
     }
 
-    /// Interns `value` masked to `ty`'s width.
-    ///
-    /// `ty` must be an integer type; a float one masks to zero, so every value
-    /// interns as `0`. Not asserted: the resulting `IntConst` carries a float
-    /// output type, which [`crate::validate`] rejects, and a caller reaching
-    /// here from a user-supplied rewrite needs that as a catchable error
-    /// rather than a panic. [`crate::IRBuilderExt::build_int_const`] checks up
-    /// front and returns `Err`.
-    pub fn intern_int_const(
-        &mut self,
-        value: u128,
-        ty: crate::node::ValueType,
-    ) -> crate::node::const_value::ConstId {
-        let masked = ty.wrap_u128(value);
-        match u64::try_from(masked) {
-            Ok(v) => self
-                .side_tables
-                .const_interner
-                .intern(crate::node::const_value::ConstValue::Bits(v)),
-            // Past the carrier the limb path holds the canonical spelling.
-            Err(_) => self.intern_int_const_limbs(&[masked as u64, (masked >> 64) as u64], ty),
-        }
-    }
-
-    /// Interns a constant given as little-endian `limbs`.
-    ///
-    /// Trimmed to the limbs `ty` actually spans first: dedup is by stored
-    /// representation, so an over-long or over-wide spelling of a value would
-    /// otherwise intern as a second, unequal constant.
-    ///
-    /// A non-integer `ty` masks to zero, exactly as in
-    /// [`intern_int_const`](Self::intern_int_const).
-    pub fn intern_int_const_limbs(
-        &mut self,
-        limbs: &[u64],
-        ty: crate::node::ValueType,
-    ) -> crate::node::const_value::ConstId {
-        let limb_count = ty.byte_size().div_ceil(8);
-        let mut trimmed: Vec<u64> = limbs.iter().copied().take(limb_count).collect();
-        trimmed.resize(limb_count, 0);
-        if let Some(last) = trimmed.last_mut() {
-            // Bits above the declared width are not part of the value.
-            // `limb_count` is `ceil(bits / 64)`, so `spare` is below 64.
-            let spare = limb_count * 64 - ty.bit_width();
-            *last &= u64::MAX >> spare;
-        }
-        // Canonical: a value fitting the carrier is `Bits`, so the scalar and
-        // the limb path reach one id for it.
-        let cv = if trimmed.iter().skip(1).all(|&l| l == 0) {
-            crate::node::const_value::ConstValue::Bits(trimmed.first().copied().unwrap_or(0))
-        } else {
-            crate::node::const_value::ConstValue::Wide(trimmed.into_boxed_slice())
-        };
-        self.side_tables.const_interner.intern(cv)
-    }
-
-    /// Panics on an OUT-OF-RANGE id. An id minted by another function's
-    /// interner that happens to be in range returns this one's value for that
-    /// index instead, which `validate`'s `DanglingConstId` also cannot see.
-    pub(crate) fn const_value(
-        &self,
-        id: crate::node::const_value::ConstId,
-    ) -> &crate::node::const_value::ConstValue {
-        &self.side_tables.const_interner[id]
-    }
-
     #[inline]
     pub fn entry(&self) -> NodeId {
         self.entry
@@ -263,31 +197,6 @@ impl Function {
         self.byte_order
     }
 
-    /// The tracked varnodes in `InitialVnId` order.
-    pub fn all_vns(&self) -> &[rsleigh::Vn] {
-        self.side_tables.vn_interner.values_as_slice()
-    }
-
-    /// Panics on an out-of-range id.
-    pub fn initial_vn(&self, id: crate::node::InitialVnId) -> rsleigh::Vn {
-        self.side_tables.vn_interner[id]
-    }
-
-    /// Non-panicking [`Self::initial_vn`].
-    pub(crate) fn initial_vn_opt(&self, id: crate::node::InitialVnId) -> Option<rsleigh::Vn> {
-        self.side_tables.vn_interner.get(id).copied()
-    }
-
-    /// `None` when `vn` is not tracked.
-    pub fn vn_id_of(&self, vn: &rsleigh::Vn) -> Option<crate::node::InitialVnId> {
-        self.side_tables.vn_interner.key_of(vn)
-    }
-
-    /// In allocation order.
-    pub(crate) fn vn_ids(&self) -> impl Iterator<Item = crate::node::InitialVnId> + '_ {
-        self.side_tables.vn_interner.keys()
-    }
-
     /// Integer then float, in ABI order, at each register's declared width with
     /// NO tracked-container projection.
     #[inline]
@@ -306,100 +215,6 @@ impl Function {
         self.default_cc.stack_vn
     }
 
-    /// At most one vn per value, so the meaning of the tag follows from the
-    /// producing node's kind.
-    #[inline]
-    pub fn get_vn_for_value(&self, value: ValueId) -> Option<rsleigh::Vn> {
-        self.side_tables
-            .value_vn
-            .get(&value)
-            .map(|&id| self.initial_vn(id))
-    }
-
-    /// A no-op when `vn` is untracked.
-    #[inline]
-    pub(crate) fn set_vn_for_value(&mut self, value: ValueId, vn: rsleigh::Vn) {
-        if let Some(vn_id) = self.vn_id_of(&vn) {
-            self.side_tables.value_vn.insert(value, vn_id);
-        }
-    }
-
-    /// The effective convention for `node_id`: a `Call`'s override if it
-    /// carries one, else the function default.
-    ///
-    /// # Panics
-    ///
-    /// On a `Call` whose [`CcId`] this function never minted, which `validate`
-    /// reports as `DanglingCcId`.
-    #[inline]
-    pub fn get_cc(&self, node_id: NodeId) -> &strider_target::BuiltCallingConvention {
-        match *self.node_kind(node_id) {
-            NodeKind::Call { cc: Some(id) } => &self.side_tables.call_ccs[id],
-            _ => &self.default_cc,
-        }
-    }
-
-    /// `None` for an id this function never minted.
-    #[inline]
-    pub fn cc(&self, id: CcId) -> Option<&strider_target::BuiltCallingConvention> {
-        self.side_tables.call_ccs.get(id)
-    }
-
-    /// Replaces any prior override on `call`.
-    ///
-    /// # Panics
-    ///
-    /// If `call` is not a `Call`.
-    pub fn set_call_cc(&mut self, call: NodeId, cc: strider_target::BuiltCallingConvention) {
-        let id = self.side_tables.call_ccs.intern(cc);
-        match self.graph.node_kind_mut(call) {
-            NodeKind::Call { cc } => *cc = Some(id),
-            other => panic!("set_call_cc on {call:?}, a {other:?}"),
-        }
-    }
-
-    /// The case addresses of a `Switch`, empty for any other node or an id
-    /// this function never minted.
-    #[inline]
-    pub fn switch_targets(&self, node_id: NodeId) -> &[u64] {
-        match *self.node_kind(node_id) {
-            NodeKind::Switch(id) => self.switch_table(id).unwrap_or(&[]),
-            _ => &[],
-        }
-    }
-
-    /// `None` for an id this function never minted.
-    #[inline]
-    pub(crate) fn switch_table(&self, id: SwitchTableId) -> Option<&[u64]> {
-        self.side_tables.switch_tables.get(id).map(Vec::as_slice)
-    }
-
-    /// A fresh table for a `Switch` about to be created.
-    pub fn add_switch_table(&mut self, targets: Vec<u64>) -> SwitchTableId {
-        self.side_tables.switch_tables.push(targets)
-    }
-
-    /// The name of a `CallOther`'s user-op, Sleigh's or `read_volatile`;
-    /// `None` for any other node or an unnamed op.
-    #[inline]
-    pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
-        match *self.node_kind(node_id) {
-            NodeKind::CallOther { user_op_id } => self
-                .side_tables
-                .call_other_names
-                .get(&user_op_id)
-                .map(String::as_str),
-            _ => None,
-        }
-    }
-
-    /// Names every `CallOther { user_op_id }`, present and future.
-    pub fn set_call_other_name(&mut self, user_op_id: u64, name: impl Into<String>) {
-        self.side_tables
-            .call_other_names
-            .insert(user_op_id, name.into());
-    }
-
     /// The `(base, byte offset)` of a Store/Load's address.  `None` when `node`
     /// is not a Store/Load, or its address is not SP-rooted, or it has not been
     /// decomposed yet.  Offsets compare only when their bases match.
@@ -413,51 +228,12 @@ impl Function {
         }
     }
 
-    /// The `initial_var_index` entries.
-    #[inline]
-    pub(crate) fn initial_var_index_entries(
-        &self,
-    ) -> impl Iterator<Item = (crate::node::InitialVnId, NodeId)> + '_ {
-        self.side_tables
-            .initial_var_index
-            .iter()
-            .map(|(&vn_id, &id)| (vn_id, id))
-    }
-
-    /// The `value_vn` entries.
-    #[inline]
-    pub(crate) fn value_vn_entries(
-        &self,
-    ) -> impl Iterator<Item = (ValueId, crate::node::InitialVnId)> + '_ {
-        self.side_tables
-            .value_vn
-            .iter()
-            .map(|(&value, &id)| (value, id))
-    }
-
     /// Whether `value` is the entry SP, the output of `InitialVar(stack_vn)`.
     pub fn is_entry_sp(&self, value: ValueId) -> bool {
         matches!(
             *self.node_kind(self.producer(value)),
             NodeKind::InitialVar(id) if self.initial_vn(id) == self.default_cc.stack_vn
         )
-    }
-
-    /// The `InitialVar(stack_vn)` node, whose output is the entry SP, or `None`
-    /// when the function tracks no such node (`stack_vn` deduped into a wider
-    /// container).  Does NOT filter by liveness: the returned node may already
-    /// have been culled.
-    pub fn initial_sp(&self) -> Option<NodeId> {
-        let sp_id = self.vn_id_of(&self.default_cc.stack_vn)?;
-        self.side_tables.initial_var_index.get(&sp_id).copied()
-    }
-
-    /// The entry value of `vn`'s `InitialVar` node.  `None` when `vn` is
-    /// untracked.
-    pub fn initial_var_value(&self, vn: &rsleigh::Vn) -> Option<ValueId> {
-        let id = self.vn_id_of(vn)?;
-        let node = *self.side_tables.initial_var_index.get(&id)?;
-        self.graph.node_outputs(node).first().copied()
     }
 
     /// [`Graph::create_node`] plus a union of every contributor's
