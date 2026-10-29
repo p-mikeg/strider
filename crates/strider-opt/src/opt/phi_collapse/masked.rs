@@ -217,5 +217,5 @@ fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId) -> u128 {
         .ok()
         .flatten()
         .filter(|&(out, _)| out == v)
-        .map_or(0, |(_, kb)| kb.zeros)
+        .map_or(0, |(_, kb)| kb.zeros_u128())
 }
