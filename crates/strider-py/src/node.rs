@@ -309,7 +309,15 @@ impl PyNode {
         &self,
         py: Python<'py>,
     ) -> PyResult<Option<Bound<'py, pyo3::types::PyBytes>>> {
-        let raw = self.with_node(py, |function, nid| function.int_const_wide_le_bytes(nid))?;
+        let raw = self.with_node(py, |function, nid| {
+            let value = function.first_value_output_of(nid)?;
+            let ty = function.value_kind(value).as_value()?;
+            // Narrow constants are `None`, whatever the value.
+            if !ty.is_wide_int() {
+                return None;
+            }
+            Some(strider_ir::eval::le_bytes(function.int_const(value)?, ty))
+        })?;
         Ok(raw.map(|b| pyo3::types::PyBytes::new_bound(py, &b)))
     }
 

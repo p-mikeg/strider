@@ -48,6 +48,17 @@ pub fn complement(v: &UBig, ty: ValueType) -> UBig {
     all_ones(ty) ^ mask(v, ty)
 }
 
+/// `v`'s little-endian bytes, zero-extended to the bytes `ty` spans:
+/// `UBig::to_le_bytes` drops its own trailing zero bytes.
+#[must_use]
+pub fn le_bytes(v: &UBig, ty: ValueType) -> Vec<u8> {
+    let mut out = vec![0u8; ty.byte_size()];
+    let src = v.to_le_bytes();
+    let n = out.len().min(src.len());
+    out[..n].copy_from_slice(&src[..n]);
+    out
+}
+
 /// `v`'s little-endian limbs, `limbs[0]` low, zero-padded to the limbs `ty`
 /// spans: `UBig::as_words` drops its own trailing zero limbs.
 #[must_use]
