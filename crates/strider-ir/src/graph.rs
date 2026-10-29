@@ -101,13 +101,13 @@ mod tests {
     fn create_single_node() {
         let mut function = test_function();
         let node_id = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(5_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
         assert_eq!(
             function.node_kind(node_id),
-            &NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize))
+            &NodeKind::IntConst(crate::node::IntConstId::new(5_usize))
         );
         assert_eq!(function.graph().all_node_ids().count(), 3);
         check_node_inputs(function.graph(), node_id, []);
@@ -125,7 +125,7 @@ mod tests {
     fn kind_of_output_matches_two_step_lookup() {
         let mut function = test_function();
         let node_id = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -135,7 +135,7 @@ mod tests {
         assert_eq!(one_step, two_step);
         assert_eq!(
             one_step,
-            &NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize))
+            &NodeKind::IntConst(crate::node::IntConstId::new(7_usize))
         );
     }
 
@@ -145,18 +145,14 @@ mod tests {
     fn cacheable_node_dedup_is_stable_across_many_calls() {
         let mut function = test_function();
         let first = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(
-                (0xdead_beef_u64) as usize,
-            )),
+            NodeKind::IntConst(crate::node::IntConstId::new((0xdead_beef_u64) as usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
         let arena_after_first = function.graph().all_node_ids().count();
         for _ in 0..1000 {
             let id = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(
-                    (0xdead_beef_u64) as usize,
-                )),
+                NodeKind::IntConst(crate::node::IntConstId::new((0xdead_beef_u64) as usize)),
                 [],
                 [ValueKind::Typed(ValueType::int(64))],
             );
@@ -174,12 +170,12 @@ mod tests {
     fn cacheable_int_const_with_different_type_does_not_dedup() {
         let mut function = test_function();
         let a = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
             [],
             [ValueKind::Typed(ValueType::int(32))],
         );
         let b = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -270,7 +266,7 @@ mod tests {
         );
         let [_region_ctrl, phi_token] = function.node_outputs_exact::<2>(region).unwrap();
         let c = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -322,7 +318,7 @@ mod tests {
         let [ctrl_value] = function.node_outputs_exact::<1>(ctrl_a).unwrap();
         let [mem_value] = function.node_outputs_exact::<1>(mem_a).unwrap();
         let target = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0x1000_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(0x1000_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -383,7 +379,7 @@ mod tests {
     fn add_node_input_registers_use() {
         let mut function = test_function();
         let const_node = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(1_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -406,14 +402,14 @@ mod tests {
         let mut function = test_function();
 
         let c0 = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
         let [out0] = function.node_outputs_exact::<1>(c0).unwrap();
 
         let c1 = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(1_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -455,14 +451,14 @@ mod tests {
         let mut function = test_function();
 
         let old = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(10_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(10_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
         let [old_value] = function.node_outputs_exact::<1>(old).unwrap();
 
         let new = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(20_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(20_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -488,12 +484,12 @@ mod tests {
         use crate::node::IntBinaryOp;
         let mut function = test_function();
         let lhs = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::int(32))],
         );
         let rhs = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(9_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(9_usize)),
             [],
             [ValueKind::Typed(ValueType::int(32))],
         );
@@ -533,7 +529,7 @@ mod tests {
         let mut function = test_function();
 
         let c = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(99_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(99_usize)),
             [],
             [ValueKind::Typed(ValueType::int(32))],
         );
@@ -563,7 +559,7 @@ mod tests {
     fn node_for_output_returns_source_node() {
         let mut function = test_function();
         let node = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::int(8))],
         );
@@ -591,7 +587,7 @@ mod tests {
     fn output_uses_reports_all_consumers_with_correct_indices() {
         let mut function = test_function();
         let src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::int(32))],
         );
@@ -624,7 +620,7 @@ mod tests {
     fn output_uses_same_output_multiple_times_reports_each_position() {
         let mut function = test_function();
         let src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(3_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(3_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -649,14 +645,14 @@ mod tests {
         let mut function = test_function();
 
         let old_src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(1_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
         let [old_value] = function.node_outputs_exact::<1>(old_src).unwrap();
 
         let new_src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(2_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(2_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -692,14 +688,14 @@ mod tests {
         let mut function = test_function();
 
         let old_src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(10_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(10_usize)),
             [],
             [ValueKind::Typed(ValueType::int(32))],
         );
         let [old_value] = function.node_outputs_exact::<1>(old_src).unwrap();
 
         let new_src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(20_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(20_usize)),
             [],
             [ValueKind::Typed(ValueType::int(32))],
         );
@@ -735,7 +731,7 @@ mod tests {
 
         let out0 = {
             let n = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(10_usize)),
+                NodeKind::IntConst(crate::node::IntConstId::new(10_usize)),
                 [],
                 [ValueKind::Typed(ValueType::int(64))],
             );
@@ -743,7 +739,7 @@ mod tests {
         };
         let out1 = {
             let n = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(20_usize)),
+                NodeKind::IntConst(crate::node::IntConstId::new(20_usize)),
                 [],
                 [ValueKind::Typed(ValueType::int(64))],
             );
@@ -751,7 +747,7 @@ mod tests {
         };
         let out2 = {
             let n = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(30_usize)),
+                NodeKind::IntConst(crate::node::IntConstId::new(30_usize)),
                 [],
                 [ValueKind::Typed(ValueType::int(64))],
             );
@@ -795,7 +791,7 @@ mod tests {
 
         let out0 = {
             let n = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
+                NodeKind::IntConst(crate::node::IntConstId::new(1_usize)),
                 [],
                 [ValueKind::Typed(ValueType::int(64))],
             );
@@ -803,7 +799,7 @@ mod tests {
         };
         let out1 = {
             let n = function.graph_mut().create_node(
-                NodeKind::IntConst(crate::node::const_value::ConstId::new(2_usize)),
+                NodeKind::IntConst(crate::node::IntConstId::new(2_usize)),
                 [],
                 [ValueKind::Typed(ValueType::int(64))],
             );
@@ -838,17 +834,17 @@ mod tests {
         let mut function = test_function();
 
         let a = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(1_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(1_usize)),
             [],
             [ValueKind::Typed(ValueType::int(32))],
         );
         let b = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(2_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(2_usize)),
             [],
             [ValueKind::Typed(ValueType::int(32))],
         );
         let c = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(3_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(3_usize)),
             [],
             [ValueKind::Typed(ValueType::int(32))],
         );
@@ -886,7 +882,7 @@ mod tests {
         let mut function = test_function();
 
         let src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(99_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(99_usize)),
             [],
             [ValueKind::Typed(ValueType::int(32))],
         );
@@ -911,7 +907,7 @@ mod tests {
         let mut function = test_function();
 
         let src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(42_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -944,7 +940,7 @@ mod tests {
     fn node_outputs_exact_errors_on_wrong_count() {
         let mut function = test_function();
         let node = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
             [],
             [ValueKind::Typed(ValueType::int(8))],
         );
@@ -959,7 +955,7 @@ mod tests {
     fn node_inputs_exact_errors_on_wrong_count() {
         let mut function = test_function();
         let src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -980,7 +976,7 @@ mod tests {
         use crate::node::IntUnaryOp;
         let mut function = test_function();
         let c = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -1097,7 +1093,7 @@ mod tests {
     fn get_cc_default_falls_back_to_function_cc() {
         let mut function = test_function();
         let nid = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -1153,7 +1149,7 @@ mod tests {
         // union into that single side-table entry.
         let mut function = test_function();
         let a = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );
@@ -1161,7 +1157,7 @@ mod tests {
             .side_tables_mut()
             .extend_asm_fingerprint(a, &[0x2000]);
         let b = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+            NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
             [],
             [ValueKind::Typed(ValueType::int(64))],
         );

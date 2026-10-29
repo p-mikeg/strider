@@ -47,6 +47,13 @@ entity_impl!(SwitchTableId, "switch_table");
 pub struct CcId(u32);
 entity_impl!(CcId, "cc");
 
+/// An interned integer constant. Opaque; read the value through
+/// [`crate::IRViewer::int_const`] or its width-aware forms
+/// [`crate::IRViewer::int_const_u128`] and [`crate::IRViewer::int_const_i128`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct IntConstId(u32);
+entity_impl!(IntConstId, "const");
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NodeKind {
     /// Outputs `[Control]`.
@@ -102,7 +109,7 @@ pub enum NodeKind {
 
     /// Read the value via `IRViewer::int_const_u128`, never by matching the
     /// payload.
-    IntConst(crate::node::const_value::ConstId),
+    IntConst(crate::node::IntConstId),
     /// Negation only. Bitwise complement is `Xor(x, all_ones)`.
     IntUnaryOp(crate::node::IntUnaryOp),
     IntBinaryOp(crate::node::IntBinaryOp),
@@ -434,7 +441,7 @@ const _: () = assert!(size_of::<NodeKind>() == 16);
 #[cfg(test)]
 mod tests {
     use super::{NodeKind, SwitchTableId};
-    use crate::node::const_value::ConstId;
+    use crate::node::IntConstId;
     use cranelift_entity::EntityRef;
 
     #[test]
@@ -462,7 +469,7 @@ mod tests {
         }
         // Killable when unused, memory reads included.
         for k in [
-            NodeKind::IntConst(ConstId::new(0)),
+            NodeKind::IntConst(IntConstId::new(0)),
             NodeKind::IntBinaryOp(crate::node::IntBinaryOp::Add),
             NodeKind::Load(rsleigh::VnSpace::RAM),
         ] {

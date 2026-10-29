@@ -60,7 +60,7 @@ fn is_integer_for_all_integer_output_types() {
 
 #[test]
 fn is_const_only_for_constant_kinds() {
-    assert!(NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)).is_const());
+    assert!(NodeKind::IntConst(crate::node::IntConstId::new(42_usize)).is_const());
     assert!(NodeKind::FloatConst(0).is_const());
     assert!(!NodeKind::Entry.is_const());
     assert!(!NodeKind::Return.is_const());
@@ -200,8 +200,8 @@ fn same_value_distinct_width_shares_const_id_distinct_node() {
     else {
         panic!("expected IntConst nodes")
     };
-    assert_eq!(id80, id128, "equal value must share one ConstId");
-    // Same ConstId, but the differing output type must keep them separate.
+    assert_eq!(id80, id128, "equal value must share one IntConstId");
+    // Same IntConstId, but the differing output type must keep them separate.
     assert_ne!(
         n80, n128,
         "different declared widths must be distinct nodes"
