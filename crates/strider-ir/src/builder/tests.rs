@@ -542,12 +542,12 @@ fn build_call_cc_float_args_are_positional_slices() -> Result<()> {
     Ok(())
 }
 
-/// A 9-byte varnode is `is_wide_int`, yet its constants still fit the `u128`
-/// carrier, so they intern as `Bits`.
+/// A 9-byte varnode is past the `u64` carrier, yet its constants still fit
+/// the `u128` one.
 #[test]
 fn i72_const_round_trips_through_the_interner() -> Result<()> {
     let mut b = empty_builder()?;
-    assert!(ValueType::int(72).is_wide_int());
+    assert!(ValueType::int(72).bit_width() > 64);
     let v: u128 = (1u128 << 72) - 1;
     let c = b.build_int_const(v, ValueType::int(72))?;
     assert_eq!(b.function().int_const_u128(c), Some(v));
@@ -2074,13 +2074,12 @@ fn int_const_carrier_boundaries_read_back_through_both_paths() -> Result<()> {
             ty.get_signed_int(value),
             "{label}"
         );
-        let want = ty.is_wide_int().then(|| {
+        let want = (ty.bit_width() > 64).then(|| {
             let mut bytes = value.to_le_bytes().to_vec();
             bytes.resize(ty.byte_size(), 0);
             bytes
         });
-        let got = ty
-            .is_wide_int()
+        let got = (ty.bit_width() > 64)
             .then(|| crate::eval::le_bytes(b.function().int_const(scalar).unwrap(), ty));
         assert_eq!(got, want, "{label}");
     }
