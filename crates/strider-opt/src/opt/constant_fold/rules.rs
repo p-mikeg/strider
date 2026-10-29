@@ -28,6 +28,20 @@ pub(super) fn build_rules() -> Vec<crate::BoxedRule> {
     rules
 }
 
+/// Whether `cap` binds anything but an `IntConst` node, unbound included.
+///
+/// Structural: a value reader answers off a carrier width, and a constant
+/// too wide for it would read as a variable, which is what lets a swap rule
+/// fire in both orientations.
+pub(super) fn binds_no_int_const(
+    b: &strider_pattern::Bindings,
+    f: &strider_ir::Function,
+    cap: Capture,
+) -> bool {
+    !b.get_node(cap, f.graph())
+        .is_some_and(|n| matches!(f.node_kind(n), strider_ir::node::NodeKind::IntConst(_)))
+}
+
 /// Collecting a value against itself: `x + x`, `x*C1 + x*C2` and everything
 /// between become one `Mul`. Each side is the same alternation, `x*C`, `x<<C`
 /// or bare `x`, contributing the coefficient `C`, `2^C` or 1. The sum is
@@ -217,7 +231,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
             rewrite_rule(
                 $op(int_const(c1), var(x))
                     .ordered()
-                    .when_match(move |edit, _ty, b| b.get_uint(x, edit.function()).is_none()),
+                    .when_match(move |edit, _ty, b| binds_no_int_const(b, edit.function(), x)),
                 template::$op(var(x), var(c1)),
             )
         };
