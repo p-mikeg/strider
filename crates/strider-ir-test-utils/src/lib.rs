@@ -170,13 +170,13 @@ impl RegisterSet {
             callee_saved_regs: self.callee_saved,
             ret_val_regs: self.ret_val,
             ret_val_regs_float: Vec::new(),
-            stack_vn,
+            stack_ptr: stack_vn,
             stack_args: self.stack_args,
             ret_stack_pop: self.ret_stack_pop,
-            link_register_vn: self.link_register,
+            link_register: self.link_register,
             preserves_memory: false,
             preserves_all_registers: false,
-            entry_address_vn: None,
+            entry_address: None,
             reg_args_adjoin_stack_args: false,
         };
         let byte_order = self.byte_order.unwrap_or_default();

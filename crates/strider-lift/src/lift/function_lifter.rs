@@ -97,7 +97,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let mut seen: rustc_hash::FxHashSet<rsleigh::Vn> = all_vns.iter().copied().collect();
         // The lifter is the SSoT for tracking SP: a function may never name
         // SP yet still need it tracked for stack analysis.
-        super::track_vns(&mut all_vns, &mut seen, [cc.stack_vn]);
+        super::track_vns(&mut all_vns, &mut seen, [cc.stack_ptr]);
         // `FunctionBuilder::new` seeds the function's OWN convention only, so
         // an override's argument registers would be untracked: an integer one
         // fails the lift outright in `read_vns`, a float one gaps
@@ -107,7 +107,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         for o in override_call_targets(cfg, lifter.sleigh().default_code_space())
             .filter_map(|addr| per_address_ccs.get(&addr))
         {
-            lifter.check_override_cc(o, cc.stack_vn)?;
+            lifter.check_override_cc(o, cc.stack_ptr)?;
             let args = o.arg_passing_regs.iter().chain(&o.arg_passing_regs_float);
             super::track_vns(&mut all_vns, &mut seen, args.copied());
         }
@@ -121,7 +121,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // `cc` threads by value into `FunctionBuilder::new` and on to
         // `Function::default_cc` with no clone, so every read of it is captured
         // into an owned local first.
-        let stack_vn = cc.stack_vn;
+        let stack_vn = cc.stack_ptr;
         let cc_regs: Vec<rsleigh::Vn> = cc
             .ret_val_regs
             .iter()
@@ -129,7 +129,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .chain(cc.arg_passing_regs.iter())
             .chain(cc.arg_passing_regs_float.iter())
             .chain(cc.callee_saved_regs.iter())
-            .chain(std::iter::once(&cc.stack_vn))
+            .chain(std::iter::once(&cc.stack_ptr))
             .copied()
             .collect();
         let mut builder =
