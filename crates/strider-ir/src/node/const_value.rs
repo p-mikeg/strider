@@ -1,5 +1,7 @@
 use cranelift_entity::entity_impl;
 
+use crate::node::ValueType;
+
 /// Opaque; read the value through [`crate::IRViewer::int_const_u128`],
 /// [`crate::IRViewer::int_const_i128`] or
 /// [`crate::IRViewer::int_const_wide_le_bytes`].
@@ -21,6 +23,11 @@ enum Repr {
     Bits(u64),
     /// Little-endian limbs, `limbs[0]` low.
     Wide(Box<[u64]>),
+}
+
+/// Limbs a `ty`-wide value spans.
+fn limb_count(ty: ValueType) -> usize {
+    ty.bit_width().div_ceil(64)
 }
 
 /// A value read through [`ConstValue::get_value`]: one reading per value,
@@ -66,6 +73,45 @@ impl ConstValue {
         } else {
             Self(Repr::Wide(limbs))
         }
+    }
+
+    /// Every bit of `ty` set.
+    pub fn all_ones(ty: ValueType) -> Self {
+        Self::wide(vec![u64::MAX; limb_count(ty)].into_boxed_slice()).mask(ty)
+    }
+
+    /// `!self` within `ty`. Limb-wise, so it is exact at `I256` / `I512` too,
+    /// where no `u128` holds the value.
+    pub fn complement(&self, ty: ValueType) -> Self {
+        let limbs: Vec<u64> = self.limbs_to(limb_count(ty)).iter().map(|l| !l).collect();
+        Self::wide(limbs.into_boxed_slice()).mask(ty)
+    }
+
+    /// `self` with every bit above `ty`'s width cleared. Limb-wise, as
+    /// [`Self::complement`] is.
+    pub fn mask(&self, ty: ValueType) -> Self {
+        let limb_count = limb_count(ty);
+        let mut limbs = self.limbs_to(limb_count);
+        if let Some(last) = limbs.last_mut() {
+            // `limb_count` is `ceil(width / 64)`, so the top limb carries
+            // 1..=64 live bits and `spare` is below 64.
+            let spare = limb_count * 64 - ty.bit_width();
+            *last &= u64::MAX >> spare;
+        }
+        Self::wide(limbs.into_boxed_slice())
+    }
+
+    /// Little-endian limbs, zero-padded or truncated to `n`.
+    fn limbs_to(&self, n: usize) -> Vec<u64> {
+        let mut out = vec![0u64; n];
+        let src: &[u64] = match &self.0 {
+            Repr::Bits(v) => core::slice::from_ref(v),
+            Repr::Wide(limbs) => limbs,
+        };
+        for (slot, limb) in out.iter_mut().zip(src) {
+            *slot = *limb;
+        }
+        out
     }
 
     /// The one read. `Wide` answers `Val` too whenever it fits, which is
@@ -125,6 +171,89 @@ mod tests {
             &ConstValue::wide(vec![0, 1 << 5].into_boxed_slice()),
             "past the carrier the limbs carry the masked value"
         );
+    }
+
+    /// Total at every supported integer width, the two past the `u128`
+    /// carrier included: all-ones has exactly `bit_width` bits set, and
+    /// complementing it twice is the identity.
+    #[test]
+    fn all_ones_and_complement_are_total_across_every_width() {
+        use crate::node::ValueType;
+        for ty in ValueType::SUPPORTED.into_iter().filter(|t| t.is_integer()) {
+            let ones = ConstValue::all_ones(ty);
+            assert_eq!(set_bits(&ones), ty.bit_width(), "{ty:?}");
+            assert_eq!(
+                ones.complement(ty),
+                ConstValue::bits(0),
+                "{ty:?}: all-ones complements to zero"
+            );
+            assert_eq!(
+                ConstValue::bits(0).complement(ty),
+                ones,
+                "{ty:?}: zero complements to all-ones"
+            );
+            assert_eq!(ones.mask(ty), ones, "{ty:?}: masking all-ones is a no-op");
+        }
+    }
+
+    /// The widths a `u128` cannot hold: every bit is addressable, and nothing
+    /// above the declared width survives.
+    #[test]
+    fn complement_and_mask_are_exact_past_the_carrier() {
+        use crate::node::ValueType;
+        let i256 = ValueType::int(256);
+        // Bit 200 alone, well above the carrier.
+        let v = ConstValue::wide(vec![0, 0, 0, 1 << 8].into_boxed_slice());
+        assert_eq!(set_bits(&v), 1);
+        let c = v.complement(i256);
+        assert_eq!(set_bits(&c), 255);
+        assert_eq!(c.complement(i256), v, "complement is an involution at I256");
+        assert_eq!(
+            ConstValue::all_ones(i256).get_value(),
+            ConstRead::Wide(&[u64::MAX; 4])
+        );
+        assert_eq!(
+            ConstValue::all_ones(ValueType::int(512)).get_value(),
+            ConstRead::Wide(&[u64::MAX; 8])
+        );
+        // A value spelled wider than its type keeps only the declared bits.
+        assert_eq!(
+            ConstValue::wide(vec![u64::MAX; 8].into_boxed_slice()).mask(i256),
+            ConstValue::all_ones(i256)
+        );
+        // I256 and I512 fill whole limbs, so what pins the trailing mask is a
+        // multi-limb width whose top limb is only partly live: I112, 48 spare.
+        let i112 = ValueType::int(112);
+        assert_eq!(
+            ConstValue::bits(0).complement(i112).get_value(),
+            ConstRead::Val((1u128 << 112) - 1)
+        );
+        assert_eq!(
+            ConstValue::wide(vec![0, 1 << 48].into_boxed_slice()).complement(i112),
+            ConstValue::wide(vec![u64::MAX, (1u64 << 48) - 1].into_boxed_slice()),
+            "bit 112 is above the width, so complementing it leaves nothing there"
+        );
+        // I72: the top limb is live for 8 bits only.
+        let i72 = ValueType::int(72);
+        assert_eq!(
+            ConstValue::all_ones(i72).get_value(),
+            ConstRead::Val((1u128 << 72) - 1)
+        );
+        assert_eq!(
+            ConstValue::wide(vec![u64::MAX, u64::MAX].into_boxed_slice()).mask(i72),
+            ConstValue::all_ones(i72)
+        );
+        assert_eq!(
+            ConstValue::bits(0xFF).complement(i72).get_value(),
+            ConstRead::Val(((1u128 << 72) - 1) ^ 0xFF)
+        );
+    }
+
+    fn set_bits(v: &ConstValue) -> usize {
+        match v.get_value() {
+            ConstRead::Val(v) => v.count_ones() as usize,
+            ConstRead::Wide(limbs) => limbs.iter().map(|l| l.count_ones() as usize).sum(),
+        }
     }
 
     #[test]
