@@ -2,8 +2,62 @@
 //!
 //! Each function answers `None` where the operation is undefined or the width
 //! has no `u128` modulus: a float, or an integer past 128 bits.
+//!
+//! [`mask`], [`all_ones`], [`complement`] and [`words`] are the exceptions:
+//! they work at any declared width over the [`UBig`] the interner stores.
+//! `UBig` is unbounded, so two's-complement-at-a-declared-width is strider's
+//! rule, and it lives here.
+
+use dashu_int::{UBig, Word};
 
 use crate::node::{IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType};
+
+/// [`words`] answers `Vec<u64>` off `UBig::as_words`, which is `&[Word]`. The
+/// two are the same type only where `Word` is 64 bits; a 32-bit target fails
+/// here rather than silently.
+const _: () = assert!(size_of::<Word>() == 8);
+
+/// Limbs a `ty`-wide value spans.
+#[inline]
+fn limb_count(ty: ValueType) -> usize {
+    ty.bit_width().div_ceil(64)
+}
+
+/// `v` with every bit above `ty`'s width cleared. A float has no integer
+/// bits: 0, as [`ValueType::wrap_u128`] gives.
+#[must_use]
+pub fn mask(v: &UBig, ty: ValueType) -> UBig {
+    if !ty.is_integer() {
+        return UBig::ZERO;
+    }
+    v.clone().split_bits(ty.bit_width()).0
+}
+
+/// Every bit of `ty` set, 0 for a float.
+#[must_use]
+pub fn all_ones(ty: ValueType) -> UBig {
+    if !ty.is_integer() {
+        return UBig::ZERO;
+    }
+    (UBig::ONE << ty.bit_width()) - UBig::ONE
+}
+
+/// `!v` within `ty`.
+#[must_use]
+pub fn complement(v: &UBig, ty: ValueType) -> UBig {
+    all_ones(ty) ^ mask(v, ty)
+}
+
+/// `v`'s little-endian limbs, `limbs[0]` low, zero-padded to the limbs `ty`
+/// spans: `UBig::as_words` drops its own trailing zero limbs.
+#[must_use]
+pub fn words(v: &UBig, ty: ValueType) -> Vec<u64> {
+    let mut out = vec![0u64; limb_count(ty)];
+    let src = v.as_words();
+    let n = out.len().min(src.len());
+    out[..n].copy_from_slice(&src[..n]);
+    out
+}
 
 /// Bit `n` of the `u128` carrier, 0 at and past its top: the saturating form
 /// of `1u128 << n`, which panics there.
@@ -232,6 +286,110 @@ pub fn lzcount(v: u128, in_ty: ValueType) -> Option<u128> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn set_bits(v: &UBig) -> usize {
+        v.as_words().iter().map(|l| l.count_ones() as usize).sum()
+    }
+
+    /// Total at every supported integer width, the two past the `u128`
+    /// carrier included: all-ones has exactly `bit_width` bits set, and
+    /// complementing it twice is the identity.
+    #[test]
+    fn all_ones_and_complement_are_total_across_every_width() {
+        for ty in ValueType::SUPPORTED.into_iter().filter(|t| t.is_integer()) {
+            let ones = all_ones(ty);
+            assert_eq!(set_bits(&ones), ty.bit_width(), "{ty:?}");
+            assert_eq!(
+                complement(&ones, ty),
+                UBig::ZERO,
+                "{ty:?}: all-ones complements to zero"
+            );
+            assert_eq!(
+                complement(&UBig::ZERO, ty),
+                ones,
+                "{ty:?}: zero complements to all-ones"
+            );
+            assert_eq!(mask(&ones, ty), ones, "{ty:?}: masking all-ones is a no-op");
+        }
+    }
+
+    /// The widths a `u128` cannot hold: every bit is addressable, and nothing
+    /// above the declared width survives.
+    #[test]
+    fn complement_and_mask_are_exact_past_the_carrier() {
+        let i256 = ValueType::int(256);
+        // Bit 200 alone, well above the carrier.
+        let v = UBig::from_words(&[0, 0, 0, 1 << 8]);
+        assert_eq!(set_bits(&v), 1);
+        let c = complement(&v, i256);
+        assert_eq!(set_bits(&c), 255);
+        assert_eq!(
+            complement(&c, i256),
+            v,
+            "complement is an involution at I256"
+        );
+        assert_eq!(words(&all_ones(i256), i256), vec![u64::MAX; 4]);
+        let i512 = ValueType::int(512);
+        assert_eq!(words(&all_ones(i512), i512), vec![u64::MAX; 8]);
+        // A value spelled wider than its type keeps only the declared bits.
+        assert_eq!(
+            mask(&UBig::from_words(&[u64::MAX; 8]), i256),
+            all_ones(i256)
+        );
+        // I256 and I512 fill whole limbs, so what pins the trailing mask is a
+        // multi-limb width whose top limb is only partly live: I112, 48 spare.
+        let i112 = ValueType::int(112);
+        assert_eq!(
+            u128::try_from(complement(&UBig::ZERO, i112)),
+            Ok((1u128 << 112) - 1)
+        );
+        assert_eq!(
+            complement(&UBig::from_words(&[0, 1 << 48]), i112),
+            UBig::from_words(&[u64::MAX, (1u64 << 48) - 1]),
+            "bit 112 is above the width, so complementing it leaves nothing there"
+        );
+        // I72: the top limb is live for 8 bits only.
+        let i72 = ValueType::int(72);
+        assert_eq!(u128::try_from(all_ones(i72)), Ok((1u128 << 72) - 1));
+        assert_eq!(
+            mask(&UBig::from_words(&[u64::MAX, u64::MAX]), i72),
+            all_ones(i72)
+        );
+        assert_eq!(
+            u128::try_from(complement(&UBig::from(0xFFu64), i72)),
+            Ok(((1u128 << 72) - 1) ^ 0xFF)
+        );
+    }
+
+    /// A float type has no integer bits, as [`ValueType::wrap_u128`] has it.
+    #[test]
+    fn a_float_type_has_no_integer_bits() {
+        for ty in ValueType::SUPPORTED.into_iter().filter(|t| t.is_float()) {
+            assert_eq!(mask(&UBig::from(u64::MAX), ty), UBig::ZERO, "{ty:?}");
+            assert_eq!(all_ones(ty), UBig::ZERO, "{ty:?}");
+            assert_eq!(complement(&UBig::ZERO, ty), UBig::ZERO, "{ty:?}");
+        }
+    }
+
+    /// `words` pads to the type's limbs where `as_words` trims, and truncates
+    /// nothing a masked value holds.
+    #[test]
+    fn words_pads_to_the_declared_limb_count() {
+        assert_eq!(words(&UBig::ZERO, ValueType::int(256)), vec![0, 0, 0, 0]);
+        assert_eq!(
+            words(&UBig::from(5u64), ValueType::int(256)),
+            vec![5, 0, 0, 0]
+        );
+        assert_eq!(words(&UBig::from(5u64), ValueType::int(64)), vec![5]);
+        assert_eq!(words(&UBig::ZERO, ValueType::I1), vec![0]);
+        assert_eq!(
+            words(
+                &UBig::from_words(&[1, 2, 3, 0, 0, 0, 0, 0]),
+                ValueType::int(512)
+            ),
+            vec![1, 2, 3, 0, 0, 0, 0, 0]
+        );
+    }
 
     /// Saturating where `1u128 << n` panics, so a width past the carrier
     /// answers rather than aborting.

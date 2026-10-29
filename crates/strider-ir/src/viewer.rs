@@ -1,7 +1,6 @@
 use anyhow::anyhow;
 
 use crate::function::Function;
-use crate::node::const_value::ConstRead;
 use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
 /// Each generated method reads a fixed input slot, panicking on the arity the
@@ -124,9 +123,7 @@ pub trait IRViewer {
         let NodeKind::IntConst(id) = *self.kind_of_value(value) else {
             return None;
         };
-        let ConstRead::Val(v) = self.function().const_value(id).get_value() else {
-            return None;
-        };
+        let v = u128::try_from(self.function().const_value(id)).ok()?;
         Some(ty.wrap_u128(v))
     }
 
@@ -153,10 +150,7 @@ pub trait IRViewer {
             return None;
         };
         let mut out = vec![0u8; ty.byte_size()];
-        let src: Vec<u8> = match self.function().const_value(id).get_value() {
-            ConstRead::Val(v) => v.to_le_bytes().to_vec(),
-            ConstRead::Wide(limbs) => limbs.iter().flat_map(|l| l.to_le_bytes()).collect(),
-        };
+        let src: Box<[u8]> = self.function().const_value(id).to_le_bytes();
         let n = out.len().min(src.len());
         out[..n].copy_from_slice(&src[..n]);
         Some(out)

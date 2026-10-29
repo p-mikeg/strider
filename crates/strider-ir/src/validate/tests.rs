@@ -1109,13 +1109,13 @@ fn graph_invariants_dangling_cc_id_detected() {
 
 #[test]
 fn graph_invariants_wide_const_width_mismatch_detected() {
-    use crate::node::const_value::ConstValue;
+    use dashu_int::UBig;
     let mut s = spine();
     // A 4-limb wide value under an I64 output: bits set above the width.
     let id =
         s.f.side_tables_mut()
             .const_interner
-            .intern(ConstValue::wide(vec![0, 0, 0, 1].into_boxed_slice()));
+            .intern(UBig::from_words(&[0, 0, 0, 1]));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
@@ -1133,13 +1133,13 @@ fn graph_invariants_wide_const_width_mismatch_detected() {
 
 #[test]
 fn graph_invariants_const_bits_above_declared_width_detected() {
-    use crate::node::const_value::ConstValue;
+    use dashu_int::UBig;
     let mut s = spine();
-    // An unmasked `Bits` value overflowing its declared I8 width.
+    // An unmasked value overflowing its declared I8 width.
     let id =
         s.f.side_tables_mut()
             .const_interner
-            .intern(ConstValue::bits(0x1FF));
+            .intern(UBig::from(0x1FFu64));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
@@ -1159,12 +1159,12 @@ fn graph_invariants_const_bits_above_declared_width_detected() {
 /// limbs against the width rejects `0xFF << 64` at `I72`, which fits exactly.
 #[test]
 fn graph_invariants_wide_const_filling_a_partial_top_limb_is_accepted() {
-    use crate::node::const_value::ConstValue;
+    use dashu_int::UBig;
     let mut s = spine();
     let id =
         s.f.side_tables_mut()
             .const_interner
-            .intern(ConstValue::wide(vec![0, 0xFF].into_boxed_slice()));
+            .intern(UBig::from_words(&[0, 0xFF]));
     let ok = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],
@@ -1185,12 +1185,12 @@ fn graph_invariants_wide_const_filling_a_partial_top_limb_is_accepted() {
 /// One bit above the declared width, in the same partial top limb.
 #[test]
 fn graph_invariants_wide_const_one_bit_over_a_partial_width_detected() {
-    use crate::node::const_value::ConstValue;
+    use dashu_int::UBig;
     let mut s = spine();
     let id =
         s.f.side_tables_mut()
             .const_interner
-            .intern(ConstValue::wide(vec![0, 0x1FF].into_boxed_slice()));
+            .intern(UBig::from_words(&[0, 0x1FF]));
     let bad = s.f.graph_mut().create_node(
         NodeKind::IntConst(id),
         [],

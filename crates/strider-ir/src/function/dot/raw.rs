@@ -3,11 +3,29 @@
 //! side-table state inline.
 
 use ::dot::{DotEmitter, DotStyle, GraphDot, GraphDotDumper};
+use dashu_int::UBig;
 use rustc_hash::FxHashMap;
 
 use crate::function::Function;
-use crate::node::{NodeId, NodeKind};
+use crate::node::{NodeId, NodeKind, ValueType};
 use crate::{IRViewer, IRWalker};
+
+/// The raw label's spelling of an interned constant: one per value, never per
+/// storage form. `Bits` is the decimal value within the `u128` carrier,
+/// `Wide` the little-endian limbs past it, padded to the limbs `ty` spans.
+/// Rendered graphs are compared across builds, so this text is an artifact.
+pub(super) fn const_label(value: &UBig, ty: Option<ValueType>) -> String {
+    match u128::try_from(value) {
+        Ok(v) => format!("Bits({v})"),
+        Err(_) => {
+            let limbs = ty.map_or_else(
+                || value.as_words().to_vec(),
+                |ty| crate::eval::words(value, ty),
+            );
+            format!("Wide({limbs:?})")
+        }
+    }
+}
 
 /// `{space}{offset:#x}:{size}`, the space as the text format spells it, e.g.
 /// `%0x38:8`.
@@ -68,8 +86,12 @@ impl<'a> RawFunctionDumper<'a> {
         let mut s = format!("n{}  {kind_str}", node.as_u32());
 
         if let NodeKind::IntConst(id) = kind {
+            let ty = f
+                .node_outputs(node)
+                .first()
+                .and_then(|&o| f.value_kind(o).as_value());
             let value = match f.side_tables().const_interner.get(*id) {
-                Some(cv) => format!("{cv:?}"),
+                Some(cv) => const_label(cv, ty),
                 None => format!("<dangling const {id:?}>"),
             };
             s.push_str(&format!("\n= {value}"));
