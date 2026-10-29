@@ -15,6 +15,5 @@ pub use ops::{
 };
 pub use strider_graph::{NodeId, UseId, ValueId};
 pub use value_kind::ValueKind;
-pub(crate) use value_type::shifted_ones_limbs;
 pub use value_type::{ValueType, VnTypeExt};
 pub use width_relation::{WidthGroups, WidthTie, width_tie};
