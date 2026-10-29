@@ -41,7 +41,7 @@ pub mod walk;
 mod test_cfgs;
 
 pub use crate::error::Result;
-pub use crate::node::const_value::ConstId;
+pub use crate::node::IntConstId;
 pub use builder::{FunctionBuilder, IRBuilder, IRBuilderExt};
 pub use node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, VnTypeExt,

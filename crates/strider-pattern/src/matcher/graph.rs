@@ -301,7 +301,7 @@ mod tests {
     use crate::matcher::{KindSpec, PatValueRef};
     use rustc_hash::FxHashMap;
     use strider_graph::NodeId;
-    use strider_ir::ConstId;
+    use strider_ir::IntConstId;
     use strider_ir::node::NodeKind;
     use strider_ir_test_utils::Rng;
 
@@ -340,7 +340,7 @@ mod tests {
         let mut b = MatcherBuilder::new();
         let x = b.leaf(crate::matcher::KindSpec::Any);
         let k = b.leaf(crate::matcher::KindSpec::Exact(NodeKind::IntConst(
-            ConstId::from_u32(1),
+            IntConstId::from_u32(1),
         )));
         let _sum = b.binary(strider_ir::IntBinaryOp::Add, x, k);
         let p = b.finish();

@@ -133,7 +133,7 @@ fn walk_does_not_visit_unreachable_nodes() {
 fn walk_follows_data_inputs_to_producer() {
     let mut graph = Graph::new();
     let src = graph.create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(42_usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new(42_usize)),
         [],
         [ValueKind::Typed(ValueType::int(64))],
     );
@@ -168,7 +168,7 @@ fn walk_follows_data_inputs_to_producer() {
 fn cfg_succs_no_control_outputs_is_empty() {
     let mut graph = Graph::new();
     let node = graph.create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
         [],
         [ValueKind::Typed(ValueType::int(64))],
     );
@@ -262,7 +262,7 @@ fn cfg_outputs_empty_for_node_with_no_outputs() {
 fn cfg_outputs_empty_when_all_outputs_are_data() {
     let mut graph = Graph::new();
     let node = graph.create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new(5_usize)),
         [],
         [ValueKind::Typed(ValueType::int(32))],
     );
@@ -275,13 +275,13 @@ fn cfg_outputs_empty_when_all_outputs_are_data() {
 fn rpo_emits_operands_before_consumer() {
     let mut graph = Graph::new();
     let a = graph.create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new(5_usize)),
         [],
         [ValueKind::Typed(ValueType::int(64))],
     );
     let [a_value] = graph.node_outputs_exact::<1>(a).unwrap();
     let c = graph.create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(4_usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new(4_usize)),
         [],
         [ValueKind::Typed(ValueType::int(64))],
     );
@@ -312,7 +312,7 @@ fn rpo_emits_operands_before_consumer() {
 fn rpo_visits_shared_operand_once() {
     let mut graph = Graph::new();
     let c = graph.create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
         [],
         [ValueKind::Typed(ValueType::int(64))],
     );
@@ -335,7 +335,7 @@ fn rpo_visits_shared_operand_once() {
 
 fn int_const(graph: &mut Graph, v: u64) -> (NodeId, ValueId) {
     let n = graph.create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new((v) as usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new((v) as usize)),
         [],
         [ValueKind::Typed(ValueType::int(64))],
     );
@@ -471,7 +471,7 @@ fn rpo_entry_first_visits_each_once() {
     let (entry, c0) = make_entry(&mut graph);
     let (a, c1) = make_ctrl_node(&mut graph, c0);
     let data = graph.create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(7_usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new(7_usize)),
         [],
         [ValueKind::Typed(ValueType::int(64))],
     );
@@ -541,13 +541,13 @@ fn reverse_postorder_filter_is_deterministic_entry_first() {
     let mut graph = Graph::new();
     let (entry, e_ctrl) = make_entry(&mut graph);
     let a = graph.create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(5_usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new(5_usize)),
         [],
         [ValueKind::Typed(ValueType::int(64))],
     );
     let [a_value] = graph.node_outputs_exact::<1>(a).unwrap();
     let c = graph.create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(4_usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new(4_usize)),
         [],
         [ValueKind::Typed(ValueType::int(64))],
     );
@@ -587,7 +587,7 @@ fn walk_visits_no_node_more_than_once() {
     let (a, a_ctrl) = make_ctrl_node(&mut graph, e_ctrl);
     let (b, b_ctrl) = make_ctrl_node(&mut graph, a_ctrl);
     let data = graph.create_node(
-        NodeKind::IntConst(crate::node::const_value::ConstId::new(0_usize)),
+        NodeKind::IntConst(crate::node::IntConstId::new(0_usize)),
         [],
         [ValueKind::Typed(ValueType::int(64))],
     );

@@ -76,7 +76,7 @@ mod tests {
     fn function_builder_builder_trait_creates_node() {
         let mut b = empty_builder().unwrap();
         assert_eq!(b.lift_addr, None);
-        let const_id = crate::node::const_value::ConstId::new(3);
+        let const_id = crate::node::IntConstId::new(3);
         let n = <FunctionBuilder as IRBuilder>::create_node(
             &mut b,
             NodeKind::IntConst(const_id),

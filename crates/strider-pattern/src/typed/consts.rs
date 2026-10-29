@@ -14,7 +14,7 @@ use rustc_hash::FxHashSet;
 
 use strider_ir::eval::{mask_below, sign_bit};
 use strider_ir::node::{NodeId, NodeKind, ValueType};
-use strider_ir::{ConstId, IRViewer};
+use strider_ir::{IRViewer, IntConstId};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::{CaptureExt, Captured, MatchPat};
@@ -63,7 +63,7 @@ fn int_const_leaf(
     pred: impl Fn(u128, ValueType) -> bool + 'static + Send,
 ) -> PatValueRef {
     let o = b.leaf(KindSpec::variant_of(&NodeKind::IntConst(
-        ConstId::from_u32(0),
+        IntConstId::from_u32(0),
     )));
     if let Some(t) = pin {
         b.set_value_ty(o, t);
@@ -257,16 +257,16 @@ pub struct BoolConst {
 impl MatchPat for BoolConst {
     fn compile(self, builder: &mut MatcherBuilder) -> PatValueRef {
         let expected: u128 = u128::from(self.b);
-        // KindSpec::Exact won't work: NodeKind::IntConst(ConstId) stores an
+        // KindSpec::Exact won't work: NodeKind::IntConst(IntConstId) stores an
         // opaque interned id, and the same value in two different Functions
-        // gets different ConstIds. Hence Variant prefilter plus a value read.
+        // gets different IntConstIds. Hence Variant prefilter plus a value read.
         int_const_leaf(builder, Some(ValueType::I1), move |v, _ty| v == expected)
     }
 }
 
 impl crate::template::template_pat::TemplatePat for BoolConst {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        // ConstId is function-specific, so the value must be interned at
+        // IntConstId is function-specific, so the value must be interned at
         // rewrite time, not at pattern-build time.
         const_template(u128::from(self.b), TemplateTy::Fixed(ValueType::I1)).compile(b)
     }
