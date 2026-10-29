@@ -10,6 +10,18 @@ from __future__ import annotations
 import strider
 from strider.pattern import Capture, int_const
 
+
+def _wide_const_ids(f: strider.ir.Function) -> list[int]:
+    """The `IntConst` nodes declared wider than 64 bits."""
+    out: list[int] = []
+    for n in f.node_ids():
+        node = f.node(n)
+        ty = node.value_type()
+        if node.kind() == "IntConst" and ty is not None and int(ty[1:]) > 64:
+            out.append(n)
+    return out
+
+
 WIDE = 0x0123456789ABCDEF_FEDCBA9876543210  # does not fit in u64
 
 
@@ -31,9 +43,9 @@ def _wide_const_function():
 
 def test_wide_const_node_is_minted_by_load_readonly_fold():
     f = _wide_const_function()
-    # Wideness shows up via `wide_const_bytes`, not the kind string, which
-    # is a plain `IntConst` for every interned constant.
-    wide_ids = [n for n in f.node_ids() if f.node(n).wide_const_bytes() is not None]
+    # Wideness shows up via `value_type`, not the kind string, which is a
+    # plain `IntConst` for every interned constant.
+    wide_ids = _wide_const_ids(f)
     assert wide_ids, "expected a wide IntConst node from the 16-byte fold"
     assert all(f.node(n).kind() == "IntConst" for n in wide_ids)
 
@@ -65,10 +77,10 @@ def test_wide_sint_const_literal_matches():
 
 
 def test_wide_const_node_sint_returns_full_value():
-    # `Node.sint()` / `uint()` cover every width up to 128 bits,
-    # so a wide constant surfaces its full value rather than None.
+    # `Node.sint()` covers every width up to 128 bits and `uint()` every
+    # width, so a wide constant surfaces its full value rather than None.
     f = _wide_const_function()
-    wide_ids = [n for n in f.node_ids() if f.node(n).wide_const_bytes() is not None]
+    wide_ids = _wide_const_ids(f)
     assert wide_ids
     for nid in wide_ids:
         node = f.node(nid)
@@ -76,11 +88,7 @@ def test_wide_const_node_sint_returns_full_value():
         assert isinstance(v, int)
         assert v == WIDE
         assert node.uint() == WIDE
-        # Agrees with the raw-bytes escape hatch.
-        wb = node.wide_const_bytes()
-        assert wb is not None
-        raw = bytes(wb)
-        assert v == int.from_bytes(raw, "little")
+        assert node.value_type() == "I128"
 
 
 # Top bits set, so a u64 truncation or a signed misread would be caught.
@@ -113,25 +121,23 @@ def test_i80_const_node_sint_returns_full_value():
     # The 10-byte x87 load folds to an I80 constant; sint decodes all
     # 80 bits.
     f = _i80_const_function()
-    wide_ids = [n for n in f.node_ids() if f.node(n).wide_const_bytes() is not None]
+    wide_ids = _wide_const_ids(f)
     assert wide_ids, "expected a wide IntConst node from the 10-byte fold"
     for nid in wide_ids:
         node = f.node(nid)
         v = node.sint()
         assert isinstance(v, int)
         assert v == I80_VALUE
-        wb = node.wide_const_bytes()
-        assert wb is not None
-        raw = bytes(wb)
-        assert len(raw) == 10  # 80-bit x87 extended = 10 bytes
-        assert v == int.from_bytes(raw, "little")
+        assert node.uint() == I80_VALUE
+        # 80-bit x87 extended.
+        assert node.value_type() == "I80"
 
 
 # I256/I512 are unreachable with the bundled x86-64 Sleigh spec: `vmovdqa
 # ymm0, [abs]` trips the wide-container guard (ymm0 sits inside the tracked
 # zmm0), and `vmovdqa64 zmm0, [abs]` lifts to an unclassified CallOther, so
-# no 64-byte Load is minted. `sint()` / `uint()` stop at 128 bits and return
-# None above it; use `wide_const_bytes()`.
+# no 64-byte Load is minted. `uint()` has no width cap; `sint()` stops at
+# 128 bits and returns None above it, there being no signed carrier.
 
 
 def test_small_const_node_sint_exact_value():
@@ -151,15 +157,15 @@ def test_small_const_node_sint_exact_value():
         if f.node(n).kind().startswith("IntConst") and f.node(n).sint() == value
     ]
     assert consts, "expected the imm64 IntConst to surface its exact value"
-    # Small constants have no wide-bytes representation.
-    assert f.node(consts[0]).wide_const_bytes() is None
+    # Within the u64 carrier, so not one of the wide constants.
+    assert consts[0] not in _wide_const_ids(f)
 
 
-def test_wide_const_bytes_is_bytes():
+def test_wide_const_uint_is_a_python_int():
     f = _wide_const_function()
-    wide = [f.node(n) for n in f.node_ids() if f.node(n).wide_const_bytes() is not None]
+    wide = [f.node(n) for n in _wide_const_ids(f)]
     assert wide
-    assert isinstance(wide[0].wide_const_bytes(), bytes)
+    assert isinstance(wide[0].uint(), int)
 
 
 def test_int_const_takes_the_unsigned_128_bit_half():
