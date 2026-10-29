@@ -119,7 +119,7 @@ fn compare(
     rom: &dyn ReadOnlyMemory,
     unchecked: &mut Unchecked,
 ) -> Verdict {
-    let stack_vn = raw.default_cc().stack_vn;
+    let stack_vn = raw.default_cc().stack_ptr;
     let mut compared = false;
     let mut skipped = BTreeSet::new();
     for (seed, small) in ENVS {

@@ -58,7 +58,7 @@ pub(crate) fn run_pipeline_x86_64(
     let cc = CallingConvention::x86_64_systemv()
         .build(strider.sleigh_regs())
         .expect("build cc");
-    let lr_vn = cc.link_register_vn;
+    let lr_vn = cc.link_register;
     let cfg = strider
         .build_cfg(
             MachineInsnAddr::from(base),

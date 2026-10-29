@@ -24,7 +24,7 @@ impl ReturnTargets<'_> {
                 let producer = function.producer(value);
                 match *function.node_kind(producer) {
                     NodeKind::InitialVar(id) => {
-                        function.default_cc().link_register_vn == Some(function.initial_vn(id))
+                        function.default_cc().link_register == Some(function.initial_vn(id))
                     }
                     NodeKind::Phi => {
                         let arms = self.arms(path, producer);
@@ -102,7 +102,7 @@ impl ReturnTargets<'_> {
                         holds == Held::ReturnAddress
                             && at.base.is_none()
                             && at.offset == 0
-                            && function.default_cc().link_register_vn.is_none()
+                            && function.default_cc().link_register.is_none()
                     }
                     NodeKind::MemPhi => {
                         out.extend(function.phi_data_inputs(node).map(below));

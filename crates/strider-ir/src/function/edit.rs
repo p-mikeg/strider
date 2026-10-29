@@ -718,10 +718,10 @@ pub(crate) mod test_fixtures {
             callee_saved_regs: Vec::new(),
             ret_val_regs: Vec::new(),
             ret_val_regs_float: Vec::new(),
-            stack_vn: strider_target::BuiltCallingConvention::default().stack_vn,
+            stack_ptr: strider_target::BuiltCallingConvention::default().stack_ptr,
             stack_args: None,
             ret_stack_pop: 0,
-            link_register_vn: None,
+            link_register: None,
             preserves_memory: false,
             preserves_all_registers: false,
             ..Default::default()

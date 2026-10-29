@@ -168,7 +168,7 @@ impl<'f> SiteClassifier<'f> {
         target_value: ValueId,
     ) -> Option<ResolvedTargets> {
         let function = self.function();
-        let lr = function.default_cc().link_register_vn?;
+        let lr = function.default_cc().link_register?;
         match *function.kind_of_value(strip_isa_mode_mask(function, target_value)) {
             NodeKind::InitialVar(id) if function.initial_vn(id) == lr => {
                 Some(ResolvedTargets::LinkRegister)

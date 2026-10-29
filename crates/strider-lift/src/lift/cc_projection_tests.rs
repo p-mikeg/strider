@@ -15,10 +15,10 @@ fn make_cc(
         callee_saved_regs,
         ret_val_regs,
         ret_val_regs_float: Vec::new(),
-        stack_vn,
+        stack_ptr: stack_vn,
         stack_args: None,
         ret_stack_pop: 0,
-        link_register_vn: None,
+        link_register: None,
         preserves_memory: false,
         preserves_all_registers: false,
         ..Default::default()
@@ -61,7 +61,7 @@ fn ret_and_clobber_split_full_width() {
         assert!(!clobbered.contains(&rax), "rax is ret, not a clobber");
         assert!(clobbered.contains(&rcx), "rcx is caller-saved, a clobber");
         assert!(!clobbered.contains(&rbx), "rbx is callee-saved, excluded");
-        assert!(!clobbered.contains(&sp), "sp is the stack_vn, excluded");
+        assert!(!clobbered.contains(&sp), "sp is the stack_ptr, excluded");
         assert_eq!(clobbered, vec![rcx], "rcx is the sole clobber");
     });
 }
