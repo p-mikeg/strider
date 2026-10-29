@@ -28,8 +28,8 @@ pub fn cc_ret_and_clobber_vns(
 ///
 /// The overlay is grouped by kind, so where a field lives says what it is:
 /// the facts the function rests on, settled once and touched by no operation,
-/// then every id-keyed payload table plus the graph-derived memos, both in
-/// [`SideTables`].
+/// then every id-keyed payload table in [`SideTables`], then the memos the
+/// analyses derive from the graph and [`Self::invalidate_analyses`] drops.
 #[derive(Clone)]
 pub struct Function {
     graph: Graph,
@@ -39,8 +39,8 @@ pub struct Function {
 
     // The facts.  None is keyed by an arena id, so [`Self::compact`] leaves
     // them alone, and none is derived from the graph, so
-    // `SideTables::invalidate_analyses` never clears one.  A derived,
-    // clearable verdict is a memo and belongs in the memo group instead.
+    // [`Self::invalidate_analyses`] never clears one.  A derived, clearable
+    // verdict is a memo and belongs in `memos` instead.
     /// The convention this function was built under.
     default_cc: strider_target::BuiltCallingConvention,
     /// The byte order of each space's loads and stores.
@@ -56,6 +56,11 @@ pub struct Function {
     call_register_frame_reach: Option<i128>,
 
     side_tables: SideTables,
+
+    /// What the analyses derived from the graph.  Written through a shared
+    /// borrow, so an analysis holding `&Function` fills them in, and dropped
+    /// whole by [`Self::invalidate_analyses`].
+    pub(super) memos: std::cell::RefCell<crate::function::memos::FunctionMemos>,
 }
 
 impl Function {
@@ -93,6 +98,7 @@ impl Function {
             assumptions: crate::AssumptionOptions::none(),
             call_register_frame_reach: None,
             side_tables: SideTables::new(vn_interner),
+            memos: std::cell::RefCell::default(),
         }
     }
 
@@ -168,7 +174,7 @@ impl Function {
             return;
         }
         self.assumptions.union_with(claims);
-        self.side_tables.invalidate_analyses();
+        self.invalidate_analyses();
     }
 
     /// Interns `value` masked to `ty`'s width.
@@ -404,7 +410,7 @@ impl Function {
         let addr = self.access_address(node)?;
         // Stack only: a heap address resolves through the same interner but is a
         // different region, so it is not an SP offset.
-        match self.side_tables().memory_decomp(addr) {
+        match self.memory_decomp(addr) {
             (crate::MemDecomp::Stack(_), slot) => slot,
             _ => None,
         }
@@ -504,6 +510,7 @@ impl Function {
         // arena with an old `NodeId`.
         let new_entry = remap.node_old_to_new(entry);
         self.side_tables.remap(&remap);
+        self.memos.get_mut().remap(&remap);
         // The dedup cache keys on `NodeKind`, which carries the `ConstId`, so
         // the id rewrite MUST precede the cache rebuild.
         self.gc_payload_tables();
@@ -733,11 +740,10 @@ mod function_skeleton_tests {
             "a fresh function claims nothing"
         );
         let v = f.node_outputs(f.entry())[0];
-        let memoized = |f: &super::Function| {
-            f.side_tables().memory_decomp(v).1.is_some() && f.side_tables().frame_escape().is_some()
-        };
-        f.side_tables().set_stack_slot(v, v, 16);
-        f.side_tables().set_frame_escape(true);
+        let memoized =
+            |f: &super::Function| f.memory_decomp(v).1.is_some() && f.frame_escape().is_some();
+        f.set_stack_slot(v, v, 16);
+        f.set_frame_escape(true);
         f.assume(&crate::AssumptionOptions::none());
         assert!(memoized(&f), "nothing added, the memos stand");
         let listed = crate::AssumptionOptions {
@@ -745,11 +751,11 @@ mod function_skeleton_tests {
             ..crate::AssumptionOptions::none()
         };
         f.assume(&listed);
-        assert!(f.side_tables().memory_decomp(v).1.is_none());
-        assert_eq!(f.side_tables().frame_escape(), None);
+        assert!(f.memory_decomp(v).1.is_none());
+        assert_eq!(f.frame_escape(), None);
         assert_eq!(f.assumptions(), &listed);
-        f.side_tables().set_stack_slot(v, v, 16);
-        f.side_tables().set_frame_escape(true);
+        f.set_stack_slot(v, v, 16);
+        f.set_frame_escape(true);
         f.assume(&listed);
         assert!(memoized(&f), "a claim in force adds nothing");
         f.assume(&crate::AssumptionOptions {
@@ -797,7 +803,7 @@ mod compact_tests {
         f.record_call_register_frame_reach(-8);
         f.assume(&listed);
 
-        f.side_tables().invalidate_analyses();
+        f.invalidate_analyses();
         f.compact().expect("compact succeeds on a valid function");
 
         let Function {
@@ -808,6 +814,7 @@ mod compact_tests {
             assumptions,
             call_register_frame_reach,
             side_tables: _,
+            memos: _,
         } = &f;
         assert_eq!(*default_cc, before.default_cc);
         assert_eq!(*byte_order, before.byte_order);
@@ -956,8 +963,7 @@ mod compact_tests {
             [entry_ctrl, mem_value, base_value, key_value],
             [],
         );
-        f.side_tables_mut()
-            .set_stack_slot(key_value, base_value, -16);
+        f.set_stack_slot(key_value, base_value, -16);
 
         let remap = f.compact().expect("compact must succeed");
 
@@ -976,7 +982,7 @@ mod compact_tests {
             "the zombie ahead of it must shift the value ids"
         );
         assert_eq!(
-            f.side_tables().memory_slot_resolved(new_key_value),
+            f.memory_slot_resolved(new_key_value),
             Some((new_base_value, -16)),
             "surviving memory_offsets entry must be remapped on key AND base"
         );
@@ -1096,10 +1102,9 @@ mod compact_tests {
             crate::node::ValueType::int(64),
         );
         let zombie_value = f.node_outputs(zombie_stack).iter().copied().next().unwrap();
-        f.side_tables_mut()
-            .set_stack_slot(zombie_value, zombie_value, -8);
+        f.set_stack_slot(zombie_value, zombie_value, -8);
         assert_eq!(
-            f.side_tables().memory_slot_resolved(zombie_value),
+            f.memory_slot_resolved(zombie_value),
             Some((zombie_value, -8)),
             "offset must be set before compact"
         );
@@ -1126,7 +1131,7 @@ mod compact_tests {
             f.node_outputs(n)
                 .first()
                 .copied()
-                .and_then(|v| f.side_tables().memory_slot_resolved(v))
+                .and_then(|v| f.memory_slot_resolved(v))
                 .map(|(_, o)| o)
                 == Some(-8)
         });

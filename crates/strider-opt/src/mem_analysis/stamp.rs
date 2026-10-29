@@ -3,10 +3,10 @@
 //!
 //! 1. Claims join the function's through [`Function::assume`], which drops the
 //!    classes and the frame-escape verdict when one is new; a run starts with
-//!    [`SideTables::invalidate_analyses`], which drops both.
+//!    [`Function::invalidate_analyses`], which drops both.
 //! 2. Everything decomposes under the function's claims
 //!    ([`strider_ir::Function::assumptions`]), which only grow.
-//! 3. [`SideTables::invalidate_analyses`] drops both and keeps the claims:
+//! 3. [`Function::invalidate_analyses`] drops both and keeps the claims:
 //!    after each pass or post-pass that changes the graph, and in
 //!    [`refresh_memory_classes`].  Any other post-pass drops the frame-escape
 //!    verdict alone; compaction drops it too and remaps the classes.
@@ -17,7 +17,7 @@
 //!    as it is, so a post-pass or an outside edit refreshes it first.
 //!
 //! [`Function::assume`]: strider_ir::Function::assume
-//! [`SideTables::invalidate_analyses`]: strider_ir::SideTables::invalidate_analyses
+//! [`Function::invalidate_analyses`]: strider_ir::Function::invalidate_analyses
 
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
@@ -46,7 +46,7 @@ pub(crate) fn stamp_all(edit: &mut crate::EditFunction<'_>) {
 /// pipeline.
 pub fn refresh_memory_classes(edit: &mut crate::EditFunction<'_>) {
     edit.clean();
-    edit.function().side_tables().invalidate_analyses();
+    edit.function().invalidate_analyses();
     stamp_all(edit);
 }
 
