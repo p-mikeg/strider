@@ -124,6 +124,20 @@ fn rewrite_rule_runtime_rejects_unbound_capture_in_rhs() {
     );
 }
 
+/// A refused RHS fails the rule at construction, not on every firing.
+#[test]
+fn rewrite_rule_runtime_rejects_a_refused_template() {
+    let a = Capture::new();
+    let mut tb = strider_pattern::template::TemplateBuilder::new();
+    let rhs = tb.capture(a);
+    tb.set_value_ty(rhs, T::int(64));
+    let err = match rewrite_rule_runtime(var(a).into_pattern(), tb.finish()) {
+        Ok(_) => panic!("expected the template's refusal, got Ok"),
+        Err(e) => e.to_string(),
+    };
+    assert!(err.contains("targets a capture"), "{err}");
+}
+
 /// A capture bound on only SOME `one_of` arms must be rejected at construction.
 ///
 /// Exactly one arm fires per match, so a rule whose RHS needs `k` has nothing to
