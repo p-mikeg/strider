@@ -28,7 +28,7 @@ impl KnownBitsFacts {
     /// `None` for untracked types, meaning fully unknown, not a known zero.
     fn from_const(val: u128, ty: ValueType) -> Option<Self> {
         let type_mask = ty.int_mask_u128()?;
-        let masked = ty.get_unsigned_int(val)?;
+        let masked = val & type_mask;
         Some(KnownBitsFacts {
             ones: masked,
             zeros: type_mask ^ masked,
