@@ -14,6 +14,17 @@ use dashu_int::{IBig, UBig};
 
 use crate::node::{IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType};
 
+/// Every bit below `bits` set, for `bits <= 128`. Total at both ends: `0`
+/// shifts a `1` out of range and `128` shifts `u128::MAX` out of range, and
+/// the width is only checked by the constructors, not by the type.
+const fn carrier_ones(bits: usize) -> u128 {
+    match bits {
+        0 => 0,
+        128 => u128::MAX,
+        b => (1u128 << b) - 1,
+    }
+}
+
 /// `v` with every bit above `ty`'s width cleared. A float has no integer
 /// bits: 0, as [`ValueType::wrap_u128`] gives.
 #[must_use]
@@ -27,7 +38,7 @@ pub fn mask(v: &UBig, ty: ValueType) -> UBig {
     if bits <= 128
         && let Ok(n) = u128::try_from(v)
     {
-        return UBig::from(n & (u128::MAX >> (128 - bits)));
+        return UBig::from(n & carrier_ones(bits));
     }
     v.clone().split_bits(bits).0
 }
@@ -42,7 +53,7 @@ pub fn all_ones(ty: ValueType) -> UBig {
     // Every width but the two widest; a shift and a subtraction per call
     // otherwise, for one of sixteen answers.
     if bits <= 128 {
-        return UBig::from(u128::MAX >> (128 - bits));
+        return UBig::from(carrier_ones(bits));
     }
     (UBig::ONE << bits) - UBig::ONE
 }
@@ -323,6 +334,24 @@ pub fn lzcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
 
 #[cfg(test)]
 mod tests {
+    /// The variants are public and only the CONSTRUCTORS check the width, so
+    /// `Int(0)` reaches these `pub fn`s. Both answered 0 before the carrier
+    /// fast paths; a `128 - bits` shift there overflows instead.
+    #[test]
+    fn the_width_primitives_are_total_at_both_ends_of_the_carrier() {
+        use super::{all_ones, mask};
+        use crate::UBig;
+        use crate::node::ValueType;
+        assert_eq!(all_ones(ValueType::Int(0)), UBig::ZERO);
+        assert_eq!(mask(&UBig::from(0xffu32), ValueType::Int(0)), UBig::ZERO);
+        assert_eq!(all_ones(ValueType::Int(128)), UBig::from(u128::MAX));
+        assert_eq!(
+            mask(&(UBig::ONE << 200usize), ValueType::Int(128)),
+            UBig::ZERO,
+            "a value past the carrier still masks at the carrier's own width"
+        );
+    }
+
     use super::*;
 
     fn set_bits(v: &UBig) -> usize {
