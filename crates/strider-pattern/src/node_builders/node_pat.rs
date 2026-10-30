@@ -72,7 +72,7 @@ pub(crate) struct NodePat {
     kind: KindSpec,
     /// Sparse: raw input slot to compiler.
     inputs: Vec<(InputSlot, SubCompiler)>,
-    node_predicate: Option<NodePredicateFactory>,
+    node_predicates: Vec<NodePredicateFactory>,
     captures: Vec<Capture>,
     anchor: AnchorKind,
     output_width: Option<u32>,
@@ -92,7 +92,7 @@ impl NodePat {
         Self {
             kind,
             inputs: Vec::new(),
-            node_predicate: None,
+            node_predicates: Vec::new(),
             captures: Vec::new(),
             anchor: AnchorKind::None,
             output_width: None,
@@ -179,13 +179,7 @@ impl NodePat {
     where
         F: FnOnce() -> NodePredicate + 'static + Send,
     {
-        self.node_predicate = Some(match self.node_predicate.take() {
-            Some(prev) => Box::new(move || {
-                let (prev, next) = (prev(), f());
-                Box::new(move |m, n| prev(m, n) && next(m, n))
-            }),
-            None => Box::new(f),
-        });
+        self.node_predicates.push(Box::new(f));
         self
     }
 
@@ -240,7 +234,7 @@ impl NodePat {
         let NodePat {
             kind,
             inputs,
-            node_predicate,
+            node_predicates,
             captures,
             anchor,
             output_width,
@@ -281,7 +275,7 @@ impl NodePat {
             }
         }
         lower_outputs(b, node, outputs);
-        if let Some(factory) = node_predicate {
+        for factory in node_predicates {
             b.set_node_predicate_at(node, factory());
         }
         for c in captures {

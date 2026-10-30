@@ -37,7 +37,7 @@ fn unfolded_nodes(graph: &PatGraph) -> usize {
             .node_inputs(node)
             .into_iter()
             .map(|value| size.get(&graph.producer(value)).copied().unwrap_or(1));
-        let own = if graph.node_kind(node).alternation {
+        let own = if graph.node_kind(node).is_alternation() {
             1usize.saturating_add(inputs.max().unwrap_or(0))
         } else {
             inputs.fold(1usize, usize::saturating_add)
@@ -75,7 +75,7 @@ impl Pattern {
             return true;
         };
         let vertex = self.graph.node_kind(root);
-        vertex.alternation || vertex.kind.matches(kind)
+        vertex.is_alternation() || vertex.kind.matches(kind)
     }
 
     /// Seal point of [`MatcherBuilder`](crate::matcher::MatcherBuilder):
@@ -198,7 +198,7 @@ impl Pattern {
                     caps
                 })
                 .collect();
-        if self.graph.node_kind(node).alternation {
+        if self.graph.node_kind(node).is_alternation() {
             // Exactly one arm fires, so only what EVERY arm binds is guaranteed.
             let mut arms = per_input.into_iter();
             if let Some(first) = arms.next() {
@@ -227,11 +227,7 @@ impl Pattern {
         let Ok(root) = self.root() else {
             return;
         };
-        let slot = &mut self.graph.node_kind_mut(root).post_match;
-        *slot = Some(match slot.take() {
-            Some(prev) => Box::new(move |m, n, ty, b| prev(m, n, ty, b) && f(m, n, ty, b)),
-            None => f,
-        });
+        self.graph.node_kind_mut(root).post_matches.push(f);
     }
 
     /// Builder form of `set_root_post_match`.
@@ -336,7 +332,7 @@ mod tests {
             .into_iter()
             .map(|v| unfold(g, g.producer(v), memo))
             .collect();
-        let s = if g.node_kind(n).alternation {
+        let s = if g.node_kind(n).is_alternation() {
             1usize.saturating_add(kids.iter().copied().max().unwrap_or(0))
         } else {
             kids.iter().fold(1usize, |acc, &k| acc.saturating_add(k))
@@ -382,7 +378,7 @@ mod tests {
                 .into_iter()
                 .map(|v| memo[&p.graph.producer(v)])
                 .collect();
-            p.graph.node_kind(n).alternation && arms.iter().any(|&a| a != arms[0])
+            p.graph.node_kind(n).is_alternation() && arms.iter().any(|&a| a != arms[0])
         }));
     }
 

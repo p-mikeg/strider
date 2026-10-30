@@ -184,6 +184,28 @@ fn graph_three_adds() -> strider_ir::Function {
     let final_ = t.add(s12, s3);
     t.ret_val(final_)
 }
+/// Stacked guards on one node all run: a later one does not replace an
+/// earlier rejection.
+#[test]
+fn stacked_guards_compose_rather_than_replace() {
+    let function = graph_three_adds();
+    let matcher = Matcher::new(&function);
+    let reject_then_accept = int_add(anything(), anything())
+        .when_match(|_m, _ty, _b| false)
+        .when_match(|_m, _ty, _b| true)
+        .into_pattern();
+    assert!(matcher.find_all(&reject_then_accept).unwrap().is_empty());
+    let root_guarded = int_add(anything(), anything())
+        .into_pattern()
+        .with_root_post_match(Box::new(|_, _, _, _| false))
+        .with_root_post_match(Box::new(|_, _, _, _| true));
+    assert!(matcher.find_all(&root_guarded).unwrap().is_empty());
+    let accepted = int_add(anything(), anything())
+        .when_match(|_m, _ty, _b| true)
+        .into_pattern();
+    assert_eq!(matcher.find_all(&accepted).unwrap().len(), 5);
+}
+
 #[test]
 fn each_match_has_its_own_bindings() {
     let function = graph_three_adds();

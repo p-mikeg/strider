@@ -5,7 +5,6 @@
 //! Input order and each input's sparse consumer slot ride on the node weight,
 //! because petgraph edge iteration order is unspecified.
 
-use anyhow::anyhow;
 use petgraph::algo::toposort;
 use petgraph::graph::{DiGraph, NodeIndex};
 use strider_graph::{Graph, NeverCacheable, ValueId};
@@ -35,6 +34,9 @@ pub(crate) trait SealNode {
 /// [`NodeIndex`] because staging never removes nodes.
 pub(crate) struct StagedGraph<N: SealNode, V> {
     g: DiGraph<StagedNode<N, V>, ()>,
+    /// The first build-time refusal. A staged graph is untrusted input, so
+    /// refusing one is a `Result`, never a panic.
+    refusal: Option<String>,
 }
 
 impl<N: SealNode, V> Default for StagedGraph<N, V> {
@@ -45,7 +47,10 @@ impl<N: SealNode, V> Default for StagedGraph<N, V> {
 
 impl<N: SealNode, V> StagedGraph<N, V> {
     pub(crate) fn new() -> Self {
-        Self { g: DiGraph::new() }
+        Self {
+            g: DiGraph::new(),
+            refusal: None,
+        }
     }
 
     pub(crate) fn add_node(&mut self, kind: N) -> usize {
@@ -81,6 +86,11 @@ impl<N: SealNode, V> StagedGraph<N, V> {
             .add_edge(NodeIndex::new(prod_node), NodeIndex::new(consumer), ());
     }
 
+    /// Keeps the first refusal; later ones are dropped.
+    pub(crate) fn reject(&mut self, why: String) {
+        self.refusal.get_or_insert(why);
+    }
+
     /// For the side-specific annotators.
     pub(crate) fn kind_mut(&mut self, node: usize) -> &mut N {
         &mut self.g[NodeIndex::new(node)].kind
@@ -100,18 +110,19 @@ impl<N: SealNode, V> StagedGraph<N, V> {
     }
 
     /// Materialises in producer-before-consumer order, bridging each staged
-    /// payload via [`SealNode`].
-    ///
-    /// # Errors
-    /// On a cyclic staged graph, which is a builder bug: pattern and template
-    /// graphs are always DAGs.
-    pub(crate) fn seal(self) -> anyhow::Result<Graph<N::Sealed, V, NeverCacheable>> {
-        let order = toposort(&self.g, None).map_err(|c| {
-            anyhow!(
-                "cycle in staged pattern/template graph at {:?}",
-                c.node_id()
-            )
-        })?;
+    /// payload via [`SealNode`], paired with the refusal to report: the first
+    /// one recorded, else a cycle, which seals to an empty graph.
+    pub(crate) fn seal(self) -> (Graph<N::Sealed, V, NeverCacheable>, Option<String>) {
+        let order = match toposort(&self.g, None) {
+            Ok(order) => order,
+            Err(c) => {
+                let cycle = format!(
+                    "cycle in staged pattern/template graph at {:?}",
+                    c.node_id()
+                );
+                return (Graph::new(), Some(self.refusal.unwrap_or(cycle)));
+            }
+        };
         // Owned, indexable by node id, `take`n exactly once in topo order.
         let mut weights: Vec<Option<StagedNode<N, V>>> = self
             .g
@@ -138,6 +149,6 @@ impl<N: SealNode, V> StagedGraph<N, V> {
             let node_id = graph.create_node(kind.seal(input_slots), input_values, outputs);
             materialised[i] = graph.node_outputs(node_id).to_vec();
         }
-        Ok(graph)
+        (graph, self.refusal)
     }
 }
