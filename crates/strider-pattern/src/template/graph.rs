@@ -9,7 +9,6 @@ use strider_graph::{Graph, NeverCacheable, NodeId};
 
 use crate::capture::Capture;
 use crate::graph_ext::HasInputSlots;
-use crate::matcher::OutputKindSpec;
 use crate::template::{TemplateKind, TemplateTy};
 
 /// A capture is split across both vertex enums. The node side is a
@@ -39,41 +38,25 @@ pub(crate) enum TmplNodeKind {
     Capture,
 }
 
-/// The value side of the build graph.
+/// The value side of the build graph. A built node's output declares its
+/// slot and kind, which is what lets a multi-output interior node, such as a
+/// `Store` or `Call` whose memory token a later node consumes, wire the right
+/// slot.
 pub(crate) enum TmplValue {
-    /// A built node's output: slot, kind and type.
-    TmplOutput(TmplOutput),
+    /// A built node's value output, typed at instantiation.
+    Value { slot: usize, ty: TemplateTy },
+    /// A built node's memory output.
+    Memory { slot: usize },
     /// Resolves to `bindings.get_value(c)` at instantiation.
     ValueCapture(Capture),
 }
 
-/// One slot of a materialised node's output signature. Declaring the kind
-/// (value / memory / control / phi-token) is what lets a multi-output interior
-/// node, such as a `Store` or `Call` whose memory token a later node consumes,
-/// wire the right slot.
-pub(crate) struct TmplOutput {
-    pub(crate) slot: usize,
-    pub(crate) kind: OutputKindSpec,
-    /// Resolved at instantiation, and meaningful only for value outputs;
-    /// memory / control / phi-token slots ignore it.
-    pub(crate) ty: TemplateTy,
-}
-
-impl TmplOutput {
-    /// Inherits the rewrite root's type.
-    pub(crate) fn value(slot: usize) -> Self {
-        Self {
-            slot,
-            kind: OutputKindSpec::AnyValue,
-            ty: TemplateTy::InheritRoot,
-        }
-    }
-
-    pub(crate) fn memory(slot: usize) -> Self {
-        Self {
-            slot,
-            kind: OutputKindSpec::Memory,
-            ty: TemplateTy::InheritRoot,
+impl TmplValue {
+    /// `None` for a capture, which no node builds.
+    pub(crate) fn built_slot(&self) -> Option<usize> {
+        match *self {
+            Self::Value { slot, .. } | Self::Memory { slot } => Some(slot),
+            Self::ValueCapture(_) => None,
         }
     }
 }
@@ -128,15 +111,16 @@ impl Template {
         self.graph
             .all_value_ids()
             .filter_map(|v| match self.graph.value_kind_ref(v) {
-                TmplValue::ValueCapture(cap) => Some(*cap),
                 // A capture reached only through `capture_typed` lives in the
                 // output's TYPE, not as a value vertex. Unreported, an
                 // unbound one resolves to `root_ty` and the rewrite builds a
                 // node at the wrong width instead of failing the check.
-                TmplValue::TmplOutput(o) => match o.ty {
-                    crate::template::TemplateTy::InheritBinding(cap) => Some(cap),
-                    _ => None,
-                },
+                TmplValue::ValueCapture(cap)
+                | TmplValue::Value {
+                    ty: TemplateTy::InheritBinding(cap),
+                    ..
+                } => Some(*cap),
+                TmplValue::Value { .. } | TmplValue::Memory { .. } => None,
             })
             .chain(self.declared_captures.iter().copied())
     }
@@ -165,14 +149,6 @@ impl Template {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
-    #[test]
-    fn output_vertex_carries_build_type_not_node() {
-        let o = TmplOutput::value(0);
-        assert!(matches!(o.ty, TemplateTy::InheritRoot));
-    }
-
     /// `bool_not(var(c))` seals into `int_xor(var(c), IntConst(1)):I1`: the xor,
     /// its const operand and the captured var, so three node vertices.
     #[test]

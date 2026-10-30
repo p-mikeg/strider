@@ -331,19 +331,9 @@ fn try_match_at(
     } else {
         // Commutative only on a raw `MatcherBuilder` node whose spec admits a
         // commutative kind: no typed builder puts an existential on one.
-        let pinned: Vec<usize> = if commutative {
-            Vec::new()
-        } else {
-            inputs[..n_fixed]
-                .iter()
-                .map(|e| match e.consumer_slot {
-                    InputSlot::At(s) => s,
-                    InputSlot::Any => unreachable!("an existential in the fixed prefix"),
-                })
-                .collect()
-        };
+        let fixed = &inputs[..n_fixed];
         (0..ctx.function().node_inputs(ir_node).len())
-            .filter(|s| !pinned.contains(s))
+            .filter(|&s| commutative || !fixed.iter().any(|e| e.consumer_slot == InputSlot::At(s)))
             .collect()
     };
 
@@ -782,19 +772,7 @@ fn value_interchangeable(a: &PatValue, b: &PatValue) -> bool {
         && a.width == b.width
         && a.slot_mode == b.slot_mode
         && a.token_fallback == b.token_fallback
-        && output_kind_eq(&a.kind, &b.kind)
-}
-
-fn output_kind_eq(a: &OutputKindSpec, b: &OutputKindSpec) -> bool {
-    match (a, b) {
-        (OutputKindSpec::Any, OutputKindSpec::Any)
-        | (OutputKindSpec::AnyValue, OutputKindSpec::AnyValue)
-        | (OutputKindSpec::Control, OutputKindSpec::Control)
-        | (OutputKindSpec::Memory, OutputKindSpec::Memory)
-        | (OutputKindSpec::PhiToken, OutputKindSpec::PhiToken) => true,
-        (OutputKindSpec::Value(x), OutputKindSpec::Value(y)) => x == y,
-        _ => false,
-    }
+        && a.kind == b.kind
 }
 
 /// The IR input slots one pattern input may occupy: the whole difference
@@ -957,7 +935,7 @@ fn vertex_imposes_requirement(o: &PatValue) -> bool {
         || o.identity.is_some()
         || o.width.is_some()
         || o.slot_mode == SlotMode::Pinned
-        || !matches!(o.kind, OutputKindSpec::Any)
+        || o.kind != OutputKindSpec::Any
 }
 
 /// `value` is a memory token whose producer offers no value output, so a
@@ -980,7 +958,6 @@ fn output_ok(o: &PatValue, f: &strider_ir::Function, value: ValueId) -> bool {
         }
         OutputKindSpec::Control => matches!(f.value_kind(value), ValueKind::Control),
         OutputKindSpec::Memory => matches!(f.value_kind(value), ValueKind::Memory),
-        OutputKindSpec::PhiToken => matches!(f.value_kind(value), ValueKind::PhiToken),
     };
     kind_ok
         && o.width

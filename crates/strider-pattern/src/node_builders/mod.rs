@@ -1,8 +1,7 @@
 //! The IR's memory side-channel (`InitialMemory -> Store -> MemPhi -> Call ->
 //! Load`) is matched like the value and control chains: a memory token is a
-//! real `PatValue` vertex carrying
-//! [`OutputKindSpec::Memory`](crate::matcher::OutputKindSpec::Memory), so a
-//! memory-side builder's input and produced token are both genuine vertices.
+//! real `PatValue` vertex of the memory kind, so a memory-side builder's input
+//! and produced token are both genuine vertices.
 
 pub mod flow;
 pub mod function_arg;
@@ -227,7 +226,6 @@ pub(crate) fn staged_shape(pat: &crate::Pattern) -> String {
                 OutputKindSpec::Value(_) => "Value",
                 OutputKindSpec::Control => "Control",
                 OutputKindSpec::Memory => "Memory",
-                OutputKindSpec::PhiToken => "PhiToken",
             };
             let _ = writeln!(
                 out,

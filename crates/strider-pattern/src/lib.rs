@@ -22,7 +22,6 @@ pub mod template;
 pub(crate) mod typed;
 
 use strider_ir::IRViewer;
-use strider_ir::node::ValueKind;
 
 pub use bindings::Bindings;
 pub use capture::Capture;
@@ -49,12 +48,8 @@ pub use template::{Template, TemplateCtx, instantiate, instantiate_guarded};
 /// An `IntCmp` root's output type is always `I1`, so signed / carry handling
 /// has to read the operand type instead.
 pub fn first_value_input_type(ctx: &TemplateCtx<'_>) -> Option<strider_ir::node::ValueType> {
-    let inputs = ctx.function.node_inputs(ctx.root);
-    let inp = inputs.into_iter().next()?;
-    match ctx.function.value_kind(inp) {
-        ValueKind::Typed(t) => Some(t),
-        _ => None,
-    }
+    let input = ctx.function.node_inputs(ctx.root).into_iter().next()?;
+    ctx.function.value_kind(input).as_value()
 }
 
 pub use typed::{
