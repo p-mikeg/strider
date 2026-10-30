@@ -70,15 +70,12 @@ pub trait IRBuilderExt: IRBuilder {
             return Ok(value_id);
         }
 
-        // A constant folds where the output has a `u128` modulus; past it the
-        // carrier cannot hold the sign bits, so a real `Extend` is emitted.
-        if let Some(v) = self.int_const_u128(value_id) {
+        // Both types are integers by the checks above, so `eval::mask` is the
+        // width reduction and not a float's empty bit set.
+        if let Some(v) = self.int_const(value_id).cloned() {
             let folded = match op {
-                ExtendOp::SignExtend => {
-                    eval::sign_extend(&UBig::from(v), curr_output_type, output_type)
-                        .and_then(|k| u128::try_from(&k).ok())
-                }
-                ExtendOp::ZeroExtend => output_type.get_unsigned_int(v),
+                ExtendOp::SignExtend => eval::sign_extend(&v, curr_output_type, output_type),
+                ExtendOp::ZeroExtend => Some(eval::mask(&v, output_type)),
             };
             if let Some(k) = folded {
                 return self.build_int_const(k, output_type);
