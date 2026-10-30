@@ -1,7 +1,7 @@
 use super::*;
 use crate::test_support::{assert_returns_const, make_fn, return_kind, run_to_fixed_point};
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp, UBig};
+use strider_ir::{ExtendOp, FunctionBuilder, IntBinaryOp};
 use strider_ir_test_utils::RegisterSet;
 
 /// `(x & 0xF0) & 0x0F`: the masks are disjoint, so the result is 0.
@@ -177,11 +177,14 @@ fn analyze_returns_populated_map_no_merge_error() -> Result<()> {
     let ctx = &fg;
     let known = super::analyze(ctx)?;
     let return_val = return_value(fg.graph())?;
-    let any_known_four = known.iter().any(|(out, kb)| {
+    let any_known_four = known.iter().any(|(out, &kb)| {
         let Some(ty) = fg.value_type_opt(out) else {
             return false;
         };
-        kb.all_known(ty) && kb.ones == UBig::from(4u8)
+        let Some(mask) = ty.int_mask_u128() else {
+            return false;
+        };
+        kb.all_known(mask) && kb.ones == 4
     });
     assert!(
         any_known_four,
@@ -957,13 +960,11 @@ fn diamond_folds_absorb_exactly_their_shared_cone_addrs() -> Result<()> {
 fn kb_default_is_fully_unknown_not_all_zero_or_all_one() {
     let kb = super::KnownBitsFacts::default();
     assert_eq!(
-        kb.ones,
-        UBig::ZERO,
+        kb.ones, 0,
         "KnownBitsFacts::default().ones must be 0 (no bit known to be 1)"
     );
     assert_eq!(
-        kb.zeros,
-        UBig::ZERO,
+        kb.zeros, 0,
         "KnownBitsFacts::default().zeros must be 0 (no bit known to be 0)"
     );
 }
@@ -1059,7 +1060,7 @@ fn kb_shift_mismatch(free: u128, ones: u128, k: u64, left: bool) -> Option<Strin
         .unwrap();
     b.build_return(Some(shifted), &[]).unwrap();
     let f = b.build().unwrap();
-    let kb = analyze(&f).unwrap()[shifted].clone();
+    let kb = analyze(&f).unwrap()[shifted];
 
     let (mut and_all, mut or_all) = (u128::MAX, 0u128);
     for concrete in 0u128..256 {
@@ -1067,9 +1068,8 @@ fn kb_shift_mismatch(free: u128, ones: u128, k: u64, left: bool) -> Option<Strin
         and_all &= out;
         or_all |= out;
     }
-    // The fixture is I8, so both fact sets fit the reference's carrier.
-    let bad_ones = u128::try_from(&kb.ones).expect("an I8 fact set") & !and_all;
-    let bad_zeros = u128::try_from(&kb.zeros).expect("an I8 fact set") & or_all;
+    let bad_ones = kb.ones & !and_all;
+    let bad_zeros = kb.zeros & or_all;
     (bad_ones != 0 || bad_zeros != 0).then(|| {
         format!(
             "free={free:#x} ones={ones:#x} k={k} left={left} kb={kb:?} \
@@ -1199,22 +1199,14 @@ fn the_constant_only_resolver_reads_constants_and_nothing_else() -> Result<()> {
         )[2],
     );
     let [lhs, rhs] = fg.node_inputs_exact::<2>(or)?;
-    assert_eq!(
-        resolve(rhs).ones,
-        UBig::from(0xF0u32),
-        "the interned constant resolves"
-    );
-    assert_eq!(resolve(rhs).zeros, UBig::from(0xFFFF_FF0Fu32));
+    assert_eq!(resolve(rhs).ones, 0xF0, "the interned constant resolves");
+    assert_eq!(resolve(rhs).zeros, 0xFFFF_FF0F);
     assert_eq!(
         (resolve(lhs).ones, resolve(lhs).zeros),
-        (UBig::ZERO, UBig::ZERO),
+        (0, 0),
         "a variable has no info"
     );
-    assert_eq!(
-        resolve(x).ones,
-        UBig::ZERO,
-        "the read-back variable has none either"
-    );
+    assert_eq!(resolve(x).ones, 0, "the read-back variable has none either");
     Ok(())
 }
 
@@ -1231,10 +1223,7 @@ fn a_shift_past_the_width_proves_every_bit_zero() -> Result<()> {
         .next()
         .expect("a Return node");
     let kb = one_hop(&fg, fg.node_inputs(ret)[2]).expect("the shift is tracked");
-    assert_eq!(
-        (kb.ones, kb.zeros),
-        (UBig::ZERO, UBig::from(0xFFFF_FFFFu32))
-    );
+    assert_eq!((kb.ones, kb.zeros), (0, 0xFFFF_FFFF));
     Ok(())
 }
 
@@ -1250,17 +1239,15 @@ fn a_right_shift_proves_its_vacated_bits_zero() -> Result<()> {
         .next()
         .expect("a Return node");
     let kb = one_hop(&fg, fg.node_inputs(ret)[2]).expect("the shift is tracked");
-    assert_eq!(
-        (kb.ones, kb.zeros),
-        (UBig::ZERO, UBig::from(0xFFFF_FF00u32))
-    );
+    assert_eq!((kb.ones, kb.zeros), (0, 0xFFFF_FF00));
     Ok(())
 }
 
-/// The lattice is as wide as the type: `And(x:I256, 3)` proves every bit but
-/// the low two zero, 254 of them past the `u128` carrier.
+/// Past the `u128` carrier the transfer proves nothing rather than reporting
+/// a mask no `u128` holds: the arm is skipped entirely, so no caller can read
+/// a zeroed mask back as "every bit known".
 #[test]
-fn a_width_past_the_carrier_is_tracked_at_its_own_width() -> Result<()> {
+fn a_width_past_the_carrier_is_skipped_not_defaulted() -> Result<()> {
     let wide = ValueType::int(256);
     let vn = strider_ir_test_utils::reg_vn(0x2000, 32);
     let (fg, _x) = crate::test_support::make_fn_with_var(vn, |b, x| {
@@ -1273,9 +1260,10 @@ fn a_width_past_the_carrier_is_tracked_at_its_own_width() -> Result<()> {
         .expect("a Return node");
     let masked = fg.node_inputs(ret)[2];
     assert_eq!(fg.value_type_opt(masked), Some(wide));
-    let want = strider_ir::eval::all_ones(wide) ^ UBig::from(3u8);
-    let kb = one_hop(&fg, masked).expect("the And is tracked");
-    assert_eq!((kb.ones, kb.zeros), (UBig::ZERO, want.clone()));
-    assert_eq!(analyze(&fg)?[masked].zeros, want);
+    assert!(
+        node_known_bits(&fg, fg.producer(masked), &const_only(&fg))?.is_none(),
+        "an And the carrier cannot hold yields no facts at all"
+    );
+    assert_eq!((analyze(&fg)?[masked].ones, 0), (0, 0));
     Ok(())
 }
