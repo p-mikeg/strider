@@ -14,11 +14,11 @@ use strider_pattern::{
     float_abs, float_add, float_binary, float_ceil, float_cmp, float_const, float_div, float_eq,
     float_floor, float_is_nan, float_le, float_lt, float_mul, float_ne, float_neg, float_round,
     float_sqrt, float_sub, float_to_int, initial_var, initial_var_for, inputs_of_width, int_add,
-    int_and, int_binary, int_carry, int_cmp, int_const, int_const_any_width, int_div, int_eq,
-    int_extend, int_le, int_lt, int_lzcount, int_mul, int_ne, int_neg, int_not, int_or,
-    int_popcount, int_rem, int_sborrow, int_scarry, int_sdiv, int_shl, int_shr, int_sign_extend,
-    int_sle, int_slt, int_srem, int_sshr, int_sub, int_truncate, int_xor, int_zero_extend,
-    predicate, value_of_width, var,
+    int_and, int_binary, int_carry, int_cmp, int_const, int_const_all_ones, int_const_any_width,
+    int_div, int_eq, int_extend, int_le, int_lt, int_lzcount, int_mul, int_ne, int_neg, int_not,
+    int_or, int_popcount, int_rem, int_sborrow, int_scarry, int_sdiv, int_shl, int_shr,
+    int_sign_extend, int_sle, int_slt, int_srem, int_sshr, int_sub, int_truncate, int_xor,
+    int_zero_extend, predicate, value_of_width, var,
 };
 
 fn count(
@@ -707,6 +707,30 @@ fn const_family() {
     let fx = make_empty_fn(|b| b.build_int_const(u128::MAX, T::int(64))).unwrap();
     assert_eq!(count(|| int_const(u128::MAX).into_pattern(), &fx), 1);
     let fx = make_empty_fn(|b| b.build_int_const(5u64, T::int(64))).unwrap();
+    assert_eq!(count(|| int_const(u128::MAX).into_pattern(), &fx), 0);
+
+    // A query value past the `u128` carrier names an I256/I512 constant.
+    let wide = (UBig::ONE << 200usize) | UBig::from(3u8);
+    let fx = make_empty_fn(|b| b.build_int_const(wide.clone(), T::int(256))).unwrap();
+    assert_eq!(count(|| int_const(wide.clone()).into_pattern(), &fx), 1);
+    assert_eq!(
+        count(
+            || int_const(vec![UBig::ONE, wide.clone()]).into_pattern(),
+            &fx
+        ),
+        1
+    );
+    assert_eq!(
+        count(|| int_const(UBig::ONE << 200usize).into_pattern(), &fx),
+        0
+    );
+    assert_eq!(count(|| int_const_all_ones().into_pattern(), &fx), 0);
+
+    // A negative query wraps into the matched width, so -1 is the all-ones
+    // constant at I256, which no `u128` literal names.
+    let fx = make_empty_fn(|b| b.build_all_ones(T::int(256))).unwrap();
+    assert_eq!(count(|| int_const(-1i32).into_pattern(), &fx), 1);
+    assert_eq!(count(|| int_const_all_ones().into_pattern(), &fx), 1);
     assert_eq!(count(|| int_const(u128::MAX).into_pattern(), &fx), 0);
 
     let fx = make_empty_fn(|b| b.build_int_const(1u64, T::I1)).unwrap();
