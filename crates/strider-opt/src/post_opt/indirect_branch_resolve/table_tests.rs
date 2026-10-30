@@ -2883,3 +2883,41 @@ fn a_heap_verdict_opens_the_table_only_under_its_claim() {
         "a later run without the claim keeps it"
     );
 }
+
+/// A dispatch whose index, scale and address all live at `I256`: the whole
+/// table resolves, where a `u128` index mask refused the site outright.
+#[test]
+fn classify_table_dispatch_resolves_an_i256_index() {
+    let wide = ValueType::int(256);
+    let (g, _target) = build_with_target(|fb| {
+        let at = fb.build_int_const(0x9000u64, wide).unwrap();
+        let raw = fb.build_load(at, VnSpace::RAM, wide).unwrap();
+        let mask = fb.build_int_const(0x7u64, wide).unwrap();
+        let idx = fb
+            .build_int_binary_operation(raw, mask, IntBinaryOp::And, wide)
+            .unwrap();
+        let stride = fb.build_int_const(4u64, wide).unwrap();
+        let scaled = fb
+            .build_int_binary_operation(idx, stride, IntBinaryOp::Mul, wide)
+            .unwrap();
+        let base = fb.build_int_const(0x4000u64, wide).unwrap();
+        let addr = fb
+            .build_int_binary_operation(base, scaled, IntBinaryOp::Add, wide)
+            .unwrap();
+        fb.build_load(addr, VnSpace::RAM, ValueType::int(32))
+            .unwrap()
+    });
+    let rom = MockRom::strided(
+        0x4000,
+        4,
+        vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
+        4,
+    );
+    match classify(&g, Some(&rom)) {
+        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
+            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
+            vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]
+        ),
+        other => panic!("expected the eight i256-indexed targets; got {other:?}"),
+    }
+}

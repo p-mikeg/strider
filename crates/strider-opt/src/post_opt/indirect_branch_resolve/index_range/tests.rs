@@ -3164,6 +3164,43 @@ fn a_range_query_past_the_carrier_is_bounded_by_its_own_width() {
     );
 }
 
+/// A guard and a scaling past the `u128` carrier track end to end: the guard
+/// `x < 1000` at `I256` and the `x << 200` under it answer an exact interval,
+/// where a 128-bit carrier could only answer top.
+#[test]
+fn a_wide_guard_and_scale_track_past_the_carrier() {
+    let wide = ValueType::int(256);
+    let g = guarded(
+        wide,
+        |b, x| {
+            let c = b.build_int_const(1000u64, wide).unwrap();
+            b.build_int_cmp_operation(x, c, IntCmpOp::Less, wide)
+                .unwrap()
+        },
+        |b, x| {
+            let k = b.build_int_const(200u64, wide).unwrap();
+            b.build_int_binary_operation(x, k, IntBinaryOp::ShiftLeft, wide)
+                .unwrap()
+        },
+    );
+    assert_eq!(
+        range_at(&g.f, g.idx, g.true_node),
+        Interval::dense(UBig::ZERO, UBig::from(999u32)),
+        "the guard bounds the i256 index"
+    );
+    let scaled = range_at(&g.f, g.ret, g.true_node);
+    assert_eq!(
+        scaled,
+        Interval::new(
+            UBig::ZERO,
+            UBig::from(999u32) << 200usize,
+            UBig::ONE << 200usize,
+        ),
+        "the scaling carries the bound past 128 bits"
+    );
+    assert!(!scaled.is_top(&strider_ir::eval::all_ones(wide)));
+}
+
 /// The sign-bit question reads the value's own width: a `u128` of known zeros
 /// names no bit of an `i256`, while the bit at 255 is its sign bit.
 #[test]
