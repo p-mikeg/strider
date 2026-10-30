@@ -429,9 +429,21 @@ impl PyFunction {
         let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
         let matches = dedup_matches(&slf, py, raw, generation, true)?;
         if signed {
-            collect_unique(py, &matches, cap, crate::matcher::PyMatch::sint_for)
+            collect_unique(
+                py,
+                &matches,
+                cap,
+                crate::matcher::PyMatch::sint_for,
+                crate::bigint::ibig_to_py_int,
+            )
         } else {
-            collect_unique(py, &matches, cap, crate::matcher::PyMatch::uint_for)
+            collect_unique(
+                py,
+                &matches,
+                cap,
+                crate::matcher::PyMatch::uint_for,
+                crate::bigint::ubig_to_py_int,
+            )
         }
     }
 
@@ -570,7 +582,7 @@ impl PyFunction {
 
 /// The distinct constant values `extract` reads for `cap` across `matches`,
 /// reduced to the sole value.
-fn collect_unique<T: IntoPy<PyObject> + Ord>(
+fn collect_unique<T: Ord>(
     py: Python<'_>,
     matches: &[crate::matcher::PyMatch],
     cap: strider_pattern::Capture,
@@ -579,6 +591,7 @@ fn collect_unique<T: IntoPy<PyObject> + Ord>(
         Python<'_>,
         strider_pattern::Capture,
     ) -> PyResult<Option<T>>,
+    to_py: impl Fn(Python<'_>, &T) -> PyResult<PyObject>,
 ) -> PyResult<Option<PyObject>> {
     let mut values = std::collections::BTreeSet::new();
     for m in matches {
@@ -586,16 +599,17 @@ fn collect_unique<T: IntoPy<PyObject> + Ord>(
             values.insert(v);
         }
     }
-    unique_value(py, values)
+    unique_value(py, values, to_py)
 }
 
-fn unique_value<T: IntoPy<PyObject> + Ord>(
+fn unique_value<T: Ord>(
     py: Python<'_>,
     values: std::collections::BTreeSet<T>,
+    to_py: impl Fn(Python<'_>, &T) -> PyResult<PyObject>,
 ) -> PyResult<Option<PyObject>> {
     match values.len() {
         0 => Ok(None),
-        1 => Ok(Some(values.into_iter().next().unwrap().into_py(py))),
+        1 => Ok(Some(to_py(py, values.iter().next().unwrap())?)),
         n => Err(crate::errors::into_strider_err(anyhow::anyhow!(
             "find_unique_value: capture binds {n} distinct constant values; \
              use find_all to see them"

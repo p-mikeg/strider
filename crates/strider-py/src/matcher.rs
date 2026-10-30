@@ -116,7 +116,7 @@ impl PyMatch {
         &self,
         py: Python<'_>,
         cap: strider_pattern::Capture,
-    ) -> PyResult<Option<u128>> {
+    ) -> PyResult<Option<strider_ir::UBig>> {
         self.read_bound(py, cap, crate::node::uint_of)
     }
 
@@ -126,7 +126,7 @@ impl PyMatch {
         &self,
         py: Python<'_>,
         cap: strider_pattern::Capture,
-    ) -> PyResult<Option<i128>> {
+    ) -> PyResult<Option<strider_ir::IBig>> {
         self.read_bound(py, cap, crate::node::sint_of)
     }
 
@@ -345,7 +345,7 @@ match_getters! {
     #[doc = "The signed value, sign-interpreted at the node's width; raises if unbound or not an integer node."]
     "sint" int_,
     #[doc = "The signed value, or `None`."]
-    "sint_opt" int_opt : i128 = sint;
+    "sint_opt" int_opt : Py<PyAny> = sint;
 
     #[doc = "The capture's value as a `bool`; raises if unbound or not a boolean node."]
     "boolean" bool_,
@@ -376,19 +376,23 @@ impl PyBoundCapture {
         CaptureKey::Capture(self.cap.bind(py).clone())
     }
 
-    /// The match's `uint_opt` for this capture, within the `u128` the value
-    /// comparison carries. `None` past it, as for a non-constant binding.
-    fn unsigned(&self, py: Python<'_>) -> PyResult<Option<u128>> {
-        Ok(self
-            .match_
-            .borrow(py)
-            .uint_opt(py, self.key(py))?
-            .and_then(|v| v.extract::<u128>(py).ok()))
+    /// The match's `uint_opt` for this capture, at any width. `None` for a
+    /// non-constant binding.
+    fn unsigned(&self, py: Python<'_>) -> PyResult<Option<strider_ir::UBig>> {
+        let m = self.match_.borrow(py);
+        match m.node_opt(py, self.key(py))? {
+            Some(node) => node.uint_value(py),
+            None => Ok(None),
+        }
     }
 
-    /// The match's `sint_opt` for this capture.
-    fn signed(&self, py: Python<'_>) -> PyResult<Option<i128>> {
-        self.match_.borrow(py).int_opt(py, self.key(py))
+    /// The match's `sint_opt` for this capture, at any width.
+    fn signed(&self, py: Python<'_>) -> PyResult<Option<strider_ir::IBig>> {
+        let m = self.match_.borrow(py);
+        match m.node_opt(py, self.key(py))? {
+            Some(node) => node.sint_value(py),
+            None => Ok(None),
+        }
     }
 
     /// Whether both bound the same value of the same function.
@@ -449,8 +453,14 @@ impl PyBoundCapture {
                 (u.is_some() && u == ou) || (s.is_some() && s == os)
             }
         } else {
-            u.is_some_and(|u| other.extract::<u128>().is_ok_and(|o| o == u))
-                || s.is_some_and(|s| other.extract::<i128>().is_ok_and(|o| o == s))
+            // An integer wider than any `ValueType` equals no constant, so it
+            // answers unequal rather than raising out of `__eq__`.
+            match crate::bigint::py_big_int(&other)?.and_then(crate::bigint::PyBigInt::in_range) {
+                Some(o) => {
+                    u.is_some_and(|u| strider_ir::IBig::from(u) == o) || s.is_some_and(|s| s == o)
+                }
+                None => false,
+            }
         };
         Ok(match op {
             CompareOp::Eq => equal.into_py(py),
