@@ -10,10 +10,10 @@
 //! masks stays linear; a mask past its phi's budget is left alone.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{IRBuilderExt, IRViewer, IntBinaryOp};
+use strider_ir::{IRBuilderExt, IRViewer, IntBinaryOp, UBig};
 
 use crate::Result;
-use crate::const_eval::var_and_const;
+use crate::const_eval::var_and_ubig;
 use crate::opt::known_bits::{const_only, node_known_bits};
 use crate::pipeline::OptimizationResult;
 
@@ -37,7 +37,7 @@ pub(super) fn fold_masked_uses(
         }
         let mut budget = (edit.node_inputs(phi).len() - 1).saturating_mul(PEEL_VISITS_PER_ARM);
         let phi_out = edit.node_outputs(phi)[0];
-        let masks: Vec<(ValueId, u128)> = edit
+        let masks: Vec<(ValueId, UBig)> = edit
             .value_uses(phi_out)
             .filter_map(|(user, _)| masked_use(edit, user, phi_out))
             .collect();
@@ -49,7 +49,8 @@ pub(super) fn fold_masked_uses(
                 continue;
             }
             walked.clear();
-            let Some(value) = masked_phi_value(edit, phi, and_out, mask, &mut walked, &mut budget)?
+            let Some(value) =
+                masked_phi_value(edit, phi, and_out, &mask, &mut walked, &mut budget)?
             else {
                 continue;
             };
@@ -71,26 +72,29 @@ fn masked_use(
     edit: &crate::EditFunction<'_>,
     user: NodeId,
     phi_out: ValueId,
-) -> Option<(ValueId, u128)> {
+) -> Option<(ValueId, UBig)> {
     if !matches!(
         edit.node_kind(user),
         NodeKind::IntBinaryOp(IntBinaryOp::And)
     ) {
         return None;
     }
+    // The fold builds `IntConst`s of `ty`; a float `And` has none.
     let (out, ty) = edit.single_value_output(user).ok()?;
-    ty.int_mask_u128()?;
+    if !ty.is_integer() {
+        return None;
+    }
     let [a, b] = edit.node_inputs_exact::<2>(user).ok()?;
     let other = if a == phi_out { b } else { a };
-    Some((out, edit.int_const_u128(other)?))
+    Some((out, edit.int_const(other)?.clone()))
 }
 
 /// `And(arm, C)` after peeling.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 enum Masked {
     /// The arm reads the `And` being folded, or its phi.
     Itself,
-    Const(u128),
+    Const(UBig),
     /// An existing value equal to `And(arm, C)`.
     Value(ValueId),
     /// `And(x, C)`.
@@ -109,7 +113,7 @@ fn masked_phi_value(
     edit: &mut crate::EditFunction<'_>,
     phi: NodeId,
     and_out: ValueId,
-    mask: u128,
+    mask: &UBig,
     walked: &mut Vec<NodeId>,
     budget: &mut usize,
 ) -> Result<Option<ValueId>> {
@@ -128,7 +132,7 @@ fn masked_phi_value(
         if masked == Masked::Itself {
             continue;
         }
-        if agreed.is_some_and(|a| a != masked) {
+        if agreed.as_ref().is_some_and(|a| *a != masked) {
             return Ok(None);
         }
         agreed = Some(masked);
@@ -139,7 +143,7 @@ fn masked_phi_value(
         Some(Masked::Value(v)) => Some(v),
         Some(Masked::Of(x)) => match witness {
             Some(v) => Some(v),
-            None => Some(edit.build_const_binop(mask, x, IntBinaryOp::And, ty)?),
+            None => Some(edit.build_const_binop(mask.clone(), x, IntBinaryOp::And, ty)?),
         },
         // Every arm is `Itself`.
         _ => None,
@@ -152,7 +156,7 @@ fn masked_phi_value(
 fn peel(
     edit: &crate::EditFunction<'_>,
     mut x: ValueId,
-    mask: u128,
+    mask: &UBig,
     selves: [ValueId; 2],
     walked: &mut Vec<NodeId>,
     budget: &mut usize,
@@ -163,7 +167,7 @@ fn peel(
         if selves.contains(&x) {
             return Some((Masked::Itself, None));
         }
-        if let Some(k) = edit.int_const_u128(x) {
+        if let Some(k) = edit.int_const(x) {
             return Some((Masked::Const(k & mask), None));
         }
         let node = edit.producer(x);
@@ -175,21 +179,22 @@ fn peel(
         };
         let (next, exact) = match op {
             IntBinaryOp::And => {
-                let Some((y, k)) = var_and_const(edit.function(), node) else {
+                let Some((y, k)) = var_and_ubig(edit.function(), node) else {
                     break;
                 };
-                if k & mask == mask {
-                    (y, k == mask)
-                } else if k & !mask == 0 {
+                // `k & !mask == 0` without a width: the mask keeps all of `k`.
+                if &k & mask == *mask {
+                    (y, k == *mask)
+                } else if &k & mask == k {
                     return Some((Masked::Value(x), None));
                 } else {
                     break;
                 }
             }
             IntBinaryOp::Or | IntBinaryOp::Xor => {
-                if known_zero(edit, a) & mask == mask {
+                if &known_zero(edit, a) & mask == *mask {
                     (b, false)
-                } else if known_zero(edit, b) & mask == mask {
+                } else if &known_zero(edit, b) & mask == *mask {
                     (a, false)
                 } else {
                     break;
@@ -206,7 +211,7 @@ fn peel(
 
 /// Bits of `v` its producer alone proves zero: the known-bits transfer read
 /// with operand facts from the IR alone, so no map is built for one hop.
-fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId) -> u128 {
+fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId) -> UBig {
     let function = edit.function();
     let facts = node_known_bits(function, function.producer(v), &const_only(function));
     // The transfer errors only where a slot the signature pins to a value does
@@ -217,5 +222,5 @@ fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId) -> u128 {
         .ok()
         .flatten()
         .filter(|&(out, _)| out == v)
-        .map_or(0, |(_, kb)| kb.zeros_u128())
+        .map_or(UBig::ZERO, |(_, kb)| kb.zeros)
 }

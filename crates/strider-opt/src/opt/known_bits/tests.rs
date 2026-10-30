@@ -1224,7 +1224,7 @@ fn the_constant_only_resolver_reads_constants_and_nothing_else() -> Result<()> {
 fn a_shift_past_the_width_proves_every_bit_zero() -> Result<()> {
     let vn = strider_ir_test_utils::reg_vn(0x1000, 4);
     let (fg, _) = crate::test_support::make_fn_with_var(vn, |b, x| {
-        b.build_const_binop(40, x, IntBinaryOp::ShiftLeft, ValueType::int(32))
+        b.build_const_binop(40u64, x, IntBinaryOp::ShiftLeft, ValueType::int(32))
     })?;
     let ret = fg
         .walk_kind(|k| matches!(k, NodeKind::Return))
@@ -1243,7 +1243,7 @@ fn a_shift_past_the_width_proves_every_bit_zero() -> Result<()> {
 fn a_right_shift_proves_its_vacated_bits_zero() -> Result<()> {
     let vn = strider_ir_test_utils::reg_vn(0x1000, 4);
     let (fg, _) = crate::test_support::make_fn_with_var(vn, |b, x| {
-        b.build_const_binop(24, x, IntBinaryOp::ShiftRight, ValueType::int(32))
+        b.build_const_binop(24u64, x, IntBinaryOp::ShiftRight, ValueType::int(32))
     })?;
     let ret = fg
         .walk_kind(|k| matches!(k, NodeKind::Return))
