@@ -3094,8 +3094,8 @@ fn an_untracked_width_proves_no_sign_bit() {
     let mut known = crate::analyze_known_bits(&f).unwrap();
     assert!(!super::is_sign_bit_known_zero(&f, wide, &known), "no facts");
     known[wide] = crate::KnownBitsFacts {
-        ones: strider_ir::UBig::ZERO,
-        zeros: strider_ir::UBig::from(u128::MAX),
+        ones: 0,
+        zeros: u128::MAX,
     };
     assert!(
         !super::is_sign_bit_known_zero(&f, wide, &known),
