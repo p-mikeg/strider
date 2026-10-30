@@ -88,7 +88,7 @@ fn non_const_add(b: &mut FunctionBuilder, ty: ValueType) -> Result<ValueId> {
 }
 
 #[test]
-fn get_unsigned_int_truncates_to_declared_width() -> Result<()> {
+fn int_const_u128_truncates_to_declared_width() -> Result<()> {
     let mut b = empty_builder()?;
     let value = b.build_int_const(u8::MAX as u64 + 1, ValueType::int(8))?;
     let val = b.int_const_u128(value);
@@ -115,7 +115,7 @@ fn get_as_int_accepts_bool_const() -> Result<()> {
 }
 
 #[test]
-fn get_unsigned_int_is_none_for_non_const() -> Result<()> {
+fn int_const_u128_is_none_for_non_const() -> Result<()> {
     let mut b = empty_builder()?;
     let add = non_const_add(&mut b, ValueType::int(64))?;
     assert_eq!(b.int_const_u128(add), None);
@@ -1977,6 +1977,36 @@ fn int_const_i128_sign_extends_and_rejects_non_const() -> Result<()> {
     assert_eq!(b.function().int_const_i128(pos), Some(7));
     let sum = b.build_int_binary_operation(neg, pos, IntBinaryOp::Add, ValueType::int(32))?;
     assert_eq!(b.function().int_const_i128(sum), None);
+    Ok(())
+}
+
+/// `int_const_ibig` is the signed reader with no carrier: it answers at every
+/// declared width, where `int_const_i128` stops at 128 bits.
+#[test]
+fn int_const_ibig_reads_a_signed_value_at_every_width() -> Result<()> {
+    use dashu_int::IBig;
+    let mut b = builder_with_region()?;
+    for ty in ValueType::SUPPORTED.into_iter().filter(|t| t.is_integer()) {
+        let ones = b.build_all_ones(ty)?;
+        assert_eq!(
+            b.function().int_const_ibig(ones),
+            Some(IBig::NEG_ONE),
+            "{ty:?}"
+        );
+    }
+    // The least I512 value: representable as an `IBig`, and no `i128`.
+    let min512 = b.build_int_const(UBig::ONE << 511usize, ValueType::int(512))?;
+    assert_eq!(
+        b.function().int_const_ibig(min512),
+        Some(-(IBig::ONE << 511usize))
+    );
+    assert_eq!(b.function().int_const_i128(min512), None);
+    // A float-typed and a non-constant value answer `None`.
+    let f = b.build_float_const(0, ValueType::float(64));
+    assert_eq!(b.function().int_const_ibig(f), None);
+    let seven = b.build_int_const(7u64, ValueType::int(32))?;
+    let sum = b.build_int_binary_operation(seven, seven, IntBinaryOp::Add, ValueType::int(32))?;
+    assert_eq!(b.function().int_const_ibig(sum), None);
     Ok(())
 }
 

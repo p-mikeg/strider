@@ -30,13 +30,13 @@ use std::ops::RangeInclusive;
 use std::rc::Rc;
 
 use cranelift_entity::SecondaryMap;
-use dashu_int::{IBig, UBig};
 use strider_ir::eval;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
     ExtendOp, Function, IRViewer, IRWalker, IntBinaryOp, IntCmpOp, IntUnaryOp, ReadOnlyMemory,
     ValueType,
 };
+use strider_ir::{IBig, UBig};
 use strider_target::Endianness;
 
 /// An entry register, for [`Env::entry`] to pick its value.

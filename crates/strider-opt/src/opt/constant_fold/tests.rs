@@ -371,12 +371,10 @@ fn assert_add_with_const(
     assert_eq!(inputs.len(), 2);
     let l = inputs[0];
     let r = inputs[1];
-    let masked = ty
-        .get_unsigned_int(u128::from(expected_const))
-        .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
+    anyhow::ensure!(ty.is_integer(), "expected integer type, got {ty:?}");
+    let masked = strider_ir::eval::mask(&strider_ir::UBig::from(expected_const), ty);
     let const_on = |o: strider_ir::node::ValueId| -> bool {
-        matches!(fg.kind_of_value(o), NodeKind::IntConst(_))
-            && ty.get_unsigned_int(fg.int_const_u128(o).unwrap_or(u128::MAX)) == Some(masked)
+        matches!(fg.kind_of_value(o), NodeKind::IntConst(_)) && fg.int_const(o) == Some(&masked)
     };
     let ok = (l == expected_base && const_on(r)) || (r == expected_base && const_on(l));
     assert!(
@@ -413,13 +411,11 @@ fn assert_sub_with_const(
     // `Add` is commutative, so accept the const on either side.
     let l = inputs[0];
     let r = inputs[1];
-    let neg_masked = ty
-        .get_unsigned_int(u128::from(expected_const).wrapping_neg())
-        .ok_or_else(|| anyhow!("expected integer type, got {ty:?}"))?;
+    anyhow::ensure!(ty.is_integer(), "expected integer type, got {ty:?}");
+    let neg_masked = strider_ir::eval::unsigned(-strider_ir::IBig::from(expected_const), ty);
     let const_match = |value: strider_ir::node::ValueId| {
         matches!(fg.kind_of_value(value), NodeKind::IntConst(_))
-            && ty.get_unsigned_int(fg.int_const_u128(value).unwrap_or(u128::MAX))
-                == Some(neg_masked)
+            && fg.int_const(value) == Some(&neg_masked)
     };
     let ok = (l == expected_base && const_match(r)) || (r == expected_base && const_match(l));
     assert!(
