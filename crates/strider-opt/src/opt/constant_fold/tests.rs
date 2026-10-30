@@ -2197,12 +2197,11 @@ fn all_ones_rules_read_the_declared_width() -> Result<()> {
 }
 
 /// The REASSOCIATION rules combine the two constants themselves rather than
-/// through `eval::int_binary`, so its width guard does not cover them. At `I256`
-/// both `2^127` operands fit in `u128` and `int_const_u128` hands them over, but
-/// `wrapping_add` carries out at 128 bits: `2^127 + 2^127` becomes `0` instead
-/// of `2^128`, and `(x + 2^127) + 2^127` folds to `x + 0`, i.e. to `x`.
+/// through `eval::int_binary`. They do it in `UBig` and the intern masks to
+/// the declared width, so `(x + 2^127) + 2^127` at `I256` folds to
+/// `x + 2^128`, not to the `x + 0` a 128-bit carry-out would give.
 #[test]
-fn reassoc_add_skips_past_128_bits() -> Result<()> {
+fn reassoc_add_folds_past_128_bits() -> Result<()> {
     let half: u128 = 1 << 127;
     let mut fg = make_fn(|b| {
         let addr = b.build_int_const(0xF00Du64, ValueType::int(64))?;
@@ -2212,23 +2211,26 @@ fn reassoc_add_skips_past_128_bits() -> Result<()> {
         let c2 = b.build_int_const(half, ValueType::int(256))?;
         b.build_int_binary_operation(inner, c2, IntBinaryOp::Add, ValueType::int(256))
     })?;
-    let outcome =
-        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    let root = fg.producer(return_value(fg.graph())?);
     assert!(
-        !outcome.changed(),
-        "an I256 add-reassociation must not fold: the combined constant does not \
-         fit the u128 the rule computes in"
+        matches!(fg.node_kind(root), NodeKind::IntBinaryOp(IntBinaryOp::Add)),
+        "got {:?}",
+        fg.node_kind(root)
+    );
+    assert!(
+        fg.node_inputs(root)
+            .into_iter()
+            .any(|v| fg.int_const(v) == Some(&(UBig::ONE << 128usize))),
+        "the two halves combine to 2^128 at I256"
     );
     Ok(())
 }
 
-/// The same hole on the `Mul` side: at `I256` both `2^64` operands fit in
-/// `u128`, but `wrapping_mul` carries out at 128 bits, so `2^64 * 2^64` becomes
-/// `0` instead of `2^128` and `(x * 2^64) * 2^64` would fold to `x * 0`. The
-/// rule's own width guard and the template's refusal to intern a `u128` past
-/// 128 bits each stop it; lifting both is what makes this fold.
+/// The same on the `Mul` side: `(x * 2^64) * 2^64` at `I256` folds to
+/// `x * 2^128`, where a 128-bit product would have given `x * 0`.
 #[test]
-fn reassoc_mul_skips_past_128_bits() -> Result<()> {
+fn reassoc_mul_folds_past_128_bits() -> Result<()> {
     let two_64: u128 = 1 << 64;
     let mut fg = make_fn(|b| {
         let addr = b.build_int_const(0xF00Du64, ValueType::int(64))?;
@@ -2238,12 +2240,18 @@ fn reassoc_mul_skips_past_128_bits() -> Result<()> {
         let c2 = b.build_int_const(two_64, ValueType::int(256))?;
         b.build_int_binary_operation(inner, c2, IntBinaryOp::Mul, ValueType::int(256))
     })?;
-    let outcome =
-        crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?;
+    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
+    let root = fg.producer(return_value(fg.graph())?);
     assert!(
-        !outcome.changed(),
-        "an I256 mul-reassociation must not fold: the product does not fit the \
-         u128 the rule computes in"
+        matches!(fg.node_kind(root), NodeKind::IntBinaryOp(IntBinaryOp::Mul)),
+        "got {:?}",
+        fg.node_kind(root)
+    );
+    assert!(
+        fg.node_inputs(root)
+            .into_iter()
+            .any(|v| fg.int_const(v) == Some(&(UBig::ONE << 128usize))),
+        "the two factors combine to 2^128 at I256"
     );
     Ok(())
 }
@@ -2352,7 +2360,13 @@ fn int_const_eval_sign_extend_to_512_bits() -> Result<()> {
     let mut fg = make_fn(|b| {
         // -(2^130) at I256.
         let v = b.build_int_const((UBig::ONE << 256usize) - (UBig::ONE << 130usize), i256)?;
-        b.extend_if_needed(v, i512, strider_ir::ExtendOp::SignExtend)
+        // Built as a node rather than through `extend_if_needed`, which folds
+        // a constant extend itself and would leave the pass nothing to do.
+        Ok(b.build_single_output_pure(
+            NodeKind::Extend(strider_ir::ExtendOp::SignExtend),
+            [v],
+            i512,
+        ))
     })?;
     assert!(
         crate::pipeline::run_one(&ConstantFold::new(), &mut fg, &crate::OptCtx::new(None))?
@@ -2906,23 +2920,35 @@ fn factor_coefficients_are_exact_at_every_carrier_width() -> Result<()> {
     Ok(())
 }
 
-/// Past the `u128` carrier `get_uint` still answers `Some` for a value that
-/// fits it, so without a width bound of their own the four non-shift forms
-/// would compute the coefficient in the wrong modulus. They must decline.
+/// The four non-shift forms compute their coefficient in `UBig` at the
+/// declared width. `C = 2^128 - 1` is the coefficient that would expose a
+/// 128-bit modulus: `C + 1` is 2^128 there, not 0.
 #[test]
-fn factor_declines_past_the_u128_carrier() -> Result<()> {
+fn factor_folds_past_the_u128_carrier() -> Result<()> {
     use FactorForm::{AddMul, AddSelf, SubMul, SubSelf};
+    let c1 = (UBig::ONE << 128usize) - UBig::ONE;
     for ty in [ValueType::int(256), ValueType::int(512)] {
+        let modulus = UBig::ONE << ty.bit_width();
         for form in [AddSelf, AddMul, SubSelf, SubMul] {
-            // 2^128 - 1 is the coefficient that exposes the wrong modulus:
-            // `C + 1` is 2^128 at these widths and 0 in the carrier.
+            let want = match form {
+                AddSelf => &c1 + UBig::ONE,
+                AddMul => &c1 + UBig::from(3u8),
+                SubSelf => &modulus + UBig::ONE - &c1,
+                SubMul => &c1 - UBig::from(3u8),
+            } % &modulus;
             let (mut fg, _base) = factor_shape(form, ty, u128::MAX, 3)?;
             run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
             let root = fg.producer(return_value(fg.graph())?);
             assert!(
-                matches!(fg.node_kind(root), NodeKind::IntBinaryOp(IntBinaryOp::Add)),
-                "{form:?} at {ty:?} folded to {:?}; the coefficient does not fit the u128 the rule computes in",
+                matches!(fg.node_kind(root), NodeKind::IntBinaryOp(IntBinaryOp::Mul)),
+                "{form:?} at {ty:?} left {:?}",
                 fg.node_kind(root)
+            );
+            assert!(
+                fg.node_inputs(root)
+                    .into_iter()
+                    .any(|v| fg.int_const(v) == Some(&want)),
+                "{form:?} at {ty:?} wants a coefficient of {want}"
             );
         }
     }
@@ -3005,32 +3031,32 @@ fn every_rule_capture_is_minted_before_the_first_rule() {
     );
 }
 
-/// A coefficient rule computes in `u128`, so every one of them is gated on
-/// the root having a `u128` modulus: the multiply form reads the gate off
-/// the root type, the shift form off `shift_count_in_range`. Past the
-/// carrier `C + 1` and `1 << C` would both be computed in the wrong ring, so
-/// the rules must decline rather than fold.
+/// A coefficient rule computes in `UBig` at the root's width, so it folds
+/// past the carrier too: `C + 1` for the multiply form and `1 << C` for the
+/// shift form are both read at the declared width.
 #[test]
-fn a_coefficient_rule_declines_past_the_carrier() -> Result<()> {
-    for (width, folds) in [(64u16, true), (256, false)] {
+fn a_coefficient_rule_folds_past_the_carrier() -> Result<()> {
+    for width in [64u16, 256] {
         let ty = ValueType::int(width);
         let vn = reg_vn(0x2000, u32::from(width) / 8);
-        for op in [IntBinaryOp::Mul, IntBinaryOp::ShiftLeft] {
+        for (op, want) in [(IntBinaryOp::Mul, 4u8), (IntBinaryOp::ShiftLeft, 9)] {
             let (mut fg, _x) = make_fn_with_var(vn, |b, x| {
                 let three = b.build_int_const(3u64, ty)?;
                 let scaled = b.build_int_binary_operation(x, three, op, ty)?;
                 b.build_int_binary_operation(x, scaled, IntBinaryOp::Add, ty)
             })?;
             run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-            let want = if folds {
-                IntBinaryOp::Mul
-            } else {
-                IntBinaryOp::Add
-            };
             assert_eq!(
                 return_kind(fg.graph())?,
-                NodeKind::IntBinaryOp(want),
+                NodeKind::IntBinaryOp(IntBinaryOp::Mul),
                 "x + (x {op:?} 3) at i{width}"
+            );
+            let root = fg.producer(return_value(fg.graph())?);
+            assert!(
+                fg.node_inputs(root)
+                    .into_iter()
+                    .any(|v| fg.int_const(v) == Some(&UBig::from(want))),
+                "x + (x {op:?} 3) at i{width} wants a coefficient of {want}"
             );
         }
     }
