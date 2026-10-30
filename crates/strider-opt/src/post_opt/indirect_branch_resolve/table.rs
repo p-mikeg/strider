@@ -320,8 +320,8 @@ impl SiteClassifier<'_> {
     /// spacing a preceding multiply built up, so `(cell << 2) >> 1` keeps all
     /// `1 << w`.  A truncate, and then the OUTPUT width, wrap the set
     /// ([`wrap`]): `zext(i8) << 25` at `I32` has 128 distinct values, not 256,
-    /// and `trunc8(i32)` has 256.  A spacing past the widest declared width, a
-    /// floor over an unrelated spacing, a wrap that leaves no progression, and a strip
+    /// and `trunc8(i32)` has 256.  A scale past the `u128` carrier, a floor over
+    /// an unrelated spacing, a wrap that leaves no progression, and a strip
     /// longer than [`MAX_SCALE_STRIP`] all answer "width-only", which defers the
     /// site rather than enumerating a cell.
     /// An unrecognised producer is not a failure: the strip ends there and the
