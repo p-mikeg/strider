@@ -246,20 +246,25 @@ fn extend_noop_when_wider_than_target() -> Result<()> {
     Ok(())
 }
 
-/// Past 128 bits a constant extend is a real `Extend`: the `u128` carrier
-/// holds only 128 sign bits, so a folded `-1` would land with a zero upper half.
-/// A zero extension would fold correctly; it keeps the `Extend` for symmetry.
+/// Past 128 bits a constant extend still folds, at the declared width: `-1`
+/// from `I64` fills all 256 bits, where a `u128` fold would have left the
+/// upper half zero.
 #[test]
-fn extend_of_a_const_past_128_bits_emits_extend() -> Result<()> {
-    for op in [ExtendOp::SignExtend, ExtendOp::ZeroExtend] {
+fn extend_of_a_const_past_128_bits_folds() -> Result<()> {
+    let wanted = [
+        (ExtendOp::SignExtend, (UBig::ONE << 256usize) - UBig::ONE),
+        (ExtendOp::ZeroExtend, UBig::from(u64::MAX)),
+    ];
+    for (op, want) in wanted {
         let mut b = empty_builder()?;
         let minus_one = b.build_int_const(u64::MAX, ValueType::int(64))?;
         let extended = b.extend_if_needed(minus_one, ValueType::int(256), op)?;
         assert!(
-            matches!(producer_kind(&b, extended), NodeKind::Extend(o) if o == op),
+            matches!(producer_kind(&b, extended), NodeKind::IntConst(_)),
             "{op:?}: got {:?}",
             producer_kind(&b, extended)
         );
+        assert_eq!(b.int_const(extended).cloned(), Some(want), "{op:?}");
     }
     Ok(())
 }
