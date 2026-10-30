@@ -145,14 +145,15 @@ pub(crate) fn eval_node_const(
 }
 
 /// `(x, c)` for a two-operand node with exactly one operand an integer
-/// constant that fits `u128`, `c` its value.
+/// constant, `c` its value; `None` where that constant is past `u128`.
+///
+/// Which operand is the variable is asked of [`var_and_ubig`], not of the
+/// carrier: a shift count is free to be narrower than its value
+/// ([`strider_ir::node::NodeKind::operand_width`]), so reading both through
+/// `int_const_u128` would name a constant too wide to read as the variable.
 pub(crate) fn var_and_const(function: &Function, node: NodeId) -> Option<(ValueId, u128)> {
-    let [a, b] = function.node_inputs_exact::<2>(node).ok()?;
-    match (function.int_const_u128(a), function.int_const_u128(b)) {
-        (None, Some(c)) => Some((a, c)),
-        (Some(c), None) => Some((b, c)),
-        _ => None,
-    }
+    let (x, c) = var_and_ubig(function, node)?;
+    Some((x, u128::try_from(&c).ok()?))
 }
 
 /// [`var_and_const`] at the stored width: `c` is the whole constant, past the
@@ -284,6 +285,40 @@ mod tests {
         assert_eq!(split(cx), Some((x, 8)));
         assert_eq!(split(cc), None, "two constants leave no variable side");
         assert_eq!(split(xx), None, "no constant side");
+    }
+
+    /// A shift count is free to be narrower than the value it shifts, so a
+    /// constant past the `u128` carrier can sit opposite one inside it.  Read
+    /// through the carrier alone, the wide constant answers `None` and is
+    /// named as the VARIABLE operand.
+    #[test]
+    fn var_and_const_does_not_name_a_wide_constant_as_the_variable() {
+        use strider_ir::node::NodeKind;
+        use strider_ir::{IntBinaryOp, UBig};
+        use strider_ir_test_utils::make_empty_fn;
+        let wide = ValueType::int(256);
+        let mut built = None;
+        let function = make_empty_fn(|b| {
+            let value = b.build_int_const(UBig::ONE << 200, wide)?;
+            let count = b.build_int_const(8u64, ValueType::int(8))?;
+            // Under `build_int_binary_operation`, which coerces every operand
+            // to the output width as the lifter does: the free width a shift
+            // count is allowed is what this pins.
+            let shifted = b.build_single_output_pure(
+                NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
+                [value, count],
+                wide,
+            );
+            built = Some(shifted);
+            Ok(shifted)
+        })
+        .expect("make_empty_fn");
+        let shifted = built.expect("built");
+        assert_eq!(
+            super::var_and_const(&function, function.producer(shifted)),
+            None,
+            "both operands are constants, whatever the carrier can read"
+        );
     }
 
     fn build_add_5_100() -> (strider_ir::Function, strider_ir::node::ValueId) {
