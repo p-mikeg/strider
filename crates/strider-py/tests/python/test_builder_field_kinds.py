@@ -42,12 +42,16 @@ def test_mem_field_narrows_the_match():
     assert g.find_all(p.load().mem(p.store())) == []
 
 
-def test_pattern_field_narrows_the_match():
+def test_an_edge_join_narrows_the_match():
     g = _clamp_graph()
-    baseline = len(g.find_all(p.if_else()))
-    assert baseline >= 2
+    t = p.Capture("t")
+
+    def iff():
+        return p.if_else().capture_true(t)
+
+    assert len(g.find_all([iff(), p.region().any_input(t)])) >= 2
     # No If in `clamp` branches straight into a CallOther.
-    assert g.find_all(p.if_else().true_branch(p.call_other().into_pat())) == []
+    assert g.find_all([iff(), p.call_other().ctrl(t)]) == []
 
 
 def test_scalar_field_narrows_the_match():
@@ -77,8 +81,8 @@ def test_scalar_clone_field_narrows_the_match():
 
 
 def test_pattern_field_is_traversed():
-    branch = p.ret().into_pat()
-    assert branch in gc.get_referents(p.if_else().true_branch(branch))
+    operand = p.anything()
+    assert operand in gc.get_referents(p.if_else().cond(operand))
 
 
 def _live(name: str) -> int:
@@ -95,9 +99,9 @@ def test_a_cycle_through_a_pattern_field_is_collectable():
     base = _live("IfPat")
     for _ in range(200):
         a = p.if_else()
-        # Deliberate: a branch slot stores its operand unchecked until the
+        # Deliberate: an operand slot stores its operand unchecked until the
         # pattern compiles, so a builder closes the loop.
-        a.true_branch(a)
+        a.cond(a)  # type: ignore[arg-type]
         del a
     gc.collect()
     gc.collect()

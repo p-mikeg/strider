@@ -47,9 +47,6 @@ pub struct MatcherBuilder {
     /// Frame address of the outermost live nesting level, the zero the stack
     /// consumption in [`Self::enter_nesting`] is measured against.
     stack_base: usize,
-    /// Nodes of the sealed patterns a binding walk matches inside this one,
-    /// which the matcher recurses through on the same stack.
-    nested_nodes: usize,
 }
 
 /// Stack one lowering may consume before [`MatcherBuilder::enter_nesting`]
@@ -87,7 +84,6 @@ impl MatcherBuilder {
             refusals: Vec::new(),
             nesting: 0,
             stack_base: 0,
-            nested_nodes: 0,
         }
     }
 
@@ -124,11 +120,6 @@ impl MatcherBuilder {
         }
         self.nesting += 1;
         true
-    }
-
-    /// Counts `nodes` matched by a binding walk against the seal's node cap.
-    pub(crate) fn add_nested_nodes(&mut self, nodes: usize) {
-        self.nested_nodes = self.nested_nodes.saturating_add(nodes);
     }
 
     pub(crate) fn leave_nesting(&mut self) {
@@ -353,20 +344,6 @@ impl MatcherBuilder {
         });
     }
 
-    /// `captures` declares what `f` binds; the sub-pattern it walks is not part
-    /// of this graph, so the capture metadata has no other way to see it.
-    /// See [`BindingWalkFn`](crate::matcher::BindingWalkFn).
-    pub fn set_binding_walk(
-        &mut self,
-        out: PatValueRef,
-        f: crate::matcher::BindingWalkFn,
-        captures: crate::matcher::WalkCaptures,
-    ) {
-        let nd = self.core.kind_mut(out.node);
-        nd.binding_walk = Some(f);
-        nd.walk_captures = captures;
-    }
-
     /// [`Self::set_post_match`] for a guard that needs the matched output's
     /// `ValueType` (`when_match`). A control / memory / phi-token vertex or a
     /// kind with no value output can never supply one, so the guard would
@@ -427,9 +404,9 @@ impl MatcherBuilder {
     pub fn finish(self) -> Pattern {
         let refusals = self.refusals;
         let mut pat = match self.core.seal() {
-            Ok(graph) => Pattern::from_graph(graph, self.nested_nodes),
+            Ok(graph) => Pattern::from_graph(graph),
             Err(cycle) => {
-                let mut empty = Pattern::from_graph(crate::matcher::graph::PatGraph::new(), 0);
+                let mut empty = Pattern::from_graph(crate::matcher::graph::PatGraph::new());
                 empty.reject(cycle.to_string());
                 empty
             }

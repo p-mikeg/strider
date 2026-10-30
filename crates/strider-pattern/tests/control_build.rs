@@ -372,10 +372,10 @@ fn if_else_capture_and_control_output_captures_coexist() {
     assert!(hits[0].value(f).is_some(), "false output still binds");
 }
 
-/// The cast ladder is a fallback inside a branch walk too: the enclosing
-/// continuation reaches the root counter, so a direct hit still cuts it.
+/// The cast ladder is a fallback: a direct hit on the cond cuts it, so the
+/// truncate binds and the value it truncates does not.
 #[test]
-fn a_branch_walk_cast_ladder_is_a_fallback_not_an_alternative() {
+fn an_if_cond_cast_ladder_is_a_fallback_not_an_alternative() {
     let (function, _, (trunc, wide)) = RegisterSet::new()
         .build_if_then_else_returns(|b| {
             let x = b.build_int_const(1u64, ValueType::int(8))?;
@@ -391,21 +391,13 @@ fn a_branch_walk_cast_ladder_is_a_fallback_not_an_alternative() {
         })
         .unwrap();
     let c = Capture::new();
-    let cond = || if_else().cond(anything().capture(c));
-    let top = cond().build().ignore_casts_mask(CastMask::TRUNCATE);
-    let nested = if_else()
-        .with_true(
-            region()
-                .input(0, cond())
-                .into_pattern()
-                .ignore_casts_mask(CastMask::TRUNCATE),
-        )
-        .build();
-    for pat in [top, nested] {
-        let hits = a::matches(&function, pat, 1);
-        assert_eq!(hits[0].value(c), Some(trunc));
-        assert_ne!(hits[0].value(c), Some(wide));
-    }
+    let pat = if_else()
+        .cond(anything().capture(c))
+        .build()
+        .ignore_casts_mask(CastMask::TRUNCATE);
+    let hits = a::matches(&function, pat, 1);
+    assert_eq!(hits[0].value(c), Some(trunc));
+    assert_ne!(hits[0].value(c), Some(wide));
 }
 
 #[test]
@@ -1472,19 +1464,4 @@ fn indirect_branch_isa_mode_matches_only_a_switching_branch() {
 
     let plain = indirect_branch_to(0x4000);
     a::none(&plain, indirect_branch().input(3, anything()).build());
-}
-
-/// `with_true` takes an already built `Pattern`, so no builder cap bounds the
-/// nesting and the free is a walk of caller-shaped depth. Built iteratively on
-/// the test thread; only the drop runs on the small one.
-#[test]
-fn a_deeply_nested_branch_tower_frees_on_a_small_stack() {
-    let tower = (0..8_000).fold(ret().build(), |p, _| if_else().with_true(p).build());
-
-    std::thread::Builder::new()
-        .stack_size(256 * 1024)
-        .spawn(move || drop(tower))
-        .unwrap()
-        .join()
-        .unwrap();
 }

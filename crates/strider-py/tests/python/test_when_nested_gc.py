@@ -1,9 +1,9 @@
 """A `.when()` predicate nested into another pattern stays visible to the GC.
 
 The compiled closures own the predicate, and the owning `Pat` is the only
-object that can report it. A `Pat` handed to an outer builder gives up its
-compiled `Pattern`, so the outer one has to take over reporting it or a cycle
-through the predicate is uncollectable.
+object that can report them. An operand's predicate compiles into the outer
+builder's `Pattern`, so the outer `Pat` has to report it or a cycle through
+the predicate is uncollectable.
 """
 
 import gc
@@ -26,11 +26,10 @@ def _cycle(nested: bool) -> None:
     def f(_m):
         return holder is not None
 
-    inner = p.entry().when(f)
     pat = (
-        p.if_else().true_branch(inner.into_pat()).into_pat()
+        p.if_else().cond(p.anything().when(f)).into_pat()
         if nested
-        else inner.into_pat()
+        else p.entry().when(f).into_pat()
     )
     holder["pat"] = pat
 
@@ -56,7 +55,7 @@ def test_nested_pat_reports_the_predicate():
     def f(_m):
         return True
 
-    pat = p.if_else().true_branch(p.entry().when(f).into_pat()).into_pat()
+    pat = p.if_else().cond(p.anything().when(f)).into_pat()
     assert f in gc.get_referents(pat)
 
 
@@ -73,8 +72,8 @@ def test_every_report_of_a_nested_predicate_is_an_owned_reference():
         return True
 
     base = sys.getrefcount(f)
-    inner = p.ret().when(f).into_pat()
-    outer = p.if_else().true_branch(inner).into_pat()
+    inner = p.anything().when(f)
+    outer = p.if_else().cond(inner).into_pat()
     owned = sys.getrefcount(f) - base
     assert _reports(inner, f) + _reports(outer, f) == owned
 
@@ -92,8 +91,8 @@ def test_a_nested_predicate_held_elsewhere_survives_collection():
         def make():
             def pred(m):
                 return True
-            inner = p.ret().when(pred).into_pat()
-            outer = p.if_else().true_branch(inner).into_pat()
+            inner = p.anything().when(pred)
+            outer = p.if_else().cond(inner).into_pat()
             ctypes.pythonapi.Py_IncRef(ctypes.py_object(pred))
             junk = [inner, outer]
             junk.append(junk)
