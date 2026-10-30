@@ -54,15 +54,21 @@ def test_an_initial_var_root_takes_a_capture_replacement():
     assert fn.validate() is None
 
 
-def test_a_declined_replacement_on_an_initial_var_root_is_no_change():
+def test_an_i512_initial_var_root_refuses_a_built_replacement():
+    """A template constant builds at every declared width, I512 included, so
+    an exempt root there refuses like any other rather than declining. The
+    declined-RHS case is `strider_opt::rewrite_rule`'s own, there being no
+    Python-reachable RHS that still declines."""
     fn = lift_bytes(_FROM_VECTOR, optimize=False)
     zmm1 = strider.sleigh.SleighArch.x86_64().reg("ZMM1")
     assert zmm1 is not None
     c = p.Capture()
     find = p.initial_var_for(zmm1)
-    # Wider than 128 bits, where a template constant declines rather than
-    # truncates.
     assert [m.value_type(c) for m in fn.find_all(find.capture(c))] == ["I512"]
-    assert fn.rewrite(find=find, replace=t.int_const(0)) == 0
-    assert fn.rewrite_all([(find, t.int_const(0)), (p.initial_var_for(_rdi()), t.int_const(1))]) == 0
+    with pytest.raises(strider.StriderError, match="instruction address"):
+        fn.rewrite(find=find, replace=t.int_const(0))
+    with pytest.raises(strider.StriderError, match="instruction address"):
+        fn.rewrite_all(
+            [(find, t.int_const(0)), (p.initial_var_for(_rdi()), t.int_const(1))]
+        )
     assert fn.validate() is None
