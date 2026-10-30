@@ -156,17 +156,6 @@ pub(crate) fn var_and_const(function: &Function, node: NodeId) -> Option<(ValueI
     Some((x, u128::try_from(&c).ok()?))
 }
 
-/// [`var_and_const`] at the stored width: `c` is the whole constant, past the
-/// `u128` carrier too.
-pub(crate) fn var_and_ubig(function: &Function, node: NodeId) -> Option<(ValueId, UBig)> {
-    let [a, b] = function.node_inputs_exact::<2>(node).ok()?;
-    match (function.int_const(a), function.int_const(b)) {
-        (None, Some(c)) => Some((a, c.clone())),
-        (Some(c), None) => Some((b, c.clone())),
-        _ => None,
-    }
-}
-
 /// `(x, c)` for `Add(x, c)` with `c` a constant, read signed at `x`'s width.
 pub(crate) fn const_addend(function: &Function, add: NodeId) -> Option<(ValueId, i128)> {
     let (x, c) = var_and_const(function, add)?;

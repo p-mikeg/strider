@@ -1417,14 +1417,17 @@ fn a_guard_on_one_bit_extract_bounds_its_siblings_soundly() {
                     {
                         return;
                     }
+                    // `index_range` works in the carrier; every value here is
+                    // `I32` or `I64`.
+                    let val = u128::try_from(val).expect("a value inside the carrier");
                     let iv = ranges.borrow_mut().range_of(v, at);
                     checks += 1;
-                    if !iv.is_top(&eval::all_ones(f.value_type_opt(v).unwrap())) {
+                    if !iv.is_top(mask(f.value_type_opt(v).unwrap())) {
                         nontop += 1;
                     }
-                    let ok = *iv.lo() <= *val
-                        && *val <= *iv.hi()
-                        && (val - iv.lo()) % iv.stride() == UBig::ZERO;
+                    let ok = iv.lo() <= val
+                        && val <= iv.hi()
+                        && (val - iv.lo()).is_multiple_of(iv.stride());
                     if !ok && bad.is_none() {
                         bad = Some(format!(
                             "seed {seed}: w={word:#x} {v:?}={val:#x} outside {iv:?}\n{}",
@@ -1493,18 +1496,15 @@ fn a_range_contains_every_runtime_value() {
                 {
                     return;
                 }
-                let ty = f.value_type_opt(v).unwrap();
+                let val = u128::try_from(val).expect("a value inside the carrier");
                 let iv = ranges.range_of(v, at);
                 checks += 1;
-                if !iv.is_top(&eval::all_ones(ty)) {
+                let m = f.value_type_opt(v).unwrap().int_mask_u128().expect("at most 128 bits");
+                if !iv.is_top(m) {
                     nontop += 1;
                 }
-                if ty.bit_width() > 128 {
-                    wide += 1;
-                }
-                let ok = *iv.lo() <= *val
-                    && *val <= *iv.hi()
-                    && (val - iv.lo()) % iv.stride() == UBig::ZERO;
+                let ok =
+                    iv.lo() <= val && val <= iv.hi() && (val - iv.lo()).is_multiple_of(iv.stride());
                 if !ok && bad.is_none() {
                     bad = Some(format!(
                         "seed {seed}: inputs {vec:?} value {v:?}={val:#x} at {at:?} outside {iv:?}\n{}",
@@ -1634,7 +1634,7 @@ fn a_phi_of_constants_holds_only_its_constants() {
             continue;
         }
         let mut ranges = index_range::RangeMap::new(&f).unwrap();
-        let mut sets: FxHashMap<ValueId, Vec<UBig>> = FxHashMap::default();
+        let mut sets: FxHashMap<ValueId, Vec<u128>> = FxHashMap::default();
         for n in strider_ir::IRWalker::walk(&f) {
             if !matches!(f.node_kind(n), NodeKind::Phi) {
                 continue;
@@ -1649,7 +1649,7 @@ fn a_phi_of_constants_holds_only_its_constants() {
         }
         functions += 1;
         phis += sets.len();
-        let mut ruled_out: FxHashMap<(ValueId, NodeId), FxHashSet<UBig>> = FxHashMap::default();
+        let mut ruled_out: FxHashMap<(ValueId, NodeId), FxHashSet<u128>> = FxHashMap::default();
         let mut rng = Rng(seed | 1);
         for _ in 0..8 {
             let x = u128::from(rng.next_u64() % 10);
@@ -1658,13 +1658,14 @@ fn a_phi_of_constants_holds_only_its_constants() {
                 let Some(set) = sets.get(&v) else {
                     return;
                 };
+                let val = u128::try_from(val).expect("a value inside the carrier");
                 checks += 1;
                 let iv = ranges.range_of(v, at);
                 let out = ruled_out
                     .entry((v, at))
                     .or_insert_with(|| ranges.ruled_out(v, at));
                 ruled += usize::from(!out.is_empty());
-                if (set.binary_search(val).is_err() || !iv.contains(val) || out.contains(val))
+                if (set.binary_search(&val).is_err() || !iv.contains(val) || out.contains(&val))
                     && bad.is_none()
                 {
                     bad = Some(format!(
