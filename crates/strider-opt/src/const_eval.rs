@@ -5,22 +5,25 @@ use strider_target::Endianness;
 use strider_ir::UBig;
 use strider_ir::eval;
 
-/// Decodes `ty` bytes at `addr` into an integer masked to `ty`. `None` for
-/// widths > 16 bytes, an unmapped read, or a non-integer `ty`.
+/// Decodes `ty` bytes at `addr` into an integer masked to `ty`. `None` for an
+/// unmapped read or a non-integer `ty`.
 fn read_rom_const(
     rom: &dyn ReadOnlyMemory,
     addr: u64,
     ty: ValueType,
     endianness: Endianness,
-) -> Option<u128> {
-    let size = ty.byte_size();
-    if size > 16 {
+) -> Option<UBig> {
+    if !ty.is_integer() {
         return None;
     }
-    let mut bytes = [0u8; 16];
-    rom.read(addr, &mut bytes[..size]).ok()?;
-    let loaded = endianness.read_uint(&bytes[..size]);
-    ty.get_unsigned_int(loaded)
+    // At most 64, the widest `ValueType`.
+    let mut bytes = vec![0u8; ty.byte_size()];
+    rom.read(addr, &mut bytes).ok()?;
+    if endianness == Endianness::Big {
+        bytes.reverse();
+    }
+    // `I1` spans a byte, so the mask is not redundant.
+    Some(eval::mask(&UBig::from_le_bytes(&bytes), ty))
 }
 
 /// Right-shift in bits that brings the `load_ty`-width slice a load in
@@ -135,7 +138,7 @@ pub(crate) fn eval_node_const(
         NodeKind::Load(space) if space == rsleigh::VnSpace::RAM => {
             let rom = rom?;
             let addr = u64::try_from(&resolve(function.load_addr(node))?).ok()?;
-            read_rom_const(rom, addr, out_ty?, function.endianness()).map(UBig::from)
+            read_rom_const(rom, addr, out_ty?, function.endianness())
         }
         _ => None,
     }
