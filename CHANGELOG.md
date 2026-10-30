@@ -93,8 +93,34 @@
   name, where a space outside RAM, register, unique and const read `??`
   and an arch's default code space read `ram` whatever the sla calls it.
 
+- Every integer reader is arbitrary-precision, at every declared width.
+  `Node.sint()`, the `Match` readers (`sint` / `sint_opt`) and
+  `find_unique_value(..., signed=True)` no longer answer `None` for a
+  constant past 128 bits, where `None` could not be told from "no match";
+  `BoundCapture.__int__`, `__index__` and `__repr__` follow.
+- `BoundCapture.__eq__` compares at full width, so `m[c] == 2**300` answers
+  `True` where it answered `False` for a matching `I512` constant. This is a
+  silent change of answer, not a new error.
+- `strider.pattern.int_const`, `strider.template.int_const` and a raw int
+  pattern or template operand take a Python `int` of any size; one past 128
+  bits failed to convert at all. An integer wider than every value type
+  (512 bits) now raises `StriderError` naming its bit length, read off
+  `int.bit_length()` before any conversion allocates. A comparison against
+  one (`m[c] == 2**600`) answers unequal rather than raising.
+
 ### Breaking, Rust
 
+- `strider_pattern::int_const` takes an unbounded signed value (`u8`..`u128`,
+  `i8`..`i128`, `UBig`, `IBig`, or a collection of them), so a query names a
+  constant of any declared width, and a negative wraps into whatever width it
+  is matched at rather than into 128 bits. A template `int_const` of a
+  negative wraps at the width it materialises at.
+- `strider_pattern::Bindings::get_int` returns `Option<IBig>`, not
+  `Option<i128>`: a constant past 128 bits answered `None`.
+- `ValueType::get_unsigned_int` is gone; it had no caller.
+  `strider_ir::eval::mask` is the unsigned read, at every width.
+  `int_mask_u128`, `wrap_u128` and `get_signed_int` stay: the signed carrier
+  is still an `i128` for the stack-offset and index arithmetic that reads it.
 - A call output or return varnode outside register and unique space is
   refused naming it as the IR text spells it, with the space shortcuts
   (``r:0x1000:4, in space `r`, outside register (`%`) and unique (`u`)
@@ -361,7 +387,7 @@
   still ends its path there (not one to a `no_return_targets` entry). A seeded jump-table arm whose code falls
   through past the end is dropped and named there.
 - Two `BoundCapture`s with no integer value (any binding but an integer
-  constant of at most 128 bits) bound to the same value of one function
+  constant) bound to the same value of one function
   compare equal; every such pair compared unequal before, `m[c] == m[c]`
   included. An integer constant still compares by its value in either
   spelling, and an unbound capture equals nothing.
@@ -513,6 +539,14 @@
 
 ### Changed, Rust
 
+- Integer constants are stored as `dashu-int`'s `UBig` and evaluated at
+  their declared width, so constant folding no longer stops at 128 bits: an
+  `I256` or `I512` constant folds where it stayed an unfolded node, through
+  arithmetic, the comparison and overflow arms, `Truncate` / `Extend` and
+  `Popcount` / `Lzcount`. `Sdiv` / `Srem` still decline `INT_MIN / -1` and
+  division by zero, and every operation still declines a float type.
+- The known-bits lattice records facts for `I256` / `I512` values, so they
+  fold and their known-zero bits reach the masked-phi collapse.
 - `DecodeEngine::build_cfg`, and so `Strider::analyze`, no longer fail when
   decoding falls through past a `FunctionBound::Size` end: the region
   tail-calls the address there, reported as `Reason::PastFunctionEnd`, as are
@@ -1244,6 +1278,12 @@
 
 ### Added, Rust
 
+- `IRViewer::int_const_ibig`: a constant read as two's complement at any
+  declared width, where `int_const_i128` answers `None` past 128 bits.
+  `strider_ir` re-exports `IBig` beside `UBig`.
+- `strider_pattern::int_const_all_ones()`: the all-ones constant of whatever
+  integer width it is matched at. `int_const` names one fixed value, so it
+  cannot spell a width-relative all-ones.
 - `MemRegionsLookupTable` implements `rsleigh::MemReader`, the one fetch
   adapter `ElfFileMemReader` and the Python `BufferReader` share.
 - `AssumptionOptions::fp_rounding_mode_is_nearest`, default on, read by the
@@ -1297,8 +1337,11 @@
 - `IRBuilderExt::build_all_ones(ty)`: the all-ones constant at any integer
   width.
 - `strider_ir::eval`: integer evaluation at a declared width (`int_binary`,
-  `int_cmp`, `int_unary`, `sign_extend`, `popcount`, `lzcount`), `None` where
-  the result is undefined or the width is past 128 bits.
+  `int_cmp`, `int_unary`, `sign_extend`, `popcount`, `lzcount`), total at
+  every declared width, `None` only where the result is undefined or the
+  type is a float. Its `mask` / `all_ones` / `complement` / `ones_at` /
+  `le_bytes` hold an unbounded `UBig` to a declared width, and `signed` /
+  `unsigned` read and write that width's two's complement.
 - `IntBinaryOp::is_shift`: whether operand 1 is a shift count.
 - `ExpectedValueKind::admits`, the slot-kind check `validate`, the template
   and the builders read.
