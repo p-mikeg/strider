@@ -112,10 +112,13 @@ impl PcodeConsts {
             // closed on it.
             _ => return None,
         };
+        // `int_from_bytes` answers an integer type or nothing, so the only
+        // refusal left is the width: this table carries values as `u128`, and
+        // the `IntSub` arm above negates in that same ring.
         let ty = ValueType::int_from_bytes(insn.output.as_ref()?.size).ok()?;
-        // This table carries values as `u128`, so a wider output has nothing
-        // to fold even though `eval` itself is total.
-        ty.int_mask_u128()?;
+        if ty.bit_width() > 128 {
+            return None;
+        }
         let (l, r) = (UBig::from(l), UBig::from(r));
         u128::try_from(&strider_ir::eval::int_binary(op, &l, &r, ty)?).ok()
     }
@@ -384,6 +387,20 @@ mod tests {
         assert_eq!(c.value_of(&t0), Some(1 << 127));
         c.observe(at(0x10, 2), &op(Opcode::IntAdd, Some(t1), &[t0, t0]));
         assert_eq!(c.value_of(&t1), None);
+    }
+
+    /// `0 - 1` at a 32-byte temporary is `2^256 - 1`, which no `u128` holds.
+    /// The subtrahend is negated in the table's ring, so without the width
+    /// bound the fold would answer the 128-bit all-ones instead.
+    #[test]
+    fn a_wide_difference_is_unknown_rather_than_negated_at_128_bits() {
+        let t = vn(VnSpace::UNIQUE, 1000, 32);
+        let mut c = PcodeConsts::default();
+        c.observe(
+            at(0x10, 0),
+            &op(Opcode::IntSub, Some(t), &[konst_of(0, 32), konst_of(1, 32)]),
+        );
+        assert_eq!(c.value_of(&t), None);
     }
 
     /// An 11-byte temporary has no value type, so its sum is unknown rather
