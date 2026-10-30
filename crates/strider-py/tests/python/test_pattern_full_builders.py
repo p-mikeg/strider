@@ -85,8 +85,8 @@ def test_ret_pat_finds_returns_in_real_graph():
     assert len(hits) >= 1
 
 
-def test_if_pat_chain_sets_branches():
-    p = if_else(cond=Capture("x")).true_branch(anything()).false_branch(anything())
+def test_if_pat_chain_sets_edge_captures():
+    p = if_else(cond=Capture("x")).capture_true(Capture("t")).capture_false(Capture("f"))
     assert isinstance(p.into_pat(), Pat)
 
 

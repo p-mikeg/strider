@@ -4,6 +4,12 @@
 
 ### Breaking, Python
 
+- `IfPat.true_branch` and `IfPat.false_branch` are gone. Join the edge's
+  consumer on the edge capture instead: `if_else().true_branch(region())` is
+  `fn.find_all([if_else().capture_true(t), region().any_input(t)])`, and a
+  `call` / `ret` consumer takes it as `.ctrl(t)`. A row holds one `Match`
+  per pattern, and an edge with several consumers answers once per consumer
+  where the branch failed to match.
 - `Node.wide_const_bytes()` is gone. `Node.uint()` reads a constant at any
   declared width, a Python `int` being arbitrary-precision, so the bytes
   escape hatch had nothing left to carry.
@@ -110,6 +116,14 @@
 
 ### Breaking, Rust
 
+- `IfPat::with_true` and `IfPat::with_false` are gone, and with them
+  `BindingWalkFn`, `WalkCaptures`, `MatcherBuilder::set_binding_walk` and
+  `Pattern::has_binding_walk`. Join the edge's consumer on the edge capture
+  instead: `if_else().with_true(region().build())` is
+  `find_joined_constrained(&[&if_else().capture_true(t).build(),
+  &region().any_input(var(t)).build()], &[])`, and a `call` / `ret` consumer
+  takes it as `.ctrl(var(t))`. An edge with several consumers answers once per
+  consumer where the branch failed to match.
 - `strider_pattern::int_const` takes an unbounded signed value (`u8`..`u128`,
   `i8`..`i128`, `UBig`, `IBig`, or a collection of them), so a query names a
   constant of any declared width, and a negative wraps into whatever width it

@@ -212,20 +212,6 @@ fn if_else_cond_matches() {
 }
 
 #[test]
-fn if_else_true_and_false_branches() {
-    let function = shapes::if_cmp_then_return(4);
-    // The branch consumer is the join Region; `anything()` matches it.
-    a::matches(
-        &function,
-        if_else()
-            .with_true(anything().into_pattern())
-            .with_false(anything().into_pattern())
-            .build(),
-        1,
-    );
-}
-
-#[test]
 fn if_else_captures() {
     let function = shapes::if_cmp_then_return(4);
     let n = Capture::new();
@@ -268,27 +254,52 @@ fn call_only_matches_present_branch_via_find_all() {
     a::none(&function, call().at(0xDEAD).build());
 }
 
+/// An `If` root's two control outputs anchor one constraint set, so a failing
+/// attempt runs once and not once per output.
 #[test]
-fn if_branch_slot_accepts_built_control_pattern() {
-    // `with_true` / `with_false` accept a finished control `Pattern`, routed
-    // through the node-wise branch-consumer walk. In unoptimised IR that
-    // consumer is the join `Region`, so a `call()` pattern does not match it
-    // while `anything()` does.
+fn a_failing_if_root_is_attempted_once() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let function = shapes::if_cmp_then_return(4);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&calls);
+    let pat = if_else()
+        .build()
+        .with_root_post_match(Box::new(move |_m, _node, _ty, _b| {
+            seen.fetch_add(1, Ordering::Relaxed);
+            false
+        }));
+    a::none(&function, pat);
+    assert_eq!(calls.load(Ordering::Relaxed), 1);
+}
+
+/// The false edge's consumer in unoptimised IR is the arm's `Region`, so a
+/// `call()` joined on that edge does not match while a `region()` does.
+#[test]
+fn a_false_edge_join_matches_its_region_not_the_arm_call() {
     let function = graph_if_with_call_in_false_branch();
     let m = Matcher::new(&function);
+    let e = Capture::new();
+    let iff = || if_else().capture_false(e).build();
 
-    assert_eq!(
-        m.find_all(&if_else().with_false(anything().into_pattern()).build())
-            .unwrap()
-            .len(),
-        1
-    );
-    assert_eq!(
-        m.find_all(&if_else().with_false(call().at(0x9999).build()).build())
-            .unwrap()
-            .len(),
-        0
-    );
+    let via_region = m
+        .find_joined_constrained(
+            &[&iff(), &region().any_input(anything().capture(e)).build()],
+            &[],
+        )
+        .unwrap();
+    assert_eq!(via_region.len(), 1);
+    let via_call = m
+        .find_joined_constrained(
+            &[
+                &iff(),
+                &call().at(0x9999).ctrl(anything().capture(e)).build(),
+            ],
+            &[],
+        )
+        .unwrap();
+    assert!(via_call.is_empty());
 }
 
 /// `call_other(user_op_id, [IntConst(7)])` writing its result to a tracked

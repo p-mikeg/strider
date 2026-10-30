@@ -74,8 +74,5 @@ mod first_of_alternation;
 #[path = "pattern_matching/memory_alternation.rs"]
 mod memory_alternation;
 
-#[path = "pattern_matching/if_branch_captures.rs"]
-mod if_branch_captures;
-
-#[path = "pattern_matching/if_branch_anchor.rs"]
-mod if_branch_anchor;
+#[path = "pattern_matching/if_edge_joins.rs"]
+mod if_edge_joins;

@@ -68,7 +68,6 @@ fn rewrite_rule_impl(
     rhs: Template,
 ) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
     let through_join = lhs.may_bind_through_a_join();
-    let walks = lhs.has_binding_walk();
     move |edit: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
         // The root check before anything is allocated. A fold table tries
         // every rule at every candidate node, and `Matcher::new` plus
@@ -150,18 +149,16 @@ fn rewrite_rule_impl(
         //
         // A match through a join binds values that need not sit below the
         // root: a loop's back-edge value reads the header, and a merge arm's
-        // value is defined on one path only. Such a match, or one a binding
-        // walk made, gets the unpruned walk and an availability check. A phi
-        // bound as a leaf is harmless: a cycle back through it passes through
-        // that phi.
+        // value is defined on one path only. Such a match gets the unpruned
+        // walk and an availability check. A phi bound as a leaf is harmless: a
+        // cycle back through it passes through that phi.
         let crosses_join = through_join
-            && (walks
-                || matched_nodes.iter().any(|&n| {
-                    matches!(
-                        edit.function().node_kind(n),
-                        NodeKind::Phi | NodeKind::MemPhi | NodeKind::Region
-                    )
-                }));
+            && matched_nodes.iter().any(|&n| {
+                matches!(
+                    edit.function().node_kind(n),
+                    NodeKind::Phi | NodeKind::MemPhi | NodeKind::Region
+                )
+            });
         if new_value != root_value {
             let cycle = if crosses_join {
                 reads_without_phi(edit, new_value, root_value)
@@ -1395,28 +1392,26 @@ mod tests {
         strider_ir::validate::validate(&function).unwrap();
     }
 
-    /// `if (c) { f(); return *p } else { return g() }`, both arms' `Region`s
-    /// collapsed. A branch walk binds `g()`'s result, which only the other
-    /// arm computes, for the root `*p`.
+    /// `if (c) x = g() else x = 7; return x + 1`. A match through the merge's
+    /// `Phi` binds `g()`'s result, which only one arm computes, for the root
+    /// `x + 1` past the merge.
     #[test]
-    fn a_rewrite_a_branch_walk_bound_may_not_read_the_other_arm() {
+    fn a_rewrite_through_a_phi_may_not_read_one_arms_value() {
         use strider_ir_test_utils::{sp_arg_frame, stack_vn_x86_64};
-        use strider_pattern::{WithOutput, call, if_else, load, var};
+        use strider_pattern::{anything, call, phi};
 
-        let ptr = reg_vn(0x1000, 8);
         let flag = reg_vn(0x1100, 1);
-        let ret = reg_vn(0x1200, 8);
+        let x = reg_vn(0x1200, 8);
         let mut b = sp_arg_frame(stack_vn_x86_64())
-            .tracked(ptr)
-            .arg(ptr)
             .tracked(flag)
             .arg(flag)
-            .tracked(ret)
+            .tracked(x)
             .build_fn()
             .unwrap();
         let entry = b.create_region_all().unwrap();
         let then = b.create_region_all().unwrap();
         let other = b.create_region_all().unwrap();
+        let join = b.create_region_all().unwrap();
         b.set_entry_region_all(entry).unwrap();
         b.set_lift_addr(Some(0x10));
         b.set_region(entry);
@@ -1424,33 +1419,30 @@ mod tests {
         let c = b.truncate_if_needed(c, ValueType::I1).unwrap();
         b.build_if(c, then, other).unwrap();
         b.set_region(then);
-        let f = b.build_int_const(0x2000u64, ValueType::int(64)).unwrap();
-        b.build_call(f, &[], &[], 0).unwrap();
-        let addr = b.read_variable(&ptr).unwrap();
+        let g = b.build_int_const(0x3000u64, ValueType::int(64)).unwrap();
+        let (_, outs) = b.build_call(g, &[], &[x], 0).unwrap();
+        b.write_variable(&x, outs[0]).unwrap();
+        b.build_branch(join).unwrap();
+        b.set_region(other);
+        let seven = b.build_int_const(7u64, ValueType::int(64)).unwrap();
+        b.write_variable(&x, seven).unwrap();
+        b.build_branch(join).unwrap();
+        b.set_region(join);
+        let merged = b.read_variable(&x).unwrap();
+        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
         let y = b
-            .build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))
+            .build_int_binary_operation(merged, one, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(y), &[]).unwrap();
-        b.set_region(other);
-        let g = b.build_int_const(0x3000u64, ValueType::int(64)).unwrap();
-        let (_, outs) = b.build_call(g, &[], &[ret], 0).unwrap();
-        b.build_return(Some(outs[0]), &[]).unwrap();
         b.set_lift_addr(None);
         let mut function = b.build().unwrap();
-        crate::pipeline::run_one(
-            &crate::RegionCollapse,
-            &mut function,
-            &crate::OptCtx::new(None),
-        )
-        .unwrap();
         let root = function.producer(y);
 
         let cap = Capture::new();
-        let other_arm = call().output(2).capture(cap).into_pattern();
-        let lhs = load().mem(call().ctrl(if_else().with_false(other_arm)));
+        let lhs = int_add(phi().any_input(call().res().capture(cap)), anything());
         let rule = rewrite_rule(lhs, var(cap));
         let mut edit = EditFunction::new(&mut function);
-        let err = rule(&mut edit, root).expect_err("the other arm's value is unavailable");
+        let err = rule(&mut edit, root).expect_err("one arm's value is unavailable");
         assert!(err.to_string().contains("not available"), "{err}");
         edit.clean();
         drop(edit);

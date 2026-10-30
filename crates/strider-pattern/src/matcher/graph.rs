@@ -6,8 +6,7 @@ use super::vertex::{PatNode, PatValue, PostMatchFn};
 
 pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 
-/// Pattern nodes one query may recurse through, counting those of every branch
-/// pattern nested inside. The engine is continuation-passing, so a node's later
+/// Pattern nodes one query may recurse through. The engine is continuation-passing, so a node's later
 /// operands are matched inside the deepest frame of its earlier operands'
 /// subtrees and the stack grows with the TREE-UNFOLDED node count, not the
 /// depth: a vertex feeding several slots is walked once per slot, which is what
@@ -54,9 +53,6 @@ pub struct Pattern {
     pub(crate) cast_mask: CastMask,
     /// Resolved once at seal and memoized, verdict included.
     root: Result<NodeId, String>,
-    /// This graph's unfolded nodes plus those of the branch patterns nested
-    /// in it.
-    total_nodes: usize,
     /// Per pat node, indexed by `NodeId::as_u32`.
     inputs: Vec<super::walk::NodeInputs>,
 }
@@ -84,8 +80,8 @@ impl Pattern {
 
     /// Seal point of [`MatcherBuilder`](crate::matcher::MatcherBuilder):
     /// resolves and memoizes the match root.
-    pub(crate) fn from_graph(graph: PatGraph, nested_nodes: usize) -> Self {
-        let count = unfolded_nodes(&graph).saturating_add(nested_nodes);
+    pub(crate) fn from_graph(graph: PatGraph) -> Self {
+        let count = unfolded_nodes(&graph);
         let root = if count > MAX_PATTERN_NODES {
             Err(format!(
                 "pattern has {count} nodes, over the {MAX_PATTERN_NODES} a query can \
@@ -99,14 +95,14 @@ impl Pattern {
             graph,
             cast_mask: CastMask::empty(),
             root,
-            total_nodes: count,
             inputs,
         }
     }
 
-    /// Nodes a query recurses through, nested branch patterns included.
+    /// Nodes a query recurses through.
+    #[cfg(test)]
     pub(crate) fn total_nodes(&self) -> usize {
-        self.total_nodes
+        unfolded_nodes(&self.graph)
     }
 
     /// The structure is frozen at seal, so a match attempt reads this instead
@@ -134,28 +130,19 @@ impl Pattern {
 
     /// Whether a match may bind a value it reached through a join, which
     /// need not sit below the match root: a pat node admitting a `Phi`,
-    /// `MemPhi` or `Region` pins an input, or [`Self::has_binding_walk`].
+    /// `MemPhi` or `Region` pins an input.
     pub fn may_bind_through_a_join(&self) -> bool {
         use strider_ir::node::NodeKind;
-        self.has_binding_walk()
-            || self.graph.all_node_ids().any(|n| {
-                let node = self.graph.node_kind(n);
-                !node.input_slots.is_empty()
-                    && [NodeKind::Phi, NodeKind::MemPhi, NodeKind::Region]
-                        .iter()
-                        .any(|k| node.kind.matches(k))
-            })
+        self.graph.all_node_ids().any(|n| {
+            let node = self.graph.node_kind(n);
+            !node.input_slots.is_empty()
+                && [NodeKind::Phi, NodeKind::MemPhi, NodeKind::Region]
+                    .iter()
+                    .any(|k| node.kind.matches(k))
+        })
     }
 
-    /// Whether a pat node binds through a walk past this graph's own edges.
-    pub fn has_binding_walk(&self) -> bool {
-        self.graph
-            .all_node_ids()
-            .any(|n| self.graph.node_kind(n).binding_walk.is_some())
-    }
-
-    /// Includes what a node's binding walk declares: that sub-pattern's graph
-    /// lives inside the walk closure, not here.
+    /// Every capture appearing anywhere in the graph.
     pub fn bound_captures(&self) -> impl Iterator<Item = crate::capture::Capture> + '_ {
         self.graph
             .all_node_ids()
@@ -164,11 +151,6 @@ impl Pattern {
                 self.graph
                     .all_value_ids()
                     .flat_map(|v| self.graph.value_kind_ref(v).captures.iter().copied()),
-            )
-            .chain(
-                self.graph
-                    .all_node_ids()
-                    .flat_map(|n| self.graph.node_kind(n).walk_captures.bound.iter().copied()),
             )
     }
 
@@ -198,17 +180,8 @@ impl Pattern {
         }
         let mut out: FxHashSet<crate::capture::Capture> = FxHashSet::default();
         // This node's own capture, and any on the values it produces, bind
-        // whenever the node matches at all. A binding walk has to succeed for
-        // the node to match, so what it guarantees is guaranteed here.
+        // whenever the node matches at all.
         out.extend(self.graph.node_kind(node).captures.iter().copied());
-        out.extend(
-            self.graph
-                .node_kind(node)
-                .walk_captures
-                .guaranteed
-                .iter()
-                .copied(),
-        );
         for &vertex in self.graph.node_outputs(node) {
             out.extend(self.graph.value_kind_ref(vertex).captures.iter().copied());
         }
@@ -306,12 +279,10 @@ mod tests {
     use strider_ir_test_utils::Rng;
 
     /// A join bound as a leaf binds nothing through it; one whose inputs the
-    /// pattern pins, or a branch walk, may.
+    /// pattern pins may.
     #[test]
     fn may_bind_through_a_join_reads_the_pattern_shape() {
-        use crate::{
-            Capture, anything, call, if_else, int_add, load, mem_phi, phi, region, ret, var,
-        };
+        use crate::{Capture, anything, call, int_add, load, mem_phi, phi, region, var};
         let c = Capture::new();
         let shape = |p: Pattern| p.may_bind_through_a_join();
         assert!(!shape(int_add(phi(), var(c)).into_pattern()));
@@ -320,19 +291,12 @@ mod tests {
             int_add(phi().phi_input(0, var(c)), anything()).into_pattern()
         ));
         assert!(shape(mem_phi().phi_input(0, crate::store()).into_pattern()));
-        assert!(shape(
-            if_else().with_true(ret().into_pattern()).into_pattern()
-        ));
         assert!(!shape(load().mem(call().ctrl(region())).into_pattern()));
         assert!(shape(
             load()
                 .mem(call().ctrl(region().any_input(anything())))
                 .into_pattern()
         ));
-        let walk = if_else().with_true(ret().into_pattern()).into_pattern();
-        assert!(walk.has_binding_walk());
-        let pinned_phi = int_add(phi().phi_input(0, var(c)), anything()).into_pattern();
-        assert!(!pinned_phi.has_binding_walk());
     }
 
     #[test]
@@ -381,29 +345,20 @@ mod tests {
         s
     }
 
-    /// A random pattern over at most twelve steps, with `If` branch patterns
-    /// nested at most two deep. Checks that `total_nodes` is the larger of the
-    /// raw count and the deepest unfolding, plus every nested branch's own
-    /// total, and returns the pattern with that total.
+    /// A random pattern over at most twelve steps. Checks that `total_nodes`
+    /// is the larger of the raw count and the deepest unfolding.
     ///
     /// `shapes` counts: the unfolding wins, the raw count wins, an alternation
-    /// whose arms unfold to different sizes, a nested branch.
-    fn random_pattern(rng: &mut Rng, depth: u32, shapes: &mut [usize; 4]) -> (Pattern, usize) {
+    /// whose arms unfold to different sizes.
+    fn random_pattern(rng: &mut Rng, shapes: &mut [usize; 3]) {
         let mut b = MatcherBuilder::new();
-        let mut nested = 0usize;
         let mut vals: Vec<PatValueRef> = vec![b.leaf(KindSpec::Any)];
         for _ in 0..rng.below(12) {
             let (l, r) = (vals[rng.below(vals.len())], vals[rng.below(vals.len())]);
-            let v = match rng.below(5) {
+            let v = match rng.below(4) {
                 1 => b.unary(KindSpec::Any, l),
                 2 => b.binary(strider_ir::IntBinaryOp::Add, l, r),
                 3 => b.one_of(&[l, r]),
-                4 if depth < 2 => {
-                    let (t, t_total) = random_pattern(rng, depth + 1, shapes);
-                    let (f, f_total) = random_pattern(rng, depth + 1, shapes);
-                    nested += t_total + f_total;
-                    crate::if_else().with_true(t).with_false(f).compile(&mut b)
-                }
                 _ => b.leaf(KindSpec::Any),
             };
             vals.push(v);
@@ -417,8 +372,7 @@ mod tests {
             .max()
             .unwrap_or(0);
         let raw = p.graph.all_node_ids().count();
-        let want = raw.max(deepest) + nested;
-        assert_eq!(p.total_nodes(), want, "depth {depth}, {nested} nested");
+        assert_eq!(p.total_nodes(), raw.max(deepest));
         shapes[0] += usize::from(deepest > raw);
         shapes[1] += usize::from(deepest < raw);
         shapes[2] += usize::from(p.graph.all_node_ids().any(|n| {
@@ -430,8 +384,6 @@ mod tests {
                 .collect();
             p.graph.node_kind(n).alternation && arms.iter().any(|&a| a != arms[0])
         }));
-        shapes[3] += usize::from(nested > 0);
-        (p, want)
     }
 
     /// `total_nodes` is the larger of the raw count and the deepest unfolding.
@@ -443,9 +395,9 @@ mod tests {
             20_000
         };
         let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
-        let mut shapes = [0usize; 4];
+        let mut shapes = [0usize; 3];
         for _ in 0..cases {
-            random_pattern(&mut rng, 0, &mut shapes);
+            random_pattern(&mut rng, &mut shapes);
         }
         assert!(
             shapes.iter().all(|&c| c >= cases / 20),
