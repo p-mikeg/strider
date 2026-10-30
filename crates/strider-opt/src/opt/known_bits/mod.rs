@@ -42,6 +42,13 @@ impl KnownBitsFacts {
     fn all_known(&self, ty: ValueType) -> bool {
         ty.is_integer() && eval::mask(&(&self.ones | &self.zeros), ty) == eval::all_ones(ty)
     }
+
+    /// The known-zero bits within the `u128` carrier, for `phi_collapse`'s
+    /// masked fold, whose own question is a `u128` one. Lossy past 128 bits,
+    /// which its caller gates out.
+    pub(crate) fn zeros_u128(&self) -> u128 {
+        u128::try_from(self.zeros.clone().split_bits(128).0).expect("128 bits fit a u128")
+    }
 }
 
 enum ConstShift {
