@@ -1496,10 +1496,23 @@ fn a_range_contains_every_runtime_value() {
                 {
                     return;
                 }
-                let val = u128::try_from(val).expect("a value inside the carrier");
                 let iv = ranges.range_of(v, at);
                 checks += 1;
-                let m = f.value_type_opt(v).unwrap().int_mask_u128().expect("at most 128 bits");
+                // A width past the carrier is refused with `top(u128::MAX)`,
+                // which is the only sound answer and nothing to compare a
+                // value against. Pinned here: a NARROWER answer there would be
+                // a claim the analysis cannot hold.
+                let (Some(m), Ok(val)) = (
+                    f.value_type_opt(v).unwrap().int_mask_u128(),
+                    u128::try_from(val),
+                ) else {
+                    wide += 1;
+                    assert!(
+                        iv.is_top(u128::MAX),
+                        "seed {seed}: {v:?} past the carrier, but the range is {iv:?}"
+                    );
+                    return;
+                };
                 if !iv.is_top(m) {
                     nontop += 1;
                 }
