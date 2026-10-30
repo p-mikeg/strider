@@ -21,7 +21,15 @@ pub fn mask(v: &UBig, ty: ValueType) -> UBig {
     if !ty.is_integer() {
         return UBig::ZERO;
     }
-    v.clone().split_bits(ty.bit_width()).0
+    let bits = ty.bit_width();
+    // A width the carrier holds masks without touching the heap; `split_bits`
+    // allocates both halves to discard one.
+    if bits <= 128
+        && let Ok(n) = u128::try_from(v)
+    {
+        return UBig::from(n & (u128::MAX >> (128 - bits)));
+    }
+    v.clone().split_bits(bits).0
 }
 
 /// Every bit of `ty` set, 0 for a float.
@@ -30,7 +38,13 @@ pub fn all_ones(ty: ValueType) -> UBig {
     if !ty.is_integer() {
         return UBig::ZERO;
     }
-    (UBig::ONE << ty.bit_width()) - UBig::ONE
+    let bits = ty.bit_width();
+    // Every width but the two widest; a shift and a subtraction per call
+    // otherwise, for one of sixteen answers.
+    if bits <= 128 {
+        return UBig::from(u128::MAX >> (128 - bits));
+    }
+    (UBig::ONE << bits) - UBig::ONE
 }
 
 /// `!v` within `ty`.
