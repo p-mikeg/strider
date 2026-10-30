@@ -130,7 +130,6 @@ mod tests {
 
     use super::{reachable_topo, topo_order};
     use crate::Capture;
-    use crate::matcher::OutputKindSpec;
     use crate::template::{
         Template, TemplateBuilder, TemplateKind, TmplNodeRef, TmplValue, TmplValueRef,
     };
@@ -578,10 +577,8 @@ mod tests {
                 (1..ins.len()).any(|i| ins[..i].contains(&ins[i]))
             });
             let memory_read = g.all_value_ids().any(|v| {
-                matches!(
-                    g.value_kind_ref(v),
-                    TmplValue::TmplOutput(o) if matches!(o.kind, OutputKindSpec::Memory)
-                ) && g.value_uses(v).next().is_some()
+                matches!(g.value_kind_ref(v), TmplValue::Memory { .. })
+                    && g.value_uses(v).next().is_some()
             });
             shapes[0] += 1;
             shapes[1] += u64::from(read_twice || two_read_outputs);
