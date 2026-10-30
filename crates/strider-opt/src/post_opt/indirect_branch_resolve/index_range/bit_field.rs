@@ -3,9 +3,9 @@
 
 use cranelift_entity::SecondaryMap;
 
-use strider_ir::eval::{bit, mask_below};
+use strider_ir::eval;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId};
-use strider_ir::{IRViewer, IntBinaryOp};
+use strider_ir::{IRViewer, IntBinaryOp, UBig};
 
 use crate::opt::known_bits::KnownBitsMap;
 
@@ -40,18 +40,19 @@ impl MaskOperands {
         let &[value] = function.node_outputs(node) else {
             return None;
         };
-        let (operand, mask) = crate::const_eval::var_and_const(function, node)?;
-        let type_mask = function.value_type_opt(value)?.int_mask_u128()?;
-        let may_set = |v: ValueId| known[v].max_value(type_mask);
-        if may_set(operand) & !mask == 0 {
+        let (operand, mask) = crate::const_eval::var_and_ubig(function, node)?;
+        let ty = function.value_type_opt(value).filter(|t| t.is_integer())?;
+        // Every bit the value may set: the complement of its known zeros.
+        let may_set = |v: ValueId| eval::complement(&known[v].zeros, ty);
+        if may_set(operand) & eval::complement(&mask, ty) == UBig::ZERO {
             self.identity[value] = Some(operand);
         }
         if let NodeKind::IntBinaryOp(IntBinaryOp::Or) = *function.kind_of_value(operand)
             && let Ok([a, b]) = function.producer_inputs_exact::<2>(operand)
         {
-            if may_set(a) & mask == 0 {
+            if may_set(a) & &mask == UBig::ZERO {
                 self.through_or[value] = Some(b);
-            } else if may_set(b) & mask == 0 {
+            } else if may_set(b) & &mask == UBig::ZERO {
                 self.through_or[value] = Some(a);
             }
         }
@@ -112,25 +113,23 @@ impl BitField {
         if self == inner {
             return Some(iv);
         }
-        if !self.encloses(inner) || inner.shift + inner.width > 128 {
+        if !self.encloses(inner) {
             return None;
         }
-        let digits = |v: u128| {
-            v.checked_shr(self.shift)
-                .and_then(|run| run.checked_shr(inner.lo - self.lo))
-                .unwrap_or(0)
-        };
+        let drop = self.shift as usize + (inner.lo - self.lo) as usize;
+        let digits = |v: &UBig| v >> drop;
         let at_top = self.exact && inner.lo + inner.width == self.lo + self.width;
-        let lo = match iv.lo {
-            0 => 0,
+        let lo = match iv.lo() {
+            z if *z == UBig::ZERO => UBig::ZERO,
             lo if at_top => digits(lo),
             _ => return None,
         };
-        let width_max = mask_below(inner.width);
+        let width_max = eval::ones_at(inner.width as usize, 0);
+        let shift = inner.shift as usize;
         Some(Interval::new(
-            lo << inner.shift,
-            digits(iv.hi).min(width_max) << inner.shift,
-            bit(inner.shift),
+            lo << shift,
+            digits(iv.hi()).min(width_max) << shift,
+            UBig::ONE << shift,
         ))
     }
 }
@@ -220,7 +219,7 @@ fn field_step(
     let f = function;
     let shift_by = || -> Option<(ValueId, u32)> {
         let [x, k] = f.producer_inputs_exact::<2>(value).ok()?;
-        Some((x, u32::try_from(f.int_const_u128(k)?).ok()?))
+        Some((x, u32::try_from(f.int_const(k)?).ok()?))
     };
     match *f.node_kind(f.producer(value)) {
         NodeKind::Extend(ExtendOp::ZeroExtend) => {
@@ -237,25 +236,28 @@ fn field_step(
             shift_by().map(|(x, k)| (x, FieldOp::ShiftRight(k)))
         }
         NodeKind::IntBinaryOp(IntBinaryOp::Mul) => {
-            let (x, c) = crate::const_eval::var_and_const(f, f.producer(value))?;
-            c.is_power_of_two()
-                .then(|| (x, FieldOp::ShiftLeft(c.trailing_zeros())))
+            let (x, c) = crate::const_eval::var_and_ubig(f, f.producer(value))?;
+            let k = c.trailing_zeros()?;
+            if c != UBig::ONE << k {
+                return None;
+            }
+            Some((x, FieldOp::ShiftLeft(u32::try_from(k).ok()?)))
         }
         NodeKind::IntBinaryOp(IntBinaryOp::And) => {
             if let Some(x) = masks.identity[value] {
                 return Some((x, FieldOp::Same));
             }
-            let (x, c) = crate::const_eval::var_and_const(f, f.producer(value))?;
+            let (x, c) = crate::const_eval::var_and_ubig(f, f.producer(value))?;
             let x = masks.through_or[value].unwrap_or(x);
-            if c == 0 {
+            // `trailing_zeros` is `None` only at zero, which masks everything
+            // out and is no field.
+            let shift = u32::try_from(c.trailing_zeros()?).ok()?;
+            let run = c >> shift as usize;
+            if &run & (&run + UBig::ONE) != UBig::ZERO {
                 return None;
             }
-            let shift = c.trailing_zeros();
-            let run = c >> shift;
-            if run & run.wrapping_add(1) != 0 {
-                return None;
-            }
-            let width = 128 - run.leading_zeros();
+            // A contiguous run of ones, so its trailing ones are its width.
+            let width = u32::try_from(super::interval::trailing_ones(&run)).ok()?;
             Some((
                 x,
                 if shift == 0 {

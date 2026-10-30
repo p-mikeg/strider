@@ -43,17 +43,11 @@ impl KnownBitsFacts {
         ty.is_integer() && eval::mask(&(&self.ones | &self.zeros), ty) == eval::all_ones(ty)
     }
 
-    /// The known-zero bits within the `u128` carrier, for a caller whose own
-    /// question is a `u128` one.
+    /// The known-zero bits within the `u128` carrier, for `phi_collapse`'s
+    /// masked fold, whose own question is a `u128` one. Lossy past 128 bits,
+    /// which its caller gates out.
     pub(crate) fn zeros_u128(&self) -> u128 {
         u128::try_from(self.zeros.clone().split_bits(128).0).expect("128 bits fit a u128")
-    }
-
-    /// Upper bound on the runtime value: every bit that could be 1, set.
-    /// `type_mask` is a width the carrier holds, so bits above it are not part
-    /// of the answer.
-    pub(crate) fn max_value(&self, type_mask: u128) -> u128 {
-        !self.zeros_u128() & type_mask
     }
 }
 
