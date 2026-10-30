@@ -8,11 +8,9 @@ in a `Template` operand raises `StriderError` naming its constructor.
 
 Compiling and matching a pattern is native recursion, so a query refuses
 a pattern the thread running it cannot recurse through: one past the
-matcher's node cap, counting those nested through `true_branch` /
-`false_branch`, or one
-nested deeper than the thread's stack allows, raises `StriderError` instead of
-overflowing. A `threading.Thread` with a reduced `stack_size` accepts less
-nesting than the main thread.
+matcher's node cap, or one nested deeper than the thread's stack allows,
+raises `StriderError` instead of overflowing. A `threading.Thread` with a
+reduced `stack_size` accepts less nesting than the main thread.
 """
 
 from __future__ import annotations
@@ -620,15 +618,11 @@ class IfPat(NodePat, InputPat, CtrlPat, OutputPat):
     def cond(self, p: ValueLike) -> "IfPat":
         """Constrain the branch condition (`inputs[1]`)."""
         ...
-    def true_branch(self, p: PatLike) -> "IfPat":
-        """Match `p` against the unique consumer of the true edge."""
-        ...
-    def false_branch(self, p: PatLike) -> "IfPat":
-        """Match `p` against the unique consumer of the false edge."""
-        ...
     def capture_true(self, c: Capture) -> "IfPat":
         """Bind the true control-output value to `c`, the edge operand
-        `dominates` / `phi_input_from_edge` take."""
+        `dominates` / `phi_input_from_edge` take. The edge's consumer is a
+        second pattern joined on `c`, as in
+        `find_all([if_else().capture_true(c), region().any_input(c)])`."""
         ...
     def capture_false(self, c: Capture) -> "IfPat":
         """Bind the false control-output value to `c`. See
