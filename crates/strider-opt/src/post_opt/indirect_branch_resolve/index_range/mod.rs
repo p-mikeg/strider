@@ -709,7 +709,7 @@ fn is_sign_bit_known_zero(
         return false;
     };
     let sign_bit = (type_mask >> 1) + 1;
-    &known[value].zeros & sign_bit != 0
+    known[value].zeros & sign_bit != 0
 }
 
 /// One value's guard nodes in dominator-tree preorder.
@@ -817,8 +817,8 @@ fn build<'f>(
     for node in function.walk() {
         masks.record(function, node, known);
         for &value_id in function.node_outputs(node) {
-            let kb: &KnownBitsFacts = &known[value_id];
-            if *kb == KnownBitsFacts::default() {
+            let kb: KnownBitsFacts = known[value_id];
+            if kb.ones == 0 && kb.zeros == 0 {
                 continue;
             }
             let Some(ty) = function.value_type_opt(value_id) else {
@@ -830,7 +830,7 @@ fn build<'f>(
             let max_val = kb.max_value(type_mask);
             // `k` trailing known-zero bits means a multiple of `2^k`, capped to
             // the range so the stride stays a valid divisor.
-            let tz = (kb.zeros_u128() & type_mask).trailing_ones().min(127);
+            let tz = kb.zeros.trailing_ones().min(127);
             let stride = eval::bit(tz).min(max_val.max(1));
             if max_val < type_mask || stride > 1 {
                 kb_bounds[value_id] = Some(Interval::new(0, max_val, stride));
