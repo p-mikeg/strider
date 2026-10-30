@@ -140,11 +140,17 @@ pub trait IRViewer {
         Some(v)
     }
 
-    /// [`Self::int_const_u128`] sign-extended from its declared width.
-    ///
-    /// `None` above 128 bits, where there is no signed carrier: an `I256` or
-    /// `I512` constant that [`Self::int_const_u128`] reads back still answers
-    /// `None` here.
+    /// [`Self::int_const`] read as two's complement at its declared width, at
+    /// every width.
+    fn int_const_ibig(&self, value: ValueId) -> Option<dashu_int::IBig> {
+        let ty = self.value_kind(value).as_value()?;
+        crate::eval::signed(self.int_const(value)?, ty)
+    }
+
+    /// [`Self::int_const_ibig`] within the `i128` carrier, for an offset
+    /// domain the carrier bounds. `None` above 128 bits: an `I256` or `I512`
+    /// constant that [`Self::int_const_u128`] reads back still answers `None`
+    /// here.
     fn int_const_i128(&self, value: ValueId) -> Option<i128> {
         let v = self.int_const_u128(value)?;
         self.value_kind(value).as_value()?.get_signed_int(v)
