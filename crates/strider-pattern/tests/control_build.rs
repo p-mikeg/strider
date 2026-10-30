@@ -297,6 +297,15 @@ fn if_cond_captures() {
     assert!(hits[0].value(c).is_some());
 }
 
+/// An output slot past any node's outputs matches nothing, even at the
+/// largest index.
+#[test]
+fn an_output_slot_past_the_end_matches_nothing() {
+    let function = shapes::call_at(0x1234);
+    let pat = call().output(usize::MAX).capture(Capture::new()).build();
+    a::none(&function, pat);
+}
+
 /// `.output(n)` on an `If` names control output `n`: 0 the true edge, 1 the
 /// false one.
 #[test]
