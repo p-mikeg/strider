@@ -33,11 +33,12 @@ use strider_pattern::{
 ///
 /// # Panics
 ///
-/// Panics if the RHS references a [`Capture`] the LHS does not bind.
+/// Panics if either side is refused, or the RHS references a [`Capture`] the
+/// LHS does not bind.
 pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs: T) -> BoxedRule {
     let lhs_pat = lhs.into_pattern();
     let rhs_tpl = rhs.into_template();
-    check_capture_coverage(&lhs_pat, &rhs_tpl).expect("rewrite_rule: RHS capture not bound by LHS");
+    check_capture_coverage(&lhs_pat, &rhs_tpl).expect("rewrite_rule");
     Box::new(rewrite_rule_impl(lhs_pat, rhs_tpl))
 }
 
@@ -54,9 +55,9 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs
 ///
 /// # Errors
 ///
-/// Errors if the RHS references a capture the LHS does not bind. The returned
-/// closure errors as [`rewrite_rule`]'s does, including when the match holds
-/// no node with an asm-fingerprint.
+/// Errors if either side is refused, or the RHS references a capture the LHS
+/// does not bind. The returned closure errors as [`rewrite_rule`]'s does,
+/// including when the match holds no node with an asm-fingerprint.
 pub fn rewrite_rule_runtime(lhs: Pattern, rhs: Template) -> Result<BoxedRule> {
     check_capture_coverage(&lhs, &rhs)?;
     Ok(Box::new(rewrite_rule_impl(lhs, rhs)))
@@ -255,8 +256,10 @@ fn available_at(f: &strider_ir::Function, value: ValueId, replaced: ValueId) -> 
     at(replaced).is_none_or(|used| at(value).is_some_and(|def| tree.dominates(def, used)))
 }
 
-/// Asserts every capture the RHS references also appears in the LHS.
+/// Asserts both sides are unrefused and every capture the RHS references also
+/// appears in the LHS.
 fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
+    rhs.root()?;
     // GUARANTEED, not merely present: under a `one_of` only one arm fires, so a
     // capture bound in some arms but not all leaves the RHS with nothing to
     // instantiate. Accepting it here would defer the failure to the first node
