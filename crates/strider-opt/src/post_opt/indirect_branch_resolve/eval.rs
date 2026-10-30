@@ -60,9 +60,9 @@ impl<'a> Evaluator<'a> {
     /// The boundary is the INDEX, not the root.  A branch's target and ISA-mode
     /// cones overlap almost entirely, so a per-root reset re-folds the shared
     /// dispatch load and everything under it.
-    pub(crate) fn begin_index(&mut self, idx_value: ValueId, idx: u128) {
+    pub(crate) fn begin_index(&mut self, idx_value: ValueId, idx: UBig) {
         self.map.clear();
-        self.map.insert(idx_value, Abs::Const(UBig::from(idx)));
+        self.map.insert(idx_value, Abs::Const(idx));
     }
 
     /// Evaluates `dispatch` over `order` against the open index.
@@ -330,9 +330,9 @@ mod tests {
         assert!(pruned.contains(&dispatch), "pruned cone includes the root");
 
         let mut ev = Evaluator::new(&function, None);
-        ev.begin_index(idx, 7);
+        ev.begin_index(idx, UBig::from(7u32));
         assert_eq!(ev.eval_root(&pruned, dispatch), Some(107));
-        ev.begin_index(idx, 8);
+        ev.begin_index(idx, UBig::from(8u32));
         assert_eq!(ev.eval_root(&pruned, dispatch), Some(108));
     }
 
@@ -369,9 +369,9 @@ mod tests {
         // pruned at the index.
         let order = cone_order_pruned(&function, sum, idx);
         let mut ev = Evaluator::new(&function, None);
-        ev.begin_index(idx, 5);
+        ev.begin_index(idx, UBig::from(5u32));
         assert_eq!(ev.eval_root(&order, sum), Some(105));
-        ev.begin_index(idx, 7); // fresh map
+        ev.begin_index(idx, UBig::from(7u32)); // fresh map
         assert_eq!(ev.eval_root(&order, sum), Some(107));
     }
 
@@ -381,12 +381,12 @@ mod tests {
         let mut ev = Evaluator::new(&function, None);
         // Pruning at `sum` itself leaves a cone of only `[sum]`.
         let order_sum = cone_order_pruned(&function, sum, sum);
-        ev.begin_index(sum, 5);
+        ev.begin_index(sum, UBig::from(5u32));
         assert_eq!(ev.eval_root(&order_sum, sum), Some(5));
         // Seeding an unrelated leaf leaves the real index unresolved.
         let const_100 = sum_unrelated_leaf(&function, sum);
         let order = cone_order_pruned(&function, sum, const_100);
-        ev.begin_index(const_100, 5);
+        ev.begin_index(const_100, UBig::from(5u32));
         assert_eq!(ev.eval_root(&order, sum), None);
     }
 
@@ -420,7 +420,7 @@ mod tests {
             .expect("pipeline");
         let order = cone_order(&function, loaded);
         let mut ev = Evaluator::new(&function, None);
-        ev.begin_index(idx, 0);
+        ev.begin_index(idx, UBig::from(0u32));
         ev.eval_root(&order, loaded)
     }
 
