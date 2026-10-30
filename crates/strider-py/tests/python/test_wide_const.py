@@ -10,6 +10,8 @@ from __future__ import annotations
 import strider
 from strider.pattern import Capture, int_const
 
+from .conftest import lift_bytes
+
 
 def _wide_const_ids(f: strider.ir.Function) -> list[int]:
     """The `IntConst` nodes declared wider than 64 bits."""
@@ -136,8 +138,37 @@ def test_i80_const_node_sint_returns_full_value():
 # I256/I512 are unreachable with the bundled x86-64 Sleigh spec: `vmovdqa
 # ymm0, [abs]` trips the wide-container guard (ymm0 sits inside the tracked
 # zmm0), and `vmovdqa64 zmm0, [abs]` lifts to an unclassified CallOther, so
-# no 64-byte Load is minted. `uint()` has no width cap; `sint()` stops at
-# 128 bits and returns None above it, there being no signed carrier.
+# no 64-byte Load is minted. Neither `uint()` nor `sint()` has a width cap,
+# so a constant of any declared width would read back whole either way.
+
+
+def test_a_query_names_a_constant_past_the_carrier():
+    """The query value is carried unbounded, so one past 128 bits builds a
+    pattern instead of being refused as an operand kind."""
+    f = _wide_const_function()
+    c = Capture()
+    assert strider.pattern.int_const(2**200) is not None
+    assert strider.template.int_const(2**200) is not None
+    assert f.find_all(strider.pattern.int_const(2**200)) == []
+    # Wrapped into the matched width like any other query: at I128 the low
+    # 128 bits of `2**200 + WIDE` are `WIDE`.
+    assert len(f.find_all(strider.pattern.int_const(2**200 + WIDE))) == 1
+    assert len(f.find_all(strider.pattern.int_const([1, 2**200 + WIDE]))) == 1
+    # A negative wraps into the matched width too.
+    assert len(f.find_all(strider.pattern.int_const(WIDE - 2**128))) == 1
+    assert f.find_all(strider.pattern.int_const(c))[0].uint(c) == WIDE
+
+
+def test_bound_capture_compares_against_an_unrepresentable_int():
+    """`__eq__` answers unequal for an int no declared width holds, rather
+    than raising out of a comparison or converting 125 MB of it."""
+    f = _wide_const_function()
+    c = Capture()
+    m = f.find_all(strider.pattern.int_const(c))[0]
+    assert (m[c] == WIDE) is True
+    assert (m[c] == 2**600) is False
+    assert (m[c] != 2 ** 10**6) is True
+    assert repr(m[c]) == f"BoundCapture({WIDE:#x})"
 
 
 def test_small_const_node_sint_exact_value():
@@ -176,3 +207,67 @@ def test_int_const_takes_the_unsigned_128_bit_half():
     assert strider.pattern.int_const(top) is not None
     assert strider.template.int_const(top) is not None
     assert strider.pattern.int_add(strider.pattern.anything(), top) is not None
+
+
+# `vextracti128 xmm1, ymm0, 1; movq rax, xmm1; ret`: the sub-register write
+# through the tracked I512 zmm1 mints an I512 mask constant, the one
+# >128-bit constant the bundled specs reach.
+_FROM_VECTOR = bytes.fromhex("c4e37d39c10166480f7ec8c3")
+I512_MASK = 2**512 - 2**128
+
+
+def _i512_const():
+    f = lift_bytes(_FROM_VECTOR, optimize=False)
+    ids = [
+        n
+        for n in f.node_ids()
+        if f.node(n).kind() == "IntConst" and f.node(n).value_type() == "I512"
+    ]
+    assert len(ids) == 1, "expected the one I512 mask constant"
+    return f, ids[0]
+
+
+def test_an_i512_node_reads_back_whole_in_both_signs():
+    """Neither reader caps: `sint()` answered `None` above 128 bits, which was
+    indistinguishable from "not a constant"."""
+    f, nid = _i512_const()
+    node = f.node(nid)
+    u, i = node.uint(), node.sint()
+    assert u == I512_MASK
+    assert i == -(2**128)
+    assert u is not None and i == u - 2**512
+
+
+def test_an_i512_constant_reaches_every_match_reader():
+    f, _ = _i512_const()
+    c = Capture()
+    pat = int_const(c).of_width(512)
+    (m,) = f.find_all(pat)
+    assert m.uint(c) == I512_MASK
+    assert m.uint_opt(c) == I512_MASK
+    assert m.sint(c) == -(2**128)
+    assert m.sint_opt(c) == -(2**128)
+    assert int(m[c]) == I512_MASK
+    assert repr(m[c]) == f"BoundCapture({I512_MASK:#x})"
+    # Either spelling of the same constant.
+    assert (m[c] == I512_MASK) is True
+    assert (m[c] == -(2**128)) is True
+    assert (m[c] == I512_MASK - 1) is False
+
+
+def test_find_unique_value_answers_for_an_i512_constant():
+    """It answered `None` there, which no caller could tell from "no
+    match"."""
+    f, _ = _i512_const()
+    c = Capture()
+    pat = int_const(c).of_width(512)
+    assert f.find_unique_value(pat, c) == I512_MASK
+    assert f.find_unique_value(pat, c, signed=True) == -(2**128)
+
+
+def test_an_i512_constant_is_nameable_in_a_query():
+    f, _ = _i512_const()
+    for v in (I512_MASK, -(2**128)):
+        assert len(f.find_all(int_const(v).of_width(512))) == 1
+        assert len(f.find_all(int_const([1, v]).of_width(512))) == 1
+    assert f.find_all(int_const(I512_MASK - 1).of_width(512)) == []
