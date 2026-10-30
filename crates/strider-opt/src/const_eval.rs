@@ -147,13 +147,18 @@ pub(crate) fn eval_node_const(
 /// `(x, c)` for a two-operand node with exactly one operand an integer
 /// constant, `c` its value; `None` where that constant is past `u128`.
 ///
-/// Which operand is the variable is asked of [`var_and_ubig`], not of the
+/// Which operand is the variable is asked of the stored constant, not of the
 /// carrier: a shift count is free to be narrower than its value
 /// ([`strider_ir::node::NodeKind::operand_width`]), so reading both through
 /// `int_const_u128` would name a constant too wide to read as the variable.
 pub(crate) fn var_and_const(function: &Function, node: NodeId) -> Option<(ValueId, u128)> {
-    let (x, c) = var_and_ubig(function, node)?;
-    Some((x, u128::try_from(&c).ok()?))
+    let [a, b] = function.node_inputs_exact::<2>(node).ok()?;
+    let (x, c) = match (function.int_const(a), function.int_const(b)) {
+        (None, Some(c)) => (a, c),
+        (Some(c), None) => (b, c),
+        _ => return None,
+    };
+    Some((x, u128::try_from(c).ok()?))
 }
 
 /// `(x, c)` for `Add(x, c)` with `c` a constant, read signed at `x`'s width.
