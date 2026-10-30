@@ -1318,7 +1318,6 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "cranelift-entity",
- "dashu-int",
  "graph-algorithms",
  "proptest",
  "rsleigh",
