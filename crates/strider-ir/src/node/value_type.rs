@@ -141,12 +141,6 @@ impl ValueType {
         }
     }
 
-    /// Masks `val` to this type's width, or `None` for floats and for widths
-    /// past the `u128` carrier.
-    pub fn get_unsigned_int(self, val: u128) -> Option<u128> {
-        Some(val & self.int_mask_u128()?)
-    }
-
     /// Sign-extends `val`, read as this type's narrow representation, to a
     /// full `i128`. `None` for floats and for widths past the carrier.
     pub fn get_signed_int(self, val: u128) -> Option<i128> {
@@ -362,34 +356,27 @@ mod tests {
         }
     }
 
+    /// The unsigned read is [`crate::eval::mask`], which has no carrier.
     #[test]
-    fn get_unsigned_int_masks_to_width() {
-        assert_eq!(
-            ValueType::int(16).get_unsigned_int(0x12345678u128),
-            Some(0x5678u128)
-        );
-        assert_eq!(
-            ValueType::int(32).get_unsigned_int(0x12345678u128),
-            Some(0x12345678u128)
-        );
-        assert_eq!(
-            ValueType::int(128).get_unsigned_int(u128::MAX),
-            Some(u128::MAX)
-        );
-        assert_eq!(ValueType::float(32).get_unsigned_int(0x12345678u128), None);
+    fn mask_reduces_to_the_declared_width() {
+        use crate::eval::mask;
+        use dashu_int::UBig;
+        let v = UBig::from(0x12345678u32);
+        assert_eq!(mask(&v, ValueType::int(16)), UBig::from(0x5678u32));
+        assert_eq!(mask(&v, ValueType::int(32)), v);
+        let all = UBig::from(u128::MAX);
+        assert_eq!(mask(&all, ValueType::int(128)), all);
+        // A float has no integer bits.
+        assert_eq!(mask(&v, ValueType::float(32)), UBig::ZERO);
         // Every bit above the declared width clears.
-        assert_eq!(
-            ValueType::int(8).get_unsigned_int(u128::MAX),
-            Some(u128::from(u8::MAX))
-        );
-        assert_eq!(
-            ValueType::int(64).get_unsigned_int(u128::MAX),
-            Some(u128::from(u64::MAX))
-        );
+        assert_eq!(mask(&all, ValueType::int(8)), UBig::from(u8::MAX));
+        assert_eq!(mask(&all, ValueType::int(64)), UBig::from(u64::MAX));
+        // Past the carrier the value survives whole.
+        assert_eq!(mask(&all, ValueType::int(256)), all);
         // I1 masks to the low bit.
-        assert_eq!(ValueType::I1.get_unsigned_int(1), Some(1));
-        assert_eq!(ValueType::I1.get_unsigned_int(0), Some(0));
-        assert_eq!(ValueType::I1.get_unsigned_int(0xFE), Some(0));
+        assert_eq!(mask(&UBig::ONE, ValueType::I1), UBig::ONE);
+        assert_eq!(mask(&UBig::ZERO, ValueType::I1), UBig::ZERO);
+        assert_eq!(mask(&UBig::from(0xFEu8), ValueType::I1), UBig::ZERO);
     }
 
     #[test]
@@ -415,14 +402,14 @@ mod tests {
     }
 
     #[test]
-    fn get_unsigned_int_for_u80_masks_to_80_bits() {
-        let raw: u128 = 0xFFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFFu128;
-        let mask: u128 = (1u128 << 80) - 1;
-        assert_eq!(ValueType::int(80).get_unsigned_int(raw), Some(mask));
-        assert_eq!(
-            ValueType::int(80).get_unsigned_int(0x12345678),
-            Some(0x12345678)
-        );
+    fn mask_for_u80_reduces_to_80_bits() {
+        use crate::eval::mask;
+        use dashu_int::UBig;
+        let ty = ValueType::int(80);
+        let raw = UBig::from(u128::MAX);
+        assert_eq!(mask(&raw, ty), (UBig::ONE << 80usize) - UBig::ONE);
+        let small = UBig::from(0x12345678u32);
+        assert_eq!(mask(&small, ty), small);
     }
 
     #[test]
@@ -486,19 +473,20 @@ mod tests {
         }
     }
 
-    /// A > 128-bit query must fail loudly rather than return the low 128 bits
-    /// as a success.
+    /// The unsigned read has no carrier, so a > 128-bit width answers in
+    /// full; the signed one still fails loudly rather than return the low
+    /// 128 bits as a success.
     #[test]
-    fn get_unsigned_int_i256_does_not_falsely_succeed() {
-        assert_eq!(ValueType::int(256).get_unsigned_int(0xDEAD_BEEFu128), None);
-        assert_eq!(ValueType::int(256).get_unsigned_int(u128::MAX), None);
-        assert_eq!(ValueType::int(512).get_unsigned_int(42u128), None);
+    fn past_the_carrier_only_the_signed_read_refuses() {
+        use crate::eval::mask;
+        use dashu_int::UBig;
+        let v = UBig::from(0xDEAD_BEEFu32);
+        assert_eq!(mask(&v, ValueType::int(256)), v);
+        let wide = UBig::ONE << 200usize;
+        assert_eq!(mask(&wide, ValueType::int(512)), wide);
         assert_eq!(ValueType::int(256).get_signed_int(0xDEAD_BEEFu128), None);
         assert_eq!(ValueType::int(512).get_signed_int(42u128), None);
-        // Exactly 128 bits still fits the carrier.
-        assert_eq!(
-            ValueType::int(128).get_unsigned_int(u128::MAX),
-            Some(u128::MAX)
-        );
+        // Exactly 128 bits still fits the signed carrier.
+        assert_eq!(ValueType::int(128).get_signed_int(u128::MAX), Some(-1));
     }
 }
