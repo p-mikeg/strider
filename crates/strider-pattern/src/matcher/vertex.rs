@@ -120,9 +120,8 @@ impl PatNode {
     }
 }
 
-/// Public for the `PhiToken` arm alone: nothing builds such a vertex yet, and
-/// narrowing this would make the variant dead rather than reserved.
-pub enum OutputKindSpec {
+#[derive(PartialEq)]
+pub(crate) enum OutputKindSpec {
     /// Value, control, memory, or phi-token: the unconstrained wildcard behind
     /// `anything()` / `var()`. A `width` constraint can still narrow it to a value
     /// output of that width.
@@ -131,7 +130,6 @@ pub enum OutputKindSpec {
     Value(ValueType),
     Control,
     Memory,
-    PhiToken,
 }
 
 /// How a value vertex reads its `slot`.

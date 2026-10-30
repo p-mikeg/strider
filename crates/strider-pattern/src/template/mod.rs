@@ -14,7 +14,7 @@ pub use ctx::TemplateCtx;
 pub use graph::Template;
 /// The vertex payloads behind a [`Template`]'s graph. Not the seam: a template
 /// is described through [`TemplateBuilder`], never by handing it a vertex.
-pub(crate) use graph::{TmplNodeKind, TmplOutput, TmplValue};
+pub(crate) use graph::{TmplNodeKind, TmplValue};
 
 // Build-side twins of the match-side value-op factories. They share the same
 // typed structs but carry `TemplatePat` constructor bounds, so the
@@ -35,7 +35,6 @@ use strider_ir::{Function, IRBuilder, IRViewer};
 
 use crate::bindings::Bindings;
 use crate::graph_ext::{consumed_inputs, topo_order};
-use crate::matcher::OutputKindSpec;
 
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind> + Send>;
 
@@ -103,7 +102,7 @@ pub(crate) enum TemplateTy {
 /// an untyped output no node consumes, an output typed from a capture that
 /// bound no typed value, a node that declares no output), gives a node an
 /// input count, an output or an operand its node signature refuses, or if
-/// node creation yields no value output. Closure, width,
+/// node creation yields no value output. Closure, unbound-capture, width,
 /// `IntConst`-from-`NodeKind` and wide-float refusals come before any node is
 /// built; a signature or wiring refusal is found mid-build, so the nodes
 /// created before it stay in `builder`'s function, dead.
@@ -163,9 +162,9 @@ pub fn instantiate_guarded<B: IRBuilder>(
     let mut materialised: FxHashMap<TmplValueId, ValueId> = FxHashMap::default();
     let mut root_value: Option<ValueId> = None;
 
-    // Every kind first, so a closure's skip declines the template before any
-    // node exists. `None` is a capture leaf.
-    let mut kinds: Vec<(NodeId, Option<NodeKind>)> = Vec::with_capacity(order.len());
+    // Every step first, so a closure's skip or an unbound capture declines
+    // the template before any node exists.
+    let mut plan: Vec<(NodeId, Step)> = Vec::with_capacity(order.len());
     for vtx in order {
         let nd = template.graph.node_kind(vtx);
         if matches!(nd.kind, TmplNodeKind::Build(_)) && template.graph.node_outputs(vtx).is_empty()
@@ -177,8 +176,14 @@ pub fn instantiate_guarded<B: IRBuilder>(
             );
         }
         let kind = match &nd.kind {
+            // A capture leaf IS its materialisation: its one output resolves
+            // to the LHS binding, reused verbatim as in `int_add(x, 0) -> x`.
             TmplNodeKind::Capture => {
-                kinds.push((vtx, None));
+                let out_vtx = template.graph.node_outputs(vtx)[0];
+                let TmplValue::ValueCapture(cap) = *template.graph.value_kind_ref(out_vtx) else {
+                    unreachable!("a capture leaf's one output is its ValueCapture")
+                };
+                plan.push((vtx, Step::Reuse(out_vtx, cap)));
                 continue;
             }
             TmplNodeKind::Build(TemplateKind::Exact(NodeKind::IntConst(_))) => {
@@ -238,34 +243,32 @@ pub fn instantiate_guarded<B: IRBuilder>(
                  IEEE pattern at the width it is evaluated at"
             );
         }
-        kinds.push((vtx, Some(kind)));
+        plan.push((vtx, Step::Build(kind)));
+    }
+    // After every closure, so a skip declines the template ahead of this.
+    for (_, step) in &plan {
+        if let Step::Reuse(_, cap) = *step
+            && bindings.get_value(cap).is_none()
+        {
+            anyhow::bail!("capture {cap:?} referenced in template but unbound by LHS");
+        }
     }
 
-    if kinds.iter().any(|(_, k)| k.is_some()) {
+    if plan.iter().any(|(_, step)| matches!(step, Step::Build(_))) {
         before_build(builder.function())?;
     }
 
-    for (vtx, kind) in kinds {
-        // A `Capture` leaf has no build kind: it IS the materialisation. Its
-        // `ValueCapture` output resolves to the LHS binding, reusing that
-        // value verbatim as in `int_add(x, 0) -> x`, and is never synthesised.
-        // The capture id lives on the output, not the marker node.
-        let Some(kind) = kind else {
-            let outs = template.graph.node_outputs(vtx);
-            let out_vtx = *outs
-                .first()
-                .ok_or_else(|| anyhow!("capture leaf has no value-capture output"))?;
-            let TmplValue::ValueCapture(cap) = template.graph.value_kind_ref(out_vtx) else {
-                return Err(anyhow!("capture leaf output is not a ValueCapture"));
-            };
-            let bound_value = bindings.get_value(*cap).ok_or_else(|| {
-                anyhow!("capture {cap:?} referenced in template but unbound by LHS")
-            })?;
-            materialised.insert(out_vtx, bound_value);
-            if vtx == root {
-                root_value = Some(bound_value);
+    for (vtx, step) in plan {
+        let kind = match step {
+            Step::Reuse(out_vtx, cap) => {
+                let value = bindings.get_value(cap).expect("checked bound above");
+                materialised.insert(out_vtx, value);
+                if vtx == root {
+                    root_value = Some(value);
+                }
+                continue;
             }
-            continue;
+            Step::Build(kind) => kind,
         };
 
         let inputs = collect_inputs(template, vtx, &materialised)?;
@@ -297,14 +300,11 @@ pub fn instantiate_guarded<B: IRBuilder>(
         let ir_outputs = builder.function().node_outputs(node);
         for out_vtx in template.graph.node_outputs(vtx).iter().copied() {
             // A `ValueCapture` never hangs off a `Build` node.
-            let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(out_vtx) else {
+            let Some(slot) = template.graph.value_kind_ref(out_vtx).built_slot() else {
                 continue;
             };
-            let ir_value = *ir_outputs.get(o.slot).ok_or_else(|| {
-                anyhow!(
-                    "template output slot {} out of range for instantiated node",
-                    o.slot
-                )
+            let ir_value = *ir_outputs.get(slot).ok_or_else(|| {
+                anyhow!("template output slot {slot} out of range for instantiated node")
             })?;
             materialised.insert(out_vtx, ir_value);
         }
@@ -320,6 +320,14 @@ pub fn instantiate_guarded<B: IRBuilder>(
     }
 
     root_value.ok_or_else(|| anyhow!("root template node never materialised"))
+}
+
+/// How one template node materialises.
+enum Step {
+    /// A capture leaf's output vertex and the capture whose LHS value it
+    /// reuses.
+    Reuse(TmplValueId, crate::Capture),
+    Build(NodeKind),
 }
 
 /// A `IntConstId` indexes one function's interner at one width, so a template
@@ -347,14 +355,6 @@ impl ValueTys {
     }
 }
 
-/// Whether the slot carries a value, and so a width.
-fn is_value_output(kind: &OutputKindSpec) -> bool {
-    matches!(
-        kind,
-        OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any
-    )
-}
-
 /// The node's first value-output vertex.
 fn first_value_output_vtx(template: &Template, node_vtx: NodeId) -> Option<TmplValueId> {
     template
@@ -362,10 +362,7 @@ fn first_value_output_vtx(template: &Template, node_vtx: NodeId) -> Option<TmplV
         .node_outputs(node_vtx)
         .iter()
         .copied()
-        .find(|&v| match template.graph.value_kind_ref(v) {
-            TmplValue::TmplOutput(o) => is_value_output(&o.kind),
-            TmplValue::ValueCapture(_) => true,
-        })
+        .find(|&v| !matches!(template.graph.value_kind_ref(v), TmplValue::Memory { .. }))
 }
 
 /// The build kind a node declares up front. A `Fn` closure picks its kind at
@@ -400,7 +397,6 @@ fn resolve_value_tys(
     root: NodeId,
     root_ty: ValueType,
 ) -> anyhow::Result<ValueTys> {
-    let binding_tys = resolve_binding_tys(template, bindings, function);
     let len = template
         .graph
         .all_value_ids()
@@ -451,24 +447,20 @@ fn resolve_value_tys(
     };
     for &node_vtx in order {
         for vtx in template.graph.node_outputs(node_vtx).iter().copied() {
-            match template.graph.value_kind_ref(vtx) {
-                TmplValue::ValueCapture(cap) => {
-                    if let Some(v) = bindings.get_value(*cap)
-                        && let ValueKind::Typed(t) = function.value_kind(v)
-                    {
-                        anchor(&mut groups, vtx, t);
-                    }
-                }
-                TmplValue::TmplOutput(o) if is_value_output(&o.kind) => match o.ty {
-                    TemplateTy::Fixed(t) => anchor(&mut groups, vtx, t),
-                    TemplateTy::InheritBinding(cap) => {
-                        if let Some(&t) = binding_tys.get(&cap) {
-                            anchor(&mut groups, vtx, t);
-                        }
-                    }
-                    TemplateTy::InheritRoot => {}
-                },
-                TmplValue::TmplOutput(_) => {}
+            let ty = match template.graph.value_kind_ref(vtx) {
+                TmplValue::ValueCapture(cap)
+                | TmplValue::Value {
+                    ty: TemplateTy::InheritBinding(cap),
+                    ..
+                } => bindings.get_type(*cap, function),
+                TmplValue::Value {
+                    ty: TemplateTy::Fixed(t),
+                    ..
+                } => Some(*t),
+                TmplValue::Value { .. } | TmplValue::Memory { .. } => None,
+            };
+            if let Some(t) = ty {
+                anchor(&mut groups, vtx, t);
             }
         }
     }
@@ -505,22 +497,19 @@ fn resolve_value_tys(
     let mut by_vertex: FxHashMap<TmplValueId, ValueType> = FxHashMap::default();
     for &node_vtx in order {
         for vtx in template.graph.node_outputs(node_vtx).iter().copied() {
-            let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(vtx) else {
+            let &TmplValue::Value { slot, ty } = template.graph.value_kind_ref(vtx) else {
                 continue;
             };
-            if !is_value_output(&o.kind) {
-                continue;
-            }
-            let ty = match o.ty {
+            let ty = match ty {
                 TemplateTy::Fixed(t) => t,
-                TemplateTy::InheritBinding(cap) => match binding_tys.get(&cap) {
-                    Some(&t) => t,
+                TemplateTy::InheritBinding(cap) => match bindings.get_type(cap, function) {
+                    Some(t) => t,
                     None => anyhow::bail!(
                         "template node {} output {} takes its width from capture id={}, \
                          which bound no typed value (it is unbound, or bound to memory or \
                          control)",
                         node_name(template, node_vtx),
-                        o.slot,
+                        slot,
                         cap.id()
                     ),
                 },
@@ -550,7 +539,7 @@ fn resolve_value_tys(
                             "template node {} output {} has no width: no template node \
                              consumes it and it declares no type. Type it with set_value_ty",
                             node_name(template, node_vtx),
-                            o.slot
+                            slot
                         ),
                     },
                 },
@@ -573,33 +562,6 @@ fn node_name(template: &Template, node_vtx: NodeId) -> String {
         TmplNodeKind::Build(TemplateKind::FnIntConst(_)) => "int_const".to_string(),
         TmplNodeKind::Capture => "capture".to_string(),
     }
-}
-
-/// Resolves every `InheritBinding(cap)` width, from the value each capture
-/// matched. An unbound or non-typed capture is omitted.
-fn resolve_binding_tys(
-    template: &Template,
-    bindings: &Bindings,
-    function: &Function,
-) -> FxHashMap<crate::Capture, ValueType> {
-    let mut out: FxHashMap<crate::Capture, ValueType> = FxHashMap::default();
-    for vtx in template.graph.all_node_ids() {
-        for out_vtx in template.graph.node_outputs(vtx).iter().copied() {
-            let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(out_vtx) else {
-                continue;
-            };
-            let TemplateTy::InheritBinding(cap) = o.ty else {
-                continue;
-            };
-            if let std::collections::hash_map::Entry::Vacant(e) = out.entry(cap)
-                && let Some(v) = bindings.get_value(cap)
-                && let ValueKind::Typed(t) = function.value_kind(v)
-            {
-                e.insert(t);
-            }
-        }
-    }
-    out
 }
 
 /// Masks `v` to `value_ty`'s width and stores it.
@@ -657,38 +619,10 @@ fn densify<T>(by_slot: BTreeMap<usize, T>, what: &str) -> anyhow::Result<Vec<T>>
     Ok(by_slot.into_values().collect())
 }
 
-/// Maps an `OutputKindSpec` to its [`ValueKind`].
-fn resolved_output_kind(o: &TmplOutput, vtx: TmplValueId, value_tys: &ValueTys) -> ValueKind {
-    match o.kind {
-        OutputKindSpec::Memory => ValueKind::Memory,
-        OutputKindSpec::Control => ValueKind::Control,
-        OutputKindSpec::PhiToken => ValueKind::PhiToken,
-        // Every value shape uses this output's own resolved type. `Any` is
-        // match-only and no template builder emits it; resolved defensively.
-        OutputKindSpec::Value(_) | OutputKindSpec::AnyValue | OutputKindSpec::Any => {
-            ValueKind::Typed(value_tys.of(vtx))
-        }
-    }
-}
-
 /// The resolved type of the node's first value output vertex. A node with no
 /// value output vertex falls back to the root's type.
 fn node_value_ty(template: &Template, node_vtx: NodeId, value_tys: &ValueTys) -> ValueType {
-    template
-        .graph
-        .node_outputs(node_vtx)
-        .iter()
-        .copied()
-        .find_map(|out_vtx| {
-            let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(out_vtx) else {
-                return None;
-            };
-            match resolved_output_kind(o, out_vtx, value_tys) {
-                ValueKind::Typed(t) => Some(t),
-                _ => None,
-            }
-        })
-        .unwrap_or(value_tys.root_ty)
+    first_value_output_vtx(template, node_vtx).map_or(value_tys.root_ty, |v| value_tys.of(v))
 }
 
 /// Checks `inputs` against `kind`'s node signature: the input count, each
@@ -774,7 +708,8 @@ fn check_conversion(
     Ok(())
 }
 
-/// Each output takes its own resolved type.
+/// Each output takes its own resolved type. A gapped or duplicate output slot
+/// is rejected, as on the input side.
 fn output_kinds_for(
     template: &Template,
     node_vtx: NodeId,
@@ -782,8 +717,15 @@ fn output_kinds_for(
 ) -> anyhow::Result<Vec<ValueKind>> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.node_outputs(node_vtx).iter().copied() {
-        if let TmplValue::TmplOutput(o) = template.graph.value_kind_ref(out_vtx) {
-            by_slot.insert(o.slot, resolved_output_kind(o, out_vtx, value_tys));
+        let (slot, kind) = match *template.graph.value_kind_ref(out_vtx) {
+            TmplValue::Value { slot, .. } => (slot, ValueKind::Typed(value_tys.of(out_vtx))),
+            TmplValue::Memory { slot } => (slot, ValueKind::Memory),
+            TmplValue::ValueCapture(_) => continue,
+        };
+        if by_slot.insert(slot, kind).is_some() {
+            anyhow::bail!(
+                "template node declares two outputs at slot {slot} (raw-builder mis-wire)"
+            );
         }
     }
     densify(by_slot, "output")
