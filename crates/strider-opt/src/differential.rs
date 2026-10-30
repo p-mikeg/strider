@@ -1502,10 +1502,7 @@ fn a_range_contains_every_runtime_value() {
                 // which is the only sound answer and nothing to compare a
                 // value against. Pinned here: a NARROWER answer there would be
                 // a claim the analysis cannot hold.
-                let (Some(m), Ok(val)) = (
-                    f.value_type_opt(v).unwrap().int_mask_u128(),
-                    u128::try_from(val),
-                ) else {
+                let Some(m) = f.value_type_opt(v).unwrap().int_mask_u128() else {
                     wide += 1;
                     assert!(
                         iv.is_top(u128::MAX),
@@ -1513,6 +1510,9 @@ fn a_range_contains_every_runtime_value() {
                     );
                     return;
                 };
+                // The type is inside the carrier, so the value must be: an
+                // unmasked value here is an interpreter defect, not a wide one.
+                let val = u128::try_from(val).expect("a value inside the carrier");
                 if !iv.is_top(m) {
                     nontop += 1;
                 }
