@@ -221,7 +221,7 @@ pub(crate) enum CastKind {
 /// both sides, though a nested operand can still be refused.
 pub(crate) enum TmplRepr {
     Var(Capture),
-    IntConst(u128),
+    IntConst(strider_ir::IBig),
     BoolConst(bool),
     FloatConst(u64),
     IntBinary(strider_ir::IntBinaryOp, Py<PyAny>, Py<PyAny>),
@@ -262,7 +262,7 @@ pub(crate) enum PatRepr {
     InputsOfWidth(u32, Py<PyAny>),
     IntConstAnyWidth(i64),
     IntConstAnyWidthAnyOf(Vec<i64>),
-    IntConstAnyOf(Vec<u128>),
+    IntConstAnyOf(Vec<strider_ir::IBig>),
     AnyInt(Option<Capture>),
     AnyBool(Option<Capture>),
     AnyFloat(Option<Capture>),
@@ -388,22 +388,10 @@ fn derive(slf: &Bound<'_, PyPat>, make: impl FnOnce(Py<PyAny>) -> PatRepr) -> Py
 /// level: the depth guard fires, its error is swallowed here, and the retry
 /// walks the tree exponentially. Only `TypeError` and `OverflowError` mean the
 /// object is not this kind of operand.
-fn extract_int_operand(ob: &Bound<'_, PyAny>) -> PyResult<Option<u128>> {
-    let py = ob.py();
-    let wrong_kind = |e: &PyErr| {
-        e.is_instance_of::<pyo3::exceptions::PyTypeError>(py)
-            || e.is_instance_of::<pyo3::exceptions::PyOverflowError>(py)
-    };
-    match ob.extract::<i128>() {
-        Ok(v) => return Ok(Some(v as u128)),
-        Err(e) if !wrong_kind(&e) => return Err(e),
-        Err(_) => {}
-    }
-    match ob.extract::<u128>() {
-        Ok(v) => Ok(Some(v)),
-        Err(e) if !wrong_kind(&e) => Err(e),
-        Err(_) => Ok(None),
-    }
+fn extract_int_operand(ob: &Bound<'_, PyAny>) -> PyResult<Option<strider_ir::IBig>> {
+    crate::bigint::py_big_int(ob)?
+        .map(crate::bigint::PyBigInt::value)
+        .transpose()
 }
 
 // The downcast happens eagerly during the recursive walk so the emitted
@@ -419,9 +407,8 @@ pub(crate) fn compile_operand_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch>
     if let Ok(p) = ob.downcast::<PyPat>() {
         return p.borrow().repr.compile_match(py);
     }
-    // A raw int is `int_const(value)`, carried as the u128 `IntConst` interns;
-    // narrow with `.of_width`. Anything wider than 128 bits has no carrier and
-    // falls through to the operand-kind error below.
+    // A raw int is `int_const(value)` at any declared width; narrow with
+    // `.of_width`. One wider than every `ValueType` is refused.
     if let Some(v) = extract_int_operand(ob)? {
         return TmplRepr::IntConst(v).compile_match(py);
     }
@@ -750,7 +737,7 @@ fn unwrapped_repr(pat: &Bound<'_, PyPat>) -> Arc<PatRepr> {
     cur
 }
 
-fn operand_kind_name(ob: &Bound<'_, PyAny>) -> String {
+pub(crate) fn operand_kind_name(ob: &Bound<'_, PyAny>) -> String {
     ob.get_type()
         .name()
         .map_or_else(|_| "value".to_string(), |n| n.to_string())
@@ -1259,7 +1246,7 @@ fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
 fn compile_tmpl_match(t: &TmplRepr, py: Python<'_>) -> PyResult<DynMatch> {
     match t {
         TmplRepr::Var(c) => Ok(DynMatch::new(sp::var(*c))),
-        TmplRepr::IntConst(v) => Ok(DynMatch::new(sp::int_const(*v))),
+        TmplRepr::IntConst(v) => Ok(DynMatch::new(sp::int_const(v.clone()))),
         TmplRepr::BoolConst(v) => Ok(DynMatch::new(sp::bool_const(*v))),
         TmplRepr::FloatConst(bits) => Ok(DynMatch::new(sp::float_const(*bits))),
         TmplRepr::IntBinary(op, l, r) => bin_match(py, l, r, |l, r| sp::int_binary(*op, l, r)),
@@ -1349,7 +1336,7 @@ fn compile_tmpl_template(t: &TmplRepr, py: Python<'_>) -> PyResult<DynTemplate> 
             Ok(DynTemplate(Box::new(move |b| template_var(b, c))))
         }
         TmplRepr::IntConst(v) => {
-            let v = *v;
+            let v = v.clone();
             Ok(DynTemplate(Box::new(move |b| tc(sp::int_const(v), b))))
         }
         TmplRepr::BoolConst(v) => {
@@ -1439,7 +1426,7 @@ impl PatRepr {
 pub enum PatLike<'py> {
     Pat(Bound<'py, PyPat>),
     Capture(Bound<'py, PyCapture>),
-    Int(i128),
+    Int(crate::bigint::PyBigInt),
     CallPat(Bound<'py, PyCallPat>),
     CallOtherPat(Bound<'py, PyCallOtherPat>),
     RetPat(Bound<'py, PyRetPat>),
@@ -1501,7 +1488,7 @@ impl PatLike<'_> {
         match self {
             PatLike::Pat(p) => p.borrow().repr.to_pattern(py),
             PatLike::Capture(c) => Ok(strider_pattern::var(c.borrow().inner).into_pattern()),
-            PatLike::Int(v) => PatRepr::Build(TmplRepr::IntConst(*v as u128)).to_pattern(py),
+            PatLike::Int(v) => PatRepr::Build(TmplRepr::IntConst(v.value_ref()?)).to_pattern(py),
             PatLike::CallPat(b) => b.borrow().build_pattern_py(py),
             PatLike::CallOtherPat(b) => b.borrow().build_pattern_py(py),
             PatLike::RetPat(b) => b.borrow().build_pattern_py(py),
@@ -2072,13 +2059,9 @@ pub fn bool_inputs(inner: Py<PyAny>) -> PyPat {
 #[derive(FromPyObject)]
 pub enum IntConstArg {
     #[pyo3(annotation = "int")]
-    One(i128),
-    /// `[2^127, 2^128)`, which `i128` cannot hold. The raw-int operand form
-    /// (`int_add(x, 2**127)`) accepts these, so the named constructor does too.
-    #[pyo3(annotation = "int")]
-    Wide(u128),
+    One(crate::bigint::PyBigInt),
     #[pyo3(annotation = "list[int]")]
-    Set(Vec<i128>),
+    Set(Vec<crate::bigint::PyBigInt>),
     #[pyo3(annotation = "Capture")]
     Cap(Py<PyCapture>),
 }
@@ -2097,20 +2080,19 @@ pub enum IntConstArg {
 /// it.
 #[pyfunction]
 #[pyo3(signature = (value=None))]
-pub fn int_const(value: Option<IntConstArg>) -> PyPat {
-    PyPat::from_repr(match value {
+pub fn int_const(value: Option<IntConstArg>) -> PyResult<PyPat> {
+    Ok(PyPat::from_repr(match value {
         None => PatRepr::AnyIntConst(None),
         Some(IntConstArg::Cap(c)) => PatRepr::AnyIntConst(Some(c.get().inner)),
-        Some(IntConstArg::One(v)) => PatRepr::Build(TmplRepr::IntConst(v as u128)),
-        Some(IntConstArg::Wide(v)) => PatRepr::Build(TmplRepr::IntConst(v)),
-        // `as u128` is the scalar form's conversion: a negative carries its
-        // 128-bit two's complement, which the core masks to the candidate's
-        // width.  Narrowing to `u64` first would sign-extend only to 64 bits
-        // and match a different constant above `I64`.
-        Some(IntConstArg::Set(vs)) => {
-            PatRepr::IntConstAnyOf(vs.into_iter().map(|v| v as u128).collect())
-        }
-    })
+        Some(IntConstArg::One(v)) => PatRepr::Build(TmplRepr::IntConst(v.value()?)),
+        // A negative carries its two's complement at whatever width it is
+        // matched at, so it names the same constant at every width.
+        Some(IntConstArg::Set(vs)) => PatRepr::IntConstAnyOf(
+            vs.into_iter()
+                .map(crate::bigint::PyBigInt::value)
+                .collect::<PyResult<Vec<_>>>()?,
+        ),
+    }))
 }
 
 /// One value, or a set of them, for [`int_const_any_width`].
