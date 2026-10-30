@@ -42,7 +42,7 @@ impl MaskOperands {
         };
         let (operand, mask) = crate::const_eval::var_and_const(function, node)?;
         let type_mask = function.value_type_opt(value)?.int_mask_u128()?;
-        let may_set = |v: ValueId| known[v].max_value(type_mask);
+        let may_set = |v: ValueId| !known[v].zeros & type_mask;
         if may_set(operand) & !mask == 0 {
             self.identity[value] = Some(operand);
         }
