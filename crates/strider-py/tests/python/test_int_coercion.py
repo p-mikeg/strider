@@ -2,6 +2,7 @@ import pytest
 
 import strider
 from strider import pattern as p
+from strider import template as t
 from .conftest import lift_bytes as _lift
 
 
@@ -19,16 +20,25 @@ def test_bare_int_query_is_int_const():
     assert len(fn.find_all(5)) == len(fn.find_all(p.int_const(5)))
 
 
-def test_a_raw_int_operand_spans_the_whole_u128_carrier():
-    """`IntConst` interns a u128, so an operand reaches 2**128-1. `i128`
-    extraction alone stops at 2**127-1, and above that the value reached the
-    operand-kind error at query time rather than at construction."""
+def test_a_raw_int_operand_spans_every_declared_width():
+    """An operand reaches the widest `ValueType`, 512 bits, on either side of
+    the signed / unsigned split: the value is carried unbounded, not in a
+    128-bit word."""
     fn = _lift(bytes([0x83, 0xC7, 0x05, 0x89, 0xF8, 0xC3]))
-    for v in (0, 1, 2**127 - 1, 2**127, 2**128 - 1, -1, -(2**127)):
+    for v in (0, 1, 2**127 - 1, 2**127, 2**128 - 1, -1, -(2**127), 2**200, 2**512 - 1, -(2**511)):
         fn.find_all(p.int_add(p.anything(), v))  # compiles, may match nothing
 
 
-def test_an_int_operand_past_the_carrier_is_rejected():
+def test_an_int_operand_past_the_widest_value_type_is_rejected():
+    """No declared width holds it, and converting it would allocate a byte
+    per eight bits, so it is refused on the size alone."""
     fn = _lift(bytes([0x83, 0xC7, 0x05, 0x89, 0xF8, 0xC3]))
-    with pytest.raises(strider.StriderError):
-        fn.find_all(p.int_add(p.anything(), 2**200))
+    for v in (2**512, -(2**512), 2 ** 10**6):
+        with pytest.raises(strider.StriderError, match="512 bits"):
+            fn.find_all(p.int_add(p.anything(), v))
+        with pytest.raises(strider.StriderError, match="512 bits"):
+            p.int_const(v)
+        with pytest.raises(strider.StriderError, match="512 bits"):
+            p.int_const([1, v])
+        with pytest.raises(strider.StriderError, match="512 bits"):
+            t.int_const(v)
