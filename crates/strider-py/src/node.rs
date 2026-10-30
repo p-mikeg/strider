@@ -92,37 +92,35 @@ impl PyNode {
     }
 }
 
-/// A `UBig` as a Python `int`, which is unbounded, so no width caps what a
-/// constant reaches Python with.
-fn ubig_to_py_int(py: Python<'_>, v: &strider_ir::UBig) -> PyResult<Py<PyAny>> {
-    if let Ok(narrow) = u128::try_from(v) {
-        return Ok(narrow.into_py(py));
-    }
-    Ok(py
-        .get_type_bound::<pyo3::types::PyInt>()
-        .call_method1(
-            "from_bytes",
-            (
-                pyo3::types::PyBytes::new_bound(py, &v.to_le_bytes()),
-                "little",
-            ),
-        )?
-        .unbind())
-}
-
 /// The unsigned integer constant a node's value output holds, if any. For
 /// reading a bound capture without constructing a `PyNode`.
-pub(crate) fn uint_of(function: &strider_ir::Function, node_id: u32) -> Option<u128> {
+pub(crate) fn uint_of(function: &strider_ir::Function, node_id: u32) -> Option<strider_ir::UBig> {
     let nid = function.graph().node_id_from_u32(node_id)?;
     let value = PyNode::value_output(function, nid)?;
-    function.int_const_u128(value)
+    function.int_const(value).cloned()
 }
 
 /// [`uint_of`] read as two's-complement at the declared width.
-pub(crate) fn sint_of(function: &strider_ir::Function, node_id: u32) -> Option<i128> {
+pub(crate) fn sint_of(function: &strider_ir::Function, node_id: u32) -> Option<strider_ir::IBig> {
     let nid = function.graph().node_id_from_u32(node_id)?;
     let value = PyNode::value_output(function, nid)?;
-    function.int_const_i128(value)
+    function.int_const_ibig(value)
+}
+
+impl PyNode {
+    /// [`Self::uint`] before the Python conversion.
+    pub(crate) fn uint_value(&self, py: Python<'_>) -> PyResult<Option<strider_ir::UBig>> {
+        self.with_node(py, |function, nid| {
+            Self::value_output(function, nid).and_then(|v| function.int_const(v).cloned())
+        })
+    }
+
+    /// [`Self::sint`] before the Python conversion.
+    pub(crate) fn sint_value(&self, py: Python<'_>) -> PyResult<Option<strider_ir::IBig>> {
+        self.with_node(py, |function, nid| {
+            Self::value_output(function, nid).and_then(|v| function.int_const_ibig(v))
+        })
+    }
 }
 
 #[pymethods]
@@ -239,15 +237,15 @@ impl PyNode {
         Ok(out)
     }
 
-    /// Integer constant value, sign-extended at the declared width. `None`
-    /// when the value output isn't an integer `IntConst`, or is declared wider
-    /// than 128 bits: an `I256` / `I512` holding a small value still answers
-    /// `None` here, unlike `uint`, which has no width cap.
+    /// Integer constant value, sign-extended at the declared width, at any
+    /// width: a Python `int` is arbitrary-precision, so `I256` / `I512` read
+    /// back here like any other. `None` when the value output isn't an
+    /// integer `IntConst`.
     /// Booleans are 1-bit integers, so a bool constant surfaces as `0` / `-1`.
-    pub(crate) fn sint(&self, py: Python<'_>) -> PyResult<Option<i128>> {
-        self.with_node(py, |function, nid| {
-            Self::value_output(function, nid).and_then(|value| function.int_const_i128(value))
-        })
+    pub(crate) fn sint(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
+        self.sint_value(py)?
+            .map(|v| crate::bigint::ibig_to_py_int(py, &v))
+            .transpose()
     }
 
     /// Integer constant value, masked to the declared width, at any width: a
@@ -255,10 +253,9 @@ impl PyNode {
     /// like any other. `None` when the value output isn't an integer
     /// `IntConst`.
     pub(crate) fn uint(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        let value = self.with_node(py, |function, nid| {
-            Self::value_output(function, nid).and_then(|v| function.int_const(v).cloned())
-        })?;
-        value.map(|v| ubig_to_py_int(py, &v)).transpose()
+        self.uint_value(py)?
+            .map(|v| crate::bigint::ubig_to_py_int(py, &v))
+            .transpose()
     }
 
     /// Boolean constant value, or `None` when the value output isn't an
