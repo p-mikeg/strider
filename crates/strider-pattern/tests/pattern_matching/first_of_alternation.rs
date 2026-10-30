@@ -168,13 +168,9 @@ fn an_alternation_root_never_reports_an_unbound_vertex_capture() {
 }
 
 /// Caller-supplied logic holds the same `Matcher` and may run a query of its
-/// own. Those matches must not count towards an enclosing arm's cut.
-///
-/// `satisfied` is shared across nested WALKS on purpose, so a `first_of` inside
-/// an `IfPat` branch does not cut on the hand-off. Sharing it across nested
-/// QUERIES too made an arm that produced NOTHING look like it had produced a
-/// match: the cut fired and the later arm holding the real match was never
-/// tried.
+/// own. Those matches must not count towards an enclosing arm's cut: counted,
+/// an arm that produced NOTHING looks like it produced a match, the cut fires
+/// and the later arm holding the real match is never tried.
 #[test]
 fn a_nested_query_in_a_guard_does_not_fire_an_enclosing_cut() {
     let function = neg_add_5_mul();
