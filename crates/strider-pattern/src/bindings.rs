@@ -167,9 +167,10 @@ impl Bindings {
         function.int_const(self.get_value(c)?).cloned()
     }
 
-    /// Sign-extended from the output type's bit width.
-    pub fn get_int(&self, c: Capture, function: &strider_ir::Function) -> Option<i128> {
-        function.int_const_i128(self.get_value(c)?)
+    /// Sign-extended from the output type's bit width. Unbounded: a constant
+    /// at any declared width comes back whole.
+    pub fn get_int(&self, c: Capture, function: &strider_ir::Function) -> Option<strider_ir::IBig> {
+        function.int_const_ibig(self.get_value(c)?)
     }
 
     /// A boolean constant is an `IntConst` typed `I1`.
@@ -348,6 +349,29 @@ mod tests {
         let v = Capture::new();
         assert!(bindings.bind_capture(v, Binding::Value(c_value.unwrap())));
         assert_eq!(bindings.get_uint(v, &function), Some(wide));
+    }
+
+    /// The signed reader is unbounded too: an `I256` all-ones comes back as
+    /// -1, where an `i128` carrier answered `None`.
+    #[test]
+    fn get_int_reads_a_constant_past_the_carrier() {
+        use strider_ir::{IBig, UBig};
+        let mut c_value = None;
+        let function = make_empty_fn(|b| {
+            let c = b.build_all_ones(ValueType::int(256)).unwrap();
+            c_value = Some(c);
+            Ok(c)
+        })
+        .expect("build graph");
+
+        let mut bindings = Bindings::default();
+        let v = Capture::new();
+        assert!(bindings.bind_capture(v, Binding::Value(c_value.unwrap())));
+        assert_eq!(bindings.get_int(v, &function), Some(IBig::NEG_ONE));
+        assert_eq!(
+            bindings.get_uint(v, &function),
+            Some((UBig::ONE << 256usize) - UBig::ONE)
+        );
     }
 
     #[test]

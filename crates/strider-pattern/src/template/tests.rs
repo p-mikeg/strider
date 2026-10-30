@@ -311,6 +311,27 @@ fn a_fresh_shift_count_saturates_only_where_the_width_cannot_hold_it() {
     }
 }
 
+/// A negative constant is wrapped into the width it materialises at, so -1
+/// past the `u128` carrier is that width's all-ones, not a 128-bit one
+/// zero-extended.
+#[test]
+fn a_fresh_negative_const_wraps_at_the_materialised_width() {
+    for width in [32u16, 256] {
+        let a = Capture::new();
+        let mut fx = sign_test_over(width);
+        let lhs = crate::int_slt(var(a), crate::int_const(0u128)).into_pattern();
+        let rhs = super::int_eq(var(a), crate::int_const(-1i32)).into_template();
+        let node = rewrite(&mut fx, &lhs, &rhs).unwrap();
+        let operand = fx.node_inputs(node)[1];
+        assert_eq!(fx.value_type(operand).unwrap(), T::int(width));
+        assert_eq!(
+            fx.int_const(operand),
+            Some(&strider_ir::eval::all_ones(T::int(width))),
+            "i{width}"
+        );
+    }
+}
+
 /// `capture_typed` over a capture is refused, not a panic: a capture keeps
 /// the type of the value it bound.
 #[test]
