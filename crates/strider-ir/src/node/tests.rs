@@ -66,12 +66,19 @@ fn is_const_only_for_constant_kinds() {
     assert!(!NodeKind::Return.is_const());
 }
 
+/// A float has no integer bits, so the unsigned read is zero, not the
+/// pattern.
 #[test]
-fn get_unsigned_int_returns_none_for_floats() {
-    assert_eq!(ValueType::float(32).get_unsigned_int(0x3F800000), None);
+fn mask_returns_zero_for_floats() {
+    use crate::eval::mask;
+    use dashu_int::UBig;
     assert_eq!(
-        ValueType::float(64).get_unsigned_int(0x3FF0000000000000),
-        None
+        mask(&UBig::from(0x3F80_0000u32), ValueType::float(32)),
+        UBig::ZERO
+    );
+    assert_eq!(
+        mask(&UBig::from(0x3FF0_0000_0000_0000u64), ValueType::float(64)),
+        UBig::ZERO
     );
 }
 
