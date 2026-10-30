@@ -322,8 +322,7 @@ pub(crate) struct FinishedPattern {
     pattern: Option<Pattern>,
     /// The `.when()` predicates compiled into `pattern`, shared with its
     /// closures: the only Python objects a `Pattern` holds, and otherwise
-    /// invisible to the cyclic collector. They leave with `pattern` when it is
-    /// nested into another builder, which then reports them.
+    /// invisible to the cyclic collector.
     when_handles: Vec<WhenFn>,
 }
 
@@ -1406,12 +1405,8 @@ impl PatRepr {
                      prior query; rebuild it for each find/rewrite call"
                 ))
             })?;
-            // Compiled in before any open scope, so the attachments move into
-            // it with the `Pattern`: the new owner reports them from here on and
-            // this one stops, one report per reference.
             if !finished.when_handles.is_empty() {
                 note_when_attached();
-                move_when_into_scope(&mut finished.when_handles);
             }
             return Ok(pattern);
         }
@@ -1761,16 +1756,6 @@ fn retain_when_handles<T>(build: impl FnOnce() -> PyResult<T>) -> PyResult<(T, V
     let _scope = RetainedWhenScope::open();
     let built = build();
     Ok((built?, RetainedWhenScope::handles()))
-}
-
-/// Moves already-compiled predicates into the open scope; without one, a
-/// query is taking the pattern and they stay where they are.
-fn move_when_into_scope(handles: &mut Vec<WhenFn>) {
-    RETAINED_WHEN.with(|c| {
-        if let Some(open) = c.borrow_mut().as_mut() {
-            open.append(handles);
-        }
-    });
 }
 
 /// Wraps `f` for a compiled closure, registering it with the open scope.
@@ -2649,13 +2634,12 @@ fn cloned_opt<T: Clone>(v: &Option<T>) -> Option<T> {
 //
 // Field kinds: `pat` (one operand slot, the row naming the fn that compiles
 // the handle: `compile_operand_match` for a value operand,
-// `compile_operand_mem` for a memory one, `pattern_for_operand` for a whole
-// nested `Pattern` the core matches at the node the slot forward-walks to),
-// `pat_list` (a `pat` whose setter coerces a list into a `one_of`), `multi`
-// (an indexed operand vector, the named compile fn deciding value or memory
-// operand), `scalar`, `scalar_inner` (a Py wrapper stored via `.inner`),
-// `flag` (no-arg bool setter), and `region` (the four address-region setters,
-// recorded in call order).
+// `compile_operand_mem` for a memory one), `pat_list` (a `pat` whose setter
+// coerces a list into a `one_of`), `multi` (an indexed operand vector, the
+// named compile fn deciding value or memory operand), `scalar`,
+// `scalar_inner` (a Py wrapper stored via `.inner`), `flag` (no-arg bool
+// setter), and `region` (the four address-region setters, recorded in call
+// order).
 
 macro_rules! node_builder {
     // A macro call cannot sit in struct-field position, so the field decls
@@ -3529,10 +3513,6 @@ node_builder! {
         { pat cond(compile_operand_match): cond = "Constrain the If's condition operand." },
         { pat ctrl(compile_operand_match): ctrl
             = "Match `p` against the If's direct ctrl predecessor (`inputs[0]`)." },
-        { pat true_branch(pattern_for_operand): with_true
-            = "Match the unique consumer of the If's true output." },
-        { pat false_branch(pattern_for_operand): with_false
-            = "Match the unique consumer of the If's false output." },
         { scalar_inner capture_true(PyCapture => Capture): capture_true(c)
             = "Bind the If's true control-output value to `c`, the edge \
                operand `dominates` / `phi_input_from_edge` take." },
@@ -3540,15 +3520,6 @@ node_builder! {
             = "Bind the If's false control-output value to `c`. See \
                `capture_true`." },
     ],
-}
-
-/// A branch slot's whole pattern compiles by recursing through its builder, so
-/// it takes a nesting level like [`compile_operand_match`].
-fn pattern_for_operand(ob: &Bound<'_, PyAny>) -> PyResult<Pattern> {
-    let _depth = DepthGuard::enter()?;
-    let py = ob.py();
-    let like = ob.extract::<PatLike<'_>>()?;
-    like.to_pattern(py)
 }
 
 /// Start an `If` pattern builder, optionally pre-setting the condition.

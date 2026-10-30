@@ -14,48 +14,15 @@
 
 use super::delegate_node_pat;
 use crate::node_builders::delegate_with_output;
-use itertools::Itertools;
-use strider_ir::IRViewer;
-use strider_ir::node::{NodeId, NodeKind, SwitchTableId, ValueType};
+use strider_ir::node::{NodeKind, SwitchTableId, ValueType};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern, WalkCaptures};
+use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
 use crate::typed::int_const;
 
 use super::MemPat;
 use super::node_pat::NodePat;
-
-/// Walks from a matched If to a control output's single consumer and matches
-/// a sub-pattern there.
-type BranchWalk = Box<
-    dyn Fn(
-            &crate::Matcher,
-            NodeId,
-            &mut crate::Bindings,
-            &mut dyn FnMut(&mut crate::Bindings) -> bool,
-        ) -> bool
-        + Send,
->;
-
-/// The branch `Pattern` a [`BranchWalk`] holds. The node cap refuses a deep
-/// nesting of these, but a refused one still exists and the derived glue frees
-/// one frame per level, so the free goes through the drop pit.
-struct BranchPattern(Option<Pattern>);
-
-impl BranchPattern {
-    fn get(&self) -> &Pattern {
-        self.0.as_ref().expect("taken only by Drop")
-    }
-}
-
-impl Drop for BranchPattern {
-    fn drop(&mut self) {
-        if let Some(pat) = self.0.take() {
-            crate::node_builders::defer_drop(pat);
-        }
-    }
-}
 
 /// A `Call` clobbers caller-saved registers and the memory token.
 pub struct CallPat(NodePat);
@@ -463,38 +430,18 @@ delegate_node_pat!(SwitchPat, 0, [capture, build, input, any_input]);
 
 /// An `If` carries two control-output vertices, true at slot 0 and false at
 /// slot 1.
-///
-/// `.with_true(q)` / `.with_false(r)` forward-walk from the matched If's
-/// control output to its single consumer and match there. Both fail the match
-/// when that output has zero or several consumers.
 pub struct IfPat {
     inner: NodePat,
-    true_branch: Option<BranchWalk>,
-    false_branch: Option<BranchWalk>,
     capture_true: Option<Capture>,
     capture_false: Option<Capture>,
-    /// Per branch slot, so replacing a branch drops the captures the
-    /// discarded walk declared.
-    branch_captures: [WalkCaptures; 2],
-    /// Per branch slot, [`Pattern::total_nodes`] of the branch pattern.
-    branch_nodes: [usize; 2],
-    /// Per branch slot, the refusal an unmatchable branch pattern carries,
-    /// replayed onto the builder at `lower`. Per slot so replacing a branch
-    /// drops it with the pattern it refused.
-    branch_refusal: [Option<String>; 2],
 }
 
 impl Default for IfPat {
     fn default() -> Self {
         Self {
             inner: NodePat::node(KindSpec::Exact(NodeKind::If)),
-            true_branch: None,
-            false_branch: None,
             capture_true: None,
             capture_false: None,
-            branch_captures: Default::default(),
-            branch_nodes: [0; 2],
-            branch_refusal: [None, None],
         }
     }
 }
@@ -514,87 +461,11 @@ impl IfPat {
         self
     }
 
-    /// Matches `pat` against the single consumer of control output slot 0.
-    ///
-    /// A branch consumer is matched node-wise, so this slot takes a finished
-    /// [`Pattern`]: a control builder's `.build()`, or a value builder sealed
-    /// via [`MatchPat::into_pattern`].
-    ///
-    /// # Captures
-    ///
-    /// `pat` matches against the enclosing match's live `Bindings`: what it
-    /// binds reaches the outer `Match`, and a capture it shares with the
-    /// condition or the other branch must bind the same thing in both or the
-    /// match is rejected.
-    ///
-    /// # Every binding per branch
-    ///
-    /// `pat` enumerates: every commutative ordering and every existential slot
-    /// it can bind produces its own outer match, and the two branches combine,
-    /// so `N` true bindings against `M` false ones are `N * M` matches.
-    /// Enumerating is what lets a binding rejected by the other branch or by a
-    /// guard above fall through to the next one instead of losing the match.
-    ///
-    /// Not quite "as it would standalone": a branch pattern is driven through
-    /// `match_at_into`, which stops at the first OUTPUT of a multi-output root
-    /// that reaches the continuation, where `matches_at_node` would go on to
-    /// the rest. No lost match has been constructed from it -- the only guard
-    /// outside the branch walk runs before it and cannot see that binding --
-    /// but the two are not the same enumeration.
-    ///
-    /// # Refusal
-    ///
-    /// A `pat` that is not a single-rooted acyclic graph the matcher can
-    /// handle is refused at build time: every query on the resulting pattern
-    /// errors, rather than reading as a silent "branch did not match". `pat`'s
-    /// nodes count against the enclosing pattern's node cap, since the matcher
-    /// recurses through them on the same stack.
-    pub fn with_true(self, pat: Pattern) -> Self {
-        self.with_branch(NodeKind::IF_TRUE_OUT_SLOT, pat)
-    }
-
-    /// Control output slot 1. See [`with_true`](Self::with_true), which also
-    /// documents the refusal and the branch-capture agreement rule.
-    pub fn with_false(self, pat: Pattern) -> Self {
-        self.with_branch(NodeKind::IF_FALSE_OUT_SLOT, pat)
-    }
-
-    /// `slot` is the arm's `If` output slot.
-    fn with_branch(mut self, slot: usize, pat: Pattern) -> Self {
-        self.branch_refusal[slot] = pat
-            .root()
-            .err()
-            .map(|e| format!("If branch pattern is not matchable ({e})"));
-        // Both branches must match, so each one's guarantees carry over whole.
-        self.branch_captures[slot] = WalkCaptures {
-            bound: pat.bound_captures().collect(),
-            guaranteed: pat
-                .guaranteed_captures()
-                .unwrap_or_default()
-                .into_iter()
-                .collect(),
-        };
-        self.branch_nodes[slot] = pat.total_nodes();
-        let pat = BranchPattern(Some(pat));
-        let walk = Box::new(
-            move |m: &crate::Matcher,
-                  if_node,
-                  b: &mut crate::Bindings,
-                  k: &mut dyn FnMut(&mut crate::Bindings) -> bool| {
-                match_branch_consumer(m, if_node, slot, pat.get(), b, k)
-            },
-        );
-        if slot == NodeKind::IF_TRUE_OUT_SLOT {
-            self.true_branch = Some(walk);
-        } else {
-            self.false_branch = Some(walk);
-        }
-        self
-    }
-
     /// Binds control output slot 0, propagated into the outer `Match`. Unlike
     /// the successor `Region`, this value survives single-input-region
-    /// collapse, so it is the stable handle for the edge join constraints.
+    /// collapse, so it is the stable handle for the edge join constraints,
+    /// and for joining the arm's consumer: the same capture on that
+    /// consumer's control input.
     pub fn capture_true(mut self, c: Capture) -> Self {
         self.capture_true = Some(c);
         self
@@ -613,52 +484,17 @@ impl IfPat {
     fn lower(self) -> NodePat {
         let IfPat {
             inner,
-            true_branch,
-            false_branch,
             capture_true,
             capture_false,
-            branch_captures,
-            branch_nodes,
-            branch_refusal,
         } = self;
-        let inner = inner
+        inner
             .with_control_output(NodeKind::IF_TRUE_OUT_SLOT, capture_true)
             .with_control_output(NodeKind::IF_FALSE_OUT_SLOT, capture_false)
-            .rejecting(branch_refusal.into_iter().flatten().next())
-            .with_nested_nodes(branch_nodes[0].saturating_add(branch_nodes[1]));
-        if true_branch.is_none() && false_branch.is_none() {
-            return inner;
-        }
-        // The forward-walks bind into the enclosing match, so they ride the
-        // binding walk rather than the node predicate, which runs before the
-        // condition's own captures exist.
-        inner.with_binding_walk(
-            NodeKind::IF_TRUE_OUT_SLOT,
-            // Nested, not sequential: the false walk runs inside each true
-            // configuration, so a false rejection re-drives the true branch.
-            Box::new(
-                move |m, if_node, bnd, k| match (&true_branch, &false_branch) {
-                    (Some(tb), Some(fb)) => tb(m, if_node, bnd, &mut |b| fb(m, if_node, b, k)),
-                    (Some(w), None) | (None, Some(w)) => w(m, if_node, bnd, k),
-                    (None, None) => k(bnd),
-                },
-            ),
-            merged_branch_captures(branch_captures),
-        )
     }
 }
 
 delegate_with_output!(IfPat, inner);
 delegate_node_pat!(IfPat, inner, [capture, input, any_input]);
-
-/// One declaration covering both branch walks, which ride a single
-/// `binding_walk`.
-fn merged_branch_captures([t, f]: [WalkCaptures; 2]) -> WalkCaptures {
-    WalkCaptures {
-        bound: [t.bound, f.bound].concat(),
-        guaranteed: [t.guaranteed, f.guaranteed].concat(),
-    }
-}
 
 impl MatchPat for IfPat {
     /// Node-rooted: the two control outputs stay sibling vertices and an `Any`
@@ -668,46 +504,13 @@ impl MatchPat for IfPat {
     }
 }
 
-/// `false` when the output has zero or several consumers, or when no
-/// configuration of `pat` against `bindings` is accepted.
-///
-/// The consumer may be value-producing, such as a `Region`, or a zero-output
-/// kind such as `Return`; the match dispatches through both shapes.
-///
-/// [`crate::Matcher`]'s node-rooted entry enumerates, so `k` runs once per way
-/// `pat` binds; see [`IfPat::with_true`].
-fn match_branch_consumer(
-    matcher: &crate::Matcher,
-    if_node: NodeId,
-    output_index: usize,
-    pat: &Pattern,
-    bindings: &mut crate::Bindings,
-    k: &mut dyn FnMut(&mut crate::Bindings) -> bool,
-) -> bool {
-    let f = matcher.function();
-    let outputs = f.node_outputs(if_node);
-    let Some(&out) = outputs.get(output_index) else {
-        return false;
-    };
-    let Ok((first, _)) = f.value_uses(out).exactly_one() else {
-        return false;
-    };
-    // `with_branch` refused an unmatchable `pat`, so this walk is unreachable
-    // for one; an `Err` here is a real bug and is surfaced rather than
-    // swallowed.
-    match matcher.match_at_into(first, pat, bindings, k) {
-        Ok(hit) => hit,
-        Err(e) => unreachable!("refused branch pattern reached the matcher: {e}"),
-    }
-}
-
 pub fn if_else() -> IfPat {
     IfPat::default()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{MatcherBuilder, entry, if_else, ret};
+    use super::{entry, if_else};
     use crate::capture::Capture;
     use crate::node_builders::{WithOutput, staged_shape};
     use crate::typed::{anything, int_const, var};
@@ -725,8 +528,7 @@ mod tests {
 
     /// Characterizes `IfPat`'s lowering: which vertices it declares, in which
     /// order, carrying which captures. The two control outputs come before the
-    /// condition's own cone, the binding walk rides `true_out`, and the node
-    /// captures land last. Reordering any of that changes which vertex
+    /// condition's own cone, and the node captures land last. Reordering any of that changes which vertex
     /// `root_output_vertex_for` picks, so this string is the contract a
     /// re-homed lowering has to reproduce.
     #[test]
@@ -746,17 +548,15 @@ mod tests {
             .capture_output(Some(0), out)
             .output_width(None, 32)
             .output_ty(Some(1), ValueType::I1)
-            .with_true(ret().capture(Capture::new()).build())
-            .with_false(entry().capture(Capture::new()).build())
             .build();
         same_shape(
             &staged_shape(&pat),
             "\
-n0 Exact(Entry) caps=0 pred=0 walk=0 walk_caps=0/0 alt=0/0 ordered=0
+n0 Exact(Entry) caps=0 pred=0 alt=0/0 ordered=0
   out v0 Control slot=0 mode=Loose width=None caps=0 ident=0 token=0
-n1 Variant caps=0 pred=1 walk=0 walk_caps=0/0 alt=0/0 ordered=0
+n1 Variant caps=0 pred=1 alt=0/0 ordered=0
   out v1 AnyValue slot=0 mode=Loose width=None caps=0 ident=0 token=0
-n2 Exact(If) caps=1 pred=0 walk=1 walk_caps=2/2 alt=0/0 ordered=0
+n2 Exact(If) caps=1 pred=0 alt=0/0 ordered=0
   out v2 Control slot=0 mode=Loose width=None caps=1 ident=0 token=0
   out v3 Control slot=1 mode=Loose width=None caps=1 ident=0 token=0
   out v4 Any slot=0 mode=Pinned width=None caps=1 ident=0 token=0
@@ -764,7 +564,7 @@ n2 Exact(If) caps=1 pred=0 walk=1 walk_caps=2/2 alt=0/0 ordered=0
   out v6 Value slot=1 mode=Pinned width=None caps=0 ident=0 token=0
   in At(1) <- v1
   in At(0) <- v0
-root=Ok(2) total_nodes=5
+root=Ok(2) total_nodes=3
 ",
         );
     }
@@ -783,13 +583,13 @@ root=Ok(2) total_nodes=5
         same_shape(
             &staged_shape(&pat),
             "\
-n0 Any caps=0 pred=0 walk=0 walk_caps=0/0 alt=0/0 ordered=0
+n0 Any caps=0 pred=0 alt=0/0 ordered=0
   out v0 Any slot=0 mode=Loose width=None caps=0 ident=0 token=0
-n1 Any caps=0 pred=0 walk=0 walk_caps=0/0 alt=0/0 ordered=0
+n1 Any caps=0 pred=0 alt=0/0 ordered=0
   out v1 Any slot=0 mode=Loose width=None caps=0 ident=0 token=0
-n2 Any caps=0 pred=0 walk=0 walk_caps=0/0 alt=0/0 ordered=0
+n2 Any caps=0 pred=0 alt=0/0 ordered=0
   out v2 Any slot=0 mode=Loose width=None caps=1 ident=0 token=0
-n3 Exact(If) caps=0 pred=0 walk=0 walk_caps=0/0 alt=0/0 ordered=0
+n3 Exact(If) caps=0 pred=0 alt=0/0 ordered=0
   out v3 Control slot=0 mode=Loose width=None caps=0 ident=0 token=0
   out v4 Control slot=1 mode=Loose width=None caps=0 ident=0 token=0
   in At(1) <- v2
@@ -807,18 +607,6 @@ root=Ok(3) total_nodes=4
         assert_eq!(
             got.lines().collect::<Vec<_>>(),
             want.lines().collect::<Vec<_>>()
-        );
-    }
-
-    /// A refused branch pattern refuses the whole `If`, and its nodes still
-    /// count against the cap.
-    #[test]
-    fn if_lowering_replays_a_branch_refusal() {
-        let refused = MatcherBuilder::new().finish();
-        let pat = if_else().with_false(refused).build();
-        assert!(
-            staged_shape(&pat).contains("root=Err("),
-            "a refused branch pattern must refuse the If"
         );
     }
 }

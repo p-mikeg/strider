@@ -22,11 +22,7 @@
 //! `k` per configuration rather than returning the first hit. A guard anywhere
 //! above that rejects a configuration therefore re-drives a commutative node
 //! below it, so e.g. a `when_match` on a unary parent picks which operand of a
-//! commutative child binds. A node's binding walk
-//! ([`BindingWalkFn`](crate::matcher::BindingWalkFn), which is how `IfPat`
-//! matches its branches) is another axis of the same enumeration: it offers
-//! each of its own configurations in turn. The caller supplies the root
-//! continuation: a first-hit collector returns `true` to stop at the first
+//! commutative child binds. The caller supplies the root continuation: a first-hit collector returns `true` to stop at the first
 //! guard-satisfying configuration in DFS order, while `find_all`'s returns
 //! `false` to enumerate the rest, reporting several distinct bindings per
 //! root.
@@ -53,8 +49,11 @@ use crate::matcher::{
 struct Ctx<'a> {
     matcher: &'a Matcher<'a>,
     pat: &'a Pattern,
-    /// [`Matcher::satisfied`], borrowed for the walk.
-    satisfied: &'a Cell<u64>,
+    /// Configurations of this attempt that reached the root continuation,
+    /// i.e. produced a match; `first_of` and the cast ladder cut on it. Local
+    /// to the attempt, so a query that caller logic (`when_match`, a
+    /// `JoinPredicate`) runs on the same `Matcher` counts in its own.
+    satisfied: Cell<u64>,
     /// Per `first_of` node and IR node it was offered, the arm that first
     /// produced a match in this attempt. The cut is scoped to the attempt
     /// rather than to one invocation of the alternation, so a sibling operand
@@ -70,7 +69,7 @@ impl<'a> Ctx<'a> {
         Self {
             matcher,
             pat,
-            satisfied: &matcher.satisfied,
+            satisfied: Cell::new(0),
             first_match_cut: RefCell::default(),
         }
     }
@@ -106,49 +105,10 @@ pub(crate) fn try_match(
     bindings: &mut Bindings,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
-    try_match_rooted(matcher, pat, root, root_value, bindings, k, true)
-}
-
-/// [`try_match`] for a sub-pattern matched INSIDE another walk, such as an
-/// `IfPat` branch. `k` is the enclosing continuation, not a root, so reaching
-/// it is no match of its own and must not bump `satisfied`.
-pub(crate) fn try_match_nested(
-    matcher: &Matcher,
-    pat: &Pattern,
-    root: PatNodeId,
-    root_value: ValueId,
-    bindings: &mut Bindings,
-    k: &mut dyn FnMut(&mut Bindings) -> bool,
-) -> bool {
-    try_match_rooted(matcher, pat, root, root_value, bindings, k, false)
-}
-
-// The continuation-passing frame, not a refactorable cluster.
-#[allow(clippy::too_many_arguments)]
-fn try_match_rooted(
-    matcher: &Matcher,
-    pat: &Pattern,
-    root: PatNodeId,
-    root_value: ValueId,
-    bindings: &mut Bindings,
-    k: &mut dyn FnMut(&mut Bindings) -> bool,
-    count_root: bool,
-) -> bool {
     let root_out_vertex = root_output_vertex_for(pat, root, matcher, root_value);
     let root_node = matcher.function().producer(root_value);
     let ctx = Ctx::new(matcher, pat);
-    if !count_root {
-        return try_match_at(
-            &ctx,
-            root,
-            root_node,
-            Some(root_value),
-            root_out_vertex,
-            bindings,
-            k,
-        );
-    }
-    let mut counted = counting(&matcher.satisfied, k);
+    let mut counted = counting(&ctx.satisfied, k);
     try_match_at(
         &ctx,
         root,
@@ -181,8 +141,7 @@ fn counting<'a>(
 /// this test, which reads width and kind: its capture is what
 /// `bind_sibling_outputs` refuses.
 ///
-/// `k` is the root continuation; see [`try_match`]. `count_root` is `false`
-/// for a sub-pattern matched inside another walk; see [`try_match_nested`].
+/// `k` is the root continuation; see [`try_match`].
 pub(crate) fn try_match_node(
     matcher: &Matcher,
     pat: &Pattern,
@@ -190,16 +149,12 @@ pub(crate) fn try_match_node(
     node: NodeId,
     bindings: &mut Bindings,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
-    count_root: bool,
 ) -> bool {
     if root_requires_value_output(pat, root) {
         return false;
     }
     let ctx = Ctx::new(matcher, pat);
-    if !count_root {
-        return try_match_at(&ctx, root, node, None, None, bindings, k);
-    }
-    let mut counted = counting(&matcher.satisfied, k);
+    let mut counted = counting(&ctx.satisfied, k);
     try_match_at(&ctx, root, node, None, None, bindings, &mut counted)
 }
 
@@ -421,7 +376,10 @@ fn try_match_at(
                 root_value,
                 out_vertex,
                 b,
-                &mut |b| continue_node(ctx, nd, ir_node, b, k),
+                &mut |b| {
+                    b.record_matched(ir_node);
+                    k(b)
+                },
             ) {
                 return true;
             }
@@ -483,7 +441,10 @@ fn try_alternation(
                     root_value,
                     out_vertex,
                     b,
-                    &mut |b| continue_node(ctx, nd, ir_node, b, k),
+                    &mut |b| {
+                        b.record_matched(ir_node);
+                        k(b)
+                    },
                 )
             },
         );
@@ -504,7 +465,7 @@ fn try_alternation(
 
 /// The constraints a pat node owes once its operands, or its alternation arm,
 /// have matched: its sibling output vertices and its guard. Restores `b` to
-/// entry on rejection; [`continue_node`] carries on from here.
+/// entry on rejection.
 // The continuation-passing frame, not a refactorable cluster.
 #[allow(clippy::too_many_arguments)]
 fn finish_node(
@@ -597,42 +558,6 @@ fn bind_sibling_outputs(
         return bind_sibling_outputs(ctx, nd, sibs, anchor, idx + 1, ir_node, root_value, b, k);
     }
     false
-}
-
-/// A matched pat node's footprint entry and hand-off to `k`, through its
-/// binding walk where it has one. A walk is an enumeration like any operand's,
-/// so `k` runs once per configuration it reaches rather than once per node,
-/// and a rejection above re-drives it.
-///
-/// A declined `k` leaves `b` for the caller to roll back, which every call site
-/// does to a mark taken earlier.
-///
-/// Inlined on measured grounds: this runs once per matched node per
-/// configuration, and left to the compiler's judgement the extra call shows up
-/// in `benches/matcher.rs`'s `matcher_find_all_add_const`.
-#[inline(always)]
-fn continue_node(
-    ctx: &Ctx,
-    nd: &PatNode,
-    ir_node: NodeId,
-    b: &mut Bindings,
-    k: &mut dyn FnMut(&mut Bindings) -> bool,
-) -> bool {
-    let Some(bw) = &nd.binding_walk else {
-        b.record_matched(ir_node);
-        return k(b);
-    };
-    // The footprint entry is scoped to one continuation call, not to this
-    // frame, so the walk's next configuration starts from a clean footprint.
-    bw(ctx.matcher, ir_node, b, &mut |b| {
-        let per_config = b.mark();
-        b.record_matched(ir_node);
-        if k(b) {
-            return true;
-        }
-        b.restore(per_config);
-        false
-    })
 }
 
 /// Try `edge`'s sub-pattern against the operand `value`, then, if the cast mask
@@ -817,8 +742,6 @@ fn node_interchangeable(
         && nb.node_predicate.is_none()
         && na.post_match.is_none()
         && nb.post_match.is_none()
-        && na.binding_walk.is_none()
-        && nb.binding_walk.is_none()
         && na.force_ordered == nb.force_ordered
         && na.alternation == nb.alternation
         && na.first_match == nb.first_match
