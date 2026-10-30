@@ -6,7 +6,7 @@ use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
 use crate::staging::{SealNode, StagedGraph};
-use crate::template::graph::{Template, TmplNode, TmplNodeKind, TmplOutput, TmplValue};
+use crate::template::graph::{Template, TmplNode, TmplNodeKind, TmplValue};
 use crate::template::{TemplateKind, TemplateTy};
 
 /// A staged node's output, by position.
@@ -86,7 +86,7 @@ impl TemplateBuilder {
     /// ```
     pub fn leaf(&mut self, kind: NodeKind) -> TmplValueRef {
         let n = self.node(kind);
-        self.add_built_output(n, TmplOutput::value(0))
+        self.value_output(n, 0)
     }
 
     /// A leaf whose kind or constant a closure computes at rewrite time, from
@@ -94,14 +94,14 @@ impl TemplateBuilder {
     /// `TemplateKind::Exact(k)` builds what [`leaf`](Self::leaf)`(k)` does.
     pub fn dynamic_leaf(&mut self, kind: TemplateKind) -> TmplValueRef {
         let n = TmplNodeRef(self.core.add_node(TmplNodeKind::Build(kind)));
-        self.add_built_output(n, TmplOutput::value(0))
+        self.value_output(n, 0)
     }
 
     /// Consumes `inner` at input slot 0, with one value output at slot 0.
     pub fn unary(&mut self, kind: NodeKind, inner: TmplValueRef) -> TmplValueRef {
         let n = self.node(kind);
         self.input(n, 0, inner);
-        self.add_built_output(n, TmplOutput::value(0))
+        self.value_output(n, 0)
     }
 
     /// Consumes `l` at input slot 0 and `r` at slot 1, with one value output
@@ -110,7 +110,7 @@ impl TemplateBuilder {
         let n = self.node(NodeKind::IntBinaryOp(op));
         self.input(n, 0, l);
         self.input(n, 1, r);
-        self.add_built_output(n, TmplOutput::value(0))
+        self.value_output(n, 0)
     }
 
     /// Bare: no inputs or outputs yet.
@@ -125,12 +125,14 @@ impl TemplateBuilder {
         self.core.add_input(node.0, slot, prod.node, prod.output);
     }
 
+    /// Inherits the rewrite root's type unless one is set.
     pub fn value_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplValueRef {
-        self.add_built_output(node, TmplOutput::value(slot))
+        let ty = TemplateTy::InheritRoot;
+        self.add_value(node, TmplValue::Value { slot, ty })
     }
 
     pub fn memory_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplValueRef {
-        self.add_built_output(node, TmplOutput::memory(slot))
+        self.add_value(node, TmplValue::Memory { slot })
     }
 
     /// Types the materialised node independently of the rewrite root. On a
@@ -167,10 +169,6 @@ impl TemplateBuilder {
         )
     }
 
-    fn add_built_output(&mut self, node: TmplNodeRef, out: TmplOutput) -> TmplValueRef {
-        self.add_value(node, TmplValue::TmplOutput(out))
-    }
-
     fn add_value(&mut self, node: TmplNodeRef, out: TmplValue) -> TmplValueRef {
         let output = self.core.add_output(node.0, out);
         TmplValueRef {
@@ -179,10 +177,11 @@ impl TemplateBuilder {
         }
     }
 
-    /// Refused when `out` is a capture.
+    /// Refused when `out` is a capture; a memory output has no type to set.
     fn set_ty(&mut self, out: TmplValueRef, ty: TemplateTy) {
         match self.core.output_mut(out.node, out.output) {
-            TmplValue::TmplOutput(o) => o.ty = ty,
+            TmplValue::Value { ty: t, .. } => *t = ty,
+            TmplValue::Memory { .. } => {}
             TmplValue::ValueCapture(_) => self.core.reject(
                 "a template type setter (capture_typed, set_value_ty) targets a capture, \
                  which keeps the type of the value it bound"
@@ -213,11 +212,26 @@ mod tests {
         assert!(t.root().is_ok());
     }
 
+    /// The first refusal is the one reported, ahead of a later one and of the
+    /// cycle it sits in.
+    #[test]
+    fn the_first_template_refusal_wins() {
+        let mut b = TemplateBuilder::new();
+        let cap = b.capture(crate::Capture::new());
+        b.set_value_ty(cap, ValueType::I1);
+        b.core.reject("second".into());
+        let n = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+        let out = b.value_output(n, 0);
+        b.input(n, 0, out);
+        let err = b.finish().root().unwrap_err().to_string();
+        assert!(err.contains("targets a capture"), "{err}");
+    }
+
     #[test]
     fn capture_is_a_node_marker_with_a_value_capture_output() {
         // A capture leaf splits across both vertex enums: a payload-less
         // marker node, and a `ValueCapture(c)` output carrying the id. A
-        // buildable node stays `Build(_)` producing a `TmplOutput(_)`.
+        // buildable node stays `Build(_)` producing a `Value { .. }`.
         let c = crate::capture::Capture::new();
         let mut b = TemplateBuilder::new();
         let _built = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| {
@@ -237,7 +251,7 @@ mod tests {
                     let out = t.graph.node_outputs(node)[0];
                     assert!(matches!(
                         t.graph.value_kind_ref(out),
-                        TmplValue::TmplOutput(_)
+                        TmplValue::Value { .. }
                     ));
                 }
                 TmplNodeKind::Capture => {

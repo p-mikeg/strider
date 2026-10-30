@@ -452,3 +452,95 @@ fn a_capture_typed_popcount_operand_takes_the_capture_width() {
     assert_eq!(fx.value_type(operand).unwrap(), T::int(64));
     assert_eq!(fx.int_const_u128(operand), Some(0xff));
 }
+
+/// An unbound capture is refused before any node is built, so a failed
+/// instantiation leaves no dead nodes behind.
+#[test]
+fn an_unbound_capture_is_refused_before_any_node_is_built() {
+    let (x, unbound) = (Capture::new(), Capture::new());
+    let mut fx = cmp_over_i64();
+    let lhs = crate::int_eq(var(x), crate::int_const(1u128)).into_pattern();
+    let rhs = super::int_eq(
+        super::int_add(var(x), crate::int_const(3u128)),
+        var(unbound),
+    )
+    .into_template();
+    let (root, bindings, root_ty) = match_once(&fx, &lhs);
+    let before = fx.graph().all_node_ids().count();
+    let err = super::instantiate(
+        &rhs,
+        &mut EditFunction::new(&mut fx),
+        &bindings,
+        root,
+        &[root],
+        root_ty,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("unbound by LHS"), "got: {err}");
+    assert_eq!(fx.graph().all_node_ids().count(), before);
+}
+
+/// Two outputs at one slot are refused, as two inputs at one slot are.
+#[test]
+fn two_outputs_at_one_slot_are_refused() {
+    let x = Capture::new();
+    let mut fx = make_empty_fn(|b| {
+        let a = b.build_int_const(5u64, T::int(64))?;
+        let k = b.build_int_const(1u64, T::int(64))?;
+        b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
+    })
+    .unwrap();
+    let lhs = crate::int_add(var(x), crate::int_const(1u128)).into_pattern();
+    let mut b = super::TemplateBuilder::new();
+    let l = b.capture(x);
+    let r = b.capture(x);
+    let add = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+    b.input(add, 0, l);
+    b.input(add, 1, r);
+    for _ in 0..2 {
+        let out = b.value_output(add, 0);
+        b.set_value_ty(out, T::int(64));
+    }
+    let rhs = b.finish();
+
+    let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err().to_string();
+    assert!(err.contains("two outputs at slot 0"), "got: {err}");
+}
+
+/// A closure's skip declines the template ahead of an unbound capture, in
+/// either staging order, so the rule skips rather than errors.
+#[test]
+fn a_closure_skip_wins_over_an_unbound_capture() {
+    for capture_first in [true, false] {
+        let (x, unbound) = (Capture::new(), Capture::new());
+        let mut fx = make_empty_fn(|b| {
+            let a = b.build_int_const(5u64, T::int(64))?;
+            let k = b.build_int_const(1u64, T::int(64))?;
+            b.build_int_binary_operation(a, k, IntBinaryOp::Add, T::int(64))
+        })
+        .unwrap();
+        let lhs = crate::int_add(var(x), crate::int_const(1u128)).into_pattern();
+        let mut b = super::TemplateBuilder::new();
+        let skipping = |b: &mut super::TemplateBuilder| {
+            b.dynamic_leaf(super::TemplateKind::FnIntConst(Box::new(|_| {
+                Err(crate::skip())
+            })))
+        };
+        let (l, r) = if capture_first {
+            let l = b.capture(unbound);
+            (l, skipping(&mut b))
+        } else {
+            let r = skipping(&mut b);
+            (b.capture(unbound), r)
+        };
+        let add = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+        b.input(add, 0, l);
+        b.input(add, 1, r);
+        let _ = b.value_output(add, 0);
+        let rhs = b.finish();
+
+        let err = rewrite(&mut fx, &lhs, &rhs).unwrap_err();
+        assert!(crate::is_skip(&err), "capture_first={capture_first}: {err}");
+    }
+}

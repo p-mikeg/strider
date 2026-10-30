@@ -24,8 +24,7 @@ pub(crate) enum AnchorKind {
 type NodePredicateFactory = Box<dyn FnOnce() -> NodePredicate + Send>;
 
 /// Binds and/or kind-constrains the value produced at output `slot`, or at
-/// some output when `slot` is `None`. Defaults to the wildcard kind
-/// ([`OutputKindSpec::Any`](crate::matcher::OutputKindSpec::Any)); `ty`
+/// some output when `slot` is `None`. Defaults to the wildcard kind; `ty`
 /// narrows to an exact value type, `width` to a bit width.
 #[derive(Clone, Copy)]
 pub(crate) struct OutputSpec {

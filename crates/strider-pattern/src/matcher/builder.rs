@@ -160,7 +160,7 @@ impl MatcherBuilder {
     /// union). Empty `alts` matches nothing. `find_all` dedups on the binding
     /// signature, so arms that match one node identically are one row.
     ///
-    /// The alternation output is [`OutputKindSpec::Any`], so it nests in a
+    /// The alternation output is the wildcard kind, so it nests in a
     /// value, control, or memory slot alike; the arms discriminate.
     ///
     /// Enumeration is multiplicative under
@@ -210,7 +210,7 @@ impl MatcherBuilder {
         self.add_output(node, PatValue::value(slot))
     }
 
-    /// A slot-0 value output relaxed to [`OutputKindSpec::Any`]: the output an
+    /// A slot-0 value output relaxed to the wildcard kind: the output an
     /// alternation node or a value-less kind synthesises.
     pub fn any_value_output(&mut self, node: PatNodeRef) -> PatValueRef {
         let out = self.value_output(node, 0);
@@ -255,7 +255,7 @@ impl MatcherBuilder {
         }
     }
 
-    /// Relaxes `out` to [`OutputKindSpec::Any`], so `anything()` / `var()` match
+    /// Relaxes `out` to the wildcard kind, so `anything()` / `var()` match
     /// value-less kinds (`Region`, `MemPhi`, ...) too.
     pub fn set_output_any(&mut self, out: PatValueRef) {
         self.out_of(out).kind = OutputKindSpec::Any;
@@ -346,7 +346,7 @@ impl MatcherBuilder {
         let untyped_kind = valueless_kind(&self.core.kind_mut(out.node).kind);
         let untyped_output = matches!(
             self.out_of(out).kind,
-            OutputKindSpec::Control | OutputKindSpec::Memory | OutputKindSpec::PhiToken
+            OutputKindSpec::Control | OutputKindSpec::Memory
         );
         if untyped_kind || untyped_output {
             self.reject_typed_guard();
