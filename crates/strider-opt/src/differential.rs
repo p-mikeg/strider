@@ -984,7 +984,13 @@ pub(crate) fn build_random_cfg(seed: u64) -> Option<strider_ir::Function> {
     let mut rs = RegisterSet::new();
     let mut vns = Vec::new();
     for i in 0..nvars {
-        let (sz, _) = [(1, ValueType::int(8)), (4, ValueType::int(32))][rng.below(2)];
+        // A width past the `u128` carrier, so the range oracles below read
+        // `index_range` where no `u128` is the value's bound.
+        let (sz, _) = [
+            (1, ValueType::int(8)),
+            (4, ValueType::int(32)),
+            (32, ValueType::int(256)),
+        ][rng.below(3)];
         let vn = reg_vn(0x1000 * (i as u64 + 1), sz);
         rs = rs.tracked(vn).arg(vn);
         vns.push(vn);
@@ -1465,6 +1471,7 @@ fn a_range_contains_every_runtime_value() {
     let mut failures: Vec<String> = Vec::new();
     let mut checks = 0usize;
     let mut nontop = 0usize;
+    let mut wide = 0usize;
     for seed in start..start + n {
         let Some(mut f) = build_random_cfg(seed) else {
             continue;
@@ -1492,6 +1499,9 @@ fn a_range_contains_every_runtime_value() {
                 if !iv.is_top(&eval::all_ones(ty)) {
                     nontop += 1;
                 }
+                if ty.bit_width() > 128 {
+                    wide += 1;
+                }
                 let ok = *iv.lo() <= *val
                     && *val <= *iv.hi()
                     && (val - iv.lo()) % iv.stride() == UBig::ZERO;
@@ -1513,12 +1523,12 @@ fn a_range_contains_every_runtime_value() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n=====\n"));
-    // Printed so the floor below can be re-baselined without editing this.
-    eprintln!("checks {checks} nontop {nontop}");
+    // Printed so the floors below can be re-baselined without editing this.
+    eprintln!("checks {checks} nontop {nontop} wide {wide}");
     // `Interval::top` satisfies the soundness check for every value, so a
     // `range_of` that answered `top` everywhere passed while proving nothing.
-    // Measured at the committed seed count: checks ~3.68M, nontop ~1.85M, so
-    // the ratio floor sits at half the measured margin.
+    // Measured at the committed seed count: checks ~4.18M, nontop ~2.45M,
+    // wide ~1.18M, so each ratio floor sits at half the measured margin.
     //
     // Population statistics, asserted only over the full seed range: a single
     // CFG can legitimately check nothing, or have every range come out `top`
@@ -1530,6 +1540,12 @@ fn a_range_contains_every_runtime_value() {
         assert!(
             nontop * 4 >= checks,
             "only {nontop} of {checks} ranges were narrower than top"
+        );
+        // Without a width past the `u128` carrier the oracle never reads
+        // `index_range` where the old carrier had no bound to offer.
+        assert!(
+            wide * 8 >= checks,
+            "only {wide} of {checks} ranges were past 128 bits"
         );
     }
 }
