@@ -1,10 +1,11 @@
 //! Constant-literal typed builders.
 //!
-//! `int_const`'s match is width-masked at the constant's own declared width,
-//! so `int_const(u128::MAX)` matches a width-relative all-ones constant up to
-//! I128 and, at I256 and I512, the constant `2^128 - 1` those widths spell
-//! out. A true all-ones there is [`int_const_all_ones`], which no `u128`
-//! literal names.
+//! `int_const`'s match wraps the query into the constant's own declared
+//! width, so `int_const(u128::MAX)` matches a width-relative all-ones
+//! constant up to I128 and, at I256 and I512, the constant `2^128 - 1` those
+//! widths spell out. The all-ones of a width the query does not fix is
+//! [`int_const_all_ones`], which no literal names: `int_const` names one
+//! value, that one is relative to whatever width it is matched at.
 //! `int_const_any_width` additionally recognises the value held at a narrower
 //! width and widened into the constant's type, by zero or by sign extension.
 
@@ -12,9 +13,9 @@ use std::cell::RefCell;
 
 use rustc_hash::FxHashSet;
 
-use strider_ir::UBig;
 use strider_ir::eval::{self, mask_below, sign_bit};
 use strider_ir::node::{NodeId, NodeKind, ValueType};
+use strider_ir::{IBig, UBig};
 use strider_ir::{IRViewer, IntConstId};
 
 use crate::capture::Capture;
@@ -37,10 +38,11 @@ fn compile_const_leaf<B: BuilderLike>(
     o
 }
 
-/// Masks `v` and the stored payload to the matched node's output width before
-/// comparing.
+/// Wraps `v` into the matched node's output width, and masks the stored
+/// payload to it, before comparing. `v` is signed and unbounded, so a
+/// negative names its two's complement at whatever width it is matched at.
 pub struct IntConst {
-    v: u128,
+    v: IBig,
 }
 
 /// The stored value of `node`'s first value output, with that output's type.
@@ -79,9 +81,9 @@ fn int_const_leaf(
 
 impl MatchPat for IntConst {
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let v = UBig::from(self.v);
+        let v = self.v;
         int_const_leaf(b, None, move |stored, ty| {
-            eval::mask(stored, ty) == eval::mask(&v, ty)
+            ty.is_integer() && eval::mask(stored, ty) == eval::unsigned(v.clone(), ty)
         })
     }
 }
@@ -104,10 +106,19 @@ pub fn int_const_all_ones() -> IntConstAllOnes {
 }
 
 /// Build-side twin for a value known at pattern-build time, interned at the
-/// resolved output width.
-fn const_template(v: u128, ty: TemplateTy) -> ConstWith {
+/// resolved output width, into which a negative is wrapped.
+///
+/// A non-negative value passes through raw: the shift-count saturation in
+/// `template` reads whether the value exceeds the width, which a wrap here
+/// would erase.
+fn const_template(v: IBig, ty: TemplateTy) -> ConstWith {
     ConstWith {
-        kind: TemplateKind::FnIntConst(Box::new(move |_ctx| Ok(strider_ir::UBig::from(v)))),
+        kind: TemplateKind::FnIntConst(Box::new(move |ctx| {
+            Ok(
+                UBig::try_from(v.clone())
+                    .unwrap_or_else(|_| eval::unsigned(v.clone(), ctx.root_ty)),
+            )
+        })),
         ty,
         caps: Vec::new(),
         opt_caps: Vec::new(),
@@ -196,8 +207,7 @@ impl MatchPat for IntConstAnyWidth {
 
 impl crate::template::template_pat::TemplatePat for IntConstAnyWidth {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        let v: u128 = i128::from(self.v) as u128;
-        const_template(v, TemplateTy::InheritRoot).compile(b)
+        const_template(IBig::from(self.v), TemplateTy::InheritRoot).compile(b)
     }
 }
 
@@ -286,7 +296,11 @@ impl crate::template::template_pat::TemplatePat for BoolConst {
     fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
         // IntConstId is function-specific, so the value must be interned at
         // rewrite time, not at pattern-build time.
-        const_template(u128::from(self.b), TemplateTy::Fixed(ValueType::I1)).compile(b)
+        const_template(
+            IBig::from(u8::from(self.b)),
+            TemplateTy::Fixed(ValueType::I1),
+        )
+        .compile(b)
     }
 }
 
@@ -407,7 +421,7 @@ pub fn any_float_const() -> AnyFloatConst {
 
 /// Match-only.
 pub struct IntConstAnyOf {
-    set: FxHashSet<u128>,
+    set: Vec<IBig>,
 }
 
 impl MatchPat for IntConstAnyOf {
@@ -429,9 +443,7 @@ impl MatchPat for IntConstAnyOf {
                 None => {
                     cache.push((
                         bits,
-                        set.iter()
-                            .map(|&v| eval::mask(&UBig::from(v), ty))
-                            .collect(),
+                        set.iter().map(|v| eval::unsigned(v.clone(), ty)).collect(),
                     ));
                     &cache[cache.len() - 1].1
                 }
@@ -452,27 +464,27 @@ macro_rules! int_const_scalar {
         impl IntConstArg for $t {
             type Pat = IntConst;
             fn into_int_const(self) -> IntConst {
-                IntConst { v: u128::from(self) }
+                IntConst { v: IBig::from(self) }
             }
         }
     )+};
 }
-int_const_scalar!(u8, u16, u32, u64, u128);
+int_const_scalar!(u8, u16, u32, u64, u128, i8, i16, i32, i64, i128, UBig, IBig);
 
-fn const_set<T: Into<u128>>(values: impl IntoIterator<Item = T>) -> IntConstAnyOf {
+fn const_set<T: Into<IBig>>(values: impl IntoIterator<Item = T>) -> IntConstAnyOf {
     IntConstAnyOf {
         set: values.into_iter().map(Into::into).collect(),
     }
 }
 
-impl<T: Into<u128>> IntConstArg for Vec<T> {
+impl<T: Into<IBig>> IntConstArg for Vec<T> {
     type Pat = IntConstAnyOf;
     fn into_int_const(self) -> IntConstAnyOf {
         const_set(self)
     }
 }
 
-impl<T: Into<u128>, const N: usize> IntConstArg for [T; N] {
+impl<T: Into<IBig>, const N: usize> IntConstArg for [T; N] {
     type Pat = IntConstAnyOf;
     fn into_int_const(self) -> IntConstAnyOf {
         const_set(self)
@@ -486,18 +498,21 @@ impl IntConstArg for Capture {
     }
 }
 
-impl<T: Into<u128> + Copy> IntConstArg for &[T] {
+impl<T: Into<IBig> + Copy> IntConstArg for &[T] {
     type Pat = IntConstAnyOf;
     fn into_int_const(self) -> IntConstAnyOf {
         const_set(self.iter().copied())
     }
 }
 
-/// Match an `IntConst` whose stored value equals `value`, both masked to the
-/// output width; given a collection, any member of it; given a [`Capture`], any
-/// integer constant, bound to it. The query is truncated too, so `0x1234`
-/// matches `0x34` at `I8`. An I256/I512 value too wide for `u128` never
-/// matches, and an empty collection matches nothing.
+/// Match an `IntConst` whose stored value equals `value` wrapped into the
+/// output width; given a collection, any member of it; given a [`Capture`],
+/// any integer constant, bound to it. The query is wrapped too, so `0x1234`
+/// matches `0x34` at `I8` and `-1` matches the all-ones constant of any
+/// width. `value` is any integer, [`UBig`] or [`IBig`] included, so a
+/// constant of any declared width is nameable; a width-relative all-ones at
+/// a width the query does not fix is [`int_const_all_ones`]. An empty
+/// collection matches nothing.
 ///
 /// The collection form stays one pattern vertex carrying a set-membership
 /// test, so it costs what the scalar form costs.
