@@ -197,7 +197,7 @@ mod tests {
             .build();
         assert_eq!(
             staged_shape(&pat),
-            "n0 Any caps=0 pred=1 alt=0/0 ordered=0\n\
+            "n0 Any caps=0 pred=1 Operands { ordered: false }\n\
              \x20 out v0 AnyValue slot=0 mode=Loose width=None caps=2 ident=0 token=0\n\
              root=Ok(0) total_nodes=1\n",
         );

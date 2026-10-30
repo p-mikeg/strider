@@ -3,8 +3,10 @@
 //! silently matching nothing.
 
 use strider_ir::IntBinaryOp;
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::Tb;
 use strider_pattern::matcher::{KindSpec, MatcherBuilder};
+use strider_pattern::template::TemplateBuilder;
 use strider_pattern::{
     CaptureExt, MatchPat, Matcher, Pattern, anything, if_else, int_add, one_of, ret, var,
 };
@@ -195,6 +197,40 @@ fn a_cyclic_builder_wiring_is_refused_not_panicked() {
     let out = b.value_output(n, 0);
     b.input(n, 0, out);
     assert!(error_of(&b.finish()).contains("cycle"));
+}
+
+/// The template side of the same wiring.
+#[test]
+fn a_cyclic_template_wiring_is_refused_not_panicked() {
+    let mut b = TemplateBuilder::new();
+    let n = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+    let out = b.value_output(n, 0);
+    b.input(n, 0, out);
+    let err = b.finish().root().unwrap_err().to_string();
+    assert!(err.contains("cycle"), "{err}");
+}
+
+/// The first refusal is the one reported, and it is preferred over the cycle
+/// verdict on whatever the refused lowering left staged.
+#[test]
+fn the_first_refusal_wins_over_later_ones_and_a_cycle() {
+    let mut b = MatcherBuilder::new();
+    let n = b.node(KindSpec::Any);
+    let out = b.value_output(n, 0);
+    b.input(n, 0, out);
+    b.reject("first".into());
+    b.reject("second".into());
+    assert_eq!(error_of(&b.finish()), "first");
+
+    let mut t = TemplateBuilder::new();
+    let cap = t.capture(strider_pattern::Capture::new());
+    t.set_value_ty(cap, ValueType::I1);
+    let n = t.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+    let out = t.value_output(n, 0);
+    t.input(n, 0, out);
+    t.set_value_ty(cap, ValueType::int(8));
+    let err = t.finish().root().unwrap_err().to_string();
+    assert!(err.contains("targets a capture"), "{err}");
 }
 
 /// `k` adds over ONE shared wildcard leaf, each add feeding both slots of the

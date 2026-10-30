@@ -44,14 +44,15 @@ def test_mem_field_narrows_the_match():
 
 def test_an_edge_join_narrows_the_match():
     g = _clamp_graph()
-    t = p.Capture("t")
+    t, r = p.Capture("t"), p.Capture("r")
 
     def iff():
         return p.if_else().capture_true(t)
 
-    assert len(g.find_all([iff(), p.region().any_input(t)])) >= 2
-    # No If in `clamp` branches straight into a CallOther.
-    assert g.find_all([iff(), p.call_other().ctrl(t)]) == []
+    assert len(g.find_all([iff(), p.region().capture(r).any_input(t)])) == 2
+    # Every `ret` here hangs off a Region, never straight off an If edge.
+    assert len(g.find_all(p.ret())) >= 1
+    assert g.find_all([iff(), p.ret().ctrl(t)]) == []
 
 
 def test_scalar_field_narrows_the_match():
