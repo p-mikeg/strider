@@ -36,15 +36,15 @@
 
 use std::cell::{Cell, RefCell};
 
+use itertools::Either;
 use rustc_hash::FxHashMap;
 use strider_graph::{NodeId as PatNodeId, ValueId as PatValueId};
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, ValueId, ValueKind};
+use strider_ir::walk::{CastMask, cast_mask_of};
 
 use crate::bindings::{Binding, Bindings};
-use crate::matcher::{
-    InputSlot, Matcher, OutputKindSpec, PatNode, PatValue, Pattern, Role, SlotMode, cast_levels,
-};
+use crate::matcher::{InputSlot, Matcher, OutputKindSpec, PatValue, Pattern, Role, SlotMode};
 
 struct Ctx<'a> {
     matcher: &'a Matcher<'a>,
@@ -91,58 +91,16 @@ impl<'a> Ctx<'a> {
     }
 }
 
-/// Value-rooted attempt: `pat`'s root against the IR node producing
-/// `root_value`, which supplies the root output's constraints and capture.
+/// Every attempt of `pat`'s root at `node`: once per output whatever its kind
+/// (a `Store` roots through its Memory output), less the outputs
+/// [`anchor_repeats`] shows impose the attempt already made, and node-rooted
+/// only when the node has no outputs at all.
 ///
 /// `k` runs once per fully guard-satisfying configuration. `true` accepts and
 /// stops the search; `false` drives the next one, which is how a caller
-/// enumerates every distinct binding rather than only the first.
-pub(crate) fn try_match(
-    matcher: &Matcher,
-    pat: &Pattern,
-    root: PatNodeId,
-    root_value: ValueId,
-    bindings: &mut Bindings,
-    k: &mut dyn FnMut(&mut Bindings) -> bool,
-) -> bool {
-    let root_out_vertex = root_output_vertex_for(pat, root, matcher, root_value);
-    let root_node = matcher.function().producer(root_value);
-    let ctx = Ctx::new(matcher, pat);
-    let mut counted = counting(&ctx.satisfied, k);
-    try_match_at(
-        &ctx,
-        root,
-        root_node,
-        Some(root_value),
-        root_out_vertex,
-        bindings,
-        &mut counted,
-    )
-}
-
-/// Wraps the root continuation so every configuration reaching it bumps
-/// `satisfied`.
-fn counting<'a>(
-    satisfied: &'a Cell<u64>,
-    k: &'a mut dyn FnMut(&mut Bindings) -> bool,
-) -> impl FnMut(&mut Bindings) -> bool + 'a {
-    move |b| {
-        satisfied.set(satisfied.get() + 1);
-        k(b)
-    }
-}
-
-/// Zero-value-output attempt (`Return` and friends): `pat`'s root against
-/// `node`, with no associated output.
-///
-/// Such a node can only satisfy a root whose output vertex imposes no value
-/// requirement (a bare `anything()`, or a control builder); a root demanding a
-/// value output is rejected here. A `var()` root is rejected too, but not by
-/// this test, which reads width and kind: its capture is what
-/// `bind_sibling_outputs` refuses.
-///
-/// `k` is the root continuation; see [`try_match`].
-pub(crate) fn try_match_node(
+/// enumerates every distinct binding rather than only the first. Each output
+/// gets its own [`Ctx`], so a root `first_of` cut does not carry over.
+pub(crate) fn anchor(
     matcher: &Matcher,
     pat: &Pattern,
     root: PatNodeId,
@@ -150,20 +108,54 @@ pub(crate) fn try_match_node(
     bindings: &mut Bindings,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
-    if root_requires_value_output(pat, root) {
-        return false;
+    let mut attempt = |root_value: Option<ValueId>, bindings: &mut Bindings| {
+        let out_vertex = root_value.and_then(|v| root_output_vertex_for(pat, root, matcher, v));
+        let ctx = Ctx::new(matcher, pat);
+        let mut counted = |b: &mut Bindings| {
+            ctx.satisfied.set(ctx.satisfied.get() + 1);
+            k(b)
+        };
+        let site = Site {
+            pat_node: root,
+            ir_node: node,
+            root_value,
+            out_vertex,
+        };
+        try_match_at(&ctx, site, bindings, &mut counted)
+    };
+    let outputs = matcher.function().node_outputs(node);
+    if outputs.is_empty() {
+        // A root demanding a value output cannot match a zero-output node. A
+        // `var()` root is rejected too, but not by this test, which reads width
+        // and kind: its capture is what `bind_sibling_outputs` refuses.
+        let demands_value = pat.graph.node_outputs(root).iter().any(|&ov| {
+            let o = pat.graph.value_kind_ref(ov);
+            o.width.is_some()
+                || matches!(o.kind, OutputKindSpec::Value(_) | OutputKindSpec::AnyValue)
+        });
+        return !demands_value && attempt(None, bindings);
     }
-    let ctx = Ctx::new(matcher, pat);
-    let mut counted = counting(&ctx.satisfied, k);
-    try_match_at(&ctx, root, node, None, None, bindings, &mut counted)
-}
-
-/// A root demanding a value output cannot match a zero-output IR node.
-fn root_requires_value_output(pat: &Pattern, root: PatNodeId) -> bool {
-    pat.graph.node_outputs(root).iter().any(|&ov| {
-        let o = pat.graph.value_kind_ref(ov);
-        o.width.is_some() || matches!(o.kind, OutputKindSpec::Value(_) | OutputKindSpec::AnyValue)
-    })
+    // An output whose anchor repeats the one already tried imposes the same
+    // constraint set, so it can only re-derive bindings already reported.
+    //
+    // `IfPat::lower` declares a vertex per control slot and
+    // `root_output_vertex_for` picks by slot, so an `If` root's two outputs
+    // resolve to DIFFERENT vertices; what skips the second is
+    // `anchor_repeats`' `as_value()` clause, not its `prev == cur` one, which
+    // would answer "not a repeat" for one shared vertex anyway.
+    let mut anchored: Option<ValueId> = None;
+    for &out_id in outputs {
+        if let Some(prev) = anchored
+            && anchor_repeats(matcher, pat, root, prev, out_id)
+        {
+            continue;
+        }
+        anchored = Some(out_id);
+        if attempt(Some(out_id), bindings) {
+            return true;
+        }
+    }
+    false
 }
 
 /// The root pat node's output vertex carrying the root-level constraints to
@@ -227,25 +219,36 @@ pub(crate) fn anchor_repeats(
     f.value_kind(anchored).as_value() == f.value_kind(out_id).as_value()
 }
 
-/// Recursive worker, continuation-passing so a guard failure anywhere above can
-/// re-drive a commutative operand order below it. `root_value` / `out_vertex`
-/// are the IR output and its pat-output vertex when this pat node sits at a
-/// value-producing position.
-///
-/// Enumerates every way `pat_node` matches `ir_node`; for each it extends
-/// `bindings` with that configuration's captures and footprint and calls `k`.
-/// `k` returning `true` accepts and leaves `bindings` in the accepted state;
-/// `false` tries the next configuration. If none is accepted, `bindings` is
-/// restored to entry.
-fn try_match_at(
-    ctx: &Ctx,
+/// A pat node offered an IR node and, at a value-producing position, the IR
+/// output and the pat-output vertex it is matched as.
+#[derive(Clone, Copy)]
+struct Site {
     pat_node: PatNodeId,
     ir_node: NodeId,
     root_value: Option<ValueId>,
     out_vertex: Option<PatValueId>,
+}
+
+/// Recursive worker, continuation-passing so a guard failure anywhere above can
+/// re-drive a commutative operand order below it.
+///
+/// Enumerates every way `site`'s pat node matches its IR node; for each it
+/// extends `bindings` with that configuration's captures and footprint and
+/// calls `k`. `k` returning `true` accepts and leaves `bindings` in the
+/// accepted state; `false` tries the next configuration. If none is accepted,
+/// `bindings` is restored to entry.
+fn try_match_at(
+    ctx: &Ctx,
+    site: Site,
     bindings: &mut Bindings,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
+    let Site {
+        pat_node,
+        ir_node,
+        root_value,
+        out_vertex,
+    } = site;
     let nd = ctx.pat.graph.node_kind(pat_node);
     if !nd.kind.matches(ctx.function().node_kind(ir_node)) {
         return false;
@@ -280,11 +283,8 @@ fn try_match_at(
     let inputs = &node_inputs.edges;
     let n_fixed = node_inputs.fixed;
 
-    // Carries this node's own captures; see `bind_all_captures`.
-    let out_weight = out_vertex.map(|ov| ctx.pat.graph.value_kind_ref(ov));
-
     if nd.is_alternation() {
-        return try_alternation(ctx, pat_node, ir_node, root_value, out_vertex, bindings, k);
+        return try_alternation(ctx, site, bindings, k);
     }
 
     // Commutativity needs one or two fixed operands at slots {0,1} (the shape
@@ -312,35 +312,10 @@ fn try_match_at(
         && ctx.function().node_kind(ir_node).is_commutative()
         && input_at(ctx, ir_node, 0) != input_at(ctx, ir_node, 1);
 
-    // The existential candidate set: every input slot of `ir_node`, less the
-    // ones a fixed operand pinned, which on a commutative node is none, its
-    // fixed operands reaching both slots. `k` existentials enumerate every
-    // injective assignment over it, which is what `any_input`'s cost is.
-    // Invariant across the search, so collected once here rather than per
-    // recursion level (and empty in the common no-`any_input` case).
-    // `Candidates::Only` never extends the `Claimed` chain, so a pinned slot is
-    // excluded here or it is offered twice; the commutative pair is `OneOf` and
-    // `Claimed` handles it.
-    //
-    // No kind filter here: the sub-pattern discriminates. A sub carries an
-    // output-kind and reaches only inputs of that kind (a value sub skips
-    // control/memory/PhiToken, a memory sub binds a memory input), while a bare
-    // wildcard (`OutputKindSpec::Any`) binds any input including a `PhiToken`.
-    let ext_slots: Vec<usize> = if n_fixed == inputs.len() {
-        Vec::new()
-    } else {
-        // Commutative only on a raw `MatcherBuilder` node whose spec admits a
-        // commutative kind: no typed builder puts an existential on one.
-        let fixed = &inputs[..n_fixed];
-        (0..ctx.function().node_inputs(ir_node).len())
-            .filter(|&s| commutative || !fixed.iter().any(|e| e.consumer_slot == InputSlot::At(s)))
-            .collect()
-    };
-
     let assignment = Assignment {
         edges: inputs,
+        fixed: n_fixed,
         commutative,
-        ext_slots: &ext_slots,
     };
 
     let mark = bindings.mark();
@@ -351,28 +326,10 @@ fn try_match_at(
         // `k`. Returning `false` makes the enumeration try its next
         // configuration, so an ancestor guard failure surfaced through `k`
         // re-drives this node and everything beneath it.
-        let mut finalize = |b: &mut Bindings| -> bool {
-            let inner = b.mark();
-            if !bind_all_captures(b, nd, out_weight, ir_node, root_value) {
-                return false;
-            }
-            if finish_node(
-                ctx,
-                nd,
-                pat_node,
-                ir_node,
-                root_value,
-                out_vertex,
-                b,
-                &mut |b| {
-                    b.record_matched(ir_node);
-                    k(b)
-                },
-            ) {
-                return true;
-            }
-            b.restore(inner);
-            false
+        // A rejection leaves `b` to the enumeration point that resumes, which
+        // restores to a mark taken before this node's operands.
+        let mut finalize = |b: &mut Bindings| {
+            bind_all_captures(ctx, site, b) && bind_sibling_outputs(ctx, site, 0, b, k)
         };
         if match_assignments(ctx, &assignment, 0, ir_node, None, bindings, &mut finalize) {
             return true;
@@ -387,20 +344,19 @@ fn try_match_at(
 /// every matching arm; `first_of` cuts to the first.
 fn try_alternation(
     ctx: &Ctx,
-    pat_node: PatNodeId,
-    ir_node: NodeId,
-    root_value: Option<ValueId>,
-    out_vertex: Option<PatValueId>,
+    site: Site,
     bindings: &mut Bindings,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
+    let Site {
+        pat_node, ir_node, ..
+    } = site;
     let nd = ctx.pat.graph.node_kind(pat_node);
-    let out_weight = out_vertex.map(|ov| ctx.pat.graph.value_kind_ref(ov));
     let mark = bindings.mark();
     // Bound before any arm runs, where every other kind binds in `finalize`
     // once its inputs have matched, so an arm rebinding this node's capture
     // conflicts rather than shadows.
-    if !bind_all_captures(bindings, nd, out_weight, ir_node, root_value) {
+    if !bind_all_captures(ctx, site, bindings) {
         return false;
     }
     let cut = ctx.cut_arm(pat_node, ir_node);
@@ -411,31 +367,16 @@ fn try_alternation(
             break;
         }
         let before = ctx.satisfied.get();
-        let accepted = try_match_at(
-            ctx,
-            alt.producer,
-            ir_node,
-            root_value,
-            Some(alt.out_vertex),
-            bindings,
-            // The arm's own `try_match_at` restores on every `false` return,
-            // so a rejected configuration needs no cleanup here.
-            &mut |b| {
-                finish_node(
-                    ctx,
-                    nd,
-                    pat_node,
-                    ir_node,
-                    root_value,
-                    out_vertex,
-                    b,
-                    &mut |b| {
-                        b.record_matched(ir_node);
-                        k(b)
-                    },
-                )
-            },
-        );
+        let arm_site = Site {
+            pat_node: alt.producer,
+            out_vertex: Some(alt.out_vertex),
+            ..site
+        };
+        // The arm's own `try_match_at` restores on every `false` return, so a
+        // rejected configuration needs no cleanup here.
+        let accepted = try_match_at(ctx, arm_site, bindings, &mut |b| {
+            bind_sibling_outputs(ctx, site, 0, b, k)
+        });
         if accepted {
             return true;
         }
@@ -451,76 +392,49 @@ fn try_alternation(
     false
 }
 
-/// The constraints a pat node owes once its operands, or its alternation arm,
-/// have matched: its sibling output vertices and its guard. Restores `b` to
-/// entry on rejection.
-// The continuation-passing frame, not a refactorable cluster.
-#[allow(clippy::too_many_arguments)]
-fn finish_node(
-    ctx: &Ctx,
-    nd: &PatNode,
-    pat_node: PatNodeId,
-    ir_node: NodeId,
-    root_value: Option<ValueId>,
-    out_vertex: Option<PatValueId>,
-    b: &mut Bindings,
-    k: &mut dyn FnMut(&mut Bindings) -> bool,
-) -> bool {
-    let outs = ctx.pat.graph.node_outputs(pat_node);
-    let inner = b.mark();
-    if bind_sibling_outputs(ctx, nd, outs, out_vertex, 0, ir_node, root_value, b, k) {
-        return true;
-    }
-    b.restore(inner);
-    false
-}
-
-/// The output vertices from `idx` on other than `anchor`, then `nd`'s
-/// post-match predicate, then `k`. A [`SlotMode::Enumerated`] vertex
-/// enumerates the node's outputs, so a capture on it binds each in turn and a
-/// rejection anywhere above re-drives it; every other vertex is checked at its
-/// own slot.
-// The continuation-passing frame, not a refactorable cluster.
-#[allow(clippy::too_many_arguments)]
+/// What `site` owes once its operands, or its alternation arm, have matched:
+/// its output vertices from `idx` on other than the anchoring one, then its
+/// post-match predicates, then its footprint entry and `k`. A
+/// [`SlotMode::Enumerated`] vertex enumerates the node's outputs, so a capture
+/// on it binds each in turn and a rejection anywhere above re-drives it; every
+/// other vertex is checked at its own slot. A rejection leaves `b` to the mark
+/// its caller took.
 fn bind_sibling_outputs(
     ctx: &Ctx,
-    nd: &PatNode,
-    sibs: &[PatValueId],
-    anchor: Option<PatValueId>,
+    site: Site,
     idx: usize,
-    ir_node: NodeId,
-    root_value: Option<ValueId>,
     b: &mut Bindings,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
-    let Some(&ov_idx) = sibs.get(idx) else {
+    let Some(&ov_idx) = ctx.pat.graph.node_outputs(site.pat_node).get(idx) else {
+        let nd = ctx.pat.graph.node_kind(site.pat_node);
         if !nd.post_matches.is_empty() {
-            let ty = root_value.and_then(|value| ctx.function().value_kind(value).as_value());
+            let ty = site
+                .root_value
+                .and_then(|value| ctx.function().value_kind(value).as_value());
             if !nd
                 .post_matches
                 .iter()
-                .all(|pm| pm(ctx.matcher, ir_node, ty, b))
+                .all(|pm| pm(ctx.matcher, site.ir_node, ty, b))
             {
                 return false;
             }
         }
+        b.record_matched(site.ir_node);
         return k(b);
     };
-    if Some(ov_idx) == anchor {
-        return bind_sibling_outputs(ctx, nd, sibs, anchor, idx + 1, ir_node, root_value, b, k);
+    if Some(ov_idx) == site.out_vertex {
+        return bind_sibling_outputs(ctx, site, idx + 1, b, k);
     }
     let ov = ctx.pat.graph.value_kind_ref(ov_idx);
-    let outs = ctx.function().node_outputs(ir_node);
-    let pinned = [ov.slot];
-    let enumerated: Vec<usize>;
-    let slots: &[usize] = if ov.slot_mode == SlotMode::Enumerated {
-        enumerated = (0..outs.len()).collect();
-        &enumerated
+    let outs = ctx.function().node_outputs(site.ir_node);
+    let slots = if ov.slot_mode == SlotMode::Enumerated {
+        Either::Left(0..outs.len())
     } else {
-        &pinned
+        Either::Right(std::iter::once(ov.slot))
     };
     let mut any_slot_present = false;
-    for &slot in slots {
+    for slot in slots {
         let Some(&val) = outs.get(slot) else { continue };
         any_slot_present = true;
         if !output_ok(ov, ctx.function(), val) {
@@ -537,7 +451,7 @@ fn bind_sibling_outputs(
             b.restore(here);
             continue;
         }
-        if bind_sibling_outputs(ctx, nd, sibs, anchor, idx + 1, ir_node, root_value, b, k) {
+        if bind_sibling_outputs(ctx, site, idx + 1, b, k) {
             return true;
         }
         b.restore(here);
@@ -547,7 +461,7 @@ fn bind_sibling_outputs(
     // value-less `Return`; one carrying a capture or a filter rejects instead of
     // leaving that capture unbound.
     if !any_slot_present && !vertex_imposes_requirement(ov) {
-        return bind_sibling_outputs(ctx, nd, sibs, anchor, idx + 1, ir_node, root_value, b, k);
+        return bind_sibling_outputs(ctx, site, idx + 1, b, k);
     }
     false
 }
@@ -565,7 +479,8 @@ fn bind_sibling_outputs(
 ///
 /// The cast walk-through is a fallback, not an alternative: it engages only
 /// when the level above PRODUCED no match, never to offer a second binding
-/// beside a direct one. Reaching the continuation is not the same test (a
+/// beside a direct one, or the answer would depend on an incidental cast
+/// sitting on top of the operand. Reaching the continuation is not the same test (a
 /// guard above can reject a configuration, and the ladder must still run),
 /// so the cut counts full matches through `ctx.satisfied`, which is also what
 /// `first_of` cuts on. Under an enumerating `k` the return value cannot tell
@@ -578,59 +493,51 @@ fn try_operand(
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
     let mark = bindings.mark();
-    let producer_ir = ctx.function().producer(value);
-    let before = ctx.satisfied.get();
-    if try_match_at(
-        ctx,
-        edge.producer,
-        producer_ir,
-        Some(value),
-        Some(edge.out_vertex),
-        bindings,
-        k,
-    ) {
-        return true;
-    }
-    bindings.restore(mark);
-    if ctx.satisfied.get() > before {
-        return false;
-    }
-
-    if ctx.pat.cast_mask.is_empty() {
-        return false;
-    }
-    // Each level in turn, outermost first: a pattern naming one cast kind under
-    // a mask that also selects another matches at an INTERMEDIATE value, which
-    // jumping straight to the bottom would skip.
-    //
-    // The chain is a fallback ladder, not an alternation: the FIRST level that
-    // produces a match wins, exactly as a direct hit above wins over the whole
-    // chain. Letting every level report would make the answer depend on an
-    // incidental cast sitting on top of the operand.
-    let levels = cast_levels(ctx.matcher, value, ctx.pat.cast_mask);
-    for (depth, &(_, unwrapped)) in levels.iter().enumerate() {
-        for &(cast, _) in levels.iter().take(depth + 1) {
-            bindings.record_matched(cast);
-        }
-        let unwrapped_ir = ctx.function().producer(unwrapped);
+    let mut level = value;
+    loop {
         let before = ctx.satisfied.get();
-        if try_match_at(
-            ctx,
-            edge.producer,
-            unwrapped_ir,
-            Some(unwrapped),
-            Some(edge.out_vertex),
-            bindings,
-            k,
-        ) {
+        let site = Site {
+            pat_node: edge.producer,
+            ir_node: ctx.function().producer(level),
+            root_value: Some(level),
+            out_vertex: Some(edge.out_vertex),
+        };
+        if try_match_at(ctx, site, bindings, k) {
             return true;
         }
-        bindings.restore(mark);
-        if ctx.satisfied.get() > before {
+        // Outermost first, so a pattern naming one cast kind under a mask also
+        // selecting another matches at the intermediate value.
+        let below = if ctx.satisfied.get() == before {
+            cast_below(ctx.function(), level, ctx.pat.cast_mask)
+        } else {
+            None
+        };
+        let Some((cast, unwrapped)) = below else {
+            bindings.restore(mark);
             return false;
-        }
+        };
+        bindings.record_matched(cast);
+        level = unwrapped;
     }
-    false
+}
+
+/// The cast producing `value` and its value input, when `mask` selects that
+/// cast's kind. Casts are the only kind walked through: a pattern crossing a
+/// region boundary spells the `Region` node out.
+fn cast_below(
+    f: &strider_ir::Function,
+    value: ValueId,
+    mask: CastMask,
+) -> Option<(NodeId, ValueId)> {
+    if mask.is_empty() {
+        return None;
+    }
+    let cast = f.producer(value);
+    let bit = cast_mask_of(f.node_kind(cast));
+    if bit.is_empty() || !mask.contains(bit) {
+        return None;
+    }
+    Some((cast, f.node_inputs(cast).into_iter().next()?))
 }
 
 pub(crate) struct InputEdge {
@@ -777,13 +684,16 @@ fn value_interchangeable(a: &PatValue, b: &PatValue) -> bool {
 
 /// The IR input slots one pattern input may occupy: the whole difference
 /// between a fixed operand, a commutative pair and an existential.
-#[derive(Clone, Copy)]
-enum Candidates<'a> {
+///
+/// The multi-slot sets are ordered: the input takes the first slot both
+/// unclaimed by an enclosing assignment and matching the sub-pattern.
+enum Candidates {
     /// A pinned slot: exactly one candidate.
     Only(usize),
-    /// Ordered; the input takes the first slot both unclaimed by an enclosing
-    /// assignment and matching the sub-pattern.
-    OneOf(&'a [usize]),
+    /// One operand of a commutative pair.
+    Pair(&'static [usize; 2]),
+    /// An existential.
+    Any,
 }
 
 /// Candidate slots for a commutative operand pair, indexed by the pattern
@@ -796,21 +706,41 @@ const COMM_ORDER: [[usize; 2]; 2] = [[0, 1], [1, 0]];
 /// occupy. Everything here is invariant across the search below it.
 struct Assignment<'a> {
     edges: &'a [InputEdge],
+    fixed: usize,
     commutative: bool,
-    ext_slots: &'a [usize],
 }
 
 impl Assignment<'_> {
-    fn candidates(&self, edge: &InputEdge) -> Candidates<'_> {
+    fn candidates(&self, edge: &InputEdge) -> Candidates {
         match edge.consumer_slot {
-            InputSlot::Any => Candidates::OneOf(self.ext_slots),
-            InputSlot::At(slot) if self.commutative => Candidates::OneOf(&COMM_ORDER[slot]),
+            InputSlot::Any => Candidates::Any,
+            InputSlot::At(slot) if self.commutative => Candidates::Pair(&COMM_ORDER[slot]),
             InputSlot::At(slot) => Candidates::Only(slot),
         }
     }
+
+    /// Whether an existential may take `slot`: any slot but one a fixed
+    /// operand pinned, which on a commutative node is none, its fixed operands
+    /// reaching both slots. `Candidates::Only` never extends the `Claimed`
+    /// chain, so a pinned slot is excluded here or it is offered twice.
+    ///
+    /// No kind filter: the sub-pattern discriminates. A sub carries an
+    /// output-kind and reaches only inputs of that kind (a value sub skips
+    /// control/memory/PhiToken, a memory sub binds a memory input), while a
+    /// bare wildcard (`OutputKindSpec::Any`) binds any input including a
+    /// `PhiToken`. `k` existentials enumerate every injective assignment over
+    /// these slots, which is what `any_input`'s cost is.
+    fn open_to_existential(&self, slot: usize) -> bool {
+        // Commutative only on a raw `MatcherBuilder` node whose spec admits a
+        // commutative kind: no typed builder puts an existential on one.
+        self.commutative
+            || !self.edges[..self.fixed]
+                .iter()
+                .any(|e| e.consumer_slot == InputSlot::At(slot))
+    }
 }
 
-/// Slots already claimed by enclosing [`Candidates::OneOf`] assignments.
+/// Slots already claimed by enclosing multi-slot assignments.
 ///
 /// Distinctness is by slot index, never by value, so
 /// `any_input(1).any_input(1)` still matches a phi with two separate `1`
@@ -854,39 +784,42 @@ fn match_assignments(
     let Some(edge) = assignment.edges.get(i) else {
         return done(bindings);
     };
-    match assignment.candidates(edge) {
+    let slots = match assignment.candidates(edge) {
         // Direct index, no search and no injectivity bookkeeping. The slot is
         // pinned, so a failed operand fails it outright.
         Candidates::Only(slot) => {
             let Some(value) = input_at(ctx, ir_node, slot) else {
                 return false;
             };
-            try_operand(ctx, edge, value, bindings, &mut |b| {
+            return try_operand(ctx, edge, value, bindings, &mut |b| {
                 match_assignments(ctx, assignment, i + 1, ir_node, claimed, b, done)
-            })
+            });
         }
-        Candidates::OneOf(slots) => {
-            for &slot in slots {
-                if Claimed::contains(claimed, slot) {
-                    continue;
-                }
-                let Some(value) = input_at(ctx, ir_node, slot) else {
-                    continue;
-                };
-                let next = Claimed {
-                    slot,
-                    prev: claimed,
-                };
-                if try_operand(ctx, edge, value, bindings, &mut |b| {
-                    match_assignments(ctx, assignment, i + 1, ir_node, Some(&next), b, done)
-                }) {
-                    return true;
-                }
-                // Bindings already restored; try the next slot.
-            }
-            false
+        Candidates::Pair(slots) => Either::Left(slots.iter().copied()),
+        Candidates::Any => Either::Right(
+            (0..ctx.function().node_inputs(ir_node).len())
+                .filter(|&s| assignment.open_to_existential(s)),
+        ),
+    };
+    for slot in slots {
+        if Claimed::contains(claimed, slot) {
+            continue;
         }
+        let Some(value) = input_at(ctx, ir_node, slot) else {
+            continue;
+        };
+        let next = Claimed {
+            slot,
+            prev: claimed,
+        };
+        if try_operand(ctx, edge, value, bindings, &mut |b| {
+            match_assignments(ctx, assignment, i + 1, ir_node, Some(&next), b, done)
+        }) {
+            return true;
+        }
+        // Bindings already restored; try the next slot.
     }
+    false
 }
 
 /// Bind every capture this pat node declares, all-or-nothing: on the first
@@ -896,23 +829,22 @@ fn match_assignments(
 /// skipped at a node-rooted position; a node-declared capture binds the matched
 /// NODE. The vertex's identity pin binds the value too, so a second slot
 /// consuming the same vertex conflicts unless it lands on the same value.
-fn bind_all_captures(
-    b: &mut Bindings,
-    nd: &PatNode,
-    out_weight: Option<&PatValue>,
-    ir_node: NodeId,
-    root_value: Option<ValueId>,
-) -> bool {
+fn bind_all_captures(ctx: &Ctx, site: Site, b: &mut Bindings) -> bool {
+    let nd = ctx.pat.graph.node_kind(site.pat_node);
+    let out_weight = site.out_vertex.map(|ov| ctx.pat.graph.value_kind_ref(ov));
     let vertex_caps: &[crate::Capture] = out_weight.map_or(&[], |ov| ov.captures.as_slice());
     let identity = out_weight.and_then(|ov| ov.identity);
-    let value_caps = root_value.into_iter().flat_map(move |value| {
+    let value_caps = site.root_value.into_iter().flat_map(move |value| {
         vertex_caps
             .iter()
             .copied()
             .chain(identity)
             .map(move |cap| (cap, Binding::Value(value)))
     });
-    let node_caps = nd.captures.iter().map(|&cap| (cap, Binding::Node(ir_node)));
+    let node_caps = nd
+        .captures
+        .iter()
+        .map(|&cap| (cap, Binding::Node(site.ir_node)));
     let mark = b.mark();
     for (cap, binding) in value_caps.chain(node_caps) {
         if !b.bind_capture(cap, binding) {

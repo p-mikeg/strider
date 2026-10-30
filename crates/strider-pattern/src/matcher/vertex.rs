@@ -154,7 +154,7 @@ pub(crate) struct PatValue {
     pub(crate) kind: OutputKindSpec,
     /// Not implied by `kind`: `Value(ValueType)` fixes int-vs-float too, while
     /// `value_of_width(32)` means "any 32-bit value", which no `kind` arm
-    /// spells. `root_requires_value_output` reads the two independently.
+    /// spells.
     pub(crate) width: Option<u32>,
     /// Where value captures live: `int_add(var(x), ..)` binds `x` here.
     /// Repeatable: `var(x).capture(y)` binds both to the matched value.

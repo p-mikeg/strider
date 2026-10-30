@@ -250,3 +250,53 @@ fn a_masked_chain_reports_the_outermost_match_only() {
          the chain reports"
     );
 }
+
+/// `zext32(zext16(trunc8(s)))` over a non-const `s`.
+fn zero_extend_ladder(t: &mut Tb) -> strider_ir::node::ValueId {
+    let s = non_const_u32(t, 1, 2);
+    let t8 = t.trunc_to(s, ValueType::int(8));
+    let z16 = t.zext_to(t8, ValueType::int(16));
+    t.zext_to(z16, ValueType::int(32))
+}
+
+/// `add(zero_extend(anything().capture(x)), any_int_const())` under every cast
+/// kind, and the kind of what `x` bound in its one match.
+fn ladder_binding(function: &strider_ir::Function) -> strider_ir::node::NodeKind {
+    let x = Capture::new();
+    let pat = int_add(int_zero_extend(anything().capture(x)), any_int_const())
+        .into_pattern()
+        .ignore_casts_mask(CastMask::all());
+    let m = a::unique(function, pat);
+    *function.node_kind(function.producer(m.value(x).expect("x binds")))
+}
+
+/// A direct hit cuts the ladder: the operand is itself a ZeroExtend, so the
+/// one beneath it is not offered for a second binding.
+#[test]
+fn a_direct_hit_cuts_the_cast_ladder() {
+    let mut t = Tb::empty();
+    let z32 = zero_extend_ladder(&mut t);
+    let k = t.u32(7);
+    let sum = t.int_bin_at(z32, k, strider_ir::IntBinaryOp::Add, ValueType::int(32));
+    let function = t.ret_val(sum);
+    assert!(matches!(
+        ladder_binding(&function),
+        strider_ir::node::NodeKind::Extend(ExtendOp::ZeroExtend)
+    ));
+}
+
+/// The first level that matches wins: below an unnamed SignExtend the outer
+/// ZeroExtend binds, and the inner one is not offered.
+#[test]
+fn the_first_matching_cast_level_wins() {
+    let mut t = Tb::empty();
+    let z32 = zero_extend_ladder(&mut t);
+    let top = t.sext_to(z32, ValueType::int(64));
+    let k = t.u64(7);
+    let sum = t.int_bin_at(top, k, strider_ir::IntBinaryOp::Add, ValueType::int(64));
+    let function = t.ret_val(sum);
+    assert!(matches!(
+        ladder_binding(&function),
+        strider_ir::node::NodeKind::Extend(ExtendOp::ZeroExtend)
+    ));
+}

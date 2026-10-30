@@ -5,8 +5,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::support::{Tb, shapes};
+use strider_ir::IRViewer;
 use strider_ir::IntUnaryOp;
-use strider_pattern::matcher::MatcherBuilder;
+use strider_ir::node::{NodeKind, ValueKind};
+use strider_pattern::matcher::{KindSpec, MatcherBuilder};
 use strider_pattern::{
     Capture, CaptureExt, MatchPat, Matcher, anything, first_of, int_add, int_neg, int_xor, one_of,
     ret, var,
@@ -309,4 +311,31 @@ fn first_of_keeps_a_later_arm_for_the_other_commutative_operand() {
         in_slot_0, in_slot_1,
         "the slot spelling the alternation cannot change the answer"
     );
+}
+
+/// A root `first_of` cuts per anchoring output: the control arm matching the
+/// `Call`'s control output must not keep the memory arm from its memory
+/// output.
+#[test]
+fn a_root_first_of_cut_does_not_carry_to_the_next_output() {
+    let mut t = Tb::empty();
+    t.call_at(0x1234);
+    let function = t.ret_nothing();
+    let call = || KindSpec::Variant(std::mem::discriminant(&NodeKind::Call { cc: None }));
+    let c = Capture::new();
+    let mut b = MatcherBuilder::new();
+    let ctl_node = b.node(call());
+    let ctl = b.control_output(ctl_node, 0);
+    let mem_node = b.node(call());
+    let mem = b.memory_output(mem_node, 1);
+    let alt = b.first_of(&[ctl, mem]);
+    b.capture_output(alt, c);
+    let pat = b.finish();
+    let kinds: Vec<_> = Matcher::new(&function)
+        .find_all(&pat)
+        .unwrap()
+        .iter()
+        .map(|m| function.value_kind(m.value(c).expect("c binds")))
+        .collect();
+    assert_eq!(kinds, [ValueKind::Control, ValueKind::Memory]);
 }
