@@ -2,7 +2,6 @@ use super::*;
 use crate::Result;
 use crate::pipeline::OptCtx;
 use crate::test_support::{assert_returns_const, make_fn};
-use strider_ir::IRWalker;
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{MockRom, make_empty_fn_endian};
@@ -158,13 +157,13 @@ fn const_load_16_bytes_folds_to_i128_both_endians() -> Result<()> {
     Ok(())
 }
 
-/// The decode tops out at a `u128`, so a wider load would silently truncate;
-/// the width guard blocks it.  The ROM maps 64 bytes so the read itself
-/// succeeds, isolating the guard; `load_oversize_read_no_change` covers the
+/// The decode spans the whole type, so a 32- or 64-byte load folds to the
+/// bytes the image holds. `load_oversize_read_no_change` covers the
 /// read-failure path.
 #[test]
-fn const_load_wider_than_16_bytes_does_not_fold() -> Result<()> {
-    use strider_ir::IRViewer;
+fn const_load_wider_than_16_bytes_folds() -> Result<()> {
+    use crate::test_support::return_value;
+    use strider_ir::{IRViewer, UBig};
 
     let rom = MockRom::raw_bytes(0x1000, (0..64u8).collect());
 
@@ -174,13 +173,16 @@ fn const_load_wider_than_16_bytes_does_not_fold() -> Result<()> {
             b.build_load(addr, rsleigh::VnSpace::RAM, ty)
         })?;
         assert!(
-            !crate::pipeline::run_one(&LoadReadOnly, &mut fg, &OptCtx::new(Some(&rom)))?.changed(),
-            "{ty:?}: wider-than-16-byte load must not fold",
+            crate::pipeline::run_one(&LoadReadOnly, &mut fg, &OptCtx::new(Some(&rom)))?.changed(),
+            "{ty:?}: the whole type is decoded",
         );
-        assert!(
-            fg.walk()
-                .any(|n| matches!(fg.node_kind(n), NodeKind::Load(_))),
-            "{ty:?}: Load node must remain in the graph",
+        let want: UBig = (0..ty.byte_size())
+            .rev()
+            .fold(UBig::ZERO, |acc, i| (acc << 8usize) + UBig::from(i as u8));
+        assert_eq!(
+            fg.int_const(return_value(fg.graph())?).cloned(),
+            Some(want),
+            "{ty:?}: little-endian bytes 0..n",
         );
     }
     Ok(())
