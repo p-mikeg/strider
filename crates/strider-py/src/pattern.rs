@@ -1670,7 +1670,11 @@ fn run_when_predicate(
         let py_match = match Py::new(
             py,
             crate::matcher::PyMatch {
-                inner: vec![strider_pattern::Match::from_root(node, bindings.clone())],
+                inner: vec![strider_pattern::Match::new(
+                    node,
+                    bindings.clone(),
+                    generation,
+                )],
                 function,
                 generation,
             },

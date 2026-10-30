@@ -44,8 +44,6 @@ pub struct TemplateBuilder {
     core: StagedGraph<TmplNodeKind, TmplValue>,
     declared_captures: Vec<crate::Capture>,
     optional_captures: Vec<crate::Capture>,
-    /// The first refused verb, reported by [`Template::root`].
-    rejected: Option<String>,
 }
 
 impl Default for TemplateBuilder {
@@ -60,7 +58,6 @@ impl TemplateBuilder {
             core: StagedGraph::new(),
             declared_captures: Vec::new(),
             optional_captures: Vec::new(),
-            rejected: None,
         }
     }
 
@@ -139,17 +136,13 @@ impl TemplateBuilder {
     /// Types the materialised node independently of the rewrite root. On a
     /// capture, which keeps its binding's type, the template is refused.
     pub fn set_value_ty(&mut self, out: TmplValueRef, ty: ValueType) {
-        if let Some(o) = self.out_data_of(out) {
-            o.ty = TemplateTy::Fixed(ty);
-        }
+        self.set_ty(out, TemplateTy::Fixed(ty));
     }
 
     /// Types `out` from the width of a bound LHS capture. On a capture, which
     /// keeps its binding's type, the template is refused.
     pub fn set_value_ty_of_binding(&mut self, out: TmplValueRef, cap: crate::Capture) {
-        if let Some(o) = self.out_data_of(out) {
-            o.ty = TemplateTy::InheritBinding(cap);
-        }
+        self.set_ty(out, TemplateTy::InheritBinding(cap));
     }
 
     /// Adds a payload-less `TmplNodeKind::Capture` marker producing a
@@ -162,18 +155,15 @@ impl TemplateBuilder {
     }
 
     /// Materialises every staged node in producer-before-consumer order. A
-    /// multi-sink template surfaces as an
-    /// [`instantiate`](crate::template::instantiate) error.
-    ///
-    /// # Panics
-    /// On a cyclic staged graph (a builder bug).
+    /// refused, cyclic or multi-sink template surfaces through
+    /// [`Template::root`].
     pub fn finish(self) -> Template {
-        let graph = self.core.seal().expect("cyclic staged template graph");
+        let (graph, refusal) = self.core.seal();
         Template::from_graph(
             graph,
             self.declared_captures,
             self.optional_captures,
-            self.rejected,
+            refusal,
         )
     }
 
@@ -189,18 +179,15 @@ impl TemplateBuilder {
         }
     }
 
-    /// `None`, recording the refusal, when `out` is a capture.
-    fn out_data_of(&mut self, out: TmplValueRef) -> Option<&mut TmplOutput> {
+    /// Refused when `out` is a capture.
+    fn set_ty(&mut self, out: TmplValueRef, ty: TemplateTy) {
         match self.core.output_mut(out.node, out.output) {
-            TmplValue::TmplOutput(o) => Some(o),
-            TmplValue::ValueCapture(_) => {
-                self.rejected.get_or_insert_with(|| {
-                    "a template type setter (capture_typed, set_value_ty) targets a \
-                     capture, which keeps the type of the value it bound"
-                        .to_string()
-                });
-                None
-            }
+            TmplValue::TmplOutput(o) => o.ty = ty,
+            TmplValue::ValueCapture(_) => self.core.reject(
+                "a template type setter (capture_typed, set_value_ty) targets a capture, \
+                 which keeps the type of the value it bound"
+                    .to_string(),
+            ),
         }
     }
 }

@@ -9,7 +9,7 @@
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
-use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern, SlotMode};
+use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern, Role, SlotMode};
 use crate::staging::{SealNode, StagedGraph};
 
 /// Names a staged node's output by position.
@@ -38,10 +38,6 @@ impl SealNode for PatNode {
 /// that produced them.
 pub struct MatcherBuilder {
     core: StagedGraph<PatNode, PatValue>,
-    /// Spellings the engine cannot honour, surfaced at query time through
-    /// [`Pattern::root`]. A pattern is untrusted input, so refusing one is a
-    /// `Result`, never a panic.
-    refusals: Vec<String>,
     /// Nesting levels currently being lowered; see [`Self::enter_nesting`].
     nesting: usize,
     /// Frame address of the outermost live nesting level, the zero the stack
@@ -81,7 +77,6 @@ impl MatcherBuilder {
     pub fn new() -> Self {
         Self {
             core: StagedGraph::new(),
-            refusals: Vec::new(),
             nesting: 0,
             stack_base: 0,
         }
@@ -127,9 +122,9 @@ impl MatcherBuilder {
     }
 
     /// Records a build-time refusal; every query on the sealed pattern then
-    /// fails with `why`.
+    /// fails with the first one recorded.
     pub fn reject(&mut self, why: String) {
-        self.refusals.push(why);
+        self.core.reject(why);
     }
 
     /// One value output at slot `0`, no inputs.
@@ -171,7 +166,7 @@ impl MatcherBuilder {
     /// Enumeration is multiplicative under
     /// [`find_all`](crate::Matcher::find_all); see [`crate::OneOf::new`].
     pub fn one_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
-        self.alternation(alts, false)
+        self.alternation(alts, Role::OneOf)
     }
 
     /// Like [`Self::one_of`] but cuts to the first arm that yields a match
@@ -179,13 +174,12 @@ impl MatcherBuilder {
     /// An arm rejected by a guard above the alternation produces no match, so
     /// the choice falls through to the next arm.
     pub fn first_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
-        self.alternation(alts, true)
+        self.alternation(alts, Role::FirstOf)
     }
 
-    fn alternation(&mut self, alts: &[PatValueRef], first_match: bool) -> PatValueRef {
+    fn alternation(&mut self, alts: &[PatValueRef], role: Role) -> PatValueRef {
         let mut alt_node = PatNode::from_kind(KindSpec::Any);
-        alt_node.alternation = true;
-        alt_node.first_match = first_match;
+        alt_node.role = role;
         let n = self.stage(alt_node);
         for (slot, alt) in alts.iter().enumerate() {
             self.input(n, slot, *alt);
@@ -253,7 +247,7 @@ impl MatcherBuilder {
         if self.core.kind_mut(out.node).typed_post_match {
             self.reject_typed_guard();
         }
-        if !self.core.kind_mut(out.node).alternation {
+        if !self.core.kind_mut(out.node).is_alternation() {
             return;
         }
         for (node, output) in self.core.input_producers(out.node) {
@@ -286,7 +280,7 @@ impl MatcherBuilder {
     /// arms are matched against the same edge as the alternation itself.
     pub fn set_token_fallback(&mut self, out: PatValueRef) {
         self.out_of(out).token_fallback = true;
-        if !self.core.kind_mut(out.node).alternation {
+        if !self.core.kind_mut(out.node).is_alternation() {
             return;
         }
         for (node, output) in self.core.input_producers(out.node) {
@@ -337,11 +331,7 @@ impl MatcherBuilder {
     /// Node-keyed form of [`Self::set_node_predicate`], for a node-rooted
     /// pattern with no anchor output to address it through.
     pub fn set_node_predicate_at(&mut self, node: PatNodeRef, f: crate::matcher::NodePredicate) {
-        let slot = &mut self.core.kind_mut(node.0).node_predicate;
-        *slot = Some(match slot.take() {
-            Some(prev) => Box::new(move |m, n| prev(m, n) && f(m, n)),
-            None => f,
-        });
+        self.core.kind_mut(node.0).node_predicates.push(f);
     }
 
     /// [`Self::set_post_match`] for a guard that needs the matched output's
@@ -375,43 +365,31 @@ impl MatcherBuilder {
     }
 
     pub fn set_post_match(&mut self, out: PatValueRef, f: crate::matcher::PostMatchFn) {
-        let slot = &mut self.core.kind_mut(out.node).post_match;
-        *slot = Some(match slot.take() {
-            Some(prev) => Box::new(move |m, n, ty, b| prev(m, n, ty, b) && f(m, n, ty, b)),
-            None => f,
-        });
+        self.core.kind_mut(out.node).post_matches.push(f);
     }
 
     /// Disables commutative operand reordering on `out`'s producer. Refused on
     /// an alternation: its inputs are alternatives, not operands, so nothing
     /// reads the flag.
     pub fn set_force_ordered(&mut self, out: PatValueRef) {
-        if self.core.kind_mut(out.node).alternation {
-            self.reject(
+        match &mut self.core.kind_mut(out.node).role {
+            Role::Operands { ordered } => *ordered = true,
+            Role::OneOf | Role::FirstOf => self.reject(
                 "`ordered` on an alternation does nothing: `one_of` / `first_of` arms are \
                  alternatives, not operands; put `.ordered()` on the arm whose operands \
                  must not swap"
                     .into(),
-            );
-            return;
+            ),
         }
-        self.core.kind_mut(out.node).force_ordered = true;
     }
 
     /// Materialises every staged node in producer-before-consumer order.
     /// Single-rootedness and acyclicity are resolved here and reported at
     /// match time.
     pub fn finish(self) -> Pattern {
-        let refusals = self.refusals;
-        let mut pat = match self.core.seal() {
-            Ok(graph) => Pattern::from_graph(graph),
-            Err(cycle) => {
-                let mut empty = Pattern::from_graph(crate::matcher::graph::PatGraph::new());
-                empty.reject(cycle.to_string());
-                empty
-            }
-        };
-        if let Some(why) = refusals.into_iter().next() {
+        let (graph, refusal) = self.core.seal();
+        let mut pat = Pattern::from_graph(graph);
+        if let Some(why) = refusal {
             pat.reject(why);
         }
         pat
@@ -470,13 +448,13 @@ mod tests {
 
     #[test]
     fn a_fat_frame_per_level_trips_the_stack_budget_inside_the_level_cap() {
-        let (levels, refusals) = std::thread::Builder::new()
+        let (levels, refusal) = std::thread::Builder::new()
             .stack_size(64 << 20)
             .spawn(|| {
                 let mut b = MatcherBuilder::new();
                 let mut levels = 0;
                 descend(&mut b, &mut levels);
-                (levels, b.refusals)
+                (levels, b.finish().root().unwrap_err().to_string())
             })
             .expect("spawn")
             .join()
@@ -486,8 +464,8 @@ mod tests {
             "{levels} levels"
         );
         assert!(
-            refusals[0].contains("of a 1024 KiB lowering budget"),
-            "{refusals:?}"
+            refusal.contains("of a 1024 KiB lowering budget"),
+            "{refusal}"
         );
     }
 }

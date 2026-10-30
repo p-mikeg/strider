@@ -552,11 +552,11 @@ mod tests {
         same_shape(
             &staged_shape(&pat),
             "\
-n0 Exact(Entry) caps=0 pred=0 alt=0/0 ordered=0
+n0 Exact(Entry) caps=0 pred=0 Operands { ordered: false }
   out v0 Control slot=0 mode=Loose width=None caps=0 ident=0 token=0
-n1 Variant caps=0 pred=1 alt=0/0 ordered=0
+n1 Variant caps=0 pred=1 Operands { ordered: false }
   out v1 AnyValue slot=0 mode=Loose width=None caps=0 ident=0 token=0
-n2 Exact(If) caps=1 pred=0 alt=0/0 ordered=0
+n2 Exact(If) caps=1 pred=0 Operands { ordered: false }
   out v2 Control slot=0 mode=Loose width=None caps=1 ident=0 token=0
   out v3 Control slot=1 mode=Loose width=None caps=1 ident=0 token=0
   out v4 Any slot=0 mode=Pinned width=None caps=1 ident=0 token=0
@@ -583,13 +583,13 @@ root=Ok(2) total_nodes=3
         same_shape(
             &staged_shape(&pat),
             "\
-n0 Any caps=0 pred=0 alt=0/0 ordered=0
+n0 Any caps=0 pred=0 Operands { ordered: false }
   out v0 Any slot=0 mode=Loose width=None caps=0 ident=0 token=0
-n1 Any caps=0 pred=0 alt=0/0 ordered=0
+n1 Any caps=0 pred=0 Operands { ordered: false }
   out v1 Any slot=0 mode=Loose width=None caps=0 ident=0 token=0
-n2 Any caps=0 pred=0 alt=0/0 ordered=0
+n2 Any caps=0 pred=0 Operands { ordered: false }
   out v2 Any slot=0 mode=Loose width=None caps=1 ident=0 token=0
-n3 Exact(If) caps=0 pred=0 alt=0/0 ordered=0
+n3 Exact(If) caps=0 pred=0 Operands { ordered: false }
   out v3 Control slot=0 mode=Loose width=None caps=0 ident=0 token=0
   out v4 Control slot=1 mode=Loose width=None caps=0 ident=0 token=0
   in At(1) <- v2

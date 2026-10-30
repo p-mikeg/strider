@@ -14,37 +14,23 @@ use crate::capture::Capture;
 pub struct Match {
     pub(crate) root: NodeId,
     pub(crate) bindings: Bindings,
-    /// `None` where the producer had no graph to stamp against, which disables
-    /// the check.
-    generation: Option<u64>,
+    generation: u64,
 }
 
 impl Match {
-    /// Packages an in-progress [`Bindings`] journal as a `Match`, so a
-    /// `.when()` predicate receives a real `Match` for the attempt still in
-    /// flight, `root` set to the node the guarded sub-pattern matched at.
-    /// Unstamped; see [`Self::from_root_in`].
-    pub fn from_root(root: NodeId, bindings: Bindings) -> Self {
+    /// `generation` is the producing graph's [`Graph::generation`].
+    pub fn new(root: NodeId, bindings: Bindings, generation: u64) -> Self {
         Self {
             root,
             bindings,
-            generation: None,
-        }
-    }
-
-    /// [`Self::from_root`] stamped with `graph`'s generation.
-    pub fn from_root_in(root: NodeId, bindings: Bindings, graph: &Graph) -> Self {
-        Self {
-            root,
-            bindings,
-            generation: Some(graph.generation()),
+            generation,
         }
     }
 
     /// Whether `graph` was compacted since this match was produced, which
-    /// invalidates every id it holds. Always `false` for an unstamped match.
+    /// invalidates every id it holds.
     pub fn is_stale(&self, graph: &Graph) -> bool {
-        self.generation.is_some_and(|g| g != graph.generation())
+        self.generation != graph.generation()
     }
 
     /// Where the top-level pattern matched. Not generation-checked; see the
