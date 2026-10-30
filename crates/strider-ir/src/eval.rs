@@ -88,7 +88,8 @@ pub const fn sign_bit(bits: u32) -> u128 {
 }
 
 /// `v` read as two's complement at `ty`'s width; `None` for a float.
-fn signed(v: &UBig, ty: ValueType) -> Option<IBig> {
+#[must_use]
+pub fn signed(v: &UBig, ty: ValueType) -> Option<IBig> {
     if !ty.is_integer() {
         return None;
     }
@@ -105,8 +106,10 @@ fn signed(v: &UBig, ty: ValueType) -> Option<IBig> {
     })
 }
 
-/// `v` wrapped into `ty`'s two's-complement ring.
-fn unsigned(v: IBig, ty: ValueType) -> UBig {
+/// `v` wrapped into `ty`'s two's-complement ring. A float has no integer
+/// bits: 0.
+#[must_use]
+pub fn unsigned(v: IBig, ty: ValueType) -> UBig {
     v & all_ones(ty)
 }
 
