@@ -10,6 +10,7 @@
 use pyo3::prelude::*;
 
 mod arch;
+mod bigint;
 mod call_other_abi;
 mod cc;
 mod cfg;
