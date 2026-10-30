@@ -60,27 +60,8 @@ pub fn var(c: PyRef<'_, PyCapture>) -> PyTemplate {
 /// `value`. Bit-pattern equality; negatives use the sign-extended form. Where
 /// nothing gives it a width, type it with `capture_typed`.
 #[pyfunction]
-pub fn int_const(value: WideInt) -> PyTemplate {
-    PyTemplate::from_tmpl(TmplRepr::IntConst(value.bits()))
-}
-
-/// A 128-bit constant from either side of the signed/unsigned split, so
-/// `[2^127, 2^128)` is spellable alongside a negative.
-#[derive(FromPyObject)]
-pub enum WideInt {
-    #[pyo3(annotation = "int")]
-    Signed(i128),
-    #[pyo3(annotation = "int")]
-    Unsigned(u128),
-}
-
-impl WideInt {
-    fn bits(self) -> u128 {
-        match self {
-            Self::Signed(v) => v as u128,
-            Self::Unsigned(v) => v,
-        }
-    }
+pub fn int_const(value: crate::bigint::PyBigInt) -> PyResult<PyTemplate> {
+    Ok(PyTemplate::from_tmpl(TmplRepr::IntConst(value.value()?)))
 }
 
 /// Type `inner`'s output at the width of the value `c` bound on the matched
