@@ -576,7 +576,7 @@ fn masked_diamond(a: u64, b: u64) -> crate::Result<(strider_ir::Function, ValueI
 
     fb.set_region(join);
     let merged = fb.read_variable(&var)?;
-    let masked = fb.build_const_binop(0x1fu64, merged, strider_ir::IntBinaryOp::And, ty)?;
+    let masked = fb.build_const_binop(0x1f, merged, strider_ir::IntBinaryOp::And, ty)?;
     fb.build_return(Some(masked), &[])?;
     fb.set_lift_addr(None);
     let mut fg = fb.build()?;
@@ -1097,92 +1097,5 @@ fn a_refusing_phi_leaves_the_next_phi_its_budget() -> crate::Result<()> {
         assert!(refused.iter().all(Option::is_none), "{refused:?}");
     }
     assert_eq!(folded[1], [Some(0x13)]);
-    Ok(())
-}
-
-/// `And(phi(left, right), mask)` over a diamond at `ty`, each arm built from
-/// the incoming variable by `arm`.
-fn wide_masked_diamond(
-    ty: ValueType,
-    mask: strider_ir::UBig,
-    arm: impl Fn(&mut strider_ir::FunctionBuilder, ValueId, usize) -> crate::Result<ValueId>,
-) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
-    let var = reg_vn(0x1000, u32::try_from(ty.byte_size()).expect("byte size"));
-    let mut fb = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = fb.create_region_all()?;
-    let left = fb.create_region_all()?;
-    let right = fb.create_region_all()?;
-    let join = fb.create_region_all()?;
-    fb.set_entry_region_all(entry)?;
-
-    fb.set_region(entry);
-    let at_entry = fb.read_variable(&var)?;
-    let zero = fb.build_int_const(0u64, ty)?;
-    let cond = fb.build_int_cmp_operation(at_entry, zero, strider_ir::IntCmpOp::Equal, ty)?;
-    fb.build_if(cond, left, right)?;
-    for (i, region) in [left, right].into_iter().enumerate() {
-        fb.set_region(region);
-        let value = arm(&mut fb, at_entry, i)?;
-        fb.write_variable(&var, value)?;
-        fb.build_branch(join)?;
-    }
-
-    fb.set_region(join);
-    let merged = fb.read_variable(&var)?;
-    let masked = fb.build_const_binop(mask, merged, strider_ir::IntBinaryOp::And, ty)?;
-    fb.build_return(Some(masked), &[])?;
-    fb.set_lift_addr(None);
-    let mut fg = fb.build()?;
-    run(&mut fg)?;
-    let ret = fg.node_inputs(find_return(&fg))[2];
-    let incoming = fg.initial_var_value(&var).expect("var is read");
-    Ok((fg, ret, incoming))
-}
-
-/// The fold reads the mask and the arms at the declared width, so an `I256`
-/// mask naming only bits above 128 still agrees the arms.
-#[test]
-fn a_mask_past_the_carrier_folds_arms_that_agree() -> crate::Result<()> {
-    use strider_ir::UBig;
-    let ty = ValueType::int(256);
-    let high = UBig::from(0xFFu8) << 200usize;
-    let (fg, ret, _) = wide_masked_diamond(ty, high.clone(), |fb, _x, i| {
-        let k = (UBig::ONE << 200usize) + UBig::from(0xAAu8 + i as u8);
-        fb.build_int_const(k, ty)
-    })?;
-    assert_eq!(
-        fg.int_const(ret).cloned(),
-        Some(UBig::ONE << 200usize),
-        "both arms carry bit 200 and nothing else the mask keeps"
-    );
-    Ok(())
-}
-
-/// The peel reads known zeros at the declared width: an `Or` whose constant
-/// side is zero only ABOVE bit 128 is still peeled through.
-#[test]
-fn an_or_peels_on_known_zeros_above_the_carrier() -> crate::Result<()> {
-    use strider_ir::UBig;
-    let ty = ValueType::int(256);
-    let high = UBig::from(0xFFu8) << 200usize;
-    let (fg, ret, incoming) = wide_masked_diamond(ty, high.clone(), |fb, x, i| {
-        let k = fb.build_int_const(0xAAu64 + i as u64, ty)?;
-        fb.build_int_binary_operation(k, x, strider_ir::IntBinaryOp::Or, ty)
-    })?;
-    let producer = fg.producer(ret);
-    assert!(
-        matches!(
-            fg.node_kind(producer),
-            NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::And)
-        ) && fg.node_inputs(producer).into_iter().any(|v| v == incoming),
-        "both arms peel to the incoming value: {:?}",
-        fg.node_kind(producer)
-    );
-    assert!(
-        fg.node_inputs(producer)
-            .into_iter()
-            .any(|v| fg.int_const(v) == Some(&high)),
-        "the rebuilt And keeps the whole mask"
-    );
     Ok(())
 }

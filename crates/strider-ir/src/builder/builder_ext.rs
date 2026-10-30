@@ -180,7 +180,7 @@ pub trait IRBuilderExt: IRBuilder {
     /// Builds `x <op> IntConst(k):ty`; the constant lands on the right.
     fn build_const_binop(
         &mut self,
-        k: impl Into<UBig>,
+        k: u128,
         x: ValueId,
         op: IntBinaryOp,
         ty: ValueType,
