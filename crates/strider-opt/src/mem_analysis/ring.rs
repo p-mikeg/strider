@@ -87,7 +87,11 @@ pub(crate) fn ring_overlap(
     // Offsets here are `i128`, so a modulus past that carrier cannot place
     // them apart; a float address has no modulus at all. Both answer "may
     // alias", the conservative direction.
-    let Some(bits) = ty.map(ValueType::bit_width).filter(|&bits| bits <= 128) else {
+    let Some(bits) = ty
+        .filter(|ty| ty.is_integer())
+        .map(ValueType::bit_width)
+        .filter(|&bits| bits <= 128)
+    else {
         return true;
     };
     ring_overlap_at(bits as u32, a, a_len, b, b_len)
