@@ -12,11 +12,11 @@ pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
 /// The vertex payloads behind a [`Pattern`]'s graph. Not the seam: a pattern is
 /// described through the builder, never by handing it a vertex.
-pub(crate) use vertex::{InputSlot, PatNode, PatValue, Role, SlotMode};
+pub(crate) use vertex::{InputSlot, OutputKindSpec, PatNode, PatValue, Role, SlotMode};
 /// The builder seam: the verbs of [`MatcherBuilder`] and the types its
 /// signatures name. A downstream `MatchPat` is lowered through them, so they
 /// stay public even where only this crate calls them today.
-pub use vertex::{KindSpec, NodePredicate, OutputKindSpec, PostMatchFn};
+pub use vertex::{KindSpec, NodePredicate, PostMatchFn};
 
 use std::cell::OnceCell;
 use std::mem::Discriminant;
@@ -138,15 +138,9 @@ impl<'f> Matcher<'f> {
         pat: &'p Pattern,
     ) -> anyhow::Result<impl Iterator<Item = Match> + 'p> {
         let root = pat.root()?;
-        // Binding no VISIBLE capture, every configuration shares one signature,
-        // so the first to reach the root is the whole answer for that root and
-        // driving the rest only to discard them is waste.
-        // `bound_captures` never yields an internal capture: the one
-        // `Capture::internal()` caller writes `PatValue::identity`, not
-        // `captures`, and the constructor is `pub(crate)`. So this reads
-        // "binds no capture", and an all-internal pattern is not a shape that
-        // reaches here.
-        let first_only = pat.bound_captures().all(|c| c.is_internal());
+        // Binding no capture, every configuration shares one signature, so the
+        // first to reach the root is the whole answer for that root.
+        let first_only = pat.bound_captures().next().is_none();
         Ok(self
             .candidates(pat, root)
             .flat_map(move |node| self.matches_at_node(node, pat, root, first_only)))
