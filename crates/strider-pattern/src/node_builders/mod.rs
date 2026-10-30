@@ -213,13 +213,11 @@ pub(crate) fn staged_shape(pat: &crate::Pattern) -> String {
         };
         let _ = writeln!(
             out,
-            "n{} {kind} caps={} pred={} alt={}/{} ordered={}",
+            "n{} {kind} caps={} pred={} {:?}",
             n.as_u32(),
             k.captures.len(),
-            u8::from(k.node_predicate.is_some()),
-            u8::from(k.alternation),
-            u8::from(k.first_match),
-            u8::from(k.force_ordered),
+            k.node_predicates.len(),
+            k.role,
         );
         for &v in g.node_outputs(n) {
             let o = g.value_kind_ref(v);

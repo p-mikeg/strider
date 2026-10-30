@@ -64,25 +64,30 @@ pub(crate) struct PatNode {
     /// value output vertex to anchor a value capture on. Repeatable: every
     /// listed capture binds that node.
     pub(crate) captures: Vec<crate::capture::Capture>,
-    /// Runs before descending into inputs.
-    pub(crate) node_predicate: Option<NodePredicate>,
-    pub(crate) post_match: Option<PostMatchFn>,
-    /// A `when_match` guard sits in `post_match`, so retyping this node's
+    /// Run before descending into inputs; all must hold.
+    pub(crate) node_predicates: Vec<NodePredicate>,
+    pub(crate) post_matches: Vec<PostMatchFn>,
+    /// A `when_match` guard sits in `post_matches`, so retyping this node's
     /// output to `Control` has to re-run the refusal that guard was admitted
     /// under.
     pub(crate) typed_post_match: bool,
-    /// Suppresses commutative operand reordering for this node.
-    pub(crate) force_ordered: bool,
-    /// Marks a `one_of` / `first_of` node: its inputs are independent
-    /// alternative sub-patterns tried against the *same* IR node, not operands.
-    pub(crate) alternation: bool,
-    /// On an alternation node, `true` cuts to the first arm that matches
-    /// (`first_of`); `false` enumerates every matching arm (`one_of`, a union).
-    pub(crate) first_match: bool,
+    pub(crate) role: Role,
     /// Consumer input slot per input, parallel to the generic graph's input
     /// order. A pattern's inputs are sparse (`call().arg(0, ..)` wires only
     /// raw slot 4), so the original slot is recorded here.
     pub(crate) input_slots: Vec<InputSlot>,
+}
+
+/// How a node's inputs are read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Role {
+    /// Operands; `ordered` suppresses commutative reordering.
+    Operands { ordered: bool },
+    /// `one_of`: the inputs are alternative sub-patterns tried against the
+    /// *same* IR node, every matching arm enumerated (a union).
+    OneOf,
+    /// `first_of`: [`Role::OneOf`] cut to the first arm that matches.
+    FirstOf,
 }
 
 impl crate::graph_ext::HasInputSlots for PatNode {
@@ -102,14 +107,16 @@ impl PatNode {
         Self {
             kind,
             captures: Vec::new(),
-            node_predicate: None,
-            post_match: None,
+            node_predicates: Vec::new(),
+            post_matches: Vec::new(),
             typed_post_match: false,
-            force_ordered: false,
-            alternation: false,
-            first_match: false,
+            role: Role::Operands { ordered: false },
             input_slots: Vec::new(),
         }
+    }
+
+    pub(crate) fn is_alternation(&self) -> bool {
+        !matches!(self.role, Role::Operands { .. })
     }
 }
 
