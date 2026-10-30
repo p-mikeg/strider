@@ -551,6 +551,9 @@
 
 ### Changed, Rust
 
+- `rewrite_rule_runtime` errors, and `rewrite_rule` panics, on an RHS
+  `Template` the builder refused, as both already did on a refused LHS. The
+  rule was built and then errored on every firing.
 - Integer constants are stored as `dashu-int`'s `UBig` and evaluated at
   their declared width, so constant folding no longer stops at 128 bits: an
   `I256` or `I512` constant folds where it stayed an unfolded node, through
