@@ -122,6 +122,12 @@
   `find_joined_constrained(&[&if_else().capture_true(t).build(),
   &region().any_input(var(t)).build()], &[])`, and a `call` / `ret` consumer
   takes it as `.ctrl(var(t))`.
+- `Match::from_root` and `Match::from_root_in` are gone:
+  `Match::new(root, bindings, generation)` takes the producing graph's
+  `Graph::generation`, so every `Match` is stamped and `is_stale` always
+  checks.
+- `matcher::OutputKindSpec` is crate-private, and its `PhiToken` arm is gone:
+  nothing built such a vertex, and no public signature names the type.
 - `strider_pattern::int_const` takes an unbounded signed value (`u8`..`u128`,
   `i8`..`i128`, `UBig`, `IBig`, or a collection of them), so a query names a
   constant of any declared width, and a negative wraps into whatever width it
@@ -552,8 +558,9 @@
 ### Changed, Rust
 
 - `rewrite_rule_runtime` errors, and `rewrite_rule` panics, on an RHS
-  `Template` the builder refused, as both already did on a refused LHS. The
-  rule was built and then errored on every firing.
+  `Template` with no root, whether the builder refused it or it is rootless
+  or multi-sink, as both already did on such an LHS. The rule was built and
+  then errored on every firing.
 - Integer constants are stored as `dashu-int`'s `UBig` and evaluated at
   their declared width, so constant folding no longer stops at 128 bits: an
   `I256` or `I512` constant folds where it stayed an unfolded node, through
@@ -651,6 +658,12 @@
 
 ### Fixed
 
+- Rust: `instantiate` refuses a template node declaring two outputs at one
+  slot, as it refuses two inputs at one slot. The later output silently
+  replaced the earlier one.
+- Rust: `instantiate` refuses a template capture the LHS left unbound before
+  it builds any node. The nodes built ahead of the capture stayed in the
+  function, dead.
 - Rust: `TemplateBuilder::finish` on a graph the raw verbs wired into a cycle
   refuses the template through `Template::root`, as `MatcherBuilder::finish`
   refuses a cyclic pattern. It panicked.
