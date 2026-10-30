@@ -576,7 +576,7 @@ fn masked_diamond(a: u64, b: u64) -> crate::Result<(strider_ir::Function, ValueI
 
     fb.set_region(join);
     let merged = fb.read_variable(&var)?;
-    let masked = fb.build_const_binop(0x1f, merged, strider_ir::IntBinaryOp::And, ty)?;
+    let masked = fb.build_const_binop(0x1fu32, merged, strider_ir::IntBinaryOp::And, ty)?;
     fb.build_return(Some(masked), &[])?;
     fb.set_lift_addr(None);
     let mut fg = fb.build()?;
