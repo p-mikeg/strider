@@ -12,7 +12,7 @@ pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
 /// The vertex payloads behind a [`Pattern`]'s graph. Not the seam: a pattern is
 /// described through the builder, never by handing it a vertex.
-pub(crate) use vertex::{InputSlot, PatNode, PatValue, SlotMode};
+pub(crate) use vertex::{InputSlot, PatNode, PatValue, Role, SlotMode};
 /// The builder seam: the verbs of [`MatcherBuilder`] and the types its
 /// signatures name. A downstream `MatchPat` is lowered through them, so they
 /// stay public even where only this crate calls them today.
@@ -45,7 +45,7 @@ fn alternation_kind_discriminants(
     pat: &Pattern,
     root: PatNodeId,
 ) -> Option<Vec<Discriminant<NodeKind>>> {
-    if !pat.graph.node_kind(root).alternation {
+    if !pat.graph.node_kind(root).is_alternation() {
         return None;
     }
     let mut kinds: Vec<Discriminant<NodeKind>> = Vec::new();
@@ -60,7 +60,7 @@ fn alternation_kind_discriminants(
                         kinds.push(d);
                     }
                 }
-                None if pat.graph.node_kind(arm).alternation => {
+                None if pat.graph.node_kind(arm).is_alternation() => {
                     if !seen.contains(&arm) {
                         seen.push(arm);
                         stack.push(arm);
@@ -220,7 +220,11 @@ impl<'f> Matcher<'f> {
         {
             let mut collect = |b: &mut Bindings| -> bool {
                 if seen.insert(b.binding_signature()) {
-                    hits.push(Match::from_root_in(node, b.clone(), self.function.graph()));
+                    hits.push(Match::new(
+                        node,
+                        b.clone(),
+                        self.function.graph().generation(),
+                    ));
                 }
                 first_only
             };
@@ -1236,7 +1240,7 @@ mod join_key_tests {
         for &(c, node) in bound {
             assert!(b.bind_capture(c, Binding::Node(NodeId::from_u32(node))));
         }
-        Match::from_root(NodeId::from_u32(0), b)
+        Match::new(NodeId::from_u32(0), b, 0)
     }
 
     /// A chain join `P0(a) - P1(a, b) - P2(b)`: level 2's key is `b`, which the

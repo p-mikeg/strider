@@ -7,9 +7,8 @@
 - `IfPat.true_branch` and `IfPat.false_branch` are gone. Join the edge's
   consumer on the edge capture instead: `if_else().true_branch(region())` is
   `fn.find_all([if_else().capture_true(t), region().any_input(t)])`, and a
-  `call` / `ret` consumer takes it as `.ctrl(t)`. A row holds one `Match`
-  per pattern, and an edge with several consumers answers once per consumer
-  where the branch failed to match.
+  `call` / `ret` consumer takes it as `.ctrl(t)`. Each row is one `Match`
+  whose `roots` are the `If` and the consumer.
 - `Node.wide_const_bytes()` is gone. `Node.uint()` reads a constant at any
   declared width, a Python `int` being arbitrary-precision, so the bytes
   escape hatch had nothing left to carry.
@@ -122,8 +121,7 @@
   instead: `if_else().with_true(region().build())` is
   `find_joined_constrained(&[&if_else().capture_true(t).build(),
   &region().any_input(var(t)).build()], &[])`, and a `call` / `ret` consumer
-  takes it as `.ctrl(var(t))`. An edge with several consumers answers once per
-  consumer where the branch failed to match.
+  takes it as `.ctrl(var(t))`.
 - `strider_pattern::int_const` takes an unbounded signed value (`u8`..`u128`,
   `i8`..`i128`, `UBig`, `IBig`, or a collection of them), so a query names a
   constant of any declared width, and a negative wraps into whatever width it
@@ -650,6 +648,9 @@
 
 ### Fixed
 
+- Rust: `TemplateBuilder::finish` on a graph the raw verbs wired into a cycle
+  refuses the template through `Template::root`, as `MatcherBuilder::finish`
+  refuses a cyclic pattern. It panicked.
 - Rust: a capture one `*_const_with!` closure reads as an `Option` no longer
   relaxes the rewrite coverage check for every OTHER use of it in the same
   RHS. A value vertex (`var(c)`), an output type inheriting the binding's
@@ -811,11 +812,11 @@
   walk had replaced was still rewritten and counted, and its fingerprints
   absorbed into the surviving value.
 - Python: `Function.rewrite` / `rewrite_all`, and Rust `rewrite_rule`, refuse
-  a match through a `Phi`, `MemPhi` or `Region`, or one an `If` branch walk
-  bound, whose replacement reads the value it replaces with no phi between
-  them, or is not available wherever that value is. `phi(a, b) -> b` on a
-  loop left a non-phi data cycle, and on a merge a value defined on one arm
-  only, both reported as a successful rewrite.
+  a match through a `Phi`, `MemPhi` or `Region` whose replacement reads the
+  value it replaces with no phi between them, or is not available wherever
+  that value is. `phi(a, b) -> b` on a loop left a non-phi data cycle, and on
+  a merge a value defined on one arm only, both reported as a successful
+  rewrite.
 - Python: under `relocated_got_is_rom=True` a MIPS global GOT entry is
   served only when the `.dynsym` header is `DT_SYMTAB`'s table; a header
   moved onto a decoy symbol served an import's entry as its lazy stub.
