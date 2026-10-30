@@ -138,14 +138,14 @@ impl<'f> SiteClassifier<'f> {
         mode_value: Option<ValueId>,
     ) -> Option<ResolvedTargets> {
         let function = self.function();
-        // `int_const` is `Some` only off an `IntConst`.
-        let k = function.int_const(target_value)?;
+        // `int_const_u128` is `Some` only off an `IntConst`.
+        let k = function.int_const_u128(target_value)?;
         // A committed interworking mode MUST fold to a constant here; if it
         // does not, fail closed (`?` defers the whole branch) rather than
         // decode the const target in the flowing mode. Mirrors the table path
         // (table.rs).
         let isa_bit = match mode_value {
-            Some(mv) => Some(*function.int_const(mv)? != strider_ir::UBig::ZERO),
+            Some(mv) => Some(function.int_const_u128(mv)? != 0),
             None => None,
         };
         // Reject rather than truncate a const with its high 64 bits set.
@@ -202,12 +202,11 @@ fn strip_isa_mode_mask(function: &strider_ir::Function, value: ValueId) -> Value
     let Some(ty) = function.value_type_opt(value) else {
         return value;
     };
-    if !ty.is_integer() {
+    let Some(want) = ty.int_mask_u128().map(|m| m ^ 1) else {
         return value;
-    }
-    let want = strider_ir::eval::complement(&strider_ir::UBig::ONE, ty);
+    };
     for (operand, other) in [(a, b), (b, a)] {
-        if function.int_const(other) == Some(&want) {
+        if function.int_const_u128(other) == Some(want) {
             return operand;
         }
     }

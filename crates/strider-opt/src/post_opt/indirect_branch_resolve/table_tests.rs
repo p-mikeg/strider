@@ -3,7 +3,6 @@ use crate::ReadOnlyMemory;
 use crate::{ConstantFold, KnownBits, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse};
 use rsleigh::VnSpace;
 use std::sync::Mutex;
-use strider_ir::UBig;
 use strider_ir::node::ValueType;
 use strider_ir::{
     ExtendOp, Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntCmpOp,
@@ -472,8 +471,8 @@ fn decompose_index_picks_shallowest_narrowed_index() {
         .decompose_index(&chain, branch)
     {
         Some(hit) => assert_eq!(
-            (hit.range.lo(), hit.range.hi(), &hit.rebase),
-            (&UBig::from(0u32), &UBig::from(7u32), &UBig::ZERO),
+            (hit.range.lo(), hit.range.hi(), hit.rebase),
+            (0, 7, 0),
             "must pick the shallow narrowed [0,7] index, not the deeper [0,63]"
         ),
         None => panic!("expected an index candidate"),
@@ -1762,23 +1761,17 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
     Ok(())
 }
 
-/// An index bound holds at every declared width: the interval carrier is the
-/// same unbounded integer the IR interns, so a type past 128 bits has a real
-/// top to measure a narrowing against rather than no bound at all.
+/// The interval carrier is a `u128`, so a wider type's "top" is not top and
+/// every interval at that type looks narrowed.  Enumerating one would pin an
+/// index whose real value set the range never covered.  `bounded_index` keeps
+/// one out by taking the type mask, which a wider type has none of.
 #[test]
-fn an_index_bound_holds_at_every_declared_width() {
-    let iv = super::super::index_range::Interval::dense(UBig::ZERO, UBig::from(7u32));
-    for bits in [32u16, 128, 256, 512] {
-        let bound = strider_ir::eval::all_ones(ValueType::int(bits));
-        assert!(index_bound_ok(&bound, &iv), "i{bits}");
-    }
-    // A span reaching the top of its own type is no narrowing, even at a
-    // count small enough to enumerate.
-    let bound = strider_ir::eval::all_ones(ValueType::int(256));
-    let at_top =
-        super::super::index_range::Interval::dense(&bound - UBig::from(7u32), bound.clone());
-    assert_eq!(at_top.count(), UBig::from(8u32));
-    assert!(!index_bound_ok(&bound, &at_top), "reaches its own top");
+fn an_index_bound_needs_a_type_inside_the_u128_carrier() {
+    let iv = super::super::index_range::Interval::dense(0, 7);
+    let mask = |bits| ValueType::int(bits).int_mask_u128();
+    assert!(mask(32).is_some_and(|mask| index_bound_ok(mask, iv)));
+    assert_eq!(mask(256), None);
+    assert_eq!(mask(512), None);
 }
 
 /// A table cell read as the low byte of a wider load, `zext(trunc8(load32))`
@@ -1808,32 +1801,17 @@ fn classify_table_dispatch_excludes_truncated_table_entry_as_index() {
 /// Mutation: keep `spacing` as the shared power of two.
 #[test]
 fn wrap_counts_a_progression_modulo_its_width() {
-    let w = |count: u128, spacing: u128, bits: usize| {
-        wrap(UBig::from(count), UBig::from(spacing), bits)
-            .map(|(c, s)| (u128::try_from(&c).ok(), u128::try_from(&s).ok()))
-    };
-    assert_eq!(w(4, 3, 8), Some((Some(4), Some(3))), "fits");
-    assert_eq!(w(1 << 32, 1, 8), Some((Some(256), Some(1))), "a truncate");
-    assert_eq!(w(256, 4, 8), Some((Some(64), Some(4))), "a widening shift");
+    assert_eq!(wrap(4, 3, 8), Some((4, 3)), "fits");
+    assert_eq!(wrap(1 << 32, 1, 8), Some((256, 1)), "a truncate");
+    assert_eq!(wrap(256, 4, 8), Some((64, 4)), "a widening shift");
     assert_eq!(
-        w(256, 3, 8),
-        Some((Some(256), Some(1))),
+        wrap(256, 3, 8),
+        Some((256, 1)),
         "odd steps cover every value"
     );
-    assert_eq!(w(256, 6, 8), Some((Some(128), Some(2))));
-    assert_eq!(w(100, 3, 8), None, "wraps before covering the cycle");
-    assert_eq!(
-        w(256, 1, 128),
-        Some((Some(256), Some(1))),
-        "256 values one apart still fit 2^128"
-    );
-    // Past the carrier the set really does wrap, where the `u128` modulus
-    // used to make every width of 128 or more a no-op.
-    assert_eq!(
-        wrap(UBig::ONE << 65usize, UBig::ONE << 64usize, 128),
-        Some((UBig::ONE << 64usize, UBig::ONE << 64usize)),
-        "a 2^65-element progression of 2^64 steps fills i128"
-    );
+    assert_eq!(wrap(256, 6, 8), Some((128, 2)));
+    assert_eq!(wrap(100, 3, 8), None, "wraps before covering the cycle");
+    assert_eq!(wrap(256, 1, 128), Some((256, 1)), "past the carrier");
 }
 
 #[test]
