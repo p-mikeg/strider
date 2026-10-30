@@ -77,7 +77,8 @@ fn build_factor_rules() -> Vec<crate::BoxedRule> {
                        binds: &strider_pattern::Bindings| {
         let f = edit.function();
         let w = ty.bit_width();
-        ty.int_mask_u128().is_some()
+        // The coefficients are `UBig`, so only the float refusal is left.
+        ty.is_integer()
             && same_width(f, binds, &[x]) == Some(w)
             && [c1, c2]
                 .iter()
@@ -146,7 +147,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     rules.push(rewrite_rule(
         int_add(int_add(var(x), int_const(c1)), int_const(c2)).when_match(
             move |edit, ty, binds| {
-                ty.int_mask_u128().is_some()
+                ty.is_integer()
                     && same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
             },
         ),
@@ -157,7 +158,7 @@ fn build_reassoc_and_mask_rules() -> Vec<crate::BoxedRule> {
     rules.push(rewrite_rule(
         int_mul(int_mul(var(x), int_const(c1)), int_const(c2)).when_match(
             move |edit, ty, binds| {
-                ty.int_mask_u128().is_some()
+                ty.is_integer()
                     && same_width(edit.function(), binds, &[x, c1, c2]) == Some(ty.bit_width())
             },
         ),
