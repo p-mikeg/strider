@@ -43,7 +43,7 @@ use strider_ir::node::{NodeId, ValueId, ValueKind};
 
 use crate::bindings::{Binding, Bindings};
 use crate::matcher::{
-    InputSlot, Matcher, OutputKindSpec, PatNode, PatValue, Pattern, SlotMode, cast_levels,
+    InputSlot, Matcher, OutputKindSpec, PatNode, PatValue, Pattern, Role, SlotMode, cast_levels,
 };
 
 struct Ctx<'a> {
@@ -269,9 +269,7 @@ fn try_match_at(
 
     // Fires after kind + output constraints and before descending into inputs,
     // so node-only predicates short-circuit here.
-    if let Some(predicate) = &nd.node_predicate
-        && !predicate(ctx.matcher, ir_node)
-    {
+    if !nd.node_predicates.iter().all(|p| p(ctx.matcher, ir_node)) {
         return false;
     }
 
@@ -285,7 +283,7 @@ fn try_match_at(
     // Carries this node's own captures; see `bind_all_captures`.
     let out_weight = out_vertex.map(|ov| ctx.pat.graph.value_kind_ref(ov));
 
-    if nd.alternation {
+    if nd.is_alternation() {
         return try_alternation(ctx, pat_node, ir_node, root_value, out_vertex, bindings, k);
     }
 
@@ -305,7 +303,7 @@ fn try_match_at(
     // `.ordered()` pins a pair for the rest. Both IR slots holding one value
     // makes the swap assign every operand what the natural order did, so it is
     // not tried.
-    let commutative = !nd.force_ordered
+    let commutative = nd.role == (Role::Operands { ordered: false })
         && (1..=COMM_ORDER.len()).contains(&n_fixed)
         && !node_inputs.interchangeable
         && inputs[..n_fixed]
@@ -419,7 +417,7 @@ fn try_alternation(
     for (arm, alt) in ctx.pat.inputs_of(pat_node).edges.iter().enumerate() {
         // An arm past the one that already matched in this attempt is not
         // re-offered just because a sibling operand moved on.
-        if nd.first_match && cut.is_some_and(|c| arm > c) {
+        if nd.role == Role::FirstOf && cut.is_some_and(|c| arm > c) {
             break;
         }
         let before = ctx.satisfied.get();
@@ -454,7 +452,7 @@ fn try_alternation(
         // The cut is on a produced match, not on structural arm shape: an arm
         // reaching `k` but rejected by a guard above falls through to the next
         // arm.
-        if nd.first_match && ctx.satisfied.get() > before {
+        if nd.role == Role::FirstOf && ctx.satisfied.get() > before {
             ctx.record_cut_arm(pat_node, ir_node, arm);
             break;
         }
@@ -506,9 +504,13 @@ fn bind_sibling_outputs(
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
     let Some(&ov_idx) = sibs.get(idx) else {
-        if let Some(pm) = &nd.post_match {
+        if !nd.post_matches.is_empty() {
             let ty = root_value.and_then(|value| ctx.function().value_kind(value).as_value());
-            if !pm(ctx.matcher, ir_node, ty, b) {
+            if !nd
+                .post_matches
+                .iter()
+                .all(|pm| pm(ctx.matcher, ir_node, ty, b))
+            {
                 return false;
             }
         }
@@ -685,7 +687,7 @@ pub(crate) fn collect_node_inputs(
                 .count();
             let interchangeable = compare_operands
                 && fixed == 2
-                && !graph.node_kind(node).alternation
+                && !graph.node_kind(node).is_alternation()
                 && interchangeable(graph, edges[0].out_vertex, edges[1].out_vertex, &mut memo);
             NodeInputs {
                 edges,
@@ -738,13 +740,11 @@ fn node_interchangeable(
     let (na, nb) = (graph.node_kind(a), graph.node_kind(b));
     if !(na.captures.is_empty()
         && nb.captures.is_empty()
-        && na.node_predicate.is_none()
-        && nb.node_predicate.is_none()
-        && na.post_match.is_none()
-        && nb.post_match.is_none()
-        && na.force_ordered == nb.force_ordered
-        && na.alternation == nb.alternation
-        && na.first_match == nb.first_match
+        && na.node_predicates.is_empty()
+        && nb.node_predicates.is_empty()
+        && na.post_matches.is_empty()
+        && nb.post_matches.is_empty()
+        && na.role == nb.role
         && na.input_slots == nb.input_slots
         && na.kind == nb.kind)
     {
