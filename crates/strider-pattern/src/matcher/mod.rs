@@ -10,15 +10,13 @@ pub use builder::{MatcherBuilder, PatNodeRef, PatValueRef};
 pub(crate) use cast_walk_through::cast_levels;
 pub use graph::Pattern;
 pub use strider_ir::walk::CastMask;
-/// The builder seam: the verbs of [`MatcherBuilder`] and the types its
-/// signatures name. A downstream `MatchPat` is lowered through them, so they
-/// stay public even where only this crate calls them today.
-pub use vertex::{
-    BindingWalkFn, KindSpec, NodePredicate, OutputKindSpec, PostMatchFn, WalkCaptures,
-};
 /// The vertex payloads behind a [`Pattern`]'s graph. Not the seam: a pattern is
 /// described through the builder, never by handing it a vertex.
 pub(crate) use vertex::{InputSlot, PatNode, PatValue, SlotMode};
+/// The builder seam: the verbs of [`MatcherBuilder`] and the types its
+/// signatures name. A downstream `MatchPat` is lowered through them, so they
+/// stay public even where only this crate calls them today.
+pub use vertex::{KindSpec, NodePredicate, OutputKindSpec, PostMatchFn};
 
 use std::cell::OnceCell;
 use std::mem::Discriminant;
@@ -78,30 +76,6 @@ fn alternation_kind_discriminants(
 pub struct Matcher<'f> {
     pub(crate) function: &'f Function,
     kind_index: OnceCell<KindIndex>,
-    /// Configurations that have reached a ROOT continuation, i.e. produced a
-    /// match. `first_of` cuts on it. Shared across nested walks: a branch
-    /// pattern's own walk hands off to the enclosing continuation rather than
-    /// to a root, so a per-walk counter would cut a nested `first_of` on the
-    /// hand-off and drop the arms a later rejection needs.
-    ///
-    /// Restored per candidate root ([`Self::scoped_count`], taken in
-    /// `matches_at_node`). That covers a nested query too: caller-supplied
-    /// logic (`when_match`, a `JoinPredicate`) holds this same `Matcher`, and
-    /// its matches would otherwise count towards an enclosing arm's cut and
-    /// discard the arm holding the real match.
-    pub(crate) satisfied: std::cell::Cell<u64>,
-}
-
-/// Restores [`Matcher::satisfied`] when dropped.
-struct CountScope<'a> {
-    cell: &'a std::cell::Cell<u64>,
-    saved: u64,
-}
-
-impl Drop for CountScope<'_> {
-    fn drop(&mut self) {
-        self.cell.set(self.saved);
-    }
 }
 
 /// Reachable nodes bucketed by `NodeKind` discriminant.
@@ -130,21 +104,12 @@ impl<'f> Matcher<'f> {
         Self {
             function,
             kind_index: OnceCell::new(),
-            satisfied: std::cell::Cell::new(0),
         }
     }
 
     fn kind_index(&self) -> &KindIndex {
         self.kind_index
             .get_or_init(|| KindIndex::build(self.function))
-    }
-
-    /// Held for the length of one candidate root's walk; see [`Self::satisfied`].
-    fn scoped_count(&self) -> CountScope<'_> {
-        CountScope {
-            cell: &self.satisfied,
-            saved: self.satisfied.get(),
-        }
     }
 
     pub fn function(&self) -> &Function {
@@ -239,8 +204,6 @@ impl<'f> Matcher<'f> {
         root: PatNodeId,
         first_only: bool,
     ) -> Vec<Match> {
-        // One scope per candidate root; see `Matcher::satisfied`.
-        let _count = self.scoped_count();
         let mut hits: Vec<Match> = Vec::new();
         // Keyed on the bindings ALONE, deliberately: an existential
         // (`any_input`, a commutative pair) reaches the same binding through
@@ -265,7 +228,7 @@ impl<'f> Matcher<'f> {
             let outputs = self.function.node_outputs(node);
             if outputs.is_empty() {
                 let mut bindings = Bindings::default();
-                walk::try_match_node(self, pat, root, node, &mut bindings, &mut collect, true);
+                walk::try_match_node(self, pat, root, node, &mut bindings, &mut collect);
             } else {
                 // An output whose anchor repeats the one already tried imposes
                 // the same constraint set, so it can only re-derive bindings
@@ -318,74 +281,6 @@ impl<'f> Matcher<'f> {
             .matches_at_node(node, pat, root, true)
             .into_iter()
             .next())
-    }
-
-    /// Matches `pat` at `node` against the LIVE `bindings`, extending them in
-    /// place with what it binds. A capture already bound differently rejects
-    /// the match; on rejection `bindings` is unchanged.
-    ///
-    /// Continuation-passing: `k` runs once per configuration `pat` reaches, so
-    /// a `pat` able to bind several ways (commutative operands, existential
-    /// slots) offers each in turn. `true` accepts and stops, leaving `bindings`
-    /// in the accepted state; `false` drives the next. The return value is
-    /// whether `k` accepted.
-    ///
-    /// A multi-output `node` is anchored on the first output whose match
-    /// reaches `k` at all; the later outputs are a fallback for a mismatch, not
-    /// a second anchor beside a working one.
-    ///
-    /// # Errors
-    /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
-    pub(crate) fn match_at_into(
-        &self,
-        node: NodeId,
-        pat: &Pattern,
-        bindings: &mut Bindings,
-        k: &mut dyn FnMut(&mut Bindings) -> bool,
-    ) -> anyhow::Result<bool> {
-        let root = pat.root()?;
-        if let Some(rk) = root_kind_discriminant(pat, root)
-            && std::mem::discriminant(self.function.node_kind(node)) != rk
-        {
-            return Ok(false);
-        }
-        let outputs = self.function.node_outputs(node);
-        if outputs.is_empty() {
-            return Ok(walk::try_match_node(
-                self, pat, root, node, bindings, k, false,
-            ));
-        }
-        // Outputs are the mechanism for finding a root VALUE, not an axis of
-        // the match: a branch pattern is rooted at the consumer node. The first
-        // output the pattern reaches `k` through is that node's answer, so the
-        // rest are not tried and a bare wildcard does not report the consumer's
-        // control and memory edges as two.
-        //
-        // A later output whose anchor repeats the one already tried is skipped:
-        // the tried one did not reach `k`, so neither can its repeat, and
-        // without the skip one nesting level of branch patterns doubles the
-        // failure cost of everything below it.
-        let mut anchored: Option<ValueId> = None;
-        for &out_id in outputs {
-            if let Some(prev) = anchored
-                && walk::anchor_repeats(self, pat, root, prev, out_id)
-            {
-                continue;
-            }
-            anchored = Some(out_id);
-            let mut reached = false;
-            let mut counting = |b: &mut Bindings| {
-                reached = true;
-                k(b)
-            };
-            if walk::try_match_nested(self, pat, root, out_id, bindings, &mut counting) {
-                return Ok(true);
-            }
-            if reached {
-                return Ok(false);
-            }
-        }
-        Ok(false)
     }
 
     /// Run several patterns and keep only the joined tuples where every

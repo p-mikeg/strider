@@ -577,13 +577,14 @@ userland PPC64 presets and `8+13` under their `*_linux_kernel` flavours, which
 name no vector register. The incoming-argument patterns (`function_arg` /
 `function_arg_float`) index the two classes separately.
 
-If slots: `.cond(p)`, `.ctrl(p)`, `.true_branch(p)` / `.false_branch(p)` (what
-an edge leads to), `.capture_true(c)` / `.capture_false(c)` (bind the edge for
-constraints).
+If slots: `.cond(p)`, `.ctrl(p)`, `.capture_true(c)` / `.capture_false(c)`
+(bind the edge for constraints). What an edge leads to is a second pattern
+joined on that capture: `fn.find_all([if_else().capture_true(t),
+region().any_input(t)])`.
 
-A query refuses a pattern of more than 256 nodes, counting those nested through
-`.true_branch` / `.false_branch` and counting a shared sub-pattern once per
-slot that reaches it, and one nested deeper than the thread's stack allows:
+A query refuses a pattern of more than 256 nodes, counting a shared
+sub-pattern once per slot that reaches it, and one nested deeper than the
+thread's stack allows:
 both raise `StriderError`. An alternation counts as its deepest arm, since the
 arms are alternatives rather than operands.
 

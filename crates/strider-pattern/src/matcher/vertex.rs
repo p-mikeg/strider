@@ -46,38 +46,6 @@ pub type NodePredicate = Box<dyn Fn(&Matcher, NodeId) -> bool + Send>;
 pub type PostMatchFn =
     Box<dyn Fn(&Matcher, NodeId, Option<ValueType>, &crate::bindings::Bindings) -> bool + Send>;
 
-/// A sideways sub-walk run after [`PostMatchFn`], matching against the LIVE
-/// journal so what it binds must agree with the enclosing match and survives
-/// into it.
-///
-/// Continuation-passing like the main engine: the walk calls `k` once per
-/// configuration it reaches, `true` accepting and stopping, `false` driving the
-/// next. Returning `false` overall fails the configuration.
-pub type BindingWalkFn = Box<
-    dyn Fn(
-            &Matcher,
-            NodeId,
-            &mut crate::bindings::Bindings,
-            &mut dyn FnMut(&mut crate::bindings::Bindings) -> bool,
-        ) -> bool
-        + Send,
->;
-
-/// What a [`BindingWalkFn`]'s sub-pattern binds. The sub-pattern's graph is
-/// held inside the closure rather than wired into the enclosing pattern, so
-/// [`Pattern::bound_captures`](crate::Pattern::bound_captures) and
-/// [`guaranteed_captures`](crate::Pattern::guaranteed_captures) read it from
-/// here.
-#[derive(Default)]
-pub struct WalkCaptures {
-    pub bound: Vec<crate::capture::Capture>,
-    /// Bound on every successful walk.
-    pub guaranteed: Vec<crate::capture::Capture>,
-}
-
-// `WalkCaptures` stays public with its fields: it is a parameter of
-// `MatcherBuilder::set_binding_walk`, which the builder seam keeps callable.
-
 /// Where a pattern input sits on its consumer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum InputSlot {
@@ -103,10 +71,6 @@ pub(crate) struct PatNode {
     /// output to `Control` has to re-run the refusal that guard was admitted
     /// under.
     pub(crate) typed_post_match: bool,
-    /// Runs after `post_match`; may bind.
-    pub(crate) binding_walk: Option<BindingWalkFn>,
-    /// Declares what `binding_walk` binds.
-    pub(crate) walk_captures: WalkCaptures,
     /// Suppresses commutative operand reordering for this node.
     pub(crate) force_ordered: bool,
     /// Marks a `one_of` / `first_of` node: its inputs are independent
@@ -141,8 +105,6 @@ impl PatNode {
             node_predicate: None,
             post_match: None,
             typed_post_match: false,
-            binding_walk: None,
-            walk_captures: WalkCaptures::default(),
             force_ordered: false,
             alternation: false,
             first_match: false,
