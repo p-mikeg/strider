@@ -37,8 +37,9 @@ def capture_typed(c: Capture, inner: Union[Template, int]) -> Template:
     as `inner` raises `StriderError`: it keeps the type of the value it
     bound."""
 def int_const(value: int) -> Template:
-    """Build an integer constant whose stored value, masked to the output
-    width, is `value`. Negatives take the sign-extended form. Its width is the
+    """Build an integer constant whose stored value, wrapped into the output
+    width, is `value`. `value` has no width cap; one wider than every value
+    type (512 bits) raises. Its width is the
     one it is evaluated at: an operand's width, a shift count's shift's (a
     count too wide for it saturates rather than wraps), or the root's. Where
     nothing gives one, as at a `Popcount` operand, the rewrite is refused;

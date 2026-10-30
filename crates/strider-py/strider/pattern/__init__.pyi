@@ -120,15 +120,15 @@ class Match:
         single-pattern query). Raises when stale, as `root` does."""
         ...
     def uint(self, key: CaptureKey) -> int:
-        """The unsigned constant value bound to `key`. Raises when unbound or
-        not an integer-valued node."""
+        """The unsigned constant value bound to `key`, at any declared width.
+        Raises when unbound or not an integer-valued node."""
         ...
     def uint_opt(self, key: CaptureKey) -> Optional[int]:
         """`uint`, or `None` instead of raising."""
         ...
     def sint(self, key: CaptureKey) -> int:
-        """The signed constant value bound to `key`. Raises when unbound or
-        not an integer-valued node."""
+        """The signed constant value bound to `key`, at any declared width.
+        Raises when unbound or not an integer-valued node."""
         ...
     def sint_opt(self, key: CaptureKey) -> Optional[int]:
         """`sint`, or `None` instead of raising."""
@@ -209,8 +209,9 @@ class BoundCapture:
     """A capture bound to one `Match`, from `m[c]` / `m["name"]`. `has` says
     whether it bound, and a numeric capture converts and compares directly,
     with an int or with another `BoundCapture` (`int(m[c])`, `m[c] == 0x10`,
-    `m[a] == m[b]`). Two captures with no integer value (any binding but an
-    integer constant of at most 128 bits, so a float constant too) are equal
+    `m[a] == m[b]`), at any declared width. An int wider than every value
+    type (512 bits) equals no constant. Two captures with no integer value
+    (any binding but an integer constant, so a float constant too) are equal
     when they bound the same value of the same function; an unbound one
     equals nothing. Every reader is a `Match` method: `m.uint(c)`,
     `m.node(c)`, `m.op_opt(c)`."""
@@ -802,11 +803,14 @@ def bool_inputs(inner: ValueLike) -> Pat:
     """Match `inner` whose value inputs are all booleans (1-bit `I1`).
     Exactly `inputs_of_width(1, inner)`, named for intent."""
 def int_const(value: int | list[int] | Capture | None = ...) -> Pat:
-    """Match an integer constant whose value equals `value`, both masked to
-    the constant's output width, or is one of `value` when given a list; an
-    empty list matches nothing. The query is truncated too, so `0x1234`
-    matches `0x34` at `i8`. Given a `Capture`, or nothing, match any integer
-    constant, binding it when there is a capture."""
+    """Match an integer constant whose value equals `value` wrapped into the
+    constant's output width, or one of `value` when given a list; an empty
+    list matches nothing. The query is wrapped too, so `0x1234` matches
+    `0x34` at `i8` and `-1` matches the all-ones constant of any width.
+    `value` has no width cap, so an `I256` or `I512` constant is nameable;
+    one wider than every value type (512 bits) raises. Given a `Capture`, or
+    nothing, match any integer constant, binding it when there is a
+    capture."""
 def int_const_any_width(value: int | list[int]) -> Pat:
     """Match an integer constant holding `value` however it was width-extended
     into the constant's own type: exact, widened by zero extension, or widened

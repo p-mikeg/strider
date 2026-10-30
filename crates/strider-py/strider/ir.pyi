@@ -57,11 +57,10 @@ class Node:
         ...
     def sint(self) -> Optional[int]:
         """This node's signed constant value, sign-extended at its declared
-        width. `None` when it is not an integer constant, and `None` at any
-        declared width over 128 bits (`I256`, `I512`) even for a small value,
-        since there is no signed carrier: read those with `uint()`, which has
-        no width cap. A boolean constant is a 1-bit integer, so `True`
-        reads back as `-1`."""
+        width, at any width: a Python `int` is arbitrary-precision, so `I256`
+        and `I512` read back whole. `None` only when it is not an integer
+        constant. A boolean constant is a 1-bit integer, so `True` reads back
+        as `-1`."""
         ...
     def uint(self) -> Optional[int]:
         """This node's unsigned constant value, masked to its declared width,
