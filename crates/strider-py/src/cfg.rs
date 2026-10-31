@@ -16,7 +16,7 @@ use crate::strider_cls::PyLifter;
 /// Control-flow graph of a single function, from `Lifter.build_cfg` or
 /// `Lifter.analyze`. Renders to Graphviz dot / dark-themed HTML, and serves
 /// the p-code audit trail (`pcode_at` / `fingerprint_pcode`).
-#[pyclass(name = "Cfg", module = "strider.cfg")]
+#[pyclass(name = "Cfg", module = "strider.cfg", frozen)]
 pub struct PyCfg {
     pub(crate) inner: strider_cfg::Cfg,
     /// The `Lifter` that built `inner`: `Cfg.lifter`, and the rom
@@ -82,10 +82,9 @@ impl PyCfg {
         html: bool,
         path: Option<&str>,
     ) -> PyResult<Option<String>> {
-        let style = style.unwrap_or(DEFAULT_CFG_STYLE);
         let d = dot::GraphDot::new(
             self.inner.dot_dumper(self.arch.names()),
-            dot_style_for(Some(style))?,
+            dot_style_for(style.unwrap_or(DEFAULT_CFG_STYLE))?,
         );
         render(&d, html, path)
     }
@@ -221,14 +220,14 @@ impl PyCfg {
         py: Python<'_>,
         node: PyRef<'_, PyNode>,
     ) -> PyResult<Vec<(u64, String)>> {
-        if !node.function.bind(py).try_borrow()?.cfg.bind(py).is(slf) {
+        if !node.at.function.borrow(py).cfg.bind(py).is(slf) {
             return Err(into_strider_err(anyhow::anyhow!(
                 "this Node belongs to a function another Cfg lifted; a \
                  fingerprint is machine addresses, which collide across images, \
                  so the two must be the same Cfg"
             )));
         }
-        let slf = slf.borrow();
+        let slf = slf.get();
         let addrs = node.asm_fingerprint(py)?;
         let map = slf.pcode_map();
         let mut out: Vec<(u64, String)> = addrs

@@ -27,7 +27,7 @@ doctest = false
 # `bound_getters!` stamp out one block per generated item and
 # `builder_slot_methods!` one per slot kind. Dropping it fails the build with
 # conflicting `PyMethods` impls.
-pyo3 = { version = "0.22", default-features = false, features = ["abi3-py39", "anyhow", "macros", "multiple-pymethods"] }
+pyo3 = { version = "0.22", default-features = false, features = ["abi3-py39", "macros", "multiple-pymethods"] }
 anyhow = { workspace = true }
 
 strider-orchestrator = { workspace = true }
