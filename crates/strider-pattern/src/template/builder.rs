@@ -5,43 +5,51 @@
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
-use crate::staging::{SealNode, StagedGraph};
+use crate::build_graph::BuildGraph;
 use crate::template::graph::{Template, TmplNode, TmplNodeKind, TmplValue};
 use crate::template::{TemplateKind, TemplateTy};
+use strider_graph::{NodeId, ValueId};
 
-/// A staged node's output, by position.
+/// A node's output, scoped to the builder that produced it. A match-side
+/// output is not one:
+///
+/// ```compile_fail,E0308
+/// use strider_ir::node::NodeKind;
+/// use strider_pattern::matcher::{KindSpec, MatcherBuilder};
+/// use strider_pattern::template::TemplateBuilder;
+/// let v = MatcherBuilder::new().leaf(KindSpec::Any);
+/// let mut b = TemplateBuilder::new();
+/// let n = b.node(NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg));
+/// b.input(n, 0, v);
+/// ```
 #[derive(Clone, Copy)]
-pub struct TmplValueRef {
-    node: usize,
-    output: usize,
-}
+pub struct TmplValueRef(ValueId);
 
-/// A staged node, by position.
+/// A node, scoped to the builder that produced it. No other id names one, so
+/// a capture, whose node is never handed out, takes no input:
+///
+/// ```compile_fail,E0308
+/// use strider_pattern::Capture;
+/// use strider_pattern::template::TemplateBuilder;
+/// let mut b = TemplateBuilder::new();
+/// let x = b.capture(Capture::new());
+/// b.input(strider_ir::node::NodeId::from_u32(0), 0, x);
+/// ```
 #[derive(Clone, Copy)]
-pub struct TmplNodeRef(pub(crate) usize);
-
-impl SealNode for TmplNodeKind {
-    type Sealed = TmplNode;
-    type Slot = usize;
-    fn seal(self, input_slots: Vec<usize>) -> TmplNode {
-        TmplNode {
-            kind: self,
-            input_slots,
-        }
-    }
-}
+pub struct TmplNodeRef(NodeId);
 
 /// # The raw verbs are checked at instantiation
 ///
 /// The high-level verbs (`leaf`, `unary`, `binary`) declare canonical output
 /// signatures and wire each input slot exactly once. The raw verbs
 /// ([`node`](Self::node), [`input`](Self::input), the `*_output` slot verbs)
-/// enforce nothing when called; [`instantiate`](crate::template::instantiate)
+/// enforce only [`input`](Self::input)'s build order when called;
+/// [`instantiate`](crate::template::instantiate)
 /// checks every node against its node signature and refuses a gapped or
 /// duplicate input slot. No verb declares a control output, so a node whose
 /// signature has one (`Call`, `Region`, `If`, ...) cannot be built.
 pub struct TemplateBuilder {
-    core: StagedGraph<TmplNodeKind, TmplValue>,
+    core: BuildGraph<TmplNode, TmplValue>,
     declared_captures: Vec<crate::Capture>,
     optional_captures: Vec<crate::Capture>,
 }
@@ -55,7 +63,7 @@ impl Default for TemplateBuilder {
 impl TemplateBuilder {
     pub fn new() -> Self {
         Self {
-            core: StagedGraph::new(),
+            core: BuildGraph::new(),
             declared_captures: Vec::new(),
             optional_captures: Vec::new(),
         }
@@ -93,7 +101,7 @@ impl TemplateBuilder {
     /// [`TemplateKind::Fn`] or [`TemplateKind::FnIntConst`];
     /// `TemplateKind::Exact(k)` builds what [`leaf`](Self::leaf)`(k)` does.
     pub fn dynamic_leaf(&mut self, kind: TemplateKind) -> TmplValueRef {
-        let n = TmplNodeRef(self.core.add_node(TmplNodeKind::Build(kind)));
+        let n = self.stage(TmplNodeKind::Build(kind));
         self.value_output(n, 0)
     }
 
@@ -115,14 +123,19 @@ impl TemplateBuilder {
 
     /// Bare: no inputs or outputs yet.
     pub fn node(&mut self, kind: NodeKind) -> TmplNodeRef {
-        TmplNodeRef(
-            self.core
-                .add_node(TmplNodeKind::Build(TemplateKind::Exact(kind))),
-        )
+        self.stage(TmplNodeKind::Build(TemplateKind::Exact(kind)))
     }
 
+    /// `prod` comes from a node built before `node`, or from a
+    /// [`capture`](Self::capture), which may be built anywhere.
     pub fn input(&mut self, node: TmplNodeRef, slot: usize, prod: TmplValueRef) {
-        self.core.add_input(node.0, slot, prod.node, prod.output);
+        let leaf = matches!(
+            self.core.graph.value_kind_ref(prod.0),
+            TmplValue::ValueCapture(_)
+        );
+        if self.core.add_input(node.0, prod.0, leaf) {
+            self.core.graph.node_kind_mut(node.0).input_slots.push(slot);
+        }
     }
 
     /// Inherits the rewrite root's type unless one is set.
@@ -152,11 +165,11 @@ impl TemplateBuilder {
     /// binding for `c`, reused verbatim. Returns only a [`TmplValueRef`], so
     /// an input can never be wired into a capture node.
     pub fn capture(&mut self, c: crate::capture::Capture) -> TmplValueRef {
-        let n = TmplNodeRef(self.core.add_node(TmplNodeKind::Capture));
+        let n = self.stage(TmplNodeKind::Capture);
         self.add_value(n, TmplValue::ValueCapture(c))
     }
 
-    /// See [`StagedGraph::enter_nesting`]: a template is charged to the stack
+    /// See [`BuildGraph::enter_nesting`]: a template is charged to the stack
     /// alone.
     pub(crate) fn enter_nesting(&mut self) -> bool {
         self.core.enter_nesting(false)
@@ -177,30 +190,31 @@ impl TemplateBuilder {
         self.capture(crate::Capture::internal())
     }
 
-    /// Materialises every staged node in producer-before-consumer order. A
-    /// refused, cyclic or multi-sink template surfaces through
+    /// A refused or multi-sink template surfaces through
     /// [`Template::root`].
     pub fn finish(self) -> Template {
-        let (graph, refusal) = self.core.seal();
         Template::from_graph(
-            graph,
+            self.core.graph,
             self.declared_captures,
             self.optional_captures,
-            refusal,
+            self.core.refusal,
         )
     }
 
+    fn stage(&mut self, kind: TmplNodeKind) -> TmplNodeRef {
+        TmplNodeRef(self.core.add_node(TmplNode {
+            kind,
+            input_slots: Vec::new(),
+        }))
+    }
+
     fn add_value(&mut self, node: TmplNodeRef, out: TmplValue) -> TmplValueRef {
-        let output = self.core.add_output(node.0, out);
-        TmplValueRef {
-            node: node.0,
-            output,
-        }
+        TmplValueRef(self.core.add_output(node.0, out))
     }
 
     /// Refused when `out` is a capture; a memory output has no type to set.
     fn set_ty(&mut self, out: TmplValueRef, ty: TemplateTy) {
-        match self.core.output_mut(out.node, out.output) {
+        match self.core.graph.value_kind_mut(out.0) {
             TmplValue::Value { ty: t, .. } => *t = ty,
             TmplValue::Memory { .. } => {}
             TmplValue::ValueCapture(_) => self.core.reject(
@@ -233,8 +247,8 @@ mod tests {
         assert!(t.root().is_ok());
     }
 
-    /// The first refusal is the one reported, ahead of a later one and of the
-    /// cycle it sits in.
+    /// The first refusal is the one reported, ahead of a later wiring
+    /// refusal and a later explicit one.
     #[test]
     fn the_first_template_refusal_wins() {
         let mut b = TemplateBuilder::new();
