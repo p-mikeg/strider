@@ -41,6 +41,7 @@ impl<P: MatchPat> MatchPat for Captured<P> {}
 /// wrapped: over a composite the discarded operands would vanish from the RHS
 /// in silence, so `template::int_add(..).capture(c)` is a compile error.
 impl crate::TemplatePat for Captured<crate::typed::wildcards::Var> {}
+impl<P> crate::template::template_pat::sealed::Sealed for Captured<P> {}
 
 /// Fluent combinator surface available on every [`MatchPat`].
 pub trait CaptureExt: MatchPat + 'static {
@@ -63,7 +64,9 @@ pub trait CaptureExt: MatchPat + 'static {
             Box::new(move |m, _node, ty, bnd| ty.is_some_and(|ty| f(m, ty, bnd)));
         MatchOnly(self.into_expr().deco(Deco::Guard(guard)))
     }
-    /// Gate on a predicate running before inputs are descended into.
+    /// Gate on a predicate running before inputs are descended into. It may
+    /// run more than once per candidate, and on nodes the full match rejects;
+    /// see [`NodePredicate`](crate::matcher::NodePredicate).
     fn filter<F>(self, f: F) -> MatchOnly
     where
         F: Fn(&crate::Matcher, strider_ir::node::NodeId) -> bool + 'static + Send,
