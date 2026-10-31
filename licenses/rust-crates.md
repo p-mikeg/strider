@@ -17,8 +17,8 @@ closure of `strider-py` and concatenating each crate's `LICENSE*` files.
 - bitflags 2.11.1 -- MIT OR Apache-2.0
 - cfg-if 1.0.4 -- MIT OR Apache-2.0
 - convert_case 0.10.0 -- MIT
-- cranelift-bitset 0.112.3 -- Apache-2.0 WITH LLVM-exception
-- cranelift-entity 0.112.3 -- Apache-2.0 WITH LLVM-exception
+- cranelift-bitset 0.128.4 -- Apache-2.0 WITH LLVM-exception
+- cranelift-entity 0.128.4 -- Apache-2.0 WITH LLVM-exception
 - crc32fast 1.5.0 -- MIT OR Apache-2.0
 - defer-rs 0.1.0 -- MIT OR Apache-2.0
 - defer-rs-impl 0.1.0 -- MIT OR Apache-2.0
@@ -77,7 +77,7 @@ The crate declares the licence below but its published archive
 carries no licence file; the text of that licence is reproduced in this
 bundle under another crate.
 
-- cranelift-bitset 0.112.3 -- Apache-2.0 WITH LLVM-exception
+- cranelift-bitset 0.128.4 -- Apache-2.0 WITH LLVM-exception
 - rawenum 0.1.1 -- Apache-2.0
 - ruzstd 0.8.2 -- MIT
 
@@ -875,7 +875,7 @@ DEALINGS IN THE SOFTWARE.
 
 Shipped by:
 
-- cranelift-entity 0.112.3 (`LICENSE`)
+- cranelift-entity 0.128.4 (`LICENSE`)
 - target-lexicon 0.12.16 (`LICENSE`)
 
 ```

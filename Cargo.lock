@@ -192,15 +192,15 @@ dependencies = [
 
 [[package]]
 name = "cranelift-bitset"
-version = "0.112.3"
+version = "0.128.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38da1eb6f7d8cdfa92f05acfae63c9a1d7a337e49ce7a2d0769c7fa03a2613a5"
+checksum = "18391da761cf362a06def7a7cf11474d79e55801dd34c2e9ba105b33dc0aef88"
 
 [[package]]
 name = "cranelift-entity"
-version = "0.112.3"
+version = "0.128.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70b85ed43567e13782cd1b25baf42a8167ee57169a60dfd3d7307c6ca3839da0"
+checksum = "8334c99a7e86060c24028732efd23bac84585770dcb752329c69f135d64f2fc1"
 dependencies = [
  "cranelift-bitset",
 ]
@@ -389,7 +389,6 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 name = "entity-utils"
 version = "0.2.0"
 dependencies = [
- "cranelift-bitset",
  "cranelift-entity",
  "rustc-hash 2.1.2",
 ]
@@ -1455,7 +1454,8 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "criterion",
- "itertools 0.13.0",
+ "either",
+ "petgraph",
  "rsleigh",
  "rustc-hash 2.1.2",
  "strider-graph",

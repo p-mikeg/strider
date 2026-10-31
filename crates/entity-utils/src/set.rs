@@ -1,115 +1,59 @@
-use core::marker::PhantomData;
+use core::fmt;
+use core::ops::{Deref, DerefMut};
 
-use cranelift_bitset::CompoundBitSet;
-use cranelift_entity::EntityRef;
+use cranelift_entity::{EntityRef, EntitySet, SetIter};
 
-/// O(1) membership and insert, keyed on the entity's integer index.
-/// [`remove`](DenseEntitySet::remove), [`len`](DenseEntitySet::len),
-/// [`is_empty`](DenseEntitySet::is_empty) and [`iter`](DenseEntitySet::iter)
-/// are not.
-#[derive(Clone, Debug)]
-pub struct DenseEntitySet<E> {
-    bitset: CompoundBitSet,
-    _marker: PhantomData<E>,
-}
+/// [`EntitySet`] plus `FromIterator` and `IntoIterator for &`. O(1) `contains`
+/// and `insert`; `is_empty` and `iter` are O(max_index / 64), and so is
+/// `remove` of the current maximum.
+#[derive(Clone)]
+pub struct DenseEntitySet<E: EntityRef>(EntitySet<E>);
 
 impl<E: EntityRef> DenseEntitySet<E> {
     pub fn new() -> Self {
         Self::default()
     }
+}
 
-    fn with_capacity(capacity: usize) -> Self {
-        Self {
-            bitset: CompoundBitSet::with_capacity(capacity),
-            _marker: PhantomData,
-        }
-    }
-
-    /// NOT O(1): popcounts the backing words rather than reading a cached
-    /// length, so O(max_index / 64).
-    pub fn len(&self) -> usize {
-        self.bitset.len()
-    }
-
-    /// O(max_index / 64), same as [`len`](DenseEntitySet::len).
-    pub fn is_empty(&self) -> bool {
-        self.bitset.is_empty()
-    }
-
-    pub fn contains(&self, entity: E) -> bool {
-        self.bitset.contains(entity.index())
-    }
-
-    /// `true` when newly inserted, matching `HashSet::insert`.
-    pub fn insert(&mut self, entity: E) -> bool {
-        self.bitset.insert(entity.index())
-    }
-
-    /// `true` when it was present. NOT O(1) when `entity` is the set's current maximum: the backing
-    /// bitset then rescans down for the new maximum, so O(max_index / 64).
-    /// A path-stack that empties repeatedly wants a
-    /// `SecondaryMap<_, bool>` instead.
-    pub fn remove(&mut self, entity: E) -> bool {
-        self.bitset.remove(entity.index())
-    }
-
-    pub fn clear(&mut self) {
-        self.bitset.clear();
-    }
-
-    /// Ascending entity-index order. A full pass steps through every backing
-    /// word, so it is O(max_index / 64 + len).
-    pub fn iter(&self) -> Iter<'_, E> {
-        Iter::<E> {
-            inner: self.bitset.iter(),
-            _marker: PhantomData,
-        }
+impl<E: EntityRef> Default for DenseEntitySet<E> {
+    fn default() -> Self {
+        Self(EntitySet::new())
     }
 }
 
-pub struct Iter<'a, E> {
-    inner: cranelift_bitset::compound::Iter<'a>,
-    _marker: PhantomData<E>,
-}
+impl<E: EntityRef> Deref for DenseEntitySet<E> {
+    type Target = EntitySet<E>;
 
-impl<E: EntityRef> Iterator for Iter<'_, E> {
-    type Item = E;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.inner.next().map(E::new)
+    fn deref(&self) -> &EntitySet<E> {
+        &self.0
     }
 }
 
-// The inner cranelift iterator keeps yielding `None` once exhausted, so the
-// wrapper is fused for free.
-impl<E: EntityRef> core::iter::FusedIterator for Iter<'_, E> {}
+impl<E: EntityRef> DerefMut for DenseEntitySet<E> {
+    fn deref_mut(&mut self) -> &mut EntitySet<E> {
+        &mut self.0
+    }
+}
+
+impl<E: EntityRef + fmt::Debug> fmt::Debug for DenseEntitySet<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_set().entries(self.iter()).finish()
+    }
+}
 
 impl<'a, E: EntityRef> IntoIterator for &'a DenseEntitySet<E> {
     type Item = E;
-    type IntoIter = Iter<'a, E>;
+    type IntoIter = SetIter<'a, E>;
 
-    fn into_iter(self) -> Self::IntoIter {
+    fn into_iter(self) -> SetIter<'a, E> {
         self.iter()
-    }
-}
-
-impl<E> Default for DenseEntitySet<E> {
-    fn default() -> Self {
-        Self {
-            bitset: CompoundBitSet::default(),
-            _marker: PhantomData,
-        }
     }
 }
 
 impl<E: EntityRef> FromIterator<E> for DenseEntitySet<E> {
     fn from_iter<T: IntoIterator<Item = E>>(iter: T) -> Self {
-        let iter = iter.into_iter();
-        let (lower, upper) = iter.size_hint();
-        let mut set = Self::with_capacity(upper.unwrap_or(lower));
-        for entity in iter {
-            set.insert(entity);
-        }
+        let mut set = Self::new();
+        set.extend(iter);
         set
     }
 }
@@ -131,14 +75,6 @@ mod tests {
 
         let s: DenseEntitySet<Id> = DenseEntitySet::default();
         assert!(!s.contains(Id(0)));
-    }
-
-    #[test]
-    fn with_capacity_zero_is_valid() {
-        let mut s: DenseEntitySet<Id> = DenseEntitySet::with_capacity(0);
-        assert!(s.iter().next().is_none());
-        s.insert(Id(0));
-        assert!(s.contains(Id(0)));
     }
 
     #[test]
@@ -184,24 +120,6 @@ mod tests {
     }
 
     #[test]
-    fn len_and_is_empty_track_membership() {
-        let mut s: DenseEntitySet<Id> = DenseEntitySet::new();
-        assert_eq!(s.len(), 0);
-        assert!(s.is_empty());
-        s.insert(Id(1));
-        s.insert(Id(2));
-        assert_eq!(s.len(), 2);
-        assert!(!s.is_empty());
-        s.insert(Id(1));
-        assert_eq!(s.len(), 2);
-        s.remove(Id(1));
-        assert_eq!(s.len(), 1);
-        s.remove(Id(2));
-        assert_eq!(s.len(), 0);
-        assert!(s.is_empty());
-    }
-
-    #[test]
     fn into_iter_for_ref_yields_same_as_iter() {
         let s: DenseEntitySet<Id> = [Id(3), Id(1), Id(4)].into_iter().collect();
         let by_iter: Vec<_> = s.iter().collect();
@@ -212,14 +130,6 @@ mod tests {
             by_for_sugar.push(id);
         }
         assert_eq!(by_iter, by_for_sugar);
-    }
-
-    #[test]
-    fn iter_is_fused() {
-        fn assert_fused<I: core::iter::FusedIterator>(_: &I) {}
-        let s: DenseEntitySet<Id> = core::iter::once(Id(1)).collect();
-        let it = s.iter();
-        assert_fused(&it);
     }
 
     #[test]
@@ -234,5 +144,11 @@ mod tests {
             "repeat insert must report 'already present'"
         );
         assert!(s.insert(Id(43)), "different entity is newly inserted");
+    }
+
+    #[test]
+    fn debug_lists_members_only() {
+        let s: DenseEntitySet<Id> = core::iter::once(Id(2)).collect();
+        assert_eq!(format!("{s:?}"), "{Id(2)}");
     }
 }

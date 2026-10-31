@@ -41,6 +41,7 @@ impl IntoExpr for Var {
 
 impl MatchPat for Var {}
 impl TemplatePat for Var {}
+impl crate::template::template_pat::sealed::Sealed for Var {}
 impl crate::node_builders::MemPat for Var {}
 
 /// Match any node and bind its output to `c`.

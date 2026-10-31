@@ -852,8 +852,15 @@ def _serve(
             srv.server_close()
             raise
     how = f"strider.explore.shutdown({bound_port})" if background else "Ctrl-C"
-    print(f"strider explorer -> {_url(host, bound_port)}  ({how} to stop)")
-    print("  drag or arrows pan, ctrl+wheel or +/- zooms, f fits, 0 is 100%")
+    try:
+        print(f"strider explorer -> {_url(host, bound_port)}  ({how} to stop)")
+        print("  drag or arrows pan, ctrl+wheel or +/- zooms, f fits, 0 is 100%")
+    except BaseException:
+        # A foreground server never reaches its loop, which is what drains it.
+        if not background:
+            _RUNNING.pop(bound_port, None)
+            srv.server_close()
+        raise
     if not background:
         run()
     return bound_port

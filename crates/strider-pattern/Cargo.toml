@@ -19,7 +19,8 @@ strider-graph = { workspace = true }
 rsleigh = { workspace = true }
 vn-container = { workspace = true }
 anyhow = { workspace = true }
-itertools = { workspace = true, features = ["use_alloc"] }
+either = { workspace = true }
+petgraph = { workspace = true }
 rustc-hash.workspace = true
 
 [dev-dependencies]
