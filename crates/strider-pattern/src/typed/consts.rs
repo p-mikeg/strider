@@ -471,6 +471,7 @@ impl IntoExpr for ConstWith {
 }
 
 impl TemplatePat for ConstWith {}
+impl crate::template::template_pat::sealed::Sealed for ConstWith {}
 
 /// Types the wrapped node's value output to the width of a bound LHS capture,
 /// for when an interior node's width comes from a captured operand the rewrite
@@ -485,6 +486,7 @@ impl IntoExpr for CaptureTyped {
 }
 
 impl TemplatePat for CaptureTyped {}
+impl crate::template::template_pat::sealed::Sealed for CaptureTyped {}
 
 pub fn capture_typed<P: TemplatePat + 'static>(cap: crate::Capture, inner: P) -> CaptureTyped {
     CaptureTyped(inner.into_expr().capture_typed(cap))

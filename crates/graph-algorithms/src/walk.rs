@@ -13,7 +13,7 @@ pub enum WalkPhase {
 }
 
 pub trait GraphRef {
-    type NodeId: Copy;
+    type NodeId: EntityRef;
 
     /// Calls `f` once per successor of `node`, in the order the walks push
     /// them. Implement it with a `for` loop: `for_each` over an adapter chain
@@ -39,10 +39,7 @@ pub struct PreOrder<G: GraphRef> {
     stack: Vec<G::NodeId>,
 }
 
-impl<G: GraphRef> PreOrder<G>
-where
-    G::NodeId: EntityRef,
-{
+impl<G: GraphRef> PreOrder<G> {
     /// Roots pop last-first, so a root no later root repeats or reaches is
     /// visited after every later root. [`PostOrder::new`] seeds its stack the
     /// same way.
@@ -60,10 +57,7 @@ where
     }
 }
 
-impl<G: GraphRef> Iterator for PreOrder<G>
-where
-    G::NodeId: EntityRef,
-{
+impl<G: GraphRef> Iterator for PreOrder<G> {
     type Item = G::NodeId;
 
     fn next(&mut self) -> Option<G::NodeId> {
@@ -102,10 +96,7 @@ pub struct PostOrder<G: GraphRef> {
     stack: Vec<(WalkPhase, G::NodeId)>,
 }
 
-impl<G: GraphRef> PostOrder<G>
-where
-    G::NodeId: EntityRef,
-{
+impl<G: GraphRef> PostOrder<G> {
     /// Roots go on the stack in source order and pop last-first, so a root no
     /// later root repeats or reaches precedes every later root in any derived
     /// RPO.
@@ -156,10 +147,7 @@ where
     }
 }
 
-impl<G: GraphRef> Iterator for PostOrder<G>
-where
-    G::NodeId: EntityRef,
-{
+impl<G: GraphRef> Iterator for PostOrder<G> {
     type Item = G::NodeId;
 
     fn next(&mut self) -> Option<G::NodeId> {
@@ -178,10 +166,7 @@ where
 pub fn acyclic_postorder<G: GraphRef>(
     graph: G,
     roots: impl IntoIterator<Item = G::NodeId>,
-) -> Result<Vec<G::NodeId>, G::NodeId>
-where
-    G::NodeId: EntityRef,
-{
+) -> Result<Vec<G::NodeId>, G::NodeId> {
     let mut walk = PostOrder::new(&graph, roots);
     // Not a `DenseEntitySet`: dropping its maximum costs O(max_index / 64).
     let mut on_path: SecondaryMap<G::NodeId, bool> = SecondaryMap::new();

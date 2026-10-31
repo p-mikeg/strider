@@ -1,6 +1,5 @@
 //! Capture-to-binding journal backing every pattern match.
 
-use rustc_hash::FxHashMap;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
@@ -25,14 +24,12 @@ pub(crate) enum Binding {
 /// `Capture` to a different value fails the containing match.
 ///
 /// Backtracking is journal-based: a speculative sub-match calls `mark` first
-/// and `restore` on failure, which drops the entry `Vec`'s tail and de-indexes
-/// the rolled-back captures.
+/// and `restore` on failure, which drops the entry `Vec`'s tail. A pattern
+/// binds a handful of captures, so a lookup scans the journal.
 #[derive(Clone, Default)]
 pub struct Bindings {
-    /// In production order.
+    /// In production order, one entry per capture.
     entries: Vec<(Capture, Binding)>,
-    /// Each bound capture to its sole `entries` index.
-    index: FxHashMap<Capture, usize>,
     /// The match's structural footprint: root, interior and captured leaves.
     /// Shares the `entries` journal's mark / restore lifecycle. May hold
     /// duplicates when a DAG sub-pattern matched twice.
@@ -73,9 +70,7 @@ impl Bindings {
 
     /// Idempotent: restoring to an already-current mark is a no-op.
     pub(crate) fn restore(&mut self, mark: BindingsMark) {
-        for (c, _) in self.entries.drain(mark.entries..) {
-            self.index.remove(&c);
-        }
+        self.entries.truncate(mark.entries);
         self.matched.truncate(mark.matched);
     }
 
@@ -91,16 +86,15 @@ impl Bindings {
     /// `true` on a new or idempotent bind, `false` on conflict, which leaves
     /// the existing binding untouched.
     pub(crate) fn bind_capture(&mut self, c: Capture, binding: Binding) -> bool {
-        if let Some(&i) = self.index.get(&c) {
-            return self.entries[i].1 == binding;
+        if let Some(bound) = self.get_binding(c) {
+            return bound == binding;
         }
-        self.index.insert(c, self.entries.len());
         self.entries.push((c, binding));
         true
     }
 
     pub(crate) fn get_binding(&self, c: Capture) -> Option<Binding> {
-        self.index.get(&c).map(|&i| self.entries[i].1)
+        self.entries.iter().find(|(e, _)| *e == c).map(|&(_, b)| b)
     }
 
     /// `None` for an unbound capture or one bound to a NODE (`Binding::Node`,
@@ -132,7 +126,7 @@ impl Bindings {
 
     /// Graph-free.
     pub fn is_bound(&self, c: Capture) -> bool {
-        self.index.contains_key(&c)
+        self.get_binding(c).is_some()
     }
 
     /// A `Binding::Value` resolves its owning node via

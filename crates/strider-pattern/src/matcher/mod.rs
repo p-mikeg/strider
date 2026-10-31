@@ -19,7 +19,8 @@ pub use vertex::{KindSpec, NodePredicate, PostMatchFn};
 use std::cell::OnceCell;
 use std::mem::Discriminant;
 
-use itertools::Either;
+use either::Either;
+use petgraph::unionfind::UnionFind;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::NodeId as PatNodeId;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
@@ -73,41 +74,12 @@ fn alternation_kind_discriminants(
 
 pub struct Matcher<'f> {
     pub(crate) function: &'f Function,
-    kind_index: OnceCell<KindIndex>,
-}
-
-/// Reachable nodes bucketed by `NodeKind` discriminant.
-struct KindIndex {
-    by_kind: FxHashMap<Discriminant<NodeKind>, Vec<NodeId>>,
-}
-
-impl KindIndex {
-    fn build(function: &Function) -> Self {
-        let mut by_kind: FxHashMap<Discriminant<NodeKind>, Vec<NodeId>> = FxHashMap::default();
-        for node in function.walk() {
-            let d = std::mem::discriminant(function.node_kind(node));
-            by_kind.entry(d).or_default().push(node);
-        }
-        Self { by_kind }
-    }
-
-    fn nodes_of_kind(&self, d: Discriminant<NodeKind>) -> &[NodeId] {
-        self.by_kind.get(&d).map_or(&[], Vec::as_slice)
-    }
 }
 
 impl<'f> Matcher<'f> {
     /// Pattern validity is checked per query, against the pattern.
     pub fn new(function: &'f Function) -> Self {
-        Self {
-            function,
-            kind_index: OnceCell::new(),
-        }
-    }
-
-    fn kind_index(&self) -> &KindIndex {
-        self.kind_index
-            .get_or_init(|| KindIndex::build(self.function))
+        Self { function }
     }
 
     pub fn function(&self) -> &Function {
@@ -135,13 +107,23 @@ impl<'f> Matcher<'f> {
         &'p self,
         pat: &'p Pattern,
     ) -> anyhow::Result<impl Iterator<Item = Match> + 'p> {
+        self.matches_over(pat, || self.function.walk())
+    }
+
+    /// [`matches`](Self::matches) over the reachable nodes `walk` yields.
+    fn matches_over<'p, I: Iterator<Item = NodeId> + 'p>(
+        &'p self,
+        pat: &'p Pattern,
+        walk: impl Fn() -> I + 'p,
+    ) -> anyhow::Result<impl Iterator<Item = Match> + 'p> {
         let root = pat.root()?;
         // Binding no capture, every configuration shares one signature, so the
         // first to reach the root is the whole answer for that root.
         let first_only = pat.bound_captures().next().is_none();
         let mut scratch = Bindings::default();
         Ok(self
-            .candidates(pat, root)
+            .candidates(pat, root, walk)
+            .filter(move |&n| walk::may_match_at(self, pat, root, n))
             .flat_map(move |node| self.matches_at_node(node, pat, root, first_only, &mut scratch)))
     }
 
@@ -154,28 +136,26 @@ impl<'f> Matcher<'f> {
         Ok(self.matches(pat)?.collect())
     }
 
-    /// The IR nodes to attempt `pat` at: a discriminant-rooted pattern scans
-    /// only its `KindIndex` bucket, an alternation root the union of its arms'
-    /// buckets, a kind-`Any` root the whole reachable graph.
-    fn candidates<'p>(
+    /// The IR nodes to attempt `pat` at, in walk order: a discriminant-rooted
+    /// pattern's kind, an alternation root's arm kinds one walk each, every
+    /// reachable node for a kind-`Any` root.
+    fn candidates<'p, I: Iterator<Item = NodeId> + 'p>(
         &'p self,
         pat: &Pattern,
         root: PatNodeId,
+        walk: impl Fn() -> I + 'p,
     ) -> impl Iterator<Item = NodeId> + 'p {
-        if let Some(d) = root_kind_discriminant(pat, root) {
-            return Either::Left(Either::Left(
-                self.kind_index().nodes_of_kind(d).iter().copied(),
-            ));
-        }
-        match alternation_kind_discriminants(pat, root) {
-            // Deduplicated, so no node is offered twice and no match is
-            // reported twice.
-            Some(ds) => {
-                Either::Left(Either::Right(ds.into_iter().flat_map(move |d| {
-                    self.kind_index().nodes_of_kind(d).iter().copied()
-                })))
-            }
-            None => Either::Right(self.function.walk()),
+        let f = self.function;
+        // Deduplicated, so no node is offered twice and no match is reported
+        // twice.
+        let kinds = root_kind_discriminant(pat, root)
+            .map(|d| vec![d])
+            .or_else(|| alternation_kind_discriminants(pat, root));
+        match kinds {
+            Some(ds) => Either::Left(ds.into_iter().flat_map(move |d| {
+                walk().filter(move |&n| std::mem::discriminant(f.node_kind(n)) == d)
+            })),
+            None => Either::Right(walk()),
         }
     }
 
@@ -202,7 +182,8 @@ impl<'f> Matcher<'f> {
         // different slots, and those are one match, not several. The cost is
         // that two `one_of` arms binding identically but covering different
         // nodes also collapse, and the first listed one's `matched_nodes`
-        // wins; see `alternation::OneOf`.
+        // wins; see `alternation::OneOf`. Filled from the second
+        // configuration on, since most roots have one.
         let mut seen: FxHashSet<Vec<(u32, Binding)>> = FxHashSet::default();
         // Returning `false` (the `find_all` case) rejects a configuration only
         // as a STOPPING POINT (the match is already banked in `hits`), which
@@ -212,7 +193,12 @@ impl<'f> Matcher<'f> {
         walk::anchor(self, pat, root, node, scratch, &mut |b| {
             if first_only {
                 hits.push(Match::new(node, std::mem::take(b), generation));
-            } else if seen.insert(b.binding_signature()) {
+            } else if hits.is_empty() || {
+                if seen.is_empty() {
+                    seen.insert(hits[0].bindings.binding_signature());
+                }
+                seen.insert(b.binding_signature())
+            } {
                 hits.push(Match::new(node, b.clone(), generation));
             }
             first_only
@@ -230,11 +216,9 @@ impl<'f> Matcher<'f> {
     /// If `pat` is not a single-rooted, acyclic graph (see [`Pattern::root`]).
     pub fn match_at(&self, node: NodeId, pat: &Pattern) -> anyhow::Result<Option<Match>> {
         let root = pat.root()?;
-        // Root-kind gate: reject a mismatched candidate before allocating a
-        // `Bindings` per output and walking in. A kind-`Any` root skips it.
-        if let Some(rk) = root_kind_discriminant(pat, root)
-            && std::mem::discriminant(self.function.node_kind(node)) != rk
-        {
+        // Reject a candidate its root kind or an operand rules out before
+        // allocating a `Bindings` per output and walking in.
+        if !walk::may_match_at(self, pat, root, node) {
             return Ok(None);
         }
         Ok(self
@@ -303,9 +287,10 @@ impl<'f> Matcher<'f> {
 
         // One `find_all` result per pattern: a list of INDEPENDENT matches
         // despite the shape, not a joined row.
+        let order: Vec<NodeId> = self.function.walk().collect();
         let per_pat: Vec<Vec<Match>> = pats
             .iter()
-            .map(|p| self.find_all(p))
+            .map(|p| Ok(self.matches_over(p, || order.iter().copied())?.collect()))
             .collect::<anyhow::Result<_>>()?;
         if per_pat.iter().any(|hits| hits.is_empty()) {
             return Ok(Vec::new());
@@ -374,14 +359,7 @@ fn correlate(
     pats: &[&Pattern],
     constraints: &[JoinConstraint],
 ) -> anyhow::Result<FxHashMap<crate::Capture, usize>> {
-    fn find(parent: &mut [usize], mut x: usize) -> usize {
-        while parent[x] != x {
-            parent[x] = parent[parent[x]]; // path halving
-            x = parent[x];
-        }
-        x
-    }
-    let mut parent: Vec<usize> = (0..pats.len()).collect();
+    let mut components = UnionFind::<usize>::new(pats.len());
     let mut cap_owner: FxHashMap<crate::Capture, usize> = FxHashMap::default();
     let mut cap_settled: FxHashMap<crate::Capture, usize> = FxHashMap::default();
     let mut capture_bearing: Vec<usize> = Vec::new();
@@ -391,8 +369,7 @@ fn correlate(
             has_cap = true;
             cap_settled.insert(c, i);
             if let Some(&j) = cap_owner.get(&c) {
-                let (ri, rj) = (find(&mut parent, i), find(&mut parent, j));
-                parent[ri] = rj;
+                components.union(i, j);
             } else {
                 cap_owner.insert(c, i);
             }
@@ -424,15 +401,13 @@ fn correlate(
         let mut owners = caps.into_iter().map(|c| cap_owner[&c]);
         if let Some(first) = owners.next() {
             for j in owners {
-                let (ri, rj) = (find(&mut parent, first), find(&mut parent, j));
-                parent[ri] = rj;
+                components.union(first, j);
             }
         }
     }
     if let Some((&first, rest)) = capture_bearing.split_first() {
-        let root0 = find(&mut parent, first);
         for &i in rest {
-            if find(&mut parent, i) != root0 {
+            if !components.equiv(first, i) {
                 anyhow::bail!(
                     "find_joined_constrained: pattern {i} shares no capture (even transitively) \
                      with the others; a join correlates on shared captures (use a \
