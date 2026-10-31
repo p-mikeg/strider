@@ -30,3 +30,6 @@ mod complex_patterns;
 
 #[path = "pattern_matching/patterns.rs"]
 mod patterns;
+
+#[path = "pattern_matching/raw_slots.rs"]
+mod raw_slots;
