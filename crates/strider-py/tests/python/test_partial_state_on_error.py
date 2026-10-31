@@ -1,8 +1,7 @@
 """A call that raises must not leave half its work behind.
 
-Two shapes of the same bug: a multi-pattern query consumed the patterns it had
-already taken before the bad one, and `add_symbols` committed the entries it
-had already extracted.
+A multi-pattern query leaves its patterns usable after a bad one, and
+`add_symbols` commits none of the entries it had already extracted.
 """
 
 from __future__ import annotations
@@ -23,13 +22,12 @@ def _function():
     ).function
 
 
-def test_a_failed_join_query_leaves_its_other_patterns_usable():
+def test_a_failed_join_query_leaves_its_patterns_usable():
     fn = _function()
-    good, used = p.ret().into_pat(), p.ret().into_pat()
-    fn.find_all(used)  # consumes `used`
-    with pytest.raises(strider.StriderError, match="already consumed"):
-        fn.find_all([good, used])
-    # `good` was taken by the failed call and never queried.
+    good = p.ret().into_pat()
+    with pytest.raises(strider.StriderError):
+        fn.find_all([good, p.int_add(p.store(), 1)])  # type: ignore[arg-type]  # the refusal under test
+    assert fn.find_all(good)
     assert fn.find_all(good)
 
 

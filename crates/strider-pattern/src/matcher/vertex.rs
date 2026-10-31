@@ -67,10 +67,6 @@ pub(crate) struct PatNode {
     /// Run before descending into inputs; all must hold.
     pub(crate) node_predicates: Vec<NodePredicate>,
     pub(crate) post_matches: Vec<PostMatchFn>,
-    /// A `when_match` guard sits in `post_matches`, so retyping this node's
-    /// output to `Control` has to re-run the refusal that guard was admitted
-    /// under.
-    pub(crate) typed_post_match: bool,
     pub(crate) role: Role,
     /// Consumer input slot per input, parallel to the generic graph's input
     /// order. A pattern's inputs are sparse (`call().arg(0, ..)` wires only
@@ -109,7 +105,6 @@ impl PatNode {
             captures: Vec::new(),
             node_predicates: Vec::new(),
             post_matches: Vec::new(),
-            typed_post_match: false,
             role: Role::Operands { ordered: false },
             input_slots: Vec::new(),
         }

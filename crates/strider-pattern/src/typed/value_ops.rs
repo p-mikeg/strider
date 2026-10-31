@@ -13,7 +13,7 @@ use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
-use crate::expr::{Expr, IntoExpr, MatchExpr, TemplateExpr};
+use crate::expr::{Expr, IntoExpr};
 use crate::matcher::KindSpec;
 use crate::matcher::match_pat::MatchPat;
 use crate::template::template_pat::TemplatePat;
@@ -35,12 +35,12 @@ impl<T> IntoExpr for Op<T> {
     }
 }
 
-impl MatchExpr for Op<()> {}
-impl<I: MatchPat> MatchExpr for Op<(I,)> {}
-impl<L: MatchPat, R: MatchPat> MatchExpr for Op<(L, R)> {}
-impl TemplateExpr for Op<()> {}
-impl<I: TemplatePat> TemplateExpr for Op<(I,)> {}
-impl<L: TemplatePat, R: TemplatePat> TemplateExpr for Op<(L, R)> {}
+impl MatchPat for Op<()> {}
+impl<I: MatchPat> MatchPat for Op<(I,)> {}
+impl<L: MatchPat, R: MatchPat> MatchPat for Op<(L, R)> {}
+impl TemplatePat for Op<()> {}
+impl<I: TemplatePat> TemplatePat for Op<(I,)> {}
+impl<L: TemplatePat, R: TemplatePat> TemplatePat for Op<(L, R)> {}
 
 /// A pattern only the match side accepts: a rewrite RHS must build one
 /// concrete shape.
@@ -52,7 +52,7 @@ impl IntoExpr for MatchOnly {
     }
 }
 
-impl MatchExpr for MatchOnly {}
+impl MatchPat for MatchOnly {}
 
 /// Any node of `exemplar`'s kind, whatever its variant, over the operands.
 fn variant<const N: usize>(exemplar: NodeKind, operands: [Expr; N], i1: bool) -> MatchOnly {
@@ -63,31 +63,35 @@ fn variant<const N: usize>(exemplar: NodeKind, operands: [Expr; N], i1: bool) ->
 /// Match any `IntBinaryOp` regardless of variant.
 pub fn any_int_binary<L: MatchPat + 'static, R: MatchPat + 'static>(l: L, r: R) -> MatchOnly {
     let kind = NodeKind::IntBinaryOp(IntBinaryOp::Add);
-    variant(kind, [l.expr(), r.expr()], false)
+    variant(kind, [l.into_expr(), r.into_expr()], false)
 }
 
 /// Match any `IntUnaryOp` regardless of variant.
 pub fn any_int_unary<I: MatchPat + 'static>(inner: I) -> MatchOnly {
-    variant(NodeKind::IntUnaryOp(IntUnaryOp::Neg), [inner.expr()], false)
+    variant(
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
+        [inner.into_expr()],
+        false,
+    )
 }
 
 /// Match any `IntCmpOp` regardless of variant. Output `I1`.
 pub fn any_int_cmp<L: MatchPat + 'static, R: MatchPat + 'static>(l: L, r: R) -> MatchOnly {
     let kind = NodeKind::IntCmpOp(IntCmpOp::Equal);
-    variant(kind, [l.expr(), r.expr()], true)
+    variant(kind, [l.into_expr(), r.into_expr()], true)
 }
 
 /// Match any `FloatBinaryOp` regardless of variant.
 pub fn any_float_binary<L: MatchPat + 'static, R: MatchPat + 'static>(l: L, r: R) -> MatchOnly {
     let kind = NodeKind::FloatBinaryOp(FloatBinaryOp::Add);
-    variant(kind, [l.expr(), r.expr()], false)
+    variant(kind, [l.into_expr(), r.into_expr()], false)
 }
 
 /// Match any `FloatUnaryOp` regardless of variant.
 pub fn any_float_unary<I: MatchPat + 'static>(inner: I) -> MatchOnly {
     variant(
         NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
-        [inner.expr()],
+        [inner.into_expr()],
         false,
     )
 }
@@ -95,18 +99,18 @@ pub fn any_float_unary<I: MatchPat + 'static>(inner: I) -> MatchOnly {
 /// Match any `FloatCmpOp` regardless of variant. Output `I1`.
 pub fn any_float_cmp<L: MatchPat + 'static, R: MatchPat + 'static>(l: L, r: R) -> MatchOnly {
     let kind = NodeKind::FloatCmpOp(FloatCmpOp::Equal);
-    variant(kind, [l.expr(), r.expr()], true)
+    variant(kind, [l.into_expr(), r.into_expr()], true)
 }
 
 /// Match any `IntBinaryOp` at `I1` regardless of variant.
 pub fn any_bool_binary<L: MatchPat + 'static, R: MatchPat + 'static>(l: L, r: R) -> MatchOnly {
     let kind = NodeKind::IntBinaryOp(IntBinaryOp::And);
-    variant(kind, [l.expr(), r.expr()], true)
+    variant(kind, [l.into_expr(), r.into_expr()], true)
 }
 
 /// NaN-aware `bool_or(float_lt(l, r), float_eq(l, r))` at `I1`.
 pub fn float_le<L: MatchPat + 'static, R: MatchPat + 'static>(lhs: L, rhs: R) -> MatchOnly {
-    MatchOnly(Expr::shared(vec![lhs.expr(), rhs.expr()], |v| {
+    MatchOnly(Expr::shared(vec![lhs.into_expr(), rhs.into_expr()], |v| {
         let cmp = |op| NodeKind::FloatCmpOp(op);
         let less = Expr::exact_i1(cmp(FloatCmpOp::Less), [Expr::at(v[0]), Expr::at(v[1])]);
         let equal = Expr::exact_i1(cmp(FloatCmpOp::Equal), [Expr::at(v[0]), Expr::at(v[1])]);
@@ -116,7 +120,7 @@ pub fn float_le<L: MatchPat + 'static, R: MatchPat + 'static>(lhs: L, rhs: R) ->
 
 /// `int_xor(float_eq(x, x), 1):I1`.
 pub fn float_is_nan<I: MatchPat + 'static>(inner: I) -> MatchOnly {
-    MatchOnly(Expr::shared(vec![inner.expr()], |v| {
+    MatchOnly(Expr::shared(vec![inner.into_expr()], |v| {
         let eq = NodeKind::FloatCmpOp(FloatCmpOp::Equal);
         Expr::bool_not(Expr::exact_i1(eq, [Expr::at(v[0]), Expr::at(v[0])]))
     }))
@@ -161,7 +165,7 @@ macro_rules! value_op_factories {
 
         /// Subtraction `lhs - rhs` (the lifter's `Add(lhs, Neg(rhs))` shape).
         pub fn int_sub<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
-            Op::new(Expr::int_sub(<L as $bound>::expr(lhs), <R as $bound>::expr(rhs)))
+            Op::new(Expr::int_sub(lhs.into_expr(), rhs.into_expr()))
         }
 
         un!($bound, int_neg, NodeKind::IntUnaryOp(IntUnaryOp::Neg),
@@ -175,7 +179,7 @@ macro_rules! value_op_factories {
         pub fn int_not<I: $bound + 'static>(inner: I) -> Op<(I,)> {
             let ones = Const::AllOnes.into();
             let xor = NodeKind::IntBinaryOp(IntBinaryOp::Xor);
-            Op::new(Expr::exact(xor, [<I as $bound>::expr(inner), ones]))
+            Op::new(Expr::exact(xor, [inner.into_expr(), ones]))
         }
 
         un!($bound, int_truncate, NodeKind::Truncate,
@@ -197,7 +201,7 @@ macro_rules! value_op_factories {
 
         /// An `Extend(op)` node with the given runtime `ExtendOp`.
         pub fn int_extend<I: $bound + 'static>(op: ExtendOp, inner: I) -> Op<(I,)> {
-            Op::new(Expr::exact(NodeKind::Extend(op), [<I as $bound>::expr(inner)]))
+            Op::new(Expr::exact(NodeKind::Extend(op), [inner.into_expr()]))
         }
 
         bin!($bound, int_eq, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Equal),
@@ -216,21 +220,21 @@ macro_rules! value_op_factories {
         #[doc = concat!($verb, " an unsigned not-equal `lhs != rhs`, i.e. `int_xor(int_eq(l, r), 1):I1`; `.ordered()` pins the `int_eq`.")]
         pub fn int_ne<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
             let eq = NodeKind::IntCmpOp(IntCmpOp::Equal);
-            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            let (l, r) = (lhs.into_expr(), rhs.into_expr());
             Op::new(Expr::negated(Expr::exact_i1(eq, [l, r])))
         }
 
         #[doc = concat!($verb, " an unsigned less-or-equal `lhs <= rhs`, i.e. `int_xor(int_lt(r, l), 1):I1`; `.ordered()` is a no-op, the `int_lt` orders its pair.")]
         pub fn int_le<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
             let lt = NodeKind::IntCmpOp(IntCmpOp::Less);
-            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            let (l, r) = (lhs.into_expr(), rhs.into_expr());
             Op::new(Expr::negated(Expr::exact_i1(lt, [r, l])))
         }
 
         #[doc = concat!($verb, " a signed less-or-equal `(signed)lhs <= (signed)rhs`, i.e. `int_xor(int_slt(r, l), 1):I1`; `.ordered()` is a no-op, the `int_slt` orders its pair.")]
         pub fn int_sle<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
             let slt = NodeKind::IntCmpOp(IntCmpOp::Sless);
-            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            let (l, r) = (lhs.into_expr(), rhs.into_expr());
             Op::new(Expr::negated(Expr::exact_i1(slt, [r, l])))
         }
 
@@ -245,8 +249,8 @@ macro_rules! value_op_factories {
         pub fn float_sub<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
             let neg = NodeKind::FloatUnaryOp(FloatUnaryOp::Neg);
             let add = NodeKind::FloatBinaryOp(FloatBinaryOp::Add);
-            let r = Expr::exact(neg, [<R as $bound>::expr(rhs)]);
-            Op::new(Expr::exact(add, [<L as $bound>::expr(lhs), r]))
+            let r = Expr::exact(neg, [rhs.into_expr()]);
+            Op::new(Expr::exact(add, [lhs.into_expr(), r]))
         }
 
         un!($bound, float_neg, NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
@@ -264,7 +268,7 @@ macro_rules! value_op_factories {
 
         #[doc = concat!($verb, " a float unary op `float_unary(op, x)` of kind `op` only.")]
         pub fn float_unary<I: $bound + 'static>(op: FloatUnaryOp, inner: I) -> Op<(I,)> {
-            Op::new(Expr::exact(NodeKind::FloatUnaryOp(op), [<I as $bound>::expr(inner)]))
+            Op::new(Expr::exact(NodeKind::FloatUnaryOp(op), [inner.into_expr()]))
         }
 
         bin!($bound, float_eq, exact_i1, NodeKind::FloatCmpOp(FloatCmpOp::Equal),
@@ -275,7 +279,7 @@ macro_rules! value_op_factories {
         #[doc = concat!($verb, " a float not-equal `lhs != rhs`, i.e. `int_xor(float_eq(l, r), 1):I1`; `.ordered()` pins the `float_eq`.")]
         pub fn float_ne<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
             let eq = NodeKind::FloatCmpOp(FloatCmpOp::Equal);
-            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            let (l, r) = (lhs.into_expr(), rhs.into_expr());
             Op::new(Expr::negated(Expr::exact_i1(eq, [l, r])))
         }
 
@@ -288,7 +292,7 @@ macro_rules! value_op_factories {
 
         /// Boolean NOT, i.e. `int_xor(operand, IntConst(1)):I1`.
         pub fn bool_not<I: $bound + 'static>(operand: I) -> Op<(I,)> {
-            Op::new(Expr::bool_not(<I as $bound>::expr(operand)))
+            Op::new(Expr::bool_not(operand.into_expr()))
         }
 
         #[doc = concat!($verb, " an integer binary op `int_binary(op, l, r)` of kind `op` only.")]
@@ -297,7 +301,7 @@ macro_rules! value_op_factories {
             lhs: L,
             rhs: R,
         ) -> Op<(L, R)> {
-            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            let (l, r) = (lhs.into_expr(), rhs.into_expr());
             Op::new(Expr::exact(NodeKind::IntBinaryOp(op), [l, r]))
         }
 
@@ -307,7 +311,7 @@ macro_rules! value_op_factories {
             lhs: L,
             rhs: R,
         ) -> Op<(L, R)> {
-            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            let (l, r) = (lhs.into_expr(), rhs.into_expr());
             Op::new(Expr::exact_i1(NodeKind::IntCmpOp(op), [l, r]))
         }
 
@@ -317,7 +321,7 @@ macro_rules! value_op_factories {
             lhs: L,
             rhs: R,
         ) -> Op<(L, R)> {
-            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            let (l, r) = (lhs.into_expr(), rhs.into_expr());
             Op::new(Expr::exact(NodeKind::FloatBinaryOp(op), [l, r]))
         }
 
@@ -327,7 +331,7 @@ macro_rules! value_op_factories {
             lhs: L,
             rhs: R,
         ) -> Op<(L, R)> {
-            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            let (l, r) = (lhs.into_expr(), rhs.into_expr());
             Op::new(Expr::exact_i1(NodeKind::FloatCmpOp(op), [l, r]))
         }
 
@@ -337,7 +341,7 @@ macro_rules! value_op_factories {
             lhs: L,
             rhs: R,
         ) -> Op<(L, R)> {
-            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            let (l, r) = (lhs.into_expr(), rhs.into_expr());
             Op::new(Expr::exact_i1(NodeKind::IntBinaryOp(op), [l, r]))
         }
     };
@@ -348,7 +352,7 @@ macro_rules! bin {
     ($bound:path, $name:ident, $ctor:ident, $kind:expr, $doc:expr) => {
         #[doc = $doc]
         pub fn $name<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
-            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            let (l, r) = (lhs.into_expr(), rhs.into_expr());
             Op::new(Expr::$ctor($kind, [l, r]))
         }
     };
@@ -358,7 +362,7 @@ macro_rules! un {
     ($bound:path, $name:ident, $kind:expr, $doc:expr) => {
         #[doc = $doc]
         pub fn $name<I: $bound + 'static>(inner: I) -> Op<(I,)> {
-            Op::new(Expr::exact($kind, [<I as $bound>::expr(inner)]))
+            Op::new(Expr::exact($kind, [inner.into_expr()]))
         }
     };
 }

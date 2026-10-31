@@ -182,15 +182,6 @@ impl<N: SealNode, V> StagedGraph<N, V> {
         }
     }
 
-    /// In wire order.
-    pub(crate) fn input_producers(&self, node: usize) -> Vec<(usize, usize)> {
-        self.nodes[node]
-            .inputs
-            .iter()
-            .map(|&(_slot, pn, po)| (pn, po))
-            .collect()
-    }
-
     /// Materialises in producer-before-consumer order, bridging each staged
     /// payload via [`SealNode`], paired with the refusal to report: the first
     /// one recorded, else a cycle, which seals to an empty graph.
