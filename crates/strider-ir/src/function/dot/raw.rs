@@ -198,22 +198,18 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
 }
 
 impl Function {
-    /// Graphviz DOT of the graph **exactly as stored**.
+    /// The renderer of the graph **exactly as stored**, in the dark theme.
+    pub fn raw_graph_dot(&self) -> GraphDot<impl GraphDotDumper + '_> {
+        GraphDot::new(RawFunctionDumper::new(self), DotStyle::dark())
+    }
+
+    /// Graphviz DOT of [`Self::raw_graph_dot`].
     ///
     /// # Errors
     ///
     /// Propagates a DOT-emit error from the renderer.
     pub fn raw_dot(&self) -> crate::Result<String> {
-        GraphDot::new(RawFunctionDumper::new(self), DotStyle::dark()).as_dot()
-    }
-
-    /// [`Self::raw_dot`] wrapped in a self-contained HTML page.
-    ///
-    /// # Errors
-    ///
-    /// Propagates a DOT-emit error from the renderer.
-    pub fn raw_html(&self) -> crate::Result<String> {
-        GraphDot::new(RawFunctionDumper::new(self), DotStyle::dark()).as_html_from_dot()
+        self.raw_graph_dot().as_dot()
     }
 
     /// Raw counterpart to the pretty explorer view; needs no Sleigh.

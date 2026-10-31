@@ -74,6 +74,10 @@ class Cfg:
         addresses alone. An address not present in this CFG is skipped rather
         than emitted with empty text. Structural nodes (Entry, InitialMemory,
         InitialVar, Region, phis) carry no fingerprint and give `[]`.
+
+        Raises `StriderError` for a `node` from a function another `Cfg`
+        lifted: a fingerprint is machine addresses, which collide across
+        images.
         """
         ...
     def entry(self) -> int:
