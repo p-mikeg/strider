@@ -6,6 +6,8 @@ That must hold for `==` and for set/dict membership, not only for `hash`.
 
 from __future__ import annotations
 
+import pytest
+
 from strider.pattern import Capture
 
 
@@ -22,3 +24,11 @@ def test_distinct_and_anonymous_captures_are_not_equal():
     assert Capture("x") != Capture("y")
     assert Capture() != Capture(), "fresh anonymous captures are unique"
     assert Capture("x") != Capture()
+
+
+def test_a_capture_defers_to_another_type_and_has_no_order():
+    x = Capture("x")
+    assert x.__eq__("x") is NotImplemented and x.__ne__("x") is NotImplemented
+    assert x != "x" and not (x == "x")
+    with pytest.raises(TypeError):
+        _ = x < Capture("x")  # pyright: ignore[reportOperatorIssue]

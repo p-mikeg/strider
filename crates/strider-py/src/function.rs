@@ -685,8 +685,9 @@ fn run_pattern_query(
     })
 }
 
-/// Dedup key is `(roots, capture-signatures)`, or capture-signatures alone
-/// under `ignore_root`.
+/// Keeps the first of the rows sharing a [`crate::matcher::dedup_key`]: one flat
+/// key per row, each sub-match's root (unless `ignore_root`) then its
+/// length-prefixed `(capture, node)` signature.
 fn dedup_matches(
     py: Python<'_>,
     raw: Vec<Vec<strider_pattern::Match>>,
@@ -694,7 +695,7 @@ fn dedup_matches(
     ignore_root: bool,
 ) -> PyResult<Vec<crate::matcher::PyMatch>> {
     at.read(py, "Match", |function| {
-        let mut seen = std::collections::HashSet::new();
+        let mut seen = rustc_hash::FxHashSet::default();
         raw.into_iter()
             .filter(|inner| seen.insert(crate::matcher::dedup_key(inner, function, ignore_root)))
             .map(|inner| crate::matcher::PyMatch {

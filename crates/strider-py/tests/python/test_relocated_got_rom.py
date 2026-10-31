@@ -139,11 +139,11 @@ def test_the_claim_is_refused_without_relocations(tmp_path):
             apply_relocations=False,
             relocated_got_is_rom=True,
         ),
-        lambda: ext._load_elf_from_segments(_elf_relocs(), False, True),
-        lambda: ext._load_elf_from_sections(_elf_relocs(), False, True),
-        # The constructors default `apply_relocations` to False, so the flag
+        lambda: ext._load_elf(_elf_relocs(), True, False, True),
+        lambda: ext._load_elf(_elf_relocs(), False, False, True),
+        # The constructor defaults `apply_relocations` to False, so the flag
         # alone is the contradiction there.
-        lambda: ext._load_elf_from_segments(_elf_relocs(), relocated_got_is_rom=True),
+        lambda: ext._load_elf(_elf_relocs(), relocated_got_is_rom=True),
     ):
         with pytest.raises(strider.StriderError) as excinfo:
             call()
@@ -176,7 +176,7 @@ def test_the_refusal_comes_before_any_mapping_is_read(tmp_path):
     broken = tmp_path / "broken.elf"
     _image_with_unreadable_code(broken, 0x500000)
     with pytest.raises(strider.StriderError, match="relocated_got_is_rom=True claims"):
-        ext._load_elf_from_segments(str(broken), False, True)
+        ext._load_elf(str(broken), True, False, True)
 
 
 def test_add_elf_refuses_the_claim_before_any_mapping_is_read(tmp_path):

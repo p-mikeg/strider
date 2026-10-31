@@ -244,3 +244,19 @@ def test_node_op_names_the_extension_direction():
         if fn.node(i).kind().startswith("Extend(")
     }
     assert ops == {"SignExtend", "ZeroExtend"}
+
+
+def test_a_node_defers_to_another_type_and_has_no_order():
+    a = _analyze_add()
+    n = a.node(a.node_ids()[0])
+    assert n.__eq__(n.id) is NotImplemented and n.__ne__(n.id) is NotImplemented
+    assert n != n.id
+    with pytest.raises(TypeError):
+        _ = n < n  # pyright: ignore[reportOperatorIssue]
+
+
+def test_the_same_id_in_another_function_is_another_node():
+    a, b = _analyze_add(), _analyze_add()
+    nid = a.node_ids()[0]
+    assert a.node(nid) != b.node(nid)
+    assert len({a.node(nid), b.node(nid), a.node(nid)}) == 2

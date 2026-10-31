@@ -799,53 +799,7 @@ def visualize(
         vis = _CfgVisualizer(cast("Cfg", target), whole, seed)
     else:
         raise TypeError(f"visualize expects a Function or Cfg, got {tn}")
-    if not background:
-        return _serve(vis, host=host, port=port)
-    return _serve_background(vis, host=host, port=port)
-
-
-def _serve_background(visualizer: _Visualizer, *, host: str, port: int) -> int:
-    """Serve on a NON-DAEMON thread and return the bound port.
-
-    Non-daemon so an interpreter exiting with the explorer still up joins the
-    thread rather than aborting inside its Rust frame; `shutdown` is registered
-    to stop it first, so the join completes.
-
-    Binding happens on THIS thread, before the worker starts, so a port already
-    in use raises here instead of vanishing into the thread. Rendering then runs
-    on the worker."""
-    srv = _Server((host, port), visualizer)
-    bound_port: int = srv.server_address[1]
-    url = _url(host, bound_port)
-
-    def run() -> None:
-        try:
-            srv.serve_forever()
-        finally:
-            _RUNNING.pop(bound_port, None)
-            srv.server_close()
-            srv.visualizer = None
-            srv.finished.set()
-
-    srv.worker = threading.Thread(
-        target=run, name=f"strider-explorer-{bound_port}", daemon=False
-    )
-    # Registered HERE, not in the worker: the port is already bound, so a
-    # `shutdown()` racing this return must find the server. It carries its own
-    # `started` guard, which is what keeps `BaseServer.shutdown` off a loop
-    # that never ENTERED: that call blocks until the loop EXITS.
-    _RUNNING[bound_port] = srv
-    try:
-        srv.worker.start()
-    except BaseException:
-        # Nothing will ever drain a registration whose thread never ran, and
-        # the listening socket has no other owner.
-        _RUNNING.pop(bound_port, None)
-        srv.server_close()
-        raise
-    print(f"strider explorer -> {url}  (strider.explore.shutdown({bound_port}) to stop)")
-    print("  drag or arrows pan, ctrl+wheel or +/- zooms, f fits, 0 is 100%")
-    return bound_port
+    return _serve(vis, host=host, port=port, background=background)
 
 
 def _serve(
@@ -853,26 +807,53 @@ def _serve(
     *,
     host: str = "127.0.0.1",
     port: int = 0,
+    background: bool = False,
 ) -> int:
-    """Serve the explorer over any visualizer-shaped object. Prints the URL
-    to stdout for the caller to open. Blocks serving requests until
-    interrupted, then returns the port it had bound."""
+    """Serve the explorer over any visualizer-shaped object, printing the URL
+    for the caller to open, and return the port it bound. Blocks serving
+    requests until interrupted, unless `background`.
+
+    `background` serves on a NON-DAEMON thread, so an interpreter exiting with
+    the explorer still up joins the thread rather than aborting inside its
+    Rust frame; `shutdown` is registered to stop it first, so the join
+    completes. Binding happens on THIS thread, before the worker starts, so a
+    port already in use raises here instead of vanishing into the thread."""
     srv = _Server((host, port), visualizer)
     bound_port: int = srv.server_address[1]
-    url = _url(host, bound_port)
-    print(f"strider explorer -> {url}  (Ctrl-C to stop)")
-    print("  drag or arrows pan, ctrl+wheel or +/- zooms, f fits, 0 is 100%")
+
+    def run() -> None:
+        try:
+            srv.serve_forever()
+        except KeyboardInterrupt:
+            srv.shutdown()
+        finally:
+            _RUNNING.pop(bound_port, None)
+            srv.server_close()
+            # `shutdown` runs on another thread and outlives this frame holding
+            # `srv`, so drop the `Function` / `Cfg` here.
+            srv.visualizer = None
+            srv.finished.set()
+
+    # Registered before the loop starts: the port is already bound, so a
+    # `shutdown()` racing this must find the server. It carries its own
+    # `started` guard, which is what keeps `BaseServer.shutdown` off a loop
+    # that never ENTERED: that call blocks until the loop EXITS.
     _RUNNING[bound_port] = srv
-    try:
-        srv.serve_forever()
-    except KeyboardInterrupt:
-        srv.shutdown()
-    finally:
-        _RUNNING.pop(bound_port, None)
-        srv.server_close()
-        # `shutdown` runs on another thread and outlives this frame holding
-        # `srv`, so drop the `Function` / `Cfg` here, on the thread that
-        # created them.
-        srv.visualizer = None
-        srv.finished.set()
+    if background:
+        srv.worker = threading.Thread(
+            target=run, name=f"strider-explorer-{bound_port}", daemon=False
+        )
+        try:
+            srv.worker.start()
+        except BaseException:
+            # Nothing will ever drain a registration whose thread never ran,
+            # and the listening socket has no other owner.
+            _RUNNING.pop(bound_port, None)
+            srv.server_close()
+            raise
+    how = f"strider.explore.shutdown({bound_port})" if background else "Ctrl-C"
+    print(f"strider explorer -> {_url(host, bound_port)}  ({how} to stop)")
+    print("  drag or arrows pan, ctrl+wheel or +/- zooms, f fits, 0 is 100%")
+    if not background:
+        run()
     return bound_port
