@@ -43,11 +43,9 @@ impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
 /// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
 /// `Function.optimize(pipeline=...)`.  Applying a pipeline copies its
 /// passes, so one pipeline drives any number of calls.
-#[pyclass(name = "OptimizerPipeline", module = "strider.opt")]
+#[pyclass(name = "OptimizerPipeline", module = "strider.opt", frozen)]
 pub struct PyOptimizerPipeline {
-    /// A `Mutex` and not a `RefCell` for pyo3 0.23, which requires a
-    /// `#[pyclass]` to be `Sync`; 0.22 asks only `Send`, which a `RefCell`
-    /// already is.
+    /// A `Mutex` and not a `RefCell`, so the frozen class is `Sync`.
     inner: Mutex<OptimizerPipeline>,
 }
 

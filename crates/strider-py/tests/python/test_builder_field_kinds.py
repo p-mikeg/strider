@@ -63,7 +63,7 @@ def test_scalar_field_narrows_the_match():
     assert widths != {baseline}, "bit_width must not leave every load matching"
 
 
-def test_scalar_inner_field_narrows_the_match():
+def test_a_wrapped_scalar_field_narrows_the_match():
     g = _switch_graph()
     baseline = len(g.find_all(p.load()))
     assert baseline >= 1

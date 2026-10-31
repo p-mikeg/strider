@@ -99,3 +99,19 @@ def test_when_on_a_nested_function_arg_runs():
         "a False predicate on a nested function_arg must reject the site"
     )
     assert seen, "the predicate on a nested function_arg never ran"
+
+
+def test_the_first_raise_ends_the_query_and_is_the_one_raised():
+    """A predicate that raised is not run again, so the exception the query
+    raises is that first one, not a later candidate's."""
+    g = _graph()
+    calls = []
+
+    def boom(m):
+        calls.append(m)
+        raise ValueError(f"raise number {len(calls)}")
+
+    assert len(g.find_all(p.anything())) > 1, "needs more than one candidate"
+    with pytest.raises(ValueError, match=r"^raise number 1$"):
+        g.find_all(p.anything().when(boom))
+    assert len(calls) == 1

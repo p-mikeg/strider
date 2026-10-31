@@ -27,7 +27,7 @@ def _overlapping_r_and_rw(path, blob: bytes) -> None:
 def test_the_read_only_view_bars_a_writable_load_over_a_read_only_one(tmp_path, relocate):
     path = tmp_path / "overlap.elf"
     _overlapping_r_and_rw(path, bytes(0x1000) + b"\x2a" * 0x1000)
-    elf = ext._load_elf_from_segments(str(path), relocate)
+    elf = ext._load_elf(str(path), True, relocate)
     assert elf.ro_reader().read(0x401000, 8) is None
     assert elf.ro_reader().read(0x400ff8, 8) == bytes(8)
 

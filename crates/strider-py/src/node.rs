@@ -1,6 +1,3 @@
-use std::hash::{Hash, Hasher};
-
-use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 
 use strider_ir::IRViewer;
@@ -13,7 +10,12 @@ use crate::function::FunctionAt;
 ///
 /// Every accessor raises `StriderError` once the function has been compacted
 /// or otherwise reshuffled, rather than dereferencing a stale node id.
-#[pyclass(name = "Node", module = "strider.ir", frozen)]
+///
+/// Equal, and hashed alike, when both reference the same function object, the
+/// same id AND the same graph generation: a stale handle raises on every
+/// accessor, so it is not the node a re-fetched handle names.
+#[pyclass(eq, hash, name = "Node", module = "strider.ir", frozen)]
+#[derive(PartialEq, Hash)]
 pub struct PyNode {
     pub(crate) at: FunctionAt,
     pub(crate) id: u32,
@@ -282,28 +284,6 @@ impl PyNode {
             Ok(kind) => format!("Node(#{} {})", self.id, kind),
             Err(_) => format!("Node(#{} stale)", self.id),
         }
-    }
-
-    /// Equal when both reference the same function object, the same id AND the
-    /// same graph generation: a stale handle raises on every accessor, so it is
-    /// not the node a re-fetched handle names.
-    fn __richcmp__(&self, py: Python<'_>, other: &PyNode, op: CompareOp) -> PyResult<PyObject> {
-        let same = self.id == other.id && self.at == other.at;
-        match op {
-            CompareOp::Eq => Ok(same.into_py(py)),
-            CompareOp::Ne => Ok((!same).into_py(py)),
-            // No meaningful ordering on nodes.
-            _ => Ok(py.NotImplemented()),
-        }
-    }
-
-    /// Hashes `(function identity, id, generation)` to stay consistent with
-    /// `__eq__`.
-    fn __hash__(&self) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.at.hash(&mut hasher);
-        self.id.hash(&mut hasher);
-        hasher.finish()
     }
 }
 

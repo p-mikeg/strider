@@ -105,18 +105,9 @@ pub fn float_const(bits: u64) -> PyTemplate {
 value_ops!(PyTemplate, "Build", "");
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
-    m.add_class::<PyTemplate>()?;
-
-    macro_rules! add_fn {
-        ($name:ident) => {
-            m.add_function(wrap_pyfunction!($name, m)?)?;
-        };
-    }
-    add_fn!(var);
-    add_fn!(int_const);
-    add_fn!(bool_const);
-    add_fn!(float_const);
-    add_fn!(capture_typed);
-    register_value_ops(m)?;
-    Ok(())
+    bind!(m;
+        classes [PyTemplate];
+        fns [var, int_const, bool_const, float_const, capture_typed];
+    );
+    register_value_ops(m)
 }

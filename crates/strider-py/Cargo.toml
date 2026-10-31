@@ -29,6 +29,10 @@ doctest = false
 # conflicting `PyMethods` impls.
 pyo3 = { version = "0.22", default-features = false, features = ["abi3-py39", "macros", "multiple-pymethods"] }
 anyhow = { workspace = true }
+# `remaining_stack` alone, the pattern compile's stack budget. Never
+# `maybe_grow`: a Python callback on a switched stack trips CPython's own
+# recursion guard.
+stacker = "0.1.25"
 
 strider-orchestrator = { workspace = true }
 strider-opt = { workspace = true }
