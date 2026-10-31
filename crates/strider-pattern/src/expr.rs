@@ -22,7 +22,9 @@ use crate::template::template_pat::TemplatePat;
 use crate::template::{TemplateBuilder, TmplValueRef};
 use crate::typed::consts::{Const, ConstWith};
 
-/// The flavour of consumer slot an operand is lowered into.
+/// The flavour of consumer slot an operand is lowered into, passed down
+/// through decorations and alternation arms to the output each one nests
+/// through.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Slot {
     Value,
@@ -33,10 +35,10 @@ pub(crate) enum Slot {
     /// A control predecessor: lowered as a value, its output retyped to
     /// `Control`.
     Control,
+    /// A pattern's root: lowered as a value, its output also taking a
+    /// valueless node's memory token.
+    Root,
 }
-
-type Lowering = Box<dyn FnOnce(&mut MatcherBuilder, Slot, bool) -> PatValueRef + Send>;
-type TemplateLowering = Box<dyn FnOnce(&mut TemplateBuilder) -> TmplValueRef + Send>;
 
 /// One pattern, lowered by [`MatchPat`](crate::MatchPat) or
 /// [`TemplatePat`](crate::TemplatePat).
@@ -44,19 +46,11 @@ type TemplateLowering = Box<dyn FnOnce(&mut TemplateBuilder) -> TmplValueRef + S
 pub struct Expr(Inner);
 
 /// A pattern as an [`Expr`]. The side it is valid on is a marker:
-/// [`MatchExpr`] and [`TemplateExpr`].
+/// [`MatchPat`] and [`TemplatePat`].
 #[doc(hidden)]
 pub trait IntoExpr: Sized {
     fn into_expr(self) -> Expr;
 }
-
-/// Valid on the match side, which makes it a [`MatchPat`].
-#[doc(hidden)]
-pub trait MatchExpr: IntoExpr + Send {}
-
-/// Valid on the build side, which makes it a [`TemplatePat`].
-#[doc(hidden)]
-pub trait TemplateExpr: IntoExpr + Send {}
 
 /// The escape hatch for a front end that builds the tree itself. A part met
 /// on a side it is not valid on refuses the pattern.
@@ -66,8 +60,8 @@ impl IntoExpr for Expr {
     }
 }
 
-impl MatchExpr for Expr {}
-impl TemplateExpr for Expr {}
+impl MatchPat for Expr {}
+impl TemplatePat for Expr {}
 impl MemPat for Expr {}
 
 enum Inner {
@@ -90,11 +84,6 @@ enum Inner {
     At(PatValueRef),
     /// A constant computed at rewrite time.
     Built(Box<ConstWith>),
-    /// A pattern defined outside this crate, lowered by its own
-    /// [`MatchPat`](crate::MatchPat) methods.
-    Lowered(Lowering),
-    /// The same for [`TemplatePat`](crate::TemplatePat).
-    LoweredTemplate(TemplateLowering),
 }
 
 /// A node with no operands and one value output.
@@ -243,8 +232,6 @@ const MATCH_SIDE: &str = "a match-only pattern (a wildcard, a predicate, a varia
      op, an alternation or a node builder) sits in a template";
 const BUILD_SIDE: &str = "a build-only pattern (a constant computed at rewrite time, or a \
      `capture_typed`) sits in a match pattern";
-const BRIDGED: &str = "a pattern lowered by its own `MatchPat` / `TemplatePat` methods is used on \
-     the other side; build it with that side's factories";
 
 impl Drop for Expr {
     fn drop(&mut self) {
@@ -290,24 +277,25 @@ impl From<ConstWith> for Expr {
 }
 
 impl Expr {
-    /// `p` lowered through its own `MatchPat` methods.
-    pub(crate) fn lowered<P: MatchPat + 'static>(p: P) -> Self {
-        Self(Inner::Lowered(Box::new(move |b, slot, ordered| {
-            match (slot, ordered) {
-                (Slot::Memory, _) => p.compile_mem(b),
-                (_, false) => p.compile(b),
-                (_, true) => p.compile_ordered(b),
-            }
-        })))
-    }
-
-    /// `p` lowered through its own `TemplatePat` methods.
-    pub(crate) fn lowered_template<P: TemplatePat + 'static>(p: P) -> Self {
-        Self(Inner::LoweredTemplate(Box::new(move |b| p.compile(b))))
-    }
-
     pub(crate) fn deco(self, d: Deco) -> Self {
         Self(Inner::Deco(Box::new((self, d))))
+    }
+
+    /// Runs `f` once the whole sub-pattern matches, whatever its root
+    /// output; `false` fails the match.
+    #[doc(hidden)]
+    pub fn post_match(self, f: PostMatchFn) -> Self {
+        self.deco(Deco::PostMatch(f))
+    }
+
+    /// Seals a node on its own anchor, as its builder's `build` does, and
+    /// anything else as [`MatchPat::into_pattern`].
+    #[doc(hidden)]
+    pub fn build(mut self) -> Pattern {
+        match self.take() {
+            Inner::Node(n) => n.build(),
+            inner => Self(inner).into_pattern(),
+        }
     }
 
     /// Binds the root output to `c`; a leaf takes its first capture itself.
@@ -338,7 +326,9 @@ impl Expr {
     }
 
     /// `ordered` pins the operand order on the node holding the pair the
-    /// pattern was written with.
+    /// pattern was written with. The slot's own retyping lands on the output
+    /// the expression nests through, an alternation's arms each taking it on
+    /// theirs.
     ///
     /// Each arm is its own function: an unoptimised frame holds every arm's
     /// locals, and this one is on the stack once per recursion step.
@@ -348,10 +338,7 @@ impl Expr {
         slot: Slot,
         ordered: bool,
     ) -> PatValueRef {
-        if slot == Slot::Control {
-            return self.lower_control(b, ordered);
-        }
-        match self.take() {
+        let out = match self.take() {
             Inner::Leaf(l) => {
                 let out = l.lower(b);
                 pin(b, out, ordered)
@@ -368,16 +355,14 @@ impl Expr {
             Inner::Alt(arms, first) => lower_alt(b, arms, first, slot, ordered),
             Inner::Shared(operands, body) => lower_shared(b, operands, body, slot),
             Inner::At(v) => v,
-            Inner::Lowered(f) => f(b, slot, ordered),
             Inner::Built(_) => b.refuse(BUILD_SIDE),
-            Inner::LoweredTemplate(_) => b.refuse(BRIDGED),
             Inner::Taken => unreachable!("an Expr lowers once"),
+        };
+        match slot {
+            Slot::Control => b.set_output_control(out),
+            Slot::Root => b.set_token_fallback(out),
+            _ => {}
         }
-    }
-
-    fn lower_control(self, b: &mut MatcherBuilder, ordered: bool) -> PatValueRef {
-        let out = self.lower(b, Slot::Value, ordered);
-        b.set_output_control(out);
         out
     }
 
@@ -411,6 +396,9 @@ impl Expr {
             match &e.0 {
                 Inner::Deco(d) => e = &d.0,
                 Inner::Node(n) => return n.misfit(slot),
+                Inner::Op(_) if slot == Slot::Memory => {
+                    return Some(misfit("producing only a value", "memory"));
+                }
                 _ => return None,
             }
         }
@@ -436,8 +424,6 @@ impl Expr {
                 _ => b.refuse(MATCH_SIDE),
             },
             Inner::Built(c) => c.lower(b),
-            Inner::LoweredTemplate(f) => f(b),
-            Inner::Lowered(_) => b.refuse(BRIDGED),
             Inner::Node(_) | Inner::Alt(..) | Inner::Shared(..) | Inner::At(_) => {
                 b.refuse(MATCH_SIDE)
             }
@@ -519,7 +505,7 @@ fn lower_deco(
     let (slot, ordered) = match d {
         Deco::Ordered if slot == Slot::Memory => (slot, false),
         Deco::Ordered => (slot, true),
-        Deco::AsValue => (Slot::Value, ordered),
+        Deco::AsValue if slot == Slot::Memory => (Slot::Value, ordered),
         _ => (slot, ordered),
     };
     if !b.core.enter_nesting(false) {
@@ -541,7 +527,11 @@ fn lower_deco(
 }
 
 /// Kept out of [`lower_deco`]'s frame, which is on the stack once per link.
+/// A control slot retypes `out` first, so a typed guard sees it untyped.
 fn annotate(b: &mut MatcherBuilder, out: PatValueRef, d: Deco, slot: Slot) -> PatValueRef {
+    if slot == Slot::Control {
+        b.set_output_control(out);
+    }
     match d {
         Deco::Capture(c) => b.capture_output(out, c),
         Deco::Filter(f) => b.set_node_predicate(out, f),
@@ -732,27 +722,27 @@ impl Node {
 
     /// Wires `p` into value input `slot`.
     pub(crate) fn input<P: MatchPat + 'static>(self, slot: usize, p: P) -> Self {
-        self.wire(InputSlot::At(slot), Slot::Value, p.expr())
+        self.wire(InputSlot::At(slot), Slot::Value, p.into_expr())
     }
 
     /// Wires `p` into raw input `slot`, whatever edge it carries.
     pub(crate) fn raw_input<P: MatchPat + 'static>(self, slot: usize, p: P) -> Self {
-        self.wire(InputSlot::At(slot), Slot::Raw, p.expr())
+        self.wire(InputSlot::At(slot), Slot::Raw, p.into_expr())
     }
 
     /// Existential: matches *some* input of the node rather than a fixed slot.
     pub(crate) fn input_any<P: MatchPat + 'static>(self, p: P) -> Self {
-        self.wire(InputSlot::Any, Slot::Raw, p.expr())
+        self.wire(InputSlot::Any, Slot::Raw, p.into_expr())
     }
 
     /// The operand's root output is a control edge.
     pub(crate) fn input_control<P: MatchPat + 'static>(self, slot: usize, p: P) -> Self {
-        self.wire(InputSlot::At(slot), Slot::Control, p.expr())
+        self.wire(InputSlot::At(slot), Slot::Control, p.into_expr())
     }
 
     /// The operand's memory-token output feeds the slot.
     pub(crate) fn input_mem<M: MemPat + 'static>(self, slot: usize, p: M) -> Self {
-        self.wire(InputSlot::At(slot), Slot::Memory, p.expr())
+        self.wire(InputSlot::At(slot), Slot::Memory, p.into_expr())
     }
 
     /// The predicate short-circuits before child recursion. Composes with one
@@ -819,7 +809,9 @@ impl Node {
     /// The anchor a `slot` consumer nests through.
     fn anchor_for(&self, slot: Slot) -> AnchorKind {
         match (slot, self.value_anchor) {
-            (Slot::Value | Slot::Raw | Slot::Control, Some(at)) => AnchorKind::Value(at),
+            (Slot::Value | Slot::Raw | Slot::Control | Slot::Root, Some(at)) => {
+                AnchorKind::Value(at)
+            }
             _ => self.anchor,
         }
     }
@@ -840,11 +832,12 @@ impl Node {
             (Slot::Value, AnchorKind::Control(_)) => ("producing only a control edge", "value"),
             (Slot::Value, AnchorKind::None) => ("with no output to nest through", "value"),
             (Slot::Control, AnchorKind::None) if outputless => ("with no output at all", "control"),
+            (Slot::Memory, AnchorKind::Value(_) | AnchorKind::Control(_) | AnchorKind::None) => {
+                ("with no memory token", "memory")
+            }
             _ => return None,
         };
-        Some(format!(
-            "an operand {what} sits in a {name} slot, which it can never match"
-        ))
+        Some(misfit(what, name))
     }
 
     /// Seals the node, anchored on its own anchor.
@@ -938,6 +931,10 @@ impl Node {
             }
         }
     }
+}
+
+fn misfit(what: &str, name: &str) -> String {
+    format!("an operand {what} sits in a {name} slot, which it can never match")
 }
 
 /// Sibling-output vertices on `node`: at a pinned slot, or enumerated over
@@ -1133,6 +1130,32 @@ mod tests {
             matcher.find_all(&guarded).unwrap().is_empty(),
             "a rejecting node predicate must still run on a node-rooted pattern"
         );
+    }
+
+    /// A control slot and a root reach an alternation's arms through
+    /// `inputs_of_width`, which constrains the node it wraps.
+    #[test]
+    fn a_slot_reaches_the_arms_under_inputs_of_width() {
+        use crate::node_builders::staged_shape;
+        use crate::{anything, call, inputs_of_width, one_of, store, var};
+        let arms = |shape: String| -> Vec<String> {
+            shape
+                .lines()
+                .filter(|l| l.contains("out v"))
+                .map(str::to_owned)
+                .collect()
+        };
+        let ctrl = call()
+            .ctrl(inputs_of_width(8, one_of![call(), store()]))
+            .build();
+        let ctrl = arms(staged_shape(&ctrl));
+        assert!(
+            ctrl[..2].iter().all(|l| l.contains(" Control ")),
+            "{ctrl:?}"
+        );
+        let root = inputs_of_width(8, one_of![var(crate::Capture::new()), anything()]);
+        let root = arms(staged_shape(&root.into_pattern()));
+        assert!(root[..2].iter().all(|l| l.ends_with("token=1")), "{root:?}");
     }
 
     /// `AnchorKind::Control` is the shape `entry()` and `region()` lower to.

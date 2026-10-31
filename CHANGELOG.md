@@ -4,6 +4,27 @@
 
 ### Breaking, Python
 
+- A `one_of` / `first_of` arm nests through the edge the alternation's slot
+  takes, as Rust's does, so `one_of([x])` answers what `x` does in every
+  slot. This is a silent change of answer, in the raw slots above all, which
+  take any edge: `region().any_input(one_of([call()]))`,
+  `load().input(0, one_of([call()]))`, `call().input(0, one_of([call()]))`,
+  `ret().any_input(one_of([call_other()]))` and
+  `call_other().arg(i, one_of([call()]))` bound a call's control or memory
+  edge through an any-kind value anchor and now match what `call()` does
+  there, nothing; `store().mem(one_of([call().res()]))` and
+  `load().mem(one_of([call().res()]))` matched nothing and now match the
+  call's memory token, as `.mem(call().res())` does.
+- `entry()` and `region()` as a value operand (of a value op, or as an
+  `addr`, `data`, `target`, `arg`, `cond`, `selector`, `ret_val` or
+  `phi_input`) raise at query time, as in Rust, where the query returned
+  `[]`: they produce only a control edge. `ValueLike` no longer lists them.
+- A builder's `into_pat()` `Pat` holds the builder by reference rather than
+  a compiled snapshot, so a later edit to the builder changes what an earlier
+  `into_pat()` matches. It answers every query it is passed to, where it was
+  used up by the first, nests as its builder does, and `.capture()` on it is
+  the builder's own. Its operands are still walked at `into_pat()`, so a bad
+  one raises there.
 - `IfPat.true_branch` and `IfPat.false_branch` are gone. Join the edge's
   consumer on the edge capture instead: `if_else().true_branch(region())` is
   `fn.find_all([if_else().capture_true(t), region().any_input(t)])`, and a
@@ -121,16 +142,18 @@
   `data`, `cond`, `selector`, `ret_val`, `phi_input`) a `store` / `mem_phi`,
   an `entry` / `region`, or a `ret` / `if_else` / `switch` /
   `indirect_branch` / `unreachable`; in a `ctrl` slot a `store` / `mem_phi`
-  or a `ret` / `indirect_branch` / `unreachable`. Decorations are looked
+  or a `ret` / `indirect_branch` / `unreachable`; in a memory slot, which
+  the typed builders gate at compile time and the hidden `IntoExpr` does
+  not, a node with no memory token or a value op. Decorations are looked
   through, an alternation's arms are not, and the raw `input`, `any_input`,
-  `phi_token` and `call_other().arg` slots take any edge as before. Python's
-  set differs: it admits `entry` / `region` in a value slot and refuses
-  `.ctrl(if_else())` / `.ctrl(switch())`, which Rust keeps, since an `If`'s or
-  `Switch`'s control output can feed a `ctrl` input.
-- A type implementing both `MatchPat` and `TemplatePat` by hand is lowered by
-  the side whose factory took it: `int_add(t, t)` used as a template, or
-  `template::int_add(t, t)` used as a pattern, is refused through the root,
-  where each op had dispatched to the operand's own trait per side.
+  `phi_token` and `call_other().arg` slots take any edge as before.
+- `MatchPat` and `TemplatePat` are markers over the hidden `IntoExpr`, which
+  a hand-written pattern implements in place of `compile`: what it lowers to
+  is checked on whichever side it is used. `MatchPat::compile_mem`,
+  `MatchPat::compile_ordered` and `TemplatePat::compile` are gone, and
+  `MatchPat::compile` is a provided method. `MatcherBuilder::set_output_control`
+  and `set_token_fallback` set the one vertex they are given, where they
+  recursed into an alternation's arms: a slot reaches each arm as it lowers.
 - The typed pattern builders return two carriers, `Op<T>`, valid on whichever
   sides its operand types `T` are, and `MatchOnly`, valid on the match side
   alone, where each op returned its own struct. The re-exported `AnyBool`,
@@ -397,6 +420,23 @@
 
 ### Changed, Python
 
+- A memory slot (`mem`, `MemPhiPat.phi_input`) takes `anything()`,
+  `var(c)` and a bare `Capture`, as Rust does, which bind the memory token,
+  through a `.capture()` or `.when()` as a `one_of` there was taken. A
+  `.of_width()`, `.value_ty()` or `.bool_valued()` there, which can never
+  hold of a token, raises, over a `one_of` too, where it matched nothing.
+- Every typed builder nests in every match slot but a memory one, as its
+  Rust twin does, so `region().any_input(if_else())` and
+  `load().input(0, store())` match. One that can
+  never match where it sits (a `store()` or `ret()` as a value operand) is
+  refused at query time with Rust's reason.
+- A refusal names the value-op constructor called (`int_add()`,
+  `int_truncate()`) where it named the family (`int_binary()`, `a cast`).
+  The nesting bound counts one level per nested operand, where a nested
+  builder call cost two, and its refusal no longer says so. A rewrite's
+  `find` given something that is no pattern raises a `TypeError` reading
+  `expected a pattern (...)`; `find_all` raises one carrying that text inside
+  pyo3's `PatQuery` extraction message.
 - Under `stack_global_disjoint`, `LoadForward` moves a stack load's memory
   edge past a constant-address store, and a constant-address (GOT) load's
   past a stack store. It moves a load's edge past a store through another
@@ -684,6 +724,10 @@
 
 ### Fixed
 
+- Python: `Function.rewrite` and `rewrite_all` no longer use up an
+  `into_pat()` `find` pattern when the rule itself is refused (an RHS naming
+  a capture the LHS never binds), nor `rewrite_all` the first pair's when a
+  later pair is refused.
 - Rust: `instantiate` refuses a template node declaring two outputs at one
   slot, as it refuses two inputs at one slot. The later output silently
   replaced the earlier one.

@@ -1,10 +1,5 @@
-"""A control / variadic `Pat` is consumed by the query that runs, not by one
-that raised before running.
-
-`into_pat()` bakes a one-shot `Pattern`; a call that takes it and then refuses
-the arguments has to put it back, or the caller is told their pattern was
-already used by a query that never happened.
-"""
+"""An `into_pat()` `Pat` stays usable after a call that refused its
+arguments."""
 
 import pytest
 

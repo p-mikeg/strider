@@ -8,7 +8,7 @@
 //! yields a match. Captures under an arm that did not fire stay unbound, so
 //! `Match::value` / `node` returning `None` tells which arm won.
 
-use crate::expr::{Expr, IntoExpr, MatchExpr};
+use crate::expr::{Expr, IntoExpr};
 use crate::matcher::match_pat::MatchPat;
 use crate::node_builders::MemPat;
 
@@ -32,8 +32,7 @@ pub struct BoxedAlt(Expr);
 ///
 /// The alternation's own output is `Any`, so it nests in a value, memory or
 /// control slot alike; the slot it lands in is passed down to the arms, which
-/// anchor accordingly. A control slot retypes the arm vertices instead, in
-/// [`MatcherBuilder::set_output_control`](crate::matcher::MatcherBuilder::set_output_control).
+/// anchor accordingly.
 pub struct OneOf(Expr);
 
 impl OneOf {
@@ -63,7 +62,7 @@ impl OneOf {
 
 #[doc(hidden)]
 pub fn boxed_alt<P: MatchPat + 'static>(p: P) -> BoxedAlt {
-    BoxedAlt(p.expr())
+    BoxedAlt(p.into_expr())
 }
 
 impl IntoExpr for OneOf {
@@ -72,7 +71,7 @@ impl IntoExpr for OneOf {
     }
 }
 
-impl MatchExpr for OneOf {}
+impl MatchPat for OneOf {}
 impl MemPat for OneOf {}
 
 /// `one_of![a, b, c]`: match if any listed sub-pattern matches, in whatever
