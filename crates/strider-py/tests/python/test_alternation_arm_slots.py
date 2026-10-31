@@ -1,7 +1,7 @@
 """An alternation's arm nests through the edge its slot takes, as in Rust, so
 `one_of([x])` answers what `x` does in every slot, raw ones included: a raw
-input or `any_input` takes any edge, and a `call()` there nests through its
-value output."""
+input or `any_input` takes any edge, and a `call()` there nests through
+whichever of its outputs feeds it."""
 
 import pytest
 
@@ -57,14 +57,21 @@ def test_a_lone_arm_answers_what_the_operand_does(functions, slot, arm):
     assert _count(functions, at(p.first_of([make()]))) == plain
 
 
-def test_the_raw_slot_answers_are_rusts(functions):
-    """The totals the Rust DSL gives for the same patterns: a call's value
-    output is no memory edge and no control edge, and `.res()` keeps its
-    memory token."""
-    assert _count(functions, p.load().input(0, p.one_of([p.call()]))) == 0
-    assert _count(functions, p.region().any_input(p.one_of([p.call()]))) == 0
-    assert _count(functions, p.store().mem(p.one_of([p.call().res()]))) > 0
-    assert _count(functions, p.load().mem(p.one_of([p.call().res()]))) > 0
+@pytest.mark.parametrize("slot, make, want", [
+    (lambda x: p.region().any_input(x), p.call, 2),
+    (lambda x: p.load().input(0, x), p.call, 18),
+    (lambda x: p.call().input(0, x), p.call, 24),
+    (lambda x: p.ret().any_input(x), p.call_other, 1),
+    (lambda x: p.call_other().arg(1, x), p.call, 1),
+    # A memory slot still takes the token alone.
+    (lambda x: p.store().mem(x), lambda: p.call().res(), 28),
+    (lambda x: p.load().mem(x), lambda: p.call().res(), 18),
+])
+def test_a_call_in_a_raw_slot_binds_any_of_its_edges(functions, slot, make, want):
+    """The totals the Rust DSL gives for the same patterns."""
+    got = [_count(functions, slot(w(make())))
+           for w in (lambda x: x, lambda x: p.one_of([x]), lambda x: p.first_of([x]))]
+    assert got == [want] * 3
 
 
 @pytest.mark.parametrize("value_slot", [

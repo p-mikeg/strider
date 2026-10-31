@@ -6,15 +6,20 @@
 
 - A `one_of` / `first_of` arm nests through the edge the alternation's slot
   takes, as Rust's does, so `one_of([x])` answers what `x` does in every
-  slot. This is a silent change of answer, in the raw slots above all, which
-  take any edge: `region().any_input(one_of([call()]))`,
-  `load().input(0, one_of([call()]))`, `call().input(0, one_of([call()]))`,
-  `ret().any_input(one_of([call_other()]))` and
-  `call_other().arg(i, one_of([call()]))` bound a call's control or memory
-  edge through an any-kind value anchor and now match what `call()` does
-  there, nothing; `store().mem(one_of([call().res()]))` and
+  operand slot. In a memory slot this is a silent change of answer:
+  `store().mem(one_of([call().res()]))` and
   `load().mem(one_of([call().res()]))` matched nothing and now match the
   call's memory token, as `.mem(call().res())` does.
+- A `call()` / `call_other()` in a raw slot (`input`, `any_input`,
+  `phi_token`, `call_other().arg`) binds any of its outputs, its control,
+  memory or value edge, as a lone `one_of` arm of one did, where it bound a
+  value output alone. A silent change of answer:
+  `region().any_input(call())`, `load().input(0, call())`,
+  `call().input(0, call())`, `ret().any_input(call_other())` and
+  `call_other().arg(0, call())` matched nothing and now match what their
+  `one_of([...])` forms always have. A `.capture()` on such a call binds the
+  edge it matched, so a rewrite reusing it as a value is refused; `.res()`
+  keeps it to the value output.
 - `entry()` and `region()` as a value operand (of a value op, or as an
   `addr`, `data`, `target`, `arg`, `cond`, `selector`, `ret_val` or
   `phi_input`) raise at query time, as in Rust, where the query returned
@@ -23,8 +28,9 @@
   a compiled snapshot, so a later edit to the builder changes what an earlier
   `into_pat()` matches. It answers every query it is passed to, where it was
   used up by the first, nests as its builder does, and `.capture()` on it is
-  the builder's own. Its operands are still walked at `into_pat()`, so a bad
-  one raises there.
+  the builder's own. A wrong-typed operand, or a wrong part in a memory slot,
+  still raises at `into_pat()`; an operand that can never match its slot
+  (`load(store())`, `call().arg(0, store())`) raises at the first query.
 - `IfPat.true_branch` and `IfPat.false_branch` are gone. Join the edge's
   consumer on the edge capture instead: `if_else().true_branch(region())` is
   `fn.find_all([if_else().capture_true(t), region().any_input(t)])`, and a
@@ -140,6 +146,20 @@
 
 ### Breaking, Rust
 
+- A `call()` / `call_other()` in a raw slot (`input`, `any_input`,
+  `phi_token`, `CallOtherPat::arg`) nests through any of its outputs, its
+  control, memory or value edge, where it nested through a value output
+  alone, so `region().any_input(call())` and `load().input(0, call())` match
+  a call's control and memory edges, as a Python `one_of` arm of one did. A
+  `.capture()` on such a call binds that edge, so a template reusing it as a
+  value is refused; `.res()` keeps the value-only binding. A memory, control
+  or value slot is unchanged.
+- `CfgOptions` gains `local_entries`, a ppc64 global entry's local entry,
+  through which every per-address table answers a local-entry address; a
+  literal naming every field passes `&strider_cfg::NO_LOCAL_ENTRIES` for
+  none.
+- `strider_ir::Function::raw_html` is gone: `raw_graph_dot()` returns the
+  raw graph's DOT, and its `as_html_from_dot()` renders it.
 - An operand that can never match its slot is refused through the pattern's
   `root()`, where the query matched nothing: in a value slot (a value op's
   operand, `float_le` / `float_is_nan` included, `target`, `arg`, `addr`,
@@ -732,10 +752,6 @@
   `ElfLifter.analyze` takes a call there under the `per_address_ccs` entry of
   the lower symbol address. It took one of the two by hash order, which
   differed from one `LifterOptions` to the next.
-- Python: `Function.rewrite` and `rewrite_all` no longer use up an
-  `into_pat()` `find` pattern when the rule itself is refused (an RHS naming
-  a capture the LHS never binds), nor `rewrite_all` the first pair's when a
-  later pair is refused.
 - Rust: `instantiate` refuses a template node declaring two outputs at one
   slot, as it refuses two inputs at one slot. The later output silently
   replaced the earlier one.
