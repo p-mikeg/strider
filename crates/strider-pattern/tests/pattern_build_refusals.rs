@@ -464,31 +464,24 @@ fn a_part_on_the_wrong_side_is_refused() {
     assert!(error_of(&int_add(typed, anything()).into_pattern()).contains("build-only"));
 }
 
-/// Implements `IntoExpr` by hand, both sides taking what it lowers to.
-struct Both(strider_pattern::Capture);
+/// Implements `IntoExpr` by hand, which the match side takes.
+struct Wrapped(strider_pattern::Capture);
 
-impl strider_pattern::IntoExpr for Both {
+impl strider_pattern::IntoExpr for Wrapped {
     fn into_expr(self) -> strider_pattern::Expr {
         var(self.0).into_expr()
     }
 }
 
-impl MatchPat for Both {}
-impl strider_pattern::TemplatePat for Both {}
+impl MatchPat for Wrapped {}
 
 #[test]
-fn a_hand_written_pattern_lowers_on_either_side() {
-    use strider_pattern::{TemplatePat, template};
+fn a_hand_written_pattern_lowers_on_the_match_side() {
+    use strider_pattern::template;
     let c = strider_pattern::Capture::new();
-    for t in [
-        TemplatePat::into_template(int_add(Both(c), Both(c))),
-        TemplatePat::into_template(template::int_add(Both(c), Both(c))),
-    ] {
-        assert!(t.root().is_ok());
-    }
     for p in [
-        int_add(Both(c), Both(c)).into_pattern(),
-        template::int_add(Both(c), Both(c)).into_pattern(),
+        int_add(Wrapped(c), Wrapped(c)).into_pattern(),
+        template::int_add(Wrapped(c), Wrapped(c)).into_pattern(),
     ] {
         assert!(p.root().is_ok());
     }

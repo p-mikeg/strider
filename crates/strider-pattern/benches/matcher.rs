@@ -152,7 +152,7 @@ fn matcher_benches(c: &mut Criterion) {
         });
     });
 
-    // No ShiftLeft node exists in the chain, so only the prefilter runs.
+    // No ShiftLeft node exists in the chain, so no candidate is attempted.
     let no_match_pat = int_shl(int_const(0xDEAD_BEEFu128), int_const(7u128)).into_pattern();
     let hits = Matcher::new(&function).find_all(&no_match_pat).unwrap();
     assert!(hits.is_empty(), "shl pattern must never match");

@@ -36,7 +36,7 @@
 
 use std::cell::{Cell, RefCell};
 
-use itertools::Either;
+use either::Either;
 use rustc_hash::FxHashMap;
 use strider_graph::{NodeId as PatNodeId, ValueId as PatValueId};
 use strider_ir::IRViewer;
@@ -156,6 +156,34 @@ pub(crate) fn anchor(
         }
     }
     false
+}
+
+/// A necessary condition for `pat` to match at `node`: the root's kind spec
+/// admits it and, one level down, each fixed operand's producer passes its pat
+/// node's kind and node predicates at the operand's slot, or at the other one
+/// of an unordered pair. The operands are not checked under a cast mask, and
+/// an alternation root, whose inputs are arms, admits everything.
+pub(crate) fn may_match_at(m: &Matcher, pat: &Pattern, root: PatNodeId, node: NodeId) -> bool {
+    let nd = pat.graph.node_kind(root);
+    let f = m.function();
+    let unordered = nd.role == (Role::Operands { ordered: false });
+    let admits = |op: &crate::matcher::PatNode, slot| {
+        f.nth_input(node, slot)
+            .map(|v| f.producer(v))
+            .is_some_and(|p| {
+                op.kind.matches(f.node_kind(p)) && op.node_predicates.iter().all(|pr| pr(m, p))
+            })
+    };
+    let fixed_ok = |e: &InputEdge| match e.consumer_slot {
+        InputSlot::At(s) => {
+            let op = pat.graph.node_kind(e.producer);
+            admits(op, s) || (unordered && s < COMM_ORDER.len() && admits(op, 1 - s))
+        }
+        InputSlot::Any => true,
+    };
+    nd.is_alternation()
+        || (nd.kind.matches(f.node_kind(node))
+            && (!pat.cast_mask.is_empty() || pat.inputs_of(root).edges.iter().all(fixed_ok)))
 }
 
 /// The root pat node's output vertex carrying the root-level constraints to
@@ -429,9 +457,9 @@ fn bind_sibling_outputs(
     let ov = ctx.pat.graph.value_kind_ref(ov_idx);
     let outs = ctx.function().node_outputs(site.ir_node);
     let slots = if ov.slot_mode == SlotMode::Enumerated {
-        Either::Left(0..outs.len())
+        0..outs.len()
     } else {
-        Either::Right(std::iter::once(ov.slot))
+        ov.slot..ov.slot.saturating_add(1)
     };
     let mut any_slot_present = false;
     for slot in slots {

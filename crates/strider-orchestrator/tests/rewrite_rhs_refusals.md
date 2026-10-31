@@ -496,3 +496,22 @@ rewrite_rule(int_add(var(a), var(b)), anything().into_expr());
 # let (a, b, c) = (Capture::new(), Capture::new(), Capture::new());
 rewrite_rule(int_add(var(a), var(b)), template::int_add(var(a), anything().into_expr()));
 ```
+
+## A wrapper of one's own
+
+No type outside strider-pattern is a template, so a wrapper around the
+hidden `Expr` cannot reach `rewrite_rule` either:
+
+```rust,compile_fail,E0277
+# use strider_orchestrator::opt::rewrite_rule;
+# use strider_pattern::*;
+struct Wrapper(Capture);
+impl IntoExpr for Wrapper {
+    fn into_expr(self) -> Expr {
+        anything().capture(self.0).into_expr()
+    }
+}
+impl TemplatePat for Wrapper {}
+# let (a, b) = (Capture::new(), Capture::new());
+rewrite_rule(int_add(var(a), var(b)), Wrapper(a));
+```
