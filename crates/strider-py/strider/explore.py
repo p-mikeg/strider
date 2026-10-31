@@ -24,6 +24,7 @@ import inspect
 import io
 import ipaddress
 import json
+import operator
 import pathlib
 import socket
 import socketserver
@@ -768,8 +769,8 @@ def visualize(
 
     The neighborhood knobs (depth, hub cap, max nodes) open uncapped, and are
     set from the page; 0 means no limit on each. `depth=None` keeps that, while
-    a number seeds the toolbar's depth control instead. A negative `depth`
-    raises `ValueError`.
+    an integer seeds the toolbar's depth control instead. A negative `depth`,
+    or one that is not an integer (a `bool`, a `float`), raises `ValueError`.
 
     `background=True` serves on a thread instead and returns the port straight
     away, so the calling thread keeps querying while the browser is open --
@@ -779,9 +780,17 @@ def visualize(
 
     Either way a render reads the arch's name table, not a decoder, so the
     server renders while this thread keeps analysing."""
-    if depth is not None and depth < 0:
-        # The control clamps to its min of 0, and 0 is the uncapped sentinel.
-        raise ValueError(f"depth must be >= 0, got {depth}")
+    if depth is not None:
+        try:
+            # `bool` is an `int` to `operator.index`, but not a depth.
+            if isinstance(depth, bool):
+                raise TypeError
+            depth = operator.index(depth)
+        except TypeError:
+            raise ValueError(f"depth: {str(depth)!r} is not an integer") from None
+        if depth < 0:
+            # The control clamps to its min of 0, and 0 is the uncapped sentinel.
+            raise ValueError(f"depth must be >= 0, got {depth}")
     seed = min(depth or 0, cast("int", _KNOB_UI["depth"]["max"]))
     tn = type(target).__name__
     if tn == "Function":

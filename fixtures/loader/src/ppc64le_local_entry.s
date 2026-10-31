@@ -1,6 +1,8 @@
 /* ELFv2 local entries. `stop` and `hook` set up the TOC at their global
  * entry and declare a local one 8 bytes in, so the linker points each
- * same-TOC `bl` at sym + 8. `sink` sets up none, so its two entries meet.
+ * same-TOC `bl` at sym + 8. `hook_alt`, 4 bytes into `hook`, declares its
+ * local entry 4 bytes in, so the two globals share one. `sink` sets up
+ * none, so its two entries meet.
  *
  * `noret_call` calls `stop`, which never returns, only when r3 is nonzero,
  * then joins the other path: the `nop` after the call is reached only by
@@ -22,8 +24,11 @@ stop:
 	.type	hook, @function
 hook:
 0:	addis	2, 12, .TOC.-0b@ha
+	.globl	hook_alt
+hook_alt:
 	addi	2, 2, .TOC.-0b@l
 	.localentry	hook, .-hook
+	.localentry	hook_alt, .-hook_alt
 	blr
 	.size	hook, .-hook
 
@@ -72,3 +77,15 @@ relay:
 	mtlr	0
 	blr
 	.size	relay, .-relay
+
+/* `tail_relay` reads r14 and tail-calls `hook`, which the linker points
+ * at `hook`'s local entry. */
+	.globl	tail_relay
+	.type	tail_relay, @function
+tail_relay:
+0:	addis	2, 12, .TOC.-0b@ha
+	addi	2, 2, .TOC.-0b@l
+	.localentry	tail_relay, .-tail_relay
+	add	4, 4, 14
+	b	hook
+	.size	tail_relay, .-tail_relay

@@ -25,6 +25,13 @@ from .conftest import fixture_path
 X64_RELOCS = lambda: fixture_path("x64", "elf_relocs")  # noqa: E731
 
 
+
+def _rom(lift):
+    """The read-only view an `ElfLifter` folds against."""
+    rom = lift.rom()
+    assert rom is not None
+    return rom
+
 def test_rom_reader_excludes_writable_sections():
     # `dispatch_table` (0x3ea0) is SHF_WRITE, hence forbidden from the
     # rom; `helper_a` (0x1030) is `.text`, hence allowed.
@@ -88,12 +95,12 @@ def test_an_unrelocated_load_never_reads_the_writable_mappings_it_drops(tmp_path
     _image_with_data(path, 0x400000, past_eof=True)
     _image_with_rodata(rodata, 0x600000, 0x401000)
 
-    elf = ext._load_elf_from_segments(str(path), False, False)
+    elf = strider.lift.load_elf(str(path), apply_relocations=False)
     assert elf.read(0x400000, 1) == b"\xc3"
     assert elf.read(0x401000, 1) is None
-    elf.add_elf(str(rodata), False, False)
+    elf.add_elf(str(rodata), apply_relocations=False)
     assert elf.read(0x401000, 1) == b"\x22"
-    assert elf.ro_reader().read(0x401000, 1) is None, (
+    assert _rom(elf).read(0x401000, 1) is None, (
         "the dropped writable mapping still bars its addresses from the ROM"
     )
 
@@ -107,15 +114,15 @@ def test_an_unrelocated_merge_never_reads_the_writable_mappings_it_drops(tmp_pat
     _image_with_data(first, 0x400000, past_eof=False)
     _image_with_data(second, 0x500000, past_eof=True)
     _image_with_rodata(rodata, 0x600000, 0x501000)
-    elf = ext._load_elf_from_segments(str(first), False, False)
+    elf = strider.lift.load_elf(str(first), apply_relocations=False)
 
-    elf.add_elf(str(second), False, False)
+    elf.add_elf(str(second), apply_relocations=False)
     assert elf.read(0x500000, 1) == b"\xc3"
-    elf.add_elf(str(rodata), False, False)
+    elf.add_elf(str(rodata), apply_relocations=False)
     assert elf.read(0x501000, 1) == b"\x22"
-    assert elf.ro_reader().read(0x501000, 1) is None, (
+    assert _rom(elf).read(0x501000, 1) is None, (
         "the dropped writable mapping still bars its addresses from the ROM"
     )
 
     with pytest.raises(strider.StriderError, match="failed to parse ELF"):
-        elf.add_elf(str(second), True, False)
+        elf.add_elf(str(second))

@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
@@ -7,7 +7,6 @@ use pyo3::types::PyDict;
 use crate::call_other_abi::PyCallOtherAbi;
 use crate::cc::PyCallingConvention;
 use crate::opt::PyOptimizerPipeline;
-use crate::reader::{LocalEntries, PyLoadedElf};
 use crate::strider_cls::function_bound;
 use strider_orchestrator::opt::AssumptionOptions;
 
@@ -161,7 +160,7 @@ impl MappingView {
 
 /// CFG-shaping knobs, keyword-only.
 #[pyclass(name = "CfgOptions", module = "strider.cfg")]
-#[derive(Clone, Default)]
+#[derive(Default)]
 pub struct PyCfgOptions {
     /// `function_max_size` and `allow_code_before_start_addr` as one extent.
     pub bound: strider_cfg::FunctionBound,
@@ -175,34 +174,29 @@ pub struct PyCfgOptions {
     /// resolver itself proves only for a bare link register. An empty list
     /// seats nothing, leaving the site an unresolved indirect branch; the
     /// classifier still runs unless `resolve_indirect_branches=False`.
-    ///
-    /// `Arc`: one seeded table is read by every `analyze` through the same
-    /// options object, and a per-call clone of it is O(table).
-    pub known_targets: Arc<HashMap<u64, KnownTarget>>,
+    pub known_targets: HashMap<u64, KnownTarget>,
     /// Classifications for Sleigh user-op names, as
     /// `{name: strider.sleigh.CallOtherAbi}`, winning over the built-in table.
     ///
     /// `Lifter.user_op_names()` lists the names a binary can contain, and
     /// `Lifter.call_other_abi(name)` reads back what strider already makes of
     /// one.
-    pub call_other_abis: Arc<HashMap<String, PyCallOtherAbi>>,
-    /// `no_return_targets` as `strider_cfg` borrows it, shared with every clone.
-    pub(crate) no_return_targets: Arc<NoReturnTargets>,
+    pub call_other_abis: HashMap<String, PyCallOtherAbi>,
+    pub(crate) no_return_targets: rustc_hash::FxHashSet<u64>,
     /// Address ranges `(start, end)` the image marks as data, decoded only for
     /// the entry instruction.
     pub data_ranges: strider_cfg::DataRanges,
-    /// The two tables' Python faces, shared with every clone of this object,
-    /// which shares the tables themselves.
-    known_targets_view: Arc<MappingView>,
-    call_other_abis_view: Arc<MappingView>,
+    /// The three tables' Python faces.
+    known_targets_view: MappingView,
+    call_other_abis_view: MappingView,
+    no_return_targets_view: OnceLock<Py<pyo3::types::PyFrozenSet>>,
     /// `known_targets` in `strider_cfg`'s own form, seated at construction:
     /// every analyse through this object BORROWS it, so neither the seating
-    /// nor a copy is charged per call. Shared with every clone, as the table
-    /// it is built from is.
-    pub(crate) seated: Arc<SeatedTargets>,
+    /// nor a copy is charged per call.
+    pub(crate) seated: SeatedTargets,
     /// `call_other_abis` as `strider_cfg` borrows it, built on first use and
-    /// rebuilt when the arch changes. Shared with every clone, as the table it is built from is.
-    overrides: Arc<std::sync::Mutex<OverridesMemo>>,
+    /// rebuilt when the arch changes.
+    overrides: Mutex<OverridesMemo>,
 }
 
 /// `slot`'s table when it was built for `target`'s preset, else `build`'s,
@@ -232,115 +226,11 @@ struct OverridesMemo {
     builds: usize,
 }
 
-/// The set beside its `frozenset` face, so the two cannot be split apart.
-#[derive(Default)]
-pub(crate) struct NoReturnTargets {
-    pub(crate) set: rustc_hash::FxHashSet<u64>,
-    view: OnceLock<Py<pyo3::types::PyFrozenSet>>,
-    local: LocalEntryMemo<NoReturnTargets>,
-}
-
-impl NoReturnTargets {
-    fn new(set: rustc_hash::FxHashSet<u64>) -> Self {
-        Self {
-            set,
-            ..Self::default()
-        }
-    }
-
-    /// This set plus the local entry of every member `entries` names.
-    fn with_local_entries(self: &Arc<Self>, entries: &Arc<LocalEntries>) -> Arc<Self> {
-        if entries.is_empty() || self.set.is_empty() {
-            return Arc::clone(self);
-        }
-        self.local
-            .get(entries, || {
-                let added: Vec<u64> = local_entries_of(entries, self.set.iter().copied())
-                    .map(|(_, local)| local)
-                    .filter(|local| !self.set.contains(local))
-                    .collect();
-                (!added.is_empty())
-                    .then(|| Self::new(self.set.iter().copied().chain(added).collect()))
-            })
-            .unwrap_or_else(|| Arc::clone(self))
-    }
-}
-
-/// A table widened by each ELF's [`LocalEntries`], one per entries table
-/// still alive, so options shared by several handles rebuild for none of them
-/// and a table rebuilt after `add_elf` is widened afresh. `None` when no key
-/// had a local entry of its own.
-struct LocalEntryMemo<T>(std::sync::Mutex<Vec<Widened<T>>>);
-
-/// The entries a table was widened by, and the widened table. A dead `Weak`
-/// still pins its allocation, so its address names no later table.
-type Widened<T> = (std::sync::Weak<LocalEntries>, Option<Arc<T>>);
-
-impl<T> Default for LocalEntryMemo<T> {
-    fn default() -> Self {
-        Self(std::sync::Mutex::default())
-    }
-}
-
-impl<T> LocalEntryMemo<T> {
-    fn get(
-        &self,
-        entries: &Arc<LocalEntries>,
-        widen: impl FnOnce() -> Option<T>,
-    ) -> Option<Arc<T>> {
-        let mut slots = self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((_, widened)) = slots
-            .iter()
-            .find(|(built_for, _)| std::ptr::eq(built_for.as_ptr(), Arc::as_ptr(entries)))
-        {
-            return widened.clone();
-        }
-        slots.retain(|(built_for, _)| built_for.strong_count() > 0);
-        let widened = widen().map(Arc::new);
-        slots.push((Arc::downgrade(entries), widened.clone()));
-        widened
-    }
-}
-
-/// The `(key, local entry)` pairs `entries` holds for `keys`.
-fn local_entries_of(
-    entries: &LocalEntries,
-    keys: impl Iterator<Item = u64>,
-) -> impl Iterator<Item = (u64, u64)> {
-    keys.flat_map(move |key| {
-        let from = entries.partition_point(|&(address, _)| address < key);
-        entries[from..]
-            .iter()
-            .take_while(move |&&(address, _)| address == key)
-            .copied()
-    })
-}
-
 /// `known_targets` as `strider_cfg::CfgOptions` borrows it.
 pub(crate) type SeatedTargets =
     rustc_hash::FxHashMap<strider_cfg::PcodeInsnAddr, strider_cfg::ResolvedTargets>;
 
 impl PyCfgOptions {
-    /// This object with the mapping-symbol data ranges of `elf`, unless it
-    /// already names some, and with the local entry of every
-    /// `no_return_targets` address `elf` has one for. Shares the ELF's tables
-    /// rather than copying them through Python on every analyse.
-    fn with_elf(&self, elf: &PyLoadedElf) -> PyResult<Self> {
-        let mut out = self.clone();
-        if out.data_ranges.ranges().is_empty() {
-            out.data_ranges = elf.data_ranges()?;
-        }
-        if !self.no_return_targets.set.is_empty() {
-            out.no_return_targets = self
-                .no_return_targets
-                .with_local_entries(&elf.local_entries()?);
-        }
-        Ok(out)
-    }
-
     /// `call_other_abis` checked against and built for `target`, rebuilt only
     /// when the arch changes, not per analyse.
     pub(crate) fn call_other_overrides(
@@ -382,20 +272,17 @@ impl PyCfgOptions {
         let seated = crate::strider_cls::seat_known_targets(&known_targets.0);
         Ok(Self {
             bound,
-            known_targets: Arc::new(known_targets.0),
-            call_other_abis: Arc::new(
-                call_other_abis
-                    .0
-                    .into_iter()
-                    .map(|(name, abi)| (name, abi.0))
-                    .collect(),
-            ),
-            data_ranges: data_ranges_from(data_ranges)?,
-            no_return_targets: Arc::new(NoReturnTargets::new(no_return_targets.0)),
-            known_targets_view: Arc::default(),
-            call_other_abis_view: Arc::default(),
-            seated: Arc::new(seated),
-            overrides: Arc::default(),
+            known_targets: known_targets.0,
+            call_other_abis: call_other_abis
+                .0
+                .into_iter()
+                .map(|(name, abi)| (name, abi.0))
+                .collect(),
+            data_ranges: strider_cfg::DataRanges::try_new(data_ranges)
+                .map_err(pyo3::exceptions::PyValueError::new_err)?,
+            no_return_targets: no_return_targets.0,
+            seated,
+            ..Self::default()
         })
     }
 
@@ -439,14 +326,14 @@ impl PyCfgOptions {
     /// `{dispatch_address: [target_address, ...] | "return"}` mapping.
     #[getter]
     fn known_targets<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        self.known_targets_view.get(py, &*self.known_targets)
+        self.known_targets_view.get(py, &self.known_targets)
     }
 
     /// Classifications for Sleigh user-op names, as a read-only
     /// `{name: strider.sleigh.CallOtherAbi}` mapping.
     #[getter]
     fn call_other_abis<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        self.call_other_abis_view.get(py, &*self.call_other_abis)
+        self.call_other_abis_view.get(py, &self.call_other_abis)
     }
 
     /// Direct-call targets that never return, as a `frozenset`.
@@ -455,44 +342,22 @@ impl PyCfgOptions {
         &self,
         py: Python<'py>,
     ) -> PyResult<Bound<'py, pyo3::types::PyFrozenSet>> {
-        let targets = &*self.no_return_targets;
-        let set = match targets.view.get() {
+        let set = match self.no_return_targets_view.get() {
             Some(set) => set,
             None => {
-                let set = pyo3::types::PyFrozenSet::new_bound(py, targets.set.iter())?;
-                targets.view.get_or_init(|| set.unbind())
+                let set = pyo3::types::PyFrozenSet::new_bound(py, self.no_return_targets.iter())?;
+                self.no_return_targets_view.get_or_init(|| set.unbind())
             }
         };
         Ok(set.bind(py).clone())
     }
 
-    /// This object as `ElfLifter` runs it on `elf`; see [`Self::with_elf`].
-    fn _with_elf(&self, elf: PyRef<'_, PyLoadedElf>) -> PyResult<Self> {
-        self.with_elf(&elf)
-    }
-
-    /// The address of the seated `known_targets` table every analyse borrows,
-    /// shared by every object derived from this one.
-    fn _seated_table_id(&self) -> usize {
-        Arc::as_ptr(&self.seated) as usize
-    }
-
-    /// How many times `call_other_abis` was resolved for an analyse, by this
-    /// object and every one derived from it.
+    /// How many times `call_other_abis` was resolved for an analyse.
     fn _call_other_override_builds(&self) -> usize {
         self.overrides
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .builds
-    }
-
-    /// This object bounded to `function_max_size`, sharing its tables rather
-    /// than rebuilding them through Python. The size replaces the whole bound.
-    fn _with_function_max_size(&self, function_max_size: u64) -> PyResult<Self> {
-        Ok(Self {
-            bound: function_bound(Some(function_max_size), false)?,
-            ..self.clone()
-        })
     }
 
     fn __repr__(&self) -> String {
@@ -509,29 +374,9 @@ impl PyCfgOptions {
             self.known_targets.len(),
             self.call_other_abis.len(),
             self.data_ranges.ranges().len(),
-            self.no_return_targets.set.len(),
+            self.no_return_targets.len(),
         )
     }
-}
-
-/// # Errors
-/// If a range ends at or below its start. `start..end` with `end <= start` is
-/// empty, so it used to be accepted and silently drop the range the caller
-/// meant to name -- the literal pool it marks then decodes as instructions,
-/// which is the failure `data_ranges` exists to prevent. A range-checked ctor
-/// argument raises `ValueError`.
-fn data_ranges_from(ranges: Vec<(u64, u64)>) -> PyResult<strider_cfg::DataRanges> {
-    for &(start, end) in &ranges {
-        if end <= start {
-            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                "data_ranges: ({start:#x}, {end:#x}) is empty; a range runs \
-                 start..end with end > start"
-            )));
-        }
-    }
-    Ok(strider_cfg::DataRanges::new(
-        ranges.into_iter().map(|(start, end)| start..end),
-    ))
 }
 
 /// Render a bool the Python way, so a `repr` reads as an eval-able constructor
@@ -790,54 +635,15 @@ impl PyAssumptionOptions {
 }
 
 /// A caller's `per_address_ccs` table and the resolution taken from it.
-///
-/// One object behind an `Arc`, because `ElfLifter.analyze` derives fresh
-/// options through `_with_cfg` on every call to seat the ELF's data ranges: a
-/// memo on the options themselves is written on the throwaway and rebuilt
-/// next call, and cloning the table there is O(entries) in `Py` handle bumps.
 pub struct PerAddressCcs {
-    py: HashMap<u64, PyCallingConvention>,
-    built: std::sync::Mutex<Option<BuiltPerAddressCcs>>,
-    local: LocalEntryMemo<PerAddressCcs>,
-}
-
-impl PerAddressCcs {
-    fn new(py: HashMap<u64, PyCallingConvention>) -> Self {
-        Self {
-            py,
-            built: std::sync::Mutex::default(),
-            local: LocalEntryMemo::default(),
-        }
-    }
-
-    /// This table plus, for every key `entries` has a local entry for, that
-    /// local entry under the key's convention. A key already at the local
-    /// entry keeps its own.
-    fn with_local_entries(self: &Arc<Self>, entries: &Arc<LocalEntries>) -> Arc<Self> {
-        if entries.is_empty() || self.py.is_empty() {
-            return Arc::clone(self);
-        }
-        self.local
-            .get(entries, || {
-                let added: Vec<(u64, u64)> = local_entries_of(entries, self.py.keys().copied())
-                    .filter(|(_, local)| !self.py.contains_key(local))
-                    .collect();
-                (!added.is_empty()).then(|| {
-                    let mut py = self.py.clone();
-                    for (global, local) in added {
-                        py.insert(local, self.py[&global].clone());
-                    }
-                    Self::new(py)
-                })
-            })
-            .unwrap_or_else(|| Arc::clone(self))
-    }
+    pub(crate) py: HashMap<u64, PyCallingConvention>,
+    built: Mutex<Option<BuiltPerAddressCcs>>,
 }
 
 /// A resolved `per_address_ccs` table and the arch it was resolved against.
 type BuiltPerAddressCcs = (
     strider_target::SleighArch,
-    std::sync::Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
+    Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>,
 );
 
 /// Lift, optimize, and CFG knobs for one `analyze` call.
@@ -857,9 +663,7 @@ pub struct PyLifterOptions {
     /// CCs accepted); `None`/omitted means no overrides. An override's
     /// `stack_pointer` must be the analysed function's own, or `analyze`
     /// raises: the override describes a callee, not another frame.
-    /// Shared so the table and its resolution both survive `_with_cfg`; see
-    /// [`PerAddressCcs`].
-    pub per_address_ccs: Option<std::sync::Arc<PerAddressCcs>>,
+    pub per_address_ccs: Option<PerAddressCcs>,
     /// Run the indirect-branch classifier (default `True`). `False` leaves
     /// every site an `IndirectBranch` placeholder, so you can supply your own
     /// answers via `CfgOptions(known_targets=...)`, or inspect the raw
@@ -885,10 +689,9 @@ impl PyLifterOptions {
         &self,
         regs: &rsleigh::SleighRegs,
         target: strider_target::SleighArch,
-    ) -> PyResult<std::sync::Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>>
-    {
+    ) -> PyResult<Arc<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>>> {
         let Some(table) = &self.per_address_ccs else {
-            return Ok(std::sync::Arc::default());
+            return Ok(Arc::default());
         };
         let mut slot = table
             .built
@@ -945,7 +748,10 @@ impl PyLifterOptions {
             cfg,
             assumptions,
             compact,
-            per_address_ccs: per_address_ccs.map(|t| std::sync::Arc::new(PerAddressCcs::new(t.0))),
+            per_address_ccs: per_address_ccs.map(|t| PerAddressCcs {
+                py: t.0,
+                built: Mutex::default(),
+            }),
             resolve_indirect_branches,
             pipeline,
             per_address_ccs_view: MappingView::default(),
@@ -959,42 +765,6 @@ impl PyLifterOptions {
         match &self.per_address_ccs {
             Some(table) => self.per_address_ccs_view.get(py, &table.py).map(Some),
             None => Ok(None),
-        }
-    }
-
-    /// These options as `ElfLifter.analyze` runs them on `elf`: the ELF's data
-    /// ranges unless `cfg` names some, and the local entry of every
-    /// `no_return_targets` address and `per_address_ccs` key that is a ppc64
-    /// ELFv2 global entry, which a same-TOC call enters past.
-    fn _with_elf(&self, py: Python<'_>, elf: PyRef<'_, PyLoadedElf>) -> PyResult<Self> {
-        let cfg = Py::new(py, self.cfg.borrow(py).with_elf(&elf)?)?;
-        let mut out = self._with_cfg(py, cfg);
-        if let Some(table) = &self.per_address_ccs
-            && !table.py.is_empty()
-        {
-            out.per_address_ccs = Some(table.with_local_entries(&elf.local_entries()?));
-        }
-        Ok(out)
-    }
-
-    /// The address of the `per_address_ccs` table an analyse resolves, or
-    /// `None` without one.
-    fn _per_address_ccs_table_id(&self) -> Option<usize> {
-        self.per_address_ccs
-            .as_ref()
-            .map(|table| Arc::as_ptr(table) as usize)
-    }
-
-    /// These options with `cfg` replaced and every other field carried over.
-    fn _with_cfg(&self, py: Python<'_>, cfg: Py<PyCfgOptions>) -> Self {
-        Self {
-            cfg,
-            assumptions: self.assumptions.clone_ref(py),
-            compact: self.compact,
-            per_address_ccs: self.per_address_ccs.clone(),
-            resolve_indirect_branches: self.resolve_indirect_branches,
-            pipeline: self.pipeline.as_ref().map(|p| p.clone_ref(py)),
-            per_address_ccs_view: MappingView::default(),
         }
     }
 

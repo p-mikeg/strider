@@ -167,6 +167,16 @@ def test_the_count_bound_still_answers_for_a_pathological_chain():
         fn.find_all(_chain(4000))
 
 
+def test_the_count_bound_answers_where_no_other_bound_reaches():
+    """Past 512 levels but far under the step cap, on a stack whose budget
+    holds even an unoptimised build's frames: only the level count refuses."""
+    fn = _function()
+    kind, value = _on_thread(lambda: fn.find_all(_chain(600)), 256 << 20)
+    assert kind == "raised", value
+    assert isinstance(value, strider.StriderError), value
+    assert "over 512 levels" in str(value), value
+
+
 def test_a_reentrant_index_raises_instead_of_recursing_forever():
     """A `__index__` that re-enters the builder must raise, not recurse
     forever. The depth guard's error has to escape the int-extraction attempt

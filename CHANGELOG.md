@@ -133,6 +133,10 @@
   (512 bits) now raises `StriderError` naming its bit length, read off
   `int.bit_length()` before any conversion allocates. A comparison against
   one (`m[c] == 2**600`) answers unequal rather than raising.
+- `ElfLifter.analyze` given an `opts` that is not a `LifterOptions`, and
+  `ElfLifter.build_cfg` given one that is not a `CfgOptions`, raise
+  `TypeError` naming the argument, as `Lifter.analyze` and `build_cfg` do.
+  They raised `AttributeError` from reading the options' fields.
 
 ### Breaking, Rust
 
@@ -724,6 +728,10 @@
 
 ### Fixed
 
+- Python: on a ppc64 ELFv2 image where two symbols share one local entry,
+  `ElfLifter.analyze` takes a call there under the `per_address_ccs` entry of
+  the lower symbol address. It took one of the two by hash order, which
+  differed from one `LifterOptions` to the next.
 - Python: `Function.rewrite` and `rewrite_all` no longer use up an
   `into_pat()` `find` pattern when the rule itself is refused (an RHS naming
   a capture the LHS never binds), nor `rewrite_all` the first pair's when a

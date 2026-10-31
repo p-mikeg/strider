@@ -83,12 +83,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // empty dominance frontier); they are recorded so the mirror is
             // total and `write_variable`'s check needs no exemption.
             if let strider_cfg::RegionTerminator::TailCall { target } = region.terminator {
-                self.record_cc_call_effects(
-                    self.per_address_ccs.get(&target.addr),
-                    r,
-                    &mut defs,
-                    &mut exp,
-                );
+                self.record_cc_call_effects(self.override_at(target.addr), r, &mut defs, &mut exp);
                 self.record_cc_return_reads(&mut exp);
             }
         }

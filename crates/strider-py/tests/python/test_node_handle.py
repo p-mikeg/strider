@@ -218,6 +218,13 @@ def test_repr_of_a_stale_node_does_not_raise():
     assert "%r" % stale
 
 
+def test_a_node_fetched_after_a_rewrite_reads_that_generation():
+    stale, fresh = _stale_and_fresh()
+    assert fresh.kind() == "Entry"
+    with pytest.raises(strider.StriderError, match="stale"):
+        stale.kind()
+
+
 def test_a_stale_node_is_not_equal_to_a_fresh_one():
     stale, fresh = _stale_and_fresh()
     assert stale != fresh

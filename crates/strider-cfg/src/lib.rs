@@ -38,7 +38,10 @@ pub(crate) fn flowing_isa_bit_at<R: rsleigh::MemReader>(
 pub use engine::DecodeEngine;
 pub use incomplete::{Incompleteness, Reason};
 pub use indirect_resolver::{Arms, ResolvedTarget, ResolvedTargets};
-pub use options::{CfgOptions, DataRanges, FunctionBound, NO_TARGETS, seated_from, seated_in};
+pub use options::{
+    CfgOptions, DataRanges, FunctionBound, LocalEntries, NO_LOCAL_ENTRIES, NO_TARGETS, seated_from,
+    seated_in,
+};
 pub use pcode_text::{insn_plain_text, insn_text};
 
 pub(crate) use query::is_addr_tail_call;

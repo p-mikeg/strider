@@ -215,21 +215,6 @@ class CfgOptions:
         `function_max_size=0`, and for a size with
         `allow_code_before_start_addr=True`."""
         ...
-    def _with_function_max_size(self, function_max_size: int) -> "CfgOptions":
-        """These options bounded to `function_max_size`, sharing both tables.
-        Raises `ValueError` for `0`."""
-        ...
-    def _with_elf(self, elf: object) -> "CfgOptions":
-        """These options as `ElfLifter` runs them on `elf`: its
-        mapping-symbol data ranges unless `data_ranges` names some, and the
-        local entry of every `no_return_targets` address that is a ppc64
-        ELFv2 global entry."""
-        ...
-    def _seated_table_id(self) -> int:
-        """The address of the seated `known_targets` table every analyse
-        borrows, shared by every object derived from this one."""
-        ...
     def _call_other_override_builds(self) -> int:
-        """How many times `call_other_abis` was resolved for an analyse, by
-        this object and every one derived from it."""
+        """How many times `call_other_abis` was resolved for an analyse."""
         ...

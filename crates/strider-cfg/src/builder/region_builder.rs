@@ -601,7 +601,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ) -> Result<InsnOutcome> {
         let target_no_return =
             crate::direct_call_target(insn, self.builder.engine.sleigh.default_code_space())
-                .is_some_and(|target| self.builder.options.no_return_targets.contains(&target));
+                .is_some_and(|target| {
+                    let opts = &self.builder.options;
+                    opts.local_entries.contains(opts.no_return_targets, target)
+                });
         if target_no_return {
             self.finish_current_region(RegionTerminator::NoReturn)?;
             return Ok(InsnOutcome::RegionClosed);
