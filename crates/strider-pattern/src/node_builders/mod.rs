@@ -76,6 +76,7 @@ macro_rules! delegate_node_pat {
         /// Raw input slot `slot`, unshifted. Slot numbering is per node kind,
         /// laid out by the IR's `expected_signature`; the named accessors are
         /// the intended surface and this is the escape hatch beneath them.
+        /// A `call` / `call_other` there binds any of its outputs.
         pub fn input<P: $crate::matcher::match_pat::MatchPat + 'static>(
             mut self,
             slot: usize,
@@ -90,7 +91,8 @@ macro_rules! delegate_node_pat {
         /// inputs no fixed operand pinned, which on a commutative node is every
         /// input, its fixed operands roaming both slots. The sub-pattern
         /// discriminates: a typed value sub binds only a value input, while
-        /// `var` / `anything` also reaches the control and memory edges.
+        /// `var` / `anything` also reaches the control and memory edges, and a
+        /// `call` / `call_other` any of its outputs.
         /// Repeatable, each call adding one constraint; several existentials
         /// on one node take distinct slots.
         ///

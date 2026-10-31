@@ -29,7 +29,8 @@ use crate::typed::consts::{Const, ConstWith};
 pub(crate) enum Slot {
     Value,
     /// A raw input, of whatever edge kind the node's signature puts there:
-    /// lowered as a value.
+    /// lowered as a value, a node with outputs of several kinds nesting
+    /// through any of them.
     Raw,
     Memory,
     /// A control predecessor: lowered as a value, its output retyped to
@@ -862,15 +863,19 @@ impl Node {
         let anchor = slot.map_or(self.anchor, |s| self.anchor_for(s));
         let node = b.node(std::mem::replace(&mut self.kind, KindSpec::Any));
         let anchor_out = match anchor {
-            AnchorKind::Value(slot) => {
-                let out = b.value_output(node, slot);
+            AnchorKind::Value(at) => {
+                let out = b.value_output(node, at);
                 if self.pin_anchor_slot {
                     b.pin_value_out_slot(out);
                 }
+                // A call: its control, memory or value edge.
+                if slot == Some(Slot::Raw) && self.value_anchor.is_some() {
+                    b.set_output_any(out);
+                }
                 Some(out)
             }
-            AnchorKind::Memory(slot) => Some(b.memory_output(node, slot)),
-            AnchorKind::Control(slot) => Some(b.control_output(node, slot)),
+            AnchorKind::Memory(at) => Some(b.memory_output(node, at)),
+            AnchorKind::Control(at) => Some(b.control_output(node, at)),
             AnchorKind::None => None,
         };
         if let Some(bits) = self.output_width
