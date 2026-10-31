@@ -509,7 +509,7 @@ fn two_outputs_at_one_slot_are_refused() {
 }
 
 /// A closure's skip declines the template ahead of an unbound capture, in
-/// either staging order, so the rule skips rather than errors.
+/// either build order, so the rule skips rather than errors.
 #[test]
 fn a_closure_skip_wins_over_an_unbound_capture() {
     for capture_first in [true, false] {

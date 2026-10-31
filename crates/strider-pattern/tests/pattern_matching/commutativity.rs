@@ -1186,9 +1186,9 @@ fn ordered_is_a_no_op_on_int_le_and_int_sle() {
 fn an_existential_beside_a_commutative_operand_takes_the_other_slot() {
     let function = shapes::int_bin(3, 5, IntBinaryOp::Add);
     let mut b = MatcherBuilder::new();
-    let node = b.node(KindSpec::Any);
     let five = MatchPat::compile(int_const(5u128), &mut b);
     let three = MatchPat::compile(int_const(3u128), &mut b);
+    let node = b.node(KindSpec::Any);
     b.input(node, 0, five);
     b.input_any(node, three);
     let _out = b.value_output(node, 0);
@@ -1202,9 +1202,9 @@ fn an_existential_wildcard_skips_the_slot_the_roaming_operand_took() {
     let function = shapes::int_bin(3, 5, IntBinaryOp::Add);
     let k = Capture::new();
     let mut b = MatcherBuilder::new();
-    let node = b.node(KindSpec::Any);
     let five = MatchPat::compile(int_const(5u128), &mut b);
     let rest = MatchPat::compile(anything().capture(k), &mut b);
+    let node = b.node(KindSpec::Any);
     b.input(node, 0, five);
     b.input_any(node, rest);
     let _out = b.value_output(node, 0);

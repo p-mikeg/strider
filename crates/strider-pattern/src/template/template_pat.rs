@@ -4,7 +4,7 @@
 //! accept one.
 
 use crate::expr::IntoExpr;
-use crate::template::{Template, TemplateBuilder};
+use crate::template::Template;
 
 /// A build-side `var()` and its `.capture()` are templates:
 ///
@@ -30,8 +30,6 @@ use crate::template::{Template, TemplateBuilder};
 /// ```
 pub trait TemplatePat: IntoExpr + Send {
     fn into_template(self) -> Template {
-        let mut b = TemplateBuilder::new();
-        self.into_expr().lower_template(&mut b);
-        b.finish()
+        self.into_expr().into_template()
     }
 }

@@ -295,6 +295,27 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         }
     }
 
+    /// Appends an output of `kind` as the node's last.
+    pub fn add_node_output(&mut self, node_id: NodeId, kind: V) -> ValueId {
+        self.cache.invalidate(node_id);
+        let index = self.store.nodes[node_id]
+            .outputs
+            .len(&self.store.output_pool) as u32;
+        let value = self
+            .store
+            .outputs
+            .push(ValueData::new(kind, node_id, index));
+        self.store.nodes[node_id]
+            .outputs
+            .push(value, &mut self.store.output_pool);
+        value
+    }
+
+    /// The cache is NOT notified, as for [`Self::node_kind_mut`].
+    pub fn value_kind_mut(&mut self, value_id: ValueId) -> &mut V {
+        &mut self.store.outputs[value_id].kind
+    }
+
     /// Appends `value_id` as the node's last input.
     pub fn add_node_input(&mut self, node_id: NodeId, value_id: ValueId) {
         self.cache.invalidate(node_id);
