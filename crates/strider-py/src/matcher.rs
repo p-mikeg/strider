@@ -18,10 +18,6 @@ pub struct PyMatch {
     pub(crate) at: FunctionAt,
 }
 
-/// Per-pattern roots (empty under `ignore_root`) paired with each sub-match's
-/// `(capture-id, node-id)` signature.
-type DedupKey = (Vec<u32>, Vec<Vec<(u32, u32)>>);
-
 /// A `Capture` instance or a string name, looked up in the global intern
 /// table.
 #[derive(FromPyObject)]
@@ -133,23 +129,24 @@ impl PyMatch {
     }
 }
 
-/// The dedup key of the sub-matches `inner`, read against `function`: without
-/// `ignore_root` the per-pattern roots join it; with it only bindings matter.
+/// The dedup key of the sub-matches `inner`, read against `function`: per
+/// sub-match, its root unless `ignore_root`, then its `(capture-id, node-id)`
+/// signature behind the signature's length.
 pub(crate) fn dedup_key(
     inner: &[strider_pattern::Match],
     function: &strider_ir::Function,
     ignore_root: bool,
-) -> DedupKey {
-    let roots = if ignore_root {
-        Vec::new()
-    } else {
-        inner.iter().map(|m| m.root().as_u32()).collect()
-    };
-    let sigs = inner
-        .iter()
-        .map(|m| m.capture_signature(function.graph()))
-        .collect();
-    (roots, sigs)
+) -> Vec<u32> {
+    let mut key = Vec::new();
+    for m in inner {
+        if !ignore_root {
+            key.push(m.root().as_u32());
+        }
+        let sig = m.capture_signature(function.graph());
+        key.push(sig.len() as u32);
+        key.extend(sig.into_iter().flat_map(|(cap, node)| [cap, node]));
+    }
+    key
 }
 
 /// Unwrap a capture read for the raising getters, raising a uniform error when

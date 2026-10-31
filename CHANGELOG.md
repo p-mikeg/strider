@@ -469,6 +469,12 @@
 
 ### Changed, Python
 
+- A pattern compile's stack budget, a quarter of the thread's remaining
+  stack, is read through `stacker` on every platform it reports a stack on.
+  Windows and the BSDs, which took the fixed 48 KiB fallback, now budget
+  from the real stack, so a deeper pattern compiles there; Android, which
+  `stacker` does not report, now takes the fallback. Linux and macOS are
+  unchanged.
 - Of several captures a rewrite's template references and its pattern leaves
   unbound, the error names the first written, where it named the last.
 - A memory slot (`mem`, `MemPhiPat.phi_input`) takes `anything()`,

@@ -105,7 +105,7 @@ def test_an_unrelocated_load_never_reads_the_writable_mappings_it_drops(tmp_path
     )
 
     with pytest.raises(strider.StriderError, match="failed to parse ELF"):
-        ext._load_elf_from_segments(str(path), True, False)
+        ext._load_elf(str(path), True, True, False)
 
 
 def test_an_unrelocated_merge_never_reads_the_writable_mappings_it_drops(tmp_path):

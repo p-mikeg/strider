@@ -42,16 +42,9 @@ fn check_source_arch(
     }
 }
 
-pub(crate) fn build_cc(
-    cc: &PyCallingConvention,
-    regs: &rsleigh::SleighRegs,
-    target: strider_target::SleighArch,
-) -> PyResult<strider_target::BuiltCallingConvention> {
-    build_cc_at(cc, regs, target, None)
-}
-
-/// [`build_cc`], for the per-address override at `addr` when there is one.
-fn build_cc_at(
+/// `cc` against `target`'s registers, as the per-address override at `addr`
+/// when there is one.
+fn build_cc(
     cc: &PyCallingConvention,
     regs: &rsleigh::SleighRegs,
     target: strider_target::SleighArch,
@@ -89,7 +82,7 @@ pub(crate) fn build_per_address_ccs(
 ) -> PyResult<rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>> {
     per_address_ccs_py
         .iter()
-        .map(|(&addr, py_cc)| Ok((addr, build_cc_at(py_cc, regs, target, Some(addr))?)))
+        .map(|(&addr, py_cc)| Ok((addr, build_cc(py_cc, regs, target, Some(addr))?)))
         .collect::<PyResult<_>>()
 }
 
@@ -247,8 +240,7 @@ pub(crate) fn optimize_function(
     let this = try_borrow_lifter(lifter)?;
     // `LoadReadOnly` reads the rom, and a mapping shortened under us takes
     // a SIGBUS there, which no Python `except` can catch.
-    crate::reader::check_mem_unchanged(py, &this.mem_obj)?;
-    crate::reader::check_mem_unchanged(py, &this.rom_obj)?;
+    crate::reader::check_mem_unchanged(py, &[&this.mem_obj, &this.rom_obj])?;
     let claims = claims_to_add(function, assumptions)?;
     let rom = this.strider()?.rom();
     let pipeline = match pipeline {
@@ -717,7 +709,7 @@ impl PyLifter {
     ) -> PyResult<Option<crate::call_other_abi::PyCallOtherAbi>> {
         let arch = try_borrow_lifter(slf)?.target()?;
         if let Some(opts) = opts {
-            let opts = opts.borrow(slf.py());
+            let opts = opts.get();
             opts.call_other_overrides(arch)?;
             if let Some(abi) = opts.call_other_abis.get(name) {
                 return Ok(Some(abi.clone()));
@@ -842,7 +834,7 @@ impl PyLifter {
         let this = try_borrow_lifter(slf)?;
         // A mapping shortened under us takes a SIGBUS on the read, which no
         // Python `except` can catch.
-        crate::reader::check_mem_unchanged(py, &this.mem_obj)?;
+        crate::reader::check_mem_unchanged(py, &[&this.mem_obj])?;
         if addr < entry {
             return Err(into_strider_err(anyhow::anyhow!(
                 "pcode_at: addr {addr:#x} is before entry {entry:#x}"
@@ -960,21 +952,19 @@ impl PyLifter {
             Some(o) => o,
             None => Py::new(py, PyCfgOptions::default())?,
         };
-        // The borrow outlives `cfg_opts`, which holds the seeded table rather
-        // than a copy of it.
-        let opts_ref = opts.borrow(py);
+        let opts_ref = opts.get();
         let seat = elf
-            .map(|elf| ElfSeat::read(&elf, &opts_ref, false, None))
+            .map(|elf| ElfSeat::read(&elf, opts_ref, false, None))
             .transpose()?;
         let entry = entry_addr(entry)?;
         let bound = slf.bind(py);
         {
             let lifter = try_borrow_lifter(bound)?;
-            crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
+            crate::reader::check_mem_unchanged(py, &[&lifter.mem_obj])?;
         }
         let target = try_borrow_lifter(bound)?.target()?;
         let overrides = opts_ref.call_other_overrides(target)?;
-        let cfg_opts = cfg_options_from(&opts_ref, &overrides, seat.as_ref());
+        let cfg_opts = cfg_options_from(opts_ref, &overrides, seat.as_ref());
         let inner = with_pending_control_flow(|| {
             let mut lifter = try_borrow_lifter_mut(bound)?;
             lifter.bump_context_gen();
@@ -1006,51 +996,37 @@ impl PyLifter {
             Some(o) => o,
             None => Py::new(py, PyLifterOptions::new_default(py)?)?,
         };
-        let opts_ref = opts.borrow(py);
-        let compact = opts_ref.compact;
-        let resolve_indirect_branches = opts_ref.resolve_indirect_branches;
-        let assumptions = opts_ref.assumptions.borrow(py).inner.clone();
+        let opts = opts.get();
+        let cfg = opts.cfg.get();
         // Materialise the pipeline override BEFORE dropping the GIL below.
-        let custom_pipeline = opts_ref
-            .pipeline
-            .as_ref()
-            .map(|p| p.borrow(py).build_pipeline());
+        let custom_pipeline = opts.pipeline.as_ref().map(|p| p.get().build_pipeline());
         let seat = elf
             .map(|(elf, size)| {
-                let per_address_ccs = opts_ref.per_address_ccs.as_ref();
-                let keyed = per_address_ccs.is_some_and(|t| !t.py.is_empty());
-                ElfSeat::read(&elf, &opts_ref.cfg.borrow(py), keyed, size)
+                let keyed = opts
+                    .per_address_ccs
+                    .as_ref()
+                    .is_some_and(|t| !t.py.is_empty());
+                ElfSeat::read(&elf, cfg, keyed, size)
             })
             .transpose()?;
-        drop(opts_ref);
 
         let (target, cc_built, per_address_built) = {
             let lifter = try_borrow_lifter(slf.bind(py))?;
-            crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
-            crate::reader::check_mem_unchanged(py, &lifter.rom_obj)?;
+            crate::reader::check_mem_unchanged(py, &[&lifter.mem_obj, &lifter.rom_obj])?;
             let regs = lifter.strider()?.sleigh_regs();
             let target = lifter.target()?;
-            let cc_built = build_cc(&cc, regs, target)?;
-            let per_address_built = opts.borrow(py).built_per_address_ccs(regs, target)?;
+            let cc_built = build_cc(&cc, regs, target, None)?;
+            let per_address_built = opts.built_per_address_ccs(regs, target)?;
             (target, cc_built, per_address_built)
         };
 
-        // `target` is only known after the borrow above, so the CFG knobs
-        // are read here rather than with the rest of the options: nothing
-        // between the two points runs Python, and `CfgOptions` is get-only, so
-        // it is the same object either way.
-        // The two borrows outlive `analyze_opts`, which holds the seeded table
-        // rather than a copy of it; both are read-only, and `CfgOptions` is
-        // get-only, so nothing can take them `&mut` meanwhile.
-        let opts_ref = opts.borrow(py);
-        let cfg_ref = opts_ref.cfg.borrow(py);
-        let overrides = cfg_ref.call_other_overrides(target)?;
+        let overrides = cfg.call_other_overrides(target)?;
         let analyze_opts = strider_orchestrator::AnalyzeOptions {
-            cfg: cfg_options_from(&cfg_ref, &overrides, seat.as_ref()),
+            cfg: cfg_options_from(cfg, &overrides, seat.as_ref()),
             per_address_ccs: &per_address_built,
-            resolve_indirect_branches,
-            assumptions,
-            compact,
+            resolve_indirect_branches: opts.resolve_indirect_branches,
+            assumptions: opts.assumptions.get().inner.clone(),
+            compact: opts.compact,
         };
         // The fixed-point loop runs without the GIL where it can: a pipeline's
         // boxed passes are `Send`, so a closure capturing one satisfies
