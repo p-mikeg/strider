@@ -502,14 +502,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // to `find_all_unique_vns` and has to be seeded here too.
         let register_space = self.register_space_vns(cfg);
         track_vns(&mut all_vns, &mut seen, register_space);
-        let mut driver = FunctionLifter::new(
-            self,
-            cc,
-            cfg,
-            all_vns,
-            per_address_ccs,
-            cfg_opts.call_other_overrides,
-        )?;
+        let mut driver = FunctionLifter::new(self, cc, cfg, all_vns, per_address_ccs, cfg_opts)?;
         driver.builder.function_mut().assume(claims);
 
         // Semi-pruned SSA phi placement: iterated dominance frontier of each

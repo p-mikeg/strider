@@ -89,6 +89,18 @@ impl ResolvedTargets {
         }
     }
 
+    /// A caller's own answer of `targets`: one is the caller's dispatch, not a
+    /// table read, so a [`Self::Single`], which out of range is a tail call
+    /// where a table's arm defers the site.
+    #[must_use]
+    pub fn seeded(targets: impl IntoIterator<Item = u64>) -> Self {
+        let table = Self::table(targets.into_iter().map(|t| ResolvedTarget::new(t, None)));
+        match table.arms() {
+            [only] => Self::Single(*only),
+            _ => table,
+        }
+    }
+
     /// The concrete targets: none for `LinkRegister` and `Withdrawn`.
     #[must_use]
     pub fn arms(&self) -> &[ResolvedTarget] {
@@ -129,6 +141,19 @@ mod tests {
 
     fn at(addr: u64, bit: Option<bool>) -> ResolvedTarget {
         ResolvedTarget::new(addr, bit)
+    }
+
+    /// One seeded target is a `Single`, a repeated one too; none withdraws.
+    #[test]
+    fn a_seed_of_one_target_is_single() {
+        let single = ResolvedTargets::Single(at(0x2000, None));
+        assert_eq!(ResolvedTargets::seeded([0x2000]), single);
+        assert_eq!(ResolvedTargets::seeded([0x2000, 0x2000]), single);
+        assert_eq!(
+            ResolvedTargets::seeded([0x3000, 0x2000]),
+            ResolvedTargets::table([at(0x2000, None), at(0x3000, None)])
+        );
+        assert_eq!(ResolvedTargets::seeded([]), ResolvedTargets::Withdrawn);
     }
 
     #[test]

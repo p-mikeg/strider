@@ -187,8 +187,7 @@ class LifterOptions:
     @property
     def compact(self) -> bool: ...
     # A read-only VIEW onto what the constructor stored, built once and handed
-    # out unchanged. Unlike the `CfgOptions` tables, it is not shared with a
-    # clone: `_with_cfg` resets it.
+    # out unchanged.
     @property
     def per_address_ccs(self) -> Optional[Mapping[int, CallingConvention]]: ...
     @property
@@ -206,19 +205,6 @@ class LifterOptions:
         pipeline: Optional[OptimizerPipeline] = ...,
     ) -> None:
         """Build the options; every field defaults."""
-        ...
-    def _with_cfg(self, cfg: CfgOptions) -> LifterOptions:
-        """A copy of these options with `cfg` replaced."""
-        ...
-    def _per_address_ccs_table_id(self) -> Optional[int]:
-        """The address of the `per_address_ccs` table an analyse resolves,
-        or `None` without one."""
-        ...
-    def _with_elf(self, elf: object) -> LifterOptions:
-        """These options as `ElfLifter.analyze` runs them on `elf`: its
-        mapping-symbol data ranges unless `cfg.data_ranges` names some, and
-        the local entry of every `no_return_targets` address and
-        `per_address_ccs` key that is a ppc64 ELFv2 global entry."""
         ...
 
 class Lifter:
@@ -253,6 +239,20 @@ class Lifter:
         """INTERNAL. Merge the ELF at `path` into the loaded-ELF handle `elf`
         and rebuild over the merged image, refusing before anything is merged
         when the handle is in use."""
+        ...
+    def _build_cfg_elf(
+        self, elf: Any, entry: int, opts: Optional[CfgOptions] = ...
+    ) -> Cfg:
+        """INTERNAL. `ElfLifter.build_cfg` over the loaded-ELF handle `elf`."""
+        ...
+    def _analyze_elf(
+        self,
+        elf: Any,
+        entry: Union[str, int],
+        cc: CallingConvention,
+        opts: Optional[LifterOptions] = ...,
+    ) -> AnalyzeResult:
+        """INTERNAL. `ElfLifter.analyze` over the loaded-ELF handle `elf`."""
         ...
     @property
     def arch(self) -> SleighArch:

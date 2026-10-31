@@ -83,3 +83,17 @@ fn a_partial_read_under_many_nested_regions_descends_one_path() {
         "the widest-serving fallback bypassed the max-end tree"
     );
 }
+
+/// A read past every region's length is served by one region, so the buffer
+/// is sized by the largest and filled from the one covering `addr`.
+#[test]
+fn read_vec_sizes_its_buffer_by_the_largest_region() {
+    let table = MemRegionsLookupTable::new([
+        MemRegion::new(0x1000, vec![1u8; 0x10]).unwrap(),
+        MemRegion::new(0x2000, vec![2u8; 0x40]).unwrap(),
+    ]);
+    assert_eq!(table.read_vec(0x1008, usize::MAX), Some(vec![1u8; 8]));
+    assert_eq!(table.read_vec(0x2000, usize::MAX), Some(vec![2u8; 0x40]));
+    assert_eq!(table.read_vec(0x2000, 3), Some(vec![2u8; 3]));
+    assert_eq!(table.read_vec(0x3000, usize::MAX), None);
+}

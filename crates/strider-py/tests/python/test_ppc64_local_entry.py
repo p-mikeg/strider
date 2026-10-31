@@ -1,7 +1,8 @@
 """A ppc64 ELFv2 `bl` to a function sharing the caller's TOC enters at its
 local entry, past the global entry `Symbol.address` names. `ElfLifter.analyze`
-extends `no_return_targets` and `per_address_ccs` with the local entry of every
-listed global entry, so a table keyed by symbol still matches those calls.
+matches a `no_return_targets` address or `per_address_ccs` key at the local
+entry of the global entry it lists, so a table keyed by symbol still matches
+those calls.
 
 The image is `fixtures/loader/out/ppc64le_local_entry.elf`, built by
 `make -C fixtures/loader` from `src/ppc64le_local_entry.s`.
@@ -13,7 +14,8 @@ import pytest
 import strider
 from strider.cfg import CfgOptions
 from strider.lift import LifterOptions
-from strider.pattern import call, function_arg
+from strider.pattern import call, function_arg, ret
+from strider.sleigh import CallingConvention
 
 from .conftest import WORKSPACE_ROOT, fixture_path
 
@@ -70,20 +72,6 @@ def test_a_no_return_symbol_ends_a_call_to_its_local_entry(elf):
     assert opts.cfg.no_return_targets == frozenset({stop})
 
 
-def test_the_widened_tables_are_built_once(elf):
-    """Every analyse derives its options afresh; the widened tables are
-    shared by all of them rather than rebuilt per call."""
-    stop, hook = elf.symbol("stop"), elf.symbol("hook")
-    opts = LifterOptions(
-        cfg=CfgOptions(no_return_targets=[stop.address]),
-        per_address_ccs={hook.address: elf.cc.preserves_all()},
-    )
-    first, second = opts._with_elf(elf._elf), opts._with_elf(elf._elf)
-    assert first.cfg.no_return_targets == {stop.address, stop.local_entry}
-    assert first.cfg.no_return_targets is second.cfg.no_return_targets
-    assert set(first.per_address_ccs or {}) == {hook.address, hook.local_entry}
-
-
 def test_build_cfg_ends_a_call_to_a_no_return_symbols_local_entry(elf):
     entry = elf.symbol("noret_call").address
     assert elf.build_cfg(entry).region_at(NOP_AFTER_STOP) is not None
@@ -116,25 +104,6 @@ def test_a_symbol_file_added_later_widens_the_next_analyse():
     assert stripped.analyze(entry, opts=opts).cfg.region_at(NOP_AFTER_STOP) is None
 
 
-def test_the_widened_per_address_table_is_built_once(elf):
-    hook = elf.symbol("hook").address
-    opts = LifterOptions(per_address_ccs={hook: elf.cc.preserves_all()})
-    first, second = opts._with_elf(elf._elf), opts._with_elf(elf._elf)
-    assert first._per_address_ccs_table_id() == second._per_address_ccs_table_id()
-    assert first._per_address_ccs_table_id() != opts._per_address_ccs_table_id()
-
-
-def test_one_options_object_alternating_handles_rebuilds_nothing(elf):
-    other = strider.lift.load_elf(_image("ppc64le_local_entry.elf"))
-    hook = elf.symbol("hook").address
-    opts = LifterOptions(per_address_ccs={hook: elf.cc.preserves_all()})
-    # Each derived object is kept alive, so no table id can be reused.
-    first, between = opts._with_elf(elf._elf), opts._with_elf(other._elf)
-    again = opts._with_elf(elf._elf)
-    assert between._per_address_ccs_table_id() != first._per_address_ccs_table_id()
-    assert again._per_address_ccs_table_id() == first._per_address_ccs_table_id()
-
-
 def test_per_address_ccs_keyed_by_a_global_entry_reaches_the_local_call(elf):
     """`relay` passes r4 through `hook` to `sink`: by default `hook` clobbers
     r4, and an all-preserving override keyed at `hook`'s symbol keeps it."""
@@ -145,6 +114,41 @@ def test_per_address_ccs_keyed_by_a_global_entry_reaches_the_local_call(elf):
     opts = LifterOptions(per_address_ccs={hook: elf.cc.preserves_all()})
     assert len(elf.analyze("relay", opts=opts).function.find_all(sink_arg1)) == 1
     assert opts.per_address_ccs is not None and set(opts.per_address_ccs) == {hook}
+
+
+def test_a_tail_call_to_a_local_entry_takes_the_global_entrys_override(elf):
+    """`tail_relay` branches to `hook`'s local entry: an all-preserving
+    override keyed at `hook`'s symbol leaves r3 as it came in."""
+    r3_kept = ret().ret_val(0, function_arg(0))
+    assert not elf.analyze("tail_relay").function.find_all(r3_kept)
+    hook = elf.symbol("hook").address
+    opts = LifterOptions(per_address_ccs={hook: elf.cc.preserves_all()})
+    assert len(elf.analyze("tail_relay", opts=opts).function.find_all(r3_kept)) == 1
+
+
+def test_a_tail_call_to_a_local_entry_clobbers_what_its_override_does(elf):
+    """An override keyed at `hook`'s symbol that clobbers r14, which
+    `tail_relay` reads and the default preserves, lifts the tail call."""
+    clobbers_r14 = CallingConvention.custom(
+        elf.arch, ["r3"], ["r2", "LR"], ["r3"], [], "r1", 96, 8, 0, link_register="LR"
+    )
+    opts = LifterOptions(per_address_ccs={elf.symbol("hook").address: clobbers_r14})
+    fn = elf.analyze("tail_relay", opts=opts).function
+    assert len(fn.find_all(call().target(elf.symbol("hook").local_entry))) == 1
+
+
+def test_two_globals_sharing_a_local_entry_answer_by_the_lower(elf):
+    """`hook_alt` is 4 bytes into `hook` and shares its local entry, where
+    `relay` calls: the lower global's override answers there, whatever order
+    the table iterates in."""
+    sink_arg1 = call().target(elf.symbol("sink").address).arg(1, function_arg(1))
+    hook, alt = elf.symbol("hook"), elf.symbol("hook_alt")
+    assert alt.local_entry == hook.local_entry and alt.address == hook.address + 4
+    for _ in range(16):
+        opts = LifterOptions(
+            per_address_ccs={hook.address: elf.cc.preserves_all(), alt.address: elf.cc}
+        )
+        assert len(elf.analyze("relay", opts=opts).function.find_all(sink_arg1)) == 1
 
 
 def test_a_plain_lifter_takes_the_local_entry_as_given(elf):
