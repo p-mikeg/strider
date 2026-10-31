@@ -309,8 +309,7 @@ def load_elf(
     if not os.path.exists(path):
         raise FileNotFoundError(path)
     header = _ElfHeader(path)
-    loader = _ext._load_elf_from_segments if from_segments else _ext._load_elf_from_sections
-    elf = loader(path, apply_relocations, relocated_got_is_rom)
+    elf = _ext._load_elf(path, from_segments, apply_relocations, relocated_got_is_rom)
     # Only run the (possibly raising) detector when arch or cc is missing.
     if arch is None or cc is None:
         det_arch, det_cc = _arch_and_cc_for_elf(header, elf.is_arm_be8)

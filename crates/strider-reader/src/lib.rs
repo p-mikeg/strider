@@ -651,8 +651,26 @@ impl MemRegionsLookupTable {
     ///
     /// When any mapped file behind the table changed since it was mapped.
     pub fn check_unchanged(&self) -> Result<()> {
-        for &i in &self.mappings {
-            self.regions[i].check_unchanged()?;
+        Self::check_all_unchanged([self])
+    }
+
+    /// [`check_unchanged`] over several tables, one `stat` per mapping however
+    /// many of them share it.
+    ///
+    /// # Errors
+    ///
+    /// When any mapped file behind the tables changed since it was mapped.
+    ///
+    /// [`check_unchanged`]: Self::check_unchanged
+    pub fn check_all_unchanged<'a>(tables: impl IntoIterator<Item = &'a Self>) -> Result<()> {
+        let mut seen = BTreeSet::new();
+        for table in tables {
+            for &i in &table.mappings {
+                let region = &table.regions[i];
+                if region.mapping_id().is_some_and(|id| seen.insert(id)) {
+                    region.check_unchanged()?;
+                }
+            }
         }
         Ok(())
     }

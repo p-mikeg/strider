@@ -117,19 +117,19 @@ impl PyBufferReader {
     }
 }
 
-/// One stat per distinct mapping behind `mem_obj`, before anything decodes
-/// through it. A reader that is not a `BufferReader` maps nothing and cannot
+/// One stat per distinct mapping behind `objs`, before anything decodes
+/// through them. A reader that is not a `BufferReader` maps nothing and cannot
 /// go stale.
 pub(crate) fn check_mem_unchanged(
     py: Python<'_>,
-    mem_obj: &Option<Arc<Py<PyAny>>>,
+    objs: &[&Option<Arc<Py<PyAny>>>],
 ) -> PyResult<()> {
-    let Some(obj) = mem_obj else { return Ok(()) };
-    let Ok(buf) = obj.extract::<PyBufferReader>(py) else {
-        return Ok(());
-    };
-    buf.lookup_table()
-        .check_unchanged()
+    let tables: Vec<_> = objs
+        .iter()
+        .filter_map(|obj| obj.as_ref()?.extract::<PyBufferReader>(py).ok())
+        .map(|buf| buf.lookup_table())
+        .collect();
+    MemRegionsLookupTable::check_all_unchanged(tables.iter().map(|t| &**t))
         .map_err(into_strider_err)
 }
 
@@ -165,25 +165,6 @@ fn symbol_place<'d, S: ObjectSymbol<'d>>(sym: &S, layout: &ElfSectionLayout) -> 
             }
         }
         _ => SymbolPlace::Nowhere,
-    }
-}
-
-/// `Segments` auto-dispatches: PT_LOAD headers for ET_EXEC / ET_DYN,
-/// falling back to the section walker for ET_REL (no program headers).
-/// `Sections` forces the section walk even on a linked binary that does
-/// carry PT_LOAD segments.
-#[derive(Clone, Copy)]
-pub(crate) enum ElfRegionSource {
-    Segments,
-    Sections,
-}
-
-impl From<ElfRegionSource> for RegionSource {
-    fn from(source: ElfRegionSource) -> Self {
-        match source {
-            ElfRegionSource::Segments => RegionSource::Auto,
-            ElfRegionSource::Sections => RegionSource::Sections,
-        }
     }
 }
 
@@ -230,7 +211,7 @@ pub struct PyLoadedElf {
     /// The runtime-immutable subset.
     rom: PyBufferReader,
     /// The region-collection strategy this ELF was loaded with.
-    source: ElfRegionSource,
+    source: RegionSource,
     /// ELFs consulted for symbols only, never for bytes: a debug companion is
     /// linked at the same addresses as the image it describes, so merging it
     /// through `add_elf` would collide with what is already mapped.
@@ -521,9 +502,7 @@ impl PyLoadedElf {
         let elf = strider_reader::load_elf(path).map_err(into_strider_err)?;
         self.check_same_target(&elf, path)?;
         let mode = relocation_mode(apply_relocations, relocated_got_is_rom)?;
-        let image = elf
-            .image(self.source.into(), mode)
-            .map_err(into_strider_err)?;
+        let image = elf.image(self.source, mode).map_err(into_strider_err)?;
         let rom_regions = without_ranges(image.rom, &self.writable);
         if let Some((lo, hi)) =
             differing_overlap(&self.mem.inner.lock_shared().regions, &image.fetch)
@@ -1014,29 +993,11 @@ impl PyLoadedElf {
     }
 }
 
-fn load_elf_impl(
-    path: &str,
-    source: ElfRegionSource,
-    apply_relocations: bool,
-    relocated_got_is_rom: bool,
-) -> PyResult<PyLoadedElf> {
-    let elf = strider_reader::load_elf(path).map_err(into_strider_err)?;
-    let mode = relocation_mode(apply_relocations, relocated_got_is_rom)?;
-    let image = elf.image(source.into(), mode).map_err(into_strider_err)?;
-    Ok(PyLoadedElf {
-        elfs: vec![elf],
-        writable: image.writable,
-        symbol_elfs: Vec::new(),
-        extra_symbols: Vec::new(),
-        mem: PyBufferReader::from_regions(image.fetch),
-        rom: PyBufferReader::from_regions(image.rom),
-        source,
-        memo: ElfMemo::default(),
-    })
-}
-
-/// Load the ELF at `path`, collecting regions from PT_LOAD program
-/// headers (falling back to the section walker for header-less ET_REL).
+/// Load the ELF at `path`. `from_segments` collects regions from PT_LOAD
+/// program headers (falling back to the section walker for header-less
+/// ET_REL); off, it walks section headers even on a linked binary, for
+/// section-granular regions (`.text` / `.rodata` / `.plt` as separate
+/// mappings) instead of coalesced PT_LOAD ranges.
 ///
 /// Set `apply_relocations` for ET_DYN binaries (kernels, PIE userland)
 /// whose `.text` or function-pointer tables ship with unresolved
@@ -1048,37 +1009,31 @@ fn load_elf_impl(
 /// them; see [`relocation_mode`].  `apply_relocations` defaults to `false`
 /// here, so it has to be passed alongside: the pair without it is refused.
 #[pyfunction]
-#[pyo3(name = "_load_elf_from_segments", signature = (path, apply_relocations=false, relocated_got_is_rom=false))]
-pub fn load_elf_from_segments(
+#[pyo3(name = "_load_elf", signature = (path, from_segments=true, apply_relocations=false, relocated_got_is_rom=false))]
+pub fn load_elf(
     path: &str,
+    from_segments: bool,
     apply_relocations: bool,
     relocated_got_is_rom: bool,
 ) -> PyResult<PyLoadedElf> {
-    load_elf_impl(
-        path,
-        ElfRegionSource::Segments,
-        apply_relocations,
-        relocated_got_is_rom,
-    )
-}
-
-/// Load the ELF at `path`, collecting regions by walking section headers
-/// even when the binary carries PT_LOAD segments.
-/// Use for section-granular regions (`.text` / `.rodata` / `.plt` as
-/// separate mappings) instead of coalesced PT_LOAD ranges.
-#[pyfunction]
-#[pyo3(name = "_load_elf_from_sections", signature = (path, apply_relocations=false, relocated_got_is_rom=false))]
-pub fn load_elf_from_sections(
-    path: &str,
-    apply_relocations: bool,
-    relocated_got_is_rom: bool,
-) -> PyResult<PyLoadedElf> {
-    load_elf_impl(
-        path,
-        ElfRegionSource::Sections,
-        apply_relocations,
-        relocated_got_is_rom,
-    )
+    let source = if from_segments {
+        RegionSource::Auto
+    } else {
+        RegionSource::Sections
+    };
+    let elf = strider_reader::load_elf(path).map_err(into_strider_err)?;
+    let mode = relocation_mode(apply_relocations, relocated_got_is_rom)?;
+    let image = elf.image(source, mode).map_err(into_strider_err)?;
+    Ok(PyLoadedElf {
+        elfs: vec![elf],
+        writable: image.writable,
+        symbol_elfs: Vec::new(),
+        extra_symbols: Vec::new(),
+        mem: PyBufferReader::from_regions(image.fetch),
+        rom: PyBufferReader::from_regions(image.rom),
+        source,
+        memo: ElfMemo::default(),
+    })
 }
 
 /// Instruction source backed by Python.  Subclass and override
@@ -1160,6 +1115,16 @@ where
     }
 }
 
+/// What a Python `read` returned, as bytes. Every instruction fetch lands
+/// here, so `bytes` (the documented return) is read borrowed; anything else
+/// still converts.
+fn read_result_bytes<'a>(bound: &'a Bound<'_, PyAny>) -> PyResult<std::borrow::Cow<'a, [u8]>> {
+    Ok(match bound.downcast::<PyBytes>() {
+        Ok(b) => b.as_bytes().into(),
+        Err(_) => bound.extract::<Vec<u8>>()?.into(),
+    })
+}
+
 /// Holds the user's Python reader object and implements
 /// `rsleigh::MemReader` by `Python::with_gil` per call.
 ///
@@ -1191,19 +1156,8 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
                     addr.off
                 );
             }
-            // Every instruction fetch lands here, so `bytes` (the documented
-            // return) is read borrowed; anything else still converts.
-            let bound = result.bind(py);
-            let owned;
-            let bytes: &[u8] = match bound.downcast::<pyo3::types::PyBytes>() {
-                Ok(b) => b.as_bytes(),
-                Err(_) => {
-                    owned = bound
-                        .extract::<Vec<u8>>()
-                        .map_err(|e| anyhow::anyhow!("PyMemReader.read must return bytes: {e}"))?;
-                    &owned
-                }
-            };
+            let bytes = read_result_bytes(result.bind(py))
+                .map_err(|e| anyhow::anyhow!("PyMemReader.read must return bytes: {e}"))?;
             // The `MemReader` contract allows a short read near a region
             // edge, but an over-long return is a Python bug: reject it
             // rather than silently dropping the excess.
@@ -1216,7 +1170,7 @@ impl rsleigh::MemReader for PyMemReaderAdapter {
                 );
             }
             let n = bytes.len();
-            out_buf[..n].copy_from_slice(bytes);
+            out_buf[..n].copy_from_slice(&bytes);
             Ok(n)
         })
         .map_err(strider_reader::MemReadError::from)
@@ -1282,26 +1236,16 @@ impl ReadOnlyMemory for PyReadOnlyMemoryAdapter {
             if result.is_none(py) {
                 anyhow::bail!("ReadOnlyMemory.read({addr:#x}, {size}) returned None (unmapped)");
             }
-            let bound = result.bind(py);
-            let owned;
-            let bytes: &[u8] = match bound.downcast::<pyo3::types::PyBytes>() {
-                Ok(b) => b.as_bytes(),
-                Err(_) => {
-                    owned = bound.extract::<Vec<u8>>().map_err(|e| {
-                        anyhow::anyhow!(
-                            "ReadOnlyMemory.read({addr:#x}, {size}) did not return bytes: {e}"
-                        )
-                    })?;
-                    &owned
-                }
-            };
+            let bytes = read_result_bytes(result.bind(py)).map_err(|e| {
+                anyhow::anyhow!("ReadOnlyMemory.read({addr:#x}, {size}) did not return bytes: {e}")
+            })?;
             if bytes.len() != size {
                 anyhow::bail!(
                     "ReadOnlyMemory.read({addr:#x}, {size}) returned {} bytes, expected {size}",
                     bytes.len()
                 );
             }
-            buf.copy_from_slice(bytes);
+            buf.copy_from_slice(&bytes);
             Ok(())
         })
     }
@@ -1398,7 +1342,7 @@ impl MemInput {
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyBufferReader>()?;
     // `_LoadedElf` stays out of the module namespace; its methods are bound on
-    // the type object regardless, so `load_elf_from_*` still hands back a fully
+    // the type object regardless, so `_load_elf` still hands back a fully
     // usable instance.
     m.add_class::<PySymbol>()?;
     m.add_class::<PySymbolIter>()?;

@@ -159,7 +159,7 @@ impl MappingView {
 }
 
 /// CFG-shaping knobs, keyword-only.
-#[pyclass(name = "CfgOptions", module = "strider.cfg")]
+#[pyclass(name = "CfgOptions", module = "strider.cfg", frozen)]
 #[derive(Default)]
 pub struct PyCfgOptions {
     /// `function_max_size` and `allow_code_before_start_addr` as one extent.
@@ -400,7 +400,7 @@ pub(crate) fn py_bool(b: bool) -> &'static str {
 /// PowerPC, ARM VFP, AArch64 or MIPS FPU rounding mode breaks.
 ///
 /// An omitted or `None` field takes the analysis default, as listed above.
-#[pyclass(eq, name = "AssumptionOptions", module = "strider.lift")]
+#[pyclass(eq, name = "AssumptionOptions", module = "strider.lift", frozen)]
 #[derive(Clone, Default, PartialEq)]
 pub struct PyAssumptionOptions {
     pub(crate) inner: AssumptionOptions,
@@ -647,7 +647,7 @@ type BuiltPerAddressCcs = (
 );
 
 /// Lift, optimize, and CFG knobs for one `analyze` call.
-#[pyclass(name = "LifterOptions", module = "strider.lift")]
+#[pyclass(name = "LifterOptions", module = "strider.lift", frozen)]
 pub struct PyLifterOptions {
     /// Nested CFG-shape knobs.
     #[pyo3(get)]
@@ -768,9 +768,9 @@ impl PyLifterOptions {
         }
     }
 
-    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
-        let cfg_repr = self.cfg.borrow(py).__repr__();
-        let assumptions_repr = self.assumptions.borrow(py).__repr__();
+    fn __repr__(&self) -> PyResult<String> {
+        let cfg_repr = self.cfg.get().__repr__();
+        let assumptions_repr = self.assumptions.get().__repr__();
         Ok(format!(
             "LifterOptions(cfg={}, compact={}, per_address_ccs={}, \
              resolve_indirect_branches={}, assumptions={}, pipeline={})",

@@ -8,7 +8,16 @@ from __future__ import annotations
 import pytest
 
 import strider
-from strider.pattern import Capture, call, load, int_const, var
+from strider.pattern import (
+    Capture,
+    anything,
+    call,
+    int_add,
+    int_const,
+    load,
+    one_of,
+    var,
+)
 
 from .conftest import built_function, fixture_path
 
@@ -48,6 +57,19 @@ def test_ignore_root_keeps_distinct_captures():
     g = _switch_graph()
     c = Capture()
     assert len(g.find_all(load().capture(c), ignore_root=True)) == 5
+
+
+def test_ignore_root_keys_each_joined_pattern_apart():
+    # `a` binds `k` or nothing, `b` binds `k` or nothing plus `j`, at the one
+    # Add. A row binding `k` in `a` alone and one binding it in `b` alone hold
+    # the same captures split differently across the patterns, and stay two.
+    g = built_function("x64", "arithmetic", "add")
+    k, j = Capture(), Capture()
+    a = int_add(one_of([anything().capture(k), anything()]), anything()).ordered()
+    b = int_add(
+        one_of([anything(), anything().capture(k)]), anything().capture(j)
+    ).ordered()
+    assert len(g.find_all([a, b], ignore_root=True)) == 3
 
 
 def test_find_unique_returns_the_single_binding():
