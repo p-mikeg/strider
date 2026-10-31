@@ -269,9 +269,11 @@ class Function:
     def mem_walk(self) -> list[Node]:
         """The memory-touching nodes (Load, Store, Call, CallOther, MemPhi,
         and the InitialMemory root) reached by following memory-token edges
-        forward from InitialMemory, in pre-order. A node that only reads the
-        final token without touching memory (`Return`, `IndirectBranch`) is
-        excluded, and the list is empty when no InitialMemory is reachable."""
+        forward from InitialMemory, in pre-order, each once. At a `MemPhi`
+        join a node can come before one of its own memory predecessors. A node
+        that only reads the final token without touching memory (`Return`,
+        `IndirectBranch`) is excluded, and the list is empty when no
+        InitialMemory is reachable."""
         ...
     def compact(self) -> None:
         """Drop every node unreachable from entry. Invalidates node ids."""

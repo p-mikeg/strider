@@ -248,9 +248,10 @@ def _uncap(params: dict[str, Any]) -> dict[str, Any]:
 class _IrVisualizer:
     """A `Function` as a `_Visualizer`."""
 
-    def __init__(self, function: Function, whole: bool = True) -> None:
+    def __init__(self, function: Function, whole: bool = True, depth: int = 0) -> None:
         self._fn = function
         self._whole = whole
+        self._depth = depth
 
     def entry(self) -> int:
         """The node id to center the first view on."""
@@ -264,7 +265,7 @@ class _IrVisualizer:
             ["whole", "depth", "hub_cap", "max_nodes", "count_producers", "pretty"],
             pretty=True,
             whole=self._whole,
-            depth=0,
+            depth=self._depth,
             hub_cap=0,
             max_nodes=0,
         )
@@ -291,11 +292,12 @@ class _IrVisualizer:
 class _CfgVisualizer:
     """A `Cfg` as a `_Visualizer`."""
 
-    def __init__(self, cfg: Cfg, whole: bool = True) -> None:
+    def __init__(self, cfg: Cfg, whole: bool = True, depth: int = 0) -> None:
         """Explore `cfg`, building its per-region disassembly text once for
         reuse by every text search."""
         self._cfg = cfg
         self._whole = whole
+        self._depth = depth
         self._texts: dict[int, str] = cfg._region_texts()
 
     def entry(self) -> int:
@@ -310,7 +312,7 @@ class _CfgVisualizer:
             self._cfg.neighborhood_dot,
             ["whole", "depth", "max_nodes"],
             whole=self._whole,
-            depth=0,
+            depth=self._depth,
             max_nodes=0,
         )
 
@@ -618,12 +620,7 @@ class _Server(socketserver.TCPServer):
 
     allow_reuse_address = True
 
-    def __init__(
-        self,
-        address: tuple[str, int],
-        visualizer: _Visualizer,
-        depth: int | None = None,
-    ) -> None:
+    def __init__(self, address: tuple[str, int], visualizer: _Visualizer) -> None:
         self.visualizer: _Visualizer | None = visualizer
         self.entry = visualizer.entry()
         self.controls = visualizer.controls()
@@ -640,13 +637,9 @@ class _Server(socketserver.TCPServer):
         #: is the caller's own and outlives the loop, so joining it cannot
         #: return.
         self.finished = threading.Event()
-        #: Whether the thread in `_RUNNING` was started to serve, and so ends
-        #: when the loop does. False for a foreground `visualize`.
-        self.owns_thread = False
-        if depth is not None:
-            for ctl in self.controls:
-                if ctl["name"] == "depth":
-                    ctl["default"] = _parse_control(ctl, str(depth))
+        #: The thread started to serve, which ends when the loop does. None
+        #: for a foreground `visualize`, which serves on its caller's thread.
+        self.worker: threading.Thread | None = None
         self.address_family = _address_family(address[0])
         super().__init__(address, _Handler)
 
@@ -660,12 +653,11 @@ class _Server(socketserver.TCPServer):
         super().serve_forever(poll_interval)
 
 
-#: Explorer servers currently serving, with the thread parked in each, keyed by
-#: the port they bound. `visualize` blocks, so a caller running it on another
-#: thread holds no handle on the server; this registry is how `shutdown` reaches
-#: it. The thread is what `shutdown` joins, but only when the server started
-#: it (`owns_thread`).
-_RUNNING: dict[int, tuple[_Server, threading.Thread]] = {}
+#: Explorer servers currently serving, keyed by the port they bound.
+#: `visualize` blocks, so a caller running it on another thread holds no handle
+#: on the server; this registry is how `shutdown` reaches it, and joins its
+#: `worker`.
+_RUNNING: dict[int, _Server] = {}
 
 
 #: Bound on the join that follows a drained serve loop; the thread is out of
@@ -713,9 +705,9 @@ def shutdown(port: int | None = None) -> list[int]:
     stopped = []
     # Every server first, before waiting on any: a handler writing a body polls
     # this, so the loop it holds is reachable within `_WRITE_POLL_SECONDS`.
-    for _p, (srv, _thread) in targets:
+    for _p, srv in targets:
         srv.stopping.set()
-    for p, (srv, _thread) in targets:
+    for p, srv in targets:
         # `BaseServer.shutdown` waits on an event `serve_forever` clears on
         # entry and sets on exit, so calling it before the loop starts blocks
         # forever.
@@ -732,16 +724,16 @@ def shutdown(port: int | None = None) -> list[int]:
         srv._BaseServer__shutdown_request = True  # type: ignore[attr-defined]
         if srv.finished.wait(_SHUTDOWN_STOP_SECONDS):
             stopped.append(p)
-    for p, (srv, thread) in targets:
+    for p, srv in targets:
         # Nothing to drain out of a loop that never ran; joining the thread
         # serving us would deadlock, and it is already past the frame this
-        # exists to drain. A foreground `visualize` registered its CALLER's
-        # thread, which outlives the serve loop, so a join there can only burn
-        # the whole timeout.
-        if p not in stopped or thread is current or not srv.owns_thread:
+        # exists to drain. A foreground `visualize` serves on its CALLER's
+        # thread, which outlives the serve loop, so it has no worker to join.
+        worker = srv.worker
+        if p not in stopped or worker is None or worker is current:
             continue
-        if thread.is_alive():
-            thread.join(timeout=_SHUTDOWN_JOIN_SECONDS)
+        if worker.is_alive():
+            worker.join(timeout=_SHUTDOWN_JOIN_SECONDS)
     return stopped
 
 
@@ -790,25 +782,20 @@ def visualize(
     if depth is not None and depth < 0:
         # The control clamps to its min of 0, and 0 is the uncapped sentinel.
         raise ValueError(f"depth must be >= 0, got {depth}")
+    seed = min(depth or 0, cast("int", _KNOB_UI["depth"]["max"]))
     tn = type(target).__name__
     if tn == "Function":
-        vis: _Visualizer = _IrVisualizer(cast("Function", target), whole)
+        vis: _Visualizer = _IrVisualizer(cast("Function", target), whole, seed)
     elif tn == "Cfg":
-        vis = _CfgVisualizer(cast("Cfg", target), whole)
+        vis = _CfgVisualizer(cast("Cfg", target), whole, seed)
     else:
         raise TypeError(f"visualize expects a Function or Cfg, got {tn}")
     if not background:
-        return _serve(vis, host=host, port=port, depth=depth)
-    return _serve_background(vis, host=host, port=port, depth=depth)
+        return _serve(vis, host=host, port=port)
+    return _serve_background(vis, host=host, port=port)
 
 
-def _serve_background(
-    visualizer: _Visualizer,
-    *,
-    host: str,
-    port: int,
-    depth: int | None,
-) -> int:
+def _serve_background(visualizer: _Visualizer, *, host: str, port: int) -> int:
     """Serve on a NON-DAEMON thread and return the bound port.
 
     Non-daemon so an interpreter exiting with the explorer still up joins the
@@ -818,7 +805,7 @@ def _serve_background(
     Binding happens on THIS thread, before the worker starts, so a port already
     in use raises here instead of vanishing into the thread. Rendering then runs
     on the worker."""
-    srv = _Server((host, port), visualizer, depth)
+    srv = _Server((host, port), visualizer)
     bound_port: int = srv.server_address[1]
     url = _url(host, bound_port)
 
@@ -831,15 +818,16 @@ def _serve_background(
             srv.visualizer = None
             srv.finished.set()
 
-    thread = threading.Thread(target=run, name=f"strider-explorer-{bound_port}", daemon=False)
+    srv.worker = threading.Thread(
+        target=run, name=f"strider-explorer-{bound_port}", daemon=False
+    )
     # Registered HERE, not in the worker: the port is already bound, so a
     # `shutdown()` racing this return must find the server. It carries its own
     # `started` guard, which is what keeps `BaseServer.shutdown` off a loop
     # that never ENTERED: that call blocks until the loop EXITS.
-    srv.owns_thread = True
-    _RUNNING[bound_port] = (srv, thread)
+    _RUNNING[bound_port] = srv
     try:
-        thread.start()
+        srv.worker.start()
     except BaseException:
         # Nothing will ever drain a registration whose thread never ran, and
         # the listening socket has no other owner.
@@ -856,17 +844,16 @@ def _serve(
     *,
     host: str = "127.0.0.1",
     port: int = 0,
-    depth: int | None = None,
 ) -> int:
     """Serve the explorer over any visualizer-shaped object. Prints the URL
     to stdout for the caller to open. Blocks serving requests until
     interrupted, then returns the port it had bound."""
-    srv = _Server((host, port), visualizer, depth)
+    srv = _Server((host, port), visualizer)
     bound_port: int = srv.server_address[1]
     url = _url(host, bound_port)
     print(f"strider explorer -> {url}  (Ctrl-C to stop)")
     print("  drag or arrows pan, ctrl+wheel or +/- zooms, f fits, 0 is 100%")
-    _RUNNING[bound_port] = (srv, threading.current_thread())
+    _RUNNING[bound_port] = srv
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

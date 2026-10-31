@@ -828,19 +828,16 @@ pub(crate) fn stash_pending_query_error(e: PyErr) {
 // `Py<PyFunction>`, so a `Match` accessor re-borrowing its `RefCell<Function>`
 // under `run_query`'s own read borrow is a same-thread recursive READ borrow.
 // That is only safe because no mutable borrow is ever taken outside
-// `try_write_inner`.
+// `PyFunction::edit`.
 thread_local! {
-    static CURRENT_QUERY_FUNCTION: std::cell::RefCell<Vec<(Py<crate::function::PyFunction>, u64)>> =
+    static CURRENT_QUERY_FUNCTION: std::cell::RefCell<Vec<crate::function::FunctionAt>> =
         const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Must be paired with [`pop_current_query_function`] once the query, and
 /// every `.when()` predicate it invokes, has finished.
-pub(crate) fn push_current_query_function(
-    function: Py<crate::function::PyFunction>,
-    generation: u64,
-) {
-    CURRENT_QUERY_FUNCTION.with(|c| c.borrow_mut().push((function, generation)));
+pub(crate) fn push_current_query_function(at: crate::function::FunctionAt) {
+    CURRENT_QUERY_FUNCTION.with(|c| c.borrow_mut().push(at));
 }
 
 pub(crate) fn pop_current_query_function() {
@@ -849,12 +846,8 @@ pub(crate) fn pop_current_query_function() {
     });
 }
 
-fn current_query_function(py: Python<'_>) -> Option<(Py<crate::function::PyFunction>, u64)> {
-    CURRENT_QUERY_FUNCTION.with(|c| {
-        c.borrow()
-            .last()
-            .map(|(function, generation)| (function.clone_ref(py), *generation))
-    })
+fn current_query_function(py: Python<'_>) -> Option<crate::function::FunctionAt> {
+    CURRENT_QUERY_FUNCTION.with(|c| c.borrow().last().map(|at| at.clone_ref(py)))
 }
 
 /// Runs a Python `.when()` predicate, returning whether to keep the match.
@@ -870,7 +863,7 @@ fn run_when_predicate(
         if peek_pending_query_error() {
             return false;
         }
-        let Some((function, generation)) = current_query_function(py) else {
+        let Some(at) = current_query_function(py) else {
             // Unreachable: every query path pushes an entry before running the
             // matcher. Fail closed rather than panic into the matcher's stack.
             eprintln!(
@@ -879,15 +872,8 @@ fn run_when_predicate(
             );
             return false;
         };
-        let m = strider_pattern::Match::new(node, bindings.clone(), generation);
-        let py_match = match Py::new(
-            py,
-            crate::matcher::PyMatch {
-                inner: vec![m],
-                function,
-                generation,
-            },
-        ) {
+        let m = strider_pattern::Match::new(node, bindings.clone(), at.generation);
+        let py_match = match Py::new(py, crate::matcher::PyMatch { inner: vec![m], at }) {
             Ok(p) => p,
             Err(e) => {
                 stash_pending_query_error(e);
@@ -2842,7 +2828,7 @@ fn run_join_predicate(tuple: &sp::JoinedMatch, obj: &PyObject) -> Option<bool> {
         if peek_pending_query_error() {
             return None;
         }
-        let Some((function, generation)) = current_query_function(py) else {
+        let Some(at) = current_query_function(py) else {
             eprintln!(
                 "strider JoinPredicate: no active query function on this thread \
                  (internal error); dropping the row"
@@ -2853,8 +2839,7 @@ fn run_join_predicate(tuple: &sp::JoinedMatch, obj: &PyObject) -> Option<bool> {
             py,
             crate::matcher::PyMatch {
                 inner: tuple.clone(),
-                function,
-                generation,
+                at,
             },
         )
         .and_then(|py_match| obj.call_method1(py, "constraint", (py_match,)))

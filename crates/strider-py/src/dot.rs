@@ -20,8 +20,7 @@ pub(crate) const DOT_STYLES: [(&str, StyleCtor); 3] = [
 
 /// Map a style name onto a [`dot::DotStyle`].  An unknown name is an error,
 /// never a silent default.
-pub fn dot_style_for(name: Option<&str>) -> PyResult<dot::DotStyle> {
-    let name = name.unwrap_or(DEFAULT_STYLE);
+pub fn dot_style_for(name: &str) -> PyResult<dot::DotStyle> {
     if let Some((_, style)) = DOT_STYLES.iter().find(|(n, _)| *n == name) {
         return Ok(style());
     }

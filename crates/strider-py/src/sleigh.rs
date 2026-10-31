@@ -2,8 +2,8 @@ use pyo3::prelude::*;
 
 /// A Sleigh address space, exposed as the `RAM` / `REGISTER` / `CONST` /
 /// `UNIQUE` class constants (instances, not callables).
-#[pyclass(name = "VnSpace", module = "strider.sleigh", frozen)]
-#[derive(Clone, Copy)]
+#[pyclass(name = "VnSpace", module = "strider.sleigh", frozen, eq, hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyVnSpace {
     pub(crate) inner: rsleigh::VnSpace,
 }
@@ -64,19 +64,6 @@ impl PyVnSpace {
     fn __repr__(&self) -> String {
         format!("VnSpace.{}", self.name().to_lowercase())
     }
-
-    /// Equality on the underlying Sleigh space identity.
-    fn __eq__(&self, other: &Self) -> bool {
-        self.inner == other.inner
-    }
-
-    /// Hash consistent with `__eq__`.
-    fn __hash__(&self) -> u64 {
-        // Hash the shortcut byte (rsleigh's own PartialEq/Hash key), NOT the
-        // address of `self.inner`: two instances wrapping `VnSpace::RAM` sit
-        // at different addresses, which broke `a == b => hash(a) == hash(b)`.
-        u64::from(self.inner.shortcut_raw())
-    }
 }
 
 /// A Sleigh varnode: `(space, offset, size_in_bytes)`.
@@ -84,8 +71,8 @@ impl PyVnSpace {
 /// Construct via:
 /// * `SleighArch.reg("RAX")`, or `None` if the name isn't a register.
 /// * `Vn(space, off, size)`, for stack varnodes and custom spaces.
-#[pyclass(name = "Vn", module = "strider.sleigh", frozen)]
-#[derive(Clone, Copy)]
+#[pyclass(name = "Vn", module = "strider.sleigh", frozen, eq, hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyVn {
     pub(crate) inner: rsleigh::Vn,
 }
@@ -131,21 +118,6 @@ impl PyVn {
     /// rsleigh's `Display` form, e.g. `%[0x20]:8` for a register varnode.
     fn __repr__(&self) -> String {
         format!("{}", self.inner)
-    }
-
-    /// Equality on all three varnode fields (space, offset, size).
-    fn __eq__(&self, other: &Self) -> bool {
-        self.inner == other.inner
-    }
-
-    /// Hash consistent with `__eq__`.
-    fn __hash__(&self) -> u64 {
-        // `addr_space` must be in the mix: without it, RAM[0x10]:8 and
-        // REGISTER[0x10]:8 shared a bucket.
-        let mut h = self.inner.addr_off;
-        h ^= u64::from(self.inner.size).wrapping_mul(0x9E37_79B9_7F4A_7C15);
-        h ^= u64::from(self.inner.addr_space.shortcut_raw()).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        h
     }
 }
 
