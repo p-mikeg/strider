@@ -1096,3 +1096,33 @@ fn retain_reachable_rejects_a_duplicate_node_id() {
     let keep = reachable_from(&g, [root]).into_iter().chain([dup]);
     let _ = retain_reachable(&mut g, keep);
 }
+
+#[test]
+fn add_node_output_appends_at_the_next_index() {
+    let mut g = TestGraph::new();
+    let region = region_node(&mut g);
+    let first = g.node_outputs(region)[0];
+    let second = g.add_node_output(region, TestVal::Int);
+    let third = g.add_node_output(region, TestVal::Ctrl);
+    assert_eq!(g.node_outputs(region), [first, second, third]);
+    assert_eq!(g.value_definition(second), (region, 1));
+    assert_eq!(g.value_definition(third), (region, 2));
+    assert_eq!(*g.value_kind_ref(second), TestVal::Int);
+    let sink = region_node(&mut g);
+    g.add_node_input(sink, third);
+    assert_eq!(g.value_uses(third).count(), 1);
+    assert_eq!(g.value_uses(first).count(), 0);
+}
+
+#[test]
+fn value_kind_mut_rewrites_one_output() {
+    let mut g = TestGraph::new();
+    let before = region_node(&mut g);
+    let region = region_node(&mut g);
+    let other = g.add_node_output(region, TestVal::Ctrl);
+    let first = g.node_outputs(region)[0];
+    *g.value_kind_mut(first) = TestVal::Int;
+    assert_eq!(*g.value_kind_ref(first), TestVal::Int);
+    assert_eq!(*g.value_kind_ref(other), TestVal::Ctrl);
+    assert_eq!(*g.value_kind_ref(g.node_outputs(before)[0]), TestVal::Ctrl);
+}

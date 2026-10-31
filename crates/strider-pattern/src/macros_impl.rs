@@ -10,7 +10,6 @@
 //!
 //!   * `uint`: `Bindings::get_uint`, yielding `UBig`.
 //!   * `float_bits`: `Bindings::get_float_bits`, yielding `u64`.
-//!   * `int_unary_op`
 //!   * `float_binary_op` / `float_unary_op` / `float_cmp_op`
 //!
 //! Two reserved bare identifiers bind graph-derived values instead of capture
@@ -32,39 +31,32 @@
 /// Bracket-list grammar is in the module docs.
 #[macro_export]
 macro_rules! int_const_with {
-    ([$($caps:tt)*] => $body:expr) => {
-        $crate::int_const_with_fn(move |__strider_ctx: &$crate::TemplateCtx<'_>| {
-            $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
-            Ok({ $body })
-        })
-        .declaring($crate::__const_with_caps!($($caps)*))
-        .declaring_optional($crate::__const_with_opt_caps!($($caps)*))
-    };
+    ($($t:tt)*) => { $crate::__const_with!(int_const_with_fn; $($t)*) };
 }
 
 /// Builds an `IntConst` typed `I1`.
 #[macro_export]
 macro_rules! bool_const_with {
-    ([$($caps:tt)*] => $body:expr) => {
-        $crate::bool_const_with_fn(move |__strider_ctx: &$crate::TemplateCtx<'_>| {
-            $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
-            Ok({ $body })
-        })
-        .declaring($crate::__const_with_caps!($($caps)*))
-        .declaring_optional($crate::__const_with_opt_caps!($($caps)*))
-    };
+    ($($t:tt)*) => { $crate::__const_with!(bool_const_with_fn; $($t)*) };
 }
 
 /// The body must evaluate to a `u64` IEEE 754 bit pattern.
 #[macro_export]
 macro_rules! float_const_with {
-    ([$($caps:tt)*] => $body:expr) => {
-        $crate::float_const_with_fn(move |__strider_ctx: &$crate::TemplateCtx<'_>| {
-            $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
-            Ok({ $body })
-        })
-        .declaring($crate::__const_with_caps!($($caps)*))
-        .declaring_optional($crate::__const_with_opt_caps!($($caps)*))
+    ($($t:tt)*) => { $crate::__const_with!(float_const_with_fn; $($t)*) };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __const_with {
+    ($f:ident; [$($caps:tt)*] => $body:expr) => {
+        $crate::__const_with_decl!(
+            $crate::$f(move |__strider_ctx: &$crate::TemplateCtx<'_>| {
+                $crate::__const_with_bindings!(__strider_ctx; $($caps)*);
+                Ok({ $body })
+            });
+            $($caps)*
+        )
     };
 }
 
@@ -94,49 +86,23 @@ macro_rules! __const_with_bindings {
     };
 }
 
-/// Collects the `name: kind` entries of a capture list into a `Vec<Capture>`,
-/// skipping the bare graph-derived idents. Source order, so the declaration
-/// reads like the list.
+/// Declares each `name: kind` entry of a capture list on the built
+/// constant, a `kind?` one as optional, in source order; the bare
+/// graph-derived idents declare nothing.
 #[doc(hidden)]
 #[macro_export]
-macro_rules! __const_with_caps {
-    () => {
-        ::std::vec::Vec::new()
+macro_rules! __const_with_decl {
+    ($e:expr;) => {
+        $e
     };
-    // A `kind?` entry is declared by `__const_with_opt_caps!` instead.
-    ($name:ident : $kind:ident ? $(, $($rest:tt)*)?) => {
-        $crate::__const_with_caps!($($($rest)*)?)
+    ($e:expr; $name:ident : $kind:ident ? $(, $($rest:tt)*)?) => {
+        $crate::__const_with_decl!($e.declare_optional($name); $($($rest)*)?)
     };
-    ($name:ident : $kind:ident $(, $($rest:tt)*)?) => {{
-        let mut caps: ::std::vec::Vec<$crate::Capture> =
-            $crate::__const_with_caps!($($($rest)*)?);
-        caps.insert(0, $name);
-        caps
-    }};
-    ($cap:ident $(, $($rest:tt)*)?) => {
-        $crate::__const_with_caps!($($($rest)*)?)
+    ($e:expr; $name:ident : $kind:ident $(, $($rest:tt)*)?) => {
+        $crate::__const_with_decl!($e.declare($name); $($($rest)*)?)
     };
-}
-
-/// The `name: kind?` entries of a capture list, source order, the complement
-/// of what [`__const_with_caps`] collects.
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __const_with_opt_caps {
-    () => {
-        ::std::vec::Vec::new()
-    };
-    ($name:ident : $kind:ident ? $(, $($rest:tt)*)?) => {{
-        let mut caps: ::std::vec::Vec<$crate::Capture> =
-            $crate::__const_with_opt_caps!($($($rest)*)?);
-        caps.insert(0, $name);
-        caps
-    }};
-    ($name:ident : $kind:ident $(, $($rest:tt)*)?) => {
-        $crate::__const_with_opt_caps!($($($rest)*)?)
-    };
-    ($cap:ident $(, $($rest:tt)*)?) => {
-        $crate::__const_with_opt_caps!($($($rest)*)?)
+    ($e:expr; $cap:ident $(, $($rest:tt)*)?) => {
+        $crate::__const_with_decl!($e; $($($rest)*)?)
     };
 }
 
@@ -171,11 +137,6 @@ macro_rules! __const_with_extract {
         $ctx.bindings
             .get_float_bits($cap, $ctx.function.graph())
             .ok_or_else(|| $crate::missing_binding("float_bits"))
-    };
-    ($ctx:ident, $cap:ident, int_unary_op) => {
-        $ctx.bindings
-            .get_int_unary_op($cap, $ctx.function.graph())
-            .ok_or_else(|| $crate::missing_binding("int_unary_op"))
     };
     ($ctx:ident, $cap:ident, float_binary_op) => {
         $ctx.bindings

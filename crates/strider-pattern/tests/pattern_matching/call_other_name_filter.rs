@@ -17,3 +17,19 @@ fn name_matches_only_target() {
         .unwrap();
     assert_eq!(matches.len(), 1, "should match exactly the cpuid CallOther");
 }
+
+#[test]
+fn every_repeated_name_must_hold() {
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .build_fn_single_region()
+        .expect("build_fn_single_region");
+    Tb::named_call_other(&mut b, 1, "cpuid", &[], &[], false, false).expect("cpuid");
+    b.build_return(None, &[]).expect("return");
+    let function = b.build().expect("build");
+
+    let hits = |p: strider_pattern::CallOtherPat| {
+        Matcher::new(&function).find_all(&p.build()).unwrap().len()
+    };
+    assert_eq!(hits(call_other().name("cpuid").name("cpuid")), 1);
+    assert_eq!(hits(call_other().name("rdtsc").name("cpuid")), 0);
+}

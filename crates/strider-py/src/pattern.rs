@@ -15,7 +15,8 @@ use strider_ir::node::ValueType as T;
 use strider_pattern as sp;
 use strider_pattern::node_builders::defer_drop;
 use strider_pattern::{
-    Capture, CaptureExt, Expr, IntoExpr, JoinConstraint, Pattern, Template, TemplatePat,
+    Capture, CaptureExt, Expr, IntoExpr, JoinConstraint, OutputAspect, Pattern, Template,
+    TemplatePat,
 };
 
 use crate::errors::into_strider_err;
@@ -769,10 +770,7 @@ impl TemplateLike<'_> {
     pub(crate) fn to_template(&self) -> PyResult<Template> {
         let cap = match self {
             TemplateLike::Template(t) => {
-                return Ok(TemplatePat::into_template(expr(
-                    t.as_any(),
-                    Slot::Template,
-                )?));
+                return Ok(expr(t.as_any(), Slot::Template)?.into_template());
             }
             TemplateLike::Capture(c) => c.get().inner,
             TemplateLike::Str(s) => {
@@ -1646,25 +1644,10 @@ pub(crate) struct CommonState {
     inputs: Vec<(usize, Py<PyAny>)>,
     /// Operands from `.any_input(p)`, one existential slot each.
     any_inputs: Vec<Py<PyAny>>,
-    outputs: Vec<OutputSpecPy>,
+    /// `(slot, aspect)`; `slot` is `None` for the existential `.any_output()`.
+    outputs: Vec<(Option<usize>, OutputAspect)>,
     /// `(edge, value)` from a phi's `.input_from`.
     edge_links: Vec<(Capture, Capture)>,
-}
-
-/// The one aspect a single `.output(slot)` / `.any_output()` call commits.
-#[derive(Clone, Copy)]
-enum OutputAspect {
-    Capture(Capture),
-    Width(u32),
-    Ty(strider_ir::node::ValueType),
-}
-
-/// A sibling-output constraint staged on a builder; `slot` is `None` for the
-/// existential `.any_output()`.
-#[derive(Clone, Copy)]
-struct OutputSpecPy {
-    slot: Option<usize>,
-    aspect: OutputAspect,
 }
 
 macro_rules! builder_common_methods {
@@ -1961,17 +1944,9 @@ macro_rules! node_builder {
         }
     };
     (@apply_slot $self:ident, $py:ident, $b:ident, output) => {
-        let __specs: Vec<OutputSpecPy> = $self.common.borrow().outputs.clone();
-        for __spec in __specs {
-            let __slot = match __spec.slot {
-                Some(__s) => $b.output(__s),
-                None => $b.any_output(),
-            };
-            $b = match __spec.aspect {
-                OutputAspect::Capture(__c) => __slot.capture(__c),
-                OutputAspect::Width(__w) => __slot.of_width(__w),
-                OutputAspect::Ty(__t) => __slot.of_type(__t),
-            };
+        let __specs = $self.common.borrow().outputs.clone();
+        for (__slot, __aspect) in __specs {
+            $b = $b.with_output(__slot, __aspect);
         }
     };
 
@@ -2334,12 +2309,8 @@ pub struct PyOutputSlot {
 
 impl PyOutputSlot {
     fn commit(&self, py: Python<'_>, aspect: OutputAspect) -> PyResult<Py<PyAny>> {
-        let spec = OutputSpecPy {
-            slot: self.slot,
-            aspect,
-        };
         with_builder(self.parent.bind(py), |b| {
-            b.common().borrow_mut().outputs.push(spec)
+            b.common().borrow_mut().outputs.push((self.slot, aspect))
         })
         .ok_or_else(|| {
             pyo3::exceptions::PyTypeError::new_err(

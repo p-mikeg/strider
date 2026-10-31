@@ -164,7 +164,7 @@ strider-ir         -> strider-graph, strider-target, read-only-memory, dot,
 strider-reader     -> read-only-memory
 strider-lift       -> strider-cfg, strider-ir, strider-target,
                       graph-algorithms, vn-container
-strider-pattern    -> strider-ir, strider-graph, graph-algorithms, vn-container
+strider-pattern    -> strider-ir, strider-graph, vn-container
 strider-opt        -> strider-cfg, strider-ir, strider-pattern, strider-target,
                       entity-utils, graph-algorithms, vn-container
 strider-orchestrator -> strider-cfg, strider-ir, strider-lift, strider-opt,
@@ -187,12 +187,10 @@ Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 and the orchestrator reaches `strider-pattern` and `dot` only from its tests
 and examples. External `dashu-int` is a production dependency of `strider-ir`
 alone, the arbitrary-precision unsigned integer behind `const_interner`.
-External `petgraph` is a production dependency of `strider-cfg`,
-`strider-lift` and `strider-pattern`, and a dev-dependency of `graph-algorithms`
-and `strider-ir`, whose dominance tests check against `simple_fast`;
-graph-algorithms' walk tests also check `acyclic_postorder`'s cycle verdict
-against `toposort`, and strider-pattern's tests use petgraph as the
-template-order oracle.
+External `petgraph` is a production dependency of `strider-cfg` and
+`strider-lift`, and a dev-dependency of `graph-algorithms` and `strider-ir`,
+whose dominance tests check against `simple_fast`; graph-algorithms' walk tests
+also check `acyclic_postorder`'s cycle verdict against `toposort`.
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.

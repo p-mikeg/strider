@@ -1,11 +1,12 @@
-//! Operand fields stay generic type parameters so the template/rewrite side can
-//! restate the same shape under a `TemplatePat` bound. Finalise with
-//! `.into_pattern()`.
+//! One set of typed factories for both sides: an operand stays a generic type
+//! parameter, so a value op is a `MatchPat` when its operands are and a
+//! `TemplatePat` when they are. Finalise with `.into_pattern()` or
+//! `.into_template()`.
 
-pub mod alternation;
-pub mod consts;
-pub mod value_ops;
-pub mod wildcards;
+pub(crate) mod alternation;
+pub(crate) mod consts;
+pub(crate) mod value_ops;
+pub(crate) mod wildcards;
 
 pub use alternation::{BoxedAlt, OneOf, boxed_alt};
 pub use consts::{

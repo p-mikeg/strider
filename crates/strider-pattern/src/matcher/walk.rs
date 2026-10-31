@@ -616,7 +616,7 @@ fn interchangeable(
     if let Some(&hit) = memo.get(&(a, b)) {
         return hit;
     }
-    // A cycle would have been refused at seal; the placeholder guards the
+    // A cycle is refused at wiring; the placeholder guards the
     // sharing-heavy DAG against re-walking a pair mid-flight.
     memo.insert((a, b), false);
     let verdict = value_interchangeable(graph.value_kind_ref(a), graph.value_kind_ref(b))
