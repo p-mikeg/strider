@@ -156,6 +156,27 @@ impl TemplateBuilder {
         self.add_value(n, TmplValue::ValueCapture(c))
     }
 
+    /// See [`StagedGraph::enter_nesting`]: a template is charged to the stack
+    /// alone.
+    pub(crate) fn enter_nesting(&mut self) -> bool {
+        self.core.enter_nesting(false)
+    }
+
+    pub(crate) fn leave_nesting(&mut self) {
+        self.core.leave_nesting(false);
+    }
+
+    /// Records `why` and lowers a placeholder in place of what was refused.
+    pub(crate) fn refuse(&mut self, why: &str) -> TmplValueRef {
+        self.core.reject(why.to_string());
+        self.placeholder()
+    }
+
+    /// Stands for an operand that was refused.
+    pub(crate) fn placeholder(&mut self) -> TmplValueRef {
+        self.capture(crate::Capture::internal())
+    }
+
     /// Materialises every staged node in producer-before-consumer order. A
     /// refused, cyclic or multi-sink template surfaces through
     /// [`Template::root`].

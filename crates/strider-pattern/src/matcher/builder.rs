@@ -37,34 +37,7 @@ impl SealNode for PatNode {
 /// Returned [`PatValueRef`] / [`PatNodeRef`] handles are scoped to the builder
 /// that produced them.
 pub struct MatcherBuilder {
-    core: StagedGraph<PatNode, PatValue>,
-    /// Nesting levels currently being lowered; see [`Self::enter_nesting`].
-    nesting: usize,
-    /// Frame address of the outermost live nesting level, the zero the stack
-    /// consumption in [`Self::enter_nesting`] is measured against.
-    stack_base: usize,
-}
-
-/// Stack one lowering may consume before [`MatcherBuilder::enter_nesting`]
-/// bails. A level count alone does not bound stack: a level costs one frame per
-/// builder and decorator it passes through, and an unoptimised frame is several
-/// times an optimised one.
-///
-/// The fattest shape measured, an unoptimised alternation of a decorated call,
-/// reaches [`MAX_PATTERN_NODES`](crate::matcher::graph::MAX_PATTERN_NODES)
-/// levels inside 0.75 MiB, so the level cap stays the bound a normal pattern
-/// trips on; this catches a fatter one before the 2 MiB a spawned thread gets
-/// by default runs out.
-const MAX_PATTERN_STACK: usize = 1024 * 1024;
-
-/// Address of a local in the calling frame. The stack grows DOWN on every
-/// target this ships to, so a deeper frame reads lower; `saturating_sub` is
-/// what makes the other direction read as no consumption rather than as a huge
-/// one.
-#[inline(never)]
-fn frame_mark() -> usize {
-    let probe = 0u8;
-    std::hint::black_box(std::ptr::from_ref(&probe)) as usize
+    pub(crate) core: StagedGraph<PatNode, PatValue>,
 }
 
 impl Default for MatcherBuilder {
@@ -77,48 +50,13 @@ impl MatcherBuilder {
     pub fn new() -> Self {
         Self {
             core: StagedGraph::new(),
-            nesting: 0,
-            stack_base: 0,
         }
     }
 
-    /// Opens one level of nested lowering, refusing past `MAX_PATTERN_NODES`.
-    /// Lowering recurses once per level before any node exists to count, so the
-    /// cap at seal comes too late to keep the recursion off the stack; a level
-    /// past it is over the node cap anyway. `false` means the caller must not
-    /// descend.
-    pub(crate) fn enter_nesting(&mut self) -> bool {
-        let here = frame_mark();
-        if self.nesting >= crate::matcher::graph::MAX_PATTERN_NODES {
-            self.reject(format!(
-                "pattern nests more than {} levels deep, over what lowering can \
-                 recurse through",
-                crate::matcher::graph::MAX_PATTERN_NODES
-            ));
-            return false;
-        }
-        if self.nesting == 0 {
-            self.stack_base = here;
-        } else {
-            let used = self.stack_base.saturating_sub(here);
-            if used > MAX_PATTERN_STACK {
-                self.reject(format!(
-                    "pattern nests too deep for this thread's stack ({} KiB used of a \
-                     {} KiB lowering budget at {} levels); nest less, or lower it on a \
-                     thread with a larger stack",
-                    used / 1024,
-                    MAX_PATTERN_STACK / 1024,
-                    self.nesting,
-                ));
-                return false;
-            }
-        }
-        self.nesting += 1;
-        true
-    }
-
-    pub(crate) fn leave_nesting(&mut self) {
-        self.nesting -= 1;
+    /// Records `why` and lowers a wildcard in place of what was refused.
+    pub(crate) fn refuse(&mut self, why: &str) -> PatValueRef {
+        self.reject(why.to_string());
+        self.leaf(KindSpec::Any)
     }
 
     /// Records a build-time refusal; every query on the sealed pattern then
@@ -438,10 +376,10 @@ mod tests {
     #[inline(never)]
     fn descend(b: &mut MatcherBuilder, levels: &mut usize) {
         let pad = std::hint::black_box([0u8; 16 * 1024]);
-        if b.enter_nesting() {
+        if b.core.enter_nesting(true) {
             *levels += 1;
             descend(b, levels);
-            b.leave_nesting();
+            b.core.leave_nesting(true);
         }
         std::hint::black_box(&pad);
     }

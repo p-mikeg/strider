@@ -11,6 +11,7 @@
 pub(crate) mod bindings;
 pub(crate) mod capture;
 pub(crate) mod error;
+pub(crate) mod expr;
 pub(crate) mod graph_ext;
 pub mod node_builders;
 pub(crate) mod staging;
@@ -26,10 +27,10 @@ use strider_ir::IRViewer;
 pub use bindings::Bindings;
 pub use capture::Capture;
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
+#[doc(hidden)]
+pub use expr::Expr;
 pub use match_result::Match;
-pub use matcher::match_pat::{
-    CaptureExt, Captured, Guarded, Limited, MatchPat, OfWidth, Ordered, ValueTy,
-};
+pub use matcher::match_pat::{CaptureExt, Captured, MatchPat};
 pub use matcher::{
     CastMask, JoinConstraint, JoinPredicateFn, JoinedMatch, MAX_PATTERN_NODES, Matcher, Pattern,
     PostMatchFn,
@@ -53,9 +54,8 @@ pub fn first_value_input_type(ctx: &TemplateCtx<'_>) -> Option<strider_ir::node:
 }
 
 pub use typed::{
-    AltSlot, AnyBool, AnyBoolConst, AnyFloat, AnyFloatConst, AnyInt, AnyIntConst, BoolConstArg,
-    BoxedAlt, FloatConstArg, IntConstAllOnes, IntConstAnyWidth, IntConstAnyWidthArg, IntConstArg,
-    OneOf, any_bool, any_bool_binary, any_bool_const, any_float, any_float_binary, any_float_cmp,
+    BoolConstArg, BoxedAlt, FloatConstArg, IntConstAnyWidthArg, IntConstArg, MatchOnly, OneOf, Op,
+    any_bool, any_bool_binary, any_bool_const, any_float, any_float_binary, any_float_cmp,
     any_float_const, any_float_unary, any_int, any_int_binary, any_int_cmp, any_int_const,
     any_int_unary, anything, bool_and, bool_binary, bool_const, bool_const_with_fn, bool_inputs,
     bool_not, bool_or, bool_xor, boxed_alt, capture_typed, float_abs, float_add, float_binary,
