@@ -127,7 +127,7 @@ delegate_node_pat!(CallPat, 0, [capture, build, input, any_input]);
 impl MemPat for CallPat {}
 
 /// Nests as a value operand through the first value output. Loose: any
-/// value output matches. `.res()` tightens it.
+/// value output matches, and in a raw slot any output. `.res()` tightens it.
 pub fn call() -> CallPat {
     CallPat(
         Node::new(KindSpec::variant_of(&NodeKind::Call { cc: None }))
@@ -308,8 +308,9 @@ pub struct RegionPat(Node);
 
 impl RegionPat {
     /// Raw input slot `idx`. The sub-pattern must be control-rooted
-    /// (`entry()`, `region()`) or an untyped wildcard (`var`, `anything`): a
-    /// typed value sub can never bind a Control edge.
+    /// (`entry()`, `region()`), a `call` / `call_other`, or an untyped
+    /// wildcard (`var`, `anything`): a typed value sub can never bind a
+    /// Control edge.
     pub fn input<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
         Self(self.0.raw_input(idx, p))
     }

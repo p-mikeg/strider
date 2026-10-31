@@ -409,7 +409,8 @@ class NodePat(Protocol):
         ...
     def into_pat(self) -> Pat:
         """Finalise to a `Pat` holding this builder, reusable across queries
-        and nesting as the builder does. A bad operand raises here. A builder
+        and nesting as the builder does. A wrong-typed operand raises here; one
+        that can never match its slot raises at the first query. A builder
         auto-finalises where a pattern is expected, so this is rarely
         needed."""
         ...
@@ -429,16 +430,19 @@ class InputPat(Protocol):
         accessors, not a replacement for them; `PhiPat.phi_input` and
         `MemPhiPat.phi_input` are the predecessor-indexed spelling.
 
-        What a slot holds decides what can bind it: only an untyped wildcard
-        (`var` / `anything`) reaches a Control, memory or phi-token edge,
-        never a typed value sub-pattern.
+        What a slot holds decides what can bind it: a typed value sub-pattern
+        binds only a value edge; an untyped wildcard (`var` / `anything`) any
+        edge; a control producer (`entry()`, `region()`, `if_else()`, ...)
+        its control edge; and a `call()` / `call_other()` any of its outputs,
+        its control, memory or value edge (`.res()` keeps it to the value).
         """
         ...
     def any_input(self: _S, p: PatLike) -> _S:
         """Require SOME input of the node to match `p`, without pinning a
-        slot. A typed sub binds an input of its own kind; `var` / `anything`
-        also reaches the control, memory and phi-token edges. Repeatable,
-        each call taking a distinct slot."""
+        slot. A typed sub binds an input of its own kind, a `call()` /
+        `call_other()` any of its outputs; `var` / `anything` also reaches
+        the control, memory and phi-token edges. Repeatable, each call taking
+        a distinct slot."""
         ...
 
 @runtime_checkable
