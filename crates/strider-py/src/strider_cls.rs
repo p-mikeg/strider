@@ -178,7 +178,7 @@ fn claims_to_add(
     };
     let given = given.inner.clone();
     let (omitted, lift_claims): (Vec<String>, Vec<&str>) = {
-        let read = function.read_inner().map_err(into_strider_err)?;
+        let read = function.read()?;
         let in_force = read.assumptions();
         let lift_claims = [
             (
@@ -255,7 +255,14 @@ pub(crate) fn optimize_function(
         Some(p) => p.build_pipeline(),
         None => strider_orchestrator::opt::default_pipeline(),
     };
-    with_pending_control_flow(|| function.run_pipeline_in_place(pipeline, rom, &claims))
+    let ctx = strider_orchestrator::opt::OptCtx::new(rom);
+    with_pending_control_flow(|| {
+        function.edit(|f| {
+            f.assume(&claims);
+            let ran = pipeline.run(f, &ctx);
+            ran.map_err(|e| anyhow::anyhow!("optimize failed: {e:#}"))
+        })
+    })
 }
 
 pub(crate) fn build_strider(

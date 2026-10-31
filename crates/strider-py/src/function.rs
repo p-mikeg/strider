@@ -1,4 +1,4 @@
-use std::cell::{Ref, RefCell, RefMut};
+use std::cell::{Ref, RefCell};
 
 use pyo3::prelude::*;
 use strider_ir::IRWalker;
@@ -6,9 +6,10 @@ use strider_ir::node::NodeKind;
 
 use crate::cfg::PyCfg;
 use crate::dot::Pretty;
+use crate::errors::into_strider_err;
 
 /// A lifted IR function: pattern queries, rewrites, walks and dot rendering.
-#[pyclass(name = "Function", module = "strider.ir")]
+#[pyclass(name = "Function", module = "strider.ir", frozen)]
 pub struct PyFunction {
     pub(crate) inner: RefCell<strider_ir::Function>,
     /// The `Cfg` this function was lifted from.
@@ -23,17 +24,15 @@ impl PyFunction {
         }
     }
 
-    /// Pretty render for `to_dot(pretty=True)` / `to_html(pretty=True)`,
-    /// naming registers through the arch's table rather than a decoder.
-    fn pretty_dot(
-        &self,
-        py: Python<'_>,
-        style: Option<&str>,
-        path: Option<&str>,
-        html: bool,
-    ) -> PyResult<Option<String>> {
-        let arch = self.cfg.bind(py).try_borrow()?.arch;
-        let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
+    /// `to_dot` / `to_html`: the graph as stored, or the pretty render in
+    /// `pretty`'s theme, naming registers through the arch's table rather
+    /// than a decoder.
+    fn render(&self, path: Option<&str>, pretty: &Pretty, html: bool) -> PyResult<Option<String>> {
+        let function = self.read()?;
+        let Some(style) = pretty.theme() else {
+            return crate::dot::render(&function.raw_graph_dot(), html, path);
+        };
+        let arch = self.cfg.get().arch;
         let d = dot::GraphDot::new(
             function.dot_dumper(arch.names()),
             crate::dot::dot_style_for(style)?,
@@ -41,63 +40,33 @@ impl PyFunction {
         crate::dot::render(&d, html, path)
     }
 
-    pub(crate) fn read_inner(&self) -> anyhow::Result<Ref<'_, strider_ir::Function>> {
-        self.inner
-            .try_borrow()
-            .map_err(|_| anyhow::anyhow!("Function is currently borrowed for mutation"))
+    pub(crate) fn read(&self) -> PyResult<Ref<'_, strider_ir::Function>> {
+        self.inner.try_borrow().map_err(|_| {
+            into_strider_err(anyhow::anyhow!(
+                "Function is currently borrowed for mutation"
+            ))
+        })
     }
 
-    pub(crate) fn try_write_inner(&self) -> anyhow::Result<RefMut<'_, strider_ir::Function>> {
-        self.inner.try_borrow_mut().map_err(|_| {
-            anyhow::anyhow!(
+    /// Run `f` on the function borrowed for mutation, moving the generation
+    /// first: a mutation erroring part-way leaves the graph rewritten, and a
+    /// bump after the `?` never happens.
+    pub(crate) fn edit<R>(
+        &self,
+        f: impl FnOnce(&mut strider_ir::Function) -> anyhow::Result<R>,
+    ) -> PyResult<R> {
+        let mut function = self.inner.try_borrow_mut().map_err(|_| {
+            into_strider_err(anyhow::anyhow!(
                 "Function mutation rejected: the function is currently borrowed for read \
                  (typically because this call is from inside a `.when()` predicate \
                  invoked by `find_all`/`find_unique`).  Mutating the function \
                  from within a pattern predicate is not supported: collect matches \
                  first and mutate after `find_all` returns."
-            )
-        })
-    }
-
-    fn with_read<R>(&self, f: impl FnOnce(&strider_ir::Function) -> PyResult<R>) -> PyResult<R> {
-        let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        f(&function)
-    }
-
-    /// [`Self::with_read`] for infallible closures.
-    fn with_read_value<R>(&self, f: impl FnOnce(&strider_ir::Function) -> R) -> PyResult<R> {
-        let function = self.read_inner().map_err(crate::errors::into_strider_err)?;
-        Ok(f(&function))
-    }
-
-    /// Run `pipeline` over this graph in place, adding `claims` first; `label`
-    /// names the operation in the surfaced error.
-    ///
-    /// `rom` is what `analyze` builds its `OptCtx` from, so a hand-built
-    /// pipeline folds read-only loads the same way.
-    pub(crate) fn run_pipeline_in_place(
-        &self,
-        pipeline: strider_orchestrator::opt::OptimizerPipeline,
-        rom: Option<&dyn strider_orchestrator::opt::ReadOnlyMemory>,
-        claims: &strider_orchestrator::opt::AssumptionOptions,
-    ) -> PyResult<()> {
-        let mut function = self
-            .try_write_inner()
-            .map_err(crate::errors::into_strider_err)?;
-        // Bump BEFORE running: a pass that errors mid-run leaves the arena
-        // partially rewritten, and a bump after the `?` never happens.
-        function.graph_mut().bump_generation();
-        function.assume(claims);
-        let ctx = strider_orchestrator::opt::OptCtx::new(rom);
-        pipeline.run(&mut function, &ctx).map_err(|e| {
-            crate::errors::into_strider_err(anyhow::anyhow!("optimize failed: {e:#}"))
+            ))
         })?;
-        Ok(())
+        function.graph_mut().bump_generation();
+        f(&mut function).map_err(into_strider_err)
     }
-}
-
-fn write_to(path: &str, contents: String) -> PyResult<()> {
-    std::fs::write(path, contents).map_err(|e| crate::errors::into_strider_err(anyhow::anyhow!(e)))
 }
 
 #[pymethods]
@@ -122,8 +91,8 @@ impl PyFunction {
     /// which only the lift reads.
     #[getter]
     fn assumptions(&self) -> PyResult<crate::options::PyAssumptionOptions> {
-        self.with_read_value(|f| crate::options::PyAssumptionOptions {
-            inner: f.assumptions().clone(),
+        Ok(crate::options::PyAssumptionOptions {
+            inner: self.read()?.assumptions().clone(),
         })
     }
 
@@ -152,7 +121,7 @@ impl PyFunction {
         assumptions: Option<PyRef<'_, crate::options::PyAssumptionOptions>>,
         pipeline: Option<PyRef<'_, crate::opt::PyOptimizerPipeline>>,
     ) -> PyResult<()> {
-        let lifter = self.cfg.bind(py).try_borrow()?.lifter.clone_ref(py);
+        let lifter = self.cfg.get().lifter.clone_ref(py);
         crate::strider_cls::optimize_function(
             lifter.bind(py),
             self,
@@ -172,49 +141,15 @@ impl PyFunction {
     /// register names through the arch's name table, which needs no decoder.
     /// A theme name in place of `True` picks the dot theme.
     #[pyo3(signature = (path=None, *, pretty=Pretty::Flag(false)))]
-    fn to_dot(
-        &self,
-        py: Python<'_>,
-        path: Option<&str>,
-        pretty: Pretty,
-    ) -> PyResult<Option<String>> {
-        if let Some(style) = pretty.theme() {
-            return self.pretty_dot(py, Some(style), path, /* html */ false);
-        }
-        let s = self
-            .with_read_value(strider_ir::Function::raw_dot)?
-            .map_err(crate::errors::into_strider_err)?;
-        match path {
-            Some(p) => {
-                write_to(p, s)?;
-                Ok(None)
-            }
-            None => Ok(Some(s)),
-        }
+    fn to_dot(&self, path: Option<&str>, pretty: Pretty) -> PyResult<Option<String>> {
+        self.render(path, &pretty, /* html */ false)
     }
 
     /// Like `to_dot` but wraps the DOT in a self-contained HTML page (embedded
     /// viz.js, no external `dot` binary).
     #[pyo3(signature = (path=None, *, pretty=Pretty::Flag(false)))]
-    fn to_html(
-        &self,
-        py: Python<'_>,
-        path: Option<&str>,
-        pretty: Pretty,
-    ) -> PyResult<Option<String>> {
-        if let Some(style) = pretty.theme() {
-            return self.pretty_dot(py, Some(style), path, /* html */ true);
-        }
-        let s = self
-            .with_read_value(strider_ir::Function::raw_html)?
-            .map_err(crate::errors::into_strider_err)?;
-        match path {
-            Some(p) => {
-                write_to(p, s)?;
-                Ok(None)
-            }
-            None => Ok(Some(s)),
-        }
+    fn to_html(&self, path: Option<&str>, pretty: Pretty) -> PyResult<Option<String>> {
+        self.render(path, &pretty, /* html */ true)
     }
 
     /// The canonical text form: a header, then one line per node reachable
@@ -222,28 +157,27 @@ impl PyFunction {
     /// text.
     #[pyo3(signature = (fingerprints = false))]
     fn to_text(&self, fingerprints: bool) -> PyResult<String> {
-        self.with_read_value(|f| f.to_text(fingerprints))
+        Ok(self.read()?.to_text(fingerprints))
     }
 
     /// Total number of node ids in the graph, whether or not they are
     /// reachable from entry.
     fn node_count(&self) -> PyResult<usize> {
-        self.with_read_value(|function| function.graph().all_node_ids().count())
+        Ok(self.read()?.graph().all_node_ids().count())
     }
 
     /// Node id of the function's `Entry` node.
     fn entry_node(&self) -> PyResult<u32> {
-        self.with_read_value(|function| function.entry().as_u32())
+        Ok(self.read()?.entry().as_u32())
     }
 
     fn __repr__(&self) -> PyResult<String> {
-        self.with_read_value(|function| {
-            format!(
-                "Function(entry=#{}, {} nodes)",
-                function.entry().as_u32(),
-                function.graph().all_node_ids().count(),
-            )
-        })
+        let function = self.read()?;
+        Ok(format!(
+            "Function(entry=#{}, {} nodes)",
+            function.entry().as_u32(),
+            function.graph().all_node_ids().count(),
+        ))
     }
 
     /// Render the depth-`depth` neighborhood around node `center`.
@@ -255,7 +189,6 @@ impl PyFunction {
     #[allow(clippy::too_many_arguments)]
     fn neighborhood_dot(
         &self,
-        py: Python<'_>,
         center: u32,
         depth: usize,
         hub_cap: usize,
@@ -263,79 +196,60 @@ impl PyFunction {
         count_producers: bool,
         pretty: bool,
     ) -> PyResult<String> {
-        let arch = pretty
-            .then(|| self.cfg.bind(py).try_borrow().map(|cfg| cfg.arch))
-            .transpose()?;
-        self.with_read_value(|function| {
-            let nid = function
-                .graph()
-                .node_id_from_u32(center)
-                .ok_or_else(|| anyhow::anyhow!("invalid node id {center}"))?;
-            match arch {
-                Some(arch) => function
-                    .dot_dumper(arch.names())
-                    .neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers)
-                    .map_err(anyhow::Error::from),
-                None => {
-                    function.raw_neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers)
-                }
-            }
-        })?
-        .map_err(crate::errors::into_strider_err)
+        let arch = pretty.then(|| self.cfg.get().arch);
+        let function = self.read()?;
+        let nid = function
+            .graph()
+            .node_id_from_u32(center)
+            .ok_or_else(|| into_strider_err(anyhow::anyhow!("invalid node id {center}")))?;
+        match arch {
+            Some(arch) => function
+                .dot_dumper(arch.names())
+                .neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers)
+                .map_err(anyhow::Error::from),
+            None => function.raw_neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers),
+        }
+        .map_err(into_strider_err)
     }
 
     /// Number of `Region` (control-flow join) nodes reachable from entry.
     fn count_regions(&self) -> PyResult<usize> {
-        self.with_read_value(|function| {
-            function
-                .walk_kind(|k| matches!(k, NodeKind::Region))
-                .count()
-        })
+        let function = self.read()?;
+        Ok(function
+            .walk_kind(|k| matches!(k, NodeKind::Region))
+            .count())
     }
 
     /// Every node id in the graph, reachable or not, as raw integers.
     fn node_ids(&self) -> PyResult<Vec<u32>> {
-        self.with_read_value(|function| {
-            function
-                .graph()
-                .all_node_ids()
-                .map(|n| n.as_u32())
-                .collect()
-        })
+        Ok(self
+            .read()?
+            .graph()
+            .all_node_ids()
+            .map(|n| n.as_u32())
+            .collect())
     }
 
     /// Re-validate the graph: `None` on success, else an error message.
     fn validate(&self) -> PyResult<Option<String>> {
-        self.with_read(|function| match strider_ir::validate::validate(function) {
-            Ok(()) => Ok(None),
-            Err(e) => Ok(Some(e.report(function).to_string())),
-        })
+        let function = self.read()?;
+        Ok(strider_ir::validate::validate(&function)
+            .err()
+            .map(|e| e.report(&function).to_string()))
     }
 
     /// Drop every node unreachable from `entry`. Mutates in place, and
     /// invalidates all pre-compaction node ids.
     fn compact(&self) -> PyResult<()> {
-        let mut function = self
-            .try_write_inner()
-            .map_err(crate::errors::into_strider_err)?;
-        let _remap = function
-            .compact()
-            .map_err(crate::errors::into_strider_err)?;
-        Ok(())
+        self.edit(|f| f.compact().map(drop))
     }
 
     /// Deep-copy into an independent `Function`, leaving this one untouched.
     /// The parent `Cfg` is shared.
     #[pyo3(name = "clone")]
     fn py_clone(&self, py: Python<'_>) -> PyResult<PyFunction> {
-        let cloned = self
-            .read_inner()
-            .map_err(crate::errors::into_strider_err)?
-            .clone();
-        Ok(PyFunction {
-            inner: RefCell::new(cloned),
-            cfg: self.cfg.clone_ref(py),
-        })
+        let cloned = self.read()?.clone();
+        Ok(PyFunction::new(cloned, self.cfg.clone_ref(py)))
     }
 
     /// Find every site where `pat` matches. `pat` takes a `Pat`, a typed
@@ -358,8 +272,8 @@ impl PyFunction {
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
         let constraints = collect_constraints(&constraints)?;
         let patterns = build_query_patterns(pat, &ignore_casts)?;
-        let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
-        dedup_matches(&slf, py, raw, generation, ignore_root)
+        let (raw, at) = run_pattern_query(&slf, py, &patterns, &constraints)?;
+        dedup_matches(py, raw, &at, ignore_root)
     }
 
     /// Find the single binding of `pat`, erroring if there is not exactly one.
@@ -382,8 +296,8 @@ impl PyFunction {
     ) -> PyResult<crate::matcher::PyMatch> {
         let constraints = collect_constraints(&constraints)?;
         let patterns = build_query_patterns(pat, &ignore_casts)?;
-        let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
-        let mut matches = dedup_matches(&slf, py, raw, generation, ignore_root)?;
+        let (raw, at) = run_pattern_query(&slf, py, &patterns, &constraints)?;
+        let mut matches = dedup_matches(py, raw, &at, ignore_root)?;
         match matches.len() {
             1 => Ok(matches.pop().unwrap()),
             0 => Err(crate::errors::into_strider_err(anyhow::anyhow!(
@@ -420,8 +334,8 @@ impl PyFunction {
         let cap = capture.resolve()?;
         let constraints = collect_constraints(&constraints)?;
         let patterns = build_query_patterns(pat, &ignore_casts)?;
-        let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
-        let matches = dedup_matches(&slf, py, raw, generation, true)?;
+        let (raw, at) = run_pattern_query(&slf, py, &patterns, &constraints)?;
+        let matches = dedup_matches(py, raw, &at, true)?;
         if signed {
             collect_unique(
                 py,
@@ -458,14 +372,7 @@ impl PyFunction {
         find: crate::pattern::PatLike<'_>,
         replace: crate::pattern::TemplateLike<'_>,
     ) -> PyResult<usize> {
-        let rhs = replace.to_template()?;
-        let lhs = crate::pattern::compile_rewrite_lhs(&find)?;
-        let rule =
-            strider_opt::rewrite_rule_runtime(lhs, rhs).map_err(crate::errors::into_strider_err)?;
-        let mut function = self
-            .try_write_inner()
-            .map_err(crate::errors::into_strider_err)?;
-        apply_rules_count_on(&mut function, std::slice::from_ref(&rule))
+        self.rewrite_all(vec![(find, replace)])
     }
 
     /// Apply the first matching `(find, replace)` pair at every reachable
@@ -477,93 +384,153 @@ impl PyFunction {
             crate::pattern::TemplateLike<'_>,
         )>,
     ) -> PyResult<usize> {
-        let mut templates = Vec::with_capacity(pairs.len());
-        for (_, rhs) in &pairs {
-            templates.push(rhs.to_template()?);
-        }
-        let mut rules: Vec<strider_opt::BoxedRule> = Vec::with_capacity(pairs.len());
-        for ((lhs, _), rhs_tpl) in pairs.iter().zip(templates) {
-            let lhs_pat = crate::pattern::compile_rewrite_lhs(lhs)?;
-            let rule = strider_opt::rewrite_rule_runtime(lhs_pat, rhs_tpl)
-                .map_err(crate::errors::into_strider_err)?;
-            rules.push(rule);
-        }
-        let mut function = self
-            .try_write_inner()
-            .map_err(crate::errors::into_strider_err)?;
-        apply_rules_count_on(&mut function, &rules)
+        let templates: Vec<_> = pairs
+            .iter()
+            .map(|(_, rhs)| rhs.to_template())
+            .collect::<PyResult<_>>()?;
+        let rules: Vec<_> = pairs
+            .iter()
+            .zip(templates)
+            .map(|((lhs, _), rhs)| {
+                let lhs = crate::pattern::compile_rewrite_lhs(lhs)?;
+                strider_opt::rewrite_rule_runtime(lhs, rhs).map_err(into_strider_err)
+            })
+            .collect::<PyResult<_>>()?;
+        self.edit(|f| {
+            strider_opt::apply_rules_count(&mut strider_opt::EditFunction::new(f), &rules)
+        })
     }
 
     /// A `Node` handle on the node at `node_id`. Raises `StriderError` for an
     /// invalid `node_id`.
     ///
     /// A raw id is meaningful only in the graph generation it came from:
-    /// `compact` and `optimize` renumber, and an id held across either names
-    /// a different node. A `Node` carries its generation and goes stale
-    /// instead; a bare int cannot.
+    /// `compact` renumbers, and `optimize` / `rewrite` rewire nodes out from
+    /// under it, so an id held across either can name something else or
+    /// nothing. A `Node` carries its generation and goes stale instead; a bare
+    /// int cannot.
     fn node(slf: Py<Self>, py: Python<'_>, node_id: u32) -> PyResult<crate::node::PyNode> {
-        crate::node::PyNode::new(py, slf, node_id)
+        let node = Self::nodes(slf, py, |f| Ok(vec![crate::node::node_id(f, node_id)?]))?;
+        Ok(node.into_iter().next().expect("one id"))
     }
 
     /// Control-only reachability (the CFG skeleton) from the entry, in
     /// ascending node-id order.
     fn cfg_walk(slf: Py<Self>, py: Python<'_>) -> PyResult<Vec<crate::node::PyNode>> {
-        let ids: Vec<u32> = slf.borrow(py).with_read_value(|function| {
-            strider_ir::walk::cfg_reachable(function.graph(), function.entry())
-                .iter()
-                .map(|n| n.as_u32())
-                .collect()
-        })?;
-        Self::nodes_from_ids(slf, py, ids)
+        Self::nodes(slf, py, |function| {
+            Ok(
+                strider_ir::walk::cfg_reachable(function.graph(), function.entry())
+                    .iter()
+                    .collect(),
+            )
+        })
     }
 
     /// Every node reachable from the entry (data-in + control-out), pre-order.
     fn data_walk(slf: Py<Self>, py: Python<'_>) -> PyResult<Vec<crate::node::PyNode>> {
-        let ids: Vec<u32> = slf
-            .borrow(py)
-            .with_read_value(|function| function.walk().map(|n| n.as_u32()).collect())?;
-        Self::nodes_from_ids(slf, py, ids)
+        Self::nodes(slf, py, |function| Ok(function.walk().collect()))
     }
 
     /// Memory-touching nodes (Load / Store / Call / CallOther / MemPhi plus
     /// the InitialMemory root) reached by following memory-token edges forward
-    /// from InitialMemory.  Each node appears once, that root first; the order at
-    /// a `MemPhi` join is unspecified, so a node can precede one of its own
-    /// memory predecessors.
+    /// from InitialMemory, in pre-order, each once. At a `MemPhi` join a node
+    /// can come before one of its own memory predecessors.
     fn mem_walk(slf: Py<Self>, py: Python<'_>) -> PyResult<Vec<crate::node::PyNode>> {
-        let ids: Vec<u32> = slf.borrow(py).with_read_value(|function| {
-            strider_ir::walk::memory_reachable(function)
-                .into_iter()
-                .map(|n| n.as_u32())
-                .collect()
-        })?;
-        Self::nodes_from_ids(slf, py, ids)
+        Self::nodes(slf, py, |function| {
+            Ok(strider_ir::walk::memory_reachable(function))
+        })
     }
 
     /// Every node reachable from `node_id` (data-in + control-out), pre-order.
     fn walk(slf: Py<Self>, py: Python<'_>, node_id: u32) -> PyResult<Vec<crate::node::PyNode>> {
-        let ids: Vec<u32> = slf.borrow(py).with_read(|function| {
-            let nid = function.graph().node_id_from_u32(node_id).ok_or_else(|| {
-                crate::errors::into_strider_err(anyhow::anyhow!("no node with id {node_id}"))
-            })?;
-            Ok(function.walk_from(nid).map(|n| n.as_u32()).collect())
-        })?;
-        Self::nodes_from_ids(slf, py, ids)
+        Self::nodes(slf, py, |function| {
+            let nid = crate::node::node_id(function, node_id)?;
+            Ok(function.walk_from(nid).collect())
+        })
     }
 }
 
 impl PyFunction {
-    /// Callers must have dropped the read borrow they collected `ids` under.
-    fn nodes_from_ids(
+    /// A `Node` handle on each node `walk` names.
+    fn nodes(
         slf: Py<Self>,
         py: Python<'_>,
-        ids: Vec<u32>,
+        walk: impl FnOnce(&strider_ir::Function) -> PyResult<Vec<strider_ir::node::NodeId>>,
     ) -> PyResult<Vec<crate::node::PyNode>> {
-        let mut out = Vec::with_capacity(ids.len());
-        for id in ids {
-            out.push(crate::node::PyNode::new(py, slf.clone_ref(py), id)?);
+        let (ids, generation) = {
+            let function = slf.borrow(py);
+            let function = function.read()?;
+            (walk(&function)?, function.graph().generation())
+        };
+        let at = FunctionAt::new(slf, generation);
+        Ok(ids.into_iter().map(|id| at.node(py, id)).collect())
+    }
+}
+
+/// A `Function` at the graph generation a `Node` or `Match` was built
+/// against: the one route from either back to the graph.
+pub(crate) struct FunctionAt {
+    pub(crate) function: Py<PyFunction>,
+    pub(crate) generation: u64,
+}
+
+impl FunctionAt {
+    pub(crate) fn new(function: Py<PyFunction>, generation: u64) -> Self {
+        Self {
+            function,
+            generation,
         }
-        Ok(out)
+    }
+
+    pub(crate) fn clone_ref(&self, py: Python<'_>) -> Self {
+        Self::new(self.function.clone_ref(py), self.generation)
+    }
+
+    /// A `Node` handle on `node`, a node of this generation.
+    pub(crate) fn node(
+        &self,
+        py: Python<'_>,
+        node: strider_ir::node::NodeId,
+    ) -> crate::node::PyNode {
+        crate::node::PyNode {
+            at: self.clone_ref(py),
+            id: node.as_u32(),
+        }
+    }
+
+    /// Run `f` on the function, borrowed for read, unless the graph moved on
+    /// since this generation; `what` names the stale handle in the error.
+    pub(crate) fn read<R>(
+        &self,
+        py: Python<'_>,
+        what: &str,
+        f: impl FnOnce(&strider_ir::Function) -> R,
+    ) -> PyResult<R> {
+        let function = self.function.borrow(py);
+        let function = function.read()?;
+        let now = function.graph().generation();
+        if now != self.generation {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "{what} is stale: the function was compacted or rewritten after this \
+                 {what} was created (generation {} -> {now}); fetch it again from the \
+                 function",
+                self.generation,
+            )));
+        }
+        Ok(f(&function))
+    }
+}
+
+impl PartialEq for FunctionAt {
+    fn eq(&self, other: &Self) -> bool {
+        self.function.is(&other.function) && self.generation == other.generation
+    }
+}
+
+impl std::hash::Hash for FunctionAt {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (self.function.as_ptr() as usize).hash(state);
+        self.generation.hash(state);
     }
 }
 
@@ -614,24 +581,22 @@ impl Drop for QueryFunctionGuard {
     }
 }
 
-/// Run a matcher query, returning its result and the graph generation it ran
-/// against.
+/// Run a matcher query, returning its result and the function at the
+/// generation it ran against.
 ///
-/// Pushes `slf` + the generation onto `crate::pattern::CURRENT_QUERY_FUNCTION`
-/// for the duration of `run`, so a `.when()` predicate can build a `Match`
-/// handle back onto this live function.
+/// Pushes that onto `crate::pattern::CURRENT_QUERY_FUNCTION` for the duration
+/// of `run`, so a `.when()` predicate can build a `Match` handle back onto this
+/// live function.
 fn run_query<T>(
     slf: &Py<PyFunction>,
     py: Python<'_>,
     run: impl FnOnce(&strider_pattern::Matcher<'_>) -> anyhow::Result<T>,
-) -> PyResult<(T, u64)> {
+) -> PyResult<(T, FunctionAt)> {
     let function_borrow = slf.borrow(py);
-    let function_guard = function_borrow
-        .read_inner()
-        .map_err(crate::errors::into_strider_err)?;
+    let function_guard = function_borrow.read()?;
     let matcher = strider_pattern::Matcher::new(&function_guard);
-    let generation = function_guard.graph().generation();
-    crate::pattern::push_current_query_function(slf.clone_ref(py), generation);
+    let at = FunctionAt::new(slf.clone_ref(py), function_guard.graph().generation());
+    crate::pattern::push_current_query_function(at.clone_ref(py));
     let _guard = QueryFunctionGuard;
     let raw = run(&matcher);
     drop(_guard);
@@ -643,10 +608,8 @@ fn run_query<T>(
     // the error set between predicate calls and the next `call_bound` would
     // replace the original with `SystemError`. Drained on the error path too,
     // so a later, unrelated query cannot inherit it.
-    let raw = crate::strider_cls::with_pending_control_flow(|| {
-        raw.map_err(crate::errors::into_strider_err)
-    })?;
-    Ok((raw, generation))
+    let raw = crate::strider_cls::with_pending_control_flow(|| raw.map_err(into_strider_err))?;
+    Ok((raw, at))
 }
 
 /// The query-level `ignore_casts=` argument: `True` is `CastMask::all()`.
@@ -701,7 +664,7 @@ fn run_pattern_query(
     py: Python<'_>,
     patterns: &[strider_pattern::Pattern],
     constraints: &[strider_pattern::JoinConstraint],
-) -> PyResult<(Vec<Vec<strider_pattern::Match>>, u64)> {
+) -> PyResult<(Vec<Vec<strider_pattern::Match>>, FunctionAt)> {
     let refs: Vec<&strider_pattern::Pattern> = patterns.iter().collect();
     run_query(slf, py, |matcher| {
         // Any constraint, even over a single pattern's own captures, routes
@@ -717,43 +680,21 @@ fn run_pattern_query(
 /// Dedup key is `(roots, capture-signatures)`, or capture-signatures alone
 /// under `ignore_root`.
 fn dedup_matches(
-    slf: &Py<PyFunction>,
     py: Python<'_>,
     raw: Vec<Vec<strider_pattern::Match>>,
-    generation: u64,
+    at: &FunctionAt,
     ignore_root: bool,
 ) -> PyResult<Vec<crate::matcher::PyMatch>> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::new();
-    for inner in raw {
-        let m = crate::matcher::PyMatch {
-            inner,
-            function: slf.clone_ref(py),
-            generation,
-        };
-        if seen.insert(m.dedup_key(py, ignore_root)?) {
-            out.push(m);
-        }
-    }
-    Ok(out)
-}
-
-/// Returns the total per-`(node, rule)` fire count.
-fn apply_rules_count_on<R>(function: &mut strider_ir::Function, rules: &[R]) -> PyResult<usize>
-where
-    R: for<'g> Fn(
-        &mut strider_opt::EditFunction<'g>,
-        strider_ir::node::NodeId,
-    ) -> anyhow::Result<Option<strider_ir::node::ValueId>>,
-{
-    // Bump BEFORE running, as `run_pipeline_in_place` does: a rule that errors
-    // part-way leaves the arena partially rewritten.
-    function.graph_mut().bump_generation();
-    let count = {
-        let mut ctx = strider_opt::EditFunction::new(function);
-        strider_opt::apply_rules_count(&mut ctx, rules).map_err(crate::errors::into_strider_err)?
-    };
-    Ok(count)
+    at.read(py, "Match", |function| {
+        let mut seen = std::collections::HashSet::new();
+        raw.into_iter()
+            .filter(|inner| seen.insert(crate::matcher::dedup_key(inner, function, ignore_root)))
+            .map(|inner| crate::matcher::PyMatch {
+                inner,
+                at: at.clone_ref(py),
+            })
+            .collect()
+    })
 }
 
 pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

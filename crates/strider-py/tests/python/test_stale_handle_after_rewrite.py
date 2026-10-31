@@ -81,3 +81,18 @@ def test_handle_obtained_after_rewrite_still_works():
     node = fresh[0].node(a)
     assert node is not None
     assert isinstance(node.kind(), str)
+
+
+def test_node_handle_stale_after_a_rewrite_that_raises():
+    """The generation moves before the rule runs, so a rewrite that raises
+    mid-way, possibly leaving the graph edited, still invalidates handles."""
+    g = _build_graph()
+    x, y = Capture(), Capture()
+    handle = g.node(g.entry_node())
+    with pytest.raises(strider.StriderError, match="i1"):
+        g.rewrite(
+            find=int_add(var(x), var(y)),
+            replace=tpl.bool_and(tpl.var(x), tpl.var(y)),
+        )
+    with pytest.raises(strider.StriderError, match="stale"):
+        handle.kind()
