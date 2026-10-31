@@ -10,6 +10,8 @@ use crate::types::PcodeInsnAddr;
 pub static NO_TARGETS: FxHashMap<PcodeInsnAddr, ResolvedTargets> =
     FxHashMap::with_hasher(rustc_hash::FxBuildHasher);
 static NO_NO_RETURN_TARGETS: FxHashSet<u64> = FxHashSet::with_hasher(rustc_hash::FxBuildHasher);
+/// No local entries, for a `CfgOptions` literal naming every field.
+pub static NO_LOCAL_ENTRIES: LocalEntries = LocalEntries(Vec::new());
 
 /// The extent of the function being built, which decides when a branch leaves
 /// it.
@@ -66,11 +68,15 @@ pub struct CfgOptions<'a> {
     /// caller's.
     pub derived_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// Direct-call targets that never return (`exit`, `abort`); a call to one
-    /// ends its region `NoReturn`. Each is matched exactly against the address
-    /// the call names: an ISA bit masked off, and on ppc64 ELFv2 the callee's
-    /// local entry, the symbol plus `strider_reader::elf::local_entry_offset`,
-    /// which a call sharing its TOC targets. Borrowed, as `known_targets` is.
+    /// ends its region `NoReturn`. Each is matched against the address the
+    /// call names, an ISA bit masked off, through [`Self::local_entries`].
+    /// Borrowed, as `known_targets` is.
     pub no_return_targets: &'a FxHashSet<u64>,
+    /// Where a call sharing a ppc64 ELFv2 callee's TOC enters it, so a
+    /// `no_return_targets` or per-address convention entry keyed by the
+    /// callee's global entry matches that call too. Borrowed, as
+    /// `known_targets` is.
+    pub local_entries: &'a LocalEntries,
     /// Caller classifications for user-op names, consulted before the built-in
     /// tables.  One override governs both the region terminator and the
     /// emitted node. Borrowed, as `known_targets` is.
@@ -101,6 +107,22 @@ impl DataRanges {
         Self(merged.into())
     }
 
+    /// [`Self::new`] over `(start, end)` pairs, refusing an empty range where
+    /// `new` drops it: a caller naming one meant a range, and the bytes it
+    /// marks would decode as code.
+    ///
+    /// # Errors
+    ///
+    /// The first pair ending at or below its start, described.
+    pub fn try_new(ranges: Vec<(u64, u64)>) -> Result<Self, String> {
+        if let Some((start, end)) = ranges.iter().find(|(start, end)| end <= start) {
+            return Err(format!(
+                "data_ranges: ({start:#x}, {end:#x}) is empty; a range runs start..end with end > start"
+            ));
+        }
+        Ok(Self::new(ranges.into_iter().map(|(start, end)| start..end)))
+    }
+
     pub fn ranges(&self) -> &[std::ops::Range<u64>] {
         &self.0
     }
@@ -113,6 +135,49 @@ impl DataRanges {
     }
 }
 
+/// `(local entry, global entry)` pairs, sorted: the ppc64 ELFv2 functions a
+/// call sharing their TOC enters past their global entry, at the symbol plus
+/// `strider_reader::elf::local_entry_offset`.
+#[derive(Clone, Default, Debug)]
+pub struct LocalEntries(Vec<(u64, u64)>);
+
+impl LocalEntries {
+    /// `(global, local)` pairs in any order; one whose two entries meet is
+    /// dropped.
+    pub fn new(entries: impl IntoIterator<Item = (u64, u64)>) -> Self {
+        let mut by_local: Vec<(u64, u64)> = entries
+            .into_iter()
+            .filter(|(global, local)| global != local)
+            .map(|(global, local)| (local, global))
+            .collect();
+        by_local.sort_unstable();
+        by_local.dedup();
+        Self(by_local)
+    }
+
+    /// `map`'s entry at `addr`, else at the lowest global entry whose local
+    /// entry `addr` is.
+    pub fn get<'m, V>(&self, map: &'m FxHashMap<u64, V>, addr: u64) -> Option<&'m V> {
+        map.get(&addr)
+            .or_else(|| self.globals_of(addr).find_map(|global| map.get(&global)))
+    }
+
+    /// Whether `set` holds `addr` or a global entry whose local entry `addr`
+    /// is.
+    pub fn contains(&self, set: &FxHashSet<u64>, addr: u64) -> bool {
+        set.contains(&addr) || self.globals_of(addr).any(|global| set.contains(&global))
+    }
+
+    /// Ascending.
+    fn globals_of(&self, local: u64) -> impl Iterator<Item = u64> + '_ {
+        let from = self.0.partition_point(|&(l, _)| l < local);
+        self.0[from..]
+            .iter()
+            .take_while(move |&&(l, _)| l == local)
+            .map(|&(_, global)| global)
+    }
+}
+
 impl Default for CfgOptions<'_> {
     fn default() -> Self {
         Self {
@@ -120,6 +185,7 @@ impl Default for CfgOptions<'_> {
             known_targets: &NO_TARGETS,
             derived_targets: &NO_TARGETS,
             no_return_targets: &NO_NO_RETURN_TARGETS,
+            local_entries: &NO_LOCAL_ENTRIES,
             call_other_overrides: &strider_target::call_other_abi::NO_OVERRIDES,
             data_ranges: DataRanges::default(),
         }
@@ -193,6 +259,39 @@ mod tests {
             ResolvedTargets::Single(t) => Some(t.addr),
             other => panic!("unexpected {other:?}"),
         }
+    }
+
+    /// An exact key answers for itself; a local entry answers through the
+    /// lowest global entry the table holds, one level deep.
+    #[test]
+    fn local_entries_answer_through_the_lowest_global() {
+        let entries = LocalEntries::new([
+            (0x110, 0x118),
+            (0x10c, 0x110),
+            (0x114, 0x118),
+            (0x200, 0x200),
+        ]);
+        let map: FxHashMap<u64, char> = [(0x110, 'a'), (0x114, 'b')].into_iter().collect();
+        assert_eq!(entries.get(&map, 0x118), Some(&'a'));
+        assert_eq!(entries.get(&map, 0x110), Some(&'a'));
+        assert_eq!(entries.get(&map, 0x114), Some(&'b'));
+        let own: FxHashMap<u64, char> = [(0x114, 'b'), (0x118, 'c')].into_iter().collect();
+        assert_eq!(entries.get(&own, 0x118), Some(&'c'));
+        let deep: FxHashMap<u64, char> = [(0x10c, 'd')].into_iter().collect();
+        assert_eq!(entries.get(&deep, 0x110), Some(&'d'));
+        assert_eq!(entries.get(&deep, 0x118), None);
+        let set: FxHashSet<u64> = [0x114].into_iter().collect();
+        assert!(entries.contains(&set, 0x118));
+        assert!(!entries.contains(&set, 0x110));
+    }
+
+    #[test]
+    fn try_new_refuses_an_empty_range() {
+        let err = DataRanges::try_new(vec![(0x10, 0x18), (0x20, 0x20)]).unwrap_err();
+        assert!(err.contains("(0x20, 0x20) is empty"), "{err}");
+        let ok = DataRanges::try_new(vec![(0x10, 0x18)]).unwrap();
+        assert_eq!(ok.ranges().len(), 1);
+        assert_eq!((ok.ranges()[0].start, ok.ranges()[0].end), (0x10, 0x18));
     }
 
     #[test]

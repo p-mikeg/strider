@@ -68,6 +68,23 @@ def test_a_symbol_file_changed_after_its_table_is_built_is_not_reread(tmp_path):
         lift.analyze(name)
 
 
+def test_add_symbols_keeps_the_data_ranges_it_cannot_change(tmp_path):
+    """`$d` spans come from the ELFs and symbol files, never from symbols
+    supplied directly, so `add_symbols` leaves the built ones in place. A
+    rebuild re-stats every symbol file, so one changed since is how a rebuild
+    shows."""
+    companion = tmp_path / "companion.elf"
+    shutil.copy(fixture_path("arm", "calls"), companion)
+    lift = strider.lift.load_elf(str(fixture_path("arm", "calls")))
+    lift.add_symbol_file(str(companion))
+    start = lift.symbol("_start").address
+    first = lift.build_cfg(start).incomplete
+    with companion.open("ab") as f:
+        f.write(b"\0" * 64)
+    lift.add_symbols({"made_up": 0x1234})
+    assert lift.build_cfg(start).incomplete == first
+
+
 def test_add_symbols_takes_addresses_and_extents():
     lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
     lift.add_symbols({"bare": 0x40_0000, "sized": (0x50_0000, 0x40)})

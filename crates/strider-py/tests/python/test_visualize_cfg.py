@@ -176,6 +176,29 @@ def test_visualize_depth_seeds_the_depth_control():
         _stop(port, t)
 
 
+class _Index:
+    """An integer by `__index__` alone, as numpy's scalars are."""
+
+    def __init__(self, n: int) -> None:
+        self.n = n
+
+    def __index__(self) -> int:
+        return self.n
+
+
+def test_visualize_depth_takes_an_index_and_clamps_it():
+    """An `__index__` integer seeds the control as an `int`, which
+    `/controls` serialises, and a seed past the control's max is clamped."""
+    for port, depth, seeded in ((8928, _Index(3), 3), (8929, 10**9, 4096)):
+        t = _serve_bg("ir", port, code=_BUSY, depth=depth)
+        try:
+            control = _controls(port)["depth"]
+            assert control["default"] == seeded
+            assert control["max"] == 4096
+        finally:
+            _stop(port, t)
+
+
 def test_absent_control_falls_back_to_the_strider_default():
     port = 8936
     t = _serve_bg("ir", port, code=_BUSY)

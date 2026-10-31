@@ -230,12 +230,11 @@ impl PyCfg {
         let slf = slf.get();
         let addrs = node.asm_fingerprint(py)?;
         let map = slf.pcode_map();
-        let mut out: Vec<(u64, String)> = addrs
+        // `addrs` is sorted, and filtering keeps the order.
+        Ok(addrs
             .into_iter()
             .filter_map(|addr| map.get(&addr).cloned().map(|text| (addr, text)))
-            .collect();
-        out.sort_by_key(|(addr, _)| *addr);
-        Ok(out)
+            .collect())
     }
 
     /// Region index of the CFG entry.

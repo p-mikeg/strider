@@ -316,7 +316,9 @@ when both IR slots hold the same value.
     concurrent call, on any thread, raises the re-entrant `StriderError`,
     while read-only calls may overlap each other. `BufferReader` is an
     `Arc<Mutex<_>>`, so a clone shares the region memo and the wrapper is
-    still `Send`; `_LoadedElf` holds two of those and a `Mutex` symbol table.
+    still `Send`; `_LoadedElf` holds two of those and an `ElfMemo` of
+    `OnceLock`s (symbol table, `$d` data ranges, local entries), built on
+    first use and reset by the `&mut` calls that add a source each reads.
     Everything else moves, so a REPL or notebook that introspects off-thread
     does not abort the interpreter. `analyze` holds the GIL when `mem`/`rom`
     is a Python object (its adapter retakes the GIL per read regardless), so
@@ -425,7 +427,7 @@ for the typed surface.
 so a second image does not silently serve unrelocated bytes, and re-merging an
 image already fully loaded does nothing. `CfgOptions` exposes `known_targets` /
 `call_other_abis`, and `LifterOptions` its `per_address_ccs`, as a memoized
-`types.MappingProxyType` over the shared table, and `no_return_targets` as a
+`types.MappingProxyType` over the table, and `no_return_targets` as a
 memoized `frozenset`, not a fresh dict per read: the
 authority is the Rust map, and a seeded 20k-entry table would otherwise cost
 milliseconds on every attribute access. `known_targets` values are tuples, so
@@ -437,6 +439,10 @@ construction and every `analyze` BORROWS those tables
 `strider_cfg::CfgOptions.no_return_targets` a `&FxHashSet`), so a seeded
 table costs a sweep nothing per function. `per_address_ccs` needs the
 analysing handle's arch to resolve, so it cannot be seated at construction:
-the built table is memoized behind the shared `PerAddressCcs`, which is where
-it has to live because `ElfLifter.analyze` derives fresh options per call
-through `_with_cfg`. The first `analyze` pays the build, the rest borrow it.
+its `PerAddressCcs` memoizes the table built per arch, so the first `analyze`
+pays the build and the rest borrow it. `ElfLifter.analyze` / `build_cfg` hand
+the caller's options unchanged to `Lifter._analyze_elf` / `_build_cfg_elf`,
+which read a symbol's size bound, the ELF's `$d` data ranges and its ppc64
+local entries off the ELF while building the core options; both tables are
+looked up through `strider_cfg::CfgOptions.local_entries`, so a key at a
+global entry also answers a call to its local one.

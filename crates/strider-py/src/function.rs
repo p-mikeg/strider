@@ -410,8 +410,16 @@ impl PyFunction {
     /// nothing. A `Node` carries its generation and goes stale instead; a bare
     /// int cannot.
     fn node(slf: Py<Self>, py: Python<'_>, node_id: u32) -> PyResult<crate::node::PyNode> {
-        let node = Self::nodes(slf, py, |f| Ok(vec![crate::node::node_id(f, node_id)?]))?;
-        Ok(node.into_iter().next().expect("one id"))
+        let generation = {
+            let function = slf.borrow(py);
+            let function = function.read()?;
+            crate::node::node_id(&function, node_id)?;
+            function.graph().generation()
+        };
+        Ok(crate::node::PyNode {
+            at: FunctionAt::new(slf, generation),
+            id: node_id,
+        })
     }
 
     /// Control-only reachability (the CFG skeleton) from the entry, in

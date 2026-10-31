@@ -6,8 +6,7 @@ analyses thousands of functions through the same `LifterOptions`; a table
 copied through Python per call makes each of those analyses O(table).
 Counted, not timed: such a copy shows in `tracemalloc`'s peak, and the views
 are memoized, so every read hands back one object. A copy on the Rust side
-allocates nothing Python sees, so the derived options are checked to share
-the seated table by identity; what an analyse passes down is a borrow of that
+allocates nothing Python sees; what an analyse passes down is a borrow of the
 table, which the Rust types hold to.
 """
 
@@ -72,8 +71,8 @@ def test_a_seeded_table_costs_nothing_per_analyse():
 
 
 def test_known_targets_reads_back_one_memoized_view():
-    """The view is built on the first read and shared by every options object
-    derived from this one, so a read costs nothing per call."""
+    """The view is built on the first read, so a read costs nothing per
+    call."""
     opts = strider.cfg.CfgOptions(
         known_targets={0x800000 + i * 4: [0x900000 + i * 4] for i in range(_ENTRIES)},
         no_return_targets=[0x2000],
@@ -81,23 +80,12 @@ def test_known_targets_reads_back_one_memoized_view():
     view = opts.known_targets
     assert opts.known_targets is view
     assert opts.no_return_targets is opts.no_return_targets
-    narrowed = opts._with_function_max_size(0x40)
-    assert narrowed.known_targets is view
     assert strider.lift.LifterOptions(cfg=opts).cfg.known_targets is view
-
-
-def test_derived_options_share_the_seated_table():
-    """Every options object an `ElfLifter` derives per call seats nothing anew."""
-    opts = strider.cfg.CfgOptions(known_targets={0x1000: [0x2000]})
-    seated = opts._seated_table_id()
-    assert opts._with_function_max_size(0x40)._seated_table_id() == seated
-    derived = strider.lift.LifterOptions(cfg=opts)._with_elf(_program()._elf)
-    assert derived.cfg._seated_table_id() == seated
 
 
 def test_call_other_abis_resolve_once_per_arch():
     """The table is resolved on the first analyse and borrowed by every later
-    one, through the options an `ElfLifter` derives per call as well."""
+    one."""
     cfg = strider.cfg.CfgOptions(
         call_other_abis={"trap": strider.sleigh.CallOtherAbi.no_return()}
     )
@@ -120,22 +108,3 @@ def test_known_targets_still_reads_back():
         0x1000: (0x2000,),
         0x1010: "return",
     }
-
-
-def test_with_function_max_size_carries_every_table():
-    abi = strider.sleigh.CallOtherAbi.no_return()
-    opts = strider.cfg.CfgOptions(
-        allow_code_before_start_addr=True,
-        known_targets={0x1000: "return"},
-        call_other_abis={"trap": abi},
-        data_ranges=[(0x10, 0x18)],
-        no_return_targets=[0x2000],
-    )
-    narrowed = opts._with_function_max_size(0x40)
-    assert narrowed.function_max_size == 0x40
-    assert narrowed.allow_code_before_start_addr is False
-    assert dict(narrowed.known_targets) == {0x1000: "return"}
-    assert list(narrowed.call_other_abis) == ["trap"]
-    assert narrowed.data_ranges == [(0x10, 0x18)]
-    assert narrowed.no_return_targets == {0x2000}
-    assert opts.function_max_size is None

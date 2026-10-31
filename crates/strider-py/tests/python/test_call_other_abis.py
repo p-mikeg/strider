@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pytest
 
 import strider
@@ -39,29 +41,29 @@ def test_override_reaches_the_decode(x86_memory_elf):
 
 
 def test_symbol_entry_carries_every_cfg_field(x86_memory_elf):
-    """`ElfLifter.analyze(<name>)` narrows `CfgOptions` to the symbol's
-    recorded size through `_with_function_max_size`, the single carrier; a
-    field it forgets is silently dropped."""
-    opts = strider.cfg.CfgOptions(
-        allow_code_before_start_addr=True,
-        known_targets={0x1000: "return"},
-        call_other_abis={"swi": strider.sleigh.CallOtherAbi.no_return()},
-        data_ranges=[(0x10, 0x18)],
-        no_return_targets=[0x2000],
-    )
-    narrowed = opts._with_function_max_size(0x100)
-    assert narrowed.function_max_size == 0x100
-    carried = {n for n in dir(opts) if not n.startswith("_") and not callable(getattr(opts, n))}
-    carried -= {"function_max_size", "allow_code_before_start_addr"}
-    for name in carried:
-        assert getattr(narrowed, name) == getattr(opts, name), f"dropped {name}"
-    assert narrowed.call_other_abis == {
-        "swi": strider.sleigh.CallOtherAbi.no_return()
-    }
+    """`ElfLifter.analyze(<name>)` bounds an open lift by the symbol's
+    recorded size and reads every other field as given: the answer the
+    address gives under that size."""
 
-    # The symbol path is what reaches for it; a lift through it must survive.
+    def opts(size: Optional[int]) -> strider.lift.LifterOptions:
+        cfg = strider.cfg.CfgOptions(
+            function_max_size=size,
+            allow_code_before_start_addr=size is None,
+            known_targets={0x1000: "return"},
+            call_other_abis={"swi": strider.sleigh.CallOtherAbi.no_return()},
+            data_ranges=[(0x10, 0x18)],
+            no_return_targets=[0x2000],
+        )
+        return strider.lift.LifterOptions(cfg=cfg)
+
     prog = strider.lift.load_elf(str(x86_memory_elf))
-    prog.analyze("array_sum", opts=strider.lift.LifterOptions(cfg=opts))
+    addr = prog.symbol("array_sum").address
+    prog.add_symbols({"array_sum_head": (addr, 4)})
+    by_name = prog.analyze("array_sum_head", opts=opts(None))
+    by_addr = prog.analyze(addr, opts=opts(4))
+    assert by_name.function.to_text() == by_addr.function.to_text()
+    assert by_name.cfg.incomplete == by_addr.cfg.incomplete
+    assert by_name.cfg.incomplete != prog.analyze(addr, opts=opts(None)).cfg.incomplete
 
 
 def test_symbol_entry_honours_a_no_return_target(x86_calls_elf):
