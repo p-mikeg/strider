@@ -115,6 +115,32 @@
 
 ### Breaking, Rust
 
+- An operand that can never match its slot is refused through the pattern's
+  `root()`, where the query matched nothing: in a value slot (a value op's
+  operand, `float_le` / `float_is_nan` included, `target`, `arg`, `addr`,
+  `data`, `cond`, `selector`, `ret_val`, `phi_input`) a `store` / `mem_phi`,
+  an `entry` / `region`, or a `ret` / `if_else` / `switch` /
+  `indirect_branch` / `unreachable`; in a `ctrl` slot a `store` / `mem_phi`
+  or a `ret` / `indirect_branch` / `unreachable`. Decorations are looked
+  through, an alternation's arms are not, and the raw `input`, `any_input`,
+  `phi_token` and `call_other().arg` slots take any edge as before. Python's
+  set differs: it admits `entry` / `region` in a value slot and refuses
+  `.ctrl(if_else())` / `.ctrl(switch())`, which Rust keeps, since an `If`'s or
+  `Switch`'s control output can feed a `ctrl` input.
+- A type implementing both `MatchPat` and `TemplatePat` by hand is lowered by
+  the side whose factory took it: `int_add(t, t)` used as a template, or
+  `template::int_add(t, t)` used as a pattern, is refused through the root,
+  where each op had dispatched to the operand's own trait per side.
+- The typed pattern builders return two carriers, `Op<T>`, valid on whichever
+  sides its operand types `T` are, and `MatchOnly`, valid on the match side
+  alone, where each op returned its own struct. The re-exported `AnyBool`,
+  `AnyBoolConst`, `AnyFloat`, `AnyFloatConst`, `AnyInt`, `AnyIntConst`,
+  `IntConstAllOnes`, `IntConstAnyWidth`, `Guarded`, `Limited`, `OfWidth`,
+  `Ordered`, `ValueTy` and `AltSlot` are gone; `Captured<P>` stays, a template
+  at `P = Var` only. A factory's operands, and the pattern a `CaptureExt`
+  method decorates, must be `'static`, `TemplatePat` requires `Send`, and a
+  `when_match` / `filter` closure must be `Send` where it is passed rather
+  than where the pattern is lowered.
 - `IfPat::with_true` and `IfPat::with_false` are gone, and with them
   `BindingWalkFn`, `WalkCaptures`, `MatcherBuilder::set_binding_walk` and
   `Pattern::has_binding_walk`. Join the edge's consumer on the edge capture

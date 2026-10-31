@@ -1,4 +1,8 @@
+use std::marker::PhantomData;
+
+use crate::expr::{Deco, Expr, IntoExpr, MatchExpr, Slot, TemplateExpr};
 use crate::matcher::{MatcherBuilder, PatValueRef, Pattern};
+use crate::typed::value_ops::MatchOnly;
 
 /// `Send` so a compiled `Pattern` can move between threads: the boxed
 /// closures a pattern lowers to carry the same bound, and a pattern is built
@@ -27,158 +31,64 @@ pub trait MatchPat: Sized + Send {
     /// Nothing consumes the root's output, so a value anchor there also
     /// accepts the memory token of a node producing no value at all: a `Call`
     /// under a convention with no return or clobber registers, which
-    /// `NodePat::build` reaches through its memory anchor.
+    /// a builder's `build` reaches through its memory anchor.
     fn into_pattern(self) -> Pattern {
         let mut b = MatcherBuilder::new();
         let root = self.compile(&mut b);
         b.set_token_fallback(root);
         b.finish()
     }
+
+    /// The pattern as an operand of another. Defaults to lowering through the
+    /// methods above.
+    #[doc(hidden)]
+    fn expr(self) -> Expr
+    where
+        Self: 'static,
+    {
+        Expr::lowered(self)
+    }
 }
 
-/// A pre-compiled output handle re-presented as a [`MatchPat`], so a shared
-/// operand compiled once can feed several consumers.
-pub(crate) struct Pre(pub(crate) PatValueRef);
-impl MatchPat for Pre {
-    fn compile(self, _b: &mut MatcherBuilder) -> PatValueRef {
+impl<T: MatchExpr> MatchPat for T {
+    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.into_expr().lower(b, Slot::Value, false)
+    }
+
+    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.into_expr().lower(b, Slot::Memory, false)
+    }
+
+    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
+        self.into_expr().lower(b, Slot::Value, true)
+    }
+
+    fn expr(self) -> Expr {
+        self.into_expr()
+    }
+}
+
+/// `P` with its root output bound to a capture.
+pub struct Captured<P>(Expr, PhantomData<fn() -> P>);
+
+impl<P> IntoExpr for Captured<P> {
+    fn into_expr(self) -> Expr {
         self.0
     }
 }
 
-pub struct Captured<P> {
-    inner: P,
-    pub(crate) cap: crate::capture::Capture,
-}
+impl<P: MatchPat> MatchExpr for Captured<P> {}
 
-impl<P: MatchPat> MatchPat for Captured<P> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let o = self.inner.compile(b);
-        b.capture_output(o, self.cap);
-        o
-    }
-
-    // The trait default would route back through `compile`, lowering the inner
-    // pattern as a value operand in a memory slot.
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let o = self.inner.compile_mem(b);
-        b.capture_output(o, self.cap);
-        o
-    }
-
-    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let o = self.inner.compile_ordered(b);
-        b.capture_output(o, self.cap);
-        o
-    }
-}
-
-/// Emit a `MatchPat` decorator: a struct wrapping `inner: P` plus the listed
-/// payload fields, whose `compile`, `compile_mem` and `compile_ordered` lower
-/// the inner pattern the same way, run `$body` (with `b` the builder, `o` the
-/// inner root output, `self` bound) to annotate the root, and return `o`.
-macro_rules! decorator {
-    (
-        $(#[$smeta:meta])*
-        $struct:ident < P $(, $g:ident)? >
-        $([ where $($pred:tt)+ ])?
-        { $($(#[$fmeta:meta])* $field:ident : $fty:ty),* $(,)? }
-        |$b:ident, $o:ident, $me:ident| $body:block
-    ) => {
-        $(#[$smeta])*
-        pub struct $struct<P $(, $g)?> {
-            inner: P,
-            $($(#[$fmeta])* pub(crate) $field: $fty),*
-        }
-        impl<P: MatchPat $(, $g)?> MatchPat for $struct<P $(, $g)?>
-        $(where $($pred)+,)?
-        {
-            fn compile($me, $b: &mut MatcherBuilder) -> PatValueRef {
-                let $o = $me.inner.compile($b);
-                $body
-                $o
-            }
-
-            fn compile_mem($me, $b: &mut MatcherBuilder) -> PatValueRef {
-                let $o = $me.inner.compile_mem($b);
-                $body
-                $o
-            }
-
-            fn compile_ordered($me, $b: &mut MatcherBuilder) -> PatValueRef {
-                let $o = $me.inner.compile_ordered($b);
-                $body
-                $o
-            }
-        }
-    };
-}
-
-decorator! {
-    /// Node predicate on the inner pattern's root.
-    Limited<P, F>
-    [ where F: Fn(&crate::Matcher, strider_ir::node::NodeId) -> bool + 'static + Send ]
-    { f: F }
-    |b, o, self| { b.set_node_predicate(o, Box::new(self.f)); }
-}
-
-decorator! {
-    /// Post-match guard, with bindings visibility, on the inner root. A root
-    /// with no value output is refused at build time: the guard is typed, and
-    /// there is no type to hand it.
-    Guarded<P, F>
-    [ where F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool + 'static + Send ]
-    { f: F }
-    |b, o, self| {
-        b.set_post_match_typed(
-            o,
-            Box::new(move |m, _node, ty, bnd| ty.is_some_and(|ty| (self.f)(m, ty, bnd))),
-        );
-    }
-}
-
-/// Pins the operand order of the node holding the pair the inner pattern was
-/// written with; see [`MatchPat::compile_ordered`].
-pub struct Ordered<P> {
-    inner: P,
-}
-
-impl<P: MatchPat> MatchPat for Ordered<P> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.inner.compile_ordered(b)
-    }
-
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let o = self.inner.compile_mem(b);
-        b.set_force_ordered(o);
-        o
-    }
-
-    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.inner.compile_ordered(b)
-    }
-}
-
-decorator! {
-    /// Pins the output-vertex width.
-    OfWidth<P>
-    { bits: u32 }
-    |b, o, self| { b.set_value_width(o, self.bits); }
-}
-
-decorator! {
-    /// [`OfWidth`] pinning the exact type rather than the width.
-    ValueTy<P>
-    { ty: strider_ir::node::ValueType }
-    |b, o, self| { b.set_value_ty(o, self.ty); }
-}
+/// A build-side `.capture(c)` reuses the LHS binding for `c` verbatim, so it
+/// REPLACES what it wraps rather than wrapping it. Only a `var()` leaf may be
+/// wrapped: over a composite the discarded operands would vanish from the RHS
+/// in silence, so `template::int_add(..).capture(c)` is a compile error.
+impl TemplateExpr for Captured<crate::typed::wildcards::Var> {}
 
 /// Fluent combinator surface available on every [`MatchPat`].
-pub trait CaptureExt: MatchPat {
+pub trait CaptureExt: MatchPat + 'static {
     fn capture(self, c: crate::capture::Capture) -> Captured<Self> {
-        Captured {
-            inner: self,
-            cap: c,
-        }
+        Captured(self.expr().capture(c), PhantomData)
     }
     /// Run `f` after the whole sub-pattern matches; `false` fails the match.
     /// `f` is typed, so a root with no value output (a control, memory or
@@ -186,36 +96,40 @@ pub trait CaptureExt: MatchPat {
     /// every query on the pattern errors. Guard those through
     /// [`Pattern::with_root_post_match`](crate::Pattern::with_root_post_match),
     /// which sees the missing type.
-    fn when_match<F>(self, f: F) -> Guarded<Self, F>
+    fn when_match<F>(self, f: F) -> MatchOnly
     where
-        F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool + 'static,
+        F: Fn(&crate::Matcher, strider_ir::node::ValueType, &crate::Bindings) -> bool
+            + 'static
+            + Send,
     {
-        Guarded { inner: self, f }
+        let guard: crate::PostMatchFn =
+            Box::new(move |m, _node, ty, bnd| ty.is_some_and(|ty| f(m, ty, bnd)));
+        MatchOnly(self.expr().deco(Deco::Guard(guard)))
     }
     /// Gate on a predicate running before inputs are descended into.
-    fn filter<F>(self, f: F) -> Limited<Self, F>
+    fn filter<F>(self, f: F) -> MatchOnly
     where
-        F: Fn(&crate::Matcher, strider_ir::node::NodeId) -> bool + 'static,
+        F: Fn(&crate::Matcher, strider_ir::node::NodeId) -> bool + 'static + Send,
     {
-        Limited { inner: self, f }
+        MatchOnly(self.expr().deco(Deco::Filter(Box::new(f))))
     }
     /// Pin the operand order of the pair this pattern was written with; see
     /// [`MatchPat::compile_ordered`].
-    fn ordered(self) -> Ordered<Self> {
-        Ordered { inner: self }
+    fn ordered(self) -> MatchOnly {
+        MatchOnly(self.expr().deco(Deco::Ordered))
     }
-    fn of_width(self, n: u32) -> OfWidth<Self> {
-        OfWidth {
-            inner: self,
-            bits: n,
-        }
+    /// Pins the output-vertex width.
+    fn of_width(self, n: u32) -> MatchOnly {
+        MatchOnly(self.expr().deco(Deco::Width(n)))
     }
-    fn value_ty(self, ty: strider_ir::node::ValueType) -> ValueTy<Self> {
-        ValueTy { inner: self, ty }
+    /// [`of_width`](Self::of_width) pinning the exact type rather than the
+    /// width.
+    fn value_ty(self, ty: strider_ir::node::ValueType) -> MatchOnly {
+        MatchOnly(self.expr().deco(Deco::Ty(ty)))
     }
     /// [`of_width(1)`](Self::of_width).
-    fn bool_valued(self) -> OfWidth<Self> {
+    fn bool_valued(self) -> MatchOnly {
         self.of_width(1)
     }
 }
-impl<P: MatchPat> CaptureExt for P {}
+impl<P: MatchPat + 'static> CaptureExt for P {}

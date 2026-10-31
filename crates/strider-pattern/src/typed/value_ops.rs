@@ -2,692 +2,363 @@
 //!
 //! Lift-time canonicalisations (`int_sub` to `int_add(_, int_neg(_))`,
 //! `int_not` to `int_xor(_, all_ones)`, the lowered `int_ne` / `int_le` /
-//! `float_*` shapes) are
-//! reproduced here so a typed pattern matches the canonical IR the lifter
-//! emits. Boolean ops pin the output to `I1`. Commutativity is data-driven via
-//! `NodeKind::is_commutative`.
+//! `float_*` shapes) are reproduced here so a typed pattern matches the
+//! canonical IR the lifter emits. Boolean ops pin the output to `I1`.
+//! Commutativity is data-driven via `NodeKind::is_commutative`.
+
+use std::marker::PhantomData;
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 
-use crate::matcher::match_pat::{MatchPat, Pre};
-use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef};
+use crate::expr::{Expr, IntoExpr, MatchExpr, TemplateExpr};
+use crate::matcher::KindSpec;
+use crate::matcher::match_pat::MatchPat;
 use crate::template::template_pat::TemplatePat;
-use crate::template::{TemplateBuilder, TmplValueRef};
-use crate::typed::builder_like::{
-    compile_bool_binary, compile_int_binary, compile_two_input, compile_unary_kind,
-};
-use crate::typed::consts::{int_const_all_ones, int_const_with_fn};
+use crate::typed::consts::Const;
 
-// The `*Fixed` structs and their lowered-shape siblings (`Sub`, `BitNot`,
-// `FloatSub`, `FloatLe`, ...) stay hand-written: their lowerings differ.
+/// A pattern built from operands of types `T`, valid on whichever sides
+/// they all are.
+pub struct Op<T>(Expr, PhantomData<fn() -> T>);
 
-/// Emit a match-only `*Any` binary struct matching any variant of
-/// `$exemplar`'s kind. Pass a trailing `pin_i1` to pin the output to `I1`
-/// (booleans / comparisons); omit it for value outputs.
-macro_rules! variant_binary_any {
-    ($(#[$smeta:meta])* $struct:ident, $fn:ident, $exemplar:expr, $fndoc:literal $(, $pin_i1:ident)?) => {
-        $(#[$smeta])*
-        pub struct $struct<L, R> {
-            lhs: L,
-            rhs: R,
-        }
-
-        impl<L: MatchPat, R: MatchPat> MatchPat for $struct<L, R> {
-            fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-                let exemplar = $exemplar;
-                #[allow(unused_mut, unused_assignments)]
-                let mut pin: Option<ValueType> = None;
-                $(
-                    let _ = stringify!($pin_i1);
-                    pin = Some(ValueType::I1);
-                )?
-                compile_two_input(b, KindSpec::variant_of(&exemplar), self.lhs, self.rhs, pin)
-            }
-        }
-
-        #[doc = $fndoc]
-        pub fn $fn<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> $struct<L, R> {
-            $struct { lhs, rhs }
-        }
-    };
-}
-
-/// Unary counterpart of [`variant_binary_any`]; never needs an output pin.
-macro_rules! variant_unary_any {
-    ($(#[$smeta:meta])* $struct:ident, $fn:ident, $exemplar:expr, $fndoc:literal) => {
-        $(#[$smeta])*
-        pub struct $struct<I> {
-            inner: I,
-        }
-
-        impl<I: MatchPat> MatchPat for $struct<I> {
-            fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-                let exemplar = $exemplar;
-                compile_unary_kind(b, KindSpec::variant_of(&exemplar), self.inner)
-            }
-        }
-
-        #[doc = $fndoc]
-        pub fn $fn<I: MatchPat>(inner: I) -> $struct<I> {
-            $struct { inner }
-        }
-    };
-}
-
-/// The `MatchPat` and `TemplatePat` impls for a builder whose lowering is the
-/// same expression on both sides, which is what the generic `compile_*`
-/// helpers exist to make true.
-///
-/// `BitNot` is deliberately NOT expressed here: its match side pins
-/// `int_const(u128::MAX)` while its build side derives all-ones from the
-/// root's width, so the two are genuinely different lowerings. The build side
-/// stops at I128, skipping rather than interning a constant truncated to the
-/// `u128` carrier; the match side stops only where the reader does, at a value
-/// past `u128`.
-macro_rules! dual_pat {
-    ($ty:ident<$($g:ident),+ $(,)?>, |$me:ident, $b:ident| $body:block) => {
-        impl<$($g: MatchPat),+> MatchPat for $ty<$($g),+> {
-            fn compile($me, $b: &mut MatcherBuilder) -> PatValueRef $body
-        }
-
-        impl<$($g: TemplatePat),+> TemplatePat for $ty<$($g),+> {
-            fn compile($me, $b: &mut TemplateBuilder) -> TmplValueRef $body
-        }
-    };
-}
-
-pub struct IntBinaryFixed<L, R> {
-    op: IntBinaryOp,
-    lhs: L,
-    rhs: R,
-}
-
-dual_pat!(IntBinaryFixed<L, R>, |self, b| {
-    compile_int_binary(b, self.op, self.lhs, self.rhs)
-});
-
-variant_binary_any!(
-    /// Match-only.
-    AnyIntBinary,
-    any_int_binary,
-    NodeKind::IntBinaryOp(IntBinaryOp::Add),
-    "Match any `IntBinaryOp` regardless of variant."
-);
-
-/// Lowered to `int_add(lhs, int_neg(rhs))`.
-pub struct Sub<L, R> {
-    lhs: L,
-    rhs: R,
-}
-
-dual_pat!(Sub<L, R>, |self, b| {
-    compile_sub(b, self.lhs, self.rhs)
-});
-
-fn compile_sub<B, L, R>(b: &mut B, lhs: L, rhs: R) -> B::OutRef
-where
-    B: crate::typed::builder_like::BuilderLike,
-    L: crate::typed::builder_like::CompileInto<B>,
-    R: crate::typed::builder_like::CompileInto<B>,
-    IntUnaryFixed<R>: crate::typed::builder_like::CompileInto<B>,
-{
-    let neg_rhs = IntUnaryFixed {
-        kind: NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-        inner: rhs,
-    };
-    compile_int_binary(b, IntBinaryOp::Add, lhs, neg_rhs)
-}
-
-/// `Neg`, `Popcount`, or `Lzcount`.
-pub struct IntUnaryFixed<I> {
-    kind: NodeKind,
-    inner: I,
-}
-
-dual_pat!(IntUnaryFixed<I>, |self, b| {
-    compile_unary_kind(b, KindSpec::Exact(self.kind), self.inner)
-});
-
-variant_unary_any!(
-    /// Match-only.
-    AnyIntUnary,
-    any_int_unary,
-    NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-    "Match any `IntUnaryOp` regardless of variant."
-);
-
-/// Bitwise complement, i.e. `int_xor(inner, all_ones)`.
-pub struct BitNot<I> {
-    inner: I,
-}
-
-impl<I: MatchPat> MatchPat for BitNot<I> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        // All-ones is the matched width's own, which no `u128` literal
-        // names past I128.
-        int_xor(self.inner, int_const_all_ones()).compile(b)
+impl<T> Op<T> {
+    pub(crate) fn new(e: Expr) -> Self {
+        Self(e, PhantomData)
     }
 }
 
-impl<I: TemplatePat> TemplatePat for BitNot<I> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        let i = self.inner.compile(b);
-        // `eval::all_ones` answers 0 for a float, which is not a
-        // complement's mask, so a float root skips the rewrite.
-        let ones_out = int_const_with_fn(|ctx| {
-            ctx.root_ty
-                .is_integer()
-                .then(|| strider_ir::eval::all_ones(ctx.root_ty))
-                .ok_or_else(crate::skip)
-        })
-        .compile(b);
-        b.binary(IntBinaryOp::Xor, i, ones_out)
+impl<T> IntoExpr for Op<T> {
+    fn into_expr(self) -> Expr {
+        self.0
     }
 }
 
-/// A unary-shape cast wrapping `inner` with an exact `NodeKind`.
-pub struct Cast<I> {
-    kind: NodeKind,
-    inner: I,
-}
+impl MatchExpr for Op<()> {}
+impl<I: MatchPat> MatchExpr for Op<(I,)> {}
+impl<L: MatchPat, R: MatchPat> MatchExpr for Op<(L, R)> {}
+impl TemplateExpr for Op<()> {}
+impl<I: TemplatePat> TemplateExpr for Op<(I,)> {}
+impl<L: TemplatePat, R: TemplatePat> TemplateExpr for Op<(L, R)> {}
 
-dual_pat!(Cast<I>, |self, b| {
-    compile_unary_kind(b, KindSpec::Exact(self.kind), self.inner)
-});
+/// A pattern only the match side accepts: a rewrite RHS must build one
+/// concrete shape.
+pub struct MatchOnly(pub(crate) Expr);
 
-/// Output `I1`.
-pub struct IntCmpFixed<L, R> {
-    op: IntCmpOp,
-    lhs: L,
-    rhs: R,
-}
-
-dual_pat!(IntCmpFixed<L, R>, |self, b| {
-    let kind = KindSpec::Exact(NodeKind::IntCmpOp(self.op));
-    compile_two_input(b, kind, self.lhs, self.rhs, Some(ValueType::I1))
-});
-
-/// `int_xor(cmp, 1):I1`, the lifter's `!=` / `<=`; `.ordered()` pins `cmp`,
-/// the node holding the pair the caller wrote.
-pub struct Negated<C> {
-    cmp: C,
-}
-
-impl<C: MatchPat> MatchPat for Negated<C> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        compile_int_binary(
-            b,
-            IntBinaryOp::Xor,
-            self.cmp,
-            crate::typed::consts::bool_const(true),
-        )
-    }
-
-    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let cmp = self.cmp.compile_ordered(b);
-        compile_int_binary(
-            b,
-            IntBinaryOp::Xor,
-            Pre(cmp),
-            crate::typed::consts::bool_const(true),
-        )
+impl IntoExpr for MatchOnly {
+    fn into_expr(self) -> Expr {
+        self.0
     }
 }
 
-impl<C: TemplatePat> TemplatePat for Negated<C> {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        compile_int_binary(
-            b,
-            IntBinaryOp::Xor,
-            self.cmp,
-            crate::typed::consts::bool_const(true),
-        )
-    }
+impl MatchExpr for MatchOnly {}
+
+/// Any node of `exemplar`'s kind, whatever its variant, over the operands.
+fn variant<const N: usize>(exemplar: NodeKind, operands: [Expr; N], i1: bool) -> MatchOnly {
+    let ty = i1.then_some(ValueType::I1);
+    MatchOnly(Expr::op(KindSpec::variant_of(&exemplar), operands, ty))
 }
 
-variant_binary_any!(
-    /// Output `I1`. Match-only.
-    AnyIntCmp,
-    any_int_cmp,
-    NodeKind::IntCmpOp(IntCmpOp::Equal),
-    "Match any `IntCmpOp` regardless of variant.",
-    pin_i1
-);
-
-pub struct FloatBinaryFixed<L, R> {
-    op: FloatBinaryOp,
-    lhs: L,
-    rhs: R,
+/// Match any `IntBinaryOp` regardless of variant.
+pub fn any_int_binary<L: MatchPat + 'static, R: MatchPat + 'static>(l: L, r: R) -> MatchOnly {
+    let kind = NodeKind::IntBinaryOp(IntBinaryOp::Add);
+    variant(kind, [l.expr(), r.expr()], false)
 }
 
-dual_pat!(FloatBinaryFixed<L, R>, |self, b| {
-    let kind = KindSpec::Exact(NodeKind::FloatBinaryOp(self.op));
-    compile_two_input(b, kind, self.lhs, self.rhs, None)
-});
-
-variant_binary_any!(
-    /// Match-only.
-    AnyFloatBinary,
-    any_float_binary,
-    NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
-    "Match any `FloatBinaryOp` regardless of variant."
-);
-
-/// Lowered to `float_add(lhs, float_neg(rhs))`.
-pub struct FloatSub<L, R> {
-    lhs: L,
-    rhs: R,
+/// Match any `IntUnaryOp` regardless of variant.
+pub fn any_int_unary<I: MatchPat + 'static>(inner: I) -> MatchOnly {
+    variant(NodeKind::IntUnaryOp(IntUnaryOp::Neg), [inner.expr()], false)
 }
 
-dual_pat!(FloatSub<L, R>, |self, b| {
-    compile_float_sub(b, self.lhs, self.rhs)
-});
-
-fn compile_float_sub<B, L, R>(b: &mut B, lhs: L, rhs: R) -> B::OutRef
-where
-    B: crate::typed::builder_like::BuilderLike,
-    L: crate::typed::builder_like::CompileInto<B>,
-    R: crate::typed::builder_like::CompileInto<B>,
-    FloatUnaryFixed<R>: crate::typed::builder_like::CompileInto<B>,
-{
-    let neg_rhs = FloatUnaryFixed {
-        op: FloatUnaryOp::Neg,
-        inner: rhs,
-    };
-    let kind = KindSpec::Exact(NodeKind::FloatBinaryOp(FloatBinaryOp::Add));
-    compile_two_input(b, kind, lhs, neg_rhs, None)
+/// Match any `IntCmpOp` regardless of variant. Output `I1`.
+pub fn any_int_cmp<L: MatchPat + 'static, R: MatchPat + 'static>(l: L, r: R) -> MatchOnly {
+    let kind = NodeKind::IntCmpOp(IntCmpOp::Equal);
+    variant(kind, [l.expr(), r.expr()], true)
 }
 
-pub struct FloatUnaryFixed<I> {
-    op: FloatUnaryOp,
-    inner: I,
+/// Match any `FloatBinaryOp` regardless of variant.
+pub fn any_float_binary<L: MatchPat + 'static, R: MatchPat + 'static>(l: L, r: R) -> MatchOnly {
+    let kind = NodeKind::FloatBinaryOp(FloatBinaryOp::Add);
+    variant(kind, [l.expr(), r.expr()], false)
 }
 
-dual_pat!(FloatUnaryFixed<I>, |self, b| {
-    let kind = KindSpec::Exact(NodeKind::FloatUnaryOp(self.op));
-    compile_unary_kind(b, kind, self.inner)
-});
-
-variant_unary_any!(
-    /// Match-only.
-    AnyFloatUnary,
-    any_float_unary,
-    NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
-    "Match any `FloatUnaryOp` regardless of variant."
-);
-
-/// Output `I1`.
-pub struct FloatCmpFixed<L, R> {
-    op: FloatCmpOp,
-    lhs: L,
-    rhs: R,
+/// Match any `FloatUnaryOp` regardless of variant.
+pub fn any_float_unary<I: MatchPat + 'static>(inner: I) -> MatchOnly {
+    variant(
+        NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
+        [inner.expr()],
+        false,
+    )
 }
 
-dual_pat!(FloatCmpFixed<L, R>, |self, b| {
-    let kind = KindSpec::Exact(NodeKind::FloatCmpOp(self.op));
-    compile_two_input(b, kind, self.lhs, self.rhs, Some(ValueType::I1))
-});
+/// Match any `FloatCmpOp` regardless of variant. Output `I1`.
+pub fn any_float_cmp<L: MatchPat + 'static, R: MatchPat + 'static>(l: L, r: R) -> MatchOnly {
+    let kind = NodeKind::FloatCmpOp(FloatCmpOp::Equal);
+    variant(kind, [l.expr(), r.expr()], true)
+}
 
-variant_binary_any!(
-    /// Output `I1`. Match-only.
-    AnyFloatCmp,
-    any_float_cmp,
-    NodeKind::FloatCmpOp(FloatCmpOp::Equal),
-    "Match any `FloatCmpOp` regardless of variant.",
-    pin_i1
-);
+/// Match any `IntBinaryOp` at `I1` regardless of variant.
+pub fn any_bool_binary<L: MatchPat + 'static, R: MatchPat + 'static>(l: L, r: R) -> MatchOnly {
+    let kind = NodeKind::IntBinaryOp(IntBinaryOp::And);
+    variant(kind, [l.expr(), r.expr()], true)
+}
 
 /// NaN-aware `bool_or(float_lt(l, r), float_eq(l, r))` at `I1`.
-pub struct FloatLe<L, R> {
-    lhs: L,
-    rhs: R,
-}
-
-impl<L: MatchPat, R: MatchPat> MatchPat for FloatLe<L, R> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        // Each operand feeds both cmp branches, and a move-by-value operand
-        // can't be consumed twice; compile once and fan out via `Pre`. The
-        // pin is what makes the two branches agree on the operand.
-        let l = self.lhs.compile(b);
-        let r = self.rhs.compile(b);
-        b.pin_shared_identity(l);
-        b.pin_shared_identity(r);
-        let less = FloatCmpFixed {
-            op: FloatCmpOp::Less,
-            lhs: Pre(l),
-            rhs: Pre(r),
-        }
-        .compile(b);
-        let equal = FloatCmpFixed {
-            op: FloatCmpOp::Equal,
-            lhs: Pre(l),
-            rhs: Pre(r),
-        }
-        .compile(b);
-        compile_bool_binary(b, IntBinaryOp::Or, Pre(less), Pre(equal))
-    }
-
-    // The `Less` orders the pair already; pinning the `Or` would order the
-    // two comparisons instead.
-    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.compile(b)
-    }
-}
-
-pub fn float_le<L: MatchPat, R: MatchPat>(lhs: L, rhs: R) -> FloatLe<L, R> {
-    FloatLe { lhs, rhs }
+pub fn float_le<L: MatchPat + 'static, R: MatchPat + 'static>(lhs: L, rhs: R) -> MatchOnly {
+    MatchOnly(Expr::shared(vec![lhs.expr(), rhs.expr()], |v| {
+        let cmp = |op| NodeKind::FloatCmpOp(op);
+        let less = Expr::exact_i1(cmp(FloatCmpOp::Less), [Expr::at(v[0]), Expr::at(v[1])]);
+        let equal = Expr::exact_i1(cmp(FloatCmpOp::Equal), [Expr::at(v[0]), Expr::at(v[1])]);
+        Expr::exact_i1(NodeKind::IntBinaryOp(IntBinaryOp::Or), [less, equal])
+    }))
 }
 
 /// `int_xor(float_eq(x, x), 1):I1`.
-pub struct FloatIsNan<I> {
-    inner: I,
-}
-
-impl<I: MatchPat> MatchPat for FloatIsNan<I> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        // `x` feeds both equality inputs; compile once, fan out via `Pre`, and
-        // pin the identity the fan-out alone does not enforce.
-        let x = self.inner.compile(b);
-        b.pin_shared_identity(x);
-        let eq = FloatCmpFixed {
-            op: FloatCmpOp::Equal,
-            lhs: Pre(x),
-            rhs: Pre(x),
-        }
-        .compile(b);
-        compile_bool_binary(
-            b,
-            IntBinaryOp::Xor,
-            Pre(eq),
-            crate::typed::consts::bool_const(true),
-        )
-    }
-
-    // One operand in both equality slots: no pair to order.
-    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.compile(b)
-    }
-}
-
-pub fn float_is_nan<I: MatchPat>(inner: I) -> FloatIsNan<I> {
-    FloatIsNan { inner }
-}
-
-/// Output `I1`.
-pub struct BoolBinaryFixed<L, R> {
-    op: IntBinaryOp,
-    lhs: L,
-    rhs: R,
-}
-
-dual_pat!(BoolBinaryFixed<L, R>, |self, b| {
-    compile_bool_binary(b, self.op, self.lhs, self.rhs)
-});
-
-variant_binary_any!(
-    /// Any `IntBinaryOp` at `I1`. Match-only.
-    AnyBoolBinary,
-    any_bool_binary,
-    NodeKind::IntBinaryOp(IntBinaryOp::And),
-    "Match any `IntBinaryOp` at `I1` regardless of variant.",
-    pin_i1
-);
-
-/// `int_xor(operand, 1):I1`.
-pub struct BoolNot<I> {
-    inner: I,
-}
-
-dual_pat!(BoolNot<I>, |self, b| { compile_bool_not(b, self.inner) });
-
-fn compile_bool_not<B, I>(b: &mut B, inner: I) -> B::OutRef
-where
-    B: crate::typed::builder_like::BuilderLike,
-    I: crate::typed::builder_like::CompileInto<B>,
-    crate::typed::consts::BoolConst: crate::typed::builder_like::CompileInto<B>,
-{
-    compile_bool_binary(
-        b,
-        IntBinaryOp::Xor,
-        inner,
-        crate::typed::consts::bool_const(true),
-    )
+pub fn float_is_nan<I: MatchPat + 'static>(inner: I) -> MatchOnly {
+    MatchOnly(Expr::shared(vec![inner.expr()], |v| {
+        let eq = NodeKind::FloatCmpOp(FloatCmpOp::Equal);
+        Expr::bool_not(Expr::exact_i1(eq, [Expr::at(v[0]), Expr::at(v[0])]))
+    }))
 }
 
 // Every factory free function is emitted from this one op list, once at crate
 // scope under `MatchPat` and once inside `mod template` under `TemplatePat`.
-// Both sides build the identical structs; only the constructor's trait bound
-// differs, which is what puts the match/template boundary at construction.
-// A `mod` can't be re-opened by per-op macro invocations, so the whole list
-// lives here and the macro is invoked once per scope.
+// Both sides build the identical expression; only the constructor's trait
+// bound differs, which is what puts the match/template boundary at
+// construction. A `mod` can't be re-opened by per-op macro invocations, so the
+// whole list lives here and the macro is invoked once per scope.
 
 macro_rules! value_op_factories {
     (
         bound = $bound:path,
         verb = $verb:literal,
     ) => {
-        binary_factory!($bound, IntBinaryFixed, IntBinaryOp, Add, int_add,
+        bin!($bound, int_add, exact, NodeKind::IntBinaryOp(IntBinaryOp::Add),
             concat!($verb, " unsigned addition `lhs + rhs`. Commutative."));
-        binary_factory!($bound, IntBinaryFixed, IntBinaryOp, Mul, int_mul,
+        bin!($bound, int_mul, exact, NodeKind::IntBinaryOp(IntBinaryOp::Mul),
             concat!($verb, " wrapping multiplication `lhs * rhs`. Commutative."));
-        binary_factory!($bound, IntBinaryFixed, IntBinaryOp, Div, int_div,
+        bin!($bound, int_div, exact, NodeKind::IntBinaryOp(IntBinaryOp::Div),
             concat!($verb, " unsigned division `lhs / rhs`."));
-        binary_factory!($bound, IntBinaryFixed, IntBinaryOp, Sdiv, int_sdiv,
+        bin!($bound, int_sdiv, exact, NodeKind::IntBinaryOp(IntBinaryOp::Sdiv),
             concat!($verb, " signed division `(signed)lhs / (signed)rhs`."));
-        binary_factory!($bound, IntBinaryFixed, IntBinaryOp, Rem, int_rem,
+        bin!($bound, int_rem, exact, NodeKind::IntBinaryOp(IntBinaryOp::Rem),
             concat!($verb, " unsigned remainder `lhs % rhs`."));
-        binary_factory!($bound, IntBinaryFixed, IntBinaryOp, Srem, int_srem,
+        bin!($bound, int_srem, exact, NodeKind::IntBinaryOp(IntBinaryOp::Srem),
             concat!($verb, " signed remainder `(signed)lhs % (signed)rhs`."));
-        binary_factory!($bound, IntBinaryFixed, IntBinaryOp, And, int_and,
+        bin!($bound, int_and, exact, NodeKind::IntBinaryOp(IntBinaryOp::And),
             concat!($verb, " bitwise AND `lhs & rhs`. Commutative."));
-        binary_factory!($bound, IntBinaryFixed, IntBinaryOp, Or, int_or,
+        bin!($bound, int_or, exact, NodeKind::IntBinaryOp(IntBinaryOp::Or),
             concat!($verb, " bitwise OR `lhs | rhs`. Commutative."));
-        binary_factory!($bound, IntBinaryFixed, IntBinaryOp, Xor, int_xor,
+        bin!($bound, int_xor, exact, NodeKind::IntBinaryOp(IntBinaryOp::Xor),
             concat!($verb, " bitwise XOR `lhs ^ rhs`. Commutative."));
-        binary_factory!($bound, IntBinaryFixed, IntBinaryOp, ShiftLeft, int_shl,
+        bin!($bound, int_shl, exact, NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
             concat!($verb, " logical left-shift `lhs << rhs`."));
-        binary_factory!($bound, IntBinaryFixed, IntBinaryOp, ShiftRight, int_shr,
+        bin!($bound, int_shr, exact, NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight),
             concat!($verb, " logical right-shift `lhs >> rhs`."));
-        binary_factory!($bound, IntBinaryFixed, IntBinaryOp, SShiftRight, int_sshr,
+        bin!($bound, int_sshr, exact, NodeKind::IntBinaryOp(IntBinaryOp::SShiftRight),
             concat!($verb, " arithmetic right-shift `(signed)lhs >> rhs`."));
 
         /// Subtraction `lhs - rhs` (the lifter's `Add(lhs, Neg(rhs))` shape).
-        pub fn int_sub<L: $bound, R: $bound>(lhs: L, rhs: R) -> Sub<L, R> {
-            Sub { lhs, rhs }
+        pub fn int_sub<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
+            Op::new(Expr::int_sub(<L as $bound>::expr(lhs), <R as $bound>::expr(rhs)))
         }
 
-        unary_factory!($bound, IntUnaryFixed, kind, NodeKind::IntUnaryOp(IntUnaryOp::Neg), int_neg,
+        un!($bound, int_neg, NodeKind::IntUnaryOp(IntUnaryOp::Neg),
             concat!($verb, " two's-complement negation `-inner`."));
-        unary_factory!($bound, IntUnaryFixed, kind, NodeKind::Popcount, int_popcount,
+        un!($bound, int_popcount, NodeKind::Popcount,
             concat!($verb, " a `Popcount(inner)` (count-set-bits) node."));
-        unary_factory!($bound, IntUnaryFixed, kind, NodeKind::Lzcount, int_lzcount,
+        un!($bound, int_lzcount, NodeKind::Lzcount,
             concat!($verb, " an `Lzcount(inner)` (leading-zero-count) node."));
 
         /// Bitwise complement `~inner` (the canonical `int_xor(_, all_ones)`).
-        pub fn int_not<I: $bound>(inner: I) -> BitNot<I> {
-            BitNot { inner }
+        pub fn int_not<I: $bound + 'static>(inner: I) -> Op<(I,)> {
+            let ones = Const::AllOnes.into();
+            let xor = NodeKind::IntBinaryOp(IntBinaryOp::Xor);
+            Op::new(Expr::exact(xor, [<I as $bound>::expr(inner), ones]))
         }
 
-        unary_factory!($bound, Cast, kind, NodeKind::Truncate, int_truncate,
+        un!($bound, int_truncate, NodeKind::Truncate,
             concat!($verb, " a `Truncate(inner)` (integer narrowing) node."));
-        unary_factory!($bound, Cast, kind, NodeKind::Extend(ExtendOp::ZeroExtend), int_zero_extend,
+        un!($bound, int_zero_extend, NodeKind::Extend(ExtendOp::ZeroExtend),
             concat!($verb, " a zero-extension `Extend(ZeroExtend)(inner)` node."));
-        unary_factory!($bound, Cast, kind, NodeKind::Extend(ExtendOp::SignExtend), int_sign_extend,
+        un!($bound, int_sign_extend, NodeKind::Extend(ExtendOp::SignExtend),
             concat!($verb, " a sign-extension `Extend(SignExtend)(inner)` node."));
-        unary_factory!($bound, Cast, kind, NodeKind::IntToFloat, int_to_float,
+        un!($bound, int_to_float, NodeKind::IntToFloat,
             concat!($verb, " an `IntToFloat(inner)` value-conversion."));
-        unary_factory!($bound, Cast, kind, NodeKind::FloatToInt, float_to_int,
+        un!($bound, float_to_int, NodeKind::FloatToInt,
             concat!($verb, " a `FloatToInt(inner)` value-conversion."));
-        unary_factory!($bound, Cast, kind, NodeKind::IntBitsToFloat, int_bits_to_float,
+        un!($bound, int_bits_to_float, NodeKind::IntBitsToFloat,
             concat!($verb, " an `IntBitsToFloat(inner)` bitcast."));
-        unary_factory!($bound, Cast, kind, NodeKind::FloatBitsToInt, float_bits_to_int,
+        un!($bound, float_bits_to_int, NodeKind::FloatBitsToInt,
             concat!($verb, " a `FloatBitsToInt(inner)` bitcast."));
-        unary_factory!($bound, Cast, kind, NodeKind::FloatToFloat, float_to_float,
+        un!($bound, float_to_float, NodeKind::FloatToFloat,
             concat!($verb, " a `FloatToFloat(inner)` precision-conversion."));
 
         /// An `Extend(op)` node with the given runtime `ExtendOp`.
-        pub fn int_extend<I: $bound>(op: ExtendOp, inner: I) -> Cast<I> {
-            Cast { kind: NodeKind::Extend(op), inner }
+        pub fn int_extend<I: $bound + 'static>(op: ExtendOp, inner: I) -> Op<(I,)> {
+            Op::new(Expr::exact(NodeKind::Extend(op), [<I as $bound>::expr(inner)]))
         }
 
-        binary_factory!($bound, IntCmpFixed, IntCmpOp, Equal, int_eq,
+        bin!($bound, int_eq, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Equal),
             concat!($verb, " an unsigned equality `lhs == rhs`. Commutative."));
-        binary_factory!($bound, IntCmpFixed, IntCmpOp, Less, int_lt,
+        bin!($bound, int_lt, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Less),
             concat!($verb, " an unsigned less-than `lhs < rhs`."));
-        binary_factory!($bound, IntCmpFixed, IntCmpOp, Sless, int_slt,
+        bin!($bound, int_slt, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Sless),
             concat!($verb, " a signed less-than `(signed)lhs < (signed)rhs`."));
-        binary_factory!($bound, IntCmpFixed, IntCmpOp, Carry, int_carry,
+        bin!($bound, int_carry, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Carry),
             concat!($verb, " an unsigned addition carry-out. Commutative."));
-        binary_factory!($bound, IntCmpFixed, IntCmpOp, Scarry, int_scarry,
+        bin!($bound, int_scarry, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Scarry),
             concat!($verb, " a signed addition overflow. Commutative."));
-        binary_factory!($bound, IntCmpFixed, IntCmpOp, Sborrow, int_sborrow,
+        bin!($bound, int_sborrow, exact_i1, NodeKind::IntCmpOp(IntCmpOp::Sborrow),
             concat!($verb, " a signed subtraction borrow."));
 
         #[doc = concat!($verb, " an unsigned not-equal `lhs != rhs`, i.e. `int_xor(int_eq(l, r), 1):I1`; `.ordered()` pins the `int_eq`.")]
-        pub fn int_ne<L: $bound, R: $bound>(lhs: L, rhs: R) -> Negated<IntCmpFixed<L, R>> {
-            Negated { cmp: int_eq(lhs, rhs) }
+        pub fn int_ne<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
+            let eq = NodeKind::IntCmpOp(IntCmpOp::Equal);
+            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            Op::new(Expr::negated(Expr::exact_i1(eq, [l, r])))
         }
 
         #[doc = concat!($verb, " an unsigned less-or-equal `lhs <= rhs`, i.e. `int_xor(int_lt(r, l), 1):I1`; `.ordered()` is a no-op, the `int_lt` orders its pair.")]
-        pub fn int_le<L: $bound, R: $bound>(lhs: L, rhs: R) -> Negated<IntCmpFixed<R, L>> {
-            Negated { cmp: int_lt(rhs, lhs) }
+        pub fn int_le<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
+            let lt = NodeKind::IntCmpOp(IntCmpOp::Less);
+            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            Op::new(Expr::negated(Expr::exact_i1(lt, [r, l])))
         }
 
         #[doc = concat!($verb, " a signed less-or-equal `(signed)lhs <= (signed)rhs`, i.e. `int_xor(int_slt(r, l), 1):I1`; `.ordered()` is a no-op, the `int_slt` orders its pair.")]
-        pub fn int_sle<L: $bound, R: $bound>(lhs: L, rhs: R) -> Negated<IntCmpFixed<R, L>> {
-            Negated { cmp: int_slt(rhs, lhs) }
+        pub fn int_sle<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
+            let slt = NodeKind::IntCmpOp(IntCmpOp::Sless);
+            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            Op::new(Expr::negated(Expr::exact_i1(slt, [r, l])))
         }
 
-        binary_factory!($bound, FloatBinaryFixed, FloatBinaryOp, Add, float_add,
+        bin!($bound, float_add, exact, NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
             concat!($verb, " a float addition `lhs + rhs`. Commutative."));
-        binary_factory!($bound, FloatBinaryFixed, FloatBinaryOp, Mul, float_mul,
+        bin!($bound, float_mul, exact, NodeKind::FloatBinaryOp(FloatBinaryOp::Mul),
             concat!($verb, " a float multiplication `lhs * rhs`. Commutative."));
-        binary_factory!($bound, FloatBinaryFixed, FloatBinaryOp, Div, float_div,
+        bin!($bound, float_div, exact, NodeKind::FloatBinaryOp(FloatBinaryOp::Div),
             concat!($verb, " a float division `lhs / rhs`."));
 
         /// Float subtraction `lhs - rhs` (the lifter's `Add(lhs, Neg(rhs))` shape).
-        pub fn float_sub<L: $bound, R: $bound>(lhs: L, rhs: R) -> FloatSub<L, R> {
-            FloatSub { lhs, rhs }
+        pub fn float_sub<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
+            let neg = NodeKind::FloatUnaryOp(FloatUnaryOp::Neg);
+            let add = NodeKind::FloatBinaryOp(FloatBinaryOp::Add);
+            let r = Expr::exact(neg, [<R as $bound>::expr(rhs)]);
+            Op::new(Expr::exact(add, [<L as $bound>::expr(lhs), r]))
         }
 
-        float_unary_factory!($bound, Neg, float_neg, concat!($verb, " a float negation `-x`."));
-        float_unary_factory!($bound, Abs, float_abs, concat!($verb, " a float absolute value `|x|`."));
-        float_unary_factory!($bound, Sqrt, float_sqrt, concat!($verb, " a float square root `√x`."));
-        float_unary_factory!($bound, Ceil, float_ceil, concat!($verb, " a float ceiling `⌈x⌉`."));
-        float_unary_factory!($bound, Floor, float_floor, concat!($verb, " a float floor `⌊x⌋`."));
-        float_unary_factory!($bound, Round, float_round,
+        un!($bound, float_neg, NodeKind::FloatUnaryOp(FloatUnaryOp::Neg),
+            concat!($verb, " a float negation `-x`."));
+        un!($bound, float_abs, NodeKind::FloatUnaryOp(FloatUnaryOp::Abs),
+            concat!($verb, " a float absolute value `|x|`."));
+        un!($bound, float_sqrt, NodeKind::FloatUnaryOp(FloatUnaryOp::Sqrt),
+            concat!($verb, " a float square root `√x`."));
+        un!($bound, float_ceil, NodeKind::FloatUnaryOp(FloatUnaryOp::Ceil),
+            concat!($verb, " a float ceiling `⌈x⌉`."));
+        un!($bound, float_floor, NodeKind::FloatUnaryOp(FloatUnaryOp::Floor),
+            concat!($verb, " a float floor `⌊x⌋`."));
+        un!($bound, float_round, NodeKind::FloatUnaryOp(FloatUnaryOp::Round),
             concat!($verb, " a float round to nearest, ties away from zero."));
 
         #[doc = concat!($verb, " a float unary op `float_unary(op, x)` of kind `op` only.")]
-        pub fn float_unary<I: $bound>(op: FloatUnaryOp, inner: I) -> FloatUnaryFixed<I> {
-            FloatUnaryFixed { op, inner }
+        pub fn float_unary<I: $bound + 'static>(op: FloatUnaryOp, inner: I) -> Op<(I,)> {
+            Op::new(Expr::exact(NodeKind::FloatUnaryOp(op), [<I as $bound>::expr(inner)]))
         }
 
-        binary_factory!($bound, FloatCmpFixed, FloatCmpOp, Equal, float_eq,
+        bin!($bound, float_eq, exact_i1, NodeKind::FloatCmpOp(FloatCmpOp::Equal),
             concat!($verb, " a float equality `lhs == rhs`. Commutative."));
-        binary_factory!($bound, FloatCmpFixed, FloatCmpOp, Less, float_lt,
+        bin!($bound, float_lt, exact_i1, NodeKind::FloatCmpOp(FloatCmpOp::Less),
             concat!($verb, " a float less-than `lhs < rhs`."));
 
         #[doc = concat!($verb, " a float not-equal `lhs != rhs`, i.e. `int_xor(float_eq(l, r), 1):I1`; `.ordered()` pins the `float_eq`.")]
-        pub fn float_ne<L: $bound, R: $bound>(lhs: L, rhs: R) -> Negated<FloatCmpFixed<L, R>> {
-            Negated { cmp: float_eq(lhs, rhs) }
+        pub fn float_ne<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
+            let eq = NodeKind::FloatCmpOp(FloatCmpOp::Equal);
+            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            Op::new(Expr::negated(Expr::exact_i1(eq, [l, r])))
         }
 
-        binary_factory!($bound, BoolBinaryFixed, IntBinaryOp, And, bool_and,
+        bin!($bound, bool_and, exact_i1, NodeKind::IntBinaryOp(IntBinaryOp::And),
             concat!($verb, " a boolean AND (`IntBinaryOp::And` at `I1`). Commutative."));
-        binary_factory!($bound, BoolBinaryFixed, IntBinaryOp, Or, bool_or,
+        bin!($bound, bool_or, exact_i1, NodeKind::IntBinaryOp(IntBinaryOp::Or),
             concat!($verb, " a boolean OR (`IntBinaryOp::Or` at `I1`). Commutative."));
-        binary_factory!($bound, BoolBinaryFixed, IntBinaryOp, Xor, bool_xor,
+        bin!($bound, bool_xor, exact_i1, NodeKind::IntBinaryOp(IntBinaryOp::Xor),
             concat!($verb, " a boolean XOR (`IntBinaryOp::Xor` at `I1`). Commutative."));
 
         /// Boolean NOT, i.e. `int_xor(operand, IntConst(1)):I1`.
-        pub fn bool_not<I: $bound>(operand: I) -> BoolNot<I> {
-            BoolNot { inner: operand }
+        pub fn bool_not<I: $bound + 'static>(operand: I) -> Op<(I,)> {
+            Op::new(Expr::bool_not(<I as $bound>::expr(operand)))
         }
 
         #[doc = concat!($verb, " an integer binary op `int_binary(op, l, r)` of kind `op` only.")]
-        pub fn int_binary<L: $bound, R: $bound>(
+        pub fn int_binary<L: $bound + 'static, R: $bound + 'static>(
             op: IntBinaryOp,
             lhs: L,
             rhs: R,
-        ) -> IntBinaryFixed<L, R> {
-            IntBinaryFixed { op, lhs, rhs }
+        ) -> Op<(L, R)> {
+            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            Op::new(Expr::exact(NodeKind::IntBinaryOp(op), [l, r]))
         }
 
         #[doc = concat!($verb, " an integer comparison `int_cmp(op, l, r)` of kind `op` only (output `I1`).")]
-        pub fn int_cmp<L: $bound, R: $bound>(
+        pub fn int_cmp<L: $bound + 'static, R: $bound + 'static>(
             op: IntCmpOp,
             lhs: L,
             rhs: R,
-        ) -> IntCmpFixed<L, R> {
-            IntCmpFixed { op, lhs, rhs }
+        ) -> Op<(L, R)> {
+            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            Op::new(Expr::exact_i1(NodeKind::IntCmpOp(op), [l, r]))
         }
 
         #[doc = concat!($verb, " a float binary op `float_binary(op, l, r)` of kind `op` only.")]
-        pub fn float_binary<L: $bound, R: $bound>(
+        pub fn float_binary<L: $bound + 'static, R: $bound + 'static>(
             op: FloatBinaryOp,
             lhs: L,
             rhs: R,
-        ) -> FloatBinaryFixed<L, R> {
-            FloatBinaryFixed { op, lhs, rhs }
+        ) -> Op<(L, R)> {
+            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            Op::new(Expr::exact(NodeKind::FloatBinaryOp(op), [l, r]))
         }
 
         #[doc = concat!($verb, " a float comparison `float_cmp(op, l, r)` of kind `op` only (output `I1`).")]
-        pub fn float_cmp<L: $bound, R: $bound>(
+        pub fn float_cmp<L: $bound + 'static, R: $bound + 'static>(
             op: FloatCmpOp,
             lhs: L,
             rhs: R,
-        ) -> FloatCmpFixed<L, R> {
-            FloatCmpFixed { op, lhs, rhs }
+        ) -> Op<(L, R)> {
+            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            Op::new(Expr::exact_i1(NodeKind::FloatCmpOp(op), [l, r]))
         }
 
         #[doc = concat!($verb, " a boolean binary op `bool_binary(op, l, r)` of kind `op` only (`IntBinaryOp` at `I1`).")]
-        pub fn bool_binary<L: $bound, R: $bound>(
+        pub fn bool_binary<L: $bound + 'static, R: $bound + 'static>(
             op: IntBinaryOp,
             lhs: L,
             rhs: R,
-        ) -> BoolBinaryFixed<L, R> {
-            BoolBinaryFixed { op, lhs, rhs }
+        ) -> Op<(L, R)> {
+            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            Op::new(Expr::exact_i1(NodeKind::IntBinaryOp(op), [l, r]))
         }
     };
 }
 
-macro_rules! binary_factory {
-    ($bound:path, $struct:ident, $op:ty, $variant:ident, $name:ident, $doc:expr) => {
+/// `$ctor` is [`Expr::exact`] or [`Expr::exact_i1`].
+macro_rules! bin {
+    ($bound:path, $name:ident, $ctor:ident, $kind:expr, $doc:expr) => {
         #[doc = $doc]
-        pub fn $name<L: $bound, R: $bound>(lhs: L, rhs: R) -> $struct<L, R> {
-            $struct {
-                op: <$op>::$variant,
-                lhs,
-                rhs,
-            }
+        pub fn $name<L: $bound + 'static, R: $bound + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
+            let (l, r) = (<L as $bound>::expr(lhs), <R as $bound>::expr(rhs));
+            Op::new(Expr::$ctor($kind, [l, r]))
         }
     };
 }
 
-macro_rules! unary_factory {
-    ($bound:path, $struct:ident, $field:ident, $kind:expr, $name:ident, $doc:expr) => {
+macro_rules! un {
+    ($bound:path, $name:ident, $kind:expr, $doc:expr) => {
         #[doc = $doc]
-        pub fn $name<I: $bound>(inner: I) -> $struct<I> {
-            $struct {
-                $field: $kind,
-                inner,
-            }
-        }
-    };
-}
-
-macro_rules! float_unary_factory {
-    ($bound:path, $variant:ident, $name:ident, $doc:expr) => {
-        #[doc = $doc]
-        pub fn $name<I: $bound>(inner: I) -> FloatUnaryFixed<I> {
-            FloatUnaryFixed {
-                op: FloatUnaryOp::$variant,
-                inner,
-            }
+        pub fn $name<I: $bound + 'static>(inner: I) -> Op<(I,)> {
+            Op::new(Expr::exact($kind, [<I as $bound>::expr(inner)]))
         }
     };
 }
@@ -698,21 +369,20 @@ value_op_factories! {
 }
 
 // Build-side twins, re-exported at the crate root as
-// `strider_pattern::template`. Same structs, `TemplatePat` bound instead of
-// `MatchPat`: a template builder accepts template-only operands (`ConstWith`,
-// `var`, nested template ops) and refuses match-only ones (`anything()` /
-// predicates / `*_any`), and vice versa.
+// `strider_pattern::template`. Same expressions, `TemplatePat` bound instead
+// of `MatchPat`: a template builder accepts template-only operands
+// (`ConstWith`, `var`, nested template ops) and refuses match-only ones
+// (`anything()` / predicates / `*_any`), and vice versa.
 pub mod template {
     use strider_ir::node::NodeKind;
     use strider_ir::{
         ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
     };
 
+    use crate::expr::Expr;
     use crate::template::template_pat::TemplatePat;
-    use crate::typed::value_ops::{
-        BitNot, BoolBinaryFixed, BoolNot, Cast, FloatBinaryFixed, FloatCmpFixed, FloatSub,
-        FloatUnaryFixed, IntBinaryFixed, IntCmpFixed, IntUnaryFixed, Negated, Sub,
-    };
+    use crate::typed::consts::Const;
+    use crate::typed::value_ops::Op;
 
     value_op_factories! {
         bound = TemplatePat,

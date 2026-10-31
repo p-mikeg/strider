@@ -7,16 +7,16 @@
 //! `Load` is value-producing and nests as a value operand; `Store` is a
 //! memory-token root exposing its token via [`MemPat`].
 
-use super::delegate_node_pat;
+use super::{delegate_node_pat, node_match_pat};
 use crate::node_builders::delegate_with_output;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
+use crate::matcher::{KindSpec, Pattern};
 
 use super::MemPat;
-use super::node_pat::NodePat;
+use crate::expr::Node;
 
 /// The address-region filter of a `Load`/`Store` pattern: a mutually-exclusive
 /// choice, so the state can hold only one at a time and the last builder call
@@ -81,13 +81,13 @@ impl RegionFilter {
     }
 
     /// A no-op when inactive.
-    fn apply(self, n: NodePat) -> NodePat {
+    fn apply(self, n: Node) -> Node {
         if !self.active() {
             return n;
         }
-        n.with_node_predicate(move || {
-            Box::new(move |matcher, node| self.check(matcher.function(), node))
-        })
+        n.with_node_predicate(Box::new(move |matcher, node| {
+            self.check(matcher.function(), node)
+        }))
     }
 }
 
@@ -131,11 +131,11 @@ macro_rules! delegate_region_filter {
 
 /// Inputs `[mem(0), addr(1)]`, single output the loaded value.
 ///
-/// Holds its `NodePat` eagerly. `space` re-narrows the kind in place rather
+/// Holds its `Node` eagerly. `space` re-narrows the kind in place rather
 /// than deferring every setter behind a boxed closure to be replayed once the
 /// space is known.
 pub struct LoadPat {
-    inner: NodePat,
+    inner: Node,
     bit_width: Option<u32>,
     region: RegionFilter,
 }
@@ -165,7 +165,7 @@ impl LoadPat {
         self
     }
 
-    fn configured(self) -> NodePat {
+    fn configured(self) -> Node {
         let LoadPat {
             mut inner,
             bit_width,
@@ -183,15 +183,9 @@ impl LoadPat {
     }
 }
 
-impl MatchPat for LoadPat {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured().compile_anchored(b)
-    }
-}
-
 pub fn load() -> LoadPat {
     LoadPat {
-        inner: NodePat::value(
+        inner: Node::value(
             KindSpec::variant_of(&NodeKind::Load(rsleigh::VnSpace::RAM)),
             0,
         ),
@@ -206,7 +200,7 @@ delegate_region_filter!(LoadPat, region);
 
 /// Inputs `[mem(0), addr(1), data(2)]`, single output the new memory token.
 pub struct StorePat {
-    inner: NodePat,
+    inner: Node,
     /// A width needs SOME wired producer at the data slot to pin on, so
     /// `configured` synthesises one when `data` was never called.
     has_data: bool,
@@ -246,7 +240,7 @@ impl StorePat {
         self
     }
 
-    fn configured(self) -> NodePat {
+    fn configured(self) -> Node {
         let StorePat {
             mut inner,
             has_data,
@@ -272,18 +266,11 @@ impl StorePat {
     }
 }
 
-impl MatchPat for StorePat {
-    /// The new memory token is the only output, so a value slot never matches.
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured().compile_anchored(b)
-    }
-}
-
 impl MemPat for StorePat {}
 
 pub fn store() -> StorePat {
     StorePat {
-        inner: NodePat::node(KindSpec::variant_of(&NodeKind::Store(
+        inner: Node::new(KindSpec::variant_of(&NodeKind::Store(
             rsleigh::VnSpace::RAM,
         )))
         .with_mem_value(NodeKind::MEM_OUT_SLOT),
@@ -296,3 +283,8 @@ pub fn store() -> StorePat {
 delegate_with_output!(StorePat, inner);
 delegate_node_pat!(StorePat, inner, [capture, input, any_input]);
 delegate_region_filter!(StorePat, region);
+
+node_match_pat! {
+    LoadPat => |p| p.configured(),
+    StorePat => |p| p.configured(),
+}
