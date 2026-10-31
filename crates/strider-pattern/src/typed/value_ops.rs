@@ -38,6 +38,7 @@ impl<L: MatchPat, R: MatchPat> MatchPat for Op<(L, R)> {}
 impl TemplatePat for Op<()> {}
 impl<I: TemplatePat> TemplatePat for Op<(I,)> {}
 impl<L: TemplatePat, R: TemplatePat> TemplatePat for Op<(L, R)> {}
+impl<T> crate::template::template_pat::sealed::Sealed for Op<T> {}
 
 /// A pattern only the match side accepts: a rewrite RHS must build one
 /// concrete shape.

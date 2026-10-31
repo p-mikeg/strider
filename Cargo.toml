@@ -39,8 +39,7 @@ strider-pattern = { path = "crates/strider-pattern" }
 vn-container = { path = "crates/vn-container" }
 rsleigh = { path = "externals/rsleigh" }
 
-cranelift-bitset = "0.112.2"
-cranelift-entity = "0.112.2"
+cranelift-entity = "0.128"
 smallvec = { version = "1.13.2", default-features = false, features = [
     "const_new",
 ] }
@@ -54,6 +53,7 @@ rustc-hash = "2"
 dashu-int = "0.4.3"
 thiserror = "2.0.18"
 anyhow = "1.0"
+either = { version = "1.15.0", default-features = false }
 itertools = { version = "0.13.0", default-features = false }
 expect-test = "1.5.0"
 proptest = "1.5.0"

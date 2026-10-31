@@ -146,6 +146,10 @@
 
 ### Breaking, Rust
 
+- `TemplatePat` is sealed: no type outside strider-pattern implements it, so
+  a hand-written wrapper around the hidden `Expr` is no rewrite RHS, where
+  it compiled and its match-only parts panicked when the rule was built.
+  `MatchPat` is still open.
 - The doc-hidden `Expr` is no longer a `TemplatePat`, so
   `rewrite_rule(lhs, anything().into_expr())` is a compile error, where it
   compiled and panicked when the rule was built. A front end that builds the
@@ -469,6 +473,9 @@
 
 ### Changed, Python
 
+- Assigning `LifterOptions.cfg` or `LifterOptions.assumptions` still raises
+  `AttributeError`, now reading "readonly attribute" where it read
+  "attribute ... is not writable": the option classes are frozen.
 - A pattern compile's stack budget, a quarter of the thread's remaining
   stack, is read through `stacker` on every platform it reports a stack on.
   Windows and the BSDs, which took the fixed 48 KiB fallback, now budget
