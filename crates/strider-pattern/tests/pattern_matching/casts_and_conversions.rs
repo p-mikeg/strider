@@ -300,3 +300,26 @@ fn the_first_matching_cast_level_wins() {
         strider_ir::node::NodeKind::Extend(ExtendOp::ZeroExtend)
     ));
 }
+
+/// A ladder that walked through a cast and failed drops the cast from the
+/// footprint, so the `any_input` slot that then matches does not report it.
+#[test]
+fn a_failed_cast_ladder_leaves_no_cast_in_the_footprint() {
+    let mut t = Tb::empty();
+    let s = non_const_u32(&mut t, 1, 2);
+    let z = t.zext_to(s, ValueType::int(64));
+    let five = t.u64(5);
+    let n = t.int_un(five, strider_ir::IntUnaryOp::Neg);
+    t.call_other("op", 1, &[z, n], None, &[], &[]);
+    let function = t.ret_nothing();
+    let pat = call_other()
+        .any_input(int_neg(anything()))
+        .into_pattern()
+        .ignore_casts_mask(CastMask::all());
+    let hits = Matcher::new(&function).find_all(&pat).unwrap();
+    assert!(!hits.is_empty());
+    for m in &hits {
+        assert!(m.matched_nodes().contains(&function.producer(n)));
+        assert!(!m.matched_nodes().contains(&function.producer(z)));
+    }
+}

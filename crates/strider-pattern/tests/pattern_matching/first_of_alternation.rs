@@ -339,3 +339,46 @@ fn a_root_first_of_cut_does_not_carry_to_the_next_output() {
         .collect();
     assert_eq!(kinds, [ValueKind::Control, ValueKind::Memory]);
 }
+
+/// `add(neg(5), 5)` when `neg_first`, else `add(5, neg(5))`.
+fn add_neg_5_and_5(neg_first: bool) -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let five = t.u64(5);
+    let neg = t.int_un(five, IntUnaryOp::Neg);
+    let sum = if neg_first {
+        t.add(neg, five)
+    } else {
+        t.add(five, neg)
+    };
+    t.ret_val(sum)
+}
+
+/// The cut holds for the whole attempt: once arm 1 matched an IR node, a later
+/// configuration of a sibling enumerated AROUND the alternation re-offers that
+/// node without reaching arm 2, as when the sibling is enumerated inside it.
+#[test]
+fn a_first_of_cut_outlives_the_invocation_that_recorded_it() {
+    let x = Capture::new();
+    let y = Capture::new();
+    // Arm 1 of the sibling binds `x` to `5`, arm 2 to `neg(5)`.
+    let sibling = || one_of![int_neg(var(x)), var(x)];
+    let alternation = || first_of![var(x), var(y)];
+    let rows = |f: &strider_ir::Function, pat: strider_pattern::Pattern| -> Vec<(bool, bool)> {
+        Matcher::new(f)
+            .find_all(&pat)
+            .unwrap()
+            .iter()
+            .map(|h| (h.value(x).is_some(), h.value(y).is_some()))
+            .collect()
+    };
+    let around = rows(
+        &add_neg_5_and_5(true),
+        int_add(sibling(), alternation()).ordered().into_pattern(),
+    );
+    let inside = rows(
+        &add_neg_5_and_5(false),
+        int_add(alternation(), sibling()).ordered().into_pattern(),
+    );
+    assert_eq!(inside, [(true, false)]);
+    assert_eq!(around, inside, "arm 2 is never reached once arm 1 matched");
+}
