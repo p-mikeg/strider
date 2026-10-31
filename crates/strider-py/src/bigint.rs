@@ -62,11 +62,6 @@ impl PyBigInt {
         })
     }
 
-    /// [`Self::value`] without consuming the holder.
-    pub(crate) fn value_ref(&self) -> PyResult<IBig> {
-        Self(self.0.clone()).value()
-    }
-
     /// The value, or `None` past the widest declared width, which no
     /// constant reaches.
     pub(crate) fn in_range(self) -> Option<IBig> {
