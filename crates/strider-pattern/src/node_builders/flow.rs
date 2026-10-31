@@ -17,12 +17,12 @@ use crate::node_builders::delegate_with_output;
 use strider_ir::node::{NodeKind, SwitchTableId, ValueType};
 
 use crate::capture::Capture;
+use crate::matcher::KindSpec;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, Pattern};
 use crate::typed::int_const;
 
 use super::MemPat;
-use crate::expr::Node;
+use crate::expr::{Node, OutputAspect};
 
 /// A `Call` clobbers caller-saved registers and the memory token.
 pub struct CallPat(Node);
@@ -70,9 +70,7 @@ impl CallPat {
 
 /// Commits a sibling-output constraint onto a multi-output family builder.
 pub trait WithOutput: Sized {
-    fn capture_output(self, slot: Option<usize>, c: Capture) -> Self;
-    fn output_width(self, slot: Option<usize>, bits: u32) -> Self;
-    fn output_ty(self, slot: Option<usize>, ty: ValueType) -> Self;
+    fn with_output(self, slot: Option<usize>, aspect: OutputAspect) -> Self;
 
     /// A sibling output at raw slot `slot`. A leaf, naming the output value
     /// itself rather than recursing into what it feeds; which slot is which is
@@ -109,15 +107,16 @@ impl<B: WithOutput> OutputPat<B> {
     }
 
     pub fn capture(self, c: Capture) -> B {
-        self.parent.capture_output(self.slot, c)
+        self.parent.with_output(self.slot, OutputAspect::Capture(c))
     }
 
     pub fn of_width(self, bits: u32) -> B {
-        self.parent.output_width(self.slot, bits)
+        self.parent
+            .with_output(self.slot, OutputAspect::Width(bits))
     }
 
     pub fn of_type(self, ty: ValueType) -> B {
-        self.parent.output_ty(self.slot, ty)
+        self.parent.with_output(self.slot, OutputAspect::Ty(ty))
     }
 }
 
@@ -138,81 +137,59 @@ pub fn call() -> CallPat {
 
 /// A `CallOther` is a Sleigh `CALLOTHER` user-op: an opaque
 /// architecture-specific instruction modelled outside the pcode core.
-pub struct CallOtherPat {
-    inner: Node,
-    name_filter: Option<String>,
-}
+pub struct CallOtherPat(Node);
 
 impl CallOtherPat {
-    pub fn user_op_id(mut self, v: u64) -> Self {
-        self.inner = self
-            .inner
-            .with_kind(KindSpec::Exact(NodeKind::CallOther { user_op_id: v }));
-        self
+    pub fn user_op_id(self, v: u64) -> Self {
+        Self(
+            self.0
+                .with_kind(KindSpec::Exact(NodeKind::CallOther { user_op_id: v })),
+        )
     }
 
-    /// Filters on `Function::call_other_name`.
-    pub fn name(mut self, name: impl Into<String>) -> Self {
-        self.name_filter = Some(name.into());
-        self
+    /// Filters on `Function::call_other_name`. Repeated, every name must hold.
+    pub fn name(self, name: impl Into<String>) -> Self {
+        let want = name.into();
+        Self(self.0.with_node_predicate(Box::new(move |matcher, n| {
+            matcher.function().call_other_name(n) == Some(want.as_str())
+        })))
     }
 
     /// The raw input slot, unshifted: control, memory and args are addressed
     /// uniformly.
-    pub fn arg<P: MatchPat + 'static>(mut self, idx: usize, p: P) -> Self {
-        self.inner = self.inner.raw_input(idx, p);
-        self
+    pub fn arg<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
+        Self(self.0.raw_input(idx, p))
     }
 
     /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
     /// control edge, not a value.
-    pub fn ctrl<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inner = self.inner.input_control(NodeKind::CTRL_SLOT, p);
-        self
+    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
     }
 
     /// Input [`NodeKind::CTRL_MEM_SLOT`].
-    pub fn mem<M: MemPat + 'static>(mut self, p: M) -> Self {
-        self.inner = self.inner.input_mem(NodeKind::CTRL_MEM_SLOT, p);
-        self
+    pub fn mem<M: MemPat + 'static>(self, p: M) -> Self {
+        Self(self.0.input_mem(NodeKind::CTRL_MEM_SLOT, p))
     }
 
     /// See [`CallPat::res`]. Here it excludes implicit-write clobber outputs.
-    pub fn res(mut self) -> Self {
-        self.inner = self.inner.pin_anchor_slot();
-        self
-    }
-
-    /// Lowers any `.name` filter to a node predicate.
-    fn configured(self) -> Node {
-        let CallOtherPat { inner, name_filter } = self;
-        match name_filter {
-            // Node-only, so it short-circuits before child recursion.
-            Some(want) => inner.with_node_predicate(Box::new(move |matcher, n| {
-                matcher.function().call_other_name(n) == Some(want.as_str())
-            })),
-            None => inner,
-        }
-    }
-
-    pub fn build(self) -> Pattern {
-        self.configured().build()
+    pub fn res(self) -> Self {
+        Self(self.0.pin_anchor_slot())
     }
 }
 
-delegate_with_output!(CallOtherPat, inner);
-delegate_node_pat!(CallOtherPat, inner, [capture, input, any_input]);
+delegate_with_output!(CallOtherPat, 0);
+delegate_node_pat!(CallOtherPat, 0, [capture, build, input, any_input]);
 
 impl MemPat for CallOtherPat {}
 
 pub fn call_other() -> CallOtherPat {
     let kind = KindSpec::variant_of(&NodeKind::CallOther { user_op_id: 0 });
-    CallOtherPat {
-        inner: Node::new(kind)
+    CallOtherPat(
+        Node::new(kind)
             .with_mem_value(NodeKind::CTRL_MEM_OUT_SLOT)
             .with_value_anchor(NodeKind::CallOther { user_op_id: 0 }.output_head_len()),
-        name_filter: None,
-    }
+    )
 }
 
 /// A `Return` has no outputs, so the pattern is rooted on the node itself and
@@ -356,35 +333,19 @@ delegate_node_pat!(SwitchPat, 0, [capture, build, input, any_input]);
 
 /// An `If` carries two control-output vertices, true at slot 0 and false at
 /// slot 1.
-pub struct IfPat {
-    inner: Node,
-    capture_true: Option<Capture>,
-    capture_false: Option<Capture>,
-}
-
-impl Default for IfPat {
-    fn default() -> Self {
-        Self {
-            inner: Node::new(KindSpec::Exact(NodeKind::If)),
-            capture_true: None,
-            capture_false: None,
-        }
-    }
-}
+pub struct IfPat(Node);
 
 impl IfPat {
     /// Input [`NodeKind::IF_COND_SLOT`]; [`NodeKind::CTRL_SLOT`] is the ctrl
     /// predecessor.
-    pub fn cond<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inner = self.inner.input(NodeKind::IF_COND_SLOT, p);
-        self
+    pub fn cond<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input(NodeKind::IF_COND_SLOT, p))
     }
 
     /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
     /// control edge.
-    pub fn ctrl<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inner = self.inner.input_control(NodeKind::CTRL_SLOT, p);
-        self
+    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
     }
 
     /// Binds control output slot 0, propagated into the outer `Match`. Unlike
@@ -392,50 +353,40 @@ impl IfPat {
     /// collapse, so it is the stable handle for the edge join constraints,
     /// and for joining the arm's consumer: the same capture on that
     /// consumer's control input.
-    pub fn capture_true(mut self, c: Capture) -> Self {
-        self.capture_true = Some(c);
-        self
+    pub fn capture_true(self, c: Capture) -> Self {
+        Self(self.0.capture_control_output(NodeKind::IF_TRUE_OUT_SLOT, c))
     }
 
     /// See [`capture_true`](Self::capture_true).
-    pub fn capture_false(mut self, c: Capture) -> Self {
-        self.capture_false = Some(c);
-        self
-    }
-
-    pub fn build(self) -> Pattern {
-        self.lower().build()
-    }
-
-    fn lower(self) -> Node {
-        let IfPat {
-            inner,
-            capture_true,
-            capture_false,
-        } = self;
-        inner
-            .with_control_output(NodeKind::IF_TRUE_OUT_SLOT, capture_true)
-            .with_control_output(NodeKind::IF_FALSE_OUT_SLOT, capture_false)
+    pub fn capture_false(self, c: Capture) -> Self {
+        Self(
+            self.0
+                .capture_control_output(NodeKind::IF_FALSE_OUT_SLOT, c),
+        )
     }
 }
 
-delegate_with_output!(IfPat, inner);
-delegate_node_pat!(IfPat, inner, [capture, input, any_input]);
+delegate_with_output!(IfPat, 0);
+delegate_node_pat!(IfPat, 0, [capture, build, input, any_input]);
 
 pub fn if_else() -> IfPat {
-    IfPat::default()
+    IfPat(
+        Node::new(KindSpec::Exact(NodeKind::If))
+            .with_control_output(NodeKind::IF_TRUE_OUT_SLOT)
+            .with_control_output(NodeKind::IF_FALSE_OUT_SLOT),
+    )
 }
 
 node_match_pat! {
     CallPat => |p| p.0,
-    CallOtherPat => |p| p.configured(),
+    CallOtherPat => |p| p.0,
     RetPat => |p| p.0,
     IndirectBranchPat => |p| p.0,
     UnreachablePat => |p| p.0,
     EntryPat => |p| p.0,
     RegionPat => |p| p.0,
     SwitchPat => |p| p.0,
-    IfPat => |p| p.lower(),
+    IfPat => |p| p.0,
 }
 
 #[cfg(test)]
@@ -457,10 +408,11 @@ mod tests {
     }
 
     /// Characterizes `IfPat`'s lowering: which vertices it declares, in which
-    /// order, carrying which captures. The two control outputs come before the
-    /// condition's own cone, and the node captures land last. Reordering any of that changes which vertex
-    /// `root_output_vertex_for` picks, so this string is the contract a
-    /// re-homed lowering has to reproduce.
+    /// order, carrying which captures. The operand cones come first, the two
+    /// control outputs lead the `If`'s own, and the node captures land last.
+    /// Reordering any of that changes which vertex `root_output_vertex_for`
+    /// picks, so this string is the contract a re-homed lowering has to
+    /// reproduce.
     #[test]
     fn if_lowering_declares_its_vertices_in_a_pinned_order() {
         let (t, f, n, out) = (
@@ -475,33 +427,35 @@ mod tests {
             .capture_true(t)
             .capture_false(f)
             .capture(n)
-            .capture_output(Some(0), out)
-            .output_width(None, 32)
-            .output_ty(Some(1), ValueType::I1)
+            .output(0)
+            .capture(out)
+            .any_output()
+            .of_width(32)
+            .output(1)
+            .of_type(ValueType::I1)
             .build();
         same_shape(
             &staged_shape(&pat),
             "\
-n0 Exact(Entry) caps=0 pred=0 Operands { ordered: false }
-  out v0 Control slot=0 mode=Loose width=None caps=0 ident=0 token=0
-n1 Variant caps=0 pred=1 Operands { ordered: false }
-  out v1 AnyValue slot=0 mode=Loose width=None caps=0 ident=0 token=0
+n0 Variant caps=0 pred=1 Operands { ordered: false }
+  out v0 AnyValue slot=0 mode=Loose width=None caps=0 ident=0 token=0
+n1 Exact(Entry) caps=0 pred=0 Operands { ordered: false }
+  out v1 Control slot=0 mode=Loose width=None caps=0 ident=0 token=0
 n2 Exact(If) caps=1 pred=0 Operands { ordered: false }
   out v2 Control slot=0 mode=Loose width=None caps=1 ident=0 token=0
   out v3 Control slot=1 mode=Loose width=None caps=1 ident=0 token=0
   out v4 Any slot=0 mode=Pinned width=None caps=1 ident=0 token=0
   out v5 Any slot=0 mode=Enumerated width=Some(32) caps=0 ident=0 token=0
   out v6 Value slot=1 mode=Pinned width=None caps=0 ident=0 token=0
-  in At(1) <- v1
-  in At(0) <- v0
+  in At(1) <- v0
+  in At(0) <- v1
 root=Ok(2) total_nodes=3
 ",
         );
     }
 
-    /// Seal numbers every operand cone ahead of the `If` that consumes it, in
-    /// the reverse of the order `lower` wired them, so which operand `lower`
-    /// compiles first decides every vertex id. Pinned because those ids are
+    /// Every operand cone is built ahead of the `If` that consumes it, in the
+    /// order `lower` compiles them, so that order decides every vertex id. Pinned because those ids are
     /// what `anchor_repeats` compares.
     #[test]
     fn if_lowering_stages_every_operand_cone_before_the_if_node() {
@@ -514,17 +468,17 @@ root=Ok(2) total_nodes=3
             &staged_shape(&pat),
             "\
 n0 Any caps=0 pred=0 Operands { ordered: false }
-  out v0 Any slot=0 mode=Loose width=None caps=0 ident=0 token=0
+  out v0 Any slot=0 mode=Loose width=None caps=1 ident=0 token=0
 n1 Any caps=0 pred=0 Operands { ordered: false }
   out v1 Any slot=0 mode=Loose width=None caps=0 ident=0 token=0
 n2 Any caps=0 pred=0 Operands { ordered: false }
-  out v2 Any slot=0 mode=Loose width=None caps=1 ident=0 token=0
+  out v2 Any slot=0 mode=Loose width=None caps=0 ident=0 token=0
 n3 Exact(If) caps=0 pred=0 Operands { ordered: false }
   out v3 Control slot=0 mode=Loose width=None caps=0 ident=0 token=0
   out v4 Control slot=1 mode=Loose width=None caps=0 ident=0 token=0
-  in At(1) <- v2
+  in At(1) <- v0
   in At(0) <- v1
-  in Any <- v0
+  in Any <- v2
 root=Ok(3) total_nodes=4
 ",
         );

@@ -136,7 +136,6 @@ macro_rules! delegate_region_filter {
 /// space is known.
 pub struct LoadPat {
     inner: Node,
-    bit_width: Option<u32>,
     region: RegionFilter,
 }
 
@@ -159,23 +158,14 @@ impl LoadPat {
         self
     }
 
-    /// Pins the value output's width.
+    /// Pins the value output's width, which is the anchor.
     pub fn bit_width(mut self, n: u32) -> Self {
-        self.bit_width = Some(n);
+        self.inner = self.inner.with_output_width(n);
         self
     }
 
     fn configured(self) -> Node {
-        let LoadPat {
-            mut inner,
-            bit_width,
-            region,
-        } = self;
-        if let Some(w) = bit_width {
-            // The loaded value IS the anchor output, so pin it there.
-            inner = inner.with_output_width(w);
-        }
-        region.apply(inner)
+        self.region.apply(self.inner)
     }
 
     pub fn build(self) -> Pattern {
@@ -189,7 +179,6 @@ pub fn load() -> LoadPat {
             KindSpec::variant_of(&NodeKind::Load(rsleigh::VnSpace::RAM)),
             0,
         ),
-        bit_width: None,
         region: RegionFilter::default(),
     }
 }

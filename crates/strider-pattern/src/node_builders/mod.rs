@@ -26,16 +26,8 @@ pub use phi::{MemPhiPat, PhiPat, mem_phi, phi, phi_for};
 macro_rules! delegate_with_output {
     ($ty:ty, $inner:tt) => {
         impl $crate::node_builders::WithOutput for $ty {
-            fn capture_output(mut self, slot: Option<usize>, c: $crate::capture::Capture) -> Self {
-                self.$inner = self.$inner.capture_output(slot, c);
-                self
-            }
-            fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
-                self.$inner = self.$inner.output_width(slot, bits);
-                self
-            }
-            fn output_ty(mut self, slot: Option<usize>, ty: strider_ir::node::ValueType) -> Self {
-                self.$inner = self.$inner.output_ty(slot, ty);
+            fn with_output(mut self, slot: Option<usize>, aspect: $crate::OutputAspect) -> Self {
+                self.$inner = self.$inner.output(slot, aspect);
                 self
             }
         }

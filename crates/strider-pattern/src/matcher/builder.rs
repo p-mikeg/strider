@@ -1,43 +1,38 @@
-//! [`strider_graph::Graph`] creates a node with all its outputs and resolves
-//! its inputs at creation time, while the builder API is incremental: a bare
-//! `node()` comes first, outputs are added later, and inputs are wired once
-//! producers are compiled. So both builders stage into a [`StagedGraph`] and
-//! materialise the whole DAG at [`finish`](MatcherBuilder::finish) in
-//! producer-before-consumer order. Each input's sparse consumer slot is
-//! recorded on the materialised [`PatNode`]'s `input_slots` via [`SealNode`].
-
 use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
+use crate::build_graph::BuildGraph;
 use crate::matcher::{KindSpec, OutputKindSpec, PatNode, PatValue, Pattern, Role, SlotMode};
-use crate::staging::{SealNode, StagedGraph};
+use strider_graph::{NodeId, ValueId};
 
-/// Names a staged node's output by position.
+/// A node's output, scoped to the builder that produced it. An IR value is
+/// not one:
+///
+/// ```compile_fail,E0308
+/// use strider_pattern::matcher::{KindSpec, MatcherBuilder};
+/// let mut b = MatcherBuilder::new();
+/// let n = b.node(KindSpec::Any);
+/// b.input(n, 0, strider_ir::node::ValueId::from_u32(0));
+/// ```
 #[derive(Clone, Copy)]
-pub struct PatValueRef {
-    node: usize,
-    output: usize,
-}
+pub struct PatValueRef(ValueId);
 
-/// Names a staged node by position.
+/// A node, scoped to the builder that produced it. An IR node is not one:
+///
+/// ```compile_fail,E0308
+/// use strider_pattern::matcher::{KindSpec, MatcherBuilder};
+/// let mut b = MatcherBuilder::new();
+/// let x = b.leaf(KindSpec::Any);
+/// b.input(strider_ir::node::NodeId::from_u32(1000), 0, x);
+/// ```
 #[derive(Clone, Copy)]
-pub struct PatNodeRef(pub(crate) usize);
-
-// The match side seals into the same `PatNode` type it stages.
-impl SealNode for PatNode {
-    type Sealed = PatNode;
-    type Slot = crate::matcher::InputSlot;
-    fn seal(mut self, input_slots: Vec<crate::matcher::InputSlot>) -> PatNode {
-        self.input_slots = input_slots;
-        self
-    }
-}
+pub struct PatNodeRef(NodeId);
 
 /// The match root is derived structurally, so the seal takes no root handle.
-/// Returned [`PatValueRef`] / [`PatNodeRef`] handles are scoped to the builder
-/// that produced them.
+/// An input is wired from a node built before its consumer; any other wiring
+/// is refused.
 pub struct MatcherBuilder {
-    pub(crate) core: StagedGraph<PatNode, PatValue>,
+    pub(crate) core: BuildGraph<PatNode, PatValue>,
 }
 
 impl Default for MatcherBuilder {
@@ -49,7 +44,7 @@ impl Default for MatcherBuilder {
 impl MatcherBuilder {
     pub fn new() -> Self {
         Self {
-            core: StagedGraph::new(),
+            core: BuildGraph::new(),
         }
     }
 
@@ -141,7 +136,9 @@ impl MatcherBuilder {
         slot: crate::matcher::InputSlot,
         prod: PatValueRef,
     ) {
-        self.core.add_input(node.0, slot, prod.node, prod.output);
+        if self.core.add_input(node.0, prod.0, false) {
+            self.core.graph.node_kind_mut(node.0).input_slots.push(slot);
+        }
     }
 
     pub fn value_output(&mut self, node: PatNodeRef, slot: usize) -> PatValueRef {
@@ -225,7 +222,7 @@ impl MatcherBuilder {
     /// Binds the matched node (`Binding::Node`), for zero-value-output roots
     /// like `Return` / `If`. Additive, like [`Self::capture_output`].
     pub fn capture_node(&mut self, node: PatNodeRef, c: crate::capture::Capture) {
-        self.core.kind_mut(node.0).captures.push(c);
+        self.core.graph.node_kind_mut(node.0).captures.push(c);
     }
 
     /// Composes with any predicate already on `out`'s producer rather than
@@ -234,13 +231,18 @@ impl MatcherBuilder {
     /// layered on top must narrow that, never delete it. Both are node-only, so
     /// evaluation order is immaterial.
     pub fn set_node_predicate(&mut self, out: PatValueRef, f: crate::matcher::NodePredicate) {
-        self.set_node_predicate_at(PatNodeRef(out.node), f);
+        let node = PatNodeRef(self.core.graph.producer(out.0));
+        self.set_node_predicate_at(node, f);
     }
 
     /// Node-keyed form of [`Self::set_node_predicate`], for a node-rooted
     /// pattern with no anchor output to address it through.
     pub fn set_node_predicate_at(&mut self, node: PatNodeRef, f: crate::matcher::NodePredicate) {
-        self.core.kind_mut(node.0).node_predicates.push(f);
+        self.core
+            .graph
+            .node_kind_mut(node.0)
+            .node_predicates
+            .push(f);
     }
 
     /// [`Self::set_post_match`] for a guard that needs the matched output's
@@ -252,7 +254,13 @@ impl MatcherBuilder {
         out: PatValueRef,
         f: crate::matcher::PostMatchFn,
     ) {
-        let untyped_kind = valueless_kind(&self.core.kind_mut(out.node).kind);
+        let untyped_kind = valueless_kind(
+            &self
+                .core
+                .graph
+                .node_kind(self.core.graph.producer(out.0))
+                .kind,
+        );
         let untyped_output = matches!(
             self.out_of(out).kind,
             OutputKindSpec::Control | OutputKindSpec::Memory
@@ -269,14 +277,14 @@ impl MatcherBuilder {
     }
 
     pub fn set_post_match(&mut self, out: PatValueRef, f: crate::matcher::PostMatchFn) {
-        self.core.kind_mut(out.node).post_matches.push(f);
+        self.kind_of(out).post_matches.push(f);
     }
 
     /// Disables commutative operand reordering on `out`'s producer. Refused on
     /// an alternation: its inputs are alternatives, not operands, so nothing
     /// reads the flag.
     pub fn set_force_ordered(&mut self, out: PatValueRef) {
-        match &mut self.core.kind_mut(out.node).role {
+        match &mut self.kind_of(out).role {
             Role::Operands { ordered } => *ordered = true,
             Role::OneOf | Role::FirstOf => self.reject(
                 "`ordered` on an alternation does nothing: `one_of` / `first_of` arms are \
@@ -287,13 +295,10 @@ impl MatcherBuilder {
         }
     }
 
-    /// Materialises every staged node in producer-before-consumer order.
-    /// Single-rootedness and acyclicity are resolved here and reported at
-    /// match time.
+    /// Single-rootedness is resolved here and reported at match time.
     pub fn finish(self) -> Pattern {
-        let (graph, refusal) = self.core.seal();
-        let mut pat = Pattern::from_graph(graph);
-        if let Some(why) = refusal {
+        let mut pat = Pattern::from_graph(self.core.graph);
+        if let Some(why) = self.core.refusal {
             pat.reject(why);
         }
         pat
@@ -304,15 +309,16 @@ impl MatcherBuilder {
     }
 
     fn add_output(&mut self, node: PatNodeRef, out: PatValue) -> PatValueRef {
-        let output = self.core.add_output(node.0, out);
-        PatValueRef {
-            node: node.0,
-            output,
-        }
+        PatValueRef(self.core.add_output(node.0, out))
     }
 
     fn out_of(&mut self, out: PatValueRef) -> &mut PatValue {
-        self.core.output_mut(out.node, out.output)
+        self.core.graph.value_kind_mut(out.0)
+    }
+
+    fn kind_of(&mut self, out: PatValueRef) -> &mut PatNode {
+        let node = self.core.graph.producer(out.0);
+        self.core.graph.node_kind_mut(node)
     }
 }
 

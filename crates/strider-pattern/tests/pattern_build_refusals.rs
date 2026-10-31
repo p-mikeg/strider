@@ -198,14 +198,14 @@ fn a_chain_at_the_nesting_cap_still_builds() {
 }
 
 /// A node wired to its own output is a cycle; `MatcherBuilder` takes untrusted
-/// wiring, so the seal refuses it rather than panicking.
+/// wiring, so the wiring is refused rather than panicking.
 #[test]
 fn a_cyclic_builder_wiring_is_refused_not_panicked() {
     let mut b = MatcherBuilder::new();
     let n = b.node(KindSpec::Any);
     let out = b.value_output(n, 0);
     b.input(n, 0, out);
-    assert!(error_of(&b.finish()).contains("cycle"));
+    assert!(error_of(&b.finish()).contains("built after its consumer"));
 }
 
 /// The template side of the same wiring.
@@ -216,21 +216,55 @@ fn a_cyclic_template_wiring_is_refused_not_panicked() {
     let out = b.value_output(n, 0);
     b.input(n, 0, out);
     let err = b.finish().root().unwrap_err().to_string();
-    assert!(err.contains("cycle"), "{err}");
+    assert!(err.contains("built after its consumer"), "{err}");
 }
 
-/// The first refusal is the one reported, and it is preferred over the cycle
-/// verdict on whatever the refused lowering left staged. The template side is
-/// pinned in `template::builder`.
+/// A node built before the operand it consumes is refused.
 #[test]
-fn the_first_refusal_wins_over_later_ones_and_a_cycle() {
+fn a_producer_built_after_its_consumer_is_refused() {
+    let mut b = MatcherBuilder::new();
+    let n = b.node(KindSpec::Any);
+    let x = b.leaf(KindSpec::Any);
+    b.input(n, 0, x);
+    let _ = b.value_output(n, 0);
+    assert!(error_of(&b.finish()).contains("built after its consumer"));
+}
+
+/// The template side of the same wiring.
+#[test]
+fn a_template_producer_built_after_its_consumer_is_refused() {
+    let mut b = TemplateBuilder::new();
+    let n = b.node(NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg));
+    let x = b.leaf(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+    b.input(n, 0, x);
+    let _ = b.value_output(n, 0);
+    let err = b.finish().root().unwrap_err().to_string();
+    assert!(err.contains("built after its consumer"), "{err}");
+}
+
+/// The first refusal is the one reported, ahead of a later wiring refusal and
+/// a later explicit one. The template side is pinned in `template::builder`.
+#[test]
+fn the_first_refusal_wins_over_later_ones() {
+    let mut b = MatcherBuilder::new();
+    let n = b.node(KindSpec::Any);
+    let out = b.value_output(n, 0);
+    b.reject("first".into());
+    b.input(n, 0, out);
+    b.reject("second".into());
+    assert_eq!(error_of(&b.finish()), "first");
+}
+
+/// A wiring refusal is reported like any other, so one wired first wins over a
+/// later explicit refusal.
+#[test]
+fn a_wiring_refusal_ahead_of_an_explicit_one_wins() {
     let mut b = MatcherBuilder::new();
     let n = b.node(KindSpec::Any);
     let out = b.value_output(n, 0);
     b.input(n, 0, out);
-    b.reject("first".into());
-    b.reject("second".into());
-    assert_eq!(error_of(&b.finish()), "first");
+    b.reject("later".into());
+    assert!(error_of(&b.finish()).contains("built after its consumer"));
 }
 
 /// `k` adds over ONE shared wildcard leaf, each add feeding both slots of the
@@ -404,9 +438,7 @@ fn an_operand_that_can_nest_is_admitted() {
 /// is not valid on is refused through the root, never by panicking.
 #[test]
 fn a_part_on_the_wrong_side_is_refused() {
-    use strider_pattern::{
-        IntoExpr, TemplatePat, capture_typed, float_le, int_const_with_fn, load, template,
-    };
+    use strider_pattern::{IntoExpr, capture_typed, float_le, int_const_with_fn, load, template};
     let a = strider_pattern::Capture::new();
     let match_only = || {
         [
@@ -420,11 +452,11 @@ fn a_part_on_the_wrong_side_is_refused() {
         ]
     };
     for e in match_only() {
-        assert!(TemplatePat::into_template(e).root().is_err());
+        assert!(e.into_template().root().is_err());
     }
     for e in match_only() {
         let nested = template::int_add(e, var(a));
-        assert!(TemplatePat::into_template(nested).root().is_err());
+        assert!(nested.into_expr().into_template().root().is_err());
     }
     let built = int_const_with_fn(|_| Ok(1u8.into())).into_expr();
     assert!(error_of(&int_add(built, anything()).into_pattern()).contains("build-only"));
@@ -466,12 +498,13 @@ fn a_hand_written_pattern_lowers_on_either_side() {
 /// captured constant, predicate or kind would vanish into a binding reuse.
 #[test]
 fn a_captured_non_var_leaf_is_refused_on_the_build_side() {
-    use strider_pattern::{
-        Capture, IntoExpr, TemplatePat, any_int_const, float_const, initial_var, template,
-    };
+    use strider_pattern::{Capture, IntoExpr, any_int_const, float_const, initial_var, template};
     let (a, c) = (Capture::new(), Capture::new());
     let built = |leaf: strider_pattern::Expr| {
-        TemplatePat::into_template(template::int_add(leaf, var(a))).root()
+        template::int_add(leaf, var(a))
+            .into_expr()
+            .into_template()
+            .root()
     };
     assert!(built(any_int_const().capture(c).into_expr()).is_err());
     assert!(built(float_const(5u64).capture(c).into_expr()).is_err());

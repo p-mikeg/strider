@@ -12,7 +12,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::NodeKind;
 
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, NodePredicate, Pattern};
+use crate::matcher::{KindSpec, NodePredicate};
 
 use super::MemPat;
 use crate::expr::Node;
@@ -30,54 +30,34 @@ fn phi_var_limit(want: rsleigh::Vn) -> NodePredicate {
 }
 
 /// Matches any `Phi` unless narrowed by [`for_vn`](Self::for_vn).
-pub struct PhiPat {
-    inner: Node,
-    var_filter: Option<rsleigh::Vn>,
-}
+pub struct PhiPat(Node);
 
 impl PhiPat {
     /// Predecessor `idx`'s incoming value, at raw input slot `idx + 1`.
-    pub fn phi_input<P: MatchPat + 'static>(mut self, idx: usize, p: P) -> Self {
-        self.inner = self.inner.input(NodeKind::Phi.input_head_len() + idx, p);
-        self
+    pub fn phi_input<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
+        Self(self.0.input(NodeKind::Phi.input_head_len() + idx, p))
     }
 
     /// The ownership edge, carrying the owning `Region`'s `PhiToken` output.
-    pub fn phi_token<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inner = self.inner.raw_input(NodeKind::PHI_TOKEN_SLOT, p);
-        self
+    pub fn phi_token<P: MatchPat + 'static>(self, p: P) -> Self {
+        Self(self.0.raw_input(NodeKind::PHI_TOKEN_SLOT, p))
     }
 
     /// Narrows to the lifter-emitted SSA phi whose `value_vn` tag contains
-    /// `vn`, so a sub-register matches its container's phi.
-    pub fn for_vn(mut self, vn: rsleigh::Vn) -> Self {
-        self.var_filter = Some(vn);
-        self
-    }
-
-    fn configured(self) -> Node {
-        let PhiPat { inner, var_filter } = self;
-        match var_filter {
-            Some(vn) => inner.with_node_predicate(phi_var_limit(vn)),
-            None => inner,
-        }
-    }
-
-    pub fn build(self) -> Pattern {
-        self.configured().build()
+    /// `vn`, so a sub-register matches its container's phi. Repeated, every
+    /// `vn` must hold.
+    pub fn for_vn(self, vn: rsleigh::Vn) -> Self {
+        Self(self.0.with_node_predicate(phi_var_limit(vn)))
     }
 }
 
 pub fn phi() -> PhiPat {
-    PhiPat {
-        // Captures and predicates anchor on the value output at slot 0.
-        inner: Node::value(KindSpec::variant_of(&NodeKind::Phi), 0),
-        var_filter: None,
-    }
+    // Captures and predicates anchor on the value output at slot 0.
+    PhiPat(Node::value(KindSpec::variant_of(&NodeKind::Phi), 0))
 }
 
-delegate_with_output!(PhiPat, inner);
-delegate_node_pat!(PhiPat, inner, [capture, input, any_input]);
+delegate_with_output!(PhiPat, 0);
+delegate_node_pat!(PhiPat, 0, [capture, build, input, any_input]);
 
 /// A [`phi`] pre-narrowed by [`PhiPat::for_vn`].
 pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
@@ -113,6 +93,6 @@ delegate_with_output!(MemPhiPat, 0);
 delegate_node_pat!(MemPhiPat, 0, [capture, build, input, any_input]);
 
 node_match_pat! {
-    PhiPat => |p| p.configured(),
+    PhiPat => |p| p.0,
     MemPhiPat => |p| p.0,
 }

@@ -16,8 +16,8 @@ pub const MAX_PATTERN_NODES: usize = 256;
 
 /// Nodes a match attempt recurses through: every vertex once per consumer slot
 /// that reaches it, so a sub-pattern feeding two slots is charged twice.
-/// Saturating, and never below the raw node count, so a cyclic or multi-sink
-/// graph still reports its size.
+/// Saturating, and never below the raw node count, so a multi-sink graph still
+/// reports its size.
 ///
 /// An alternation's inputs are alternatives rather than operands, run one at a
 /// time with the frame unwound between them, so it costs its DEEPEST arm, not
@@ -26,7 +26,7 @@ pub const MAX_PATTERN_NODES: usize = 256;
 /// Taken over every node rather than from the root, which is not derived yet
 /// and may not exist.
 fn unfolded_nodes(graph: &PatGraph) -> usize {
-    // Sealing creates every producer before its consumers, so id order is a
+    // Every producer is built before its consumers, so id order is a
     // topological one.
     let mut size: Vec<usize> = Vec::with_capacity(graph.all_node_ids().count());
     for node in graph.all_node_ids() {
@@ -116,7 +116,7 @@ impl Pattern {
     /// A build-time refusal, reported through the same channel as an
     /// unmatchable graph and preferred over it: a refusal names the spelling,
     /// while the structural verdict describes whatever the refused lowering
-    /// left staged.
+    /// left built.
     pub(crate) fn reject(&mut self, why: String) {
         self.root = Err(why);
     }
@@ -124,8 +124,7 @@ impl Pattern {
     /// O(1) read of the verdict memoized at construction.
     ///
     /// # Errors
-    /// If the pattern is rootless, cyclic, multi-sink, or was refused at build
-    /// time.
+    /// If the pattern is rootless, multi-sink, or was refused at build time.
     pub fn root(&self) -> anyhow::Result<NodeId> {
         self.root.clone().map_err(anyhow::Error::msg)
     }
@@ -164,13 +163,13 @@ impl Pattern {
     /// fires, so a capture present in some arms but not all is not guaranteed.
     ///
     /// # Errors
-    /// If the pattern is rootless, cyclic, or multi-sink.
+    /// If the pattern is rootless or multi-sink.
     pub fn guaranteed_captures(&self) -> anyhow::Result<FxHashSet<crate::capture::Capture>> {
         let mut memo: FxHashMap<NodeId, FxHashSet<crate::capture::Capture>> = FxHashMap::default();
         Ok(self.guaranteed_from(self.root()?, &mut memo))
     }
 
-    /// A sealed graph is acyclic, so the memo makes this linear and the
+    /// A pattern graph is acyclic, so the memo makes this linear and the
     /// recursion terminates.
     fn guaranteed_from(
         &self,
@@ -310,18 +309,6 @@ mod tests {
         assert_eq!(p.graph.all_value_ids().count(), 3);
         // Root is the unique sink (`int_add`).
         assert!(p.root().is_ok());
-    }
-
-    #[test]
-    fn reachable_topo_orders_producers_before_consumers() {
-        let mut b = MatcherBuilder::new();
-        let a = b.leaf(crate::matcher::KindSpec::Any);
-        let _unary = b.unary(crate::matcher::KindSpec::Any, a);
-        let p = b.finish();
-        let root = p.root().unwrap();
-        let order = crate::graph_ext::reachable_topo(&p.graph, root).unwrap();
-        assert_eq!(order.len(), 2);
-        assert_eq!(*order.last().unwrap(), root);
     }
 
     /// The tree unfolding of `n`, by memoised recursion.
