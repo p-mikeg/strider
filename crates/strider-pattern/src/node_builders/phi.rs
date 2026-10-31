@@ -6,16 +6,16 @@
 //! `Phi` produces a value output at slot 0; `MemPhi` produces a memory token
 //! there and implements [`MemPat`] so a `load` / `store` can chain off it.
 
-use super::delegate_node_pat;
+use super::{delegate_node_pat, node_match_pat};
 use crate::node_builders::delegate_with_output;
 use strider_ir::IRViewer;
 use strider_ir::node::NodeKind;
 
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, NodePredicate, PatValueRef, Pattern};
+use crate::matcher::{KindSpec, NodePredicate, Pattern};
 
 use super::MemPat;
-use super::node_pat::NodePat;
+use crate::expr::Node;
 
 /// Requires the matched `Phi`'s `value_vn` tag to contain `vn`.
 fn phi_var_limit(want: rsleigh::Vn) -> NodePredicate {
@@ -31,7 +31,7 @@ fn phi_var_limit(want: rsleigh::Vn) -> NodePredicate {
 
 /// Matches any `Phi` unless narrowed by [`for_vn`](Self::for_vn).
 pub struct PhiPat {
-    inner: NodePat,
+    inner: Node,
     var_filter: Option<rsleigh::Vn>,
 }
 
@@ -44,7 +44,7 @@ impl PhiPat {
 
     /// The ownership edge, carrying the owning `Region`'s `PhiToken` output.
     pub fn phi_token<P: MatchPat + 'static>(mut self, p: P) -> Self {
-        self.inner = self.inner.input(NodeKind::PHI_TOKEN_SLOT, p);
+        self.inner = self.inner.raw_input(NodeKind::PHI_TOKEN_SLOT, p);
         self
     }
 
@@ -55,10 +55,10 @@ impl PhiPat {
         self
     }
 
-    fn configured(self) -> NodePat {
+    fn configured(self) -> Node {
         let PhiPat { inner, var_filter } = self;
         match var_filter {
-            Some(vn) => inner.with_node_predicate(move || phi_var_limit(vn)),
+            Some(vn) => inner.with_node_predicate(phi_var_limit(vn)),
             None => inner,
         }
     }
@@ -68,18 +68,10 @@ impl PhiPat {
     }
 }
 
-impl MatchPat for PhiPat {
-    /// Nests as a value operand anchored on the value output, as in
-    /// `store(data=phi())` or `int_add(x, phi())`.
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured().compile_anchored(b)
-    }
-}
-
 pub fn phi() -> PhiPat {
     PhiPat {
         // Captures and predicates anchor on the value output at slot 0.
-        inner: NodePat::value(KindSpec::variant_of(&NodeKind::Phi), 0),
+        inner: Node::value(KindSpec::variant_of(&NodeKind::Phi), 0),
         var_filter: None,
     }
 }
@@ -94,7 +86,7 @@ pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
 
 /// The memory-token phi at join points, producing its token at output slot 0.
 /// Same slot layout as [`PhiPat`], with a memory token per predecessor.
-pub struct MemPhiPat(NodePat);
+pub struct MemPhiPat(Node);
 
 impl MemPhiPat {
     /// Predecessor `idx`'s incoming memory token.
@@ -105,14 +97,7 @@ impl MemPhiPat {
 
     /// See [`PhiPat::phi_token`].
     pub fn phi_token<P: MatchPat + 'static>(self, p: P) -> Self {
-        Self(self.0.input(NodeKind::PHI_TOKEN_SLOT, p))
-    }
-}
-
-impl MatchPat for MemPhiPat {
-    /// The memory token is the only output, so a value slot never matches.
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_anchored(b)
+        Self(self.0.raw_input(NodeKind::PHI_TOKEN_SLOT, p))
     }
 }
 
@@ -120,10 +105,14 @@ impl MemPat for MemPhiPat {}
 
 pub fn mem_phi() -> MemPhiPat {
     MemPhiPat(
-        NodePat::node(KindSpec::variant_of(&NodeKind::MemPhi))
-            .with_mem_value(NodeKind::MEM_OUT_SLOT),
+        Node::new(KindSpec::variant_of(&NodeKind::MemPhi)).with_mem_value(NodeKind::MEM_OUT_SLOT),
     )
 }
 
 delegate_with_output!(MemPhiPat, 0);
 delegate_node_pat!(MemPhiPat, 0, [capture, build, input, any_input]);
+
+node_match_pat! {
+    PhiPat => |p| p.configured(),
+    MemPhiPat => |p| p.0,
+}

@@ -328,3 +328,132 @@ fn nested_alternations_at_the_node_cap_match() {
     .join()
     .unwrap();
 }
+
+/// An operand slot takes what its operand nests through. A memory token, a
+/// control edge or a node with no output in a value slot, and a memory token
+/// or a node with no output in a control slot, can never match there.
+#[test]
+fn an_operand_with_nothing_to_nest_through_is_refused() {
+    use strider_pattern::{call, entry, load, mem_phi, store, unreachable};
+    let x = strider_pattern::Capture::new();
+    for (pat, why) in [
+        (int_add(store(), var(x)).into_pattern(), "memory token"),
+        (
+            int_add(var(x), mem_phi().capture(x)).into_pattern(),
+            "memory token",
+        ),
+        (int_add(entry(), var(x)).into_pattern(), "control edge"),
+        (int_add(ret(), var(x)).into_pattern(), "no output"),
+        (load().addr(if_else()).build(), "no output"),
+        (
+            int_add(store().when_match(|_m, _t, _b| true), var(x)).into_pattern(),
+            "memory token",
+        ),
+        (ret().ctrl(ret()).build(), "no output"),
+        (call().ctrl(store()).build(), "memory token"),
+        (ret().ctrl(unreachable()).build(), "no output"),
+        (
+            strider_pattern::float_le(store(), var(x)).into_pattern(),
+            "memory token",
+        ),
+        (
+            strider_pattern::float_is_nan(mem_phi()).into_pattern(),
+            "memory token",
+        ),
+    ] {
+        let err = error_of(&pat);
+        assert!(err.contains(why), "{err}");
+    }
+}
+
+/// The slots that take any edge, the alternation arms, and the control
+/// slot's control producers stay admitted.
+#[test]
+fn an_operand_that_can_nest_is_admitted() {
+    use strider_pattern::{call, entry, load, region, store};
+    let function = add_5_3();
+    let matcher = Matcher::new(&function);
+    for pat in [
+        load().input(0, store()).build(),
+        call().any_input(store()).build(),
+        region().input(0, entry()).build(),
+        ret().ctrl(if_else()).build(),
+        ret().ctrl(region()).build(),
+        ret().ctrl(call()).build(),
+        int_add(one_of![store(), anything()], anything()).into_pattern(),
+        one_of![ret(), if_else()].into_pattern(),
+        strider_pattern::phi().phi_token(region()).build(),
+        strider_pattern::mem_phi().phi_token(region()).build(),
+        strider_pattern::call_other().arg(0, entry()).build(),
+        strider_pattern::call_other().arg(1, store()).build(),
+    ] {
+        assert!(matcher.find_all(&pat).is_ok());
+    }
+}
+
+/// The hidden `expr()` reaches every pattern, so a part used on a side it is
+/// not valid on is refused through the root, never by panicking.
+#[test]
+fn a_part_on_the_wrong_side_is_refused() {
+    use strider_pattern::{TemplatePat, capture_typed, int_const_with_fn, template};
+    let a = strider_pattern::Capture::new();
+    let wildcard = template::int_add(anything().expr(), var(a));
+    assert!(TemplatePat::into_template(wildcard).root().is_err());
+    let built = TemplatePat::expr(int_const_with_fn(|_| Ok(1u8.into())));
+    assert!(error_of(&int_add(built, anything()).into_pattern()).contains("build-only"));
+    let typed = TemplatePat::expr(capture_typed(a, var(a)));
+    assert!(error_of(&int_add(typed, anything()).into_pattern()).contains("build-only"));
+    let node = template::int_add(strider_pattern::call().expr(), var(a));
+    assert!(TemplatePat::into_template(node).root().is_err());
+}
+
+/// Implements both traits by hand, so a factory of either side holds it
+/// lowered through that side's methods only.
+struct Both(strider_pattern::Capture);
+
+impl MatchPat for Both {
+    fn compile(self, b: &mut MatcherBuilder) -> strider_pattern::matcher::PatValueRef {
+        MatchPat::compile(var(self.0), b)
+    }
+}
+
+impl strider_pattern::TemplatePat for Both {
+    fn compile(self, b: &mut TemplateBuilder) -> strider_pattern::template::TmplValueRef {
+        strider_pattern::TemplatePat::compile(var(self.0), b)
+    }
+}
+
+#[test]
+fn a_hand_written_pattern_on_the_other_side_is_refused() {
+    use strider_pattern::{TemplatePat, template};
+    let c = strider_pattern::Capture::new();
+    let built = TemplatePat::into_template(int_add(Both(c), Both(c)));
+    assert!(built.root().is_err());
+    let matched = template::int_add(Both(c), Both(c)).into_pattern();
+    assert!(error_of(&matched).contains("other side"));
+    // Each side's own factory still lowers it.
+    assert!(
+        TemplatePat::into_template(template::int_add(Both(c), Both(c)))
+            .root()
+            .is_ok()
+    );
+    assert!(int_add(Both(c), Both(c)).into_pattern().root().is_ok());
+}
+
+/// On the build side only a `var()`'s capture names the binding it reuses: a
+/// captured constant, predicate or kind would vanish into a binding reuse.
+#[test]
+fn a_captured_non_var_leaf_is_refused_on_the_build_side() {
+    use strider_pattern::{
+        Capture, TemplatePat, any_int_const, float_const, initial_var, template,
+    };
+    let (a, c) = (Capture::new(), Capture::new());
+    let built = |leaf: strider_pattern::Expr| {
+        TemplatePat::into_template(template::int_add(leaf, var(a))).root()
+    };
+    assert!(built(any_int_const().capture(c).expr()).is_err());
+    assert!(built(float_const(5u64).capture(c).expr()).is_err());
+    assert!(built(initial_var().capture(c).expr()).is_err());
+    assert!(built(MatchPat::expr(var(c))).is_ok());
+    assert!(built(anything().capture(c).expr()).is_ok());
+}

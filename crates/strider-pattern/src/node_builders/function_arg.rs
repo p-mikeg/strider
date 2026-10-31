@@ -9,10 +9,9 @@
 use strider_ir::IRViewer;
 use strider_ir::node::{FunctionArgSource, NodeKind};
 
-use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
-use crate::node_builders::delegate_node_pat;
-use crate::node_builders::node_pat::NodePat;
+use crate::expr::Node;
+use crate::matcher::{KindSpec, Pattern};
+use crate::node_builders::{delegate_node_pat, node_match_pat};
 
 /// Which index space [`FunctionArgPat::index`] refers to. Integer and float
 /// arguments are numbered separately, so the caller states the class.
@@ -29,7 +28,7 @@ pub struct FunctionArgPat {
     source: Option<FunctionArgSource>,
     class: FunctionArgClass,
     index: Option<u32>,
-    inner: NodePat,
+    inner: Node,
 }
 
 impl Default for FunctionArgPat {
@@ -38,7 +37,7 @@ impl Default for FunctionArgPat {
             source: None,
             class: FunctionArgClass::default(),
             index: None,
-            inner: NodePat::value(KindSpec::Any, 0),
+            inner: Node::value(KindSpec::Any, 0),
         }
     }
 }
@@ -65,46 +64,44 @@ impl FunctionArgPat {
 
     /// Index, class and source carry no cross-binding state, so one node
     /// predicate covers them all and short-circuits before child recursion.
-    fn lower(self) -> NodePat {
+    fn lower(self) -> Node {
         let FunctionArgPat {
             source,
             class,
             index,
             inner,
         } = self;
-        inner.with_node_predicate(move || {
-            Box::new(move |matcher, node| {
-                let f = matcher.function();
-                if !is_carrier(f, node, class, index) {
-                    return false;
+        inner.with_node_predicate(Box::new(move |matcher, node| {
+            let f = matcher.function();
+            if !is_carrier(f, node, class, index) {
+                return false;
+            }
+            let Some(expected) = source else {
+                return true;
+            };
+            match (expected, f.node_kind(node)) {
+                (FunctionArgSource::Register(want), NodeKind::InitialVar(actual)) => {
+                    vn_container::vn_contains(&f.initial_vn(*actual), &want)
                 }
-                let Some(expected) = source else {
-                    return true;
-                };
-                match (expected, f.node_kind(node)) {
-                    (FunctionArgSource::Register(want), NodeKind::InitialVar(actual)) => {
-                        vn_container::vn_contains(&f.initial_vn(*actual), &want)
+                (
+                    FunctionArgSource::Stack {
+                        space: want_space,
+                        offset: want_offset,
+                    },
+                    NodeKind::Load(actual_space),
+                ) => {
+                    // Both the address space, from the `Load` payload,
+                    // and the SP-relative offset, from the memory-class
+                    // side-table every pipeline run fills, must agree. A
+                    // carrier with no recorded offset is rejected.
+                    if want_space != *actual_space {
+                        return false;
                     }
-                    (
-                        FunctionArgSource::Stack {
-                            space: want_space,
-                            offset: want_offset,
-                        },
-                        NodeKind::Load(actual_space),
-                    ) => {
-                        // Both the address space, from the `Load` payload,
-                        // and the SP-relative offset, from the memory-class
-                        // side-table every pipeline run fills, must agree. A
-                        // carrier with no recorded offset is rejected.
-                        if want_space != *actual_space {
-                            return false;
-                        }
-                        matches!(f.stack_offset(node), Some((_, off)) if off == want_offset)
-                    }
-                    _ => false,
+                    matches!(f.stack_offset(node), Some((_, off)) if off == want_offset)
                 }
-            })
-        })
+                _ => false,
+            }
+        }))
     }
 
     pub fn build(self) -> Pattern {
@@ -141,12 +138,6 @@ fn is_carrier(
     }
 }
 
-impl MatchPat for FunctionArgPat {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.lower().compile_anchored(b)
-    }
-}
-
 /// The `idx`-th integer-class argument. Unfiltered by source, so both register
 /// (`InitialVar`) and stack (`Load`) carriers match.
 pub fn function_arg(idx: u32) -> FunctionArgPat {
@@ -180,6 +171,10 @@ pub fn function_arg_stack(space: rsleigh::VnSpace, offset: i128, idx: u32) -> Fu
         .source(FunctionArgSource::Stack { space, offset })
 }
 
+node_match_pat! {
+    FunctionArgPat => |p| p.lower(),
+}
+
 #[cfg(test)]
 mod tests {
     use super::function_arg;
@@ -188,7 +183,7 @@ mod tests {
 
     /// Characterizes the lowering: one kind-`Any` node, one value output at
     /// slot 0 carrying every capture, and the index / class / source filter on
-    /// the node predicate. Re-homing this onto `NodePat` has to reproduce it.
+    /// the node predicate. Re-homing this onto `Node` has to reproduce it.
     #[test]
     fn function_arg_lowering_declares_one_node_and_one_value_output() {
         let pat = function_arg(2)

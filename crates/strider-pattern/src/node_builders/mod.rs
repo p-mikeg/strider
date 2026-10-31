@@ -6,7 +6,6 @@
 pub mod flow;
 pub mod function_arg;
 pub mod memory;
-pub(crate) mod node_pat;
 pub mod phi;
 
 pub use flow::{
@@ -21,9 +20,7 @@ pub use function_arg::{
 pub use memory::{LoadPat, StorePat, load, store};
 pub use phi::{MemPhiPat, PhiPat, mem_phi, phi, phi_for};
 
-use crate::matcher::{MatcherBuilder, PatValueRef};
-
-/// [`WithOutput`] for a builder that wraps one [`NodePat`](node_pat::NodePat)
+/// [`WithOutput`] for a builder that wraps one [`Node`](crate::expr::Node)
 /// and forwards every output constraint to it unchanged. `$inner` names the
 /// field, `0` for a newtype.
 macro_rules! delegate_with_output {
@@ -46,7 +43,7 @@ macro_rules! delegate_with_output {
 }
 pub(crate) use delegate_with_output;
 
-/// The forwarders every [`NodePat`](node_pat::NodePat) wrapper repeats
+/// The forwarders every [`Node`](crate::expr::Node) wrapper repeats
 /// verbatim. `$inner` names the field, `0` for a newtype; each method is opted
 /// into by name, so a builder that has to do work in one of them (`StorePat`
 /// synthesises a data producer in `build`) simply leaves it out and writes its
@@ -84,7 +81,7 @@ macro_rules! delegate_node_pat {
             slot: usize,
             p: P,
         ) -> Self {
-            self.$inner = self.$inner.input(slot, p);
+            self.$inner = self.$inner.raw_input(slot, p);
             self
         }
     };
@@ -118,38 +115,21 @@ macro_rules! delegate_node_pat {
 }
 pub(crate) use delegate_node_pat;
 
-type BoxedCompile = Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef + Send>;
-
-/// Defers a sub-pattern's compilation until `build`, once the shared
-/// [`MatcherBuilder`] exists.
-pub(crate) struct SubCompiler(Option<BoxedCompile>);
-
-impl SubCompiler {
-    pub(crate) fn new(f: impl FnOnce(&mut MatcherBuilder) -> PatValueRef + Send + 'static) -> Self {
-        Self(Some(Box::new(f)))
-    }
-
-    /// Lowers the sub-pattern one nesting level down. Past the nesting cap it
-    /// hands back a wildcard instead: the pattern is refused by then, and
-    /// descending is what would abort the process.
-    pub(crate) fn call(mut self, b: &mut MatcherBuilder) -> PatValueRef {
-        if !b.enter_nesting() {
-            return b.leaf(crate::matcher::KindSpec::Any);
+/// A builder as an [`Expr`](crate::Expr), `$node` its configured node: every
+/// slot nests through what that node declares.
+macro_rules! node_match_pat {
+    ($($ty:ty => |$p:ident| $node:expr),* $(,)?) => {$(
+        impl $crate::expr::IntoExpr for $ty {
+            fn into_expr(self) -> $crate::Expr {
+                let $p = self;
+                $node.into()
+            }
         }
-        let f = self.0.take().expect("a SubCompiler runs once");
-        let out = f(b);
-        b.leave_nesting();
-        out
-    }
-}
 
-impl Drop for SubCompiler {
-    fn drop(&mut self) {
-        if let Some(f) = self.0.take() {
-            defer_drop(f);
-        }
-    }
+        impl $crate::expr::MatchExpr for $ty {}
+    )*};
 }
+pub(crate) use node_match_pat;
 
 thread_local! {
     static DROP_PIT: std::cell::RefCell<Vec<Box<dyn Send>>> =
@@ -191,8 +171,7 @@ pub fn defer_drop<T: Send + 'static>(value: T) {
 /// Vertex order is observable: [`root_output_vertex_for`] picks among a node's
 /// output vertices and [`anchor_repeats`] compares vertex identity, so a
 /// lowering that declares the same vertices in another order is a behaviour
-/// change, not a refactor. A builder moved onto [`NodePat`](node_pat::NodePat)
-/// must reproduce this string.
+/// change, not a refactor.
 ///
 /// [`root_output_vertex_for`]: crate::matcher::walk::root_output_vertex_for
 /// [`anchor_repeats`]: crate::matcher::walk::anchor_repeats

@@ -8,44 +8,33 @@
 //! yields a match. Captures under an arm that did not fire stay unbound, so
 //! `Match::value` / `node` returning `None` tells which arm won.
 
+use crate::expr::{Expr, IntoExpr, MatchExpr};
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{MatcherBuilder, PatValueRef};
 use crate::node_builders::MemPat;
 
-/// Which flavour of slot the alternation is being lowered into, decided by the
-/// consumer rather than by the arm.
-#[derive(Clone, Copy)]
-pub enum AltSlot {
-    Value,
-    Memory,
-}
-
-/// One type-erased entry of a [`OneOf`], normally built by the `one_of!` macro.
-/// It keeps both lowerings open until the slot is known.
-pub struct BoxedAlt(Option<BoxedAltFn>);
-
-type BoxedAltFn = Box<dyn FnOnce(&mut MatcherBuilder, AltSlot) -> PatValueRef + Send>;
-
-impl BoxedAlt {
-    fn call(mut self, b: &mut MatcherBuilder, slot: AltSlot) -> PatValueRef {
-        let f = self.0.take().expect("a BoxedAlt runs once");
-        f(b, slot)
-    }
-}
-
-impl Drop for BoxedAlt {
-    fn drop(&mut self) {
-        if let Some(f) = self.0.take() {
-            crate::node_builders::defer_drop(f);
-        }
-    }
-}
+/// One entry of a [`OneOf`], normally built by the `one_of!` macro. It is
+/// no pattern of its own, so an arm reaches neither a template nor a memory
+/// slot past the bound its alternation is held to:
+///
+/// ```compile_fail,E0277
+/// use strider_pattern::{Capture, TemplatePat, anything, boxed_alt, template, var};
+/// TemplatePat::into_template(template::int_add(boxed_alt(anything()), var(Capture::new())));
+/// ```
+///
+/// ```compile_fail,E0277
+/// use strider_pattern::{Capture, boxed_alt, int_add, load, var};
+/// let (a, b) = (Capture::new(), Capture::new());
+/// load().mem(boxed_alt(int_add(var(a), var(b))));
+/// ```
+pub struct BoxedAlt(Expr);
 
 /// Match-only: a rewrite RHS must build one concrete shape.
-pub struct OneOf {
-    alts: Vec<BoxedAlt>,
-    first_match: bool,
-}
+///
+/// The alternation's own output is `Any`, so it nests in a value, memory or
+/// control slot alike; the slot it lands in is passed down to the arms, which
+/// anchor accordingly. A control slot retypes the arm vertices instead, in
+/// [`MatcherBuilder::set_output_control`](crate::matcher::MatcherBuilder::set_output_control).
+pub struct OneOf(Expr);
 
 impl OneOf {
     /// A union over the alternatives. An empty list matches nothing.
@@ -60,10 +49,7 @@ impl OneOf {
     /// graph. [`match_at`](crate::Matcher::match_at) stops at the first match;
     /// [`OneOf::first`] cuts instead of enumerating.
     pub fn new(alts: Vec<BoxedAlt>) -> Self {
-        Self {
-            alts,
-            first_match: false,
-        }
+        Self(Expr::alt(alts.into_iter().map(|a| a.0).collect(), false))
     }
 
     /// An ordered choice: cut to the first alternative that yields a match, and
@@ -71,51 +57,22 @@ impl OneOf {
     /// falls through to the next one; a winning arm with two commutative
     /// orderings still reports both.
     pub fn first(alts: Vec<BoxedAlt>) -> Self {
-        Self {
-            alts,
-            first_match: true,
-        }
+        Self(Expr::alt(alts.into_iter().map(|a| a.0).collect(), true))
     }
 }
 
 #[doc(hidden)]
 pub fn boxed_alt<P: MatchPat + 'static>(p: P) -> BoxedAlt {
-    BoxedAlt(Some(Box::new(move |b, slot| match slot {
-        AltSlot::Value => p.compile(b),
-        AltSlot::Memory => p.compile_mem(b),
-    })))
+    BoxedAlt(p.expr())
 }
 
-impl OneOf {
-    fn lower(self, b: &mut MatcherBuilder, slot: AltSlot) -> PatValueRef {
-        if !b.enter_nesting() {
-            return b.leaf(crate::matcher::KindSpec::Any);
-        }
-        let first_match = self.first_match;
-        let refs: Vec<PatValueRef> = self.alts.into_iter().map(|alt| alt.call(b, slot)).collect();
-        b.leave_nesting();
-        if first_match {
-            b.first_of(&refs)
-        } else {
-            b.one_of(&refs)
-        }
+impl IntoExpr for OneOf {
+    fn into_expr(self) -> Expr {
+        self.0
     }
 }
 
-/// The alternation's own output is `Any`, so it nests in a value, memory or
-/// control slot alike; the slot it lands in is passed down to the arms, which
-/// anchor accordingly. A control slot retypes the arm vertices instead, in
-/// [`MatcherBuilder::set_output_control`](crate::matcher::MatcherBuilder::set_output_control).
-impl MatchPat for OneOf {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.lower(b, AltSlot::Value)
-    }
-
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.lower(b, AltSlot::Memory)
-    }
-}
-
+impl MatchExpr for OneOf {}
 impl MemPat for OneOf {}
 
 /// `one_of![a, b, c]`: match if any listed sub-pattern matches, in whatever
