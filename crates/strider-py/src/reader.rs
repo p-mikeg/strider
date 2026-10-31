@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use object::{Object, ObjectSymbol};
 use pyo3::prelude::*;
@@ -32,8 +32,6 @@ pub(crate) struct PyBufferReaderInner {
     pub(crate) regions: Vec<MemRegion>,
     /// Lazily rebuilt; cleared on every region change.
     pub(crate) table: Option<Arc<MemRegionsLookupTable>>,
-    /// Bytes in the largest single region, built with `table`.
-    max_region_len: Option<usize>,
 }
 
 /// Raw byte reader for firmware or custom sources.  Works as both the
@@ -52,14 +50,6 @@ impl PyBufferReader {
             return Arc::clone(t);
         }
         let t = Arc::new(MemRegionsLookupTable::new(inner.regions.clone()));
-        inner.max_region_len = Some(
-            inner
-                .regions
-                .iter()
-                .map(|r| (r.end_addr() - r.start_addr()) as usize)
-                .max()
-                .unwrap_or(0),
-        );
         inner.table = Some(Arc::clone(&t));
         t
     }
@@ -71,22 +61,11 @@ impl PyBufferReader {
         PyBufferReaderView { table }
     }
 
-    /// Upper bound on what one `MemRegionsLookupTable::read` can return; the
-    /// table itself publishes no such bound.
-    fn read_bound(&self) -> usize {
-        if let Some(n) = self.inner.lock_shared().max_region_len {
-            return n;
-        }
-        drop(self.lookup_table());
-        self.inner.lock_shared().max_region_len.unwrap_or(0)
-    }
-
     pub(crate) fn from_regions(regions: Vec<MemRegion>) -> Self {
         Self {
             inner: Arc::new(Mutex::new(PyBufferReaderInner {
                 regions,
                 table: None,
-                max_region_len: None,
             })),
         }
     }
@@ -132,23 +111,19 @@ impl PyBufferReader {
     ) -> PyResult<Option<Bound<'py, PyBytes>>> {
         let table = self.lookup_table();
         table.check_unchanged().map_err(into_strider_err)?;
-        // `table.read` fills from one region only, so a multi-exabyte `size`
-        // would allocate (and OOM) for nothing.
-        let mut buf = vec![0u8; size.min(self.read_bound())];
-        match table.read(addr, &mut buf) {
-            Some(n) => {
-                buf.truncate(n);
-                Ok(Some(PyBytes::new_bound(py, &buf)))
-            }
-            None => Ok(None),
-        }
+        Ok(table
+            .read_vec(addr, size)
+            .map(|buf| PyBytes::new_bound(py, &buf)))
     }
 }
 
 /// One stat per distinct mapping behind `mem_obj`, before anything decodes
 /// through it. A reader that is not a `BufferReader` maps nothing and cannot
 /// go stale.
-pub(crate) fn check_mem_unchanged(py: Python<'_>, mem_obj: &Option<Py<PyAny>>) -> PyResult<()> {
+pub(crate) fn check_mem_unchanged(
+    py: Python<'_>,
+    mem_obj: &Option<Arc<Py<PyAny>>>,
+) -> PyResult<()> {
     let Some(obj) = mem_obj else { return Ok(()) };
     let Ok(buf) = obj.extract::<PyBufferReader>(py) else {
         return Ok(());
@@ -264,25 +239,23 @@ pub struct PyLoadedElf {
     /// name; `symbol_at` still reaches these by address, and one with a size
     /// can win there.
     extra_symbols: Vec<PySymbol>,
-    /// Every symbol of every source, built on the first symbol query and
-    /// dropped whenever a source is added.
-    symbol_table: Mutex<Option<SymbolTable>>,
-    /// The `$d` mapping-symbol spans of every ELF, built on first use and
-    /// dropped whenever an ELF is added.
-    data_ranges: Mutex<Option<strider_cfg::DataRanges>>,
-    /// [`LocalEntries`], built on first use and dropped with `symbol_table`.
-    local_entries: Mutex<Option<Arc<LocalEntries>>>,
+    memo: ElfMemo,
 }
 
-/// Every symbol's `(address, local_entry)` where the two differ, sorted: the
-/// ppc64 ELFv2 functions a same-TOC call enters past their address.
-pub(crate) type LocalEntries = Vec<(u64, u64)>;
+/// What a `_LoadedElf` builds over every source on first use, dropped
+/// whenever a source it reads is added.
+#[derive(Default)]
+struct ElfMemo {
+    symbols: OnceLock<SymbolTable>,
+    /// The `$d` mapping-symbol spans.
+    data_ranges: OnceLock<strider_cfg::DataRanges>,
+    local_entries: OnceLock<Arc<strider_cfg::LocalEntries>>,
+}
 
 fn invalidate_and_extend(reader: &PyBufferReader, regions: Vec<MemRegion>) {
     let mut inner = reader.inner.lock_shared();
     inner.regions.extend(regions);
     inner.table = None;
-    inner.max_region_len = None;
 }
 
 fn region_spans(regions: &[MemRegion]) -> Vec<(u64, u64)> {
@@ -356,14 +329,14 @@ pub struct PySymbol {
     /// function, where it is the code the `.opd` descriptor at `st_value`
     /// names.
     #[pyo3(get)]
-    address: u64,
+    pub(crate) address: u64,
     /// `None` for `st_size == 0`, which records no extent rather than an
     /// empty one: a hand-written `.S` entry point with no `.size` directive
     /// is still a whole function. Also `None` for a ppc64 ELFv1 function
     /// whose `st_size` measures its `.opd` descriptor rather than its code: a
     /// dot symbol names the code, or the size is 16 or 24.
     #[pyo3(get)]
-    size: Option<u64>,
+    pub(crate) size: Option<u64>,
     is_function: bool,
     /// An ARM Thumb function, whose `address` keeps the ISA bit.
     thumb: bool,
@@ -526,25 +499,93 @@ impl PyLoadedElf {
         Ok(())
     }
 
+    /// Merge another ELF (e.g. a shared library) into this one, extending
+    /// the regions and symbol set; `Lifter._merge_elf` is the one caller, so
+    /// the decoder rebuilds over what `symbol` and `read` see. The
+    /// earlier-loaded ELF wins a name collision, and `relocated_got_is_rom` is
+    /// this image's own claim.
+    ///
+    /// Errors if the new ELF's architecture, class or byte order, or on ARM
+    /// its `EF_ARM_BE8`, differs from the first image's: one handle decodes
+    /// one target. Errors too if it maps code over an address already loaded
+    /// with DIFFERENT bytes: `add_elf` places shared objects at distinct
+    /// addresses, so two ELFs linked at the same base cannot share one address
+    /// space. Re-merging an image already fully loaded, byte for byte, is
+    /// allowed and does nothing.
+    pub(crate) fn add_elf(
+        &mut self,
+        path: &str,
+        apply_relocations: bool,
+        relocated_got_is_rom: bool,
+    ) -> PyResult<()> {
+        let elf = strider_reader::load_elf(path).map_err(into_strider_err)?;
+        self.check_same_target(&elf, path)?;
+        let mode = relocation_mode(apply_relocations, relocated_got_is_rom)?;
+        let image = elf
+            .image(self.source.into(), mode)
+            .map_err(into_strider_err)?;
+        let rom_regions = without_ranges(image.rom, &self.writable);
+        if let Some((lo, hi)) =
+            differing_overlap(&self.mem.inner.lock_shared().regions, &image.fetch)
+        {
+            return Err(into_strider_err(anyhow::anyhow!(
+                "add_elf: {path} maps [{lo:#x}, {hi:#x}) with bytes that differ from what is \
+                 already loaded there; add_elf merges shared objects at DISTINCT addresses, so \
+                 two ELFs linked at the same base cannot be merged into one address space"
+            )));
+        }
+        // An image already loaded: no byte it maps is new (the overlap check
+        // above makes the shared ones identical) and it bars nothing new from
+        // the read-only view, so its regions and symbols are the ones already
+        // here and a merge would append a second copy of both. An image
+        // mapping nothing still goes through, for its symbols.
+        if !image.fetch.is_empty()
+            && regions_covered(&self.mem.inner.lock_shared().regions, &image.fetch)
+            && image
+                .writable
+                .as_slice()
+                .iter()
+                .all(|&(lo, hi)| self.writable.covers(lo, hi))
+        {
+            return Ok(());
+        }
+        invalidate_and_extend(&self.mem, image.fetch);
+        {
+            let mut rom = self.rom.inner.lock_shared();
+            let kept = without_ranges(std::mem::take(&mut rom.regions), &image.writable);
+            rom.regions = kept;
+        }
+        invalidate_and_extend(&self.rom, rom_regions);
+        self.writable = AddressSet::merged(
+            self.writable
+                .as_slice()
+                .iter()
+                .chain(image.writable.as_slice())
+                .copied()
+                .collect(),
+        );
+        self.elfs.push(elf);
+        self.memo = ElfMemo::default();
+        Ok(())
+    }
+
     /// Building parses the mapping, so a file that changed underneath is an
     /// error here rather than a SIGBUS. A table already built needs no mapping
     /// and costs no stat.
     fn with_symbols<T>(&self, f: impl FnOnce(&SymbolTable) -> T) -> PyResult<T> {
-        let stale = self.symbol_table.lock_shared().is_none();
-        if stale {
+        if self.memo.symbols.get().is_none() {
             self.check_unchanged()?;
-            let built = self.build_symbol_table();
-            *self.symbol_table.lock_shared() = Some(built);
         }
-        let table = self.symbol_table.lock_shared();
-        Ok(f(table.as_ref().expect("just built")))
+        Ok(f(self
+            .memo
+            .symbols
+            .get_or_init(|| self.build_symbol_table())))
     }
 
     /// Bytes inside executable sections that ARM / AArch64 mapping symbols
     /// mark as data, over every ELF and symbol file.
     pub(crate) fn data_ranges(&self) -> PyResult<strider_cfg::DataRanges> {
-        let mut cached = self.data_ranges.lock_shared();
-        if let Some(ranges) = cached.as_ref() {
+        if let Some(ranges) = self.memo.data_ranges.get() {
             return Ok(ranges.clone());
         }
         self.check_unchanged()?;
@@ -555,16 +596,17 @@ impl PyLoadedElf {
             };
             all.extend(strider_reader::elf::mapping_symbol_data_ranges(&file));
         }
-        let ranges = strider_cfg::DataRanges::new(all);
-        *cached = Some(ranges.clone());
-        Ok(ranges)
+        Ok(self
+            .memo
+            .data_ranges
+            .get_or_init(|| strider_cfg::DataRanges::new(all))
+            .clone())
     }
 
-    /// [`LocalEntries`] over every ELF and symbol file. Only a ppc64 image
+    /// The local entries of every ELF and symbol file. Only a ppc64 image
     /// can have any, so no other builds the symbol table for it.
-    pub(crate) fn local_entries(&self) -> PyResult<Arc<LocalEntries>> {
-        let mut cached = self.local_entries.lock_shared();
-        if let Some(entries) = cached.as_ref() {
+    pub(crate) fn local_entries(&self) -> PyResult<Arc<strider_cfg::LocalEntries>> {
+        if let Some(entries) = self.memo.local_entries.get() {
             return Ok(Arc::clone(entries));
         }
         let mut ppc64 = false;
@@ -572,22 +614,16 @@ impl PyLoadedElf {
             let file = obj.checked_file().map_err(into_strider_err)?;
             ppc64 |= file.architecture() == object::Architecture::PowerPc64;
         }
-        let mut entries = LocalEntries::new();
-        if ppc64 {
+        let entries = if ppc64 {
             self.with_symbols(|t| {
-                entries.extend(
-                    t.syms
-                        .iter()
-                        .filter(|s| s.local_entry != s.address)
-                        .map(|s| (s.address, s.local_entry)),
-                );
-            })?;
-            entries.sort_unstable();
-            entries.dedup();
-        }
-        let entries = Arc::new(entries);
-        *cached = Some(Arc::clone(&entries));
-        Ok(entries)
+                strider_cfg::LocalEntries::new(t.syms.iter().map(|s| (s.address, s.local_entry)))
+            })?
+        } else {
+            strider_cfg::LocalEntries::default()
+        };
+        Ok(Arc::clone(
+            self.memo.local_entries.get_or_init(|| Arc::new(entries)),
+        ))
     }
 
     /// One name can have several symbols: FreeBSD's `model_name` is both an
@@ -771,7 +807,7 @@ impl PyLoadedElf {
     /// name, else an undefined symbol that still has an address (a PLT stub,
     /// or an object file's extern).  Raises `StriderError` when there is
     /// neither.
-    fn symbol(&self, name: &str) -> PyResult<PySymbol> {
+    pub(crate) fn symbol(&self, name: &str) -> PyResult<PySymbol> {
         self.symbol_opt(name)?.ok_or_else(|| {
             into_strider_err(anyhow::anyhow!(
                 "symbol {name:?} not found in any ELF loaded into this \
@@ -909,87 +945,6 @@ impl PyLoadedElf {
         self.mem.read(py, addr, size)
     }
 
-    /// Merge another ELF (e.g. a shared library) into this one, extending
-    /// the regions and symbol set.  The earlier-loaded ELF wins a name
-    /// collision.
-    ///
-    /// `apply_relocations` defaults to `True`, as it does on `load_elf`: a
-    /// merged ELF is normally the ET_DYN case relocations exist for, and it
-    /// also selects what is mapped, so `False` drops writable non-executable
-    /// sections rather than serving their on-disk bytes.
-    ///
-    /// `relocated_got_is_rom` is per image, and does not inherit the handle's:
-    /// the claim is about one shared object's link, so a RELRO main image says
-    /// nothing about a library merged into it.  With `apply_relocations=False`
-    /// it is refused, the two denying each other.
-    ///
-    /// Errors if the new ELF's architecture, class or byte order, or on ARM
-    /// its `EF_ARM_BE8`, differs from the first image's: one handle decodes
-    /// one target. Errors too if it maps code over an address already loaded
-    /// with DIFFERENT bytes: `add_elf` places shared objects at distinct
-    /// addresses, so two ELFs linked at the same base cannot share one address
-    /// space. Re-merging an image already fully loaded, byte for byte, is
-    /// allowed and does nothing.
-    #[pyo3(signature = (path, apply_relocations=true, relocated_got_is_rom=false))]
-    pub(crate) fn add_elf(
-        &mut self,
-        path: &str,
-        apply_relocations: bool,
-        relocated_got_is_rom: bool,
-    ) -> PyResult<()> {
-        let elf = strider_reader::load_elf(path).map_err(into_strider_err)?;
-        self.check_same_target(&elf, path)?;
-        let mode = relocation_mode(apply_relocations, relocated_got_is_rom)?;
-        let image = elf
-            .image(self.source.into(), mode)
-            .map_err(into_strider_err)?;
-        let rom_regions = without_ranges(image.rom, &self.writable);
-        if let Some((lo, hi)) =
-            differing_overlap(&self.mem.inner.lock_shared().regions, &image.fetch)
-        {
-            return Err(into_strider_err(anyhow::anyhow!(
-                "add_elf: {path} maps [{lo:#x}, {hi:#x}) with bytes that differ from what is \
-                 already loaded there; add_elf merges shared objects at DISTINCT addresses, so \
-                 two ELFs linked at the same base cannot be merged into one address space"
-            )));
-        }
-        // An image already loaded: no byte it maps is new (the overlap check
-        // above makes the shared ones identical) and it bars nothing new from
-        // the read-only view, so its regions and symbols are the ones already
-        // here and a merge would append a second copy of both. An image
-        // mapping nothing still goes through, for its symbols.
-        if !image.fetch.is_empty()
-            && regions_covered(&self.mem.inner.lock_shared().regions, &image.fetch)
-            && image
-                .writable
-                .as_slice()
-                .iter()
-                .all(|&(lo, hi)| self.writable.covers(lo, hi))
-        {
-            return Ok(());
-        }
-        invalidate_and_extend(&self.mem, image.fetch);
-        {
-            let mut rom = self.rom.inner.lock_shared();
-            let kept = without_ranges(std::mem::take(&mut rom.regions), &image.writable);
-            rom.regions = kept;
-        }
-        invalidate_and_extend(&self.rom, rom_regions);
-        self.writable = AddressSet::merged(
-            self.writable
-                .as_slice()
-                .iter()
-                .chain(image.writable.as_slice())
-                .copied()
-                .collect(),
-        );
-        self.elfs.push(elf);
-        self.symbol_table.lock_shared().take();
-        self.local_entries.lock_shared().take();
-        self.data_ranges.lock_shared().take();
-        Ok(())
-    }
-
     /// Take the symbols of `path` and none of its bytes.
     ///
     /// This is how a separate debug or symbol file attaches: `objcopy
@@ -1004,9 +959,7 @@ impl PyLoadedElf {
         let obj = strider_reader::load_elf(path).map_err(into_strider_err)?;
         self.check_describes_a_loaded_image(&obj, path)?;
         self.symbol_elfs.push(obj);
-        self.symbol_table.lock_shared().take();
-        self.local_entries.lock_shared().take();
-        self.data_ranges.lock_shared().take();
+        self.memo = ElfMemo::default();
         Ok(())
     }
 
@@ -1052,8 +1005,11 @@ impl PyLoadedElf {
             });
         }
         self.extra_symbols.append(&mut added);
-        self.symbol_table.lock_shared().take();
-        self.local_entries.lock_shared().take();
+        // `$d` spans come from the ELFs alone.
+        self.memo = ElfMemo {
+            data_ranges: std::mem::take(&mut self.memo.data_ranges),
+            ..ElfMemo::default()
+        };
         Ok(())
     }
 }
@@ -1075,9 +1031,7 @@ fn load_elf_impl(
         mem: PyBufferReader::from_regions(image.fetch),
         rom: PyBufferReader::from_regions(image.rom),
         source,
-        symbol_table: Mutex::new(None),
-        data_ranges: Mutex::new(None),
-        local_entries: Mutex::new(None),
+        memo: ElfMemo::default(),
     })
 }
 
@@ -1395,52 +1349,48 @@ impl ReadOnlyMemory for PyBufferReaderView {
     }
 }
 
-/// The memory argument every Python entry point accepts: either a
-/// `BufferReader` or any Python object with a `read(...)` method.
-pub enum MemInput {
-    Buffer(PyBufferReader),
-    Cb(std::sync::Arc<Py<PyAny>>),
+/// The memory argument every Python entry point accepts: a `BufferReader`
+/// or any Python object with a `read(...)` method.
+pub struct MemInput {
+    /// The object itself, which a callback's adapter shares, so a holder of
+    /// both holds one reference.
+    pub obj: Arc<Py<PyAny>>,
+    /// `None` for a callback.
+    buffer: Option<PyBufferReader>,
 }
 
 impl<'py> FromPyObject<'py> for MemInput {
     fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
-        if let Ok(m) = ob.extract::<PyBufferReader>() {
-            return Ok(MemInput::Buffer(m));
+        let buffer = ob.extract::<PyBufferReader>().ok();
+        if buffer.is_none() && !ob.hasattr("read")? {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "expected a BufferReader or an object with a `read(...)` method",
+            ));
         }
-        if ob.hasattr("read")? {
-            return Ok(MemInput::Cb(std::sync::Arc::new(ob.clone().unbind())));
-        }
-        Err(pyo3::exceptions::PyTypeError::new_err(
-            "expected a BufferReader or an object with a `read(...)` method",
-        ))
+        Ok(Self {
+            obj: Arc::new(ob.clone().unbind()),
+            buffer,
+        })
     }
 }
 
 impl MemInput {
-    /// The Python callback object backing this input, if any.  Shares the
-    /// exact reference the adapter holds, so registering it for cyclic-GC
-    /// traversal does not inflate the object's refcount.
-    pub fn py_callback(&self) -> Option<std::sync::Arc<Py<PyAny>>> {
-        match self {
-            MemInput::Cb(obj) => Some(std::sync::Arc::clone(obj)),
-            MemInput::Buffer(_) => None,
-        }
+    pub fn calls_python(&self) -> bool {
+        self.buffer.is_none()
     }
-}
 
-impl MemInput {
     /// This input in the rom role.
     pub fn into_box(self) -> Box<dyn ReadOnlyMemory> {
-        match self {
-            MemInput::Buffer(m) => Box::new(m.reader_view()),
-            MemInput::Cb(obj) => Box::new(PyReadOnlyMemoryAdapter { py_obj: obj }),
+        match self.buffer {
+            Some(m) => Box::new(m.reader_view()),
+            None => Box::new(PyReadOnlyMemoryAdapter { py_obj: self.obj }),
         }
     }
 
     pub fn into_any(self) -> AnyMemReader {
-        match self {
-            MemInput::Buffer(m) => AnyMemReader::Buffer(m.reader_view()),
-            MemInput::Cb(obj) => AnyMemReader::Cb(PyMemReaderAdapter { py_obj: obj }),
+        match self.buffer {
+            Some(m) => AnyMemReader::Buffer(m.reader_view()),
+            None => AnyMemReader::Cb(PyMemReaderAdapter { py_obj: self.obj }),
         }
     }
 }

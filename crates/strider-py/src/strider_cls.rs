@@ -6,7 +6,7 @@ use crate::cfg::PyCfg;
 use crate::errors::into_strider_err;
 use crate::function::PyFunction;
 use crate::options::{PyCfgOptions, PyLifterOptions};
-use crate::reader::{AnyMemReader, MemInput};
+use crate::reader::{AnyMemReader, MemInput, PyLoadedElf};
 
 fn cleared() -> PyErr {
     into_strider_err(anyhow::anyhow!(
@@ -301,9 +301,6 @@ pub(crate) fn overrides_from(
 
 /// Seat caller-supplied indirect-branch answers at the CFG level, so they apply
 /// whether or not the classifier runs.
-///
-/// One target is the caller's own dispatch, not a table read: a `Single`,
-/// which out of range is a tail call where a table's arm defers the site.
 pub(crate) fn seat_known_targets(
     known_targets: &std::collections::HashMap<u64, crate::options::KnownTarget>,
 ) -> crate::options::SeatedTargets {
@@ -313,16 +310,7 @@ pub(crate) fn seat_known_targets(
             let seated = match answer {
                 crate::options::KnownTarget::Return => strider_cfg::ResolvedTargets::LinkRegister,
                 crate::options::KnownTarget::Targets(targets) => {
-                    let table = strider_cfg::ResolvedTargets::table(
-                        targets
-                            .iter()
-                            .map(|&t| strider_cfg::ResolvedTarget::new(t, None)),
-                    );
-                    let only = match table.arms() {
-                        [only] => Some(*only),
-                        _ => None,
-                    };
-                    only.map_or(table, strider_cfg::ResolvedTargets::Single)
+                    strider_cfg::ResolvedTargets::seeded(targets.iter().copied())
                 }
             };
             (strider_cfg::PcodeInsnAddr::at_machine_start(addr), seated)
@@ -330,23 +318,62 @@ pub(crate) fn seat_known_targets(
         .collect()
 }
 
+/// What an `ElfLifter` call adds to its options, read off the ELF before the
+/// build, so no borrow of the ELF outlives the read.
+struct ElfSeat {
+    /// A symbol's recorded size, bounding a lift the options leave open.
+    size: Option<std::num::NonZeroU64>,
+    /// The ELF's `$d` spans, for options naming no data ranges.
+    data_ranges: Option<strider_cfg::DataRanges>,
+    /// For options holding a table keyed by call target.
+    local_entries: Option<std::sync::Arc<strider_cfg::LocalEntries>>,
+}
+
+impl ElfSeat {
+    fn read(
+        elf: &PyLoadedElf,
+        opts: &PyCfgOptions,
+        per_address_ccs: bool,
+        size: Option<u64>,
+    ) -> PyResult<Self> {
+        let data_ranges = opts.data_ranges.ranges().is_empty();
+        let keyed = per_address_ccs || !opts.no_return_targets.is_empty();
+        Ok(Self {
+            size: size.and_then(std::num::NonZeroU64::new),
+            data_ranges: data_ranges.then(|| elf.data_ranges()).transpose()?,
+            local_entries: keyed.then(|| elf.local_entries()).transpose()?,
+        })
+    }
+}
+
 /// Every `CfgOptions` field, spelled out. No `..default()` here: a field added
 /// later has to be handled rather than silently dropped, which is how
 /// `build_cfg` came to ignore `known_targets` entirely.
 /// `call_other_overrides` is `opts`' own, from
 /// [`PyCfgOptions::call_other_overrides`].
-pub(crate) fn cfg_options_from<'a>(
+fn cfg_options_from<'a>(
     opts: &'a PyCfgOptions,
     call_other_overrides: &'a strider_target::call_other_abi::CallOtherOverrides,
+    elf: Option<&'a ElfSeat>,
 ) -> strider_cfg::CfgOptions<'a> {
     strider_cfg::CfgOptions {
-        bound: opts.bound,
+        bound: match (opts.bound, elf.and_then(|e| e.size)) {
+            (strider_cfg::FunctionBound::Open { .. }, Some(size)) => {
+                strider_cfg::FunctionBound::Size(size)
+            }
+            (bound, _) => bound,
+        },
         known_targets: &opts.seated,
         // Only the resolve loop derives answers of its own.
         derived_targets: &strider_cfg::NO_TARGETS,
-        no_return_targets: &opts.no_return_targets.set,
+        no_return_targets: &opts.no_return_targets,
+        local_entries: elf
+            .and_then(|e| e.local_entries.as_deref())
+            .unwrap_or(&strider_cfg::NO_LOCAL_ENTRIES),
         call_other_overrides,
-        data_ranges: opts.data_ranges.clone(),
+        data_ranges: elf
+            .and_then(|e| e.data_ranges.clone())
+            .unwrap_or_else(|| opts.data_ranges.clone()),
     }
 }
 
@@ -451,16 +478,16 @@ pub struct PyLifter {
     /// this thread or another, raises; the rest share it and may overlap each
     /// other.
     inner: Option<strider_orchestrator::Strider<AnyMemReader>>,
-    /// The same Python reader/rom callback objects the adapters hold, so
-    /// `__traverse__` can make the otherwise-buried lifter to reader edge
-    /// visible to the cyclic GC.  Empty for the owned-data path.
-    py_deps: Vec<std::sync::Arc<Py<PyAny>>>,
     /// The exact `mem` object the handle was built from, returned by
-    /// `reader()`. `None` only after `__clear__` during GC.
-    mem_obj: Option<Py<PyAny>>,
+    /// `reader()`. A callback's is the one its adapter holds, which
+    /// `__traverse__` visits for the cyclic GC. `None` only after `__clear__`
+    /// during GC.
+    mem_obj: Option<std::sync::Arc<Py<PyAny>>>,
     /// The exact `rom` object the handle was built from, returned by `rom()`.
     /// `None` when no rom was supplied, or after `__clear__` during GC.
-    rom_obj: Option<Py<PyAny>>,
+    rom_obj: Option<std::sync::Arc<Py<PyAny>>>,
+    /// `mem` or `rom` is a Python callback.
+    reader_calls_python: bool,
     /// The engine `pcode_at` sweeps with, kept between calls with everything
     /// it has decoded: `Sleigh::clone` is a whole `Sleigh::new` plus a commit
     /// replay, and walking an instruction stream is one call per address.
@@ -505,17 +532,6 @@ struct SweepSleigh {
     cursor: u64,
 }
 
-fn collect_py_deps(mem: &MemInput, rom: Option<&MemInput>) -> Vec<std::sync::Arc<Py<PyAny>>> {
-    let mut deps = Vec::new();
-    if let Some(o) = mem.py_callback() {
-        deps.push(o);
-    }
-    if let Some(o) = rom.and_then(MemInput::py_callback) {
-        deps.push(o);
-    }
-    deps
-}
-
 impl PyLifter {
     fn strider(&self) -> PyResult<&strider_orchestrator::Strider<AnyMemReader>> {
         self.inner.as_ref().ok_or_else(cleared)
@@ -547,14 +563,13 @@ fn build_lifter(
     mem: Bound<'_, PyAny>,
     rom: Option<Bound<'_, PyAny>>,
 ) -> PyResult<PyLifter> {
-    let mem_input = mem.extract::<MemInput>()?;
-    let rom_input = rom.as_ref().map(|r| r.extract::<MemInput>()).transpose()?;
-    let py_deps = collect_py_deps(&mem_input, rom_input.as_ref());
+    let mem = mem.extract::<MemInput>()?;
+    let rom = rom.map(|r| r.extract::<MemInput>()).transpose()?;
     Ok(PyLifter {
-        inner: Some(build_strider(arch, mem_input, rom_input)?),
-        py_deps,
-        mem_obj: Some(mem.unbind()),
-        rom_obj: rom.map(Bound::unbind),
+        reader_calls_python: mem.calls_python() || rom.as_ref().is_some_and(MemInput::calls_python),
+        mem_obj: Some(std::sync::Arc::clone(&mem.obj)),
+        rom_obj: rom.as_ref().map(|r| std::sync::Arc::clone(&r.obj)),
+        inner: Some(build_strider(arch, mem, rom)?),
         sweep_sleigh: std::cell::RefCell::new(None),
         context_gen: std::cell::Cell::new(0),
     })
@@ -611,23 +626,19 @@ impl PyLifter {
     /// to the `Lifter` runs through the Sleigh, where the collector can't
     /// see it, and leaks.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        for dep in &self.py_deps {
-            visit.call(&**dep)?;
-        }
         if let Some(o) = &self.mem_obj {
-            visit.call(o)?;
+            visit.call(&**o)?;
         }
         if let Some(o) = &self.rom_obj {
-            visit.call(o)?;
+            visit.call(&**o)?;
         }
         Ok(())
     }
 
     fn __clear__(&mut self) {
-        // The engine's adapters and the sweep engine's reader clone share the
-        // `Arc<Py<PyAny>>`s in `py_deps`, so the reference drops only with all
+        // The engine's adapters and the sweep engine's reader clone share a
+        // callback's `Arc<Py<PyAny>>`, so the reference drops only with all
         // three.
-        self.py_deps.clear();
         self.inner = None;
         self.sweep_sleigh.get_mut().take();
         self.mem_obj = None;
@@ -730,33 +741,20 @@ impl PyLifter {
         entry: &Bound<'_, PyAny>,
         opts: Option<Py<PyCfgOptions>>,
     ) -> PyResult<PyCfg> {
-        let entry = entry_addr(entry)?;
-        let bound = slf.bind(py);
-        {
-            let lifter = try_borrow_lifter(bound)?;
-            crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
-        }
-        let target = try_borrow_lifter(bound)?.target()?;
-        // The borrow outlives `cfg_opts`, which holds the seeded table rather
-        // than a copy of it.
-        let opts_ref = opts.as_ref().map(|o| o.borrow(py));
-        let overrides = match &opts_ref {
-            Some(o) => Some(o.call_other_overrides(target)?),
-            None => None,
-        };
-        let cfg_opts = match (&opts_ref, &overrides) {
-            (Some(o), Some(overrides)) => cfg_options_from(o, overrides),
-            _ => strider_cfg::CfgOptions::default(),
-        };
-        let inner = with_pending_control_flow(|| {
-            let mut lifter = try_borrow_lifter_mut(bound)?;
-            lifter.bump_context_gen();
-            lifter
-                .strider_mut()?
-                .build_cfg(entry, &cfg_opts)
-                .map_err(into_strider_err)
-        })?;
-        Ok(PyCfg::new(inner, slf, target))
+        Self::build_cfg_at(slf, py, entry, opts, None)
+    }
+
+    /// INTERNAL. `ElfLifter.build_cfg`: [`Self::build_cfg`] with `elf`'s data
+    /// ranges and local entries.
+    #[pyo3(name = "_build_cfg_elf", signature = (elf, entry, opts=None))]
+    fn build_cfg_elf(
+        slf: Py<Self>,
+        py: Python<'_>,
+        elf: PyRef<'_, PyLoadedElf>,
+        entry: &Bound<'_, PyAny>,
+        opts: Option<Py<PyCfgOptions>>,
+    ) -> PyResult<PyCfg> {
+        Self::build_cfg_at(slf, py, entry, opts, Some(elf))
     }
 
     /// Lift, optimise and resolve the function at `entry`, returning an
@@ -795,103 +793,33 @@ impl PyLifter {
         cc: Option<PyCallingConvention>,
         opts: Option<Py<PyLifterOptions>>,
     ) -> PyResult<PyObject> {
-        let entry = entry_addr(entry)?;
-        let cc = cc.ok_or_else(|| {
-            into_strider_err(anyhow::anyhow!(
-                "`cc` is required on a plain Lifter (the handle stores no \
-                 default); only ElfLifter derives one from the ELF header"
-            ))
-        })?;
-        let opts = match opts {
-            Some(o) => o,
-            None => Py::new(py, PyLifterOptions::new_default(py)?)?,
+        Self::analyze_at(slf, py, entry_addr(entry)?, cc, opts, None)
+    }
+
+    /// INTERNAL. `ElfLifter.analyze`: [`Self::analyze`] with `entry` a symbol
+    /// name or an address, a symbol's recorded size bounding a lift `opts`
+    /// leaves open, and `elf`'s data ranges and local entries.
+    #[pyo3(name = "_analyze_elf", signature = (elf, entry, cc, opts=None))]
+    fn analyze_elf(
+        slf: Py<Self>,
+        py: Python<'_>,
+        elf: PyRef<'_, PyLoadedElf>,
+        entry: &Bound<'_, PyAny>,
+        cc: PyCallingConvention,
+        opts: Option<Py<PyLifterOptions>>,
+    ) -> PyResult<PyObject> {
+        let (addr, size) = if let Ok(name) = entry.downcast::<pyo3::types::PyString>() {
+            let sym = elf.symbol(&name.to_cow()?)?;
+            (sym.address, sym.size)
+        } else if entry.is_instance_of::<pyo3::types::PyInt>() {
+            (entry_addr(entry)?, None)
+        } else {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "`entry` must be a symbol name (str) or address (int), got {}",
+                entry.get_type().getattr("__name__")?
+            )));
         };
-        let opts_ref = opts.borrow(py);
-        let compact = opts_ref.compact;
-        let resolve_indirect_branches = opts_ref.resolve_indirect_branches;
-        let assumptions = opts_ref.assumptions.borrow(py).inner.clone();
-        // Materialise the pipeline override BEFORE dropping the GIL below.
-        let custom_pipeline = opts_ref
-            .pipeline
-            .as_ref()
-            .map(|p| p.borrow(py).build_pipeline());
-        drop(opts_ref);
-
-        let (target, cc_built, per_address_built) = {
-            let lifter = try_borrow_lifter(slf.bind(py))?;
-            crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
-            crate::reader::check_mem_unchanged(py, &lifter.rom_obj)?;
-            let regs = lifter.strider()?.sleigh_regs();
-            let target = lifter.target()?;
-            let cc_built = build_cc(&cc, regs, target)?;
-            let per_address_built = opts.borrow(py).built_per_address_ccs(regs, target)?;
-            (target, cc_built, per_address_built)
-        };
-
-        // `target` is only known after the borrow above, so the CFG knobs
-        // are read here rather than with the rest of the options: nothing
-        // between the two points runs Python, and `CfgOptions` is get-only, so
-        // it is the same object either way.
-        // The two borrows outlive `analyze_opts`, which holds the seeded table
-        // rather than a copy of it; both are read-only, and `CfgOptions` is
-        // get-only, so nothing can take them `&mut` meanwhile.
-        let opts_ref = opts.borrow(py);
-        let cfg_ref = opts_ref.cfg.borrow(py);
-        let overrides = cfg_ref.call_other_overrides(target)?;
-        let analyze_opts = strider_orchestrator::AnalyzeOptions {
-            cfg: cfg_options_from(&cfg_ref, &overrides),
-            per_address_ccs: &per_address_built,
-            resolve_indirect_branches,
-            assumptions,
-            compact,
-        };
-        // The fixed-point loop runs without the GIL where it can: a pipeline's
-        // boxed passes are `Send`, so a closure capturing one satisfies
-        // `allow_threads`'s `Ungil` bound. Holding it would stall every other
-        // Python thread for the length of an analysis, which is what an
-        // explorer serving in the background would feel.
-        //
-        // Not where the reader is a Python object. Such an adapter takes the
-        // GIL back on EVERY memory read, so dropping it buys almost no
-        // parallelism there, and doing so lets a worker thread call into the
-        // interpreter while the main thread finalises it: `Python::with_gil`
-        // after `Py_Finalize` aborts or segfaults the process, which no
-        // `StriderError` can catch. Holding the GIL instead makes
-        // finalisation wait for the analysis, the way any other Python call
-        // does. `py_deps` is empty exactly on the owned-data path.
-        let result = {
-            let mut lifter = try_borrow_lifter_mut(slf.bind(py))?;
-            lifter.bump_context_gen();
-            let reader_calls_python = !lifter.py_deps.is_empty();
-            // Reborrow before the closure so its captured type is a plain
-            // `&mut Strider`, not the GIL-bound `PyRefMut`, which embeds a
-            // `!Send` `Python<'_>` marker and would fail `Ungil`.
-            let inner = lifter.strider_mut()?;
-            let outcome = if reader_calls_python {
-                inner.analyze(entry, &cc_built, &analyze_opts, custom_pipeline)
-            } else {
-                py.allow_threads(|| inner.analyze(entry, &cc_built, &analyze_opts, custom_pipeline))
-            };
-            prefer_pending_control_flow(outcome.map_err(into_strider_err))?
-        };
-        let unresolved = machine_addrs(
-            result
-                .incomplete()
-                .of(strider_cfg::Reason::UnresolvedBranch),
-        );
-        let strider_orchestrator::AnalyzeResult { cfg, function } = result;
-
-        // Surface anything a Python callback stashed while the GIL was
-        // released.
-        check_pending_control_flow()?;
-
-        let cfg_obj = Py::new(py, PyCfg::new(cfg, slf.clone_ref(py), target))?;
-
-        let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
-        let result = analyze_result_type(py)?
-            .bind(py)
-            .call1((cfg_obj, py_function, unresolved))?;
-        Ok(result.unbind())
+        Self::analyze_at(slf, py, addr, Some(cc), opts, Some((elf, size)))
     }
 
     /// Decode from `entry` one instruction at a time until `addr`, and
@@ -1016,6 +944,161 @@ impl PyLifter {
             *slot = Some(sweep);
         }
         out
+    }
+}
+
+impl PyLifter {
+    /// `build_cfg`, with `elf` read for an `ElfLifter`'s options.
+    fn build_cfg_at(
+        slf: Py<Self>,
+        py: Python<'_>,
+        entry: &Bound<'_, PyAny>,
+        opts: Option<Py<PyCfgOptions>>,
+        elf: Option<PyRef<'_, PyLoadedElf>>,
+    ) -> PyResult<PyCfg> {
+        let opts = match opts {
+            Some(o) => o,
+            None => Py::new(py, PyCfgOptions::default())?,
+        };
+        // The borrow outlives `cfg_opts`, which holds the seeded table rather
+        // than a copy of it.
+        let opts_ref = opts.borrow(py);
+        let seat = elf
+            .map(|elf| ElfSeat::read(&elf, &opts_ref, false, None))
+            .transpose()?;
+        let entry = entry_addr(entry)?;
+        let bound = slf.bind(py);
+        {
+            let lifter = try_borrow_lifter(bound)?;
+            crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
+        }
+        let target = try_borrow_lifter(bound)?.target()?;
+        let overrides = opts_ref.call_other_overrides(target)?;
+        let cfg_opts = cfg_options_from(&opts_ref, &overrides, seat.as_ref());
+        let inner = with_pending_control_flow(|| {
+            let mut lifter = try_borrow_lifter_mut(bound)?;
+            lifter.bump_context_gen();
+            lifter
+                .strider_mut()?
+                .build_cfg(entry, &cfg_opts)
+                .map_err(into_strider_err)
+        })?;
+        Ok(PyCfg::new(inner, slf, target))
+    }
+
+    /// `analyze`, with `elf` read for an `ElfLifter`'s options, and a symbol's
+    /// recorded size.
+    fn analyze_at(
+        slf: Py<Self>,
+        py: Python<'_>,
+        entry: u64,
+        cc: Option<PyCallingConvention>,
+        opts: Option<Py<PyLifterOptions>>,
+        elf: Option<(PyRef<'_, PyLoadedElf>, Option<u64>)>,
+    ) -> PyResult<PyObject> {
+        let cc = cc.ok_or_else(|| {
+            into_strider_err(anyhow::anyhow!(
+                "`cc` is required on a plain Lifter (the handle stores no \
+                 default); only ElfLifter derives one from the ELF header"
+            ))
+        })?;
+        let opts = match opts {
+            Some(o) => o,
+            None => Py::new(py, PyLifterOptions::new_default(py)?)?,
+        };
+        let opts_ref = opts.borrow(py);
+        let compact = opts_ref.compact;
+        let resolve_indirect_branches = opts_ref.resolve_indirect_branches;
+        let assumptions = opts_ref.assumptions.borrow(py).inner.clone();
+        // Materialise the pipeline override BEFORE dropping the GIL below.
+        let custom_pipeline = opts_ref
+            .pipeline
+            .as_ref()
+            .map(|p| p.borrow(py).build_pipeline());
+        let seat = elf
+            .map(|(elf, size)| {
+                let per_address_ccs = opts_ref.per_address_ccs.as_ref();
+                let keyed = per_address_ccs.is_some_and(|t| !t.py.is_empty());
+                ElfSeat::read(&elf, &opts_ref.cfg.borrow(py), keyed, size)
+            })
+            .transpose()?;
+        drop(opts_ref);
+
+        let (target, cc_built, per_address_built) = {
+            let lifter = try_borrow_lifter(slf.bind(py))?;
+            crate::reader::check_mem_unchanged(py, &lifter.mem_obj)?;
+            crate::reader::check_mem_unchanged(py, &lifter.rom_obj)?;
+            let regs = lifter.strider()?.sleigh_regs();
+            let target = lifter.target()?;
+            let cc_built = build_cc(&cc, regs, target)?;
+            let per_address_built = opts.borrow(py).built_per_address_ccs(regs, target)?;
+            (target, cc_built, per_address_built)
+        };
+
+        // `target` is only known after the borrow above, so the CFG knobs
+        // are read here rather than with the rest of the options: nothing
+        // between the two points runs Python, and `CfgOptions` is get-only, so
+        // it is the same object either way.
+        // The two borrows outlive `analyze_opts`, which holds the seeded table
+        // rather than a copy of it; both are read-only, and `CfgOptions` is
+        // get-only, so nothing can take them `&mut` meanwhile.
+        let opts_ref = opts.borrow(py);
+        let cfg_ref = opts_ref.cfg.borrow(py);
+        let overrides = cfg_ref.call_other_overrides(target)?;
+        let analyze_opts = strider_orchestrator::AnalyzeOptions {
+            cfg: cfg_options_from(&cfg_ref, &overrides, seat.as_ref()),
+            per_address_ccs: &per_address_built,
+            resolve_indirect_branches,
+            assumptions,
+            compact,
+        };
+        // The fixed-point loop runs without the GIL where it can: a pipeline's
+        // boxed passes are `Send`, so a closure capturing one satisfies
+        // `allow_threads`'s `Ungil` bound. Holding it would stall every other
+        // Python thread for the length of an analysis, which is what an
+        // explorer serving in the background would feel.
+        //
+        // Not where the reader is a Python object. Such an adapter takes the
+        // GIL back on EVERY memory read, so dropping it buys almost no
+        // parallelism there, and doing so lets a worker thread call into the
+        // interpreter while the main thread finalises it: `Python::with_gil`
+        // after `Py_Finalize` aborts or segfaults the process, which no
+        // `StriderError` can catch. Holding the GIL instead makes
+        // finalisation wait for the analysis, the way any other Python call
+        // does.
+        let result = {
+            let mut lifter = try_borrow_lifter_mut(slf.bind(py))?;
+            lifter.bump_context_gen();
+            let reader_calls_python = lifter.reader_calls_python;
+            // Reborrow before the closure so its captured type is a plain
+            // `&mut Strider`, not the GIL-bound `PyRefMut`, which embeds a
+            // `!Send` `Python<'_>` marker and would fail `Ungil`.
+            let inner = lifter.strider_mut()?;
+            let outcome = if reader_calls_python {
+                inner.analyze(entry, &cc_built, &analyze_opts, custom_pipeline)
+            } else {
+                py.allow_threads(|| inner.analyze(entry, &cc_built, &analyze_opts, custom_pipeline))
+            };
+            prefer_pending_control_flow(outcome.map_err(into_strider_err))?
+        };
+        let unresolved = machine_addrs(
+            result
+                .incomplete()
+                .of(strider_cfg::Reason::UnresolvedBranch),
+        );
+        let strider_orchestrator::AnalyzeResult { cfg, function } = result;
+
+        // Surface anything a Python callback stashed while the GIL was
+        // released.
+        check_pending_control_flow()?;
+
+        let cfg_obj = Py::new(py, PyCfg::new(cfg, slf.clone_ref(py), target))?;
+
+        let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;
+        let result = analyze_result_type(py)?
+            .bind(py)
+            .call1((cfg_obj, py_function, unresolved))?;
+        Ok(result.unbind())
     }
 }
 

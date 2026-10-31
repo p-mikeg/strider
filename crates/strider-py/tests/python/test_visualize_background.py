@@ -269,6 +269,19 @@ def test_a_body_write_with_no_progress_gives_up_when_the_server_is_stopping():
     assert p.handler.close_connection, "a cut write must close its connection"
 
 
+@pytest.mark.parametrize("depth", [True, 2.5])
+def test_a_depth_that_is_not_an_integer_raises_before_serving(depth):
+    lift = strider.lift.load_elf(str(fixture_path("x64", "switch")))
+    fn = lift.analyze(lift.entry_point()).function
+    try:
+        port = strider.explore.visualize(fn, port=0, depth=depth, background=True)
+    except ValueError as e:
+        assert "depth" in str(e)
+    else:
+        strider.explore.shutdown(port)
+        pytest.fail(f"depth={depth!r} was served")
+
+
 def test_explore_visualize_is_the_one_entry():
     """No `Lifter.visualize`; `explore.visualize` checks its own arguments
     before binding anything."""

@@ -235,8 +235,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let default_code_space = self.lifter.sleigh().default_code_space();
         let call_address =
             self.build_addr_const(default_code_space, target, "default code space")?;
-        let override_cc = self.per_address_ccs.get(&target).cloned();
-        self.build_cc_call(call_address, override_cc.as_ref(), None)?;
+        let override_cc = self.override_at(target);
+        self.build_cc_call(call_address, override_cc, None)?;
         self.build_cc_return()
     }
 

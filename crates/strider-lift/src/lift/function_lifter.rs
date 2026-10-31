@@ -37,6 +37,9 @@ pub(crate) struct FunctionLifter<'a, R: rsleigh::MemReader> {
     pub(crate) return_sites: Vec<super::ReturnSite>,
     pub(crate) per_address_ccs:
         &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
+    /// What `per_address_ccs` answers a ppc64 local entry through, from
+    /// [`strider_cfg::CfgOptions`].
+    pub(crate) local_entries: &'a strider_cfg::LocalEntries,
     /// Caller classifications for user-op names, from
     /// [`strider_cfg::CfgOptions`]; consulted before the built-in tables.
     pub(crate) call_other_overrides: &'a strider_target::call_other_abi::CallOtherOverrides,
@@ -92,7 +95,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         cfg: &'a strider_cfg::Cfg,
         mut all_vns: Vec<rsleigh::Vn>,
         per_address_ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention>,
-        call_other_overrides: &'a strider_target::call_other_abi::CallOtherOverrides,
+        cfg_opts: &'a strider_cfg::CfgOptions<'a>,
     ) -> Result<Self> {
         let mut seen: rustc_hash::FxHashSet<rsleigh::Vn> = all_vns.iter().copied().collect();
         // The lifter is the SSoT for tracking SP: a function may never name
@@ -105,7 +108,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // Only the overrides THIS cfg selects: a caller passes a binary-wide
         // table, and walking all of it costs the table per function.
         for o in override_call_targets(cfg, lifter.sleigh().default_code_space())
-            .filter_map(|addr| per_address_ccs.get(&addr))
+            .filter_map(|addr| cfg_opts.local_entries.get(per_address_ccs, addr))
         {
             lifter.check_override_cc(o, cc.stack_ptr)?;
             let args = o.arg_passing_regs.iter().chain(&o.arg_passing_regs_float);
@@ -168,7 +171,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             return_sites: Vec::new(),
             switch_anchors: Vec::new(),
             per_address_ccs,
-            call_other_overrides,
+            local_entries: cfg_opts.local_entries,
+            call_other_overrides: cfg_opts.call_other_overrides,
             container_map,
             pcode_consts: super::pcode_consts::PcodeConsts::default(),
             pending_isa_mode: None,
@@ -201,11 +205,16 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         &self,
         insn: &rsleigh::Insn,
     ) -> Option<&'a strider_target::BuiltCallingConvention> {
-        // Copied out of `self`, so the result borrows for `'a`, not `&self`.
-        let ccs: &'a rustc_hash::FxHashMap<u64, strider_target::BuiltCallingConvention> =
-            self.per_address_ccs;
         strider_cfg::direct_call_target(insn, self.lifter.sleigh().default_code_space())
-            .and_then(|target| ccs.get(&target))
+            .and_then(|target| self.override_at(target))
+    }
+
+    /// The `per_address_ccs` override a call to `target` selects, if any.
+    pub(crate) fn override_at(
+        &self,
+        target: u64,
+    ) -> Option<&'a strider_target::BuiltCallingConvention> {
+        self.local_entries.get(self.per_address_ccs, target)
     }
 
     /// A zero-pcode-op entry region carries no instruction, so its start address

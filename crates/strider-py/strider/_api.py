@@ -229,34 +229,6 @@ def _arch_and_cc_for_elf(
     )
 
 
-def _load_elf_with(
-    loader,
-    path: StrPath,
-    *,
-    apply_relocations: bool,
-    relocated_got_is_rom: bool,
-    arch: Optional[SleighArch],
-    cc: Optional[CallingConvention],
-) -> "ElfLifter":
-    """Shared body of `load_elf`'s two region-collection strategies.
-
-    `os.fspath` converts a `pathlib.Path` (or any `__fspath__` object) here,
-    so a non-path argument fails as a clear `TypeError` rather than a
-    confusing `FileNotFoundError` further down.
-    """
-    path = os.fspath(path)
-    if not os.path.exists(path):
-        raise FileNotFoundError(path)
-    header = _ElfHeader(path)
-    elf = loader(path, apply_relocations, relocated_got_is_rom)
-    # Only run the (possibly raising) detector when arch or cc is missing.
-    if arch is None or cc is None:
-        det_arch, det_cc = _arch_and_cc_for_elf(header, elf.is_arm_be8)
-        arch = arch if arch is not None else det_arch
-        cc = cc if cc is not None else det_cc
-    return ElfLifter(elf, arch, cc, elf.reader(), rom=elf.ro_reader())
-
-
 def load_elf(
     path: StrPath,
     *,
@@ -331,15 +303,20 @@ def load_elf(
     a microMIPS image among them. Passing both `arch=` and `cc=` skips the
     detector, and with it the ABI and microMIPS refusals.
     """
+    # `os.fspath` makes a non-path argument a clear `TypeError` rather than a
+    # confusing `FileNotFoundError` further down.
+    path = os.fspath(path)
+    if not os.path.exists(path):
+        raise FileNotFoundError(path)
+    header = _ElfHeader(path)
     loader = _ext._load_elf_from_segments if from_segments else _ext._load_elf_from_sections
-    return _load_elf_with(
-        loader,
-        path,
-        apply_relocations=apply_relocations,
-        relocated_got_is_rom=relocated_got_is_rom,
-        arch=arch,
-        cc=cc,
-    )
+    elf = loader(path, apply_relocations, relocated_got_is_rom)
+    # Only run the (possibly raising) detector when arch or cc is missing.
+    if arch is None or cc is None:
+        det_arch, det_cc = _arch_and_cc_for_elf(header, elf.is_arm_be8)
+        arch = arch if arch is not None else det_arch
+        cc = cc if cc is not None else det_cc
+    return ElfLifter(elf, arch, cc, elf.reader(), rom=elf.ro_reader())
 
 
 class ElfLifter(Lifter):
@@ -545,9 +522,7 @@ class ElfLifter(Lifter):
         some, and the local entry of every `no_return_targets` address that
         is a ppc64 ELFv2 symbol's `address`. `entry` is an address, and no
         symbol size bounds the build, as for `analyze(int)`."""
-        if opts is None:
-            opts = CfgOptions()
-        return super().build_cfg(entry, opts._with_elf(self._elf))
+        return self._build_cfg_elf(self._elf, entry, opts)
 
     def analyze(
         self,
@@ -572,38 +547,7 @@ class ElfLifter(Lifter):
         Releases the GIL as `Lifter.analyze` does, and a daemon thread inside
         it at interpreter finalization aborts the process as it does there.
         """
-        target = entry
-        if opts is None:
-            opts = LifterOptions()
-
-        if isinstance(target, str):
-            sym = self._elf.symbol(target)
-            addr = sym.address
-            # An unrecorded symbol size leaves the lift unbounded.
-            if opts.cfg.function_max_size is None and sym.size is not None:
-                # `_with_function_max_size` carries every other field over on
-                # the Rust side: rebuilding `CfgOptions` from its attributes
-                # drops whatever this call forgets, and copies the seeded
-                # tables through Python on every analyse.
-                opts = opts._with_cfg(opts.cfg._with_function_max_size(sym.size))
-        elif isinstance(target, int):
-            addr = target
-        else:
-            raise TypeError(
-                f"`entry` must be a symbol name (str) or address (int), "
-                f"got {type(target).__name__}"
-            )
-        # A literal pool inside the function decodes as plausible instructions;
-        # the ELF's mapping symbols are the only record that it is data. A
-        # ppc64 ELFv2 call enters a function at its local entry, so a table
-        # keyed by `Symbol.address` is widened to match it there.
-        opts = opts._with_elf(self._elf)
-
-        # The raw address passes through: `Lifter::build_cfg` reads its low bit
-        # per function and masks `decode_addr` itself.
-        if cc is None:
-            cc = self._cc
-        return super().analyze(addr, cc, opts)
+        return self._analyze_elf(self._elf, entry, self._cc if cc is None else cc, opts)
 
 
 class FieldPat:
