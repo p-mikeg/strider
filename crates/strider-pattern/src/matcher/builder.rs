@@ -168,29 +168,8 @@ impl MatcherBuilder {
         self.out_of(out).kind = OutputKindSpec::Value(ty);
     }
 
-    /// An alternation's arms are matched against the same edge as the
-    /// alternation itself, so retyping it to `Control` retypes the arms with
-    /// it; a value-anchored arm would otherwise reject the control edge its own
-    /// alternation just bound.
-    ///
-    /// Alone among the output-kind setters in recursing: the value-kind ones
-    /// narrow what an arm's `AnyValue` vertex already accepts, while `Control`
-    /// contradicts it.
-    ///
-    /// The operand is compiled before the slot retypes it, so a `when_match`
-    /// on it passed `set_post_match_typed`'s check while still typed;
-    /// the refusal re-runs here.
     pub fn set_output_control(&mut self, out: PatValueRef) {
         self.out_of(out).kind = OutputKindSpec::Control;
-        if self.core.kind_mut(out.node).typed_post_match {
-            self.reject_typed_guard();
-        }
-        if !self.core.kind_mut(out.node).is_alternation() {
-            return;
-        }
-        for (node, output) in self.core.input_producers(out.node) {
-            self.set_output_control(PatValueRef { node, output });
-        }
     }
 
     /// Relaxes `out` to the wildcard kind, so `anything()` / `var()` match
@@ -212,18 +191,10 @@ impl MatcherBuilder {
         out
     }
 
-    /// Sets the vertex's `token_fallback`, widening an `AnyValue` output to
-    /// also accept a valueless node's memory token. Recurses through an
-    /// alternation, whose
-    /// arms are matched against the same edge as the alternation itself.
+    /// Widens an `AnyValue` output to also accept a valueless node's memory
+    /// token.
     pub fn set_token_fallback(&mut self, out: PatValueRef) {
         self.out_of(out).token_fallback = true;
-        if !self.core.kind_mut(out.node).is_alternation() {
-            return;
-        }
-        for (node, output) in self.core.input_producers(out.node) {
-            self.set_token_fallback(PatValueRef { node, output });
-        }
     }
 
     pub fn set_value_width(&mut self, out: PatValueRef, bits: u32) {
@@ -287,19 +258,14 @@ impl MatcherBuilder {
             OutputKindSpec::Control | OutputKindSpec::Memory
         );
         if untyped_kind || untyped_output {
-            self.reject_typed_guard();
+            self.reject(
+                "`when_match` is typed and this root produces no value output, so the \
+                 guard could never run; use `Pattern::with_root_post_match`, which is \
+                 handed the missing type"
+                    .into(),
+            );
         }
-        self.core.kind_mut(out.node).typed_post_match = true;
         self.set_post_match(out, f);
-    }
-
-    fn reject_typed_guard(&mut self) {
-        self.reject(
-            "`when_match` is typed and this root produces no value output, so the \
-             guard could never run; use `Pattern::with_root_post_match`, which is \
-             handed the missing type"
-                .into(),
-        );
     }
 
     pub fn set_post_match(&mut self, out: PatValueRef, f: crate::matcher::PostMatchFn) {

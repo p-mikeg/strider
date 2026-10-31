@@ -356,10 +356,8 @@ impl PyFunction {
         ignore_casts: IgnoreCasts,
         constraints: Option<Vec<Bound<'_, PyAny>>>,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
-        // Constraints first: `build_query_patterns` TAKES a one-shot control
-        // pattern, and a raise after that burns it for a query that never ran.
         let constraints = collect_constraints(&constraints)?;
-        let patterns = build_query_patterns(py, pat, &ignore_casts)?;
+        let patterns = build_query_patterns(pat, &ignore_casts)?;
         let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
         dedup_matches(&slf, py, raw, generation, ignore_root)
     }
@@ -382,10 +380,8 @@ impl PyFunction {
         ignore_casts: IgnoreCasts,
         constraints: Option<Vec<Bound<'_, PyAny>>>,
     ) -> PyResult<crate::matcher::PyMatch> {
-        // Constraints first: `build_query_patterns` TAKES a one-shot control
-        // pattern, and a raise after that burns it for a query that never ran.
         let constraints = collect_constraints(&constraints)?;
-        let patterns = build_query_patterns(py, pat, &ignore_casts)?;
+        let patterns = build_query_patterns(pat, &ignore_casts)?;
         let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
         let mut matches = dedup_matches(&slf, py, raw, generation, ignore_root)?;
         match matches.len() {
@@ -422,10 +418,8 @@ impl PyFunction {
         signed: bool,
     ) -> PyResult<Option<PyObject>> {
         let cap = capture.resolve()?;
-        // Constraints first: `build_query_patterns` TAKES a one-shot control
-        // pattern, and a raise after that burns it for a query that never ran.
         let constraints = collect_constraints(&constraints)?;
-        let patterns = build_query_patterns(py, pat, &ignore_casts)?;
+        let patterns = build_query_patterns(pat, &ignore_casts)?;
         let (raw, generation) = run_pattern_query(&slf, py, &patterns, &constraints)?;
         let matches = dedup_matches(&slf, py, raw, generation, true)?;
         if signed {
@@ -461,15 +455,11 @@ impl PyFunction {
     /// part-way leaves the graph rewritten.
     fn rewrite(
         &self,
-        py: Python<'_>,
         find: crate::pattern::PatLike<'_>,
         replace: crate::pattern::TemplateLike<'_>,
     ) -> PyResult<usize> {
-        // RHS first, as `find_all` orders its own arguments: compiling the LHS
-        // TAKES a one-shot `into_pat()` pattern, and a raise after that burns
-        // it for a rewrite that never ran.
-        let rhs = replace.to_template(py)?;
-        let lhs = crate::pattern::compile_rewrite_lhs(py, &find)?;
+        let rhs = replace.to_template()?;
+        let lhs = crate::pattern::compile_rewrite_lhs(&find)?;
         let rule =
             strider_opt::rewrite_rule_runtime(lhs, rhs).map_err(crate::errors::into_strider_err)?;
         let mut function = self
@@ -482,21 +472,18 @@ impl PyFunction {
     /// node, returning the total fire count. See `rewrite`.
     fn rewrite_all(
         &self,
-        py: Python<'_>,
         pairs: Vec<(
             crate::pattern::PatLike<'_>,
             crate::pattern::TemplateLike<'_>,
         )>,
     ) -> PyResult<usize> {
-        // Every RHS first, for the reason `rewrite` compiles its one RHS
-        // first: a bad replacement must not burn a one-shot `find` pattern.
         let mut templates = Vec::with_capacity(pairs.len());
         for (_, rhs) in &pairs {
-            templates.push(rhs.to_template(py)?);
+            templates.push(rhs.to_template()?);
         }
         let mut rules: Vec<strider_opt::BoxedRule> = Vec::with_capacity(pairs.len());
         for ((lhs, _), rhs_tpl) in pairs.iter().zip(templates) {
-            let lhs_pat = crate::pattern::compile_rewrite_lhs(py, lhs)?;
+            let lhs_pat = crate::pattern::compile_rewrite_lhs(lhs)?;
             let rule = strider_opt::rewrite_rule_runtime(lhs_pat, rhs_tpl)
                 .map_err(crate::errors::into_strider_err)?;
             rules.push(rule);
@@ -680,13 +667,12 @@ impl IgnoreCasts {
 }
 
 fn build_query_patterns(
-    py: Python<'_>,
     pat: crate::pattern::PatQuery<'_>,
     ignore_casts: &IgnoreCasts,
 ) -> PyResult<Vec<strider_pattern::Pattern>> {
     let mask = ignore_casts.mask();
     Ok(pat
-        .to_patterns(py)?
+        .to_patterns()?
         .into_iter()
         .map(|p| p.ignore_casts_mask(mask))
         .collect())
