@@ -1168,7 +1168,7 @@ fn ordered_leaves_the_xor_of_a_lowered_int_ne_commutative() {
 /// `Xor` still swaps. `int_sle` is the same over `Sless`.
 #[test]
 fn ordered_is_a_no_op_on_int_le_and_int_sle() {
-    fn check<P: MatchPat>(op: IntCmpOp, le: impl Fn(u128, u128) -> P) {
+    fn check<P: MatchPat + 'static>(op: IntCmpOp, le: impl Fn(u128, u128) -> P) {
         let function = one_first_negated_cmp(3, 5, op);
         a::matches(&function, le(5, 3).into_pattern(), 1);
         a::matches(&function, le(5, 3).ordered().into_pattern(), 1);

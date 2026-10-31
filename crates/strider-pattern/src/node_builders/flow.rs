@@ -12,20 +12,20 @@
 //! * `If` inputs `[ctrl(0), cond(1)]`, outputs `[Control(0) true,
 //!   Control(1) false]`.
 
-use super::delegate_node_pat;
+use super::{delegate_node_pat, node_match_pat};
 use crate::node_builders::delegate_with_output;
 use strider_ir::node::{NodeKind, SwitchTableId, ValueType};
 
 use crate::capture::Capture;
 use crate::matcher::match_pat::MatchPat;
-use crate::matcher::{KindSpec, MatcherBuilder, PatValueRef, Pattern};
+use crate::matcher::{KindSpec, Pattern};
 use crate::typed::int_const;
 
 use super::MemPat;
-use super::node_pat::NodePat;
+use crate::expr::Node;
 
 /// A `Call` clobbers caller-saved registers and the memory token.
-pub struct CallPat(NodePat);
+pub struct CallPat(Node);
 
 impl CallPat {
     /// The target, input [`NodeKind::CALL_TARGET_SLOT`].
@@ -124,33 +124,22 @@ impl<B: WithOutput> OutputPat<B> {
 delegate_with_output!(CallPat, 0);
 delegate_node_pat!(CallPat, 0, [capture, build, input, any_input]);
 
-impl MatchPat for CallPat {
-    /// Nests as a value operand, anchored on the first value output. Loose:
-    /// any value output matches. `.res()` tightens it.
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0
-            .with_value_anchor(NodeKind::Call { cc: None }.output_head_len())
-            .compile_anchored(b)
-    }
-
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_anchored(b)
-    }
-}
-
 impl MemPat for CallPat {}
 
+/// Nests as a value operand through the first value output. Loose: any
+/// value output matches. `.res()` tightens it.
 pub fn call() -> CallPat {
     CallPat(
-        NodePat::node(KindSpec::variant_of(&NodeKind::Call { cc: None }))
-            .with_mem_value(NodeKind::CTRL_MEM_OUT_SLOT),
+        Node::new(KindSpec::variant_of(&NodeKind::Call { cc: None }))
+            .with_mem_value(NodeKind::CTRL_MEM_OUT_SLOT)
+            .with_value_anchor(NodeKind::Call { cc: None }.output_head_len()),
     )
 }
 
 /// A `CallOther` is a Sleigh `CALLOTHER` user-op: an opaque
 /// architecture-specific instruction modelled outside the pcode core.
 pub struct CallOtherPat {
-    inner: NodePat,
+    inner: Node,
     name_filter: Option<String>,
 }
 
@@ -171,7 +160,7 @@ impl CallOtherPat {
     /// The raw input slot, unshifted: control, memory and args are addressed
     /// uniformly.
     pub fn arg<P: MatchPat + 'static>(mut self, idx: usize, p: P) -> Self {
-        self.inner = self.inner.input(idx, p);
+        self.inner = self.inner.raw_input(idx, p);
         self
     }
 
@@ -195,15 +184,13 @@ impl CallOtherPat {
     }
 
     /// Lowers any `.name` filter to a node predicate.
-    fn configured(self) -> NodePat {
+    fn configured(self) -> Node {
         let CallOtherPat { inner, name_filter } = self;
         match name_filter {
             // Node-only, so it short-circuits before child recursion.
-            Some(want) => inner.with_node_predicate(move || {
-                Box::new(move |matcher, n| {
-                    matcher.function().call_other_name(n) == Some(want.as_str())
-                })
-            }),
+            Some(want) => inner.with_node_predicate(Box::new(move |matcher, n| {
+                matcher.function().call_other_name(n) == Some(want.as_str())
+            })),
             None => inner,
         }
     }
@@ -216,32 +203,21 @@ impl CallOtherPat {
 delegate_with_output!(CallOtherPat, inner);
 delegate_node_pat!(CallOtherPat, inner, [capture, input, any_input]);
 
-impl MatchPat for CallOtherPat {
-    /// See [`CallPat`]'s impl.
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured()
-            .with_value_anchor(NodeKind::CallOther { user_op_id: 0 }.output_head_len())
-            .compile_anchored(b)
-    }
-
-    fn compile_mem(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.configured().compile_anchored(b)
-    }
-}
-
 impl MemPat for CallOtherPat {}
 
 pub fn call_other() -> CallOtherPat {
     let kind = KindSpec::variant_of(&NodeKind::CallOther { user_op_id: 0 });
     CallOtherPat {
-        inner: NodePat::node(kind).with_mem_value(NodeKind::CTRL_MEM_OUT_SLOT),
+        inner: Node::new(kind)
+            .with_mem_value(NodeKind::CTRL_MEM_OUT_SLOT)
+            .with_value_anchor(NodeKind::CallOther { user_op_id: 0 }.output_head_len()),
         name_filter: None,
     }
 }
 
 /// A `Return` has no outputs, so the pattern is rooted on the node itself and
 /// a capture binds the node.
-pub struct RetPat(NodePat);
+pub struct RetPat(Node);
 
 impl RetPat {
     /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
@@ -258,23 +234,15 @@ impl RetPat {
 
 delegate_node_pat!(RetPat, 0, [capture, build, input, any_input]);
 
-impl MatchPat for RetPat {
-    /// Node-rooted: the synthesized `Any` output is what an alternation or an
-    /// existential slot wires; no value slot can bind it.
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_alt_arm(b)
-    }
-}
-
 pub fn ret() -> RetPat {
-    RetPat(NodePat::node(KindSpec::Exact(NodeKind::Return)))
+    RetPat(Node::new(KindSpec::Exact(NodeKind::Return)))
 }
 
 /// Inputs `[ctrl, mem, target]` plus the optional interworking ISA mode after
 /// them, reached through [`input`](Self::input) and present only on a
 /// mode-switching branch. No outputs, so the pattern is rooted on the node
 /// itself; [`any_input`](Self::any_input) reaches the mode input too.
-pub struct IndirectBranchPat(NodePat);
+pub struct IndirectBranchPat(Node);
 
 impl IndirectBranchPat {
     /// Input [`NodeKind::INDIRECT_BRANCH_TARGET_SLOT`].
@@ -296,21 +264,13 @@ impl IndirectBranchPat {
 
 delegate_node_pat!(IndirectBranchPat, 0, [capture, build, input, any_input]);
 
-impl MatchPat for IndirectBranchPat {
-    /// Node-rooted: the synthesized `Any` output is what an alternation or an
-    /// existential slot wires; no value slot can bind it.
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_alt_arm(b)
-    }
-}
-
 pub fn indirect_branch() -> IndirectBranchPat {
-    IndirectBranchPat(NodePat::node(KindSpec::Exact(NodeKind::IndirectBranch)))
+    IndirectBranchPat(Node::new(KindSpec::Exact(NodeKind::IndirectBranch)))
 }
 
 /// Inputs `[ctrl]` plus the optional memory token an exit-free-cycle sink
 /// carries; no outputs.
-pub struct UnreachablePat(NodePat);
+pub struct UnreachablePat(Node);
 
 impl UnreachablePat {
     /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
@@ -322,36 +282,18 @@ impl UnreachablePat {
 
 delegate_node_pat!(UnreachablePat, 0, [capture, build, input, any_input]);
 
-impl MatchPat for UnreachablePat {
-    /// Node-rooted: the synthesized `Any` output is what an alternation or an
-    /// existential slot wires; no value slot can bind it.
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_alt_arm(b)
-    }
-}
-
 pub fn unreachable() -> UnreachablePat {
-    UnreachablePat(NodePat::node(KindSpec::Exact(NodeKind::Unreachable)))
+    UnreachablePat(Node::new(KindSpec::Exact(NodeKind::Unreachable)))
 }
 
 /// The function's unique entry node: no inputs, one control output at slot 0.
 /// Producing a control output means an `EntryPat` also nests as a control
 /// operand, as in `region().input(0, entry())` or `.ctrl(entry())`.
-pub struct EntryPat(NodePat);
-
-impl EntryPat {}
-
-impl MatchPat for EntryPat {
-    /// The control output is the anchor, so nesting wires that edge into
-    /// whatever control-consuming slot it is passed to.
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_anchored(b)
-    }
-}
+pub struct EntryPat(Node);
 
 pub fn entry() -> EntryPat {
     EntryPat(
-        NodePat::node(KindSpec::Exact(NodeKind::Entry)).with_control_value(NodeKind::CTRL_OUT_SLOT),
+        Node::new(KindSpec::Exact(NodeKind::Entry)).with_control_value(NodeKind::CTRL_OUT_SLOT),
     )
 }
 
@@ -362,29 +304,20 @@ delegate_node_pat!(EntryPat, 0, [capture, build]);
 /// predecessor at raw slots `0..N`, no fixed prefix. Anchored on the control
 /// output at slot 0; the `PhiToken` output at slot 1 is reachable through
 /// [`output`](Self::output).
-pub struct RegionPat(NodePat);
+pub struct RegionPat(Node);
 
 impl RegionPat {
     /// Raw input slot `idx`. The sub-pattern must be control-rooted
     /// (`entry()`, `region()`) or an untyped wildcard (`var`, `anything`): a
     /// typed value sub can never bind a Control edge.
     pub fn input<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
-        Self(self.0.input(idx, p))
-    }
-}
-
-impl MatchPat for RegionPat {
-    /// The control output is the anchor, so nesting wires that edge into
-    /// whatever control-consuming slot it is passed to.
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_anchored(b)
+        Self(self.0.raw_input(idx, p))
     }
 }
 
 pub fn region() -> RegionPat {
     RegionPat(
-        NodePat::node(KindSpec::Exact(NodeKind::Region))
-            .with_control_value(NodeKind::CTRL_OUT_SLOT),
+        Node::new(KindSpec::Exact(NodeKind::Region)).with_control_value(NodeKind::CTRL_OUT_SLOT),
     )
 }
 
@@ -394,7 +327,7 @@ delegate_node_pat!(RegionPat, 0, [capture, build, any_input]);
 /// Inputs `[ctrl, selector]`, one control output per arm. No anchor
 /// output, so the pattern is rooted on the node itself; `output` /
 /// `any_output` reach the arm edges.
-pub struct SwitchPat(NodePat);
+pub struct SwitchPat(Node);
 
 impl SwitchPat {
     /// Input [`NodeKind::SWITCH_SELECTOR_SLOT`], the value the switch
@@ -411,16 +344,8 @@ impl SwitchPat {
     }
 }
 
-impl MatchPat for SwitchPat {
-    /// Node-rooted: the synthesized `Any` output is what an alternation or an
-    /// existential slot wires; no value slot can bind it.
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_alt_arm(b)
-    }
-}
-
 pub fn switch() -> SwitchPat {
-    SwitchPat(NodePat::node(KindSpec::variant_of(&NodeKind::Switch(
+    SwitchPat(Node::new(KindSpec::variant_of(&NodeKind::Switch(
         SwitchTableId::from_u32(0),
     ))))
 }
@@ -431,7 +356,7 @@ delegate_node_pat!(SwitchPat, 0, [capture, build, input, any_input]);
 /// An `If` carries two control-output vertices, true at slot 0 and false at
 /// slot 1.
 pub struct IfPat {
-    inner: NodePat,
+    inner: Node,
     capture_true: Option<Capture>,
     capture_false: Option<Capture>,
 }
@@ -439,7 +364,7 @@ pub struct IfPat {
 impl Default for IfPat {
     fn default() -> Self {
         Self {
-            inner: NodePat::node(KindSpec::Exact(NodeKind::If)),
+            inner: Node::new(KindSpec::Exact(NodeKind::If)),
             capture_true: None,
             capture_false: None,
         }
@@ -481,7 +406,7 @@ impl IfPat {
         self.lower().build()
     }
 
-    fn lower(self) -> NodePat {
+    fn lower(self) -> Node {
         let IfPat {
             inner,
             capture_true,
@@ -496,16 +421,20 @@ impl IfPat {
 delegate_with_output!(IfPat, inner);
 delegate_node_pat!(IfPat, inner, [capture, input, any_input]);
 
-impl MatchPat for IfPat {
-    /// Node-rooted: the two control outputs stay sibling vertices and an `Any`
-    /// output is synthesized for an alternation or existential slot to wire.
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.lower().compile_alt_arm(b)
-    }
-}
-
 pub fn if_else() -> IfPat {
     IfPat::default()
+}
+
+node_match_pat! {
+    CallPat => |p| p.0,
+    CallOtherPat => |p| p.configured(),
+    RetPat => |p| p.0,
+    IndirectBranchPat => |p| p.0,
+    UnreachablePat => |p| p.0,
+    EntryPat => |p| p.0,
+    RegionPat => |p| p.0,
+    SwitchPat => |p| p.0,
+    IfPat => |p| p.lower(),
 }
 
 #[cfg(test)]

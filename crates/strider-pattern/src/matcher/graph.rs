@@ -26,26 +26,22 @@ pub const MAX_PATTERN_NODES: usize = 256;
 /// Taken over every node rather than from the root, which is not derived yet
 /// and may not exist.
 fn unfolded_nodes(graph: &PatGraph) -> usize {
-    let raw = graph.all_node_ids().count();
-    let Ok(order) = crate::graph_ext::topo_order(graph) else {
-        return raw;
-    };
-    let mut size: FxHashMap<NodeId, usize> = FxHashMap::default();
-    let mut deepest = 0;
-    for node in order {
+    // Sealing creates every producer before its consumers, so id order is a
+    // topological one.
+    let mut size: Vec<usize> = Vec::with_capacity(graph.all_node_ids().count());
+    for node in graph.all_node_ids() {
         let inputs = graph
             .node_inputs(node)
             .into_iter()
-            .map(|value| size.get(&graph.producer(value)).copied().unwrap_or(1));
+            .map(|value| size[graph.producer(value).as_u32() as usize]);
         let own = if graph.node_kind(node).is_alternation() {
             1usize.saturating_add(inputs.max().unwrap_or(0))
         } else {
             inputs.fold(1usize, usize::saturating_add)
         };
-        deepest = deepest.max(own);
-        size.insert(node, own);
+        size.push(own);
     }
-    raw.max(deepest)
+    size.iter().copied().max().unwrap_or(0).max(size.len())
 }
 
 pub struct Pattern {
@@ -83,6 +79,12 @@ impl Pattern {
     pub(crate) fn from_graph(graph: PatGraph) -> Self {
         let count = unfolded_nodes(&graph);
         let root = if count > MAX_PATTERN_NODES {
+            // A shared operand is walked once per slot naming it, so a chain of
+            // them unfolds past what a `usize` counts.
+            let count = match count {
+                usize::MAX => format!("over 2^{}", usize::BITS),
+                n => n.to_string(),
+            };
             Err(format!(
                 "pattern has {count} nodes, over the {MAX_PATTERN_NODES} a query can \
                  recurse through; split it or match the parts separately"
