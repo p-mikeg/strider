@@ -133,3 +133,21 @@ def test_the_merge_methods_take_a_path_object(tmp_path, x86_memory_elf, x86_relo
     stripped_lift = strider.lift.load_elf(pathlib.Path(stripped))
     stripped_lift.add_symbol_file(pathlib.Path(dbg))
     assert stripped_lift.symbols()
+
+
+def test_a_rom_mapped_from_another_file_is_checked_on_its_own(tmp_path):
+    """`analyze` stats each mapping behind `mem` and `rom` once, so a `rom`
+    cut from a different file than `mem` still raises when only it changed."""
+    code, data = tmp_path / "code.elf", tmp_path / "data.elf"
+    shutil.copy(fixture_path("x64", "switch"), code)
+    shutil.copy(fixture_path("x64", "switch"), data)
+    mem = strider.lift.load_elf(str(code))
+    rom = strider.lift.load_elf(str(data)).reader()
+    lift = strider.lift.lifter(mem.arch, mem.reader(), rom=rom)
+    cc = strider.sleigh.CallingConvention.x86_64_systemv()
+    entry = mem.symbol("dispatch_value").address
+    lift.analyze(entry, cc)
+    with data.open("ab") as f:
+        f.write(b"\0" * 64)
+    with pytest.raises(strider.StriderError, match="data.elf changed on disk"):
+        lift.analyze(entry, cc)

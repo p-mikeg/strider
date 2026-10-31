@@ -3,13 +3,12 @@
 //! capture. A bare string is not a sub-pattern operand. `"_"` and `"any_"` are
 //! reserved.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyString, PyTuple};
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use strider_ir::node::ValueType as T;
 
 use strider_pattern as sp;
@@ -25,8 +24,10 @@ use strider_pattern::WithOutput;
 
 /// Binds a matched node so its value, op variant or fingerprint can be read
 /// back from the `Match`. Each `Capture()` is globally unique.
-#[pyclass(name = "Capture", module = "strider.pattern", frozen)]
-#[derive(Clone)]
+/// Equal when both wrap the same interned id, so `Capture("x") ==
+/// Capture("x")` and a set/dict dedups them, consistent with `__hash__`.
+#[pyclass(eq, name = "Capture", module = "strider.pattern", frozen)]
+#[derive(Clone, PartialEq)]
 pub struct PyCapture {
     pub(crate) inner: Capture,
 }
@@ -55,35 +56,22 @@ impl PyCapture {
     fn __hash__(&self) -> isize {
         self.inner.id() as i64 as isize
     }
-
-    /// Equal when both wrap the same interned id, so `Capture("x") ==
-    /// Capture("x")` and a set/dict dedups them, consistent with `__hash__`.
-    fn __richcmp__(&self, py: Python<'_>, other: &PyCapture, op: CompareOp) -> PyObject {
-        let same = self.inner.id() == other.inner.id();
-        match op {
-            CompareOp::Eq => same.into_py(py),
-            CompareOp::Ne => (!same).into_py(py),
-            // No meaningful ordering on captures.
-            _ => py.NotImplemented(),
-        }
-    }
 }
 
-// Both tables live for the process: a `Capture` is a bare u32 handle into
-// them, so an id handed out stays resolvable. Nothing prunes them, so a name
-// built from data rather than written in source (`Capture(f"arg{i}")`) is
-// retained for the life of the process.
-fn intern_table() -> &'static Mutex<HashMap<String, Capture>> {
-    static TABLE: std::sync::OnceLock<Mutex<HashMap<String, Capture>>> = std::sync::OnceLock::new();
-    TABLE.get_or_init(|| Mutex::new(HashMap::new()))
+/// Every interned name both ways, for the process: a `Capture` is a bare u32
+/// handle, so an id handed out stays resolvable, and a bound capture's id
+/// renders as its source name in a `repr`. Nothing prunes it, so a name built
+/// from data rather than written in source (`Capture(f"arg{i}")`) is retained
+/// for the life of the process.
+struct Names {
+    by_name: FxHashMap<String, Capture>,
+    by_id: FxHashMap<u32, String>,
 }
 
-// Reverse of `intern_table`, so a bound capture's id can be rendered as its
-// source name in a `repr`.
-fn reverse_name_table() -> &'static Mutex<HashMap<u32, String>> {
-    static TABLE: std::sync::OnceLock<Mutex<HashMap<u32, String>>> = std::sync::OnceLock::new();
-    TABLE.get_or_init(|| Mutex::new(HashMap::new()))
-}
+static NAMES: Mutex<Names> = Mutex::new(Names {
+    by_name: FxHashMap::with_hasher(FxBuildHasher),
+    by_id: FxHashMap::with_hasher(FxBuildHasher),
+});
 
 pub(crate) fn intern_str(name: &str) -> PyResult<Capture> {
     if name == "_" || name == "any_" {
@@ -92,30 +80,23 @@ pub(crate) fn intern_str(name: &str) -> PyResult<Capture> {
         )));
     }
     // Hits are every `m["off"]` / `"off" in m`, so they take one lock and allocate
-    // nothing; only a first sighting builds the `String` and the reverse entry.
-    let mut table = intern_table()
+    // nothing; only a first sighting builds the `String`s.
+    let mut names = NAMES
         .lock()
         .map_err(|_| into_strider_err(anyhow::anyhow!("intern table lock poisoned")))?;
-    if let Some(&cap) = table.get(name) {
+    if let Some(&cap) = names.by_name.get(name) {
         return Ok(cap);
     }
     let cap = Capture::new();
-    table.insert(name.to_string(), cap);
-    drop(table);
-    if let Ok(mut rev) = reverse_name_table().lock() {
-        rev.entry(cap.id()).or_insert_with(|| name.to_string());
-    }
+    names.by_name.insert(name.to_string(), cap);
+    names.by_id.insert(cap.id(), name.to_string());
     Ok(cap)
 }
 
 /// `Capture('name')` for a string-interned capture, else `Capture(<id>)` for a
 /// fresh anonymous one.
 pub(crate) fn capture_display(id: u32) -> String {
-    match reverse_name_table()
-        .lock()
-        .ok()
-        .and_then(|t| t.get(&id).cloned())
-    {
+    match NAMES.lock().ok().and_then(|t| t.by_id.get(&id).cloned()) {
         Some(name) => format!("Capture('{name}')"),
         None => format!("Capture({id})"),
     }
@@ -562,74 +543,6 @@ fn frame_mark() -> usize {
     std::hint::black_box(std::ptr::from_ref(&probe)) as usize
 }
 
-/// Lowest address this thread's stack can reach, from the platform's own
-/// bounds. `None` where they are not queryable.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-fn stack_bottom() -> Option<usize> {
-    // `pthread_attr_t` is 56 bytes on glibc and musl and smaller on the 32-bit
-    // ABIs; the buffer is well over it and passed only back to pthread.
-    #[repr(C, align(16))]
-    struct AttrBuf([u8; 512]);
-
-    unsafe extern "C" {
-        fn pthread_self() -> usize;
-        fn pthread_getattr_np(thread: usize, attr: *mut u8) -> i32;
-        fn pthread_attr_getstack(attr: *const u8, addr: *mut usize, size: *mut usize) -> i32;
-        fn pthread_attr_destroy(attr: *mut u8) -> i32;
-    }
-
-    let mut attr = AttrBuf([0; 512]);
-    let (mut addr, mut size) = (0usize, 0usize);
-    unsafe {
-        if pthread_getattr_np(pthread_self(), attr.0.as_mut_ptr()) != 0 {
-            return None;
-        }
-        let got = pthread_attr_getstack(attr.0.as_ptr(), &raw mut addr, &raw mut size);
-        pthread_attr_destroy(attr.0.as_mut_ptr());
-        (got == 0 && size > 0).then_some(addr)
-    }
-}
-
-#[cfg(target_os = "macos")]
-fn stack_bottom() -> Option<usize> {
-    unsafe extern "C" {
-        fn pthread_self() -> *mut u8;
-        fn pthread_get_stackaddr_np(thread: *mut u8) -> *mut u8;
-        fn pthread_get_stacksize_np(thread: *mut u8) -> usize;
-    }
-
-    // `stackaddr` here is the HIGH end, the opposite of the pthread_attr one.
-    unsafe {
-        let thread = pthread_self();
-        (pthread_get_stackaddr_np(thread) as usize).checked_sub(pthread_get_stacksize_np(thread))
-    }
-}
-
-#[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
-fn stack_bottom() -> Option<usize> {
-    None
-}
-
-thread_local! {
-    /// [`stack_bottom`] for this thread, which does not move. The glibc query
-    /// reads `/proc/self/maps` for the main thread, so asking per compile
-    /// would cost more than the compile.
-    static CACHED_STACK_BOTTOM: std::cell::Cell<Option<Option<usize>>> =
-        const { std::cell::Cell::new(None) };
-}
-
-/// What one compile entering at `here` may consume.
-fn compile_budget(here: usize) -> usize {
-    let bottom = CACHED_STACK_BOTTOM.with(|c| {
-        let cached = c.get().unwrap_or_else(stack_bottom);
-        c.set(Some(cached));
-        cached
-    });
-    bottom.map_or(FALLBACK_PATTERN_STACK, |bottom| {
-        here.saturating_sub(bottom) / STACK_BUDGET_SHARE
-    })
-}
-
 fn too_deep() -> PyErr {
     into_strider_err(anyhow::anyhow!(
         "pattern nesting too deep: over {MAX_PATTERN_NESTING} levels. That is \
@@ -650,7 +563,9 @@ impl DepthGuard {
             }
             if next == 1 {
                 STACK_BASE.set(here);
-                STACK_BUDGET.set(compile_budget(here));
+                let left = stacker::remaining_stack();
+                STACK_BUDGET
+                    .set(left.map_or(FALLBACK_PATTERN_STACK, |left| left / STACK_BUDGET_SHARE));
                 COMPILE_STEPS.set(0);
             } else {
                 let used = STACK_BASE.get().saturating_sub(here);
@@ -857,42 +772,43 @@ fn run_when_predicate(
     bindings: &strider_pattern::Bindings,
     py_func: &PyObject,
 ) -> bool {
+    run_predicate(
+        ".when()",
+        |at| {
+            vec![strider_pattern::Match::new(
+                node,
+                bindings.clone(),
+                at.generation,
+            )]
+        },
+        |py, m| py_func.call1(py, (m,)),
+    )
+    .unwrap_or(false)
+}
+
+/// A Python predicate's `bool` verdict on the `Match` `inner` builds against
+/// the live query. `None` without one, or once a predicate has raised, this
+/// one included: its exception is stashed for the query boundary.
+fn run_predicate(
+    what: &str,
+    inner: impl FnOnce(&crate::function::FunctionAt) -> Vec<strider_pattern::Match>,
+    call: impl FnOnce(Python<'_>, Py<crate::matcher::PyMatch>) -> PyResult<PyObject>,
+) -> Option<bool> {
     Python::with_gil(|py| {
         if peek_pending_query_error() {
-            return false;
+            return None;
         }
         let Some(at) = current_query_function(py) else {
             // Unreachable: every query path pushes an entry before running the
             // matcher. Fail closed rather than panic into the matcher's stack.
-            eprintln!(
-                "strider .when(): no active query function on this thread (internal \
-                 error); treating as no-match"
-            );
-            return false;
+            eprintln!("strider {what}: no active query function on this thread (internal error)");
+            return None;
         };
-        let m = strider_pattern::Match::new(node, bindings.clone(), at.generation);
-        let py_match = match Py::new(py, crate::matcher::PyMatch { inner: vec![m], at }) {
-            Ok(p) => p,
-            Err(e) => {
-                stash_pending_query_error(e);
-                return false;
-            }
-        };
-        let args = PyTuple::new_bound(py, [py_match]);
-        let result = py_func.call_bound(py, args, None);
-        match result {
-            Ok(obj) => match obj.extract::<bool>(py) {
-                Ok(b) => b,
-                Err(e) => {
-                    stash_pending_query_error(e);
-                    false
-                }
-            },
-            Err(e) => {
-                stash_pending_query_error(e);
-                false
-            }
-        }
+        let inner = inner(&at);
+        let verdict = Py::new(py, crate::matcher::PyMatch { inner, at })
+            .and_then(|m| call(py, m))
+            .and_then(|r| r.extract::<bool>(py));
+        verdict.map_err(stash_pending_query_error).ok()
     })
 }
 
@@ -1823,12 +1739,11 @@ fn cloned_opt<T: Clone>(v: &Option<T>) -> Option<T> {
 
 // Every node builder is the same skeleton over a different operand field-set,
 // generated here from a compact spec. `memory:` is whether the node produces
-// a memory token. Field kinds: `pat` (one operand, the row naming its `Slot`), `pat_list`
-// (a value `pat` whose setter coerces a list into a `one_of`), `multi` (an
-// indexed operand vector, the row naming its `Slot`), `scalar`,
-// `scalar_inner` (a Py wrapper stored via `.inner`), `flag` (no-arg bool
-// setter), and `region` (the four address-region setters, recorded in call
-// order).
+// a memory token. Field kinds: `pat` (one operand, the row naming its `Slot`
+// and any coercion its setter applies), `multi` (an indexed operand vector,
+// the row naming its `Slot`), `scalar` (a value, the row naming any field of
+// the Python wrapper it stores), `flag` (no-arg bool setter), and `region`
+// (the four address-region setters, recorded in call order).
 
 macro_rules! node_builder {
     // A macro call cannot sit in struct-field position, so the field decls
@@ -1840,19 +1755,13 @@ macro_rules! node_builder {
             $($acc)*
         }
     };
-    (@members $inner:ident [ $($acc:tt)* ] { pat $name:ident($c:ident): $m:ident = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@members $inner [ $($acc)* $name: Option<Py<PyAny>>, ] $($rest)*);
-    };
-    (@members $inner:ident [ $($acc:tt)* ] { pat_list $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
+    (@members $inner:ident [ $($acc:tt)* ] { pat $name:ident($c:ident) $($coerce:ident)?: $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Option<Py<PyAny>>, ] $($rest)*);
     };
     (@members $inner:ident [ $($acc:tt)* ] { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Vec<($idx, Py<PyAny>)>, ] $($rest)*);
     };
-    (@members $inner:ident [ $($acc:tt)* ] { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@members $inner [ $($acc)* $name: Option<$store>, ] $($rest)*);
-    };
-    (@members $inner:ident [ $($acc:tt)* ] { scalar_inner $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal } $($rest:tt)*) => {
+    (@members $inner:ident [ $($acc:tt)* ] { scalar $name:ident($set:ty => $store:ty) $(.$field:ident)?: $m:ident($arg:ident) = $doc:literal } $($rest:tt)*) => {
         node_builder!(@members $inner [ $($acc)* $name: Option<$store>, ] $($rest)*);
     };
     (@members $inner:ident [ $($acc:tt)* ] { flag $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
@@ -1865,16 +1774,10 @@ macro_rules! node_builder {
     // Bound to a `let` first: an `if let` scrutinee keeps the `Ref` alive for
     // the body, where compiling the operand runs Python (`__index__`) that can
     // re-enter a setter and take `borrow_mut`.
-    (@apply $self:ident, $py:ident, $b:ident, { pat $name:ident($c:ident): $m:ident = $doc:literal }) => {
+    (@apply $self:ident, $py:ident, $b:ident, { pat $name:ident($c:ident) $($coerce:ident)?: $m:ident = $doc:literal }) => {
         let __slot = clone_opt($py, &$self.inner.borrow().$name);
         if let Some(__p) = __slot {
             $b = $b.$m(expr(__p.bind($py), Slot::$c)?);
-        }
-    };
-    (@apply $self:ident, $py:ident, $b:ident, { pat_list $name:ident: $m:ident = $doc:literal }) => {
-        let __slot = clone_opt($py, &$self.inner.borrow().$name);
-        if let Some(__p) = __slot {
-            $b = $b.$m(expr(__p.bind($py), Slot::Value)?);
         }
     };
     (@apply $self:ident, $py:ident, $b:ident, { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal }) => {
@@ -1889,13 +1792,8 @@ macro_rules! node_builder {
             $b = $b.$m(__idx, expr(__p.bind($py), Slot::$compile)?);
         }
     };
-    (@apply $self:ident, $py:ident, $b:ident, { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {
+    (@apply $self:ident, $py:ident, $b:ident, { scalar $name:ident($set:ty => $store:ty) $(.$field:ident)?: $m:ident($arg:ident) = $doc:literal }) => {
         if let Some(__v) = cloned_opt(&$self.inner.borrow().$name) {
-            $b = $b.$m(__v);
-        }
-    };
-    (@apply $self:ident, $py:ident, $b:ident, { scalar_inner $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {
-        if let Some(__v) = $self.inner.borrow().$name {
             $b = $b.$m(__v);
         }
     };
@@ -1950,33 +1848,25 @@ macro_rules! node_builder {
         }
     };
 
-    (@traverse $inner:ident, $visit:ident, { pat $name:ident($c:ident): $m:ident = $doc:literal }) => {
-        if let Some(__p) = $inner.$name.as_ref() { $visit.call(__p)?; }
-    };
-    (@traverse $inner:ident, $visit:ident, { pat_list $name:ident: $m:ident = $doc:literal }) => {
+    (@traverse $inner:ident, $visit:ident, { pat $name:ident($c:ident) $($coerce:ident)?: $m:ident = $doc:literal }) => {
         if let Some(__p) = $inner.$name.as_ref() { $visit.call(__p)?; }
     };
     (@traverse $inner:ident, $visit:ident, { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal }) => {
         for (_, __p) in &$inner.$name { $visit.call(__p)?; }
     };
-    (@traverse $inner:ident, $visit:ident, { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
-    (@traverse $inner:ident, $visit:ident, { scalar_inner $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
+    (@traverse $inner:ident, $visit:ident, { scalar $name:ident($set:ty => $store:ty) $(.$field:ident)?: $m:ident($arg:ident) = $doc:literal }) => {};
     (@traverse $inner:ident, $visit:ident, { flag $name:ident: $m:ident = $doc:literal }) => {};
     (@traverse $inner:ident, $visit:ident, { region $name:ident }) => {};
 
     // Mirrors `@traverse`: every slot reported there has to be droppable here,
     // or a cycle through it is uncollectable.
-    (@clear $inner:ident, { pat $name:ident($c:ident): $m:ident = $doc:literal }) => {
-        $inner.$name = None;
-    };
-    (@clear $inner:ident, { pat_list $name:ident: $m:ident = $doc:literal }) => {
+    (@clear $inner:ident, { pat $name:ident($c:ident) $($coerce:ident)?: $m:ident = $doc:literal }) => {
         $inner.$name = None;
     };
     (@clear $inner:ident, { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal }) => {
         $inner.$name.clear();
     };
-    (@clear $inner:ident, { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
-    (@clear $inner:ident, { scalar_inner $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {};
+    (@clear $inner:ident, { scalar $name:ident($set:ty => $store:ty) $(.$field:ident)?: $m:ident($arg:ident) = $doc:literal }) => {};
     (@clear $inner:ident, { flag $name:ident: $m:ident = $doc:literal }) => {};
     (@clear $inner:ident, { region $name:ident }) => {};
 
@@ -1990,24 +1880,12 @@ macro_rules! node_builder {
             $($acc)*
         }
     };
-    (@setters $ty:ident [ $($acc:tt)* ] { pat $name:ident($c:ident): $m:ident = $doc:literal } $($rest:tt)*) => {
+    (@setters $ty:ident [ $($acc:tt)* ] { pat $name:ident($c:ident) $($coerce:ident)?: $m:ident = $doc:literal } $($rest:tt)*) => {
         node_builder!(@setters $ty [ $($acc)*
             #[doc = $doc]
-            fn $name<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
+            fn $name<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyResult<PyRef<'py, Self>> {
+                $( let p = $coerce(slf.py(), p)?; )?
                 slf.inner.borrow_mut().$name = Some(p);
-                slf
-            }
-        ] $($rest)*);
-    };
-    (@setters $ty:ident [ $($acc:tt)* ] { pat_list $name:ident: $m:ident = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@setters $ty [ $($acc)*
-            #[doc = $doc]
-            fn $name<'py>(
-                slf: PyRef<'py, Self>,
-                py: Python<'_>,
-                p: Py<PyAny>,
-            ) -> PyResult<PyRef<'py, Self>> {
-                slf.inner.borrow_mut().$name = Some(coerce_operand_list(py, p)?);
                 Ok(slf)
             }
         ] $($rest)*);
@@ -2026,20 +1904,11 @@ macro_rules! node_builder {
             }
         ] $($rest)*);
     };
-    (@setters $ty:ident [ $($acc:tt)* ] { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal } $($rest:tt)*) => {
+    (@setters $ty:ident [ $($acc:tt)* ] { scalar $name:ident($set:ty => $store:ty) $(.$field:ident)?: $m:ident($arg:ident) = $doc:literal } $($rest:tt)*) => {
         node_builder!(@setters $ty [ $($acc)*
             #[doc = $doc]
             fn $name<'py>(slf: PyRef<'py, Self>, $arg: $set) -> PyRef<'py, Self> {
-                slf.inner.borrow_mut().$name = Some($arg);
-                slf
-            }
-        ] $($rest)*);
-    };
-    (@setters $ty:ident [ $($acc:tt)* ] { scalar_inner $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal } $($rest:tt)*) => {
-        node_builder!(@setters $ty [ $($acc)*
-            #[doc = $doc]
-            fn $name<'py>(slf: PyRef<'py, Self>, $arg: $set) -> PyRef<'py, Self> {
-                slf.inner.borrow_mut().$name = Some($arg.inner);
+                slf.inner.borrow_mut().$name = Some($arg $(.$field)?);
                 slf
             }
         ] $($rest)*);
@@ -2217,7 +2086,7 @@ node_builder! {
     memory: false,
     slots: [any_input, input, output],
     fields: [
-        { scalar_inner space(crate::sleigh::PyVnSpace => rsleigh::VnSpace): space(s)
+        { scalar space(crate::sleigh::PyVnSpace => rsleigh::VnSpace).inner: space(s)
             = "Restrict the match to a specific memory space." },
         { pat addr(Value): addr = "Constrain the load's address operand." },
         { pat mem(Memory): mem
@@ -2250,7 +2119,7 @@ node_builder! {
     fields: [
         { pat addr(Value): addr = "Constrain the store's address operand." },
         { pat data(Value): data = "Constrain the store's stored-value operand." },
-        { scalar_inner space(crate::sleigh::PyVnSpace => rsleigh::VnSpace): space(s)
+        { scalar space(crate::sleigh::PyVnSpace => rsleigh::VnSpace).inner: space(s)
             = "Restrict the match to a specific memory space." },
         { pat mem(Memory): mem = "Constrain the store's memory predecessor." },
         { scalar bit_width(u32 => u32): bit_width(n) = "Filter stores by data width in bits." },
@@ -2282,7 +2151,7 @@ node_builder! {
     memory: true,
     slots: [any_input, input, output],
     fields: [
-        { pat_list target: target
+        { pat target(Value) coerce_operand_list: target
             = "Constrain the call target. `p` is any pattern operand, including a \
                raw int, which matches a call to that literal address \
                (`target(0x1000)`). A list of them matches a call to any one \
@@ -2410,7 +2279,7 @@ node_builder! {
     memory: false,
     slots: [any_input, input],
     fields: [
-        { pat_list target: target
+        { pat target(Value) coerce_operand_list: target
             = "Constrain the dispatch target (`inputs[2]`). `p` is any pattern \
                operand, including a raw int, which matches a branch to that \
                literal address. A list of them matches any one entry; an empty \
@@ -2449,7 +2318,7 @@ node_builder! {
     memory: false,
     slots: [any_input, input, output],
     fields: [
-        { pat_list selector: selector
+        { pat selector(Value) coerce_operand_list: selector
             = "The value the switch dispatches on (`inputs[1]`). The arms' \
                addresses are the control outputs, not this slot. `p` is any \
                pattern operand, including a raw int, which matches that literal \
@@ -2474,10 +2343,10 @@ node_builder! {
         { pat cond(Value): cond = "Constrain the If's condition operand." },
         { pat ctrl(Value): ctrl
             = "Match `p` against the If's direct ctrl predecessor (`inputs[0]`)." },
-        { scalar_inner capture_true(PyCapture => Capture): capture_true(c)
+        { scalar capture_true(PyCapture => Capture).inner: capture_true(c)
             = "Bind the If's true control-output value to `c`, the edge \
                operand `dominates` / `phi_input_from_edge` take." },
-        { scalar_inner capture_false(PyCapture => Capture): capture_false(c)
+        { scalar capture_false(PyCapture => Capture).inner: capture_false(c)
             = "Bind the If's false control-output value to `c`. See \
                `capture_true`." },
     ],
@@ -2663,20 +2532,22 @@ pub fn negate(c: &Bound<'_, PyAny>) -> PyResult<PyJoinConstraint> {
     })
 }
 
-/// The coerced operands, the constraint objects themselves, and any predicate
-/// handle a `Where` closure captured.
-type CoercedConstraints = (Vec<Arc<ConstraintTree>>, Vec<PyObject>, Vec<PredicateFn>);
-
-/// Coerces every listed constraint, collecting the handles the composite ends
-/// up owning.
-fn coerce_all(constraints: &[Bound<'_, PyAny>]) -> PyResult<CoercedConstraints> {
+/// `node` over every listed constraint, coerced, owning the handles the
+/// composite ends up holding.
+fn composite(
+    constraints: &[Bound<'_, PyAny>],
+    node: fn(Vec<Arc<ConstraintTree>>) -> ConstraintNode,
+) -> PyResult<PyJoinConstraint> {
     let mut predicates = Vec::new();
     let coerced = constraints
         .iter()
         .map(|c| coerce_tree(c, &mut predicates))
         .collect::<PyResult<_>>()?;
-    let operands = constraints.iter().map(|c| c.clone().unbind()).collect();
-    Ok((coerced, operands, predicates))
+    Ok(PyJoinConstraint {
+        inner: ConstraintTree::new(node(coerced))?,
+        operands: constraints.iter().map(|c| c.clone().unbind()).collect(),
+        predicates,
+    })
 }
 
 /// A constraint that passes when ANY of the listed constraints passes. An
@@ -2686,12 +2557,7 @@ fn coerce_all(constraints: &[Bound<'_, PyAny>]) -> PyResult<CoercedConstraints> 
 /// how you express OR.
 #[pyfunction]
 pub fn any_of(constraints: Vec<Bound<'_, PyAny>>) -> PyResult<PyJoinConstraint> {
-    let (coerced, operands, predicates) = coerce_all(&constraints)?;
-    Ok(PyJoinConstraint {
-        inner: ConstraintTree::new(ConstraintNode::Any(coerced))?,
-        operands,
-        predicates,
-    })
+    composite(&constraints, ConstraintNode::Any)
 }
 
 /// A constraint that passes only when EVERY listed constraint passes. An
@@ -2699,12 +2565,7 @@ pub fn any_of(constraints: Vec<Bound<'_, PyAny>>) -> PyResult<PyJoinConstraint> 
 /// (the top-level list does not nest).
 #[pyfunction]
 pub fn all_of(constraints: Vec<Bound<'_, PyAny>>) -> PyResult<PyJoinConstraint> {
-    let (coerced, operands, predicates) = coerce_all(&constraints)?;
-    Ok(PyJoinConstraint {
-        inner: ConstraintTree::new(ConstraintNode::All(coerced))?,
-        operands,
-        predicates,
-    })
+    composite(&constraints, ConstraintNode::All)
 }
 
 /// Base class for a user-defined join constraint. Subclass and override
@@ -2795,34 +2656,11 @@ fn coerce_tree(
 /// `c` in whichever pattern bound it. Any exception is stashed for the query
 /// boundary to re-raise; the row drops meanwhile.
 fn run_join_predicate(tuple: &sp::JoinedMatch, obj: &PyObject) -> Option<bool> {
-    Python::with_gil(|py| {
-        if peek_pending_query_error() {
-            return None;
-        }
-        let Some(at) = current_query_function(py) else {
-            eprintln!(
-                "strider JoinPredicate: no active query function on this thread \
-                 (internal error); dropping the row"
-            );
-            return None;
-        };
-        let verdict = Py::new(
-            py,
-            crate::matcher::PyMatch {
-                inner: tuple.clone(),
-                at,
-            },
-        )
-        .and_then(|py_match| obj.call_method1(py, "constraint", (py_match,)))
-        .and_then(|r| r.extract::<bool>(py));
-        match verdict {
-            Ok(b) => Some(b),
-            Err(e) => {
-                stash_pending_query_error(e);
-                None
-            }
-        }
-    })
+    run_predicate(
+        "JoinPredicate",
+        |_| tuple.clone(),
+        |py, m| obj.call_method1(py, "constraint", (m,)),
+    )
 }
 
 node_builder! {
@@ -2835,7 +2673,7 @@ node_builder! {
     memory: false,
     slots: [any_input, input, output],
     fields: [
-        { scalar_inner for_vn(crate::sleigh::PyVn => rsleigh::Vn): for_vn(vn)
+        { scalar for_vn(crate::sleigh::PyVn => rsleigh::Vn).inner: for_vn(vn)
             = "Restrict the match to phi nodes tagged `vn` or a register containing \
                it, so `eax` matches a phi tagged `rax`." },
         { multi inputs(usize): phi_input(Value)
