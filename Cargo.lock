@@ -1392,9 +1392,7 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "criterion",
- "graph-algorithms",
  "itertools 0.13.0",
- "petgraph",
  "rsleigh",
  "rustc-hash 2.1.2",
  "strider-graph",

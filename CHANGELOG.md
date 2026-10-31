@@ -146,6 +146,31 @@
 
 ### Breaking, Rust
 
+- The doc-hidden `Expr` is no longer a `TemplatePat`, so
+  `rewrite_rule(lhs, anything().into_expr())` is a compile error, where it
+  compiled and panicked when the rule was built. A front end that builds the
+  tree itself takes it to a template through `Expr::into_template` and
+  `Expr::capture_typed`, whose match-only parts refuse the template.
+- The `*_const_with!` capture lists drop the `int_unary_op` kind: `Neg` is
+  the one `IntUnaryOp`, so there was nothing for it to tell apart.
+- A `*_const_with_fn` constant declares its captures one at a time,
+  `.declare(c)` / `.declare_optional(c)`, where `.declaring(vec)` /
+  `.declaring_optional(vec)` replaced the list.
+- A repeated `CallOtherPat::name` or `PhiPat::for_vn` requires every name or
+  varnode given, where the last one replaced the rest, so
+  `phi_for(rbx).for_vn(rax)` matches nothing rather than the `rax` phi. A
+  silent change of answer. Python's `.name()` / `.for_vn()` still replace.
+  `IfPat` no longer implements `Default`; `if_else()` builds it.
+- `WithOutput`'s `capture_output` / `output_width` / `output_ty` are one
+  `with_output(slot, OutputAspect)`, `OutputAspect` being the one constraint
+  an `.output(slot)` / `.any_output()` terminal commits.
+- `MatcherBuilder` and `TemplateBuilder` build straight into the pattern
+  graph, so `input` refuses a producer built after its consumer, reported
+  through the root at `finish`: build each operand before the node consuming
+  it. A template `capture` may still be built anywhere. A cyclic wiring is
+  refused by the same rule, where the refusal named a cycle, and like any
+  refusal it is reported only when it comes first: a cycle wired before an
+  explicit `reject` is now the error reported, where the `reject` was.
 - A `call()` / `call_other()` in a raw slot (`input`, `any_input`,
   `phi_token`, `CallOtherPat::arg`) nests through any of its outputs, its
   control, memory or value edge, where it nested through a value output
@@ -444,6 +469,8 @@
 
 ### Changed, Python
 
+- Of several captures a rewrite's template references and its pattern leaves
+  unbound, the error names the first written, where it named the last.
 - A memory slot (`mem`, `MemPhiPat.phi_input`) takes `anything()`,
   `var(c)` and a bare `Capture`, as Rust does, which bind the memory token,
   through a `.capture()` or `.when()` as a `one_of` there was taken. A
@@ -647,6 +674,14 @@
 
 ### Changed, Rust
 
+- The crate-root value-op factories (`int_add`, `int_cmp`, `float_neg`, ...)
+  and `template::`'s are one set: `template::int_add` is `int_add`. An op
+  takes any pattern operands and is a match pattern when they are, a template
+  when they are, so a wrong-side operand is refused where the op is used
+  rather than where it is built.
+- `Template::referenced_captures` lists captures in written order, so a
+  rewrite's coverage error and `instantiate`'s unbound-capture error name the
+  first unbound capture written, where they named the last.
 - `rewrite_rule_runtime` errors, and `rewrite_rule` panics, on an RHS
   `Template` with no root, whether the builder refused it or it is rootless
   or multi-sink, as both already did on such an LHS. The rule was built and

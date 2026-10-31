@@ -77,8 +77,7 @@ pub struct Template {
 }
 
 impl Template {
-    /// For `TemplateBuilder::finish`, once the staging core has sealed the
-    /// staged DAG.
+    /// For `TemplateBuilder::finish`.
     pub(crate) fn from_graph(
         graph: Graph<TmplNode, TmplValue, NeverCacheable>,
         declared_captures: Vec<Capture>,
@@ -96,7 +95,7 @@ impl Template {
     /// The build root is the unique sink, recovered structurally.
     ///
     /// # Errors
-    /// Unless there is exactly one sink: zero means rootless or cyclic, more
+    /// Unless there is exactly one sink: zero means an empty template, more
     /// than one means multi-rooted. Also if the builder refused a verb.
     pub fn root(&self) -> anyhow::Result<NodeId> {
         if let Some(why) = &self.rejected {

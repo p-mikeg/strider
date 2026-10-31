@@ -16,11 +16,9 @@ pub use graph::Template;
 /// is described through [`TemplateBuilder`], never by handing it a vertex.
 pub(crate) use graph::{TmplNodeKind, TmplValue};
 
-// Build-side twins of the match-side value-op factories. They share the same
-// typed structs but carry `TemplatePat` constructor bounds, so the
-// match/template boundary is enforced at the construction call site.
-// Re-exported so a rewrite RHS reads `strider_pattern::template::add(...)`.
-pub use crate::typed::value_ops::template::*;
+// The value-op factories, so a rewrite RHS reads
+// `strider_pattern::template::int_add(...)`.
+pub use crate::typed::value_ops::ops::*;
 
 use std::collections::BTreeMap;
 
@@ -34,7 +32,7 @@ use strider_ir::node::{
 use strider_ir::{Function, IRBuilder, IRViewer};
 
 use crate::bindings::Bindings;
-use crate::graph_ext::{consumed_inputs, topo_order};
+use crate::graph_ext::consumed_inputs;
 
 pub type TemplateKindFn = Box<dyn Fn(&TemplateCtx<'_>) -> anyhow::Result<NodeKind> + Send>;
 
@@ -142,7 +140,9 @@ pub fn instantiate_guarded<B: IRBuilder>(
     before_build: impl FnOnce(&Function) -> anyhow::Result<()>,
 ) -> anyhow::Result<ValueId> {
     let root = template.root()?;
-    let order = topo_order(&template.graph)?;
+    // Ids run producers first but for a capture, which materialises before
+    // any node is built.
+    let order: Vec<NodeId> = template.graph.all_node_ids().collect();
 
     // Scanned before the mutating build loop, which is what the immutable
     // `function` borrow requires.
@@ -164,7 +164,8 @@ pub fn instantiate_guarded<B: IRBuilder>(
 
     // Every step first, so a closure's skip or an unbound capture declines
     // the template before any node exists.
-    let mut plan: Vec<(NodeId, Step)> = Vec::with_capacity(order.len());
+    let mut plan: Vec<(NodeId, NodeKind)> = Vec::with_capacity(order.len());
+    let mut unbound = None;
     for vtx in order {
         let nd = template.graph.node_kind(vtx);
         if matches!(nd.kind, TmplNodeKind::Build(_)) && template.graph.node_outputs(vtx).is_empty()
@@ -183,7 +184,15 @@ pub fn instantiate_guarded<B: IRBuilder>(
                 let TmplValue::ValueCapture(cap) = *template.graph.value_kind_ref(out_vtx) else {
                     unreachable!("a capture leaf's one output is its ValueCapture")
                 };
-                plan.push((vtx, Step::Reuse(out_vtx, cap)));
+                match bindings.get_value(cap) {
+                    Some(value) => {
+                        materialised.insert(out_vtx, value);
+                        if vtx == root {
+                            root_value = Some(value);
+                        }
+                    }
+                    None => unbound = unbound.or(Some(cap)),
+                }
                 continue;
             }
             TmplNodeKind::Build(TemplateKind::Exact(NodeKind::IntConst(_))) => {
@@ -243,34 +252,18 @@ pub fn instantiate_guarded<B: IRBuilder>(
                  IEEE pattern at the width it is evaluated at"
             );
         }
-        plan.push((vtx, Step::Build(kind)));
+        plan.push((vtx, kind));
     }
     // After every closure, so a skip declines the template ahead of this.
-    for (_, step) in &plan {
-        if let Step::Reuse(_, cap) = *step
-            && bindings.get_value(cap).is_none()
-        {
-            anyhow::bail!("capture {cap:?} referenced in template but unbound by LHS");
-        }
+    if let Some(cap) = unbound {
+        anyhow::bail!("capture {cap:?} referenced in template but unbound by LHS");
     }
 
-    if plan.iter().any(|(_, step)| matches!(step, Step::Build(_))) {
+    if !plan.is_empty() {
         before_build(builder.function())?;
     }
 
-    for (vtx, step) in plan {
-        let kind = match step {
-            Step::Reuse(out_vtx, cap) => {
-                let value = bindings.get_value(cap).expect("checked bound above");
-                materialised.insert(out_vtx, value);
-                if vtx == root {
-                    root_value = Some(value);
-                }
-                continue;
-            }
-            Step::Build(kind) => kind,
-        };
-
+    for (vtx, kind) in plan {
         let inputs = collect_inputs(template, vtx, &materialised)?;
 
         // Usually a single value output; a multi-output node such as a
@@ -320,14 +313,6 @@ pub fn instantiate_guarded<B: IRBuilder>(
     }
 
     root_value.ok_or_else(|| anyhow!("root template node never materialised"))
-}
-
-/// How one template node materialises.
-enum Step {
-    /// A capture leaf's output vertex and the capture whose LHS value it
-    /// reuses.
-    Reuse(TmplValueId, crate::Capture),
-    Build(NodeKind),
 }
 
 /// A `IntConstId` indexes one function's interner at one width, so a template

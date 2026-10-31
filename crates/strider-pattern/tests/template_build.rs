@@ -206,6 +206,34 @@ fn instantiate_bare_var_resolves_to_bound_output() {
     assert_eq!(fx.walk().count(), pre_count, "no fresh node created");
 }
 
+/// A capture takes no input, so a raw template may build one after the node
+/// consuming it.
+#[test]
+fn a_capture_built_after_its_consumer_instantiates() {
+    let c = Capture::new();
+    let mut fx = make_empty_fn(|b| {
+        let five = b.build_int_const(5u64, T::int(64))?;
+        let seven = b.build_int_const(7u64, T::int(64))?;
+        b.build_int_binary_operation(five, seven, IntBinaryOp::Add, T::int(64))
+    })
+    .unwrap();
+    let lhs = int_add(int_const(5u128), var(c)).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
+    let bound = bindings.get_value(c).unwrap();
+
+    let mut b = TemplateBuilder::new();
+    let neg = b.node(NodeKind::IntUnaryOp(strider_ir::IntUnaryOp::Neg));
+    let x = b.capture(c);
+    b.input(neg, 0, x);
+    let _out = b.value_output(neg, 0);
+    let rhs = b.finish();
+
+    let resolved = instantiate_at_root(&mut fx, &rhs, &bindings, root_node, root_ty);
+    let node = fx.producer(resolved);
+    assert!(matches!(fx.node_kind(node), NodeKind::IntUnaryOp(_)));
+    assert_eq!(fx.node_inputs(node)[0], bound);
+}
+
 /// A `Template` may wire a multi-output interior node's non-value output into a
 /// later consumer. Here the `Store`'s memory output feeds the `Load`'s memory
 /// input slot while the `Load` root yields the value, exercising
@@ -433,6 +461,25 @@ fn instantiate_with_unbound_template_capture_errors() {
         msg.contains("unbound by LHS"),
         "error names the unbound-capture contract; got: {msg}"
     );
+}
+
+/// Captures are reported in written order, so of several unbound the first
+/// written is the one named.
+#[test]
+fn captures_are_reported_in_written_order() {
+    let mut fx = make_empty_fn(|b| b.build_int_const(5u64, T::int(64))).unwrap();
+    let lhs = int_const(5u128).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
+
+    let (a, b) = (Capture::new(), Capture::new());
+    let rhs = template::int_add(var(a), var(b)).into_template();
+    assert_eq!(rhs.referenced_captures().collect::<Vec<_>>(), vec![a, b]);
+
+    let mut ef = EditFunction::new(&mut fx);
+    let err = instantiate(&rhs, &mut ef, &bindings, root_node, &[root_node], root_ty)
+        .expect_err("unbound template capture must error")
+        .to_string();
+    assert!(err.contains(&format!("{a:?}")), "{err}");
 }
 
 /// A capture read inside a `*_const_with!` closure has no template vertex, but

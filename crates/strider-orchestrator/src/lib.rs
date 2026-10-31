@@ -5,6 +5,10 @@ pub use strider_lift::lift::{LiftOutcome, Lifter};
 
 mod resolve;
 
+#[cfg(doctest)]
+#[doc = include_str!("../tests/rewrite_rhs_refusals.md")]
+struct RewriteRhsRefusals;
+
 #[cfg(feature = "test-util")]
 pub use resolve::Classifier;
 
