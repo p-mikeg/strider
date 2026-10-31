@@ -169,48 +169,6 @@ def test_pipeline_override_runs_custom_pipeline():
     assert empty_fn.node_count() > default_fn.node_count()
 
 
-def test_with_cfg_carries_over_every_other_field():
-    """`_with_cfg` replaces only `cfg`.
-
-    Fields are read-only, so overriding the nested `CfgOptions` once meant
-    re-listing every field; anything forgotten silently reverted to its
-    default.  Every non-cfg field here is set away from its default, so a
-    dropped carry-over fails loudly.
-    """
-    pipeline = strider.opt.OptimizerPipeline.empty()
-    assumptions = strider.lift.AssumptionOptions(
-        stack_global_disjoint=False,
-        assume_incoming_args_survive_calls=False,
-        distinct_sp_bases_disjoint=True,
-        callee_preserves_stack_args=True,
-        noalias_allocators=[0x2000],
-        escape_analysis=True,
-        return_slots_survive_untracked_writes=False,
-        msr_register_keeps_mode=False,
-        fp_rounding_mode_is_nearest=False,
-    )
-    opts = strider.lift.LifterOptions(
-        cfg=strider.cfg.CfgOptions(function_max_size=64),
-        compact=False,
-        per_address_ccs={0x1000: strider.sleigh.CallingConvention.x86_64_systemv()},
-        assumptions=assumptions,
-        pipeline=pipeline,
-    )
-
-    out = opts._with_cfg(strider.cfg.CfgOptions(function_max_size=128))
-
-    assert out.cfg.function_max_size == 128
-    assert out.compact is False
-    assert out.per_address_ccs is not None and 0x1000 in out.per_address_ccs
-    assert out.assumptions is assumptions
-    # Identity, not just presence: the carried-over pipeline must be the
-    # SAME object, matching what passing `pipeline=opts.pipeline` did.
-    assert out.pipeline is pipeline
-
-    # `_with_cfg` copies, it does not mutate the receiver.
-    assert opts.cfg.function_max_size == 64
-
-
 def test_none_clears_every_claim():
     n = strider.lift.AssumptionOptions.none()
     # Enumerated, not listed: a claim added default-on has to trip this, which

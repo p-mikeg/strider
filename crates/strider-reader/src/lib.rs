@@ -398,6 +398,8 @@ pub struct MemRegionsLookupTable {
     ///
     /// [`check_unchanged`]: Self::check_unchanged
     mappings: Vec<usize>,
+    /// Bytes in the largest region: the most one read can return.
+    max_region_len: usize,
 }
 
 /// Ascending-start index over a slice of [`MemRegion`]s: which of them cover a
@@ -624,10 +626,16 @@ impl MemRegionsLookupTable {
             .filter(|(_, r)| r.mapping_id().is_some_and(|id| seen.insert(id)))
             .map(|(i, _)| i)
             .collect();
+        let max_region_len = regions
+            .iter()
+            .map(|r| (r.end_addr() - r.start_addr()) as usize)
+            .max()
+            .unwrap_or(0);
         Self {
             regions,
             index,
             mappings,
+            max_region_len,
         }
     }
 
@@ -668,6 +676,15 @@ impl MemRegionsLookupTable {
             .next()
             .or_else(|| self.index.widest_at(addr))?;
         self.regions[winner].read(addr, out)
+    }
+
+    /// [`Self::read`] of up to `size` bytes into a buffer no larger than one
+    /// region, so a huge `size` allocates nothing a read cannot fill.
+    pub fn read_vec(&self, addr: u64, size: usize) -> Option<Vec<u8>> {
+        let mut buf = vec![0u8; size.min(self.max_region_len)];
+        let n = self.read(addr, &mut buf)?;
+        buf.truncate(n);
+        Some(buf)
     }
 
     /// Fill-all-or-error read: copies the mapped bytes into `buf` **raw**, with
