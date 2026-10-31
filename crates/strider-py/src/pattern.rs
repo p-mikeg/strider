@@ -13,12 +13,9 @@ use pyo3::types::{PyBool, PyString, PyTuple};
 use strider_ir::node::ValueType as T;
 
 use strider_pattern as sp;
-use strider_pattern::matcher::{MatcherBuilder, PatValueRef};
 use strider_pattern::node_builders::defer_drop;
-use strider_pattern::template::{TemplateBuilder, TmplValueRef};
 use strider_pattern::{
-    Capture, CaptureExt, JoinConstraint, MatchPat, MemPat, Pattern, Template, TemplatePat,
-    template as tpl,
+    Capture, CaptureExt, Expr, IntoExpr, JoinConstraint, Pattern, Template, TemplatePat,
 };
 
 use crate::errors::into_strider_err;
@@ -123,181 +120,119 @@ pub(crate) fn capture_display(id: u32) -> String {
     }
 }
 
-/// A `MatchPat` behind a box: the one type a Python pattern tree lowers
-/// through, keeping each node's own `compile_ordered`.
-pub(crate) struct DynMatch(Box<dyn ErasedMatch>);
-
-/// `MatchPat` over `self: Box<Self>`. `compile_mem` is not erased: a
-/// `DynMatch` in a memory slot lowers through `compile`.
-trait ErasedMatch: Send {
-    fn compile_boxed(self: Box<Self>, b: &mut MatcherBuilder) -> PatValueRef;
-    fn compile_ordered_boxed(self: Box<Self>, b: &mut MatcherBuilder) -> PatValueRef;
+/// Where a Python operand sits, which decides what it may be. Any match
+/// slot but a memory one takes any pattern, refused where it can never
+/// match as Rust refuses it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Slot {
+    Value,
+    Memory,
+    /// A rewrite RHS operand.
+    Template,
 }
 
-impl<P: MatchPat + 'static> ErasedMatch for P {
-    fn compile_boxed(self: Box<Self>, b: &mut MatcherBuilder) -> PatValueRef {
-        (*self).compile(b)
-    }
-
-    fn compile_ordered_boxed(self: Box<Self>, b: &mut MatcherBuilder) -> PatValueRef {
-        (*self).compile_ordered(b)
-    }
-}
-
-impl DynMatch {
-    pub(crate) fn new(p: impl MatchPat + 'static) -> Self {
-        Self(Box::new(p))
-    }
-
-    /// A lowering with no `MatchPat` of its own; `.ordered()` pins its root.
-    pub(crate) fn from_fn(
-        f: impl FnOnce(&mut MatcherBuilder) -> PatValueRef + Send + 'static,
-    ) -> Self {
-        Self::new(FnMatch(f))
+impl Slot {
+    fn admits(self, b: &dyn Builder) -> bool {
+        match self {
+            Slot::Value => true,
+            Slot::Memory => b.memory(),
+            Slot::Template => false,
+        }
     }
 }
 
-struct FnMatch<F>(F);
-
-impl<F: FnOnce(&mut MatcherBuilder) -> PatValueRef + Send> MatchPat for FnMatch<F> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        (self.0)(b)
-    }
+/// What a `Repr` is, beyond how it lowers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    /// `strider.template` has a twin.
+    Build,
+    Match,
+    /// Constrains the node it wraps, which `.ordered()` looks through.
+    Through,
+    /// One operand in both slots of a pair `.ordered()` can pin.
+    Pair,
 }
 
-impl MatchPat for DynMatch {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_boxed(b)
-    }
+pub(crate) type Make0 = Box<dyn Fn() -> Expr + Send + Sync>;
+pub(crate) type Make1 = Box<dyn Fn(Expr) -> Expr + Send + Sync>;
+pub(crate) type Make2 = Box<dyn Fn(Expr, Expr) -> Expr + Send + Sync>;
 
-    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
-        self.0.compile_ordered_boxed(b)
-    }
-}
-
-pub(crate) struct DynTemplate(
-    pub(crate) Box<dyn FnOnce(&mut TemplateBuilder) -> TmplValueRef + Send>,
-);
-
-impl TemplatePat for DynTemplate {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        (self.0)(b)
-    }
-}
-
-/// Type-erased sub-pattern yielding a memory token.
-pub(crate) struct DynMem(pub(crate) Box<dyn FnOnce(&mut MatcherBuilder) -> PatValueRef + Send>);
-
-impl MatchPat for DynMem {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        (self.0)(b)
-    }
-}
-
-impl MemPat for DynMem {}
-
-#[derive(Clone, Copy)]
-pub(crate) enum IntUnaryKind {
-    Neg,
-    Popcount,
-    Lzcount,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum CastKind {
-    Truncate,
-    ZeroExtend,
-    SignExtend,
-    IntToFloat,
-    FloatToInt,
-    IntBitsToFloat,
-    FloatBitsToInt,
-    FloatToFloat,
-}
-
-/// A build-valid shape: what a `Template` holds, and what a `Pat` holds under
-/// [`PatRepr::Build`] when built by a constructor `strider.template` shares.
-/// Every variant but `CaptureTyped`, which only a `Template` holds, compiles on
-/// both sides, though a nested operand can still be refused.
-pub(crate) enum TmplRepr {
-    Var(Capture),
-    IntConst(strider_ir::IBig),
-    BoolConst(bool),
-    FloatConst(u64),
-    IntBinary(strider_ir::IntBinaryOp, Py<PyAny>, Py<PyAny>),
-    /// Lowers to `int_add(l, int_neg(r))`.
-    Sub(Py<PyAny>, Py<PyAny>),
-    /// Lowers to `int_xor(x, all_ones)`.
-    BitNot(Py<PyAny>),
-    IntUnary(IntUnaryKind, Py<PyAny>),
-    Cast(CastKind, Py<PyAny>),
-    Extend(strider_ir::ExtendOp, Py<PyAny>),
-    IntCmp(strider_ir::IntCmpOp, Py<PyAny>, Py<PyAny>),
-    /// Lowers to `int_xor(int_eq(l, r), 1)`.
-    IntNe(Py<PyAny>, Py<PyAny>),
-    /// Lowers to `int_xor(int_lt(r, l), 1)`, operands swapped.
-    IntLe(Py<PyAny>, Py<PyAny>),
-    /// Lowers to `int_xor(int_slt(r, l), 1)`, operands swapped.
-    IntSle(Py<PyAny>, Py<PyAny>),
-    FloatBinary(strider_ir::FloatBinaryOp, Py<PyAny>, Py<PyAny>),
-    FloatSub(Py<PyAny>, Py<PyAny>),
-    FloatUnary(strider_ir::FloatUnaryOp, Py<PyAny>),
-    FloatCmp(strider_ir::FloatCmpOp, Py<PyAny>, Py<PyAny>),
-    /// Lowers to `int_xor(float_eq(l, r), 1)`.
-    FloatNe(Py<PyAny>, Py<PyAny>),
-    /// Boolean ops are `IntBinaryOp` at `I1`.
-    BoolBinary(strider_ir::IntBinaryOp, Py<PyAny>, Py<PyAny>),
-    /// Lowers to `int_xor(x, 1)`.
-    BoolNot(Py<PyAny>),
-    /// The operand, typed at the width of the value the capture bound.
-    CaptureTyped(Capture, Py<PyAny>),
-}
-
-/// The recursive shape of a `PyPat`; recompiled fresh on every query.
-/// `Build` holds the shapes a rewrite can build too; the rest are match-only.
-pub(crate) enum PatRepr {
-    Build(TmplRepr),
+/// How a `Repr` lowers, over the `Expr`s of its operands.
+pub(crate) enum Op {
     Any,
-    ValueOfWidth(u32),
-    InputsOfWidth(u32, Py<PyAny>),
-    IntConstAnyWidth(i64),
-    IntConstAnyWidthAnyOf(Vec<i64>),
-    IntConstAnyOf(Vec<strider_ir::IBig>),
-    AnyInt(Option<Capture>),
-    AnyBool(Option<Capture>),
-    AnyFloat(Option<Capture>),
-    AnyIntConst(Option<Capture>),
-    AnyBoolConst(Option<Capture>),
-    AnyFloatConst(Option<Capture>),
-    InitialVar,
-    InitialVarFor(rsleigh::Vn),
-    /// Alternation (`one_of` union / `first_of` cut when the flag is set).
-    OneOf(Vec<Py<PyAny>>, bool),
-    /// `bool_or(float_lt(l, r), float_eq(l, r))`: one pair in two slots.
-    FloatLe(Py<PyAny>, Py<PyAny>),
-    /// `int_xor(float_eq(x, x), 1)`: one operand in both slots.
-    FloatIsNan(Py<PyAny>),
-    AnyIntBinary(Capture, Py<PyAny>, Py<PyAny>),
-    AnyIntUnary(Capture, Py<PyAny>),
-    AnyIntCmp(Capture, Py<PyAny>, Py<PyAny>),
-    AnyBoolBinary(Capture, Py<PyAny>, Py<PyAny>),
-    AnyFloatBinary(Capture, Py<PyAny>, Py<PyAny>),
-    AnyFloatUnary(Capture, Py<PyAny>),
-    AnyFloatCmp(Capture, Py<PyAny>, Py<PyAny>),
-    // The wrapped `Pat` OBJECT, not its repr: a repr shared by several `Pat`s
-    // has no owner to attribute its `Py` handles to, and reporting them once
-    // per wrapper tells the collector about references that do not exist.
-    Wrapped(Py<PyAny>, Wrap),
-    /// A finished control / variadic [`Pattern`] from a control builder's
-    /// `.into_pat()`. One-shot: consumed when queried, and not nestable as a
-    /// value operand.
-    Finished(Box<std::sync::Mutex<FinishedPattern>>),
+    Var(Capture),
+    Leaf(Make0),
+    Un(Make1),
+    Bin(Make2),
+    /// Every operand an arm; `true` cuts to the first that matches.
+    OneOf(bool),
+    /// A `.when()` predicate is the second operand.
+    Wrap(Wrap),
+    /// A builder's `.into_pat()`, its one operand, which it lowers as, bound
+    /// to the captures chained on since.
+    Finished(Vec<Capture>),
+}
+
+/// The recipe behind a `Pat` or a `Template`, lowered fresh on every query:
+/// a shape over the Python objects it was given, which only this node holds
+/// and reports to the collector.
+pub(crate) struct Repr {
+    /// The constructor, as an error names it.
+    pub(crate) name: &'static str,
+    pub(crate) kind: Kind,
+    pub(crate) op: Op,
+    pub(crate) args: Vec<Py<PyAny>>,
+}
+
+impl Repr {
+    pub(crate) fn new(name: &'static str, kind: Kind, op: Op, args: Vec<Py<PyAny>>) -> Self {
+        Self {
+            name,
+            kind,
+            op,
+            args,
+        }
+    }
+}
+
+pub(crate) fn leaf(name: &'static str, kind: Kind, make: Make0) -> Repr {
+    Repr::new(name, kind, Op::Leaf(make), Vec::new())
+}
+
+pub(crate) fn un(name: &'static str, kind: Kind, make: Make1, x: Py<PyAny>) -> Repr {
+    Repr::new(name, kind, Op::Un(make), vec![x])
+}
+
+pub(crate) fn bin(name: &'static str, kind: Kind, make: Make2, l: Py<PyAny>, r: Py<PyAny>) -> Repr {
+    Repr::new(name, kind, Op::Bin(make), vec![l, r])
+}
+
+/// One of the wildcards bound to `c` when given one.
+fn cap_opt(
+    name: &'static str,
+    kind: Kind,
+    make: fn() -> sp::MatchOnly,
+    c: Option<Capture>,
+) -> PyPat {
+    PyPat::from(leaf(
+        name,
+        kind,
+        Box::new(move || match c {
+            Some(c) => ex(make().capture(c)),
+            None => ex(make()),
+        }),
+    ))
+}
+
+/// A carrier as the `Expr` either side lowers.
+pub(crate) fn ex<P: IntoExpr>(p: P) -> Expr {
+    p.into_expr()
 }
 
 /// A chained verb, decorating the root of the `Pat` it wraps.
 pub(crate) enum Wrap {
     Capture(Capture),
-    When(Py<PyAny>),
+    When,
     /// Pins the wrapped shape's operand order.
     Ordered,
     OfWidth(u32),
@@ -309,44 +244,92 @@ impl Wrap {
     fn name(&self) -> &'static str {
         match self {
             Wrap::Capture(_) => ".capture()",
-            Wrap::When(_) => ".when()",
+            Wrap::When => ".when()",
             Wrap::Ordered => ".ordered()",
             Wrap::OfWidth(_) => ".of_width()",
             Wrap::ValueTy(_) => ".value_ty()",
         }
     }
+
+    /// `e` decorated; `f` is a `.when()` predicate.
+    fn apply(&self, py: Python<'_>, e: Expr, f: Option<&Py<PyAny>>) -> Expr {
+        match self {
+            Wrap::Capture(c) => ex(e.capture(*c)),
+            Wrap::When => e.post_match(when_guard(
+                f.expect("a .when() holds its predicate").clone_ref(py),
+            )),
+            Wrap::Ordered => ex(e.ordered()),
+            Wrap::OfWidth(n) => ex(e.of_width(*n)),
+            Wrap::ValueTy(ty) => ex(e.value_ty(*ty)),
+        }
+    }
 }
 
-pub(crate) struct FinishedPattern {
-    /// Taken on the first query.
-    pattern: Option<Pattern>,
-    /// The `.when()` predicates compiled into `pattern`, shared with its
-    /// closures: the only Python objects a `Pattern` holds, and otherwise
-    /// invisible to the cyclic collector.
-    when_handles: Vec<WhenFn>,
+impl Repr {
+    /// The `Expr` this shape lowers to, its operands walked for `slot`'s side.
+    fn expr(&self, py: Python<'_>, slot: Slot) -> PyResult<Expr> {
+        let side = if slot == Slot::Template {
+            Slot::Template
+        } else {
+            Slot::Value
+        };
+        let arg = |i: usize| expr(self.args[i].bind(py), side);
+        Ok(match &self.op {
+            Op::Any => ex(sp::anything()),
+            Op::Var(c) => ex(sp::var(*c)),
+            Op::Leaf(make) => make(),
+            Op::Un(make) => make(arg(0)?),
+            Op::Bin(make) => make(arg(0)?, arg(1)?),
+            Op::OneOf(first) => {
+                let mut arms = Vec::with_capacity(self.args.len());
+                for a in &self.args {
+                    arms.push(sp::boxed_alt(expr(a.bind(py), Slot::Value)?));
+                }
+                ex(if *first {
+                    sp::OneOf::first(arms)
+                } else {
+                    sp::OneOf::new(arms)
+                })
+            }
+            Op::Wrap(w) => w.apply(py, arg(0)?, self.args.get(1)),
+            Op::Finished(caps) => return builder_expr(self.args[0].bind(py), slot, caps),
+        })
+    }
+
+    /// The shape under the wrappers `through` passes.
+    fn under<'a>(&'a self, py: Python<'a>, through: fn(&Repr) -> bool) -> &'a Repr {
+        let mut r = self;
+        while through(r) {
+            match r.args[0].bind(py).downcast::<PyPat>() {
+                Ok(p) => r = &p.get().repr,
+                Err(_) => break,
+            }
+        }
+        r
+    }
+
+    /// A memory slot takes a wildcard or an alternation, through a
+    /// `.capture()` or `.when()`: a width, a type or an operand order can
+    /// never hold of a memory token.
+    fn is_memory(&self, py: Python<'_>) -> bool {
+        let through = |r: &Repr| matches!(&r.op, Op::Wrap(Wrap::Capture(_) | Wrap::When));
+        let r = self.under(py, through);
+        matches!(r.op, Op::Any | Op::Var(_) | Op::OneOf(_))
+    }
 }
 
-/// A finished pattern. Reusable across `find_all` / rewrite calls, except one
-/// built from a control or variadic builder's `into_pat()`, which is consumed
-/// by its first query.
-#[pyclass(name = "Pat", module = "strider.pattern")]
+/// A finished pattern, reusable across `find_all` / rewrite calls.
+#[pyclass(name = "Pat", module = "strider.pattern", frozen)]
 pub struct PyPat {
-    pub(crate) repr: Arc<PatRepr>,
+    pub(crate) repr: Repr,
     /// Links below this one in the `.capture()` / `.when()` / `.of_width()`
     /// chain. Dropping the chain is native recursion, so it is bounded.
     depth: u32,
 }
 
-impl PyPat {
-    pub(crate) fn from_repr(repr: PatRepr) -> Self {
-        Self {
-            repr: Arc::new(repr),
-            depth: 0,
-        }
-    }
-
-    pub(crate) fn from_tmpl(t: TmplRepr) -> Self {
-        Self::from_repr(PatRepr::Build(t))
+impl From<Repr> for PyPat {
+    fn from(repr: Repr) -> Self {
+        Self { repr, depth: 0 }
     }
 }
 
@@ -356,23 +339,20 @@ impl PyPat {
 // long enough chain overflows the stack.
 impl Drop for PyPat {
     fn drop(&mut self) {
-        defer_drop(std::mem::replace(&mut self.repr, Arc::new(PatRepr::Any)));
+        defer_drop(std::mem::take(&mut self.repr.args));
     }
 }
 
-/// A `Pat` wrapping `slf`, which it owns as an operand handle.
-fn derive(slf: &Bound<'_, PyPat>, make: impl FnOnce(Py<PyAny>) -> PatRepr) -> PyResult<PyPat> {
-    let depth = slf.borrow().depth + 1;
+/// A `Pat` applying `wrap` to `slf`, which it owns as an operand handle.
+fn derive(slf: &Bound<'_, PyPat>, wrap: Wrap, more: Option<PyObject>) -> PyResult<PyPat> {
+    let depth = slf.get().depth + 1;
     if depth > MAX_PATTERN_NESTING {
-        return Err(into_strider_err(anyhow::anyhow!(
-            "pattern nesting too deep: over {MAX_PATTERN_NESTING} levels, and a \
-             nested builder call costs two. That is the loosest bound; this \
-             thread's stack budget and the matcher's own node cap both reject \
-             shallower patterns still"
-        )));
+        return Err(too_deep());
     }
+    let mut args = vec![slf.clone().into_any().unbind()];
+    args.extend(more);
     Ok(PyPat {
-        repr: Arc::new(make(slf.clone().into_any().unbind())),
+        repr: Repr::new(wrap.name(), Kind::Match, Op::Wrap(wrap), args),
         depth,
     })
 }
@@ -393,133 +373,84 @@ fn extract_int_operand(ob: &Bound<'_, PyAny>) -> PyResult<Option<strider_ir::IBi
         .transpose()
 }
 
-// The downcast happens eagerly during the recursive walk so the emitted
-// `FnOnce` closes over owned data only, never a `Bound` re-borrowed across
-// the GIL.
-pub(crate) fn compile_operand_match(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch> {
-    // Every nested-operand recursion funnels through here, including the
-    // pure typed-builder path (`load(addr=load(...))`) that never touches
-    // `compile_repr_*`. Guarding here turns a deep-nesting Rust stack
-    // overflow into a clean `StriderError`.
+/// `ob` as the `Expr` the `slot` it sits in takes. Walked fresh per query,
+/// so no Python handle outlives the query inside Rust data.
+pub(crate) fn expr(ob: &Bound<'_, PyAny>, slot: Slot) -> PyResult<Expr> {
     let _depth = DepthGuard::enter()?;
     let py = ob.py();
-    if let Ok(p) = ob.downcast::<PyPat>() {
-        return p.borrow().repr.compile_match(py);
+    if slot == Slot::Template {
+        if let Ok(t) = ob.downcast::<crate::template::PyTemplate>() {
+            return t.get().repr.expr(py, slot);
+        }
+        if let Ok(p) = ob.downcast::<PyPat>() {
+            return Err(into_strider_err(anyhow::anyhow!(pat_rhs_message(
+                &p.get().repr
+            ))));
+        }
+    } else if let Ok(p) = ob.downcast::<PyPat>() {
+        let repr = &p.get().repr;
+        if slot == Slot::Memory && !matches!(repr.op, Op::Finished(_)) && !repr.is_memory(py) {
+            return Err(refusal(ob, slot));
+        }
+        return repr.expr(py, slot);
+    }
+    if let Ok(c) = ob.downcast::<PyCapture>() {
+        return Ok(ex(sp::var(c.get().inner)));
     }
     // A raw int is `int_const(value)` at any declared width; narrow with
     // `.of_width`. One wider than every `ValueType` is refused.
-    if let Some(v) = extract_int_operand(ob)? {
-        return TmplRepr::IntConst(v).compile_match(py);
-    }
-    if let Ok(c) = ob.extract::<PyRef<'_, PyCapture>>() {
-        let cap = c.inner;
-        return Ok(DynMatch::new(strider_pattern::var(cap)));
-    }
-    if let Ok(b) = ob.downcast::<PyLoadPat>() {
-        return b.borrow().compile_value(py);
-    }
-    if let Ok(b) = ob.downcast::<PyFunctionArgPat>() {
-        return Ok(b.borrow().compile_value(py));
-    }
-    if let Ok(b) = ob.downcast::<PyPhiPat>() {
-        return b.borrow().compile_value(py);
-    }
-    if let Ok(b) = ob.downcast::<PyIntBinaryPat>() {
-        return b.borrow().compile_value(py);
-    }
-    if let Ok(b) = ob.downcast::<PyFloatBinaryPat>() {
-        return b.borrow().compile_value(py);
-    }
-    if let Ok(b) = ob.downcast::<PyBoolBinaryPat>() {
-        return b.borrow().compile_value(py);
-    }
-    // Call / CallOther nest via their value outputs, loose by default (any
-    // value output); `.res()` narrows to the declared result.
-    if let Ok(b) = ob.downcast::<PyCallPat>() {
-        return b.borrow().compile_value(py);
-    }
-    if let Ok(b) = ob.downcast::<PyCallOtherPat>() {
-        return b.borrow().compile_value(py);
-    }
-    // `entry()` / `region()` produce control, wiring that edge into whatever
-    // control slot they are passed to, e.g. `region().any_input(entry())`.
-    if let Ok(b) = ob.downcast::<PyEntryPat>() {
-        return b.borrow().compile_value(py);
-    }
-    if let Ok(b) = ob.downcast::<PyRegionPat>() {
-        return b.borrow().compile_value(py);
-    }
-    Err(into_strider_err(anyhow::anyhow!(
-        "expected a value pattern (a Pat, a Capture, an int, or a value \
-         builder). A bare string is not a capture: use Capture(\"name\") for a \
-         capture or anything() for a wildcard. A control / variadic builder \
-         (store / ret / if / mem_phi) cannot be nested as a value operand."
-    )))
-}
-
-pub(crate) fn compile_operand_template(ob: &Bound<'_, PyAny>) -> PyResult<DynTemplate> {
-    // Same recursion bound as `compile_operand_match`.
-    let _depth = DepthGuard::enter()?;
-    let py = ob.py();
-    if let Ok(t) = ob.downcast::<crate::template::PyTemplate>() {
-        return t.borrow().repr.compile_template(py);
-    }
-    if let Ok(p) = ob.downcast::<PyPat>() {
-        return Err(into_strider_err(anyhow::anyhow!(pat_rhs_message(
-            &p.borrow().repr
-        ))));
-    }
-    // A raw int builds an `int_const(value)` on the RHS too.
-    if let Some(v) = extract_int_operand(ob)? {
-        return TmplRepr::IntConst(v).compile_template(py);
-    }
-    if let Ok(c) = ob.extract::<PyRef<'_, PyCapture>>() {
-        let cap = c.inner;
-        return Ok(DynTemplate(Box::new(move |b| template_var(b, cap))));
-    }
-    Err(into_strider_err(anyhow::anyhow!(
-        "cannot use {} as a nested rewrite RHS operand: expected a Template, a \
-         Capture or an int. A bare string names a capture only as the whole \
-         RHS; nested, use Capture(\"name\")",
-        operand_kind_name(ob)
-    )))
-}
-
-pub(crate) fn compile_operand_mem(ob: &Bound<'_, PyAny>) -> PyResult<DynMem> {
-    // Same recursion bound as `compile_operand_match`.
-    let _depth = DepthGuard::enter()?;
-    let py = ob.py();
-    // A `one_of` / `first_of` nests in a memory slot: its output kind is `Any`,
-    // so its value lowering serves as the memory sub.
-    // Through the chainable wrappers too, so `.cap` does not change which
-    // slots accept the alternation.
-    if let Ok(p) = ob.downcast::<PyPat>()
-        && wraps_alternation(ob)
+    if slot != Slot::Memory
+        && let Some(v) = extract_int_operand(ob)?
     {
-        let alt = compile_repr_match(&p.borrow().repr, py)?;
-        return Ok(DynMem(Box::new(move |b| mc(alt, b))));
+        return Ok(ex(sp::int_const(v)));
     }
-    if let Ok(b) = ob.downcast::<PyStorePat>() {
-        return b.borrow().compile_mem(py);
+    builder_expr(ob, slot, &[])
+}
+
+/// `ob` as a builder the `slot` takes, bound to `caps` too.
+fn builder_expr(ob: &Bound<'_, PyAny>, slot: Slot, caps: &[Capture]) -> PyResult<Expr> {
+    match with_builder(ob, |b| slot.admits(b).then(|| b.expr(ob.py(), caps))) {
+        Some(Some(e)) => e,
+        _ => Err(refusal(ob, slot)),
     }
-    if let Ok(b) = ob.downcast::<PyMemPhiPat>() {
-        return b.borrow().compile_mem(py);
+}
+
+fn refusal(ob: &Bound<'_, PyAny>, slot: Slot) -> PyErr {
+    let kind = operand_kind_name(ob);
+    into_strider_err(match slot {
+        Slot::Memory => anyhow::anyhow!(
+            "a memory-input slot (`mem`) requires a memory producer: store() / \
+             mem_phi() / call() / call_other(); got a value operand ({kind})"
+        ),
+        Slot::Template => anyhow::anyhow!(
+            "cannot use {kind} as a nested rewrite RHS operand: expected a \
+             Template, a Capture or an int. A bare string names a capture only \
+             as the whole RHS; nested, use Capture(\"name\")"
+        ),
+        Slot::Value => anyhow::anyhow!(
+            "expected a pattern (a Pat, a Capture, an int, or a typed builder), \
+             got {kind}. A bare string is not a capture: use Capture(\"name\") \
+             for a capture or anything() for a wildcard."
+        ),
+    })
+}
+
+/// `ob` sealed as a query's root.
+pub(crate) fn root_pattern(ob: &Bound<'_, PyAny>) -> PyResult<Pattern> {
+    let py = ob.py();
+    if let Ok(p) = ob.downcast::<PyPat>() {
+        return match &p.get().repr.op {
+            Op::Finished(caps) => {
+                let builder = p.get().repr.args[0].bind(py);
+                with_builder(builder, |b| b.pattern(py, caps)).expect("into_pat holds a builder")
+            }
+            _ => Ok(expr(ob, Slot::Value)?.build()),
+        };
     }
-    if let Ok(b) = ob.downcast::<PyCallPat>() {
-        return b.borrow().compile_mem(py);
+    match with_builder(ob, |b| b.pattern(py, &[])) {
+        Some(pat) => pat,
+        None => Ok(expr(ob, Slot::Value)?.build()),
     }
-    if let Ok(b) = ob.downcast::<PyCallOtherPat>() {
-        return b.borrow().compile_mem(py);
-    }
-    // A value operand here would build a pattern that can never match: the
-    // matcher's `output_ok` rejects a value output against a memory slot.
-    // Reject up front rather than silently returning a dead pattern.
-    Err(into_strider_err(anyhow::anyhow!(
-        "a memory-input slot (`mem`) requires a memory producer: \
-         store() / mem_phi() / call() / call_other(); got a value operand \
-         ({})",
-        operand_kind_name(ob)
-    )))
 }
 
 /// A `list` operand becomes a `one_of` union, so `target([a, b])` matches
@@ -531,247 +462,16 @@ fn coerce_operand_list(py: Python<'_>, p: Py<PyAny>) -> PyResult<Py<PyAny>> {
     }
 }
 
-/// `any_input` operands and `one_of` / `first_of` arms: a memory producer
-/// (`store` / `mem_phi`) wires as a memory sub, everything else as a value sub
-/// (a wildcard already reaches control / phi-token slots). The memory sub is
-/// a `DynMem` boxed as a `DynMatch`, lowering through `compile` like a value.
-pub(crate) fn compile_any_input(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch> {
-    if ob.downcast::<PyStorePat>().is_ok() || ob.downcast::<PyMemPhiPat>().is_ok() {
-        return Ok(DynMatch::new(compile_operand_mem(ob)?));
-    }
-    compile_operand_match(ob)
-}
-
-/// Compile a `one_of` / `first_of` arm, which is any pattern: the slot the
-/// alternation sits in decides which edge the arm binds, not the caller. The
-/// node-rooted control builders (ret / if / switch / indirect_branch /
-/// unreachable) have no output vertex, so they route through their
-/// `compile_alt_arm` (a synthesized `Any` output); every other kind goes
-/// through the value / memory arm bridge.
-fn compile_alt_arm_operand(ob: &Bound<'_, PyAny>) -> PyResult<DynMatch> {
-    let py = ob.py();
-    // `call` / `call_other` produce a memory token as well as values, and an
-    // arm binds whichever edge the alternation is matched against, so the
-    // anchor stays kind-agnostic instead of pinning the value output.
-    if ob.downcast::<PyCallPat>().is_ok() || ob.downcast::<PyCallOtherPat>().is_ok() {
-        let inner = compile_operand_match(ob)?;
-        return Ok(DynMatch::from_fn(move |b| {
-            let out = mc(inner, b);
-            b.set_output_any(out);
-            out
-        }));
-    }
-    if let Ok(b) = ob.downcast::<PyRetPat>() {
-        return b.borrow().compile_alt_arm(py);
-    }
-    if let Ok(b) = ob.downcast::<PyIfPat>() {
-        return b.borrow().compile_alt_arm(py);
-    }
-    if let Ok(b) = ob.downcast::<PySwitchPat>() {
-        return b.borrow().compile_alt_arm(py);
-    }
-    if let Ok(b) = ob.downcast::<PyIndirectBranchPat>() {
-        return b.borrow().compile_alt_arm(py);
-    }
-    if let Ok(b) = ob.downcast::<PyUnreachablePat>() {
-        return b.borrow().compile_alt_arm(py);
-    }
-    compile_any_input(ob)
-}
-
-/// Whether `ob` is a `one_of` / `first_of`, looking through the chainable
-/// wrappers (`.capture` / `.when` / `.of_width` / `.value_ty`), which
-/// leave the alternation's `Any` output kind alone.
-fn wraps_alternation(ob: &Bound<'_, PyAny>) -> bool {
-    let py = ob.py();
-    let mut cur: Py<PyAny> = ob.clone().unbind();
-    for _ in 0..MAX_PATTERN_NESTING {
-        let Ok(p) = cur.bind(py).downcast::<PyPat>() else {
-            return false;
-        };
-        let next = match &*p.borrow().repr {
-            PatRepr::OneOf(..) => return true,
-            PatRepr::Wrapped(inner, w) if !matches!(w, Wrap::Ordered) => inner.clone_ref(py),
-            _ => return false,
-        };
-        cur = next;
-    }
-    false
-}
-
-/// Ok for the binary ops and comparisons `.ordered()` can pin; Err names the
-/// shape otherwise. Commutativity itself is not decided here: the matcher pins
-/// nothing unless the matched IR kind reports `is_commutative`.
-fn orderable(repr: &PatRepr) -> Result<(), &'static str> {
-    let pair = match repr {
-        PatRepr::Build(t) => matches!(
-            t,
-            TmplRepr::IntBinary(..)
-                | TmplRepr::Sub(..)
-                | TmplRepr::IntCmp(..)
-                | TmplRepr::IntNe(..)
-                | TmplRepr::IntLe(..)
-                | TmplRepr::IntSle(..)
-                | TmplRepr::FloatBinary(..)
-                | TmplRepr::FloatSub(..)
-                | TmplRepr::FloatCmp(..)
-                | TmplRepr::FloatNe(..)
-                | TmplRepr::BoolBinary(..)
-        ),
-        PatRepr::FloatLe(..)
-        | PatRepr::FloatIsNan(_)
-        | PatRepr::AnyIntBinary(..)
-        | PatRepr::AnyIntCmp(..)
-        | PatRepr::AnyBoolBinary(..)
-        | PatRepr::AnyFloatBinary(..)
-        | PatRepr::AnyFloatCmp(..) => true,
-        PatRepr::Any
-        | PatRepr::ValueOfWidth(_)
-        | PatRepr::InputsOfWidth(..)
-        | PatRepr::IntConstAnyWidth(_)
-        | PatRepr::IntConstAnyWidthAnyOf(_)
-        | PatRepr::IntConstAnyOf(_)
-        | PatRepr::AnyInt(_)
-        | PatRepr::AnyBool(_)
-        | PatRepr::AnyFloat(_)
-        | PatRepr::AnyIntConst(_)
-        | PatRepr::AnyBoolConst(_)
-        | PatRepr::AnyFloatConst(_)
-        | PatRepr::InitialVar
-        | PatRepr::InitialVarFor(_)
-        | PatRepr::OneOf(..)
-        | PatRepr::AnyIntUnary(..)
-        | PatRepr::AnyFloatUnary(..)
-        | PatRepr::Wrapped(..)
-        | PatRepr::Finished(_) => false,
-    };
-    if pair { Ok(()) } else { Err(repr.name()) }
-}
-
-impl TmplRepr {
-    /// The constructor that builds this shape, as an error names it.
-    fn name(&self) -> &'static str {
-        match self {
-            TmplRepr::Var(_) => "var()",
-            TmplRepr::IntConst(_) => "int_const()",
-            TmplRepr::BoolConst(_) => "bool_const()",
-            TmplRepr::FloatConst(_) => "float_const()",
-            TmplRepr::IntBinary(..) => "int_binary()",
-            TmplRepr::Sub(..) => "int_sub()",
-            TmplRepr::BitNot(_) => "int_not()",
-            TmplRepr::IntUnary(IntUnaryKind::Neg, _) => "int_neg()",
-            TmplRepr::IntUnary(IntUnaryKind::Popcount, _) => "int_popcount()",
-            TmplRepr::IntUnary(IntUnaryKind::Lzcount, _) => "int_lzcount()",
-            TmplRepr::Cast(..) | TmplRepr::Extend(..) => "a cast",
-            TmplRepr::IntCmp(..) => "int_cmp()",
-            TmplRepr::IntNe(..) => "int_ne()",
-            TmplRepr::IntLe(..) => "int_le()",
-            TmplRepr::IntSle(..) => "int_sle()",
-            TmplRepr::FloatBinary(..) => "float_binary()",
-            TmplRepr::FloatSub(..) => "float_sub()",
-            TmplRepr::FloatUnary(..) => "a float unary op",
-            TmplRepr::FloatCmp(..) => "float_cmp()",
-            TmplRepr::FloatNe(..) => "float_ne()",
-            TmplRepr::BoolBinary(..) => "bool_binary()",
-            TmplRepr::BoolNot(_) => "bool_not()",
-            TmplRepr::CaptureTyped(..) => "capture_typed()",
-        }
-    }
-}
-
-impl PatRepr {
-    /// The constructor that builds this shape, as an error names it.
-    fn name(&self) -> &'static str {
-        match self {
-            PatRepr::Build(t) => t.name(),
-            PatRepr::Any => "anything()",
-            PatRepr::ValueOfWidth(_) => "value_of_width()",
-            PatRepr::InputsOfWidth(..) => "inputs_of_width()",
-            PatRepr::IntConstAnyWidth(_) => "int_const_any_width()",
-            PatRepr::IntConstAnyWidthAnyOf(_) => "int_const_any_width([..])",
-            PatRepr::IntConstAnyOf(_) => "int_const([..])",
-            PatRepr::AnyInt(_) => "any_int()",
-            PatRepr::AnyBool(_) => "any_bool()",
-            PatRepr::AnyFloat(_) => "any_float()",
-            PatRepr::AnyIntConst(_) => "int_const()",
-            PatRepr::AnyBoolConst(_) => "bool_const()",
-            PatRepr::AnyFloatConst(_) => "float_const()",
-            PatRepr::InitialVar => "initial_var()",
-            PatRepr::InitialVarFor(_) => "initial_var_for()",
-            PatRepr::OneOf(_, true) => "first_of()",
-            PatRepr::OneOf(_, false) => "one_of()",
-            PatRepr::FloatLe(..) => "float_le()",
-            PatRepr::FloatIsNan(_) => "float_is_nan()",
-            PatRepr::AnyIntBinary(..) => "any_int_binary()",
-            PatRepr::AnyIntUnary(..) => "any_int_unary()",
-            PatRepr::AnyIntCmp(..) => "any_int_cmp()",
-            PatRepr::AnyBoolBinary(..) => "any_bool_binary()",
-            PatRepr::AnyFloatBinary(..) => "any_float_binary()",
-            PatRepr::AnyFloatUnary(..) => "any_float_unary()",
-            PatRepr::AnyFloatCmp(..) => "any_float_cmp()",
-            PatRepr::Wrapped(_, w) => w.name(),
-            PatRepr::Finished(_) => "a control / variadic builder",
-        }
-    }
-}
-
-/// The shape below the chainable wrappers and `inputs_of_width`, which
-/// constrain the same root node they wrap and so leave what `.ordered()` pins
-/// unchanged.
-fn unwrapped_repr(pat: &Bound<'_, PyPat>) -> Arc<PatRepr> {
-    let py = pat.py();
-    let mut cur = Arc::clone(&pat.borrow().repr);
-    for _ in 0..MAX_PATTERN_NESTING {
-        let next = match &*cur {
-            PatRepr::Wrapped(inner, _) | PatRepr::InputsOfWidth(_, inner) => {
-                match inner.bind(py).downcast::<PyPat>() {
-                    Ok(p) => Arc::clone(&p.borrow().repr),
-                    Err(_) => return cur,
-                }
-            }
-            _ => return cur,
-        };
-        cur = next;
-    }
-    cur
-}
-
 pub(crate) fn operand_kind_name(ob: &Bound<'_, PyAny>) -> String {
     ob.get_type()
         .name()
         .map_or_else(|_| "value".to_string(), |n| n.to_string())
 }
 
-pub(crate) fn template_var(b: &mut TemplateBuilder, cap: Capture) -> TmplValueRef {
-    tc(strider_pattern::var(cap), b)
-}
-
-// `mc` / `tc` disambiguate `.compile`: under a single-trait bound only that
-// trait's method is in scope, so callers avoid spelling out UFCS.
-fn mc<P: MatchPat>(p: P, b: &mut MatcherBuilder) -> PatValueRef {
-    p.compile(b)
-}
-
-fn tc<P: TemplatePat>(p: P, b: &mut TemplateBuilder) -> TmplValueRef {
-    p.compile(b)
-}
-
 /// The refusal of a `Pat` on a rewrite RHS, at the top or nested.
-fn pat_rhs_message(repr: &PatRepr) -> String {
-    let name = repr.name();
-    // Every build-valid shape and every constant has a `strider.template`
-    // constructor.
-    let has_twin = matches!(
-        repr,
-        PatRepr::Build(_)
-            | PatRepr::IntConstAnyWidth(_)
-            | PatRepr::IntConstAnyWidthAnyOf(_)
-            | PatRepr::IntConstAnyOf(_)
-            | PatRepr::AnyIntConst(_)
-            | PatRepr::AnyBoolConst(_)
-            | PatRepr::AnyFloatConst(_)
-    );
-    if has_twin {
+fn pat_rhs_message(repr: &Repr) -> String {
+    let name = repr.name;
+    if repr.kind == Kind::Build {
         format!(
             "cannot use {name} as a rewrite RHS: a strider.pattern Pat only \
              matches; build it with strider.template (e.g. template.var(c), \
@@ -794,139 +494,27 @@ fn parse_value_ty(name: &str) -> PyResult<T> {
         .map_err(into_strider_err)
 }
 
-impl PatRepr {
-    /// Every Python object this node holds, for the cyclic GC.
-    pub(crate) fn traverse(&self, visit: &pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        match self {
-            PatRepr::Build(t) => t.traverse(visit)?,
-            PatRepr::InputsOfWidth(_, x)
-            | PatRepr::FloatIsNan(x)
-            | PatRepr::AnyIntUnary(_, x)
-            | PatRepr::AnyFloatUnary(_, x) => visit.call(x)?,
-            PatRepr::FloatLe(l, r)
-            | PatRepr::AnyIntBinary(_, l, r)
-            | PatRepr::AnyIntCmp(_, l, r)
-            | PatRepr::AnyBoolBinary(_, l, r)
-            | PatRepr::AnyFloatBinary(_, l, r)
-            | PatRepr::AnyFloatCmp(_, l, r) => {
-                visit.call(l)?;
-                visit.call(r)?;
-            }
-            PatRepr::OneOf(alts, _) => {
-                for a in alts {
-                    visit.call(a)?;
-                }
-            }
-            PatRepr::Wrapped(inner, wrap) => {
-                visit.call(inner)?;
-                match wrap {
-                    Wrap::When(f) => visit.call(f)?,
-                    // Hold no Python object.
-                    Wrap::Capture(_) | Wrap::Ordered | Wrap::OfWidth(_) | Wrap::ValueTy(_) => {}
-                }
-            }
-            // Held only briefly and never across Python code; a skipped
-            // report keeps the predicate alive rather than freeing it.
-            PatRepr::Finished(finished) => {
-                if let Ok(finished) = finished.try_lock() {
-                    for f in &finished.when_handles {
-                        visit.call(&**f)?;
-                    }
-                }
-            }
-            // Hold no Python object.
-            PatRepr::Any
-            | PatRepr::ValueOfWidth(_)
-            | PatRepr::IntConstAnyWidth(_)
-            | PatRepr::IntConstAnyWidthAnyOf(_)
-            | PatRepr::IntConstAnyOf(_)
-            | PatRepr::AnyInt(_)
-            | PatRepr::AnyBool(_)
-            | PatRepr::AnyFloat(_)
-            | PatRepr::AnyIntConst(_)
-            | PatRepr::AnyBoolConst(_)
-            | PatRepr::AnyFloatConst(_)
-            | PatRepr::InitialVar
-            | PatRepr::InitialVarFor(_) => {}
-        }
-        Ok(())
-    }
-
-    pub(crate) fn compile_match(&self, py: Python<'_>) -> PyResult<DynMatch> {
-        compile_repr_match(self, py)
-    }
-}
-
-impl TmplRepr {
-    /// Every Python object this node holds, for the cyclic GC.
-    pub(crate) fn traverse(&self, visit: &pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        match self {
-            TmplRepr::BitNot(x)
-            | TmplRepr::IntUnary(_, x)
-            | TmplRepr::Cast(_, x)
-            | TmplRepr::Extend(_, x)
-            | TmplRepr::FloatUnary(_, x)
-            | TmplRepr::BoolNot(x)
-            | TmplRepr::CaptureTyped(_, x) => visit.call(x)?,
-            TmplRepr::IntBinary(_, l, r)
-            | TmplRepr::Sub(l, r)
-            | TmplRepr::IntCmp(_, l, r)
-            | TmplRepr::IntNe(l, r)
-            | TmplRepr::IntLe(l, r)
-            | TmplRepr::IntSle(l, r)
-            | TmplRepr::FloatBinary(_, l, r)
-            | TmplRepr::FloatSub(l, r)
-            | TmplRepr::FloatCmp(_, l, r)
-            | TmplRepr::FloatNe(l, r)
-            | TmplRepr::BoolBinary(_, l, r) => {
-                visit.call(l)?;
-                visit.call(r)?;
-            }
-            // Hold no Python object.
-            TmplRepr::Var(_)
-            | TmplRepr::IntConst(_)
-            | TmplRepr::BoolConst(_)
-            | TmplRepr::FloatConst(_) => {}
-        }
-        Ok(())
-    }
-
-    /// The match side, at a compile level of its own.
-    pub(crate) fn compile_match(&self, py: Python<'_>) -> PyResult<DynMatch> {
-        let _depth = DepthGuard::enter()?;
-        compile_tmpl_match(self, py)
-    }
-
-    /// The build side, at a compile level of its own. Total over its own
-    /// shape; a nested operand can still be refused.
-    pub(crate) fn compile_template(&self, py: Python<'_>) -> PyResult<DynTemplate> {
-        let _depth = DepthGuard::enter()?;
-        compile_tmpl_template(self, py)
-    }
-}
-
-// Compiling is native recursion mirroring the Python pattern tree's depth, so
-// a pathologically deep pattern would overflow the Rust stack and abort the
-// process. The two bounds below turn that abort into an exception.
+// The per-query walk is native recursion mirroring the Python pattern tree's
+// depth, so a pathologically deep pattern would overflow the Rust stack and
+// abort the process. The two bounds below turn that abort into an exception.
 //
-// They bound COMPILING, and the `.capture()` / `.when()` / `.of_width()` chain
+// They bound the WALK, and the `.capture()` / `.when()` / `.of_width()` chain
 // at construction. They do NOT bound the other three ways to nest: a free
-// constructor (`int_add(deep, ...)`) goes through `PyPat::from_repr`, which
-// starts a fresh count, a `strider.template` constructor does the same, and a
-// builder operand slot holds a bare `Py<PyAny>` with no count at all. Any of
+// constructor (`int_add(deep, ...)`) starts a fresh count, a
+// `strider.template` constructor does the same, and a builder operand slot
+// holds a bare `Py<PyAny>` with no count at all. Any of
 // them can be driven from a Python `for` loop, which involves no Python
 // recursion and so hits no interpreter limit. Dropping any of them is safe
 // however deep: every builder and `Pat` defers its operand slots (`defer_drop`).
 
-/// Compile-recursion levels, NOT builder calls: a nested call costs two, so
-/// the ceiling a caller sees is about half this. Well above any hand-written
-/// pattern; a machine-generated one can exceed it.
+/// Walk levels, one per nested operand. Well above any hand-written pattern;
+/// a machine-generated one can exceed it.
 ///
 /// The cheap bound of the two, and the one calibrated for the main thread's
 /// 8 MiB stack. The stack budget below is what holds on a smaller one.
 const MAX_PATTERN_NESTING: u32 = 512;
 
-/// Lowering steps one compile may spend, about two per pattern node.
+/// Operands one walk may visit.
 ///
 /// Depth alone does not bound the work: a `Pat` used in two operands
 /// (`q = int_add(q, q)`) lowers once per use, so each level of reuse doubles
@@ -1041,6 +629,14 @@ fn compile_budget(here: usize) -> usize {
     })
 }
 
+fn too_deep() -> PyErr {
+    into_strider_err(anyhow::anyhow!(
+        "pattern nesting too deep: over {MAX_PATTERN_NESTING} levels. That is \
+         the loosest bound; this thread's stack budget and the matcher's own \
+         node cap both reject shallower patterns still"
+    ))
+}
+
 struct DepthGuard;
 
 impl DepthGuard {
@@ -1049,12 +645,7 @@ impl DepthGuard {
         COMPILE_DEPTH.with(|d| {
             let next = d.get() + 1;
             if next > MAX_PATTERN_NESTING {
-                return Err(into_strider_err(anyhow::anyhow!(
-                    "pattern nesting too deep: over {MAX_PATTERN_NESTING} levels, \
-                     and a nested builder call costs two. That is the loosest \
-                     bound; this thread's stack budget and the matcher's own node \
-                     cap both reject shallower patterns still"
-                )));
+                return Err(too_deep());
             }
             if next == 1 {
                 STACK_BASE.set(here);
@@ -1095,350 +686,26 @@ impl Drop for DepthGuard {
     }
 }
 
-fn op_match(py: Python<'_>, ob: &Py<PyAny>) -> PyResult<DynMatch> {
-    compile_operand_match(ob.bind(py))
-}
+/// Polymorphic input for `Function.find_all` and a rewrite's `find`: a `Pat`,
+/// a `Capture`, a raw int (an `int_const`), or any typed builder. A bare
+/// string is NOT a capture: use `Capture(name)`.
+pub struct PatLike<'py>(Bound<'py, PyAny>);
 
-// Operands compile eagerly while the GIL and the `Bound`s are held, so the
-// box owns only child `DynMatch`es / `DynTemplate`s and outlives those borrows.
-
-fn bin_match<P: MatchPat + 'static>(
-    py: Python<'_>,
-    l: &Py<PyAny>,
-    r: &Py<PyAny>,
-    f: impl FnOnce(DynMatch, DynMatch) -> P,
-) -> PyResult<DynMatch> {
-    let l = op_match(py, l)?;
-    let r = op_match(py, r)?;
-    Ok(DynMatch::new(f(l, r)))
-}
-
-fn un_match<P: MatchPat + 'static>(
-    py: Python<'_>,
-    x: &Py<PyAny>,
-    f: impl FnOnce(DynMatch) -> P,
-) -> PyResult<DynMatch> {
-    Ok(DynMatch::new(f(op_match(py, x)?)))
-}
-
-/// The match side of a `Pat`: the match-only shapes here, the build-valid
-/// ones through [`compile_tmpl_match`] under this level's guard.
-fn compile_repr_match(repr: &PatRepr, py: Python<'_>) -> PyResult<DynMatch> {
-    let _depth = DepthGuard::enter()?;
-    match repr {
-        PatRepr::Build(t) => compile_tmpl_match(t, py),
-        PatRepr::Any => Ok(DynMatch::new(sp::anything())),
-        PatRepr::ValueOfWidth(n) => Ok(DynMatch::new(sp::value_of_width(*n))),
-        PatRepr::InputsOfWidth(n, inner) => {
-            let n = *n;
-            un_match(py, inner, |i| sp::inputs_of_width(n, i))
+impl<'py> FromPyObject<'py> for PatLike<'py> {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        let is_pattern = ob.is_instance_of::<PyPat>()
+            || ob.is_instance_of::<PyCapture>()
+            || with_builder(ob, |_| ()).is_some()
+            || crate::bigint::py_big_int(ob)?.is_some();
+        if !is_pattern {
+            return Err(pyo3::exceptions::PyTypeError::new_err(format!(
+                "expected a pattern (a Pat, a typed builder, a Capture or an \
+                 int), got {}",
+                operand_kind_name(ob)
+            )));
         }
-        PatRepr::IntConstAnyWidth(v) => Ok(DynMatch::new(sp::int_const_any_width(*v))),
-        PatRepr::IntConstAnyWidthAnyOf(vals) => {
-            Ok(DynMatch::new(sp::int_const_any_width(vals.clone())))
-        }
-        PatRepr::IntConstAnyOf(vals) => Ok(DynMatch::new(sp::int_const(vals.clone()))),
-        PatRepr::AnyInt(c) => {
-            let c = *c;
-            Ok(DynMatch::from_fn(move |b| match c {
-                Some(c) => mc(sp::any_int().capture(c), b),
-                None => mc(sp::any_int(), b),
-            }))
-        }
-        PatRepr::AnyBool(c) => {
-            let c = *c;
-            Ok(DynMatch::from_fn(move |b| match c {
-                Some(c) => mc(sp::any_bool().capture(c), b),
-                None => mc(sp::any_bool(), b),
-            }))
-        }
-        PatRepr::AnyFloat(c) => {
-            let c = *c;
-            Ok(DynMatch::from_fn(move |b| match c {
-                Some(c) => mc(sp::any_float().capture(c), b),
-                None => mc(sp::any_float(), b),
-            }))
-        }
-        PatRepr::AnyIntConst(c) => {
-            let c = *c;
-            Ok(DynMatch::from_fn(move |b| match c {
-                Some(c) => mc(sp::int_const(c), b),
-                None => mc(sp::any_int_const(), b),
-            }))
-        }
-        PatRepr::AnyBoolConst(c) => {
-            let c = *c;
-            Ok(DynMatch::from_fn(move |b| match c {
-                Some(c) => mc(sp::bool_const(c), b),
-                None => mc(sp::any_bool_const(), b),
-            }))
-        }
-        PatRepr::AnyFloatConst(c) => {
-            let c = *c;
-            Ok(DynMatch::from_fn(move |b| match c {
-                Some(c) => mc(sp::float_const(c), b),
-                None => mc(sp::any_float_const(), b),
-            }))
-        }
-        PatRepr::InitialVar => Ok(DynMatch::new(sp::initial_var())),
-        PatRepr::InitialVarFor(vn) => Ok(DynMatch::new(sp::initial_var_for(*vn))),
-        PatRepr::OneOf(alts, first) => {
-            let boxed: Vec<sp::BoxedAlt> = alts
-                .iter()
-                .map(|a| compile_alt_arm_operand(a.bind(py)).map(sp::boxed_alt))
-                .collect::<PyResult<_>>()?;
-            Ok(DynMatch::new(if *first {
-                sp::OneOf::first(boxed)
-            } else {
-                sp::OneOf::new(boxed)
-            }))
-        }
-        PatRepr::FloatLe(l, r) => bin_match(py, l, r, sp::float_le),
-        PatRepr::FloatIsNan(x) => un_match(py, x, sp::float_is_nan),
-        PatRepr::AnyIntBinary(c, l, r) => {
-            let c = *c;
-            bin_match(py, l, r, |l, r| sp::any_int_binary(l, r).capture(c))
-        }
-        PatRepr::AnyIntUnary(c, x) => {
-            let c = *c;
-            un_match(py, x, |x| sp::any_int_unary(x).capture(c))
-        }
-        PatRepr::AnyIntCmp(c, l, r) => {
-            let c = *c;
-            bin_match(py, l, r, |l, r| sp::any_int_cmp(l, r).capture(c))
-        }
-        PatRepr::AnyBoolBinary(c, l, r) => {
-            let c = *c;
-            bin_match(py, l, r, |l, r| sp::any_bool_binary(l, r).capture(c))
-        }
-        PatRepr::AnyFloatBinary(c, l, r) => {
-            let c = *c;
-            bin_match(py, l, r, |l, r| sp::any_float_binary(l, r).capture(c))
-        }
-        PatRepr::AnyFloatUnary(c, x) => {
-            let c = *c;
-            un_match(py, x, |x| sp::any_float_unary(x).capture(c))
-        }
-        PatRepr::AnyFloatCmp(c, l, r) => {
-            let c = *c;
-            bin_match(py, l, r, |l, r| sp::any_float_cmp(l, r).capture(c))
-        }
-        PatRepr::Wrapped(inner, wrap) => {
-            let inner = op_match(py, inner)?;
-            Ok(match wrap {
-                Wrap::Capture(c) => DynMatch::new(inner.capture(*c)),
-                Wrap::When(f) => DynMatch::new(wrap_when(inner, f.clone_ref(py))),
-                Wrap::Ordered => DynMatch::new(inner.ordered()),
-                Wrap::OfWidth(n) => DynMatch::new(inner.of_width(*n)),
-                Wrap::ValueTy(ty) => DynMatch::new(inner.value_ty(*ty)),
-            })
-        }
-        PatRepr::Finished(_) => Err(into_strider_err(anyhow::anyhow!(
-            "a finished control / variadic pattern cannot be nested as a \
-             value operand"
-        ))),
+        Ok(Self(ob.clone()))
     }
-}
-
-/// The match side of a build-valid shape. The caller holds this level's
-/// [`DepthGuard`].
-fn compile_tmpl_match(t: &TmplRepr, py: Python<'_>) -> PyResult<DynMatch> {
-    match t {
-        TmplRepr::Var(c) => Ok(DynMatch::new(sp::var(*c))),
-        TmplRepr::IntConst(v) => Ok(DynMatch::new(sp::int_const(v.clone()))),
-        TmplRepr::BoolConst(v) => Ok(DynMatch::new(sp::bool_const(*v))),
-        TmplRepr::FloatConst(bits) => Ok(DynMatch::new(sp::float_const(*bits))),
-        TmplRepr::IntBinary(op, l, r) => bin_match(py, l, r, |l, r| sp::int_binary(*op, l, r)),
-        TmplRepr::Sub(l, r) => bin_match(py, l, r, sp::int_sub),
-        TmplRepr::BitNot(x) => un_match(py, x, sp::int_not),
-        TmplRepr::IntUnary(kind, x) => {
-            let kind = *kind;
-            let x = op_match(py, x)?;
-            Ok(DynMatch::from_fn(move |b| match kind {
-                IntUnaryKind::Neg => mc(sp::int_neg(x), b),
-                IntUnaryKind::Popcount => mc(sp::int_popcount(x), b),
-                IntUnaryKind::Lzcount => mc(sp::int_lzcount(x), b),
-            }))
-        }
-        TmplRepr::Cast(kind, x) => {
-            let kind = *kind;
-            let x = op_match(py, x)?;
-            Ok(DynMatch::from_fn(move |b| cast_match(kind, x, b)))
-        }
-        TmplRepr::Extend(op, x) => un_match(py, x, |x| sp::int_extend(*op, x)),
-        TmplRepr::IntCmp(op, l, r) => bin_match(py, l, r, |l, r| sp::int_cmp(*op, l, r)),
-        TmplRepr::IntNe(l, r) => bin_match(py, l, r, sp::int_ne),
-        TmplRepr::IntLe(l, r) => bin_match(py, l, r, sp::int_le),
-        TmplRepr::IntSle(l, r) => bin_match(py, l, r, sp::int_sle),
-        TmplRepr::FloatBinary(op, l, r) => bin_match(py, l, r, |l, r| sp::float_binary(*op, l, r)),
-        TmplRepr::FloatSub(l, r) => bin_match(py, l, r, sp::float_sub),
-        TmplRepr::FloatUnary(op, x) => un_match(py, x, |x| sp::float_unary(*op, x)),
-        TmplRepr::FloatCmp(op, l, r) => bin_match(py, l, r, |l, r| sp::float_cmp(*op, l, r)),
-        TmplRepr::FloatNe(l, r) => bin_match(py, l, r, sp::float_ne),
-        TmplRepr::BoolBinary(op, l, r) => bin_match(py, l, r, |l, r| sp::bool_binary(*op, l, r)),
-        TmplRepr::BoolNot(x) => un_match(py, x, sp::bool_not),
-        TmplRepr::CaptureTyped(..) => Err(into_strider_err(anyhow::anyhow!(
-            "capture_typed() builds a rewrite RHS and matches nothing"
-        ))),
-    }
-}
-
-fn cast_match(kind: CastKind, x: DynMatch, b: &mut MatcherBuilder) -> PatValueRef {
-    match kind {
-        CastKind::Truncate => mc(sp::int_truncate(x), b),
-        CastKind::ZeroExtend => mc(sp::int_zero_extend(x), b),
-        CastKind::SignExtend => mc(sp::int_sign_extend(x), b),
-        CastKind::IntToFloat => mc(sp::int_to_float(x), b),
-        CastKind::FloatToInt => mc(sp::float_to_int(x), b),
-        CastKind::IntBitsToFloat => mc(sp::int_bits_to_float(x), b),
-        CastKind::FloatBitsToInt => mc(sp::float_bits_to_int(x), b),
-        CastKind::FloatToFloat => mc(sp::float_to_float(x), b),
-    }
-}
-
-fn op_tpl(py: Python<'_>, ob: &Py<PyAny>) -> PyResult<DynTemplate> {
-    compile_operand_template(ob.bind(py))
-}
-
-// Composite ops go through the `TemplatePat`-bounded `tpl::` twins: a
-// `DynTemplate` operand is `TemplatePat`, not `MatchPat`, so it cannot feed
-// the match-side factories. Leaves stay on the dual-trait builders.
-
-fn bin_tpl<P: TemplatePat + Send + 'static>(
-    py: Python<'_>,
-    l: &Py<PyAny>,
-    r: &Py<PyAny>,
-    f: impl FnOnce(DynTemplate, DynTemplate) -> P,
-) -> PyResult<DynTemplate> {
-    let l = op_tpl(py, l)?;
-    let r = op_tpl(py, r)?;
-    let p = f(l, r);
-    Ok(DynTemplate(Box::new(move |b| tc(p, b))))
-}
-
-fn un_tpl<P: TemplatePat + Send + 'static>(
-    py: Python<'_>,
-    x: &Py<PyAny>,
-    f: impl FnOnce(DynTemplate) -> P,
-) -> PyResult<DynTemplate> {
-    let p = f(op_tpl(py, x)?);
-    Ok(DynTemplate(Box::new(move |b| tc(p, b))))
-}
-
-/// The build side of a build-valid shape, total over the shape itself; a
-/// nested operand can still be refused. The caller holds this level's
-/// [`DepthGuard`].
-fn compile_tmpl_template(t: &TmplRepr, py: Python<'_>) -> PyResult<DynTemplate> {
-    match t {
-        TmplRepr::Var(c) => {
-            let c = *c;
-            Ok(DynTemplate(Box::new(move |b| template_var(b, c))))
-        }
-        TmplRepr::IntConst(v) => {
-            let v = v.clone();
-            Ok(DynTemplate(Box::new(move |b| tc(sp::int_const(v), b))))
-        }
-        TmplRepr::BoolConst(v) => {
-            let v = *v;
-            Ok(DynTemplate(Box::new(move |b| tc(sp::bool_const(v), b))))
-        }
-        TmplRepr::FloatConst(bits) => {
-            let bits = *bits;
-            Ok(DynTemplate(Box::new(move |b| tc(sp::float_const(bits), b))))
-        }
-        TmplRepr::IntBinary(op, l, r) => bin_tpl(py, l, r, |l, r| tpl::int_binary(*op, l, r)),
-        TmplRepr::Sub(l, r) => bin_tpl(py, l, r, tpl::int_sub),
-        TmplRepr::BitNot(x) => un_tpl(py, x, tpl::int_not),
-        TmplRepr::IntUnary(kind, x) => {
-            let kind = *kind;
-            let x = op_tpl(py, x)?;
-            Ok(DynTemplate(Box::new(move |b| match kind {
-                IntUnaryKind::Neg => tc(tpl::int_neg(x), b),
-                IntUnaryKind::Popcount => tc(tpl::int_popcount(x), b),
-                IntUnaryKind::Lzcount => tc(tpl::int_lzcount(x), b),
-            })))
-        }
-        TmplRepr::Cast(kind, x) => {
-            let kind = *kind;
-            let x = op_tpl(py, x)?;
-            Ok(DynTemplate(Box::new(move |b| cast_tpl(kind, x, b))))
-        }
-        TmplRepr::Extend(op, x) => un_tpl(py, x, |x| tpl::int_extend(*op, x)),
-        TmplRepr::IntCmp(op, l, r) => bin_tpl(py, l, r, |l, r| tpl::int_cmp(*op, l, r)),
-        TmplRepr::IntNe(l, r) => bin_tpl(py, l, r, tpl::int_ne),
-        TmplRepr::IntLe(l, r) => bin_tpl(py, l, r, tpl::int_le),
-        TmplRepr::IntSle(l, r) => bin_tpl(py, l, r, tpl::int_sle),
-        TmplRepr::FloatBinary(op, l, r) => bin_tpl(py, l, r, |l, r| tpl::float_binary(*op, l, r)),
-        TmplRepr::FloatSub(l, r) => bin_tpl(py, l, r, tpl::float_sub),
-        TmplRepr::FloatUnary(op, x) => un_tpl(py, x, |x| tpl::float_unary(*op, x)),
-        TmplRepr::FloatCmp(op, l, r) => bin_tpl(py, l, r, |l, r| tpl::float_cmp(*op, l, r)),
-        TmplRepr::FloatNe(l, r) => bin_tpl(py, l, r, tpl::float_ne),
-        TmplRepr::BoolBinary(op, l, r) => bin_tpl(py, l, r, |l, r| tpl::bool_binary(*op, l, r)),
-        TmplRepr::BoolNot(x) => un_tpl(py, x, tpl::bool_not),
-        TmplRepr::CaptureTyped(c, x) => {
-            let c = *c;
-            un_tpl(py, x, |x| sp::capture_typed(c, x))
-        }
-    }
-}
-
-fn cast_tpl(kind: CastKind, x: DynTemplate, b: &mut TemplateBuilder) -> TmplValueRef {
-    match kind {
-        CastKind::Truncate => tc(tpl::int_truncate(x), b),
-        CastKind::ZeroExtend => tc(tpl::int_zero_extend(x), b),
-        CastKind::SignExtend => tc(tpl::int_sign_extend(x), b),
-        CastKind::IntToFloat => tc(tpl::int_to_float(x), b),
-        CastKind::FloatToInt => tc(tpl::float_to_int(x), b),
-        CastKind::IntBitsToFloat => tc(tpl::int_bits_to_float(x), b),
-        CastKind::FloatBitsToInt => tc(tpl::float_bits_to_int(x), b),
-        CastKind::FloatToFloat => tc(tpl::float_to_float(x), b),
-    }
-}
-
-impl PatRepr {
-    pub(crate) fn to_pattern(&self, py: Python<'_>) -> PyResult<Pattern> {
-        if let PatRepr::Finished(finished) = self {
-            let mut finished = finished.lock().expect("pattern cache poisoned");
-            let pattern = finished.pattern.take().ok_or_else(|| {
-                into_strider_err(anyhow::anyhow!(
-                    "this control / variadic pattern was already consumed by a \
-                     prior query; rebuild it for each find/rewrite call"
-                ))
-            })?;
-            if !finished.when_handles.is_empty() {
-                note_when_attached();
-            }
-            return Ok(pattern);
-        }
-        Ok(self.compile_match(py)?.into_pattern())
-    }
-}
-
-/// Polymorphic input for builder field methods and `Function.find_all`:
-/// a `Pat`, a `Capture`, a raw int (an `int_const`), or any typed builder that
-/// finalises to a pattern. A bare string is NOT a capture: use `Capture(name)`.
-#[derive(FromPyObject)]
-pub enum PatLike<'py> {
-    Pat(Bound<'py, PyPat>),
-    Capture(Bound<'py, PyCapture>),
-    Int(crate::bigint::PyBigInt),
-    CallPat(Bound<'py, PyCallPat>),
-    CallOtherPat(Bound<'py, PyCallOtherPat>),
-    RetPat(Bound<'py, PyRetPat>),
-    IfPat(Bound<'py, PyIfPat>),
-    LoadPat(Bound<'py, PyLoadPat>),
-    StorePat(Bound<'py, PyStorePat>),
-    PhiPat(Bound<'py, PyPhiPat>),
-    MemPhiPat(Bound<'py, PyMemPhiPat>),
-    FunctionArgPat(Bound<'py, PyFunctionArgPat>),
-    IntBinaryPat(Bound<'py, PyIntBinaryPat>),
-    FloatBinaryPat(Bound<'py, PyFloatBinaryPat>),
-    BoolBinaryPat(Bound<'py, PyBoolBinaryPat>),
-    IndirectBranchPat(Bound<'py, PyIndirectBranchPat>),
-    UnreachablePat(Bound<'py, PyUnreachablePat>),
-    SwitchPat(Bound<'py, PySwitchPat>),
-    EntryPat(Bound<'py, PyEntryPat>),
-    RegionPat(Bound<'py, PyRegionPat>),
 }
 
 /// One pattern, or a list matched as a join: every pattern runs, captures
@@ -1453,65 +720,10 @@ pub enum PatQuery<'py> {
 }
 
 impl PatQuery<'_> {
-    pub(crate) fn to_patterns(&self, py: Python<'_>) -> PyResult<Vec<Pattern>> {
+    pub(crate) fn to_patterns(&self) -> PyResult<Vec<Pattern>> {
         match self {
-            PatQuery::Single(p) => Ok(vec![p.to_pattern(py)?]),
-            PatQuery::Many(ps) => {
-                let mut out = Vec::with_capacity(ps.len());
-                for (i, p) in ps.iter().enumerate() {
-                    match p.to_pattern(py) {
-                        Ok(pat) => out.push(pat),
-                        // A `Finished` pattern is TAKEN, so unwinding past one
-                        // a later entry then failed on would consume it for a
-                        // query that never ran.
-                        Err(e) => {
-                            for (src, pat) in ps[..i].iter().zip(out) {
-                                src.restore(pat);
-                            }
-                            return Err(e);
-                        }
-                    }
-                }
-                Ok(out)
-            }
-        }
-    }
-}
-
-impl PatLike<'_> {
-    pub(crate) fn to_pattern(&self, py: Python<'_>) -> PyResult<Pattern> {
-        match self {
-            PatLike::Pat(p) => p.borrow().repr.to_pattern(py),
-            PatLike::Capture(c) => Ok(strider_pattern::var(c.borrow().inner).into_pattern()),
-            PatLike::Int(v) => PatRepr::Build(TmplRepr::IntConst(v.value_ref()?)).to_pattern(py),
-            PatLike::CallPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::CallOtherPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::RetPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::IfPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::LoadPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::StorePat(b) => b.borrow().build_pattern_py(py),
-            PatLike::PhiPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::MemPhiPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::FunctionArgPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::IntBinaryPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::FloatBinaryPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::BoolBinaryPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::IndirectBranchPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::UnreachablePat(b) => b.borrow().build_pattern_py(py),
-            PatLike::SwitchPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::EntryPat(b) => b.borrow().build_pattern_py(py),
-            PatLike::RegionPat(b) => b.borrow().build_pattern_py(py),
-        }
-    }
-
-    /// Put `pat` back where `to_pattern` took it from. A no-op for every
-    /// source that compiles a fresh `Pattern` per call, which is all but a
-    /// `Pat` holding a finished control / variadic one.
-    fn restore(&self, pat: Pattern) {
-        if let PatLike::Pat(p) = self
-            && let PatRepr::Finished(finished) = &*p.borrow().repr
-        {
-            finished.lock().expect("pattern cache poisoned").pattern = Some(pat);
+            PatQuery::Single(p) => Ok(vec![root_pattern(&p.0)?]),
+            PatQuery::Many(ps) => ps.iter().map(|p| root_pattern(&p.0)).collect(),
         }
     }
 }
@@ -1554,27 +766,27 @@ impl<'py> FromPyObject<'py> for TemplateLike<'py> {
 }
 
 impl TemplateLike<'_> {
-    pub(crate) fn to_template(&self, py: Python<'_>) -> PyResult<Template> {
-        match self {
-            TemplateLike::Template(t) => t.borrow().to_template(py),
-            TemplateLike::Capture(c) => Ok(DynTemplate(Box::new({
-                let cap = c.borrow().inner;
-                move |b| template_var(b, cap)
-            }))
-            .into_template()),
+    pub(crate) fn to_template(&self) -> PyResult<Template> {
+        let cap = match self {
+            TemplateLike::Template(t) => {
+                return Ok(TemplatePat::into_template(expr(
+                    t.as_any(),
+                    Slot::Template,
+                )?));
+            }
+            TemplateLike::Capture(c) => c.get().inner,
             TemplateLike::Str(s) => {
                 let name = s.to_string();
                 if name == "_" || name == "any_" {
-                    Err(into_strider_err(anyhow::anyhow!(
+                    return Err(into_strider_err(anyhow::anyhow!(
                         "cannot use {name:?} as a rewrite RHS: it is the \
                          wildcard, not a capture name"
-                    )))
-                } else {
-                    let cap = intern_str(&name)?;
-                    Ok(DynTemplate(Box::new(move |b| template_var(b, cap))).into_template())
+                    )));
                 }
+                intern_str(&name)?
             }
-        }
+        };
+        Ok(TemplatePat::into_template(sp::var(cap)))
     }
 }
 
@@ -1718,68 +930,19 @@ fn note_when_attached() {
     });
 }
 
-/// A `.when()` predicate baked into a compiled [`Pattern`], shared with the
-/// closure that runs it. One attachment is one strong Python reference, which
-/// only the `Pat` currently holding that `Pattern` reports to the collector.
-pub(crate) type WhenFn = Arc<PyObject>;
-
-// Collects the predicates baked into the pattern being finalised, while a
-// `retain_when_handles` scope is open.
-thread_local! {
-    static RETAINED_WHEN: std::cell::RefCell<Option<Vec<WhenFn>>> =
-        const { std::cell::RefCell::new(None) };
-}
-
-/// Reinstates the enclosing scope on every exit, including an unwind: left
-/// open, the next `attach_when` lands in a scope whose pattern no longer
-/// exists and the predicate is retained for the process lifetime.
-struct RetainedWhenScope(Option<Vec<WhenFn>>);
-
-impl RetainedWhenScope {
-    fn open() -> Self {
-        Self(RETAINED_WHEN.with(|c| c.replace(Some(Vec::new()))))
-    }
-
-    /// What the open scope has collected, leaving it open for `Drop`.
-    fn handles() -> Vec<WhenFn> {
-        RETAINED_WHEN.with(|c| c.borrow().clone().unwrap_or_default())
-    }
-}
-
-impl Drop for RetainedWhenScope {
-    fn drop(&mut self) {
-        RETAINED_WHEN.with(|c| c.replace(self.0.take()));
-    }
-}
-
-/// Runs `build` and returns the predicates its compiled closures kept.
-fn retain_when_handles<T>(build: impl FnOnce() -> PyResult<T>) -> PyResult<(T, Vec<WhenFn>)> {
-    let _scope = RetainedWhenScope::open();
-    let built = build();
-    Ok((built?, RetainedWhenScope::handles()))
-}
-
-/// Wraps `f` for a compiled closure, registering it with the open scope.
-fn attach_when(f: PyObject) -> WhenFn {
+/// `f` as a post-match guard, handed the matched node as `Match.root`.
+fn when_guard(f: PyObject) -> sp::PostMatchFn {
     note_when_attached();
-    let f = Arc::new(f);
-    RETAINED_WHEN.with(|c| {
-        if let Some(open) = c.borrow_mut().as_mut() {
-            open.push(Arc::clone(&f));
-        }
-    });
-    f
+    Box::new(move |_matcher, node, _ty, bindings| run_when_predicate(node, bindings, &f))
 }
 
 /// Compile `pat` as a rewrite LHS, rejecting a `.when()` guard anywhere in it.
-pub(crate) fn compile_rewrite_lhs(py: Python<'_>, pat: &PatLike<'_>) -> PyResult<Pattern> {
+pub(crate) fn compile_rewrite_lhs(pat: &PatLike<'_>) -> PyResult<Pattern> {
     let outer = REWRITE_LHS_WHEN.with(|c| c.replace(Some(false)));
-    let compiled = pat.to_pattern(py);
+    let compiled = root_pattern(&pat.0);
     let saw_when = REWRITE_LHS_WHEN.with(|c| c.replace(outer)) == Some(true);
     let compiled = compiled?;
     if saw_when {
-        // Nothing ran, so the one-shot pattern this may have taken goes back.
-        pat.restore(compiled);
         return Err(into_strider_err(anyhow::anyhow!(
             "a .when() predicate cannot run on a rewrite `find` pattern: the \
              function is held for mutation while the rule fires, so the \
@@ -1791,86 +954,84 @@ pub(crate) fn compile_rewrite_lhs(py: Python<'_>, pat: &PatLike<'_>) -> PyResult
     Ok(compiled)
 }
 
-/// Compiles a memory-token producer with its `.when()` predicate attached.
-pub(crate) fn mem_with_when<M: MemPat + 'static>(
-    inner: M,
-    when: Option<PyObject>,
-    b: &mut MatcherBuilder,
-) -> PatValueRef {
-    let out = inner.compile_mem(b);
-    if let Some(f) = when {
-        let py_func = attach_when(f);
-        b.set_post_match(
-            out,
-            Box::new(move |_matcher, node, _ty, bindings| {
-                run_when_predicate(node, bindings, &py_func)
-            }),
-        );
+/// A typed builder: field state replayed onto the core builder per query.
+pub(crate) trait Builder {
+    /// Produces a memory token, so a memory slot takes it.
+    fn memory(&self) -> bool {
+        false
     }
-    out
+    fn common(&self) -> &std::cell::RefCell<CommonState>;
+    /// The node with every operand walked, bound to its own capture and
+    /// `caps`, `.when()` aside.
+    fn node(&self, py: Python<'_>, caps: &[Capture]) -> PyResult<Expr>;
 }
 
-/// `inner` with a Python `.when()` predicate on its root, attached as it
-/// lowers. Forwards `compile_ordered`, so a pin lands under the guard.
-pub(crate) struct WhenPat<P> {
-    inner: P,
-    f: PyObject,
-}
-
-impl<P: MatchPat> MatchPat for WhenPat<P> {
-    fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let o = self.inner.compile(b);
-        guard_with(b, o, self.f);
-        o
+impl dyn Builder + '_ {
+    fn when(&self, py: Python<'_>) -> Option<sp::PostMatchFn> {
+        let f = self
+            .common()
+            .borrow()
+            .when
+            .as_ref()
+            .map(|f| f.clone_ref(py));
+        f.map(when_guard)
     }
 
-    fn compile_ordered(self, b: &mut MatcherBuilder) -> PatValueRef {
-        let o = self.inner.compile_ordered(b);
-        guard_with(b, o, self.f);
-        o
+    /// Nested as an operand.
+    fn expr(&self, py: Python<'_>, caps: &[Capture]) -> PyResult<Expr> {
+        let e = self.node(py, caps)?;
+        Ok(match self.when(py) {
+            Some(f) => e.post_match(f),
+            None => e,
+        })
+    }
+
+    /// Sealed as a root, on the node's own anchor.
+    fn pattern(&self, py: Python<'_>, caps: &[Capture]) -> PyResult<Pattern> {
+        let pat = self.node(py, caps)?.build();
+        Ok(match self.when(py) {
+            Some(f) => pat.with_root_post_match(f),
+            None => pat,
+        })
     }
 }
 
-/// Attaches `f` as a full `PostMatchFn`, which keeps the matched `NodeId` the
-/// predicate needs for a real `Match.root`.
-fn guard_with(b: &mut MatcherBuilder, o: PatValueRef, f: PyObject) {
-    let f = attach_when(f);
-    b.set_post_match(
-        o,
-        Box::new(move |_matcher, node, _ty, bindings| run_when_predicate(node, bindings, &f)),
-    );
+/// The one list of builder types. `f` over `ob` as a builder, if it is one.
+macro_rules! builders {
+    ($($ty:ty),* $(,)?) => {
+        pub(crate) fn with_builder<R>(
+            ob: &Bound<'_, PyAny>,
+            f: impl FnOnce(&dyn Builder) -> R,
+        ) -> Option<R> {
+            $(
+                if let Ok(b) = ob.downcast::<$ty>() {
+                    return Some(f(&*b.borrow()));
+                }
+            )*
+            None
+        }
+    };
 }
 
-pub(crate) fn wrap_when<P: MatchPat>(inner: P, f: PyObject) -> WhenPat<P> {
-    WhenPat { inner, f }
-}
-
-/// For the node-rooted control / variadic builders, which finalise straight
-/// to a `Pattern` and so have no `MatchPat` form for [`wrap_when`] to wrap.
-pub(crate) fn make_root_post_match(py_func: PyObject) -> strider_pattern::PostMatchFn {
-    let py_func = attach_when(py_func);
-    Box::new(move |_matcher, node, _ty, bindings| run_when_predicate(node, bindings, &py_func))
-}
-
-/// Attaches an optional `.when()` predicate to a node-rooted `one_of` arm's
-/// synthesized output.
-fn alt_arm_with_when(
-    out: PatValueRef,
-    mb: &mut MatcherBuilder,
-    when: Option<PyObject>,
-) -> PatValueRef {
-    if let Some(f) = when {
-        mb.set_post_match(out, make_root_post_match(f));
-    }
-    out
-}
-
-fn apply_when_to_pattern(py: Python<'_>, common: &CommonState, pat: Pattern) -> Pattern {
-    match common.when.as_ref() {
-        Some(f) => pat.with_root_post_match(make_root_post_match(f.clone_ref(py))),
-        None => pat,
-    }
-}
+builders!(
+    PyLoadPat,
+    PyStorePat,
+    PyCallPat,
+    PyCallOtherPat,
+    PyPhiPat,
+    PyMemPhiPat,
+    PyIntBinaryPat,
+    PyFloatBinaryPat,
+    PyBoolBinaryPat,
+    PyFunctionArgPat,
+    PyEntryPat,
+    PyRegionPat,
+    PyRetPat,
+    PyIfPat,
+    PySwitchPat,
+    PyIndirectBranchPat,
+    PyUnreachablePat,
+);
 
 /// Selects which value-passthrough cast node kinds the matcher walks through
 /// transparently. Build from the classmethods, combine with `|`, and pass as
@@ -1954,14 +1115,24 @@ impl PyPat {
     /// Exposes the operand sub-patterns and any `.when()` predicate, which are
     /// `Py` handles the collector cannot otherwise see.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        self.repr.traverse(&visit)
+        self.repr.args.iter().try_for_each(|a| visit.call(a))
     }
 
     /// Capture this pattern's matched node under `c`, a `Capture` or a name.
     /// Returns a new `Pat`.
+    /// On an `into_pat()` `Pat`, the builder's own `.capture()`.
     fn capture(slf: &Bound<'_, Self>, c: crate::matcher::CaptureKey<'_>) -> PyResult<PyPat> {
         let c = c.resolve()?;
-        derive(slf, |inner| PatRepr::Wrapped(inner, Wrap::Capture(c)))
+        let pat = slf.get();
+        let Op::Finished(caps) = &pat.repr.op else {
+            return derive(slf, Wrap::Capture(c), None);
+        };
+        let op = Op::Finished(caps.iter().copied().chain([c]).collect());
+        let args = vec![pat.repr.args[0].clone_ref(slf.py())];
+        Ok(PyPat {
+            repr: Repr::new(pat.repr.name, Kind::Match, op, args),
+            depth: pat.depth,
+        })
     }
 
     /// Attach a Python predicate that runs after this pattern matches.
@@ -1971,25 +1142,25 @@ impl PyPat {
     /// re-raises out of `find_all` / `find_unique`, every later candidate
     /// failing without running the predicate.
     fn when(slf: &Bound<'_, Self>, f: PyObject) -> PyResult<PyPat> {
-        derive(slf, |inner| PatRepr::Wrapped(inner, Wrap::When(f)))
+        derive(slf, Wrap::When, Some(f))
     }
 
     /// Constrain the matched node's value output to exactly `n` bits.
     /// Match-only.
     fn of_width(slf: &Bound<'_, Self>, n: u32) -> PyResult<PyPat> {
-        derive(slf, |inner| PatRepr::Wrapped(inner, Wrap::OfWidth(n)))
+        derive(slf, Wrap::OfWidth(n), None)
     }
 
     /// Constrain the matched node's value output to the type named by `ty`,
     /// e.g. `"i1"`, `"i64"`, `"f32"`. Match-only.
     fn value_ty(slf: &Bound<'_, Self>, ty: &str) -> PyResult<PyPat> {
         let t = parse_value_ty(ty)?;
-        derive(slf, |inner| PatRepr::Wrapped(inner, Wrap::ValueTy(t)))
+        derive(slf, Wrap::ValueTy(t), None)
     }
 
     /// Sugar for `.of_width(1)`, a boolean output. Match-only.
     fn bool_valued(slf: &Bound<'_, Self>) -> PyResult<PyPat> {
-        derive(slf, |inner| PatRepr::Wrapped(inner, Wrap::OfWidth(1)))
+        derive(slf, Wrap::OfWidth(1), None)
     }
 
     /// Stop the matcher retrying this op with its operands swapped; a no-op
@@ -1998,12 +1169,18 @@ impl PyPat {
     /// `int_ne` / `float_ne` that node is the `Equal` under the `Xor`. A shape
     /// with no operands to order raises. Match-only.
     fn ordered(slf: &Bound<'_, Self>) -> PyResult<PyPat> {
-        if let Err(kind) = orderable(&unwrapped_repr(slf)) {
+        // The chainable wrappers and `inputs_of_width` constrain the node they
+        // wrap, so they leave what `.ordered()` pins unchanged.
+        let r = slf.get().repr.under(slf.py(), |r| {
+            matches!(r.op, Op::Wrap(_)) || r.kind == Kind::Through
+        });
+        if !matches!(r.op, Op::Bin(_)) && r.kind != Kind::Pair {
             return Err(into_strider_err(anyhow::anyhow!(
-                "ordered() pins the operand order of a binary op; got {kind}"
+                "ordered() pins the operand order of a binary op; got {}",
+                r.name
             )));
         }
-        derive(slf, |inner| PatRepr::Wrapped(inner, Wrap::Ordered))
+        derive(slf, Wrap::Ordered, None)
     }
 
     fn __repr__(&self) -> String {
@@ -2014,31 +1191,63 @@ impl PyPat {
 /// Wildcard: matches any node without binding it.
 #[pyfunction(name = "anything")]
 pub fn any_() -> PyPat {
-    PyPat::from_repr(PatRepr::Any)
+    PyPat::from(Repr::new("anything()", Kind::Match, Op::Any, Vec::new()))
 }
 
 /// Wildcard that binds the matched node to capture `c`.
 #[pyfunction]
 pub fn var(c: PyRef<'_, PyCapture>) -> PyPat {
-    PyPat::from_tmpl(TmplRepr::Var(c.inner))
+    PyPat::from(var_repr(c.inner))
+}
+
+pub(crate) fn var_repr(c: Capture) -> Repr {
+    Repr::new("var()", Kind::Build, Op::Var(c), Vec::new())
 }
 
 /// Match any value output exactly `n` bits wide.
 #[pyfunction]
 pub fn value_of_width(n: u32) -> PyPat {
-    PyPat::from_repr(PatRepr::ValueOfWidth(n))
+    let make = move || ex(sp::value_of_width(n));
+    PyPat::from(leaf("value_of_width()", Kind::Match, Box::new(make)))
+}
+
+/// `int_const(v)`, either side.
+pub(crate) fn int_const_repr(v: strider_ir::IBig) -> Repr {
+    let make = move || ex(sp::int_const(v.clone()));
+    leaf("int_const()", Kind::Build, Box::new(make))
+}
+
+/// `bool_const(v)`, either side.
+pub(crate) fn bool_const_repr(v: bool) -> Repr {
+    leaf(
+        "bool_const()",
+        Kind::Build,
+        Box::new(move || ex(sp::bool_const(v))),
+    )
+}
+
+/// `float_const(bits)`, either side.
+pub(crate) fn float_const_repr(bits: u64) -> Repr {
+    let make = move || ex(sp::float_const(bits));
+    leaf("float_const()", Kind::Build, Box::new(make))
 }
 
 /// Match `inner` and require all value inputs to be `n` bits wide.
 #[pyfunction]
 pub fn inputs_of_width(n: u32, inner: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::InputsOfWidth(n, inner))
+    let make = move |e| ex(sp::inputs_of_width(n, e));
+    PyPat::from(un(
+        "inputs_of_width()",
+        Kind::Through,
+        Box::new(make),
+        inner,
+    ))
 }
 
 /// Match `inner` whose value inputs are all 1-bit (`I1`).
 #[pyfunction]
 pub fn bool_inputs(inner: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::InputsOfWidth(1, inner))
+    inputs_of_width(1, inner)
 }
 
 /// One constant, a set of them, or a capture, for [`int_const`].
@@ -2067,18 +1276,22 @@ pub enum IntConstArg {
 #[pyfunction]
 #[pyo3(signature = (value=None))]
 pub fn int_const(value: Option<IntConstArg>) -> PyResult<PyPat> {
-    Ok(PyPat::from_repr(match value {
-        None => PatRepr::AnyIntConst(None),
-        Some(IntConstArg::Cap(c)) => PatRepr::AnyIntConst(Some(c.get().inner)),
-        Some(IntConstArg::One(v)) => PatRepr::Build(TmplRepr::IntConst(v.value()?)),
+    let any = |c| cap_opt("int_const()", Kind::Build, sp::any_int_const, c);
+    Ok(match value {
+        None => any(None),
+        Some(IntConstArg::Cap(c)) => any(Some(c.get().inner)),
+        Some(IntConstArg::One(v)) => PyPat::from(int_const_repr(v.value()?)),
         // A negative carries its two's complement at whatever width it is
         // matched at, so it names the same constant at every width.
-        Some(IntConstArg::Set(vs)) => PatRepr::IntConstAnyOf(
-            vs.into_iter()
+        Some(IntConstArg::Set(vs)) => {
+            let vs = vs
+                .into_iter()
                 .map(crate::bigint::PyBigInt::value)
-                .collect::<PyResult<Vec<_>>>()?,
-        ),
-    }))
+                .collect::<PyResult<Vec<_>>>()?;
+            let make = move || ex(sp::int_const(vs.clone()));
+            PyPat::from(leaf("int_const([..])", Kind::Build, Box::new(make)))
+        }
+    })
 }
 
 /// One value, or a set of them, for [`int_const_any_width`].
@@ -2098,13 +1311,20 @@ pub enum IntConstAnyWidthArg {
 /// A value outside the signed 64-bit range raises.
 #[pyfunction]
 pub fn int_const_any_width(value: IntConstAnyWidthArg) -> PyResult<PyPat> {
-    Ok(PyPat::from_repr(match value {
-        IntConstAnyWidthArg::One(v) => PatRepr::IntConstAnyWidth(checked_signed_i64(v)?),
-        IntConstAnyWidthArg::Set(vs) => PatRepr::IntConstAnyWidthAnyOf(
-            vs.into_iter()
+    Ok(PyPat::from(match value {
+        IntConstAnyWidthArg::One(v) => {
+            let v = checked_signed_i64(v)?;
+            let make = move || ex(sp::int_const_any_width(v));
+            leaf("int_const_any_width()", Kind::Build, Box::new(make))
+        }
+        IntConstAnyWidthArg::Set(vs) => {
+            let vs: Vec<i64> = vs
+                .into_iter()
                 .map(checked_signed_i64)
-                .collect::<PyResult<_>>()?,
-        ),
+                .collect::<PyResult<_>>()?;
+            let make = move || ex(sp::int_const_any_width(vs.clone()));
+            leaf("int_const_any_width([..])", Kind::Build, Box::new(make))
+        }
     }))
 }
 
@@ -2123,11 +1343,12 @@ pub enum BoolConstArg {
 #[pyfunction]
 #[pyo3(signature = (value=None))]
 pub fn bool_const(value: Option<BoolConstArg>) -> PyPat {
-    PyPat::from_repr(match value {
-        None => PatRepr::AnyBoolConst(None),
-        Some(BoolConstArg::Cap(c)) => PatRepr::AnyBoolConst(Some(c.get().inner)),
-        Some(BoolConstArg::One(v)) => PatRepr::Build(TmplRepr::BoolConst(v)),
-    })
+    let any = |c| cap_opt("bool_const()", Kind::Build, sp::any_bool_const, c);
+    match value {
+        None => any(None),
+        Some(BoolConstArg::Cap(c)) => any(Some(c.get().inner)),
+        Some(BoolConstArg::One(v)) => PyPat::from(bool_const_repr(v)),
+    }
 }
 
 /// The IEEE 754 bit pattern, or a capture, for [`float_const`].
@@ -2145,11 +1366,12 @@ pub enum FloatConstArg {
 #[pyfunction]
 #[pyo3(signature = (bits=None))]
 pub fn float_const(bits: Option<FloatConstArg>) -> PyPat {
-    PyPat::from_repr(match bits {
-        None => PatRepr::AnyFloatConst(None),
-        Some(FloatConstArg::Cap(c)) => PatRepr::AnyFloatConst(Some(c.get().inner)),
-        Some(FloatConstArg::Bits(b)) => PatRepr::Build(TmplRepr::FloatConst(b)),
-    })
+    let any = |c| cap_opt("float_const()", Kind::Build, sp::any_float_const, c);
+    match bits {
+        None => any(None),
+        Some(FloatConstArg::Cap(c)) => any(Some(c.get().inner)),
+        Some(FloatConstArg::Bits(b)) => PyPat::from(float_const_repr(b)),
+    }
 }
 
 /// Match any node with an integer value output (`I1` through `I512`),
@@ -2157,7 +1379,7 @@ pub fn float_const(bits: Option<FloatConstArg>) -> PyPat {
 #[pyfunction]
 #[pyo3(signature = (c=None))]
 pub fn any_int(c: Option<PyRef<'_, PyCapture>>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyInt(c.map(|c| c.inner)))
+    cap_opt("any_int()", Kind::Match, sp::any_int, c.map(|c| c.inner))
 }
 
 /// Match any node with a 1-bit (`I1`) value output, optionally binding it to
@@ -2165,7 +1387,7 @@ pub fn any_int(c: Option<PyRef<'_, PyCapture>>) -> PyPat {
 #[pyfunction]
 #[pyo3(signature = (c=None))]
 pub fn any_bool(c: Option<PyRef<'_, PyCapture>>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyBool(c.map(|c| c.inner)))
+    cap_opt("any_bool()", Kind::Match, sp::any_bool, c.map(|c| c.inner))
 }
 
 /// Match any node with a float value output (`F16` through `F128`), optionally
@@ -2173,20 +1395,28 @@ pub fn any_bool(c: Option<PyRef<'_, PyCapture>>) -> PyPat {
 #[pyfunction]
 #[pyo3(signature = (c=None))]
 pub fn any_float(c: Option<PyRef<'_, PyCapture>>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyFloat(c.map(|c| c.inner)))
+    cap_opt(
+        "any_float()",
+        Kind::Match,
+        sp::any_float,
+        c.map(|c| c.inner),
+    )
 }
 
 /// Match any `InitialVar` node.
 #[pyfunction]
 pub fn initial_var() -> PyPat {
-    PyPat::from_repr(PatRepr::InitialVar)
+    let make = || ex(sp::initial_var());
+    PyPat::from(leaf("initial_var()", Kind::Match, Box::new(make)))
 }
 
 /// Match `InitialVar(vn)` for `vn` or any register containing it, so `eax`
 /// matches a node tagged `rax`.
 #[pyfunction]
 pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
-    PyPat::from_repr(PatRepr::InitialVarFor(vn.inner))
+    let vn = vn.inner;
+    let make = move || ex(sp::initial_var_for(vn));
+    PyPat::from(leaf("initial_var_for()", Kind::Match, Box::new(make)))
 }
 
 /// Alternation (logical OR): match if any listed sub-pattern matches. The dual
@@ -2218,7 +1448,12 @@ pub fn initial_var_for(vn: crate::sleigh::PyVn) -> PyPat {
 /// `field` is that alternation for a struct offset.
 #[pyfunction]
 pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
-    PyPat::from_repr(PatRepr::OneOf(patterns, false))
+    PyPat::from(Repr::new(
+        "one_of()",
+        Kind::Match,
+        Op::OneOf(false),
+        patterns,
+    ))
 }
 
 /// Alternation with a first-match cut (ordered OR): match the first listed
@@ -2228,15 +1463,19 @@ pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
 /// `one_of`: any arm, any slot. Match-only. No alternatives matches nothing.
 #[pyfunction]
 pub fn first_of(patterns: Vec<Py<PyAny>>) -> PyPat {
-    PyPat::from_repr(PatRepr::OneOf(patterns, true))
+    PyPat::from(Repr::new(
+        "first_of()",
+        Kind::Match,
+        Op::OneOf(true),
+        patterns,
+    ))
 }
 
 /// Match any node, subject to a Python predicate. Shorthand for
 /// `anything().when(f)`.
 #[pyfunction]
 pub fn predicate(py: Python<'_>, f: PyObject) -> PyResult<PyPat> {
-    let any = Py::new(py, PyPat::from_repr(PatRepr::Any))?.into_any();
-    Ok(PyPat::from_repr(PatRepr::Wrapped(any, Wrap::When(f))))
+    derive(&Bound::new(py, any_())?, Wrap::When, Some(f))
 }
 
 // The one spelling each parser accepts is the op variant's `Debug` output, the
@@ -2361,61 +1600,52 @@ value_ops!(PyPat, "Pattern", " Commutative.");
 /// Pattern: `x` is NaN, the IEEE 754 self-inequality `x != x`.
 #[pyfunction]
 pub fn float_is_nan(operand: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::FloatIsNan(operand))
+    let make = |x| ex(sp::float_is_nan(x));
+    PyPat::from(un("float_is_nan()", Kind::Pair, Box::new(make), operand))
 }
 
 /// Pattern: float `a <= b`, NaN-aware.
 #[pyfunction]
 pub fn float_le(l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::FloatLe(l, r))
+    let make = |l, r| ex(sp::float_le(l, r));
+    PyPat::from(bin("float_le()", Kind::Match, Box::new(make), l, r))
 }
 
-/// Match any `IntBinaryOp` over `(l, r)` and bind the op variant to `c`.
-#[pyfunction]
-pub fn any_int_binary(c: PyRef<'_, PyCapture>, l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyIntBinary(c.inner, l, r))
+/// The `any_*` ops: any variant of one op family, the variant bound to `c`.
+macro_rules! any_variant {
+    ($($name:ident($($x:ident),+) = $doc:literal;)*) => {$(
+        #[doc = $doc]
+        #[pyfunction]
+        pub fn $name(c: PyRef<'_, PyCapture>, $($x: Py<PyAny>),+) -> PyPat {
+            let c = c.inner;
+            let name = concat!(stringify!($name), "()");
+            PyPat::from(any_variant!(@repr $name, name, c, $($x),+))
+        }
+    )*};
+    (@repr $name:ident, $n:ident, $c:ident, $x:ident) => {
+        un($n, Kind::Match, Box::new(move |x| ex(sp::$name(x).capture($c))), $x)
+    };
+    (@repr $name:ident, $n:ident, $c:ident, $l:ident, $r:ident) => {
+        bin($n, Kind::Match, Box::new(move |l, r| ex(sp::$name(l, r).capture($c))), $l, $r)
+    };
 }
 
-/// Match any `IntUnaryOp` over `operand` and bind the op variant to `c`.
-#[pyfunction]
-pub fn any_int_unary(c: PyRef<'_, PyCapture>, operand: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyIntUnary(c.inner, operand))
+any_variant! {
+    any_int_binary(l, r)
+        = "Match any `IntBinaryOp` over `(l, r)` and bind the op variant to `c`.";
+    any_int_unary(operand)
+        = "Match any `IntUnaryOp` over `operand` and bind the op variant to `c`.";
+    any_int_cmp(l, r)
+        = "Match any `IntCmpOp` over `(l, r)` and bind the op variant to `c`.";
+    any_bool_binary(l, r)
+        = "Match any boolean binary op over `(l, r)` and bind the op variant to `c`.";
+    any_float_binary(l, r)
+        = "Match any `FloatBinaryOp` over `(l, r)` and bind the op variant to `c`.";
+    any_float_unary(operand)
+        = "Match any `FloatUnaryOp` over `operand` and bind the op variant to `c`.";
+    any_float_cmp(l, r)
+        = "Match any `FloatCmpOp` over `(l, r)` and bind the op variant to `c`.";
 }
-
-/// Match any `IntCmpOp` over `(l, r)` and bind the op variant to `c`.
-#[pyfunction]
-pub fn any_int_cmp(c: PyRef<'_, PyCapture>, l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyIntCmp(c.inner, l, r))
-}
-
-/// Match any boolean binary op over `(l, r)` and bind the op variant to `c`.
-#[pyfunction]
-pub fn any_bool_binary(c: PyRef<'_, PyCapture>, l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyBoolBinary(c.inner, l, r))
-}
-
-/// Match any `FloatBinaryOp` over `(l, r)` and bind the op variant to `c`.
-#[pyfunction]
-pub fn any_float_binary(c: PyRef<'_, PyCapture>, l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyFloatBinary(c.inner, l, r))
-}
-
-/// Match any `FloatUnaryOp` over `operand` and bind the op variant to `c`.
-#[pyfunction]
-pub fn any_float_unary(c: PyRef<'_, PyCapture>, operand: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyFloatUnary(c.inner, operand))
-}
-
-/// Match any `FloatCmpOp` over `(l, r)` and bind the op variant to `c`.
-#[pyfunction]
-pub fn any_float_cmp(c: PyRef<'_, PyCapture>, l: Py<PyAny>, r: Py<PyAny>) -> PyPat {
-    PyPat::from_repr(PatRepr::AnyFloatCmp(c.inner, l, r))
-}
-
-// A typed builder accumulates field state and replays it onto the core builder
-// at finalise time. `.when()` reaches the core two ways: value-rooted builders
-// wrap it via `wrap_when` at the `MatchPat` level, node-rooted ones attach it
-// as a root post-match guard on the finished `Pattern`.
 
 /// Leaves the original in place so the builder stays reusable.
 fn clone_opt(py: Python<'_>, slot: &Option<Py<PyAny>>) -> Option<Py<PyAny>> {
@@ -2423,7 +1653,7 @@ fn clone_opt(py: Python<'_>, slot: &Option<Py<PyAny>>) -> Option<Py<PyAny>> {
 }
 
 #[derive(Default)]
-struct CommonState {
+pub(crate) struct CommonState {
     capture: Option<Capture>,
     when: Option<PyObject>,
     /// `(raw slot, operand)` from `.input(i, p)`.
@@ -2469,15 +1699,18 @@ macro_rules! builder_common_methods {
                 slf.common.borrow_mut().when = Some(f);
                 slf
             }
-            /// Finalise into a `Pat`.
-            fn into_pat(&self, py: Python<'_>) -> PyResult<PyPat> {
-                let (pat, when_handles) = retain_when_handles(|| self.build_pattern_py(py))?;
-                Ok(PyPat::from_repr(PatRepr::Finished(Box::new(
-                    std::sync::Mutex::new(FinishedPattern {
-                        pattern: Some(pat),
-                        when_handles,
-                    }),
-                ))))
+            /// Finalise into a `Pat` holding this builder, its operands
+            /// walked once here so a bad one raises now.
+            fn into_pat(slf: Bound<'_, Self>) -> PyResult<PyPat> {
+                (&*slf.borrow() as &dyn Builder).pattern(slf.py(), &[])?;
+                let name = "a control / variadic builder";
+                let args = vec![slf.into_any().unbind()];
+                Ok(PyPat::from(Repr::new(
+                    name,
+                    Kind::Match,
+                    Op::Finished(Vec::new()),
+                    args,
+                )))
             }
             fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
                 let name: String = slf.get_type().getattr("__name__")?.extract()?;
@@ -2619,25 +1852,11 @@ fn cloned_opt<T: Clone>(v: &Option<T>) -> Option<T> {
     v.clone()
 }
 
-// Every node-rooted builder is the same skeleton over a different operand
-// field-set, generated here from a compact spec so the `.when()` wiring and
-// capture handling live in ONE place.
-//
-// The four root flavors differ only in how `build_pattern_py` and the
-// nestable-compile methods derive from `core_builder`:
-//
-//   * `value` produces a value and exposes `compile_value`, so it nests as a
-//     value operand. `.when()` rides on `wrap_when`.
-//   * `mem` produces a memory token and exposes `compile_mem` for a `mem`
-//     slot. `.when()` is applied by `apply_when_to_pattern`.
-//   * `mem_value` produces both, so it nests in either position.
-//   * `node` is node-rooted only: same build as `mem`, no nestable compile.
-//
-// Field kinds: `pat` (one operand slot, the row naming the fn that compiles
-// the handle: `compile_operand_match` for a value operand,
-// `compile_operand_mem` for a memory one), `pat_list` (a `pat` whose setter
-// coerces a list into a `one_of`), `multi` (an indexed operand vector, the
-// named compile fn deciding value or memory operand), `scalar`,
+// Every node builder is the same skeleton over a different operand field-set,
+// generated here from a compact spec. `memory:` is whether the node produces
+// a memory token. Field kinds: `pat` (one operand, the row naming its `Slot`), `pat_list`
+// (a value `pat` whose setter coerces a list into a `one_of`), `multi` (an
+// indexed operand vector, the row naming its `Slot`), `scalar`,
 // `scalar_inner` (a Py wrapper stored via `.inner`), `flag` (no-arg bool
 // setter), and `region` (the four address-region setters, recorded in call
 // order).
@@ -2680,13 +1899,13 @@ macro_rules! node_builder {
     (@apply $self:ident, $py:ident, $b:ident, { pat $name:ident($c:ident): $m:ident = $doc:literal }) => {
         let __slot = clone_opt($py, &$self.inner.borrow().$name);
         if let Some(__p) = __slot {
-            $b = $b.$m($c(__p.bind($py))?);
+            $b = $b.$m(expr(__p.bind($py), Slot::$c)?);
         }
     };
     (@apply $self:ident, $py:ident, $b:ident, { pat_list $name:ident: $m:ident = $doc:literal }) => {
         let __slot = clone_opt($py, &$self.inner.borrow().$name);
         if let Some(__p) = __slot {
-            $b = $b.$m(compile_operand_match(__p.bind($py))?);
+            $b = $b.$m(expr(__p.bind($py), Slot::Value)?);
         }
     };
     (@apply $self:ident, $py:ident, $b:ident, { multi $name:ident($idx:ty): $m:ident($compile:ident) = $doc:literal }) => {
@@ -2698,7 +1917,7 @@ macro_rules! node_builder {
             .map(|(i, p)| (*i, p.clone_ref($py)))
             .collect();
         for (__idx, __p) in __items {
-            $b = $b.$m(__idx, $compile(__p.bind($py))?);
+            $b = $b.$m(__idx, expr(__p.bind($py), Slot::$compile)?);
         }
     };
     (@apply $self:ident, $py:ident, $b:ident, { scalar $name:ident($set:ty => $store:ty): $m:ident($arg:ident) = $doc:literal }) => {
@@ -2740,7 +1959,7 @@ macro_rules! node_builder {
             .map(|p| p.clone_ref($py))
             .collect();
         for __p in __items {
-            $b = $b.any_input(compile_any_input(__p.bind($py))?);
+            $b = $b.any_input(expr(__p.bind($py), Slot::Value)?);
         }
     };
     (@apply_slot $self:ident, $py:ident, $b:ident, input) => {
@@ -2752,7 +1971,7 @@ macro_rules! node_builder {
             .map(|(i, p)| (*i, p.clone_ref($py)))
             .collect();
         for (__idx, __p) in __items {
-            $b = $b.input(__idx, compile_operand_match(__p.bind($py))?);
+            $b = $b.input(__idx, expr(__p.bind($py), Slot::Value)?);
         }
     };
     (@apply_slot $self:ident, $py:ident, $b:ident, output) => {
@@ -2904,63 +2123,6 @@ macro_rules! node_builder {
         ] $($rest)*);
     };
 
-    (@compile_mem) => {
-        /// Compile as a memory-token producer for a `mem` slot,
-        /// honouring `.when()`.
-        fn compile_mem(&self, py: Python<'_>) -> PyResult<DynMem> {
-            let b = self.core_builder(py)?;
-            let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
-            Ok(DynMem(Box::new(move |mb| mem_with_when(b, when, mb))))
-        }
-    };
-    (@compile_value $doc:literal) => {
-        #[doc = $doc]
-        fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
-            let b = self.core_builder(py)?;
-            let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
-            Ok(match when {
-                Some(f) => DynMatch::new(wrap_when(b, f)),
-                None => DynMatch::new(b),
-            })
-        }
-    };
-    (@build_from_core) => {
-        fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-            let pat = self.core_builder(py)?.build();
-            Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
-        }
-    };
-    (@flavor value $py_name:literal $core:path) => {
-        node_builder!(@compile_value
-            "Compile as a value operand (`MatchPat`), honouring `.when()`.");
-
-        fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-            Ok(self.compile_value(py)?.into_pattern())
-        }
-    };
-    (@flavor mem $py_name:literal $core:path) => {
-        node_builder!(@compile_mem);
-        node_builder!(@build_from_core);
-    };
-    (@flavor mem_value $py_name:literal $core:path) => {
-        node_builder!(@compile_mem);
-        node_builder!(@compile_value
-            "Nest as a value operand, e.g. `int_add(x, call_other().name(\"f\"))`. \
-             Loose by default: any value output, narrowed by `.res()`.");
-        node_builder!(@build_from_core);
-    };
-    (@flavor node $py_name:literal $core:path) => {
-        node_builder!(@build_from_core);
-
-        /// Compile as a `one_of` / `first_of` arm: node-rooted, so the core
-        /// synthesizes an `Any` output for the alternation to wire.
-        fn compile_alt_arm(&self, py: Python<'_>) -> PyResult<DynMatch> {
-            let b = self.core_builder(py)?;
-            let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
-            Ok(DynMatch::from_fn(move |mb| alt_arm_with_when(mc(b, mb), mb, when)))
-        }
-    };
-
     (
         ty: $ty:ident,
         inner: $inner:ident,
@@ -2968,7 +2130,7 @@ macro_rules! node_builder {
         doc: $doc:literal,
         core: $core:path,
         core_ty: $core_ty:ty,
-        root: $root:ident,
+        memory: $mem:literal,
         slots: [ $( $slot:ident ),* $(,)? ],
         fields: [ $( $field:tt ),* $(,)? ],
         // The zero-argument module-level constructor, for builders that need
@@ -3015,9 +2177,8 @@ macro_rules! node_builder {
                 }
             }
 
-            /// Applies every set field plus `common.capture`. `.when()` is
-            /// applied per root flavor instead.
-            fn core_builder(&self, py: Python<'_>) -> PyResult<$core_ty> {
+            /// Applies every set field plus `common.capture` and `caps`.
+            fn core_builder(&self, py: Python<'_>, caps: &[Capture]) -> PyResult<$core_ty> {
                 // A field-less builder such as `EntryPat` never touches
                 // `self.inner` or `py`, so reference both unconditionally to
                 // keep that case off `dead_code` / `unused_variables`.
@@ -3026,7 +2187,7 @@ macro_rules! node_builder {
                 let mut b = $core();
                 $( node_builder!(@apply self, py, b, $field); )*
                 $( node_builder!(@apply_slot self, py, b, $slot); )*
-                if let Some(c) = self.common.borrow().capture {
+                for &c in self.common.borrow().capture.iter().chain(caps) {
                     b = b.capture(c);
                 }
                 Ok(b)
@@ -3054,7 +2215,18 @@ macro_rules! node_builder {
                 }
             }
 
-            node_builder!(@flavor $root $py_name $core);
+        }
+
+        impl Builder for $ty {
+            fn memory(&self) -> bool {
+                $mem
+            }
+            fn common(&self) -> &std::cell::RefCell<CommonState> {
+                &self.common
+            }
+            fn node(&self, py: Python<'_>, caps: &[Capture]) -> PyResult<Expr> {
+                Ok(ex(self.core_builder(py, caps)?))
+            }
         }
 
         node_builder!(@setters $ty [] $($field)*);
@@ -3081,13 +2253,13 @@ node_builder! {
           `.space(s)`, `.mem(m)`, `.bit_width(n)`, `.stack_only()`.",
     core: strider_pattern::load,
     core_ty: strider_pattern::LoadPat,
-    root: value,
+    memory: false,
     slots: [any_input, input, output],
     fields: [
         { scalar_inner space(crate::sleigh::PyVnSpace => rsleigh::VnSpace): space(s)
             = "Restrict the match to a specific memory space." },
-        { pat addr(compile_operand_match): addr = "Constrain the load's address operand." },
-        { pat mem(compile_operand_mem): mem
+        { pat addr(Value): addr = "Constrain the load's address operand." },
+        { pat mem(Memory): mem
             = "Constrain the load's memory predecessor (a memory-producing sub-pattern)." },
         { scalar bit_width(u32 => u32): bit_width(n) = "Filter loads by value width in bits." },
         { region region },
@@ -3112,14 +2284,14 @@ node_builder! {
     doc: "Typed builder for `Store` node patterns.",
     core: strider_pattern::store,
     core_ty: strider_pattern::StorePat,
-    root: mem,
+    memory: true,
     slots: [any_input, input, output],
     fields: [
-        { pat addr(compile_operand_match): addr = "Constrain the store's address operand." },
-        { pat data(compile_operand_match): data = "Constrain the store's stored-value operand." },
+        { pat addr(Value): addr = "Constrain the store's address operand." },
+        { pat data(Value): data = "Constrain the store's stored-value operand." },
         { scalar_inner space(crate::sleigh::PyVnSpace => rsleigh::VnSpace): space(s)
             = "Restrict the match to a specific memory space." },
-        { pat mem(compile_operand_mem): mem = "Constrain the store's memory predecessor." },
+        { pat mem(Memory): mem = "Constrain the store's memory predecessor." },
         { scalar bit_width(u32 => u32): bit_width(n) = "Filter stores by data width in bits." },
         { region region },
     ],
@@ -3138,175 +2310,32 @@ pub fn store(addr: Option<Py<PyAny>>, data: Option<Py<PyAny>>) -> PyStorePat {
     b
 }
 
-#[derive(Default)]
-struct CallInner {
-    target: Option<Py<PyAny>>,
-    ctrl: Option<Py<PyAny>>,
-    args: Vec<(usize, Py<PyAny>)>,
-    mem: Option<Py<PyAny>>,
-    /// Pins a nested value operand to the declared result output, excluding
-    /// caller-saved clobber outputs.
-    res: bool,
+node_builder! {
+    ty: PyCallPat,
+    inner: CallInner,
+    py_name: "CallPat",
+    doc: "Typed builder for `Call` node patterns. Chain `.target(p)`, \
+          `.arg(idx, p)`, `.mem(m)`, `.ctrl(p)`.",
+    core: strider_pattern::call,
+    core_ty: strider_pattern::CallPat,
+    memory: true,
+    slots: [any_input, input, output],
+    fields: [
+        { pat_list target: target
+            = "Constrain the call target. `p` is any pattern operand, including a \
+               raw int, which matches a call to that literal address \
+               (`target(0x1000)`). A list of them matches a call to any one \
+               entry; an empty list matches nothing." },
+        { pat ctrl(Value): ctrl
+            = "Match `p` against the Call's direct ctrl predecessor (`inputs[0]`)." },
+        { multi args(usize): arg(Value) = "Constrain positional argument `idx` (0-based)." },
+        { pat mem(Memory): mem = "Constrain the call's memory predecessor." },
+        { flag res: res
+            = "When nested as a value operand, pin it to the declared result \
+               output, excluding caller-saved clobbers." },
+    ],
+    ctor: call = "Start a `Call` pattern builder.",
 }
-
-/// Typed builder for `Call` node patterns. Chain `.target(p)`,
-/// `.arg(idx, p)`, `.mem(m)`, `.ctrl(p)`.
-#[pyclass(name = "CallPat", module = "strider.pattern")]
-pub struct PyCallPat {
-    inner: std::cell::RefCell<CallInner>,
-    common: std::cell::RefCell<CommonState>,
-}
-
-// An operand slot holds another builder or `Pat`; see `defer_drop`.
-impl Drop for PyCallPat {
-    fn drop(&mut self) {
-        if let Ok(mut inner) = self.inner.try_borrow_mut() {
-            defer_drop(std::mem::take(&mut *inner));
-        }
-        if let Ok(mut common) = self.common.try_borrow_mut() {
-            defer_drop(std::mem::take(&mut *common));
-        }
-    }
-}
-
-impl PyCallPat {
-    fn new() -> Self {
-        Self {
-            inner: std::cell::RefCell::new(CallInner::default()),
-            common: std::cell::RefCell::new(CommonState::default()),
-        }
-    }
-
-    fn core_builder(&self, py: Python<'_>) -> PyResult<strider_pattern::CallPat> {
-        let mut b = strider_pattern::call();
-        // `let` first: compiling an operand runs Python that can re-enter a
-        // setter, which takes `borrow_mut`.
-        let target = clone_opt(py, &self.inner.borrow().target);
-        if let Some(t) = target {
-            b = b.target(compile_operand_match(t.bind(py))?);
-        }
-        let ctrl = clone_opt(py, &self.inner.borrow().ctrl);
-        if let Some(c) = ctrl {
-            b = b.ctrl(compile_operand_match(c.bind(py))?);
-        }
-        let args: Vec<(usize, Py<PyAny>)> = self
-            .inner
-            .borrow()
-            .args
-            .iter()
-            .map(|(i, p)| (*i, p.clone_ref(py)))
-            .collect();
-        for (idx, p) in args {
-            b = b.arg(idx, compile_operand_match(p.bind(py))?);
-        }
-        let mem = clone_opt(py, &self.inner.borrow().mem);
-        if let Some(m) = mem {
-            b = b.mem(compile_operand_mem(m.bind(py))?);
-        }
-        if self.inner.borrow().res {
-            b = b.res();
-        }
-        node_builder!(@apply_slot self, py, b, any_input);
-        node_builder!(@apply_slot self, py, b, input);
-        node_builder!(@apply_slot self, py, b, output);
-        if let Some(c) = self.common.borrow().capture {
-            b = b.capture(c);
-        }
-        Ok(b)
-    }
-
-    /// The operand slots, for `__traverse__`.
-    fn traverse_operands(&self, visit: &pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        let Ok(inner) = self.inner.try_borrow() else {
-            return Ok(());
-        };
-        for p in [&inner.target, &inner.ctrl, &inner.mem]
-            .into_iter()
-            .flatten()
-        {
-            visit.call(p)?;
-        }
-        for (_, p) in &inner.args {
-            visit.call(p)?;
-        }
-        Ok(())
-    }
-
-    /// Drops everything `traverse_operands` reports, for `__clear__`.
-    fn clear_operands(&self) {
-        let Ok(mut inner) = self.inner.try_borrow_mut() else {
-            return;
-        };
-        inner.target = None;
-        inner.ctrl = None;
-        inner.mem = None;
-        inner.args.clear();
-    }
-
-    /// Honours `.when()`, like the macro-generated memory flavours.
-    fn compile_mem(&self, py: Python<'_>) -> PyResult<DynMem> {
-        let b = self.core_builder(py)?;
-        let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
-        Ok(DynMem(Box::new(move |mb| mem_with_when(b, when, mb))))
-    }
-
-    /// Loose by default: any value output, narrowed by `.res()`.
-    fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
-        let b = self.core_builder(py)?;
-        let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
-        Ok(match when {
-            Some(f) => DynMatch::new(wrap_when(b, f)),
-            None => DynMatch::new(b),
-        })
-    }
-
-    fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        let pat = self.core_builder(py)?.build();
-        Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
-    }
-}
-
-#[pymethods]
-impl PyCallPat {
-    /// Constrain the call target. `p` is any pattern operand, including a raw
-    /// int, which matches a call to that literal address (`target(0x1000)`).
-    /// A list of them matches a call to any one entry; an empty list matches
-    /// nothing.
-    fn target<'py>(
-        slf: PyRef<'py, Self>,
-        py: Python<'_>,
-        p: Py<PyAny>,
-    ) -> PyResult<PyRef<'py, Self>> {
-        slf.inner.borrow_mut().target = Some(coerce_operand_list(py, p)?);
-        Ok(slf)
-    }
-    /// Constrain positional argument `idx` (0-based).
-    fn arg<'py>(slf: PyRef<'py, Self>, idx: usize, p: Py<PyAny>) -> PyResult<PyRef<'py, Self>> {
-        check_operand_index(idx)?;
-        slf.inner.borrow_mut().args.push((idx, p));
-        Ok(slf)
-    }
-    /// Constrain the call's memory predecessor.
-    fn mem<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().mem = Some(p);
-        slf
-    }
-    /// Match `p` against the Call's direct ctrl predecessor (`inputs[0]`).
-    fn ctrl<'py>(slf: PyRef<'py, Self>, p: Py<PyAny>) -> PyRef<'py, Self> {
-        slf.inner.borrow_mut().ctrl = Some(p);
-        slf
-    }
-    /// When nested as a value operand, pin it to the declared result output,
-    /// excluding caller-saved clobbers.
-    fn res(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
-        slf.inner.borrow_mut().res = true;
-        slf
-    }
-}
-builder_common_methods!(PyCallPat);
-builder_slot_methods!(PyCallPat, any_input);
-builder_slot_methods!(PyCallPat, input);
-builder_slot_methods!(PyCallPat, output);
 
 /// Returned by `.output(slot)` / `.any_output()`. Each terminal commits one
 /// constraint onto the parent builder and hands it back so the chain
@@ -3317,43 +2346,23 @@ pub struct PyOutputSlot {
     slot: Option<usize>,
 }
 
-// The parent is held untyped, so committing dispatches over the builders that
-// expose `output`. Listed once here rather than one terminal type per builder.
-macro_rules! output_slot_parents {
-    ($($ty:ty),* $(,)?) => {
-        impl PyOutputSlot {
-            fn commit(&self, py: Python<'_>, aspect: OutputAspect) -> PyResult<Py<PyAny>> {
-                let spec = OutputSpecPy {
-                    slot: self.slot,
-                    aspect,
-                };
-                let parent = self.parent.bind(py);
-                $(
-                    if let Ok(b) = parent.downcast::<$ty>() {
-                        b.borrow().common.borrow_mut().outputs.push(spec);
-                        return Ok(self.parent.clone_ref(py));
-                    }
-                )*
-                Err(pyo3::exceptions::PyTypeError::new_err(
-                    "output slot terminal holds a parent that is not a pattern builder",
-                ))
-            }
-        }
-    };
+impl PyOutputSlot {
+    fn commit(&self, py: Python<'_>, aspect: OutputAspect) -> PyResult<Py<PyAny>> {
+        let spec = OutputSpecPy {
+            slot: self.slot,
+            aspect,
+        };
+        with_builder(self.parent.bind(py), |b| {
+            b.common().borrow_mut().outputs.push(spec)
+        })
+        .ok_or_else(|| {
+            pyo3::exceptions::PyTypeError::new_err(
+                "output slot terminal holds a parent that is not a pattern builder",
+            )
+        })?;
+        Ok(self.parent.clone_ref(py))
+    }
 }
-
-output_slot_parents!(
-    PyCallPat,
-    PyCallOtherPat,
-    PyLoadPat,
-    PyStorePat,
-    PyIfPat,
-    PySwitchPat,
-    PyPhiPat,
-    PyMemPhiPat,
-    PyEntryPat,
-    PyRegionPat,
-);
 
 #[pymethods]
 impl PyOutputSlot {
@@ -3388,12 +2397,6 @@ impl PyOutputSlot {
     }
 }
 
-/// Start a `Call` pattern builder.
-#[pyfunction]
-pub fn call() -> PyCallPat {
-    PyCallPat::new()
-}
-
 node_builder! {
     ty: PyCallOtherPat,
     inner: CallOtherInner,
@@ -3401,19 +2404,19 @@ node_builder! {
     doc: "Typed builder for `CallOther` node patterns.",
     core: strider_pattern::call_other,
     core_ty: strider_pattern::CallOtherPat,
-    root: mem_value,
+    memory: true,
     slots: [any_input, input, output],
     fields: [
         { scalar user_op_id(u64 => u64): user_op_id(v)
             = "Constrain the matched node's user-op id." },
         { scalar name(String => String): name(n)
             = "Constrain the matched node's user-op name." },
-        { pat ctrl(compile_operand_match): ctrl
+        { pat ctrl(Value): ctrl
             = "Match the CallOther's control predecessor (`inputs[0]`)." },
-        { pat mem(compile_operand_mem): mem
+        { pat mem(Memory): mem
             = "Match the CallOther's memory predecessor (`inputs[1]`); \
                takes a memory producer (store / mem_phi / call / call_other)." },
-        { multi args(usize): arg(compile_operand_match)
+        { multi args(usize): arg(Value)
             = "Constrain raw `inputs[idx]` of the matched CallOther." },
         { flag res: res
             = "When nested as a value operand, pin it to the declared result \
@@ -3429,12 +2432,12 @@ node_builder! {
     doc: "Typed builder for `Return` node patterns.",
     core: strider_pattern::ret,
     core_ty: strider_pattern::RetPat,
-    root: node,
+    memory: false,
     slots: [any_input, input],
     fields: [
-        { pat ctrl(compile_operand_match): ctrl
+        { pat ctrl(Value): ctrl
             = "Match `p` against the Return's direct ctrl predecessor (`inputs[0]`)." },
-        { multi ret_vals(usize): ret_val(compile_operand_match)
+        { multi ret_vals(usize): ret_val(Value)
             = "Constrain the return value at position `idx`, raw input slot `idx + 2`." },
     ],
     ctor: ret = "Start a `Return` pattern builder.",
@@ -3447,7 +2450,7 @@ node_builder! {
     doc: "Typed builder for `IndirectBranch` node patterns.",
     core: strider_pattern::indirect_branch,
     core_ty: strider_pattern::IndirectBranchPat,
-    root: node,
+    memory: false,
     slots: [any_input, input],
     fields: [
         { pat_list target: target
@@ -3455,9 +2458,9 @@ node_builder! {
                operand, including a raw int, which matches a branch to that \
                literal address. A list of them matches any one entry; an empty \
                list matches nothing." },
-        { pat ctrl(compile_operand_match): ctrl
+        { pat ctrl(Value): ctrl
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
-        { pat mem(compile_operand_mem): mem
+        { pat mem(Memory): mem
             = "Constrain the node's memory predecessor (`inputs[1]`)." },
     ],
     ctor: indirect_branch = "Start an `IndirectBranch` pattern builder.",
@@ -3470,10 +2473,10 @@ node_builder! {
     doc: "Typed builder for `Unreachable` node patterns.",
     core: strider_pattern::unreachable,
     core_ty: strider_pattern::UnreachablePat,
-    root: node,
+    memory: false,
     slots: [any_input, input],
     fields: [
-        { pat ctrl(compile_operand_match): ctrl
+        { pat ctrl(Value): ctrl
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
     ],
     ctor: unreachable = "Start an `Unreachable` pattern builder.",
@@ -3486,7 +2489,7 @@ node_builder! {
     doc: "Typed builder for `Switch` node patterns.",
     core: strider_pattern::switch,
     core_ty: strider_pattern::SwitchPat,
-    root: node,
+    memory: false,
     slots: [any_input, input, output],
     fields: [
         { pat_list selector: selector
@@ -3495,7 +2498,7 @@ node_builder! {
                pattern operand, including a raw int, which matches that literal \
                value. A list of them matches any one entry; an empty list \
                matches nothing." },
-        { pat ctrl(compile_operand_match): ctrl
+        { pat ctrl(Value): ctrl
             = "Match `p` against the node's direct ctrl predecessor (`inputs[0]`)." },
     ],
     ctor: switch = "Start a `Switch` pattern builder.",
@@ -3508,11 +2511,11 @@ node_builder! {
     doc: "Typed builder for `If` node patterns.",
     core: strider_pattern::if_else,
     core_ty: strider_pattern::IfPat,
-    root: node,
+    memory: false,
     slots: [any_input, input, output],
     fields: [
-        { pat cond(compile_operand_match): cond = "Constrain the If's condition operand." },
-        { pat ctrl(compile_operand_match): ctrl
+        { pat cond(Value): cond = "Constrain the If's condition operand." },
+        { pat ctrl(Value): ctrl
             = "Match `p` against the If's direct ctrl predecessor (`inputs[0]`)." },
         { scalar_inner capture_true(PyCapture => Capture): capture_true(c)
             = "Bind the If's true control-output value to `c`, the edge \
@@ -3873,16 +2876,16 @@ node_builder! {
     doc: "Typed builder for tagged-`Phi` patterns.",
     core: strider_pattern::phi,
     core_ty: strider_pattern::PhiPat,
-    root: value,
+    memory: false,
     slots: [any_input, input, output],
     fields: [
         { scalar_inner for_vn(crate::sleigh::PyVn => rsleigh::Vn): for_vn(vn)
             = "Restrict the match to phi nodes tagged `vn` or a register containing \
                it, so `eax` matches a phi tagged `rax`." },
-        { multi inputs(usize): phi_input(compile_operand_match)
+        { multi inputs(usize): phi_input(Value)
             = "Constrain the value arriving from predecessor `idx`, raw input \
                slot `idx + 1`. `.input(i, p)` addresses the raw slot instead." },
-        { pat phi_token(compile_operand_match): phi_token
+        { pat phi_token(Value): phi_token
             = "Constrain the phi's ownership edge, the PhiToken input at raw \
                slot 0 (the owning Region's PhiToken output), which \
                `.input(0, p)` also names. A typed sub can never bind it \
@@ -3907,14 +2910,14 @@ node_builder! {
     doc: "Typed builder for `MemPhi` patterns.",
     core: strider_pattern::mem_phi,
     core_ty: strider_pattern::MemPhiPat,
-    root: mem,
+    memory: true,
     slots: [any_input, input, output],
     fields: [
-        { multi inputs(usize): phi_input(compile_operand_mem)
+        { multi inputs(usize): phi_input(Memory)
             = "Constrain the memory token arriving from predecessor `idx`, raw \
                input slot `idx + 1`. `.input(i, p)` addresses the raw slot \
                instead, and takes a value operand." },
-        { pat phi_token(compile_operand_match): phi_token
+        { pat phi_token(Value): phi_token
             = "Constrain the MemPhi's ownership edge, the PhiToken input at \
                raw slot 0 (the owning Region's PhiToken output), which \
                `.input(0, p)` also names. See PhiPat.phi_token for the \
@@ -3944,8 +2947,7 @@ macro_rules! phi_edge_links {
                     Err(_) => {
                         let cap = Capture::new();
                         let arm = Bound::new(py, one_of(vec![value.clone().unbind()]))?;
-                        let captured =
-                            derive(&arm, |inner| PatRepr::Wrapped(inner, Wrap::Capture(cap)))?;
+                        let captured = derive(&arm, Wrap::Capture(cap), None)?;
                         slf.common
                             .borrow_mut()
                             .any_inputs
@@ -3996,7 +2998,7 @@ node_builder! {
           `region().any_input(entry())`.",
     core: strider_pattern::entry,
     core_ty: strider_pattern::EntryPat,
-    root: value,
+    memory: false,
     slots: [output],
     fields: [],
     ctor: entry = "Matches the function's unique `Entry` node.",
@@ -4014,7 +3016,7 @@ node_builder! {
           operand, e.g. `region().any_input(region())`.",
     core: strider_pattern::region,
     core_ty: strider_pattern::RegionPat,
-    root: value,
+    memory: false,
     slots: [any_input, input, output],
     fields: [],
     ctor: region = "Matches any CFG-merge `Region` node.",
@@ -4058,8 +3060,13 @@ impl PyFunctionArgPat {
 
     /// No operand slots; `__clear__` still drops `.when()`.
     fn clear_operands(&self) {}
+}
 
-    fn core_builder(&self) -> strider_pattern::FunctionArgPat {
+impl Builder for PyFunctionArgPat {
+    fn common(&self) -> &std::cell::RefCell<CommonState> {
+        &self.common
+    }
+    fn node(&self, _py: Python<'_>, caps: &[Capture]) -> PyResult<Expr> {
         let mut b = strider_pattern::any_function_arg().class(*self.class.borrow());
         if let Some(s) = *self.source.borrow() {
             b = b.source(s);
@@ -4067,23 +3074,10 @@ impl PyFunctionArgPat {
         if let Some(i) = *self.index.borrow() {
             b = b.index(i);
         }
-        if let Some(c) = self.common.borrow().capture {
+        for &c in self.common.borrow().capture.iter().chain(caps) {
             b = b.capture(c);
         }
-        b
-    }
-
-    fn compile_value(&self, py: Python<'_>) -> DynMatch {
-        let b = self.core_builder();
-        match self.common.borrow().when.as_ref() {
-            Some(f) => DynMatch::new(wrap_when(b, f.clone_ref(py))),
-            None => DynMatch::new(b),
-        }
-    }
-
-    fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-        let pat = self.core_builder().build();
-        Ok(apply_when_to_pattern(py, &self.common.borrow(), pat))
+        Ok(ex(b))
     }
 }
 
@@ -4168,29 +3162,21 @@ pub fn function_arg_stack(space: crate::sleigh::PyVnSpace, offset: i128) -> PyFu
 }
 
 macro_rules! binary_op_builder {
-    (
-        $ty:ident, $py_name:literal, $core:ident, $op_ty:ty,
-        $doc:literal
-    ) => {
+    ($ty:ident, $py_name:literal, $doc:literal) => {
         #[doc = $doc]
         #[pyclass(name = $py_name, module = "strider.pattern")]
         pub struct $ty {
-            op: $op_ty,
-            lhs: Py<PyAny>,
-            rhs: Py<PyAny>,
+            /// The op over its two operands, fixed at construction.
+            repr: Repr,
             ordered: std::cell::Cell<bool>,
             common: std::cell::RefCell<CommonState>,
         }
 
-        // `lhs` / `rhs` hold whatever nested here, so a chain of these drops one
-        // native frame per link; see `defer_drop`. Whoever is deallocating holds
-        // the GIL, so re-entering it here only bumps a count.
+        // The operands hold whatever nested here, so a chain of these drops
+        // one native frame per link; see `defer_drop`.
         impl Drop for $ty {
             fn drop(&mut self) {
-                Python::with_gil(|py| {
-                    defer_drop(std::mem::replace(&mut self.lhs, py.None()));
-                    defer_drop(std::mem::replace(&mut self.rhs, py.None()));
-                });
+                defer_drop(std::mem::take(&mut self.repr.args));
                 if let Ok(mut common) = self.common.try_borrow_mut() {
                     defer_drop(std::mem::take(&mut *common));
                 }
@@ -4203,48 +3189,37 @@ macro_rules! binary_op_builder {
                 &self,
                 visit: &pyo3::PyVisit<'_>,
             ) -> Result<(), pyo3::PyTraverseError> {
-                visit.call(&self.lhs)?;
-                visit.call(&self.rhs)
+                self.repr.args.iter().try_for_each(|a| visit.call(a))
             }
 
-            /// `lhs`/`rhs` are fixed at construction, so a cycle cannot close
+            /// The operands are fixed at construction, so a cycle cannot close
             /// through them; only `.when()` can capture this builder, and
             /// `__clear__` drops that.
             fn clear_operands(&self) {}
 
-            fn new(op: $op_ty, lhs: Py<PyAny>, rhs: Py<PyAny>) -> Self {
+            fn new(repr: Repr) -> Self {
                 Self {
-                    op,
-                    lhs,
-                    rhs,
+                    repr,
                     ordered: std::cell::Cell::new(false),
                     common: std::cell::RefCell::new(CommonState::default()),
                 }
             }
+        }
 
-            fn compile_value(&self, py: Python<'_>) -> PyResult<DynMatch> {
-                let op = self.op;
-                let l = compile_operand_match(self.lhs.bind(py))?;
-                let r = compile_operand_match(self.rhs.bind(py))?;
-                let ordered = self.ordered.get();
-                let capture = self.common.borrow().capture;
-                let when = self.common.borrow().when.as_ref().map(|f| f.clone_ref(py));
-                Ok(DynMatch::from_fn(move |mb| {
-                    let pat = strider_pattern::$core(op, l, r);
-                    // `.ordered()` pins commutativity on the root and must be
-                    // applied before capture / when. The branch exists because
-                    // `pat.ordered()` is a distinct type, so each arm needs its
-                    // own monomorphic `pat`.
-                    if ordered {
-                        apply_cap_when(mb, pat.ordered(), capture, when)
-                    } else {
-                        apply_cap_when(mb, pat, capture, when)
-                    }
-                }))
+        impl Builder for $ty {
+            fn common(&self) -> &std::cell::RefCell<CommonState> {
+                &self.common
             }
-
-            fn build_pattern_py(&self, py: Python<'_>) -> PyResult<Pattern> {
-                Ok(self.compile_value(py)?.into_pattern())
+            /// `.ordered()` pins the root ahead of the capture.
+            fn node(&self, py: Python<'_>, caps: &[Capture]) -> PyResult<Expr> {
+                let mut e = self.repr.expr(py, Slot::Value)?;
+                if self.ordered.get() {
+                    e = Wrap::Ordered.apply(py, e, None);
+                }
+                for &c in self.common.borrow().capture.iter().chain(caps) {
+                    e = Wrap::Capture(c).apply(py, e, None);
+                }
+                Ok(e)
             }
         }
 
@@ -4264,58 +3239,62 @@ macro_rules! binary_op_builder {
     };
 }
 
-fn apply_cap_when<P: MatchPat + 'static>(
-    mb: &mut MatcherBuilder,
-    pat: P,
-    capture: Option<Capture>,
-    when: Option<PyObject>,
-) -> PatValueRef {
-    match (capture, when) {
-        (Some(c), Some(f)) => wrap_when(pat.capture(c), f).compile(mb),
-        (Some(c), None) => pat.capture(c).compile(mb),
-        (None, Some(f)) => wrap_when(pat, f).compile(mb),
-        (None, None) => pat.compile(mb),
-    }
-}
-
 binary_op_builder!(
     PyIntBinaryPat,
     "IntBinaryPat",
-    int_binary,
-    strider_ir::IntBinaryOp,
     "Typed builder for an integer binary-op pattern."
 );
 binary_op_builder!(
     PyFloatBinaryPat,
     "FloatBinaryPat",
-    float_binary,
-    strider_ir::FloatBinaryOp,
     "Typed builder for a float binary-op pattern."
 );
 binary_op_builder!(
     PyBoolBinaryPat,
     "BoolBinaryPat",
-    bool_binary,
-    strider_ir::IntBinaryOp,
     "Typed builder for a boolean binary-op pattern (`IntBinaryOp` at `I1`)."
 );
 
 /// Build an `IntBinaryOp` pattern builder for the named `op`.
 #[pyfunction]
 pub fn int_binary(op: &str, l: Py<PyAny>, r: Py<PyAny>) -> PyResult<PyIntBinaryPat> {
-    Ok(PyIntBinaryPat::new(parse_int_binary_op(op)?, l, r))
+    let op = parse_int_binary_op(op)?;
+    let make = move |l, r| ex(sp::int_binary(op, l, r));
+    Ok(PyIntBinaryPat::new(bin(
+        "int_binary()",
+        Kind::Build,
+        Box::new(make),
+        l,
+        r,
+    )))
 }
 
 /// Build a boolean binary pattern builder for the named `op`.
 #[pyfunction]
 pub fn bool_binary(op: &str, l: Py<PyAny>, r: Py<PyAny>) -> PyResult<PyBoolBinaryPat> {
-    Ok(PyBoolBinaryPat::new(parse_bool_binary_op(op)?, l, r))
+    let op = parse_bool_binary_op(op)?;
+    let make = move |l, r| ex(sp::bool_binary(op, l, r));
+    Ok(PyBoolBinaryPat::new(bin(
+        "bool_binary()",
+        Kind::Build,
+        Box::new(make),
+        l,
+        r,
+    )))
 }
 
 /// Build a `FloatBinaryOp` pattern builder for the named `op`.
 #[pyfunction]
 pub fn float_binary(op: &str, l: Py<PyAny>, r: Py<PyAny>) -> PyResult<PyFloatBinaryPat> {
-    Ok(PyFloatBinaryPat::new(parse_float_binary_op(op)?, l, r))
+    let op = parse_float_binary_op(op)?;
+    let make = move |l, r| ex(sp::float_binary(op, l, r));
+    Ok(PyFloatBinaryPat::new(bin(
+        "float_binary()",
+        Kind::Build,
+        Box::new(make),
+        l,
+        r,
+    )))
 }
 
 pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {

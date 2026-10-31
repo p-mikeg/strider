@@ -4,7 +4,7 @@ The options views hand out immutable values, `build_cfg` reports only the seeds
 it seated, `pcode_at` answers the same whatever order the calls came in,
 merging an image does nothing when it is already loaded and reaches every view
 from any thread, `build_cfg` and `analyze` answer the same for a bad
-`entry`, a rewrite does not burn a one-shot pattern on a bad replacement,
+`entry`, a refused rewrite leaves its `into_pat()` pattern usable,
 importing strider exports nothing to a child process, a custom convention is
 checked against the register table rather than the preset name, and a pattern
 shared into an exponential tree is refused rather than compiled.
@@ -228,7 +228,7 @@ def test_analyze_and_build_cfg_answer_the_same_for_a_bad_entry(entry):
     assert str(built.value) == str(analyzed.value)
 
 
-# --- rewrite does not burn a one-shot pattern -------------------------------
+# --- a refused rewrite leaves its pattern usable ----------------------------
 
 
 def _analyzed_function():
@@ -250,6 +250,25 @@ def test_a_bad_replacement_in_rewrite_all_leaves_them_usable():
     with pytest.raises(strider.StriderError):
         fn.rewrite_all([(lhs, tpl.int_add(anything(), 1))])  # type: ignore[arg-type]
     assert len(fn.find_all(lhs)) == 1
+
+
+def test_a_refused_rule_leaves_the_find_pattern_usable():
+    """The rule itself is refused (the RHS names a capture the LHS never
+    binds), after both sides were built."""
+    fn = _analyzed_function()
+    lhs = ret().into_pat()
+    with pytest.raises(strider.StriderError):
+        fn.rewrite(lhs, tpl.var(Capture()))
+    assert len(fn.find_all(lhs)) == 1
+
+
+def test_a_refused_second_rule_leaves_the_first_find_pattern_usable():
+    fn = _analyzed_function()
+    c = Capture()
+    first = ret().capture(c).into_pat()
+    with pytest.raises(strider.StriderError):
+        fn.rewrite_all([(first, tpl.var(c)), (ret().into_pat(), tpl.var(Capture()))])
+    assert len(fn.find_all(first)) == 1
 
 
 # --- importing strider exports nothing --------------------------------------
