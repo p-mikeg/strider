@@ -19,7 +19,7 @@ use strider_ir::{IBig, UBig};
 use strider_ir::{IRViewer, IntConstId};
 
 use crate::capture::Capture;
-use crate::expr::{Deco, Expr, IntoExpr, Leaf, TemplateExpr};
+use crate::expr::{Deco, Expr, IntoExpr, Leaf};
 use crate::matcher::match_pat::{CaptureExt, Captured};
 use crate::matcher::{KindSpec, MatcherBuilder, OutputKindSpec, PatValueRef};
 use crate::template::template_pat::TemplatePat;
@@ -470,7 +470,7 @@ impl IntoExpr for ConstWith {
     }
 }
 
-impl TemplateExpr for ConstWith {}
+impl TemplatePat for ConstWith {}
 
 /// Types the wrapped node's value output to the width of a bound LHS capture,
 /// for when an interior node's width comes from a captured operand the rewrite
@@ -484,10 +484,10 @@ impl IntoExpr for CaptureTyped {
     }
 }
 
-impl TemplateExpr for CaptureTyped {}
+impl TemplatePat for CaptureTyped {}
 
 pub fn capture_typed<P: TemplatePat + 'static>(cap: crate::Capture, inner: P) -> CaptureTyped {
-    CaptureTyped(inner.expr().deco(Deco::TyOf(cap)))
+    CaptureTyped(inner.into_expr().deco(Deco::TyOf(cap)))
 }
 
 /// An `IntConst` whose value `f` computes at rewrite time, at the width it is

@@ -444,9 +444,7 @@ def test_mem_rejects_value_operand():
             load().addr(int_const(0x200))  # pyright: ignore[reportArgumentType]
         ).into_pat()
     with pytest.raises(strider.StriderError):
-        load().addr(int_const(0x100)).mem(
-            var(Capture())  # pyright: ignore[reportArgumentType]
-        ).into_pat()
+        load().addr(int_const(0x100)).mem(int_add(var(Capture()), 1)).into_pat()
 
 
 def test_deeply_nested_typed_builder_raises_not_aborts():

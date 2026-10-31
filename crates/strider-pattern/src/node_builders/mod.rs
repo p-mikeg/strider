@@ -126,7 +126,7 @@ macro_rules! node_match_pat {
             }
         }
 
-        impl $crate::expr::MatchExpr for $ty {}
+        impl $crate::MatchPat for $ty {}
     )*};
 }
 pub(crate) use node_match_pat;
@@ -232,7 +232,6 @@ pub(crate) fn staged_shape(pat: &crate::Pattern) -> String {
 }
 
 /// A sub-pattern that produces a memory token, so it can be chained into a
-/// consumer's memory input slot. The lowering itself is
-/// [`crate::matcher::match_pat::MatchPat::compile_mem`]; this bound is what
-/// keeps a value-only pattern out of a memory slot.
+/// consumer's memory input slot. This bound is what keeps a value-only
+/// pattern out of a memory slot.
 pub trait MemPat: crate::matcher::match_pat::MatchPat {}

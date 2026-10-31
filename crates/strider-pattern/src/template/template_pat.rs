@@ -3,8 +3,8 @@
 //! a rewrite RHS a compile error: `rewrite_rule<L, T: TemplatePat>` cannot
 //! accept one.
 
-use crate::expr::{Expr, TemplateExpr};
-use crate::template::{Template, TemplateBuilder, TmplValueRef};
+use crate::expr::IntoExpr;
+use crate::template::{Template, TemplateBuilder};
 
 /// A build-side `var()` and its `.capture()` are templates:
 ///
@@ -28,33 +28,10 @@ use crate::template::{Template, TemplateBuilder, TmplValueRef};
 /// let c = Capture::new();
 /// TemplatePat::into_template(template::int_add(var(c), var(c)).capture(c));
 /// ```
-pub trait TemplatePat: Sized + Send {
-    /// Returns the value-output handle of the lowered root node.
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef;
-
+pub trait TemplatePat: IntoExpr + Send {
     fn into_template(self) -> Template {
         let mut b = TemplateBuilder::new();
-        self.compile(&mut b);
+        self.into_expr().lower_template(&mut b);
         b.finish()
-    }
-
-    /// The pattern as an operand of another. Defaults to lowering through
-    /// [`compile`](Self::compile).
-    #[doc(hidden)]
-    fn expr(self) -> Expr
-    where
-        Self: 'static,
-    {
-        Expr::lowered_template(self)
-    }
-}
-
-impl<T: TemplateExpr> TemplatePat for T {
-    fn compile(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        self.into_expr().lower_template(b)
-    }
-
-    fn expr(self) -> Expr {
-        self.into_expr()
     }
 }

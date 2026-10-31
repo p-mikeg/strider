@@ -348,10 +348,10 @@ PatLike = Union[
     "BoolBinaryPat",
 ]
 
-#: What a VALUE operand slot accepts. The control-only builders are absent:
-#: `store`, `mem_phi`, `ret`, `if_else`, `indirect_branch`, `unreachable` and
-#: `switch` produce no value, so passing one raises at QUERY time rather than
-#: at construction.
+#: What a VALUE operand slot accepts. The builders that produce no value are
+#: absent: `store`, `mem_phi`, `entry`, `region`, `ret`, `if_else`,
+#: `indirect_branch`, `unreachable` and `switch`, so passing one raises at
+#: QUERY time rather than at construction.
 ValueLike = Union[
     int,
     Capture,
@@ -360,19 +360,18 @@ ValueLike = Union[
     "CallOtherPat",
     "LoadPat",
     "PhiPat",
-    "EntryPat",
-    "RegionPat",
     "FunctionArgPat",
     "IntBinaryPat",
     "FloatBinaryPat",
     "BoolBinaryPat",
 ]
 
-#: What a MEMORY slot accepts: the four memory producers, or a `Pat`, which
-#: is how an `one_of` over them arrives. `load` is absent because it produces a
-#: value, and passing one raises rather than building a pattern that can never
-#: match.
+#: What a MEMORY slot accepts: the four memory producers, a wildcard
+#: (`anything()`, `var(c)` or a bare `Capture`), or a `one_of` over them. `load`
+#: is absent because it produces a value, and passing one raises rather than
+#: building a pattern that can never match.
 MemLike = Union[
+    Capture,
     Pat,
     "StorePat",
     "MemPhiPat",
@@ -409,9 +408,10 @@ class NodePat(Protocol):
         `find_all` / `find_unique`."""
         ...
     def into_pat(self) -> Pat:
-        """Finalise to a `Pat`, consumed by its first query and not nestable
-        as an operand. A builder auto-finalises where a pattern is expected,
-        so this is rarely needed."""
+        """Finalise to a `Pat` holding this builder, reusable across queries
+        and nesting as the builder does. A bad operand raises here. A builder
+        auto-finalises where a pattern is expected, so this is rarely
+        needed."""
         ...
 
 @runtime_checkable
@@ -419,7 +419,7 @@ class InputPat(Protocol):
     """A builder whose node kind exposes raw input slots. Not `EntryPat`
     (`Entry` is `inputs: []`), nor `FunctionArgPat` and the three binary-op
     builders, whose operands are fixed at construction."""
-    def input(self: _S, idx: int, p: ValueLike) -> _S:
+    def input(self: _S, idx: int, p: PatLike) -> _S:
         """Match `p` against raw input slot `idx`.
 
         Slot 0 is not uniform across kinds: `Call` is `[ctrl, mem, target,

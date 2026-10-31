@@ -28,7 +28,7 @@ pub use bindings::Bindings;
 pub use capture::Capture;
 pub use error::{MissingBinding, Result, RewriteSkip, is_skip, missing_binding, skip};
 #[doc(hidden)]
-pub use expr::Expr;
+pub use expr::{Expr, IntoExpr};
 pub use match_result::Match;
 pub use matcher::match_pat::{CaptureExt, Captured, MatchPat};
 pub use matcher::{

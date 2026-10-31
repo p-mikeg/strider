@@ -1,9 +1,8 @@
 """A `.when()` predicate nested into another pattern stays visible to the GC.
 
-The compiled closures own the predicate, and the owning `Pat` is the only
-object that can report them. An operand's predicate compiles into the outer
-builder's `Pattern`, so the outer `Pat` has to report it or a cycle through
-the predicate is uncollectable.
+The `Pat` a predicate was attached to holds and reports it; an `into_pat()`
+`Pat` reports its builder, which reports its operands, so a cycle through the
+predicate is collectable.
 """
 
 import gc
@@ -51,12 +50,26 @@ def test_nested_when_cycle_is_collected():
     assert _collects(True)
 
 
-def test_nested_pat_reports_the_predicate():
+def _reaches(obj, target) -> bool:
+    seen, todo = set(), [obj]
+    while todo:
+        o = todo.pop()
+        if o is target:
+            return True
+        if id(o) not in seen:
+            seen.add(id(o))
+            todo.extend(gc.get_referents(o))
+    return False
+
+
+def test_nested_pat_reaches_the_predicate():
+    """Through its builder and the operand `Pat`, which reports it."""
+
     def f(_m):
         return True
 
     pat = p.if_else().cond(p.anything().when(f)).into_pat()
-    assert f in gc.get_referents(pat)
+    assert _reaches(pat, f)
 
 
 def _reports(obj, target) -> int:

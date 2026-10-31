@@ -1,8 +1,9 @@
 use strider_ir::IRViewer;
 use strider_ir::node::{InitialVnId, NodeId, NodeKind, ValueType};
 
+use crate::TemplatePat;
 use crate::capture::Capture;
-use crate::expr::{Deco, Expr, IntoExpr, Leaf, MatchExpr, TemplateExpr};
+use crate::expr::{Deco, Expr, IntoExpr, Leaf};
 use crate::matcher::match_pat::{CaptureExt, MatchPat};
 use crate::matcher::{KindSpec, NodePredicate};
 use crate::typed::value_ops::MatchOnly;
@@ -18,7 +19,7 @@ impl IntoExpr for Any {
     }
 }
 
-impl MatchExpr for Any {}
+impl MatchPat for Any {}
 impl crate::node_builders::MemPat for Any {}
 
 /// Wildcard; not usable as a rewrite RHS.
@@ -38,8 +39,8 @@ impl IntoExpr for Var {
     }
 }
 
-impl MatchExpr for Var {}
-impl TemplateExpr for Var {}
+impl MatchPat for Var {}
+impl TemplatePat for Var {}
 impl crate::node_builders::MemPat for Var {}
 
 /// Match any node and bind its output to `c`.
@@ -110,7 +111,7 @@ pub fn inputs_of_width<I: MatchPat + 'static>(n: u32, inner: I) -> MatchOnly {
     let filter = Deco::Filter(Box::new(move |matcher, node| {
         inputs_of_width_check(matcher, node, want)
     }));
-    MatchOnly(inner.expr().deco(filter).deco(Deco::AsValue))
+    MatchOnly(inner.into_expr().deco(filter).deco(Deco::AsValue))
 }
 
 fn inputs_of_width_check(matcher: &crate::Matcher, node: NodeId, want: usize) -> bool {
