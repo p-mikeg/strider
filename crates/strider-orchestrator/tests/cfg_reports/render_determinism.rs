@@ -37,7 +37,13 @@ fn renders<R: rsleigh::MemReader>(
                 .expect("function neighborhood"),
         ),
         ("raw dot", function.raw_dot().expect("raw dot")),
-        ("raw html", function.raw_html().expect("raw html")),
+        (
+            "raw html",
+            function
+                .raw_graph_dot()
+                .as_html_from_dot()
+                .expect("raw html"),
+        ),
         (
             "raw neighborhood",
             function
