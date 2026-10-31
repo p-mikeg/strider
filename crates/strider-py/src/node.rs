@@ -7,73 +7,39 @@ use strider_ir::IRViewer;
 use strider_ir::node::NodeKind;
 
 use crate::errors::into_strider_err;
-use crate::function::PyFunction;
+use crate::function::FunctionAt;
 
 /// A handle on a single node in the IR graph.
 ///
 /// Every accessor raises `StriderError` once the function has been compacted
 /// or otherwise reshuffled, rather than dereferencing a stale node id.
-#[pyclass(name = "Node", module = "strider.ir")]
+#[pyclass(name = "Node", module = "strider.ir", frozen)]
 pub struct PyNode {
-    pub(crate) function: Py<PyFunction>,
+    pub(crate) at: FunctionAt,
     pub(crate) id: u32,
-    /// Sampled at construction, compared on every accessor.
-    pub(crate) generation: u64,
+}
+
+/// `node_id` as a live node of `function`, else `StriderError`.
+pub(crate) fn node_id(
+    function: &strider_ir::Function,
+    node_id: u32,
+) -> PyResult<strider_ir::node::NodeId> {
+    function
+        .graph()
+        .node_id_from_u32(node_id)
+        .ok_or_else(|| into_strider_err(anyhow::anyhow!("no node with id {node_id} in function")))
 }
 
 impl PyNode {
-    /// For a caller that has already resolved `node_id` against `generation`
-    /// under its own read borrow.
-    pub(crate) fn validated(function: Py<PyFunction>, node_id: u32, generation: u64) -> Self {
-        Self {
-            function,
-            id: node_id,
-            generation,
-        }
-    }
-
-    /// `StriderError` when `node_id` is not a live node in the function.
-    pub(crate) fn new(py: Python<'_>, function: Py<PyFunction>, node_id: u32) -> PyResult<Self> {
-        let generation = {
-            let borrow = function.borrow(py);
-            let guard = borrow.read_inner().map_err(into_strider_err)?;
-            // Validate eagerly so a bad id fails here, not at the first
-            // accessor call.
-            if guard.graph().node_id_from_u32(node_id).is_none() {
-                return Err(into_strider_err(anyhow::anyhow!(
-                    "no node with id {node_id} in function"
-                )));
-            }
-            guard.graph().generation()
-        };
-        Ok(Self {
-            function,
-            id: node_id,
-            generation,
-        })
-    }
-
-    /// Borrow for read, check the generation hasn't drifted and the id is
-    /// still live, then run `f` on the resolved `(function, NodeId)`.
+    /// Run `f` on the function and this node's id, once [`FunctionAt::read`]
+    /// admits it.
     fn with_node<F, R>(&self, py: Python<'_>, f: F) -> PyResult<R>
     where
         F: FnOnce(&strider_ir::Function, strider_ir::node::NodeId) -> R,
     {
-        let borrow = self.function.borrow(py);
-        let guard = borrow.read_inner().map_err(into_strider_err)?;
-        if guard.graph().generation() != self.generation {
-            return Err(into_strider_err(anyhow::anyhow!(
-                "Node is stale: function was compacted / reshuffled after this Node was \
-                 created (node generation = {}, function generation = {}).  Re-fetch the \
-                 node from the post-compaction function.",
-                self.generation,
-                guard.graph().generation(),
-            )));
-        }
-        let nid = guard.graph().node_id_from_u32(self.id).ok_or_else(|| {
-            into_strider_err(anyhow::anyhow!("no node with id {} in function", self.id))
-        })?;
-        Ok(f(&guard, nid))
+        self.at.read(py, "Node", |function| {
+            node_id(function, self.id).map(|nid| f(function, nid))
+        })?
     }
 
     /// The FIRST value output, skipping control / memory slots. A `Call`
@@ -130,11 +96,11 @@ impl PyNode {
     /// `__dict__` / `PyLifter::__clear__`, and `function` is load-bearing for
     /// as long as the `Node` lives.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        visit.call(&self.function)
+        visit.call(&self.at.function)
     }
 
-    /// The node's raw integer id in the graph. Raises once `compact` /
-    /// `optimize` has invalidated every outstanding id.
+    /// The node's raw integer id in the graph. Raises once the handle is
+    /// stale.
     #[getter]
     fn id(&self, py: Python<'_>) -> PyResult<u32> {
         self.with_node(py, |_, _| self.id)
@@ -200,41 +166,27 @@ impl PyNode {
     /// The producer node behind each input edge, in input-slot order. A
     /// producer appears once per slot it feeds.
     fn inputs(&self, py: Python<'_>) -> PyResult<Vec<PyNode>> {
-        // Collect ids under the read borrow, build the child `PyNode`s after
-        // dropping it: `PyNode::new` re-borrows the function.
-        let producer_ids: Vec<u32> = self.with_node(py, |function, nid| {
+        self.with_node(py, |function, nid| {
             function
                 .node_inputs(nid)
                 .into_iter()
-                .map(|value| function.producer(value).as_u32())
+                .map(|value| self.at.node(py, function.producer(value)))
                 .collect()
-        })?;
-        let mut out = Vec::with_capacity(producer_ids.len());
-        for pid in producer_ids {
-            out.push(PyNode::new(py, self.function.clone_ref(py), pid)?);
-        }
-        Ok(out)
+        })
     }
 
     /// The nodes consuming this node's outputs. A consumer appears once per
     /// edge it draws from this node, in output-slot then use order.
     fn outputs(&self, py: Python<'_>) -> PyResult<Vec<PyNode>> {
-        // Collect ids under the read borrow, build the child `PyNode`s after
-        // dropping it: `PyNode::new` re-borrows the function.
-        let consumer_ids: Vec<u32> = self.with_node(py, |function, nid| {
-            let mut ids = Vec::new();
-            for &out in function.node_outputs(nid) {
-                for (consumer, _slot) in function.value_uses(out) {
-                    ids.push(consumer.as_u32());
+        self.with_node(py, |function, nid| {
+            let mut out = Vec::new();
+            for &value in function.node_outputs(nid) {
+                for (consumer, _slot) in function.value_uses(value) {
+                    out.push(self.at.node(py, consumer));
                 }
             }
-            ids
-        })?;
-        let mut out = Vec::with_capacity(consumer_ids.len());
-        for cid in consumer_ids {
-            out.push(PyNode::new(py, self.function.clone_ref(py), cid)?);
-        }
-        Ok(out)
+            out
+        })
     }
 
     /// Integer constant value, sign-extended at the declared width, at any
@@ -336,9 +288,7 @@ impl PyNode {
     /// same graph generation: a stale handle raises on every accessor, so it is
     /// not the node a re-fetched handle names.
     fn __richcmp__(&self, py: Python<'_>, other: &PyNode, op: CompareOp) -> PyResult<PyObject> {
-        let same = self.id == other.id
-            && self.generation == other.generation
-            && self.function.as_ptr() == other.function.as_ptr();
+        let same = self.id == other.id && self.at == other.at;
         match op {
             CompareOp::Eq => Ok(same.into_py(py)),
             CompareOp::Ne => Ok((!same).into_py(py)),
@@ -351,9 +301,8 @@ impl PyNode {
     /// `__eq__`.
     fn __hash__(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        (self.function.as_ptr() as usize).hash(&mut hasher);
+        self.at.hash(&mut hasher);
         self.id.hash(&mut hasher);
-        self.generation.hash(&mut hasher);
         hasher.finish()
     }
 }

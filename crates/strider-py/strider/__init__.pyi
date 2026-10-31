@@ -26,11 +26,17 @@ __version__: str
 __all__: list[str]
 
 class StriderError(Exception):
-    """Raised when an analysis fails, and when a pattern is built into an
-    invalid shape. Bad scalar arguments and file IO raise the usual builtins
-    (`ValueError`, `TypeError`, `OverflowError`, `FileNotFoundError`). The
-    message carries the error and its causes; `.backtrace` carries that same
-    message followed by the Rust backtrace, and `STRIDER_BACKTRACE=1` folds the
+    """Raised when an analysis fails, when a pattern is built into an
+    invalid shape, and for a bad argument, unless the conversion itself
+    rejects it (`TypeError` for the wrong type, `OverflowError` for an int
+    out of range, though an `entry` out of range raises this), it is a
+    range-checked option (`ValueError`, such as
+    `CfgOptions(function_max_size=0)`, an unknown `known_targets` string, an
+    empty `data_ranges` range or a `BufferReader` region past the address
+    space), an ELF `load_elf` cannot lift (`ValueError`), or a missing file
+    (`FileNotFoundError`). The message
+    carries the error and its causes; `.backtrace` carries that same message
+    followed by the Rust backtrace, and `STRIDER_BACKTRACE=1` folds the
     backtrace into the message too."""
 
     backtrace: str

@@ -39,15 +39,12 @@ class _StubVisualizer:
 def unserved_server():
     """A bound server registered as running, which nothing ever serves.
 
-    The registered thread has already finished, so `shutdown`'s join is a
-    no-op and only its stop half is under test.
+    It has no worker, so `shutdown` joins nothing and only its stop half is
+    under test.
     """
     srv = explore._Server(("127.0.0.1", 0), _StubVisualizer())
     port = srv.server_address[1]
-    finished = threading.Thread(target=lambda: None)
-    finished.start()
-    finished.join()
-    explore._RUNNING[port] = (srv, finished)
+    explore._RUNNING[port] = srv
     try:
         yield srv, port
     finally:

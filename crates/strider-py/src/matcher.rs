@@ -2,7 +2,7 @@ use pyo3::basic::CompareOp;
 use pyo3::prelude::*;
 
 use crate::errors::into_strider_err;
-use crate::function::PyFunction;
+use crate::function::FunctionAt;
 use crate::pattern::{PyCapture, intern_str};
 
 /// Result of a successful pattern match.
@@ -10,14 +10,12 @@ use crate::pattern::{PyCapture, intern_str};
 /// Every capture accessor raises `StriderError` once the function has been
 /// compacted or otherwise reshuffled, rather than dereferencing the stored
 /// `ValueId`s against the new arena.
-#[pyclass(name = "Match", module = "strider.pattern")]
+#[pyclass(name = "Match", module = "strider.pattern", frozen)]
 pub struct PyMatch {
     /// Per-input-pattern sub-matches, non-empty. Shared captures are already
     /// unified, so the `Match` presents the union of every pattern's captures.
     pub(crate) inner: Vec<strider_pattern::Match>,
-    pub(crate) function: Py<PyFunction>,
-    /// Sampled at construction, compared on every accessor.
-    pub(crate) generation: u64,
+    pub(crate) at: FunctionAt,
 }
 
 /// Per-pattern roots (empty under `ignore_root`) paired with each sub-match's
@@ -42,27 +40,9 @@ impl CaptureKey<'_> {
 }
 
 impl PyMatch {
-    /// Error if the arena was reshuffled since this match was built.
-    fn assert_generation(&self, function: &strider_ir::Function) -> PyResult<()> {
-        if function.graph().generation() != self.generation {
-            return Err(into_strider_err(anyhow::anyhow!(
-                "Match is stale: function was compacted / reshuffled after this Match was \
-                 created (match generation = {}, function generation = {}).  Re-run the \
-                 pattern against the post-compaction function.",
-                self.generation,
-                function.graph().generation(),
-            )));
-        }
-        Ok(())
-    }
-
-    /// Run `f` only if the arena still has the generation this match was
-    /// built against, so a raw node id never escapes a compaction.
-    fn checked<R>(&self, py: Python<'_>, f: impl FnOnce(&Self) -> R) -> PyResult<R> {
-        let function = self.function.borrow(py);
-        let function = function.read_inner().map_err(into_strider_err)?;
-        self.assert_generation(&function)?;
-        Ok(f(self))
+    /// [`FunctionAt::read`] for this match.
+    fn read<R>(&self, py: Python<'_>, f: impl FnOnce(&strider_ir::Function) -> R) -> PyResult<R> {
+        self.at.read(py, "Match", f)
     }
 
     /// The first sub-match binding `cap`; the join already unified shared
@@ -81,15 +61,12 @@ impl PyMatch {
         py: Python<'_>,
         cap: strider_pattern::Capture,
     ) -> PyResult<Option<(bool, u32)>> {
-        let function = self.function.borrow(py);
-        let function = function.read_inner().map_err(into_strider_err)?;
-        self.assert_generation(&function)?;
-        let Some(m) = self.binding_for(cap) else {
-            return Ok(None);
-        };
-        Ok(match m.value(cap) {
-            Some(v) => Some((true, v.as_u32())),
-            None => m.node(cap, function.graph()).map(|n| (false, n.as_u32())),
+        self.read(py, |function| {
+            let m = self.binding_for(cap)?;
+            match m.value(cap) {
+                Some(v) => Some((true, v.as_u32())),
+                None => m.node(cap, function.graph()).map(|n| (false, n.as_u32())),
+            }
         })
     }
 
@@ -101,13 +78,11 @@ impl PyMatch {
         cap: strider_pattern::Capture,
         read: impl FnOnce(&strider_ir::Function, u32) -> Option<R>,
     ) -> PyResult<Option<R>> {
-        let function = self.function.borrow(py);
-        let function = function.read_inner().map_err(into_strider_err)?;
-        self.assert_generation(&function)?;
-        Ok(self
-            .binding_for(cap)
-            .and_then(|m| m.node(cap, function.graph()))
-            .and_then(|nid| read(&function, nid.as_u32())))
+        self.read(py, |function| {
+            self.binding_for(cap)
+                .and_then(|m| m.node(cap, function.graph()))
+                .and_then(|nid| read(function, nid.as_u32()))
+        })
     }
 
     /// The unsigned constant bound to `cap`, or `None` when `cap` is unbound or
@@ -134,47 +109,47 @@ impl PyMatch {
     /// ascending capture-id order. The value mirrors `BoundCapture.__repr__`: a
     /// hex constant when the node is an integer const, else `<node>`.
     fn bindings_repr(&self, py: Python<'_>) -> PyResult<String> {
-        let function = self.function.borrow(py);
-        let function = function.read_inner().map_err(into_strider_err)?;
-        self.assert_generation(&function)?;
-        // Distinct captures across sub-matches; `capture_signature` is sorted by
-        // id, so the first node seen per id wins and order is deterministic.
-        let mut seen: std::collections::BTreeMap<u32, u32> = std::collections::BTreeMap::new();
-        for m in &self.inner {
-            for (cap_id, node_id) in m.capture_signature(function.graph()) {
-                seen.entry(cap_id).or_insert(node_id);
+        self.read(py, |function| {
+            // Distinct captures across sub-matches; `capture_signature` is sorted
+            // by id, so the first node seen per id wins and order is
+            // deterministic.
+            let mut seen = std::collections::BTreeMap::new();
+            for m in &self.inner {
+                for (cap_id, node_id) in m.capture_signature(function.graph()) {
+                    seen.entry(cap_id).or_insert(node_id);
+                }
             }
-        }
-        let entries: Vec<String> = seen
-            .into_iter()
-            .map(|(cap_id, node_id)| {
-                let key = crate::pattern::capture_display(cap_id);
-                let value = crate::node::uint_of(&function, node_id)
-                    .map_or_else(|| "<node>".to_string(), |v| format!("{v:#x}"));
-                format!("{key}: BoundCapture({value})")
-            })
-            .collect();
-        Ok(entries.join(", "))
+            let entries: Vec<String> = seen
+                .into_iter()
+                .map(|(cap_id, node_id)| {
+                    let key = crate::pattern::capture_display(cap_id);
+                    let value = crate::node::uint_of(function, node_id)
+                        .map_or_else(|| "<node>".to_string(), |v| format!("{v:#x}"));
+                    format!("{key}: BoundCapture({value})")
+                })
+                .collect();
+            entries.join(", ")
+        })
     }
+}
 
-    /// Without `ignore_root` the per-pattern roots join the key; with it only
-    /// bindings matter.
-    pub(crate) fn dedup_key(&self, py: Python<'_>, ignore_root: bool) -> PyResult<DedupKey> {
-        let function = self.function.borrow(py);
-        let function = function.read_inner().map_err(into_strider_err)?;
-        self.assert_generation(&function)?;
-        let roots = if ignore_root {
-            Vec::new()
-        } else {
-            self.inner.iter().map(|m| m.root().as_u32()).collect()
-        };
-        let sigs = self
-            .inner
-            .iter()
-            .map(|m| m.capture_signature(function.graph()))
-            .collect();
-        Ok((roots, sigs))
-    }
+/// The dedup key of the sub-matches `inner`, read against `function`: without
+/// `ignore_root` the per-pattern roots join it; with it only bindings matter.
+pub(crate) fn dedup_key(
+    inner: &[strider_pattern::Match],
+    function: &strider_ir::Function,
+    ignore_root: bool,
+) -> DedupKey {
+    let roots = if ignore_root {
+        Vec::new()
+    } else {
+        inner.iter().map(|m| m.root().as_u32()).collect()
+    };
+    let sigs = inner
+        .iter()
+        .map(|m| m.capture_signature(function.graph()))
+        .collect();
+    (roots, sigs)
 }
 
 /// Unwrap a capture read for the raising getters, raising a uniform error when
@@ -193,7 +168,7 @@ fn or_missing<T>(v: Option<T>, what: &str) -> PyResult<T> {
 impl PyMatch {
     /// Exposes the `Py<PyFunction>` edge to the cyclic collector.
     fn __traverse__(&self, visit: pyo3::PyVisit<'_>) -> Result<(), pyo3::PyTraverseError> {
-        visit.call(&self.function)
+        visit.call(&self.at.function)
     }
 
     /// Node id where the top-level pattern matched. Stored beside the
@@ -201,13 +176,15 @@ impl PyMatch {
     /// same node.
     #[getter]
     fn root(&self, py: Python<'_>) -> PyResult<u32> {
-        self.checked(py, |m| m.inner[0].root().as_u32())
+        self.read(py, |_| self.inner[0].root().as_u32())
     }
 
     /// One root node id per pattern passed to the query.
     #[getter]
     fn roots(&self, py: Python<'_>) -> PyResult<Vec<u32>> {
-        self.checked(py, |m| m.inner.iter().map(|m| m.root().as_u32()).collect())
+        self.read(py, |_| {
+            self.inner.iter().map(|m| m.root().as_u32()).collect()
+        })
     }
 
     /// `m[c]` / `m["name"]`: capture `c` bound to THIS match, a `BoundCapture`
@@ -216,7 +193,7 @@ impl PyMatch {
     fn __getitem__(slf: Bound<'_, Self>, key: CaptureKey<'_>) -> PyResult<PyBoundCapture> {
         let py = slf.py();
         let cap = key.resolve()?;
-        slf.borrow().checked(py, |_| ())?;
+        slf.get().read(py, |_| ())?;
         Ok(PyBoundCapture {
             match_: slf.unbind(),
             cap: Py::new(py, PyCapture { inner: cap })?,
@@ -226,7 +203,7 @@ impl PyMatch {
     /// True when `key` (a `Capture` or string name) is bound in this match.
     fn __contains__(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
-        self.checked(py, |m| m.is_bound(cap))
+        self.read(py, |_| self.is_bound(cap))
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {
@@ -241,7 +218,7 @@ impl PyMatch {
     /// `m.node(c)` agree.
     fn has(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<bool> {
         let cap = key.resolve()?;
-        self.checked(py, |m| m.is_bound(cap))
+        self.read(py, |_| self.is_bound(cap))
     }
 
     /// Sorted, deduped machine-instruction addresses whose lift or subsequent
@@ -267,25 +244,10 @@ impl PyMatch {
         key: CaptureKey<'_>,
     ) -> PyResult<Option<crate::node::PyNode>> {
         let cap = key.resolve()?;
-        // Re-borrow to check the generation before handing out a node id that
-        // could point into a stale arena, and to resolve an `Output` binding
-        // back to its owning node.
-        let nid = {
-            let function = self.function.borrow(py);
-            let function = function.read_inner().map_err(into_strider_err)?;
-            self.assert_generation(&function)?;
-            self.binding_for(cap)
-                .and_then(|m| m.node(cap, function.graph()))
-        };
-        // Resolved under the borrow just dropped, so `PyNode::new`'s own
-        // re-validation would repeat it.
-        Ok(nid.map(|nid| {
-            crate::node::PyNode::validated(
-                self.function.clone_ref(py),
-                nid.as_u32(),
-                self.generation,
-            )
-        }))
+        self.read(py, |function| {
+            let nid = self.binding_for(cap)?.node(cap, function.graph())?;
+            Some(self.at.node(py, nid))
+        })
     }
 }
 
@@ -365,7 +327,7 @@ match_getters! {
 
 /// Capture `cap` bound to a specific `PyMatch`: `m[c]`. It says whether the
 /// capture bound and converts a numeric one; the readers are the match's.
-#[pyclass(name = "BoundCapture", module = "strider.pattern")]
+#[pyclass(name = "BoundCapture", module = "strider.pattern", frozen)]
 pub struct PyBoundCapture {
     match_: Py<PyMatch>,
     cap: Py<PyCapture>,
@@ -379,7 +341,7 @@ impl PyBoundCapture {
     /// The match's `uint_opt` for this capture, at any width. `None` for a
     /// non-constant binding.
     fn unsigned(&self, py: Python<'_>) -> PyResult<Option<strider_ir::UBig>> {
-        let m = self.match_.borrow(py);
+        let m = self.match_.get();
         match m.node_opt(py, self.key(py))? {
             Some(node) => node.uint_value(py),
             None => Ok(None),
@@ -388,7 +350,7 @@ impl PyBoundCapture {
 
     /// The match's `sint_opt` for this capture, at any width.
     fn signed(&self, py: Python<'_>) -> PyResult<Option<strider_ir::IBig>> {
-        let m = self.match_.borrow(py);
+        let m = self.match_.get();
         match m.node_opt(py, self.key(py))? {
             Some(node) => node.sint_value(py),
             None => Ok(None),
@@ -397,8 +359,8 @@ impl PyBoundCapture {
 
     /// Whether both bound the same value of the same function.
     fn same_binding(&self, py: Python<'_>, other: &Self) -> PyResult<bool> {
-        let (a, b) = (self.match_.borrow(py), other.match_.borrow(py));
-        if !a.function.is(&b.function) {
+        let (a, b) = (self.match_.get(), other.match_.get());
+        if !a.at.function.is(&b.at.function) {
             return Ok(false);
         }
         let mine = a.bound_identity(py, self.cap.borrow(py).inner)?;
@@ -418,11 +380,11 @@ impl PyBoundCapture {
     /// Whether the capture bound in this match.
     #[getter]
     fn has(&self, py: Python<'_>) -> PyResult<bool> {
-        self.match_.borrow(py).has(py, self.key(py))
+        self.match_.get().has(py, self.key(py))
     }
 
     fn __int__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
-        self.match_.borrow(py).uint(py, self.key(py))
+        self.match_.get().uint(py, self.key(py))
     }
     fn __index__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.__int__(py)
@@ -445,10 +407,10 @@ impl PyBoundCapture {
         // Ahead of the int path: under abi3 a `u128` extract shifts its
         // operand, and a `BoundCapture` has no `__rshift__`.
         let equal = if let Ok(o) = other.downcast::<PyBoundCapture>() {
-            let o = o.borrow();
+            let o = o.get();
             let (ou, os) = (o.unsigned(py)?, o.signed(py)?);
             if u.is_none() && ou.is_none() {
-                self.same_binding(py, &o)?
+                self.same_binding(py, o)?
             } else {
                 (u.is_some() && u == ou) || (s.is_some() && s == os)
             }
