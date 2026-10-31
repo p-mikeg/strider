@@ -19,7 +19,7 @@ use strider_ir::{IBig, UBig};
 use strider_ir::{IRViewer, IntConstId};
 
 use crate::capture::Capture;
-use crate::expr::{Deco, Expr, IntoExpr, Leaf};
+use crate::expr::{Expr, IntoExpr, Leaf};
 use crate::matcher::match_pat::{CaptureExt, Captured};
 use crate::matcher::{KindSpec, MatcherBuilder, OutputKindSpec, PatValueRef};
 use crate::template::template_pat::TemplatePat;
@@ -431,18 +431,18 @@ pub struct ConstWith {
 }
 
 impl ConstWith {
-    /// Declares the captures the closure resolves at instantiation.
+    /// Declares a capture the closure resolves at instantiation.
     #[must_use]
-    pub fn declaring(mut self, caps: Vec<crate::Capture>) -> Self {
-        self.caps = caps;
+    pub fn declare(mut self, c: crate::Capture) -> Self {
+        self.caps.push(c);
         self
     }
 
-    /// Declares the captures the closure resolves to an `Option`, which the
+    /// Declares a capture the closure resolves to an `Option`, which the
     /// coverage check lets bind on only some alternation arms.
     #[must_use]
-    pub fn declaring_optional(mut self, caps: Vec<crate::Capture>) -> Self {
-        self.opt_caps = caps;
+    pub fn declare_optional(mut self, c: crate::Capture) -> Self {
+        self.opt_caps.push(c);
         self
     }
 
@@ -487,7 +487,7 @@ impl IntoExpr for CaptureTyped {
 impl TemplatePat for CaptureTyped {}
 
 pub fn capture_typed<P: TemplatePat + 'static>(cap: crate::Capture, inner: P) -> CaptureTyped {
-    CaptureTyped(inner.into_expr().deco(Deco::TyOf(cap)))
+    CaptureTyped(inner.into_expr().capture_typed(cap))
 }
 
 /// An `IntConst` whose value `f` computes at rewrite time, at the width it is

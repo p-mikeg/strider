@@ -739,6 +739,21 @@ fn phi_for_vn_filters() {
     a::none(&function, phi().for_vn(rbx).build());
 }
 
+#[test]
+fn every_repeated_for_vn_must_hold() {
+    let rax = strider_ir_test_utils::reg_vn(0, 8);
+    let rbx = strider_ir_test_utils::reg_vn(16, 8);
+    let mut b: FunctionBuilder = RegisterSet::new()
+        .tracked(rax)
+        .build_fn_single_region()
+        .unwrap();
+    let v = b.read_variable(&rax).unwrap();
+    b.build_return(Some(v), &[]).unwrap();
+    let function = b.build().unwrap();
+    a::matches(&function, phi().for_vn(rax).for_vn(rax).build(), 1);
+    a::none(&function, phi().for_vn(rbx).for_vn(rax).build());
+}
+
 /// `phi_token` targets raw slot 0 directly, no `+1` shift. `PhiToken` falls
 /// outside `MatchPat`'s value domain, so a typed sub can never bind it.
 #[test]

@@ -80,7 +80,7 @@ pub fn capture_typed(
         )));
     }
     let c = c.inner;
-    let make = move |x| ex(sp::capture_typed(c, x));
+    let make = move |x: sp::Expr| x.capture_typed(c);
     Ok(PyTemplate::from(un(
         "capture_typed()",
         Kind::Build,

@@ -18,7 +18,6 @@ use crate::matcher::{
     Pattern, PostMatchFn,
 };
 use crate::node_builders::MemPat;
-use crate::template::template_pat::TemplatePat;
 use crate::template::{TemplateBuilder, TmplValueRef};
 use crate::typed::consts::{Const, ConstWith};
 
@@ -62,7 +61,6 @@ impl IntoExpr for Expr {
 }
 
 impl MatchPat for Expr {}
-impl TemplatePat for Expr {}
 impl MemPat for Expr {}
 
 enum Inner {
@@ -174,14 +172,19 @@ pub(crate) struct Op {
 
 impl Op {
     fn lower(self, b: &mut MatcherBuilder, ordered: bool) -> PatValueRef {
+        let mut ins = [None, None];
+        for (i, e) in std::iter::once(self.lhs).chain(self.rhs).enumerate() {
+            ins[i] = Some(e.lower_operand(b, Slot::Value, ordered && self.ordered_at == Some(i)));
+        }
         let node = b.node(self.kind);
+        for (i, o) in ins.into_iter().enumerate() {
+            if let Some(o) = o {
+                b.wire(node, InputSlot::At(i), o);
+            }
+        }
         let out = b.value_output(node, 0);
         if let Some(ty) = self.ty {
             b.set_value_ty(out, ty);
-        }
-        for (i, e) in std::iter::once(self.lhs).chain(self.rhs).enumerate() {
-            let o = e.lower_operand(b, Slot::Value, ordered && self.ordered_at == Some(i));
-            b.wire(node, InputSlot::At(i), o);
         }
         if ordered && self.ordered_at.is_none() {
             b.set_force_ordered(out);
@@ -193,10 +196,15 @@ impl Op {
         let KindSpec::Exact(kind) = self.kind else {
             return b.refuse(MATCH_SIDE);
         };
-        let node = b.node(kind);
+        let mut ins = [None, None];
         for (i, e) in std::iter::once(self.lhs).chain(self.rhs).enumerate() {
-            let o = e.lower_template_nested(b);
-            b.input(node, i, o);
+            ins[i] = Some(e.lower_template_nested(b));
+        }
+        let node = b.node(kind);
+        for (i, o) in ins.into_iter().enumerate() {
+            if let Some(o) = o {
+                b.input(node, i, o);
+            }
         }
         let out = b.value_output(node, 0);
         if let Some(ty) = self.ty {
@@ -277,7 +285,24 @@ impl From<ConstWith> for Expr {
     }
 }
 
+/// The build side of the escape hatch. An `Expr` is not a
+/// [`TemplatePat`](crate::TemplatePat), so
+/// a Rust rewrite cannot take one as its RHS; a match-only part refuses the
+/// template through its root.
 impl Expr {
+    #[doc(hidden)]
+    pub fn into_template(self) -> crate::Template {
+        let mut b = TemplateBuilder::new();
+        self.lower_template(&mut b);
+        b.finish()
+    }
+
+    /// [`capture_typed`](crate::capture_typed) over a tree.
+    #[doc(hidden)]
+    pub fn capture_typed(self, cap: Capture) -> Self {
+        self.deco(Deco::TyOf(cap))
+    }
+
     pub(crate) fn deco(self, d: Deco) -> Self {
         Self(Inner::Deco(Box::new((self, d))))
     }
@@ -612,26 +637,12 @@ enum AnchorKind {
     None,
 }
 
-/// Binds and/or kind-constrains the value produced at output `slot`, or at
-/// some output when `slot` is `None`. Defaults to the wildcard kind; `ty`
-/// narrows to an exact value type, `width` to a bit width.
+/// The one constraint a sibling-output vertex carries.
 #[derive(Clone, Copy)]
-struct OutputSpec {
-    slot: Option<usize>,
-    capture: Option<Capture>,
-    ty: Option<ValueType>,
-    width: Option<u32>,
-}
-
-impl OutputSpec {
-    fn at(slot: Option<usize>) -> Self {
-        Self {
-            slot,
-            capture: None,
-            ty: None,
-            width: None,
-        }
-    }
+pub enum OutputAspect {
+    Capture(Capture),
+    Width(u32),
+    Ty(ValueType),
 }
 
 /// One pattern node, its operands and its output constraints.
@@ -651,7 +662,8 @@ pub(crate) struct Node {
     /// Requires the matched value to be produced at exactly the anchor slot
     /// ([`crate::matcher::SlotMode::Pinned`]).
     pin_anchor_slot: bool,
-    outputs: Vec<OutputSpec>,
+    /// At a pinned slot, or `None` for `any_output()`.
+    outputs: Vec<(Option<usize>, OutputAspect)>,
     /// Control-output vertices beyond the anchor, `(slot, capture)`: the two
     /// arms of an `If`. Declared ahead of `outputs`.
     control_outputs: Vec<(usize, Option<Capture>)>,
@@ -747,7 +759,7 @@ impl Node {
     }
 
     /// The predicate short-circuits before child recursion. Composes with one
-    /// already staged, like
+    /// already set, like
     /// [`MatcherBuilder::set_node_predicate_at`](crate::matcher::MatcherBuilder::set_node_predicate_at).
     pub(crate) fn with_node_predicate(mut self, f: NodePredicate) -> Self {
         self.node_predicates.push(f);
@@ -774,36 +786,24 @@ impl Node {
         self
     }
 
-    /// Binds a *sibling* output of the anchor. A leaf: it captures the output
+    /// A *sibling* output of the anchor. A leaf: it constrains the output
     /// value itself and does not recurse into what that output feeds.
-    pub(crate) fn capture_output(mut self, slot: Option<usize>, c: Capture) -> Self {
-        self.outputs.push(OutputSpec {
-            capture: Some(c),
-            ..OutputSpec::at(slot)
-        });
+    pub(crate) fn output(mut self, slot: Option<usize>, aspect: OutputAspect) -> Self {
+        self.outputs.push((slot, aspect));
         self
     }
 
-    /// Implies a value output of that width.
-    pub(crate) fn output_width(mut self, slot: Option<usize>, bits: u32) -> Self {
-        self.outputs.push(OutputSpec {
-            width: Some(bits),
-            ..OutputSpec::at(slot)
-        });
+    /// A control-output vertex at `slot`, sibling to the anchor.
+    pub(crate) fn with_control_output(mut self, slot: usize) -> Self {
+        self.control_outputs.push((slot, None));
         self
     }
 
-    pub(crate) fn output_ty(mut self, slot: Option<usize>, ty: ValueType) -> Self {
-        self.outputs.push(OutputSpec {
-            ty: Some(ty),
-            ..OutputSpec::at(slot)
-        });
-        self
-    }
-
-    /// A control-output vertex at `slot`, bound to `c`. Sibling to the anchor.
-    pub(crate) fn with_control_output(mut self, slot: usize, c: Option<Capture>) -> Self {
-        self.control_outputs.push((slot, c));
+    /// Binds the control-output vertex at `slot`, replacing any capture there.
+    pub(crate) fn capture_control_output(mut self, slot: usize, c: Capture) -> Self {
+        if let Some(out) = self.control_outputs.iter_mut().find(|(s, _)| *s == slot) {
+            out.1 = Some(c);
+        }
         self
     }
 
@@ -861,7 +861,11 @@ impl Node {
         ordered: bool,
     ) -> Option<PatValueRef> {
         let anchor = slot.map_or(self.anchor, |s| self.anchor_for(s));
+        let inputs = self.lower_inputs(b);
         let node = b.node(std::mem::replace(&mut self.kind, KindSpec::Any));
+        for (at, o) in inputs {
+            b.wire(node, at, o);
+        }
         let anchor_out = match anchor {
             AnchorKind::Value(at) => {
                 let out = b.value_output(node, at);
@@ -883,14 +887,14 @@ impl Node {
         {
             b.set_value_width(out, bits);
         }
-        self.wire_inputs(b, node);
         self.finish(b, node, anchor_out);
         slot?;
         let out = anchor_out.unwrap_or_else(|| b.any_value_output(node));
         Some(pin(b, out, ordered))
     }
 
-    fn wire_inputs(&mut self, b: &mut MatcherBuilder, node: PatNodeRef) {
+    fn lower_inputs(&mut self, b: &mut MatcherBuilder) -> Vec<(InputSlot, PatValueRef)> {
+        let mut wired = Vec::with_capacity(self.inputs.len());
         for (at, slot, e) in std::mem::take(&mut self.inputs) {
             let o = e.lower_operand(b, slot, false);
             let width = self
@@ -900,8 +904,9 @@ impl Node {
             if let Some(&(_, bits)) = width {
                 b.set_value_width(o, bits);
             }
-            b.wire(node, at, o);
+            wired.push((at, o));
         }
+        wired
     }
 
     /// The output constraints, predicates and captures, once the operands
@@ -944,9 +949,13 @@ fn misfit(what: &str, name: &str) -> String {
 
 /// Sibling-output vertices on `node`: at a pinned slot, or enumerated over
 /// every slot for `any_output()`.
-fn lower_outputs(b: &mut MatcherBuilder, node: PatNodeRef, outputs: Vec<OutputSpec>) {
-    for spec in outputs {
-        let out = match spec.slot {
+fn lower_outputs(
+    b: &mut MatcherBuilder,
+    node: PatNodeRef,
+    outputs: Vec<(Option<usize>, OutputAspect)>,
+) {
+    for (slot, aspect) in outputs {
+        let out = match slot {
             // The pin is what a single-vertex node (`switch`) needs: with no
             // second vertex to pick between, the root lookup takes the only
             // one and the slot would go unchecked.
@@ -957,18 +966,19 @@ fn lower_outputs(b: &mut MatcherBuilder, node: PatNodeRef, outputs: Vec<OutputSp
             }
             None => b.any_slot_value_output(node),
         };
-        match spec.ty {
-            Some(ty) => b.set_value_ty(out, ty),
-            // Without a type pin, relax to the wildcard so a control or memory
-            // sibling output can still bind. A width pin below still narrows it
-            // to a value of that width.
-            None => b.set_output_any(out),
-        }
-        if let Some(bits) = spec.width {
-            b.set_value_width(out, bits);
-        }
-        if let Some(c) = spec.capture {
-            b.capture_output(out, c);
+        // Without a type pin, relax to the wildcard so a control or memory
+        // sibling output can still bind. A width pin still narrows it to a
+        // value of that width.
+        match aspect {
+            OutputAspect::Ty(ty) => b.set_value_ty(out, ty),
+            OutputAspect::Capture(c) => {
+                b.set_output_any(out);
+                b.capture_output(out, c);
+            }
+            OutputAspect::Width(bits) => {
+                b.set_output_any(out);
+                b.set_value_width(out, bits);
+            }
         }
     }
 }
@@ -1091,8 +1101,8 @@ mod tests {
     fn a_raw_builder_input_at_usize_max_names_no_slot() {
         let function = call_with_arg();
         let mut b = MatcherBuilder::new();
-        let node = b.node(KindSpec::variant_of(&NodeKind::Call { cc: None }));
         let arg = MatchPat::compile(int_const(42u128), &mut b);
+        let node = b.node(KindSpec::variant_of(&NodeKind::Call { cc: None }));
         b.input(node, usize::MAX, arg);
         b.memory_output(node, 1);
         let raw = b.finish();

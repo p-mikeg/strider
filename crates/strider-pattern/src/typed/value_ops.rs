@@ -9,15 +9,12 @@
 use std::marker::PhantomData;
 
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{
-    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
-};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp};
 
 use crate::expr::{Expr, IntoExpr};
 use crate::matcher::KindSpec;
 use crate::matcher::match_pat::MatchPat;
 use crate::template::template_pat::TemplatePat;
-use crate::typed::consts::Const;
 
 /// A pattern built from operands of types `T`, valid on whichever sides
 /// they all are.
@@ -126,18 +123,12 @@ pub fn float_is_nan<I: MatchPat + 'static>(inner: I) -> MatchOnly {
     }))
 }
 
-// Every factory free function is emitted from this one op list, once at crate
-// scope under `MatchPat` and once inside `mod template` under `TemplatePat`.
-// Both sides build the identical expression; only the constructor's trait
-// bound differs, which is what puts the match/template boundary at
-// construction. A `mod` can't be re-opened by per-op macro invocations, so the
-// whole list lives here and the macro is invoked once per scope.
+// Every factory is emitted once from this op list: `Op<T>` is a match
+// pattern when its operands are and a template when they are, so one
+// constructor serves both sides and `template` re-exports it.
 
 macro_rules! value_op_factories {
-    (
-        bound = $bound:path,
-        verb = $verb:literal,
-    ) => {
+    ($bound:path, $verb:literal) => {
         bin!($bound, int_add, exact, NodeKind::IntBinaryOp(IntBinaryOp::Add),
             concat!($verb, " unsigned addition `lhs + rhs`. Commutative."));
         bin!($bound, int_mul, exact, NodeKind::IntBinaryOp(IntBinaryOp::Mul),
@@ -367,29 +358,17 @@ macro_rules! un {
     };
 }
 
-value_op_factories! {
-    bound = MatchPat,
-    verb = "Match",
-}
-
-// Build-side twins, re-exported at the crate root as
-// `strider_pattern::template`. Same expressions, `TemplatePat` bound instead
-// of `MatchPat`: a template builder accepts template-only operands
-// (`ConstWith`, `var`, nested template ops) and refuses match-only ones
-// (`anything()` / predicates / `*_any`), and vice versa.
-pub mod template {
+pub(crate) mod ops {
     use strider_ir::node::NodeKind;
     use strider_ir::{
         ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
     };
 
-    use crate::expr::Expr;
-    use crate::template::template_pat::TemplatePat;
+    use crate::expr::{Expr, IntoExpr};
     use crate::typed::consts::Const;
     use crate::typed::value_ops::Op;
 
-    value_op_factories! {
-        bound = TemplatePat,
-        verb = "Build",
-    }
+    value_op_factories!(IntoExpr, "Match or build");
 }
+
+pub use ops::*;
