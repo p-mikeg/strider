@@ -37,7 +37,9 @@ impl KindSpec {
 }
 
 /// Accept or reject the matched IR node. Takes no output type; a closure that
-/// needs one derives it from the node.
+/// needs one derives it from the node. It may run more than once per
+/// candidate, and on nodes the full match would reject: the root's operands are
+/// screened before the root is matched, at both slots of an unordered pair.
 pub type NodePredicate = Box<dyn Fn(&Matcher, NodeId) -> bool + Send>;
 
 /// Runs once every input has resolved, so it sees the accumulated bindings.

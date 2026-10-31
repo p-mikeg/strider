@@ -40,8 +40,7 @@ static ALLOCATOR: Counting = Counting;
 const LEAVES: usize = 8;
 const CHAIN: usize = 400;
 
-/// Runs `f` once to warm the kind index, then counts what a second run
-/// allocates.
+/// Runs `f` once to warm up, then counts what a second run allocates.
 fn allocations_of<T>(f: impl Fn() -> T) -> (T, usize) {
     drop(f());
     let before = ALLOCS.load(Ordering::Relaxed);

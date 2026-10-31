@@ -142,10 +142,10 @@ fn find_all_is_deterministic() {
     assert_eq!(a1, a2);
 }
 
-/// The lazy kind index is built on the first query and reused after; each
-/// query at a different discriminant must still return its own hit count.
+/// One matcher answers queries at different discriminants, each with its own
+/// hit count.
 #[test]
-fn kind_index_reused_across_queries() {
+fn one_matcher_answers_each_kind_in_turn() {
     let function = shapes::add_consts(5, 7);
     let matcher = Matcher::new(&function);
 
@@ -156,16 +156,33 @@ fn kind_index_reused_across_queries() {
         "two IntConsts"
     );
 
-    // Served after the index is built.
     let pat_add = int_add(anything(), anything()).into_pattern();
     assert_eq!(matcher.find_all(&pat_add).unwrap().len(), 1, "one Add");
 
-    // Re-run the first query, now via the cache.
     assert_eq!(
         matcher.find_all(&pat_const).unwrap().len(),
         2,
         "re-query still two"
     );
+}
+
+/// An alternation root is attempted arm kind by arm kind, each in walk order,
+/// so its matches come back grouped by the arm that names their kind.
+#[test]
+fn an_alternation_root_reports_its_arms_kinds_in_arm_order() {
+    let mut t = Tb::empty();
+    let (one, two, three) = (t.u64(1), t.u64(2), t.u64(3));
+    let inner = t.add(one, two);
+    let outer = t.add(inner, three);
+    let function = t.ret_val(outer);
+    let pat = one_of![int_add(anything(), anything()), any_int_const()].into_pattern();
+    let kinds: Vec<bool> = Matcher::new(&function)
+        .find_all(&pat)
+        .unwrap()
+        .iter()
+        .map(|m| function.node_kind(m.root()).is_const())
+        .collect();
+    assert_eq!(kinds, [false, false, true, true, true]);
 }
 
 /// Three leaf `Add`s at distinct operand values, summed by two more `Add`s.

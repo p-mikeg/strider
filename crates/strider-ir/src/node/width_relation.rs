@@ -1,6 +1,8 @@
 //! Where an input slot's width comes from, and the equivalence classes that
 //! answer folds into.
 
+use petgraph::unionfind::UnionFind;
+
 use crate::node::signature::{Conversion, OperandWidth};
 use crate::node::{NodeKind, ValueId};
 
@@ -32,34 +34,21 @@ pub fn width_tie<T>(kind: &NodeKind, slot: usize, out: Option<T>, first: Option<
 
 /// Union-find over value vertices, grouping the ones a node evaluates at one
 /// width.
-pub struct WidthGroups {
-    parent: Vec<u32>,
-}
+pub struct WidthGroups(UnionFind<u32>);
 
 impl WidthGroups {
     /// Over vertex ids below `len`.
     #[must_use]
     pub fn new(len: usize) -> Self {
-        Self {
-            parent: (0..len as u32).collect(),
-        }
+        Self(UnionFind::new(len))
     }
 
     pub fn find(&mut self, v: ValueId) -> usize {
-        let mut i = v.as_u32() as usize;
-        while self.parent[i] as usize != i {
-            let grandparent = self.parent[self.parent[i] as usize];
-            self.parent[i] = grandparent;
-            i = grandparent as usize;
-        }
-        i
+        self.0.find_mut(v.as_u32()) as usize
     }
 
     pub fn union(&mut self, a: ValueId, b: ValueId) {
-        let (ra, rb) = (self.find(a), self.find(b));
-        if ra != rb {
-            self.parent[rb] = ra as u32;
-        }
+        self.0.union(a.as_u32(), b.as_u32());
     }
 
     /// [`width_tie`] with a `Tied` head joined to `operand`. A head that IS

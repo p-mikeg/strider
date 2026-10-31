@@ -80,3 +80,32 @@ def test_giving_up_on_a_server_that_never_served_leaves_it_able_to_serve(
     monkeypatch.setattr(explore, "_SHUTDOWN_START_SECONDS", 0.2)
     assert explore.shutdown(port) == []
     assert not srv.stopping.is_set()
+
+
+class _BrokenStdout:
+    def write(self, s: str) -> int:
+        raise BrokenPipeError(32, "Broken pipe")
+
+    def flush(self) -> None:
+        pass
+
+
+def test_a_url_print_that_raises_leaves_no_server_behind(monkeypatch):
+    """A foreground server whose URL cannot be printed never serves, so it
+    must not stay registered with its socket bound: every later `shutdown`,
+    the one at exit included, would wait on it."""
+    made: list[explore._Server] = []
+
+    class _Recorded(explore._Server):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            made.append(self)
+
+    monkeypatch.setattr(explore, "_Server", _Recorded)
+    before = set(explore._RUNNING)
+    monkeypatch.setattr("sys.stdout", _BrokenStdout())
+    with pytest.raises(BrokenPipeError):
+        explore._serve(_StubVisualizer(), host="127.0.0.1", port=0)
+    monkeypatch.undo()
+    assert set(explore._RUNNING) == before
+    assert made[0].socket.fileno() == -1, "the listening socket is still open"
