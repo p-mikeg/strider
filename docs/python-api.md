@@ -614,9 +614,11 @@ node kind: `Call` inputs are `[ctrl, mem, target, sp, arg0, ...]`, `Load`'s are
 `[ctrl, mem, result, ...clobbers]` and `Load`'s are `[value]`. The IR's
 `expected_signature` (`crates/strider-ir/src/node/signature.rs`) is the source
 of truth. They are the escape hatch beneath the named accessors, not a
-replacement for them. What a slot holds decides what can bind it: only an
-untyped wildcard (`var` / `anything`) reaches a control, memory or phi-token
-edge, never a typed value sub-pattern.
+replacement for them. What a slot holds decides what can bind it: a typed
+value sub-pattern binds only a value edge; an untyped wildcard (`var` /
+`anything`) any edge; a control producer (`entry()`, `region()`, `if_else()`,
+...) its control edge; and a `call()` / `call_other()` any of its outputs, its
+control, memory or value edge (`.res()` keeps it to the value).
 
 `phi()` and `mem_phi()` index predecessors with `.phi_input(i, p)`, raw slot
 `i + 1`; their `.input(i, p)` is the raw slot every other builder's is, so
@@ -634,8 +636,10 @@ p.load().input(1, x)                                                  # raw slot
 ```
 
 `any_input` matches an input of any kind: a value producer a value input, a
-memory producer (`store` / `mem_phi`) a memory input, a wildcard any input at
-all including control and phi-token edges.
+memory producer (`store` / `mem_phi`) a memory input, a control producer
+(`if_else`, `region`, ...) a control input, a `call` / `call_other` any of its
+control, memory or value outputs, and a wildcard any input at all including
+phi-token edges.
 
 ### `one_of` / `first_of`, alternation (OR)
 
