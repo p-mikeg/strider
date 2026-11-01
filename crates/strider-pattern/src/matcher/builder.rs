@@ -88,10 +88,10 @@ impl MatcherBuilder {
         self.alternation(alts, Role::OneOf)
     }
 
-    /// Like [`Self::one_of`] but cuts to the first arm that yields a match
-    /// instead of enumerating every match: an ordered choice, not a union.
-    /// An arm rejected by a guard above the alternation produces no match, so
-    /// the choice falls through to the next arm.
+    /// Like [`Self::one_of`] but an ordered choice, not a union: see
+    /// [`crate::OneOf::first`]. An arm rejected by a guard above the
+    /// alternation produces no match, so the choice falls through to the next
+    /// arm.
     pub fn first_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
         self.alternation(alts, Role::FirstOf)
     }

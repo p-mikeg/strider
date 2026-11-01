@@ -170,13 +170,14 @@ impl<'f> Matcher<'f> {
 
     /// Every match of `pat` rooted at `node`; see [`walk::anchor`].
     ///
-    /// `first_only` stops at the first match, moving `scratch` into it.
-    /// Otherwise every distinct match is enumerated, deduplicated by
-    /// capture-to-binding map, and `scratch` comes back empty, the walk
-    /// restoring it on every rejection. The dedup set is
-    /// per-node: two different roots are different matches whatever their
-    /// bindings, while one node's outputs share the set, so a pattern reachable
-    /// through several outputs does not double-report an identical binding.
+    /// `first_only` stops at the first match, moving `scratch` into it, unless
+    /// `pat` holds a `first_of` ([`Self::lowest_arm_matches`]). Otherwise every
+    /// distinct match is enumerated, deduplicated by capture-to-binding map,
+    /// and `scratch` comes back empty, the walk restoring it on every
+    /// rejection. The dedup set is per-node: two different roots are different
+    /// matches whatever their bindings, while one node's outputs share the set,
+    /// so a pattern reachable through several outputs does not double-report
+    /// an identical binding.
     fn matches_at_node(
         &self,
         node: NodeId,
@@ -185,6 +186,9 @@ impl<'f> Matcher<'f> {
         first_only: bool,
         scratch: &mut Bindings,
     ) -> Vec<Match> {
+        if pat.holds_first_of {
+            return self.lowest_arm_matches(node, pat, root, first_only, scratch);
+        }
         let mut hits: Vec<Match> = Vec::new();
         // Keyed on the bindings ALONE, deliberately: an existential
         // (`any_input`, a commutative pair) reaches the same binding through
@@ -199,7 +203,7 @@ impl<'f> Matcher<'f> {
         // drives the engine on to the next operand ordering / existential
         // slot. `true` accepts and stops.
         let generation = self.function.graph().generation();
-        walk::anchor(self, pat, root, node, scratch, &mut |b| {
+        walk::anchor(self, pat, root, node, scratch, None, &mut |b| {
             if first_only {
                 hits.push(Match::new(node, std::mem::take(b), generation));
             } else if hits.is_empty() || {
@@ -213,6 +217,54 @@ impl<'f> Matcher<'f> {
             first_only
         });
         hits
+    }
+
+    /// [`Self::matches_at_node`] for a pattern holding a `first_of`. Every
+    /// configuration runs, then each `first_of`, per IR node it was offered
+    /// and root output anchored, keeps only the matches through the lowest
+    /// arm any of them took there. The keys settle in `first_of` build order,
+    /// then IR node order, so the answer does not depend on the order the
+    /// configurations ran in.
+    #[inline(never)]
+    fn lowest_arm_matches(
+        &self,
+        node: NodeId,
+        pat: &Pattern,
+        root: PatNodeId,
+        first_only: bool,
+        scratch: &mut Bindings,
+    ) -> Vec<Match> {
+        let generation = self.function.graph().generation();
+        let mut found: Vec<(Match, Vec<walk::ArmTaken>)> = Vec::new();
+        let trail = walk::ArmTrail::default();
+        walk::anchor(self, pat, root, node, scratch, Some(&trail), &mut |b| {
+            let arms = trail.arms.borrow().clone();
+            found.push((Match::new(node, b.clone(), generation), arms));
+            false
+        });
+        let mut keys: Vec<walk::ArmKey> = found
+            .iter()
+            .flat_map(|(_, a)| a.iter().map(|e| e.0))
+            .collect();
+        keys.sort_unstable_by_key(|&(p, n, v)| (p.as_u32(), n.as_u32(), v.map(ValueId::as_u32)));
+        keys.dedup();
+        fn at(arms: &[walk::ArmTaken], key: walk::ArmKey) -> impl Iterator<Item = usize> + '_ {
+            arms.iter().filter(move |e| e.0 == key).map(|e| e.1)
+        }
+        for key in keys {
+            let Some(lowest) = found.iter().flat_map(|(_, a)| at(a, key)).min() else {
+                continue;
+            };
+            found.retain(|(_, a)| at(a, key).all(|arm| arm == lowest));
+        }
+        let mut seen = FxHashSet::default();
+        let distinct = found
+            .into_iter()
+            .map(|(m, _)| m)
+            .filter(|m| seen.insert(m.bindings.binding_signature()));
+        distinct
+            .take(if first_only { 1 } else { usize::MAX })
+            .collect()
     }
 
     /// The first match of `pat` at `node`, if any.

@@ -90,7 +90,7 @@ pub(crate) enum Role {
     /// `one_of`: the inputs are alternative sub-patterns tried against the
     /// *same* IR node, every matching arm enumerated (a union).
     OneOf,
-    /// `first_of`: [`Role::OneOf`] cut to the first arm that matches.
+    /// `first_of`: [`Role::OneOf`] kept to the first arm that matches.
     FirstOf,
 }
 

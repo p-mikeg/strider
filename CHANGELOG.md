@@ -425,9 +425,8 @@
   lists a node's input producers or its outputs' consumers.
 - `strider_opt::{value_range, indirect_branch_resolve, KnownBitsFacts,
   KnownBitsMap, analyze_known_bits, classify_target}` exist only with the
-  `test-util` feature: only tests read them.
-  `classify_sites`, `ClassifiedSites`, `ReturnTargets` and the `KnownBits`
-  pass stay public.
+  `test-util` feature: only tests read them. `classify_sites`,
+  `ClassifiedSites`, `ReturnTargets` and the `KnownBits` pass stay public.
 - `KindSpec::VariantWith` is gone. `load().space(s)`, `store().space(s)` and
   `call_other().user_op_id(v)` pin `KindSpec::Exact`, the same test on
   kinds whose payload is that one field, so two such operands of a
@@ -463,12 +462,12 @@
   `AnalyzeOptions` fields, with the same defaults, and each round claims
   `assumptions` on its fresh lift before the pipeline runs.
 - `OptCtx` is `{ rom }`, built by `OptCtx::new(rom)`, and carries no claim;
-  `OptCtx::at_floor` is gone.
-  Claims accumulate per `Function`: `Function::assume(&claims)` adds to
-  `Function::assumptions`, which every pass reads, and nothing withdraws
-  one; analyse again for a function without one. A function never given a
-  claim, a fresh lift included, is optimized at the sound floor, where a
-  run under `OptCtx::new` used the three default claims.
+  `OptCtx::at_floor` is gone. Claims accumulate per `Function`:
+  `Function::assume(&claims)` adds to `Function::assumptions`, which every
+  pass reads, and nothing withdraws one; analyse again for a function without
+  one. A function never given a claim, a fresh lift included, is optimized at
+  the sound floor, where a run under `OptCtx::new` used the three default
+  claims.
 - `RegionIndex::overlapping` is gone; `RegionIndex::covering` remains.
 - `strider_ir::Value`, the second name for `strider_ir::node::ValueId`, is
   gone: use `ValueId`.
@@ -501,7 +500,8 @@
   unchanged.
 - Of several captures a rewrite's template references and its pattern leaves
   unbound, the error names the first written, where it named the last.
-- `hash(CastMask)` takes other values; equal masks still hash equal.
+- `hash(CastMask)` returns different values than in 0.2.0; equal masks still
+  hash equal.
 - A memory slot (`mem`, `MemPhiPat.phi_input`) takes `anything()`,
   `var(c)` and a bare `Capture`, as Rust does, which bind the memory token,
   through a `.capture()` or `.when()` as a `one_of` there was taken. A
@@ -532,9 +532,9 @@
   them are one carrier. Both passes' narrowing now rests on those two claims,
   which reverses the 0.2.0 entry that they rewire "only on structural facts".
 - With `return_slots_survive_untracked_writes` cleared, return-target
-  verification passes a constant-address store under
-  `stack_global_disjoint` and a store through a `noalias_allocators`
-  result, where it took both to clobber the return slot.
+  verification passes a constant-address store under `stack_global_disjoint`
+  and a store through a `noalias_allocators` result, where it took both to
+  clobber the return slot.
 - `ElfLifter.build_cfg` derives its options from the ELF as `analyze` does:
   the `$d` mapping symbols seat `data_ranges` unless the options name some,
   and a ppc64 ELFv2 `no_return_targets` address also covers its
@@ -814,14 +814,31 @@
 
 ### Fixed
 
+- `first_of` keeps, at each node it is offered, only the matches through the
+  first listed arm that yields any match. It kept the first arm to match in
+  search order, so a sibling tried around it (another `one_of`'s arm order,
+  or the slot the `first_of` sat in) could report a later arm beside an
+  earlier one, or instead of it where a query stops at its first match.
+  Several `first_of`s in one match settle in the order they are written, an
+  inner one before the one holding it. A query holding a `first_of` runs every
+  configuration before it answers, `match_at` included.
 - Python: a `StriderError` raised on a small thread (a `threading.stack_size`
   of 32 or 40 KiB, or 64 KiB in a debug build), such as a refusal or a pattern
   nested past the thread's stack, reaches the caller, where it crashed the
   process: building it resolved a Rust backtrace on the spent stack.
-  `.backtrace` is resolved when first read.
+  `.backtrace` is resolved when first read. `STRIDER_BACKTRACE=1` still
+  resolves it where the error is raised, to fold it into the message, so a
+  small thread can still crash then.
+- Python: a `per_address_ccs` convention that does not resolve against the
+  target's registers raises a one-line message naming the address and the
+  cause, its frames on `.backtrace`. The message carried the whole Rust
+  backtrace.
 - `int_const_any_width` with a negative value matches an `I256` or `I512`
-  constant holding it sign-extended, as `int_const` does at that width. It
-  matched none past 128 bits.
+  constant holding it sign-extended, or an `I512` holding that `I256` value
+  zero-extended, as it does below 128 bits. It matched none past 128 bits. At
+  those widths it no longer matches a value sign-extended to 128 bits and then
+  zero-extended, which is no single widening: `int_const_any_width(163)`
+  matched the `I256` constant `2^128 - 93`.
 - Rust: a template whose width group mixes types anchors that group from the
   graph, operands first in slot order, not from build order, so where a
   capture was built no longer changes which type the group takes or the
@@ -918,7 +935,7 @@
   but 0 as toward -inf and broke a tie away from zero. `trunc.l.s` on a
   32-bit FPU writes the whole doubleword.
 - Python: PowerPC `fmadd`, `fmsub`, `fnmadd`, `fnmsub` and their single
-  and record forms round the exact A*C ± B once, where they rounded the
+  and record forms round the exact A*C +/- B once, where they rounded the
   product and the sum apart (the single forms three times), so gcc's
   default `a*b+c` could read one bit off and `-2^31 * DBL_MAX + inf` read
   NaN; `fmsub.` and `fnmsub.` rounded to single. The VSX `xs*m*sp` and

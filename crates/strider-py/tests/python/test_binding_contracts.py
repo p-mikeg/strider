@@ -329,6 +329,32 @@ def test_backtrace_stays_assignable():
     except strider.StriderError as e:
         e.backtrace = "mine"
         assert e.backtrace == "mine"
+        setattr(e, "backtrace", None)  # the stub types it `str`
+        assert e.backtrace is None
+        del e.backtrace
+        assert e.backtrace == ""
+    else:
+        pytest.fail("expected a StriderError")
+
+
+def test_backtrace_has_a_docstring():
+    doc = strider.StriderError.backtrace.__doc__
+    assert doc and "Rust backtrace" in doc, doc
+
+
+def test_a_per_address_cc_refusal_keeps_the_backtrace_out_of_its_message():
+    """The refusal names the address and the cause; the frames stay on
+    `.backtrace`, as for every other error."""
+    opts = strider.lift.LifterOptions(
+        per_address_ccs={0x2000: CallingConvention.aarch64_aapcs64()}
+    )
+    try:
+        _x86_64(_STRAIGHT).analyze(_BASE, CallingConvention.x86_64_systemv(), opts=opts)
+    except strider.StriderError as e:
+        assert str(e) == (
+            'per-address CC at 0x2000 unresolved: unknown sleigh register name "x0"'
+        ), str(e)
+        assert "stack backtrace" in e.backtrace.lower()
     else:
         pytest.fail("expected a StriderError")
 

@@ -128,8 +128,8 @@ strider.explore.shutdown(port)
   pan-and-zoom explorer while you keep querying. `StriderError.backtrace`
   carries the Rust trace.
 - **Threads.** `analyze` drops the GIL, so one lift handle per thread analyses
-  in parallel. A handle decodes only on the thread that built it and says so
-  rather than misbehaving.
+  in parallel. A handle works from any thread; a call into one already in use
+  raises `StriderError` rather than misbehaving.
 - **Failing safely.** A pattern too large or too deep for the thread's stack
   and an out-of-range operand index raise `StriderError` instead of crashing
   the interpreter, and the wheel is built with overflow checks.
