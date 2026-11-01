@@ -55,14 +55,15 @@ Python (from the workspace root, never from `crates/strider-py`):
 
 ```bash
 uv sync --group dev
-uv run maturin develop --features test-hooks   # without it, 1 test skips
+uv run maturin develop --features test-hooks   # without it, 2 tests skip
 uv run pytest
 uv run pyright     # type-checks strider/, its tests and examples; gate is 0 errors
 ```
 
 `test-hooks` is a default-off feature of `strider-py` carrying `_rebuild`,
 which installs a reader after the handle exists: the one way to close a
-collectable cycle back onto it, and nothing a user should reach. CI turns it
+collectable cycle back onto it, and nothing a user should reach. It also
+carries `CfgOptions._call_other_override_builds`, a resolution counter. CI turns it
 on for both `maturin develop` runs and never for `maturin build`, so it is
 absent from the shipped wheel.
 
@@ -131,9 +132,9 @@ Strider:
   stack budget (`MAX_PATTERN_STACK`), are refused through the reject channel
   (`Pattern.root: Result<NodeId, String>`, surfaced by `Pattern::root()`), not
   by overflowing the stack. `MatcherBuilder::finish` reports a cyclic wiring
-  through the same channel. `TemplatePat` is implemented for `Captured<P>` only
-  at `P = Var`, so `template::int_add(..).capture(c)` is a compile error rather
-  than a silently dropped operand.
+  through the same channel. `TemplatePat` is sealed, and implemented for
+  `Captured<P>` only at `P = Var`, so `template::int_add(..).capture(c)` is a
+  compile error rather than a silently dropped operand.
 - `strider-opt`: optimization passes, the `OptimizerPipeline`, the
   `rewrite_rule` facade over `strider-pattern`, and the
   `indirect_branch_resolve` classifiers (`classify_sites`, which `analyze`
@@ -308,7 +309,8 @@ when both IR slots hold the same value.
     `Arc<... + Send + Sync>`: `JoinConstraint` is `Clone`, so the predicate is
     shared rather than duplicated.
   - `strider-py`: no `#[pyclass(unsendable)]` remains. `OptimizerPipeline`
-    was the last, and holds a `Mutex<OptimizerPipeline>` instead.
+    was the last, and is now a plain class whose `add` / `add_post` take
+    `&mut self`.
     `Lifter` moves, drops and runs anywhere. Every method that reads the
     handle borrows its `PyCell`; `analyze`, `build_cfg` and `add_elf` borrow
     exclusively, across the GIL release and any `read()` callback, so a

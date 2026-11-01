@@ -1,8 +1,3 @@
-//! The build-side mirror of [`MatchPat`](crate::MatchPat), implemented only by
-//! the buildable typed patterns. That restriction is what makes a wildcard in
-//! a rewrite RHS a compile error: `rewrite_rule<L, T: TemplatePat>` cannot
-//! accept one.
-
 use crate::expr::IntoExpr;
 use crate::template::Template;
 
@@ -26,7 +21,7 @@ pub(crate) mod sealed {
 /// TemplatePat::into_template(template::int_add(anything(), var(Capture::new())));
 /// ```
 ///
-/// Nor is a composite's `.capture()`, which would drop its operands:
+/// Nor is a composite's `.capture()`:
 ///
 /// ```compile_fail,E0277
 /// use strider_pattern::{Capture, CaptureExt, TemplatePat, template, var};

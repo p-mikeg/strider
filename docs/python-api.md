@@ -111,6 +111,11 @@ fw = strider.lift.lifter(sleigh.SleighArch.arm(), Firmware(blob))
 either. The `reader.MemLike` / `reader.RomLike` type aliases name what each
 argument accepts.
 
+A Python subclass of `MemReader`, `ReadOnlyMemory` or
+`pattern.constraints.JoinPredicate` is never freed once instantiated (a defect
+of the pyo3 0.22 bindings; its instances are freed), so define such a class
+once rather than in a loop.
+
 ---
 
 ## 2. Analyzing a function
@@ -619,6 +624,14 @@ value sub-pattern binds only a value edge; an untyped wildcard (`var` /
 `anything`) any edge; a control producer (`entry()`, `region()`, `if_else()`,
 ...) its control edge; and a `call()` / `call_other()` any of its outputs, its
 control, memory or value edge (`.res()` keeps it to the value).
+
+Every typed builder nests in every match slot but a memory one, and one that
+can never match where it sits (a `store()` or `ret()` as a value operand,
+`entry()` / `region()` as a value) raises at query time. A memory slot
+(`.mem(p)`, `mem_phi().phi_input(i, p)`) takes the memory producers, a
+wildcard (`anything()`, `var(c)`, a bare `Capture`) or a `one_of` over them;
+a width or type there (`.of_width()`, `.value_ty()`, `.bool_valued()`)
+raises, since a memory token has neither.
 
 `phi()` and `mem_phi()` index predecessors with `.phi_input(i, p)`, raw slot
 `i + 1`; their `.input(i, p)` is the raw slot every other builder's is, so

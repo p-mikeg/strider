@@ -1,8 +1,3 @@
-//! One set of typed factories for both sides: an operand stays a generic type
-//! parameter, so a value op is a `MatchPat` when its operands are and a
-//! `TemplatePat` when they are. Finalise with `.into_pattern()` or
-//! `.into_template()`.
-
 pub(crate) mod alternation;
 pub(crate) mod consts;
 pub(crate) mod value_ops;

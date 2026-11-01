@@ -9,7 +9,7 @@
 //! and the producer is the vertex's own producer node.
 //!
 //! Matching a node's inputs is one problem: an injective assignment of pattern
-//! inputs to IR input slots, each input drawing from its own [`Candidates`]
+//! inputs to IR input slots, each input drawing from its own candidate
 //! set, solved by [`match_assignments`]. A fixed operand's set is a singleton;
 //! a commutative arity-2 node gives both operands `{0, 1}`, so injectivity
 //! yields exactly the natural then the swapped ordering; an `any_input`
@@ -22,10 +22,10 @@
 //! `k` per configuration rather than returning the first hit. A guard anywhere
 //! above that rejects a configuration therefore re-drives a commutative node
 //! below it, so e.g. a `when_match` on a unary parent picks which operand of a
-//! commutative child binds. The caller supplies the root continuation: a first-hit collector returns `true` to stop at the first
-//! guard-satisfying configuration in DFS order, while `find_all`'s returns
-//! `false` to enumerate the rest, reporting several distinct bindings per
-//! root.
+//! commutative child binds. The caller supplies the root continuation: a
+//! first-hit collector returns `true` to stop at the first guard-satisfying
+//! configuration in DFS order, while `find_all`'s returns `false` to enumerate
+//! the rest, reporting several distinct bindings per root.
 //!
 //! On a sub-pattern mismatch at a producer output, a non-empty
 //! [`CastMask`](crate::matcher::CastMask) makes the matcher unwrap a masked
@@ -55,36 +55,11 @@ struct Ctx<'a> {
     /// `JoinPredicate`) runs on the same `Matcher` counts in its own.
     satisfied: Cell<u64>,
     /// Per `first_of` node and IR node it was offered, the arm that first
-    /// produced a match in this attempt. The cut is scoped to the attempt
-    /// rather than to one invocation of the alternation, so a sibling operand
-    /// enumerated INSIDE the alternation's invocation and one enumerated around
-    /// it leave the same arms; the IR node is part of the key because a
-    /// commutative ordering or an `any_input` slot re-offers the same pat node
-    /// a DIFFERENT IR node, for which an earlier arm's match proves nothing.
+    /// produced a match in this attempt.
     first_match_cut: RefCell<FxHashMap<(PatNodeId, NodeId), usize>>,
 }
 
-impl<'a> Ctx<'a> {
-    fn new(matcher: &'a Matcher<'a>, pat: &'a Pattern) -> Self {
-        Self {
-            matcher,
-            pat,
-            satisfied: Cell::new(0),
-            first_match_cut: RefCell::default(),
-        }
-    }
-
-    fn cut_arm(&self, node: PatNodeId, ir: NodeId) -> Option<usize> {
-        self.first_match_cut.borrow().get(&(node, ir)).copied()
-    }
-
-    fn record_cut_arm(&self, node: PatNodeId, ir: NodeId, arm: usize) {
-        self.first_match_cut
-            .borrow_mut()
-            .entry((node, ir))
-            .or_insert(arm);
-    }
-
+impl Ctx<'_> {
     #[inline]
     fn function(&self) -> &strider_ir::Function {
         self.matcher.function()
@@ -110,7 +85,12 @@ pub(crate) fn anchor(
 ) -> bool {
     let mut attempt = |root_value: Option<ValueId>, bindings: &mut Bindings| {
         let out_vertex = root_value.and_then(|v| root_output_vertex_for(pat, root, matcher, v));
-        let ctx = Ctx::new(matcher, pat);
+        let ctx = Ctx {
+            matcher,
+            pat,
+            satisfied: Cell::new(0),
+            first_match_cut: RefCell::default(),
+        };
         let mut counted = |b: &mut Bindings| {
             ctx.satisfied.set(ctx.satisfied.get() + 1);
             k(b)
@@ -138,7 +118,7 @@ pub(crate) fn anchor(
     // An output whose anchor repeats the one already tried imposes the same
     // constraint set, so it can only re-derive bindings already reported.
     //
-    // `IfPat::lower` declares a vertex per control slot and
+    // `if_else()` declares a vertex per control slot and
     // `root_output_vertex_for` picks by slot, so an `If` root's two outputs
     // resolve to DIFFERENT vertices; what skips the second is
     // `anchor_repeats`' `as_value()` clause, not its `prev == cur` one, which
@@ -319,7 +299,7 @@ fn try_match_at(
     // of every commutative IR kind's signature), a commutative IR kind, and no
     // `.ordered()`. A single pinned operand reaches both slots too, or the same
     // query answers differently by which slot it names. Otherwise operands stay
-    // on `Candidates::Only`, i.e. one ordering.
+    // on their pinned slot, i.e. one ordering.
     //
     // Both orderings are re-driven under an enumerating continuation, so a
     // commutative node whose two operands EACH satisfy both sub-patterns
@@ -387,7 +367,11 @@ fn try_alternation(
     if !bind_all_captures(ctx, site, bindings) {
         return false;
     }
-    let cut = ctx.cut_arm(pat_node, ir_node);
+    let cut = ctx
+        .first_match_cut
+        .borrow()
+        .get(&(pat_node, ir_node))
+        .copied();
     for (arm, alt) in ctx.pat.inputs_of(pat_node).edges.iter().enumerate() {
         // An arm past the one that already matched in this attempt is not
         // re-offered just because a sibling operand moved on.
@@ -411,8 +395,18 @@ fn try_alternation(
         // The cut is on a produced match, not on structural arm shape: an arm
         // reaching `k` but rejected by a guard above falls through to the next
         // arm.
+        //
+        // The cut is scoped to the attempt rather than to one invocation of
+        // the alternation, so a sibling operand enumerated INSIDE the
+        // alternation's invocation and one enumerated around it leave the same
+        // arms; the IR node is part of the key because a commutative ordering
+        // or an `any_input` slot re-offers the same pat node a DIFFERENT IR
+        // node, for which an earlier arm's match proves nothing.
         if nd.role == Role::FirstOf && ctx.satisfied.get() > before {
-            ctx.record_cut_arm(pat_node, ir_node, arm);
+            ctx.first_match_cut
+                .borrow_mut()
+                .entry((pat_node, ir_node))
+                .or_insert(arm);
             break;
         }
     }
@@ -496,7 +490,7 @@ fn bind_sibling_outputs(
 
 /// Try `edge`'s sub-pattern against the operand `value`, then, if the cast mask
 /// permits and `value` is a registered cast, against the unwrapped value. `k`
-/// continues the enclosing match. Both [`Candidates`] arms share this and
+/// continues the enclosing match. Every candidate set shares this and
 /// differ only in their reaction to `false`: a singleton fails its pinned slot,
 /// a multi-candidate set tries the next.
 ///
@@ -710,20 +704,6 @@ fn value_interchangeable(a: &PatValue, b: &PatValue) -> bool {
         && a.kind == b.kind
 }
 
-/// The IR input slots one pattern input may occupy: the whole difference
-/// between a fixed operand, a commutative pair and an existential.
-///
-/// The multi-slot sets are ordered: the input takes the first slot both
-/// unclaimed by an enclosing assignment and matching the sub-pattern.
-enum Candidates {
-    /// A pinned slot: exactly one candidate.
-    Only(usize),
-    /// One operand of a commutative pair.
-    Pair(&'static [usize; 2]),
-    /// An existential.
-    Any,
-}
-
 /// Candidate slots for a commutative operand pair, indexed by the pattern
 /// input's own consumer slot. Each operand tries its own slot first, so
 /// injectivity enumerates the natural ordering before the swapped one whichever
@@ -739,18 +719,10 @@ struct Assignment<'a> {
 }
 
 impl Assignment<'_> {
-    fn candidates(&self, edge: &InputEdge) -> Candidates {
-        match edge.consumer_slot {
-            InputSlot::Any => Candidates::Any,
-            InputSlot::At(slot) if self.commutative => Candidates::Pair(&COMM_ORDER[slot]),
-            InputSlot::At(slot) => Candidates::Only(slot),
-        }
-    }
-
     /// Whether an existential may take `slot`: any slot but one a fixed
     /// operand pinned, which on a commutative node is none, its fixed operands
-    /// reaching both slots. `Candidates::Only` never extends the `Claimed`
-    /// chain, so a pinned slot is excluded here or it is offered twice.
+    /// reaching both slots. A pinned slot never extends the `Claimed` chain, so
+    /// it is excluded here or it is offered twice.
     ///
     /// No kind filter: the sub-pattern discriminates. A sub carries an
     /// output-kind and reaches only inputs of that kind (a value sub skips
@@ -812,10 +784,14 @@ fn match_assignments(
     let Some(edge) = assignment.edges.get(i) else {
         return done(bindings);
     };
-    let slots = match assignment.candidates(edge) {
+    // The IR input slots the input may occupy, the whole difference between a
+    // fixed operand, a commutative pair and an existential. A multi-slot set
+    // is ordered: the input takes the first slot both unclaimed by an
+    // enclosing assignment and matching the sub-pattern.
+    let slots = match edge.consumer_slot {
         // Direct index, no search and no injectivity bookkeeping. The slot is
         // pinned, so a failed operand fails it outright.
-        Candidates::Only(slot) => {
+        InputSlot::At(slot) if !assignment.commutative => {
             let Some(value) = input_at(ctx, ir_node, slot) else {
                 return false;
             };
@@ -823,8 +799,8 @@ fn match_assignments(
                 match_assignments(ctx, assignment, i + 1, ir_node, claimed, b, done)
             });
         }
-        Candidates::Pair(slots) => Either::Left(slots.iter().copied()),
-        Candidates::Any => Either::Right(
+        InputSlot::At(slot) => Either::Left(COMM_ORDER[slot].iter().copied()),
+        InputSlot::Any => Either::Right(
             (0..ctx.function().node_inputs(ir_node).len())
                 .filter(|&s| assignment.open_to_existential(s)),
         ),

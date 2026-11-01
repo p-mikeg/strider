@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import tracemalloc
 
+import pytest
+
 import strider
 
 from .conftest import fixture_path
@@ -83,6 +85,10 @@ def test_known_targets_reads_back_one_memoized_view():
     assert strider.lift.LifterOptions(cfg=opts).cfg.known_targets is view
 
 
+@pytest.mark.skipif(
+    not hasattr(strider.cfg.CfgOptions, "_call_other_override_builds"),
+    reason="built without the `test-hooks` feature",
+)
 def test_call_other_abis_resolve_once_per_arch():
     """The table is resolved on the first analyse and borrowed by every later
     one."""
@@ -93,9 +99,9 @@ def test_call_other_abis_resolve_once_per_arch():
     prog = _program()
     for _ in range(3):
         prog.analyze("add", opts=opts)
-    assert cfg._call_other_override_builds() == 1
+    assert cfg._call_other_override_builds() == 1  # type: ignore[attr-defined]
     prog.build_cfg(prog.symbol("add").address, cfg)
-    assert cfg._call_other_override_builds() == 1
+    assert cfg._call_other_override_builds() == 1  # type: ignore[attr-defined]
 
 
 def test_known_targets_still_reads_back():

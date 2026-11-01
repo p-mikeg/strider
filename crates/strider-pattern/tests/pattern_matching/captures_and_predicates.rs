@@ -159,14 +159,19 @@ fn get_int_const_on_unbound_var_returns_none() {
 #[test]
 fn get_bool_const_and_float_bits_helpers() {
     // Return the I1 const directly: widening it would const-fold into a wider
-    // `IntConst`, and `get_bool` only reads back an `IntConst` typed `I1`.
+    // `IntConst`, and `bool_const_val` only reads back an `IntConst` typed `I1`.
     let mut t = Tb::empty();
     let bc = t.boolean(true);
     let function = t.ret_val(bc);
 
     let v = Capture::new();
     let m = a::unique(&function, bool_const(true).capture(v).into_pattern());
-    assert_eq!(m.bindings().get_bool(v, &function), Some(true));
+    assert_eq!(
+        m.bindings()
+            .get_value(v)
+            .and_then(|v| function.bool_const_val(v)),
+        Some(true)
+    );
     assert_eq!(m.bindings().get_float_bits(v, function.graph()), None);
 }
 
