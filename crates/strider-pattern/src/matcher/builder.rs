@@ -31,21 +31,14 @@ pub struct PatNodeRef(NodeId);
 /// The match root is derived structurally, so the seal takes no root handle.
 /// An input is wired from a node built before its consumer; any other wiring
 /// is refused.
+#[derive(Default)]
 pub struct MatcherBuilder {
     pub(crate) core: BuildGraph<PatNode, PatValue>,
 }
 
-impl Default for MatcherBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl MatcherBuilder {
     pub fn new() -> Self {
-        Self {
-            core: BuildGraph::new(),
-        }
+        Self::default()
     }
 
     /// Records `why` and lowers a wildcard in place of what was refused.
@@ -62,21 +55,14 @@ impl MatcherBuilder {
 
     /// One value output at slot `0`, no inputs.
     pub fn leaf(&mut self, kind: KindSpec) -> PatValueRef {
-        let n = self.stage(PatNode::from_kind(kind));
-        self.value_output(n, 0)
-    }
-
-    /// Consumes `inner` at slot `0`, one value output at slot `0`.
-    pub fn unary(&mut self, kind: KindSpec, inner: PatValueRef) -> PatValueRef {
-        let n = self.stage(PatNode::from_kind(kind));
-        self.input(n, 0, inner);
+        let n = self.add_node(PatNode::from_kind(kind));
         self.value_output(n, 0)
     }
 
     /// Consumes `l` at slot `0` and `r` at slot `1`, one value output at
     /// slot `0`.
     pub fn binary(&mut self, op: IntBinaryOp, l: PatValueRef, r: PatValueRef) -> PatValueRef {
-        let n = self.stage(PatNode::exact(NodeKind::IntBinaryOp(op)));
+        let n = self.add_node(PatNode::exact(NodeKind::IntBinaryOp(op)));
         self.input(n, 0, l);
         self.input(n, 1, r);
         self.value_output(n, 0)
@@ -84,7 +70,7 @@ impl MatcherBuilder {
 
     /// No inputs or outputs yet.
     pub fn node(&mut self, kind: KindSpec) -> PatNodeRef {
-        self.stage(PatNode::from_kind(kind))
+        self.add_node(PatNode::from_kind(kind))
     }
 
     /// Matches if any alternative matches the node. The alternatives wire as
@@ -113,7 +99,7 @@ impl MatcherBuilder {
     fn alternation(&mut self, alts: &[PatValueRef], role: Role) -> PatValueRef {
         let mut alt_node = PatNode::from_kind(KindSpec::Any);
         alt_node.role = role;
-        let n = self.stage(alt_node);
+        let n = self.add_node(alt_node);
         for (slot, alt) in alts.iter().enumerate() {
             self.input(n, slot, *alt);
         }
@@ -254,13 +240,16 @@ impl MatcherBuilder {
         out: PatValueRef,
         f: crate::matcher::PostMatchFn,
     ) {
-        let untyped_kind = valueless_kind(
-            &self
-                .core
-                .graph
-                .node_kind(self.core.graph.producer(out.0))
-                .kind,
-        );
+        // The value-less kinds whose anchor output does not already say so. A
+        // `Store` or `Region` is value-less too; its memory or control anchor
+        // is what the output check catches.
+        let untyped_kind = self.kind_of(out).kind.is_variant_in(&[
+            NodeKind::If,
+            NodeKind::Switch(strider_ir::node::SwitchTableId::from_u32(0)),
+            NodeKind::Return,
+            NodeKind::IndirectBranch,
+            NodeKind::Unreachable,
+        ]);
         let untyped_output = matches!(
             self.out_of(out).kind,
             OutputKindSpec::Control | OutputKindSpec::Memory
@@ -297,14 +286,10 @@ impl MatcherBuilder {
 
     /// Single-rootedness is resolved here and reported at match time.
     pub fn finish(self) -> Pattern {
-        let mut pat = Pattern::from_graph(self.core.graph);
-        if let Some(why) = self.core.refusal {
-            pat.reject(why);
-        }
-        pat
+        Pattern::from_graph(self.core.graph, self.core.refusal)
     }
 
-    fn stage(&mut self, kind: PatNode) -> PatNodeRef {
+    fn add_node(&mut self, kind: PatNode) -> PatNodeRef {
         PatNodeRef(self.core.add_node(kind))
     }
 
@@ -320,23 +305,6 @@ impl MatcherBuilder {
         let node = self.core.graph.producer(out.0);
         self.core.graph.node_kind_mut(node)
     }
-}
-
-/// The value-less kinds whose anchor output does not already say so. A `Store`
-/// or `Region` is value-less too; its memory or control anchor is what the
-/// caller's output check catches.
-fn valueless_kind(spec: &KindSpec) -> bool {
-    spec.discriminant().is_some_and(|d| {
-        [
-            NodeKind::If,
-            NodeKind::Switch(strider_ir::node::SwitchTableId::from_u32(0)),
-            NodeKind::Return,
-            NodeKind::IndirectBranch,
-            NodeKind::Unreachable,
-        ]
-        .iter()
-        .any(|k| std::mem::discriminant(k) == d)
-    })
 }
 
 #[cfg(test)]

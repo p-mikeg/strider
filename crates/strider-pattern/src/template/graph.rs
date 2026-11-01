@@ -67,31 +67,16 @@ pub struct Template {
     /// Captures a `*_const_with!` closure reads at instantiation and cannot
     /// do without. They have no vertex, so only the declaration makes them
     /// visible to the coverage check.
-    declared_captures: Vec<Capture>,
+    pub(crate) declared_captures: Vec<Capture>,
     /// Captures a closure reads as an `Option`, disjoint from
     /// `declared_captures`, so the coverage check asks only that the LHS
     /// mention them.
-    optional_captures: Vec<Capture>,
+    pub(crate) optional_captures: Vec<Capture>,
     /// Why the builder refused the template, reported by [`Self::root`].
-    rejected: Option<String>,
+    pub(crate) rejected: Option<String>,
 }
 
 impl Template {
-    /// For `TemplateBuilder::finish`.
-    pub(crate) fn from_graph(
-        graph: Graph<TmplNode, TmplValue, NeverCacheable>,
-        declared_captures: Vec<Capture>,
-        optional_captures: Vec<Capture>,
-        rejected: Option<String>,
-    ) -> Self {
-        Self {
-            graph,
-            declared_captures,
-            optional_captures,
-            rejected,
-        }
-    }
-
     /// The build root is the unique sink, recovered structurally.
     ///
     /// # Errors

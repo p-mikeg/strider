@@ -23,6 +23,12 @@ impl KindSpec {
         }
     }
 
+    /// Whether the spec names the variant of one of `kinds`; never for `Any`.
+    pub(crate) fn is_variant_in(&self, kinds: &[NodeKind]) -> bool {
+        self.discriminant()
+            .is_some_and(|d| kinds.iter().any(|k| std::mem::discriminant(k) == d))
+    }
+
     pub fn variant_of(exemplar: &NodeKind) -> Self {
         Self::Variant(std::mem::discriminant(exemplar))
     }

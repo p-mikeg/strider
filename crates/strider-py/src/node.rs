@@ -60,35 +60,22 @@ impl PyNode {
     }
 }
 
-/// The unsigned integer constant a node's value output holds, if any. For
-/// reading a bound capture without constructing a `PyNode`.
-pub(crate) fn uint_of(function: &strider_ir::Function, node_id: u32) -> Option<strider_ir::UBig> {
-    let nid = function.graph().node_id_from_u32(node_id)?;
-    let value = PyNode::value_output(function, nid)?;
-    function.int_const(value).cloned()
+/// The unsigned integer constant a node's value output holds, if any.
+pub(crate) fn uint_of(
+    function: &strider_ir::Function,
+    nid: strider_ir::node::NodeId,
+) -> Option<strider_ir::UBig> {
+    function
+        .int_const(PyNode::value_output(function, nid)?)
+        .cloned()
 }
 
 /// [`uint_of`] read as two's-complement at the declared width.
-pub(crate) fn sint_of(function: &strider_ir::Function, node_id: u32) -> Option<strider_ir::IBig> {
-    let nid = function.graph().node_id_from_u32(node_id)?;
-    let value = PyNode::value_output(function, nid)?;
-    function.int_const_ibig(value)
-}
-
-impl PyNode {
-    /// [`Self::uint`] before the Python conversion.
-    pub(crate) fn uint_value(&self, py: Python<'_>) -> PyResult<Option<strider_ir::UBig>> {
-        self.with_node(py, |function, nid| {
-            Self::value_output(function, nid).and_then(|v| function.int_const(v).cloned())
-        })
-    }
-
-    /// [`Self::sint`] before the Python conversion.
-    pub(crate) fn sint_value(&self, py: Python<'_>) -> PyResult<Option<strider_ir::IBig>> {
-        self.with_node(py, |function, nid| {
-            Self::value_output(function, nid).and_then(|v| function.int_const_ibig(v))
-        })
-    }
+pub(crate) fn sint_of(
+    function: &strider_ir::Function,
+    nid: strider_ir::node::NodeId,
+) -> Option<strider_ir::IBig> {
+    function.int_const_ibig(PyNode::value_output(function, nid)?)
 }
 
 #[pymethods]
@@ -197,7 +184,7 @@ impl PyNode {
     /// integer `IntConst`.
     /// Booleans are 1-bit integers, so a bool constant surfaces as `0` / `-1`.
     pub(crate) fn sint(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        self.sint_value(py)?
+        self.with_node(py, sint_of)?
             .map(|v| crate::bigint::ibig_to_py_int(py, &v))
             .transpose()
     }
@@ -207,7 +194,7 @@ impl PyNode {
     /// like any other. `None` when the value output isn't an integer
     /// `IntConst`.
     pub(crate) fn uint(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
-        self.uint_value(py)?
+        self.with_node(py, uint_of)?
             .map(|v| crate::bigint::ubig_to_py_int(py, &v))
             .transpose()
     }

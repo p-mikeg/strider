@@ -2,7 +2,6 @@
 //! built from an exact `NodeKind`, or from a rewrite-time closure through
 //! [`dynamic_leaf`](TemplateBuilder::dynamic_leaf).
 
-use strider_ir::IntBinaryOp;
 use strider_ir::node::{NodeKind, ValueType};
 
 use crate::build_graph::BuildGraph;
@@ -40,33 +39,22 @@ pub struct TmplNodeRef(NodeId);
 
 /// # The raw verbs are checked at instantiation
 ///
-/// The high-level verbs (`leaf`, `unary`, `binary`) declare canonical output
-/// signatures and wire each input slot exactly once. The raw verbs
+/// [`leaf`](Self::leaf) declares a canonical output signature. The raw verbs
 /// ([`node`](Self::node), [`input`](Self::input), the `*_output` slot verbs)
 /// enforce only [`input`](Self::input)'s build order when called;
-/// [`instantiate`](crate::template::instantiate)
-/// checks every node against its node signature and refuses a gapped or
-/// duplicate input slot. No verb declares a control output, so a node whose
+/// [`instantiate`](crate::template::instantiate) checks every node against its
+/// node signature and refuses a gapped or duplicate input slot. No verb declares a control output, so a node whose
 /// signature has one (`Call`, `Region`, `If`, ...) cannot be built.
+#[derive(Default)]
 pub struct TemplateBuilder {
     core: BuildGraph<TmplNode, TmplValue>,
     declared_captures: Vec<crate::Capture>,
     optional_captures: Vec<crate::Capture>,
 }
 
-impl Default for TemplateBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl TemplateBuilder {
     pub fn new() -> Self {
-        Self {
-            core: BuildGraph::new(),
-            declared_captures: Vec::new(),
-            optional_captures: Vec::new(),
-        }
+        Self::default()
     }
 
     /// Declares a capture a dynamic-kind closure reads at instantiation. It has
@@ -101,29 +89,13 @@ impl TemplateBuilder {
     /// [`TemplateKind::Fn`] or [`TemplateKind::FnIntConst`];
     /// `TemplateKind::Exact(k)` builds what [`leaf`](Self::leaf)`(k)` does.
     pub fn dynamic_leaf(&mut self, kind: TemplateKind) -> TmplValueRef {
-        let n = self.stage(TmplNodeKind::Build(kind));
-        self.value_output(n, 0)
-    }
-
-    /// Consumes `inner` at input slot 0, with one value output at slot 0.
-    pub fn unary(&mut self, kind: NodeKind, inner: TmplValueRef) -> TmplValueRef {
-        let n = self.node(kind);
-        self.input(n, 0, inner);
-        self.value_output(n, 0)
-    }
-
-    /// Consumes `l` at input slot 0 and `r` at slot 1, with one value output
-    /// at slot 0.
-    pub fn binary(&mut self, op: IntBinaryOp, l: TmplValueRef, r: TmplValueRef) -> TmplValueRef {
-        let n = self.node(NodeKind::IntBinaryOp(op));
-        self.input(n, 0, l);
-        self.input(n, 1, r);
+        let n = self.add_node(TmplNodeKind::Build(kind));
         self.value_output(n, 0)
     }
 
     /// Bare: no inputs or outputs yet.
     pub fn node(&mut self, kind: NodeKind) -> TmplNodeRef {
-        self.stage(TmplNodeKind::Build(TemplateKind::Exact(kind)))
+        self.add_node(TmplNodeKind::Build(TemplateKind::Exact(kind)))
     }
 
     /// `prod` comes from a node built before `node`, or from a
@@ -165,7 +137,7 @@ impl TemplateBuilder {
     /// binding for `c`, reused verbatim. Returns only a [`TmplValueRef`], so
     /// an input can never be wired into a capture node.
     pub fn capture(&mut self, c: crate::capture::Capture) -> TmplValueRef {
-        let n = self.stage(TmplNodeKind::Capture);
+        let n = self.add_node(TmplNodeKind::Capture);
         self.add_value(n, TmplValue::ValueCapture(c))
     }
 
@@ -193,15 +165,15 @@ impl TemplateBuilder {
     /// A refused or multi-sink template surfaces through
     /// [`Template::root`].
     pub fn finish(self) -> Template {
-        Template::from_graph(
-            self.core.graph,
-            self.declared_captures,
-            self.optional_captures,
-            self.core.refusal,
-        )
+        Template {
+            graph: self.core.graph,
+            declared_captures: self.declared_captures,
+            optional_captures: self.optional_captures,
+            rejected: self.core.refusal,
+        }
     }
 
-    fn stage(&mut self, kind: TmplNodeKind) -> TmplNodeRef {
+    fn add_node(&mut self, kind: TmplNodeKind) -> TmplNodeRef {
         TmplNodeRef(self.core.add_node(TmplNode {
             kind,
             input_slots: Vec::new(),
@@ -240,7 +212,10 @@ mod tests {
         let k = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| {
             Ok(strider_ir::UBig::ONE)
         })));
-        let _sum = b.binary(IntBinaryOp::Add, x, k);
+        let n = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+        b.input(n, 0, x);
+        b.input(n, 1, k);
+        b.value_output(n, 0);
         let t = b.finish();
         assert_eq!(t.graph.all_node_ids().count(), 3);
         assert_eq!(t.graph.all_value_ids().count(), 3);
