@@ -170,14 +170,14 @@ impl<'f> Matcher<'f> {
 
     /// Every match of `pat` rooted at `node`; see [`walk::anchor`].
     ///
-    /// `first_only` stops at the first match, moving `scratch` into it, unless
-    /// `pat` holds a `first_of` ([`Self::lowest_arm_matches`]). Otherwise every
-    /// distinct match is enumerated, deduplicated by capture-to-binding map,
-    /// and `scratch` comes back empty, the walk restoring it on every
-    /// rejection. The dedup set is per-node: two different roots are different
-    /// matches whatever their bindings, while one node's outputs share the set,
-    /// so a pattern reachable through several outputs does not double-report
-    /// an identical binding.
+    /// `first_only` stops at the first match, moving `scratch` into it; see
+    /// [`Self::lowest_arm_matches`] for a `pat` holding a `first_of` or a cast
+    /// mask. Without `first_only`, every distinct match is enumerated,
+    /// deduplicated by capture-to-binding map, and `scratch` comes back empty,
+    /// the walk restoring it on every rejection. The dedup set is per-node:
+    /// two different roots are different matches whatever their bindings,
+    /// while one node's outputs share the set, so a pattern reachable through
+    /// several outputs does not double-report an identical binding.
     fn matches_at_node(
         &self,
         node: NodeId,
@@ -186,7 +186,7 @@ impl<'f> Matcher<'f> {
         first_only: bool,
         scratch: &mut Bindings,
     ) -> Vec<Match> {
-        if pat.holds_first_of {
+        if pat.holds_first_of || !pat.cast_mask.is_empty() {
             return self.lowest_arm_matches(node, pat, root, first_only, scratch);
         }
         let mut hits: Vec<Match> = Vec::new();
@@ -219,12 +219,17 @@ impl<'f> Matcher<'f> {
         hits
     }
 
-    /// [`Self::matches_at_node`] for a pattern holding a `first_of`. Every
-    /// configuration runs, then each `first_of`, per IR node it was offered
-    /// and root output anchored, keeps only the matches through the lowest
-    /// arm any of them took there. The keys settle in `first_of` build order,
-    /// then IR node order, so the answer does not depend on the order the
-    /// configurations ran in.
+    /// [`Self::matches_at_node`] for a pattern holding a `first_of` or a cast
+    /// mask. Every configuration runs, then each `first_of`, per value it was
+    /// offered and root output anchored, keeps only the matches through the
+    /// lowest arm any of them took there, and each laddered operand those at
+    /// the outermost cast level. One offered the same value twice in a match
+    /// compares its arms there in visit order, lexicographically, so the
+    /// filter never empties a non-empty answer. The keys settle `first_of`s
+    /// first, in build order, then IR node order, so the answer does not
+    /// depend on the order the configurations ran in. With `first_only`, a
+    /// match through the first arm of every choice, each made once, ends the
+    /// search: the filter keeps it.
     #[inline(never)]
     fn lowest_arm_matches(
         &self,
@@ -238,36 +243,59 @@ impl<'f> Matcher<'f> {
         let mut found: Vec<(Match, Vec<walk::ArmTaken>)> = Vec::new();
         let trail = walk::ArmTrail::default();
         walk::anchor(self, pat, root, node, scratch, Some(&trail), &mut |b| {
-            let arms = trail.arms.borrow().clone();
-            found.push((Match::new(node, b.clone(), generation), arms));
+            let arms = trail.arms.borrow();
+            // A match through the first arm of each choice, each made once,
+            // takes the lowest arm at every key, so the filter keeps it.
+            let lowest = || {
+                (arms.iter().enumerate())
+                    .all(|(i, e)| e.1 == 0 && arms[..i].iter().all(|f| f.0 != e.0))
+            };
+            if first_only && lowest() {
+                found = vec![(Match::new(node, std::mem::take(b), generation), Vec::new())];
+                return true;
+            }
+            found.push((Match::new(node, b.clone(), generation), arms.clone()));
             false
         });
-        let mut keys: Vec<walk::ArmKey> = found
+        // Every arm taken, grouped by key in settle order and then by match,
+        // each match's arms at a key in visit order (the sort is stable).
+        let mut taken: Vec<(walk::ArmKey, usize, usize)> = found
             .iter()
-            .flat_map(|(_, a)| a.iter().map(|e| e.0))
+            .enumerate()
+            .flat_map(|(i, (_, arms))| arms.iter().map(move |&(key, arm)| (key, i, arm)))
             .collect();
-        keys.sort_unstable_by_key(|&(p, n, v)| (p.as_u32(), n.as_u32(), v.map(ValueId::as_u32)));
-        keys.dedup();
-        fn at(arms: &[walk::ArmTaken], key: walk::ArmKey) -> impl Iterator<Item = usize> + '_ {
-            arms.iter().filter(move |e| e.0 == key).map(|e| e.1)
+        taken.sort_by_key(|&((c, (p, n, o), v), i, _)| {
+            let id = |v: Option<ValueId>| v.map(ValueId::as_u32);
+            (c, p.as_u32(), n.as_u32(), id(o), id(v), i)
+        });
+        fn arms(run: &[(walk::ArmKey, usize, usize)]) -> impl Iterator<Item = usize> + '_ {
+            run.iter().map(|e| e.2)
         }
-        for key in keys {
-            let Some(lowest) = found.iter().flat_map(|(_, a)| at(a, key)).min() else {
-                continue;
-            };
-            found.retain(|(_, a)| at(a, key).all(|arm| arm == lowest));
+        let mut kept = vec![true; found.len()];
+        for group in taken.chunk_by(|a, b| a.0 == b.0) {
+            let runs = || group.chunk_by(|a, b| a.1 == b.1);
+            let lowest = runs()
+                .filter(|run| kept[run[0].1])
+                .min_by(|a, b| arms(a).cmp(arms(b)));
+            let Some(lowest) = lowest else { continue };
+            for run in runs() {
+                kept[run[0].1] &= arms(run).eq(arms(lowest));
+            }
         }
         let mut seen = FxHashSet::default();
         let distinct = found
             .into_iter()
-            .map(|(m, _)| m)
+            .zip(kept)
+            .filter_map(|((m, _), keep)| keep.then_some(m))
             .filter(|m| seen.insert(m.bindings.binding_signature()));
         distinct
             .take(if first_only { 1 } else { usize::MAX })
             .collect()
     }
 
-    /// The first match of `pat` at `node`, if any.
+    /// The first match of `pat` at `node`, if any. Under a `first_of` or a
+    /// cast mask, that is the first found through the first arm of every
+    /// choice, else the first the filter keeps.
     ///
     /// `node` is taken as given, so a node unreachable from the entry answers
     /// here while [`find_all`](Self::find_all), which seeds from

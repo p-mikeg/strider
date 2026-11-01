@@ -27,9 +27,9 @@
 //! configuration in DFS order, while `find_all`'s returns `false` to enumerate
 //! the rest, reporting several distinct bindings per root.
 //!
-//! On a sub-pattern mismatch at a producer output, a non-empty
-//! [`CastMask`](crate::matcher::CastMask) makes the matcher unwrap a masked
-//! cast and retry against the cast's value input.
+//! Under a non-empty [`CastMask`](crate::matcher::CastMask), an operand that
+//! is a masked cast is also tried at the cast's value input: an ordered
+//! choice the caller settles outermost first, as it settles a `first_of`.
 //!
 //! [`PatValue`]: crate::matcher::PatValue
 //! [`PatNode`]: crate::matcher::PatNode
@@ -50,25 +50,38 @@ struct Ctx<'a> {
     matcher: &'a Matcher<'a>,
     pat: &'a Pattern,
     /// Configurations of this attempt that reached the root continuation,
-    /// i.e. produced a match; `first_of` and the cast ladder cut on it. Local
-    /// to the attempt, so a query that caller logic (`when_match`, a
+    /// i.e. produced a match; the pruned `first_of` cuts on it. Local to the
+    /// attempt, so a query that caller logic (`when_match`, a
     /// `JoinPredicate`) runs on the same `Matcher` counts in its own.
     satisfied: Cell<u64>,
-    /// Per `first_of` node and IR node it was offered, the lowest arm that
-    /// produced a match in this attempt.
-    first_match_cut: RefCell<FxHashMap<(PatNodeId, NodeId), usize>>,
-    /// Kept only for a pattern holding a `first_of`.
+    /// Per [`Offer`] of a `first_of`, the lowest arm that produced a match in
+    /// this attempt.
+    first_match_cut: RefCell<FxHashMap<Offer, usize>>,
+    /// Kept only for a pattern holding a `first_of` or a cast mask.
     trail: Option<&'a ArmTrail>,
 }
 
-/// A `first_of` node, the IR node it was offered, and the root output the
-/// attempt anchored on.
-pub(crate) type ArmKey = (PatNodeId, NodeId, Option<ValueId>);
+/// What an [`ArmKey`] chooses between: a `first_of`'s arms, or the cast
+/// levels of an operand under the cast mask, outermost first. The `first_of`s
+/// settle first.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub(crate) enum Choice {
+    FirstOf,
+    Cast,
+}
+
+/// A pat node and the IR node and value it was offered.
+pub(crate) type Offer = (PatNodeId, NodeId, Option<ValueId>);
+
+/// The choice, where it was offered (an operand's outermost level for a
+/// cast), and the root output the attempt anchored on.
+pub(crate) type ArmKey = (Choice, Offer, Option<ValueId>);
 
 /// An [`ArmKey`] and the arm taken there.
 pub(crate) type ArmTaken = (ArmKey, usize);
 
-/// The `first_of` arms the configuration being matched has taken.
+/// The `first_of` arms and cast levels the configuration being matched has
+/// taken.
 #[derive(Default)]
 pub(crate) struct ArmTrail {
     /// The root output the current attempt anchored on.
@@ -89,7 +102,7 @@ impl Ctx<'_> {
 /// only when the node has no outputs at all.
 ///
 /// `k` runs once per fully guard-satisfying configuration, `trail` then
-/// holding the `first_of` arms it took. `true` accepts and
+/// holding the `first_of` arms and cast levels it took. `true` accepts and
 /// stops the search; `false` drives the next one, which is how a caller
 /// enumerates every distinct binding rather than only the first. Each output
 /// gets its own [`Ctx`], so a root `first_of` cut does not carry over.
@@ -369,8 +382,8 @@ fn try_match_at(
 
 /// `one_of` / `first_of`: the inputs are independent alternative sub-patterns,
 /// not operands, all tried against the SAME `ir_node`. Both enumerate every
-/// matching arm, `first_of` recording the arm it took; `first_of` also prunes
-/// the arms past one that matched.
+/// matching arm, `first_of` recording the arm it took. The pattern's
+/// `pruned_first_of` also skips the arms past one that matched.
 fn try_alternation(
     ctx: &Ctx,
     site: Site,
@@ -389,20 +402,16 @@ fn try_alternation(
         return false;
     }
     let trail = ctx.trail.filter(|_| nd.role == Role::FirstOf);
-    // The caller keeps, per `first_of` and IR node, the matches through the
-    // lowest arm taken there, settling the `first_of`s in build order. A match
-    // through an arm past one that matched is then dropped, and at the first
-    // `first_of` settled, reached once per configuration, it is dropped before
-    // it can give a later one its lowest arm, so skipping the arm is exact.
-    // Anywhere else it might be what an earlier `first_of` keeps.
+    // The caller keeps, per `first_of` and value offered, the matches through
+    // the lowest arm taken there, settling the `first_of`s in build order. At
+    // the first one settled, reached once per configuration, a match through
+    // an arm past one that matched is dropped before it can give a later one
+    // its lowest arm, so skipping that arm is exact. Anywhere else such a
+    // match may be the one an earlier `first_of` keeps.
     let prunes = ctx.pat.pruned_first_of == Some(pat_node);
+    let offer = (pat_node, ir_node, site.root_value);
     let cut = prunes
-        .then(|| {
-            ctx.first_match_cut
-                .borrow()
-                .get(&(pat_node, ir_node))
-                .copied()
-        })
+        .then(|| ctx.first_match_cut.borrow().get(&offer).copied())
         .flatten();
     for (arm, alt) in ctx.pat.inputs_of(pat_node).edges.iter().enumerate() {
         if prunes && cut.is_some_and(|c| arm > c) {
@@ -417,7 +426,7 @@ fn try_alternation(
         if let Some(t) = trail {
             t.arms
                 .borrow_mut()
-                .push(((pat_node, ir_node, t.anchor.get()), arm));
+                .push(((Choice::FirstOf, offer, t.anchor.get()), arm));
         }
         // The arm's own `try_match_at` restores on every `false` return, so a
         // rejected configuration needs no cleanup here.
@@ -437,14 +446,15 @@ fn try_alternation(
         // The cut is scoped to the attempt rather than to one invocation of
         // the alternation, so a sibling operand enumerated around the
         // alternation does not re-offer the arms past it. It can still bring
-        // an EARLIER arm a match, which the caller then prefers. The IR node is
-        // part of the key because a commutative ordering or an `any_input`
-        // slot re-offers the same pat node a DIFFERENT IR node, for which an
-        // earlier arm's match proves nothing.
+        // an EARLIER arm a match, which the caller then prefers. The value
+        // offered is part of the key because a commutative ordering, an
+        // `any_input` slot or another output of one node re-offers the same
+        // pat node a DIFFERENT value, for which an earlier arm's match proves
+        // nothing.
         if prunes && ctx.satisfied.get() > before {
             ctx.first_match_cut
                 .borrow_mut()
-                .entry((pat_node, ir_node))
+                .entry(offer)
                 .and_modify(|c| *c = (*c).min(arm))
                 .or_insert(arm);
             break;
@@ -539,14 +549,11 @@ fn bind_sibling_outputs(
 /// rolls them back and a success keeps them, which is what holds the
 /// asm-fingerprint superset contract.
 ///
-/// The cast walk-through is a fallback, not an alternative: it engages only
-/// when the level above PRODUCED no match, never to offer a second binding
-/// beside a direct one, or the answer would depend on an incidental cast
-/// sitting on top of the operand. Reaching the continuation is not the same test (a
-/// guard above can reject a configuration, and the ladder must still run),
-/// so the cut counts full matches through `ctx.satisfied`, which is also what
-/// `first_of` cuts on. Under an enumerating `k` the return value cannot tell
-/// the two apart: it is always `false`.
+/// The cast walk-through is an ordered choice over the levels, outermost
+/// first, like a `first_of` over them: every level runs, and the caller keeps,
+/// per operand, the matches at the outermost level any match reached, never a
+/// second binding beside a direct one, or the answer would depend on an
+/// incidental cast sitting on top of the operand.
 fn try_operand(
     ctx: &Ctx,
     edge: &InputEdge,
@@ -555,32 +562,46 @@ fn try_operand(
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
     let mark = bindings.mark();
+    // A cast mask always comes with a trail; only a cast has a level to choose.
+    let choice = ctx
+        .trail
+        .filter(|_| cast_below(ctx.function(), value, ctx.pat.cast_mask).is_some())
+        .map(|t| {
+            (
+                t,
+                (edge.producer, ctx.function().producer(value), Some(value)),
+            )
+        });
     let mut level = value;
-    loop {
-        let before = ctx.satisfied.get();
+    for depth in 0.. {
         let site = Site {
             pat_node: edge.producer,
             ir_node: ctx.function().producer(level),
             root_value: Some(level),
             out_vertex: Some(edge.out_vertex),
         };
-        if try_match_at(ctx, site, bindings, k) {
+        if let Some((t, offer)) = choice {
+            t.arms
+                .borrow_mut()
+                .push(((Choice::Cast, offer, t.anchor.get()), depth));
+        }
+        let accepted = try_match_at(ctx, site, bindings, k);
+        if let Some((t, _)) = choice {
+            t.arms.borrow_mut().pop();
+        }
+        if accepted {
             return true;
         }
         // Outermost first, so a pattern naming one cast kind under a mask also
         // selecting another matches at the intermediate value.
-        let below = if ctx.satisfied.get() == before {
-            cast_below(ctx.function(), level, ctx.pat.cast_mask)
-        } else {
-            None
-        };
-        let Some((cast, unwrapped)) = below else {
-            bindings.restore(mark);
-            return false;
+        let Some((cast, unwrapped)) = cast_below(ctx.function(), level, ctx.pat.cast_mask) else {
+            break;
         };
         bindings.record_matched(cast);
         level = unwrapped;
     }
+    bindings.restore(mark);
+    false
 }
 
 /// The cast producing `value` and its value input, when `mask` selects that

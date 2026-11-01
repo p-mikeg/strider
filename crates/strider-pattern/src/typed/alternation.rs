@@ -46,12 +46,12 @@ impl OneOf {
     /// per root candidate for `m` matching arms each, with identically-binding
     /// arms collapsing in the dedup. It scales with the pattern, not the
     /// graph. [`match_at`](crate::Matcher::match_at) stops at the first match,
-    /// unless the pattern holds a [`OneOf::first`].
+    /// unless the pattern holds a [`OneOf::first`] or a cast mask (see there).
     pub fn new(alts: Vec<BoxedAlt>) -> Self {
         Self(Expr::alt(alts.into_iter().map(|a| a.0).collect(), false))
     }
 
-    /// An ordered choice: at each IR node it is offered, keep only the matches
+    /// An ordered choice: at each value it is offered, keep only the matches
     /// through the first-listed arm that yields one, whatever order the rest
     /// of the pattern is tried in, and report every binding THAT arm produces.
     /// Several in one match settle in the order they are written, an inner one
@@ -62,9 +62,11 @@ impl OneOf {
     /// # Cost
     ///
     /// A query holding one runs every configuration before it answers,
-    /// [`match_at`](crate::Matcher::match_at) included. The first one written
-    /// skips the arms past one that matched; any other runs every arm, as
-    /// [`OneOf::new`] does.
+    /// [`match_at`](crate::Matcher::match_at) included, unless it wants one
+    /// match (`match_at`, or a pattern capturing nothing) and finds one
+    /// through the first arm of every choice, where it stops. The first to
+    /// settle skips the arms past one that matched, unless one match can pass
+    /// through it twice; any other runs every arm, as [`OneOf::new`] does.
     pub fn first(alts: Vec<BoxedAlt>) -> Self {
         Self(Expr::alt(alts.into_iter().map(|a| a.0).collect(), true))
     }

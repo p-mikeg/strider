@@ -198,3 +198,13 @@ def test_one_per_address_table_resolves_against_each_lifters_arch():
     with pytest.raises(strider.StriderError, match='unknown sleigh register name "RDI"'):
         x86.analyze(0x1000, CallingConvention.x86_cdecl(), opts)
     x64.analyze(0x1000, CallingConvention.x86_64_systemv(), opts)
+
+
+def test_a_preserves_variant_reprs_as_the_call_that_made_it():
+    """A `preserves_*` override is what `per_address_ccs` mostly holds, so its
+    repr must not read as the plain preset."""
+    cc = CallingConvention.x86_64_systemv()
+    assert repr(cc.preserves_all()) == "CallingConvention.x86_64_systemv().preserves_all()"
+    assert repr(cc.preserves_regs()) == "CallingConvention.x86_64_systemv().preserves_regs()"
+    custom = _custom_cc(SleighArch.x86_64()).preserves_all()
+    assert repr(custom) == "<CallingConvention custom.preserves_all() for x86_64>"

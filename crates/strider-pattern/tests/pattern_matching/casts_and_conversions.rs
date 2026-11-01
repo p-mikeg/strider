@@ -323,3 +323,33 @@ fn a_failed_cast_ladder_leaves_no_cast_in_the_footprint() {
         assert!(!m.matched_nodes().contains(&function.producer(z)));
     }
 }
+
+/// A commutative node's two spellings are one query, so the ladder under one
+/// operand must not answer by which operand is named first. Named second,
+/// `var(x)` runs once per configuration of the union, and the one leaving `x`
+/// unbound must not walk it through the `zext` beside the direct match.
+#[test]
+fn the_cast_ladder_answers_alike_in_both_commutative_spellings() {
+    let vn = reg_vn(0x40, 4);
+    let mut t = Tb::with_vars(&[vn]);
+    let r = t.read_var(&vn);
+    let zx = t.zext_to(r, ValueType::int(64));
+    let sx = t.sext_to(r, ValueType::int(64));
+    let sum = t.add(zx, sx);
+    let f = t.ret_val(sum);
+    let x = Capture::new();
+    let union = || one_of![int_extend(ExtendOp::SignExtend, var(x)), anything()];
+    let rows = |pat: Pattern| {
+        let mut v: Vec<String> = Matcher::new(&f)
+            .find_all(&pat.ignore_casts())
+            .unwrap()
+            .iter()
+            .map(|h| format!("{:?}", f.node_kind(f.producer(h.value(x).unwrap()))))
+            .collect();
+        v.sort();
+        v
+    };
+    let var_first = rows(int_add(var(x), union()).into_pattern());
+    assert_eq!(var_first, ["Extend(SignExtend)", "Extend(ZeroExtend)"]);
+    assert_eq!(rows(int_add(union(), var(x)).into_pattern()), var_first);
+}

@@ -220,13 +220,26 @@ impl PyCallingConvention {
         self.preset_name
     }
 
-    /// `CallingConvention.<preset>()` for a preset.  A `custom(...)` one has
-    /// no argument-free reproduction, so it renders as a plain description
-    /// naming the arch its registers were resolved against.
+    /// `CallingConvention.<preset>()` for a preset, then the `preserves_*`
+    /// variant taken of it.  A `custom(...)` one has no argument-free
+    /// reproduction, so it renders as a plain description naming the arch its
+    /// registers were resolved against.
     fn __repr__(&self) -> String {
+        let (all_regs, memory) = match &self.inner {
+            CcImpl::Preset(cc) => (cc.preserves_all_registers, cc.preserves_memory),
+            CcImpl::Custom(cc) => (cc.preserves_all_registers, cc.preserves_memory),
+        };
+        let variant = match (all_regs, memory) {
+            (false, _) => "",
+            (true, true) => ".preserves_all()",
+            (true, false) => ".preserves_regs()",
+        };
         match self.source_arch {
-            Some(arch) => format!("<CallingConvention custom for {}>", arch.preset().name()),
-            None => format!("CallingConvention.{}()", self.preset_name),
+            Some(arch) => format!(
+                "<CallingConvention custom{variant} for {}>",
+                arch.preset().name()
+            ),
+            None => format!("CallingConvention.{}(){variant}", self.preset_name),
         }
     }
 }
