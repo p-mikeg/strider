@@ -534,14 +534,8 @@ fn frame_mark() -> usize {
     std::hint::black_box(std::ptr::from_ref(&probe)) as usize
 }
 
-/// A refusal raised where the stack may be spent, so it skips anyhow: resolving
-/// the backtrace `into_strider_err` formats overflows a small thread's stack.
-fn stack_refusal(msg: String) -> PyErr {
-    crate::errors::StriderError::new_err(msg)
-}
-
 fn too_deep() -> PyErr {
-    stack_refusal(format!(
+    into_strider_err(anyhow::anyhow!(
         "pattern nesting too deep: over {MAX_PATTERN_NESTING} levels. That is \
          the loosest bound; this thread's stack budget and the matcher's own \
          node cap both reject shallower patterns still"
@@ -568,7 +562,7 @@ impl DepthGuard {
                 let used = STACK_BASE.get().saturating_sub(here);
                 let budget = STACK_BUDGET.get();
                 if used > budget {
-                    return Err(stack_refusal(format!(
+                    return Err(into_strider_err(anyhow::anyhow!(
                         "pattern nesting too deep for this thread's stack ({} KiB \
                          used of a {} KiB compile budget at {next} levels; give the \
                          thread a larger stack_size, or nest less)",
@@ -579,7 +573,7 @@ impl DepthGuard {
             }
             let steps = COMPILE_STEPS.get() + 1;
             if steps > MAX_COMPILE_STEPS {
-                return Err(stack_refusal(format!(
+                return Err(into_strider_err(anyhow::anyhow!(
                     "pattern too large to compile: over {MAX_COMPILE_STEPS} lowered \
                      nodes. A Pat used in two operands (q = int_add(q, q)) lowers \
                      once per use, so each level of reuse doubles the pattern; a \
@@ -1583,8 +1577,7 @@ macro_rules! builder_common_methods {
                 )))
             }
             fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
-                let name: String = slf.get_type().getattr("__name__")?.extract()?;
-                Ok(format!("{name}(...)"))
+                Ok(format!("{}(...)", slf.get_type().name()?))
             }
 
             /// Exposes the operand slots and the `.when()` predicate to the
@@ -2418,7 +2411,7 @@ impl ConstraintTree {
         Ok(Arc::new(Self { node, depth, size }))
     }
 
-    fn materialize(&self) -> JoinConstraint {
+    pub(crate) fn materialize(&self) -> JoinConstraint {
         let all = |cs: &[Arc<Self>]| cs.iter().map(|c| c.materialize()).collect();
         match &self.node {
             ConstraintNode::Leaf(c) => c.clone(),
@@ -2592,8 +2585,7 @@ impl PyJoinPredicate {
     }
 
     fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
-        let name: String = slf.get_type().getattr("__name__")?.extract()?;
-        Ok(format!("{name}()"))
+        Ok(format!("{}()", slf.get_type().name()?))
     }
 }
 
@@ -2603,16 +2595,7 @@ impl PyJoinPredicate {
 ///
 /// The `Where` closure's handle is shared onto `held`, so whoever keeps the
 /// constraint reports that one reference to the cyclic GC.
-pub(crate) fn coerce_join_constraint(
-    obj: &Bound<'_, PyAny>,
-    held: &mut Vec<PredicateFn>,
-) -> PyResult<JoinConstraint> {
-    Ok(coerce_tree(obj, held)?.materialize())
-}
-
-/// [`coerce_join_constraint`] without the materialisation, so a composite
-/// shares its operand instead of copying it.
-fn coerce_tree(
+pub(crate) fn coerce_tree(
     obj: &Bound<'_, PyAny>,
     held: &mut Vec<PredicateFn>,
 ) -> PyResult<Arc<ConstraintTree>> {
@@ -2805,10 +2788,10 @@ node_builder! {
 /// `.source_register(vn)`, `.source_stack(space, offset)`.
 #[pyclass(name = "FunctionArgPat", module = "strider.pattern")]
 pub struct PyFunctionArgPat {
-    source: std::cell::RefCell<Option<FunctionArgSource>>,
+    source: std::cell::Cell<Option<FunctionArgSource>>,
     /// Which index space `index` names; `Any` unless a constructor pinned it.
-    class: std::cell::RefCell<strider_pattern::FunctionArgClass>,
-    index: std::cell::RefCell<Option<u32>>,
+    class: strider_pattern::FunctionArgClass,
+    index: std::cell::Cell<Option<u32>>,
     common: std::cell::RefCell<CommonState>,
 }
 
@@ -2828,9 +2811,9 @@ impl PyFunctionArgPat {
         source: Option<FunctionArgSource>,
     ) -> Self {
         Self {
-            source: std::cell::RefCell::new(source),
-            class: std::cell::RefCell::new(class),
-            index: std::cell::RefCell::new(index),
+            source: std::cell::Cell::new(source),
+            class,
+            index: std::cell::Cell::new(index),
             common: std::cell::RefCell::new(CommonState::default()),
         }
     }
@@ -2850,11 +2833,11 @@ impl Builder for PyFunctionArgPat {
         &self.common
     }
     fn node(&self, _py: Python<'_>, caps: &[Capture]) -> PyResult<Expr> {
-        let mut b = strider_pattern::any_function_arg().class(*self.class.borrow());
-        if let Some(s) = *self.source.borrow() {
+        let mut b = strider_pattern::any_function_arg().class(self.class);
+        if let Some(s) = self.source.get() {
             b = b.source(s);
         }
-        if let Some(i) = *self.index.borrow() {
+        if let Some(i) = self.index.get() {
             b = b.index(i);
         }
         for &c in self.common.borrow().capture.iter().chain(caps) {
@@ -2868,13 +2851,12 @@ impl Builder for PyFunctionArgPat {
 impl PyFunctionArgPat {
     /// Constrain the match to argument at ABI position `i`.
     fn index(slf: PyRef<'_, Self>, i: u32) -> PyRef<'_, Self> {
-        slf.index.replace(Some(i));
+        slf.index.set(Some(i));
         slf
     }
     /// Constrain to an argument sourced from register varnode `vn` or a register containing it.
     fn source_register(slf: PyRef<'_, Self>, vn: crate::sleigh::PyVn) -> PyRef<'_, Self> {
-        slf.source
-            .replace(Some(FunctionArgSource::Register(vn.inner)));
+        slf.source.set(Some(FunctionArgSource::Register(vn.inner)));
         slf
     }
     /// Constrain to an argument sourced from the stack at `(space, offset)`.
@@ -2883,7 +2865,7 @@ impl PyFunctionArgPat {
         space: crate::sleigh::PyVnSpace,
         offset: i128,
     ) -> PyRef<'_, Self> {
-        slf.source.replace(Some(stack_source(space, offset)));
+        slf.source.set(Some(stack_source(space, offset)));
         slf
     }
 }

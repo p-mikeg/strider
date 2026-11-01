@@ -256,3 +256,37 @@ def test_the_pass_name_tuples_cover_the_default_pipeline():
     assert sorted(p.passes) == sorted(strider.opt._MAIN_PASS_NAMES)
     assert set(p.post_passes) <= set(strider.opt._POST_PASS_NAMES)
     assert not {"_MAIN_PASS_NAMES", "_POST_PASS_NAMES"} & set(strider.opt.__all__)
+
+
+def test_a_rom_read_may_edit_the_pipeline_optimize_runs():
+    """`optimize` runs a copy, so the pipeline is free while a Python `read()`
+    runs under it."""
+    from strider import reader, sleigh
+
+    pipe = strider.opt.OptimizerPipeline.empty()
+    pipe.add(strider.opt.LoadReadOnly())
+    edits = []
+
+    class Rom(reader.ReadOnlyMemory):
+        def read(self, addr, size):
+            try:
+                pipe.add(strider.opt.ConstantFold())
+                edits.append("added")
+            except Exception as e:
+                edits.append(repr(e))
+            return b"\x11" * size
+
+    # mov rax, qword [0x2000] ; ret
+    code = bytes([0x48, 0x8B, 0x04, 0x25, 0x00, 0x20, 0x00, 0x00, 0xC3])
+    lft = strider.lift.lifter(
+        sleigh.SleighArch.x86_64(), reader.BufferReader(0x1000, code), Rom()
+    )
+    fn = lft.analyze(
+        0x1000,
+        sleigh.CallingConvention.x86_64_systemv(),
+        opts=strider.lift.LifterOptions(pipeline=strider.opt.OptimizerPipeline.empty()),
+    ).function
+    fn.optimize(pipeline=pipe)
+    assert edits, "LoadReadOnly must read the rom"
+    assert set(edits) == {"added"}, edits
+    assert pipe.passes == ["LoadReadOnly"] + ["ConstantFold"] * len(edits)

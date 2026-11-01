@@ -10,8 +10,9 @@ pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 /// continuation-passing, so a node's later operands are matched inside the
 /// deepest frame of its earlier operands' subtrees and the stack grows with
 /// the TREE-UNFOLDED node count, not the depth: a vertex feeding several slots
-/// is walked once per slot, which is what `unfolded_nodes` charges. The cap keeps the deepest pattern a query can
-/// describe inside the 2 MiB a spawned thread gets by default.
+/// is walked once per slot, which is what `unfolded_nodes` charges. The cap
+/// keeps the deepest pattern a query can describe inside the 2 MiB a spawned
+/// thread gets by default.
 pub const MAX_PATTERN_NODES: usize = 256;
 
 /// Nodes a match attempt recurses through: every vertex once per consumer slot

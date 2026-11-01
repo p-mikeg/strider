@@ -100,12 +100,12 @@
   `Function.optimize(assumptions=None, pipeline=None)`, run against the rom of
   the `Lifter` that produced the function, so the error for a function from
   another handle is gone. `pipeline` is second, so pass it by keyword:
-  `function.optimize(pipe)` raises `TypeError`. It takes the claims to add as `assumptions=`, an
-  `AssumptionOptions`, in place of `opts=`, whose other fields it ignored. It
-  adds them to the function's and withdraws none. `assumptions=None` adds
-  nothing, where `opts=None` applied the three default claims; a set that
-  leaves out a claim already in force raises `StriderError` naming it, and
-  each missing allocator address, before anything runs. Pass
+  `function.optimize(pipe)` raises `TypeError`. It takes the claims to add as
+  `assumptions=`, an `AssumptionOptions`, in place of `opts=`, whose other
+  fields it ignored. It adds them to the function's and withdraws none.
+  `assumptions=None` adds nothing, where `opts=None` applied the three default
+  claims; a set that leaves out a claim already in force raises `StriderError`
+  naming it, and each missing allocator address, before anything runs. Pass
   `assumptions=function.assumptions | AssumptionOptions.none(escape_analysis=True)`
   to add one; analyse again to drop one.
 - `AssumptionOptions` is unhashable: `hash()`, set membership and dict keys
@@ -124,7 +124,6 @@
 - `Function.to_dot(pretty=True)` names a `Load` / `Store` space by its sla
   name, where a space outside RAM, register, unique and const read `??`
   and an arch's default code space read `ram` whatever the sla calls it.
-
 - Every integer reader is arbitrary-precision, at every declared width.
   `Node.sint()`, the `Match` readers (`sint` / `sint_opt`) and
   `find_unique_value(..., signed=True)` no longer answer `None` for a
@@ -183,8 +182,8 @@
   literal naming every field passes `&strider_cfg::NO_LOCAL_ENTRIES` for
   none.
 - `strider_ir::Function::raw_html` is gone: `raw_graph_dot()` returns the
-  raw renderer, whose `as_html_from_dot()` renders the HTML (`raw_dot()` is
-  the DOT text).
+  raw renderer, whose `as_html_from_dot()` renders the HTML
+  (`Function::raw_dot()` is the DOT text).
 - An operand that can never match its slot is refused through the pattern's
   `root()`, where the query matched nothing: in a value slot (a value op's
   operand, `float_le` / `float_is_nan` included, `target`, `arg`, `addr`,
@@ -196,13 +195,13 @@
   not, a node with no memory token or a value op. Decorations are looked
   through, an alternation's arms are not, and the raw `input`, `any_input`,
   `phi_token` and `call_other().arg` slots take any edge as before.
-- `MatchPat` and `TemplatePat` are markers over the hidden `IntoExpr`, which
-  a hand-written match pattern implements in place of `compile`; what it
-  lowers to is checked on the match side. `MatchPat::compile_mem` and
+- `MatchPat` and `TemplatePat` are markers over the hidden `IntoExpr`, which a
+  hand-written match pattern implements in place of `compile`; what it lowers
+  to is checked on the match side. `MatchPat::compile_mem` and
   `TemplatePat::compile` are gone, and `MatchPat::compile` is a provided
-  method. `MatcherBuilder::set_output_control`
-  and `set_token_fallback` set the one vertex they are given, where they
-  recursed into an alternation's arms: a slot reaches each arm as it lowers.
+  method. `MatcherBuilder::set_output_control` and `set_token_fallback` set
+  the one vertex they are given, where they recursed into an alternation's
+  arms: a slot reaches each arm as it lowers.
 - The typed pattern builders return two carriers, `Op<T>`, valid on whichever
   sides its operand types `T` are, and `MatchOnly`, valid on the match side
   alone, where each op returned its own struct. The re-exported `AnyBool`,
@@ -494,24 +493,24 @@
 - Assigning `LifterOptions.cfg` or `LifterOptions.assumptions` still raises
   `AttributeError`, now reading "readonly attribute" where it read
   "attribute ... is not writable": the option classes are frozen.
-- A pattern compile's stack budget, a quarter of the thread's remaining
-  stack, is read through `stacker` on every platform it reports a stack on.
-  Windows, the BSDs, Solaris, illumos and Haiku, which took the fixed 48 KiB
-  fallback, now budget from the real stack, so a deeper pattern compiles there; Android, which
-  `stacker` does not report, now takes the fallback. Linux and macOS are
+- A pattern compile's stack budget, a quarter of the thread's remaining stack,
+  is read through `stacker` on every platform it reports a stack on. Windows,
+  the BSDs, Solaris, illumos and Haiku, which took the fixed 48 KiB fallback,
+  now budget from the real stack, so a deeper pattern compiles there; Android,
+  which `stacker` does not report, now takes the fallback. Linux and macOS are
   unchanged.
 - Of several captures a rewrite's template references and its pattern leaves
   unbound, the error names the first written, where it named the last.
+- `hash(CastMask)` takes other values; equal masks still hash equal.
 - A memory slot (`mem`, `MemPhiPat.phi_input`) takes `anything()`,
   `var(c)` and a bare `Capture`, as Rust does, which bind the memory token,
   through a `.capture()` or `.when()` as a `one_of` there was taken. A
   `.of_width()`, `.value_ty()` or `.bool_valued()` there, which can never
   hold of a token, raises, over a `one_of` too, where it matched nothing.
-- Every typed builder nests in every match slot but a memory one, as its
-  Rust twin does, so `region().any_input(if_else())` and
-  `load().input(0, store())` match. One that can
-  never match where it sits (a `store()` or `ret()` as a value operand) is
-  refused at query time with Rust's reason.
+- Every typed builder nests in every match slot but a memory one, as its Rust
+  twin does, so `region().any_input(if_else())` and `load().input(0, store())`
+  match. One that can never match where it sits (a `store()` or `ret()` as a
+  value operand) is refused at query time with Rust's reason.
 - A refusal names the value-op constructor called (`int_add()`,
   `int_truncate()`) where it named the family (`int_binary()`, `a cast`).
   The nesting bound counts one level per nested operand, where a nested
@@ -547,17 +546,16 @@
   a parser of the header must accept the ` register=little` suffix.
 - `analyze` and `build_cfg` no longer fail when decoding falls through past
   `function_max_size`: the fall-through is a tail call to the address there,
-  which `cfg.incomplete` names `"past_function_end"`, as it does a
-  conditional branch's not-taken path past the end, a conditional
-  instruction skipping itself there, and the return address of a call that
-  still ends its path there (not one to a `no_return_targets` entry). A seeded jump-table arm whose code falls
-  through past the end is dropped and named there.
+  which `cfg.incomplete` names `"past_function_end"`, as it does a conditional
+  branch's not-taken path past the end, a conditional instruction skipping
+  itself there, and the return address of a call that still ends its path
+  there (not one to a `no_return_targets` entry). A seeded jump-table arm
+  whose code falls through past the end is dropped and named there.
 - Two `BoundCapture`s with no integer value (any binding but an integer
-  constant) bound to the same value of one function
-  compare equal; every such pair compared unequal before, `m[c] == m[c]`
-  included. An integer constant still compares by its value in either
-  spelling, and an unbound capture equals nothing.
-
+  constant) bound to the same value of one function compare equal; every such
+  pair compared unequal before, `m[c] == m[c]` included. An integer constant
+  still compares by its value in either spelling, and an unbound capture
+  equals nothing.
 - `build_cfg` reports a seed seated past p-code op 0 (a memory-indirect `jmp`)
   as `"unverified_seed"`; it went unreported.
 - `load()` / `store()` region filters apply in call order, the last winning:
@@ -614,13 +612,13 @@
   arg_passing_regs: unknown sleigh register name "X"`.
 - A `Lifter` works on any thread: `analyze`, `build_cfg`, `Function.optimize`,
   `pcode_at`, `call_other_abi`, `user_op_names` and `add_elf` no longer raise
-  off the thread that built it, reversing 0.2.0.
-  Each of them, a plain `Lifter`'s `arch` and `reader()`, and `rom()` on any
-  `Lifter` raises `StriderError` ("already in use") while an `analyze`,
-  `build_cfg` or `add_elf` is in flight on the handle, from a `read()`
-  callback or another thread, and those three raise while any of these calls
-  is; the others may overlap each other. All but `analyze`, `build_cfg` and
-  `Function.optimize` raised PyO3's `RuntimeError`. Such an `add_elf` merges nothing.
+  off the thread that built it, reversing 0.2.0. Each of them, a plain
+  `Lifter`'s `arch` and `reader()`, and `rom()` on any `Lifter` raises
+  `StriderError` ("already in use") while an `analyze`, `build_cfg` or
+  `add_elf` is in flight on the handle, from a `read()` callback or another
+  thread, and those three raise while any of these calls is; the others may
+  overlap each other. All but `analyze`, `build_cfg` and `Function.optimize`
+  raised PyO3's `RuntimeError`. Such an `add_elf` merges nothing.
 - `AssumptionOptions(...)` takes its defaults from Rust: a field passed
   `None` takes its default (it raised `TypeError`), `noalias_allocators`
   reads back sorted and deduplicated, `repr` included (it kept the order and
@@ -643,24 +641,22 @@
   FCSR.RM are round to nearest even at every conversion that rounds by them
   (`cvtsd2si`, `cvtss2si`, `cvtpd2dq`, `cvtps2dq`, `cvtpd2pi`, `cvtps2pi`,
   `cvtsd2ss`, `cvtpd2ps`, `cvtdq2ps`, `cvtpi2ps`, `cvtsi2ss`, the 64-bit
-  `cvtsi2sd` and the scalar VEX forms; `fctid`, `fctiw`, `fctidu`,
-  `fctiwu`, `fcfid*`, `frsp`, `xscvdpspn`; ARM `vcvtr`, `vcvt.f32.f64`,
-  `vcvt.f32.s32`, `vcvt.f32.u32`, `vcvtb`, `vcvtt`; AArch64 `fcvt` to a
-  narrower float, `fcvtn`, `scvtf`, `ucvtf`, `bfcvt`; MIPS `cvt.w`, `cvt.l`,
-  `cvt.s`, `cvt.d.l`). Off, each one reads the
-  mode and selects among nearest even, down, up and toward zero, so a mode
-  `ldmxcsr`, `fldcw`, `mtfsfi`, `vmsr` or `ctc1` sets folds; an AArch64
-  FPCR read is volatile, so `msr fpcr` does not. A function holding an ARM
-  `vcvtr` or VFP narrowing or integer-to-single conversion, a MIPS `cvt`
-  or an x87 `fst` to memory tracks the mode register the conversion names
-  (FPSCR, FCSR, the x87 control word) whatever the claim, which shifts the
-  `InitialVnId`s after it; an AArch64 one tracks FPCR only with the claim
-  off. `AssumptionOptions.none()` clears it; the
-  lift reads it, so `optimize` refuses to add it. Before, the SSE forms
-  rounded to nearest even and `none()` did not lift that premise. MXCSR.FTZ
-  and DAZ are still taken as 0. A function holding a rounding SSE
-  conversion now tracks MXCSR (and a PowerPC one the RN bits), which shifts
-  the `InitialVnId`s after it.
+  `cvtsi2sd` and the scalar VEX forms; `fctid`, `fctiw`, `fctidu`, `fctiwu`,
+  `fcfid*`, `frsp`, `xscvdpspn`; ARM `vcvtr`, `vcvt.f32.f64`, `vcvt.f32.s32`,
+  `vcvt.f32.u32`, `vcvtb`, `vcvtt`; AArch64 `fcvt` to a narrower float,
+  `fcvtn`, `scvtf`, `ucvtf`, `bfcvt`; MIPS `cvt.w`, `cvt.l`, `cvt.s`,
+  `cvt.d.l`). Off, each one reads the mode and selects among nearest even,
+  down, up and toward zero, so a mode `ldmxcsr`, `fldcw`, `mtfsfi`, `vmsr` or
+  `ctc1` sets folds; an AArch64 FPCR read is volatile, so `msr fpcr` does not.
+  A function holding an ARM `vcvtr` or VFP narrowing or integer-to-single
+  conversion, a MIPS `cvt` or an x87 `fst` to memory tracks the mode register
+  the conversion names (FPSCR, FCSR, the x87 control word) whatever the claim,
+  which shifts the `InitialVnId`s after it; an AArch64 one tracks FPCR only
+  with the claim off. `AssumptionOptions.none()` clears it; the lift reads it,
+  so `optimize` refuses to add it. Before, the SSE forms rounded to nearest
+  even and `none()` did not lift that premise. MXCSR.FTZ and DAZ are still
+  taken as 0. A function holding a rounding SSE conversion now tracks MXCSR
+  (and a PowerPC one the RN bits), which shifts the `InitialVnId`s after it.
 - `CallingConvention.custom(reg_args_adjoin_stack_args=True)` declares that
   the argument registers have stack homes just below the stack arguments, as
   the ARM, MIPS and PowerPC64 presets do; a custom convention for such an ABI
@@ -736,8 +732,8 @@
   tail-calls the address there, reported as `Reason::PastFunctionEnd`, as are
   a conditional branch's not-taken path past the end, a conditional
   instruction skipping itself there, and the return address of a call that
-  still ends `NoReturn` there (not one to a `no_return_targets` entry). A seeded arm whose code falls through past the
-  end is dropped and named there.
+  still ends `NoReturn` there (not one to a `no_return_targets` entry). A
+  seeded arm whose code falls through past the end is dropped and named there.
 - `FunctionArgPat::source` matches a sub-register of the carrier, as
   `function_arg_reg` does in Python.
 - `Lifter` refuses a calling convention whose stack geometry belongs to
@@ -818,10 +814,14 @@
 
 ### Fixed
 
-- Python: a pattern nested past a small thread's stack (a
-  `threading.stack_size` of 32 or 40 KiB, or 64 KiB in a debug build) raises
-  `StriderError`, where it crashed the process: building the refusal resolved
-  a Rust backtrace on the spent stack. Its `.backtrace` is empty.
+- Python: a `StriderError` raised on a small thread (a `threading.stack_size`
+  of 32 or 40 KiB, or 64 KiB in a debug build), such as a refusal or a pattern
+  nested past the thread's stack, reaches the caller, where it crashed the
+  process: building it resolved a Rust backtrace on the spent stack.
+  `.backtrace` is resolved when first read.
+- `int_const_any_width` with a negative value matches an `I256` or `I512`
+  constant holding it sign-extended, as `int_const` does at that width. It
+  matched none past 128 bits.
 - Rust: a template whose width group mixes types anchors that group from the
   graph, operands first in slot order, not from build order, so where a
   capture was built no longer changes which type the group takes or the
@@ -894,17 +894,17 @@
 - Python: AArch64 `fmov` between a general register and an h register
   moves the 16 bits, where it converted the value between half and single
   or double precision.
-- Python: AArch64 `fcvt` to a narrower float, `fcvtn`, `scvtf` (general and
-  FP register) and `ucvtf` (general register), ARM `vcvt.f32.f64`, `vcvt.f32.s32`,
-  `vcvt.f32.u32`, `vcvtb` and `vcvtt`, MIPS `cvt.s.d`, `cvt.s.w`,
-  `cvt.s.l` and `cvt.d.l`, and x87 `fst` and `fstp` to a single or a double
-  round by the dynamic mode, taken as nearest even under
+- Python: AArch64 `fcvt` to a narrower float, `fcvtn`, `scvtf` (general and FP
+  register) and `ucvtf` (general register), ARM `vcvt.f32.f64`,
+  `vcvt.f32.s32`, `vcvt.f32.u32`, `vcvtb` and `vcvtt`, MIPS `cvt.s.d`,
+  `cvt.s.w`, `cvt.s.l` and `cvt.d.l`, and x87 `fst` and `fstp` to a single or
+  a double round by the dynamic mode, taken as nearest even under
   `fp_rounding_mode_is_nearest`, where they rounded to nearest whatever it
-  was. AArch64 `bfcvt`, `bfcvtn` and `bfcvtn2` convert to BFloat16, where
-  they converted to IEEE half; `fcvtxn` rounds to odd; the general `scvtf`
-  and `ucvtf` `#fbits` forms scale by an exact power of two, where the half
-  ones rounded the integer to half first and divided by infinity past `#15`,
-  and `#64` divided by one.
+  was. AArch64 `bfcvt`, `bfcvtn` and `bfcvtn2` convert to BFloat16, where they
+  converted to IEEE half; `fcvtxn` rounds to odd; the general `scvtf` and
+  `ucvtf` `#fbits` forms scale by an exact power of two, where the half ones
+  rounded the integer to half first and divided by infinity past `#15`, and
+  `#64` divided by one.
 - Python: ARM `vrintr` and `vrintx` hand their op FPSCR.RMode, bits 22-23,
   where they passed bits 21-22, so two of them across a `vmsr` switching
   between nearest and toward -inf deduplicated.
@@ -1097,16 +1097,16 @@
   gives the IEEE single's bits; it read doubleword 1 and wrote word 3, and the
   pun returned stale bits. `lxsdx` and `xsadddp` use doubleword 0, which the
   FPR of the same number overlays, where they used doubleword 1.
-- Python: ppc64 `xsadddp` sets the FPSCR bits `fadd` sets (FPRF, VXSNAN
-  and the summaries). It set none, so an `mffs` or `mcrfs` after it read the
-  bits from before it, and a branch on them folded. It shares `fadd`'s two
-  flaws: VXSNAN is set for a quiet NaN too, and XX ORs in the FI no p-code
-  op sets. No scalar float op the sla spells in p-code sets FR, FI, OX, UX,
-  VXISI, VXIDI, VXIMZ or VXSQRT: those keep the last explicit write's value, so `mtfsb0` FI, `fadd`, `mffs` reads FI
-  as 0.
+- Python: ppc64 `xsadddp` sets the FPSCR bits `fadd` sets (FPRF, VXSNAN and
+  the summaries). It set none, so an `mffs` or `mcrfs` after it read the bits
+  from before it, and a branch on them folded. It shares `fadd`'s two flaws:
+  VXSNAN is set for a quiet NaN too, and XX ORs in the FI no p-code op sets.
+  No scalar float op the sla spells in p-code sets FR, FI, OX, UX, VXISI,
+  VXIDI, VXIMZ or VXSQRT: those keep the last explicit write's value, so
+  `mtfsb0` FI, `fadd`, `mffs` reads FI as 0.
 - Python: ppc64 `xsdivqp` lifts to its own `call_other`, `vsx300_xsdivqp`,
-  appended after the existing user ops, so no other id moved. It shared `xscvudqp`'s
-  `vsx300_47`, so a query by name could not tell the two apart.
+  appended after the existing user ops, so no other id moved. It shared
+  `xscvudqp`'s `vsx300_47`, so a query by name could not tell the two apart.
 - Python: the ppc64 presets lift e500 `mfpmr` and `mtpmr`, each read of a
   performance-monitor register its own value. A function using one failed
   to lift on an unclassified `call_other`.

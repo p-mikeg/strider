@@ -7,7 +7,6 @@
 //! there and implements [`MemPat`] so a `load` / `store` can chain off it.
 
 use super::{delegate_node_pat, node_match_pat};
-use crate::node_builders::delegate_with_output;
 use strider_ir::IRViewer;
 use strider_ir::node::NodeKind;
 
@@ -56,8 +55,7 @@ pub fn phi() -> PhiPat {
     PhiPat(Node::value(KindSpec::variant_of(&NodeKind::Phi), 0))
 }
 
-delegate_with_output!(PhiPat, 0);
-delegate_node_pat!(PhiPat, 0, [capture, build, input, any_input]);
+delegate_node_pat! { PhiPat, 0, [capture, build, input, any_input], with_output }
 
 /// A [`phi`] pre-narrowed by [`PhiPat::for_vn`].
 pub fn phi_for(vn: rsleigh::Vn) -> PhiPat {
@@ -89,8 +87,7 @@ pub fn mem_phi() -> MemPhiPat {
     )
 }
 
-delegate_with_output!(MemPhiPat, 0);
-delegate_node_pat!(MemPhiPat, 0, [capture, build, input, any_input]);
+delegate_node_pat! { MemPhiPat, 0, [capture, build, input, any_input], with_output }
 
 node_match_pat! {
     PhiPat => |p| p.0,

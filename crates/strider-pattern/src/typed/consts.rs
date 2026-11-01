@@ -151,7 +151,10 @@ fn fits_width(v: u128, w: usize) -> bool {
 /// most as wide as `out_ty` and widened to it by zero or sign extension. Every
 /// `ValueType` width is a candidate rather than only the powers of two: an
 /// `I40` constant is not reachable through an `I32` or `I64` probe.
-fn value_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
+fn value_at_some_width(stored: &UBig, out_ty: ValueType, v: u128) -> bool {
+    let Ok(stored) = u128::try_from(stored) else {
+        return past_the_carrier(stored, out_ty, v);
+    };
     let output_width = out_ty.bit_width();
     if output_width == 0 {
         return false;
@@ -190,17 +193,37 @@ fn value_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
     false
 }
 
+/// [`value_at_some_width`] for a `stored` past the `u128` carrier, which `v`
+/// reaches sign-extended out of `I128`, or zero-extended from a width between
+/// the two.
+fn past_the_carrier(stored: &UBig, out_ty: ValueType, v: u128) -> bool {
+    let i128_ty = ValueType::int(128);
+    let lo = eval::mask(stored, i128_ty);
+    let sign_extended = eval::signed(&lo, i128_ty)
+        .is_some_and(|s| eval::unsigned(s, out_ty) == *stored)
+        && value_at_some_width(&lo, i128_ty, v);
+    sign_extended
+        || ValueType::SUPPORTED.into_iter().any(|t| {
+            let w = t.bit_width();
+            t.is_integer()
+                && w > 128
+                && w < out_ty.bit_width()
+                && eval::mask(stored, t) == *stored
+                && value_at_some_width(stored, t, v)
+        })
+}
+
 /// Matches `v` however it was width-extended into the constant's own output
 /// type: exact, widened by zero extension, or widened by sign extension. A
 /// 32-bit `-50` widened to `IntConst(0x0000_0000_FFFF_FFCE)` at `I64`, and a
 /// positive `128` widened to `IntConst(0xFFFF_FFFF_FFFF_FF80)` from `I8`, are
 /// both forms the bit-exact [`int_const`] cannot match. Any member of
-/// `values` matches; `value_at_some_width` works in the `u128` the query
-/// literal is given in, so a stored value past it is no extension of one.
+/// `values` matches.
 fn any_width_leaf(values: Vec<u128>) -> Leaf {
     int_const_leaf(None, move |stored, out_ty| {
-        u128::try_from(stored)
-            .is_ok_and(|s| values.iter().any(|&v| value_at_some_width(s, out_ty, v)))
+        values
+            .iter()
+            .any(|&v| value_at_some_width(stored, out_ty, v))
     })
 }
 
@@ -538,7 +561,11 @@ where
 
 #[cfg(test)]
 mod any_width_tests {
-    use super::{ValueType, value_at_some_width};
+    use super::{UBig, ValueType};
+
+    fn value_at_some_width(stored: u128, ty: ValueType, v: u128) -> bool {
+        super::value_at_some_width(&UBig::from(stored), ty, v)
+    }
 
     /// The IR holds constants at widths that are not powers of two, so probing
     /// only 8/16/32/64/128 cannot reach one stored at its own width.

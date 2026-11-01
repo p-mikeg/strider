@@ -61,6 +61,7 @@ impl PyNode {
 }
 
 /// The unsigned integer constant a node's value output holds, if any.
+#[inline]
 pub(crate) fn uint_of(
     function: &strider_ir::Function,
     nid: strider_ir::node::NodeId,
@@ -71,6 +72,7 @@ pub(crate) fn uint_of(
 }
 
 /// [`uint_of`] read as two's-complement at the declared width.
+#[inline]
 pub(crate) fn sint_of(
     function: &strider_ir::Function,
     nid: strider_ir::node::NodeId,
