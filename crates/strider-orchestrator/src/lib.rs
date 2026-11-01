@@ -34,8 +34,7 @@ pub struct AnalyzeOptions<'a> {
     /// Keyed by direct-call target address, through `cfg`'s
     /// [`strider_cfg::CfgOptions::local_entries`]. Built against this engine's
     /// registers and fitting its arch, as the default CC must
-    /// ([`Lifter::build_ir_with`]); borrowed, as
-    /// [`strider_cfg::CfgOptions::known_targets`] is.
+    /// ([`Lifter::build_ir_with`]).
     pub per_address_ccs: &'a FxHashMap<u64, strider_target::BuiltCallingConvention>,
     /// Run the indirect-branch classifier.  Off leaves every unseeded site an
     /// `IndirectBranch` placeholder, so a caller can hand its own answers in

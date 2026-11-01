@@ -109,7 +109,7 @@ impl FunctionArgPat {
     }
 }
 
-delegate_node_pat!(FunctionArgPat, inner, [capture]);
+delegate_node_pat! { FunctionArgPat, inner, [capture] }
 
 /// Whether `node` produces a carrier of `class` at `index`, `index` `None`
 /// accepting any position within the class.
