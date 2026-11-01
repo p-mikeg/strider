@@ -43,8 +43,9 @@ pub struct TmplNodeRef(NodeId);
 /// ([`node`](Self::node), [`input`](Self::input), the `*_output` slot verbs)
 /// enforce only [`input`](Self::input)'s build order when called;
 /// [`instantiate`](crate::template::instantiate) checks every node against its
-/// node signature and refuses a gapped or duplicate input slot. No verb declares a control output, so a node whose
-/// signature has one (`Call`, `Region`, `If`, ...) cannot be built.
+/// node signature and refuses a gapped or duplicate input slot. No verb
+/// declares a control output, so a node whose signature has one (`Call`,
+/// `Region`, `If`, ...) cannot be built.
 #[derive(Default)]
 pub struct TemplateBuilder {
     core: BuildGraph<TmplNode, TmplValue>,

@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use pyo3::types::PyType;
 
-use strider_target::call_other_abi::{CallOtherAbi, CallOtherClass, CallOtherOverride};
+use strider_target::call_other_abi::{CallOtherClass, CallOtherOverride};
 
 /// `Class` carries the static register names of a table row, resolved against
 /// a Sleigh at lift time.  `Built` is resolved eagerly instead, so a name typo
@@ -57,13 +57,6 @@ impl PyCallOtherAbi {
         match &self.inner {
             AbiImpl::Class(class) => CallOtherOverride::Class(*class),
             AbiImpl::Built(abi) => CallOtherOverride::Built((**abi).clone()),
-        }
-    }
-
-    fn abi(&self) -> Option<&CallOtherAbi> {
-        match &self.inner {
-            AbiImpl::Class(CallOtherClass::Call(abi)) => Some(abi),
-            _ => None,
         }
     }
 
@@ -173,7 +166,8 @@ impl PyCallOtherAbi {
     #[getter]
     fn clobbers_memory(&self) -> bool {
         match &self.inner {
-            AbiImpl::Class(_) => self.abi().is_some_and(|a| a.clobbers_memory),
+            AbiImpl::Class(CallOtherClass::Call(abi)) => abi.clobbers_memory,
+            AbiImpl::Class(CallOtherClass::NoOp) => false,
             AbiImpl::Built(abi) => abi.clobbers_memory,
         }
     }

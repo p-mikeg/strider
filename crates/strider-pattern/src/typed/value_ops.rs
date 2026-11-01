@@ -124,13 +124,25 @@ pub fn float_is_nan<I: MatchPat + 'static>(inner: I) -> MatchOnly {
     }))
 }
 
-/// `$ctor` is [`Expr::exact`] or [`Expr::exact_i1`].
+/// `$ctor` is [`Expr::exact`] or [`Expr::exact_i1`]; with `op`, the op is a
+/// runtime argument of the `$variant` sub-enum.
 macro_rules! bin {
     ($name:ident, $ctor:ident, $kind:expr, $doc:expr) => {
         #[doc = $doc]
         pub fn $name<L: IntoExpr + 'static, R: IntoExpr + 'static>(lhs: L, rhs: R) -> Op<(L, R)> {
             let (l, r) = (lhs.into_expr(), rhs.into_expr());
             Op::new(Expr::$ctor($kind, [l, r]))
+        }
+    };
+    ($name:ident, $ctor:ident, op $variant:ident, $doc:expr) => {
+        #[doc = $doc]
+        pub fn $name<L: IntoExpr + 'static, R: IntoExpr + 'static>(
+            op: $variant,
+            lhs: L,
+            rhs: R,
+        ) -> Op<(L, R)> {
+            let (l, r) = (lhs.into_expr(), rhs.into_expr());
+            Op::new(Expr::$ctor(NodeKind::$variant(op), [l, r]))
         }
     };
 }
@@ -317,60 +329,16 @@ pub(crate) mod ops {
         Op::new(Expr::bool_not(operand.into_expr()))
     }
 
-    /// Match or build an integer binary op `int_binary(op, l, r)` of kind `op`
-    /// only.
-    pub fn int_binary<L: IntoExpr + 'static, R: IntoExpr + 'static>(
-        op: IntBinaryOp,
-        lhs: L,
-        rhs: R,
-    ) -> Op<(L, R)> {
-        let (l, r) = (lhs.into_expr(), rhs.into_expr());
-        Op::new(Expr::exact(NodeKind::IntBinaryOp(op), [l, r]))
-    }
-
-    /// Match or build an integer comparison `int_cmp(op, l, r)` of kind `op`
-    /// only (output `I1`).
-    pub fn int_cmp<L: IntoExpr + 'static, R: IntoExpr + 'static>(
-        op: IntCmpOp,
-        lhs: L,
-        rhs: R,
-    ) -> Op<(L, R)> {
-        let (l, r) = (lhs.into_expr(), rhs.into_expr());
-        Op::new(Expr::exact_i1(NodeKind::IntCmpOp(op), [l, r]))
-    }
-
-    /// Match or build a float binary op `float_binary(op, l, r)` of kind `op`
-    /// only.
-    pub fn float_binary<L: IntoExpr + 'static, R: IntoExpr + 'static>(
-        op: FloatBinaryOp,
-        lhs: L,
-        rhs: R,
-    ) -> Op<(L, R)> {
-        let (l, r) = (lhs.into_expr(), rhs.into_expr());
-        Op::new(Expr::exact(NodeKind::FloatBinaryOp(op), [l, r]))
-    }
-
-    /// Match or build a float comparison `float_cmp(op, l, r)` of kind `op`
-    /// only (output `I1`).
-    pub fn float_cmp<L: IntoExpr + 'static, R: IntoExpr + 'static>(
-        op: FloatCmpOp,
-        lhs: L,
-        rhs: R,
-    ) -> Op<(L, R)> {
-        let (l, r) = (lhs.into_expr(), rhs.into_expr());
-        Op::new(Expr::exact_i1(NodeKind::FloatCmpOp(op), [l, r]))
-    }
-
-    /// Match or build a boolean binary op `bool_binary(op, l, r)` of kind `op`
-    /// only (`IntBinaryOp` at `I1`).
-    pub fn bool_binary<L: IntoExpr + 'static, R: IntoExpr + 'static>(
-        op: IntBinaryOp,
-        lhs: L,
-        rhs: R,
-    ) -> Op<(L, R)> {
-        let (l, r) = (lhs.into_expr(), rhs.into_expr());
-        Op::new(Expr::exact_i1(NodeKind::IntBinaryOp(op), [l, r]))
-    }
+    bin! { int_binary, exact, op IntBinaryOp,
+    "Match or build an integer binary op `int_binary(op, l, r)` of kind `op` only." }
+    bin! { int_cmp, exact_i1, op IntCmpOp,
+    "Match or build an integer comparison `int_cmp(op, l, r)` of kind `op` only (output `I1`)." }
+    bin! { float_binary, exact, op FloatBinaryOp,
+    "Match or build a float binary op `float_binary(op, l, r)` of kind `op` only." }
+    bin! { float_cmp, exact_i1, op FloatCmpOp,
+    "Match or build a float comparison `float_cmp(op, l, r)` of kind `op` only (output `I1`)." }
+    bin! { bool_binary, exact_i1, op IntBinaryOp,
+    "Match or build a boolean binary op `bool_binary(op, l, r)` of kind `op` only (`IntBinaryOp` at `I1`)." }
 }
 
 pub use ops::*;

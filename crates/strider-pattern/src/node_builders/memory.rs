@@ -8,7 +8,6 @@
 //! memory-token root exposing its token via [`MemPat`].
 
 use super::{delegate_node_pat, node_match_pat};
-use crate::node_builders::delegate_with_output;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind};
 
@@ -37,10 +36,6 @@ enum RegionFilter {
 }
 
 impl RegionFilter {
-    fn active(&self) -> bool {
-        !matches!(self, RegionFilter::Any)
-    }
-
     fn check(&self, function: &strider_ir::Function, node: NodeId) -> bool {
         use strider_ir::MemDecomp;
         let Some(addr) = function.access_address(node) else {
@@ -60,29 +55,9 @@ impl RegionFilter {
         }
     }
 
-    fn set_stack_offset(&mut self, k: i128) {
-        *self = RegionFilter::Stack { offset: Some(k) };
-    }
-
-    /// Keeps an offset already pinned by `stack_offset`, so
-    /// `.stack_offset(k).stack_only()` still requires `k`.
-    fn set_stack_only(&mut self) {
-        if !matches!(self, RegionFilter::Stack { .. }) {
-            *self = RegionFilter::Stack { offset: None };
-        }
-    }
-
-    fn set_heap_only(&mut self) {
-        *self = RegionFilter::Heap;
-    }
-
-    fn set_non_stack(&mut self) {
-        *self = RegionFilter::NonStack;
-    }
-
-    /// A no-op when inactive.
+    /// A no-op for `Any`.
     fn apply(self, n: Node) -> Node {
-        if !self.active() {
+        if matches!(self, RegionFilter::Any) {
             return n;
         }
         n.with_node_predicate(Box::new(move |matcher, node| {
@@ -99,7 +74,7 @@ macro_rules! delegate_region_filter {
             /// Requires the address to decompose to exactly `sp + k`. Replaces any
             /// region filter set before it.
             pub fn stack_offset(mut self, k: i128) -> Self {
-                self.$region.set_stack_offset(k);
+                self.$region = RegionFilter::Stack { offset: Some(k) };
                 self
             }
 
@@ -107,7 +82,9 @@ macro_rules! delegate_region_filter {
             /// offset a preceding [`stack_offset`](Self::stack_offset) pinned. The one
             /// region filter that does not discard what came before.
             pub fn stack_only(mut self) -> Self {
-                self.$region.set_stack_only();
+                if !matches!(self.$region, RegionFilter::Stack { .. }) {
+                    self.$region = RegionFilter::Stack { offset: None };
+                }
                 self
             }
 
@@ -115,14 +92,14 @@ macro_rules! delegate_region_filter {
             /// An address with no decomposition verdict is rejected. Replaces any
             /// region filter set before it.
             pub fn non_stack(mut self) -> Self {
-                self.$region.set_non_stack();
+                self.$region = RegionFilter::NonStack;
                 self
             }
 
             /// Keeps only accesses whose address decomposes to a heap base (a pure
             /// allocator's return pointer). Replaces any region filter set before it.
             pub fn heap_only(mut self) -> Self {
-                self.$region.set_heap_only();
+                self.$region = RegionFilter::Heap;
                 self
             }
         }
@@ -179,8 +156,7 @@ pub fn load() -> LoadPat {
     }
 }
 
-delegate_with_output!(LoadPat, inner);
-delegate_node_pat!(LoadPat, inner, [capture, input, any_input]);
+delegate_node_pat! { LoadPat, inner, [capture, input, any_input], with_output }
 delegate_region_filter!(LoadPat, region);
 
 /// Inputs `[mem(0), addr(1), data(2)]`, single output the new memory token.
@@ -265,8 +241,7 @@ pub fn store() -> StorePat {
     }
 }
 
-delegate_with_output!(StorePat, inner);
-delegate_node_pat!(StorePat, inner, [capture, input, any_input]);
+delegate_node_pat! { StorePat, inner, [capture, input, any_input], with_output }
 delegate_region_filter!(StorePat, region);
 
 node_match_pat! {

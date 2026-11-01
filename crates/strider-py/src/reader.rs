@@ -482,9 +482,8 @@ impl PyLoadedElf {
 
     /// Merge another ELF (e.g. a shared library) into this one, extending
     /// the regions and symbol set. The decoder then rebuilds over what `symbol`
-    /// and `read` see. The
-    /// earlier-loaded ELF wins a name collision, and `relocated_got_is_rom` is
-    /// this image's own claim.
+    /// and `read` see. The earlier-loaded ELF wins a name collision, and
+    /// `relocated_got_is_rom` is this image's own claim.
     ///
     /// Errors if the new ELF's architecture, class or byte order, or on ARM
     /// its `EF_ARM_BE8`, differs from the first image's: one handle decodes
@@ -1072,8 +1071,7 @@ impl PyMemReader {
     }
 
     fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
-        let name: String = slf.get_type().getattr("__name__")?.extract()?;
-        Ok(format!("{name}()"))
+        Ok(format!("{}()", slf.get_type().name()?))
     }
 }
 
@@ -1214,8 +1212,7 @@ impl PyReadOnlyMemory {
     }
 
     fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
-        let name: String = slf.get_type().getattr("__name__")?.extract()?;
-        Ok(format!("{name}()"))
+        Ok(format!("{}()", slf.get_type().name()?))
     }
 }
 
