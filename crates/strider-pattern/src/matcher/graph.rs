@@ -241,9 +241,12 @@ impl Pattern {
     }
 
     /// Adds `m` to the cast-walk-through mask; the matcher then skips the
-    /// selected cast kinds transparently. A query under a mask runs every
-    /// configuration before it answers, [`match_at`](crate::Matcher::match_at)
-    /// included.
+    /// selected cast kinds transparently. After every `first_of`, each operand
+    /// under a masked cast keeps the matches at the outermost cast level any
+    /// match kept so far reached, the operands settling in the order they are
+    /// written, so a guard coupling two of them answers by which is written
+    /// first. A query under a mask runs every configuration before it answers,
+    /// on the terms [`OneOf::first`](crate::OneOf::first) gives under Cost.
     pub fn ignore_casts_mask(mut self, m: CastMask) -> Self {
         self.cast_mask |= m;
         self
