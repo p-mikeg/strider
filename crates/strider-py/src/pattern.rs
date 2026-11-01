@@ -1337,14 +1337,18 @@ pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
 
 /// Alternation with a first-match cut (ordered OR): match the first listed
 /// sub-pattern that matches, ignoring the rest. Unlike `one_of` (a union),
-/// overlapping arms do not each fire; the first arm that matches wins, so a
-/// leading `anything()` arm shadows everything after it. Same generality as
-/// `one_of`: any arm, any slot. Match-only. No alternatives matches nothing.
+/// overlapping arms do not each fire: at each node it is offered, the first
+/// listed arm that yields any match wins, whatever order the rest of the
+/// pattern is tried in, so a leading `anything()` arm shadows everything after
+/// it. Several `first_of`s in one match settle in pattern order: operands left
+/// to right, a builder's setters in the order its reference lists them, an
+/// inner one before the one holding it, each among the matches the earlier
+/// ones kept. Same generality as `one_of`: any arm, any slot. Match-only. No
+/// alternatives matches nothing.
 ///
-/// At each node it is offered, the first listed arm that yields any match
-/// wins, whatever order the rest of the pattern is tried in. Several
-/// `first_of`s in one match settle in the order they are written, an inner one
-/// before the one holding it, each among the matches the earlier ones kept.
+/// A query holding one runs every configuration of the pattern before it
+/// answers, unless it captures nothing and finds a match through the first
+/// arm of every `first_of`, where it stops.
 #[pyfunction]
 pub fn first_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     PyPat::from(Repr::new(

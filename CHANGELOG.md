@@ -142,6 +142,8 @@
   `ElfLifter.build_cfg` given one that is not a `CfgOptions`, raise
   `TypeError` naming the argument, as `Lifter.analyze` and `build_cfg` do.
   They raised `AttributeError` from reading the options' fields.
+- `StriderError.backtrace` read off the class is a property, not `""`; an
+  instance reads as before.
 
 ### Breaking, Rust
 
@@ -814,14 +816,33 @@
 
 ### Fixed
 
-- `first_of` keeps, at each node it is offered, only the matches through the
+- `first_of` keeps, at each value it is offered, only the matches through the
   first listed arm that yields any match. It kept the first arm to match in
   search order, so a sibling tried around it (another `one_of`'s arm order,
   or the slot the `first_of` sat in) could report a later arm beside an
-  earlier one, or instead of it where a query stops at its first match.
-  Several `first_of`s in one match settle in the order they are written, an
-  inner one before the one holding it. A query holding a `first_of` runs every
-  configuration before it answers, `match_at` included.
+  earlier one, or instead of it where a query stops at its first match. Two
+  outputs of one node, such as a `CallOther`'s result and a clobber, are two
+  values: an arm matching at one no longer drops the other arm's match at the
+  other. Several `first_of`s in one match settle in the order they are
+  written (in Python, in pattern order: operands left to right, a builder's
+  setters in the order its reference lists them), an inner one before the one
+  holding it, each among the matches the earlier ones kept. A query holding a
+  `first_of` runs every configuration before it answers, `match_at` included,
+  unless it wants one match (`match_at`, or a pattern capturing nothing) and
+  finds one through the first arm of every choice, where it stops.
+- `ignore_casts` (Python) and `Pattern::ignore_casts_mask` (Rust) keep, per
+  operand under a masked cast, the matches at the outermost cast level any
+  match reached, whatever order the rest of the pattern is tried in. The
+  walk-through engaged when the level above had produced no match in the
+  search so far, so a capture a sibling binds in some configurations and not
+  others moved the answer: `int_add(var(x), S)` and `int_add(S, var(x))`
+  could answer differently, as could a sibling `one_of`'s arm order. A query
+  under a mask runs every configuration before it answers, on the terms a
+  `first_of` does, so it costs more than the same query without one.
+- Python: `repr()` of a `CallingConvention` from `.preserves_all()` or
+  `.preserves_regs()` names the variant
+  (`CallingConvention.x86_64_systemv().preserves_all()`), where it read as the
+  plain preset, a convention that clobbers registers.
 - Python: a `StriderError` raised on a small thread (a `threading.stack_size`
   of 32 or 40 KiB, or 64 KiB in a debug build), such as a refusal or a pattern
   nested past the thread's stack, reaches the caller, where it crashed the
@@ -835,10 +856,10 @@
   backtrace.
 - `int_const_any_width` with a negative value matches an `I256` or `I512`
   constant holding it sign-extended, or an `I512` holding that `I256` value
-  zero-extended, as it does below 128 bits. It matched none past 128 bits. At
-  those widths it no longer matches a value sign-extended to 128 bits and then
-  zero-extended, which is no single widening: `int_const_any_width(163)`
-  matched the `I256` constant `2^128 - 93`.
+  zero-extended, as it does below 128 bits. It matched no negative value past
+  128 bits. At those widths it no longer matches a value sign-extended to 128
+  bits and then zero-extended, which is no single widening:
+  `int_const_any_width(163)` matched the `I256` constant `2^128 - 93`.
 - Rust: a template whose width group mixes types anchors that group from the
   graph, operands first in slot order, not from build order, so where a
   capture was built no longer changes which type the group takes or the
