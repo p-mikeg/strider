@@ -6,9 +6,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::support::{Tb, shapes};
 use strider_ir::IRViewer;
-use strider_ir::IntUnaryOp;
 use strider_ir::node::{NodeKind, ValueKind};
-use strider_pattern::matcher::{KindSpec, MatcherBuilder};
+use strider_ir::{IntBinaryOp, IntUnaryOp};
+use strider_pattern::matcher::{KindSpec, MatcherBuilder, PatValueRef};
 use strider_pattern::{
     Capture, CaptureExt, MatchPat, Matcher, anything, first_of, int_add, int_neg, int_xor, one_of,
     ret, var,
@@ -94,7 +94,8 @@ fn first_of_reports_only_the_first_matching_arm() {
 }
 
 /// Counts continuations reaching the root guard: `one_of` is multiplicative in
-/// the number of nested alternations, `first_of` cuts at the first match.
+/// the number of nested alternations, the first `first_of` built cuts at its
+/// first match.
 ///
 /// The root capture is what keeps the count meaningful: a pattern binding
 /// nothing a caller can see has one answer per root, and `find_all` then stops
@@ -137,7 +138,11 @@ fn root_continuations(f: &strider_ir::Function, ordered: bool) -> usize {
 fn one_of_explores_every_arm_while_first_of_cuts() {
     let f = shapes::add_consts(5, 3);
     assert_eq!(root_continuations(&f, false), 4, "2 arms x 2 alternations");
-    assert_eq!(root_continuations(&f, true), 1);
+    assert_eq!(
+        root_continuations(&f, true),
+        2,
+        "the second first_of's arms all run"
+    );
 }
 
 /// A capture on the alternation's own output vertex has nothing to bind when
@@ -381,4 +386,132 @@ fn a_first_of_cut_outlives_the_invocation_that_recorded_it() {
     );
     assert_eq!(inside, [(true, false)]);
     assert_eq!(around, inside, "arm 2 is never reached once arm 1 matched");
+}
+
+/// The sibling's arms reversed: arm 1 of the sibling now binds `x` to
+/// `neg(5)`, so arm 1 of the alternation first fails and arm 2 matches, and
+/// only the sibling's next configuration brings arm 1 a match. A union's arm
+/// order carries no meaning, so the answer must not move with it.
+#[test]
+fn a_first_of_answer_does_not_depend_on_a_siblings_arm_order() {
+    let x = Capture::new();
+    let y = Capture::new();
+    let sibling = || one_of![var(x), int_neg(var(x))];
+    let alternation = || first_of![var(x), var(y)];
+    let rows = |f: &strider_ir::Function, pat: strider_pattern::Pattern| -> Vec<(bool, bool)> {
+        Matcher::new(f)
+            .find_all(&pat)
+            .unwrap()
+            .iter()
+            .map(|h| (h.value(x).is_some(), h.value(y).is_some()))
+            .collect()
+    };
+    let around = rows(
+        &add_neg_5_and_5(true),
+        int_add(sibling(), alternation()).ordered().into_pattern(),
+    );
+    let inside = rows(
+        &add_neg_5_and_5(false),
+        int_add(alternation(), sibling()).ordered().into_pattern(),
+    );
+    assert_eq!(inside, [(true, false)]);
+    assert_eq!(around, inside, "the lowest arm that matches wins");
+}
+
+/// `match_at` stops at its first match, which arm 2 of the alternation
+/// reaches before the sibling's next configuration brings arm 1 one.
+#[test]
+fn match_at_takes_the_lowest_first_of_arm_that_matches() {
+    let x = Capture::new();
+    let y = Capture::new();
+    let f = add_neg_5_and_5(true);
+    let pat = int_add(one_of![var(x), int_neg(var(x))], first_of![var(x), var(y)])
+        .ordered()
+        .into_pattern();
+    let any_add = int_add(anything(), anything()).into_pattern();
+    let sum = Matcher::new(&f).find_all(&any_add).unwrap()[0].root();
+    let hit = Matcher::new(&f)
+        .match_at(sum, &pat)
+        .unwrap()
+        .expect("matches");
+    assert!(hit.value(y).is_none(), "arm 2 lost to arm 1");
+    assert_eq!(f.int_const_u128(hit.value(x).unwrap()), Some(5));
+}
+
+/// `add(xor(b, a), add(a, b))`: the sibling under `rows` binds `x` to `b` in
+/// one configuration and to `a` in the other.
+fn xor_ba_plus_add_ab() -> strider_ir::Function {
+    let mut t = Tb::empty();
+    let a = t.u64(1);
+    let b = t.u64(2);
+    let s = t.int_bin(b, a, IntBinaryOp::Xor);
+    let inner = t.add(a, b);
+    let sum = t.add(s, inner);
+    t.ret_val(sum)
+}
+
+/// `(x, y bound, w bound)` per match of `int_add(sibling, inner)`, the sibling
+/// binding `x` to `b` first, then to `a`, or the reverse.
+fn under_sibling(
+    f: &strider_ir::Function,
+    b_first: bool,
+    inner: impl Fn(&mut MatcherBuilder) -> PatValueRef,
+    (x, y, w): (Capture, Capture, Capture),
+) -> Vec<(Option<u128>, bool, bool)> {
+    let to_b = || int_xor(var(x), anything()).ordered();
+    let to_a = || int_xor(anything(), var(x)).ordered();
+    let sibling = if b_first {
+        one_of![to_b(), to_a()]
+    } else {
+        one_of![to_a(), to_b()]
+    };
+    let mut b = MatcherBuilder::new();
+    let sibling = MatchPat::compile(sibling, &mut b);
+    let inner = inner(&mut b);
+    let sum = b.binary(IntBinaryOp::Add, sibling, inner);
+    b.set_force_ordered(sum);
+    Matcher::new(f)
+        .find_all(&b.finish())
+        .unwrap()
+        .iter()
+        .map(|h| {
+            let x = h.value(x).and_then(|v| f.int_const_u128(v));
+            (x, h.value(y).is_some(), h.value(w).is_some())
+        })
+        .collect()
+}
+
+/// Two `first_of`s whose arms conflict through `x`, under a sibling that binds
+/// `x` in either order. They settle in the order the pattern spells them: the
+/// left one keeps arm 1 (`x` = `a`), which leaves the right one arm 2.
+#[test]
+fn two_first_ofs_settle_left_to_right_whatever_the_enumeration_order() {
+    let f = xor_ba_plus_add_ab();
+    let caps = (Capture::new(), Capture::new(), Capture::new());
+    let (x, y, w) = caps;
+    let inner = |b: &mut MatcherBuilder| {
+        let sum = int_add(first_of![var(x), var(y)], first_of![var(x), var(w)]);
+        MatchPat::compile(sum.ordered(), b)
+    };
+    let b_first = under_sibling(&f, true, inner, caps);
+    assert_eq!(b_first, [(Some(1), false, true)]);
+    assert_eq!(under_sibling(&f, false, inner, caps), b_first);
+}
+
+/// One `first_of` reached at `a` and at `b` in the same match settles at the
+/// earlier-built node first: `a` keeps arm 1, which leaves `b` arm 2.
+#[test]
+fn a_shared_first_of_settles_per_node_whatever_the_enumeration_order() {
+    let f = xor_ba_plus_add_ab();
+    let caps = (Capture::new(), Capture::new(), Capture::new());
+    let (x, y, _) = caps;
+    let inner = |b: &mut MatcherBuilder| {
+        let shared = MatchPat::compile(first_of![var(x), var(y)], b);
+        let sum = b.binary(IntBinaryOp::Add, shared, shared);
+        b.set_force_ordered(sum);
+        sum
+    };
+    let b_first = under_sibling(&f, true, inner, caps);
+    assert_eq!(b_first, [(Some(1), true, false)]);
+    assert_eq!(under_sibling(&f, false, inner, caps), b_first);
 }

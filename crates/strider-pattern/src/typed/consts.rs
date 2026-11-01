@@ -152,9 +152,14 @@ fn fits_width(v: u128, w: usize) -> bool {
 /// `ValueType` width is a candidate rather than only the powers of two: an
 /// `I40` constant is not reachable through an `I32` or `I64` probe.
 fn value_at_some_width(stored: &UBig, out_ty: ValueType, v: u128) -> bool {
-    let Ok(stored) = u128::try_from(stored) else {
-        return past_the_carrier(stored, out_ty, v);
-    };
+    match u128::try_from(stored) {
+        Ok(s) => narrow_at_some_width(s, out_ty, v),
+        Err(_) => past_the_carrier(stored, out_ty, v),
+    }
+}
+
+/// [`value_at_some_width`] for a `stored` inside the `u128` carrier.
+fn narrow_at_some_width(stored: u128, out_ty: ValueType, v: u128) -> bool {
     let output_width = out_ty.bit_width();
     if output_width == 0 {
         return false;
@@ -186,7 +191,13 @@ fn value_at_some_width(stored: &UBig, out_ty: ValueType, v: u128) -> bool {
         if above == 0 {
             return true; // zero-extended form
         }
-        if sign_bit_w != 0 && (low & sign_bit_w) != 0 && above == above_w_mask {
+        // Past 128 bits a sign extension leaves the carrier, and the mask
+        // stops at bit 127.
+        if output_width <= 128
+            && sign_bit_w != 0
+            && (low & sign_bit_w) != 0
+            && above == above_w_mask
+        {
             return true; // sign-extended form
         }
     }
@@ -194,8 +205,8 @@ fn value_at_some_width(stored: &UBig, out_ty: ValueType, v: u128) -> bool {
 }
 
 /// [`value_at_some_width`] for a `stored` past the `u128` carrier, which `v`
-/// reaches sign-extended out of `I128`, or zero-extended from a width between
-/// the two.
+/// reaches sign-extended out of `I128`, or zero-extended from an integer width
+/// between `I128` and `out_ty`.
 fn past_the_carrier(stored: &UBig, out_ty: ValueType, v: u128) -> bool {
     let i128_ty = ValueType::int(128);
     let lo = eval::mask(stored, i128_ty);
@@ -208,8 +219,7 @@ fn past_the_carrier(stored: &UBig, out_ty: ValueType, v: u128) -> bool {
             t.is_integer()
                 && w > 128
                 && w < out_ty.bit_width()
-                && eval::mask(stored, t) == *stored
-                && value_at_some_width(stored, t, v)
+                && eval::unsigned(IBig::from(v as i128), t) == *stored
         })
 }
 
@@ -220,10 +230,9 @@ fn past_the_carrier(stored: &UBig, out_ty: ValueType, v: u128) -> bool {
 /// both forms the bit-exact [`int_const`] cannot match. Any member of
 /// `values` matches.
 fn any_width_leaf(values: Vec<u128>) -> Leaf {
-    int_const_leaf(None, move |stored, out_ty| {
-        values
-            .iter()
-            .any(|&v| value_at_some_width(stored, out_ty, v))
+    int_const_leaf(None, move |stored, out_ty| match u128::try_from(stored) {
+        Ok(s) => values.iter().any(|&v| narrow_at_some_width(s, out_ty, v)),
+        Err(_) => values.iter().any(|&v| past_the_carrier(stored, out_ty, v)),
     })
 }
 
@@ -561,7 +570,7 @@ where
 
 #[cfg(test)]
 mod any_width_tests {
-    use super::{UBig, ValueType};
+    use super::{IBig, UBig, ValueType};
 
     fn value_at_some_width(stored: u128, ty: ValueType, v: u128) -> bool {
         super::value_at_some_width(&UBig::from(stored), ty, v)
@@ -641,5 +650,121 @@ mod any_width_tests {
             ValueType::int(64),
             minus_1
         ));
+    }
+
+    fn ones(w: usize) -> UBig {
+        (UBig::from(1u8) << w) - UBig::from(1u8)
+    }
+
+    /// `v`, a `from`-bit value, sign-extended to `to` bits.
+    fn sext(v: &UBig, from: usize, to: usize) -> UBig {
+        if (v.clone() >> (from - 1)) & UBig::from(1u8) == UBig::from(0u8) {
+            v.clone()
+        } else {
+            v.clone() + (ones(to) ^ ones(from))
+        }
+    }
+
+    /// `x` mod `2^w`.
+    fn low_of(x: i64, w: usize) -> UBig {
+        let m = IBig::from(1) << w;
+        UBig::try_from(((IBig::from(x) % m.clone()) + m.clone()) % m).unwrap()
+    }
+
+    /// The rule from first principles: `x` held at a supported integer width
+    /// `w` at most `out`'s (`I1` only when `out` is `I1`), so
+    /// `-2^(w-1) <= x < 2^w`, then widened ONCE to `out` by zero or sign
+    /// extension.
+    fn reference(stored: &UBig, out: ValueType, x: i64) -> bool {
+        let big_w = out.bit_width();
+        ValueType::SUPPORTED
+            .into_iter()
+            .filter(|t| t.is_integer())
+            .map(ValueType::bit_width)
+            .filter(|&w| w <= big_w && (w > 1 || big_w == 1))
+            .any(|w| {
+                let half = IBig::from(1) << (w - 1);
+                if IBig::from(x) < -half.clone() || IBig::from(x) >= (IBig::from(1) << w) {
+                    return false;
+                }
+                let low = low_of(x, w);
+                *stored == low
+                    || (low >= UBig::try_from(half).unwrap() && *stored == sext(&low, w, big_w))
+            })
+    }
+
+    /// A positive value whose top bit is set at its width, sign-extended to an
+    /// intermediate width and then zero-extended, is that value widened at no
+    /// single width, past the `u128` carrier as below it.
+    #[test]
+    fn a_chained_extension_is_no_single_widening() {
+        for (x, w, mid, out) in [
+            (200, 8, 64, 128),
+            (200, 8, 128, 256),
+            (200, 8, 256, 512),
+            (163, 8, 128, 256),
+        ] {
+            let stored = sext(&UBig::from(x as u8), w, mid);
+            let ty = ValueType::int(out);
+            assert!(!reference(&stored, ty, x), "{x} via I{mid} at I{out}");
+            assert!(
+                !super::value_at_some_width(&stored, ty, x as u128),
+                "{x} via I{mid} at I{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn any_width_agrees_with_the_exact_rule_up_to_512_bits() {
+        let mut rng = strider_ir_test_utils::Rng(0x5eed_0fa1_1000_0001);
+        let tys: Vec<ValueType> = ValueType::SUPPORTED
+            .into_iter()
+            .filter(|t| t.is_integer())
+            .collect();
+        let edge = |r: &mut strider_ir_test_utils::Rng| -> i64 {
+            match r.below(7) {
+                0 => r.below(600) as i64 - 300,
+                1 => -(1i64 << r.below(63)),
+                2 => (1i64 << r.below(63)) - r.below(3) as i64,
+                3 => -((1i64 << r.below(63)) - r.below(3) as i64),
+                4 => i64::MIN + r.below(3) as i64,
+                5 => i64::MAX - r.below(3) as i64,
+                _ => r.next_u64() as i64,
+            }
+        };
+        for _ in 0..300_000 {
+            let ty = tys[rng.below(tys.len())];
+            let big_w = ty.bit_width();
+            let x = edge(&mut rng);
+            let base = if rng.below(5) == 0 { edge(&mut rng) } else { x };
+            let widths: Vec<usize> = tys
+                .iter()
+                .map(|t| t.bit_width())
+                .filter(|&w| w <= big_w)
+                .collect();
+            let w1 = widths[rng.below(widths.len())];
+            let w2 = widths[rng.below(widths.len())].max(w1);
+            let l1 = low_of(base, w1);
+            let stored = match rng.below(7) {
+                0 => l1,
+                1 => sext(&l1, w1, big_w),
+                2 => sext(&l1, w1, w2),
+                3 => sext(&sext(&l1, w1, w2), w2, big_w),
+                4 => ones(big_w),
+                5 => {
+                    let mut v = UBig::from(rng.next_u64());
+                    for _ in 0..rng.below(8) {
+                        v = (v << 64) | UBig::from(rng.next_u64());
+                    }
+                    v
+                }
+                _ => sext(&l1, w1, big_w) ^ (UBig::from(1u8) << rng.below(big_w)),
+            } & ones(big_w);
+            assert_eq!(
+                super::value_at_some_width(&stored, ty, i128::from(x) as u128),
+                reference(&stored, ty, x),
+                "{x} at {ty:?}, stored {stored:#x}"
+            );
+        }
     }
 }

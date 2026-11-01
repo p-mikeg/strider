@@ -66,7 +66,7 @@ fn build_cc(
         crate::cc::CcImpl::Preset(preset) => preset.build(regs).map_err(|e| {
             into_strider_err(match addr {
                 None => e,
-                Some(addr) => anyhow::anyhow!("per-address CC at {addr:#x} unresolved: {e:?}"),
+                Some(addr) => e.context(format!("per-address CC at {addr:#x} unresolved")),
             })
         }),
         crate::cc::CcImpl::Custom(built) => Ok(*built.clone()),
