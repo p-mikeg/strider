@@ -4,7 +4,7 @@
 //! two arms that bind identically while covering different nodes collapse to
 //! one, and the first listed arm's `Match::matched_nodes` is the one kept.
 //! Give the arms distinct captures when that distinction matters.
-//! [`OneOf::first`] is the ordered variant, cutting to the first arm that
+//! [`OneOf::first`] is the ordered variant, keeping the first arm that
 //! yields a match. Captures under an arm that did not fire stay unbound, so
 //! `Match::value` / `node` returning `None` tells which arm won.
 
@@ -45,16 +45,26 @@ impl OneOf {
     /// one root, siblings as much as nested, run the continuation `m^k` times
     /// per root candidate for `m` matching arms each, with identically-binding
     /// arms collapsing in the dedup. It scales with the pattern, not the
-    /// graph. [`match_at`](crate::Matcher::match_at) stops at the first match;
-    /// [`OneOf::first`] cuts instead of enumerating.
+    /// graph. [`match_at`](crate::Matcher::match_at) stops at the first match,
+    /// unless the pattern holds a [`OneOf::first`].
     pub fn new(alts: Vec<BoxedAlt>) -> Self {
         Self(Expr::alt(alts.into_iter().map(|a| a.0).collect(), false))
     }
 
-    /// An ordered choice: cut to the first alternative that yields a match, and
-    /// report every binding THAT arm produces. An arm a guard above rejects
-    /// falls through to the next one; a winning arm with two commutative
-    /// orderings still reports both.
+    /// An ordered choice: at each IR node it is offered, keep only the matches
+    /// through the first-listed arm that yields one, whatever order the rest
+    /// of the pattern is tried in, and report every binding THAT arm produces.
+    /// Several in one match settle in the order they are written, an inner one
+    /// before the one holding it, each among the matches the earlier ones
+    /// kept. An arm a guard above rejects falls through to the next one; a
+    /// winning arm with two commutative orderings still reports both.
+    ///
+    /// # Cost
+    ///
+    /// A query holding one runs every configuration before it answers,
+    /// [`match_at`](crate::Matcher::match_at) included. The first one written
+    /// skips the arms past one that matched; any other runs every arm, as
+    /// [`OneOf::new`] does.
     pub fn first(alts: Vec<BoxedAlt>) -> Self {
         Self(Expr::alt(alts.into_iter().map(|a| a.0).collect(), true))
     }
@@ -86,8 +96,8 @@ macro_rules! one_of {
     };
 }
 
-/// `first_of![a, b, c]`: ordered choice, cutting to the first sub-pattern that
-/// yields a match. Takes the same arms as [`one_of!`].
+/// `first_of![a, b, c]`: ordered choice, keeping the first sub-pattern that
+/// yields a match; see [`OneOf::first`]. Takes the same arms as [`one_of!`].
 #[macro_export]
 macro_rules! first_of {
     ($($alt:expr),+ $(,)?) => {

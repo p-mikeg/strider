@@ -875,7 +875,10 @@ def first_of(patterns: Sequence[PatLike]) -> Pat:
 
     Same generality as `one_of` (any arm, any slot), but a first-match
     cut rather than a union: the first arm that matches wins and the rest
-    are not tried. Order the alternatives most-specific first, because a
+    are dropped. That holds at each node the alternation is offered,
+    whatever order the rest of the pattern is tried in; several `first_of`s
+    in one match settle in the order they are written, an inner one before
+    the one holding it. Order the alternatives most-specific first, because a
     permissive leading arm shadows everything after it. `anything()` and
     `var(c)` match ANY node::
 

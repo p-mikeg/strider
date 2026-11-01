@@ -392,23 +392,23 @@ when both IR slots hold the same value.
 - SP-alias precision rests on the claims a `Function` holds
   (`Function::assumptions`), which every SP-aware pass and classifier reads:
   `AnalyzeOptions.assumptions` seeds each round's fresh lift, and
-  `Function::assume` adds claims, withdrawing none.
-  `assumptions` is an `AssumptionOptions` of nine claims about the code being
-  analysed that the IR cannot prove, so a wrong one miscompiles; every field's
-  risky value is the positive one, five default ON (two,
-  `msr_register_keeps_mode` and `fp_rounding_mode_is_nearest`, are read by the
-  lift instead), and
+  `Function::assume` adds claims, withdrawing none. `assumptions` is an
+  `AssumptionOptions` of nine claims about the code being analysed that the IR
+  cannot prove, so a wrong one miscompiles; every field's risky value is the
+  positive one, five default ON (two, `msr_register_keeps_mode` and
+  `fp_rounding_mode_is_nearest`, are read by the lift instead), and
   `AssumptionOptions::none()`, not `::default()`, is the sound floor of those
   fields under any input whose memory behaves as RAM and whose floating-point
   controls (MXCSR.FTZ/DAZ, FPSCR.NI/OE/UE, FZ, FS) are the IEEE default. It is
   the floor, not the only sound setting: `callee_preserves_stack_args` is inert
-  without `escape_analysis` or a listed allocator. Per-field detail is on the struct
-  (`crates/strider-ir/src/function/assumptions.rs`). `LoadForward` is two analyzers: the
-  `alias` one is `MemPurpose::Forward` over `assumptions`, the `narrow` one
-  `MemPurpose::TableWalk`, the same claims less the call relaxations, because
-  the edge `narrow_load_to` rewires is read afterwards by walks that honour no
-  call relaxation (the table walk, and return-target verification with its
-  claim off). `FunctionArgDetect` narrows under the same row.
+  without `escape_analysis` or a listed allocator. Per-field detail is on the
+  struct (`crates/strider-ir/src/function/assumptions.rs`). `LoadForward` is two
+  analyzers: the `alias` one is `MemPurpose::Forward` over `assumptions`, the
+  `narrow` one `MemPurpose::TableWalk`, the same claims less the call
+  relaxations, because the edge `narrow_load_to` rewires is read afterwards by
+  walks that honour no call relaxation (the table walk, and return-target
+  verification with its claim off). `FunctionArgDetect` narrows under the same
+  row.
 
 ## strider-py
 
