@@ -481,8 +481,8 @@ impl PyLoadedElf {
     }
 
     /// Merge another ELF (e.g. a shared library) into this one, extending
-    /// the regions and symbol set; `Lifter._merge_elf` is the one caller, so
-    /// the decoder rebuilds over what `symbol` and `read` see. The
+    /// the regions and symbol set. The decoder then rebuilds over what `symbol`
+    /// and `read` see. The
     /// earlier-loaded ELF wins a name collision, and `relocated_got_is_rom` is
     /// this image's own claim.
     ///
@@ -880,17 +880,16 @@ impl PyLoadedElf {
             }
             out
         })?;
-        Ok(PySymbolIter { syms, next: 0 })
+        Ok(PySymbolIter(syms.into_iter()))
     }
 
     /// Every symbol pulled one at a time: a `Symbol` is built only when
     /// pulled, so the Python objects are never all live at once.  The Rust
     /// table is collected up front.
     fn iter_symbols(&self) -> PyResult<PySymbolIter> {
-        Ok(PySymbolIter {
-            syms: self.with_symbols(|t| t.syms.clone())?,
-            next: 0,
-        })
+        Ok(PySymbolIter(
+            self.with_symbols(|t| t.syms.clone())?.into_iter(),
+        ))
     }
 
     /// ELF entry-point address from the first loaded ELF.
@@ -1353,10 +1352,7 @@ pub fn register(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
 
 /// Yields `Symbol`s one at a time.
 #[pyo3::pyclass(name = "SymbolIter", module = "strider.reader")]
-pub struct PySymbolIter {
-    syms: Vec<PySymbol>,
-    next: usize,
-}
+pub struct PySymbolIter(std::vec::IntoIter<PySymbol>);
 
 #[pyo3::pymethods]
 impl PySymbolIter {
@@ -1365,16 +1361,12 @@ impl PySymbolIter {
     }
 
     fn __next__(&mut self) -> Option<PySymbol> {
-        let out = self.syms.get(self.next).cloned();
-        if out.is_some() {
-            self.next += 1;
-        }
-        out
+        self.0.next()
     }
 
     /// What is LEFT, not the total: CPython takes this as a length hint, so a
     /// partly consumed iterator would over-allocate.
     fn __len__(&self) -> usize {
-        self.syms.len() - self.next
+        self.0.len()
     }
 }

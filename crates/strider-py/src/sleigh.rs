@@ -47,17 +47,16 @@ impl PyVnSpace {
     /// The space's name (`"RAM"`, `"REGISTER"`, `"CONST"`, `"UNIQUE"`,
     /// or `"OTHER"`).
     pub(crate) fn name(&self) -> &'static str {
-        if self.inner == rsleigh::VnSpace::RAM {
-            "RAM"
-        } else if self.inner == rsleigh::VnSpace::REGISTER {
-            "REGISTER"
-        } else if self.inner == rsleigh::VnSpace::CONST {
-            "CONST"
-        } else if self.inner == rsleigh::VnSpace::UNIQUE {
-            "UNIQUE"
-        } else {
-            "OTHER"
-        }
+        use rsleigh::VnSpace as S;
+        [
+            (S::RAM, "RAM"),
+            (S::REGISTER, "REGISTER"),
+            (S::CONST, "CONST"),
+            (S::UNIQUE, "UNIQUE"),
+        ]
+        .into_iter()
+        .find_map(|(space, name)| (space == self.inner).then_some(name))
+        .unwrap_or("OTHER")
     }
 
     /// `VnSpace.<name>` (lowercased).

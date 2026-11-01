@@ -134,28 +134,28 @@ where
 /// through a constructor is re-extracted and re-validated like any other, so
 /// the reach is a caller confusing itself about its own options, not getting
 /// an unchecked value into the analysis.
-#[derive(Default)]
-struct MappingView(OnceLock<PyObject>);
+fn mapping_view<'py, T: IntoPy<PyObject> + Clone>(
+    view: &OnceLock<PyObject>,
+    py: Python<'py>,
+    source: &T,
+) -> PyResult<Bound<'py, PyAny>> {
+    memo_obj(view, py, || {
+        let proxy = py.import_bound("types")?.getattr("MappingProxyType")?;
+        proxy.call1((source.clone().into_py(py),))
+    })
+}
 
-impl MappingView {
-    fn get<'py, T: IntoPy<PyObject> + Clone>(
-        &self,
-        py: Python<'py>,
-        source: &T,
-    ) -> PyResult<Bound<'py, PyAny>> {
-        let obj = match self.0.get() {
-            Some(o) => o,
-            None => {
-                let dict = source.clone().into_py(py);
-                let proxy = py
-                    .import_bound("types")?
-                    .getattr("MappingProxyType")?
-                    .call1((dict,))?;
-                self.0.get_or_init(|| proxy.unbind())
-            }
-        };
-        Ok(obj.bind(py).clone())
+/// `view`'s object, built by `build` on first use.
+fn memo_obj<'py>(
+    view: &OnceLock<PyObject>,
+    py: Python<'py>,
+    build: impl FnOnce() -> PyResult<Bound<'py, PyAny>>,
+) -> PyResult<Bound<'py, PyAny>> {
+    if let Some(obj) = view.get() {
+        return Ok(obj.bind(py).clone());
     }
+    let obj = build()?.unbind();
+    Ok(view.get_or_init(|| obj).bind(py).clone())
 }
 
 /// CFG-shaping knobs, keyword-only.
@@ -165,7 +165,7 @@ pub struct PyCfgOptions {
     /// `function_max_size` and `allow_code_before_start_addr` as one extent.
     pub bound: strider_cfg::FunctionBound,
     /// Indirect-branch answers supplied by the caller, as
-    /// `{dispatch_address: [target_address, ...] | "return"}`, in the Python
+    /// `{dispatch_address: (target_address, ...) | "return"}`, in the Python
     /// form the getter hands back; `seated` is the same table as
     /// `strider_cfg` reads it.
     ///
@@ -187,9 +187,9 @@ pub struct PyCfgOptions {
     /// the entry instruction.
     pub data_ranges: strider_cfg::DataRanges,
     /// The three tables' Python faces.
-    known_targets_view: MappingView,
-    call_other_abis_view: MappingView,
-    no_return_targets_view: OnceLock<Py<pyo3::types::PyFrozenSet>>,
+    known_targets_view: OnceLock<PyObject>,
+    call_other_abis_view: OnceLock<PyObject>,
+    no_return_targets_view: OnceLock<PyObject>,
     /// `known_targets` in `strider_cfg`'s own form, seated at construction:
     /// every analyse through this object BORROWS it, so neither the seating
     /// nor a copy is charged per call.
@@ -223,6 +223,7 @@ struct OverridesMemo {
         strider_target::SleighArch,
         Arc<strider_target::call_other_abi::CallOtherOverrides>,
     )>,
+    #[cfg(feature = "test-hooks")]
     builds: usize,
 }
 
@@ -241,10 +242,13 @@ impl PyCfgOptions {
             .overrides
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let OverridesMemo { built, builds } = &mut *memo;
-        memo_per_arch(built, target, || {
+        let memo = &mut *memo;
+        memo_per_arch(&mut memo.built, target, || {
             let overrides = crate::strider_cls::overrides_from(&self.call_other_abis, target)?;
-            *builds += 1;
+            #[cfg(feature = "test-hooks")]
+            {
+                memo.builds += 1;
+            }
             Ok(overrides)
         })
     }
@@ -323,36 +327,29 @@ impl PyCfgOptions {
     }
 
     /// Indirect-branch answers supplied by the caller, as a read-only
-    /// `{dispatch_address: [target_address, ...] | "return"}` mapping.
+    /// `{dispatch_address: (target_address, ...) | "return"}` mapping.
     #[getter]
     fn known_targets<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        self.known_targets_view.get(py, &self.known_targets)
+        mapping_view(&self.known_targets_view, py, &self.known_targets)
     }
 
     /// Classifications for Sleigh user-op names, as a read-only
     /// `{name: strider.sleigh.CallOtherAbi}` mapping.
     #[getter]
     fn call_other_abis<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
-        self.call_other_abis_view.get(py, &self.call_other_abis)
+        mapping_view(&self.call_other_abis_view, py, &self.call_other_abis)
     }
 
     /// Direct-call targets that never return, as a `frozenset`.
     #[getter]
-    fn no_return_targets<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> PyResult<Bound<'py, pyo3::types::PyFrozenSet>> {
-        let set = match self.no_return_targets_view.get() {
-            Some(set) => set,
-            None => {
-                let set = pyo3::types::PyFrozenSet::new_bound(py, self.no_return_targets.iter())?;
-                self.no_return_targets_view.get_or_init(|| set.unbind())
-            }
-        };
-        Ok(set.bind(py).clone())
+    fn no_return_targets<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        memo_obj(&self.no_return_targets_view, py, || {
+            Ok(pyo3::types::PyFrozenSet::new_bound(py, &self.no_return_targets)?.into_any())
+        })
     }
 
     /// How many times `call_other_abis` was resolved for an analyse.
+    #[cfg(feature = "test-hooks")]
     fn _call_other_override_builds(&self) -> usize {
         self.overrides
             .lock()
@@ -675,7 +672,7 @@ pub struct PyLifterOptions {
     #[pyo3(get)]
     pub pipeline: Option<Py<PyOptimizerPipeline>>,
     /// `per_address_ccs`' Python face.
-    per_address_ccs_view: MappingView,
+    per_address_ccs_view: OnceLock<PyObject>,
 }
 
 impl PyLifterOptions {
@@ -754,7 +751,7 @@ impl PyLifterOptions {
             }),
             resolve_indirect_branches,
             pipeline,
-            per_address_ccs_view: MappingView::default(),
+            per_address_ccs_view: OnceLock::new(),
         })
     }
 
@@ -763,7 +760,7 @@ impl PyLifterOptions {
     #[getter]
     fn per_address_ccs<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
         match &self.per_address_ccs {
-            Some(table) => self.per_address_ccs_view.get(py, &table.py).map(Some),
+            Some(table) => mapping_view(&self.per_address_ccs_view, py, &table.py).map(Some),
             None => Ok(None),
         }
     }

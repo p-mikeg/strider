@@ -75,8 +75,6 @@ fn _strider(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     force_anyhow_backtrace_capture();
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add_function(pyo3::wrap_pyfunction!(viz_standalone_js, m)?)?;
-    // Top-level so the pure-Python facade (`_api.py`) can reach it as
-    // `_ext._load_elf`.
     m.add_function(pyo3::wrap_pyfunction!(reader::load_elf, m)?)?;
     // StriderError is the one cross-cutting symbol kept at the top level.
     errors::register(py, m)?;

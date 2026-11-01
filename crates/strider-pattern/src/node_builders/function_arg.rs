@@ -179,11 +179,11 @@ node_match_pat! {
 mod tests {
     use super::function_arg;
     use crate::capture::Capture;
-    use crate::node_builders::staged_shape;
+    use crate::node_builders::pattern_shape;
 
     /// Characterizes the lowering: one kind-`Any` node, one value output at
     /// slot 0 carrying every capture, and the index / class / source filter on
-    /// the node predicate. Re-homing this onto `Node` has to reproduce it.
+    /// the node predicate.
     #[test]
     fn function_arg_lowering_declares_one_node_and_one_value_output() {
         let pat = function_arg(2)
@@ -191,7 +191,7 @@ mod tests {
             .capture(Capture::new())
             .build();
         assert_eq!(
-            staged_shape(&pat),
+            pattern_shape(&pat),
             "n0 Any caps=0 pred=1 Operands { ordered: false }\n\
              \x20 out v0 AnyValue slot=0 mode=Loose width=None caps=2 ident=0 token=0\n\
              root=Ok(0) total_nodes=1\n",

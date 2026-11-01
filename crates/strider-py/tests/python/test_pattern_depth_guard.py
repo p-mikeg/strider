@@ -209,3 +209,81 @@ def test_a_raising_index_surfaces_its_own_error():
 
     with pytest.raises(ValueError, match="from __index__"):
         p.load().addr(Boom()).into_pat()  # type: ignore[arg-type]
+
+
+
+def _on_small_thread_child(kib: int, setup: str, loop: str):
+    """Run `loop` on fresh `kib` KiB threads in a child, since a SIGSEGV takes
+    the whole process down."""
+    body = textwrap.dedent(
+        f"""\
+        import threading
+
+        import strider
+        from strider import pattern as p
+
+        mem = strider.reader.BufferReader(0x1000, bytes([0x48, 0x01, 0xF8, 0xC3]))
+        lift = strider.lift.lifter(strider.sleigh.SleighArch.x86_64(), mem)
+        fn = lift.analyze(
+            0x1000, strider.sleigh.CallingConvention.x86_64_systemv()
+        ).function
+        threading.stack_size({kib} * 1024)
+        """
+    )
+    body += textwrap.dedent(setup) + textwrap.dedent(loop)
+    return subprocess.run(
+        [sys.executable, "-c", body], capture_output=True, text=True, timeout=120
+    )
+
+
+@pytest.mark.parametrize("kib", [32, 40, 64])
+@pytest.mark.parametrize("shape", ["value", "builder", "join"])
+def test_the_stack_refusal_itself_fits_a_minimal_thread(kib, shape):
+    """The refusal is raised on the stack the guard just declared spent, so
+    building it must cost next to nothing: resolving a Rust backtrace there
+    was a SIGSEGV on a 32 KiB thread. Each depth runs on a fresh thread until
+    one refuses."""
+    fits = _on_small_thread_child(
+        kib,
+        "",
+        """\
+        t = threading.Thread(target=lambda: fn.find_all(p.load(p.anything())))
+        t.start()
+        t.join()
+        """,
+    )
+    if fits.returncode != 0:
+        pytest.skip("this build's first pattern level alone overflows the thread")
+    setup = f"""\
+        a = p.Capture("A")
+
+        def build(n):
+            if {shape!r} == "value":
+                pat = p.anything()
+                for _ in range(n):
+                    pat = p.int_add(pat, p.anything())
+                return pat
+            pat = p.anything().capture(a)
+            for _ in range(n):
+                pat = p.load(pat)
+            return [pat, p.load(p.var(a))] if {shape!r} == "join" else pat
+
+        def run(n, out):
+            try:
+                fn.find_all(build(n))
+            except strider.StriderError as e:
+                out.append(str(e))
+        """
+    loop = """\
+        for n in range(1, 200):
+            out = []
+            t = threading.Thread(target=run, args=(n, out))
+            t.start()
+            t.join()
+            if out:
+                print("raised", out[0], flush=True)
+                break
+        """
+    out = _on_small_thread_child(kib, setup, loop)
+    assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
+    assert out.stdout.startswith("raised"), out.stdout

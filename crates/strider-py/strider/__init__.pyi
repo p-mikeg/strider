@@ -27,17 +27,17 @@ __all__: list[str]
 
 class StriderError(Exception):
     """Raised when an analysis fails, when a pattern is built into an
-    invalid shape, and for a bad argument, unless the conversion itself
-    rejects it (`TypeError` for the wrong type, `OverflowError` for an int
-    out of range, though an `entry` out of range raises this), it is a
-    range-checked option (`ValueError`, such as
-    `CfgOptions(function_max_size=0)`, an unknown `known_targets` string, an
-    empty `data_ranges` range or a `BufferReader` region past the address
-    space), an ELF `load_elf` cannot lift (`ValueError`), or a missing file
-    (`FileNotFoundError`). The message
-    carries the error and its causes; `.backtrace` carries that same message
-    followed by the Rust backtrace, and `STRIDER_BACKTRACE=1` folds the
-    backtrace into the message too."""
+    invalid shape, and for a bad argument. The exceptions are a wrong type
+    (`TypeError`), an int out of range (`OverflowError`, though an `entry`
+    out of range raises `StriderError`), a range-checked option
+    (`ValueError`, such as `CfgOptions(function_max_size=0)`, an unknown
+    `known_targets` string, an empty `data_ranges` range or a `BufferReader`
+    region past the address space), an ELF `load_elf` cannot lift
+    (`ValueError`), and a missing `load_elf` path (`FileNotFoundError`). The
+    message carries the error and its causes; `.backtrace` carries that same
+    message followed by the Rust backtrace (empty when a pattern's nesting or
+    size is refused), and `STRIDER_BACKTRACE=1` folds the backtrace into the
+    message too."""
 
     backtrace: str
     ...

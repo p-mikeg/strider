@@ -17,6 +17,7 @@ pub(crate) use vertex::{InputSlot, OutputKindSpec, PatNode, PatValue, Role, Slot
 pub use vertex::{KindSpec, NodePredicate, PostMatchFn};
 
 use std::cell::OnceCell;
+use std::collections::BTreeMap;
 use std::mem::Discriminant;
 
 use either::Either;
@@ -137,8 +138,8 @@ impl<'f> Matcher<'f> {
     }
 
     /// The IR nodes to attempt `pat` at, in walk order: a discriminant-rooted
-    /// pattern's kind, an alternation root's arm kinds one walk each, every
-    /// reachable node for a kind-`Any` root.
+    /// pattern's kind, an alternation root's arm kinds one after another,
+    /// every reachable node for a kind-`Any` root.
     fn candidates<'p, I: Iterator<Item = NodeId> + 'p>(
         &'p self,
         pat: &Pattern,
@@ -146,15 +147,26 @@ impl<'f> Matcher<'f> {
         walk: impl Fn() -> I + 'p,
     ) -> impl Iterator<Item = NodeId> + 'p {
         let f = self.function;
+        let is = move |n: NodeId, d| std::mem::discriminant(f.node_kind(n)) == d;
         // Deduplicated, so no node is offered twice and no match is reported
         // twice.
         let kinds = root_kind_discriminant(pat, root)
             .map(|d| vec![d])
             .or_else(|| alternation_kind_discriminants(pat, root));
         match kinds {
-            Some(ds) => Either::Left(ds.into_iter().flat_map(move |d| {
-                walk().filter(move |&n| std::mem::discriminant(f.node_kind(n)) == d)
-            })),
+            // One walk, filtered once per kind.
+            Some(ds) if ds.len() > 1 => {
+                let order: Vec<NodeId> = walk().collect();
+                let by_kind: Vec<NodeId> = ds
+                    .into_iter()
+                    .flat_map(|d| order.iter().copied().filter(move |&n| is(n, d)))
+                    .collect();
+                Either::Left(Either::Left(by_kind.into_iter()))
+            }
+            Some(ds) => Either::Left(Either::Right(
+                ds.into_iter()
+                    .flat_map(move |d| walk().filter(move |&n| is(n, d))),
+            )),
             None => Either::Right(walk()),
         }
     }
@@ -559,25 +571,16 @@ pub enum JoinConstraint {
 /// level and abort on the free, after every walk over it has already returned.
 impl Drop for JoinConstraint {
     fn drop(&mut self) {
-        let mut stack = Vec::new();
-        take_children(self, &mut stack);
-        while let Some(mut child) = stack.pop() {
-            take_children(&mut child, &mut stack);
-        }
-    }
-}
-
-/// Steals `c`'s sub-constraints, leaving a leaf whose own drop is trivial.
-fn take_children(c: &mut JoinConstraint, out: &mut Vec<JoinConstraint>) {
-    match c {
-        JoinConstraint::Not(inner) => {
-            out.push(core::mem::replace(
+        match self {
+            Self::Not(inner) => crate::node_builders::defer_drop(std::mem::replace(
                 &mut **inner,
-                JoinConstraint::And(Vec::new()),
-            ));
+                Self::And(Vec::new()),
+            )),
+            Self::Or(list) | Self::And(list) => {
+                crate::node_builders::defer_drop(std::mem::take(list));
+            }
+            _ => {}
         }
-        JoinConstraint::Or(list) | JoinConstraint::And(list) => out.append(list),
-        _ => {}
     }
 }
 
@@ -659,14 +662,6 @@ impl<'a> Row<'a> {
             Row::Full(tuple) => Either::Right(tuple.iter()),
         }
     }
-
-    /// `Some` once the row is complete.
-    fn as_tuple(&self) -> Option<&'a JoinedMatch> {
-        match *self {
-            Row::Full(tuple) => Some(tuple),
-            Row::Indices { .. } => None,
-        }
-    }
 }
 
 impl JoinConstraint {
@@ -733,16 +728,10 @@ struct Kleene {
 }
 
 impl Kleene {
-    fn or() -> Self {
+    /// `true` for OR, `false` for AND.
+    fn new(dominant: bool) -> Self {
         Self {
-            dominant: true,
-            saw_unknown: false,
-        }
-    }
-
-    fn and() -> Self {
-        Self {
-            dominant: false,
+            dominant,
             saw_unknown: false,
         }
     }
@@ -849,8 +838,8 @@ impl<'f> ConstraintEval<'f> {
                         next = &**inner;
                         continue;
                     }
-                    JoinConstraint::Or(cs) => (Kleene::or(), cs),
-                    JoinConstraint::And(cs) => (Kleene::and(), cs),
+                    JoinConstraint::Or(cs) => (Kleene::new(true), cs),
+                    JoinConstraint::And(cs) => (Kleene::new(false), cs),
                     leaf => break self.leaf_passes(leaf, tuple),
                 };
                 let mut rest = cs.iter();
@@ -944,7 +933,9 @@ impl<'f> ConstraintEval<'f> {
                 ref captures,
                 ref pred,
             } => {
-                let full = tuple.as_tuple()?;
+                let Row::Full(full) = tuple else {
+                    return None;
+                };
                 // Unbound declared capture => unanswerable: drop the row before
                 // `pred` runs (sound under `Not`; matches the built-ins).
                 if captures.iter().any(|&c| self.node_of(tuple, c).is_none()) {
@@ -1040,10 +1031,10 @@ impl<'f> ConstraintEval<'f> {
 /// first one seen identifies it. Where that first binder binds the node, rows
 /// differing only in which of its outputs a later one bound collapse.
 fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>) {
-    let mut seen: FxHashSet<Vec<(u32, Binding)>> = FxHashSet::default();
+    let mut seen: FxHashSet<BTreeMap<u32, Binding>> = FxHashSet::default();
     acc.retain(|tuple| {
-        let mut sig: Vec<(u32, Binding)> = Vec::new();
-        let mut sig_ids: FxHashSet<u32> = FxHashSet::default();
+        // Keyed and so sorted by id, the first binder of each kept.
+        let mut sig: BTreeMap<u32, Binding> = BTreeMap::new();
         for (slot, m) in tuple.iter().enumerate() {
             if m.bindings.iter().next().is_none() {
                 // Keyed by tuple POSITION, so two capture-free patterns get
@@ -1051,21 +1042,15 @@ fn dedup_on_shared_captures(acc: &mut Vec<JoinedMatch>) {
                 // ids count up from 0, so counting down from `u32::MAX` cannot
                 // collide with one for any tuple that fits in memory.
                 let slot_id = u32::MAX - u32::try_from(slot).unwrap_or(0);
-                sig.push((slot_id, Binding::Node(m.root())));
+                sig.insert(slot_id, Binding::Node(m.root()));
                 continue;
             }
             for (cap, binding) in m.bindings.iter() {
-                if sig_ids.insert(cap.id()) {
-                    sig.push((cap.id(), binding));
-                }
+                sig.entry(cap.id()).or_insert(binding);
             }
         }
         // Nothing to key on; never dedup.
-        if sig.is_empty() {
-            return true;
-        }
-        sig.sort_unstable_by_key(|(id, _)| *id);
-        seen.insert(sig)
+        sig.is_empty() || seen.insert(sig)
     });
 }
 
@@ -1241,21 +1226,21 @@ mod kleene_tests {
 
     #[test]
     fn or_truth_dominates_then_unknown_poisons() {
-        assert_eq!(fold(Kleene::or(), [U, T, F]), T);
+        assert_eq!(fold(Kleene::new(true), [U, T, F]), T);
         // Unknown poisons a would-be `false`.
-        assert_eq!(fold(Kleene::or(), [F, U, F]), U);
-        assert_eq!(fold(Kleene::or(), [F, F]), F);
+        assert_eq!(fold(Kleene::new(true), [F, U, F]), U);
+        assert_eq!(fold(Kleene::new(true), [F, F]), F);
         // Identity of `Or`.
-        assert_eq!(fold(Kleene::or(), []), F);
+        assert_eq!(fold(Kleene::new(true), []), F);
     }
 
     #[test]
     fn and_falsity_dominates_then_unknown_poisons() {
-        assert_eq!(fold(Kleene::and(), [U, F, T]), F);
+        assert_eq!(fold(Kleene::new(false), [U, F, T]), F);
         // Unknown poisons a would-be `true`.
-        assert_eq!(fold(Kleene::and(), [T, U, T]), U);
-        assert_eq!(fold(Kleene::and(), [T, T]), T);
+        assert_eq!(fold(Kleene::new(false), [T, U, T]), U);
+        assert_eq!(fold(Kleene::new(false), [T, T]), T);
         // Identity of `And`.
-        assert_eq!(fold(Kleene::and(), []), T);
+        assert_eq!(fold(Kleene::new(false), []), T);
     }
 }

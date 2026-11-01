@@ -40,8 +40,7 @@ pub(crate) enum Slot {
     Root,
 }
 
-/// One pattern, lowered by [`MatchPat`](crate::MatchPat) or
-/// [`TemplatePat`](crate::TemplatePat).
+/// One pattern, lowered once into either side's builder.
 #[doc(hidden)]
 pub struct Expr(Inner);
 
@@ -286,9 +285,8 @@ impl From<ConstWith> for Expr {
 }
 
 /// The build side of the escape hatch. An `Expr` is not a
-/// [`TemplatePat`](crate::TemplatePat), so
-/// a Rust rewrite cannot take one as its RHS; a match-only part refuses the
-/// template through its root.
+/// [`TemplatePat`](crate::TemplatePat), so a Rust rewrite cannot take one as
+/// its RHS; a match-only part refuses the template through its root.
 impl Expr {
     #[doc(hidden)]
     pub fn into_template(self) -> crate::Template {
@@ -355,15 +353,14 @@ impl Expr {
     /// pattern was written with. The slot's own retyping lands on the output
     /// the expression nests through, an alternation's arms each taking it on
     /// theirs.
-    ///
-    /// Each arm is its own function: an unoptimised frame holds every arm's
-    /// locals, and this one is on the stack once per recursion step.
     pub(crate) fn lower(
         mut self,
         b: &mut MatcherBuilder,
         slot: Slot,
         ordered: bool,
     ) -> PatValueRef {
+        // Each arm is its own function: an unoptimised frame holds every
+        // arm's locals, and this one is on the stack once per recursion step.
         let out = match self.take() {
             Inner::Leaf(l) => {
                 let out = l.lower(b);
@@ -504,8 +501,6 @@ fn lower_alt(
 }
 
 /// Each operand feeds several slots; the pin is what makes them agree on it.
-/// `float_le`'s `Less` orders its pair already, and `float_is_nan` has one
-/// operand, so there is no pair to order.
 fn lower_shared(
     b: &mut MatcherBuilder,
     operands: Vec<Expr>,
@@ -552,9 +547,10 @@ fn lower_deco(
     annotate(b, out, d, slot)
 }
 
-/// Kept out of [`lower_deco`]'s frame, which is on the stack once per link.
-/// A control slot retypes `out` first, so a typed guard sees it untyped.
+/// Applies `d` to `out`. A control slot retypes `out` first, so a typed guard
+/// sees it untyped.
 fn annotate(b: &mut MatcherBuilder, out: PatValueRef, d: Deco, slot: Slot) -> PatValueRef {
+    // Kept out of `lower_deco`'s frame, which is on the stack once per link.
     if slot == Slot::Control {
         b.set_output_control(out);
     }
@@ -820,13 +816,11 @@ impl Node {
     /// Why the node can never match a `slot` consumer: it nests through no
     /// output of the slot's kind.
     fn misfit(&self, slot: Slot) -> Option<String> {
-        let outputless = [
+        let outputless = self.kind.is_variant_in(&[
             NodeKind::Return,
             NodeKind::IndirectBranch,
             NodeKind::Unreachable,
-        ]
-        .iter()
-        .any(|k| self.kind.discriminant() == Some(std::mem::discriminant(k)));
+        ]);
         let (what, name) = match (slot, self.anchor_for(slot)) {
             (Slot::Value, AnchorKind::Memory(_)) => ("nesting through a memory token", "value"),
             (Slot::Control, AnchorKind::Memory(_)) => ("nesting through a memory token", "control"),
@@ -851,15 +845,14 @@ impl Node {
     /// Lowers into `b` for a `slot` consumer, through the anchor it reads,
     /// an anchorless node through a synthesized `Any` output. With no slot,
     /// on its own anchor: `None` for an anchorless kind like `Return` / `If`.
-    ///
-    /// The fields stay in the box: this frame is on the stack once per
-    /// nesting level, and an unoptimised one holds every local it names.
     fn lower(
         mut self: Box<Self>,
         b: &mut MatcherBuilder,
         slot: Option<Slot>,
         ordered: bool,
     ) -> Option<PatValueRef> {
+        // The fields stay in the box: this frame is on the stack once per
+        // nesting level, and an unoptimised one holds every local it names.
         let anchor = slot.map_or(self.anchor, |s| self.anchor_for(s));
         let inputs = self.lower_inputs(b);
         let node = b.node(std::mem::replace(&mut self.kind, KindSpec::Any));
@@ -1151,7 +1144,7 @@ mod tests {
     /// `inputs_of_width`, which constrains the node it wraps.
     #[test]
     fn a_slot_reaches_the_arms_under_inputs_of_width() {
-        use crate::node_builders::staged_shape;
+        use crate::node_builders::pattern_shape;
         use crate::{anything, call, inputs_of_width, one_of, store, var};
         let arms = |shape: String| -> Vec<String> {
             shape
@@ -1163,13 +1156,13 @@ mod tests {
         let ctrl = call()
             .ctrl(inputs_of_width(8, one_of![call(), store()]))
             .build();
-        let ctrl = arms(staged_shape(&ctrl));
+        let ctrl = arms(pattern_shape(&ctrl));
         assert!(
             ctrl[..2].iter().all(|l| l.contains(" Control ")),
             "{ctrl:?}"
         );
         let root = inputs_of_width(8, one_of![var(crate::Capture::new()), anything()]);
-        let root = arms(staged_shape(&root.into_pattern()));
+        let root = arms(pattern_shape(&root.into_pattern()));
         assert!(root[..2].iter().all(|l| l.ends_with("token=1")), "{root:?}");
     }
 
