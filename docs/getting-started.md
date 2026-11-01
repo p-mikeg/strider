@@ -154,3 +154,4 @@ first; its "Breaking, Python" section says how to port each of these:
   pipeline=...)`, and takes `assumptions=` in place of `opts=`.
 - `Lifter.visualize(target)` is `strider.explore.visualize(target)`.
 - `AssumptionOptions` is unhashable and compares by value.
+- `bool(m[c])` raises `TypeError`: test `m[c].has` or `c in m`.

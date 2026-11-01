@@ -59,9 +59,13 @@ impl PyVnSpace {
         .unwrap_or("OTHER")
     }
 
-    /// `VnSpace.<NAME>`, the class constant it is.
+    /// `VnSpace.<NAME>`, its class constant, or `<VnSpace OTHER 'c'>` for a
+    /// space with none, `c` being the shortcut its `Vn`s print with.
     fn __repr__(&self) -> String {
-        format!("VnSpace.{}", self.name())
+        match self.name() {
+            "OTHER" => format!("<VnSpace OTHER {:?}>", self.inner.shortcut()),
+            name => format!("VnSpace.{name}"),
+        }
     }
 }
 

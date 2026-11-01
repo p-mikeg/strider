@@ -6,7 +6,7 @@ use crate::macros::forall_preset;
 /// `Preset` resolves its static register names against a Sleigh lazily, at
 /// consumption time.  `Custom` is resolved eagerly instead, so typos and
 /// ABI-invariant violations in user-supplied names surface at construction.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub(crate) enum CcImpl {
     Preset(strider_target::CallingConvention),
     Custom(Box<strider_target::BuiltCallingConvention>),
@@ -15,8 +15,17 @@ pub(crate) enum CcImpl {
 /// A calling convention.  Construct via a preset classmethod (e.g.
 /// `CallingConvention.x86_64_systemv()`) or `CallingConvention.custom(...)`
 /// for a binary whose ABI matches no built-in preset.
-#[pyclass(name = "CallingConvention", module = "strider.sleigh", frozen)]
-#[derive(Clone)]
+///
+/// Equal when the same constructor calls built both: a `custom` never equals
+/// a preset, nor one resolved against another preset, as for `CallOtherAbi`.
+#[pyclass(
+    name = "CallingConvention",
+    module = "strider.sleigh",
+    frozen,
+    eq,
+    hash
+)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PyCallingConvention {
     pub(crate) inner: CcImpl,
     pub(crate) preset_name: &'static str,
