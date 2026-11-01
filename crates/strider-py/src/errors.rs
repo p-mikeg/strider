@@ -18,10 +18,10 @@ create_exception!(
      `BufferReader` region past the address space), an ELF `load_elf` cannot \
      lift (`ValueError`), and a missing `load_elf` path \
      (`FileNotFoundError`). The message carries the error and its causes; \
-     `.backtrace` carries that same message followed by the Rust backtrace, \
-     resolved when first read (empty on a `StriderError` raised from \
-     Python), and `STRIDER_BACKTRACE=1` folds the backtrace into the message \
-     too."
+     `.backtrace` carries the error and its causes followed by the Rust \
+     backtrace, resolved when first read (empty on a `StriderError` raised \
+     from Python), and `STRIDER_BACKTRACE=1` folds the backtrace into the \
+     message too."
 );
 
 thread_local! {
@@ -64,8 +64,8 @@ impl ErrorOrigin {
     }
 }
 
-/// The message followed by the Rust backtrace, resolved when first read;
-/// empty on a `StriderError` raised from Python.
+/// The error and its causes followed by the Rust backtrace, resolved when
+/// first read; empty on a `StriderError` raised from Python.
 #[pyfunction]
 fn backtrace(err: &Bound<'_, PyAny>) -> PyResult<PyObject> {
     let py = err.py();

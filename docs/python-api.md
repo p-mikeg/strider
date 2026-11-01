@@ -675,8 +675,12 @@ captures nothing, `one_of([load(), anything()])` answers exactly what
 is the **ordered** variant: at each node it is offered, the first listed arm
 that yields any match wins, whatever order the rest of the pattern is tried
 in, so a permissive leading arm shadows the rest; list most-specific first.
-Several `first_of`s in one match settle in the order they are written, an inner
-one before the one holding it. Any pattern kind is a valid arm, including the
+Several `first_of`s in one match settle in pattern order: operands left to
+right, a builder's setters in the order its reference lists them, an inner one
+before the one holding it, each among the matches the earlier ones kept. A
+query holding a `first_of` runs every configuration of the pattern before it
+answers, unless it captures nothing and finds a match through the first arm of
+every `first_of`, where it stops. Any pattern kind is a valid arm, including the
 node-rooted control builders (`ret` / `if_else` / `switch` / `indirect_branch`
 / `unreachable`).
 
@@ -743,7 +747,9 @@ function.find_unique_value(pat, off)          # the single captured VALUE, or No
 `ignore_casts` takes a bool or a `CastMask`, which picks the casts the matcher
 walks through: `CastMask.zero_extend()`, `.sign_extend()`, `.extend()` (both),
 `.truncate()`, `.int_bits_to_float()`, `.float_bits_to_int()`, `.all()` and
-`.none()`, combined with `|` and `&`.
+`.none()`, combined with `|` and `&`. Each operand under such a cast keeps only
+the matches at the outermost level any match reached, so a query under a mask
+runs every configuration of the pattern, as a `first_of` does.
 
 `find_unique` fails if there are two *structurally distinct* matches even when
 they bind the same value. `find_unique_value(pat, capture)` deduplicates by the
@@ -1179,9 +1185,9 @@ raise `StriderError` for an unbound capture (use `has()` or the `_opt` readers
 to avoid that), and for a `Match` read after `compact`, `optimize`, `rewrite` or
 `rewrite_all` ran on the function.
 
-The message is the error and its causes; `.backtrace` holds the message and the
-Rust backtrace, resolved when first read, so a sweep can log it without
-re-running:
+The message is the error and its causes; `.backtrace` holds the error, its
+causes and the Rust backtrace, resolved when first read, so a sweep can log it
+without re-running:
 
 ```python
 import logging
