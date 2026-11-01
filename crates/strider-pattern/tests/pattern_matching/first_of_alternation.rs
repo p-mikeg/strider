@@ -515,3 +515,159 @@ fn a_shared_first_of_settles_per_node_whatever_the_enumeration_order() {
     assert_eq!(b_first, [(Some(1), true, false)]);
     assert_eq!(under_sibling(&f, false, inner, caps), b_first);
 }
+
+/// The kinds `x` binds in `pat`'s matches, sorted.
+fn x_kinds(f: &strider_ir::Function, pat: &strider_pattern::Pattern, x: Capture) -> Vec<String> {
+    let mut v: Vec<String> = Matcher::new(f)
+        .find_all(pat)
+        .unwrap()
+        .iter()
+        .map(|h| format!("{:?}", f.node_kind(f.producer(h.value(x).unwrap()))))
+        .collect();
+    v.sort();
+    v
+}
+
+/// The cut `first_of` sits under a cast ladder. Skipping an arm that a later
+/// configuration would have matched must not send the ladder through the cast
+/// to a match the uncut search never offers, so the answer does not move with
+/// a sibling union's arm order.
+#[test]
+fn a_cut_first_of_under_a_cast_ladder_ignores_a_siblings_arm_order() {
+    let vn = super::support::reg_vn(0x40, 4);
+    let mut t = Tb::with_vars(&[vn]);
+    let r = t.read_var(&vn);
+    let zx = t.zext_to(r, strider_ir::node::ValueType::int(64));
+    let five = t.u64(5);
+    let sum = t.add(five, zx);
+    let f = t.ret_val(sum);
+    let x = Capture::new();
+    let rows = |var_first: bool| {
+        let sibling = if var_first {
+            one_of![var(x), anything()]
+        } else {
+            one_of![anything(), var(x)]
+        };
+        let pat = int_add(sibling, first_of![var(x), anything()])
+            .ordered()
+            .into_pattern()
+            .ignore_casts();
+        x_kinds(&f, &pat, x)
+    };
+    assert_eq!(rows(true), rows(false));
+}
+
+/// A `first_of` shared by both operands of one node is offered the same IR
+/// node twice per match and may take a different arm each time. The filter
+/// keeps the lowest arm SEQUENCE there, so a guard needing both arms keeps its
+/// one match.
+#[test]
+fn a_first_of_offered_one_node_twice_keeps_a_guarded_match() {
+    let mut t = Tb::empty();
+    let x = t.f64(1.5);
+    let eq = t.fcmp(x, x, strider_ir::FloatCmpOp::Equal);
+    let one = t.boolean(true);
+    let nan = t.bool_bin(eq, one, IntBinaryOp::Xor);
+    let f = t.ret_val(nan);
+    let (a, b) = (Capture::new(), Capture::new());
+    let pat = strider_pattern::float_is_nan(first_of![var(a), var(b)])
+        .when_match(move |_, _, bd| bd.get_value(a).is_some() && bd.get_value(b).is_some())
+        .into_pattern();
+    assert_eq!(Matcher::new(&f).find_all(&pat).unwrap().len(), 1);
+}
+
+/// Two outputs of one node are two values offered: an arm's match at one
+/// proves nothing at the other. At `v1` only the second arm matches, so it
+/// stays beside the first arm's match at `v0`.
+#[test]
+fn two_outputs_of_one_node_settle_a_first_of_apart() {
+    let rax = super::support::reg_vn(0, 8);
+    let rdx = super::support::reg_vn(16, 8);
+    let mut t = Tb::with_vars(&[rax, rdx]);
+    t.call_other("op", 1, &[], Some(rax), &[], &[rdx]);
+    let v0 = t.read_var(&rax);
+    let v1 = t.read_var(&rdx);
+    let sum = t.add(v0, v1);
+    let r = t.int_bin(sum, v0, IntBinaryOp::Xor);
+    let f = t.ret_val(r);
+    assert_eq!(f.producer(v0), f.producer(v1));
+    let (fc, x) = (Capture::new(), Capture::new());
+    let pat = int_xor(
+        int_add(first_of![var(x), anything()].capture(fc), anything()),
+        var(x),
+    )
+    .ordered()
+    .into_pattern();
+    let mut got: Vec<_> = Matcher::new(&f)
+        .find_all(&pat)
+        .unwrap()
+        .iter()
+        .map(|h| h.value(fc).unwrap().as_u32())
+        .collect();
+    got.sort_unstable();
+    let mut want = [v0.as_u32(), v1.as_u32()];
+    want.sort_unstable();
+    assert_eq!(got, want);
+}
+
+/// A single-answer query stops at its first match when that match took the
+/// first arm of every choice, each once: the filter keeps it first. Here the
+/// natural ordering of the commutative `add(5, mul)` is that match, so the
+/// swapped one, through the second arm, never runs.
+#[test]
+fn a_single_answer_query_stops_at_a_first_arm_match() {
+    let f = neg_add_5_mul();
+    let runs = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::clone(&runs);
+    let pat = int_add(
+        first_of![strider_pattern::any_int_const(), anything()],
+        anything(),
+    )
+    .when_match(move |_, _, _| {
+        seen.fetch_add(1, Ordering::Relaxed);
+        true
+    })
+    .into_pattern();
+    let m = Matcher::new(&f);
+    assert_eq!(m.find_all(&pat).unwrap().len(), 1);
+    assert_eq!(runs.swap(0, Ordering::Relaxed), 1);
+    let add = (f.graph().all_node_ids())
+        .find(|&n| matches!(f.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .unwrap();
+    assert!(m.match_at(add, &pat).unwrap().is_some());
+    assert_eq!(runs.load(Ordering::Relaxed), 1);
+}
+
+/// The match that stops a single-answer query need not be the first found:
+/// any match through the first arm of every choice, each made once, is kept.
+/// On `add(5, mul)` the first union arm offers its `first_of` the `mul`, so
+/// that match takes the second arm; the second union arm's first-arm match at
+/// `5` then stops the query before its own second arm runs.
+#[test]
+fn a_single_answer_query_stops_at_a_later_first_arm_match() {
+    let f = neg_add_5_mul();
+    let runs = Arc::new(AtomicUsize::new(0));
+    let counted = |p: strider_pattern::MatchOnly| {
+        let seen = Arc::clone(&runs);
+        p.when_match(move |_, _, _| {
+            seen.fetch_add(1, Ordering::Relaxed);
+            true
+        })
+    };
+    let ordered = int_add(
+        anything(),
+        first_of![strider_pattern::any_int_const(), anything()],
+    )
+    .ordered();
+    let swapped = int_add(
+        first_of![strider_pattern::any_int_const(), anything()],
+        anything(),
+    )
+    .ordered();
+    let pat = one_of![counted(ordered), counted(swapped)].into_pattern();
+    let add = (f.graph().all_node_ids())
+        .find(|&n| matches!(f.node_kind(n), NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .unwrap();
+    assert!(Matcher::new(&f).match_at(add, &pat).unwrap().is_some());
+    assert_eq!(runs.load(Ordering::Relaxed), 2);
+}
