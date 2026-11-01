@@ -34,10 +34,10 @@ class StriderError(Exception):
     `known_targets` string, an empty `data_ranges` range or a `BufferReader`
     region past the address space), an ELF `load_elf` cannot lift
     (`ValueError`), and a missing `load_elf` path (`FileNotFoundError`). The
-    message carries the error and its causes; `.backtrace` carries that same
-    message followed by the Rust backtrace, resolved when first read (empty on
-    a `StriderError` raised from Python), and `STRIDER_BACKTRACE=1` folds the
-    backtrace into the message too."""
+    message carries the error and its causes; `.backtrace` carries the error
+    and its causes followed by the Rust backtrace, resolved when first read
+    (empty on a `StriderError` raised from Python), and `STRIDER_BACKTRACE=1`
+    folds the backtrace into the message too."""
 
     backtrace: str
     ...
