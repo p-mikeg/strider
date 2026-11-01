@@ -91,7 +91,9 @@ impl MatcherBuilder {
     /// Like [`Self::one_of`] but an ordered choice, not a union: see
     /// [`crate::OneOf::first`]. An arm rejected by a guard above the
     /// alternation produces no match, so the choice falls through to the next
-    /// arm.
+    /// arm. Each output a root match anchors on settles on its own; one
+    /// offered several values settles them in IR node id order, then value id
+    /// order.
     pub fn first_of(&mut self, alts: &[PatValueRef]) -> PatValueRef {
         self.alternation(alts, Role::FirstOf)
     }

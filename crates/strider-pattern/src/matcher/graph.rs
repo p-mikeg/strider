@@ -15,10 +15,8 @@ pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 /// thread gets by default.
 pub const MAX_PATTERN_NODES: usize = 256;
 
-/// Nodes a match attempt recurses through: every vertex once per consumer slot
-/// that reaches it, so a sub-pattern feeding two slots is charged twice.
-/// Saturating, and never below the raw node count, so a multi-sink graph still
-/// reports its size.
+/// [`unfolded`] at weight one, saturating, and never below the raw node
+/// count, so a multi-sink graph still reports its size.
 ///
 /// Taken over every node rather than from the root, which is not derived yet
 /// and may not exist.
@@ -243,7 +241,9 @@ impl Pattern {
     }
 
     /// Adds `m` to the cast-walk-through mask; the matcher then skips the
-    /// selected cast kinds transparently.
+    /// selected cast kinds transparently. A query under a mask runs every
+    /// configuration before it answers, [`match_at`](crate::Matcher::match_at)
+    /// included.
     pub fn ignore_casts_mask(mut self, m: CastMask) -> Self {
         self.cast_mask |= m;
         self

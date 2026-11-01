@@ -95,8 +95,8 @@ GIL, so the two run in parallel. A handle decodes the image as it stood when
 it was built, so `add_elf` every ELF first.
 
 An analysis failure is a `strider.StriderError`, and its `.backtrace` carries
-the message followed by the Rust backtrace; `STRIDER_BACKTRACE=1` folds that
-backtrace into the message too.
+the error and its causes followed by the Rust backtrace; `STRIDER_BACKTRACE=1`
+folds that backtrace into the message too.
 
 ## Where to go next
 
