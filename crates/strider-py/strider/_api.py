@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import stat as _stat
 import struct
-from typing import TYPE_CHECKING, Iterator, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Mapping, Optional, Union
 
 # Resolve the extension submodule by its full dotted path so `_ext` is
 # unambiguous regardless of what `__init__.py` binds into the package
@@ -29,9 +29,9 @@ if TYPE_CHECKING:
     # `_ext` is an opaque module to a checker, so its attributes come back as
     # `Any`; the stub imports below are the same classes with their real types.
     from .cfg import Cfg, CfgOptions
-    from .lift import Lifter, LifterOptions
+    from .lift import AnalyzeResult, Lifter, LifterOptions
     from .pattern import CaptureKey, LoadPat, Match, Pat, StorePat, ValueLike
-    from .reader import BufferReader, MemLike, RomLike, Symbol
+    from .reader import BufferReader, MemLike, RomLike, Symbol, SymbolIter
     from .sleigh import CallingConvention, SleighArch
 else:
     CallingConvention = _ext.sleigh.CallingConvention
@@ -262,10 +262,12 @@ def load_elf(
     place but strider cannot read or decode may relocate. Any other image with
     such a table serves none of its writable mappings.
 
-    `relocated_got_is_rom` (default `False`) additionally serves `.got` and
-    `.data.rel.ro` as READ-ONLY memory, so a load through a GOT slot folds to
-    the address the slot holds. It is what resolves a PIC jump table whose
-    base comes out of the GOT.
+    `relocated_got_is_rom` (default `False`) additionally serves `.got`
+    (PPC32's `.got2` too) and `.data.rel.ro` as READ-ONLY memory, so a load
+    through a GOT slot folds to the address the slot holds. It is what
+    resolves a PIC jump table whose base comes out of the GOT. PPC32 code
+    that relocates its own `.got2` (Linux's `prom_init` `reloc_got2`,
+    `-mrelocatable` `.fixup`) breaks the claim.
 
     An image with a table its dynamic tags place that strider cannot read or
     decode serves neither.
@@ -355,8 +357,9 @@ class ElfLifter(Lifter):
         mem: "MemLike",
         rom: Optional["RomLike"] = None,
     ) -> None:
-        """Attach the ELF backend and default calling convention; `arch`,
-        `mem` and `rom` were already consumed by `__new__`."""
+        """Do not call this directly; use `load_elf`. Attaches the ELF
+        backend and default calling convention; `arch`, `mem` and `rom` were
+        already consumed by `__new__`."""
         del arch, mem, rom
         self._elf = elf
         # Every base `Lifter.analyze` takes its own convention; this is the
@@ -391,17 +394,20 @@ class ElfLifter(Lifter):
             return f"ElfLifter(cc={self._cc.name()})"
         return f"ElfLifter(arch={arch}, cc={self._cc.name()})"
 
-    def functions(self) -> Iterator["Symbol"]:
+    def functions(self) -> SymbolIter:
         """The function symbols in address order, one per address: aliases of
         an address already listed are excluded, preferring the one whose size
         the ELF records. A function with no recorded size is still yielded,
-        with `Symbol.size` `None`."""
-        return iter(self._elf.functions())
+        with `Symbol.size` `None`.
 
-    def iter_symbols(self) -> Iterator["Symbol"]:
+        A cursor, not a container: `len()` reports what is LEFT to pull."""
+        return self._elf.functions()
+
+    def iter_symbols(self) -> SymbolIter:
         """Every symbol pulled one at a time, so the `Symbol` objects are
-        never all live at once. The Rust table is built up front."""
-        return iter(self._elf.iter_symbols())
+        never all live at once. The Rust table is built up front. `len()`
+        reports what is LEFT to pull, so a consumed cursor shrinks."""
+        return self._elf.iter_symbols()
 
     def symbol(self, name: str) -> "Symbol":
         """The `Symbol` named `name`: its definition in the first ELF that
@@ -419,9 +425,9 @@ class ElfLifter(Lifter):
         """The symbol covering `address`: the nearest one at or below it whose
         recorded extent reaches `address`. A symbol with no recorded size
         covers only its own address, and aliases sharing an address are ranked
-        by having a recorded extent first, then by being code, so a sized data
-        alias wins over an unsized function one. `None` when nothing covers
-        `address`."""
+        by having a recorded extent first, then by being code, so a sized DATA
+        alias outranks an unsized CODE one; `functions()` filters to code
+        instead. `None` when nothing covers `address`."""
         return self._elf.symbol_at(address)
 
     def symbols(self) -> Mapping[str, "Symbol"]:
@@ -514,6 +520,14 @@ class ElfLifter(Lifter):
         An ELF already carrying a name keeps its own answer for that name."""
         self._elf.add_symbols(symbols, is_function=is_function)
 
+    if TYPE_CHECKING:
+
+        def reader(self) -> BufferReader:
+            """The `BufferReader` over the regions `load_elf` mapped: PT_LOAD
+            segments unless `from_segments=False`. The base `Lifter.reader`,
+            narrowed."""
+            ...
+
     def build_cfg(self, entry: int, opts: Optional[CfgOptions] = None) -> Cfg:
         """`Lifter.build_cfg`, with the options `analyze` derives from the
         ELF: its `$d` mapping symbols as `data_ranges` unless `opts` names
@@ -527,16 +541,18 @@ class ElfLifter(Lifter):
         entry: Union[str, int],
         cc: Optional[CallingConvention] = None,
         opts: Optional[LifterOptions] = None,
-    ):
+    ) -> AnalyzeResult:
         """Lift the function at `entry`, a symbol name or an address,
         returning the same `AnalyzeResult` as `Lifter.analyze`.
 
         A `str` entry is resolved through the ELF symbol table, and its
         recorded size bounds the lift unless `opts.cfg.function_max_size` is
-        set. Unless `opts.cfg.data_ranges` names some, the ELF's `$d` mapping
-        symbols supply them. A `no_return_targets` address or
-        `per_address_ccs` key that is a ppc64 ELFv2 symbol's `address` also
-        covers its `Symbol.local_entry`. `cc` defaults to this handle's
+        set; the bound drops `allow_code_before_start_addr`. Unless
+        `opts.cfg.data_ranges` names some, the ELF's `$d` mapping symbols
+        supply them, so a literal pool is never decoded as code. A
+        `no_return_targets` address or `per_address_ccs` key that is a ppc64
+        ELFv2 symbol's `address` also covers its `Symbol.local_entry`, where a
+        call sharing its TOC lands. `cc` defaults to this handle's
         convention.
 
         Raises `TypeError` when `entry` is neither `str` nor `int`, and

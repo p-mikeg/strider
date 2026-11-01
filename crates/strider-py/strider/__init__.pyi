@@ -35,9 +35,9 @@ class StriderError(Exception):
     region past the address space), an ELF `load_elf` cannot lift
     (`ValueError`), and a missing `load_elf` path (`FileNotFoundError`). The
     message carries the error and its causes; `.backtrace` carries that same
-    message followed by the Rust backtrace (empty when a pattern's nesting or
-    size is refused), and `STRIDER_BACKTRACE=1` folds the backtrace into the
-    message too."""
+    message followed by the Rust backtrace, resolved when first read (empty on
+    a `StriderError` raised from Python), and `STRIDER_BACKTRACE=1` folds the
+    backtrace into the message too."""
 
     backtrace: str
     ...
