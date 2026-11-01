@@ -673,26 +673,28 @@ bindings, so order carries no meaning and a downstream constraint can pick the
 arm it needs. A match is identified by what it binds, so two arms matching one
 node with the same bindings are one match: at the root of a pattern that
 captures nothing, `one_of([load(), anything()])` answers exactly what
-`anything()` does, and the arms need a capture to tell them apart. `first_of`
-is the **ordered** variant: at each value it is offered (each output of a node
-is its own), the first listed arm that yields any match wins, whatever order
-the rest of the pattern is tried in, so a permissive leading arm shadows the
-rest; list most-specific first. A match reaching one `first_of` twice
-(`float_is_nan` and `float_le` read their operands twice) counts the
-later-listed arm it took. Several `first_of`s in one match settle in pattern
-order: operands left to right, a builder's own slots in its fixed order, then
-its `any_input`s, then its `input`s, whatever order the setters were called
-in, an inner one before the one holding it, each among the matches the earlier
-ones kept. The fixed orders: `load` addr, mem; `store` addr, data, mem; `call`
-target, ctrl, args, mem; `call_other` ctrl, mem, args; `ret` ctrl, return
-values; `indirect_branch` target, ctrl, mem; `unreachable` ctrl; `switch`
+`anything()` does, and the arms need a capture to tell them apart. `first_of` is
+the **ordered** variant: at each value it is offered (each output of a node is
+its own), the first listed arm that yields any match wins, whatever order the
+rest of the pattern is tried in, so a permissive leading arm shadows the rest;
+list most-specific first. A match reaching one `first_of` twice at one value
+(`float_is_nan` and `float_le` read their operands twice) wins there if it took
+the first arm any match took at both reads; when none did, the reads settle in
+order, each through the first arm that yields a match. Several `first_of`s in
+one match settle in pattern order: operands left to right, a `one_of`'s arms as
+listed, a builder's own slots in its fixed order, then its `any_input`s, then
+its `input`s, a repeated setter in call order and the rest whatever order they
+were called in, an inner one before the one holding it, each among the matches
+the earlier ones kept. The fixed orders: `load` addr, mem; `store` addr, data,
+mem; `call` target, ctrl, args, mem; `call_other` ctrl, mem, args; `ret` ctrl,
+return values; `indirect_branch` target, ctrl, mem; `unreachable` ctrl; `switch`
 selector, ctrl; `if_else` cond, ctrl; `phi` / `mem_phi` inputs, phi_token.
 Repeated setters (`arg`, `ret_val`, `phi_input`, `any_input`, `input`) keep
 their call order. A query holding a `first_of` runs every configuration of the
-pattern before it answers, unless it captures nothing and finds a match
-through the first arm of every `first_of`, walking through no cast, where it
-stops. Any pattern kind is a valid arm, including the node-rooted control
-builders (`ret` / `if_else` / `switch` / `indirect_branch` / `unreachable`).
+pattern before it answers, unless it captures nothing and finds a match through
+the first arm of every `first_of`, walking through no cast, where it stops. Any
+pattern kind is a valid arm, including the node-rooted control builders (`ret` /
+`if_else` / `switch` / `indirect_branch` / `unreachable`).
 
 ### `field` / `code_ptr`, the two canonical-form alternations
 
@@ -759,12 +761,12 @@ walks through: `CastMask.zero_extend()`, `.sign_extend()`, `.extend()` (both),
 `.truncate()`, `.int_bits_to_float()`, `.float_bits_to_int()`, `.all()` and
 `.none()`, combined with `|` and `&`. Each operand under such a cast keeps only
 the matches at the outermost level any match the `first_of`s kept reached.
-Several such operands settle in pattern order, each among the matches the
-earlier ones kept, as several `first_of`s do, so a guard coupling two of them
-answers by which is written first. A query under a mask runs every
-configuration of the pattern, as a `first_of` does, unless it captures nothing
-and finds a match through the first arm of every `first_of`, walking through
-no cast, where it stops.
+Several such operands settle in pattern order, an inner one before the one
+holding it, each among the matches the earlier ones kept, as several `first_of`s
+do, so a guard coupling two of them answers by which is written first. A query
+under a mask runs every configuration of the pattern, as a `first_of` does,
+unless it captures nothing and finds a match through the first arm of every
+`first_of`, walking through no cast, where it stops.
 
 `find_unique` fails if there are two *structurally distinct* matches even when
 they bind the same value. `find_unique_value(pat, capture)` deduplicates by the
@@ -826,7 +828,8 @@ for hit in function.find_all(p.load(addr=p.int_add(p.anything(), p.int_const(off
 `pattern.CaptureKey` is the type alias for the capture argument, a `Capture`
 or its name, and `.capture()` takes it too. `hit[c]` is a `BoundCapture`,
 which carries `has` and the numeric conversions alone. It has no truth value:
-`if hit[c]` raises `TypeError`, so test `hit[c].has` or `int(hit[c])`.
+`if hit[c]` raises `TypeError`, so test `hit[c].has` for whether it bound and
+read `int(hit[c])` for its value.
 
 ---
 

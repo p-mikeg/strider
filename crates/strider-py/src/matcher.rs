@@ -363,8 +363,7 @@ impl PyBoundCapture {
     fn __index__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.__int__(py)
     }
-    /// No truth value: `if m[c]` would read as "bound" and as "nonzero"
-    /// alike, and be neither.
+    /// Raises: a `BoundCapture` has no truth value.
     fn __bool__(&self) -> PyResult<bool> {
         Err(pyo3::exceptions::PyTypeError::new_err(
             "a BoundCapture has no truth value: use m[c].has (or c in m) for \
@@ -412,12 +411,14 @@ impl PyBoundCapture {
             _ => py.NotImplemented(),
         })
     }
-    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
-        Ok(match self.unsigned(py)? {
-            Some(v) => format!("BoundCapture({v:#x})"),
-            None if self.has(py)? => "BoundCapture(<node>)".to_string(),
-            None => "BoundCapture(unbound)".to_string(),
-        })
+    /// A repr must not raise; a stale match renders as such.
+    fn __repr__(&self, py: Python<'_>) -> String {
+        match (self.unsigned(py), self.has(py)) {
+            (Ok(Some(v)), _) => format!("BoundCapture({v:#x})"),
+            (Ok(None), Ok(true)) => "BoundCapture(<node>)".to_string(),
+            (Ok(None), Ok(false)) => "BoundCapture(unbound)".to_string(),
+            _ => "BoundCapture(stale)".to_string(),
+        }
     }
 }
 
