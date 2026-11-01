@@ -83,6 +83,12 @@ impl<'py> FromPyObject<'py> for PyBigInt {
 /// `ob` as an integer, or `None` when it is not one at all.
 pub(crate) fn py_big_int(ob: &Bound<'_, PyAny>) -> PyResult<Option<PyBigInt>> {
     let py = ob.py();
+    // A failed extract is not always "not an integer": a `__index__` that
+    // itself raises would read as one, and the next candidate would call it
+    // again. For a re-entrant one that is two recursions per level: the depth
+    // guard fires, its error is swallowed, and the retry walks the tree
+    // exponentially. Only `TypeError` and `OverflowError` mean the object is
+    // not this kind of operand.
     let wrong_kind = |e: &PyErr| {
         e.is_instance_of::<pyo3::exceptions::PyTypeError>(py)
             || e.is_instance_of::<pyo3::exceptions::PyOverflowError>(py)

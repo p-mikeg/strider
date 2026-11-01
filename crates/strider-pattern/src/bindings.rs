@@ -1,9 +1,7 @@
 //! Capture-to-binding journal backing every pattern match.
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{
-    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
-};
+use strider_ir::{FloatBinaryOp, FloatCmpOp, FloatUnaryOp, Graph, IRViewer};
 
 use crate::capture::Capture;
 
@@ -24,8 +22,7 @@ pub(crate) enum Binding {
 /// `Capture` to a different value fails the containing match.
 ///
 /// Backtracking is journal-based: a speculative sub-match calls `mark` first
-/// and `restore` on failure, which drops the entry `Vec`'s tail. A pattern
-/// binds a handful of captures, so a lookup scans the journal.
+/// and `restore` on failure, which drops the entry `Vec`'s tail.
 #[derive(Clone, Default)]
 pub struct Bindings {
     /// In production order, one entry per capture.
@@ -45,8 +42,7 @@ pub(crate) struct BindingsMark {
 }
 
 // The `NodeKind` variant name doubles as the returned op type, so one
-// `$variant` token drives both. `get_bool_binary_op` needs an extra I1 check
-// and stays hand-written below.
+// `$variant` token drives both.
 macro_rules! op_extractor {
     ($(#[$attr:meta])* $fn:ident => $variant:ident) => {
         $(#[$attr])*
@@ -94,6 +90,7 @@ impl Bindings {
     }
 
     pub(crate) fn get_binding(&self, c: Capture) -> Option<Binding> {
+        // A pattern binds a handful of captures, so a lookup scans the journal.
         self.entries.iter().find(|(e, _)| *e == c).map(|&(_, b)| b)
     }
 
@@ -161,17 +158,6 @@ impl Bindings {
         function.int_const(self.get_value(c)?).cloned()
     }
 
-    /// Sign-extended from the output type's bit width. Unbounded: a constant
-    /// at any declared width comes back whole.
-    pub fn get_int(&self, c: Capture, function: &strider_ir::Function) -> Option<strider_ir::IBig> {
-        function.int_const_ibig(self.get_value(c)?)
-    }
-
-    /// A boolean constant is an `IntConst` typed `I1`.
-    pub fn get_bool(&self, c: Capture, function: &strider_ir::Function) -> Option<bool> {
-        function.bool_const_val(self.get_value(c)?)
-    }
-
     /// `None` for a non-value output kind (`Control` / `Memory` /
     /// `PhiToken`) as well as for the usual unbound / control-flow cases.
     pub fn get_type(
@@ -192,34 +178,6 @@ impl Bindings {
     }
 
     op_extractor! {
-        get_int_binary_op => IntBinaryOp
-    }
-
-    op_extractor! {
-        get_int_unary_op => IntUnaryOp
-    }
-
-    op_extractor! {
-        get_int_cmp_op => IntCmpOp
-    }
-
-    /// A boolean binary op is an `IntBinaryOp` whose output is `I1`.
-    pub fn get_bool_binary_op(&self, c: Capture, graph: &Graph) -> Option<IntBinaryOp> {
-        let node = self.get_node(c, graph)?;
-        let NodeKind::IntBinaryOp(op) = graph.node_kind(node) else {
-            return None;
-        };
-        let value = self.get_value(c)?;
-        if !graph.value_kind(value).as_value()?.is_bool() {
-            return None;
-        }
-        Some(*op)
-    }
-
-    // Boolean NOT is `Xor(x, IntConst(1)):I1`, so a bool unary op comes back
-    // from `get_bool_binary_op` as `IntBinaryOp::Xor`.
-
-    op_extractor! {
         get_float_binary_op => FloatBinaryOp
     }
 
@@ -238,7 +196,7 @@ impl Bindings {
 mod tests {
     use super::*;
     use strider_ir::node::ValueType;
-    use strider_ir::{IRBuilderExt, IRViewer, IRWalker};
+    use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
     use strider_ir_test_utils::make_empty_fn;
 
     #[test]
@@ -345,29 +303,6 @@ mod tests {
         assert_eq!(bindings.get_uint(v, &function), Some(wide));
     }
 
-    /// The signed reader is unbounded too: an `I256` all-ones comes back as
-    /// -1, where an `i128` carrier answered `None`.
-    #[test]
-    fn get_int_reads_a_constant_past_the_carrier() {
-        use strider_ir::{IBig, UBig};
-        let mut c_value = None;
-        let function = make_empty_fn(|b| {
-            let c = b.build_all_ones(ValueType::int(256)).unwrap();
-            c_value = Some(c);
-            Ok(c)
-        })
-        .expect("build graph");
-
-        let mut bindings = Bindings::default();
-        let v = Capture::new();
-        assert!(bindings.bind_capture(v, Binding::Value(c_value.unwrap())));
-        assert_eq!(bindings.get_int(v, &function), Some(IBig::NEG_ONE));
-        assert_eq!(
-            bindings.get_uint(v, &function),
-            Some((UBig::ONE << 256usize) - UBig::ONE)
-        );
-    }
-
     #[test]
     fn get_uint_returns_none_when_not_an_int_const() {
         let mut s_value = None;
@@ -390,7 +325,7 @@ mod tests {
     }
 
     #[test]
-    fn get_int_binary_op_reads_op_variant_through_bound_capture() {
+    fn get_node_reads_a_node_binding() {
         let mut s_value = None;
         let function = make_empty_fn(|b| {
             let av = b.build_int_const(1u64, ValueType::int(64)).unwrap();
@@ -408,10 +343,8 @@ mod tests {
         let mut bindings = Bindings::default();
         let v = Capture::new();
         assert!(bindings.bind_capture(v, Binding::Node(add_node)));
-        assert_eq!(
-            bindings.get_int_binary_op(v, function.graph()),
-            Some(IntBinaryOp::Add)
-        );
+        assert_eq!(bindings.get_node(v, function.graph()), Some(add_node));
+        assert_eq!(bindings.get_value(v), None);
     }
 
     #[test]
@@ -423,13 +356,7 @@ mod tests {
         assert_eq!(bindings.get_value(v), None);
         assert_eq!(bindings.get_node(v, function.graph()), None);
         assert_eq!(bindings.get_uint(v, &function), None);
-        assert_eq!(bindings.get_int(v, &function), None);
-        assert_eq!(bindings.get_bool(v, &function), None);
         assert_eq!(bindings.get_float_bits(v, function.graph()), None);
-        assert_eq!(bindings.get_int_binary_op(v, function.graph()), None);
-        assert_eq!(bindings.get_int_unary_op(v, function.graph()), None);
-        assert_eq!(bindings.get_int_cmp_op(v, function.graph()), None);
-        assert_eq!(bindings.get_bool_binary_op(v, function.graph()), None);
         assert_eq!(bindings.get_float_binary_op(v, function.graph()), None);
         assert_eq!(bindings.get_float_unary_op(v, function.graph()), None);
         assert_eq!(bindings.get_float_cmp_op(v, function.graph()), None);

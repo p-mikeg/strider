@@ -9,7 +9,7 @@ use std::sync::Mutex;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyString, PyTuple};
 use rustc_hash::{FxBuildHasher, FxHashMap};
-use strider_ir::node::ValueType as T;
+use strider_ir::node::{FunctionArgSource, ValueType as T};
 
 use strider_pattern as sp;
 use strider_pattern::node_builders::defer_drop;
@@ -126,7 +126,7 @@ impl Slot {
 /// What a `Repr` is, beyond how it lowers.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Kind {
-    /// `strider.template` has a twin.
+    /// Buildable: `strider.template` has a twin.
     Build,
     Match,
     /// Constrains the node it wraps, which `.ordered()` looks through.
@@ -339,16 +339,7 @@ fn derive(slf: &Bound<'_, PyPat>, wrap: Wrap, more: Option<PyObject>) -> PyResul
     })
 }
 
-/// `ob` as the u128 `IntConst` interns, or `None` when it is not an integer at
-/// all. Signed first so a negative keeps its two's-complement bits, then
-/// unsigned for `[2^127, 2^128)`, which `i128` cannot hold.
-///
-/// `Bound::extract` discards the exception the conversion raised, so a
-/// `__index__` that itself raises reads as "not an integer" and the next
-/// candidate calls it again. For a re-entrant one that is two recursions per
-/// level: the depth guard fires, its error is swallowed here, and the retry
-/// walks the tree exponentially. Only `TypeError` and `OverflowError` mean the
-/// object is not this kind of operand.
+/// `ob` as an integer of any width, or `None` when it is not an integer at all.
 fn extract_int_operand(ob: &Bound<'_, PyAny>) -> PyResult<Option<strider_ir::IBig>> {
     crate::bigint::py_big_int(ob)?
         .map(crate::bigint::PyBigInt::value)
@@ -478,7 +469,7 @@ fn parse_value_ty(name: &str) -> PyResult<T> {
 
 // The per-query walk is native recursion mirroring the Python pattern tree's
 // depth, so a pathologically deep pattern would overflow the Rust stack and
-// abort the process. The two bounds below turn that abort into an exception.
+// abort the process. The bounds below turn that abort into an exception.
 //
 // They bound the WALK, and the `.capture()` / `.when()` / `.of_width()` chain
 // at construction. They do NOT bound the other three ways to nest: a free
@@ -500,8 +491,8 @@ const MAX_PATTERN_NESTING: u32 = 512;
 ///
 /// Depth alone does not bound the work: a `Pat` used in two operands
 /// (`q = int_add(q, q)`) lowers once per use, so each level of reuse doubles
-/// the boxed sub-patterns, and every one of them is built before anything is
-/// staged for the matcher's own node cap to refuse. Well past
+/// the boxed sub-patterns, and every one of them is built before the matcher's
+/// own node cap sees the pattern. Well past
 /// [`strider_pattern::MAX_PATTERN_NODES`], so no pattern a query can run is
 /// refused here.
 const MAX_COMPILE_STEPS: u64 = 4096;
@@ -543,8 +534,14 @@ fn frame_mark() -> usize {
     std::hint::black_box(std::ptr::from_ref(&probe)) as usize
 }
 
+/// A refusal raised where the stack may be spent, so it skips anyhow: resolving
+/// the backtrace `into_strider_err` formats overflows a small thread's stack.
+fn stack_refusal(msg: String) -> PyErr {
+    crate::errors::StriderError::new_err(msg)
+}
+
 fn too_deep() -> PyErr {
-    into_strider_err(anyhow::anyhow!(
+    stack_refusal(format!(
         "pattern nesting too deep: over {MAX_PATTERN_NESTING} levels. That is \
          the loosest bound; this thread's stack budget and the matcher's own \
          node cap both reject shallower patterns still"
@@ -571,7 +568,7 @@ impl DepthGuard {
                 let used = STACK_BASE.get().saturating_sub(here);
                 let budget = STACK_BUDGET.get();
                 if used > budget {
-                    return Err(into_strider_err(anyhow::anyhow!(
+                    return Err(stack_refusal(format!(
                         "pattern nesting too deep for this thread's stack ({} KiB \
                          used of a {} KiB compile budget at {next} levels; give the \
                          thread a larger stack_size, or nest less)",
@@ -582,7 +579,7 @@ impl DepthGuard {
             }
             let steps = COMPILE_STEPS.get() + 1;
             if steps > MAX_COMPILE_STEPS {
-                return Err(into_strider_err(anyhow::anyhow!(
+                return Err(stack_refusal(format!(
                     "pattern too large to compile: over {MAX_COMPILE_STEPS} lowered \
                      nodes. A Pat used in two operands (q = int_add(q, q)) lowers \
                      once per use, so each level of reuse doubles the pattern; a \
@@ -936,52 +933,44 @@ builders!(
 /// Selects which value-passthrough cast node kinds the matcher walks through
 /// transparently. Build from the classmethods, combine with `|`, and pass as
 /// `find_all(pat, ignore_casts=...)`.
-#[pyclass(name = "CastMask", module = "strider.pattern", frozen)]
-#[derive(Clone, Copy)]
+#[pyclass(eq, hash, name = "CastMask", module = "strider.pattern", frozen)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PyCastMask {
     pub(crate) inner: strider_pattern::CastMask,
 }
 
+/// One classmethod per row, in its own `#[pymethods]` block.
 macro_rules! forall_castmask {
-    ($name:ident => $value:ident) => {
-        #[pymethods]
-        impl PyCastMask {
-            #[doc = concat!(
-                                                "The `", stringify!($value),
-                                                "` cast mask, for the matcher to walk through."
-                                            )]
-            #[classmethod]
-            fn $name(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-                Self {
-                    inner: strider_pattern::CastMask::$value,
-                }
-            }
-        }
-    };
-    ($name:ident => fn $value:ident, $doc:literal) => {
+    ($($name:ident => $value:expr, $doc:literal;)*) => {$(
         #[pymethods]
         impl PyCastMask {
             #[doc = $doc]
             #[classmethod]
             fn $name(_cls: &Bound<'_, pyo3::types::PyType>) -> Self {
-                Self {
-                    inner: strider_pattern::CastMask::$value(),
-                }
+                Self { inner: $value }
             }
         }
-    };
+    )*};
 }
 
-forall_castmask!(zero_extend => ZERO_EXTEND);
-forall_castmask!(sign_extend => SIGN_EXTEND);
-forall_castmask!(extend => EXTEND);
-forall_castmask!(truncate => TRUNCATE);
-forall_castmask!(int_bits_to_float => INT_BITS_TO_FLOAT);
-forall_castmask!(float_bits_to_int => FLOAT_BITS_TO_INT);
-forall_castmask!(all => fn all,
-    "Every value-passthrough cast, so the matcher walks through all of them.");
-forall_castmask!(none => fn empty,
-    "No cast at all, so the matcher walks through none of them.");
+forall_castmask! {
+    zero_extend => sp::CastMask::ZERO_EXTEND,
+        "The `ZERO_EXTEND` cast mask, for the matcher to walk through.";
+    sign_extend => sp::CastMask::SIGN_EXTEND,
+        "The `SIGN_EXTEND` cast mask, for the matcher to walk through.";
+    extend => sp::CastMask::EXTEND,
+        "The `EXTEND` cast mask, for the matcher to walk through.";
+    truncate => sp::CastMask::TRUNCATE,
+        "The `TRUNCATE` cast mask, for the matcher to walk through.";
+    int_bits_to_float => sp::CastMask::INT_BITS_TO_FLOAT,
+        "The `INT_BITS_TO_FLOAT` cast mask, for the matcher to walk through.";
+    float_bits_to_int => sp::CastMask::FLOAT_BITS_TO_INT,
+        "The `FLOAT_BITS_TO_INT` cast mask, for the matcher to walk through.";
+    all => sp::CastMask::all(),
+        "Every value-passthrough cast, so the matcher walks through all of them.";
+    none => sp::CastMask::empty(),
+        "No cast at all, so the matcher walks through none of them.";
+}
 
 #[pymethods]
 impl PyCastMask {
@@ -994,12 +983,6 @@ impl PyCastMask {
         Self {
             inner: self.inner & other.inner,
         }
-    }
-    fn __eq__(&self, other: &Self) -> bool {
-        self.inner == other.inner
-    }
-    fn __hash__(&self) -> u64 {
-        u64::from(self.inner.bits())
     }
     /// The mask as a raw integer bitset.
     fn bits(&self) -> u32 {
@@ -1040,7 +1023,9 @@ impl PyPat {
     /// anything else is a `TypeError`, so a predicate that forgot to return
     /// is an error rather than a rejection. Raising aborts the whole query and
     /// re-raises out of `find_all` / `find_unique`, every later candidate
-    /// failing without running the predicate.
+    /// failing without running the predicate. It may run on a partial match
+    /// the full match rejects, more than once, or not at all for a candidate
+    /// another operand's node kind already rules out.
     fn when(slf: &Bound<'_, Self>, f: PyObject) -> PyResult<PyPat> {
         derive(slf, Wrap::When, Some(f))
     }
@@ -2820,7 +2805,7 @@ node_builder! {
 /// `.source_register(vn)`, `.source_stack(space, offset)`.
 #[pyclass(name = "FunctionArgPat", module = "strider.pattern")]
 pub struct PyFunctionArgPat {
-    source: std::cell::RefCell<Option<strider_ir::node::FunctionArgSource>>,
+    source: std::cell::RefCell<Option<FunctionArgSource>>,
     /// Which index space `index` names; `Any` unless a constructor pinned it.
     class: std::cell::RefCell<strider_pattern::FunctionArgClass>,
     index: std::cell::RefCell<Option<u32>>,
@@ -2837,11 +2822,15 @@ impl Drop for PyFunctionArgPat {
 }
 
 impl PyFunctionArgPat {
-    fn new() -> Self {
+    fn new(
+        class: strider_pattern::FunctionArgClass,
+        index: Option<u32>,
+        source: Option<FunctionArgSource>,
+    ) -> Self {
         Self {
-            source: std::cell::RefCell::new(None),
-            class: std::cell::RefCell::new(strider_pattern::FunctionArgClass::Any),
-            index: std::cell::RefCell::new(None),
+            source: std::cell::RefCell::new(source),
+            class: std::cell::RefCell::new(class),
+            index: std::cell::RefCell::new(index),
             common: std::cell::RefCell::new(CommonState::default()),
         }
     }
@@ -2885,9 +2874,7 @@ impl PyFunctionArgPat {
     /// Constrain to an argument sourced from register varnode `vn` or a register containing it.
     fn source_register(slf: PyRef<'_, Self>, vn: crate::sleigh::PyVn) -> PyRef<'_, Self> {
         slf.source
-            .replace(Some(strider_ir::node::FunctionArgSource::Register(
-                vn.inner,
-            )));
+            .replace(Some(FunctionArgSource::Register(vn.inner)));
         slf
     }
     /// Constrain to an argument sourced from the stack at `(space, offset)`.
@@ -2896,12 +2883,15 @@ impl PyFunctionArgPat {
         space: crate::sleigh::PyVnSpace,
         offset: i128,
     ) -> PyRef<'_, Self> {
-        slf.source
-            .replace(Some(strider_ir::node::FunctionArgSource::Stack {
-                space: space.inner,
-                offset,
-            }));
+        slf.source.replace(Some(stack_source(space, offset)));
         slf
+    }
+}
+
+fn stack_source(space: crate::sleigh::PyVnSpace, offset: i128) -> FunctionArgSource {
+    FunctionArgSource::Stack {
+        space: space.inner,
+        offset,
     }
 }
 
@@ -2910,53 +2900,47 @@ builder_common_methods!(PyFunctionArgPat);
 /// Start a `FunctionArg` pattern builder at integer-class index `i`.
 #[pyfunction]
 pub fn function_arg(i: u32) -> PyFunctionArgPat {
-    let b = PyFunctionArgPat::new();
-    b.class.replace(strider_pattern::FunctionArgClass::Integer);
-    b.index.replace(Some(i));
-    b
+    PyFunctionArgPat::new(sp::FunctionArgClass::Integer, Some(i), None)
 }
 
 /// Start a `FunctionArg` pattern builder at float-class index `i`, counting
 /// only float parameters.
 #[pyfunction]
 pub fn function_arg_float(i: u32) -> PyFunctionArgPat {
-    let b = PyFunctionArgPat::new();
-    b.class.replace(strider_pattern::FunctionArgClass::Float);
-    b.index.replace(Some(i));
-    b
+    PyFunctionArgPat::new(sp::FunctionArgClass::Float, Some(i), None)
 }
 
 /// Start a `FunctionArg` pattern builder matching any index of either class.
 #[pyfunction]
 pub fn any_function_arg() -> PyFunctionArgPat {
-    PyFunctionArgPat::new()
+    PyFunctionArgPat::new(sp::FunctionArgClass::Any, None, None)
 }
 
 /// Match a `FunctionArg` whose source is register `vn` or a register containing it.
 #[pyfunction]
 pub fn function_arg_reg(vn: crate::sleigh::PyVn) -> PyFunctionArgPat {
-    let b = PyFunctionArgPat::new();
-    b.source
-        .replace(Some(strider_ir::node::FunctionArgSource::Register(
-            vn.inner,
-        )));
-    b
+    let source = FunctionArgSource::Register(vn.inner);
+    PyFunctionArgPat::new(sp::FunctionArgClass::Any, None, Some(source))
 }
 
 /// Match a `FunctionArg` whose source is a specific stack slot.
 #[pyfunction]
 pub fn function_arg_stack(space: crate::sleigh::PyVnSpace, offset: i128) -> PyFunctionArgPat {
-    let b = PyFunctionArgPat::new();
-    b.source
-        .replace(Some(strider_ir::node::FunctionArgSource::Stack {
-            space: space.inner,
-            offset,
-        }));
-    b
+    let source = stack_source(space, offset);
+    PyFunctionArgPat::new(sp::FunctionArgClass::Any, None, Some(source))
 }
 
 macro_rules! binary_op_builder {
-    ($ty:ident, $py_name:literal, $doc:literal) => {
+    ($ty:ident, $py_name:literal, $doc:literal, $ctor:ident($parse:path), $ctor_doc:literal) => {
+        #[doc = $ctor_doc]
+        #[pyfunction]
+        pub fn $ctor(op: &str, l: Py<PyAny>, r: Py<PyAny>) -> PyResult<$ty> {
+            let op = $parse(op)?;
+            let make = move |l, r| ex(sp::$ctor(op, l, r));
+            let name = concat!(stringify!($ctor), "()");
+            Ok($ty::new(bin(name, Kind::Build, Box::new(make), l, r)))
+        }
+
         #[doc = $doc]
         #[pyclass(name = $py_name, module = "strider.pattern")]
         pub struct $ty {
@@ -3036,60 +3020,24 @@ macro_rules! binary_op_builder {
 binary_op_builder!(
     PyIntBinaryPat,
     "IntBinaryPat",
-    "Typed builder for an integer binary-op pattern."
+    "Typed builder for an integer binary-op pattern.",
+    int_binary(parse_int_binary_op),
+    "Build an `IntBinaryOp` pattern builder for the named `op`."
 );
 binary_op_builder!(
     PyFloatBinaryPat,
     "FloatBinaryPat",
-    "Typed builder for a float binary-op pattern."
+    "Typed builder for a float binary-op pattern.",
+    float_binary(parse_float_binary_op),
+    "Build a `FloatBinaryOp` pattern builder for the named `op`."
 );
 binary_op_builder!(
     PyBoolBinaryPat,
     "BoolBinaryPat",
-    "Typed builder for a boolean binary-op pattern (`IntBinaryOp` at `I1`)."
+    "Typed builder for a boolean binary-op pattern (`IntBinaryOp` at `I1`).",
+    bool_binary(parse_bool_binary_op),
+    "Build a boolean binary pattern builder for the named `op`."
 );
-
-/// Build an `IntBinaryOp` pattern builder for the named `op`.
-#[pyfunction]
-pub fn int_binary(op: &str, l: Py<PyAny>, r: Py<PyAny>) -> PyResult<PyIntBinaryPat> {
-    let op = parse_int_binary_op(op)?;
-    let make = move |l, r| ex(sp::int_binary(op, l, r));
-    Ok(PyIntBinaryPat::new(bin(
-        "int_binary()",
-        Kind::Build,
-        Box::new(make),
-        l,
-        r,
-    )))
-}
-
-/// Build a boolean binary pattern builder for the named `op`.
-#[pyfunction]
-pub fn bool_binary(op: &str, l: Py<PyAny>, r: Py<PyAny>) -> PyResult<PyBoolBinaryPat> {
-    let op = parse_bool_binary_op(op)?;
-    let make = move |l, r| ex(sp::bool_binary(op, l, r));
-    Ok(PyBoolBinaryPat::new(bin(
-        "bool_binary()",
-        Kind::Build,
-        Box::new(make),
-        l,
-        r,
-    )))
-}
-
-/// Build a `FloatBinaryOp` pattern builder for the named `op`.
-#[pyfunction]
-pub fn float_binary(op: &str, l: Py<PyAny>, r: Py<PyAny>) -> PyResult<PyFloatBinaryPat> {
-    let op = parse_float_binary_op(op)?;
-    let make = move |l, r| ex(sp::float_binary(op, l, r));
-    Ok(PyFloatBinaryPat::new(bin(
-        "float_binary()",
-        Kind::Build,
-        Box::new(make),
-        l,
-        r,
-    )))
-}
 
 pub fn register(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // The rosters the `Literal` type aliases in `strider/__init__.py` are

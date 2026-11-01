@@ -48,12 +48,6 @@ impl CallPat {
         )
     }
 
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
-    /// control edge, not a value.
-    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
-        Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
-    }
-
     /// Input [`NodeKind::CTRL_MEM_SLOT`], taking a `store` / `mem_phi` / prior
     /// `call`.
     pub fn mem<M: MemPat + 'static>(self, p: M) -> Self {
@@ -121,7 +115,7 @@ impl<B: WithOutput> OutputPat<B> {
 }
 
 delegate_with_output!(CallPat, 0);
-delegate_node_pat!(CallPat, 0, [capture, build, input, any_input]);
+delegate_node_pat!(CallPat, 0, [capture, build, input, any_input, ctrl]);
 
 impl MemPat for CallPat {}
 
@@ -161,12 +155,6 @@ impl CallOtherPat {
         Self(self.0.raw_input(idx, p))
     }
 
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
-    /// control edge, not a value.
-    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
-        Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
-    }
-
     /// Input [`NodeKind::CTRL_MEM_SLOT`].
     pub fn mem<M: MemPat + 'static>(self, p: M) -> Self {
         Self(self.0.input_mem(NodeKind::CTRL_MEM_SLOT, p))
@@ -179,7 +167,7 @@ impl CallOtherPat {
 }
 
 delegate_with_output!(CallOtherPat, 0);
-delegate_node_pat!(CallOtherPat, 0, [capture, build, input, any_input]);
+delegate_node_pat!(CallOtherPat, 0, [capture, build, input, any_input, ctrl]);
 
 impl MemPat for CallOtherPat {}
 
@@ -197,19 +185,13 @@ pub fn call_other() -> CallOtherPat {
 pub struct RetPat(Node);
 
 impl RetPat {
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
-    /// control edge.
-    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
-        Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
-    }
-
     /// 0-based past ctrl and mem, so raw input slot `idx + 2`.
     pub fn ret_val<P: MatchPat + 'static>(self, idx: usize, p: P) -> Self {
         Self(self.0.input(NodeKind::Return.input_head_len() + idx, p))
     }
 }
 
-delegate_node_pat!(RetPat, 0, [capture, build, input, any_input]);
+delegate_node_pat!(RetPat, 0, [capture, build, input, any_input, ctrl]);
 
 pub fn ret() -> RetPat {
     RetPat(Node::new(KindSpec::Exact(NodeKind::Return)))
@@ -227,19 +209,17 @@ impl IndirectBranchPat {
         Self(self.0.input(NodeKind::INDIRECT_BRANCH_TARGET_SLOT, p))
     }
 
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
-    /// control edge.
-    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
-        Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
-    }
-
     /// Input [`NodeKind::CTRL_MEM_SLOT`].
     pub fn mem<M: MemPat + 'static>(self, p: M) -> Self {
         Self(self.0.input_mem(NodeKind::CTRL_MEM_SLOT, p))
     }
 }
 
-delegate_node_pat!(IndirectBranchPat, 0, [capture, build, input, any_input]);
+delegate_node_pat!(
+    IndirectBranchPat,
+    0,
+    [capture, build, input, any_input, ctrl]
+);
 
 pub fn indirect_branch() -> IndirectBranchPat {
     IndirectBranchPat(Node::new(KindSpec::Exact(NodeKind::IndirectBranch)))
@@ -249,15 +229,7 @@ pub fn indirect_branch() -> IndirectBranchPat {
 /// carries; no outputs.
 pub struct UnreachablePat(Node);
 
-impl UnreachablePat {
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
-    /// control edge.
-    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
-        Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
-    }
-}
-
-delegate_node_pat!(UnreachablePat, 0, [capture, build, input, any_input]);
+delegate_node_pat!(UnreachablePat, 0, [capture, build, input, any_input, ctrl]);
 
 pub fn unreachable() -> UnreachablePat {
     UnreachablePat(Node::new(KindSpec::Exact(NodeKind::Unreachable)))
@@ -314,12 +286,6 @@ impl SwitchPat {
     pub fn selector<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input(NodeKind::SWITCH_SELECTOR_SLOT, p))
     }
-
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
-    /// control edge.
-    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
-        Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
-    }
 }
 
 pub fn switch() -> SwitchPat {
@@ -329,7 +295,7 @@ pub fn switch() -> SwitchPat {
 }
 
 delegate_with_output!(SwitchPat, 0);
-delegate_node_pat!(SwitchPat, 0, [capture, build, input, any_input]);
+delegate_node_pat!(SwitchPat, 0, [capture, build, input, any_input, ctrl]);
 
 /// An `If` carries two control-output vertices, true at slot 0 and false at
 /// slot 1.
@@ -340,12 +306,6 @@ impl IfPat {
     /// predecessor.
     pub fn cond<P: MatchPat + 'static>(self, p: P) -> Self {
         Self(self.0.input(NodeKind::IF_COND_SLOT, p))
-    }
-
-    /// Input [`NodeKind::CTRL_SLOT`]. The sub-pattern's root produces a
-    /// control edge.
-    pub fn ctrl<P: MatchPat + 'static>(self, p: P) -> Self {
-        Self(self.0.input_control(NodeKind::CTRL_SLOT, p))
     }
 
     /// Binds control output slot 0, propagated into the outer `Match`. Unlike
@@ -367,7 +327,7 @@ impl IfPat {
 }
 
 delegate_with_output!(IfPat, 0);
-delegate_node_pat!(IfPat, 0, [capture, build, input, any_input]);
+delegate_node_pat!(IfPat, 0, [capture, build, input, any_input, ctrl]);
 
 pub fn if_else() -> IfPat {
     IfPat(
@@ -393,7 +353,7 @@ node_match_pat! {
 mod tests {
     use super::{entry, if_else};
     use crate::capture::Capture;
-    use crate::node_builders::{WithOutput, staged_shape};
+    use crate::node_builders::{WithOutput, pattern_shape};
     use crate::typed::{anything, int_const, var};
     use strider_ir::node::ValueType;
 
@@ -410,9 +370,6 @@ mod tests {
     /// Characterizes `IfPat`'s lowering: which vertices it declares, in which
     /// order, carrying which captures. The operand cones come first, the two
     /// control outputs lead the `If`'s own, and the node captures land last.
-    /// Reordering any of that changes which vertex `root_output_vertex_for`
-    /// picks, so this string is the contract a re-homed lowering has to
-    /// reproduce.
     #[test]
     fn if_lowering_declares_its_vertices_in_a_pinned_order() {
         let (t, f, n, out) = (
@@ -435,7 +392,7 @@ mod tests {
             .of_type(ValueType::I1)
             .build();
         same_shape(
-            &staged_shape(&pat),
+            &pattern_shape(&pat),
             "\
 n0 Variant caps=0 pred=1 Operands { ordered: false }
   out v0 AnyValue slot=0 mode=Loose width=None caps=0 ident=0 token=0
@@ -455,17 +412,16 @@ root=Ok(2) total_nodes=3
     }
 
     /// Every operand cone is built ahead of the `If` that consumes it, in the
-    /// order `lower` compiles them, so that order decides every vertex id. Pinned because those ids are
-    /// what `anchor_repeats` compares.
+    /// order `lower` compiles them, so that order decides every vertex id.
     #[test]
-    fn if_lowering_stages_every_operand_cone_before_the_if_node() {
+    fn if_lowering_builds_every_operand_cone_before_the_if_node() {
         let pat = if_else()
             .cond(var(Capture::new()))
             .input(0, anything())
             .any_input(anything())
             .build();
         same_shape(
-            &staged_shape(&pat),
+            &pattern_shape(&pat),
             "\
 n0 Any caps=0 pred=0 Operands { ordered: false }
   out v0 Any slot=0 mode=Loose width=None caps=1 ident=0 token=0

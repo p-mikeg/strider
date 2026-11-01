@@ -250,7 +250,8 @@ class CallingConvention:
         writes memory has to be seen taking a frame address."""
         ...
     def name(self) -> str:
-        """The preset's short name, e.g. `"x86_64_systemv"`."""
+        """The preset's short name, e.g. `"x86_64_systemv"`, or `"custom"`
+        for a `custom(...)` one."""
         ...
 
 class VnSpace:

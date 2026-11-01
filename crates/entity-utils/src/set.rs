@@ -1,17 +1,44 @@
 use core::fmt;
-use core::ops::{Deref, DerefMut};
 
 use cranelift_entity::{EntityRef, EntitySet, SetIter};
 
-/// [`EntitySet`] plus `FromIterator` and `IntoIterator for &`. O(1) `contains`
-/// and `insert`; `is_empty` and `iter` are O(max_index / 64), and so is
-/// `remove` of the current maximum.
+/// A bitset of entities. O(1) `contains` and `insert`; `is_empty` and `iter`
+/// are O(capacity / 64), and so is `remove` of the current maximum, where
+/// capacity follows the largest index ever inserted and survives `clear`
+/// and `remove`.
 #[derive(Clone)]
 pub struct DenseEntitySet<E: EntityRef>(EntitySet<E>);
 
 impl<E: EntityRef> DenseEntitySet<E> {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn contains(&self, e: E) -> bool {
+        self.0.contains(e)
+    }
+
+    /// `true` if `e` was not already a member.
+    pub fn insert(&mut self, e: E) -> bool {
+        self.0.insert(e)
+    }
+
+    /// `true` if `e` was a member.
+    pub fn remove(&mut self, e: E) -> bool {
+        self.0.remove(e)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
+    /// In ascending index order.
+    pub fn iter(&self) -> SetIter<'_, E> {
+        self.0.iter()
     }
 }
 
@@ -21,17 +48,9 @@ impl<E: EntityRef> Default for DenseEntitySet<E> {
     }
 }
 
-impl<E: EntityRef> Deref for DenseEntitySet<E> {
-    type Target = EntitySet<E>;
-
-    fn deref(&self) -> &EntitySet<E> {
-        &self.0
-    }
-}
-
-impl<E: EntityRef> DerefMut for DenseEntitySet<E> {
-    fn deref_mut(&mut self) -> &mut EntitySet<E> {
-        &mut self.0
+impl<E: EntityRef> Extend<E> for DenseEntitySet<E> {
+    fn extend<T: IntoIterator<Item = E>>(&mut self, iter: T) {
+        self.0.extend(iter);
     }
 }
 

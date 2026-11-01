@@ -234,6 +234,53 @@ fn a_capture_built_after_its_consumer_instantiates() {
     assert_eq!(fx.node_inputs(node)[0], bound);
 }
 
+/// Which type anchors a width group does not depend on whether a capture in it
+/// was built before or after the node consuming it. The group here mixes the
+/// capture's `I64` with a declared `I32`, so the anchor decides the fresh
+/// constant's width.
+#[test]
+fn a_late_built_capture_anchors_its_width_group_as_an_early_one() {
+    let c = Capture::new();
+    let fx = make_empty_fn(|b| {
+        let five = b.build_int_const(5u64, T::int(64))?;
+        let seven = b.build_int_const(7u64, T::int(64))?;
+        b.build_int_binary_operation(five, seven, IntBinaryOp::Add, T::int(64))
+    })
+    .unwrap();
+    let lhs = int_add(int_const(5u128), var(c)).into_pattern();
+    let (root_node, bindings, root_ty) = match_lhs_once(&fx, &lhs);
+
+    let build = |capture_first: bool| {
+        let mut b = TemplateBuilder::new();
+        let early = capture_first.then(|| b.capture(c));
+        let k = b.dynamic_leaf(template::TemplateKind::FnIntConst(Box::new(|_| {
+            Ok(UBig::ONE)
+        })));
+        b.set_value_ty(k, T::int(32));
+        let add = b.node(NodeKind::IntBinaryOp(IntBinaryOp::Add));
+        let x = early.unwrap_or_else(|| b.capture(c));
+        b.input(add, 0, x);
+        b.input(add, 1, k);
+        let sum = b.value_output(add, 0);
+        let ext = b.node(NodeKind::Extend(strider_ir::ExtendOp::ZeroExtend));
+        b.input(ext, 0, sum);
+        b.value_output(ext, 0);
+        b.finish()
+    };
+    let outcome = |rhs: &Template| {
+        let mut fx = fx.clone();
+        let mut ef = EditFunction::new(&mut fx);
+        match instantiate(rhs, &mut ef, &bindings, root_node, &[root_node], root_ty) {
+            Ok(v) => {
+                let sum = fx.node_inputs(fx.producer(v))[0];
+                Ok(fx.value_kind(sum).as_value())
+            }
+            Err(e) => Err(e.to_string()),
+        }
+    };
+    assert_eq!(outcome(&build(false)), outcome(&build(true)));
+}
+
 /// A `Template` may wire a multi-output interior node's non-value output into a
 /// later consumer. Here the `Store`'s memory output feeds the `Load`'s memory
 /// input slot while the `Load` root yields the value, exercising
@@ -705,7 +752,7 @@ fn instantiate_refuses_an_ill_typed_operand() {
 }
 
 /// `Load(Store(..))` over a fresh `InitialMemory`, the Store's inputs wired by
-/// `wire` from `[mem, addr]`. No other vertex is staged: an unconsumed one is
+/// `wire` from `[mem, addr]`. No other vertex is built: an unconsumed one is
 /// a second sink, which `instantiate` refuses for its own reason.
 fn store_then_load(
     wire: impl FnOnce(&mut TemplateBuilder, template::TmplNodeRef, [template::TmplValueRef; 2]),

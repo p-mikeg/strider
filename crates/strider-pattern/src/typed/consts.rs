@@ -328,10 +328,10 @@ pub fn any_float_const() -> MatchOnly {
 
 /// Any member of `set`, masked to the output width on both sides like the
 /// single-value form, or `int_const([u128::MAX])` would miss the `I32`
-/// all-ones constant `int_const(u128::MAX)` finds. The width is only known per
-/// candidate, so the masked set is built once per width met rather than
-/// scanning the candidates for each.
+/// all-ones constant `int_const(u128::MAX)` finds.
 fn int_const_set(set: Vec<IBig>) -> MatchOnly {
+    // The width is only known per candidate, so the masked set is built once
+    // per width met rather than scanning the candidates for each.
     let by_width: RefCell<Vec<(usize, FxHashSet<UBig>)>> = RefCell::new(Vec::new());
     MatchOnly(
         int_const_leaf(None, move |stored, ty| {

@@ -147,14 +147,9 @@
 ### Breaking, Rust
 
 - `TemplatePat` is sealed: no type outside strider-pattern implements it, so
-  a hand-written wrapper around the hidden `Expr` is no rewrite RHS, where
-  it compiled and its match-only parts panicked when the rule was built.
-  `MatchPat` is still open.
-- The doc-hidden `Expr` is no longer a `TemplatePat`, so
-  `rewrite_rule(lhs, anything().into_expr())` is a compile error, where it
-  compiled and panicked when the rule was built. A front end that builds the
-  tree itself takes it to a template through `Expr::into_template` and
-  `Expr::capture_typed`, whose match-only parts refuse the template.
+  a hand-written type is no longer a rewrite RHS. `MatchPat` is still open.
+  A front end that builds the tree itself reaches a template through the
+  hidden `Expr::into_template` / `Expr::capture_typed`.
 - The `*_const_with!` capture lists drop the `int_unary_op` kind: `Neg` is
   the one `IntUnaryOp`, so there was nothing for it to tell apart.
 - A `*_const_with_fn` constant declares its captures one at a time,
@@ -188,7 +183,8 @@
   literal naming every field passes `&strider_cfg::NO_LOCAL_ENTRIES` for
   none.
 - `strider_ir::Function::raw_html` is gone: `raw_graph_dot()` returns the
-  raw graph's DOT, and its `as_html_from_dot()` renders it.
+  raw renderer, whose `as_html_from_dot()` renders the HTML (`raw_dot()` is
+  the DOT text).
 - An operand that can never match its slot is refused through the pattern's
   `root()`, where the query matched nothing: in a value slot (a value op's
   operand, `float_le` / `float_is_nan` included, `target`, `arg`, `addr`,
@@ -201,10 +197,10 @@
   through, an alternation's arms are not, and the raw `input`, `any_input`,
   `phi_token` and `call_other().arg` slots take any edge as before.
 - `MatchPat` and `TemplatePat` are markers over the hidden `IntoExpr`, which
-  a hand-written pattern implements in place of `compile`: what it lowers to
-  is checked on whichever side it is used. `MatchPat::compile_mem`,
-  `MatchPat::compile_ordered` and `TemplatePat::compile` are gone, and
-  `MatchPat::compile` is a provided method. `MatcherBuilder::set_output_control`
+  a hand-written match pattern implements in place of `compile`; what it
+  lowers to is checked on the match side. `MatchPat::compile_mem` and
+  `TemplatePat::compile` are gone, and `MatchPat::compile` is a provided
+  method. `MatcherBuilder::set_output_control`
   and `set_token_fallback` set the one vertex they are given, where they
   recursed into an alternation's arms: a slot reaches each arm as it lowers.
 - The typed pattern builders return two carriers, `Op<T>`, valid on whichever
@@ -235,8 +231,26 @@
   constant of any declared width, and a negative wraps into whatever width it
   is matched at rather than into 128 bits. A template `int_const` of a
   negative wraps at the width it materialises at.
-- `strider_pattern::Bindings::get_int` returns `Option<IBig>`, not
-  `Option<i128>`: a constant past 128 bits answered `None`.
+- `Bindings::get_int`, `get_bool`, `get_int_binary_op`, `get_int_unary_op`,
+  `get_int_cmp_op` and `get_bool_binary_op` are gone: read the bound node's
+  kind through `get_node`, an integer through `get_uint` (or `get_value` and
+  `int_const_ibig`), and a boolean through `get_value` and `bool_const_val`.
+- `strider_pattern::MissingBinding` is gone: `missing_binding` returns the
+  same message as a plain `anyhow::Error`.
+- `MatcherBuilder::unary`, `TemplateBuilder::unary` and
+  `TemplateBuilder::binary` are gone: build the node with `node`, `input`
+  and `value_output`.
+- cranelift-entity is 0.128, where it was 0.112. It is a public dependency:
+  `NodeId` and the other ids implement its `EntityRef`, so a crate on 0.112
+  no longer type-checks against them.
+- `DenseEntitySet` no longer has `len`, and `entity_utils::set::Iter` is
+  gone: the set has `contains`, `insert`, `remove`, `is_empty`, `clear` and
+  `iter` (cranelift's `SetIter`), plus `Extend`, `FromIterator` and
+  `IntoIterator` for `&DenseEntitySet`.
+- `graph_algorithms::walk::GraphRef::NodeId` is bounded by `EntityRef`, where
+  it was `Copy`.
+- `IRBuilderExt::build_int_const_limbs` is gone: `build_int_const` takes any
+  `impl Into<UBig>`, so a limb spelling is `UBig::from_words`.
 - `ValueType::get_unsigned_int` is gone; it had no caller.
   `strider_ir::eval::mask` is the unsigned read, at every width.
   `int_mask_u128`, `wrap_u128` and `get_signed_int` stay: the signed carrier
@@ -419,12 +433,12 @@
   `call_other().user_op_id(v)` pin `KindSpec::Exact`, the same test on
   kinds whose payload is that one field, so two such operands of a
   commutative node now count as interchangeable.
-- `TemplateBuilder::{leaf, unary, node}` take a `NodeKind` instead of a
+- `TemplateBuilder::{leaf, node}` take a `NodeKind` instead of a
   `KindSpec`, and `set_template_kind` is gone: `dynamic_leaf(TemplateKind)`
   builds an input-less leaf whose kind or constant a closure computes, so a
   closure-kinded node can no longer take inputs. A non-exact spec became an
   `IntConst` with the target function's constant id 0.
-- `typed::builder_like` (`BuilderLike`, `CompileInto`) is crate-private.
+- `typed::builder_like` (`BuilderLike`, `CompileInto`) is gone.
 - `PatNode::input_slots` holds `matcher::InputSlot` (`At(slot)` or `Any`)
   instead of a `usize` with `usize::MAX` marking an existential.
 - `PatValue::{match_slot, any_slot}` become `slot_mode: matcher::SlotMode`
@@ -473,13 +487,17 @@
 
 ### Changed, Python
 
+- A `.when()` predicate no longer runs on a candidate whose other operands'
+  node kinds already rule it out, so a predicate that raised there no longer
+  aborts the query, and a side-effecting one sees fewer calls. The matches
+  are unchanged.
 - Assigning `LifterOptions.cfg` or `LifterOptions.assumptions` still raises
   `AttributeError`, now reading "readonly attribute" where it read
   "attribute ... is not writable": the option classes are frozen.
 - A pattern compile's stack budget, a quarter of the thread's remaining
   stack, is read through `stacker` on every platform it reports a stack on.
-  Windows and the BSDs, which took the fixed 48 KiB fallback, now budget
-  from the real stack, so a deeper pattern compiles there; Android, which
+  Windows, the BSDs, Solaris, illumos and Haiku, which took the fixed 48 KiB
+  fallback, now budget from the real stack, so a deeper pattern compiles there; Android, which
   `stacker` does not report, now takes the fallback. Linux and macOS are
   unchanged.
 - Of several captures a rewrite's template references and its pattern leaves
@@ -687,6 +705,12 @@
 
 ### Changed, Rust
 
+- A `.filter()` node predicate also runs in the operand gate before each
+  match attempt, so it runs more often per candidate, and an operand's
+  predicate may run before its root's.
+- An alternation root over several node kinds walks the graph once, where it
+  walked once per kind; Python's `find_all(one_of([...]))` over mixed kinds
+  included.
 - The crate-root value-op factories (`int_add`, `int_cmp`, `float_neg`, ...)
   and `template::`'s are one set: `template::int_add` is `int_add`. An op
   takes any pattern operands and is a match pattern when they are, a template
@@ -722,8 +746,6 @@
   not in the order listed.
 - `LoadForward` is a unit struct again (`Copy`); `LoadForward::default()`
   still builds one.
-- `IRBuilderExt::build_int_const_limbs` takes any integer type (it refused
-  one of 64 bits or fewer).
 - `Lifter::build_ir_with` ends a `CallOther` exactly where the `Cfg` ended
   its region instead of re-deciding under the `cfg_opts` it is handed, so a
   CFG built under other `call_other_overrides` lifts as it was built (the
@@ -796,6 +818,14 @@
 
 ### Fixed
 
+- Python: a pattern nested past a small thread's stack (a
+  `threading.stack_size` of 32 or 40 KiB, or 64 KiB in a debug build) raises
+  `StriderError`, where it crashed the process: building the refusal resolved
+  a Rust backtrace on the spent stack. Its `.backtrace` is empty.
+- Rust: a template whose width group mixes types anchors that group from the
+  graph, operands first in slot order, not from build order, so where a
+  capture was built no longer changes which type the group takes or the
+  refusal it reports.
 - Python: on a ppc64 ELFv2 image where two symbols share one local entry,
   `ElfLifter.analyze` takes a call there under the `per_address_ccs` entry of
   the lower symbol address. It took one of the two by hash order, which
@@ -1451,6 +1481,8 @@
 
 ### Added, Rust
 
+- `strider_graph::Graph::add_node_output`, which adds an output to an
+  existing node, and `Graph::value_kind_mut`.
 - `IRViewer::int_const_ibig`: a constant read as two's complement at any
   declared width, where `int_const_i128` answers `None` past 128 bits.
   `strider_ir` re-exports `IBig` beside `UBig`.
@@ -1554,10 +1586,6 @@
   to the later, as `MemRegionsLookupTable` collapses them.
   `RelocationMode::Applied { got_is_rom }` also builds a relocated
   `ElfFileMemReader`.
-- `MatchPat::compile_ordered`, the lowering `.ordered()` uses: the root
-  pinned, unless a shape names another node. `typed::value_ops::Negated`, the
-  return type of `int_ne`, `int_le`, `int_sle` and `float_ne` on both sides,
-  is one that does.
 - `float_unary(op, x)` and `template::float_unary`, the op-valued float
   unary builder beside `float_binary`.
 - `strider_target::ArchNames`, an arch's register and space names, default

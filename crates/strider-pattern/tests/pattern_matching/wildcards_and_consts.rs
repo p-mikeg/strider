@@ -1,3 +1,4 @@
+use strider_ir::IRViewer;
 use strider_ir::UBig;
 use strider_ir::node::ValueType;
 use strider_pattern::*;
@@ -199,7 +200,11 @@ fn any_bool_matches_a_non_constant_i1() {
         .find_all(&any_bool().capture(c).into_pattern())
         .unwrap()
         .iter()
-        .map(|m| m.bindings().get_bool(c, &function))
+        .map(|m| {
+            m.bindings()
+                .get_value(c)
+                .and_then(|v| function.bool_const_val(v))
+        })
         .collect();
     assert_eq!(
         read,
@@ -242,5 +247,10 @@ fn bool_const_capture_binds_the_matched_value() {
 
     let bv = Capture::new();
     let m = a::unique(&function, bool_const(bv).into_pattern());
-    assert_eq!(m.bindings().get_bool(bv, &function), Some(true));
+    assert_eq!(
+        m.bindings()
+            .get_value(bv)
+            .and_then(|v| function.bool_const_val(v)),
+        Some(true)
+    );
 }
