@@ -626,12 +626,15 @@ _ZERO_ARG_RETURNS = {
 
 
 def _stub_returns(tree: ast.Module) -> dict[tuple[str, str], Optional[str]]:
-    """`(class, method) -> the declared return annotation`, quotes stripped."""
+    """`(class, method) -> the declared return annotation`, quotes stripped,
+    a class body's `if TYPE_CHECKING:` declarations included."""
     out: dict[tuple[str, str], Optional[str]] = {}
     for node in tree.body:
         if not isinstance(node, ast.ClassDef):
             continue
-        for item in node.body:
+        body = list(node.body)
+        body += [s for i in node.body if isinstance(i, ast.If) for s in i.body]
+        for item in body:
             if not isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             src = None if item.returns is None else ast.unparse(item.returns)
@@ -643,7 +646,11 @@ def _stub_returns(tree: ast.Module) -> dict[tuple[str, str], Optional[str]]:
 
 @pytest.mark.parametrize("mod_name", sorted(_ZERO_ARG_RETURNS))
 def test_zero_arg_accessors_return_what_the_stub_promises(mod_name):
-    declared = _stub_returns(_stub_ast(MODULES[mod_name]))
+    # A stub re-exports the pure-Python facade, whose source declares it.
+    declared = {
+        **_stub_returns(_stub_ast("_api.py")),
+        **_stub_returns(_stub_ast(MODULES[mod_name])),
+    }
     wrong = []
     for key, want in _ZERO_ARG_RETURNS[mod_name].items():
         got = declared.get(key)

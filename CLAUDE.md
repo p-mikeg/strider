@@ -63,9 +63,9 @@ uv run pyright     # type-checks strider/, its tests and examples; gate is 0 err
 `test-hooks` is a default-off feature of `strider-py` carrying `_rebuild`,
 which installs a reader after the handle exists: the one way to close a
 collectable cycle back onto it, and nothing a user should reach. It also
-carries `CfgOptions._call_other_override_builds`, a resolution counter. CI turns it
-on for both `maturin develop` runs and never for `maturin build`, so it is
-absent from the shipped wheel.
+carries `CfgOptions._call_other_override_builds`, a resolution counter. CI
+turns it on for both `maturin develop` runs and never for `maturin build`, so
+it is absent from the shipped wheel.
 
 CI also runs every `crates/strider-py/examples/python/*.py` on Python 3.9 and
 3.13, `pytest` against `maturin develop --release`, and checks that a
@@ -309,8 +309,8 @@ when both IR slots hold the same value.
     `Arc<... + Send + Sync>`: `JoinConstraint` is `Clone`, so the predicate is
     shared rather than duplicated.
   - `strider-py`: no `#[pyclass(unsendable)]` remains. `OptimizerPipeline`
-    was the last, and is now a plain class whose `add` / `add_post` take
-    `&mut self`.
+    was the last: its `add` / `add_post` take `&mut self`, and `analyze` and
+    `Function.optimize` run a copy, so a `read()` callback may edit it.
     `Lifter` moves, drops and runs anywhere. Every method that reads the
     handle borrows its `PyCell`; `analyze`, `build_cfg` and `add_elf` borrow
     exclusively, across the GIL release and any `read()` callback, so a

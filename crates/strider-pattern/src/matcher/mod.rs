@@ -108,14 +108,14 @@ impl<'f> Matcher<'f> {
         &'p self,
         pat: &'p Pattern,
     ) -> anyhow::Result<impl Iterator<Item = Match> + 'p> {
-        self.matches_over(pat, || self.function.walk())
+        self.matches_over(pat, self.function.walk())
     }
 
     /// [`matches`](Self::matches) over the reachable nodes `walk` yields.
-    fn matches_over<'p, I: Iterator<Item = NodeId> + 'p>(
+    fn matches_over<'p>(
         &'p self,
         pat: &'p Pattern,
-        walk: impl Fn() -> I + 'p,
+        walk: impl Iterator<Item = NodeId> + 'p,
     ) -> anyhow::Result<impl Iterator<Item = Match> + 'p> {
         let root = pat.root()?;
         // Binding no capture, every configuration shares one signature, so the
@@ -140,11 +140,11 @@ impl<'f> Matcher<'f> {
     /// The IR nodes to attempt `pat` at, in walk order: a discriminant-rooted
     /// pattern's kind, an alternation root's arm kinds one after another,
     /// every reachable node for a kind-`Any` root.
-    fn candidates<'p, I: Iterator<Item = NodeId> + 'p>(
+    fn candidates<'p>(
         &'p self,
         pat: &Pattern,
         root: PatNodeId,
-        walk: impl Fn() -> I + 'p,
+        walk: impl Iterator<Item = NodeId> + 'p,
     ) -> impl Iterator<Item = NodeId> + 'p {
         let f = self.function;
         let is = move |n: NodeId, d| std::mem::discriminant(f.node_kind(n)) == d;
@@ -153,21 +153,18 @@ impl<'f> Matcher<'f> {
         let kinds = root_kind_discriminant(pat, root)
             .map(|d| vec![d])
             .or_else(|| alternation_kind_discriminants(pat, root));
-        match kinds {
+        match kinds.as_deref() {
+            Some(&[d]) => Either::Left(Either::Left(walk.filter(move |&n| is(n, d)))),
             // One walk, filtered once per kind.
-            Some(ds) if ds.len() > 1 => {
-                let order: Vec<NodeId> = walk().collect();
+            Some(ds) => {
+                let order: Vec<NodeId> = walk.collect();
                 let by_kind: Vec<NodeId> = ds
-                    .into_iter()
-                    .flat_map(|d| order.iter().copied().filter(move |&n| is(n, d)))
+                    .iter()
+                    .flat_map(|&d| order.iter().copied().filter(move |&n| is(n, d)))
                     .collect();
-                Either::Left(Either::Left(by_kind.into_iter()))
+                Either::Left(Either::Right(by_kind.into_iter()))
             }
-            Some(ds) => Either::Left(Either::Right(
-                ds.into_iter()
-                    .flat_map(move |d| walk().filter(move |&n| is(n, d))),
-            )),
-            None => Either::Right(walk()),
+            None => Either::Right(walk),
         }
     }
 
@@ -302,7 +299,7 @@ impl<'f> Matcher<'f> {
         let order: Vec<NodeId> = self.function.walk().collect();
         let per_pat: Vec<Vec<Match>> = pats
             .iter()
-            .map(|p| Ok(self.matches_over(p, || order.iter().copied())?.collect()))
+            .map(|p| Ok(self.matches_over(p, order.iter().copied())?.collect()))
             .collect::<anyhow::Result<_>>()?;
         if per_pat.iter().any(|hits| hits.is_empty()) {
             return Ok(Vec::new());

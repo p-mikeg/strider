@@ -303,6 +303,36 @@ def test_errors_still_carry_a_backtrace():
         pytest.fail("expected a StriderError")
 
 
+def test_an_error_pickles_with_its_backtrace():
+    """`.backtrace` renders when read, so a pickled error carries it as text."""
+    import pickle
+
+    try:
+        _x86_64(_STRAIGHT).analyze(0x9999, CallingConvention.x86_64_systemv())
+    except strider.StriderError as e:
+        copy = pickle.loads(pickle.dumps(e))
+        assert type(copy) is strider.StriderError
+        assert str(copy) == str(e)
+        assert copy.backtrace == e.backtrace
+        assert "stack backtrace" in copy.backtrace.lower()
+    else:
+        pytest.fail("expected a StriderError")
+
+
+def test_an_error_raised_from_python_has_an_empty_backtrace():
+    assert strider.StriderError("mine").backtrace == ""
+
+
+def test_backtrace_stays_assignable():
+    try:
+        _x86_64(_STRAIGHT).analyze(0x9999, CallingConvention.x86_64_systemv())
+    except strider.StriderError as e:
+        e.backtrace = "mine"
+        assert e.backtrace == "mine"
+    else:
+        pytest.fail("expected a StriderError")
+
+
 # --- the custom-convention arch check ---------------------------------------
 
 
