@@ -31,6 +31,15 @@ def test_vnspace_constants_are_instances_not_callables():
     assert VnSpace.REGISTER.name() == "REGISTER"
 
 
+def test_a_vn_space_reprs_as_its_class_constant():
+    from strider.sleigh import VnSpace
+
+    for name in ("RAM", "REGISTER", "CONST", "UNIQUE"):
+        space = getattr(VnSpace, name)
+        assert repr(space) == f"VnSpace.{name}"
+        assert eval(repr(space), {"VnSpace": VnSpace}) == space
+
+
 def test_vn_space_hash_consistent_with_eq():
     """`VnSpace.__hash__` hashes the underlying Sleigh space identity rather
     than the wrapper's address, so two separately obtained `VnSpace.RAM`

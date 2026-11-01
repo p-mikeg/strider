@@ -20,6 +20,7 @@ from typing import (
     ClassVar,
     Generic,
     Literal,
+    NoReturn,
     Optional,
     Protocol,
     Sequence,
@@ -223,6 +224,10 @@ class BoundCapture:
     def has(self) -> bool: ...
     def __int__(self) -> int: ...
     def __index__(self) -> int: ...
+    def __bool__(self) -> NoReturn:
+        """Raises `TypeError`: test `has` for whether it bound, `int()` for
+        its value."""
+        ...
     def __eq__(self, other: object) -> bool: ...
     __hash__: ClassVar[None]  # type: ignore[assignment]
     def __repr__(self) -> str: ...
@@ -875,14 +880,18 @@ def first_of(patterns: Sequence[PatLike]) -> Pat:
 
     Same generality as `one_of` (any arm, any slot), but a first-match
     cut rather than a union: the first arm that matches wins and the rest
-    are dropped. That holds at each node the alternation is offered,
-    whatever order the rest of the pattern is tried in; several `first_of`s
-    in one match settle in pattern order: operands left to right, a
-    builder's setters in the order its reference lists them, an inner one
-    before the one holding it, each among the matches the earlier ones kept.
-    A query holding one runs every configuration of the pattern before it
-    answers, unless it captures nothing and finds a match through the first
-    arm of every `first_of`, where it stops. Order the alternatives
+    are dropped. That holds at each value the alternation is offered (each
+    output of a node is its own), whatever order the rest of the pattern is
+    tried in. A match reaching one `first_of` twice (`float_is_nan` and
+    `float_le` read their operands twice) counts the later-listed arm it
+    took. Several `first_of`s in one match settle in pattern order: operands
+    left to right, a builder's own slots in its fixed order, then its
+    `any_input`s, then its `input`s, whatever order the setters were called
+    in, an inner one before the one holding it, each among the matches the
+    earlier ones kept. A query holding one runs every configuration of the
+    pattern before it answers, unless it captures nothing and finds a match
+    through the first arm of every `first_of`, walking through no cast,
+    where it stops. Order the alternatives
     most-specific first, because a permissive leading arm shadows everything
     after it. `anything()` and `var(c)` match ANY node::
 
