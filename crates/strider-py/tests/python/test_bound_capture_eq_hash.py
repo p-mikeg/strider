@@ -115,3 +115,15 @@ def test_bound_capture_is_unhashable():
     bc = _bound_neg_const()
     with pytest.raises(TypeError):
         hash(bc)
+
+
+def test_a_bound_capture_has_no_truth_value():
+    """`if m[c]` reads as "bound" and as "nonzero" alike; both were silently
+    True, an unbound capture and a zero constant included."""
+    g = built_function("x86", "memory", "array_sum")
+    c, never = Capture(), Capture()
+    hit = g.find_all(int_const(c))[0]
+    for bc in (hit[c], hit[never]):
+        with pytest.raises(TypeError, match="no truth value"):
+            bool(bc)
+    assert not hit[never].has

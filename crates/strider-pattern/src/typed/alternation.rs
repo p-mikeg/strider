@@ -52,12 +52,14 @@ impl OneOf {
     }
 
     /// An ordered choice: at each value it is offered, keep only the matches
-    /// through the first-listed arm that yields one, whatever order the rest
-    /// of the pattern is tried in, and report every binding THAT arm produces.
-    /// Several in one match settle in the order they are written, an inner one
-    /// before the one holding it, each among the matches the earlier ones
-    /// kept. An arm a guard above rejects falls through to the next one; a
-    /// winning arm with two commutative orderings still reports both.
+    /// through the first-listed arm that yields one, whatever order the rest of
+    /// the pattern is tried in, and report every binding THAT arm produces. A
+    /// match offered one value at several slots counts the last-listed arm it
+    /// took there. Several in one match settle in the order they are written,
+    /// an inner one before the one holding it, each among the matches the
+    /// earlier ones kept. An arm a guard above rejects falls through to the
+    /// next one; a winning arm with two commutative orderings still reports
+    /// both.
     ///
     /// # Cost
     ///

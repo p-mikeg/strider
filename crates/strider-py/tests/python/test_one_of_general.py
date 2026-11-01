@@ -103,3 +103,16 @@ def test_captured_one_of_in_memory_slot():
     capped = fn.find_all(p.load().mem(p.one_of([p.store(), p.mem_phi()]).capture("m")))
     assert len(capped) == plain
     assert all("m" in m for m in capped)
+
+
+def test_a_union_beside_a_shared_first_of_keeps_its_match():
+    """`float_is_nan` reads its operand twice, so a match through `var(x)` at
+    both reads ties with one through it at a single read, and the union arm
+    beside the `first_of` drops neither."""
+    fn = _lift(str(fixture_path("x64", "floats")), "f64_compare")
+    x, t = p.Capture("x"), p.Capture("t")
+    first = p.first_of([p.var(x), p.anything()])
+    alone = fn.find_all(p.float_is_nan(first))
+    hits = fn.find_all(p.float_is_nan(p.one_of([first, p.anything().capture(t)])))
+    assert alone and all(x in m for m in alone)
+    assert sum(1 for m in hits if x in m and t not in m) == len(alone)
