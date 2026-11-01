@@ -16,7 +16,7 @@ from __future__ import annotations
 import os
 import stat as _stat
 import struct
-from typing import TYPE_CHECKING, Mapping, Optional, Union
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Union
 
 # Resolve the extension submodule by its full dotted path so `_ext` is
 # unambiguous regardless of what `__init__.py` binds into the package
@@ -339,7 +339,7 @@ class ElfLifter(Lifter):
 
     def __new__(
         cls,
-        elf,  # the internal loaded-ELF handle the loader returns
+        elf: Any,  # the internal loaded-ELF handle the loader returns
         arch: SleighArch,
         cc: CallingConvention,
         mem: "MemLike",
@@ -351,15 +351,15 @@ class ElfLifter(Lifter):
 
     def __init__(
         self,
-        elf,
+        elf: Any,
         arch: SleighArch,
         cc: CallingConvention,
         mem: "MemLike",
         rom: Optional["RomLike"] = None,
     ) -> None:
-        """Do not call this directly; use `load_elf`. Attaches the ELF
-        backend and default calling convention; `arch`, `mem` and `rom` were
-        already consumed by `__new__`."""
+        """Do not call this directly; use `load_elf`."""
+        # Attaches the ELF backend and default calling convention; `arch`,
+        # `mem` and `rom` were already consumed by `__new__`.
         del arch, mem, rom
         self._elf = elf
         # Every base `Lifter.analyze` takes its own convention; this is the
@@ -405,7 +405,7 @@ class ElfLifter(Lifter):
 
     def iter_symbols(self) -> SymbolIter:
         """Every symbol pulled one at a time, so the `Symbol` objects are
-        never all live at once. The Rust table is built up front. `len()`
+        never all live at once. The table is built up front. `len()`
         reports what is LEFT to pull, so a consumed cursor shrinks."""
         return self._elf.iter_symbols()
 

@@ -258,8 +258,8 @@ def _skip_if_compiling_overflows(kib: int, levels: int):
 @pytest.mark.parametrize("nest", [0, 2])
 def test_any_refusal_fits_a_minimal_thread(kib, nest):
     """A refusal the matcher raises (a constant in a memory slot never
-    matches) resolved its Rust backtrace on the spot, a SIGSEGV on a 32 KiB
-    thread; `.backtrace` read later, on the main thread, still has frames."""
+    matches) reaches the caller of a 32 KiB thread, and `.backtrace`, read
+    later on the main thread, still has frames."""
     _skip_if_compiling_overflows(kib, nest + 1)
     out = _on_small_thread_child(
         kib,

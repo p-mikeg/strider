@@ -20,13 +20,17 @@ pub const MAX_PATTERN_NODES: usize = 256;
 /// Saturating, and never below the raw node count, so a multi-sink graph still
 /// reports its size.
 ///
-/// An alternation's inputs are alternatives rather than operands, run one at a
-/// time with the frame unwound between them, so it costs its DEEPEST arm, not
-/// their sum.
-///
 /// Taken over every node rather than from the root, which is not derived yet
 /// and may not exist.
 fn unfolded_nodes(graph: &PatGraph) -> usize {
+    unfolded(graph, |_| 1).max(graph.all_node_ids().count())
+}
+
+/// The most `own` weight one match configuration passes through, every vertex
+/// counted once per consumer slot that reaches it. An alternation's inputs are
+/// alternatives rather than operands, one run per configuration, so it counts
+/// its heaviest arm, not their sum.
+fn unfolded(graph: &PatGraph, own: impl Fn(NodeId) -> usize) -> usize {
     // Every producer is built before its consumers, so id order is a
     // topological one.
     let mut size: Vec<usize> = Vec::with_capacity(graph.all_node_ids().count());
@@ -35,14 +39,14 @@ fn unfolded_nodes(graph: &PatGraph) -> usize {
             .node_inputs(node)
             .into_iter()
             .map(|value| size[graph.producer(value).as_u32() as usize]);
-        let own = if graph.node_kind(node).is_alternation() {
-            1usize.saturating_add(inputs.max().unwrap_or(0))
+        let below = if graph.node_kind(node).is_alternation() {
+            inputs.max().unwrap_or(0)
         } else {
-            inputs.fold(1usize, usize::saturating_add)
+            inputs.fold(0, usize::saturating_add)
         };
-        size.push(own);
+        size.push(own(node).saturating_add(below));
     }
-    size.iter().copied().max().unwrap_or(0).max(size.len())
+    size.iter().copied().max().unwrap_or(0)
 }
 
 pub struct Pattern {
@@ -52,6 +56,10 @@ pub struct Pattern {
     root: Result<NodeId, String>,
     /// Per pat node, indexed by `NodeId::as_u32`.
     inputs: Vec<super::walk::NodeInputs>,
+    pub(crate) holds_first_of: bool,
+    /// The `first_of` that skips the arms past one that matched: the first
+    /// built, when one configuration passes through it at most once.
+    pub(crate) pruned_first_of: Option<NodeId>,
 }
 
 impl Pattern {
@@ -98,7 +106,13 @@ impl Pattern {
             crate::graph_ext::derive_root(&graph).map_err(|e| e.to_string())
         };
         let inputs = super::walk::collect_node_inputs(&graph, root.is_ok());
+        let first_of = graph
+            .all_node_ids()
+            .find(|&n| graph.node_kind(n).role == super::Role::FirstOf);
+        let pruned_first_of = first_of.filter(|&p| unfolded(&graph, |n| usize::from(n == p)) == 1);
         Self {
+            holds_first_of: first_of.is_some(),
+            pruned_first_of,
             graph,
             cast_mask: CastMask::empty(),
             root,

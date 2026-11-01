@@ -55,7 +55,6 @@ impl RegionFilter {
         }
     }
 
-    /// A no-op for `Any`.
     fn apply(self, n: Node) -> Node {
         if matches!(self, RegionFilter::Any) {
             return n;

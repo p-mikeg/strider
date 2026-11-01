@@ -64,20 +64,27 @@ impl ErrorOrigin {
     }
 }
 
-/// `StriderError.backtrace`.
+/// The message followed by the Rust backtrace, resolved when first read;
+/// empty on a `StriderError` raised from Python.
 #[pyfunction]
-fn backtrace(err: &Bound<'_, PyAny>) -> PyResult<String> {
-    let origin = err.getattr(intern!(err.py(), "_origin"))?;
-    if let Ok(origin) = origin.downcast::<ErrorOrigin>() {
-        return Ok(format!("{:?}", origin.get().0));
-    }
-    Ok(origin.extract::<Option<String>>()?.unwrap_or_default())
+fn backtrace(err: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+    let py = err.py();
+    let origin = err.getattr(intern!(py, "_origin"))?;
+    Ok(match origin.downcast::<ErrorOrigin>() {
+        Ok(origin) => format!("{:?}", origin.get().0).into_py(py),
+        Err(_) => origin.unbind(),
+    })
 }
 
-/// Sets `StriderError.backtrace`.
 #[pyfunction]
-fn set_backtrace(err: &Bound<'_, PyAny>, text: String) -> PyResult<()> {
-    err.setattr(intern!(err.py(), "_origin"), text)
+fn set_backtrace(err: &Bound<'_, PyAny>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+    err.setattr(intern!(err.py(), "_origin"), value)
+}
+
+#[pyfunction]
+fn del_backtrace(err: &Bound<'_, PyAny>) -> PyResult<()> {
+    err.delattr(intern!(err.py(), "_origin"))
+        .map_err(|_| pyo3::exceptions::PyAttributeError::new_err("backtrace"))
 }
 
 /// A `StriderError` instantiated when Python raises it, once the raising
@@ -90,7 +97,7 @@ struct Raised {
 
 impl PyErrArguments for Raised {
     fn arguments(self, py: Python<'_>) -> PyObject {
-        // `{e:?}` appends anyhow's backtrace, burying the actionable line.
+        // `{:?}` appends anyhow's backtrace, burying the actionable line.
         let msg = if backtrace_requested() {
             format!("{:?}", self.origin)
         } else {
@@ -136,13 +143,14 @@ fn backtrace_requested() -> bool {
 pub fn register(py: Python<'_>, parent: &Bound<'_, PyModule>) -> PyResult<()> {
     let ty = py.get_type_bound::<StriderError>();
     // A `StriderError` raised from Python has no origin.
-    ty.setattr("_origin", py.None())?;
+    ty.setattr("_origin", "")?;
     let property = py.import_bound("builtins")?.getattr("property")?;
     ty.setattr(
         "backtrace",
         property.call1((
             wrap_pyfunction_bound!(backtrace, py)?,
             wrap_pyfunction_bound!(set_backtrace, py)?,
+            wrap_pyfunction_bound!(del_backtrace, py)?,
         ))?,
     )?;
     parent.add("StriderError", ty)?;
