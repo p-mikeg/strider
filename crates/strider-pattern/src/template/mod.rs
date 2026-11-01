@@ -16,8 +16,6 @@ pub use graph::Template;
 /// is described through [`TemplateBuilder`], never by handing it a vertex.
 pub(crate) use graph::{TmplNodeKind, TmplValue};
 
-// The value-op factories, so a rewrite RHS reads
-// `strider_pattern::template::int_add(...)`.
 pub use crate::typed::value_ops::ops::*;
 
 use std::collections::BTreeMap;
@@ -176,52 +174,41 @@ pub fn instantiate_guarded<B: IRBuilder>(
                 node_name(template, vtx)
             );
         }
-        let kind = match &nd.kind {
+        let TmplNodeKind::Build(build) = &nd.kind else {
             // A capture leaf IS its materialisation: its one output resolves
             // to the LHS binding, reused verbatim as in `int_add(x, 0) -> x`.
-            TmplNodeKind::Capture => {
-                let out_vtx = template.graph.node_outputs(vtx)[0];
-                let TmplValue::ValueCapture(cap) = *template.graph.value_kind_ref(out_vtx) else {
-                    unreachable!("a capture leaf's one output is its ValueCapture")
-                };
-                match bindings.get_value(cap) {
-                    Some(value) => {
-                        materialised.insert(out_vtx, value);
-                        if vtx == root {
-                            root_value = Some(value);
-                        }
+            let out_vtx = template.graph.node_outputs(vtx)[0];
+            let TmplValue::ValueCapture(cap) = *template.graph.value_kind_ref(out_vtx) else {
+                unreachable!("a capture leaf's one output is its ValueCapture")
+            };
+            match bindings.get_value(cap) {
+                Some(value) => {
+                    materialised.insert(out_vtx, value);
+                    if vtx == root {
+                        root_value = Some(value);
                     }
-                    None => unbound = unbound.or(Some(cap)),
                 }
-                continue;
+                None => unbound = unbound.or(Some(cap)),
             }
-            TmplNodeKind::Build(TemplateKind::Exact(NodeKind::IntConst(_))) => {
-                return Err(raw_int_const());
-            }
-            TmplNodeKind::Build(TemplateKind::Exact(k)) => *k,
-            TmplNodeKind::Build(TemplateKind::Fn(f)) => {
-                // The closure computes its constant against this node's own
-                // declared output type, not the rewrite root's.
-                let value_ty = node_value_ty(template, vtx, &value_tys);
-                let ctx = TemplateCtx {
-                    function: builder.function(),
-                    bindings,
-                    root: lhs_root,
-                    root_ty: value_ty,
-                };
-                match f(&ctx)? {
-                    NodeKind::IntConst(_) => return Err(raw_int_const()),
-                    kind => kind,
-                }
-            }
-            TmplNodeKind::Build(TemplateKind::FnIntConst(f)) => {
-                let value_ty = node_value_ty(template, vtx, &value_tys);
-                let ctx = TemplateCtx {
-                    function: builder.function(),
-                    bindings,
-                    root: lhs_root,
-                    root_ty: value_ty,
-                };
+            continue;
+        };
+        // A closure computes against this node's own declared output type,
+        // not the rewrite root's.
+        let value_ty = node_value_ty(template, vtx, &value_tys);
+        let ctx = TemplateCtx {
+            function: builder.function(),
+            bindings,
+            root: lhs_root,
+            root_ty: value_ty,
+        };
+        let kind = match build {
+            TemplateKind::Exact(NodeKind::IntConst(_)) => return Err(raw_int_const()),
+            TemplateKind::Exact(k) => *k,
+            TemplateKind::Fn(f) => match f(&ctx)? {
+                NodeKind::IntConst(_) => return Err(raw_int_const()),
+                kind => kind,
+            },
+            TemplateKind::FnIntConst(f) => {
                 let mut v = f(&ctx)?;
                 // P-code tests the whole count against the width, so one that
                 // does not fit keeps every bit of the width set rather than
@@ -240,7 +227,7 @@ pub fn instantiate_guarded<B: IRBuilder>(
         // A template `FloatConst` carries raw IEEE bits with no width; the
         // width is resolved here, and bits above it are another constant.
         if let NodeKind::FloatConst(bits) = kind {
-            let ty = node_value_ty(template, vtx, &value_tys);
+            let ty = value_ty;
             // The payload is a `u64`, so a wider float has no encoding here.
             anyhow::ensure!(
                 !(ty.is_float() && ty.byte_size() > 8),
@@ -359,6 +346,28 @@ fn exact_kind(template: &Template, node_vtx: NodeId) -> Option<NodeKind> {
     }
 }
 
+/// Every node reachable from `root`, operands first and in slot order.
+fn operand_postorder(template: &Template, root: NodeId) -> Vec<NodeId> {
+    let g = &template.graph;
+    let mut seen = vec![false; g.all_node_ids().count()];
+    let mut order = Vec::new();
+    let mut stack = vec![(root, false)];
+    while let Some((node, operands_done)) = stack.pop() {
+        if operands_done {
+            order.push(node);
+            continue;
+        }
+        if std::mem::replace(&mut seen[node.as_u32() as usize], true) {
+            continue;
+        }
+        stack.push((node, true));
+        let mut inputs = consumed_inputs(g, node);
+        inputs.sort_by_key(|&(slot, _)| std::cmp::Reverse(slot));
+        stack.extend(inputs.into_iter().map(|(_, v)| (g.producer(v), false)));
+    }
+    order
+}
+
 /// Each value output's type. A node built with no declared type
 /// ([`TemplateTy::InheritRoot`]) takes the width of the group it is evaluated
 /// in, so a fresh constant in a comparison operand gets the OPERAND width and
@@ -430,7 +439,9 @@ fn resolve_value_tys(
     let mut anchor = |groups: &mut WidthGroups, vtx: TmplValueId, ty: ValueType| {
         group_ty.entry(groups.find(vtx)).or_insert(ty);
     };
-    for &node_vtx in order {
+    // First wins, so the order is the graph's own: a capture can be built
+    // after its consumer, and its id would otherwise decide the anchor.
+    for node_vtx in operand_postorder(template, root) {
         for vtx in template.graph.node_outputs(node_vtx).iter().copied() {
             let ty = match template.graph.value_kind_ref(vtx) {
                 TmplValue::ValueCapture(cap)

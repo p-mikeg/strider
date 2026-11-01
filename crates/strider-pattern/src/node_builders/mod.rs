@@ -42,7 +42,7 @@ pub(crate) use delegate_with_output;
 /// own.
 ///
 /// Only the forwarders whose DOC is the same for every builder live here.
-/// `ctrl`, `mem` and `target` name a specific slot per node kind, so they stay
+/// `mem` and `target` name a specific slot per node kind, so they stay
 /// hand-written where that sentence is worth reading.
 macro_rules! delegate_node_pat {
     ($ty:ty, $inner:tt, [$($m:ident),* $(,)?]) => {
@@ -75,6 +75,16 @@ macro_rules! delegate_node_pat {
             p: P,
         ) -> Self {
             self.$inner = self.$inner.raw_input(slot, p);
+            self
+        }
+    };
+    (@m $inner:tt, ctrl) => {
+        /// Input [`NodeKind::CTRL_SLOT`](strider_ir::node::NodeKind::CTRL_SLOT).
+        /// The sub-pattern's root produces a control edge, not a value.
+        pub fn ctrl<P: $crate::matcher::match_pat::MatchPat + 'static>(mut self, p: P) -> Self {
+            self.$inner = self
+                .$inner
+                .input_control(strider_ir::node::NodeKind::CTRL_SLOT, p);
             self
         }
     };
@@ -163,14 +173,12 @@ pub fn defer_drop<T: Send + 'static>(value: T) {
 /// node and one per output vertex and wired input.
 ///
 /// Vertex order is observable: [`root_output_vertex_for`] picks among a node's
-/// output vertices and [`anchor_repeats`] compares vertex identity, so a
-/// lowering that declares the same vertices in another order is a behaviour
-/// change, not a refactor.
+/// output vertices and [`anchor_repeats`] compares vertex identity.
 ///
 /// [`root_output_vertex_for`]: crate::matcher::walk::root_output_vertex_for
 /// [`anchor_repeats`]: crate::matcher::walk::anchor_repeats
 #[cfg(test)]
-pub(crate) fn staged_shape(pat: &crate::Pattern) -> String {
+pub(crate) fn pattern_shape(pat: &crate::Pattern) -> String {
     use crate::matcher::{KindSpec, OutputKindSpec};
     use std::fmt::Write as _;
 

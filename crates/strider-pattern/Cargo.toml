@@ -20,6 +20,7 @@ rsleigh = { workspace = true }
 vn-container = { workspace = true }
 anyhow = { workspace = true }
 either = { workspace = true }
+thiserror.workspace = true
 petgraph = { workspace = true }
 rustc-hash.workspace = true
 

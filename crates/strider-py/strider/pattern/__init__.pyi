@@ -102,15 +102,16 @@ class Match:
     counterpart returns `None` there instead. Guard with `has(key)` (or catch
     the error) when a capture may be unbound.
 
-    Every reader, `_opt` ones included, raises once `compact` / `optimize` has
-    reshuffled the arena the stored ids point into.
+    Every reader, `_opt` ones included, raises once `compact`, `optimize`,
+    `rewrite` or `rewrite_all` has run on the function, since the stored ids
+    may no longer name the nodes they did.
     """
 
     @property
     def root(self) -> int:
         """The node id where the top-level pattern matched. For a joined
-        (list) query, see `roots`. Raises once `compact` / `optimize` has
-        invalidated every outstanding id."""
+        (list) query, see `roots`. Raises once `compact`, `optimize`,
+        `rewrite` or `rewrite_all` has run on the function."""
         ...
     @property
     def roots(self) -> list[int]:
@@ -302,7 +303,9 @@ class Pat(OrderedPat):
         predicate that forgot to return is an error and not a rejection. A
         rejected binding backtracks, so other bindings are still tried.
         Raising is not a rejection either: it aborts the whole query and
-        re-raises out of `find_all` / `find_unique`."""
+        re-raises out of `find_all` / `find_unique`. `f` may run on a partial
+        match the full match rejects, more than once, or not at all for a
+        candidate another operand's node kind already rules out."""
         ...
     def of_width(self, n: int) -> Pat:
         """Constrain this value's own output to `n` bits. `value_of_width(n)`
@@ -405,7 +408,9 @@ class NodePat(Protocol):
         `bool`, and anything else is a `TypeError`. A rejected binding
         backtracks, so other bindings are still tried. Raising is not a
         rejection either: it aborts the whole query and re-raises out of
-        `find_all` / `find_unique`."""
+        `find_all` / `find_unique`. `f` may run on a partial match the full
+        match rejects, more than once, or not at all for a candidate another
+        operand's node kind already rules out."""
         ...
     def into_pat(self) -> Pat:
         """Finalise to a `Pat` holding this builder, reusable across queries
@@ -425,7 +430,7 @@ class InputPat(Protocol):
 
         Slot 0 is not uniform across kinds: `Call` is `[ctrl, mem, target,
         sp, arg0, ...]`, `Load` is `[mem, addr]`, `If` is `[ctrl, cond]`.
-        The IR's `expected_signature` (`strider-ir/src/node_signature.rs`)
+        The IR's `expected_signature` (`strider-ir/src/node/signature.rs`)
         is the source of truth. This is the escape hatch beneath the named
         accessors, not a replacement for them; `PhiPat.phi_input` and
         `MemPhiPat.phi_input` are the predecessor-indexed spelling.
@@ -524,7 +529,7 @@ class OutputPat(Protocol):
 
         Slot numbering is per kind and asymmetric with the inputs: a `Call`
         is `[ctrl, mem, result, ...clobbers]` while a `Load` is `[value]`.
-        The IR's `expected_signature` (`strider-ir/src/node_signature.rs`)
+        The IR's `expected_signature` (`strider-ir/src/node/signature.rs`)
         is the source of truth.
 
         This names the output value itself; it does not recurse into

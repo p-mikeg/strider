@@ -6,11 +6,11 @@ use super::vertex::{PatNode, PatValue, PostMatchFn};
 
 pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 
-/// Pattern nodes one query may recurse through. The engine is continuation-passing, so a node's later
-/// operands are matched inside the deepest frame of its earlier operands'
-/// subtrees and the stack grows with the TREE-UNFOLDED node count, not the
-/// depth: a vertex feeding several slots is walked once per slot, which is what
-/// `unfolded_nodes` charges. The cap keeps the deepest pattern a query can
+/// Pattern nodes one query may recurse through. The engine is
+/// continuation-passing, so a node's later operands are matched inside the
+/// deepest frame of its earlier operands' subtrees and the stack grows with
+/// the TREE-UNFOLDED node count, not the depth: a vertex feeding several slots
+/// is walked once per slot, which is what `unfolded_nodes` charges. The cap keeps the deepest pattern a query can
 /// describe inside the 2 MiB a spawned thread gets by default.
 pub const MAX_PATTERN_NODES: usize = 256;
 
@@ -75,10 +75,14 @@ impl Pattern {
     }
 
     /// Seal point of [`MatcherBuilder`](crate::matcher::MatcherBuilder):
-    /// resolves and memoizes the match root.
-    pub(crate) fn from_graph(graph: PatGraph) -> Self {
+    /// resolves and memoizes the match root. A build-time `refusal` is
+    /// preferred over the structural verdict: it names the spelling, while the
+    /// verdict describes whatever the refused lowering left built.
+    pub(crate) fn from_graph(graph: PatGraph, refusal: Option<String>) -> Self {
         let count = unfolded_nodes(&graph);
-        let root = if count > MAX_PATTERN_NODES {
+        let root = if let Some(why) = refusal {
+            Err(why)
+        } else if count > MAX_PATTERN_NODES {
             // A shared operand is walked once per slot naming it, so a chain of
             // them unfolds past what a `usize` counts.
             let count = match count {
@@ -111,14 +115,6 @@ impl Pattern {
     /// of rebuilding the edge list per operand ordering.
     pub(crate) fn inputs_of(&self, node: NodeId) -> &super::walk::NodeInputs {
         &self.inputs[node.as_u32() as usize]
-    }
-
-    /// A build-time refusal, reported through the same channel as an
-    /// unmatchable graph and preferred over it: a refusal names the spelling,
-    /// while the structural verdict describes whatever the refused lowering
-    /// left built.
-    pub(crate) fn reject(&mut self, why: String) {
-        self.root = Err(why);
     }
 
     /// O(1) read of the verdict memoized at construction.
@@ -224,16 +220,10 @@ impl Pattern {
     ///
     /// A pattern with no unique sink root has nowhere to put the guard; it
     /// already errors at query time, so this is a no-op there.
-    pub(crate) fn set_root_post_match(&mut self, f: PostMatchFn) {
-        let Ok(root) = self.root() else {
-            return;
-        };
-        self.graph.node_kind_mut(root).post_matches.push(f);
-    }
-
-    /// Builder form of `set_root_post_match`.
     pub fn with_root_post_match(mut self, f: PostMatchFn) -> Self {
-        self.set_root_post_match(f);
+        if let Ok(&root) = self.root.as_ref() {
+            self.graph.node_kind_mut(root).post_matches.push(f);
+        }
         self
     }
 
@@ -330,6 +320,13 @@ mod tests {
         s
     }
 
+    /// A wildcard node consuming `inner` at slot 0.
+    fn wildcard_over(b: &mut MatcherBuilder, inner: PatValueRef) -> PatValueRef {
+        let n = b.node(KindSpec::Any);
+        b.input(n, 0, inner);
+        b.value_output(n, 0)
+    }
+
     /// A random pattern over at most twelve steps. Checks that `total_nodes`
     /// is the larger of the raw count and the deepest unfolding.
     ///
@@ -341,7 +338,7 @@ mod tests {
         for _ in 0..rng.below(12) {
             let (l, r) = (vals[rng.below(vals.len())], vals[rng.below(vals.len())]);
             let v = match rng.below(4) {
-                1 => b.unary(KindSpec::Any, l),
+                1 => wildcard_over(&mut b, l),
                 2 => b.binary(strider_ir::IntBinaryOp::Add, l, r),
                 3 => b.one_of(&[l, r]),
                 _ => b.leaf(KindSpec::Any),
@@ -398,7 +395,7 @@ mod tests {
         let mut b = MatcherBuilder::new();
         let mut v = b.leaf(KindSpec::Any);
         for _ in 0..100_000 {
-            v = b.unary(KindSpec::Any, v);
+            v = wildcard_over(&mut b, v);
         }
         let p = b.finish();
         assert_eq!(p.total_nodes(), 100_001);
