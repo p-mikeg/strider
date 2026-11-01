@@ -101,11 +101,11 @@ impl Ctx<'_> {
 /// [`anchor_repeats`] shows impose the attempt already made, and node-rooted
 /// only when the node has no outputs at all.
 ///
-/// `k` runs once per fully guard-satisfying configuration, `trail` then
-/// holding the `first_of` arms and cast levels it took. `true` accepts and
-/// stops the search; `false` drives the next one, which is how a caller
-/// enumerates every distinct binding rather than only the first. Each output
-/// gets its own [`Ctx`], so a root `first_of` cut does not carry over.
+/// `k` runs once per fully guard-satisfying configuration, `trail` then holding
+/// the `first_of` arms and cast levels it took. `true` accepts and stops the
+/// search; `false` drives the next one, which is how a caller enumerates every
+/// distinct binding rather than only the first. Each output gets its own
+/// [`Ctx`], so a root `first_of` cut does not carry over.
 pub(crate) fn anchor(
     matcher: &Matcher,
     pat: &Pattern,
@@ -551,9 +551,9 @@ fn bind_sibling_outputs(
 ///
 /// The cast walk-through is an ordered choice over the levels, outermost
 /// first, like a `first_of` over them: every level runs, and the caller keeps,
-/// per operand, the matches at the outermost level any match reached, never a
-/// second binding beside a direct one, or the answer would depend on an
-/// incidental cast sitting on top of the operand.
+/// per operand and among the matches the earlier keys kept, those at the
+/// outermost level any of them reached, so a cast sitting on top of an
+/// operand never adds a second binding beside a direct one.
 fn try_operand(
     ctx: &Ctx,
     edge: &InputEdge,

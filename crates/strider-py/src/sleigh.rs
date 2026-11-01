@@ -59,9 +59,9 @@ impl PyVnSpace {
         .unwrap_or("OTHER")
     }
 
-    /// `VnSpace.<name>` (lowercased).
+    /// `VnSpace.<NAME>`, the class constant it is.
     fn __repr__(&self) -> String {
-        format!("VnSpace.{}", self.name().to_lowercase())
+        format!("VnSpace.{}", self.name())
     }
 }
 

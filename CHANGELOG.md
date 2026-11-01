@@ -129,6 +129,9 @@
   `find_unique_value(..., signed=True)` no longer answer `None` for a
   constant past 128 bits, where `None` could not be told from "no match";
   `BoundCapture.__int__`, `__index__` and `__repr__` follow.
+- `BoundCapture` has no truth value: `bool(m[c])`, and so `if m[c]:`, raises
+  `TypeError` naming `.has` and `int()`, where it was `True` for an unbound
+  capture and for a zero constant alike.
 - `BoundCapture.__eq__` compares at full width, so `m[c] == 2**300` answers
   `True` where it answered `False` for a matching `I512` constant. This is a
   silent change of answer, not a new error.
@@ -823,26 +826,36 @@
   earlier one, or instead of it where a query stops at its first match. Two
   outputs of one node, such as a `CallOther`'s result and a clobber, are two
   values: an arm matching at one no longer drops the other arm's match at the
-  other. Several `first_of`s in one match settle in the order they are
-  written (in Python, in pattern order: operands left to right, a builder's
-  setters in the order its reference lists them), an inner one before the one
-  holding it, each among the matches the earlier ones kept. A query holding a
-  `first_of` runs every configuration before it answers, `match_at` included,
-  unless it wants one match (`match_at`, or a pattern capturing nothing) and
-  finds one through the first arm of every choice, where it stops.
+  other. A match reaching one `first_of` twice (`float_is_nan` and `float_le`
+  read their operands twice) counts the later-listed arm it took. Several
+  `first_of`s in one match settle in the order they are written (in Python,
+  in pattern order: operands left to right, a builder's own slots in its
+  fixed order, then its `any_input`s, then its `input`s, whatever order the
+  setters were called in), an inner one before the one holding it, each
+  among the matches the earlier ones kept. A query holding a `first_of` runs
+  every configuration before it answers, `match_at` included, unless it
+  wants one match (`match_at`, or a pattern capturing nothing) and finds one
+  through the first arm of every `first_of`, walking through no cast, where
+  it stops.
 - `ignore_casts` (Python) and `Pattern::ignore_casts_mask` (Rust) keep, per
   operand under a masked cast, the matches at the outermost cast level any
-  match reached, whatever order the rest of the pattern is tried in. The
-  walk-through engaged when the level above had produced no match in the
-  search so far, so a capture a sibling binds in some configurations and not
-  others moved the answer: `int_add(var(x), S)` and `int_add(S, var(x))`
-  could answer differently, as could a sibling `one_of`'s arm order. A query
+  match the `first_of`s kept reached. Several such operands settle in the
+  order they are written, each among the matches the earlier ones kept, as
+  several `first_of`s do, so a guard coupling two of them answers by which is
+  written first. The walk-through engaged when the level above had produced
+  no match in the search so far, so a capture a sibling binds in some
+  configurations and not others moved the answer: `int_add(var(x), s)` and
+  `int_add(s, var(x))`, `s` binding `x` in only some configurations, could
+  answer differently, as could a sibling `one_of`'s arm order. A query
   under a mask runs every configuration before it answers, on the terms a
   `first_of` does, so it costs more than the same query without one.
 - Python: `repr()` of a `CallingConvention` from `.preserves_all()` or
   `.preserves_regs()` names the variant
   (`CallingConvention.x86_64_systemv().preserves_all()`), where it read as the
   plain preset, a convention that clobbers registers.
+- Python: `repr()` of a `VnSpace` is its class constant (`VnSpace.RAM`), which
+  evaluates back to it, where it read `VnSpace.ram`, an attribute that does
+  not exist.
 - Python: a `StriderError` raised on a small thread (a `threading.stack_size`
   of 32 or 40 KiB, or 64 KiB in a debug build), such as a refusal or a pattern
   nested past the thread's stack, reaches the caller, where it crashed the

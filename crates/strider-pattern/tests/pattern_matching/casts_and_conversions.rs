@@ -353,3 +353,50 @@ fn the_cast_ladder_answers_alike_in_both_commutative_spellings() {
     assert_eq!(var_first, ["Extend(SignExtend)", "Extend(ZeroExtend)"]);
     assert_eq!(rows(int_add(union(), var(x)).into_pattern()), var_first);
 }
+
+/// Two laddered operands a guard couples settle in pattern order, as two
+/// `first_of`s do: the operand written first keeps its outermost level, so
+/// the two spellings of one commutative query answer apart.
+#[test]
+fn two_coupled_cast_ladders_settle_in_pattern_order() {
+    let (va, vb) = (reg_vn(0x40, 4), reg_vn(0x48, 4));
+    let mut t = Tb::with_vars(&[va, vb]);
+    let a_ = t.read_var(&va);
+    let b_ = t.read_var(&vb);
+    let za = t.zext_to(a_, ValueType::int(64));
+    let zb = t.zext_to(b_, ValueType::int(64));
+    let sum = t.add(za, zb);
+    let f = t.ret_val(sum);
+    let (x, y) = (Capture::new(), Capture::new());
+    let is_ext = |v: strider_ir::node::ValueId| {
+        matches!(
+            f.node_kind(f.producer(v)),
+            strider_ir::node::NodeKind::Extend(_)
+        )
+    };
+    let rows = |x_first: bool| {
+        let guard = move |m: &Matcher, _: ValueType, b: &Bindings| {
+            let ext = |c| {
+                let fun = m.function();
+                let p = fun.producer(b.get_value(c).unwrap());
+                matches!(fun.node_kind(p), strider_ir::node::NodeKind::Extend(_))
+            };
+            !(ext(x) && ext(y))
+        };
+        let pat = if x_first {
+            int_add(var(x), var(y)).when_match(guard)
+        } else {
+            int_add(var(y), var(x)).when_match(guard)
+        };
+        let mut v: Vec<(bool, bool)> = Matcher::new(&f)
+            .find_all(&pat.into_pattern().ignore_casts())
+            .unwrap()
+            .iter()
+            .map(|h| (is_ext(h.value(x).unwrap()), is_ext(h.value(y).unwrap())))
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    assert_eq!(rows(true), [(true, false), (true, false)]);
+    assert_eq!(rows(false), [(false, true), (false, true)]);
+}

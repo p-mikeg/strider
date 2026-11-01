@@ -168,8 +168,9 @@ impl PyMatch {
     }
 
     /// `m[c]` / `m["name"]`: capture `c` bound to THIS match, a `BoundCapture`
-    /// that says whether it bound and converts and compares a numeric capture
-    /// (`int(m[c])`, `m[c] == 0x10`). The readers are this match's methods.
+    /// whose `has` says whether it bound and which converts and compares a
+    /// numeric capture (`int(m[c])`, `m[c] == 0x10`). The readers are this
+    /// match's methods.
     fn __getitem__(slf: Bound<'_, Self>, key: CaptureKey<'_>) -> PyResult<PyBoundCapture> {
         let py = slf.py();
         let cap = key.resolve()?;
@@ -361,6 +362,14 @@ impl PyBoundCapture {
     }
     fn __index__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         self.__int__(py)
+    }
+    /// No truth value: `if m[c]` would read as "bound" and as "nonzero"
+    /// alike, and be neither.
+    fn __bool__(&self) -> PyResult<bool> {
+        Err(pyo3::exceptions::PyTypeError::new_err(
+            "a BoundCapture has no truth value: use m[c].has (or c in m) for \
+             whether it bound, int(m[c]) for its value",
+        ))
     }
     /// Equal to an int matching the captured constant at its width, in either
     /// signed or unsigned spelling (so `-8` and `0xFFFFFFF8` both match a

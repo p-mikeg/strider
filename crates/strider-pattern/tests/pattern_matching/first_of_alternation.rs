@@ -559,7 +559,7 @@ fn a_cut_first_of_under_a_cast_ladder_ignores_a_siblings_arm_order() {
 
 /// A `first_of` shared by both operands of one node is offered the same IR
 /// node twice per match and may take a different arm each time. The filter
-/// keeps the lowest arm SEQUENCE there, so a guard needing both arms keeps its
+/// counts a match's highest arm there, so a guard needing both arms keeps its
 /// one match.
 #[test]
 fn a_first_of_offered_one_node_twice_keeps_a_guarded_match() {
@@ -611,7 +611,7 @@ fn two_outputs_of_one_node_settle_a_first_of_apart() {
 }
 
 /// A single-answer query stops at its first match when that match took the
-/// first arm of every choice, each once: the filter keeps it first. Here the
+/// first arm of every choice: the filter keeps it first. Here the
 /// natural ordering of the commutative `add(5, mul)` is that match, so the
 /// swapped one, through the second arm, never runs.
 #[test]
@@ -639,7 +639,7 @@ fn a_single_answer_query_stops_at_a_first_arm_match() {
 }
 
 /// The match that stops a single-answer query need not be the first found:
-/// any match through the first arm of every choice, each made once, is kept.
+/// any match through the first arm of every choice is kept.
 /// On `add(5, mul)` the first union arm offers its `first_of` the `mul`, so
 /// that match takes the second arm; the second union arm's first-arm match at
 /// `5` then stops the query before its own second arm runs.
@@ -670,4 +670,34 @@ fn a_single_answer_query_stops_at_a_later_first_arm_match() {
         .unwrap();
     assert!(Matcher::new(&f).match_at(add, &pat).unwrap().is_some());
     assert_eq!(runs.load(Ordering::Relaxed), 2);
+}
+
+/// A union arm beside a shared `first_of` keeps the `first_of`'s own match:
+/// `float_is_nan` reaches its operand once per slot, so the match through
+/// `var(x)` at both slots ties with one that reached it at a single slot.
+#[test]
+fn a_union_beside_a_shared_first_of_keeps_its_match() {
+    let mut t = Tb::empty();
+    let v = t.f64(1.5);
+    let eq = t.fcmp(v, v, strider_ir::FloatCmpOp::Equal);
+    let one = t.boolean(true);
+    let nan = t.bool_bin(eq, one, IntBinaryOp::Xor);
+    let f = t.ret_val(nan);
+    let (x, y) = (Capture::new(), Capture::new());
+    let rows = |pat: strider_pattern::Pattern| {
+        let mut v: Vec<(bool, bool)> = Matcher::new(&f)
+            .find_all(&pat)
+            .unwrap()
+            .iter()
+            .map(|h| (h.value(x).is_some(), h.value(y).is_some()))
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    let fo = || first_of![var(x), anything()];
+    let want = [(false, true), (true, false), (true, true)];
+    let by_var = strider_pattern::float_is_nan(one_of![fo(), var(y)]);
+    assert_eq!(rows(by_var.into_pattern()), want);
+    let by_capture = strider_pattern::float_is_nan(one_of![fo(), anything().capture(y)]);
+    assert_eq!(rows(by_capture.into_pattern()), want);
 }

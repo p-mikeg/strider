@@ -17,6 +17,7 @@ pub(crate) use vertex::{InputSlot, OutputKindSpec, PatNode, PatValue, Role, Slot
 pub use vertex::{KindSpec, NodePredicate, PostMatchFn};
 
 use std::cell::OnceCell;
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::mem::Discriminant;
 
@@ -223,13 +224,13 @@ impl<'f> Matcher<'f> {
     /// mask. Every configuration runs, then each `first_of`, per value it was
     /// offered and root output anchored, keeps only the matches through the
     /// lowest arm any of them took there, and each laddered operand those at
-    /// the outermost cast level. One offered the same value twice in a match
-    /// compares its arms there in visit order, lexicographically, so the
-    /// filter never empties a non-empty answer. The keys settle `first_of`s
-    /// first, in build order, then IR node order, so the answer does not
-    /// depend on the order the configurations ran in. With `first_only`, a
-    /// match through the first arm of every choice, each made once, ends the
-    /// search: the filter keeps it.
+    /// the outermost cast level. A match offered one value several times counts
+    /// the highest arm it took there, so the filter never empties a non-empty
+    /// answer. The keys settle `first_of`s first, in build order, then IR node
+    /// order, each among the matches the earlier keys kept, so the answer does
+    /// not depend on the order the configurations ran in. With `first_only`, a
+    /// match through the first arm of every choice ends the search: the filter
+    /// keeps it.
     #[inline(never)]
     fn lowest_arm_matches(
         &self,
@@ -244,42 +245,31 @@ impl<'f> Matcher<'f> {
         let trail = walk::ArmTrail::default();
         walk::anchor(self, pat, root, node, scratch, Some(&trail), &mut |b| {
             let arms = trail.arms.borrow();
-            // A match through the first arm of each choice, each made once,
-            // takes the lowest arm at every key, so the filter keeps it.
-            let lowest = || {
-                (arms.iter().enumerate())
-                    .all(|(i, e)| e.1 == 0 && arms[..i].iter().all(|f| f.0 != e.0))
-            };
-            if first_only && lowest() {
+            if first_only && arms.iter().all(|e| e.1 == 0) {
                 found = vec![(Match::new(node, std::mem::take(b), generation), Vec::new())];
                 return true;
             }
             found.push((Match::new(node, b.clone(), generation), arms.clone()));
             false
         });
-        // Every arm taken, grouped by key in settle order and then by match,
-        // each match's arms at a key in visit order (the sort is stable).
+        // Per key in settle order, each match's highest arm there.
         let mut taken: Vec<(walk::ArmKey, usize, usize)> = found
             .iter()
             .enumerate()
             .flat_map(|(i, (_, arms))| arms.iter().map(move |&(key, arm)| (key, i, arm)))
             .collect();
-        taken.sort_by_key(|&((c, (p, n, o), v), i, _)| {
+        taken.sort_unstable_by_key(|&((c, (p, n, o), v), i, arm)| {
             let id = |v: Option<ValueId>| v.map(ValueId::as_u32);
-            (c, p.as_u32(), n.as_u32(), id(o), id(v), i)
+            (c, p.as_u32(), n.as_u32(), id(o), id(v), i, Reverse(arm))
         });
-        fn arms(run: &[(walk::ArmKey, usize, usize)]) -> impl Iterator<Item = usize> + '_ {
-            run.iter().map(|e| e.2)
-        }
+        taken.dedup_by_key(|e| (e.0, e.1));
         let mut kept = vec![true; found.len()];
         for group in taken.chunk_by(|a, b| a.0 == b.0) {
-            let runs = || group.chunk_by(|a, b| a.1 == b.1);
-            let lowest = runs()
-                .filter(|run| kept[run[0].1])
-                .min_by(|a, b| arms(a).cmp(arms(b)));
-            let Some(lowest) = lowest else { continue };
-            for run in runs() {
-                kept[run[0].1] &= arms(run).eq(arms(lowest));
+            let Some(lowest) = group.iter().filter(|e| kept[e.1]).map(|e| e.2).min() else {
+                continue;
+            };
+            for e in group {
+                kept[e.1] &= e.2 == lowest;
             }
         }
         let mut seen = FxHashSet::default();
