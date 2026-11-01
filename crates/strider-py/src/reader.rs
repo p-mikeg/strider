@@ -299,9 +299,9 @@ fn differing_overlap(existing: &[MemRegion], new: &[MemRegion]) -> Option<(u64, 
 }
 
 /// One ELF symbol: where it is, what the ELF says it spans, and which loaded
-/// region it falls in.
-#[pyclass(name = "Symbol", module = "strider.reader", frozen)]
-#[derive(Clone)]
+/// region it falls in. Equal when every field is.
+#[pyclass(name = "Symbol", module = "strider.reader", frozen, eq, hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct PySymbol {
     /// The symbol name as spelled in the ELF symbol table.
     #[pyo3(get)]

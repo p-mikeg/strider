@@ -982,8 +982,22 @@ impl PyCastMask {
     fn bits(&self) -> u32 {
         self.inner.bits()
     }
+    /// Whether any cast is selected, so `if mask & CastMask.truncate():`
+    /// tests membership.
+    fn __bool__(&self) -> bool {
+        !self.inner.is_empty()
+    }
+    /// The classmethods that build it, joined with `|`.
     fn __repr__(&self) -> String {
-        format!("CastMask(0b{:08b})", self.inner.bits())
+        if self.inner.is_empty() {
+            return "CastMask.none()".to_owned();
+        }
+        let names: Vec<String> = self
+            .inner
+            .iter_names()
+            .map(|(name, _)| format!("CastMask.{}()", name.to_lowercase()))
+            .collect();
+        names.join(" | ")
     }
 }
 
@@ -1341,11 +1355,14 @@ pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
 /// of a node is its own), the first listed arm that yields any match wins,
 /// whatever order the rest of the pattern is tried in, so a leading
 /// `anything()` arm shadows everything after it. A match reaching one
-/// `first_of` twice (`float_is_nan` and `float_le` read their operands twice)
-/// counts the later-listed arm it took. Several `first_of`s in one match
-/// settle in pattern order: operands left to right, a builder's own slots in
-/// its fixed order, then its `any_input`s, then its `input`s, whatever order
-/// the setters were called in, an inner one before the one holding it, each
+/// `first_of` twice at one value (`float_is_nan` and `float_le` read their
+/// operands twice) wins there if it took the first arm any match took at both
+/// reads; when none did, the reads settle in order, each through the first arm
+/// that yields a match. Several `first_of`s in one match settle in pattern
+/// order: operands left to right, a `one_of`'s arms as listed, a builder's own
+/// slots in its fixed order, then its `any_input`s, then its `input`s, a
+/// repeated setter (`arg`, `input`, ...) in call order and the rest whatever
+/// order they were called in, an inner one before the one holding it, each
 /// among the matches the earlier ones kept. Same generality as `one_of`: any
 /// arm, any slot. Match-only. No alternatives matches nothing.
 ///
