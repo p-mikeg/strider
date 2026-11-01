@@ -116,3 +116,18 @@ def test_a_union_beside_a_shared_first_of_keeps_its_match():
     hits = fn.find_all(p.float_is_nan(p.one_of([first, p.anything().capture(t)])))
     assert alone and all(x in m for m in alone)
     assert sum(1 for m in hits if x in m and t not in m) == len(alone)
+
+
+def test_a_shared_first_of_takes_the_first_matching_arm_at_each_read():
+    """A guard below each arm reads the bindings from before the arm binds,
+    so `float_is_nan`'s two reads differ: after arm 0 at the first read, arms
+    0 and 1 fail at the second, which then takes arm 2."""
+    fn = _lift(str(fixture_path("x64", "floats")), "f64_compare")
+    x, y, z = p.Capture("x"), p.Capture("y"), p.Capture("z")
+
+    def bits(c):
+        guard = p.anything().when(lambda m: x not in m)
+        return p.int_bits_to_float(guard).capture(c)
+
+    hits = fn.find_all(p.float_is_nan(p.first_of([bits(x), bits(y), p.var(z)])))
+    assert hits and all(x in m and z in m and y not in m for m in hits)

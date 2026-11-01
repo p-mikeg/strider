@@ -54,21 +54,24 @@ impl OneOf {
     /// An ordered choice: at each value it is offered, keep only the matches
     /// through the first-listed arm that yields one, whatever order the rest of
     /// the pattern is tried in, and report every binding THAT arm produces. A
-    /// match offered one value at several slots counts the last-listed arm it
-    /// took there. Several in one match settle in the order they are written,
-    /// an inner one before the one holding it, each among the matches the
-    /// earlier ones kept. An arm a guard above rejects falls through to the
-    /// next one; a winning arm with two commutative orderings still reports
-    /// both.
+    /// match offered one value at several slots wins there if it took the first
+    /// arm any match took at every slot; when none did, the slots settle in the
+    /// order they are read, each through the first arm that yields a match.
+    /// Several in one match settle in the order they are written, a `one_of`'s
+    /// arms as listed, an inner one before the one holding it, each among the
+    /// matches the earlier ones kept. An arm a guard above rejects falls
+    /// through to the next one; a winning arm with two commutative orderings
+    /// still reports both.
     ///
     /// # Cost
     ///
     /// A query holding one runs every configuration before it answers,
     /// [`match_at`](crate::Matcher::match_at) included, unless it wants one
-    /// match (`match_at`, or a pattern capturing nothing) and finds one
-    /// through the first arm of every choice, where it stops. The first to
-    /// settle skips the arms past one that matched, unless one match can pass
-    /// through it twice; any other runs every arm, as [`OneOf::new`] does.
+    /// match (`match_at`, or a pattern capturing nothing) and finds one through
+    /// the first arm of every `first_of`, walking through no cast, where it
+    /// stops. The first to settle skips the arms past one that matched, unless
+    /// one match can pass through it twice; any other runs every arm, as
+    /// [`OneOf::new`] does.
     pub fn first(alts: Vec<BoxedAlt>) -> Self {
         Self(Expr::alt(alts.into_iter().map(|a| a.0).collect(), true))
     }

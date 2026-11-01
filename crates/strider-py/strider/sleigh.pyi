@@ -104,6 +104,10 @@ class SleighArch:
         (a non-register space, or an offset and size absent from this
         arch's table)."""
         ...
+    def __eq__(self, other) -> bool:
+        """Equal when built from the same preset."""
+        ...
+    def __hash__(self) -> int: ...
 
 class CallingConvention:
     """How a function receives arguments, returns values, and which
@@ -253,6 +257,11 @@ class CallingConvention:
         """The preset's short name, e.g. `"x86_64_systemv"`, or `"custom"`
         for a `custom(...)` one."""
         ...
+    def __eq__(self, other) -> bool:
+        """Equal when the same constructor calls built both: a `custom` never
+        equals a preset, nor one resolved against another preset."""
+        ...
+    def __hash__(self) -> int: ...
 
 class VnSpace:
     """One of the disassembler's built-in address spaces."""

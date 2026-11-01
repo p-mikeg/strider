@@ -558,9 +558,9 @@ fn a_cut_first_of_under_a_cast_ladder_ignores_a_siblings_arm_order() {
 }
 
 /// A `first_of` shared by both operands of one node is offered the same IR
-/// node twice per match and may take a different arm each time. The filter
-/// counts a match's highest arm there, so a guard needing both arms keeps its
-/// one match.
+/// node twice per match and may take a different arm each time. A guard
+/// needing both arms leaves no match through arm 0 at both, so the one
+/// through arm 0, then arm 1, is kept.
 #[test]
 fn a_first_of_offered_one_node_twice_keeps_a_guarded_match() {
     let mut t = Tb::empty();
@@ -611,9 +611,9 @@ fn two_outputs_of_one_node_settle_a_first_of_apart() {
 }
 
 /// A single-answer query stops at its first match when that match took the
-/// first arm of every choice: the filter keeps it first. Here the
-/// natural ordering of the commutative `add(5, mul)` is that match, so the
-/// swapped one, through the second arm, never runs.
+/// first arm of every choice: the filter keeps it first. Here the natural
+/// ordering of the commutative `add(5, mul)` is that match, so the swapped one,
+/// through the second arm, never runs.
 #[test]
 fn a_single_answer_query_stops_at_a_first_arm_match() {
     let f = neg_add_5_mul();
@@ -638,11 +638,11 @@ fn a_single_answer_query_stops_at_a_first_arm_match() {
     assert_eq!(runs.load(Ordering::Relaxed), 1);
 }
 
-/// The match that stops a single-answer query need not be the first found:
-/// any match through the first arm of every choice is kept.
-/// On `add(5, mul)` the first union arm offers its `first_of` the `mul`, so
-/// that match takes the second arm; the second union arm's first-arm match at
-/// `5` then stops the query before its own second arm runs.
+/// The match that stops a single-answer query need not be the first found: any
+/// match through the first arm of every choice is kept. On `add(5, mul)` the
+/// first union arm offers its `first_of` the `mul`, so that match takes the
+/// second arm; the second union arm's first-arm match at `5` then stops the
+/// query before its own second arm runs.
 #[test]
 fn a_single_answer_query_stops_at_a_later_first_arm_match() {
     let f = neg_add_5_mul();
@@ -700,4 +700,78 @@ fn a_union_beside_a_shared_first_of_keeps_its_match() {
     assert_eq!(rows(by_var.into_pattern()), want);
     let by_capture = strider_pattern::float_is_nan(one_of![fo(), anything().capture(y)]);
     assert_eq!(rows(by_capture.into_pattern()), want);
+}
+
+/// `float_is_nan(a)` over `a = int_bits_to_float(r0)`.
+fn nan_of_bits() -> strider_ir::Function {
+    let r0 = super::support::reg_vn(0, 8);
+    let mut t = Tb::with_vars(&[r0]);
+    let i = t.read_var(&r0);
+    let a = t.int_bits_to_float(i, strider_ir::node::ValueType::float(64));
+    let eq = t.fcmp(a, a, strider_ir::FloatCmpOp::Equal);
+    let nan = t.bool_not(eq);
+    t.ret_val(nan)
+}
+
+/// Which of `caps` each match of `pat` binds, sorted.
+fn bound(
+    f: &strider_ir::Function,
+    pat: strider_pattern::Pattern,
+    caps: &[Capture],
+) -> Vec<Vec<bool>> {
+    let mut v: Vec<Vec<bool>> = Matcher::new(f)
+        .find_all(&pat)
+        .unwrap()
+        .iter()
+        .map(|h| caps.iter().map(|&c| h.value(c).is_some()).collect())
+        .collect();
+    v.sort_unstable();
+    v
+}
+
+/// A guard below each arm reads the bindings from before that arm binds, so
+/// the two reads of `float_is_nan` differ: after arm 0 at the first read,
+/// arms 0 and 1 fail at the second. The first arm that matches at each read
+/// is arm 0, then arm 2, though other matches took arm 1 at both.
+#[test]
+fn a_shared_first_of_takes_the_first_matching_arm_at_each_read() {
+    let f = nan_of_bits();
+    let (x, y, z) = (Capture::new(), Capture::new(), Capture::new());
+    let g = move || anything().when_match(move |_, _, b| b.get_value(x).is_none());
+    let pat = strider_pattern::float_is_nan(first_of![
+        strider_pattern::int_bits_to_float(g()).capture(x),
+        strider_pattern::int_bits_to_float(g()).capture(y),
+        var(z)
+    ])
+    .into_pattern();
+    assert_eq!(bound(&f, pat, &[x, y, z]), [vec![true, false, true]]);
+}
+
+/// Arm 0's guard needs `c`, which only arm 1 binds: it fails at the first
+/// read and holds at the second, after arm 1.
+#[test]
+fn a_shared_first_of_arm_a_guard_admits_at_the_second_read_wins_there() {
+    let f = nan_of_bits();
+    let (x, c) = (Capture::new(), Capture::new());
+    let pat = strider_pattern::float_is_nan(first_of![
+        var(x).when_match(move |_, _, b| b.get_value(c).is_some()),
+        anything().capture(c)
+    ])
+    .into_pattern();
+    assert_eq!(bound(&f, pat, &[x, c]), [vec![true, true]]);
+}
+
+/// A root guard needing `z`, which only the `first_of`'s arm 1 binds: arm 0
+/// at the first read, then arm 1, is the first arm that matches at each.
+#[test]
+fn a_shared_first_of_under_a_root_guard_takes_the_first_arm_at_each_read() {
+    let f = nan_of_bits();
+    let (x, y, z) = (Capture::new(), Capture::new(), Capture::new());
+    let pat = strider_pattern::float_is_nan(one_of![
+        first_of![var(x), anything().capture(z)],
+        anything().capture(y)
+    ])
+    .when_match(move |_, _, b| b.get_value(z).is_some())
+    .into_pattern();
+    assert_eq!(bound(&f, pat, &[x, y, z]), [vec![true, false, true]]);
 }
