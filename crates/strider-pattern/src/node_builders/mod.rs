@@ -20,21 +20,6 @@ pub use function_arg::{
 pub use memory::{LoadPat, StorePat, load, store};
 pub use phi::{MemPhiPat, PhiPat, mem_phi, phi, phi_for};
 
-/// [`WithOutput`] for a builder that wraps one [`Node`](crate::expr::Node)
-/// and forwards every output constraint to it unchanged. `$inner` names the
-/// field, `0` for a newtype.
-macro_rules! delegate_with_output {
-    ($ty:ty, $inner:tt) => {
-        impl $crate::node_builders::WithOutput for $ty {
-            fn with_output(mut self, slot: Option<usize>, aspect: $crate::OutputAspect) -> Self {
-                self.$inner = self.$inner.output(slot, aspect);
-                self
-            }
-        }
-    };
-}
-pub(crate) use delegate_with_output;
-
 /// The forwarders every [`Node`](crate::expr::Node) wrapper repeats
 /// verbatim. `$inner` names the field, `0` for a newtype; each method is opted
 /// into by name, so a builder that has to do work in one of them (`StorePat`
@@ -43,11 +28,22 @@ pub(crate) use delegate_with_output;
 ///
 /// Only the forwarders whose DOC is the same for every builder live here.
 /// `mem` and `target` name a specific slot per node kind, so they stay
-/// hand-written where that sentence is worth reading.
+/// hand-written where that sentence is worth reading. A trailing
+/// `with_output` also forwards every [`WithOutput`] constraint.
 macro_rules! delegate_node_pat {
-    ($ty:ty, $inner:tt, [$($m:ident),* $(,)?]) => {
+    ($ty:ty, $inner:tt, [$($m:ident),* $(,)?] $(, $extra:ident)?) => {
         impl $ty {
             $($crate::node_builders::delegate_node_pat!(@m $inner, $m);)*
+        }
+        $($crate::node_builders::delegate_node_pat!(@$extra $ty, $inner);)?
+    };
+
+    (@with_output $ty:ty, $inner:tt) => {
+        impl $crate::node_builders::WithOutput for $ty {
+            fn with_output(mut self, slot: Option<usize>, aspect: $crate::OutputAspect) -> Self {
+                self.$inner = self.$inner.output(slot, aspect);
+                self
+            }
         }
     };
 

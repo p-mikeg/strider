@@ -255,3 +255,29 @@ fn an_int_const_query_is_truncated_to_the_constant_width() {
         1
     );
 }
+
+/// Past the `u128` carrier: an I256 `-50`, and the all-ones that is `-1`
+/// sign-extended from any width.
+#[test]
+fn a_negative_int_const_any_width_matches_at_i256() {
+    use strider_ir::UBig;
+    for v in [-50i64, -1] {
+        let mut t = Tb::empty();
+        let stored = (UBig::ONE << 256usize) - UBig::from(v.unsigned_abs());
+        let c = t
+            .fb_mut()
+            .build_int_const(stored, ValueType::int(256))
+            .unwrap();
+        let function = t.ret_val(c);
+        let m = Matcher::new(&function);
+        let exact = !m.find_all(&int_const(v).into_pattern()).unwrap().is_empty();
+        let any = !m
+            .find_all(&int_const_any_width(v).into_pattern())
+            .unwrap()
+            .is_empty();
+        assert!(
+            any,
+            "int_const_any_width({v}) misses the I256 constant int_const({v}) matches={exact}"
+        );
+    }
+}

@@ -13,7 +13,6 @@
 //!   Control(1) false]`.
 
 use super::{delegate_node_pat, node_match_pat};
-use crate::node_builders::delegate_with_output;
 use strider_ir::node::{NodeKind, SwitchTableId, ValueType};
 
 use crate::capture::Capture;
@@ -114,8 +113,7 @@ impl<B: WithOutput> OutputPat<B> {
     }
 }
 
-delegate_with_output!(CallPat, 0);
-delegate_node_pat!(CallPat, 0, [capture, build, input, any_input, ctrl]);
+delegate_node_pat! { CallPat, 0, [capture, build, input, any_input, ctrl], with_output }
 
 impl MemPat for CallPat {}
 
@@ -166,8 +164,7 @@ impl CallOtherPat {
     }
 }
 
-delegate_with_output!(CallOtherPat, 0);
-delegate_node_pat!(CallOtherPat, 0, [capture, build, input, any_input, ctrl]);
+delegate_node_pat! { CallOtherPat, 0, [capture, build, input, any_input, ctrl], with_output }
 
 impl MemPat for CallOtherPat {}
 
@@ -191,7 +188,7 @@ impl RetPat {
     }
 }
 
-delegate_node_pat!(RetPat, 0, [capture, build, input, any_input, ctrl]);
+delegate_node_pat! { RetPat, 0, [capture, build, input, any_input, ctrl] }
 
 pub fn ret() -> RetPat {
     RetPat(Node::new(KindSpec::Exact(NodeKind::Return)))
@@ -215,11 +212,7 @@ impl IndirectBranchPat {
     }
 }
 
-delegate_node_pat!(
-    IndirectBranchPat,
-    0,
-    [capture, build, input, any_input, ctrl]
-);
+delegate_node_pat! { IndirectBranchPat, 0, [capture, build, input, any_input, ctrl] }
 
 pub fn indirect_branch() -> IndirectBranchPat {
     IndirectBranchPat(Node::new(KindSpec::Exact(NodeKind::IndirectBranch)))
@@ -229,7 +222,7 @@ pub fn indirect_branch() -> IndirectBranchPat {
 /// carries; no outputs.
 pub struct UnreachablePat(Node);
 
-delegate_node_pat!(UnreachablePat, 0, [capture, build, input, any_input, ctrl]);
+delegate_node_pat! { UnreachablePat, 0, [capture, build, input, any_input, ctrl] }
 
 pub fn unreachable() -> UnreachablePat {
     UnreachablePat(Node::new(KindSpec::Exact(NodeKind::Unreachable)))
@@ -246,8 +239,7 @@ pub fn entry() -> EntryPat {
     )
 }
 
-delegate_with_output!(EntryPat, 0);
-delegate_node_pat!(EntryPat, 0, [capture, build]);
+delegate_node_pat! { EntryPat, 0, [capture, build], with_output }
 
 /// Joins control edges at a CFG merge: one variadic Control input per
 /// predecessor at raw slots `0..N`, no fixed prefix. Anchored on the control
@@ -271,8 +263,7 @@ pub fn region() -> RegionPat {
     )
 }
 
-delegate_with_output!(RegionPat, 0);
-delegate_node_pat!(RegionPat, 0, [capture, build, any_input]);
+delegate_node_pat! { RegionPat, 0, [capture, build, any_input], with_output }
 
 /// Inputs `[ctrl, selector]`, one control output per arm. No anchor
 /// output, so the pattern is rooted on the node itself; `output` /
@@ -294,8 +285,7 @@ pub fn switch() -> SwitchPat {
     ))))
 }
 
-delegate_with_output!(SwitchPat, 0);
-delegate_node_pat!(SwitchPat, 0, [capture, build, input, any_input, ctrl]);
+delegate_node_pat! { SwitchPat, 0, [capture, build, input, any_input, ctrl], with_output }
 
 /// An `If` carries two control-output vertices, true at slot 0 and false at
 /// slot 1.
@@ -326,8 +316,7 @@ impl IfPat {
     }
 }
 
-delegate_with_output!(IfPat, 0);
-delegate_node_pat!(IfPat, 0, [capture, build, input, any_input, ctrl]);
+delegate_node_pat! { IfPat, 0, [capture, build, input, any_input, ctrl], with_output }
 
 pub fn if_else() -> IfPat {
     IfPat(

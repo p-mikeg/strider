@@ -9,13 +9,13 @@
 //! and the producer is the vertex's own producer node.
 //!
 //! Matching a node's inputs is one problem: an injective assignment of pattern
-//! inputs to IR input slots, each input drawing from its own candidate
-//! set, solved by [`match_assignments`]. A fixed operand's set is a singleton;
-//! a commutative arity-2 node gives both operands `{0, 1}`, so injectivity
-//! yields exactly the natural then the swapped ordering; an `any_input`
-//! existential draws from every slot and lets the sub-pattern discriminate (a
-//! value sub cannot match a `PhiToken`/control/memory slot). Backtracking rolls
-//! back via [`Bindings::mark`] / [`Bindings::restore`].
+//! inputs to IR input slots, each input drawing from its own candidate set,
+//! solved by [`match_assignments`]. A fixed operand's set is a singleton; a
+//! commutative arity-2 node gives both operands `{0, 1}`, so injectivity yields
+//! exactly the natural then the swapped ordering; an `any_input` existential
+//! draws from every slot and lets the sub-pattern discriminate (a value sub
+//! cannot match a `PhiToken`/control/memory slot). Backtracking rolls back via
+//! [`Bindings::mark`] / [`Bindings::restore`].
 //!
 //! The engine is continuation-passing: [`try_match_at`] enumerates a pat node's
 //! matches (each operand ordering by each descendant configuration) and calls
@@ -181,12 +181,9 @@ pub(crate) fn root_output_vertex_for(
     root_value: ValueId,
 ) -> Option<PatValueId> {
     let outs = pat.graph.node_outputs(root);
-    let mut iter = outs.iter().copied();
-    let first = iter.next()?;
-    if iter.next().is_none() {
-        return Some(first);
+    if let [only] = *outs {
+        return Some(only);
     }
-
     let (_node, ir_slot) = matcher.function().value_definition(root_value);
     outs.iter()
         .copied()
@@ -318,7 +315,7 @@ fn try_match_at(
             .iter()
             .all(|e| matches!(e.consumer_slot, InputSlot::At(s) if s < COMM_ORDER.len()))
         && ctx.function().node_kind(ir_node).is_commutative()
-        && input_at(ctx, ir_node, 0) != input_at(ctx, ir_node, 1);
+        && ctx.function().nth_input(ir_node, 0) != ctx.function().nth_input(ir_node, 1);
 
     let assignment = Assignment {
         edges: inputs,
@@ -490,9 +487,9 @@ fn bind_sibling_outputs(
 
 /// Try `edge`'s sub-pattern against the operand `value`, then, if the cast mask
 /// permits and `value` is a registered cast, against the unwrapped value. `k`
-/// continues the enclosing match. Every candidate set shares this and
-/// differ only in their reaction to `false`: a singleton fails its pinned slot,
-/// a multi-candidate set tries the next.
+/// continues the enclosing match. The candidate sets share this and differ
+/// only in their reaction to `false`: a singleton fails its pinned slot, a
+/// multi-candidate set tries the next.
 ///
 /// Every failure path restores `bindings` to entry, so a caller may retry
 /// without cleanup. Skipped casts are journaled BEFORE the retry, so a failure
@@ -792,7 +789,7 @@ fn match_assignments(
         // Direct index, no search and no injectivity bookkeeping. The slot is
         // pinned, so a failed operand fails it outright.
         InputSlot::At(slot) if !assignment.commutative => {
-            let Some(value) = input_at(ctx, ir_node, slot) else {
+            let Some(value) = ctx.function().nth_input(ir_node, slot) else {
                 return false;
             };
             return try_operand(ctx, edge, value, bindings, &mut |b| {
@@ -809,7 +806,7 @@ fn match_assignments(
         if Claimed::contains(claimed, slot) {
             continue;
         }
-        let Some(value) = input_at(ctx, ir_node, slot) else {
+        let Some(value) = ctx.function().nth_input(ir_node, slot) else {
             continue;
         };
         let next = Claimed {
@@ -857,11 +854,6 @@ fn bind_all_captures(ctx: &Ctx, site: Site, b: &mut Bindings) -> bool {
         }
     }
     true
-}
-
-fn input_at(ctx: &Ctx, ir_node: NodeId, slot: usize) -> Option<ValueId> {
-    let use_id = ctx.function().node_input_id_at(ir_node, slot).ok()?;
-    Some(ctx.function().graph().value_of_use(use_id))
 }
 
 /// Whether the vertex constrains anything at all: a capture or identity pin to

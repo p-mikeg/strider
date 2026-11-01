@@ -236,24 +236,63 @@ def _on_small_thread_child(kib: int, setup: str, loop: str):
     )
 
 
-@pytest.mark.parametrize("kib", [32, 40, 64])
-@pytest.mark.parametrize("shape", ["value", "builder", "join"])
-def test_the_stack_refusal_itself_fits_a_minimal_thread(kib, shape):
-    """The refusal is raised on the stack the guard just declared spent, so
-    building it must cost next to nothing: resolving a Rust backtrace there
-    was a SIGSEGV on a 32 KiB thread. Each depth runs on a fresh thread until
-    one refuses."""
+def _skip_if_compiling_overflows(kib: int, levels: int):
+    """Skips where `levels` nested loads, which nothing refuses, overflow."""
     fits = _on_small_thread_child(
         kib,
         "",
-        """\
-        t = threading.Thread(target=lambda: fn.find_all(p.load(p.anything())))
+        f"""\
+        pat = p.anything()
+        for _ in range({levels}):
+            pat = p.load(pat)
+        t = threading.Thread(target=lambda: fn.find_all(pat))
         t.start()
         t.join()
         """,
     )
     if fits.returncode != 0:
-        pytest.skip("this build's first pattern level alone overflows the thread")
+        pytest.skip(f"this build overflows the thread compiling {levels} level(s)")
+
+
+@pytest.mark.parametrize("kib", [32, 40, 64])
+@pytest.mark.parametrize("nest", [0, 2])
+def test_any_refusal_fits_a_minimal_thread(kib, nest):
+    """A refusal the matcher raises (a constant in a memory slot never
+    matches) resolved its Rust backtrace on the spot, a SIGSEGV on a 32 KiB
+    thread; `.backtrace` read later, on the main thread, still has frames."""
+    _skip_if_compiling_overflows(kib, nest + 1)
+    out = _on_small_thread_child(
+        kib,
+        f"""\
+        pat = p.load().mem(p.int_const(3))
+        for _ in range({nest}):
+            pat = p.load(pat)
+        errs = []
+
+        def run():
+            try:
+                fn.find_all(pat)
+            except strider.StriderError as e:
+                errs.append(e)
+        """,
+        """\
+        t = threading.Thread(target=run)
+        t.start()
+        t.join()
+        print("raised", "stack backtrace" in errs[0].backtrace.lower(), flush=True)
+        """,
+    )
+    assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
+    assert out.stdout.split() == ["raised", "True"], out.stdout
+
+
+@pytest.mark.parametrize("kib", [32, 40, 64])
+@pytest.mark.parametrize("shape", ["value", "builder", "join"])
+def test_the_stack_refusal_itself_fits_a_minimal_thread(kib, shape):
+    """The refusal is raised on the stack the guard just declared spent, so
+    building it must not resolve the Rust backtrace there, a SIGSEGV on a
+    32 KiB thread. Each depth runs on a fresh thread until one refuses."""
+    _skip_if_compiling_overflows(kib, 1)
     setup = f"""\
         a = p.Capture("A")
 
@@ -272,7 +311,7 @@ def test_the_stack_refusal_itself_fits_a_minimal_thread(kib, shape):
             try:
                 fn.find_all(build(n))
             except strider.StriderError as e:
-                out.append(str(e))
+                out.append(e)
         """
     loop = """\
         for n in range(1, 200):
@@ -281,9 +320,9 @@ def test_the_stack_refusal_itself_fits_a_minimal_thread(kib, shape):
             t.start()
             t.join()
             if out:
-                print("raised", out[0], flush=True)
+                print("raised", "stack backtrace" in out[0].backtrace.lower())
                 break
         """
     out = _on_small_thread_child(kib, setup, loop)
     assert out.returncode == 0, f"child exited {out.returncode}: stderr={out.stderr!r}"
-    assert out.stdout.startswith("raised"), out.stdout
+    assert out.stdout.split() == ["raised", "True"], out.stdout

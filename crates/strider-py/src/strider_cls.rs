@@ -233,7 +233,7 @@ fn claims_to_add(
 pub(crate) fn optimize_function(
     lifter: &Bound<'_, PyLifter>,
     function: &PyFunction,
-    pipeline: Option<&crate::opt::PyOptimizerPipeline>,
+    pipeline: Option<strider_orchestrator::opt::OptimizerPipeline>,
     assumptions: Option<&crate::options::PyAssumptionOptions>,
 ) -> PyResult<()> {
     let py = lifter.py();
@@ -243,10 +243,7 @@ pub(crate) fn optimize_function(
     crate::reader::check_mem_unchanged(py, &[&this.mem_obj, &this.rom_obj])?;
     let claims = claims_to_add(function, assumptions)?;
     let rom = this.strider()?.rom();
-    let pipeline = match pipeline {
-        Some(p) => p.build_pipeline(),
-        None => strider_orchestrator::opt::default_pipeline(),
-    };
+    let pipeline = pipeline.unwrap_or_else(strider_orchestrator::opt::default_pipeline);
     let ctx = strider_orchestrator::opt::OptCtx::new(rom);
     with_pending_control_flow(|| {
         function.edit(|f| {
@@ -589,8 +586,7 @@ impl PyLifter {
     }
 
     fn __repr__(slf: Bound<'_, Self>) -> PyResult<String> {
-        let name: String = slf.get_type().getattr("__name__")?.extract()?;
-        Ok(format!("{name}(...)"))
+        Ok(format!("{}(...)", slf.get_type().name()?))
     }
 
     /// Without this, a cycle from a user's `read()`-callback object back

@@ -119,13 +119,13 @@ impl PyFunction {
         &self,
         py: Python<'_>,
         assumptions: Option<PyRef<'_, crate::options::PyAssumptionOptions>>,
-        pipeline: Option<PyRef<'_, crate::opt::PyOptimizerPipeline>>,
+        pipeline: Option<Bound<'_, crate::opt::PyOptimizerPipeline>>,
     ) -> PyResult<()> {
         let lifter = self.cfg.get().lifter.clone_ref(py);
         crate::strider_cls::optimize_function(
             lifter.bind(py),
             self,
-            pipeline.as_deref(),
+            pipeline.map(|p| p.borrow().build_pipeline()),
             assumptions.as_deref(),
         )
     }
@@ -627,11 +627,10 @@ fn query(
     constraints: Option<Vec<Bound<'_, PyAny>>>,
     ignore_root: bool,
 ) -> PyResult<Vec<crate::matcher::PyMatch>> {
-    let mut held = Vec::new();
     let constraints: Vec<_> = constraints
         .iter()
         .flatten()
-        .map(|c| crate::pattern::coerce_join_constraint(c, &mut held))
+        .map(|c| Ok(crate::pattern::coerce_tree(c, &mut Vec::new())?.materialize()))
         .collect::<PyResult<_>>()?;
     let mask = ignore_casts.mask();
     let patterns: Vec<_> = pat

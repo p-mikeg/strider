@@ -35,6 +35,8 @@ from ..sleigh import Vn, VnSpace
 # over the captures patterns bind. Separate namespaces so the two kinds
 # cannot be mistaken for one another.
 from . import constraints as constraints
+# Pure Python: the source is what a checker reads.
+from .._api import FieldPat as FieldPat, code_ptr as code_ptr, field as field
 from .constraints import ConstraintLike as _ConstraintLike
 
 __all__: list[str]
@@ -868,30 +870,6 @@ def one_of(patterns: Sequence[PatLike]) -> Pat:
     nothing, `one_of([load(), anything()])` therefore answers exactly what
     `anything()` does; give the arms a capture to tell them apart.
     """
-class FieldPat:
-    """A struct field at `base + offset`. `ConstantFold` rewrites `base + 0`
-    to `base`, so a field at offset 0 lifts with no `Add`; `pattern` matches
-    both forms and `offset(m)` reads 0 back for the bare one."""
-
-    pattern: ValueLike
-    #: The offset capture, `None` for a known offset.
-    capture: Optional[CaptureKey]
-    def __init__(self, base: ValueLike, offset: Union[int, CaptureKey, None] = ...) -> None: ...
-    def offset(self, m: Match) -> int:
-        """The field offset `m` matched, signed: a frame slot or a
-        `container_of` field sits below its base."""
-    def load(self) -> LoadPat:
-        """A `Load` of the field."""
-    def store(self, data: Optional[ValueLike] = ...) -> StorePat:
-        """A `Store` into the field, of `data` when given."""
-
-def field(base: ValueLike, offset: Union[int, CaptureKey, None] = ...) -> FieldPat:
-    """The field at `base + offset`. `offset` is an `int` to require that
-    offset, a `Capture` or capture name to bind it, or `None` for a fresh
-    capture."""
-def code_ptr(target: ValueLike) -> Pat:
-    """`target`, or `target & -2`: an ARM interworking or MIPS16 branch clears
-    the ISA-mode bit, the one mask strider strips when resolving a target."""
 def first_of(patterns: Sequence[PatLike]) -> Pat:
     """Match the FIRST listed sub-pattern that matches (an ordered OR).
 
