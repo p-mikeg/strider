@@ -54,9 +54,26 @@ struct Ctx<'a> {
     /// to the attempt, so a query that caller logic (`when_match`, a
     /// `JoinPredicate`) runs on the same `Matcher` counts in its own.
     satisfied: Cell<u64>,
-    /// Per `first_of` node and IR node it was offered, the arm that first
+    /// Per `first_of` node and IR node it was offered, the lowest arm that
     /// produced a match in this attempt.
     first_match_cut: RefCell<FxHashMap<(PatNodeId, NodeId), usize>>,
+    /// Kept only for a pattern holding a `first_of`.
+    trail: Option<&'a ArmTrail>,
+}
+
+/// A `first_of` node, the IR node it was offered, and the root output the
+/// attempt anchored on.
+pub(crate) type ArmKey = (PatNodeId, NodeId, Option<ValueId>);
+
+/// An [`ArmKey`] and the arm taken there.
+pub(crate) type ArmTaken = (ArmKey, usize);
+
+/// The `first_of` arms the configuration being matched has taken.
+#[derive(Default)]
+pub(crate) struct ArmTrail {
+    /// The root output the current attempt anchored on.
+    anchor: Cell<Option<ValueId>>,
+    pub(crate) arms: RefCell<Vec<ArmTaken>>,
 }
 
 impl Ctx<'_> {
@@ -71,7 +88,8 @@ impl Ctx<'_> {
 /// [`anchor_repeats`] shows impose the attempt already made, and node-rooted
 /// only when the node has no outputs at all.
 ///
-/// `k` runs once per fully guard-satisfying configuration. `true` accepts and
+/// `k` runs once per fully guard-satisfying configuration, `trail` then
+/// holding the `first_of` arms it took. `true` accepts and
 /// stops the search; `false` drives the next one, which is how a caller
 /// enumerates every distinct binding rather than only the first. Each output
 /// gets its own [`Ctx`], so a root `first_of` cut does not carry over.
@@ -81,15 +99,20 @@ pub(crate) fn anchor(
     root: PatNodeId,
     node: NodeId,
     bindings: &mut Bindings,
+    trail: Option<&ArmTrail>,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
     let mut attempt = |root_value: Option<ValueId>, bindings: &mut Bindings| {
         let out_vertex = root_value.and_then(|v| root_output_vertex_for(pat, root, matcher, v));
+        if let Some(t) = trail {
+            t.anchor.set(root_value);
+        }
         let ctx = Ctx {
             matcher,
             pat,
             satisfied: Cell::new(0),
             first_match_cut: RefCell::default(),
+            trail,
         };
         let mut counted = |b: &mut Bindings| {
             ctx.satisfied.set(ctx.satisfied.get() + 1);
@@ -345,8 +368,9 @@ fn try_match_at(
 }
 
 /// `one_of` / `first_of`: the inputs are independent alternative sub-patterns,
-/// not operands, all tried against the SAME `ir_node`. `one_of` enumerates
-/// every matching arm; `first_of` cuts to the first.
+/// not operands, all tried against the SAME `ir_node`. Both enumerate every
+/// matching arm, `first_of` recording the arm it took; `first_of` also prunes
+/// the arms past one that matched.
 fn try_alternation(
     ctx: &Ctx,
     site: Site,
@@ -364,15 +388,24 @@ fn try_alternation(
     if !bind_all_captures(ctx, site, bindings) {
         return false;
     }
-    let cut = ctx
-        .first_match_cut
-        .borrow()
-        .get(&(pat_node, ir_node))
-        .copied();
+    let trail = ctx.trail.filter(|_| nd.role == Role::FirstOf);
+    // The caller keeps, per `first_of` and IR node, the matches through the
+    // lowest arm taken there, settling the `first_of`s in build order. A match
+    // through an arm past one that matched is then dropped, and at the first
+    // `first_of` settled, reached once per configuration, it is dropped before
+    // it can give a later one its lowest arm, so skipping the arm is exact.
+    // Anywhere else it might be what an earlier `first_of` keeps.
+    let prunes = ctx.pat.pruned_first_of == Some(pat_node);
+    let cut = prunes
+        .then(|| {
+            ctx.first_match_cut
+                .borrow()
+                .get(&(pat_node, ir_node))
+                .copied()
+        })
+        .flatten();
     for (arm, alt) in ctx.pat.inputs_of(pat_node).edges.iter().enumerate() {
-        // An arm past the one that already matched in this attempt is not
-        // re-offered just because a sibling operand moved on.
-        if nd.role == Role::FirstOf && cut.is_some_and(|c| arm > c) {
+        if prunes && cut.is_some_and(|c| arm > c) {
             break;
         }
         let before = ctx.satisfied.get();
@@ -381,11 +414,19 @@ fn try_alternation(
             out_vertex: Some(alt.out_vertex),
             ..site
         };
+        if let Some(t) = trail {
+            t.arms
+                .borrow_mut()
+                .push(((pat_node, ir_node, t.anchor.get()), arm));
+        }
         // The arm's own `try_match_at` restores on every `false` return, so a
         // rejected configuration needs no cleanup here.
         let accepted = try_match_at(ctx, arm_site, bindings, &mut |b| {
             bind_sibling_outputs(ctx, site, 0, b, k)
         });
+        if let Some(t) = trail {
+            t.arms.borrow_mut().pop();
+        }
         if accepted {
             return true;
         }
@@ -394,15 +435,17 @@ fn try_alternation(
         // arm.
         //
         // The cut is scoped to the attempt rather than to one invocation of
-        // the alternation, so a sibling operand enumerated INSIDE the
-        // alternation's invocation and one enumerated around it leave the same
-        // arms; the IR node is part of the key because a commutative ordering
-        // or an `any_input` slot re-offers the same pat node a DIFFERENT IR
-        // node, for which an earlier arm's match proves nothing.
-        if nd.role == Role::FirstOf && ctx.satisfied.get() > before {
+        // the alternation, so a sibling operand enumerated around the
+        // alternation does not re-offer the arms past it. It can still bring
+        // an EARLIER arm a match, which the caller then prefers. The IR node is
+        // part of the key because a commutative ordering or an `any_input`
+        // slot re-offers the same pat node a DIFFERENT IR node, for which an
+        // earlier arm's match proves nothing.
+        if prunes && ctx.satisfied.get() > before {
             ctx.first_match_cut
                 .borrow_mut()
                 .entry((pat_node, ir_node))
+                .and_modify(|c| *c = (*c).min(arm))
                 .or_insert(arm);
             break;
         }
