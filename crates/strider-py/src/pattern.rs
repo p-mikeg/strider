@@ -1340,6 +1340,11 @@ pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
 /// overlapping arms do not each fire; the first arm that matches wins, so a
 /// leading `anything()` arm shadows everything after it. Same generality as
 /// `one_of`: any arm, any slot. Match-only. No alternatives matches nothing.
+///
+/// At each node it is offered, the first listed arm that yields any match
+/// wins, whatever order the rest of the pattern is tried in. Several
+/// `first_of`s in one match settle in the order they are written, an inner one
+/// before the one holding it, each among the matches the earlier ones kept.
 #[pyfunction]
 pub fn first_of(patterns: Vec<Py<PyAny>>) -> PyPat {
     PyPat::from(Repr::new(

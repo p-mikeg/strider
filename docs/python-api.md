@@ -142,16 +142,15 @@ _cfg, fn, _u = lft.analyze(0x1000, sleigh.CallingConvention.x86_64_systemv())
 A handle works on any thread. `analyze`, `build_cfg` and `add_elf` hold it
 alone: while one is in flight, from a `read()` callback or another thread,
 `analyze`, `build_cfg`, `Function.optimize`, `pcode_at`, `call_other_abi`,
-`user_op_names`, `add_elf`, `arch`, `reader()` and `rom()` on any `Lifter`
-raise `StriderError: this Lifter is already in use`,
-and those three raise while any of these is in flight. The others may overlap
-each other. Such an `add_elf` merges nothing. To analyse in
-parallel, a worker thread builds its own handle over the same `prog.arch`,
-`prog.reader()` and `prog.rom()`, gathered before any analysis on `prog` is in
-flight; since `analyze` drops the GIL the two run in parallel. A handle
-decodes the image as it stood when it was built, so an `add_elf` on `prog`
-after a worker's handle exists never reaches that worker: merge every ELF
-first. `Function.optimize` holds the GIL for its whole run.
+`user_op_names`, `add_elf`, `arch`, `reader()` and `rom()` on any `Lifter` raise
+`StriderError: this Lifter is already in use`, and those three raise while any
+of these is in flight. The others may overlap each other. Such an `add_elf`
+merges nothing. To analyse in parallel, a worker thread builds its own handle
+over the same `prog.arch`, `prog.reader()` and `prog.rom()`, gathered before any
+analysis on `prog` is in flight; since `analyze` drops the GIL the two run in
+parallel. A handle decodes the image as it stood when it was built, so an
+`add_elf` on `prog` after a worker's handle exists never reaches that worker:
+merge every ELF first. `Function.optimize` holds the GIL for its whole run.
 
 ### `lift.LifterOptions`, per-call tuning
 
@@ -190,20 +189,19 @@ the positive one:
 
 - `stack_global_disjoint` (default on): no constant address equals `sp + K` at
   runtime.
-- `assume_incoming_args_survive_calls` (default on): a callee leaves an
-  incoming stack-argument slot as it found it, so an argument read after a
-  call is still found. A function that hands a callee a pointer into those
-  slots, or into the register arguments' homes a convention keeps just below
-  them (ARM, MIPS, PowerPC64: a by-value struct split between registers and
-  the stack), is caught (`h(&a); return a;`), and there every call keeps the
-  slots unknown. A `CallingConvention.custom` convention whose ABI homes or
-  splits register arguments next to the stack ones (ARM, MIPS, PPC64, riscv,
-  Win64) must pass `reg_args_adjoin_stack_args=True`. A pointer to a local is
-  taken to stay inside that local; a
-  callee reading a pointer from a register its convention preserves is not
-  caught. Code that stores its entry stack pointer (the ARM `-mapcs-frame`
-  frame record) hands it over, so there no stack argument read after a call
-  is found.
+- `assume_incoming_args_survive_calls` (default on): a callee leaves an incoming
+  stack-argument slot as it found it, so an argument read after a call is still
+  found. A function that hands a callee a pointer into those slots, or into the
+  register arguments' homes a convention keeps just below them (ARM, MIPS,
+  PowerPC64: a by-value struct split between registers and the stack), is caught
+  (`h(&a); return a;`), and there every call keeps the slots unknown. A
+  `CallingConvention.custom` convention whose ABI homes or splits register
+  arguments next to the stack ones (ARM, MIPS, PPC64, riscv, Win64) must pass
+  `reg_args_adjoin_stack_args=True`. A pointer to a local is taken to stay
+  inside that local; a callee reading a pointer from a register its convention
+  preserves is not caught. Code that stores its entry stack pointer (the ARM
+  `-mapcs-frame` frame record) hands it over, so there no stack argument read
+  after a call is found.
 - `return_slots_survive_untracked_writes` (default on): a RAM store whose
   address strider cannot place on the entry stack, and any callee or user-op,
   leave the slots the function saved its return address and entry stack
@@ -277,25 +275,24 @@ the positive one:
   `msr_register_keeps_mode`.
 
 `AssumptionOptions.none()` clears all nine; `AssumptionOptions()` does not. It
-is the sound floor of these fields for any input whose memory behaves as RAM
-and whose floating-point controls are the IEEE default: a load reads back the
-last value the analysed code stored at its address, so a memory-mapped register
-polled after a write still reads as the value written, and the FTZ, DAZ, NI,
-OE, UE, FZ and FS controls above are clear.
-`AssumptionOptions.none(...)` takes the same keywords as the constructor and
-sets only the claims named, where each one the constructor leaves out takes its
-default: `AssumptionOptions(escape_analysis=True)` holds six claims,
+is the sound floor of these fields for any input whose memory behaves as RAM and
+whose floating-point controls are the IEEE default: a load reads back the last
+value the analysed code stored at its address, so a memory-mapped register
+polled after a write still reads as the value written, and the FTZ, DAZ, NI, OE,
+UE, FZ and FS controls above are clear. `AssumptionOptions.none(...)` takes the
+same keywords as the constructor and sets only the claims named, where each one
+the constructor leaves out takes its default:
+`AssumptionOptions(escape_analysis=True)` holds six claims,
 `AssumptionOptions.none(escape_analysis=True)` one.
 
 Claims accumulate per `Function`. `analyze` starts a fresh one from the claims
 it is given, and `function.assumptions` reads back the ones in force.
-`function.optimize(assumptions=...)` adds the claims the set holds and
-withdraws none: `assumptions=None` adds nothing, and a set that leaves out a
-claim already in force raises `StriderError`. So does a set that adds
+`function.optimize(assumptions=...)` adds the claims the set holds and withdraws
+none: `assumptions=None` adds nothing, and a set that leaves out a claim already
+in force raises `StriderError`. So does a set that adds
 `msr_register_keeps_mode` or `fp_rounding_mode_is_nearest`: the lift reads them,
-so analyse again with the claim. Add
-one by naming the union
-(`a.union(b)` is the same):
+so analyse again with the claim. Add one by naming the union (`a.union(b)` is
+the same):
 
 ```python
 from strider.lift import AssumptionOptions
@@ -304,8 +301,8 @@ function.optimize(
     assumptions=function.assumptions | AssumptionOptions.none(escape_analysis=True))
 ```
 
-To drop one, analyse again without it. A claim a
-run used has shaped the graph for good, so a withdrawal could not be honoured.
+To drop one, analyse again without it. A claim a run used has shaped the graph
+for good, so a withdrawal could not be honoured.
 
 `call_other_abis` reclassifies a Sleigh user-op by name ahead of the built-in
 table. Each value is a `strider.sleigh.CallOtherAbi`: one of the four
@@ -675,10 +672,13 @@ arm it needs. A match is identified by what it binds, so two arms matching one
 node with the same bindings are one match: at the root of a pattern that
 captures nothing, `one_of([load(), anything()])` answers exactly what
 `anything()` does, and the arms need a capture to tell them apart. `first_of`
-is the **ordered** variant: it cuts to the first matching arm, so a permissive
-leading arm shadows the rest; list most-specific first. Any pattern kind is a
-valid arm, including the node-rooted control builders (`ret` / `if_else` /
-`switch` / `indirect_branch` / `unreachable`).
+is the **ordered** variant: at each node it is offered, the first listed arm
+that yields any match wins, whatever order the rest of the pattern is tried
+in, so a permissive leading arm shadows the rest; list most-specific first.
+Several `first_of`s in one match settle in the order they are written, an inner
+one before the one holding it. Any pattern kind is a valid arm, including the
+node-rooted control builders (`ret` / `if_else` / `switch` / `indirect_branch`
+/ `unreachable`).
 
 ### `field` / `code_ptr`, the two canonical-form alternations
 

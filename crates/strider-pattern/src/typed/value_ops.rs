@@ -330,15 +330,15 @@ pub(crate) mod ops {
     }
 
     bin! { int_binary, exact, op IntBinaryOp,
-    "Match or build an integer binary op `int_binary(op, l, r)` of kind `op` only." }
+    "Match or build an integer binary op of kind `op`." }
     bin! { int_cmp, exact_i1, op IntCmpOp,
-    "Match or build an integer comparison `int_cmp(op, l, r)` of kind `op` only (output `I1`)." }
+    "Match or build an integer comparison of kind `op` (output `I1`)." }
     bin! { float_binary, exact, op FloatBinaryOp,
-    "Match or build a float binary op `float_binary(op, l, r)` of kind `op` only." }
+    "Match or build a float binary op of kind `op`." }
     bin! { float_cmp, exact_i1, op FloatCmpOp,
-    "Match or build a float comparison `float_cmp(op, l, r)` of kind `op` only (output `I1`)." }
+    "Match or build a float comparison of kind `op` (output `I1`)." }
     bin! { bool_binary, exact_i1, op IntBinaryOp,
-    "Match or build a boolean binary op `bool_binary(op, l, r)` of kind `op` only (`IntBinaryOp` at `I1`)." }
+    "Match or build a boolean binary op of kind `op` (`IntBinaryOp` at `I1`)." }
 }
 
 pub use ops::*;
