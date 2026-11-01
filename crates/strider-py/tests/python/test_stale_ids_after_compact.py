@@ -67,6 +67,13 @@ def test_match_getitem_is_stale_after_compact():
         m[c]
 
 
+def test_a_stale_bound_capture_reprs_without_raising():
+    g, m, c = _graph_and_match()
+    b = m[c]
+    g.compact()
+    assert repr(b) == "BoundCapture(stale)"
+
+
 def test_match_has_is_stale_after_compact():
     """`has` / `in` are capture accessors too: the natural
     `if c in m: m.node(c)` guard must not turn a raise into a clean skip."""

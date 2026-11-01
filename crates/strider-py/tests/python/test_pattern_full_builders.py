@@ -351,6 +351,24 @@ def test_cast_mask_all_vs_none():
     assert CastMask.none().bits() == 0
 
 
+def test_a_cast_mask_is_true_when_it_selects_a_cast():
+    assert not CastMask.none()
+    assert not (CastMask.extend() & CastMask.truncate())
+    assert CastMask.extend() & CastMask.sign_extend()
+
+
+def test_a_cast_mask_reprs_as_the_calls_that_build_it():
+    for mask in (
+        CastMask.none(),
+        CastMask.zero_extend(),
+        CastMask.extend() | CastMask.float_bits_to_int(),
+        CastMask.all(),
+    ):
+        assert eval(repr(mask), {"CastMask": CastMask}) == mask
+    assert repr(CastMask.none()) == "CastMask.none()"
+    assert repr(CastMask.extend()) == "CastMask.zero_extend() | CastMask.sign_extend()"
+
+
 def test_ignore_casts_accepts_a_cast_mask():
     g = _patterns_graph()
     # A mask is ignore_casts=True narrowed to specific cast kinds.
