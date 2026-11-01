@@ -270,10 +270,7 @@ impl PyFunction {
         ignore_casts: IgnoreCasts,
         constraints: Option<Vec<Bound<'_, PyAny>>>,
     ) -> PyResult<Vec<crate::matcher::PyMatch>> {
-        let constraints = collect_constraints(&constraints)?;
-        let patterns = build_query_patterns(pat, &ignore_casts)?;
-        let (raw, at) = run_pattern_query(&slf, py, &patterns, &constraints)?;
-        dedup_matches(py, raw, &at, ignore_root)
+        query(&slf, py, pat, &ignore_casts, constraints, ignore_root)
     }
 
     /// Find the single binding of `pat`, erroring if there is not exactly one.
@@ -294,10 +291,7 @@ impl PyFunction {
         ignore_casts: IgnoreCasts,
         constraints: Option<Vec<Bound<'_, PyAny>>>,
     ) -> PyResult<crate::matcher::PyMatch> {
-        let constraints = collect_constraints(&constraints)?;
-        let patterns = build_query_patterns(pat, &ignore_casts)?;
-        let (raw, at) = run_pattern_query(&slf, py, &patterns, &constraints)?;
-        let mut matches = dedup_matches(py, raw, &at, ignore_root)?;
+        let mut matches = query(&slf, py, pat, &ignore_casts, constraints, ignore_root)?;
         match matches.len() {
             1 => Ok(matches.pop().unwrap()),
             0 => Err(crate::errors::into_strider_err(anyhow::anyhow!(
@@ -332,24 +326,21 @@ impl PyFunction {
         signed: bool,
     ) -> PyResult<Option<PyObject>> {
         let cap = capture.resolve()?;
-        let constraints = collect_constraints(&constraints)?;
-        let patterns = build_query_patterns(pat, &ignore_casts)?;
-        let (raw, at) = run_pattern_query(&slf, py, &patterns, &constraints)?;
-        let matches = dedup_matches(py, raw, &at, true)?;
+        let matches = query(&slf, py, pat, &ignore_casts, constraints, true)?;
         if signed {
-            collect_unique(
+            unique_value(
                 py,
                 &matches,
                 cap,
-                crate::matcher::PyMatch::sint_for,
+                crate::node::sint_of,
                 crate::bigint::ibig_to_py_int,
             )
         } else {
-            collect_unique(
+            unique_value(
                 py,
                 &matches,
                 cap,
-                crate::matcher::PyMatch::uint_for,
+                crate::node::uint_of,
                 crate::bigint::ubig_to_py_int,
             )
         }
@@ -542,36 +533,21 @@ impl std::hash::Hash for FunctionAt {
     }
 }
 
-/// The distinct constant values `extract` reads for `cap` across `matches`,
-/// reduced to the sole value.
-fn collect_unique<T: Ord>(
+/// The one distinct constant value `read` finds for `cap` across `matches`.
+fn unique_value<T: Ord>(
     py: Python<'_>,
     matches: &[crate::matcher::PyMatch],
     cap: strider_pattern::Capture,
-    extract: impl Fn(
-        &crate::matcher::PyMatch,
-        Python<'_>,
-        strider_pattern::Capture,
-    ) -> PyResult<Option<T>>,
-    to_py: impl Fn(Python<'_>, &T) -> PyResult<PyObject>,
+    read: fn(&strider_ir::Function, strider_ir::node::NodeId) -> Option<T>,
+    to_py: fn(Python<'_>, &T) -> PyResult<PyObject>,
 ) -> PyResult<Option<PyObject>> {
     let mut values = std::collections::BTreeSet::new();
     for m in matches {
-        if let Some(v) = extract(m, py, cap)? {
-            values.insert(v);
-        }
+        values.extend(m.read_bound(py, cap, read)?);
     }
-    unique_value(py, values, to_py)
-}
-
-fn unique_value<T: Ord>(
-    py: Python<'_>,
-    values: std::collections::BTreeSet<T>,
-    to_py: impl Fn(Python<'_>, &T) -> PyResult<PyObject>,
-) -> PyResult<Option<PyObject>> {
     match values.len() {
         0 => Ok(None),
-        1 => Ok(Some(to_py(py, values.iter().next().unwrap())?)),
+        1 => Ok(Some(to_py(py, values.first().unwrap())?)),
         n => Err(crate::errors::into_strider_err(anyhow::anyhow!(
             "find_unique_value: capture binds {n} distinct constant values; \
              use find_all to see them"
@@ -637,63 +613,42 @@ impl IgnoreCasts {
     }
 }
 
-fn build_query_patterns(
+/// Every match of `pat` (a LIST joins on shared captures, each result one
+/// sub-match per pattern) that survives `constraints`, keeping the first of the
+/// rows sharing a [`crate::matcher::dedup_key`].
+///
+/// The coerced constraints live only for this query, so the predicate handles
+/// they retain need no GC visibility.
+fn query(
+    slf: &Py<PyFunction>,
+    py: Python<'_>,
     pat: crate::pattern::PatQuery<'_>,
     ignore_casts: &IgnoreCasts,
-) -> PyResult<Vec<strider_pattern::Pattern>> {
+    constraints: Option<Vec<Bound<'_, PyAny>>>,
+    ignore_root: bool,
+) -> PyResult<Vec<crate::matcher::PyMatch>> {
+    let mut held = Vec::new();
+    let constraints: Vec<_> = constraints
+        .iter()
+        .flatten()
+        .map(|c| crate::pattern::coerce_join_constraint(c, &mut held))
+        .collect::<PyResult<_>>()?;
     let mask = ignore_casts.mask();
-    Ok(pat
+    let patterns: Vec<_> = pat
         .to_patterns()?
         .into_iter()
         .map(|p| p.ignore_casts_mask(mask))
-        .collect())
-}
-
-/// The coerced constraints live only for this query, so the predicate handles
-/// they retain need no GC visibility.
-fn collect_constraints(
-    constraints: &Option<Vec<Bound<'_, PyAny>>>,
-) -> PyResult<Vec<strider_pattern::JoinConstraint>> {
-    let mut held = Vec::new();
-    constraints.as_deref().map_or_else(
-        || Ok(Vec::new()),
-        |v| {
-            v.iter()
-                .map(|c| crate::pattern::coerce_join_constraint(c, &mut held))
-                .collect()
-        },
-    )
-}
-
-/// One sub-match group per result: a single pattern gives one-element groups,
-/// several patterns join on shared captures and give one sub-match per pattern.
-fn run_pattern_query(
-    slf: &Py<PyFunction>,
-    py: Python<'_>,
-    patterns: &[strider_pattern::Pattern],
-    constraints: &[strider_pattern::JoinConstraint],
-) -> PyResult<(Vec<Vec<strider_pattern::Match>>, FunctionAt)> {
+        .collect();
     let refs: Vec<&strider_pattern::Pattern> = patterns.iter().collect();
-    run_query(slf, py, |matcher| {
+    let (raw, at) = run_query(slf, py, |matcher| {
         // Any constraint, even over a single pattern's own captures, routes
         // through the constrained join so the CFG filter actually runs.
         if refs.len() == 1 && constraints.is_empty() {
             Ok(matcher.matches(refs[0])?.map(|m| vec![m]).collect())
         } else {
-            matcher.find_joined_constrained(&refs, constraints)
+            matcher.find_joined_constrained(&refs, &constraints)
         }
-    })
-}
-
-/// Keeps the first of the rows sharing a [`crate::matcher::dedup_key`]: one flat
-/// key per row, each sub-match's root (unless `ignore_root`) then its
-/// length-prefixed `(capture, node)` signature.
-fn dedup_matches(
-    py: Python<'_>,
-    raw: Vec<Vec<strider_pattern::Match>>,
-    at: &FunctionAt,
-    ignore_root: bool,
-) -> PyResult<Vec<crate::matcher::PyMatch>> {
+    })?;
     at.read(py, "Match", |function| {
         let mut seen = rustc_hash::FxHashSet::default();
         raw.into_iter()

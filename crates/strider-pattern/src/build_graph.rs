@@ -44,12 +44,6 @@ fn frame_mark() -> usize {
 
 impl<N, V> Default for BuildGraph<N, V> {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl<N, V> BuildGraph<N, V> {
-    pub(crate) fn new() -> Self {
         Self {
             graph: Graph::new(),
             refusal: None,
@@ -58,7 +52,9 @@ impl<N, V> BuildGraph<N, V> {
             stack_base: 0,
         }
     }
+}
 
+impl<N, V> BuildGraph<N, V> {
     /// Opens one recursion step of lowering, refusing once the stack budget is
     /// spent and, for a `level`, past `MAX_PATTERN_NODES` levels. Lowering
     /// recurses before any node exists to count, so the cap at finish comes too

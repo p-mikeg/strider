@@ -103,12 +103,11 @@ class _ElfHeader:
             raise ValueError(f"{path!r}: invalid EI_DATA={ei_data}")
         self.is_64bit = ei_class == 2
         self.is_little_endian = ei_data == 1
-        endian_fmt = "<H" if self.is_little_endian else ">H"
-        (self.e_machine,) = struct.unpack(endian_fmt, header[18:20])
-        word_fmt = "<I" if self.is_little_endian else ">I"
+        order = "<" if self.is_little_endian else ">"
+        (self.e_machine,) = struct.unpack(order + "H", header[18:20])
         # `e_entry` is the first of the three addresses, at offset 24 on both
         # classes; 0 on a relocatable object, which has no entry point.
-        addr_fmt = ("<" if self.is_little_endian else ">") + ("Q" if self.is_64bit else "I")
+        addr_fmt = order + ("Q" if self.is_64bit else "I")
         size = 8 if self.is_64bit else 4
         (self.e_entry,) = (
             struct.unpack(addr_fmt, header[24 : 24 + size])
@@ -119,7 +118,7 @@ class _ElfHeader:
         # ELF64. PowerPC64 carries its ABI level in the low two bits.
         off = 48 if self.is_64bit else 36
         self.e_flags = (
-            struct.unpack(word_fmt, header[off : off + 4])[0]
+            struct.unpack(order + "I", header[off : off + 4])[0]
             if len(header) >= off + 4
             else 0
         )
@@ -438,7 +437,7 @@ class ElfLifter(Lifter):
         when `addr` is unmapped or inside a relocation this loader does not
         compute. In writable, non-executable data such a field is not cut out
         but serves the file's bytes, which the loader overwrites. `rom()`
-        serves no writable data, except `.got` / `.data.rel.ro` under
+        serves no writable data, except `.got` / `.got2` / `.data.rel.ro` under
         `relocated_got_is_rom`, where such a field is unmapped."""
         return self._elf.read(addr, size)
 

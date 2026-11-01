@@ -228,9 +228,6 @@ def test_analyze_and_build_cfg_answer_the_same_for_a_bad_entry(entry):
     assert str(built.value) == str(analyzed.value)
 
 
-# --- a refused rewrite leaves its pattern usable ----------------------------
-
-
 def _analyzed_function():
     lifter = _x86_64(_STRAIGHT)
     return lifter.analyze(_BASE, CallingConvention.x86_64_systemv()).function

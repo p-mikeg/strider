@@ -4,10 +4,7 @@ use crate::expr::{Deco, Expr, IntoExpr, Slot};
 use crate::matcher::{MatcherBuilder, PatValueRef, Pattern};
 use crate::typed::value_ops::MatchOnly;
 
-/// A pattern the match side lowers. `Send` so a compiled `Pattern` can move
-/// between threads: the boxed closures a pattern lowers to carry the same
-/// bound, and a pattern is built from plain data, so nothing real is
-/// excluded.
+/// A pattern the match side lowers.
 pub trait MatchPat: IntoExpr + Send {
     /// Lower into `b`, returning the value-output handle of the root node.
     fn compile(self, b: &mut MatcherBuilder) -> PatValueRef {
@@ -36,10 +33,7 @@ impl<P> IntoExpr for Captured<P> {
 
 impl<P: MatchPat> MatchPat for Captured<P> {}
 
-/// A build-side `.capture(c)` reuses the LHS binding for `c` verbatim, so it
-/// REPLACES what it wraps rather than wrapping it. Only a `var()` leaf may be
-/// wrapped: over a composite the discarded operands would vanish from the RHS
-/// in silence, so `template::int_add(..).capture(c)` is a compile error.
+/// Only a `var()` leaf's capture is a template.
 impl crate::TemplatePat for Captured<crate::typed::wildcards::Var> {}
 impl<P> crate::template::template_pat::sealed::Sealed for Captured<P> {}
 

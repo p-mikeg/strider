@@ -1,11 +1,17 @@
 use strider_ir::UBig;
-use strider_ir::node::ValueType;
+use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{
     FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
 };
 use strider_pattern::*;
 
 use super::support::{Tb, assertions as a};
+
+/// The kind of the node `c` bound.
+fn bound_kind(m: &Match, c: Capture, function: &strider_ir::Function) -> Option<NodeKind> {
+    let node = m.bindings().get_node(c, function.graph())?;
+    Some(*function.node_kind(node))
+}
 
 #[test]
 fn any_int_binary_captures_each_variant() {
@@ -29,8 +35,8 @@ fn any_int_binary_captures_each_variant() {
                 .into_pattern(),
         );
         assert_eq!(
-            m.bindings().get_int_binary_op(ov, function.graph()),
-            Some(op)
+            bound_kind(&m, ov, &function),
+            Some(NodeKind::IntBinaryOp(op))
         );
     }
 }
@@ -82,8 +88,8 @@ fn any_int_unary_captures_variant() {
         any_int_unary(int_const(42u128)).capture(ov).into_pattern(),
     );
     assert_eq!(
-        m.bindings().get_int_unary_op(ov, function.graph()),
-        Some(op)
+        bound_kind(&m, ov, &function),
+        Some(NodeKind::IntUnaryOp(op))
     );
 }
 
@@ -109,7 +115,7 @@ fn any_int_cmp_captures_variant() {
                 .capture(ov)
                 .into_pattern(),
         );
-        assert_eq!(m.bindings().get_int_cmp_op(ov, function.graph()), Some(op));
+        assert_eq!(bound_kind(&m, ov, &function), Some(NodeKind::IntCmpOp(op)));
     }
 }
 
@@ -201,9 +207,10 @@ fn any_bool_binary_captures_variant() {
                 .into_pattern(),
         );
         assert_eq!(
-            m.bindings().get_bool_binary_op(ov, function.graph()),
-            Some(op)
+            bound_kind(&m, ov, &function),
+            Some(NodeKind::IntBinaryOp(op))
         );
+        assert_eq!(m.bindings().get_type(ov, &function), Some(ValueType::I1));
     }
 }
 
@@ -342,8 +349,8 @@ fn variant_any_composes_with_value_capture() {
 
     for m in &hits {
         assert_eq!(
-            m.bindings().get_int_binary_op(ov, function.graph()),
-            Some(IntBinaryOp::Mul),
+            bound_kind(m, ov, &function),
+            Some(NodeKind::IntBinaryOp(IntBinaryOp::Mul)),
             "the op-variant capture composes with the value captures either way",
         );
     }
@@ -374,5 +381,5 @@ fn unbound_op_capture_returns_none() {
     };
     let m = a::first(&function, int_const(7u128).into_pattern());
     let ov = Capture::new();
-    assert_eq!(m.bindings().get_int_binary_op(ov, function.graph()), None);
+    assert_eq!(m.bindings().get_float_binary_op(ov, function.graph()), None);
 }

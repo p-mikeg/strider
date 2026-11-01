@@ -1,6 +1,5 @@
 use pyo3::prelude::*;
 use pyo3::types::PyType;
-use std::sync::Mutex;
 use strider_orchestrator::opt::OptimizerPipeline;
 
 use crate::errors::into_strider_err;
@@ -43,33 +42,15 @@ impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
 /// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
 /// `Function.optimize(pipeline=...)`.  Applying a pipeline copies its
 /// passes, so one pipeline drives any number of calls.
-#[pyclass(name = "OptimizerPipeline", module = "strider.opt", frozen)]
+#[pyclass(name = "OptimizerPipeline", module = "strider.opt")]
 pub struct PyOptimizerPipeline {
-    /// A `Mutex` and not a `RefCell`, so the frozen class is `Sync`.
-    inner: Mutex<OptimizerPipeline>,
+    inner: OptimizerPipeline,
 }
 
 impl PyOptimizerPipeline {
-    fn new_with(pipeline: OptimizerPipeline) -> Self {
-        Self {
-            inner: Mutex::new(pipeline),
-        }
-    }
-
-    /// Every caller holds the GIL, so the lock never contends.
-    fn lock(&self) -> std::sync::MutexGuard<'_, OptimizerPipeline> {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    pub(crate) fn new_full_default() -> Self {
-        Self::new_with(strider_orchestrator::opt::default_pipeline())
-    }
-
     /// A copy of the wrapped pipeline, leaving the wrapper usable again.
     pub(crate) fn build_pipeline(&self) -> OptimizerPipeline {
-        self.lock().clone()
+        self.inner.clone()
     }
 }
 
@@ -78,34 +59,37 @@ impl PyOptimizerPipeline {
     /// A pipeline with no passes; build one up with `add` / `add_post`.
     #[classmethod]
     fn empty(_cls: &Bound<'_, PyType>) -> Self {
-        Self::new_with(OptimizerPipeline::new())
+        Self {
+            inner: OptimizerPipeline::new(),
+        }
     }
 
     /// The pipeline `analyze` runs when given none.
     #[classmethod]
     fn default(_cls: &Bound<'_, PyType>) -> Self {
-        Self::new_full_default()
+        Self {
+            inner: strider_orchestrator::opt::default_pipeline(),
+        }
     }
 
     /// Append a `strider.opt.*` pass to the main list, which runs repeatedly
     /// until the graph stops changing.  A single-shot post-pass is rejected
     /// here; use `add_post` instead.
-    fn add(&self, pass_obj: PyOptPass) -> PyResult<()> {
-        let erased = pass_obj.into_erased()?;
-        self.lock().add_boxed(erased);
+    fn add(&mut self, pass_obj: PyOptPass) -> PyResult<()> {
+        self.inner.add_boxed(pass_obj.into_erased()?);
         Ok(())
     }
 
     /// Append a post-pass, run once after the main passes finish. A
     /// fixed-point pass is accepted here too, and runs once.
-    fn add_post(&self, pass_obj: PyOptPass) {
-        self.lock().add_post_boxed(pass_obj.into_erased_post());
+    fn add_post(&mut self, pass_obj: PyOptPass) {
+        self.inner.add_post_boxed(pass_obj.into_erased_post());
     }
 
     /// Names of the main (repeated) passes currently registered, in order.
     #[getter]
     fn passes(&self) -> Vec<String> {
-        self.lock()
+        self.inner
             .passes()
             .iter()
             .map(|p| p.name().to_string())
@@ -113,18 +97,17 @@ impl PyOptimizerPipeline {
     }
 
     fn __repr__(&self) -> String {
-        let pipeline = self.lock();
         format!(
             "OptimizerPipeline({} passes, {} post)",
-            pipeline.passes().len(),
-            pipeline.post_passes().len()
+            self.inner.passes().len(),
+            self.inner.post_passes().len()
         )
     }
 
     /// Names of the post-passes currently registered, in order.
     #[getter]
     fn post_passes(&self) -> Vec<String> {
-        self.lock()
+        self.inner
             .post_passes()
             .iter()
             .map(|p| p.name().to_string())

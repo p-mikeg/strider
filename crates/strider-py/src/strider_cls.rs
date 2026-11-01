@@ -315,9 +315,9 @@ pub(crate) fn seat_known_targets(
 struct ElfSeat {
     /// A symbol's recorded size, bounding a lift the options leave open.
     size: Option<std::num::NonZeroU64>,
-    /// The ELF's `$d` spans, for options naming no data ranges.
+    /// The ELF's `$d` spans.
     data_ranges: Option<strider_cfg::DataRanges>,
-    /// For options holding a table keyed by call target.
+    /// The ELF's ppc64 local entries.
     local_entries: Option<std::sync::Arc<strider_cfg::LocalEntries>>,
 }
 
@@ -393,45 +393,24 @@ pub(crate) fn machine_addrs(
     out
 }
 
-/// Drain the pending-exception cell: an exception a Python callback stashed
-/// rather than raised (a `KeyboardInterrupt` / `SystemExit` from a `read`, or
-/// anything a `.when()` predicate raised) is surfaced here.  Raising it
-/// directly would have been destroyed by the next callback.
-pub(crate) fn check_pending_control_flow() -> PyResult<()> {
-    // Same boundary drops a swallowed callback cause: any `StriderError` that
-    // wanted it was synthesized before this runs, and a survivor would chain
-    // itself onto an unrelated later error and pin its traceback.
-    crate::errors::clear_callback_cause();
-    if let Some(err) = crate::pattern::take_pending_query_error() {
-        return Err(err);
-    }
-    Ok(())
-}
-
-/// On failure, prefer a stashed control-flow exception over the
-/// operation's own error.  Success leaves the cell for
-/// [`check_pending_control_flow`].
-pub(crate) fn prefer_pending_control_flow<T>(result: PyResult<T>) -> PyResult<T> {
-    match result {
-        Ok(v) => Ok(v),
-        Err(e) => {
-            check_pending_control_flow()?;
-            Err(e)
-        }
-    }
-}
-
-/// Run `f` with both drains: a stashed control-flow exception wins over
-/// `f`'s own error, and a stash survived by a successful `f` still surfaces.
+/// Run `f`, then drain the pending-exception cell: an exception a Python
+/// callback stashed rather than raised (a `KeyboardInterrupt` / `SystemExit`
+/// from a `read`, or anything a `.when()` predicate raised) wins over `f`'s
+/// result, its error or its success alike. Raising it directly would have been
+/// destroyed by the next callback.
 ///
-/// Every entry point that can reach a Python callback, a reader's `read` or a
-/// pattern's `.when()`, goes through this (or `analyze`'s open-coded
-/// equivalent), so a later, unrelated call cannot inherit a stashed
-/// exception.
+/// Every entry point that can reach a Python callback goes through this, so a
+/// later, unrelated call cannot inherit a stashed exception.
 pub(crate) fn with_pending_control_flow<T>(f: impl FnOnce() -> PyResult<T>) -> PyResult<T> {
-    let out = prefer_pending_control_flow(f())?;
-    check_pending_control_flow()?;
-    Ok(out)
+    let out = f();
+    // The same boundary drops a swallowed callback cause: any `StriderError`
+    // that wanted it was synthesized before this runs, and a survivor would
+    // chain itself onto an unrelated later error and pin its traceback.
+    crate::errors::clear_callback_cause();
+    match crate::pattern::take_pending_query_error() {
+        Some(err) => Err(err),
+        None => out,
+    }
 }
 
 /// The `collections.namedtuple` type backing `strider.lift.AnalyzeResult`,
@@ -736,8 +715,7 @@ impl PyLifter {
         Self::build_cfg_at(slf, py, entry, opts, None)
     }
 
-    /// INTERNAL. `ElfLifter.build_cfg`: [`Self::build_cfg`] with `elf`'s data
-    /// ranges and local entries.
+    /// INTERNAL. `ElfLifter.build_cfg` over the loaded-ELF handle `elf`.
     #[pyo3(name = "_build_cfg_elf", signature = (elf, entry, opts=None))]
     fn build_cfg_elf(
         slf: Py<Self>,
@@ -788,9 +766,7 @@ impl PyLifter {
         Self::analyze_at(slf, py, entry_addr(entry)?, cc, opts, None)
     }
 
-    /// INTERNAL. `ElfLifter.analyze`: [`Self::analyze`] with `entry` a symbol
-    /// name or an address, a symbol's recorded size bounding a lift `opts`
-    /// leaves open, and `elf`'s data ranges and local entries.
+    /// INTERNAL. `ElfLifter.analyze` over the loaded-ELF handle `elf`.
     #[pyo3(name = "_analyze_elf", signature = (elf, entry, cc, opts=None))]
     fn analyze_elf(
         slf: Py<Self>,
@@ -958,11 +934,11 @@ impl PyLifter {
             .transpose()?;
         let entry = entry_addr(entry)?;
         let bound = slf.bind(py);
-        {
+        let target = {
             let lifter = try_borrow_lifter(bound)?;
             crate::reader::check_mem_unchanged(py, &[&lifter.mem_obj])?;
-        }
-        let target = try_borrow_lifter(bound)?.target()?;
+            lifter.target()?
+        };
         let overrides = opts_ref.call_other_overrides(target)?;
         let cfg_opts = cfg_options_from(opts_ref, &overrides, seat.as_ref());
         let inner = with_pending_control_flow(|| {
@@ -999,7 +975,10 @@ impl PyLifter {
         let opts = opts.get();
         let cfg = opts.cfg.get();
         // Materialise the pipeline override BEFORE dropping the GIL below.
-        let custom_pipeline = opts.pipeline.as_ref().map(|p| p.get().build_pipeline());
+        let custom_pipeline = opts
+            .pipeline
+            .as_ref()
+            .map(|p| p.borrow(py).build_pipeline());
         let seat = elf
             .map(|(elf, size)| {
                 let keyed = opts
@@ -1042,7 +1021,7 @@ impl PyLifter {
         // `StriderError` can catch. Holding the GIL instead makes
         // finalisation wait for the analysis, the way any other Python call
         // does.
-        let result = {
+        let result = with_pending_control_flow(|| {
             let mut lifter = try_borrow_lifter_mut(slf.bind(py))?;
             lifter.bump_context_gen();
             let reader_calls_python = lifter.reader_calls_python;
@@ -1055,19 +1034,14 @@ impl PyLifter {
             } else {
                 py.allow_threads(|| inner.analyze(entry, &cc_built, &analyze_opts, custom_pipeline))
             };
-            prefer_pending_control_flow(outcome.map_err(into_strider_err))?
-        };
+            outcome.map_err(into_strider_err)
+        })?;
         let unresolved = machine_addrs(
             result
                 .incomplete()
                 .of(strider_cfg::Reason::UnresolvedBranch),
         );
         let strider_orchestrator::AnalyzeResult { cfg, function } = result;
-
-        // Surface anything a Python callback stashed while the GIL was
-        // released.
-        check_pending_control_flow()?;
-
         let cfg_obj = Py::new(py, PyCfg::new(cfg, slf.clone_ref(py), target))?;
 
         let py_function = Py::new(py, PyFunction::new(function, cfg_obj.clone_ref(py)))?;

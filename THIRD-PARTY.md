@@ -60,7 +60,7 @@ sdist and the repository.
 
 ## Rust crates
 
-Sixty third-party crates are in `strider-py`'s normal dependency closure and
+Sixty-four third-party crates are in `strider-py`'s normal dependency closure and
 are linked statically into the extension module. Their names, versions, SPDX
 expressions and licence texts are in
 [`licenses/rust-crates.md`](licenses/rust-crates.md), which also carries the

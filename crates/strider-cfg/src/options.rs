@@ -63,23 +63,20 @@ pub struct CfgOptions<'a> {
     pub known_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// A resolver's own answers, keyed by the `BranchIndirect`'s exact p-code
     /// address: one beats `known_targets` at that site, and
-    /// [`ResolvedTargets::Withdrawn`] defers it. Borrowed, as `known_targets`
-    /// is. The orchestrator's `analyze` owns this layer and refuses a
-    /// caller's.
+    /// [`ResolvedTargets::Withdrawn`] defers it. The orchestrator's `analyze`
+    /// owns this layer and refuses a caller's.
     pub derived_targets: &'a FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     /// Direct-call targets that never return (`exit`, `abort`); a call to one
     /// ends its region `NoReturn`. Each is matched against the address the
     /// call names, an ISA bit masked off, through [`Self::local_entries`].
-    /// Borrowed, as `known_targets` is.
     pub no_return_targets: &'a FxHashSet<u64>,
     /// Where a call sharing a ppc64 ELFv2 callee's TOC enters it, so a
     /// `no_return_targets` or per-address convention entry keyed by the
-    /// callee's global entry matches that call too. Borrowed, as
-    /// `known_targets` is.
+    /// callee's global entry matches that call too.
     pub local_entries: &'a LocalEntries,
     /// Caller classifications for user-op names, consulted before the built-in
     /// tables.  One override governs both the region terminator and the
-    /// emitted node. Borrowed, as `known_targets` is.
+    /// emitted node.
     pub call_other_overrides: &'a strider_target::call_other_abi::CallOtherOverrides,
     /// Bytes the image marks as data (ELF `$d` mapping symbols), which the
     /// builder decodes only for the instruction at the start address; see

@@ -22,7 +22,7 @@
 //!     `None` unless that input is a typed value. Use
 //!     `in_ty.ok_or_else(strider_pattern::skip)?` where it is required.
 //!
-//! A missing binding raises [`MissingBinding`](crate::MissingBinding) tagged
+//! A missing binding raises [`missing_binding`](crate::missing_binding) tagged
 //! with the entry's `kind` token. Writing the kind `kind?` instead yields an
 //! `Option` and no error, for a capture an alternation binds on only some
 //! arms; the rewrite coverage check is relaxed to match, so an entry is

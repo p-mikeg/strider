@@ -130,10 +130,6 @@ macro_rules! delegate_region_filter {
 }
 
 /// Inputs `[mem(0), addr(1)]`, single output the loaded value.
-///
-/// Holds its `Node` eagerly. `space` re-narrows the kind in place rather
-/// than deferring every setter behind a boxed closure to be replayed once the
-/// space is known.
 pub struct LoadPat {
     inner: Node,
     region: RegionFilter,

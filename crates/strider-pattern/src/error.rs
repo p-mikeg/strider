@@ -2,22 +2,13 @@
 //! sentinel, [`RewriteSkip`], lets a rewrite rule opt out without surfacing a
 //! hard error.
 
-use std::fmt;
-
 pub type Result<T> = anyhow::Result<T>;
 
 /// Returned by a closure inside a rewrite RHS to decline the rewrite,
 /// detected via [`is_skip`].
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
+#[error("rewrite rule opted to skip")]
 pub struct RewriteSkip;
-
-impl fmt::Display for RewriteSkip {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("rewrite rule opted to skip")
-    }
-}
-
-impl std::error::Error for RewriteSkip {}
 
 #[track_caller]
 pub fn skip() -> anyhow::Error {
@@ -28,19 +19,8 @@ pub fn is_skip(err: &anyhow::Error) -> bool {
     err.is::<RewriteSkip>()
 }
 
-/// A builder referenced a capture the LHS never bound. Carries the capture
-/// kind name (`"uint"`, `"int_binary_op"`, ...).
-#[derive(Debug)]
-pub struct MissingBinding(&'static str);
-
-impl fmt::Display for MissingBinding {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "missing binding for capture of kind {}", self.0)
-    }
-}
-
-impl std::error::Error for MissingBinding {}
-
+/// A builder referenced a capture the LHS never bound, naming the capture
+/// kind (`"uint"`, `"float_bits"`, ...).
 pub fn missing_binding(kind: &'static str) -> anyhow::Error {
-    anyhow::Error::new(MissingBinding(kind))
+    anyhow::anyhow!("missing binding for capture of kind {kind}")
 }

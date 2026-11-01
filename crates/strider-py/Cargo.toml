@@ -23,10 +23,10 @@ doctest = false
 # `macros`: `#[pyclass]` / `#[pymethods]` / `wrap_pyfunction!` themselves,
 # off under `default-features = false`.
 # `multiple-pymethods`: several `#[pyclass]`es carry more than one `#[pymethods]`
-# block. `forall_castmask!` / `forall_preset!` / `match_getters!` /
-# `bound_getters!` stamp out one block per generated item and
-# `builder_slot_methods!` one per slot kind. Dropping it fails the build with
-# conflicting `PyMethods` impls.
+# block: `forall_castmask!` stamps out one per mask, `forall_preset!` and
+# `match_getters!` one beside the class's own, and `builder_slot_methods!` one
+# per slot kind. Dropping it fails the build with conflicting `PyMethods`
+# impls.
 pyo3 = { version = "0.22", default-features = false, features = ["abi3-py39", "macros", "multiple-pymethods"] }
 anyhow = { workspace = true }
 # `remaining_stack` alone, the pattern compile's stack budget. Never

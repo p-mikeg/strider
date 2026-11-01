@@ -66,39 +66,19 @@ impl PyMatch {
         })
     }
 
-    /// Resolve `cap` to a node id and read it under a single borrow, skipping
-    /// the `PyNode` round trip's three resolutions and discarded incref.
-    fn read_bound<R>(
+    /// Resolve `cap` to a node and read it under a single borrow, skipping
+    /// the `PyNode` round trip's second resolution and discarded incref.
+    pub(crate) fn read_bound<R>(
         &self,
         py: Python<'_>,
         cap: strider_pattern::Capture,
-        read: impl FnOnce(&strider_ir::Function, u32) -> Option<R>,
+        read: impl FnOnce(&strider_ir::Function, strider_ir::node::NodeId) -> Option<R>,
     ) -> PyResult<Option<R>> {
         self.read(py, |function| {
             self.binding_for(cap)
                 .and_then(|m| m.node(cap, function.graph()))
-                .and_then(|nid| read(function, nid.as_u32()))
+                .and_then(|nid| read(function, nid))
         })
-    }
-
-    /// The unsigned constant bound to `cap`, or `None` when `cap` is unbound or
-    /// its node is not an integer constant. For `find_unique_value`.
-    pub(crate) fn uint_for(
-        &self,
-        py: Python<'_>,
-        cap: strider_pattern::Capture,
-    ) -> PyResult<Option<strider_ir::UBig>> {
-        self.read_bound(py, cap, crate::node::uint_of)
-    }
-
-    /// The signed (sign-extended from its width) constant bound to `cap`. Like
-    /// [`Self::uint_for`] but reads the value as two's-complement.
-    pub(crate) fn sint_for(
-        &self,
-        py: Python<'_>,
-        cap: strider_pattern::Capture,
-    ) -> PyResult<Option<strider_ir::IBig>> {
-        self.read_bound(py, cap, crate::node::sint_of)
     }
 
     /// `Capture('x'): BoundCapture(...)` entries for every bound capture, in
@@ -119,7 +99,10 @@ impl PyMatch {
                 .into_iter()
                 .map(|(cap_id, node_id)| {
                     let key = crate::pattern::capture_display(cap_id);
-                    let value = crate::node::uint_of(function, node_id)
+                    let value = function
+                        .graph()
+                        .node_id_from_u32(node_id)
+                        .and_then(|nid| crate::node::uint_of(function, nid))
                         .map_or_else(|| "<node>".to_string(), |v| format!("{v:#x}"));
                     format!("{key}: BoundCapture({value})")
                 })
@@ -199,8 +182,7 @@ impl PyMatch {
 
     /// True when `key` (a `Capture` or string name) is bound in this match.
     fn __contains__(&self, py: Python<'_>, key: CaptureKey<'_>) -> PyResult<bool> {
-        let cap = key.resolve()?;
-        self.read(py, |_| self.is_bound(cap))
+        self.has(py, key)
     }
 
     fn __repr__(&self, py: Python<'_>) -> String {
@@ -338,20 +320,14 @@ impl PyBoundCapture {
     /// The match's `uint_opt` for this capture, at any width. `None` for a
     /// non-constant binding.
     fn unsigned(&self, py: Python<'_>) -> PyResult<Option<strider_ir::UBig>> {
-        let m = self.match_.get();
-        match m.node_opt(py, self.key(py))? {
-            Some(node) => node.uint_value(py),
-            None => Ok(None),
-        }
+        let cap = self.cap.get().inner;
+        self.match_.get().read_bound(py, cap, crate::node::uint_of)
     }
 
     /// The match's `sint_opt` for this capture, at any width.
     fn signed(&self, py: Python<'_>) -> PyResult<Option<strider_ir::IBig>> {
-        let m = self.match_.get();
-        match m.node_opt(py, self.key(py))? {
-            Some(node) => node.sint_value(py),
-            None => Ok(None),
-        }
+        let cap = self.cap.get().inner;
+        self.match_.get().read_bound(py, cap, crate::node::sint_of)
     }
 
     /// Whether both bound the same value of the same function.
@@ -390,7 +366,7 @@ impl PyBoundCapture {
     /// signed or unsigned spelling (so `-8` and `0xFFFFFFF8` both match a
     /// 32-bit -8), or to another `BoundCapture` whose constant agrees in
     /// either spelling. Two captures with no integer value (any binding but an
-    /// integer constant of at most 128 bits, so a float constant too) are
+    /// integer constant, so a float constant too) are
     /// equal when they bound the same value of the same function; an unbound
     /// one equals nothing.
     /// Value-comparing, hence `BoundCapture` is unhashable.

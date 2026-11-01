@@ -215,6 +215,3 @@ class CfgOptions:
         `function_max_size=0`, and for a size with
         `allow_code_before_start_addr=True`."""
         ...
-    def _call_other_override_builds(self) -> int:
-        """How many times `call_other_abis` was resolved for an analyse."""
-        ...
