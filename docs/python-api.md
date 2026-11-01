@@ -591,15 +591,17 @@ deepest arm, since the arms are alternatives rather than operands.
 ### The shared builder vocabulary
 
 Every builder carries the same small set of methods, declared once in the stubs
-as `typing.Protocol` mixins and true of the runtime objects structurally:
+as `typing.Protocol` mixins and true of the runtime objects structurally. The
+rows list the slot setters in the order a builder lowers them, its own slots
+before `any_input` and `input` (the full order is under `first_of`):
 
 | mixin | methods | on |
 | --- | --- | --- |
 | `NodePat` | `.capture(c)`, `.when(f)`, `.into_pat()` | every builder |
-| `InputPat` | `.input(i, p)`, `.any_input(p)` | every node builder with input slots; not `entry()` (`Entry` has none), and not the operand builders `function_arg` / `int_binary` / `float_binary` / `bool_binary`, whose operands are their arguments |
 | `CtrlPat` | `.ctrl(p)` | `if_else`, `switch`, `call`, `call_other`, `ret`, `indirect_branch`, `unreachable` |
-| `MemPat` | `.mem(p)` | `call`, `call_other`, `indirect_branch`, `load`, `store` |
 | `MemAccessPat` | `.addr(p)`, `.bit_width(n)`, `.space(s)`, `.stack_offset(k)`, `.stack_only()`, `.non_stack()`, `.heap_only()` | `load`, `store` |
+| `MemPat` | `.mem(p)` | `call`, `call_other`, `indirect_branch`, `load`, `store` |
+| `InputPat` | `.any_input(p)`, `.input(i, p)` | every node builder with input slots; not `entry()` (`Entry` has none), and not the operand builders `function_arg` / `int_binary` / `float_binary` / `bool_binary`, whose operands are their arguments |
 | `OrderedPat` | `.ordered()` | `Pat`, `int_binary`, `float_binary`, `bool_binary` |
 | `OutputPat` | `.output(slot)`, `.any_output()` | every node builder with outputs; not the sinks `ret` / `indirect_branch` / `unreachable`, and not the operand builders listed above. `.any_output()` is satisfied by ANY output of the node, not a fixed slot |
 
@@ -672,17 +674,25 @@ arm it needs. A match is identified by what it binds, so two arms matching one
 node with the same bindings are one match: at the root of a pattern that
 captures nothing, `one_of([load(), anything()])` answers exactly what
 `anything()` does, and the arms need a capture to tell them apart. `first_of`
-is the **ordered** variant: at each node it is offered, the first listed arm
-that yields any match wins, whatever order the rest of the pattern is tried
-in, so a permissive leading arm shadows the rest; list most-specific first.
-Several `first_of`s in one match settle in pattern order: operands left to
-right, a builder's setters in the order its reference lists them, an inner one
-before the one holding it, each among the matches the earlier ones kept. A
-query holding a `first_of` runs every configuration of the pattern before it
-answers, unless it captures nothing and finds a match through the first arm of
-every `first_of`, where it stops. Any pattern kind is a valid arm, including the
-node-rooted control builders (`ret` / `if_else` / `switch` / `indirect_branch`
-/ `unreachable`).
+is the **ordered** variant: at each value it is offered (each output of a node
+is its own), the first listed arm that yields any match wins, whatever order
+the rest of the pattern is tried in, so a permissive leading arm shadows the
+rest; list most-specific first. A match reaching one `first_of` twice
+(`float_is_nan` and `float_le` read their operands twice) counts the
+later-listed arm it took. Several `first_of`s in one match settle in pattern
+order: operands left to right, a builder's own slots in its fixed order, then
+its `any_input`s, then its `input`s, whatever order the setters were called
+in, an inner one before the one holding it, each among the matches the earlier
+ones kept. The fixed orders: `load` addr, mem; `store` addr, data, mem; `call`
+target, ctrl, args, mem; `call_other` ctrl, mem, args; `ret` ctrl, return
+values; `indirect_branch` target, ctrl, mem; `unreachable` ctrl; `switch`
+selector, ctrl; `if_else` cond, ctrl; `phi` / `mem_phi` inputs, phi_token.
+Repeated setters (`arg`, `ret_val`, `phi_input`, `any_input`, `input`) keep
+their call order. A query holding a `first_of` runs every configuration of the
+pattern before it answers, unless it captures nothing and finds a match
+through the first arm of every `first_of`, walking through no cast, where it
+stops. Any pattern kind is a valid arm, including the node-rooted control
+builders (`ret` / `if_else` / `switch` / `indirect_branch` / `unreachable`).
 
 ### `field` / `code_ptr`, the two canonical-form alternations
 
@@ -748,8 +758,13 @@ function.find_unique_value(pat, off)          # the single captured VALUE, or No
 walks through: `CastMask.zero_extend()`, `.sign_extend()`, `.extend()` (both),
 `.truncate()`, `.int_bits_to_float()`, `.float_bits_to_int()`, `.all()` and
 `.none()`, combined with `|` and `&`. Each operand under such a cast keeps only
-the matches at the outermost level any match reached, so a query under a mask
-runs every configuration of the pattern, as a `first_of` does.
+the matches at the outermost level any match the `first_of`s kept reached.
+Several such operands settle in pattern order, each among the matches the
+earlier ones kept, as several `first_of`s do, so a guard coupling two of them
+answers by which is written first. A query under a mask runs every
+configuration of the pattern, as a `first_of` does, unless it captures nothing
+and finds a match through the first arm of every `first_of`, walking through
+no cast, where it stops.
 
 `find_unique` fails if there are two *structurally distinct* matches even when
 they bind the same value. `find_unique_value(pat, capture)` deduplicates by the
@@ -810,7 +825,8 @@ for hit in function.find_all(p.load(addr=p.int_add(p.anything(), p.int_const(off
 
 `pattern.CaptureKey` is the type alias for the capture argument, a `Capture`
 or its name, and `.capture()` takes it too. `hit[c]` is a `BoundCapture`,
-which carries `has` and the numeric conversions alone.
+which carries `has` and the numeric conversions alone. It has no truth value:
+`if hit[c]` raises `TypeError`, so test `hit[c].has` or `int(hit[c])`.
 
 ---
 
