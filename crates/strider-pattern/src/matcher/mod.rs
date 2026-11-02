@@ -221,16 +221,15 @@ impl<'f> Matcher<'f> {
 
     /// [`Self::matches_at_node`] for a pattern holding a `first_of` or a cast
     /// mask. Every configuration runs, then each `first_of`, per value it was
-    /// offered and root output anchored, keeps only the matches through the
-    /// lowest arm any of them took there, and each laddered operand those at
-    /// the outermost cast level. Where one match is offered one value several
-    /// times, the matches through the lowest arm at every visit are kept, else
-    /// the lexicographic minimum of the arms in visit order, so the filter
-    /// never empties a non-empty answer. The keys settle `first_of`s first, in
-    /// build order, then IR node order, each among the matches the earlier keys
-    /// kept, so the answer does not depend on the order the configurations ran
-    /// in. With `first_only`, a match through the first arm of every choice
-    /// ends the search: the filter keeps it.
+    /// offered, root output anchored and read, keeps only the matches through
+    /// the lowest arm any of them took there, and each laddered operand those
+    /// at the outermost cast level. A read ranks the edge path the visit came
+    /// down, so a match visits a key at most once and the filter never empties
+    /// a non-empty answer. The keys settle `first_of`s first, in build order,
+    /// then reads in read order, then IR node order, each among the matches the
+    /// earlier keys kept, so the answer does not depend on the order the
+    /// configurations ran in. With `first_only`, a match through the first arm
+    /// of every choice ends the search: the filter keeps it.
     #[inline(never)]
     fn lowest_arm_matches(
         &self,
@@ -252,33 +251,24 @@ impl<'f> Matcher<'f> {
             found.push((Match::new(node, b.clone(), generation), arms.clone()));
             false
         });
-        // Per key in settle order, each match's arms there in visit order (the
-        // sort is stable).
+        // Per key in settle order, each match's arm there: a match visits a key
+        // at most once.
         let mut taken: Vec<(walk::ArmKey, usize, usize)> = found
             .iter()
             .enumerate()
             .flat_map(|(i, (_, arms))| arms.iter().map(move |&(key, arm)| (key, i, arm)))
             .collect();
-        taken.sort_by_key(|&((c, (p, n, o), v), i, _)| {
+        taken.sort_unstable_by_key(|&((c, (p, n, o), v, read), _, _)| {
             let id = |v: Option<ValueId>| v.map(ValueId::as_u32);
-            (c, p.as_u32(), n.as_u32(), id(o), id(v), i)
+            (c, p.as_u32(), read, n.as_u32(), id(o), id(v))
         });
-        fn arms(run: &[(walk::ArmKey, usize, usize)]) -> impl Iterator<Item = usize> + '_ {
-            run.iter().map(|e| e.2)
-        }
         let mut kept = vec![true; found.len()];
         for group in taken.chunk_by(|a, b| a.0 == b.0) {
-            let runs = || group.chunk_by(|a, b| a.1 == b.1);
-            let live = || runs().filter(|r| kept[r[0].1]);
-            let Some(lowest) = live().min_by(|a, b| arms(a).cmp(arms(b))) else {
+            let Some(low) = group.iter().filter(|e| kept[e.1]).map(|e| e.2).min() else {
                 continue;
             };
-            // Some match took the lowest arm at every visit iff `lowest` did.
-            let low = live().flat_map(arms).min();
-            let every = |run: &[_]| arms(run).all(|a| Some(a) == low);
-            let uniform = every(lowest);
-            for run in runs() {
-                kept[run[0].1] &= (uniform && every(run)) || arms(run).eq(arms(lowest));
+            for e in group {
+                kept[e.1] &= e.2 == low;
             }
         }
         let mut seen = FxHashSet::default();

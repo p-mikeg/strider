@@ -147,6 +147,14 @@
   They raised `AttributeError` from reading the options' fields.
 - `StriderError.backtrace` read off the class is a property, not `""`; an
   instance reads as before.
+- `SleighArch`, `CallingConvention` and `Symbol` compare and hash by value, as
+  `VnSpace`, `Vn` and `CallOtherAbi` do: `lift.arch == SleighArch.x86()`,
+  `lift.cc == CallingConvention.x86_cdecl()` and two reads of one symbol
+  answered `False`, each a fresh object. A `custom(...)` convention never equals
+  a preset, nor one resolved against another arch.
+- `bool()` of a `CastMask` is whether it selects any cast, so
+  `if mask & CastMask.truncate():` tests membership. Every mask was true,
+  `CastMask.none()` included.
 
 ### Breaking, Rust
 
@@ -490,14 +498,6 @@
 
 ### Changed, Python
 
-- `SleighArch`, `CallingConvention` and `Symbol` compare and hash by value,
-  as `VnSpace`, `Vn` and `CallOtherAbi` do: `lift.arch == SleighArch.x86()`,
-  `lift.cc == CallingConvention.x86_cdecl()` and two reads of one symbol
-  answered `False`, each a fresh object. A `custom(...)` convention never
-  equals a preset, nor one resolved against another preset.
-- `bool()` of a `CastMask` is whether it selects any cast, so
-  `if mask & CastMask.truncate():` tests membership. Every mask was true,
-  `CastMask.none()` included.
 - A `.when()` predicate no longer runs on a candidate whose other operands'
   node kinds already rule it out, so a predicate that raised there no longer
   aborts the query, and a side-effecting one sees fewer calls. The matches
@@ -827,23 +827,25 @@
 
 ### Fixed
 
-- `first_of` keeps, at each value it is offered, only the matches through the
-  first listed arm that yields any match. It kept the first arm to match in
-  search order, so a sibling tried around it (another `one_of`'s arm order, or
-  the slot the `first_of` sat in) could report a later arm beside an earlier
-  one, or instead of it where a query stops at its first match. Two outputs of
-  one node, such as a `CallOther`'s result and a clobber, are two values: an arm
-  matching at one no longer drops the other arm's match at the other. A match
-  reaching one `first_of` twice at one value (`float_is_nan` and `float_le` read
-  their operands twice) wins there if it took the first arm any match took at
-  both reads; when none did, the reads settle in order, each through the first
-  arm that yields a match. Several `first_of`s in one match settle in the order
-  they are written (in Python, in pattern order: operands left to right, a
-  `one_of`'s arms as listed, a builder's own slots in its fixed order, then its
-  `any_input`s, then its `input`s, a repeated setter (`arg`, `input`, ...) in
-  call order and the rest whatever order they were called in), an inner one
-  before the one holding it, each among the matches the earlier ones kept. A
-  query holding a `first_of` runs every configuration before it answers,
+- `first_of` keeps, at each value it is offered at each read, only the matches
+  through the first listed arm that yields any match. It kept the first arm to
+  match in search order, so a sibling tried around it (another `one_of`'s arm
+  order, or the slot the `first_of` sat in) could report a later arm beside an
+  earlier one, or instead of it where a query stops at its first match. Two
+  outputs of one node, such as a `CallOther`'s result and a clobber, are two
+  values: an arm matching at one no longer drops the other arm's match at the
+  other. A match reaching one `first_of` more than once (`float_is_nan` and
+  `float_le` read their operands twice) settles each read on its own, in the
+  order the pattern reads them: of the matches still kept that make that read,
+  only those through the first arm any of them took there stay. Several
+  `first_of`s in one match settle in the order they are written (in Python, in
+  pattern order: operands left to right, a `one_of`'s arms as listed, a
+  builder's own slots in its fixed order, then its `any_input`s, then its
+  `input`s, whatever order the setters were called in, a repeated setter (`arg`,
+  `input`, ...) keeping its call order), an inner one before the one holding it,
+  each among the matches the earlier ones kept. `Pattern::root` refuses a
+  pattern unfolding to 2^64 or more reads through every arm of its alternations.
+  A query holding a `first_of` runs every configuration before it answers,
   `match_at` included, unless it wants one match (`match_at`, or a pattern
   capturing nothing) and finds one through the first arm of every `first_of`,
   walking through no cast, where it stops.
