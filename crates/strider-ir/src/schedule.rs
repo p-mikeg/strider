@@ -157,45 +157,13 @@ pub fn early_position(
 ) -> Option<NodeId> {
     let graph = function.graph();
     let pinned_at = |node: NodeId| -> Option<Option<NodeId>> {
-        let at = match graph.node_kind(node) {
-            NodeKind::Phi | NodeKind::MemPhi => function.phi_region(node),
-            NodeKind::Entry
-            | NodeKind::InitialMemory
-            | NodeKind::InitialVar(_)
-            | NodeKind::Region
-            | NodeKind::If
-            | NodeKind::Switch(_)
-            | NodeKind::Call { .. }
-            | NodeKind::Return
-            | NodeKind::IndirectBranch
-            | NodeKind::Unreachable
-            | NodeKind::Load(_)
-            | NodeKind::Store(_)
-            | NodeKind::IntConst(_)
-            | NodeKind::IntUnaryOp(_)
-            | NodeKind::IntBinaryOp(_)
-            | NodeKind::IntCmpOp(_)
-            | NodeKind::Truncate
-            | NodeKind::Popcount
-            | NodeKind::Lzcount
-            | NodeKind::Extend(_)
-            | NodeKind::FloatConst(_)
-            | NodeKind::FloatBinaryOp(_)
-            | NodeKind::FloatUnaryOp(_)
-            | NodeKind::FloatCmpOp(_)
-            | NodeKind::IntToFloat
-            | NodeKind::FloatToInt
-            | NodeKind::FloatToFloat
-            | NodeKind::IntBitsToFloat
-            | NodeKind::FloatBitsToInt
-            | NodeKind::CallOther { .. }
-            | NodeKind::CPoolRef
-            | NodeKind::New => {
-                if !is_pinned(graph, node) {
-                    return None;
-                }
-                node
-            }
+        let kind = graph.node_kind(node);
+        let at = if matches!(kind, NodeKind::Phi | NodeKind::MemPhi) {
+            function.phi_region(node)
+        } else if kind.has_control_flow() {
+            node
+        } else {
+            return None;
         };
         Some(tree.contains(at).then_some(at))
     };
