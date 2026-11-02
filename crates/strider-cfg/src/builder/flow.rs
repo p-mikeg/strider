@@ -49,10 +49,6 @@ fn get_context_at<R: rsleigh::MemReader>(
 }
 
 impl FlowVars {
-    pub fn is_empty(&self) -> bool {
-        self.vars.is_empty()
-    }
-
     /// The sla's flowing context vars.
     pub fn discover<R: rsleigh::MemReader>(sleigh: &rsleigh::Sleigh<R>) -> crate::Result<Self> {
         Ok(Self {
