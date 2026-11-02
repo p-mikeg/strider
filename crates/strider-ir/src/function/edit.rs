@@ -435,7 +435,8 @@ impl<'g> EditFunction<'g> {
     /// `has_side_effects` gate governs only the operand cascade.
     pub fn kill_node(&mut self, node: NodeId) {
         // Snapshot inputs BEFORE detaching (detach clears them).
-        let inputs: Vec<ValueId> = self.function.node_inputs(node).into_iter().collect();
+        let inputs: smallvec::SmallVec<[ValueId; 4]> =
+            self.function.node_inputs(node).into_iter().collect();
         for &input in &inputs {
             self.note_edge(input);
         }
