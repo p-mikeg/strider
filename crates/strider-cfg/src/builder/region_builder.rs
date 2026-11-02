@@ -631,7 +631,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// The conditional ALWAYS survives.  An out-of-bounds successor is wired
-    /// to a synthetic empty stub (`Builder::tail_call_stub`) rather than
+    /// to a synthetic empty stub (`Builder::edge_to_stub`) rather than
     /// deleted.
     fn process_cond_branch(
         &mut self,
@@ -669,8 +669,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // Either arm at this instruction's own end is a fall-through
                 // out of the function, reported as one.
                 self.report_skip_past_end(successor, addr, lift_res);
-                let stub = self.builder.tail_call_stub(successor)?;
-                self.builder.region_graph.add_edge(region, stub, ());
+                self.builder.edge_to_stub(region, successor)?;
             } else {
                 self.enqueue(region, successor)?;
             }
@@ -857,6 +856,16 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         Ok(region)
     }
 
+    /// Seals the region `Unconditional` onto `existing`, the region already
+    /// starting at `addr`, reporting an ISA-mode clash there.
+    fn seal_onto(&mut self, addr: PcodeInsnAddr, existing: NodeIndex) -> Result<()> {
+        self.builder
+            .note_isa_mode_clash(addr, existing, self.isa_mode);
+        let region = self.finish_current_region(RegionTerminator::Unconditional)?;
+        self.builder.region_graph.add_edge(region, existing, ());
+        Ok(())
+    }
+
     /// Falling through into an already-explored region seals the current one
     /// as `Unconditional` and edges to it.
     ///
@@ -872,17 +881,11 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) -> Result<InsnOutcome> {
-        if let Some(existing_region_id) = self.builder.index.get(addr) {
+        if let Some(existing) = self.builder.index.get(addr) {
             // A pcode index inside the current machine instruction already
             // starting a region is exactly where two ISA decodes of one address
             // produce different pcode sequences.
-            let want = self.isa_mode;
-            self.builder
-                .note_isa_mode_clash(addr, existing_region_id, want);
-            let region = self.finish_current_region(RegionTerminator::Unconditional)?;
-            self.builder
-                .region_graph
-                .add_edge(region, existing_region_id, ());
+            self.seal_onto(addr, existing)?;
             return Ok(InsnOutcome::RegionClosed);
         }
         self.process_new_insn(insn, addr, lift_res)
@@ -969,11 +972,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // partition, which `RegionIndex::containing` resolves by
                 // walking down past the greatest start.
                 if let Some(existing) = self.builder.index.get(cur_addr) {
-                    let want = self.isa_mode;
-                    self.builder.note_isa_mode_clash(cur_addr, existing, want);
-                    let region = self.finish_current_region(RegionTerminator::Unconditional)?;
-                    self.builder.region_graph.add_edge(region, existing, ());
-                    return Ok(());
+                    return self.seal_onto(cur_addr, existing);
                 }
                 // Total segmentation, one region per zero-pcode-op instruction:
                 // seal on reaching a nop, and on leaving a lone-nop region.
@@ -1017,7 +1016,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// loss [`Builder::seat_non_boundary_target`] reports, reached from the
     /// other side, so it is reported under the same reason.
     ///
-    /// A [`Builder::tail_call_stub`] owns no bytes (nothing outside the
+    /// A [`Builder::edge_to_stub`] stub owns no bytes (nothing outside the
     /// function bound is decoded), so its start is no overlap.
     fn note_stepped_over_region_starts(
         &mut self,
@@ -1054,15 +1053,14 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
     }
 
-    /// Seals the region onto a [`Builder::tail_call_stub`] at `cur_addr`,
+    /// Seals the region onto a [`Builder::edge_to_stub`] stub at `cur_addr`,
     /// where the fall-through found nothing to decode, and reports that
     /// address as `reason`: every stub seal names the address it could not go
     /// on from.
     fn seal_and_report(&mut self, cur_addr: PcodeInsnAddr, reason: crate::Reason) -> Result<()> {
         self.note_empty_span_to(cur_addr);
         let region = self.finish_current_region(RegionTerminator::Unconditional)?;
-        let stub = self.builder.tail_call_stub(cur_addr)?;
-        self.builder.region_graph.add_edge(region, stub, ());
+        self.builder.edge_to_stub(region, cur_addr)?;
         self.builder.incomplete.insert(cur_addr, reason);
         Ok(())
     }
@@ -1170,7 +1168,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     }
 
     /// Sequential decoding running off the recorded function extent: the
-    /// region leaves through a [`Builder::tail_call_stub`] at `cur_addr`, the
+    /// region leaves through a [`Builder::edge_to_stub`] stub at `cur_addr`, the
     /// tail call a branch out of range gets, reported as
     /// [`crate::Reason::PastFunctionEnd`]. Returns whether it sealed.
     ///
