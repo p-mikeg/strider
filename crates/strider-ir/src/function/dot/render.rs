@@ -2,17 +2,7 @@ use ::dot::GraphDotDumper as _;
 
 use super::{FunctionDotDumper, FunctionDotDumperState, edge_style, node_style};
 use crate::IRViewer;
-use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind};
-
-/// Whether `node` has a single output with no uses.
-fn has_one_unused_output(graph: &Graph, node: NodeId) -> bool {
-    let outputs = graph.node_outputs(node);
-    if outputs.len() != 1 {
-        return false;
-    }
-    graph.value_uses(outputs[0]).next().is_none()
-}
 
 impl ::dot::GraphDotDumper for FunctionDotDumper<'_> {
     type Node = crate::node::NodeId;
@@ -51,8 +41,7 @@ impl ::dot::GraphDotDumper for FunctionDotDumper<'_> {
 }
 
 impl FunctionDotDumper<'_> {
-    /// `Ok(None)` when the node draws no shared box of its own (a per-use const,
-    /// or a useless `InitialVar`).
+    /// `None` when the node draws no shared box of its own: a per-use const.
     fn try_declare_node(
         &self,
         node: NodeId,
@@ -61,11 +50,6 @@ impl FunctionDotDumper<'_> {
     ) -> Option<String> {
         let kind = *self.function.node_kind(node);
         if self.renders_per_use(node) {
-            return None;
-        }
-        if matches!(kind, NodeKind::InitialVar(_))
-            && has_one_unused_output(self.function.graph(), node)
-        {
             return None;
         }
 
