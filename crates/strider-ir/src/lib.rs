@@ -14,7 +14,6 @@ mod control_flow_view;
 pub use control_flow_view::{
     CtrlKey, DominatorTree, control_dominator_tree, control_edge_dominator_tree,
 };
-pub(crate) mod error;
 pub mod eval;
 mod function;
 #[cfg(any(test, feature = "test-util"))]
@@ -23,9 +22,8 @@ pub use function::{
     AssumptionOptions, EditFunction, FuncSideTables, Function, MemDecomp, MemoryId,
 };
 pub mod graph;
-pub use graph::Graph;
+pub use graph::{Graph, Inputs};
 pub mod node;
-pub use graph::Inputs;
 mod region;
 mod schedule;
 /// The int-constant type [`IRViewer::int_const`] answers and
@@ -41,13 +39,12 @@ pub mod walk;
 #[cfg(test)]
 mod test_cfgs;
 
-pub use crate::error::Result;
-pub use crate::node::IntConstId;
 pub use builder::{FunctionBuilder, IRBuilder, IRBuilderExt};
 pub use node::{
-    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, VnTypeExt,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntConstId,
+    IntUnaryOp, ValueType, VnTypeExt,
 };
 pub use region::RegionId;
 pub use viewer::{IRViewer, IRWalker};
 
-pub type ValueType = node::ValueType;
+pub type Result<T> = anyhow::Result<T>;

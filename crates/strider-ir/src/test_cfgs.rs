@@ -32,7 +32,7 @@ pub(crate) fn arb_terms(max_regions: usize, max_arms: usize) -> impl Strategy<Va
     prop::collection::vec(term, 1..=max_regions)
 }
 
-pub(crate) fn empty_builder() -> crate::error::Result<FunctionBuilder> {
+pub(crate) fn empty_builder() -> crate::Result<FunctionBuilder> {
     FunctionBuilder::new(
         vec![],
         strider_target::BuiltCallingConvention::default(),
@@ -46,7 +46,7 @@ pub(crate) fn lower(terms: &[Term]) -> Option<FunctionBuilder> {
     let mut b = empty_builder().ok()?;
     let regions: Vec<_> = (0..terms.len())
         .map(|_| b.create_region_all())
-        .collect::<crate::error::Result<_>>()
+        .collect::<crate::Result<_>>()
         .ok()?;
     b.set_entry_region_all(regions[0]).ok()?;
     b.set_lift_addr(Some(0x5000));
@@ -73,11 +73,11 @@ pub(crate) fn lower(terms: &[Term]) -> Option<FunctionBuilder> {
 
 /// `n` regions, each branching to the next; the last returns. Unvalidated,
 /// since `validate` itself walks the graph.
-pub(crate) fn chain(n: usize) -> crate::error::Result<FunctionBuilder> {
+pub(crate) fn chain(n: usize) -> crate::Result<FunctionBuilder> {
     let mut b = empty_builder()?;
     let regions: Vec<_> = (0..n)
         .map(|_| b.create_region_all())
-        .collect::<crate::error::Result<_>>()?;
+        .collect::<crate::Result<_>>()?;
     b.set_entry_region_all(regions[0])?;
     b.set_lift_addr(Some(0x7000));
     for pair in regions.windows(2) {
@@ -90,12 +90,12 @@ pub(crate) fn chain(n: usize) -> crate::error::Result<FunctionBuilder> {
 }
 
 /// A `Switch` of `k` arms, each branching to one join that returns.
-pub(crate) fn wide_join(k: usize) -> crate::error::Result<Function> {
+pub(crate) fn wide_join(k: usize) -> crate::Result<Function> {
     let mut b = empty_builder()?;
     let entry = b.create_region_all()?;
     let arms: Vec<_> = (0..k)
         .map(|_| b.create_region_all())
-        .collect::<crate::error::Result<_>>()?;
+        .collect::<crate::Result<_>>()?;
     let join = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
     b.set_lift_addr(Some(0x8000));

@@ -4,7 +4,7 @@ use super::*;
 use crate::IRViewer;
 use anyhow::anyhow;
 
-use crate::error::Result;
+use crate::Result;
 use crate::node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeId,
     NodeKind, ValueKind, ValueType,

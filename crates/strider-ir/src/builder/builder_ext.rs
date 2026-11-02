@@ -5,12 +5,12 @@ use anyhow::anyhow;
 use dashu_int::UBig;
 
 use crate::IRViewer;
+use crate::Result;
 use crate::builder::IRBuilder;
 use crate::builder::checks::{
     require_float_type, require_float_value, require_integer_type, require_integer_value,
     require_output_type, require_slot, require_value_type,
 };
-use crate::error::Result;
 use crate::eval;
 use crate::node::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeKind,

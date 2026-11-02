@@ -67,13 +67,13 @@ impl ValueType {
     }
 
     /// The integer type of an `n`-byte varnode: one byte is `I8`, never `I1`.
-    pub fn int_from_bytes(n: u32) -> crate::error::Result<Self> {
+    pub fn int_from_bytes(n: u32) -> crate::Result<Self> {
         Self::from_bytes(n, Self::Int)
             .ok_or_else(|| anyhow!("unsupported integer varnode size: {n} bytes"))
     }
 
     /// The float type of an `n`-byte varnode.
-    pub(crate) fn float_from_bytes(n: u32) -> crate::error::Result<Self> {
+    pub(crate) fn float_from_bytes(n: u32) -> crate::Result<Self> {
         Self::from_bytes(n, Self::Float)
             .ok_or_else(|| anyhow!("unsupported float varnode size: {n} bytes"))
     }
@@ -202,19 +202,19 @@ impl std::str::FromStr for ValueType {
 
 /// The [`ValueType`] a varnode's byte size maps to.
 pub trait VnTypeExt {
-    fn int_type(&self) -> crate::error::Result<ValueType>;
+    fn int_type(&self) -> crate::Result<ValueType>;
 
-    fn float_type(&self) -> crate::error::Result<ValueType>;
+    fn float_type(&self) -> crate::Result<ValueType>;
 }
 
 impl VnTypeExt for rsleigh::Vn {
     #[inline]
-    fn int_type(&self) -> crate::error::Result<ValueType> {
+    fn int_type(&self) -> crate::Result<ValueType> {
         ValueType::int_from_bytes(self.size)
     }
 
     #[inline]
-    fn float_type(&self) -> crate::error::Result<ValueType> {
+    fn float_type(&self) -> crate::Result<ValueType> {
         ValueType::float_from_bytes(self.size)
     }
 }
