@@ -36,7 +36,7 @@ impl ValueKind {
     pub fn as_value(self) -> Option<ValueType> {
         match self {
             Self::Typed(v) => Some(v),
-            _ => None,
+            Self::Control | Self::PhiToken | Self::Memory => None,
         }
     }
 

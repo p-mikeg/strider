@@ -191,18 +191,57 @@ impl Reach {
     }
 }
 
-/// The arithmetic an address is built from, which [`frame_reach`] follows.
-fn is_address_arithmetic(kind: &NodeKind) -> bool {
+/// A step of the arithmetic an address is built from, which [`frame_reach`]
+/// follows; `None` off it.
+#[derive(Clone, Copy)]
+enum AddrStep {
+    Phi,
+    Add,
+    Neg,
+    /// `And` / `Or` / `Xor` / a width change: the offset is lost.
+    Opaque,
+}
+
+fn address_step(kind: &NodeKind) -> Option<AddrStep> {
     use crate::node::IntUnaryOp;
-    matches!(
-        kind,
-        NodeKind::IntBinaryOp(
-            IntBinaryOp::Add | IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor
-        ) | NodeKind::IntUnaryOp(IntUnaryOp::Neg)
-            | NodeKind::Extend(_)
-            | NodeKind::Truncate
-            | NodeKind::Phi
-    )
+    match kind {
+        NodeKind::Phi => Some(AddrStep::Phi),
+        NodeKind::IntBinaryOp(IntBinaryOp::Add) => Some(AddrStep::Add),
+        NodeKind::IntUnaryOp(IntUnaryOp::Neg) => Some(AddrStep::Neg),
+        NodeKind::IntBinaryOp(IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor)
+        | NodeKind::Extend(_)
+        | NodeKind::Truncate => Some(AddrStep::Opaque),
+        NodeKind::Entry
+        | NodeKind::InitialMemory
+        | NodeKind::InitialVar(_)
+        | NodeKind::Region
+        | NodeKind::MemPhi
+        | NodeKind::If
+        | NodeKind::Switch(_)
+        | NodeKind::Call { .. }
+        | NodeKind::Return
+        | NodeKind::IndirectBranch
+        | NodeKind::Unreachable
+        | NodeKind::Load(_)
+        | NodeKind::Store(_)
+        | NodeKind::IntConst(_)
+        | NodeKind::IntBinaryOp(_)
+        | NodeKind::IntCmpOp(_)
+        | NodeKind::Popcount
+        | NodeKind::Lzcount
+        | NodeKind::FloatConst(_)
+        | NodeKind::FloatBinaryOp(_)
+        | NodeKind::FloatUnaryOp(_)
+        | NodeKind::FloatCmpOp(_)
+        | NodeKind::IntToFloat
+        | NodeKind::FloatToInt
+        | NodeKind::FloatToFloat
+        | NodeKind::IntBitsToFloat
+        | NodeKind::FloatBitsToInt
+        | NodeKind::CallOther { .. }
+        | NodeKind::CPoolRef
+        | NodeKind::New => None,
+    }
 }
 
 /// The highest offset from the entry stack pointer among `values` that are
@@ -219,7 +258,6 @@ fn is_address_arithmetic(kind: &NodeKind) -> bool {
 /// registers, are gone from the graph by then.
 fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
     use crate::IRViewer;
-    use crate::node::IntUnaryOp;
     // The cone the arithmetic reaches, and each value's users within it.
     let mut cone = Vec::new();
     let mut seen = entity_utils::DenseEntitySet::new();
@@ -232,7 +270,7 @@ fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
         }
         cone.push(v);
         let node = function.producer(v);
-        if is_address_arithmetic(function.node_kind(node)) {
+        if address_step(function.node_kind(node)).is_some() {
             for input in function.value_inputs(node) {
                 users[input].push(v);
                 work.push(input);
@@ -256,35 +294,33 @@ fn frame_reach(function: &Function, values: &[ValueId]) -> Option<i128> {
             let shift = (128 - bits) as u32;
             x.wrapping_shl(shift).wrapping_shr(shift)
         };
-        let next = if !is_address_arithmetic(&kind) {
-            match kind {
-                _ if function.is_entry_sp(v) => Reach::Sp(0),
-                NodeKind::IntConst(_) => function
-                    .int_const_i128(v)
-                    .map_or(Reach::Other, Reach::Const),
-                _ => Reach::Other,
-            }
-        } else {
-            let inputs: Vec<Reach> = function.value_inputs(node).map(|i| reach[i]).collect();
-            let stack = inputs.iter().any(|r| r.is_stack());
-            match kind {
-                NodeKind::Phi => inputs.iter().fold(Reach::Top, |acc, &r| acc.meet(r)),
-                _ if inputs.contains(&Reach::Top) => Reach::Top,
-                NodeKind::IntBinaryOp(IntBinaryOp::Add) => match inputs[..] {
-                    [Reach::Sp(k), Reach::Const(c)] | [Reach::Const(c), Reach::Sp(k)] => {
-                        Reach::Sp(wrap(k.wrapping_add(c)))
-                    }
-                    [Reach::Const(a), Reach::Const(b)] => Reach::Const(wrap(a.wrapping_add(b))),
-                    _ if stack => Reach::SpUnplaced,
-                    _ => Reach::Other,
-                },
-                NodeKind::IntUnaryOp(IntUnaryOp::Neg) => match inputs[..] {
-                    [Reach::Const(c)] => Reach::Const(wrap(c.wrapping_neg())),
-                    _ if stack => Reach::SpUnplaced,
-                    _ => Reach::Other,
-                },
-                _ if stack => Reach::SpUnplaced,
-                _ => Reach::Other,
+        let next = match address_step(&kind) {
+            None if function.is_entry_sp(v) => Reach::Sp(0),
+            None => function
+                .int_const_i128(v)
+                .map_or(Reach::Other, Reach::Const),
+            Some(step) => {
+                let inputs: Vec<Reach> = function.value_inputs(node).map(|i| reach[i]).collect();
+                let stack = inputs.iter().any(|r| r.is_stack());
+                match step {
+                    AddrStep::Phi => inputs.iter().fold(Reach::Top, |acc, &r| acc.meet(r)),
+                    _ if inputs.contains(&Reach::Top) => Reach::Top,
+                    AddrStep::Add => match inputs[..] {
+                        [Reach::Sp(k), Reach::Const(c)] | [Reach::Const(c), Reach::Sp(k)] => {
+                            Reach::Sp(wrap(k.wrapping_add(c)))
+                        }
+                        [Reach::Const(a), Reach::Const(b)] => Reach::Const(wrap(a.wrapping_add(b))),
+                        _ if stack => Reach::SpUnplaced,
+                        _ => Reach::Other,
+                    },
+                    AddrStep::Neg => match inputs[..] {
+                        [Reach::Const(c)] => Reach::Const(wrap(c.wrapping_neg())),
+                        _ if stack => Reach::SpUnplaced,
+                        _ => Reach::Other,
+                    },
+                    AddrStep::Opaque if stack => Reach::SpUnplaced,
+                    AddrStep::Opaque => Reach::Other,
+                }
             }
         };
         if reach[v] != next {
