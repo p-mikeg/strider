@@ -254,7 +254,39 @@ impl FuncSideTables {
                     let old = *id;
                     *id = *cc_ids[old].get_or_insert_with(|| ccs.intern(call_ccs[old].clone()));
                 }
-                _ => {}
+                // `InitialVar`'s id keys the function's own tracked varnodes.
+                NodeKind::Call { cc: None }
+                | NodeKind::Entry
+                | NodeKind::InitialMemory
+                | NodeKind::InitialVar(_)
+                | NodeKind::Region
+                | NodeKind::MemPhi
+                | NodeKind::Phi
+                | NodeKind::If
+                | NodeKind::Return
+                | NodeKind::IndirectBranch
+                | NodeKind::Unreachable
+                | NodeKind::Load(_)
+                | NodeKind::Store(_)
+                | NodeKind::IntUnaryOp(_)
+                | NodeKind::IntBinaryOp(_)
+                | NodeKind::IntCmpOp(_)
+                | NodeKind::Truncate
+                | NodeKind::Popcount
+                | NodeKind::Lzcount
+                | NodeKind::Extend(_)
+                | NodeKind::FloatConst(_)
+                | NodeKind::FloatBinaryOp(_)
+                | NodeKind::FloatUnaryOp(_)
+                | NodeKind::FloatCmpOp(_)
+                | NodeKind::IntToFloat
+                | NodeKind::FloatToInt
+                | NodeKind::FloatToFloat
+                | NodeKind::IntBitsToFloat
+                | NodeKind::FloatBitsToInt
+                | NodeKind::CallOther { .. }
+                | NodeKind::CPoolRef
+                | NodeKind::New => {}
             }
         }
         *const_interner = consts;
@@ -385,10 +417,10 @@ impl crate::Function {
     /// reports as `DanglingCcId`.
     #[inline]
     pub fn get_cc(&self, node_id: NodeId) -> &strider_target::BuiltCallingConvention {
-        match *self.node_kind(node_id) {
-            NodeKind::Call { cc: Some(id) } => &self.side_tables().call_ccs[id],
-            _ => self.default_cc(),
-        }
+        let NodeKind::Call { cc: Some(id) } = *self.node_kind(node_id) else {
+            return self.default_cc();
+        };
+        &self.side_tables().call_ccs[id]
     }
 
     /// `None` for an id this function never minted.
@@ -404,20 +436,21 @@ impl crate::Function {
     /// If `call` is not a `Call`.
     pub fn set_call_cc(&mut self, call: NodeId, cc: strider_target::BuiltCallingConvention) {
         let id = self.side_tables_mut().call_ccs.intern(cc);
-        match self.graph_mut().node_kind_mut(call) {
-            NodeKind::Call { cc } => *cc = Some(id),
-            other => panic!("set_call_cc on {call:?}, a {other:?}"),
-        }
+        let kind = self.graph_mut().node_kind_mut(call);
+        let NodeKind::Call { cc } = kind else {
+            panic!("set_call_cc on {call:?}, a {kind:?}");
+        };
+        *cc = Some(id);
     }
 
     /// The case addresses of a `Switch`, empty for any other node or an id
     /// this function never minted.
     #[inline]
     pub fn switch_targets(&self, node_id: NodeId) -> &[u64] {
-        match *self.node_kind(node_id) {
-            NodeKind::Switch(id) => self.switch_table(id).unwrap_or(&[]),
-            _ => &[],
-        }
+        let NodeKind::Switch(id) = *self.node_kind(node_id) else {
+            return &[];
+        };
+        self.switch_table(id).unwrap_or(&[])
     }
 
     /// `None` for an id this function never minted.
@@ -435,14 +468,13 @@ impl crate::Function {
     /// `None` for any other node or an unnamed op.
     #[inline]
     pub fn call_other_name(&self, node_id: NodeId) -> Option<&str> {
-        match *self.node_kind(node_id) {
-            NodeKind::CallOther { user_op_id } => self
-                .side_tables()
-                .call_other_names
-                .get(&user_op_id)
-                .map(String::as_str),
-            _ => None,
-        }
+        let NodeKind::CallOther { user_op_id } = *self.node_kind(node_id) else {
+            return None;
+        };
+        self.side_tables()
+            .call_other_names
+            .get(&user_op_id)
+            .map(String::as_str)
     }
 
     /// Names every `CallOther { user_op_id }`, present and future.
