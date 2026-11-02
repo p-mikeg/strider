@@ -963,6 +963,7 @@ fn add_region_empty_region_with_disallowed_terminator_returns_error() {
         start_addr: addr(0x1000, 0),
         insns: Vec::new(),
         empty_span_len: 0,
+        isa_mode: None,
         terminator: RegionTerminator::Return,
     };
     let err = b.add_region(empty).unwrap_err();
@@ -983,6 +984,7 @@ fn add_region_empty_unconditional_is_allowed() {
         start_addr: addr(0x1000, 0),
         insns: Vec::new(),
         empty_span_len: 0,
+        isa_mode: None,
         terminator: RegionTerminator::Unconditional,
     };
     b.add_region(empty)
@@ -998,6 +1000,7 @@ fn add_region_empty_tail_call_is_allowed() {
         start_addr: addr(0x9000, 0),
         insns: Vec::new(),
         empty_span_len: 0,
+        isa_mode: None,
         terminator: RegionTerminator::TailCall {
             target: 0x9000.into(),
         },

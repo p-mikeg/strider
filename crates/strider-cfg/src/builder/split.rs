@@ -75,6 +75,7 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
             "split_region produced an out-of-order second half"
         );
         let first_region_start_addr = second_region.start_addr;
+        let isa_mode = second_region.isa_mode;
         second_region.start_addr = addr;
 
         // Re-index the now-second region under its new start address.  The
@@ -89,14 +90,9 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
             insns: first_region_insns,
             empty_span_len: 0,
             terminator: RegionTerminator::Unconditional,
+            // Both halves decoded in the same mode.
+            isa_mode,
         })?;
-        // Both halves decoded in the same mode. Without carrying it, the first
-        // half has no recorded mode and `explore`'s clash check reads `None`,
-        // so a later wrong-mode arrival at this address goes unreported for no
-        // reason other than that some unrelated target split the region.
-        if let Some(&mode) = self.region_isa_mode.get(&region_id) {
-            self.region_isa_mode.insert(first_region, mode);
-        }
 
         let parent_edges: Vec<_> = self
             .region_graph
