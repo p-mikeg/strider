@@ -1114,9 +1114,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
         let mut current = self.parent_edge;
         while let Some(region_id) = current {
-            let Some(region) = self.builder.region_graph.node_weight(region_id) else {
-                return Ok(false);
-            };
+            let region = &self.builder.region_graph[region_id];
             if region.terminator != RegionTerminator::Unconditional {
                 return Ok(false);
             }
