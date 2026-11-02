@@ -1,7 +1,7 @@
 use bitflags::bitflags;
 
-use crate::ExtendOp;
 use crate::node::NodeKind;
+use crate::node::kind::KindFlags;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
@@ -18,44 +18,7 @@ bitflags! {
 
 /// Empty for non-cast kinds.
 pub const fn cast_mask_of(kind: &NodeKind) -> CastMask {
-    match kind {
-        NodeKind::Extend(ExtendOp::ZeroExtend) => CastMask::ZERO_EXTEND,
-        NodeKind::Extend(ExtendOp::SignExtend) => CastMask::SIGN_EXTEND,
-        NodeKind::Truncate => CastMask::TRUNCATE,
-        NodeKind::IntBitsToFloat => CastMask::INT_BITS_TO_FLOAT,
-        NodeKind::FloatBitsToInt => CastMask::FLOAT_BITS_TO_INT,
-
-        NodeKind::Entry
-        | NodeKind::InitialMemory
-        | NodeKind::InitialVar(_)
-        | NodeKind::Region
-        | NodeKind::Phi
-        | NodeKind::MemPhi
-        | NodeKind::If
-        | NodeKind::Switch(_)
-        | NodeKind::Call { .. }
-        | NodeKind::CallOther { .. }
-        | NodeKind::Return
-        | NodeKind::IndirectBranch
-        | NodeKind::Unreachable
-        | NodeKind::Load(_)
-        | NodeKind::Store(_)
-        | NodeKind::IntConst(_)
-        | NodeKind::IntUnaryOp(_)
-        | NodeKind::IntBinaryOp(_)
-        | NodeKind::IntCmpOp(_)
-        | NodeKind::Popcount
-        | NodeKind::Lzcount
-        | NodeKind::FloatConst(_)
-        | NodeKind::FloatUnaryOp(_)
-        | NodeKind::FloatBinaryOp(_)
-        | NodeKind::FloatCmpOp(_)
-        | NodeKind::IntToFloat
-        | NodeKind::FloatToInt
-        | NodeKind::FloatToFloat
-        | NodeKind::CPoolRef
-        | NodeKind::New => CastMask::empty(),
-    }
+    CastMask::from_bits_retain((kind.flags().bits() >> KindFlags::CAST_SHIFT) as u32)
 }
 
 #[cfg(test)]
