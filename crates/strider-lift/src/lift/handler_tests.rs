@@ -1636,7 +1636,7 @@ pub(super) fn lift_bytes_with_opts(
 /// in-function code after it, so `strider-cfg` ends the region `NoReturn` and
 /// the lifter must sink the open control edge into `Unreachable`.  It does
 /// that for `Opcode::Call`; `Opcode::CallIndirect` reaches the same terminator
-/// (`region_builder`'s `is_branch_tail_call_nocheck` arm) and must too, or the
+/// (`region_builder`'s `is_branch_tail_call` arm) and must too, or the
 /// `Call` node keeps a control output nothing consumes and `validate` rejects
 /// the whole function.
 #[test]
