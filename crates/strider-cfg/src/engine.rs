@@ -3,7 +3,7 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::builder::{Builder, FlowCommit, FlowContext, FlowVars};
+use crate::builder::{Builder, FlowCommit, FlowContext, FlowVars, hold_var};
 use crate::{Cfg, CfgOptions, MachineInsnAddr, Result};
 
 /// A Sleigh engine and the decode context it carries across functions, so
@@ -150,10 +150,8 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
         self.flow_vars.pin_at(&mut self.sleigh, decode_addr, want)?;
         // The pin's diff can write an alias of the mode bit last, flipping it
         // back.
-        if let Some((var, value)) = entry_mode
-            && self.sleigh.get_context_at(decode_addr, var)? != value
-        {
-            self.sleigh.set_context_at(decode_addr, var, value)?;
+        if let Some((var, value)) = entry_mode {
+            hold_var(&mut self.sleigh, decode_addr, var, value)?;
         }
         // The function's now-committed ISA mode, the base context the builder
         // decodes a strider-resolved target in.

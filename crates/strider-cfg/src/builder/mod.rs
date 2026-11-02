@@ -4,7 +4,7 @@ mod split;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use flow::{FlowCommit, FlowContext, FlowVars};
+pub(crate) use flow::{FlowCommit, FlowContext, FlowVars, hold_var};
 use region_builder::{DecodeFailure, RegionBuilder, decode_failure};
 
 use std::collections::BTreeMap;
