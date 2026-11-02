@@ -3,8 +3,8 @@ use smallvec::SmallVec;
 
 use super::FunctionBuilder;
 use crate::IRViewer;
-use crate::builder::IRBuilderExt;
 use crate::builder::checks::{require_value_kind, validate_value_inputs};
+use crate::builder::{IRBuilder, IRBuilderExt};
 use crate::error::Result;
 use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, VnTypeExt};
 

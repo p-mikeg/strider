@@ -133,26 +133,6 @@ impl FunctionBuilder {
         self.lift_addr
     }
 
-    /// Stamps the current lift address into the node's asm-fingerprint. On a
-    /// dedup-cache hit the address is unioned into the existing entry.
-    pub(crate) fn create_node(
-        &mut self,
-        kind: NodeKind,
-        inputs: impl IntoIterator<Item = ValueId>,
-        output_kinds: impl IntoIterator<Item = ValueKind>,
-    ) -> NodeId {
-        let addr = self.lift_addr;
-        let node_id = self
-            .function_mut()
-            .create_node_attributed(kind, inputs, output_kinds, &[]);
-        if let Some(addr) = addr {
-            self.function_mut()
-                .side_tables_mut()
-                .extend_asm_fingerprint(node_id, &[addr]);
-        }
-        node_id
-    }
-
     /// Validates before handing the function over. A failure wraps a
     /// [`crate::validate::ValidationReport`], recoverable with
     /// `err.downcast_ref::<crate::validate::ValidationReport>()`.
