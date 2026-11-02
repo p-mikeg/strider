@@ -51,8 +51,7 @@ impl FunctionBuilder {
         let entry_node = self.function.entry();
         let [entry_control] = self.function().node_outputs_exact(entry_node)?;
         let entry_memory = self.entry_memory;
-        self.link_control_regions(region_id, entry_control)?;
-        self.link_memory_regions(region_id, entry_memory)?;
+        self.link_edges(region_id, entry_control, entry_memory);
 
         // A `vn_id` doubles as SSA-variable key and `InitialVar` payload, so
         // no index translation is needed.
