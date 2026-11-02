@@ -251,9 +251,9 @@ only wide ones); read via `IRViewer::int_const_u128` / `int_const_i128`, never
 off the `UBig`. `UBig` is unsigned and unbounded, so two's-complement at a
 declared width stays strider's rule: interning masks to the width
 (`eval::mask`) before dedup, and `UBig` normalises one value to one form, so
-equal constants from different paths collapse. `eval::le_bytes` pads
-`UBig::to_le_bytes` back to the bytes the type spans, which `to_le_bytes`
-trims. Both DOT labels spell the value and no storage form: the raw one its
+equal constants from different paths collapse. `eval::le_bytes` (test-util
+only) pads `UBig::to_le_bytes` back to the bytes the type spans, which
+`to_le_bytes` trims. Both DOT labels spell the value and no storage form: the raw one its
 decimal (`function/dot/raw.rs`), the pretty one `const {v:#x}:<ty>`
 (`function/dot/label.rs`). Rendered graphs are compared across builds, so that
 text is the renderer's, not a `Debug` impl.
