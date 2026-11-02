@@ -556,7 +556,8 @@ assumption_fields! {
     noalias_allocators: Vec<u64>,
 
     /// When the frame is provably private (no stack address escapes to a
-    /// callee), forward a spill load across a call and past an opaque store.
+    /// callee), forward a spill load across a call and, under
+    /// `stack_global_disjoint`, past an opaque store.
     /// An address held in an argument, a stored value, a return, or a register
     /// a call clobbers escapes; the claim is that no callee reads one from a
     /// register its convention preserves.

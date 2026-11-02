@@ -98,27 +98,24 @@ float_arg 7 [%v33]
 %v146:ctrl, %v147:mem, %v148:i64<v0>, %v149:i64<v1>, %v150:i64<f0>, %v151:i64<f2>, %v152:i64<a0>, %v153:i64<a1>, %v154:i64<a2>, %v155:i64<a3>, %v156:i64<t0>, %v157:i64<t1>, %v158:i64<t2>, %v159:i64<t3>, %v160:i64<t9>, %v161:i64<pc>, %v162:i64<f12>, %v163:i64<f13>, %v164:i64<f14>, %v165:i64<f15>, %v166:i64<f16>, %v167:i64<f17>, %v168:i64<f18>, %v169:i64<f19>, %v170:i8<ISAModeSwitch> = call %v113, %v142, %v143, %v17, %v144, %v145, %v121, %v122, %v123, %v124, %v125, %v126, %v129, %v130, %v131, %v132, %v133, %v134, %v135, %v136
 %v171:mem = store[r] %v147, %v17, %v148
 %v172:i32 = load[r] %v147, %v12
-%v173:i64 = extend.sign %v172
-%v174:i64 = iconst[0x20]
-%v175:i64 = int.shift_right %v148, %v174
-%v176:i32 = truncate %v175
-%v177:i64 = iconst[0xffffffffffffffd4]
-%v178:i64 = int.add %v2, %v177
-%v179:i32 = load[r] %v171, %v178
-%v180:i32 = int.add %v176, %v179
-%v181:i64 = extend.sign %v180
-%v182:i64 = int.xor %v173, %v181
-%v183:i32 = truncate %v182
-%v184:mem = store[r] %v171, %v12, %v183
-%v185:i64 = iconst[0x120000ca8]
-%v186:ctrl, %v187:mem, %v188:i64<v0>, %v189:i64<v1>, %v190:i64<f0>, %v191:i64<f2>, %v192:i64<a0>, %v193:i64<a1>, %v194:i64<a2>, %v195:i64<a3>, %v196:i64<t0>, %v197:i64<t1>, %v198:i64<t2>, %v199:i64<t3>, %v200:i64<t9>, %v201:i64<pc>, %v202:i64<f12>, %v203:i64<f13>, %v204:i64<f14>, %v205:i64<f15>, %v206:i64<f16>, %v207:i64<f17>, %v208:i64<f18>, %v209:i64<f19>, %v210:i8<ISAModeSwitch> = call %v146, %v184, %v185, %v17, %v20, %v21, %v154, %v155, %v156, %v157, %v158, %v159, %v162, %v163, %v164, %v165, %v166, %v167, %v168, %v169, %v148
-%v211:i32 = load[r] %v187, %v12
-%v212:i64 = extend.sign %v211
-%v213:i64 = int.xor %v212, %v188
-%v214:i32 = truncate %v213
-%v215:mem = store[r] %v187, %v12, %v214
-%v216:i64 = extend.sign %v214
-return %v186, %v215, %v216, %v213, %v190, %v191
+%v173:i64 = iconst[0x20]
+%v174:i64 = int.shift_right %v148, %v173
+%v175:i32 = truncate %v174
+%v176:i64 = iconst[0xffffffffffffffd4]
+%v177:i64 = int.add %v2, %v176
+%v178:i32 = load[r] %v171, %v177
+%v179:i32 = int.add %v175, %v178
+%v180:i32 = int.xor %v172, %v179
+%v181:mem = store[r] %v171, %v12, %v180
+%v182:i64 = iconst[0x120000ca8]
+%v183:ctrl, %v184:mem, %v185:i64<v0>, %v186:i64<v1>, %v187:i64<f0>, %v188:i64<f2>, %v189:i64<a0>, %v190:i64<a1>, %v191:i64<a2>, %v192:i64<a3>, %v193:i64<t0>, %v194:i64<t1>, %v195:i64<t2>, %v196:i64<t3>, %v197:i64<t9>, %v198:i64<pc>, %v199:i64<f12>, %v200:i64<f13>, %v201:i64<f14>, %v202:i64<f15>, %v203:i64<f16>, %v204:i64<f17>, %v205:i64<f18>, %v206:i64<f19>, %v207:i8<ISAModeSwitch> = call %v146, %v181, %v182, %v17, %v20, %v21, %v154, %v155, %v156, %v157, %v158, %v159, %v162, %v163, %v164, %v165, %v166, %v167, %v168, %v169, %v148
+%v208:i32 = load[r] %v184, %v12
+%v209:i64 = extend.sign %v208
+%v210:i64 = int.xor %v209, %v185
+%v211:i32 = truncate %v210
+%v212:mem = store[r] %v184, %v12, %v211
+%v213:i64 = extend.sign %v211
+return %v183, %v212, %v213, %v210, %v187, %v188
 
 == eight_int_args @0x120000c30
 cfg
@@ -222,7 +219,7 @@ cfg
   0x120000c88 44 ops return -> []
 tracked [v0, v1, a0, a1, a2, a3, t0, t1, t2, t3, sp, ra, pc, f0, f2, f12, f13, f14, f15, f16, f17, f18, f19, ISAModeSwitch, u:0x1700:1, u:0x1800:1, u:0x1a00:1, u:0x1c00:8, u:0x1f00:8, u:0x114500:8, u:0x114600:1, u:0x114700:8, u:0x115700:8, u:0x115800:1, u:0x115900:1, u:0x115c00:8, u:0x116000:8, u:0x116f00:8, u:0x117000:1, u:0x117100:1, u:0x117400:8, u:0x117800:8]
 arg 0 [%v2]
-arg 1 [%v9]
+arg 1 [%v7]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[a0]
@@ -230,15 +227,13 @@ arg 1 [%v9]
 %v4:i64 = int.and %v2, %v3
 %v5:i64 = iconst[0x20]
 %v6:i64 = int.shift_left %v4, %v5
-%v7:i64 = iconst[0xffffffff00000000]
-%v8:i64 = int.and %v6, %v7
-%v9:i64 = initial_var[a1]
-%v10:i64 = int.and %v9, %v3
-%v11:i64 = int.or %v8, %v10
-%v12:i64 = initial_var[v1]
-%v13:i64 = initial_var[f0]
-%v14:i64 = initial_var[f2]
-return %v0, %v1, %v11, %v12, %v13, %v14
+%v7:i64 = initial_var[a1]
+%v8:i64 = int.and %v7, %v3
+%v9:i64 = int.or %v6, %v8
+%v10:i64 = initial_var[v1]
+%v11:i64 = initial_var[f0]
+%v12:i64 = initial_var[f2]
+return %v0, %v1, %v9, %v10, %v11, %v12
 
 == tail_caller @0x120000ca8
 cfg

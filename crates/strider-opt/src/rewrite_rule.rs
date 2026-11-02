@@ -3,11 +3,12 @@
 //! wildcard RHS fails to compile.  [`rewrite_rule_runtime`] is the dynamic
 //! (FFI) counterpart taking an already-built [`Pattern`] and [`Template`].
 //!
-//! Asm-fingerprint absorption holds by construction: every fresh RHS node
-//! absorbs the matched footprint's fingerprints at creation (superset-only).
+//! Asm-fingerprint absorption holds by construction: every RHS node absorbs
+//! the matched footprint's fingerprints once the rewrite is accepted
+//! (superset-only).
 
 use strider_ir::node::{NodeId, NodeKind, ValueId};
-use strider_ir::{EditFunction, IRViewer, IRWalker};
+use strider_ir::{EditFunction, IRBuilder, IRViewer, IRWalker};
 
 use strider_pattern::{
     Capture, MatchPat, Matcher, Pattern, Result, Template, TemplatePat, instantiate_guarded,
@@ -21,10 +22,14 @@ use strider_pattern::{
 /// The returned closure attempts the match at a candidate root and on
 /// success materialises the RHS and redirects the root's value output to
 /// it. Returns `Ok(Some(new_out))` when at least one use was redirected,
-/// `Ok(None)` for a failed match, a skipped RHS, or nothing to redirect.
+/// `Ok(None)` for a failed match, a skipped RHS, nothing to redirect, or a
+/// replacement this site cannot take: one of another width than the root,
+/// or, for a match through a join, one that would read the root or is not
+/// available wherever the root is read.
 /// It errors, before building anything, when the RHS would build nodes and
 /// no matched node carries an asm-fingerprint (an `InitialVar` or `Phi`
-/// root), even where a built constant would dedup onto a fingerprinted node.
+/// root), even where a built constant would dedup onto a fingerprinted node,
+/// and when a match below its root would have the replacement read it.
 ///
 /// # Single-value-output constraint
 ///
@@ -36,10 +41,7 @@ use strider_pattern::{
 /// Panics if either side is refused, or the RHS references a [`Capture`] the
 /// LHS does not bind.
 pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs: T) -> BoxedRule {
-    let lhs_pat = lhs.into_pattern();
-    let rhs_tpl = rhs.into_template();
-    check_capture_coverage(&lhs_pat, &rhs_tpl).expect("rewrite_rule");
-    Box::new(rewrite_rule_impl(lhs_pat, rhs_tpl))
+    Rewrite::typed(lhs, rhs).boxed()
 }
 
 /// The dynamic (FFI / scripted) counterpart of [`rewrite_rule`], taking an
@@ -59,40 +61,72 @@ pub fn rewrite_rule<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs
 /// does not bind. The returned closure errors as [`rewrite_rule`]'s does,
 /// including when the match holds no node with an asm-fingerprint.
 pub fn rewrite_rule_runtime(lhs: Pattern, rhs: Template) -> Result<BoxedRule> {
-    check_capture_coverage(&lhs, &rhs)?;
-    Ok(Box::new(rewrite_rule_impl(lhs, rhs)))
+    Ok(Rewrite::checked(lhs, rhs)?.boxed())
 }
 
-/// Shared body for [`rewrite_rule`] and [`rewrite_rule_runtime`].
-fn rewrite_rule_impl(
+/// A compiled LHS -> RHS rewrite, the body of [`rewrite_rule`] and
+/// [`rewrite_rule_runtime`].
+pub(crate) struct Rewrite {
     lhs: Pattern,
     rhs: Template,
-) -> impl for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>> + 'static {
-    let through_join = lhs.may_bind_through_a_join();
-    move |edit: &mut EditFunction<'_>, node: NodeId| -> Result<Option<ValueId>> {
-        // The root check before anything is allocated. A fold table tries
-        // every rule at every candidate node, and `Matcher::new` plus
-        // `match_at` allocate per attempt, so a rule whose root cannot match
-        // used to pay for the attempt and be rejected inside. ~40 of the 60
-        // `ConstantFold` rules are rooted on one `IntBinaryOp` variant, which
-        // the peephole's own `matches_kind` gate cannot separate: it is a
-        // discriminant, identical for all of them.
-        if !lhs.root_admits_kind(edit.function().node_kind(node)) {
-            return Ok(None);
-        }
+    through_join: bool,
+    /// A rule of a built-in table, whose replacement of another width is a
+    /// bug in the rule, not a site to decline.
+    built_in: bool,
+}
+
+impl Rewrite {
+    /// Refuses a refused side, or an RHS reading a capture the LHS does not
+    /// bind on every match.
+    fn checked(lhs: Pattern, rhs: Template) -> Result<Self> {
+        check_capture_coverage(&lhs, &rhs)?;
+        Ok(Self {
+            through_join: lhs.may_bind_through_a_join(),
+            lhs,
+            rhs,
+            built_in: false,
+        })
+    }
+
+    /// [`Self::checked`] over typed sides, whose capture coverage is the
+    /// rule author's to get right.
+    fn typed<L: MatchPat, T: TemplatePat>(lhs: L, rhs: T) -> Self {
+        Self::checked(lhs.into_pattern(), rhs.into_template()).expect("rewrite_rule")
+    }
+
+    /// The rule closure: [`Self::apply`] behind the root-kind check.
+    fn boxed(self) -> BoxedRule {
+        Box::new(move |edit: &mut EditFunction<'_>, node: NodeId| {
+            // The root check before anything is allocated: `Matcher::new` plus
+            // `match_at` allocate per attempt.
+            if !self.lhs.root_admits_kind(edit.function().node_kind(node)) {
+                return Ok(None);
+            }
+            self.apply(edit, node)
+        })
+    }
+
+    /// Matches at `node` and, on success, redirects its value to the
+    /// instantiated RHS.
+    fn apply(&self, edit: &mut EditFunction<'_>, node: NodeId) -> Result<Option<ValueId>> {
+        let (lhs, rhs) = (&self.lhs, &self.rhs);
         // Keep the matcher borrow tight so the function can be mutated
         // afterwards. The snapshotted footprint (root, interior, captured
         // leaves) is the rewrite's proof: the interior nodes get culled, so
         // their asm-fingerprints must be carried onto the RHS.
         let (bindings, matched_nodes) = {
             let matcher = Matcher::new(edit.function());
-            match matcher.match_at(node, &lhs)? {
+            match matcher.match_at(node, lhs)? {
                 Some(m) => (m.bindings().clone(), m.matched_nodes().to_vec()),
                 None => return Ok(None),
             }
         };
 
         let (root_value, root_ty) = edit.function().single_value_output(node)?;
+        // Nothing to redirect, so nothing to build or attribute.
+        if edit.value_uses(root_value).next().is_none() {
+            return Ok(None);
+        }
 
         // A fresh node's fingerprint is the footprint's, so a footprint of
         // exempt nodes only (an `InitialVar` or `Phi` root) would leave every
@@ -112,13 +146,16 @@ fn rewrite_rule_impl(
             Ok(())
         };
 
-        // Threading the matched footprint as the proof-node set makes EVERY
-        // fresh node, not just the root output, absorb the matched subgraph's
-        // fingerprints at creation. A closure in the tree may opt out via
-        // `skip()`, which becomes "no change" here.
-        let new_value = match instantiate_guarded(
-            &rhs,
+        // A closure in the tree may opt out via `skip()`, which becomes "no
+        // change" here. The build can dedup onto a live node, so the footprint
+        // is unioned in only once the rewrite is accepted.
+        let mut build = Unattributed {
             edit,
+            built: Vec::new(),
+        };
+        let new_value = match instantiate_guarded(
+            rhs,
+            &mut build,
             &bindings,
             node,
             &matched_nodes,
@@ -129,19 +166,20 @@ fn rewrite_rule_impl(
             Err(e) if is_skip(&e) => return Ok(None),
             Err(e) => return Err(e),
         };
+        let Unattributed { edit, built } = build;
 
         // A replacement of a different width is not a narrower spelling of the
         // same value, it IS a different value: every use of the root silently
         // starts reading the wrong number of bits. Reachable whenever the RHS
         // hands back an LHS-bound value that the match reached THROUGH a cast
-        // (`ignore_casts`), or a template that pins its own root width.
-        let new_ty = edit.function().value_type(new_value)?;
-        if new_ty != root_ty {
-            anyhow::bail!(
-                "rewrite would replace a {root_ty:?} value with a {new_ty:?} one; \
-                 a capture bound through a cast carries the pre-cast width, so the \
-                 replacement has to restate the conversion"
+        // (`ignore_casts`), or a template that pins its own root width, so it
+        // is this site's to decline.
+        if edit.function().value_type(new_value)? != root_ty {
+            debug_assert!(
+                !self.built_in,
+                "a built-in rule replaced a {root_ty} root with a value of another width"
             );
+            return Ok(None);
         }
 
         // `replace_value` redirects EVERY use of the root, the RHS's own fresh
@@ -152,20 +190,42 @@ fn rewrite_rule_impl(
         // root: a loop's back-edge value reads the header, and a merge arm's
         // value is defined on one path only. Such a match gets the unpruned
         // walk and an availability check. A phi bound as a leaf is harmless: a
-        // cycle back through it passes through that phi.
-        let crosses_join = through_join
-            && matched_nodes.iter().any(|&n| {
-                matches!(
-                    edit.function().node_kind(n),
-                    NodeKind::Phi | NodeKind::MemPhi | NodeKind::Region
-                )
-            });
+        // cycle back through it passes through that phi. Which values such a match binds is the site's, so a cycle
+        // or an unavailable value declines it.
+        //
+        // Otherwise every LHS-bound value other than the root sits strictly
+        // below it, so in an acyclic graph none of them reaches it: the walk
+        // prunes at the matched footprint and is left with the fresh RHS.
         if new_value != root_value {
+            let f = edit.function();
+            let crosses_join = self.through_join
+                && matched_nodes.iter().any(|&n| {
+                    matches!(
+                        f.node_kind(n),
+                        NodeKind::Phi | NodeKind::MemPhi | NodeKind::Region
+                    )
+                });
             let cycle = if crosses_join {
-                reads_without_phi(edit, new_value, root_value)
+                // A phi breaks the cycle, and a control input is no read.
+                reads(
+                    f,
+                    new_value,
+                    root_value,
+                    |n| matches!(f.node_kind(n), NodeKind::Phi | NodeKind::MemPhi),
+                    |input| !f.value_kind(input).is_control(),
+                )
             } else {
-                reads_value(edit, new_value, root_value, &matched_nodes)
+                reads(
+                    f,
+                    new_value,
+                    root_value,
+                    |n| matched_nodes.contains(&n),
+                    |_| true,
+                )
             };
+            if crosses_join && (cycle || !available_at(edit, new_value, root_value)) {
+                return Ok(None);
+            }
             if cycle {
                 anyhow::bail!(
                     "rewrite would make the replacement read the value it replaces, \
@@ -174,21 +234,18 @@ fn rewrite_rule_impl(
                      dedup cache"
                 );
             }
-            if crosses_join && !available_at(edit.function(), new_value, root_value) {
-                anyhow::bail!(
-                    "rewrite would read the replacement where it is not available: \
-                     its definition does not dominate the value it replaces"
-                );
-            }
         }
 
-        // Redundant for a fresh-node RHS, but load-bearing for a
-        // BARE-CAPTURE RHS such as `add(x, 0) -> x`: that returns the
-        // LHS-bound value verbatim, so nothing else carries the culled
-        // interior nodes' addresses onto the survivor.
+        // EVERY built node takes the matched subgraph's fingerprints, not just
+        // the root output. A BARE-CAPTURE RHS such as `add(x, 0) -> x` builds
+        // nothing and returns the LHS-bound value verbatim, so its survivor
+        // takes them too: nothing else carries the culled interior nodes'
+        // addresses onto it.
         let new_producer = edit.producer(new_value);
-        for &matched in &matched_nodes {
-            edit.absorb_node_fingerprint(new_producer, matched);
+        for into in built.into_iter().chain([new_producer]) {
+            for &matched in &matched_nodes {
+                edit.absorb_node_fingerprint(into, matched);
+            }
         }
 
         // `replace_value` absorbs the old root's fingerprint, redirects every
@@ -198,33 +255,195 @@ fn rewrite_rule_impl(
     }
 }
 
-/// Whether `from`'s cone reads `target`.
-///
-/// Prunes at the matched footprint: every LHS-bound value other than the root
-/// sits strictly below it, so in an acyclic graph none of them reaches it. What
-/// is left to walk is the freshly built RHS, bounded by the template.
-fn reads_value(f: &impl IRViewer, from: ValueId, target: ValueId, matched: &[NodeId]) -> bool {
-    let mut seen = rustc_hash::FxHashSet::default();
-    let mut stack = vec![from];
-    while let Some(v) = stack.pop() {
-        if v == target {
-            return true;
-        }
-        if !seen.insert(v) {
-            continue;
-        }
-        let producer = f.producer(v);
-        if matched.contains(&producer) {
-            continue;
-        }
-        stack.extend(f.node_inputs(producer));
-    }
-    false
+/// The RHS build: through the edit, but recording each node instead of
+/// unioning the matched footprint into it.
+struct Unattributed<'e, 'g> {
+    edit: &'e mut EditFunction<'g>,
+    built: Vec<NodeId>,
 }
 
-/// Whether `from` reads `target` along data inputs with no phi between them,
-/// so redirecting `target`'s uses to `from` closes a cycle no phi breaks.
-fn reads_without_phi(f: &impl IRViewer, from: ValueId, target: ValueId) -> bool {
+impl IRViewer for Unattributed<'_, '_> {
+    fn function(&self) -> &strider_ir::Function {
+        self.edit.function()
+    }
+}
+
+impl IRBuilder for Unattributed<'_, '_> {
+    fn function_mut(&mut self) -> &mut strider_ir::Function {
+        IRBuilder::function_mut(self.edit)
+    }
+
+    fn intern_int_const(
+        &mut self,
+        val: impl Into<strider_ir::UBig>,
+        ty: strider_ir::node::ValueType,
+    ) -> strider_ir::node::IntConstId {
+        self.edit.intern_int_const(val, ty)
+    }
+
+    fn create_node_attributed<I, O>(
+        &mut self,
+        kind: NodeKind,
+        inputs: I,
+        outputs: O,
+        _contributors: &[NodeId],
+    ) -> NodeId
+    where
+        I: IntoIterator<Item = ValueId>,
+        O: IntoIterator<Item = strider_ir::node::ValueKind>,
+    {
+        let node = self.edit.create_node_attributed(kind, inputs, outputs, &[]);
+        self.built.push(node);
+        node
+    }
+}
+
+/// One entry of a [`RuleTable`].
+pub(crate) enum Rule {
+    Rewrite(Box<Rewrite>),
+    /// A rule that decides its root itself, tried at the kinds `roots`
+    /// admits.
+    Fold {
+        roots: fn(&NodeKind) -> bool,
+        fold: fn(&mut EditFunction<'_>, NodeId) -> Result<Option<ValueId>>,
+    },
+}
+
+impl Rule {
+    /// [`rewrite_rule`] as a table entry.
+    pub(crate) fn rewrite<L: MatchPat + 'static, T: TemplatePat + 'static>(lhs: L, rhs: T) -> Self {
+        Rule::Rewrite(Box::new(Rewrite {
+            built_in: true,
+            ..Rewrite::typed(lhs, rhs)
+        }))
+    }
+
+    /// The rule as a lone closure would run it: nothing unless the root
+    /// admits `node`'s kind.
+    #[cfg(test)]
+    pub(crate) fn try_at(
+        &self,
+        edit: &mut EditFunction<'_>,
+        node: NodeId,
+    ) -> Result<Option<ValueId>> {
+        if !self.admits(edit.node_kind(node)) {
+            return Ok(None);
+        }
+        self.run(edit, node)
+    }
+
+    fn run(&self, edit: &mut EditFunction<'_>, node: NodeId) -> Result<Option<ValueId>> {
+        match self {
+            Rule::Rewrite(rewrite) => rewrite.apply(edit, node),
+            Rule::Fold { fold, .. } => fold(edit, node),
+        }
+    }
+
+    fn admits(&self, kind: &NodeKind) -> bool {
+        match self {
+            Rule::Rewrite(rewrite) => rewrite.lhs.root_admits_kind(kind),
+            Rule::Fold { roots, .. } => roots(kind),
+        }
+    }
+}
+
+/// An ordered rule list tried first-fire-wins at a root, each kind seeing
+/// only the rules whose root admits it: most fold rules are rooted on one
+/// `IntBinaryOp` variant.
+pub(crate) struct RuleTable {
+    rules: Vec<Rule>,
+    /// Per root kind, the indices of the rules it admits, in table order.
+    by_kind: std::cell::RefCell<rustc_hash::FxHashMap<NodeKind, Box<[usize]>>>,
+}
+
+impl RuleTable {
+    pub(crate) fn new(rules: Vec<Rule>) -> Self {
+        Self {
+            rules,
+            by_kind: std::cell::RefCell::default(),
+        }
+    }
+
+    /// Whether any rule's root admits `kind`.
+    pub(crate) fn admits(&self, kind: &NodeKind) -> bool {
+        if names_an_entity(kind) {
+            return self.rules.iter().any(|rule| rule.admits(kind));
+        }
+        !self.admitted(*kind).is_empty()
+    }
+
+    /// The indices of the rules `kind` admits, in table order.
+    fn admitted(&self, kind: NodeKind) -> std::cell::RefMut<'_, [usize]> {
+        std::cell::RefMut::map(self.by_kind.borrow_mut(), |by_kind| {
+            &mut **by_kind.entry(kind).or_insert_with(|| {
+                (0..self.rules.len())
+                    .filter(|&i| self.rules[i].admits(&kind))
+                    .collect()
+            })
+        })
+    }
+
+    /// The output of the FIRST rule to fire at `root`, or `None` if none does.
+    ///
+    /// Later rules do not run: the first firing rule redirects every use of
+    /// the root's output, so a later match sits on a node nothing consumes.
+    ///
+    /// # Errors
+    /// Propagates the first error returned by a rule.
+    pub(crate) fn first_match(
+        &self,
+        edit: &mut EditFunction<'_>,
+        root: NodeId,
+    ) -> Result<Option<ValueId>> {
+        let kind = *edit.node_kind(root);
+        if names_an_entity(&kind) {
+            let admitted: Vec<usize> = (0..self.rules.len())
+                .filter(|&i| self.rules[i].admits(&kind))
+                .collect();
+            return self.first_of(&admitted, edit, root);
+        }
+        self.first_of(&self.admitted(kind), edit, root)
+    }
+
+    fn first_of(
+        &self,
+        admitted: &[usize],
+        edit: &mut EditFunction<'_>,
+        root: NodeId,
+    ) -> Result<Option<ValueId>> {
+        for &i in admitted {
+            let fired = self.rules[i].run(edit, root)?;
+            if fired.is_some() {
+                return Ok(fired);
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// Whether `kind`'s payload names an entity of one function, which the
+/// thread-long memo would gain an entry for per value.
+fn names_an_entity(kind: &NodeKind) -> bool {
+    matches!(
+        kind,
+        NodeKind::IntConst(_)
+            | NodeKind::FloatConst(_)
+            | NodeKind::InitialVar(_)
+            | NodeKind::Switch(_)
+            | NodeKind::Call { .. }
+            | NodeKind::CallOther { .. }
+    )
+}
+
+/// Whether `from`'s cone reads `target`, walking no further past a producer
+/// `stop` names, nor along an input `follow` refuses.
+fn reads(
+    f: &impl IRViewer,
+    from: ValueId,
+    target: ValueId,
+    stop: impl Fn(NodeId) -> bool,
+    follow: impl Fn(ValueId) -> bool,
+) -> bool {
     let mut seen = rustc_hash::FxHashSet::default();
     let mut stack = vec![from];
     while let Some(v) = stack.pop() {
@@ -235,14 +454,10 @@ fn reads_without_phi(f: &impl IRViewer, from: ValueId, target: ValueId) -> bool 
             continue;
         }
         let producer = f.producer(v);
-        if matches!(f.node_kind(producer), NodeKind::Phi | NodeKind::MemPhi) {
+        if stop(producer) {
             continue;
         }
-        stack.extend(
-            f.node_inputs(producer)
-                .into_iter()
-                .filter(|&input| !f.value_kind(input).is_control()),
-        );
+        stack.extend(f.node_inputs(producer).into_iter().filter(|&i| follow(i)));
     }
     false
 }
@@ -250,9 +465,9 @@ fn reads_without_phi(f: &impl IRViewer, from: ValueId, target: ValueId) -> bool 
 /// Whether `value` is computable wherever `replaced` is: its early position
 /// dominates `replaced`'s, which dominates every use. A `replaced` with no
 /// position has no use on a path that runs.
-fn available_at(f: &strider_ir::Function, value: ValueId, replaced: ValueId) -> bool {
-    let tree = strider_ir::control_dominator_tree(f);
-    let at = |v| strider_ir::early_position(f, &tree, v);
+fn available_at(edit: &EditFunction<'_>, value: ValueId, replaced: ValueId) -> bool {
+    let tree = edit.control_dominator_tree();
+    let at = |v| strider_ir::early_position(edit.function(), &tree, v);
     at(replaced).is_none_or(|used| at(value).is_some_and(|def| tree.dominates(def, used)))
 }
 
@@ -300,19 +515,33 @@ fn check_capture_coverage(lhs: &Pattern, rhs: &Template) -> Result<()> {
 /// Rules are tried in order and the first fire ends the node: it redirects the
 /// matched root's uses, leaving the root itself detached, and a later rule
 /// would still instantiate a full RHS and union the discarded match's
-/// fingerprints into what can be a live node.  Same rule as the in-tree
-/// peephole driver's `first_matching_rule`.
+/// fingerprints into what can be a live node.  Same rule as the fold tables'
+/// `first_match`.
 ///
 /// One call walks the graph once, so a rule whose output its own LHS matches
 /// needs the caller to loop to a fixed point.
 ///
-/// Ends by re-deriving the memory classes `stack_only()` / `heap_only()`
-/// read, under the claims the function holds.
+/// Ends, on every exit, by re-deriving the memory classes `stack_only()` /
+/// `heap_only()` read, under the claims the function holds.
 ///
 /// # Errors
 ///
 /// Propagates the first error returned by any rule.
 pub fn apply_rules_count<R>(edit: &mut EditFunction<'_>, rules: &[R]) -> Result<usize>
+where
+    R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
+{
+    let applied = fire_rules(edit, rules);
+    // A rule can rewire an address value's inputs, so a surviving memory
+    // class names the wrong slot and a fresh `Load` has none; `RegionFilter`
+    // reads that table directly, so a stale entry changes what `stack_only()`
+    // / `heap_only()` match. An error exit hands the function back too.
+    crate::refresh_memory_classes(edit);
+    applied
+}
+
+/// [`apply_rules_count`]'s walk.
+fn fire_rules<R>(edit: &mut EditFunction<'_>, rules: &[R]) -> Result<usize>
 where
     R: for<'g> Fn(&mut EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
 {
@@ -336,11 +565,6 @@ where
             }
         }
     }
-    // A rule can rewire an address value's inputs, so a surviving memory
-    // class names the wrong slot and a fresh `Load` has none; `RegionFilter`
-    // reads that table directly, so a stale entry changes what `stack_only()`
-    // / `heap_only()` match.
-    crate::refresh_memory_classes(edit);
     Ok(applied)
 }
 
@@ -362,9 +586,16 @@ mod tests {
 
     /// A sub-pattern the match reached THROUGH a cast matches at the pre-cast
     /// width, so an RHS rebuilt from its captures is narrower than the root it
-    /// replaces. Installing it would redirect every I64 use at an I32 value.
+    /// replaces. Installing it would redirect every I64 use at an I32 value,
+    /// so the site is declined.
     #[test]
     fn a_rewrite_may_not_replace_a_value_with_a_narrower_one() {
+        narrower_replacement(false);
+    }
+
+    /// [`a_rewrite_may_not_replace_a_value_with_a_narrower_one`]'s rewrite,
+    /// as a `built_in` table rule or a user one.
+    fn narrower_replacement(built_in: bool) {
         use strider_ir::ExtendOp;
         use strider_pattern::{int_const as int_const_match, int_mul, var};
 
@@ -391,7 +622,6 @@ mod tests {
             .build_int_binary_operation(widened, zero, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(sum), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
         // `add(mul(a,b), 0) -> a`, written to see through casts. The `mul`
@@ -409,18 +639,137 @@ mod tests {
             );
             hits[0].root()
         };
-        let rule =
-            super::rewrite_rule_runtime(lhs, strider_pattern::TemplatePat::into_template(var(a)))
-                .unwrap();
+        let rhs = strider_pattern::TemplatePat::into_template(var(a));
+        if built_in {
+            let rule = super::Rule::Rewrite(Box::new(super::Rewrite {
+                built_in: true,
+                ..super::Rewrite::checked(lhs, rhs).unwrap()
+            }));
+            let mut edit = EditFunction::new(&mut function);
+            let _ = rule.try_at(&mut edit, root);
+            return;
+        }
+        let rule = super::rewrite_rule_runtime(lhs, rhs).unwrap();
 
         let mut edit = EditFunction::new(&mut function);
         edit.cull_dead();
-        let err = rule(&mut edit, root).expect_err("a width-changing replacement must be refused");
-        let msg = format!("{err}");
-        assert!(
-            msg.contains("I64") && msg.contains("I32"),
-            "the error must name both widths, got: {msg}"
+        let sum_value = edit.node_outputs(root)[0];
+        assert_eq!(rule(&mut edit, root).unwrap(), None);
+        assert_eq!(
+            edit.value_uses(sum_value).count(),
+            1,
+            "the return still reads it"
         );
+    }
+
+    /// A built-in rule replacing its root at another width is a bug in the
+    /// rule, so a test build fails loudly instead of declining.
+    /// Mutation: decline it as a user rule's.
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "a built-in rule replaced")]
+    fn a_built_in_rule_of_another_width_fails_a_test_build() {
+        narrower_replacement(true);
+    }
+
+    /// `ret zext(n * n) + 0`, each node at its own address, with `n` a
+    /// truncated register: the function, the `Mul` and the root `Add`.
+    fn widened_square_fn() -> (strider_ir::Function, super::NodeId, super::NodeId) {
+        use strider_ir::ExtendOp;
+        let vn = reg_vn(0x1000, 8);
+        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
+        let region = b.create_region_all().unwrap();
+        b.set_entry_region_all(region).unwrap();
+        b.set_region(region);
+        b.set_lift_addr(Some(0x10));
+        let wide_in = b.read_variable(&vn).unwrap();
+        let n = b.truncate_if_needed(wide_in, ValueType::int(32)).unwrap();
+        b.set_lift_addr(Some(0x20));
+        let prod = b
+            .build_int_binary_operation(n, n, IntBinaryOp::Mul, ValueType::int(32))
+            .unwrap();
+        b.set_lift_addr(Some(0x30));
+        let widened = b
+            .extend_if_needed(prod, ValueType::int(64), ExtendOp::ZeroExtend)
+            .unwrap();
+        b.set_lift_addr(Some(0x40));
+        let zero = b.build_int_const(0u64, ValueType::int(64)).unwrap();
+        let sum = b
+            .build_int_binary_operation(widened, zero, IntBinaryOp::Add, ValueType::int(64))
+            .unwrap();
+        b.set_lift_addr(Some(0x50));
+        b.build_return(Some(sum), &[]).unwrap();
+        let function = b.build().unwrap();
+        let (mul, add) = (function.producer(prod), function.producer(sum));
+        (function, mul, add)
+    }
+
+    /// `add(mul(a, b), 0) -> mul:I32(a, b)` through the cast rebuilds the
+    /// live `Mul`, so its build dedups onto it; the refused width must leave
+    /// that node's fingerprint as it was. Mutation: union the footprint in at
+    /// the build.
+    #[test]
+    fn a_refused_rewrite_leaves_the_node_its_build_reached_unattributed() {
+        use strider_pattern::template::TemplateBuilder;
+        use strider_pattern::{int_const as int_const_match, int_mul};
+
+        let (mut function, mul, add) = widened_square_fn();
+        let (a, bcap) = (Capture::new(), Capture::new());
+        let lhs = int_add(int_mul(var(a), var(bcap)), int_const_match(0u64))
+            .into_pattern()
+            .ignore_casts();
+        let mut tb = TemplateBuilder::new();
+        let (ta, tbv) = (tb.capture(a), tb.capture(bcap));
+        let mul_node = tb.node(strider_ir::node::NodeKind::IntBinaryOp(IntBinaryOp::Mul));
+        tb.input(mul_node, 0, ta);
+        tb.input(mul_node, 1, tbv);
+        let product = tb.value_output(mul_node, 0);
+        tb.set_value_ty(product, ValueType::int(32));
+        let rule = super::rewrite_rule_runtime(lhs, tb.finish()).unwrap();
+
+        let before = function.side_tables().asm_fingerprint(mul);
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
+        let refused = rule(&mut edit, add);
+        assert!(
+            !matches!(refused, Ok(Some(_))),
+            "an I32 Mul cannot replace an I64 Add"
+        );
+        assert_eq!(edit.function().side_tables().asm_fingerprint(mul), before);
+    }
+
+    /// A root nothing reads is no site: neither a bare capture nor a build
+    /// for it may attribute or create anything. Mutation: drop the use check.
+    #[test]
+    fn a_rewrite_of_an_unread_root_changes_nothing() {
+        use strider_pattern::int_const as int_const_match;
+
+        let (mut function, _, add) = widened_square_fn();
+        let w = Capture::new();
+        let lhs = || int_add(var(w), int_const_match(0u64));
+        let rules = [
+            rewrite_rule(lhs(), var(w)),
+            rewrite_rule(lhs(), template::int_xor(var(w), int_const(0x5u128))),
+        ];
+        let mut edit = EditFunction::new(&mut function);
+        // Not culled, so the unread root keeps its operands.
+        let ret = edit
+            .live_of_kind(|k| matches!(k, NodeKind::Return))
+            .next()
+            .unwrap();
+        let slot = edit
+            .node_input_id_at(ret, NodeKind::Return.input_head_len())
+            .unwrap();
+        let other = edit.build_int_const(7u64, ValueType::int(64)).unwrap();
+        edit.update_input(slot, other);
+        let zext = edit.producer(edit.node_inputs(add)[0]);
+        let before = edit.function().side_tables().asm_fingerprint(zext);
+        let nodes_before = edit.function().graph().all_node_ids().count();
+        for rule in &rules {
+            assert_eq!(rule(&mut edit, add).unwrap(), None);
+        }
+        assert_eq!(edit.function().side_tables().asm_fingerprint(zext), before);
+        assert_eq!(edit.function().graph().all_node_ids().count(), nodes_before);
     }
 
     /// A match made only of fingerprint-exempt nodes has no instruction
@@ -511,7 +860,6 @@ mod tests {
             .build_int_binary_operation(a, k, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(sum), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
         let add_root = {
@@ -568,29 +916,34 @@ mod tests {
         hits[0].root()
     }
 
-    /// Folding `(var + 1) + 2` to `var + 3` rewrites away the inner Add and
-    /// its `IntConst(1)`; neither may linger in `live_nodes`.
-    #[test]
-    fn track_chain_fold_culls_dead_intermediate() {
+    /// A one-region function at lift address `0x10` up to `(var + 1) + 2`:
+    /// the builder and the `1`, `var + 1` and the outer sum.
+    fn var_plus_1_plus_2() -> (strider_ir::FunctionBuilder, [super::ValueId; 3]) {
         let vn = reg_vn(0x1000, 8);
-        let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
-
         let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
         let region = b.create_region_all().unwrap();
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();
-        let k1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let ty = ValueType::int(64);
+        let k1 = b.build_int_const(1u64, ty).unwrap();
         let inner = b
-            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::int(64))
+            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ty)
             .unwrap();
-        let k2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
         let outer = b
-            .build_int_binary_operation(inner, k2, IntBinaryOp::Add, ValueType::int(64))
+            .build_const_binop(2u64, inner, IntBinaryOp::Add, ty)
             .unwrap();
+        (b, [k1, inner, outer])
+    }
+
+    /// Folding `(var + 1) + 2` to `var + 3` rewrites away the inner Add and
+    /// its `IntConst(1)`; neither may linger in `live_nodes`.
+    #[test]
+    fn track_chain_fold_culls_dead_intermediate() {
+        let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+        let (mut b, [k1, inner, outer]) = var_plus_1_plus_2();
         b.build_return(Some(outer), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
         let inner_node = function.producer(inner);
@@ -663,7 +1016,6 @@ mod tests {
             .build_int_binary_operation(or, k3, IntBinaryOp::And, ValueType::int(64))
             .unwrap();
         b.build_return(Some(outer), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
         let outer_node = function.producer(outer);
@@ -733,7 +1085,6 @@ mod tests {
             .build_int_binary_operation(xv, zero, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(add_node_val), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
         let add_node = function.producer(add_node_val);
@@ -784,7 +1135,6 @@ mod tests {
             .unwrap();
         b.set_lift_addr(Some(0xEE));
         b.build_return(Some(add_val), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
         let x_node = function.producer(xv);
@@ -817,23 +1167,8 @@ mod tests {
     /// cone is still culled.
     #[test]
     fn track_dedup_hit_stays_live() {
-        let vn = reg_vn(0x1000, 8);
         let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
-
-        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
-        let region = b.create_region_all().unwrap();
-        b.set_entry_region_all(region).unwrap();
-        b.set_region(region);
-        b.set_lift_addr(Some(0x10));
-        let xv = b.read_variable(&vn).unwrap();
-        let k1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
-        let inner = b
-            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::int(64))
-            .unwrap();
-        let k2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
-        let outer = b
-            .build_int_binary_operation(inner, k2, IntBinaryOp::Add, ValueType::int(64))
-            .unwrap();
+        let (mut b, [_, inner, outer]) = var_plus_1_plus_2();
         // Kept live by a side-effecting Store so it survives independently
         // of the fold.
         let three = b.build_int_const(3u64, ValueType::int(64)).unwrap();
@@ -841,7 +1176,6 @@ mod tests {
         b.build_store(store_addr, three, rsleigh::VnSpace::RAM)
             .unwrap();
         b.build_return(Some(outer), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
         let inner_node = function.producer(inner);
@@ -900,7 +1234,6 @@ mod tests {
             .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(sum), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
         // Both match `var + <const>`; only the first may take effect.
@@ -927,35 +1260,140 @@ mod tests {
         );
     }
 
-    /// After `apply_rules_count` plus `clean()`, no accumulated dead cone
-    /// may linger in `live_nodes`.
-    #[test]
-    fn track_apply_rules_count_no_dead_cone() {
+    /// `ret (x + 0) * 1` over a register `x`: the register, the sum and the
+    /// product.
+    fn add_then_mul_fn() -> (
+        strider_ir::Function,
+        strider_ir::node::ValueId,
+        strider_ir::node::ValueId,
+        strider_ir::node::ValueId,
+    ) {
         let vn = reg_vn(0x1000, 8);
-        let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
-
-        // `((var+1)+2)` is itself an operand of a further `+ 4`, so apply
-        // folds twice.
         let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
         let region = b.create_region_all().unwrap();
         b.set_entry_region_all(region).unwrap();
         b.set_region(region);
         b.set_lift_addr(Some(0x10));
         let xv = b.read_variable(&vn).unwrap();
-        let k1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
-        let a1 = b
-            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::int(64))
+        let zero = b.build_int_const(0u64, ValueType::int(64)).unwrap();
+        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let sum = b
+            .build_int_binary_operation(xv, zero, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
-        let k2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
-        let a2 = b
-            .build_int_binary_operation(a1, k2, IntBinaryOp::Add, ValueType::int(64))
+        let product = b
+            .build_int_binary_operation(sum, one, IntBinaryOp::Mul, ValueType::int(64))
             .unwrap();
+        b.build_return(Some(product), &[]).unwrap();
+        (b.build().unwrap(), xv, sum, product)
+    }
+
+    /// A table hands each root kind, payload included, its own admitted
+    /// rules: an `Add` seen first must not narrow what a `Mul` is offered.
+    /// Mutation: key the memo by discriminant.
+    #[test]
+    fn rule_table_admits_per_root_kind_payload_included() {
+        use super::{Rule, RuleTable};
+        use strider_pattern::int_mul;
+        let (x, y) = (Capture::new(), Capture::new());
+        let (mut function, xv, sum, product) = add_then_mul_fn();
+
+        let table = RuleTable::new(vec![
+            Rule::rewrite(int_add(var(x), int_const(0u128)), var(x)),
+            Rule::rewrite(int_mul(var(y), int_const(1u128)), var(y)),
+        ]);
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
+        let add = edit.producer(sum);
+        let mul = edit.producer(product);
+        assert_eq!(table.first_match(&mut edit, add).unwrap(), Some(xv));
+        assert_eq!(table.first_match(&mut edit, mul).unwrap(), Some(xv));
+    }
+
+    /// The memo outlives every function a thread folds, so a kind naming
+    /// one function's constant or variable gets no entry of its own.
+    /// Mutation: memoize every kind.
+    #[test]
+    fn rule_table_memo_stays_bounded_over_distinct_constants() {
+        use super::{Rule, RuleTable};
+        use cranelift_entity::EntityRef;
+        use strider_ir::node::{IntConstId, NodeKind};
+        let x = Capture::new();
+        let table = RuleTable::new(vec![Rule::rewrite(
+            int_add(var(x), int_const(0u128)),
+            var(x),
+        )]);
+        for i in 0..1000 {
+            assert!(!table.admits(&NodeKind::IntConst(IntConstId::new(i))));
+            assert!(!table.admits(&NodeKind::FloatConst(i as u64)));
+        }
+        assert_eq!(table.by_kind.borrow().len(), 0);
+    }
+
+    /// Once a rule fires, the rules after it must not even be tried.
+    #[test]
+    fn rule_table_stops_at_the_first_fire() {
+        use super::{Rule, RuleTable};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static LATER_TRIES: AtomicUsize = AtomicUsize::new(0);
+        fn fires(
+            edit: &mut EditFunction<'_>,
+            root: strider_ir::node::NodeId,
+        ) -> super::Result<Option<strider_ir::node::ValueId>> {
+            Ok(Some(edit.node_outputs(root)[0]))
+        }
+        fn declines(
+            _: &mut EditFunction<'_>,
+            _: strider_ir::node::NodeId,
+        ) -> super::Result<Option<strider_ir::node::ValueId>> {
+            Ok(None)
+        }
+        fn counts(
+            edit: &mut EditFunction<'_>,
+            root: strider_ir::node::NodeId,
+        ) -> super::Result<Option<strider_ir::node::ValueId>> {
+            LATER_TRIES.fetch_add(1, Ordering::Relaxed);
+            fires(edit, root)
+        }
+
+        let (mut function, _, sum, _) = add_then_mul_fn();
+        let any = |_: &strider_ir::node::NodeKind| true;
+        let table = RuleTable::new(vec![
+            Rule::Fold {
+                roots: any,
+                fold: declines,
+            },
+            Rule::Fold {
+                roots: any,
+                fold: fires,
+            },
+            Rule::Fold {
+                roots: any,
+                fold: counts,
+            },
+        ]);
+        let mut edit = EditFunction::new(&mut function);
+        let add = edit.producer(sum);
+        assert_eq!(table.first_match(&mut edit, add).unwrap(), Some(sum));
+        assert_eq!(
+            LATER_TRIES.load(Ordering::Relaxed),
+            0,
+            "no rule may run after the first fire"
+        );
+    }
+
+    /// After `apply_rules_count` plus `clean()`, no accumulated dead cone
+    /// may linger in `live_nodes`.
+    #[test]
+    fn track_apply_rules_count_no_dead_cone() {
+        let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
+        // `((var+1)+2)` is itself an operand of a further `+ 4`, so apply
+        // folds twice.
+        let (mut b, [_, a1, a2]) = var_plus_1_plus_2();
         let k4 = b.build_int_const(4u64, ValueType::int(64)).unwrap();
         let a3 = b
             .build_int_binary_operation(a2, k4, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(a3), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
         let a1_node = function.producer(a1);
@@ -1004,7 +1442,6 @@ mod tests {
             .build_load(addr, rsleigh::VnSpace::RAM, VT::int(64))
             .unwrap();
         b.build_return(Some(loaded), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
         let load_node = function.producer(loaded);
@@ -1120,28 +1557,12 @@ mod tests {
     /// unreachable: the dedup-cache hit must re-enter `live_nodes`/`roots`.
     #[test]
     fn track_rhs_dedup_revives_culled_const() {
-        let vn = reg_vn(0x1000, 8);
         let (x, c1, c2) = (Capture::new(), Capture::new(), Capture::new());
-
-        let mut b = RegisterSet::new().tracked(vn).arg(vn).build_fn().unwrap();
-        let region = b.create_region_all().unwrap();
-        b.set_entry_region_all(region).unwrap();
-        b.set_region(region);
-        b.set_lift_addr(Some(0x10));
-        let xv = b.read_variable(&vn).unwrap();
-        let k1 = b.build_int_const(1u64, ValueType::int(64)).unwrap();
-        let inner = b
-            .build_int_binary_operation(xv, k1, IntBinaryOp::Add, ValueType::int(64))
-            .unwrap();
-        let k2 = b.build_int_const(2u64, ValueType::int(64)).unwrap();
-        let outer = b
-            .build_int_binary_operation(inner, k2, IntBinaryOp::Add, ValueType::int(64))
-            .unwrap();
+        let (mut b, [_, _, outer]) = var_plus_1_plus_2();
         // Wired into nothing, so it starts unreachable and the initial cull
         // removes it. The fold's RHS const (1 + 2) dedups back onto it.
         let dangling_three = b.build_int_const(3u64, ValueType::int(64)).unwrap();
         b.build_return(Some(outer), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
         let three_node = function.producer(dangling_three);
@@ -1186,7 +1607,7 @@ mod tests {
 
     /// `p = phi(x, b); r = p + 3; b = r + 1`. Replacing `r` by `b`, which the
     /// match bound through the phi, would make `b` read itself, though `b`
-    /// sits in `r`'s own block.
+    /// sits in `r`'s own block, so the site is declined.
     #[test]
     fn a_rewrite_through_a_phi_may_not_close_a_cycle_its_back_edge_carries() {
         use strider_ir::IntCmpOp;
@@ -1219,7 +1640,6 @@ mod tests {
         b.build_if(done, exit, head).unwrap();
         b.set_region(exit);
         b.build_return(Some(r), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
         let root = function.producer(r);
 
@@ -1230,8 +1650,11 @@ mod tests {
         );
         let rule = rewrite_rule(lhs, var(back));
         let mut edit = EditFunction::new(&mut function);
-        let err = rule(&mut edit, root).expect_err("the back-edge value reads the root");
-        assert!(err.to_string().contains("data cycle"), "{err}");
+        assert_eq!(
+            rule(&mut edit, root).unwrap(),
+            None,
+            "the back-edge value reads the root"
+        );
         edit.clean();
         drop(edit);
         strider_ir::validate::validate(&function).unwrap();
@@ -1260,7 +1683,6 @@ mod tests {
                 .unwrap();
         }
         b.build_return(Some(sum), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
 
         let x = Capture::new();
@@ -1319,13 +1741,9 @@ mod tests {
         b.set_region(exit);
         let out = b.read_variable(&x).unwrap();
         b.build_return(Some(out), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
         let root = function.producer(r);
-        assert!(matches!(
-            function.node_kind(function.producer(p)),
-            NodeKind::Phi
-        ));
+        assert!(matches!(function.kind_of_value(p), NodeKind::Phi));
 
         let (a, k) = (Capture::new(), Capture::new());
         let rule = rewrite_rule(int_add(phi().phi_input(0, var(a)), var(k)), var(k));
@@ -1336,9 +1754,75 @@ mod tests {
         strider_ir::validate::validate(&function).unwrap();
     }
 
+    /// `if (c) { x_i = i } ; *(0x100 + 8i) = x_i + 7` for eight registers:
+    /// each store's sum matches through its phi, and the eight fires, which
+    /// edit no control, share one dominator tree, a constant the RHS builds
+    /// included. Mutation: build the tree per availability check; intern a
+    /// built constant through `function_mut`.
+    #[test]
+    fn join_crossing_fires_share_one_dominator_tree() {
+        use strider_pattern::{phi, var};
+        let (a, k) = (Capture::new(), Capture::new());
+        let lhs = || int_add(phi().phi_input(0, var(a)), var(k));
+        join_crossing_fires_build_one_tree(&rewrite_rule(lhs(), var(k)));
+        join_crossing_fires_build_one_tree(&rewrite_rule(
+            lhs(),
+            strider_pattern::template::int_add(var(k), int_const(0u128)),
+        ));
+    }
+
+    fn join_crossing_fires_build_one_tree(rule: &super::BoxedRule) {
+        use super::apply_rules_count;
+
+        const K: u64 = 8;
+        let flag = reg_vn(0x2000, 1);
+        let regs: Vec<_> = (0..K).map(|i| reg_vn(0x1000 + 8 * i, 8)).collect();
+        let mut set = RegisterSet::new().tracked(flag).arg(flag);
+        for &r in &regs {
+            set = set.tracked(r).arg(r);
+        }
+        let mut b = set.build_fn().unwrap();
+        let entry = b.create_region_all().unwrap();
+        let then = b.create_region_all().unwrap();
+        let join = b.create_region_all().unwrap();
+        b.set_entry_region_all(entry).unwrap();
+        b.set_lift_addr(Some(0x10));
+        b.set_region(entry);
+        let c = b.read_variable(&flag).unwrap();
+        let c = b.truncate_if_needed(c, ValueType::I1).unwrap();
+        b.build_if(c, then, join).unwrap();
+        b.set_region(then);
+        for (i, r) in regs.iter().enumerate() {
+            let v = b.build_int_const(i as u64, ValueType::int(64)).unwrap();
+            b.write_variable(r, v).unwrap();
+        }
+        b.build_branch(join).unwrap();
+        b.set_region(join);
+        for (i, r) in regs.iter().enumerate() {
+            let x = b.read_variable(r).unwrap();
+            let seven = b.build_int_const(7u64, ValueType::int(64)).unwrap();
+            let sum = b
+                .build_int_binary_operation(x, seven, IntBinaryOp::Add, ValueType::int(64))
+                .unwrap();
+            let addr = b
+                .build_int_const(0x100 + 8 * i as u64, ValueType::int(64))
+                .unwrap();
+            b.build_store(addr, sum, rsleigh::VnSpace::RAM).unwrap();
+        }
+        b.build_return(None, &[]).unwrap();
+        let mut function = b.build().unwrap();
+
+        let mut edit = EditFunction::new(&mut function);
+        edit.cull_dead();
+        let fired = apply_rules_count(&mut edit, std::slice::from_ref(rule)).unwrap();
+        assert_eq!(fired, K as usize);
+        assert_eq!(edit.control_dominator_builds(), 1);
+    }
+
     /// `head: call; y = *p; x = y + 1; if (x < 9) goto head`. A match through
     /// the loop's `Region` binds the latch's `x`, which reads the root `y`
-    /// with no phi between them: `y -> x` would make `x = x + 1`.
+    /// with no phi between them: `y -> x` would make `x = x + 1`, so the site
+    /// is declined.
     #[test]
     fn a_rewrite_through_a_region_may_not_close_a_cycle() {
         use strider_ir::IntCmpOp;
@@ -1376,7 +1860,6 @@ mod tests {
         b.build_if(more, head, exit).unwrap();
         b.set_region(exit);
         b.build_return(Some(x), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
         let root = function.producer(y);
 
@@ -1388,8 +1871,11 @@ mod tests {
         )))));
         let rule = rewrite_rule(lhs, var(c));
         let mut edit = EditFunction::new(&mut function);
-        let err = rule(&mut edit, root).expect_err("the latch's value reads the root");
-        assert!(err.to_string().contains("data cycle"), "{err}");
+        assert_eq!(
+            rule(&mut edit, root).unwrap(),
+            None,
+            "the latch's value reads the root"
+        );
         edit.clean();
         drop(edit);
         strider_ir::validate::validate(&function).unwrap();
@@ -1397,7 +1883,7 @@ mod tests {
 
     /// `if (c) x = g() else x = 7; return x + 1`. A match through the merge's
     /// `Phi` binds `g()`'s result, which only one arm computes, for the root
-    /// `x + 1` past the merge.
+    /// `x + 1` past the merge, so the site is declined.
     #[test]
     fn a_rewrite_through_a_phi_may_not_read_one_arms_value() {
         use strider_ir_test_utils::{sp_arg_frame, stack_vn_x86_64};
@@ -1445,8 +1931,11 @@ mod tests {
         let lhs = int_add(phi().any_input(call().res().capture(cap)), anything());
         let rule = rewrite_rule(lhs, var(cap));
         let mut edit = EditFunction::new(&mut function);
-        let err = rule(&mut edit, root).expect_err("one arm's value is unavailable");
-        assert!(err.to_string().contains("not available"), "{err}");
+        assert_eq!(
+            rule(&mut edit, root).unwrap(),
+            None,
+            "one arm's value is unavailable"
+        );
         edit.clean();
         drop(edit);
         strider_ir::validate::validate(&function).unwrap();
@@ -1479,7 +1968,6 @@ mod tests {
                 .build_int_binary_operation(v, rhs, IntBinaryOp::Add, ValueType::int(64))
                 .unwrap();
             b.build_return(Some(sum), &[]).unwrap();
-            b.set_lift_addr(None);
             let mut function = b.build().unwrap();
             let root = function.producer(sum);
 
@@ -1610,7 +2098,6 @@ mod tests {
             .build_int_binary_operation(loaded, seven, IntBinaryOp::Add, ValueType::int(64))
             .unwrap();
         b.build_return(Some(sum), &[]).unwrap();
-        b.set_lift_addr(None);
         let mut function = b.build().unwrap();
         let five = function.producer(five);
 

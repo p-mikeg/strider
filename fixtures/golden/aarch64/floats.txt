@@ -430,7 +430,7 @@ arg 0 [%v2]
 arg 1 [%v3]
 float_arg 0 [%v4]
 float_arg 1 [%v7]
-float_arg 3 [%v24]
+float_arg 3 [%v21]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[x0]
@@ -450,19 +450,17 @@ float_arg 3 [%v24]
 %v16:f32 = float.div %v13, %v15
 %v17:i32 = float_bits_to_int %v16
 %v18:i128 = extend.zero %v17
-%v19:i128 = iconst[0xffffffff]
-%v20:i128 = int.and %v18, %v19
-%v21:i32 = float_bits_to_int %v15
-%v22:i128 = extend.zero %v21
-%v23:i128 = int.and %v22, %v19
-%v24:i128 = initial_var[q3]
-%v25:i128 = iconst[0xffffffffffffffffffffffff00000000]
-%v26:i128 = int.and %v24, %v25
-%v27:i32 = float_bits_to_int %v10
-%v28:i128 = extend.zero %v27
-%v29:i128 = int.or %v26, %v28
-%v30:i128 = int.and %v29, %v19
-return %v0, %v1, %v2, %v3, %v20, %v7, %v23, %v30
+%v19:i32 = float_bits_to_int %v15
+%v20:i128 = extend.zero %v19
+%v21:i128 = initial_var[q3]
+%v22:i128 = iconst[0xffffffffffffffffffffffff00000000]
+%v23:i128 = int.and %v21, %v22
+%v24:i32 = float_bits_to_int %v10
+%v25:i128 = extend.zero %v24
+%v26:i128 = int.or %v23, %v25
+%v27:i128 = iconst[0xffffffff]
+%v28:i128 = int.and %v26, %v27
+return %v0, %v1, %v2, %v3, %v18, %v7, %v20, %v28
 
 == f64_arith @0x880
 cfg
@@ -472,7 +470,7 @@ arg 0 [%v2]
 arg 1 [%v3]
 float_arg 0 [%v4]
 float_arg 1 [%v7]
-float_arg 3 [%v24]
+float_arg 3 [%v21]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[x0]
@@ -492,19 +490,17 @@ float_arg 3 [%v24]
 %v16:f64 = float.div %v13, %v15
 %v17:i64 = float_bits_to_int %v16
 %v18:i128 = extend.zero %v17
-%v19:i128 = iconst[0xffffffffffffffff]
-%v20:i128 = int.and %v18, %v19
-%v21:i64 = float_bits_to_int %v15
-%v22:i128 = extend.zero %v21
-%v23:i128 = int.and %v22, %v19
-%v24:i128 = initial_var[q3]
-%v25:i128 = iconst[0xffffffffffffffff0000000000000000]
-%v26:i128 = int.and %v24, %v25
-%v27:i64 = float_bits_to_int %v10
-%v28:i128 = extend.zero %v27
-%v29:i128 = int.or %v26, %v28
-%v30:i128 = int.and %v29, %v19
-return %v0, %v1, %v2, %v3, %v20, %v7, %v23, %v30
+%v19:i64 = float_bits_to_int %v15
+%v20:i128 = extend.zero %v19
+%v21:i128 = initial_var[q3]
+%v22:i128 = iconst[0xffffffffffffffff0000000000000000]
+%v23:i128 = int.and %v21, %v22
+%v24:i64 = float_bits_to_int %v10
+%v25:i128 = extend.zero %v24
+%v26:i128 = int.or %v23, %v25
+%v27:i128 = iconst[0xffffffffffffffff]
+%v28:i128 = int.and %v26, %v27
+return %v0, %v1, %v2, %v3, %v18, %v7, %v20, %v28
 
 == f32_to_f64 @0x8a0
 cfg

@@ -6,6 +6,7 @@
 //! positions.
 
 use crate::DominatorTree;
+use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, ValueKind};
@@ -164,10 +165,7 @@ pub fn early_position(
     let graph = function.graph();
     let pinned_at = |node: NodeId| -> Option<Option<NodeId>> {
         let at = match graph.node_kind(node) {
-            NodeKind::Phi | NodeKind::MemPhi => {
-                let token = graph.nth_input(node, NodeKind::PHI_TOKEN_SLOT)?;
-                graph.value_definition(token).0
-            }
+            NodeKind::Phi | NodeKind::MemPhi => function.phi_region(node),
             _ if is_pinned(graph, node) => node,
             _ => return None,
         };

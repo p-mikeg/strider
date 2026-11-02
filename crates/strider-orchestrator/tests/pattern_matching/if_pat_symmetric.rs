@@ -11,15 +11,12 @@ use super::support::shapes;
 fn canonicalised_inverted() -> Function {
     let mut function = shapes::if_cmp_then_return_inverted(4);
     let r = strider_orchestrator::opt::run_one(
-        &IfCondInversion::new(),
+        &IfCondInversion,
         &mut function,
         &strider_orchestrator::opt::OptCtx::new(None),
     )
     .expect("opt");
-    assert!(
-        r.changed(),
-        "IfCondInversion must rewrite the inverted-cond If"
-    );
+    assert!(r, "IfCondInversion must rewrite the inverted-cond If");
     function
 }
 

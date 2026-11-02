@@ -35,6 +35,17 @@ pairings of add / subtract with multiply / shift reduce to one `x * K`, which
 means a pattern written against the shape in the source will not match. Search
 for the folded form, or for `int_mul(x, int_const_any_width(K))`.
 
+The same goes for a few more rewrites, each of which leaves a shape a pattern
+written against the source will not find:
+
+- a truncate of an add, multiply, and, or or xor of two extends (or of an
+  extend and a constant) from the truncate's own width is that operation at
+  the narrow width: `trunc8(zext32(a) + zext32(b))` is `a + b` at 8 bits;
+- chained constant shifts compose: `(x << 2) << 3` is `x << 5`, and a signed
+  right shift saturates at the width less one;
+- chained constant xors merge: `(x ^ 1) ^ 3` is `x ^ 2`;
+- a sign extend of a widening zero extend is that zero extend.
+
 **LoadReadOnly.** When a load reads a fixed address that lands in read-only
 memory, it replaces the load with the constant stored there. `load_elf` derives
 that image for you (the loaded file minus its writable mappings), so a load out
@@ -47,7 +58,9 @@ Check `prog.rom()`, whose repr counts its regions, when folding you expected doe
 not happen; the fix is to hand in a `rom=` covering the constant data yourself.
 
 **KnownBits.** Tracks which bits of each value are known to be 0 or 1. When every
-bit of a result is pinned down, it becomes a constant.
+bit of a result is pinned down, it becomes a constant. A mask that keeps every
+bit its operand may set is dropped: `zext32(x8) & 0xff` is `zext32(x8)`, so a
+pattern naming that `and` will not match.
 
 **FlagCmpCanonicalize.** CPUs compute a comparison as a little tree of flag bits
 (carry, zero, sign, overflow). This recognizes those trees, including the shapes
@@ -70,13 +83,13 @@ phi or memory phi over it is replaced by its single value input.
 
 **DeadBranchElimination.** An `if` on a constant condition, or a `switch` whose
 dispatch address is a constant naming one of its arms, can only take one arm.
-The branch is removed, and the arms no longer reached go with it. It declines
-when the surviving arm would reach no terminator, as for a loop whose only exit
-was the dead arm. It also declines an `if` whose dead arm feeds an `Unreachable`
-directly. A dead arm that calls a no-return function still folds, since it
-reaches its `Unreachable` through the call.
-
-**CfgDetach.** Removes control edges into a merge region that can never be taken,
+The branch is removed, and the arms no longer reached go with it. It folds only
+when the surviving arm reaches a terminator without taking the dead arm of any
+constant branch, so no branch folds whose surviving arm enters a loop that only
+dead arms leave, whether the branch is inside the loop or before it. A dead arm
+that feeds an `Unreachable`, directly or through a no-return call, folds like
+any other. Every run then removes the control
+edges into a merge region that can never be taken, whichever pass left them,
 along with the matching phi and memory-phi inputs.
 
 **LoadForward.** When a value is stored to some location (a stack slot, a

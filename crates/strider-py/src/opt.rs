@@ -4,39 +4,8 @@ use strider_orchestrator::opt::OptimizerPipeline;
 
 use crate::errors::into_strider_err;
 
-/// A type-erased fixed-point pass.
-pub(crate) type ErasedPass = Box<dyn strider_orchestrator::opt::Optimizer + Send>;
-
-/// A type-erased post-pass, run once after the fixed-point loop.
-pub(crate) type ErasedPostPass = Box<dyn strider_orchestrator::opt::PostOptimizer + Send>;
-
-/// Lets a Python caller register an ordinary fixed-point pass via
-/// `OptimizerPipeline.add_post(...)`: runs it once.
-struct OptAsPostPass(ErasedPass);
-
-impl Clone for OptAsPostPass {
-    fn clone(&self) -> Self {
-        OptAsPostPass(self.0.clone_box())
-    }
-}
-
-impl strider_orchestrator::opt::PostOptimizer for OptAsPostPass {
-    fn apply(
-        &self,
-        edit: &mut strider_opt::EditFunction<'_>,
-        ctx: &strider_orchestrator::opt::OptCtx<'_>,
-    ) -> strider_orchestrator::opt::Result<()> {
-        self.0.apply(edit, ctx)?;
-        Ok(())
-    }
-
-    /// The WRAPPED pass's name. Reporting the wrapper's would put a type name
-    /// no caller can construct into `post_passes`, breaking the round trip
-    /// `add_post` documents.
-    fn name(&self) -> &'static str {
-        self.0.name()
-    }
-}
+/// A type-erased pass.
+pub(crate) type ErasedPass = &'static dyn strider_orchestrator::opt::Optimizer;
 
 /// Builder for an optimizer pipeline.  Construct via `empty()` or
 /// `default()`, then `add(pass)` / `add_post(pass)`; apply it with
@@ -76,14 +45,14 @@ impl PyOptimizerPipeline {
     /// until the graph stops changing.  A single-shot post-pass is rejected
     /// here; use `add_post` instead.
     fn add(&mut self, pass_obj: PyOptPass) -> PyResult<()> {
-        self.inner.add_boxed(pass_obj.into_erased()?);
+        self.inner.add(pass_obj.into_erased()?);
         Ok(())
     }
 
     /// Append a post-pass, run once after the main passes finish. A
     /// fixed-point pass is accepted here too, and runs once.
     fn add_post(&mut self, pass_obj: PyOptPass) {
-        self.inner.add_post_boxed(pass_obj.into_erased_post());
+        self.inner.add_post_pass(pass_obj.into_erased_post());
     }
 
     /// Names of the main (repeated) passes currently registered, in order.
@@ -137,7 +106,7 @@ macro_rules! pure_pass_class {
 
 /// The pass catalogue in two sections: a `main` row joins the fixed-point
 /// list, a `post` row runs once after that loop converges and is rejected by
-/// `add`. Each row is `"PythonName" => WrapperType = pass constructor, doc`.
+/// `add`. Each row is `"PythonName" => WrapperType = pass, doc`.
 macro_rules! opt_passes {
     (
         main { $($mn:literal => $mty:ident = $mctor:expr, $mdoc:literal;)* }
@@ -161,7 +130,7 @@ macro_rules! opt_passes {
             /// Erase to a fixed-point pass; a post-pass-only kind is an error.
             fn into_erased(self) -> PyResult<ErasedPass> {
                 Ok(match self {
-                    $( PyOptPass::$mty(_) => Box::new($mctor), )*
+                    $( PyOptPass::$mty(_) => &$mctor, )*
                     $( PyOptPass::$pty(_) )|* => {
                         return Err(into_strider_err(anyhow::anyhow!(
                             "{} are post-passes (they run once after the fixed-point \
@@ -173,17 +142,11 @@ macro_rules! opt_passes {
                 })
             }
 
-            /// Real post-passes erase to their concrete `PostOptimizer`;
-            /// anything else goes through [`OptAsPostPass`] so it runs once
-            /// after convergence.
-            fn into_erased_post(self) -> ErasedPostPass {
+            /// Any pass erases for `add_post`, a fixed-point one running once.
+            fn into_erased_post(self) -> ErasedPass {
                 match self {
-                    $( PyOptPass::$pty(_) => Box::new($pctor), )*
-                    other => Box::new(OptAsPostPass(
-                        other
-                            .into_erased()
-                            .expect("non-post pass always erases to a fixed-point pass"),
-                    )),
+                    $( PyOptPass::$mty(_) => &$mctor, )*
+                    $( PyOptPass::$pty(_) => &$pctor, )*
                 }
             }
         }
@@ -203,7 +166,7 @@ macro_rules! opt_passes {
 // `test_docstrings.py` holds the two equal.
 opt_passes! {
     main {
-        "ConstantFold" => PyConstantFold = strider_orchestrator::opt::ConstantFold::new(),
+        "ConstantFold" => PyConstantFold = strider_orchestrator::opt::ConstantFold,
             "Evaluates constant expressions and applies algebraic identities (`x+0` \
              to `x`, `x^x` to `0`, AND-mask merging).";
         "KnownBits" => PyKnownBits = strider_orchestrator::opt::KnownBits,
@@ -224,16 +187,14 @@ opt_passes! {
             strider_orchestrator::opt::DeadBranchElimination,
             "Folds a branch with a constant selector (an `If` on a constant `I1`, a \
              `Switch` on a constant dispatch address), wiring the live successor \
-             past it and killing the branch node, and strips the dead arm's \
-             predecessor slots from the joins.";
-        "CfgDetach" => PyCfgDetach = strider_orchestrator::opt::CfgDetach,
-            "Removes a `Region` predecessor slot whose control producer entry can \
-             no longer reach, along with the matching `Phi` / `MemPhi` value slots.";
+             past it and killing the branch node. Every run then strips each \
+             `Region` predecessor slot entry can no longer reach, with the matching \
+             `Phi` / `MemPhi` value slots.";
         "FlagCmpCanonicalize" => PyFlagCmpCanonicalize =
-            strider_orchestrator::opt::FlagCmpCanonicalize::new(),
+            strider_orchestrator::opt::FlagCmpCanonicalize,
             "Folds an architecture's condition-flag tree into a single direct \
              comparison node.";
-        "IfCondInversion" => PyIfCondInversion = strider_orchestrator::opt::IfCondInversion::new(),
+        "IfCondInversion" => PyIfCondInversion = strider_orchestrator::opt::IfCondInversion,
             "Rewrites a branch on a negated condition (`Xor(C, IntConst(1)):I1`) \
              into a branch on the plain condition with its two arms swapped.";
         "LoadForward" => PyLoadForward = strider_orchestrator::opt::LoadForward,

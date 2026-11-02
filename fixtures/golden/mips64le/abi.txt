@@ -98,25 +98,22 @@ float_arg 7 [%v33]
 %v146:ctrl, %v147:mem, %v148:i64<v0>, %v149:i64<v1>, %v150:i64<f0>, %v151:i64<f2>, %v152:i64<a0>, %v153:i64<a1>, %v154:i64<a2>, %v155:i64<a3>, %v156:i64<t0>, %v157:i64<t1>, %v158:i64<t2>, %v159:i64<t3>, %v160:i64<t9>, %v161:i64<pc>, %v162:i64<f12>, %v163:i64<f13>, %v164:i64<f14>, %v165:i64<f15>, %v166:i64<f16>, %v167:i64<f17>, %v168:i64<f18>, %v169:i64<f19>, %v170:i8<ISAModeSwitch> = call %v113, %v142, %v143, %v17, %v144, %v145, %v121, %v122, %v123, %v124, %v125, %v126, %v129, %v130, %v131, %v132, %v133, %v134, %v135, %v136
 %v171:mem = store[r] %v147, %v17, %v148
 %v172:i32 = load[r] %v147, %v12
-%v173:i64 = extend.sign %v172
-%v174:i32 = truncate %v148
-%v175:i64 = iconst[0xffffffffffffffd4]
-%v176:i64 = int.add %v2, %v175
-%v177:i32 = load[r] %v171, %v176
-%v178:i32 = int.add %v174, %v177
-%v179:i64 = extend.sign %v178
-%v180:i64 = int.xor %v173, %v179
-%v181:i32 = truncate %v180
-%v182:mem = store[r] %v171, %v12, %v181
-%v183:i64 = iconst[0x120000ca8]
-%v184:ctrl, %v185:mem, %v186:i64<v0>, %v187:i64<v1>, %v188:i64<f0>, %v189:i64<f2>, %v190:i64<a0>, %v191:i64<a1>, %v192:i64<a2>, %v193:i64<a3>, %v194:i64<t0>, %v195:i64<t1>, %v196:i64<t2>, %v197:i64<t3>, %v198:i64<t9>, %v199:i64<pc>, %v200:i64<f12>, %v201:i64<f13>, %v202:i64<f14>, %v203:i64<f15>, %v204:i64<f16>, %v205:i64<f17>, %v206:i64<f18>, %v207:i64<f19>, %v208:i8<ISAModeSwitch> = call %v146, %v182, %v183, %v17, %v20, %v21, %v154, %v155, %v156, %v157, %v158, %v159, %v162, %v163, %v164, %v165, %v166, %v167, %v168, %v169, %v148
-%v209:i32 = load[r] %v185, %v12
-%v210:i64 = extend.sign %v209
-%v211:i64 = int.xor %v210, %v186
-%v212:i32 = truncate %v211
-%v213:mem = store[r] %v185, %v12, %v212
-%v214:i64 = extend.sign %v212
-return %v184, %v213, %v214, %v211, %v188, %v189
+%v173:i32 = truncate %v148
+%v174:i64 = iconst[0xffffffffffffffd4]
+%v175:i64 = int.add %v2, %v174
+%v176:i32 = load[r] %v171, %v175
+%v177:i32 = int.add %v173, %v176
+%v178:i32 = int.xor %v172, %v177
+%v179:mem = store[r] %v171, %v12, %v178
+%v180:i64 = iconst[0x120000ca8]
+%v181:ctrl, %v182:mem, %v183:i64<v0>, %v184:i64<v1>, %v185:i64<f0>, %v186:i64<f2>, %v187:i64<a0>, %v188:i64<a1>, %v189:i64<a2>, %v190:i64<a3>, %v191:i64<t0>, %v192:i64<t1>, %v193:i64<t2>, %v194:i64<t3>, %v195:i64<t9>, %v196:i64<pc>, %v197:i64<f12>, %v198:i64<f13>, %v199:i64<f14>, %v200:i64<f15>, %v201:i64<f16>, %v202:i64<f17>, %v203:i64<f18>, %v204:i64<f19>, %v205:i8<ISAModeSwitch> = call %v146, %v179, %v180, %v17, %v20, %v21, %v154, %v155, %v156, %v157, %v158, %v159, %v162, %v163, %v164, %v165, %v166, %v167, %v168, %v169, %v148
+%v206:i32 = load[r] %v182, %v12
+%v207:i64 = extend.sign %v206
+%v208:i64 = int.xor %v207, %v183
+%v209:i32 = truncate %v208
+%v210:mem = store[r] %v182, %v12, %v209
+%v211:i64 = extend.sign %v209
+return %v181, %v210, %v211, %v208, %v185, %v186
 
 == eight_int_args @0x120000c30
 cfg

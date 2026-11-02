@@ -9,11 +9,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [features]
-# Exposes the single-pass test runners (`run_one` / `run_post`) and the
-# analyses the classifiers read (`value_range`, the known-bits facts,
-# `classify_target`, the `indirect_branch_resolve` module) to downstream
-# integration tests, which compile against the non-`test` build. Off in
-# production, where `classify_sites` is the one entry.
+# Exposes the single-pass test runners (`run_one`, `run_one_unvalidated`,
+# `run_post`) and `classify_target` to downstream integration tests and
+# benches, which compile against the non-`test` build. Off in production,
+# where `classify_sites` is the one classifier entry.
 test-util = []
 
 [dependencies]

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use strider_ir::node::{NodeKind, ValueId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
     Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntUnaryOp,
     ReadOnlyMemory, Result, ValueType,
@@ -14,6 +14,46 @@ pub trait IrWalkerEx: IRWalker {
 
     fn has_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> bool {
         self.walk_kind(pred).next().is_some()
+    }
+
+    /// The first reachable node of the kind.
+    ///
+    /// # Panics
+    ///
+    /// If there is none.
+    #[track_caller]
+    fn first_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> NodeId {
+        self.walk_kind(pred)
+            .next()
+            .expect("no reachable node of the kind")
+    }
+
+    /// The one reachable node of the kind.
+    ///
+    /// # Panics
+    ///
+    /// If there is none, or more than one.
+    #[track_caller]
+    fn sole_kind(&self, pred: impl Fn(&NodeKind) -> bool) -> NodeId {
+        let mut nodes = self.walk_kind(pred);
+        let first = nodes.next().expect("no reachable node of the kind");
+        assert!(
+            nodes.next().is_none(),
+            "more than one reachable node of the kind"
+        );
+        first
+    }
+
+    /// The sole reachable `Return`'s value input.
+    ///
+    /// # Panics
+    ///
+    /// If there is not exactly one `Return`, or it returns no value.
+    #[track_caller]
+    fn returned(&self) -> ValueId {
+        let ret = self.sole_kind(|k| matches!(k, NodeKind::Return));
+        self.nth_input(ret, NodeKind::Return.input_head_len())
+            .expect("the Return carries no value")
     }
 }
 
