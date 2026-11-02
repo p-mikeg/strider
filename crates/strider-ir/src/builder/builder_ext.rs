@@ -352,7 +352,6 @@ pub trait IRBuilderExt: IRBuilder {
             && float_type.byte_size() <= 8
         {
             // Already masked to the type's width.
-            #[allow(clippy::cast_possible_truncation)]
             return Ok(self.build_float_const(bits as u64, float_type));
         }
         Ok(self.build_single_output_pure(NodeKind::IntBitsToFloat, [value], float_type))
