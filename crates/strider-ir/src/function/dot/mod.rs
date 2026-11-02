@@ -87,7 +87,7 @@ impl Function {
         FunctionDotDumper {
             function: self,
             names,
-            node_to_arg_indices: build_arg_reverse_map(self),
+            arg_labels: arg_labels(self),
             view: None,
         }
     }
@@ -97,8 +97,8 @@ pub struct FunctionDotDumper<'a> {
     function: &'a Function,
     /// The arch's register and space names, all a label reads.
     names: &'a strider_target::ArchNames,
-    /// Carrier node -> arg tags.
-    node_to_arg_indices: FxHashMap<NodeId, Vec<ArgTag>>,
+    /// Carrier node -> its arg tags, joined.
+    arg_labels: FxHashMap<NodeId, String>,
     /// A neighbourhood render; `None` renders everything reachable from the
     /// function's entry.
     view: Option<::dot::View<NodeId>>,
@@ -121,7 +121,8 @@ impl std::fmt::Display for ArgTag {
     }
 }
 
-fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<ArgTag>> {
+/// Carrier node -> its arg tags, sorted and `", "`-joined.
+fn arg_labels(function: &Function) -> FxHashMap<NodeId, String> {
     let mut map: FxHashMap<NodeId, Vec<ArgTag>> = FxHashMap::default();
     let side = function.side_tables();
     let tags = side
@@ -137,11 +138,13 @@ fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<ArgTag>> 
             map.entry(node).or_default().push(tag);
         }
     }
-    // Sort so label output is deterministic.
-    for v in map.values_mut() {
-        v.sort_unstable();
-    }
-    map
+    map.into_iter()
+        .map(|(node, mut tags)| {
+            tags.sort_unstable();
+            let joined: Vec<String> = tags.iter().map(ToString::to_string).collect();
+            (node, joined.join(", "))
+        })
+        .collect()
 }
 
 #[derive(Default)]
