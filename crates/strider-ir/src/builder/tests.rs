@@ -1843,18 +1843,6 @@ fn graph_mut_returns_mutable_reference_to_inner_graph() -> Result<()> {
 }
 
 #[test]
-fn entry_returns_recorded_entry_node_id() -> Result<()> {
-    let b = empty_builder()?;
-    let entry_via_accessor = b.entry();
-    let entry_via_function = b.function().entry();
-    assert_eq!(
-        entry_via_accessor, entry_via_function,
-        "FunctionBuilder::entry() must match Function::entry()"
-    );
-    Ok(())
-}
-
-#[test]
 fn build_after_inplace_optimization_still_succeeds() -> Result<()> {
     let mut b = empty_builder()?;
     // build() needs something to validate.
@@ -2635,21 +2623,29 @@ mod build_call_with_cc {
         b.build_return(Some(v), &[]).unwrap();
         b.set_lift_addr(None);
 
-        let entry = b.entry();
+        let entry = b.function().entry();
 
         let r1 = b.function_mut().graph_mut().create_node(
             NodeKind::IntConst(crate::node::IntConstId::new((1_u64) as usize)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::int(64))],
         );
-        assert_eq!(b.entry(), entry, "entry() stable after first mutation");
+        assert_eq!(
+            b.function().entry(),
+            entry,
+            "entry() stable after first mutation"
+        );
 
         let r2 = b.function_mut().graph_mut().create_node(
             NodeKind::IntConst(crate::node::IntConstId::new((2_u64) as usize)),
             std::iter::empty(),
             [ValueKind::Typed(ValueType::int(64))],
         );
-        assert_eq!(b.entry(), entry, "entry() stable after second mutation");
+        assert_eq!(
+            b.function().entry(),
+            entry,
+            "entry() stable after second mutation"
+        );
         assert_ne!(r1, r2, "consecutive create_node calls produce distinct ids");
 
         assert!(matches!(b.function().node_kind(r1), NodeKind::IntConst(_)));
