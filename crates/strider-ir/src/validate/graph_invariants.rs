@@ -8,38 +8,9 @@ use crate::node::{
     Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType, WidthTie, width_tie,
 };
 use crate::schedule::{ScheduleContext, data_producers, live_arms, schedule_early};
-use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
+use crate::walk::{FnSuccs, NodeIdSet, PostOrder, WalkPhase};
 
 use super::ValidationError;
-
-/// The data producers of a node, restricted to `universe`. `Phi` / `MemPhi`
-/// expand to nothing: closing a data cycle is what they are for.
-#[derive(Clone, Copy)]
-struct DataProducers<'a> {
-    graph: &'a Graph,
-    universe: &'a NodeIdSet,
-}
-
-impl DataProducers<'_> {
-    fn of(self, node: NodeId) -> impl Iterator<Item = NodeId> {
-        let phi = matches!(self.graph.node_kind(node), NodeKind::Phi | NodeKind::MemPhi);
-        (!phi)
-            .then(|| data_producers(self.graph, node))
-            .into_iter()
-            .flatten()
-            .filter(move |&producer| self.universe.contains(producer))
-    }
-}
-
-impl graph_algorithms::walk::GraphRef for DataProducers<'_> {
-    type NodeId = NodeId;
-
-    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
-        for succ in self.of(node) {
-            f(succ);
-        }
-    }
-}
 
 /// No non-phi node is its own transitive data producer.
 ///
@@ -50,11 +21,18 @@ pub(super) fn check_function_invariants_data_cycles(
     reachable: &NodeIdSet,
     errs: &mut Vec<ValidationError>,
 ) {
-    let producers = DataProducers {
-        graph: function.graph(),
-        universe: reachable,
+    let graph = function.graph();
+    // The reachable data producers of a node. `Phi` / `MemPhi` expand to
+    // nothing: closing a data cycle is what they are for.
+    let producers = move |node| {
+        let phi = matches!(graph.node_kind(node), NodeKind::Phi | NodeKind::MemPhi);
+        (!phi)
+            .then(|| data_producers(graph, node))
+            .into_iter()
+            .flatten()
+            .filter(move |&producer| reachable.contains(producer))
     };
-    let mut walk = PostOrder::new(producers, reachable.iter());
+    let mut walk = PostOrder::new(FnSuccs::new(producers), reachable.iter());
     // Not a `NodeIdSet`: the walk is seeded from every reachable node, so the
     // path empties once per seed, and `DenseEntitySet::remove` costs
     // O(max_index / 64) each time it drops the set's maximum.
@@ -63,7 +41,7 @@ pub(super) fn check_function_invariants_data_cycles(
         match phase {
             WalkPhase::Pre => {
                 on_path[node] = true;
-                if producers.of(node).any(|p| on_path[p]) {
+                if producers(node).any(|p| on_path[p]) {
                     errs.push(ValidationError::DataCycle {
                         node,
                         kind: *function.node_kind(node),
