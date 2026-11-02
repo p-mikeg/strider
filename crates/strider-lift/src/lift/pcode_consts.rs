@@ -128,70 +128,58 @@ fn mask_to(v: u128, size_bytes: u32) -> u128 {
     v & strider_ir::eval::mask_below(size_bytes.saturating_mul(8))
 }
 
-/// The register a STORE writes or a LOAD reads, when it addresses the
-/// REGISTER space and its address resolves. `None` for an ordinary memory
-/// access, for any other opcode, and for a register access this cannot name,
-/// where the lift takes its opaque path rather than naming the wrong
-/// register.
-///
-/// The width comes off the opcode: a STORE's is the value it stores, a LOAD's
-/// its output, which is what the value is read into.
-pub(crate) fn register_slot_of(
-    insn: &rsleigh::Insn,
-    consts: &PcodeConsts,
-    declared: &[rsleigh::Vn],
-) -> Option<rsleigh::Vn> {
-    let size = match insn.opcode {
-        rsleigh::Opcode::Store => insn.inputs.get(2)?.size,
-        rsleigh::Opcode::Load => insn.output.as_ref()?.size,
-        _ => return None,
-    };
-    register_slot(insn, consts, declared, size)
-}
-
-/// Whether `insn` addresses the REGISTER space at all, independent of whether
-/// the address resolves. What separates "this is an ordinary memory access"
-/// from "this is a register access this cannot name".
-pub(crate) fn is_register_space_access(insn: &rsleigh::Insn) -> bool {
-    crate::lift::pcode_util::decode_space_id(insn)
-        .is_ok_and(|space| space == rsleigh::VnSpace::REGISTER)
-}
-
-/// The folded address as the exact slice it names, gated on some DECLARED
-/// register enclosing it.
-///
-/// The gate is what keeps the tracked set a nesting family. A computed offset
-/// need not land on a declared boundary: one that straddles two registers, or
-/// lands past the end of the register file, names no register at all. Seeding
-/// such a slot puts a varnode that only PARTIALLY overlaps a real register
-/// into the tracked set, where `dedup_overlapping_largest` keeps both and
-/// models them as non-aliasing: a write to one is invisible to a read of the
-/// other.
-///
-/// The slice itself is returned, not its container, because the width is the
-/// access width. The declared register enclosing it is what the tracked set is
-/// seeded with, and `write_vn` reaches it from the slice through the container
-/// map.
-pub(super) fn register_slot(
-    insn: &rsleigh::Insn,
-    consts: &PcodeConsts,
-    declared: &[rsleigh::Vn],
-    size: u32,
-) -> Option<rsleigh::Vn> {
-    let slot = raw_register_slot(insn, consts, size)?;
-    vn_container::smallest_enclosing(declared, &slot).map(|_| slot)
-}
-
-fn raw_register_slot(insn: &rsleigh::Insn, consts: &PcodeConsts, size: u32) -> Option<rsleigh::Vn> {
-    if !is_register_space_access(insn) {
-        return None;
+impl<R: rsleigh::MemReader> super::Lifter<R> {
+    /// The register a STORE writes or a LOAD reads, when it addresses the
+    /// REGISTER space and its address resolves. `None` for an ordinary memory
+    /// access, for any other opcode, and for a register access this cannot
+    /// name, where the lift takes its opaque path rather than naming the wrong
+    /// register.
+    ///
+    /// The width comes off the opcode: a STORE's is the value it stores, a
+    /// LOAD's its output, which is what the value is read into.
+    ///
+    /// The folded address is returned as the exact slice it names, gated on
+    /// some DECLARED register enclosing it. The gate is what keeps the tracked
+    /// set a nesting family. A computed offset need not land on a declared
+    /// boundary: one that straddles two registers, or lands past the end of
+    /// the register file, names no register at all. Seeding such a slot puts a
+    /// varnode that only PARTIALLY overlaps a real register into the tracked
+    /// set, where `dedup_overlapping_largest` keeps both and models them as
+    /// non-aliasing: a write to one is invisible to a read of the other.
+    ///
+    /// The slice itself is returned, not its container, because the width is
+    /// the access width. The declared register enclosing it is what the
+    /// tracked set is seeded with, and `write_vn` reaches it from the slice
+    /// through the container map.
+    pub(crate) fn register_slot_of(
+        &self,
+        insn: &rsleigh::Insn,
+        consts: &PcodeConsts,
+    ) -> Option<rsleigh::Vn> {
+        let size = match insn.opcode {
+            rsleigh::Opcode::Store => insn.inputs.get(2)?.size,
+            rsleigh::Opcode::Load => insn.output.as_ref()?.size,
+            _ => return None,
+        };
+        if !self.is_register_space_access(insn) {
+            return None;
+        }
+        let off = u64::try_from(consts.value_of(insn.inputs.get(1)?)?).ok()?;
+        let slot = rsleigh::Vn {
+            addr_space: rsleigh::VnSpace::REGISTER,
+            addr_off: off,
+            size,
+        };
+        vn_container::smallest_enclosing(self.declared_reg_vns(), &slot).map(|_| slot)
     }
-    let off = u64::try_from(consts.value_of(insn.inputs.get(1)?)?).ok()?;
-    Some(rsleigh::Vn {
-        addr_space: rsleigh::VnSpace::REGISTER,
-        addr_off: off,
-        size,
-    })
+
+    /// Whether `insn` addresses the REGISTER space at all, independent of
+    /// whether the address resolves. What separates "this is an ordinary
+    /// memory access" from "this is a register access this cannot name".
+    pub(crate) fn is_register_space_access(&self, insn: &rsleigh::Insn) -> bool {
+        self.decode_space_id(insn)
+            .is_ok_and(|space| space == rsleigh::VnSpace::REGISTER)
+    }
 }
 
 /// The tracked varnodes an UNRESOLVABLE register-space write may reach: the

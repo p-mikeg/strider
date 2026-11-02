@@ -51,7 +51,7 @@ pub fn vn_overlaps(a: &rsleigh::Vn, b: &rsleigh::Vn) -> bool {
 /// are modelled as non-aliasing, so a write to one is invisible to a read of
 /// the other. No register file checked declares one: they all nest exactly.
 /// That discharges the REGISTER half; a computed register slot is held to the
-/// same shape upstream by `strider-lift`'s `register_slot`, which drops a slot
+/// same shape upstream by `strider-lift`'s `register_slot_of`, which drops a slot
 /// [`smallest_enclosing`] cannot seat in a declared register. UNIQUE nests
 /// too, by a different construction: `SleighCompile` hands out temporaries on
 /// a 256-byte stride and rejects a constructor temp wider than that, and the
