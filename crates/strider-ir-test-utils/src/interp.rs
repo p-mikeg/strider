@@ -29,7 +29,7 @@ use std::collections::BTreeMap;
 use std::ops::RangeInclusive;
 use std::rc::Rc;
 
-use cranelift_entity::SecondaryMap;
+use cranelift_entity::{EntityRef, SecondaryMap};
 use strider_ir::eval;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{
