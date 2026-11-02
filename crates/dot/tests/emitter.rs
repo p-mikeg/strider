@@ -2,7 +2,7 @@ use dot::{DotEmitter, DotStyle};
 
 #[test]
 fn empty_emitter_produces_minimal_digraph() {
-    let style = DotStyle::empty();
+    let style = DotStyle::default();
     let out = DotEmitter::new("G", &style).finish();
     assert_eq!(out, "digraph \"G\" {\n}\n");
 }
@@ -28,7 +28,7 @@ fn empty_emitter_with_dark_style_emits_attr_blocks_in_order() {
 
 #[test]
 fn node_emits_quoted_id_and_escaped_label() {
-    let style = DotStyle::empty();
+    let style = DotStyle::default();
     let mut e = DotEmitter::new("G", &style);
     e.node("n1", "hello \"world\"", "box", &[]);
     let out = e.finish();
@@ -40,7 +40,7 @@ fn node_emits_quoted_id_and_escaped_label() {
 
 #[test]
 fn node_with_extra_attrs_emits_them_comma_separated() {
-    let style = DotStyle::empty();
+    let style = DotStyle::default();
     let mut e = DotEmitter::new("G", &style);
     e.node("n1", "lbl", "trapezium", &[("fillcolor", "#3a2a10")]);
     let out = e.finish();
@@ -52,7 +52,7 @@ fn node_with_extra_attrs_emits_them_comma_separated() {
 
 #[test]
 fn edge_with_no_extra_omits_bracket_block() {
-    let style = DotStyle::empty();
+    let style = DotStyle::default();
     let mut e = DotEmitter::new("G", &style);
     e.edge("a", "b", &[]);
     let out = e.finish();
@@ -65,7 +65,7 @@ fn edge_with_no_extra_omits_bracket_block() {
 
 #[test]
 fn edge_with_extra_emits_bracketed_attrs() {
-    let style = DotStyle::empty();
+    let style = DotStyle::default();
     let mut e = DotEmitter::new("G", &style);
     e.edge("a", "b", &[("label", "Branch"), ("style", "dashed")]);
     let out = e.finish();
@@ -77,7 +77,7 @@ fn edge_with_extra_emits_bracketed_attrs() {
 
 #[test]
 fn digraph_name_with_special_chars_is_quoted_and_escaped() {
-    let style = DotStyle::empty();
+    let style = DotStyle::default();
     let out = DotEmitter::new("my graph \"X\"", &style).finish();
     assert!(
         out.starts_with("digraph \"my graph \\\"X\\\"\" {\n"),
@@ -87,7 +87,7 @@ fn digraph_name_with_special_chars_is_quoted_and_escaped() {
 
 #[test]
 fn digraph_name_with_backslash_is_doubled() {
-    let style = DotStyle::empty();
+    let style = DotStyle::default();
     let out = DotEmitter::new("path\\sub", &style).finish();
     // `\s` is not one of the passed-through DOT escapes, so it doubles.
     assert!(
@@ -98,7 +98,7 @@ fn digraph_name_with_backslash_is_doubled() {
 
 #[test]
 fn node_id_with_special_chars_is_escaped() {
-    let style = DotStyle::empty();
+    let style = DotStyle::default();
     let mut e = DotEmitter::new("G", &style);
     e.node("a\"b\\c", "lbl", "box", &[]);
     let out = e.finish();
@@ -110,7 +110,7 @@ fn node_id_with_special_chars_is_escaped() {
 
 #[test]
 fn edge_endpoints_with_special_chars_are_escaped() {
-    let style = DotStyle::empty();
+    let style = DotStyle::default();
     let mut e = DotEmitter::new("G", &style);
     e.edge("a\"x", "b\\y", &[]);
     let out = e.finish();
@@ -125,7 +125,7 @@ fn edge_endpoints_with_special_chars_are_escaped() {
 /// dropped from that line.
 #[test]
 fn node_label_backslash_bigram_is_not_a_line_break() {
-    let style = DotStyle::empty();
+    let style = DotStyle::default();
     let mut e = DotEmitter::new("G", &style);
     e.node("n0", "C:\\lib\\name", "box", &[]);
     let out = e.finish();
@@ -137,7 +137,7 @@ fn node_label_backslash_bigram_is_not_a_line_break() {
 
 #[test]
 fn node_id_backslash_bigram_is_not_a_line_break() {
-    let style = DotStyle::empty();
+    let style = DotStyle::default();
     let mut e = DotEmitter::new("G", &style);
     e.node("a\\lb", "lbl", "box", &[]);
     e.edge("a\\lb", "c\\nd", &[("label", "x\\ry")]);
@@ -151,7 +151,7 @@ fn node_id_backslash_bigram_is_not_a_line_break() {
 /// `\l` bigram inside a line, or a newline in the head, stays text.
 #[test]
 fn node_left_lines_breaks_between_lines_and_escapes_each() {
-    let style = DotStyle::empty();
+    let style = DotStyle::default();
     let mut e = DotEmitter::new("G", &style);
     e.node_left_lines("n0", "hdr\n", ["0x1000: nop", "C:\\lib"], "box", &[]);
     let out = e.finish();

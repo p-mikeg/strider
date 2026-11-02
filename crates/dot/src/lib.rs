@@ -6,11 +6,7 @@ const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html"
 /// `@viz-js/viz` v3.5.0 standalone build: Graphviz 11.x as Wasm, the Wasm
 /// itself base64-embedded in the JS. Inlined into the template so the
 /// generated HTML is self-contained: no CDN fetch, no `.wasm` side-load.
-const VIZ_STANDALONE_JS: &str = include_str!("../assets/vendored/viz-standalone.js");
-
-pub fn viz_standalone_js() -> &'static str {
-    VIZ_STANDALONE_JS
-}
+pub const VIZ_STANDALONE_JS: &str = include_str!("../assets/vendored/viz-standalone.js");
 
 /// `svg-pan-zoom` v3.6.1 minified. Inlined for the same reason as
 /// [`VIZ_STANDALONE_JS`].
@@ -78,7 +74,8 @@ pub trait GraphDotDumper {
 }
 
 /// A pre-built Graphviz visual theme (graph/node/edge default attributes).
-#[derive(Clone)]
+/// `Default` sets none.
+#[derive(Clone, Default)]
 pub struct DotStyle {
     graph: Vec<(&'static str, &'static str)>,
     node: Vec<(&'static str, &'static str)>,
@@ -121,14 +118,6 @@ impl DotStyle {
     /// without them multiline labels overflow their boxes in the WASM render.
     pub fn dark_cfg() -> Self {
         Self::dark_with_font("Courier")
-    }
-
-    pub fn empty() -> Self {
-        Self {
-            graph: vec![],
-            node: vec![],
-            edge: vec![],
-        }
     }
 }
 
@@ -541,7 +530,7 @@ mod attr_quoting_tests {
     /// newline in one cannot end the value early.
     #[test]
     fn non_label_attr_value_is_escaped() {
-        let mut e = DotEmitter::new("G", &DotStyle::empty());
+        let mut e = DotEmitter::new("G", &DotStyle::default());
         e.node("n0", "lbl", "box", &[("tooltip", "say \"hi\"\nbye")]);
         let dot = e.finish();
         assert!(
@@ -567,8 +556,8 @@ mod style_tests {
     use super::DotStyle;
 
     #[test]
-    fn empty_has_no_default_attrs() {
-        let s = DotStyle::empty();
+    fn default_has_no_attrs() {
+        let s = DotStyle::default();
         assert!(s.graph.is_empty());
         assert!(s.node.is_empty());
         assert!(s.edge.is_empty());
