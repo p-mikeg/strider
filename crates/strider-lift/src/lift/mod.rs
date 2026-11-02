@@ -456,16 +456,6 @@ pub(crate) fn aliasable_vns(cfg: &strider_cfg::Cfg) -> impl Iterator<Item = rsle
 
 pub(crate) type RegionMap = rustc_hash::FxHashMap<strider_cfg::RegionId, strider_ir::RegionId>;
 
-pub(crate) fn ir_region_of(
-    region_map: &RegionMap,
-    cfg_rid: strider_cfg::RegionId,
-) -> Result<strider_ir::RegionId> {
-    region_map
-        .get(&cfg_rid)
-        .copied()
-        .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))
-}
-
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Allocates one IR region per CFG region, keyed by CFG `RegionId`; every
     /// CFG region is present.
@@ -483,10 +473,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             placed.sort_unstable();
             let ir_rid = self.builder.create_region(&placed)?;
             region_map.insert(cfg_rid, ir_rid);
-            let region = cfg
-                .region_graph()
-                .node_weight(cfg_rid)
-                .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
+            let region = &cfg.region_graph()[cfg_rid];
             let last_addr = region
                 .insns
                 .last()
@@ -497,9 +484,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             let node = self.builder.function().graph().value_definition(ctrl).0;
             self.region_last_addrs.insert(node, last_addr);
         }
-        let entry_ir = *region_map
-            .get(&cfg.entry())
-            .ok_or_else(|| anyhow!("entry region {:?} missing from region_map", cfg.entry()))?;
+        let entry_ir = region_map[&cfg.entry()];
         self.builder.set_entry_region(entry_ir)?;
         // Carriers for float arguments sharing a container are read out of it,
         // which needs a current region.
@@ -597,21 +582,18 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // Pre-order matters: a region must be processed after its immediate
         // dominator so `inherit_variables` reads that dominator's FINAL values.
         for &cfg_rid in dom.preorder() {
-            let ir_region = ir_region_of(region_map, cfg_rid)?;
+            let ir_region = region_map[&cfg_rid];
             // The entry region has no idom; `set_entry_region` seeded it.
             if let Some(idom_cfg) = dom.doms.immediate_dominator(cfg_rid) {
-                let idom_ir = ir_region_of(region_map, idom_cfg)?;
-                self.builder.inherit_variables(ir_region, idom_ir);
+                self.builder
+                    .inherit_variables(ir_region, region_map[&idom_cfg]);
             }
             self.builder.set_region(ir_region);
             #[cfg(debug_assertions)]
             {
                 self.current_cfg_region = Some(cfg_rid);
             }
-            let region = cfg
-                .region_graph()
-                .node_weight(cfg_rid)
-                .ok_or_else(|| anyhow!("no region {cfg_rid:?} in cfg"))?;
+            let region = &cfg.region_graph()[cfg_rid];
             let terminator = &region.terminator;
             self.pcode_consts.reset();
             for wrapped_insn in &region.insns {
@@ -694,24 +676,17 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// `Unconditional` regions, whose `handle_branch` is a no-op.  `CondBranch`
     /// and `Switch` are already wired by their handlers.
     fn link_region_edges(&mut self, region_map: &RegionMap) -> Result<()> {
-        let cfg = self.cfg;
-        for edge_idx in cfg.region_graph().edge_indices() {
-            let Some((src, tgt)) = cfg.region_graph().edge_endpoints(edge_idx) else {
-                continue;
-            };
-            let src_terminator = &cfg
-                .region_graph()
-                .node_weight(src)
-                .ok_or_else(|| anyhow!("no region {src:?} in cfg"))?
-                .terminator;
-            if matches!(src_terminator, strider_cfg::RegionTerminator::Unconditional) {
+        let graph = self.cfg.region_graph();
+        for (src, tgt) in graph.edge_indices().filter_map(|e| graph.edge_endpoints(e)) {
+            if matches!(
+                graph[src].terminator,
+                strider_cfg::RegionTerminator::Unconditional
+            ) {
                 // Every CFG edge against a `translate_regions` that walks the
                 // dominator pre-order, which covers every region only because
                 // `strider_cfg::DecodeEngine::build_cfg` removes the unreachable ones.
-                self.builder.link_regions(
-                    ir_region_of(region_map, src)?,
-                    ir_region_of(region_map, tgt)?,
-                )?;
+                self.builder
+                    .link_regions(region_map[&src], region_map[&tgt])?;
             }
         }
         Ok(())
