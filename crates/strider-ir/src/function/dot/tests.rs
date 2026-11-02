@@ -1454,3 +1454,49 @@ fn interned_values_render_alike_whatever_route_reached_them() {
         "one value, one label: {labels:?}"
     );
 }
+
+/// Every kind's (shape, fill) pair, one representative per variant.
+#[test]
+fn node_style_per_kind() {
+    let expected = [
+        ("Mdiamond", "#1a3a5c"),      // Entry
+        ("Mdiamond", "#1a3a5c"),      // InitialMemory
+        ("Mdiamond", "#1a3a5c"),      // InitialVar
+        ("invhouse", "#2a1a4a"),      // Region
+        ("house", "#163030"),         // MemPhi
+        ("house", "#163030"),         // Phi
+        ("diamond", "#3a2a10"),       // If
+        ("trapezium", "#103a10"),     // Switch
+        ("rarrow", "#3a1010"),        // Call
+        ("doublecircle", "#103a10"),  // Return
+        ("doublecircle", "#103a10"),  // IndirectBranch
+        ("Msquare", "#3a1030"),       // Unreachable
+        ("box3d", "#102030"),         // Load
+        ("box3d", "#102030"),         // Store
+        ("ellipse", "#2d2d2d"),       // IntConst
+        ("box", "#2d2d2d"),           // IntUnaryOp
+        ("box", "#2d2d2d"),           // IntBinaryOp
+        ("box", "#2d2d2d"),           // IntCmpOp
+        ("box", "#2d2d2d"),           // Truncate
+        ("box", "#2d2d2d"),           // Popcount
+        ("box", "#2d2d2d"),           // Lzcount
+        ("box", "#2d2d2d"),           // Extend
+        ("ellipse", "#1a3020"),       // FloatConst
+        ("box", "#1a3020"),           // FloatBinaryOp
+        ("box", "#1a3020"),           // FloatUnaryOp
+        ("box", "#1a3020"),           // FloatCmpOp
+        ("box", "#302018"),           // IntToFloat
+        ("box", "#302018"),           // FloatToInt
+        ("box", "#302018"),           // FloatToFloat
+        ("box", "#302018"),           // IntBitsToFloat
+        ("box", "#302018"),           // FloatBitsToInt
+        ("doubleoctagon", "#3a2810"), // CallOther
+        ("folder", "#2a1a3a"),        // CPoolRef
+        ("component", "#103a2a"),     // New
+    ];
+    let kinds = crate::node::signature::every_node_kind();
+    assert_eq!(kinds.len(), expected.len());
+    for (k, want) in kinds.iter().zip(expected) {
+        assert_eq!(node_style(k), want, "{k:?}");
+    }
+}
