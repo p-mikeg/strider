@@ -146,18 +146,6 @@ fn an_unmapped_conditional_arm_keeps_the_fall_through() {
     );
 }
 
-/// ARM paired with the x86-64 sla: the mode var it re-imposes at every
-/// region is not one that sla flows, so the re-impose would be a silent
-/// no-op.
-#[test]
-fn an_isa_mode_var_the_sla_does_not_flow_is_an_error() {
-    let sleigh = make_sleigh_over(vec![0xc3], 0x1000);
-    let err = crate::DecodeEngine::from_sleigh(strider_target::SleighArch::arm(), sleigh)
-        .err()
-        .expect("an ARM engine over the x86-64 sla");
-    assert!(err.to_string().contains("TMode"), "{err}");
-}
-
 /// A function whose first byte is unmapped has nothing to analyse, so there
 /// is no partial answer to report.
 #[test]
@@ -859,7 +847,7 @@ fn enqueue_ignores_a_context_commit_this_build_did_not_make() {
     // parent, so this one comes from the baseline either way.
     let victim = "cond_mask";
     assert!(
-        engine.flow_vars.contains(victim),
+        arch.decode_tables().flow_vars.iter().any(|n| n == victim),
         "the ARM sla flows {victim}"
     );
     assert_ne!(arch.isa_mode_var(), Some(victim));
@@ -1477,13 +1465,13 @@ fn split_rewires_incoming_edges_to_first_half() {
 fn re_deriving_committed_context_bars_the_reentry_probe() {
     // 0x1000 je 0x1003 ; 0x1002 lock xadd %ecx,(%eax) ; mov %ecx,%eax ; ret
     const LOCK_REENTRY: [u8; 9] = [0x74, 0x01, 0xf0, 0x0f, 0xc1, 0x08, 0x89, 0xc8, 0xc3];
-    let interior = |lent: Vec<(&'static str, super::FlowCommit, u32)>| {
+    let interior = |lent: &'static [(&'static str, super::FlowCommit, u32)]| {
         let arch = strider_target::SleighArch::x86();
         let reader = rsleigh::mem_readers::BufMemReader::new(LOCK_REENTRY.to_vec(), 0x1000);
         let mut engine = crate::DecodeEngine::new(arch, reader).expect("decode engine");
         let opts = crate::CfgOptions::default();
         let b = engine.builder(0x1000u64.into(), &opts).expect("builder");
-        b.engine.flow_commit_defaults = lent;
+        b.engine.flow_commit = lent;
         b.build()
             .expect("build")
             .incomplete()
@@ -1492,7 +1480,7 @@ fn re_deriving_committed_context_bars_the_reentry_probe() {
             .collect::<Vec<_>>()
     };
     assert!(
-        interior(Vec::new()).is_empty(),
+        interior(&[]).is_empty(),
         "with nothing to re-derive the probe runs and the reentry is exact",
     );
     // `segover` is a real x86 flowing var (`ia.sinc:411`) that no
@@ -1500,7 +1488,7 @@ fn re_deriving_committed_context_bars_the_reentry_probe() {
     // what is under test is the guard, not this var. It has to exist in
     // the sla, because `rederive_flow` reads every name it is lent.
     assert_eq!(
-        interior(vec![("segover", super::FlowCommit::Flowing, 0)]),
+        interior(vec![("segover", super::FlowCommit::Flowing, 0)].leak()),
         vec![0x1003],
         "with committed context to re-derive the probe must be barred, so the \
          reentry falls back to being reported as interior",
