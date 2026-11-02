@@ -777,35 +777,18 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         // for every site: a placeholder's caller needs the same bit a seated
         // target would have decoded in.
         self.builder.sample_flowing_isa_bit(addr);
-        let resolved = self.builder.options.seated(addr).cloned();
-        // Unclassified so far: defer to the orchestrator's rebuild loop, which
-        // runs the resolver against the optimised IR.  `target_vn` and `addr`
-        // are stamped onto the terminator so the lifter can emit a
-        // placeholder `Return(target_value)` anchoring the value for that
-        // resolver to inspect.  No outgoing edge.
-        let Some(resolved) = resolved else {
-            self.finish_current_region(RegionTerminator::defer(target_vn, addr))?;
-            return Ok(InsnOutcome::RegionClosed);
-        };
-        // An in-function single target is a degenerate table.  A one-arm
-        // `Switch` keeps the dispatch selector on the terminator, so a later
-        // round can re-derive and WIDEN the site once the CFG has grown; a plain
-        // branch edge erases the selector and latches the first answer forever.
-        // A switch whose loop back-edge runs through its own arms resolves to
-        // one arm that way: before any arm exists the header has a single
-        // predecessor, so the index is the entry constant and the table load
-        // folds to one literal.  A tail call leaves the function, so it closes
-        // no loop through the dispatch.
-        let resolved = match resolved {
-            crate::ResolvedTargets::Single(t)
-                if !self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(t.addr)) =>
-            {
-                crate::ResolvedTargets::table([t])
+        let arms = match self.builder.options.seated(addr) {
+            // Unclassified so far: defer to the orchestrator's rebuild loop,
+            // which runs the resolver against the optimised IR.  `target_vn`
+            // and `addr` are stamped onto the terminator so the lifter can emit
+            // a placeholder `Return(target_value)` anchoring the value for that
+            // resolver to inspect.  No outgoing edge.  `Withdrawn` holds
+            // nothing trustworthy, so it is deferred exactly the same way.
+            None | Some(crate::ResolvedTargets::Withdrawn) => {
+                self.finish_current_region(RegionTerminator::defer(target_vn, addr))?;
+                return Ok(InsnOutcome::RegionClosed);
             }
-            other => other,
-        };
-        match resolved {
-            crate::ResolvedTargets::LinkRegister => {
+            Some(crate::ResolvedTargets::LinkRegister) => {
                 // Seating a `Return` consumes the site: no placeholder, no
                 // `Switch` anchor, so nothing downstream can notice that the
                 // seated answer just deleted whatever else the site had.
@@ -813,82 +796,85 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 // resolve loop this map holds the classifier's derivations too.
                 self.builder.link_register_seated.push(addr);
                 self.finish_current_region(RegionTerminator::Return)?;
+                return Ok(InsnOutcome::RegionClosed);
             }
-            crate::ResolvedTargets::Single(target) => {
-                // Only a tail call reaches here: an in-function `Single` was
-                // rewritten to a one-arm `Switch` above.
-                //
+            Some(&crate::ResolvedTargets::Single(t))
+                if self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(t.addr)) =>
+            {
                 // A `TailCall` consumes the site exactly as `LinkRegister` does
                 // (no placeholder, no `Switch` anchor), so a dispatch that
                 // really had more arms leaves no trace. Record it, or the loss
                 // goes unreported.
                 self.builder.tail_call_seated.push(addr);
-                self.finish_current_region(RegionTerminator::TailCall {
-                    target: crate::ResolvedTarget::new(target.addr, target.isa_bit),
-                })?;
+                self.finish_current_region(RegionTerminator::TailCall { target: t })?;
+                return Ok(InsnOutcome::RegionClosed);
             }
-            // Nothing trustworthy: deferred exactly as a site with no answer.
-            crate::ResolvedTargets::Withdrawn => {
-                self.finish_current_region(RegionTerminator::defer(target_vn, addr))?;
+            // An in-function single target is a degenerate table.  A one-arm
+            // `Switch` keeps the dispatch selector on the terminator, so a
+            // later round can re-derive and WIDEN the site once the CFG has
+            // grown; a plain branch edge erases the selector and latches the
+            // first answer forever.  A switch whose loop back-edge runs through
+            // its own arms resolves to one arm that way: before any arm exists
+            // the header has a single predecessor, so the index is the entry
+            // constant and the table load folds to one literal.  A tail call
+            // leaves the function, so it closes no loop through the dispatch.
+            Some(seated) => seated.arms(),
+        };
+        // An out-of-range arm has no per-target tail-call escape; one interior
+        // to a region but off every instruction boundary can neither be split
+        // out nor found by `switch_arm_regions` at lift time.  Deferring beats
+        // failing the whole function over one over-approximated table entry: a
+        // bad arm is evidence the whole bound is wrong, and seating the rest
+        // decodes whatever else it over-approximated into, which fails the
+        // function outright where deferring leaves it lifting with the site
+        // unresolved.
+        //
+        // The off-boundary arm is reported the way
+        // `Builder::seat_non_boundary_target` reports the one discovered after
+        // seating, so the loss is reported either way.
+        let mut deferred = false;
+        for target in arms {
+            let a = PcodeInsnAddr::at_machine_start(target.addr);
+            if self.builder.addr_is_interior_non_boundary(a) {
+                self.builder
+                    .incomplete
+                    .insert(a, crate::Reason::InteriorTarget);
+                deferred = true;
+            } else if self.is_branch_tail_call_nocheck(a) {
+                deferred = true;
             }
-            crate::ResolvedTargets::Multiple(arms) => {
-                // An out-of-range arm has no per-target tail-call escape; one
-                // interior to a region but off every instruction boundary can
-                // neither be split out nor found by `switch_arm_regions` at lift
-                // time.  Deferring beats failing the whole function over one
-                // over-approximated table entry: a bad arm is evidence the whole
-                // bound is wrong, and seating the rest decodes whatever else it
-                // over-approximated into, which fails the function outright
-                // where deferring leaves it lifting with the site unresolved.
-                //
-                // The off-boundary arm is reported the way
-                // `Builder::seat_non_boundary_target` reports the one discovered
-                // after seating, so the loss is reported either way.
-                let mut deferred = false;
-                for target in arms.iter() {
-                    let a = PcodeInsnAddr::at_machine_start(target.addr);
-                    if self.builder.addr_is_interior_non_boundary(a) {
-                        self.builder
-                            .incomplete
-                            .insert(a, crate::Reason::InteriorTarget);
-                        deferred = true;
-                    } else if self.is_branch_tail_call_nocheck(a) {
-                        deferred = true;
-                    }
-                }
-                if deferred {
-                    self.finish_current_region(RegionTerminator::defer(target_vn, addr))?;
-                    return Ok(InsnOutcome::RegionClosed);
-                }
-                let region = self.finish_current_region(RegionTerminator::Switch {
-                    target_vn,
-                    targets: arms.to_vec(),
-                    addr,
-                })?;
-                // Each target decodes in the ISA mode the branch committed
-                // (`isa_bit`): an interworking `bx`/`jr`-dispatch table can carry
-                // per-target Thumb/ARM (or MIPS16) modes, while a plain jump table
-                // commits none and inherits the mode flowing into the branch.
-                //
-                // Enqueued HIGHEST first so the LIFO work queue explores lowest
-                // first. Arms of one switch have no regions yet when the site is
-                // sealed, so the interior-address guard above cannot separate
-                // them; decoding the lower arm first gives `explore` a region to
-                // recognise a higher over-read arm as interior to, which drops it
-                // instead of decoding a second region inside that instruction.
-                // Read at the branch site, which is still the last address
-                // decoded, exactly where `sample_flowing_isa_bit` sampled.
-                let flowing = self.flowing_commits()?;
-                for target in arms.iter().rev() {
-                    self.builder.enqueue_resolved(
-                        Some(region),
-                        PcodeInsnAddr::at_machine_start(target.addr),
-                        target.isa_bit,
-                        addr,
-                        &flowing,
-                    );
-                }
-            }
+        }
+        if deferred {
+            self.finish_current_region(RegionTerminator::defer(target_vn, addr))?;
+            return Ok(InsnOutcome::RegionClosed);
+        }
+        let region = self.finish_current_region(RegionTerminator::Switch {
+            target_vn,
+            targets: arms.to_vec(),
+            addr,
+        })?;
+        // Each target decodes in the ISA mode the branch committed
+        // (`isa_bit`): an interworking `bx`/`jr`-dispatch table can carry
+        // per-target Thumb/ARM (or MIPS16) modes, while a plain jump table
+        // commits none and inherits the mode flowing into the branch.
+        //
+        // Enqueued HIGHEST first so the LIFO work queue explores lowest
+        // first. Arms of one switch have no regions yet when the site is
+        // sealed, so the interior-address guard above cannot separate
+        // them; decoding the lower arm first gives `explore` a region to
+        // recognise a higher over-read arm as interior to, which drops it
+        // instead of decoding a second region inside that instruction.
+        // Read at the branch site, which is still the last address
+        // decoded, exactly where `sample_flowing_isa_bit` sampled.
+        let flowing = self.flowing_commits()?;
+        for target in arms.iter().rev() {
+            self.builder.enqueue_resolved(
+                Some(region),
+                PcodeInsnAddr::at_machine_start(target.addr),
+                target.isa_bit,
+                addr,
+                &flowing,
+            );
         }
         Ok(InsnOutcome::RegionClosed)
     }
