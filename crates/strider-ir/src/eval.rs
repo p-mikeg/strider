@@ -62,12 +62,11 @@ pub fn ones_at(bits: usize, shift: usize) -> UBig {
 
 /// `v`'s little-endian bytes, zero-extended to the bytes `ty` spans:
 /// `UBig::to_le_bytes` drops its own trailing zero bytes.
+#[cfg(any(test, feature = "test-util"))]
 #[must_use]
 pub fn le_bytes(v: &UBig, ty: ValueType) -> Vec<u8> {
-    let mut out = vec![0u8; ty.byte_size()];
-    let src = v.to_le_bytes();
-    let n = out.len().min(src.len());
-    out[..n].copy_from_slice(&src[..n]);
+    let mut out = v.to_le_bytes().into_vec();
+    out.resize(ty.byte_size(), 0);
     out
 }
 
