@@ -232,9 +232,13 @@ macro_rules! arch_presets {
             $(
                 $(#[$doc])*
                 pub fn $ctor() -> SleighArch {
+                    // A `static`, not the `const` itself: a const's bytes are
+                    // emitted again wherever this constructor is inlined.
+                    static SLA: rsleigh::sla_spec::SlaSpec = rsleigh::sla_spec::$sla;
+                    static PSPEC: rsleigh::pspec::PSpec = rsleigh::pspec::$pspec;
                     SleighArch {
-                        sla_spec: rsleigh::sla_spec::$sla,
-                        pspec: rsleigh::pspec::$pspec,
+                        sla_spec: SLA,
+                        pspec: PSPEC,
                         endianness: Endianness::$endian,
                         preset: ArchPreset::$variant,
                     }
