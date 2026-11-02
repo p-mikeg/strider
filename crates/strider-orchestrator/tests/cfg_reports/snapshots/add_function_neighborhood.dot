@@ -1,0 +1,56 @@
+digraph "G" {
+  graph [
+    rankdir="TB",
+    bgcolor="#1e1e1e",
+    fontcolor="white",
+  ];
+
+  node [
+    shape="box",
+    style="filled,rounded",
+    fillcolor="#2d2d2d",
+    color="#888888",
+    fontcolor="white",
+    fontname="monospace",
+    margin="0.2",
+  ];
+
+  edge [
+    color="#aaaaaa",
+    fontcolor="white",
+    penwidth="1.2",
+  ];
+
+  "0" [label="Entry", shape="Mdiamond", fillcolor="#1a3a5c", color="#ffcc00", penwidth="2.5"];
+  "1" [label="Return", shape="doublecircle", fillcolor="#103a10"];
+  "0" -> "1" [color="#00cccc", label="ctrl", fontcolor="#cccccc", fontsize="9"];
+  "11" -> "1" [color="#cc88aa", label="mem", fontcolor="#cccccc", fontsize="9"];
+  "6" -> "1" [color="#88cc88", label="EAX", fontcolor="#cccccc", fontsize="9"];
+  "5" -> "1" [color="#88cc88", label="EDX", fontcolor="#cccccc", fontsize="9"];
+  "4" -> "1" [color="#88cc88", label="ST0", fontcolor="#cccccc", fontsize="9"];
+  "3" -> "1" [color="#88cc88", label="ST1", fontcolor="#cccccc", fontsize="9"];
+  "2" -> "1" [color="#88cc88", label="XMM0", fontcolor="#cccccc", fontsize="9"];
+  "2" [label="init\nXMM0", shape="Mdiamond", fillcolor="#1a3a5c"];
+  "3" [label="init\nST1", shape="Mdiamond", fillcolor="#1a3a5c"];
+  "4" [label="init\nST0", shape="Mdiamond", fillcolor="#1a3a5c"];
+  "5" [label="init\nEDX", shape="Mdiamond", fillcolor="#1a3a5c"];
+  "6" [label="Add:i32", shape="box", fillcolor="#2d2d2d"];
+  "12" -> "6" [color="#4488ff", label="lhs", fontcolor="#cccccc", fontsize="9"];
+  "7" -> "6" [color="#ff4444", label="rhs", fontcolor="#cccccc", fontsize="9"];
+  "7" [label="[arg 0]\nLoad i32\n← ram\nbase sp + 4", shape="box3d", fillcolor="#102030", peripheries="2"];
+  "11" -> "7" [color="#cc88aa", label="mem", fontcolor="#cccccc", fontsize="9"];
+  "8" -> "7" [color="#cc88ff", label="addr", fontcolor="#cccccc", fontsize="9"];
+  "8" [label="Add:i32", shape="box", fillcolor="#2d2d2d"];
+  "10" -> "8" [color="#4488ff", label="lhs", fontcolor="#cccccc", fontsize="9"];
+  "c0" -> "8" [color="#ff4444", label="rhs", fontcolor="#cccccc", fontsize="9"];
+  "c0" [label="const 0x4:i32", shape="ellipse", fillcolor="#2d2d2d"];
+  "10" [label="init\nESP", shape="Mdiamond", fillcolor="#1a3a5c"];
+  "11" [label="InitialMemory", shape="Mdiamond", fillcolor="#1a3a5c"];
+  "12" [label="[arg 1]\nLoad i32\n← ram\nbase sp + 8", shape="box3d", fillcolor="#102030", peripheries="2"];
+  "11" -> "12" [color="#cc88aa", label="mem", fontcolor="#cccccc", fontsize="9"];
+  "13" -> "12" [color="#cc88ff", label="addr", fontcolor="#cccccc", fontsize="9"];
+  "13" [label="Add:i32", shape="box", fillcolor="#2d2d2d"];
+  "10" -> "13" [color="#4488ff", label="lhs", fontcolor="#cccccc", fontsize="9"];
+  "c1" -> "13" [color="#ff4444", label="rhs", fontcolor="#cccccc", fontsize="9"];
+  "c1" [label="const 0x8:i32", shape="ellipse", fillcolor="#2d2d2d"];
+}
