@@ -175,19 +175,15 @@ pub fn shift_out_of_range(amount: u128, ty: ValueType) -> bool {
 /// Result masked to `ty`, or `None` when the operation is undefined (division
 /// by zero, `INT_MIN / -1`) or `ty` is a float.
 ///
-/// Both operands are masked to `ty` at entry, the shift amount only after its
-/// out-of-range test. Div, Rem and ShiftRight are not safe under
+/// Both operands are masked to `ty` at entry, the shift amount only after it
+/// is clamped to the width. Div, Rem and ShiftRight are not safe under
 /// masking-commutativity, so they need the inputs already narrowed to give the
 /// right answer on a caller that passed raw bits.
 #[inline]
 pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<UBig> {
-    int_bits(ty)?;
-    // The shift count, `None` once at or past the width: a count no `usize`
-    // holds is past every supported width.
-    let shift = u128::try_from(r)
-        .ok()
-        .filter(|&a| !shift_out_of_range(a, ty))
-        .and_then(|a| usize::try_from(a).ok());
+    let bits = int_bits(ty)?;
+    // Sleigh answers a count at or past the width as one exactly at it.
+    let shift = usize::try_from(r).map_or(bits, |a| a.min(bits));
     let l = mask(l, ty);
     let r = mask(r, ty);
     let raw: UBig = match op {
@@ -196,28 +192,10 @@ pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<
         IntBinaryOp::And => l & r,
         IntBinaryOp::Or => l | r,
         IntBinaryOp::Xor => l ^ r,
-        IntBinaryOp::ShiftLeft => match shift {
-            Some(s) => l << s,
-            None => UBig::ZERO,
-        },
-        IntBinaryOp::ShiftRight => match shift {
-            Some(s) => l >> s,
-            None => UBig::ZERO,
-        },
-        IntBinaryOp::SShiftRight => {
-            let sl = signed(&l, ty)?;
-            match shift {
-                // `IBig`'s shift is arithmetic: it floors, so it sign-fills.
-                Some(s) => unsigned(sl >> s, ty),
-                None => {
-                    if sl < IBig::ZERO {
-                        all_ones(ty)
-                    } else {
-                        UBig::ZERO
-                    }
-                }
-            }
-        }
+        IntBinaryOp::ShiftLeft => l << shift,
+        IntBinaryOp::ShiftRight => l >> shift,
+        // `IBig`'s shift floors, so it sign-fills.
+        IntBinaryOp::SShiftRight => unsigned(signed(&l, ty)? >> shift, ty),
         IntBinaryOp::Div => {
             if r == UBig::ZERO {
                 return None;
@@ -1021,6 +999,42 @@ mod tests {
                 "{}: {}",
                 c.case,
                 c.why,
+            );
+        }
+    }
+
+    /// Past the carrier, a count at the width, one no `usize` holds and one no
+    /// `u128` holds all saturate the way a count at the width does.
+    #[test]
+    fn a_saturated_shift_past_the_carrier() {
+        for w in [256u16, 512] {
+            let ty = ValueType::int(w);
+            let neg = all_ones(ty) ^ u(1);
+            let pos = (UBig::ONE << (usize::from(w) - 2)) + u(3);
+            let counts = [UBig::from(w), UBig::ONE << 70usize, UBig::ONE << 128usize];
+            for count in &counts {
+                for l in [&neg, &pos] {
+                    for op in [IntBinaryOp::ShiftLeft, IntBinaryOp::ShiftRight] {
+                        assert_eq!(int_binary(op, l, count, ty), Some(UBig::ZERO), "{op:?} {w}");
+                    }
+                }
+                assert_eq!(
+                    int_binary(IntBinaryOp::SShiftRight, &neg, count, ty),
+                    Some(all_ones(ty))
+                );
+                assert_eq!(
+                    int_binary(IntBinaryOp::SShiftRight, &pos, count, ty),
+                    Some(UBig::ZERO)
+                );
+            }
+            let below = UBig::from(w - 1);
+            assert_eq!(
+                int_binary(IntBinaryOp::SShiftRight, &neg, &below, ty),
+                Some(all_ones(ty))
+            );
+            assert_eq!(
+                int_binary(IntBinaryOp::ShiftLeft, &u(1), &below, ty),
+                Some(UBig::ONE << (usize::from(w) - 1))
             );
         }
     }
