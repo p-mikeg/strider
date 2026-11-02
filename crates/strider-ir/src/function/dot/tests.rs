@@ -940,11 +940,20 @@ fn mem_phi_value_inputs_are_labelled_with_matching_pred_index() {
     );
 }
 
+/// Wires `value` into a `Return`, so the walk from `entry` reaches its
+/// producer.
+fn return_value(f: &mut Function, value: ValueId) -> NodeId {
+    let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
+    let mem = crate::function::test_initial_memory(f);
+    let [memv] = f.node_outputs_exact::<1>(mem).unwrap();
+    f.graph_mut()
+        .create_node(NodeKind::Return, [ctrl, memv, value], [])
+}
+
 #[test]
 fn neighborhood_bfs_bounds_depth_and_walks_both_directions() {
     use super::neighborhood::neighborhood_nodes;
     use crate::node::IntBinaryOp;
-    use rustc_hash::FxHashMap;
 
     let mut f = test_function();
     let c1 = int_const_node(&mut f, 5, ValueType::int(32));
@@ -956,32 +965,31 @@ fn neighborhood_bfs_bounds_depth_and_walks_both_directions() {
         [v1, v2],
         [ValueKind::Typed(ValueType::int(32))],
     );
-    let mut consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
-    consumers.entry(c1).or_default().push(add);
-    consumers.entry(c2).or_default().push(add);
+    let av = f.node_outputs(add)[0];
+    let ret = return_value(&mut f, av);
 
     assert_eq!(
-        neighborhood_nodes(&f, add, 0, 12, usize::MAX, false, &consumers).len(),
+        neighborhood_nodes(&f, add, 0, 12, usize::MAX, false).len(),
         1
     );
-    let d1 = neighborhood_nodes(&f, add, 1, 12, usize::MAX, false, &consumers);
-    assert!(d1.contains(&c1) && d1.contains(&c2) && d1.contains(&add));
-    assert_eq!(d1.len(), 3);
-    // Depth 1 from a const reaches Add via the consumer edge: both directions.
-    assert!(neighborhood_nodes(&f, c1, 1, 12, usize::MAX, false, &consumers).contains(&add));
-    // Depth 3 from c1 reaches the whole tiny graph via both directions.
-    let all = neighborhood_nodes(&f, c1, 3, 12, usize::MAX, false, &consumers);
-    assert!(all.contains(&c1) && all.contains(&add) && all.contains(&c2));
-    assert_eq!(all.len(), 3);
+    // Depth 1 from Add: its producers and its consumer, both directions.
+    let d1 = neighborhood_nodes(&f, add, 1, 12, usize::MAX, false);
+    assert!(d1.contains(&c1) && d1.contains(&c2) && d1.contains(&ret));
+    assert_eq!(d1.len(), 4);
+    // Depth 1 from a const reaches Add via the consumer edge.
+    assert!(neighborhood_nodes(&f, c1, 1, 12, usize::MAX, false).contains(&add));
+    // Depth 2 from c1: Add, then its other producer and its consumer.
+    let d2 = neighborhood_nodes(&f, c1, 2, 12, usize::MAX, false);
+    assert!(d2.contains(&add) && d2.contains(&c2) && d2.contains(&ret));
+    assert_eq!(d2.len(), 4);
 }
 
 #[test]
 fn neighborhood_hub_follows_producers_not_consumers() {
     use super::neighborhood::neighborhood_nodes;
     use crate::node::IntBinaryOp;
-    use rustc_hash::FxHashMap;
 
-    // c1, c2 -> add(hub) -> use1.
+    // c1, c2 -> add(hub) -> use1 -> Return.
     let mut f = test_function();
     let c1 = int_const_node(&mut f, 5, ValueType::int(32));
     let c2 = int_const_node(&mut f, 8, ValueType::int(32));
@@ -1000,20 +1008,17 @@ fn neighborhood_hub_follows_producers_not_consumers() {
         [av, v3],
         [ValueKind::Typed(ValueType::int(32))],
     );
-    let mut consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
-    consumers.entry(c1).or_default().push(add);
-    consumers.entry(c2).or_default().push(add);
-    consumers.entry(add).or_default().push(use1);
-    consumers.entry(c3).or_default().push(use1);
+    let uv = f.node_outputs(use1)[0];
+    return_value(&mut f, uv);
 
     // Add has 2 producers (c1, c2) and 1 consumer (use1). With the default
     // consumer-only hub count at cap 2, Add is NOT a hub (1 <= 2), so its
     // consumer use1 is followed.
-    let n = neighborhood_nodes(&f, c1, 4, 2, usize::MAX, false, &consumers);
+    let n = neighborhood_nodes(&f, c1, 4, 2, usize::MAX, false);
     assert!(n.contains(&use1), "consumer-only count keeps Add a non-hub");
     // count_producers folds in the 2 inputs (degree 3 > 2), so Add becomes a
     // hub: its producer c2 is still reached but its consumer use1 is suppressed.
-    let n2 = neighborhood_nodes(&f, c1, 4, 2, usize::MAX, true, &consumers);
+    let n2 = neighborhood_nodes(&f, c1, 4, 2, usize::MAX, true);
     assert!(n2.contains(&c2), "hub producers followed");
     assert!(!n2.contains(&use1), "hub consumer fan-out suppressed");
 }
@@ -1022,9 +1027,8 @@ fn neighborhood_hub_follows_producers_not_consumers() {
 fn neighborhood_bfs_bounds_total_node_count() {
     use super::neighborhood::neighborhood_nodes;
     use crate::node::IntBinaryOp;
-    use rustc_hash::FxHashMap;
 
-    // Depth 1 from Add reaches all 3 nodes, so a budget of 2 must clamp it.
+    // Depth 1 from Add reaches all 4 nodes, so a budget of 2 must clamp it.
     let mut f = test_function();
     let c1 = int_const_node(&mut f, 5, ValueType::int(32));
     let c2 = int_const_node(&mut f, 8, ValueType::int(32));
@@ -1035,9 +1039,10 @@ fn neighborhood_bfs_bounds_total_node_count() {
         [v1, v2],
         [ValueKind::Typed(ValueType::int(32))],
     );
-    let consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
+    let av = f.node_outputs(add)[0];
+    return_value(&mut f, av);
 
-    let budgeted = neighborhood_nodes(&f, add, 1, 12, 2, false, &consumers);
+    let budgeted = neighborhood_nodes(&f, add, 1, 12, 2, false);
     assert_eq!(
         budgeted.len(),
         2,
