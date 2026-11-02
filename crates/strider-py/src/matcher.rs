@@ -411,7 +411,7 @@ impl PyBoundCapture {
             _ => py.NotImplemented(),
         })
     }
-    /// A repr must not raise; a stale match renders as such.
+    /// `BoundCapture(<value>)`, `(<node>)`, `(unbound)`, or `(stale)`.
     fn __repr__(&self, py: Python<'_>) -> String {
         match (self.unsigned(py), self.has(py)) {
             (Ok(Some(v)), _) => format!("BoundCapture({v:#x})"),

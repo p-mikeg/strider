@@ -1,5 +1,5 @@
 """The frozen value records compare by value: a fresh read-back of the same
-arch, convention or symbol is the same thing, not a different object."""
+arch, convention or symbol compares equal to it."""
 
 from strider.lift import lifter, load_elf
 from strider.reader import BufferReader
