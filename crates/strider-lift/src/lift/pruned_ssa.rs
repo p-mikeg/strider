@@ -63,11 +63,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             self.add_def(&vn, self.cfg.entry(), &mut defs, &mut exp);
         }
         for r in self.cfg.region_ids() {
-            let region = self
-                .cfg
-                .region_graph()
-                .node_weight(r)
-                .expect("region id from region_ids() is in the graph");
+            let region = &self.cfg.region_graph()[r];
             exp.written.clear();
             // One resolver per region, fed every op in order, exactly as the
             // lift feeds its own: the register a store resolves to must be the
