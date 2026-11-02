@@ -127,29 +127,13 @@ pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs(graph), iter::once(entry))
 }
 
-/// Forward def-use edges restricted to a precomputed live set.
-#[derive(Clone, Copy)]
-pub(crate) struct DefUseSuccs<'a> {
+/// Forward def-use successors within `live`.
+pub(crate) fn live_def_use_succs<'a>(
     graph: &'a Graph,
-    live_nodes: &'a DenseEntitySet<NodeId>,
-}
-
-impl<'a> DefUseSuccs<'a> {
-    #[inline]
-    pub(crate) fn new(graph: &'a Graph, live_nodes: &'a DenseEntitySet<NodeId>) -> Self {
-        Self { graph, live_nodes }
-    }
-}
-
-impl graph_algorithms::walk::GraphRef for DefUseSuccs<'_> {
-    type NodeId = NodeId;
-
-    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
-        let live = def_use_succs(self.graph, node).filter(|&succ| self.live_nodes.contains(succ));
-        for succ in live {
-            f(succ);
-        }
-    }
+    live: &'a NodeIdSet,
+    node: NodeId,
+) -> impl Iterator<Item = NodeId> + 'a {
+    def_use_succs(graph, node).filter(|&succ| live.contains(succ))
 }
 
 /// A walk's reachable set plus its input-less `roots`.
@@ -179,7 +163,7 @@ impl GraphWalkInfo {
     /// Every producer before its consumers unless the use closes a def-use
     /// cycle (a loop's `Region` or phi), a root first.
     pub(crate) fn reverse_postorder(&self, graph: &Graph) -> Vec<NodeId> {
-        let succs = DefUseSuccs::new(graph, &self.live_nodes);
+        let succs = FnSuccs::new(|n| live_def_use_succs(graph, &self.live_nodes, n));
         let mut rpo: Vec<_> = PostOrder::new(succs, self.roots.iter().copied()).collect();
         rpo.reverse();
         rpo
