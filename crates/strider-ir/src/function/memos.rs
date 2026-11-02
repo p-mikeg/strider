@@ -63,29 +63,23 @@ impl FunctionMemos {
         // the interner have to be rebuilt together.
         let mut new_interner: EntityInterner<MemoryId, (ValueId, i128)> = EntityInterner::new();
         let mut new_slots: SecondaryMap<ValueId, MemDecomp> = SecondaryMap::new();
+        let mut rebase = |id: MemoryId| {
+            let &(old_base, off) = memory_interner.get(id)?;
+            Some(new_interner.intern((remap.value_old_to_new(old_base)?, off)))
+        };
         for (old_value, slot) in memory_offsets.iter() {
             let Some(new_value) = remap.value_old_to_new(old_value) else {
                 continue;
             };
             let new_slot = match *slot {
-                MemDecomp::Unknown => continue,
-                MemDecomp::NotMemory => MemDecomp::NotMemory,
-                MemDecomp::Stack(id) | MemDecomp::Heap(id) => {
-                    let Some(&(old_base, off)) = memory_interner.get(id) else {
-                        continue;
-                    };
-                    let Some(new_base) = remap.value_old_to_new(old_base) else {
-                        continue;
-                    };
-                    let new_id = new_interner.intern((new_base, off));
-                    if matches!(*slot, MemDecomp::Heap(_)) {
-                        MemDecomp::Heap(new_id)
-                    } else {
-                        MemDecomp::Stack(new_id)
-                    }
-                }
+                MemDecomp::Unknown => None,
+                MemDecomp::NotMemory => Some(MemDecomp::NotMemory),
+                MemDecomp::Stack(id) => rebase(id).map(MemDecomp::Stack),
+                MemDecomp::Heap(id) => rebase(id).map(MemDecomp::Heap),
             };
-            new_slots[new_value] = new_slot;
+            if let Some(new_slot) = new_slot {
+                new_slots[new_value] = new_slot;
+            }
         }
         *memory_offsets = new_slots;
         *memory_interner = new_interner;
