@@ -241,7 +241,7 @@ fn validate_flags_stale_initial_var_index_entry() {
     stamp(&mut s.f, iv);
     let iv_value = s.f.node_outputs(iv)[0];
     let vn_id = s.f.vn_id_of(&vn).expect("vn is tracked");
-    s.f.side_tables_mut().initial_var_index.insert(vn_id, iv);
+    s.f.side_tables_mut().initial_var_index[vn_id] = Some(iv);
     let ret =
         s.f.graph_mut()
             .create_node(NodeKind::Return, [s.entry_ctrl, s.mem_value, iv_value], []);
@@ -337,7 +337,7 @@ fn validate_reports_side_table_entries_keyed_by_unminted_varnode_ids() {
     let mut s = spine();
     let id = InitialVnId::from_index(0);
     let (iv, value) = returned_initial_var(&mut s, id, ValueType::int(32));
-    s.f.side_tables_mut().initial_var_index.insert(id, iv);
+    s.f.side_tables_mut().initial_var_index[id] = Some(iv);
     s.f.side_tables_mut().value_vn.insert(value, id);
 
     let errs = validate(&s.f).unwrap_err();

@@ -66,10 +66,7 @@ impl FunctionBuilder {
             let value = self.build_single_output_pure(NodeKind::InitialVar(vn_id), [], output_type);
             initial_variables[vn_id] = value;
             let node_id = self.function().producer(value);
-            self.function_mut()
-                .side_tables_mut()
-                .initial_var_index
-                .insert(vn_id, node_id);
+            self.function_mut().side_tables_mut().initial_var_index[vn_id] = Some(node_id);
         }
         Ok(initial_variables)
     }
