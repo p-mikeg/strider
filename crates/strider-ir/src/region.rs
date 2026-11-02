@@ -4,7 +4,7 @@ use cranelift_entity::{SecondaryMap, entity_impl};
 
 use crate::IRViewer;
 use crate::builder::FunctionBuilder;
-use crate::builder::checks::{require_control_kind, require_memory_kind};
+use crate::builder::checks::require_memory_kind;
 use crate::error::Result;
 use crate::node::InitialVnId;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
@@ -35,13 +35,6 @@ pub(crate) struct TerminatedRegion {
 }
 
 impl FunctionBuilder {
-    /// Errors unless `res`'s control and memory edges both have their expected
-    /// kind.
-    pub(crate) fn require_terminator_kinds(&self, res: &TerminatedRegion) -> Result<()> {
-        require_control_kind(self.function(), res.control)?;
-        require_memory_kind(self.function(), res.memory)
-    }
-
     /// Errors if no region is set or the region is already terminated.
     pub(crate) fn require_cur_region(&self) -> Result<RegionId> {
         let region_id = self.cur_region.ok_or_else(|| {
@@ -63,7 +56,6 @@ impl FunctionBuilder {
     }
 
     pub(crate) fn advance_cur_region_ctrl(&mut self, ctrl: ValueId) -> Result<()> {
-        require_control_kind(self.function(), ctrl)?;
         let region_id = self.require_cur_region()?;
         self.regions[region_id].cur_ctrl = ctrl;
         Ok(())
@@ -81,6 +73,8 @@ impl FunctionBuilder {
         let control = self.regions[region_id].cur_ctrl;
         let memory = self.regions[region_id].cur_memory;
         self.regions[region_id].terminated = true;
+        debug_assert!(self.function().value_kind(control).is_control());
+        debug_assert!(self.function().value_kind(memory).is_memory());
         Ok(TerminatedRegion {
             control,
             memory,
@@ -258,7 +252,6 @@ impl FunctionBuilder {
         region: RegionId,
         control: ValueId,
     ) -> Result<()> {
-        require_control_kind(self.function(), control)?;
         let control_node = self.regions[region].control_node;
         self.function_mut()
             .graph_mut()
@@ -267,7 +260,6 @@ impl FunctionBuilder {
     }
 
     pub(crate) fn link_memory_regions(&mut self, region: RegionId, memory: ValueId) -> Result<()> {
-        require_memory_kind(self.function(), memory)?;
         let memory_node = self.regions[region].memory_node;
         self.function_mut()
             .graph_mut()

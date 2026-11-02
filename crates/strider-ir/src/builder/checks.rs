@@ -36,7 +36,6 @@ value_kind_requirements! {
     require_value_kind => is_value, "a value edge";
     require_bool_value => is_bool, "a bool value";
     require_phi_token_kind => is_phi_token, "a phi-token edge";
-    require_control_kind => is_control, "a control edge";
     require_memory_kind => is_memory, "a memory edge";
 }
 
