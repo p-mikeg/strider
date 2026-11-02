@@ -220,6 +220,12 @@ how their `tests/` integration targets get a feature (`test-util`,
   `FloatBitsToInt`.
 - Opaque: `CPoolRef`, `New`.
 
+strider-ir warns on `_` / `other` arms over any enum
+(`clippy::wildcard_enum_match_arm` in its `lib.rs`, an error under CI's
+`-D warnings`), so a new `NodeKind` variant forces a decision at every
+classifying `match`; a single-variant test (let-else, `==`, a one-variant
+`matches!`) and the `Phi | MemPhi` family count as compliant.
+
 Op sub-enums (`node/ops.rs`): `IntUnaryOp{Neg}`;
 `IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,ShiftRight,
 SShiftRight,ShiftLeft,Mul}`; `IntCmpOp{Equal,Sless,Less,Carry,Scarry,Sborrow}`
