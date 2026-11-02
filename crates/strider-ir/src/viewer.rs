@@ -155,7 +155,10 @@ pub trait IRViewer {
         let v = u128::try_from(self.int_const(value)?).ok()?;
         // Both intern paths mask to the declared width and `validate` reports
         // `ConstWidthMismatch` on anything above it, so this cannot narrow.
-        debug_assert_eq!(ty.wrap_u128(v), v, "unmasked stored constant");
+        debug_assert!(
+            ty.int_mask_u128().is_none_or(|m| v <= m),
+            "unmasked stored constant"
+        );
         Some(v)
     }
 
