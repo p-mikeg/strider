@@ -196,11 +196,11 @@ pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<
         IntBinaryOp::ShiftRight => l >> shift,
         // `IBig`'s shift floors, so it sign-fills.
         IntBinaryOp::SShiftRight => unsigned(signed(&l, ty)? >> shift, ty),
-        IntBinaryOp::Div => {
+        IntBinaryOp::Div | IntBinaryOp::Rem => {
             if r == UBig::ZERO {
                 return None;
             }
-            l / r
+            if op == IntBinaryOp::Div { l / r } else { l % r }
         }
         IntBinaryOp::Sdiv => {
             let (sl, sr) = (signed(&l, ty)?, signed(&r, ty)?);
@@ -211,12 +211,6 @@ pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<
             }
             // `IBig` division truncates toward zero, as Sleigh's Sdiv does.
             unsigned(sl / sr, ty)
-        }
-        IntBinaryOp::Rem => {
-            if r == UBig::ZERO {
-                return None;
-            }
-            l % r
         }
         IntBinaryOp::Srem => {
             let (sl, sr) = (signed(&l, ty)?, signed(&r, ty)?);
