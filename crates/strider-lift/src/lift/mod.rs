@@ -7,7 +7,6 @@ mod cast;
 mod cc_projection;
 mod control;
 mod dispatch;
-mod dominance;
 mod exit_free_sink;
 mod float;
 mod function_lifter;
@@ -406,7 +405,12 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         // variable's definition sites, less the region-local temporaries.  This
         // is what stops the lifter minting a value `Phi` for every varnode at
         // every region.
-        let dom = dominance::DomInfo::compute(cfg);
+        let graph = cfg.region_graph();
+        let doms = graph_algorithms::dominance::dominators(cfg.entry(), |r| graph.neighbors(r));
+        // Where a definition in `r` first stops dominating, hence where a phi
+        // may be needed.  An absent key means an empty frontier.
+        let frontiers =
+            graph_algorithms::dominance::dominance_frontiers(&doms, |r| cfg.region_predecessors(r));
         let (mut def_sites, nonlocal) = driver.collect_def_sites()?;
         // The write funnel checks against the FULL map, hence the copy before
         // the narrowing below.
@@ -415,14 +419,14 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             driver.def_sites = def_sites.clone();
         }
         def_sites.retain(|&id, _| !driver.is_local_temporary(id, &nonlocal));
-        let placement = graph_algorithms::dominance::phi_placement(&dom.frontiers, &def_sites);
+        let placement = graph_algorithms::dominance::phi_placement(&frontiers, &def_sites);
 
         let region_map = driver.build_region_map(&placement)?;
 
         // Dominator-tree pre-order, so each region inherits reaching variable
         // values from its already-processed immediate dominator.  Then wire the
         // fallthrough edges the per-insn loop didn't reach.
-        driver.translate_regions(&region_map, &dom)?;
+        driver.translate_regions(&region_map, &doms)?;
         driver.link_region_edges(&region_map)?;
         driver.seat_exit_free_sinks()?;
 
@@ -576,15 +580,17 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     fn translate_regions(
         &mut self,
         region_map: &RegionMap,
-        dom: &dominance::DomInfo,
+        doms: &graph_algorithms::dominance::Dominators<strider_cfg::RegionId>,
     ) -> Result<()> {
         let cfg = self.cfg;
         // Pre-order matters: a region must be processed after its immediate
         // dominator so `inherit_variables` reads that dominator's FINAL values.
-        for &cfg_rid in dom.preorder() {
+        // Siblings go ascending by `RegionId`, and every body node's NodeId
+        // follows this order. Regions unreachable from the entry are absent.
+        for cfg_rid in doms.tree_preorder() {
             let ir_region = region_map[&cfg_rid];
             // The entry region has no idom; `set_entry_region` seeded it.
-            if let Some(idom_cfg) = dom.doms.immediate_dominator(cfg_rid) {
+            if let Some(idom_cfg) = doms.immediate_dominator(cfg_rid) {
                 self.builder
                     .inherit_variables(ir_region, region_map[&idom_cfg]);
             }
