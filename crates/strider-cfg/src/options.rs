@@ -219,12 +219,9 @@ pub fn seated_in(
     map: &FxHashMap<PcodeInsnAddr, ResolvedTargets>,
     addr: PcodeInsnAddr,
 ) -> Option<&ResolvedTargets> {
-    map.get(&addr).or_else(|| {
-        let start = PcodeInsnAddr::at_machine_start(addr.machine_addr.addr);
-        (start != addr)
-            .then_some(start)
-            .and_then(|start| map.get(&start))
-    })
+    // At index 0 the fallback repeats the exact probe's miss.
+    map.get(&addr)
+        .or_else(|| map.get(&PcodeInsnAddr::at_machine_start(addr.machine_addr.addr)))
 }
 
 #[cfg(test)]
