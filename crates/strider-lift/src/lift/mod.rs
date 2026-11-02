@@ -70,8 +70,6 @@ pub struct Lifter<R: rsleigh::MemReader> {
     /// The Sleigh and the decode context it carries across functions: `&mut`
     /// to build a CFG, `&` to lift one.
     engine: strider_cfg::DecodeEngine<R>,
-    /// This engine's address spaces, for [`Self::check_cfg_space_ids`].
-    space_ids: rsleigh::SpaceIds,
 }
 
 impl<R: rsleigh::MemReader> Lifter<R> {
@@ -81,9 +79,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ///
     /// When [`strider_cfg::DecodeEngine::new`] fails.
     pub fn new(arch: strider_target::SleighArch, reader: R) -> Result<Self> {
-        let engine = strider_cfg::DecodeEngine::new(arch, reader)?;
-        let space_ids = engine.sleigh().space_ids();
-        Ok(Self { engine, space_ids })
+        Ok(Self {
+            engine: strider_cfg::DecodeEngine::new(arch, reader)?,
+        })
     }
 
     /// Indexed by `user_op_id`, which for `read_volatile` is past the table.
@@ -326,7 +324,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             if space_id.addr_space != rsleigh::VnSpace::CONST {
                 continue;
             }
-            if self.space_ids.resolve(*space_id).is_none() {
+            if self.engine.space_ids().resolve(*space_id).is_none() {
                 return Err(anyhow!(
                     "{:?} at {:#x} names an address space this Sleigh engine did not declare: \
                      the CFG was built by a different engine, whose spaces this one cannot \

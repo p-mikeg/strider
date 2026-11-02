@@ -29,6 +29,8 @@ pub struct DecodeEngine<R: rsleigh::MemReader> {
     pub(crate) sleigh: rsleigh::Sleigh<R>,
     pub(crate) arch: strider_target::SleighArch,
     pub(crate) tables: &'static strider_target::DecodeTables,
+    /// The sla's address spaces, fixed for the engine's lifetime.
+    space_ids: rsleigh::SpaceIds,
     /// The sla's flowing context vars.
     pub(crate) flow_vars: FlowVars,
     /// [`strider_target::DecodeTables::flow_commit`], per engine so a test can
@@ -48,8 +50,10 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
     /// When the sla does not load.
     pub fn new(arch: strider_target::SleighArch, reader: R) -> Result<Self> {
         let tables = arch.decode_tables();
+        let sleigh = arch.sleigh(reader)?;
         Ok(Self {
-            sleigh: arch.sleigh(reader)?,
+            space_ids: sleigh.space_ids(),
+            sleigh,
             arch,
             tables,
             flow_vars: FlowVars::of(arch),
@@ -116,6 +120,12 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
     #[must_use]
     pub fn arch(&self) -> strider_target::SleighArch {
         self.arch
+    }
+
+    /// What every [`Cfg::space_ids`] this engine builds holds.
+    #[must_use]
+    pub fn space_ids(&self) -> &rsleigh::SpaceIds {
+        &self.space_ids
     }
 
     #[must_use]
