@@ -1203,6 +1203,30 @@ fn neighborhood_duplicates_shared_const_per_use() {
     );
 }
 
+/// A carrier's tags print sorted and `", "`-joined, raw and pretty alike.
+#[test]
+fn arg_tags_join_sorted_in_both_renders() {
+    let mut f = test_function();
+    let [ctrl] = f.node_outputs_exact::<1>(f.entry()).unwrap();
+    let node = f.graph_mut().create_node(
+        NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
+        [],
+        [ValueKind::Typed(ValueType::int(64))],
+    );
+    let [value] = f.node_outputs_exact::<1>(node).unwrap();
+    f.side_tables_mut().register_float_arg_value(0, value);
+    f.side_tables_mut().register_arg_value(1, value);
+    f.side_tables_mut().register_arg_value(0, value);
+    f.graph_mut()
+        .create_node(NodeKind::Return, [ctrl, value], []);
+
+    let tags = "[arg 0], [arg 1], [float arg 0]";
+    let raw = f.raw_dot().unwrap();
+    assert!(raw.contains(&format!("\\n{tags}\"")), "{raw}");
+    let pretty = render(&f);
+    assert!(pretty.contains(&format!("\"{tags}\\ninit")), "{pretty}");
+}
+
 /// The integer and float index spaces are separate, so a float carrier must
 /// not render as the integer arg of the same index.
 #[test]
