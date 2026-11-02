@@ -1161,11 +1161,11 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// tail call a branch out of range gets, reported as
     /// [`crate::Reason::PastFunctionEnd`]. Returns whether it sealed.
     ///
-    /// Gated on `cur_addr` having advanced past the region start: a run of
-    /// zero-pcode-op instructions (x86 `nop`, AArch64 `paciasp` / `autiasp`,
-    /// AArch64 `bti`) advances `cur_addr` without ever appending to `self.insns`,
-    /// so a gate on `insns.is_empty()` would let such a prefix walk past the
-    /// bound and absorb the next function's first real instruction.
+    /// Not gated on `insns.is_empty()`: a run of zero-pcode-op instructions
+    /// (x86 `nop`, AArch64 `paciasp` / `autiasp`, AArch64 `bti`) advances
+    /// `cur_addr` without ever appending to `self.insns`, so such a gate would
+    /// let that prefix walk past the bound and absorb the next function's
+    /// first real instruction.
     ///
     /// Only a [`crate::FunctionBound::Size`] end gets here. An open bound puts
     /// only addresses below the entry out of range, no region it decodes
@@ -1173,8 +1173,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// a [`DecodeFailure::PastEnd`] `Err`, which drops the arm: a real arm stays inside the
     /// function.
     fn seal_past_function_end(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
-        let advanced_past_start = cur_addr.machine_addr.addr != self.start_addr.machine_addr.addr;
-        if !advanced_past_start || !self.is_branch_tail_call_nocheck(cur_addr) {
+        if !self.is_branch_tail_call_nocheck(cur_addr) {
             return Ok(false);
         }
         if self.builder.descent.is_some() {
