@@ -247,24 +247,13 @@ impl FunctionBuilder {
             })
     }
 
-    pub(crate) fn link_control_regions(
-        &mut self,
-        region: RegionId,
-        control: ValueId,
-    ) -> Result<()> {
-        let control_node = self.regions[region].control_node;
-        self.function_mut()
-            .graph_mut()
-            .add_node_input(control_node, control);
-        Ok(())
-    }
-
-    pub(crate) fn link_memory_regions(&mut self, region: RegionId, memory: ValueId) -> Result<()> {
-        let memory_node = self.regions[region].memory_node;
-        self.function_mut()
-            .graph_mut()
-            .add_node_input(memory_node, memory);
-        Ok(())
+    /// Appends `control` to `region`'s `Region` and `memory` to its `MemPhi`.
+    pub(crate) fn link_edges(&mut self, region: RegionId, control: ValueId, memory: ValueId) {
+        let r = &self.regions[region];
+        let (control_node, memory_node) = (r.control_node, r.memory_node);
+        let graph = self.function.graph_mut();
+        graph.add_node_input(control_node, control);
+        graph.add_node_input(memory_node, memory);
     }
 
     pub(crate) fn link_region(
@@ -274,8 +263,7 @@ impl FunctionBuilder {
         memory: ValueId,
         cur_region: RegionId,
     ) -> Result<()> {
-        self.link_control_regions(region, control)?;
-        self.link_memory_regions(region, memory)?;
+        self.link_edges(region, control, memory);
         // `cur_region`'s current variable map, so a self-loop (`cur_region ==
         // region`, an entry that is its own loop header) takes the values
         // reaching the back edge.
