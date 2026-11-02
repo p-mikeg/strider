@@ -114,27 +114,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             lifter.check_override_cc(o, cc.stack_ptr)?;
             tracked.extend(o.arg_passing_regs.iter().chain(&o.arg_passing_regs_float));
         }
-        // `FunctionBuilder::new` seeds the CC registers and `Function::new`
-        // drops enclosed sub-registers, so the function's `all_vns()` is the
-        // canonical tracked set.  Resolving a varnode INTO that set is the
-        // machine-register concern owned here: query every raw varnode plus
-        // every CC register, so an ABI register narrower than its tracked
-        // container (ABI says `eax`, the function tracks `rax`) resolves.
-        //
-        // `cc` threads by value into `FunctionBuilder::new` and on to
-        // `Function::default_cc` with no clone, so every read of it is captured
-        // into an owned local first.
-        let stack_vn = cc.stack_ptr;
-        let cc_regs: Vec<rsleigh::Vn> = cc
-            .ret_val_regs
-            .iter()
-            .chain(cc.ret_val_regs_float.iter())
-            .chain(cc.arg_passing_regs.iter())
-            .chain(cc.arg_passing_regs_float.iter())
-            .chain(cc.callee_saved_regs.iter())
-            .chain(std::iter::once(&cc.stack_ptr))
-            .copied()
-            .collect();
         let mut builder = strider_ir::FunctionBuilder::new(
             tracked.iter().copied().collect(),
             cc,
@@ -142,30 +121,38 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         )?;
         // Owned, because borrowing would put a lifetime on `FunctionBuilder`.
         builder.set_internal_registers(lifter.internal_register_vns().to_vec());
-        let queries = tracked.into_iter().chain(cc_regs);
-        let container_map =
-            vn_container::ContainerMap::build(builder.function().all_vns(), queries);
+        // `FunctionBuilder::new` seeds the CC registers and `Function::new`
+        // drops enclosed sub-registers, so the function's `all_vns()` is the
+        // canonical tracked set.  Resolving a varnode INTO that set is the
+        // machine-register concern owned here: query every raw varnode plus
+        // every CC register, so an ABI register narrower than its tracked
+        // container (ABI says `eax`, the function tracks `rax`) resolves.
+        let f = builder.function();
+        let cc = f.default_cc();
+        let queries = tracked
+            .iter()
+            .chain(&cc.ret_val_regs)
+            .chain(&cc.ret_val_regs_float)
+            .chain(&cc.arg_passing_regs)
+            .chain(&cc.arg_passing_regs_float)
+            .chain(&cc.callee_saved_regs)
+            .chain([&cc.stack_ptr])
+            .copied();
+        let container_map = vn_container::ContainerMap::build(f.all_vns(), queries);
         // Since the stack vn was added to `tracked` above, after dedup it must
         // resolve to a tracked container: itself, or a larger tracked vn.
         debug_assert!(
             {
-                let tracked = builder.function().all_vns();
-                let sp_container = vn_container::largest_container_in(tracked, &stack_vn);
-                tracked.contains(&sp_container)
-                    && vn_container::vn_contains(&sp_container, &stack_vn)
+                let sp_container = vn_container::largest_container_in(f.all_vns(), &cc.stack_ptr);
+                f.all_vns().contains(&sp_container)
+                    && vn_container::vn_contains(&sp_container, &cc.stack_ptr)
             },
-            "stack vn {stack_vn:?} did not resolve to a tracked container",
+            "stack vn {:?} did not resolve to a tracked container",
+            cc.stack_ptr,
         );
-        let default_ret_clobber_vns = {
-            let f = builder.function();
-            f.default_cc()
-                .ret_and_clobber_vns(f.all_vns(), |v| container_map.container_of(v))
-        };
-        let default_float_arg_vns = {
-            let f = builder.function();
-            f.default_cc()
-                .float_arg_prefix(f.all_vns(), |v| container_map.container_of(v))
-        };
+        let container_of = |v: &rsleigh::Vn| container_map.container_of(v);
+        let default_ret_clobber_vns = cc.ret_and_clobber_vns(f.all_vns(), container_of);
+        let default_float_arg_vns = cc.float_arg_prefix(f.all_vns(), container_of);
         Ok(Self {
             lifter,
             builder,
