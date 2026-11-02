@@ -478,8 +478,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         }
         let entry_ir = region_map[&cfg.entry()];
         self.builder.set_entry_region(entry_ir)?;
-        // Carriers for float arguments sharing a container are read out of it,
-        // which needs a current region.
+        // `bind_entry_address_register` writes a variable, which needs a
+        // current region.
         self.builder.set_region(entry_ir);
         self.record_register_arg_carriers()?;
         self.bind_entry_address_register()?;
