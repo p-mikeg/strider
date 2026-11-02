@@ -1023,33 +1023,22 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         cur_addr: PcodeInsnAddr,
         lift_res: &rsleigh::LiftRes,
     ) {
-        let len = u64::try_from(lift_res.machine_insn_len).unwrap_or(u64::MAX);
         let base = cur_addr.machine_addr.addr;
+        let len = lift_res.machine_insn_len as u64;
         let (Some(lo), Some(hi)) = (base.checked_add(1), base.checked_add(len)) else {
             return;
         };
         if lo >= hi {
             return;
         }
-        let stepped_over: Vec<PcodeInsnAddr> = self
-            .builder
-            .index
-            .starts_in(PcodeInsnAddr::at_machine_start(lo)..PcodeInsnAddr::at_machine_start(hi))
-            .filter(|&(_, region)| {
+        let range = PcodeInsnAddr::at_machine_start(lo)..PcodeInsnAddr::at_machine_start(hi);
+        for (start, region) in self.builder.index.starts_in(range) {
+            let r = &self.builder.region_graph[region];
+            if !(r.insns.is_empty() && matches!(r.terminator, RegionTerminator::TailCall { .. })) {
                 self.builder
-                    .region_graph
-                    .node_weight(region)
-                    .is_some_and(|r| {
-                        !(r.insns.is_empty()
-                            && matches!(r.terminator, RegionTerminator::TailCall { .. }))
-                    })
-            })
-            .map(|(start, _)| start)
-            .collect();
-        for start in stepped_over {
-            self.builder
-                .incomplete
-                .insert(start, crate::Reason::InteriorTarget);
+                    .incomplete
+                    .insert(start, crate::Reason::InteriorTarget);
+            }
         }
     }
 
