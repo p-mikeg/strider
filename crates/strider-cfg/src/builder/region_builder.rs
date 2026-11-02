@@ -500,9 +500,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
     }
 
-    /// Address-bounds reasoning only: does NOT check that the target lands on
-    /// a machine-instruction boundary.
-    fn is_branch_tail_call_nocheck(&self, branch_target_addr: PcodeInsnAddr) -> bool {
+    /// Whether `branch_target_addr` lies outside the function's bound.
+    fn is_branch_tail_call(&self, branch_target_addr: PcodeInsnAddr) -> bool {
         crate::is_addr_tail_call(
             branch_target_addr.machine_addr.addr,
             self.builder.start_addr,
@@ -596,7 +595,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// out of range, reporting `ret` as [`crate::Reason::PastFunctionEnd`]:
     /// a callee that returns would fall out of the function.
     fn end_at_call_returning_past_end(&mut self, ret: PcodeInsnAddr) -> Result<InsnOutcome> {
-        if !self.is_branch_tail_call_nocheck(ret) {
+        if !self.is_branch_tail_call(ret) {
             return Ok(InsnOutcome::Continue);
         }
         self.finish_current_region(RegionTerminator::NoReturn)?;
@@ -614,7 +613,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ) -> Result<InsnOutcome> {
         let target_var = branch_target_operand(insn, addr)?;
         let target = self.decode_branch_target(target_var, addr, lift_res)?;
-        if self.is_branch_tail_call_nocheck(target) {
+        if self.is_branch_tail_call(target) {
             // A direct `b <oob>` stays in the current ISA mode; no switch.
             self.finish_current_region(RegionTerminator::TailCall {
                 target: target.machine_addr.addr.into(),
@@ -640,8 +639,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let next_insn_addr = next_pcode_addr(addr, lift_res)?;
 
         // Classify before lifting: an OOB successor is never decoded.
-        let true_oob = self.is_branch_tail_call_nocheck(target_addr);
-        let false_oob = self.is_branch_tail_call_nocheck(next_insn_addr);
+        let true_oob = self.is_branch_tail_call(target_addr);
+        let false_oob = self.is_branch_tail_call(next_insn_addr);
 
         // Edges are unweighted; `region_if` recovers polarity by matching each
         // successor region against `true_target`.  A stub owns exactly its
@@ -750,7 +749,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                 return Ok(InsnOutcome::RegionClosed);
             }
             Some(&crate::ResolvedTargets::Single(t))
-                if self.is_branch_tail_call_nocheck(PcodeInsnAddr::at_machine_start(t.addr)) =>
+                if self.is_branch_tail_call(PcodeInsnAddr::at_machine_start(t.addr)) =>
             {
                 // A `TailCall` consumes the site exactly as `LinkRegister` does
                 // (no placeholder, no `Switch` anchor), so a dispatch that
@@ -791,7 +790,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     .incomplete
                     .insert(a, crate::Reason::InteriorTarget);
                 deferred = true;
-            } else if self.is_branch_tail_call_nocheck(a) {
+            } else if self.is_branch_tail_call(a) {
                 deferred = true;
             }
         }
@@ -900,7 +899,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             // So a CONST-space branch target, on this machine address, is
             // never a tail call.
             debug_assert!(
-                !self.is_branch_tail_call_nocheck(cur_addr),
+                !self.is_branch_tail_call(cur_addr),
                 "decoding {cur_addr:?} outside the function bound"
             );
             let lift_res = match self.lift_code(cur_addr.machine_addr.addr) {
@@ -1159,7 +1158,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// a [`DecodeFailure::PastEnd`] `Err`, which drops the arm: a real arm stays inside the
     /// function.
     fn seal_past_function_end(&mut self, cur_addr: PcodeInsnAddr) -> Result<bool> {
-        if !self.is_branch_tail_call_nocheck(cur_addr) {
+        if !self.is_branch_tail_call(cur_addr) {
             return Ok(false);
         }
         if self.builder.descent.is_some() {
@@ -1556,7 +1555,7 @@ mod tests {
         let mut engine = make_engine();
         let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        assert!(rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)));
+        assert!(rb.is_branch_tail_call(addr_at(0x0800, 0)));
     }
 
     #[test]
@@ -1570,7 +1569,7 @@ mod tests {
         let mut engine = make_engine();
         let mut b = make_builder_opts(0x1000, &mut engine, &opts);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        assert!(!rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)));
+        assert!(!rb.is_branch_tail_call(addr_at(0x0800, 0)));
     }
 
     #[test]
@@ -1582,7 +1581,7 @@ mod tests {
         let mut engine = make_engine();
         let mut b = make_builder_opts(0x1000, &mut engine, &opts);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        assert!(rb.is_branch_tail_call_nocheck(addr_at(0x0800, 0)));
+        assert!(rb.is_branch_tail_call(addr_at(0x0800, 0)));
     }
 
     #[test]
@@ -1590,7 +1589,7 @@ mod tests {
         let mut engine = make_engine();
         let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        assert!(!rb.is_branch_tail_call_nocheck(addr_at(0x1200, 0)));
+        assert!(!rb.is_branch_tail_call(addr_at(0x1200, 0)));
     }
 
     #[test]
@@ -1602,8 +1601,8 @@ mod tests {
         let mut engine = make_engine();
         let mut b = make_builder_opts(0x1000, &mut engine, &opts);
         let rb = make_region_builder(&mut b, addr_at(0x1000, 0));
-        assert!(rb.is_branch_tail_call_nocheck(addr_at(0x1100, 0)));
-        assert!(!rb.is_branch_tail_call_nocheck(addr_at(0x10ff, 0)));
+        assert!(rb.is_branch_tail_call(addr_at(0x1100, 0)));
+        assert!(!rb.is_branch_tail_call(addr_at(0x10ff, 0)));
     }
 
     #[test]
@@ -1619,7 +1618,7 @@ mod tests {
         let rb = make_region_builder(&mut b, addr_at(start_addr, 0));
         let target = addr_at(start_addr + 0x10, 0);
         assert!(
-            !rb.is_branch_tail_call_nocheck(target),
+            !rb.is_branch_tail_call(target),
             "target inside function range must NOT classify as tail call even when start+max overflows"
         );
     }
