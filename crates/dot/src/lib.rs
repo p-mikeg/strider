@@ -1,4 +1,4 @@
-use std::fmt::{Debug, Write};
+use std::fmt::Write;
 use std::path::Path;
 
 const HTML_DOT_TEMPLATE: &str = include_str!("../assets/graph_template_dot.html");
@@ -34,9 +34,6 @@ impl<N: Copy + Ord> View<N> {
 /// A graph type that can be serialised to Graphviz DOT format node by node.
 pub trait GraphDotDumper {
     type Node: Copy + Ord;
-    // Bound is Debug + Display, not `std::error::Error`, so impls can pick
-    // `type Error = anyhow::Error`, which does not implement it.
-    type Error: Debug + std::fmt::Display + Send + Sync + 'static;
     /// The mutable state threaded through all [`Self::dump_as_dot`] calls,
     /// starting from its `Default`.
     type State: Default;
@@ -77,7 +74,7 @@ pub trait GraphDotDumper {
         node: Self::Node,
         out: &mut DotEmitter,
         state: &mut Self::State,
-    ) -> core::result::Result<(), Self::Error>;
+    ) -> anyhow::Result<()>;
 }
 
 /// A pre-built Graphviz visual theme (graph/node/edge default attributes).
