@@ -671,40 +671,32 @@ impl<'g> EditFunction<'g> {
     /// slots from every `Phi`/`MemPhi` over its phi-token.
     ///
     /// `pred_indices` index the Region's predecessors, and may arrive unsorted
-    /// and with duplicates.  Pass ALL dead indices at once.
+    /// and with duplicates; their order is the order orphaned producers are
+    /// enqueued in.  Pass ALL dead indices at once.
     pub fn remove_region_predecessors(&mut self, region: NodeId, pred_indices: &[u32]) {
         debug_assert!(
             matches!(self.node_kind(region), NodeKind::Region),
             "remove_region_predecessors: node is not a Region",
         );
-        if pred_indices.is_empty() {
-            return;
-        }
-        let mut indices: Vec<u32> = pred_indices.to_vec();
-        indices.sort_unstable();
-        indices.dedup();
-
         // Collected once: the Phi/MemPhi set doesn't change as their value
         // inputs are removed.
-        let phi_nodes: Vec<NodeId> = {
-            let outputs = self.node_outputs(region);
-            if let Some(&phi_value) = outputs.get(NodeKind::REGION_PHI_OUT_SLOT) {
+        let phi_nodes: Vec<NodeId> = self
+            .node_outputs(region)
+            .get(NodeKind::REGION_PHI_OUT_SLOT)
+            .map_or_else(Vec::new, |&phi_value| {
                 self.graph_ref()
                     .value_uses(phi_value)
                     .map(|(n, _)| n)
                     .collect()
-            } else {
-                Vec::new()
-            }
-        };
+            });
 
         // Each Phi/MemPhi loses slots `pred_index + 1`; the Region loses
         // `pred_index`.
-        let phi_idxs: Vec<u32> = indices.iter().map(|&i| i + 1).collect();
+        let phi_idxs: Vec<u32> = pred_indices.iter().map(|&i| i + 1).collect();
         for &phi in &phi_nodes {
             self.remove_node_inputs_batch(phi, &phi_idxs);
         }
-        self.remove_node_inputs_batch(region, &indices);
+        self.remove_node_inputs_batch(region, pred_indices);
     }
 
     /// [`Graph::remove_node_inputs_batch`] for a **non-cacheable** node.  Out-of-range and duplicate indices are ignored.
@@ -1849,8 +1841,9 @@ mod tests {
             [ValueKind::Typed(ValueType::int(64))],
         );
 
-        // Remove predecessors {1, 3, 6} in one batch (unsorted on purpose).
-        ctx.remove_region_predecessors(region, &[3, 1, 6]);
+        // Remove predecessors {1, 3, 6} in one batch (unsorted and with a
+        // duplicate on purpose).
+        ctx.remove_region_predecessors(region, &[3, 1, 6, 3]);
 
         assert_eq!(
             ctx.function().node_inputs(region).len(),
