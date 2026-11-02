@@ -652,27 +652,24 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                             rsleigh::Opcode::Call | rsleigh::Opcode::CallIndirect
                         )
                     });
-            self.with_lift_addr(term_addr, |s| {
-                match terminator {
-                    strider_cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
-                        s.handle_unresolved_indirect_branch(target_vn, *addr)?
-                    }
-                    strider_cfg::RegionTerminator::Switch {
-                        target_vn,
-                        targets,
-                        addr,
-                    } => s.handle_switch(cfg_rid, target_vn, targets, region_map, *addr)?,
-                    // A target's `isa_bit` (the callee's ISA mode on an
-                    // interworking tail call) is the callee function's own
-                    // concern, applied when it is analyzed at its entry, not
-                    // while lifting this caller.
-                    strider_cfg::RegionTerminator::TailCall { target } => {
-                        s.handle_tail_call(target.addr)?;
-                    }
-                    _ if noreturn_call => s.builder.build_unreachable()?,
-                    _ => {}
+            self.with_lift_addr(term_addr, |s| match terminator {
+                strider_cfg::RegionTerminator::UnresolvedIndirectBranch { target_vn, addr } => {
+                    s.handle_unresolved_indirect_branch(target_vn, *addr)
                 }
-                Ok(())
+                strider_cfg::RegionTerminator::Switch {
+                    target_vn,
+                    targets,
+                    addr,
+                } => s.handle_switch(cfg_rid, target_vn, targets, region_map, *addr),
+                // A target's `isa_bit` (the callee's ISA mode on an
+                // interworking tail call) is the callee function's own
+                // concern, applied when it is analyzed at its entry, not
+                // while lifting this caller.
+                strider_cfg::RegionTerminator::TailCall { target } => {
+                    s.handle_tail_call(target.addr)
+                }
+                _ if noreturn_call => s.builder.build_unreachable(),
+                _ => Ok(()),
             })?;
         }
         Ok(())
