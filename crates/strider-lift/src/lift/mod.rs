@@ -422,15 +422,11 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         driver.link_region_edges(&region_map)?;
         driver.seat_exit_free_sinks()?;
 
-        let unresolved_branches = std::mem::take(&mut driver.unresolved_branches);
-        let switch_anchors = std::mem::take(&mut driver.switch_anchors);
-        let return_sites = std::mem::take(&mut driver.return_sites);
-        let function = driver.builder.build()?;
         Ok(LiftOutcome {
-            function,
-            unresolved_branches,
-            switch_anchors,
-            return_sites,
+            function: driver.builder.build()?,
+            unresolved_branches: driver.unresolved_branches,
+            switch_anchors: driver.switch_anchors,
+            return_sites: driver.return_sites,
         })
     }
 }
