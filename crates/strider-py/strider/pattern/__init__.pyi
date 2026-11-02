@@ -884,22 +884,22 @@ def first_of(patterns: Sequence[PatLike]) -> Pat:
 
     Same generality as `one_of` (any arm, any slot), but a first-match cut
     rather than a union: the first arm that matches wins and the rest are
-    dropped. That holds at each value the alternation is offered (each output
-    of a node is its own), whatever order the rest of the pattern is tried in.
-    A match reaching one `first_of` twice at one value (`float_is_nan` and
-    `float_le` read their operands twice) wins there if it took the first arm
-    any match took at both reads; when none did, the reads settle in order,
-    each through the first arm that yields a match. Several `first_of`s in one
-    match settle in pattern order: operands left to right, a `one_of`'s arms
-    as listed, a builder's own slots in its fixed order, then its
-    `any_input`s, then its `input`s, a repeated setter (`arg`, `input`, ...)
-    in call order and the rest whatever order they were called in, an inner
-    one before the one holding it, each among the matches the earlier ones
-    kept. A query holding one runs every configuration of the pattern before
-    it answers, unless it captures nothing and finds a match through the first
-    arm of every `first_of`, walking through no cast, where it stops. Order
-    the alternatives most-specific first, because a permissive leading arm
-    shadows everything after it. `anything()` and `var(c)` match ANY node::
+    dropped. That holds at each value the alternation is offered (each output of
+    a node is its own) at each read, whatever order the rest of the pattern is
+    tried in. A match reaching one `first_of` more than once (`float_is_nan` and
+    `float_le` read their operands twice) settles each read on its own, in the
+    order the pattern reads them: of the matches still kept that make that read,
+    only those through the first arm any of them took there stay. Several
+    `first_of`s in one match settle in pattern order: operands left to right, a
+    `one_of`'s arms as listed, a builder's own slots in its fixed order, then
+    its `any_input`s, then its `input`s, whatever order the setters were called
+    in, a repeated setter (`arg`, `input`, ...) keeping its call order, an inner
+    one before the one holding it, each among the matches the earlier ones kept.
+    A query holding one runs every configuration of the pattern before it
+    answers, unless it captures nothing and finds a match through the first arm
+    of every `first_of`, walking through no cast, where it stops. Order the
+    alternatives most-specific first, because a permissive leading arm shadows
+    everything after it. `anything()` and `var(c)` match ANY node::
 
         # WRONG: var(base) also matches the Add, so `off` never binds and
         # every `base + K` load looks like a bare `base`.

@@ -761,8 +761,10 @@ fn a_shared_first_of_arm_a_guard_admits_at_the_second_read_wins_there() {
     assert_eq!(bound(&f, pat, &[x, c]), [vec![true, true]]);
 }
 
-/// A root guard needing `z`, which only the `first_of`'s arm 1 binds: arm 0
-/// at the first read, then arm 1, is the first arm that matches at each.
+/// A root guard needing `z`, which only the `first_of`'s arm 1 binds. At the
+/// first read arm 0 matches, then arm 1 at the second: `{x, z}`. A match the
+/// union arm routes away from the first read takes arm 1 at the second, the
+/// first arm that matches there once the guard rules arm 0 out: `{y, z}`.
 #[test]
 fn a_shared_first_of_under_a_root_guard_takes_the_first_arm_at_each_read() {
     let f = nan_of_bits();
@@ -773,5 +775,132 @@ fn a_shared_first_of_under_a_root_guard_takes_the_first_arm_at_each_read() {
     ])
     .when_match(move |_, _, b| b.get_value(z).is_some())
     .into_pattern();
-    assert_eq!(bound(&f, pat, &[x, y, z]), [vec![true, false, true]]);
+    assert_eq!(
+        bound(&f, pat, &[x, y, z]),
+        [vec![false, true, true], vec![true, false, true]]
+    );
+}
+
+/// The union arm binds `t` at the first read and routes it away from the
+/// `first_of`, whose arm 0 needs a `y` only arm 1 binds. Arm 1 at the first
+/// read then arm 0 at the second (`{y}`) beats the match taking arm 1 at the
+/// second read (`{t, y}`); the union at both reads (`{t}`) reads no `first_of`.
+#[test]
+fn a_shared_first_of_settles_a_read_a_union_routes_away_on_its_own() {
+    let f = nan_of_bits();
+    let (y, t) = (Capture::new(), Capture::new());
+    let has_y = move || anything().when_match(move |_, _, b| b.get_value(y).is_some());
+    let no_y = move || anything().when_match(move |_, _, b| b.get_value(y).is_none());
+    let pat = strider_pattern::float_is_nan(one_of![
+        first_of![
+            has_y(),
+            strider_pattern::int_bits_to_float(no_y()).capture(y)
+        ],
+        no_y().capture(t)
+    ])
+    .into_pattern();
+    assert_eq!(
+        bound(&f, pat, &[y, t]),
+        [vec![false, true], vec![true, false]]
+    );
+}
+
+/// An outer `first_of` routes one read to an inner one. Under a root guard
+/// binding `x` and `y` together, arm 0 (`x`) at the first read, then the inner
+/// `first_of`'s arm 1 (`y`) at the second, is the first arm that yields a match
+/// at each read.
+#[test]
+fn a_shared_first_of_routing_a_read_to_an_inner_one_settles_each_read() {
+    let f = nan_of_bits();
+    let (x, y) = (Capture::new(), Capture::new());
+    let pat =
+        strider_pattern::float_is_nan(first_of![var(x), anything(), first_of![var(x), var(y)]])
+            .when_match(move |_, _, b| b.get_value(x).is_some() == b.get_value(y).is_some())
+            .into_pattern();
+    assert_eq!(bound(&f, pat, &[x, y]), [vec![true, true]]);
+}
+
+/// A match taking arm 0 at the second read, after the union at the first,
+/// settles that read for the match taking arm 0 then arm 1, so `{x, z}` goes
+/// and `{x, y}` and `{y}` stay.
+#[test]
+fn a_union_at_one_read_lets_another_match_settle_the_next() {
+    let f = nan_of_bits();
+    let (x, y, z) = (Capture::new(), Capture::new(), Capture::new());
+    let pat = strider_pattern::float_is_nan(one_of![
+        first_of![var(x), anything().capture(z)],
+        anything().capture(y)
+    ])
+    .when_match(move |_, _, b| b.get_value(z).is_some() || b.get_value(y).is_some())
+    .into_pattern();
+    assert_eq!(
+        bound(&f, pat, &[x, y, z]),
+        [vec![false, true, false], vec![true, true, false]]
+    );
+}
+
+/// A match the first read drops does not settle the second: arm 0, which
+/// needs the `w` only arm 2 binds, matches at the second read only after
+/// arm 2 at the first, which arm 1 beats. The answer is as with arm 0 off.
+#[test]
+fn a_match_dropped_at_one_read_does_not_settle_the_next() {
+    let f = nan_of_bits();
+    let (x, y, z, w) = (
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+        Capture::new(),
+    );
+    let run = |arm0: bool| {
+        let fo = first_of![
+            var(x).when_match(move |_, _, b| arm0 && b.get_value(w).is_some()),
+            anything().capture(z),
+            anything().capture(w)
+        ];
+        let pat = strider_pattern::float_is_nan(one_of![fo, anything().capture(y)]).into_pattern();
+        bound(&f, pat, &[x, y, z, w])
+    };
+    let want = [
+        vec![false, false, true, false],
+        vec![false, true, false, false],
+        vec![false, true, true, false],
+    ];
+    assert_eq!(run(false), want);
+    assert_eq!(run(true), want);
+}
+
+/// `float_is_nan(a + b)`: each read offers the `first_of` either addend of the
+/// commutative add, and the guard wants `p` and `q` on different addends. At
+/// the first read arm 0 matches whichever addend it is offered, so both orders
+/// stay, however the IR numbers `a` and `b`.
+#[test]
+fn a_shared_first_of_offered_two_values_settles_its_reads_in_order() {
+    let (r0, r1) = (super::support::reg_vn(0, 8), super::support::reg_vn(8, 8));
+    let mut t = Tb::with_vars(&[r0, r1]);
+    let (i, j) = (t.read_var(&r0), t.read_var(&r1));
+    let f64t = strider_ir::node::ValueType::float(64);
+    let a = t.int_bits_to_float(i, f64t);
+    let b = t.int_bits_to_float(j, f64t);
+    let s = t.fbin(a, b, strider_ir::FloatBinaryOp::Add, f64t);
+    let eq = t.fcmp(s, s, strider_ir::FloatCmpOp::Equal);
+    let nan = t.bool_not(eq);
+    let f = t.ret_val(nan);
+    let (p, q) = (Capture::new(), Capture::new());
+    let fo = first_of![anything().capture(p), anything().capture(q)];
+    let pat = strider_pattern::float_is_nan(strider_pattern::float_add(fo, anything()))
+        .when_match(move |_, _, bd| {
+            matches!((bd.get_value(p), bd.get_value(q)), (Some(x), Some(y)) if x != y)
+        })
+        .into_pattern();
+    let mut got: Vec<_> = Matcher::new(&f)
+        .find_all(&pat)
+        .unwrap()
+        .iter()
+        .map(|h| (h.value(p).unwrap().as_u32(), h.value(q).unwrap().as_u32()))
+        .collect();
+    got.sort_unstable();
+    let (a, b) = (a.as_u32(), b.as_u32());
+    let mut want = [(a, b), (b, a)];
+    want.sort_unstable();
+    assert_eq!(got, want);
 }
