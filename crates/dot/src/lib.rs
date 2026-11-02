@@ -16,9 +16,24 @@ pub fn viz_standalone_js() -> &'static str {
 /// [`VIZ_STANDALONE_JS`].
 const SVG_PAN_ZOOM_JS: &str = include_str!("../assets/vendored/svg-pan-zoom.min.js");
 
+/// A restricted render: the nodes it draws, ascending, and the one it
+/// highlights.
+pub struct View<N> {
+    nodes: Vec<N>,
+    center: N,
+}
+
+impl<N: Copy + Ord> View<N> {
+    pub fn new(nodes: impl IntoIterator<Item = N>, center: N) -> Self {
+        let mut nodes: Vec<N> = nodes.into_iter().collect();
+        nodes.sort_unstable();
+        Self { nodes, center }
+    }
+}
+
 /// A graph type that can be serialised to Graphviz DOT format node by node.
 pub trait GraphDotDumper {
-    type Node;
+    type Node: Copy + Ord;
     // Bound is Debug + Display, not `std::error::Error`, so impls can pick
     // `type Error = anyhow::Error`, which does not implement it.
     type Error: Debug + std::fmt::Display + Send + Sync + 'static;
@@ -27,7 +42,32 @@ pub trait GraphDotDumper {
     /// Creates the mutable state threaded through all [`Self::dump_as_dot`] calls.
     fn create_initial_state(&self) -> Self::State;
 
+    /// Every node of a whole render; a restricted one draws its view's.
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node>;
+
+    /// `None` renders the whole graph.
+    fn view(&self) -> Option<&View<Self::Node>> {
+        None
+    }
+
+    /// Whether `node` is drawn; an edge out of an undrawn node is dropped.
+    fn in_view(&self, node: Self::Node) -> bool {
+        self.view()
+            .is_none_or(|v| v.nodes.binary_search(&node).is_ok())
+    }
+
+    fn is_center(&self, node: Self::Node) -> bool {
+        self.view().is_some_and(|v| v.center == node)
+    }
+
+    /// The highlight attributes of the view's center, else none.
+    fn center_attrs(&self, node: Self::Node) -> &'static [(&'static str, &'static str)] {
+        if self.is_center(node) {
+            &[("color", "#ffcc00"), ("penwidth", "2.5")]
+        } else {
+            &[]
+        }
+    }
 
     /// Emits DOT statements (nodes + edges) for a single graph node.
     ///
@@ -333,10 +373,14 @@ impl<G: GraphDotDumper> GraphDot<G> {
     pub fn as_dot(&self) -> anyhow::Result<String> {
         let mut dot = DotEmitter::new("G", &self.style);
         let mut state = self.dumper.create_initial_state();
-        for node in self.dumper.iter_nodes() {
+        let mut dump = |node| {
             self.dumper
                 .dump_as_dot(node, &mut dot, &mut state)
-                .map_err(|e| anyhow::anyhow!("dot dump error: {e}"))?;
+                .map_err(|e| anyhow::anyhow!("dot dump error: {e}"))
+        };
+        match self.dumper.view() {
+            Some(view) => view.nodes.iter().try_for_each(|&node| dump(node))?,
+            None => self.dumper.iter_nodes().into_iter().try_for_each(dump)?,
         }
 
         Ok(dot.finish())

@@ -1,3 +1,4 @@
+use ::dot::GraphDotDumper as _;
 use rustc_hash::FxHashMap;
 
 use super::{FunctionDotDumper, FunctionDotDumperState, edge_style, node_style};
@@ -25,22 +26,15 @@ impl ::dot::GraphDotDumper for FunctionDotDumper<'_> {
             #[cfg(test)]
             dot_to_node: FxHashMap::default(),
             next_unique_id: 0,
-            center: self.center,
         }
     }
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
-        match &self.nodes {
-            // NOT the walk filtered to the set: a neighbourhood is BFS'd from
-            // its centre and need not be reachable from `entry`.
-            Some(set) => {
-                let mut v: Vec<NodeId> = set.iter().copied().collect();
-                v.sort_unstable_by_key(|n| n.as_u32());
-                v
-            }
-            None => crate::walk::walk_graph(self.function.graph(), self.function.entry())
-                .collect::<Vec<_>>(),
-        }
+        crate::walk::walk_graph(self.function.graph(), self.function.entry())
+    }
+
+    fn view(&self) -> Option<&::dot::View<NodeId>> {
+        self.view.as_ref()
     }
 
     fn dump_as_dot(
@@ -76,7 +70,7 @@ impl FunctionDotDumper<'_> {
         state: &mut FunctionDotDumperState,
     ) -> Option<String> {
         let kind = *self.function.node_kind(node);
-        if state.renders_per_use(self.function.graph(), node) {
+        if self.renders_per_use(node) {
             return None;
         }
         if matches!(kind, NodeKind::InitialVar(_))
@@ -85,7 +79,7 @@ impl FunctionDotDumper<'_> {
             return None;
         }
 
-        let cur_id = state.get_dot_id(self.function.graph(), node);
+        let cur_id = self.dot_id(state, node);
 
         // Arg carrier nodes get an "[arg N]" prefix and a double border.
         let base_label = self.pretty_label(node);
@@ -107,10 +101,7 @@ impl FunctionDotDumper<'_> {
         if is_arg_node {
             extra.push(("peripheries", "2"));
         }
-        if self.center == Some(node) {
-            extra.push(("color", "#ffcc00"));
-            extra.push(("penwidth", "2.5"));
-        }
+        extra.extend_from_slice(self.center_attrs(node));
 
         out.node(&cur_id, &label, shape, &extra);
         Some(cur_id)
@@ -181,12 +172,7 @@ impl FunctionDotDumper<'_> {
         state: &mut FunctionDotDumperState,
     ) {
         let parent_id = self.function.producer(parent_value);
-        // Restricted render: drop edges whose producer is out of view.
-        if self
-            .nodes
-            .as_ref()
-            .is_some_and(|set| !set.contains(&parent_id))
-        {
+        if !self.in_view(parent_id) {
             return;
         }
         let parent_kind = *self.function.node_kind(parent_id);
@@ -203,7 +189,7 @@ impl FunctionDotDumper<'_> {
                     let name = self.call_clobbered_name(parent_value);
                     let label = format!("Post Call\n{name}");
                     let virt_id = state.alloc_virtual_id();
-                    let call_dot_id = state.get_dot_id(self.function.graph(), parent_id);
+                    let call_dot_id = self.dot_id(state, parent_id);
                     out.node(
                         &virt_id,
                         &label,
@@ -218,7 +204,7 @@ impl FunctionDotDumper<'_> {
                     state.virtual_nodes.insert(parent_value, virt_id.clone());
                     virt_id
                 } else {
-                    state.get_dot_id(self.function.graph(), parent_id)
+                    self.dot_id(state, parent_id)
                 }
             } else if parent_kind == NodeKind::If {
                 // The If may not have rendered yet, so make the branch virtual
@@ -231,7 +217,7 @@ impl FunctionDotDumper<'_> {
                 };
                 Self::get_or_create_if_branch_virtual(state, parent_value, blabel, out)
             } else {
-                state.get_dot_id(self.function.graph(), parent_id)
+                self.dot_id(state, parent_id)
             }
         };
 
@@ -261,7 +247,7 @@ impl FunctionDotDumper<'_> {
 
         out.edge(&parent_dot_id, cur_id, &extra);
 
-        if state.renders_per_use(self.function.graph(), parent_id) {
+        if self.renders_per_use(parent_id) {
             self.emit_const_node(parent_id, &parent_dot_id, out);
         }
     }
