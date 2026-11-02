@@ -116,9 +116,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // reaches here only where a `LinkRegister` answer seated the region
             // as a `Return`, and records its site like a Sleigh `RETURN` so the
             // seat is re-checked against each round's IR.
-            Opcode::Return | Opcode::BranchIndirect => {
-                self.handle_sleigh_return(region_id, insn, addr, region_map)?;
-            }
+            Opcode::Return | Opcode::BranchIndirect => self.handle_sleigh_return(insn, addr)?,
             Opcode::Call => self.handle_call(insn)?,
             Opcode::CallIndirect => self.handle_call_indirect(insn)?,
             // Decompiler-internal phi; `lift_one` never emits it.  Same
