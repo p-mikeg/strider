@@ -84,14 +84,12 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             .iter()
             .find(|&n| matches!(graph.node_kind(n), NodeKind::Region))
             .ok_or_else(|| anyhow!("exit-free control cycle has no Region to seat a sink on"))?;
-        let index = graph
+        let (index, control) = graph
             .node_inputs(seat)
             .into_iter()
-            .position(|v| cycle.contains(graph.value_definition(v).0))
+            .enumerate()
+            .find(|&(_, v)| cycle.contains(graph.value_definition(v).0))
             .ok_or_else(|| anyhow!("cycle seat {seat:?} has no control input from its cycle"))?;
-        let control = graph
-            .nth_input(seat, index)
-            .ok_or_else(|| anyhow!("cycle seat {seat:?} lost input {index}"))?;
         Ok(BackEdge {
             use_id: graph.node_input_id_at(seat, index)?,
             control,
@@ -162,12 +160,8 @@ fn walk_to_cycle(graph: &Graph, stranded: &NodeIdSet, start: NodeId) -> NodeIdSe
             None => return NodeIdSet::new(),
         }
     }
-    let mut cycle = NodeIdSet::new();
     let closed = path.iter().position(|&n| n == node).unwrap_or(path.len());
-    for &n in &path[closed..] {
-        cycle.insert(n);
-    }
-    cycle
+    path[closed..].iter().copied().collect()
 }
 
 /// Drops every stranded node reaching `cycle`: the sink seated there is now
