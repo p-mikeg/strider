@@ -18,7 +18,7 @@ use crate::matcher::{
     Pattern, PostMatchFn,
 };
 use crate::node_builders::MemPat;
-use crate::template::{TemplateBuilder, TmplValueRef};
+use crate::template::{TemplateBuilder, TemplateKind, TemplateTy, TmplValueRef};
 use crate::typed::consts::{Const, ConstWith};
 
 /// The flavour of consumer slot an operand is lowered into, passed down
@@ -195,21 +195,13 @@ impl Op {
         let KindSpec::Exact(kind) = self.kind else {
             return b.refuse(MATCH_SIDE);
         };
-        let mut ins = [None, None];
-        for (i, e) in std::iter::once(self.lhs).chain(self.rhs).enumerate() {
-            ins[i] = Some(e.lower_template_nested(b));
-        }
-        let node = b.node(kind);
-        for (i, o) in ins.into_iter().enumerate() {
-            if let Some(o) = o {
-                b.input(node, i, o);
-            }
-        }
-        let out = b.value_output(node, 0);
-        if let Some(ty) = self.ty {
-            b.set_value_ty(out, ty);
-        }
-        out
+        let l = self.lhs.lower_template_nested(b);
+        let ins = match self.rhs {
+            Some(r) => vec![l, r.lower_template_nested(b)],
+            None => vec![l],
+        };
+        let ty = self.ty.map_or(TemplateTy::InheritRoot, TemplateTy::Fixed);
+        b.build(TemplateKind::Exact(kind), &ins, ty)
     }
 }
 

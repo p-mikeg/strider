@@ -1143,7 +1143,25 @@ pub fn bool_inputs(inner: Py<PyAny>) -> PyPat {
     inputs_of_width(1, inner)
 }
 
-/// One constant, a set of them, or a capture, for [`int_const`].
+/// A `Capture`, tried first as a downcast: `T`'s numeric variants ahead of
+/// its own `Cap` would each raise and discard a Python error. Anything else
+/// extracts as `T`, with `T`'s own error.
+pub enum CapOr<T> {
+    Cap(Py<PyCapture>),
+    Else(T),
+}
+
+impl<'py, T: FromPyObject<'py>> FromPyObject<'py> for CapOr<T> {
+    fn extract_bound(ob: &Bound<'py, PyAny>) -> PyResult<Self> {
+        match ob.downcast::<PyCapture>() {
+            Ok(c) => Ok(Self::Cap(c.clone().unbind())),
+            Err(_) => T::extract_bound(ob).map(Self::Else),
+        }
+    }
+}
+
+/// One constant, a set of them, or a capture, for [`int_const`]. `Cap` is
+/// never extracted past [`CapOr`]; it names the capture in the error.
 #[derive(FromPyObject)]
 pub enum IntConstArg {
     #[pyo3(annotation = "int")]
@@ -1168,15 +1186,15 @@ pub enum IntConstArg {
 /// it.
 #[pyfunction]
 #[pyo3(signature = (value=None))]
-pub fn int_const(value: Option<IntConstArg>) -> PyResult<PyPat> {
+pub fn int_const(value: Option<CapOr<IntConstArg>>) -> PyResult<PyPat> {
     let any = |c| cap_opt("int_const()", Kind::Build, sp::any_int_const, c);
     Ok(match value {
         None => any(None),
-        Some(IntConstArg::Cap(c)) => any(Some(c.get().inner)),
-        Some(IntConstArg::One(v)) => PyPat::from(int_const_repr(v.value()?)),
+        Some(CapOr::Cap(c) | CapOr::Else(IntConstArg::Cap(c))) => any(Some(c.get().inner)),
+        Some(CapOr::Else(IntConstArg::One(v))) => PyPat::from(int_const_repr(v.value()?)),
         // A negative carries its two's complement at whatever width it is
         // matched at, so it names the same constant at every width.
-        Some(IntConstArg::Set(vs)) => {
+        Some(CapOr::Else(IntConstArg::Set(vs))) => {
             let vs = vs
                 .into_iter()
                 .map(crate::bigint::PyBigInt::value)
@@ -1221,7 +1239,7 @@ pub fn int_const_any_width(value: IntConstAnyWidthArg) -> PyResult<PyPat> {
     }))
 }
 
-/// One value, or a capture, for [`bool_const`].
+/// One value, or a capture, for [`bool_const`], through [`CapOr`].
 #[derive(FromPyObject)]
 pub enum BoolConstArg {
     #[pyo3(annotation = "bool")]
@@ -1235,16 +1253,17 @@ pub enum BoolConstArg {
 /// there is one.
 #[pyfunction]
 #[pyo3(signature = (value=None))]
-pub fn bool_const(value: Option<BoolConstArg>) -> PyPat {
+pub fn bool_const(value: Option<CapOr<BoolConstArg>>) -> PyPat {
     let any = |c| cap_opt("bool_const()", Kind::Build, sp::any_bool_const, c);
     match value {
         None => any(None),
-        Some(BoolConstArg::Cap(c)) => any(Some(c.get().inner)),
-        Some(BoolConstArg::One(v)) => PyPat::from(bool_const_repr(v)),
+        Some(CapOr::Cap(c) | CapOr::Else(BoolConstArg::Cap(c))) => any(Some(c.get().inner)),
+        Some(CapOr::Else(BoolConstArg::One(v))) => PyPat::from(bool_const_repr(v)),
     }
 }
 
-/// The IEEE 754 bit pattern, or a capture, for [`float_const`].
+/// The IEEE 754 bit pattern, or a capture, for [`float_const`], through
+/// [`CapOr`].
 #[derive(FromPyObject)]
 pub enum FloatConstArg {
     #[pyo3(annotation = "int")]
@@ -1258,12 +1277,12 @@ pub enum FloatConstArg {
 /// there is one.
 #[pyfunction]
 #[pyo3(signature = (bits=None))]
-pub fn float_const(bits: Option<FloatConstArg>) -> PyPat {
+pub fn float_const(bits: Option<CapOr<FloatConstArg>>) -> PyPat {
     let any = |c| cap_opt("float_const()", Kind::Build, sp::any_float_const, c);
     match bits {
         None => any(None),
-        Some(FloatConstArg::Cap(c)) => any(Some(c.get().inner)),
-        Some(FloatConstArg::Bits(b)) => PyPat::from(float_const_repr(b)),
+        Some(CapOr::Cap(c) | CapOr::Else(FloatConstArg::Cap(c))) => any(Some(c.get().inner)),
+        Some(CapOr::Else(FloatConstArg::Bits(b))) => PyPat::from(float_const_repr(b)),
     }
 }
 
