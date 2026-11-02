@@ -558,38 +558,25 @@ pub(super) fn check_function_invariants_memory_linearity(
     ctx: &ScheduleContext<'_>,
     errs: &mut Vec<ValidationError>,
 ) {
-    let graph = ctx.function.graph();
-    let memory_input = |node: NodeId| {
-        graph
-            .nth_input(node, NodeKind::CTRL_MEM_SLOT)
-            .filter(|&v| graph.value_kind(v) == ValueKind::Memory)
-    };
-    let mut stack: Vec<ValueId> = Vec::new();
-    for node in ctx.pinned_nodes() {
-        match graph.node_kind(node) {
-            NodeKind::Return
-            | NodeKind::IndirectBranch
-            | NodeKind::Unreachable
-            | NodeKind::Call { .. }
-            | NodeKind::CallOther { .. } => stack.extend(memory_input(node)),
-            _ => {}
-        }
-    }
+    let function = ctx.function;
+    let graph = function.graph();
+    // Of the control nodes, exactly the memory sinks take Memory there.
+    let mut stack: Vec<ValueId> = ctx
+        .domtree
+        .preorder()
+        .iter()
+        .filter_map(|&node| ctrl_memory_input(graph, node))
+        .collect();
     let mut on_chain = NodeIdSet::new();
     while let Some(value) = stack.pop() {
         let producer = graph.producer(value);
         if !on_chain.insert(producer) {
             continue;
         }
-        match graph.node_kind(producer) {
-            NodeKind::Store(_) => {
-                stack.extend(graph.nth_input(producer, NodeKind::ACCESS_MEM_SLOT))
-            }
-            NodeKind::MemPhi => stack.extend(live_arms(ctx.function, &ctx.domtree, producer)),
-            NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
-                stack.extend(memory_input(producer));
-            }
-            _ => {}
+        if matches!(graph.node_kind(producer), NodeKind::MemPhi) {
+            stack.extend(live_arms(function, &ctx.domtree, producer));
+        } else {
+            stack.extend(function.memory_input_of(producer));
         }
     }
     for node in &ctx.live {
