@@ -146,11 +146,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
                 "node {node_id:?} does not have exactly {M} inputs (has {actual})"
             ));
         }
-        let mut result = [ValueId::default(); M];
-        for (i, v) in inputs.into_iter().enumerate() {
-            result[i] = v;
-        }
-        Ok(result)
+        Ok(core::array::from_fn(|i| inputs[i]))
     }
 
     /// # Errors
@@ -161,15 +157,10 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         node_id: NodeId,
     ) -> crate::Result<[ValueId; M]> {
         let outputs = self.node_outputs(node_id);
-        if outputs.len() != M {
+        outputs.try_into().map_err(|_| {
             let actual = outputs.len();
-            return Err(anyhow!(
-                "node {node_id:?} does not have exactly {M} outputs (has {actual})"
-            ));
-        }
-        let mut result = [ValueId::default(); M];
-        result.copy_from_slice(outputs);
-        Ok(result)
+            anyhow!("node {node_id:?} does not have exactly {M} outputs (has {actual})")
+        })
     }
 
     #[inline]
