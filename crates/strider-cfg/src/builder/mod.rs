@@ -44,7 +44,7 @@ pub(super) struct ArmSeed {
     /// The indirect branch the arm was seated from.
     pub(super) site: PcodeInsnAddr,
     /// The region the site sealed as a `Switch`.
-    pub(super) switch: Option<NodeIndex>,
+    pub(super) switch: NodeIndex,
     pub(super) arm: PcodeInsnAddr,
 }
 
@@ -52,7 +52,7 @@ impl ArmSeed {
     /// Whether the item at `addr` off `parent` is the arm itself rather than
     /// code decoded off it.
     fn is_arm(&self, parent: Option<NodeIndex>, addr: PcodeInsnAddr) -> bool {
-        self.switch == parent && self.arm == addr
+        parent == Some(self.switch) && self.arm == addr
     }
 }
 
@@ -105,7 +105,7 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// Keyed on the SITE, not the address alone: two explorations of one
     /// address decode in different contexts by construction, so a failure at
     /// one site says nothing about the same address reached from another.
-    pub(super) undecodable_seeded: Vec<(Option<NodeIndex>, crate::UndecodableTarget)>,
+    pub(super) undecodable_seeded: Vec<(NodeIndex, crate::UndecodableTarget)>,
     /// The ISA mode each region was decoded in.  Read by the conflict checks
     /// in [`Self::note_isa_mode_clash`], and carried across a region split.
     pub(super) region_isa_mode: BTreeMap<NodeIndex, u32>,
@@ -217,12 +217,20 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // commit). An arch naming no `flow_commit_vars` re-derives nothing, and
         // its out-of-band `is_benign_prefix_reentry` decode commits too, so it
         // takes the function's own baseline, as `enqueue_resolved` does.
-        let mut carried = if !self.engine.flow_commit_defaults.is_empty()
+        // A direct edge switches no ISA mode, so the child decodes in the
+        // mode its parent region decoded in, which need not be the entry's.
+        // Never the engine's value at the parent's start: an interworking
+        // call commits the mode at its target, and a callee below the caller
+        // paints forward over the caller's own bytes.
+        let bit = isa_mode.map(|mode| mode != 0);
+        let carried = if !self.engine.flow_commit_defaults.is_empty()
             && self.committed_next.contains(&addr.machine_addr.addr)
         {
-            self.engine
+            let snapshot = self
+                .engine
                 .flow_vars
-                .snapshot(&self.engine.sleigh, addr.machine_addr.addr)
+                .snapshot(&self.engine.sleigh, addr.machine_addr.addr);
+            self.carry(snapshot, &[], bit)
         } else {
             // The baseline is the entry's pspec defaults, and a FLOWING
             // committed var must not degrade to them: it was painted forward
@@ -231,23 +239,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             // mode that way, and the target decoded as a plain-Thumb store.
             // A `noflow` var does degrade, being confined to one address:
             // carrying a live IT state forward predicates the code after it.
-            let mut ctx = self.function_mode.clone();
-            for &(name, value) in flowing {
-                ctx = self.engine.flow_vars.with_var(&ctx, name, value);
-            }
-            ctx
+            self.carry(self.function_mode.clone(), flowing, bit)
         };
-        // A direct edge switches no ISA mode, so the child decodes in the
-        // mode its parent region decoded in, which need not be the entry's.
-        // Never the engine's value at the parent's start: an interworking
-        // call commits the mode at its target, and a callee below the caller
-        // paints forward over the caller's own bytes.
-        if let (Some(var), Some(mode)) = (self.engine.arch.isa_mode_var(), isa_mode) {
-            carried = self
-                .engine
-                .flow_vars
-                .with_mode_bit(&carried, var, mode != 0);
-        }
         self.work_queue.push(WorkItem {
             parent,
             addr,
@@ -256,14 +249,15 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         });
     }
 
-    /// Enqueue `addr` as a strider-*resolved indirect* target of `parent`,
-    /// resolved from the branch at `branch_site`.  Sleigh never flowed the mode
-    /// here, so decode in the function mode (default transients: unlike a
-    /// direct edge, no source region's context reaches a resolved target, so
-    /// IT-block and register-list state start fresh) with the
-    /// ISA-mode var set to what the branch commits: an interworking branch's own
-    /// bit (`isa_bit`), else the mode flowing INTO the branch, so a `mov pc` in a
-    /// Thumb region of an otherwise-ARM function keeps Thumb.
+    /// Enqueue `addr` as a strider-*resolved indirect* target of the `Switch`
+    /// region `parent`, resolved from the branch at `branch_site`.  Sleigh
+    /// never flowed the mode here, so decode in the function mode (default
+    /// transients: unlike a direct edge, no source region's context reaches a
+    /// resolved target, so IT-block and register-list state start fresh) with
+    /// the ISA-mode var set to `bit`, what the branch commits: an interworking
+    /// branch's own bit, else the mode flowing INTO the branch
+    /// ([`Self::sample_flowing_isa_bit`]), so a `mov pc` in a Thumb region of
+    /// an otherwise-ARM function keeps Thumb.
     ///
     /// `flowing` is the branch site's live value for each FLOWING committed var
     /// (`RegionBuilder::flowing_commits`), applied over the function mode as
@@ -273,22 +267,15 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// confined to the one address its commit covers.
     pub(super) fn enqueue_resolved(
         &mut self,
-        parent: Option<NodeIndex>,
+        parent: NodeIndex,
         addr: PcodeInsnAddr,
-        isa_bit: Option<bool>,
+        bit: Option<bool>,
         branch_site: PcodeInsnAddr,
         flowing: &[(&'static str, u32)],
     ) {
-        let mut carried = self.function_mode.clone();
-        for &(name, value) in flowing {
-            carried = self.engine.flow_vars.with_var(&carried, name, value);
-        }
-        let flowing_isa = self.sample_flowing_isa_bit(branch_site);
-        if let (Some(var), Some(bit)) = (self.engine.arch.isa_mode_var(), isa_bit.or(flowing_isa)) {
-            carried = self.engine.flow_vars.with_mode_bit(&carried, var, bit);
-        }
+        let carried = self.carry(self.function_mode.clone(), flowing, bit);
         self.seeded_queue.push(WorkItem {
-            parent,
+            parent: Some(parent),
             addr,
             carried,
             seeded_by: Some(ArmSeed {
@@ -297,6 +284,24 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 arm: addr,
             }),
         });
+    }
+
+    /// `ctx` carrying each FLOWING committed var's live value from `flowing`,
+    /// then, on an arch with an ISA-mode var, the mode `bit`.
+    fn carry(
+        &self,
+        mut ctx: FlowContext,
+        flowing: &[(&'static str, u32)],
+        bit: Option<bool>,
+    ) -> FlowContext {
+        let vars = &self.engine.flow_vars;
+        for &(name, value) in flowing {
+            vars.set_var(&mut ctx, name, value);
+        }
+        if let (Some(var), Some(bit)) = (self.engine.arch.isa_mode_var(), bit) {
+            vars.set_var(&mut ctx, var, u32::from(bit));
+        }
+        ctx
     }
 
     /// The next target to explore, every direct edge before any seeded arm.
@@ -701,7 +706,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             for arm in self.region_graph.neighbors(switch) {
                 if reaching.contains(&arm) {
                     self.undecodable_seeded.push((
-                        Some(switch),
+                        switch,
                         crate::UndecodableTarget {
                             site,
                             target: self.region_graph[arm].start_addr,
@@ -732,9 +737,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// before seating it.
     fn drop_refused_switch_arms(&mut self) {
         for (parent, bad) in self.undecodable_seeded.clone() {
-            if let Some(parent) = parent {
-                self.drop_switch_arm(parent, bad.target);
-            }
+            self.drop_switch_arm(parent, bad.target);
         }
         for (parent, target) in std::mem::take(&mut self.clashing_seeded) {
             self.drop_switch_arm(parent, target);
