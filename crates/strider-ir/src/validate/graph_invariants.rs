@@ -28,7 +28,7 @@ impl DataProducers<'_> {
             .into_iter()
             .flatten()
             .filter(move |&value| !self.graph.value_kind(value).is_control())
-            .map(move |value| self.graph.value_definition(value).0)
+            .map(move |value| self.graph.producer(value))
             .filter(move |&producer| self.universe.contains(producer))
     }
 }
@@ -109,6 +109,14 @@ pub(super) fn check_unique_kinds(seen: &UniqueKinds, errs: &mut Vec<ValidationEr
     }
 }
 
+/// The type of `node`'s first output; `None` without one or when untyped.
+fn first_output_type(graph: &Graph, node: NodeId) -> Option<ValueType> {
+    graph
+        .node_outputs(node)
+        .first()
+        .and_then(|&o| graph.value_kind(o).as_value())
+}
+
 /// Every reachable `Region` needs at least one predecessor.
 pub(super) fn check_region(
     function: &Function,
@@ -166,10 +174,7 @@ pub(super) fn check_arith_widths(
     errs: &mut Vec<ValidationError>,
 ) {
     let graph = function.graph();
-    let out = graph
-        .node_outputs(node)
-        .first()
-        .and_then(|&o| function.value_type_opt(o));
+    let out = first_output_type(graph, node);
     // Carries the real input slot, not a position in the filtered list: a
     // node with an untyped input would otherwise report an index that
     // names a different operand, and read the wrong slot's width rule.
@@ -218,15 +223,13 @@ pub(super) fn check_extend_truncate(
         | OperandWidth::OfFirstOperand
         | OperandWidth::Free => return,
     };
-    let (Some(in_value), Some(&out_value)) = (
-        graph.node_inputs(node).into_iter().next(),
-        graph.node_outputs(node).first(),
-    ) else {
-        return;
-    };
     let (Some(in_ty), Some(out_ty)) = (
-        function.value_type_opt(in_value),
-        function.value_type_opt(out_value),
+        graph
+            .node_inputs(node)
+            .into_iter()
+            .next()
+            .and_then(|v| function.value_type_opt(v)),
+        first_output_type(graph, node),
     ) else {
         return;
     };
@@ -311,18 +314,8 @@ pub(super) fn check_phis(
     }
     let token = inputs[NodeKind::PHI_TOKEN_SLOT];
     let token_kind = graph.value_kind(token);
-    if token_kind != ValueKind::PhiToken {
-        let (producer, _) = graph.value_definition(token);
-        errs.push(ValidationError::PhiTokenNotFromRegion {
-            phi: node,
-            producer,
-            producer_kind: token_kind,
-        });
-        return;
-    }
-
-    let (owner, _idx) = graph.value_definition(token);
-    if !matches!(graph.node_kind(owner), NodeKind::Region) {
+    let owner = graph.producer(token);
+    if token_kind != ValueKind::PhiToken || !matches!(graph.node_kind(owner), NodeKind::Region) {
         errs.push(ValidationError::PhiTokenNotFromRegion {
             phi: node,
             producer: owner,
@@ -431,11 +424,8 @@ pub(super) fn check_initial_vars(
         errs.push(ValidationError::DanglingInitialVnId { node, id });
         return;
     };
-    let Some(&out) = graph.node_outputs(node).first() else {
+    let Some(ty) = first_output_type(graph, node) else {
         return; // arity reported elsewhere
-    };
-    let ValueKind::Typed(ty) = graph.value_kind(out) else {
-        return;
     };
     if ValueType::int_from_bytes(vn.size).ok() != Some(ty) {
         errs.push(ValidationError::InitialVarTypeMismatch { node, vn, ty });
@@ -511,11 +501,8 @@ pub(super) fn check_consts(
 ) {
     let graph = function.graph();
     if let NodeKind::FloatConst(bits) = *kind {
-        let Some(&out) = graph.node_outputs(node).first() else {
+        let Some(ty) = first_output_type(graph, node) else {
             return; // arity reported elsewhere
-        };
-        let ValueKind::Typed(ty) = graph.value_kind(out) else {
-            return;
         };
         if ty.is_float() {
             if ty.byte_size() > 8 {
@@ -533,12 +520,8 @@ pub(super) fn check_consts(
         errs.push(ValidationError::DanglingConstId { node, id });
         return;
     };
-    let outputs = graph.node_outputs(node);
-    let Some(&out) = outputs.first() else {
+    let Some(ty) = first_output_type(graph, node) else {
         return; // arity reported elsewhere
-    };
-    let ValueKind::Typed(ty) = graph.value_kind(out) else {
-        return;
     };
     // Canonical masking: every bit above the declared width is zero.
     if *value != crate::eval::mask(value, ty) {
@@ -594,7 +577,7 @@ pub(super) fn check_function_invariants_memory_linearity(
     }
     let mut on_chain = NodeIdSet::new();
     while let Some(value) = stack.pop() {
-        let producer = graph.value_definition(value).0;
+        let producer = graph.producer(value);
         if !on_chain.insert(producer) {
             continue;
         }
@@ -656,7 +639,7 @@ fn check_memory_order(
     let mut store_origin: SecondaryMap<NodeId, Option<NodeId>> = SecondaryMap::new();
     let mut stores: Vec<NodeId> = Vec::new();
     let mut origin = |value: ValueId| {
-        let mut producer = graph.value_definition(value).0;
+        let mut producer = graph.producer(value);
         let found = loop {
             match graph.node_kind(producer) {
                 NodeKind::Store(_) => {
@@ -664,13 +647,11 @@ fn check_memory_order(
                         break known;
                     }
                     stores.push(producer);
-                    producer = graph
-                        .value_definition(
-                            graph
-                                .nth_input(producer, NodeKind::ACCESS_MEM_SLOT)
-                                .expect("a Store has memory"),
-                        )
-                        .0;
+                    producer = graph.producer(
+                        graph
+                            .nth_input(producer, NodeKind::ACCESS_MEM_SLOT)
+                            .expect("a Store has memory"),
+                    );
                 }
                 NodeKind::MemPhi => break function.phi_region(producer),
                 NodeKind::InitialMemory => break tree.root(),
@@ -698,11 +679,7 @@ fn check_memory_order(
         state[node] = if is_effect(node) { Some(node) } else { before };
         ancestors.push(node);
 
-        // Of the control nodes, exactly the memory readers take Memory there.
-        let memory = graph
-            .nth_input(node, NodeKind::CTRL_MEM_SLOT)
-            .filter(|&v| graph.value_kind(v) == ValueKind::Memory);
-        if let (Some(memory), Some(effect)) = (memory, before)
+        if let (Some(memory), Some(effect)) = (ctrl_memory_input(graph, node), before)
             && origin(memory) != effect
         {
             errs.push(ValidationError::MemoryRewind { node, effect });
@@ -716,7 +693,7 @@ fn check_memory_order(
         let edge_states = graph
             .node_inputs(region)
             .into_iter()
-            .map(|edge| state[graph.value_definition(edge).0]);
+            .map(|edge| state[graph.producer(edge)]);
         if is_effect(region) {
             for phi in chain_mem_phis(region) {
                 let arms = graph.node_inputs(phi).into_iter().skip(1);
@@ -737,6 +714,14 @@ fn check_memory_order(
             }
         }
     }
+}
+
+/// A control node's memory input; of the control nodes, exactly the memory
+/// readers take Memory at [`NodeKind::CTRL_MEM_SLOT`].
+fn ctrl_memory_input(graph: &Graph, node: NodeId) -> Option<ValueId> {
+    graph
+        .nth_input(node, NodeKind::CTRL_MEM_SLOT)
+        .filter(|&v| graph.value_kind(v) == ValueKind::Memory)
 }
 
 /// A phi's value inputs on edges from a node of `tree`.
@@ -791,12 +776,10 @@ pub(super) fn check_function_invariants_availability(
         for phi in ctx.attached_phis(cfg_node) {
             let arms = graph.node_inputs(phi).into_iter().skip(1);
             for ((input_idx, value), edge) in (1..).zip(arms).zip(preds) {
-                let Some(edge_at) = at[graph.value_definition(edge).0] else {
+                let Some(edge_at) = at[graph.producer(edge)] else {
                     continue;
                 };
-                if !at[graph.value_definition(value).0]
-                    .is_some_and(|pos| tree.dominates(pos, edge_at))
-                {
+                if !at[graph.producer(value)].is_some_and(|pos| tree.dominates(pos, edge_at)) {
                     errs.push(ValidationError::InputNotAvailable {
                         node: phi,
                         input_idx,
@@ -822,7 +805,7 @@ fn latest_input(
         if graph.value_kind(value).is_control() {
             continue;
         }
-        let Some(pos) = at[graph.value_definition(value).0] else {
+        let Some(pos) = at[graph.producer(value)] else {
             errs.push(ValidationError::InputNotAvailable { node, input_idx });
             continue;
         };
