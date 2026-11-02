@@ -34,11 +34,14 @@ impl FunctionBuilder {
     /// [`crate::node::ValueType`].
     pub fn set_entry_region(&mut self, region_id: RegionId) -> Result<()> {
         let initial_variables = self.wire_entry_and_build_initial_vars(region_id)?;
-        self.set_region_variables(region_id, initial_variables.clone());
+        let mut packed = SecondaryMap::new();
+        for (var_id, &value) in initial_variables.iter() {
+            packed[var_id] = value.into();
+        }
         // The entry carries phis when it is also a join (a loop header). Each
         // `InitialVar` is then that phi's entry-edge operand, appended by
         // `link_region_variables` below.
-        self.seed_phi_vars_from_phis(region_id);
+        self.seed_variables(region_id, packed);
         self.link_region_variables(region_id, &initial_variables)
     }
 
