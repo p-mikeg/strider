@@ -188,12 +188,12 @@ Workspace production dependencies only. Leaves (no workspace deps): `dot`,
 and the orchestrator reaches `strider-pattern` and `dot` only from its tests
 and examples. External `dashu-int` is a production dependency of `strider-ir`
 alone, the arbitrary-precision unsigned integer behind `const_interner`.
-External `petgraph` is a production dependency of `strider-cfg`,
-`strider-lift` and `strider-pattern` (the last for its `UnionFind`: the
-template's width groups and the join's correlation check), and a
-dev-dependency of `graph-algorithms` and `strider-ir`. strider-ir's dominance
-tests check against `simple_fast`; graph-algorithms' walk tests also check
-`acyclic_postorder`'s cycle verdict against `toposort`.
+External `petgraph` is a production dependency of `strider-cfg` and
+`strider-pattern` (the latter for its `UnionFind`: the template's width groups
+and the join's correlation check), and a dev-dependency of `graph-algorithms`,
+`strider-ir` and `strider-lift`: ir's dominance tests check against
+`simple_fast`; graph-algorithms' walk tests also check `acyclic_postorder`'s
+cycle verdict against `toposort`, and a lift test walks a `Cfg` with its `Dfs`.
 
 Dev-dependencies are not in that graph, and are not a DAG:
 `strider-ir-test-utils` depends on `strider-ir`, which dev-depends back on it.
