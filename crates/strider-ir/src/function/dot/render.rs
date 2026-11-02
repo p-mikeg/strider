@@ -33,7 +33,7 @@ impl ::dot::GraphDotDumper for FunctionDotDumper<'_> {
         }
 
         for (idx, parent_value) in self.function.node_inputs(node).into_iter().enumerate() {
-            self.emit_input_edge(node, &cur_id, kind, idx, parent_value, out, state);
+            self.emit_input_edge(&cur_id, kind, idx, parent_value, out, state);
         }
 
         Ok(())
@@ -124,14 +124,10 @@ impl FunctionDotDumper<'_> {
         }
     }
 
-    /// One edge from an input's producer to `node`, materialising whatever
-    /// producer-side helper it needs.
-    // The arguments are one render cursor; a struct for them would only be
-    // filled and read at this one call site.
-    #[allow(clippy::too_many_arguments)]
+    /// One edge from an input's producer to the `kind` node drawn as
+    /// `cur_id`, materialising whatever producer-side helper it needs.
     fn emit_input_edge(
         &self,
-        node: NodeId,
         cur_id: &str,
         kind: NodeKind,
         idx: usize,
@@ -181,7 +177,7 @@ impl FunctionDotDumper<'_> {
             None => self.dot_id(state, parent_id),
         };
 
-        let (label, tail_idx, color) = edge_style(self, node, idx);
+        let (label, tail_idx, color) = edge_style(&kind, idx);
 
         // Every repeating input is `<slot name><ordinal>`, the ordinal from
         // the signature's own head length. Two kinds read better otherwise:
