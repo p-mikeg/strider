@@ -1,12 +1,5 @@
 //! Walks against brute-force reachability, cycle and root-order oracles.
 
-#![allow(
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
-
 mod common;
 
 use common::cases::{self, Case};
