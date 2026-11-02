@@ -293,9 +293,6 @@
   root, or, for a match through a join, reads the root or is not available
   where it is read; each returned `Err` and stopped the walk. A rule of the
   built-in ConstantFold and FlagCmp tables still fails a debug build there.
-- `cranelift-entity` is 0.128 (was 0.112). It is a public dependency through
-  `EntityRef`, which `NodeId`, `ValueId` and the other entity ids
-  implement, so a caller naming that trait needs the same version.
 - `SideTables::set_frame_address_in_call_register` is gone:
   `FunctionBuilder::build` records the call register's frame reach, the
   stack address's offset from the entry SP, which
@@ -384,7 +381,7 @@
   `FlagCmpCanonicalize::new()`, `IfCondInversion::new()` and every pass's
   `Default`, `Clone` and `Copy` are gone. Name the pass itself
   (`p.add(&ConstantFold)`).
-- `EditFunction::replace_all_uses` is private: it left the old producer live
+- `EditFunction::replace_all_uses` is gone: it left the old producer live
   and dropped its asm-fingerprint. `replace_value` does the same rewire and
   handles both.
 - `EditFunction::replace_value` returns `bool`, not `Result<bool>`, and
@@ -539,10 +536,8 @@
   `update_input` one. `RawStore` no longer implements `Default`, and
   `Graph: Clone` asks `C: Clone` of the cache policy too (both shipped
   policies are).
-- `IRBuilder::create_node` and `create_node_attributed` take
-  `impl IntoIterator` inputs and outputs, so a call cannot name them with a
-  turbofish. The inherent `Function::create_node_attributed` is gone: the
-  `IRBuilder` method is the one, with the trait in scope.
+- The inherent `Function::create_node_attributed` is gone: the `IRBuilder`
+  method is the one, with the trait in scope.
 - `FunctionBuilder::entry()` is gone: read `function().entry()`, always
   node 0. `FunctionBuilder::set_internal_registers` takes `&'static [Vn]`
   (`DecodeTables::internal_register_vns`), not a `Vec` per function.
