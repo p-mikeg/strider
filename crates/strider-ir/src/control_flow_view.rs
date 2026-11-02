@@ -4,24 +4,8 @@ use cranelift_entity::{EntityRef, SecondaryMap};
 use smallvec::SmallVec;
 
 use crate::function::Function;
+use crate::graph::Graph;
 use crate::node::{NodeId, ValueId};
-
-/// Only `Control`-kind edges are visible.
-#[derive(Clone, Copy)]
-pub(crate) struct ControlFlowView<'a> {
-    function: &'a Function,
-}
-
-impl<'a> ControlFlowView<'a> {
-    pub(crate) fn new(function: &'a Function) -> Self {
-        Self { function }
-    }
-
-    /// Every control node but `Switch` fans out to at most two.
-    pub(crate) fn succs(self, a: NodeId) -> SmallVec<[NodeId; 2]> {
-        crate::walk::cfg_succs(self.function.graph(), a).collect()
-    }
-}
 
 /// A dominator tree numbered by pre/post interval, so [`Self::dominates`] is
 /// O(1).
@@ -92,8 +76,8 @@ impl<K: EntityRef + Hash> DominatorTree<K> {
 
 /// Dominators of the control subgraph.
 pub fn control_dominator_tree(function: &Function) -> DominatorTree<NodeId> {
-    let view = ControlFlowView::new(function);
-    DominatorTree::compute(function.entry(), |n| view.succs(n))
+    let graph = function.graph();
+    DominatorTree::compute(function.entry(), |n| crate::walk::cfg_succs(graph, n))
 }
 
 /// Dominators of the edge-split control graph. Querying with
@@ -102,8 +86,8 @@ pub fn control_dominator_tree(function: &Function) -> DominatorTree<NodeId> {
 pub fn control_edge_dominator_tree(function: &Function) -> DominatorTree<CtrlKey> {
     // The entry key must be `CtrlKey::Node(function.entry())`; a mismatch
     // yields an empty tree that silently answers `false` to every query.
-    let view = ControlSplitView::new(function);
-    DominatorTree::compute(CtrlKey::Node(function.entry()), |k| view.succs(k))
+    let graph = function.graph();
+    DominatorTree::compute(CtrlKey::Node(function.entry()), |k| split_succs(graph, k))
 }
 
 /// A vertex of the edge-split control graph. Dominance over `Edge(v)` is edge
@@ -133,45 +117,31 @@ impl EntityRef for CtrlKey {
     }
 }
 
-/// [`ControlFlowView`] with [`cfg_succs`](crate::walk::cfg_succs)'s two stages
-/// unfolded: node to its `Control` outputs stops at [`CtrlKey::Edge`], and
-/// output to its consumers resumes from it.
-#[derive(Clone, Copy)]
-pub(crate) struct ControlSplitView<'a> {
-    function: &'a Function,
-}
-
-impl<'a> ControlSplitView<'a> {
-    pub(crate) fn new(function: &'a Function) -> Self {
-        Self { function }
-    }
-}
-
-impl ControlSplitView<'_> {
-    pub(crate) fn succs(self, a: CtrlKey) -> SmallVec<[CtrlKey; 2]> {
-        let graph = self.function.graph();
-        match a {
-            // Stage 1, stopping at the output.
-            CtrlKey::Node(node) => crate::walk::cfg_outputs(graph, node)
-                .map(CtrlKey::Edge)
-                .collect(),
-            // Stage 2, resuming from the output.
-            CtrlKey::Edge(value) => {
-                let succs: SmallVec<[CtrlKey; 2]> = graph
-                    .value_uses(value)
-                    .map(|(succ, _)| CtrlKey::Node(succ))
-                    .collect();
-                // Zero consumers makes this vertex a dead end, so every
-                // dominance query past it silently answers `false`; the
-                // validator rejects that graph as `UnusedControlOutput`.
-                debug_assert_eq!(
-                    succs.len(),
-                    1,
-                    "control edge {value:?} has {} consumers, expected exactly one",
-                    succs.len()
-                );
-                succs
-            }
+/// [`cfg_succs`](crate::walk::cfg_succs)'s two stages unfolded: node to its
+/// `Control` outputs stops at [`CtrlKey::Edge`], and output to its consumers
+/// resumes from it.
+fn split_succs(graph: &Graph, a: CtrlKey) -> SmallVec<[CtrlKey; 2]> {
+    match a {
+        // Stage 1, stopping at the output.
+        CtrlKey::Node(node) => crate::walk::cfg_outputs(graph, node)
+            .map(CtrlKey::Edge)
+            .collect(),
+        // Stage 2, resuming from the output.
+        CtrlKey::Edge(value) => {
+            let succs: SmallVec<[CtrlKey; 2]> = graph
+                .value_uses(value)
+                .map(|(succ, _)| CtrlKey::Node(succ))
+                .collect();
+            // Zero consumers makes this vertex a dead end, so every
+            // dominance query past it silently answers `false`; the
+            // validator rejects that graph as `UnusedControlOutput`.
+            debug_assert_eq!(
+                succs.len(),
+                1,
+                "control edge {value:?} has {} consumers, expected exactly one",
+                succs.len()
+            );
+            succs
         }
     }
 }
@@ -187,6 +157,27 @@ mod tests {
     use petgraph::visit::{GraphBase, IntoNeighbors};
     use proptest::prelude::*;
     use strider_ir_test_utils::graph_oracle;
+
+    /// Only `Control`-kind edges are visible.
+    #[derive(Clone, Copy)]
+    struct ControlFlowView<'a>(&'a Function);
+
+    impl ControlFlowView<'_> {
+        /// Every control node but `Switch` fans out to at most two.
+        fn succs(self, a: NodeId) -> SmallVec<[NodeId; 2]> {
+            crate::walk::cfg_succs(self.0.graph(), a).collect()
+        }
+    }
+
+    /// [`ControlFlowView`] over the edge-split control graph.
+    #[derive(Clone, Copy)]
+    struct ControlSplitView<'a>(&'a Function);
+
+    impl ControlSplitView<'_> {
+        fn succs(self, a: CtrlKey) -> SmallVec<[CtrlKey; 2]> {
+            split_succs(self.0.graph(), a)
+        }
+    }
 
     // petgraph's Cooper-Harvey-Kennedy `simple_fast` is the independent oracle
     // the interval trees below are matched against; nothing in production
@@ -243,7 +234,7 @@ mod tests {
     }
 
     fn control_dominators(function: &Function) -> petgraph::algo::dominators::Dominators<NodeId> {
-        petgraph::algo::dominators::simple_fast(&ControlFlowView::new(function), function.entry())
+        petgraph::algo::dominators::simple_fast(&ControlFlowView(function), function.entry())
     }
 
     /// The idom chain-walk answer [`DominatorTree::dominates`] must match.
@@ -268,7 +259,7 @@ mod tests {
         function: &Function,
     ) -> petgraph::algo::dominators::Dominators<CtrlKey> {
         petgraph::algo::dominators::simple_fast(
-            &ControlSplitView::new(function),
+            &ControlSplitView(function),
             CtrlKey::Node(function.entry()),
         )
     }
@@ -325,7 +316,7 @@ mod tests {
     #[test]
     fn control_view_neighbors_are_control_successors() {
         let f = diamond().expect("diamond() should build without errors");
-        let view = ControlFlowView::new(&f);
+        let view = ControlFlowView(&f);
         let if_node = f
             .graph()
             .all_node_ids()
@@ -347,7 +338,7 @@ mod tests {
         let f = diamond().expect("diamond() should build without errors");
         let entry = f.entry();
 
-        let doms = simple_fast(&ControlFlowView::new(&f), entry);
+        let doms = simple_fast(&ControlFlowView(&f), entry);
 
         let if_node = f
             .graph()
@@ -649,8 +640,8 @@ mod tests {
                 empty_true_arm().expect("empty_true_arm builds").0,
             ),
         ] {
-            let view = ControlSplitView::new(&f);
-            let plain = ControlFlowView::new(&f);
+            let view = ControlSplitView(&f);
+            let plain = ControlFlowView(&f);
 
             for node in f.graph().all_node_ids() {
                 // The split view and `cfg_succs` are only consulted on
@@ -981,7 +972,7 @@ mod tests {
     /// Builds both trees with counting successor closures: each vertex in the
     /// tree is asked for its successors exactly once, any other never.
     fn assert_each_vertex_asked_once(f: &Function) {
-        let view = ControlFlowView::new(f);
+        let view = ControlFlowView(f);
         let mut asked: SecondaryMap<NodeId, u32> = SecondaryMap::new();
         let tree = DominatorTree::compute(f.entry(), |n| {
             asked[n] += 1;
@@ -990,7 +981,7 @@ mod tests {
         for n in f.graph().all_node_ids() {
             assert_eq!(asked[n], u32::from(tree.contains(n)), "{n:?} asked");
         }
-        let view = ControlSplitView::new(f);
+        let view = ControlSplitView(f);
         let mut asked: SecondaryMap<CtrlKey, u32> = SecondaryMap::new();
         let tree = DominatorTree::compute(CtrlKey::Node(f.entry()), |k| {
             asked[k] += 1;
