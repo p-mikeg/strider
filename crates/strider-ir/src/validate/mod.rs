@@ -39,7 +39,8 @@ pub fn validate(function: &Function) -> Result<(), ValidationErrors> {
 
     // Everything checked one node at a time, in one scan of the reachable set.
     let mut seen = UniqueKinds::default();
-    for (node, kind) in function.reachable_kind_iter(&reachable) {
+    for node in &reachable {
+        let kind = function.node_kind(node);
         check_local_typing(function.graph(), node, &mut errs);
         note_unique_kinds(&mut seen, node, kind);
         check_region(function, node, kind, &mut errs);
