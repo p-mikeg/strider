@@ -8,6 +8,7 @@ use crate::node::{NodeId, NodeKind, ValueKind};
 /// The IR dedup policy: cacheable kinds dedup on
 /// `(NodeKind, inputs, output_kinds)`, non-cacheable ones always allocate
 /// fresh.
+#[derive(Clone)]
 pub struct IrCacheable;
 
 impl NodeCacheable<NodeKind, ValueKind> for IrCacheable {
