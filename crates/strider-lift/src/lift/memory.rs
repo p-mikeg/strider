@@ -112,4 +112,18 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
         Ok(())
     }
+
+    pub(super) fn handle_cpool_ref(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        let refs = self.read_vns(&insn.inputs)?;
+        let out_vn = require_output_vn(insn)?;
+        let result = self.builder.build_cpool_ref(&refs, out_vn.int_type()?)?;
+        self.write_vn(out_vn, result)
+    }
+
+    pub(super) fn handle_new(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        let args = self.read_vns(&insn.inputs)?;
+        let out_vn = require_output_vn(insn)?;
+        let result = self.builder.build_new(&args, out_vn.int_type()?)?;
+        self.write_vn(out_vn, result)
+    }
 }
