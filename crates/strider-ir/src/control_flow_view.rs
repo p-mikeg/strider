@@ -278,7 +278,7 @@ mod tests {
     ///         |
     ///       Return
     /// ```
-    fn diamond() -> crate::error::Result<Function> {
+    fn diamond() -> crate::Result<Function> {
         let mut b = empty_builder()?;
 
         let region_a = b.create_region_all()?;
@@ -408,7 +408,7 @@ mod tests {
     /// ```
     ///
     /// Returns `(function, true_edge_value, region_j, region_t)`.
-    fn empty_true_arm() -> crate::error::Result<(Function, ValueId, NodeId, NodeId)> {
+    fn empty_true_arm() -> crate::Result<(Function, ValueId, NodeId, NodeId)> {
         let mut b = empty_builder()?;
 
         let region_a = b.create_region_all()?;
@@ -496,7 +496,7 @@ mod tests {
     ///                |
     ///              Return
     /// ```
-    fn diamond_loop_and_empty_arm() -> crate::error::Result<Function> {
+    fn diamond_loop_and_empty_arm() -> crate::Result<Function> {
         let mut b = empty_builder()?;
 
         let (a, c_b, c_c, d) = (
@@ -819,7 +819,7 @@ mod tests {
     ///         |
     ///       Return
     /// ```
-    fn irreducible_with_orphan() -> crate::error::Result<Function> {
+    fn irreducible_with_orphan() -> crate::Result<Function> {
         let mut b = empty_builder()?;
         let (a, rb, rc, x, u, v) = (
             b.create_region_all()?,
@@ -890,11 +890,11 @@ mod tests {
 
     /// `if (c) goto err;` `n` times: every rung also edges into one shared
     /// error region.
-    fn error_ladder(n: usize) -> crate::error::Result<Function> {
+    fn error_ladder(n: usize) -> crate::Result<Function> {
         let mut b = empty_builder()?;
         let rungs: Vec<_> = (0..n)
             .map(|_| b.create_region_all())
-            .collect::<crate::error::Result<_>>()?;
+            .collect::<crate::Result<_>>()?;
         let (err, done) = (b.create_region_all()?, b.create_region_all()?);
         b.set_entry_region_all(rungs[0])?;
         b.set_lift_addr(Some(0x6000));
