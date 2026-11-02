@@ -1,5 +1,5 @@
 //! Detects stack-passed function arguments and records them in
-//! `FuncSideTables::arg_index_to_values`.  Must run as a post-pass: it needs the
+//! `FunctionSideTables::arg_index_to_values`.  Must run as a post-pass: it needs the
 //! optimized memory graph.
 //!
 //! A candidate is a `Load[InitialVar(sp) + K]` with `K` in a stack slot and no
