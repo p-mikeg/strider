@@ -332,3 +332,86 @@ fn float_call_args_keep_their_abi_positions() {
         }
     }
 }
+
+/// When the entry is a loop header the entry region's current `q0` is its
+/// `Phi`, but a float parameter is the INCOMING value: the `d0`/`d1` slices of
+/// the shared `q0` container must bottom out at `InitialVar(q0)`, never at
+/// the loop phi, like the own-container float and integer carriers do.
+///
+/// ```text
+/// 0x1000: vadd.f64 d0,d0,d1   <- entry and loop header
+/// 0x1004: vorr q8,q0,q0       names q0, so d0/d1 share its container
+/// 0x1008: subs r0,r0,#1
+/// 0x100c: bne 0x1000          back edge INTO the entry region
+/// 0x1010: bx lr
+/// ```
+#[test]
+fn shared_container_float_carrier_is_the_incoming_value_at_a_loop_header_entry() {
+    use strider_ir::IRViewer;
+    use strider_ir::node::NodeKind;
+
+    let bytes = vec![
+        0x01, 0x0b, 0x30, 0xee, // vadd.f64 d0,d0,d1
+        0x50, 0x01, 0x60, 0xf2, // vorr q8,q0,q0
+        0x01, 0x00, 0x50, 0xe2, // subs r0,r0,#1
+        0xfb, 0xff, 0xff, 0x1a, // bne 0x1000
+        0x1e, 0xff, 0x2f, 0xe1, // bx lr
+    ];
+    let f = super::handler_tests::lift_bytes(
+        strider_target::SleighArch::arm(),
+        strider_target::CallingConvention::arm_aapcs(),
+        bytes,
+    )
+    .expect("the ARM loop-header fixture must lift");
+
+    let q0 = reg(0x300, 16);
+    assert!(
+        f.all_vns().contains(&q0),
+        "sanity: q0 is the tracked container, got {:?}",
+        f.all_vns()
+    );
+    let q0_id = f.vn_id_of(&q0).expect("q0 is tracked");
+    assert!(
+        f.graph()
+            .all_node_ids()
+            .any(|n| matches!(f.node_kind(n), NodeKind::Phi)),
+        "sanity: the entry region is a loop header and carries phis"
+    );
+
+    // The pure producer cone of one carrier: every node reached through inputs.
+    let cone_kinds = |v: strider_ir::node::ValueId| -> Vec<NodeKind> {
+        let mut stack = vec![f.producer(v)];
+        let mut seen = Vec::new();
+        let mut kinds = Vec::new();
+        while let Some(n) = stack.pop() {
+            if seen.contains(&n) {
+                continue;
+            }
+            seen.push(n);
+            kinds.push(*f.node_kind(n));
+            if matches!(f.node_kind(n), NodeKind::Phi) {
+                continue;
+            }
+            for input in f.node_inputs(n) {
+                stack.push(f.producer(input));
+            }
+        }
+        kinds
+    };
+    for j in 0..2 {
+        let carriers = f.side_tables().float_arg_index_to_values(j).to_vec();
+        assert_eq!(carriers.len(), 1, "float param {j} has one carrier");
+        let kinds = cone_kinds(carriers[0]);
+        assert!(
+            !kinds.iter().any(|k| matches!(k, NodeKind::Phi)),
+            "float param {j} (d{j}) is sliced out of the entry loop PHI of q0 \
+             instead of its incoming value; cone = {kinds:?}"
+        );
+        assert!(
+            kinds
+                .iter()
+                .any(|k| matches!(k, NodeKind::InitialVar(id) if *id == q0_id)),
+            "float param {j} (d{j}) must bottom out at InitialVar(q0); cone = {kinds:?}"
+        );
+    }
+}
