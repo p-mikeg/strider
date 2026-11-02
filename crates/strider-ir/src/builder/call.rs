@@ -66,7 +66,7 @@ impl FunctionBuilder {
         validate_value_inputs(self.function(), args)?;
         self.validate_call_output_vns(output_vns)?;
 
-        let sp_vn = self.function.stack_vn();
+        let sp_vn = self.function.default_cc().stack_ptr;
         let sp_value = self.read_variable(&sp_vn)?;
         // A callee can read a register its convention neither passes nor
         // preserves (i386 `regparm`, a static chain, AArch64's indirect-result

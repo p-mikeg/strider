@@ -53,14 +53,14 @@ pub struct FuncSideTables {
     /// value to it.
     pub(crate) const_interner: EntityInterner<IntConstId, UBig>,
     /// Case addresses of each `Switch(id)`, one per control output.
-    pub(crate) switch_tables: PrimaryMap<SwitchTableId, Vec<u64>>,
+    switch_tables: PrimaryMap<SwitchTableId, Vec<u64>>,
     /// Override conventions referenced by `Call { cc: Some(id) }`, deduped by
     /// value.
-    pub(crate) call_ccs: EntityInterner<CcId, strider_target::BuiltCallingConvention>,
+    call_ccs: EntityInterner<CcId, strider_target::BuiltCallingConvention>,
     /// Sleigh user-op name by `CallOther` `user_op_id`.
-    pub(crate) call_other_names: FxHashMap<u64, String>,
+    call_other_names: FxHashMap<u64, String>,
     /// Every tracked varnode, value-deduped, in `(space, offset, size)` order.
-    pub(crate) vn_interner: EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
+    vn_interner: EntityInterner<crate::node::InitialVnId, rsleigh::Vn>,
 }
 
 impl FuncSideTables {
@@ -466,7 +466,7 @@ impl crate::Function {
     /// container).  Does NOT filter by liveness: the returned node may already
     /// have been culled.
     pub fn initial_sp(&self) -> Option<NodeId> {
-        let sp_id = self.vn_id_of(&self.stack_vn())?;
+        let sp_id = self.vn_id_of(&self.default_cc().stack_ptr)?;
         self.side_tables().initial_var_index[sp_id]
     }
 
