@@ -144,8 +144,7 @@ pub(crate) fn schedule_early(ctx: &ScheduleContext<'_>, mut schedule: impl FnMut
         graph: ctx.function.graph(),
         live: &ctx.live,
     };
-    let roots: Vec<NodeId> = ctx.pinned_nodes().flat_map(|p| preds.of(p)).collect();
-    for node in PostOrder::new(preds, roots) {
+    for node in PostOrder::new(preds, ctx.pinned_nodes().flat_map(|p| preds.of(p))) {
         schedule(node);
     }
 }
