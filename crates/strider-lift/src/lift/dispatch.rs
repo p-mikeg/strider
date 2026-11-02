@@ -105,8 +105,11 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // JVM object allocation; opaque.
             Opcode::New => self.handle_new(insn)?,
 
-            Opcode::Nop => {}
-            Opcode::Branch => self.handle_branch()?,
+            // Every unconditional successor, branch or fall-through alike, is
+            // wired uniformly by `link_region_edges`.  Emitting an IR branch
+            // here too would double-link the successor and its `Phi`
+            // predecessor inputs.
+            Opcode::Nop | Opcode::Branch => {}
             Opcode::CondBranch => self.handle_cond_branch(region_id, insn, region_map)?,
             Opcode::Store => self.handle_store(insn)?,
             // Both emit a CC `Return`, correct for the link-register return
