@@ -215,10 +215,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             // whole register file when it does not, so a def is recorded for
             // exactly what is written.
             Opcode::Store => {
-                let declared = self.lifter.declared_reg_vns();
-                if let Some(vn) = super::pcode_consts::register_slot_of(insn, consts, declared) {
+                if let Some(vn) = self.lifter.register_slot_of(insn, consts) {
                     self.add_def(&vn, r, defs, exp);
-                } else if super::pcode_consts::is_register_space_access(insn) {
+                } else if self.lifter.is_register_space_access(insn) {
                     for vn in
                         super::pcode_consts::opaque_clobber_set(self.builder.function().all_vns())
                     {
