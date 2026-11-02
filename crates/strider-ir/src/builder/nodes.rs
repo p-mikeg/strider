@@ -4,8 +4,8 @@ use super::FunctionBuilder;
 use crate::IRViewer;
 use crate::builder::IRBuilderExt;
 use crate::builder::checks::{
-    require_bool_value, require_output_type, require_phi_token_kind, require_slot,
-    require_value_kind, validate_value_inputs,
+    require_bool_value, require_output_type, require_slot, require_value_kind,
+    validate_value_inputs,
 };
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
@@ -187,23 +187,11 @@ impl FunctionBuilder {
         Ok(self.build_single_output_pure(kind, [memory, addr], output_type))
     }
 
-    /// `phi_token` must be the owning `Region`'s `PhiToken` output.
-    /// `incoming_values` holds one value per predecessor, and may be empty at
-    /// first: `link_region_variables` appends them later.
-    pub(crate) fn build_vn_phi(
-        &mut self,
-        var: rsleigh::Vn,
-        phi_token: ValueId,
-        incoming_values: &[ValueId],
-    ) -> Result<ValueId> {
-        require_phi_token_kind(self.function(), phi_token)?;
-        validate_value_inputs(self.function(), incoming_values)?;
+    /// A `Phi` on the owning `Region`'s `phi_token`, with no operands yet:
+    /// each edge into the region appends one.
+    pub(crate) fn build_vn_phi(&mut self, var: rsleigh::Vn, phi_token: ValueId) -> Result<ValueId> {
         let output_type = ValueType::int_from_bytes(var.size)?;
-        let phi_value = self.build_single_output_pure(
-            NodeKind::Phi,
-            core::iter::once(phi_token).chain(incoming_values.iter().copied()),
-            output_type,
-        );
+        let phi_value = self.build_single_output_pure(NodeKind::Phi, [phi_token], output_type);
         self.function_mut().set_vn_for_value(phi_value, var);
         Ok(phi_value)
     }

@@ -170,7 +170,7 @@ impl FunctionBuilder {
         let mut variables = SecondaryMap::new();
         for &vn_id in phi_vars {
             let var = self.function().initial_vn(vn_id);
-            let value = self.build_vn_phi(var, phi_token, &[])?;
+            let value = self.build_vn_phi(var, phi_token)?;
             phis.push((vn_id, value));
             variables[vn_id] = value.into();
         }
