@@ -28,11 +28,6 @@ impl InitialVnId {
     pub fn from_index(index: usize) -> Self {
         Self(index as u32)
     }
-
-    #[inline]
-    pub fn index(self) -> usize {
-        self.0 as usize
-    }
 }
 
 /// A `Switch`'s case-address table, resolved by the crate-internal
@@ -181,6 +176,10 @@ bitflags::bitflags! {
         const CONTROL = 1 << 2;
         /// Must survive unused although it carries no control.
         const EFFECTFUL = 1 << 3;
+        /// A pattern may try both operand orderings.
+        const COMMUTATIVE = 1 << 4;
+        /// Consumes control and produces none.
+        const TERMINATOR = 1 << 5;
     }
 }
 
@@ -330,10 +329,7 @@ impl NodeKind {
     /// does not escape.
     #[must_use]
     pub fn is_terminator(&self) -> bool {
-        matches!(
-            self,
-            Self::Return | Self::IndirectBranch | Self::Unreachable
-        )
+        self.flags().contains(KindFlags::TERMINATOR)
     }
 
     /// Whether the graph may dedup nodes of this kind.
@@ -366,7 +362,7 @@ impl NodeKind {
             .intersects(KindFlags::CONTROL.union(KindFlags::EFFECTFUL))
     }
 
-    /// The one row per variant the four predicates above read.
+    /// The one row per variant the flag predicates on `NodeKind` read.
     #[inline]
     const fn flags(&self) -> KindFlags {
         use KindFlags as F;
@@ -377,16 +373,23 @@ impl NodeKind {
             // Inputs grow after construction, so identity is not fixed.
             Self::MemPhi | Self::Phi => F::FINGERPRINT_EXEMPT,
             // Each occurrence is a distinct event.
-            Self::If
-            | Self::Switch(_)
-            | Self::Call { .. }
-            | Self::CallOther { .. }
-            | Self::Return
-            | Self::IndirectBranch
-            | Self::Unreachable => F::CONTROL,
+            Self::If | Self::Switch(_) | Self::Call { .. } | Self::CallOther { .. } => F::CONTROL,
+            Self::Return | Self::IndirectBranch | Self::Unreachable => {
+                F::CONTROL.union(F::TERMINATOR)
+            }
             Self::Store(..) => F::CACHEABLE.union(F::EFFECTFUL),
             // Opaque per-occurrence identity.
             Self::CPoolRef | Self::New => F::EFFECTFUL,
+            Self::IntBinaryOp(
+                IntBinaryOp::Add
+                | IntBinaryOp::Mul
+                | IntBinaryOp::And
+                | IntBinaryOp::Or
+                | IntBinaryOp::Xor,
+            )
+            | Self::FloatBinaryOp(FloatBinaryOp::Add | FloatBinaryOp::Mul)
+            | Self::IntCmpOp(IntCmpOp::Equal | IntCmpOp::Carry | IntCmpOp::Scarry)
+            | Self::FloatCmpOp(FloatCmpOp::Equal) => F::CACHEABLE.union(F::COMMUTATIVE),
             // Identity is fully determined by the payload plus the inputs.
             Self::Load(..)
             | Self::IntConst(..)
@@ -416,22 +419,7 @@ impl NodeKind {
     /// `Scarry` ask whether `l + r` overflows, and addition commutes.
     #[inline]
     pub fn is_commutative(&self) -> bool {
-        match self {
-            Self::IntBinaryOp(op) => matches!(
-                op,
-                IntBinaryOp::Add
-                    | IntBinaryOp::Mul
-                    | IntBinaryOp::And
-                    | IntBinaryOp::Or
-                    | IntBinaryOp::Xor
-            ),
-            Self::FloatBinaryOp(op) => matches!(op, FloatBinaryOp::Add | FloatBinaryOp::Mul),
-            Self::IntCmpOp(op) => {
-                matches!(op, IntCmpOp::Equal | IntCmpOp::Carry | IntCmpOp::Scarry)
-            }
-            Self::FloatCmpOp(op) => matches!(op, FloatCmpOp::Equal),
-            _ => false,
-        }
+        self.flags().contains(KindFlags::COMMUTATIVE)
     }
 }
 
@@ -475,6 +463,44 @@ mod tests {
         ] {
             assert!(!k.has_control_flow(), "{k:?} is not control flow");
             assert!(!k.has_side_effects(), "{k:?} should NOT have side effects");
+        }
+    }
+
+    #[test]
+    fn commutative_kinds_are_exactly_the_symmetric_ops() {
+        use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+        let mut kinds = crate::node::signature::every_node_kind();
+        kinds.extend(IntBinaryOp::ALL.map(NodeKind::IntBinaryOp));
+        kinds.extend(IntCmpOp::ALL.map(NodeKind::IntCmpOp));
+        kinds.extend(FloatBinaryOp::ALL.map(NodeKind::FloatBinaryOp));
+        kinds.extend(FloatCmpOp::ALL.map(NodeKind::FloatCmpOp));
+        let commutative = [
+            NodeKind::IntBinaryOp(IntBinaryOp::Add),
+            NodeKind::IntBinaryOp(IntBinaryOp::Mul),
+            NodeKind::IntBinaryOp(IntBinaryOp::And),
+            NodeKind::IntBinaryOp(IntBinaryOp::Or),
+            NodeKind::IntBinaryOp(IntBinaryOp::Xor),
+            NodeKind::FloatBinaryOp(FloatBinaryOp::Add),
+            NodeKind::FloatBinaryOp(FloatBinaryOp::Mul),
+            NodeKind::IntCmpOp(IntCmpOp::Equal),
+            NodeKind::IntCmpOp(IntCmpOp::Carry),
+            NodeKind::IntCmpOp(IntCmpOp::Scarry),
+            NodeKind::FloatCmpOp(FloatCmpOp::Equal),
+        ];
+        for k in kinds {
+            assert_eq!(k.is_commutative(), commutative.contains(&k), "{k:?}");
+        }
+    }
+
+    #[test]
+    fn terminators_are_return_indirect_branch_and_unreachable() {
+        let terminators = [
+            NodeKind::Return,
+            NodeKind::IndirectBranch,
+            NodeKind::Unreachable,
+        ];
+        for k in crate::node::signature::every_node_kind() {
+            assert_eq!(k.is_terminator(), terminators.contains(&k), "{k:?}");
         }
     }
 }

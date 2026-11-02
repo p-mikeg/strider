@@ -67,7 +67,7 @@ impl FunctionDotDumper<'_> {
         match kind {
             NodeKind::InitialVar(id) => match self.function.initial_vn_opt(*id) {
                 Some(vn) => format!("init\n{}", self.vn_to_name(&vn)),
-                None => format!("init\n#{}", id.index()),
+                None => format!("init\n#{}", id.as_u32()),
             },
             NodeKind::MemPhi => "φ Mem".to_string(),
             // An output-less Phi (malformed graph) labels rather than panics.
