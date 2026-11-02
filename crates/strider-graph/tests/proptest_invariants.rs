@@ -548,6 +548,37 @@ fn compaction_rebuilds_cache() {
     );
 }
 
+/// Survivors are numbered in `reachable` order, and each use-list lists its
+/// consumers newest-numbered first.
+#[test]
+fn compaction_numbers_in_reachable_order_and_relinks_newest_first() {
+    let mut g = TestGraph::new();
+    let a = const_node(&mut g, 1);
+    let a_node = g.producer(a);
+    let _zombie = const_node(&mut g, 999);
+    let regions: Vec<NodeId> = (0..3)
+        .map(|_| {
+            let r = region_node(&mut g);
+            g.add_node_input(r, a);
+            r
+        })
+        .collect();
+
+    let keep = [a_node, regions[2], regions[0], regions[1]];
+    let remap = retain_reachable(&mut g, keep);
+    let new: Vec<NodeId> = keep
+        .iter()
+        .map(|&n| remap.node_old_to_new(n).expect("kept"))
+        .collect();
+    assert_eq!(new, (0..4).map(NodeId::from_u32).collect::<Vec<_>>());
+    let a_new = remap.value_old_to_new(a).expect("kept");
+    assert_eq!(
+        g.value_uses(a_new).collect::<Vec<_>>(),
+        [(new[3], 0), (new[2], 0), (new[1], 0)]
+    );
+    assert_use_list_consistent(&g);
+}
+
 /// The node, output, input and remap arenas are sized off the survivors up
 /// front, so compaction does not grow them by doubling beside the graph it
 /// replaces; only the two list pools, whose size classes the caller cannot
