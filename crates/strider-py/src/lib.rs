@@ -67,7 +67,7 @@ fn force_anyhow_backtrace_capture() {
 #[pyfunction]
 #[pyo3(name = "_viz_standalone_js")]
 fn viz_standalone_js() -> &'static str {
-    ::dot::viz_standalone_js()
+    ::dot::VIZ_STANDALONE_JS
 }
 
 #[pymodule]
