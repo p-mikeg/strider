@@ -1,5 +1,5 @@
 //! SSA-shaped patterns: `phi()`, `initial_var_for(vn)`, and the
-//! `FuncSideTables::arg_index_to_values` side-table `FunctionArgDetect` populates.
+//! `FunctionSideTables::arg_index_to_values` side-table `FunctionArgDetect` populates.
 
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{IRViewer, IntCmpOp};
@@ -57,7 +57,7 @@ fn graph_phi_for_reg() -> (strider_ir::Function, rsleigh::Vn) {
 }
 
 // After `FunctionArgDetect`, the underlying `InitialVar` / `Load` nodes
-// survive unchanged and are recorded in `FuncSideTables::arg_index_to_values`.
+// survive unchanged and are recorded in `FunctionSideTables::arg_index_to_values`.
 // The tests below check the side-table contents and carrier node kinds.
 
 /// A graph with one stack-arg at sp-relative offset `4`, index `0`.

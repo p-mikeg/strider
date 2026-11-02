@@ -6,7 +6,7 @@ mod memos;
 mod side_tables;
 mod text;
 pub use memos::{MemDecomp, MemoryId};
-pub use side_tables::FuncSideTables;
+pub use side_tables::FunctionSideTables;
 
 pub use assumptions::AssumptionOptions;
 pub use edit::EditFunction;
