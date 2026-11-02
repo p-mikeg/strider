@@ -183,16 +183,14 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             }
             other => other,
         };
-        let mut clobber_vns: Vec<rsleigh::Vn> = Vec::new();
+        let mut output_vns: Vec<rsleigh::Vn> = result_vn.into_iter().collect();
         for vn in &abi.implicit_writes {
             let c = self.container_map.container_of(vn);
-            if Some(c) == result_vn || clobber_vns.contains(&c) {
-                continue;
+            if !output_vns.contains(&c) {
+                output_vns.push(c);
             }
-            clobber_vns.push(c);
         }
-        let mut output_vns: Vec<rsleigh::Vn> = result_vn.into_iter().collect();
-        output_vns.extend_from_slice(&clobber_vns);
+        let n_ret = usize::from(result_vn.is_some());
 
         let (_, outputs) = self
             .builder
@@ -207,7 +205,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         self.builder
             .function_mut()
             .set_call_other_name(user_op_id, name);
-        let (ret_vals, clobbers) = outputs.split_at(result_vn.iter().count());
+        let (ret_vals, clobbers) = outputs.split_at(n_ret);
 
         // An implicit clobber defines its whole container, so it is written
         // whole.  The result goes through the masked-insert path, which is the
@@ -219,7 +217,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // successor could read the binding anyway.  The node's output slots
         // still exist and dangle, which matches `no_return` semantics.
         if !terminate {
-            for (vn, v) in core::iter::zip(&clobber_vns, clobbers) {
+            for (vn, v) in core::iter::zip(&output_vns[n_ret..], clobbers) {
                 self.write_variable(vn, *v)?;
             }
             if let (Some(c), Some(&v)) = (result_vn, ret_vals.first()) {
