@@ -80,3 +80,54 @@ fn mips_binds_t9_to_the_entry_address() {
     assert!(!initial, "t9 must not be read as a runtime input");
     assert!(literal, "t9's value must be the entry address literal");
 }
+
+/// At an entry that is also a loop header the entry address is the value on
+/// the ENTRY edge: the loop reads t9's phi, whose entry operand is the
+/// literal and whose back-edge operand is the incremented t9.
+#[test]
+fn a_loop_header_entry_binds_t9_on_the_entry_edge() {
+    use strider_ir::node::{IntBinaryOp, NodeKind};
+    // 1000: 6739 0001    daddiu t9,t9,1
+    // 1004: 1720 fffe    bnez   t9,1000
+    // 1008: 0000 0000    nop             (delay slot)
+    // 100c: 03e0 0008    jr     ra
+    // 1010: 0000 0000    nop             (delay slot)
+    let bytes = vec![
+        0x67, 0x39, 0x00, 0x01, 0x17, 0x20, 0xff, 0xfe, 0x00, 0x00, 0x00, 0x00, 0x03, 0xe0, 0x00,
+        0x08, 0x00, 0x00, 0x00, 0x00,
+    ];
+    let mut lifter = strider_lift::lift::Lifter::new(
+        strider_target::SleighArch::mipsbe64(),
+        rsleigh::mem_readers::BufMemReader::new(bytes, 0x1000),
+    )
+    .expect("lifter");
+    let cc = strider_target::CallingConvention::mips_n64()
+        .build(lifter.sleigh_regs())
+        .expect("cc");
+    let cfg = lifter
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
+        .expect("cfg");
+    let f = lifter.build_ir(&cfg, cc).expect("ir").function;
+    let add = f
+        .walk_kind(|k| matches!(k, NodeKind::IntBinaryOp(IntBinaryOp::Add)))
+        .next()
+        .expect("the daddiu");
+    let [sum] = f.node_outputs(add)[..] else {
+        panic!("one output")
+    };
+    let read = f
+        .node_inputs(add)
+        .into_iter()
+        .find(|v| f.int_const_u128(*v) != Some(1))
+        .expect("the t9 operand");
+    let phi = f.producer(read);
+    assert!(
+        matches!(f.node_kind(phi), NodeKind::Phi),
+        "the loop must read t9's phi, not {:?}",
+        f.node_kind(phi)
+    );
+    let operands: Vec<_> = f.node_inputs(phi).into_iter().skip(1).collect();
+    assert_eq!(operands.len(), 2, "entry edge and back edge");
+    assert_eq!(f.int_const_u128(operands[0]), Some(0x1000), "entry operand");
+    assert_eq!(operands[1], sum, "back-edge operand");
+}
