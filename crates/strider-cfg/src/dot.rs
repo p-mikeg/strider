@@ -45,8 +45,6 @@ impl GraphDotDumper for CfgDotDumper<'_> {
     type Error = anyhow::Error;
     type State = ();
 
-    fn create_initial_state(&self) -> Self::State {}
-
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
         self.cfg.region_graph.node_indices()
     }
