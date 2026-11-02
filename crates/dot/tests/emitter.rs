@@ -89,7 +89,7 @@ fn digraph_name_with_special_chars_is_quoted_and_escaped() {
 fn digraph_name_with_backslash_is_doubled() {
     let style = DotStyle::default();
     let out = DotEmitter::new("path\\sub", &style).finish();
-    // `\s` is not one of the passed-through DOT escapes, so it doubles.
+    // Every backslash doubles.
     assert!(
         out.starts_with("digraph \"path\\\\sub\" {\n"),
         "expected doubled backslash, got: {out}",
