@@ -13,36 +13,26 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         terminate: bool,
     ) -> Result<()> {
         let (user_op_id, name) = decode_user_op(insn, self.lifter.user_op_names())?;
-        if self.call_other_overrides.get(name).is_none()
-            && strider_target::call_other_abi::is_msr_register_mode(
-                self.lifter.arch().preset(),
-                name,
-            )
-        {
-            return self.lift_msr_register_mode(insn);
+        let preset = self.lifter.arch().preset();
+        if self.call_other_overrides.get(name).is_none() {
+            if strider_target::call_other_abi::is_msr_register_mode(preset, name) {
+                return self.lift_msr_register_mode(insn);
+            }
+            if strider_target::call_other_abi::is_rounding_mode_control(preset, name) {
+                return self.lift_rounding_mode_control(insn, name);
+            }
         }
-        if self.call_other_overrides.get(name).is_none()
-            && strider_target::call_other_abi::is_rounding_mode_control(
-                self.lifter.arch().preset(),
-                name,
-            )
-        {
-            return self.lift_rounding_mode_control(insn, name);
-        }
-        let class = strider_target::call_other_abi::classify_with(
-            self.call_other_overrides,
-            self.lifter.arch().preset(),
-            name,
-        )
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "unknown CallOther user-op {name:?}; classify it per analysis \
-                 (Python: CfgOptions(call_other_abis={{{name:?}: \
-                 strider.sleigh.CallOtherAbi.pure()}}), Rust: \
-                 CfgOptions::call_other_overrides), or add an entry to \
-                 strider_target::call_other_abi::classify"
-            )
-        })?;
+        let class =
+            strider_target::call_other_abi::classify_with(self.call_other_overrides, preset, name)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "unknown CallOther user-op {name:?}; classify it per analysis \
+                         (Python: CfgOptions(call_other_abis={{{name:?}: \
+                         strider.sleigh.CallOtherAbi.pure()}}), Rust: \
+                         CfgOptions::call_other_overrides), or add an entry to \
+                         strider_target::call_other_abi::classify"
+                    )
+                })?;
 
         // `None` is the NoOp class: no IR node, control and memory unchanged,
         // and the pcode-explicit output dropped.  Otherwise the ABI carries the
@@ -59,9 +49,14 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
         // Slot 0 is the user-op id, not an argument.
         let explicit_args = self.read_vns(insn.inputs.get(1..).unwrap_or(&[]))?;
-        let output_vn: Option<rsleigh::Vn> = insn.output.as_ref().copied();
-        self.build_abi_call_other(user_op_id, name, &explicit_args, &abi, output_vn, terminate)?;
-        Ok(())
+        self.build_abi_call_other(
+            user_op_id,
+            name,
+            &explicit_args,
+            &abi,
+            insn.output,
+            terminate,
+        )
     }
 
     /// `out = msrRegisterMode(new, current)`: `current` under
@@ -142,7 +137,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         abi: &strider_target::BuiltCallOtherAbi,
         output: Option<rsleigh::Vn>,
         terminate: bool,
-    ) -> Result<Option<strider_ir::node::ValueId>> {
+    ) -> Result<()> {
         let mut args: Vec<strider_ir::node::ValueId> =
             Vec::with_capacity(abi.implicit_reads.len() + explicit_args.len());
         for vn in &abi.implicit_reads {
@@ -223,16 +218,15 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // region, so the write would land in a terminated region and no
         // successor could read the binding anyway.  The node's output slots
         // still exist and dangle, which matches `no_return` semantics.
-        let result = ret_vals.first().copied();
         if !terminate {
             for (vn, v) in core::iter::zip(&clobber_vns, clobbers) {
                 self.write_variable(vn, *v)?;
             }
-            if let (Some(c), Some(v)) = (result_vn, result) {
+            if let (Some(c), Some(&v)) = (result_vn, ret_vals.first()) {
                 self.write_vn(&c, v)?;
             }
         }
-        Ok(result)
+        Ok(())
     }
 }
 
