@@ -4,8 +4,9 @@ mod split;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use flow::{FlowCommit, FlowContext, FlowVars, hold_var};
+pub(crate) use flow::{FlowContext, FlowVars, hold_var};
 use region_builder::{DecodeFailure, RegionBuilder, decode_failure};
+pub(crate) use strider_target::FlowCommit;
 
 use std::collections::BTreeMap;
 
@@ -218,7 +219,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // call commits the mode at its target, and a callee below the caller
         // paints forward over the caller's own bytes.
         let bit = isa_mode.map(|mode| mode != 0);
-        let carried = if !self.engine.flow_commit_defaults.is_empty()
+        let carried = if !self.engine.flow_commit.is_empty()
             && self.committed_next.contains(&addr.machine_addr.addr)
         {
             let snapshot = self
@@ -530,8 +531,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // snapshot LOCAL rather than a coincidence of two per-preset tables:
         // whatever `flow_commit_vars` grows to, a throwaway decode cannot run
         // where a snapshot is believed.
-        if self.engine.arch.isa_mode_var().is_some() || !self.engine.flow_commit_defaults.is_empty()
-        {
+        if self.engine.arch.isa_mode_var().is_some() || !self.engine.flow_commit.is_empty() {
             return false;
         }
         let region = &self.region_graph[owner];
@@ -576,7 +576,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// unprefixed decode emits bare.
     fn is_atomic_marker(&self, op: &rsleigh::Insn) -> bool {
         op.opcode == rsleigh::Opcode::CallOther
-            && crate::user_op_of(op, &self.engine.user_op_names)
+            && crate::user_op_of(op, &self.engine.tables.user_op_names)
                 .is_some_and(|(_, name)| name == "LOCK" || name == "UNLOCK")
     }
 

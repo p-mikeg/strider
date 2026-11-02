@@ -81,12 +81,7 @@ where
     ///
     /// # Errors
     ///
-    /// Returns `Err` from [`Lifter::new`]: the sla not loading,
-    /// `Sleigh::user_op_names()` failing, the arch
-    /// declaring no address space with shortcut `'r'` or naming that space
-    /// something other than `"ram"`, and `DecodeEngine::new` failing. An arch
-    /// and sla that disagree on the ISA mode (a mode var the sla does not
-    /// flow, an unpaired `ISAModeSwitch`) fail too.
+    /// Returns `Err` from [`Lifter::new`]: the sla not loading.
     pub fn new(
         arch: strider_target::SleighArch,
         reader: R,
