@@ -455,14 +455,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                         branch_target_var.size
                     );
                 }
-                let off: i64 = if bits == 64 {
-                    raw.cast_signed()
-                } else {
-                    // Shift the sign bit up to bit 63, then arithmetic-shift
-                    // back down.
-                    let shift = 64 - bits;
-                    (raw << shift).cast_signed() >> shift
-                };
+                // Shift the sign bit up to bit 63, then arithmetic-shift back
+                // down.
+                let shift = 64 - bits;
+                let off = (raw << shift).cast_signed() >> shift;
                 let target = branch_insn_addr.insn_index.checked_add_signed(off).ok_or_else(
                     || anyhow!("invalid branch target variable {branch_target_var:?} at opcode {branch_insn_addr:?}"),
                 )?;
@@ -1326,15 +1322,23 @@ mod tests {
         let mut b = make_builder(0x1000, &mut engine);
         let rb = make_region_builder(&mut b, addr_at(0x2000, 0));
         let lift = fake_lift_res(8);
-        let narrow = Vn {
-            addr_off: 0xFFFF_FFFC,
-            addr_space: VnSpace::CONST,
-            size: 4,
-        };
-        let target = rb
-            .decode_branch_target(narrow, addr_at(0x2000, 6), &lift)
-            .expect("a backward CONST branch must decode");
-        assert_eq!(target, addr_at(0x2000, 2));
+        // -4 at every declared width, a non-power-of-two one included.
+        for (size, addr_off) in [
+            (1, 0xFC),
+            (3, 0xFF_FFFC),
+            (4, 0xFFFF_FFFC),
+            (8, 0xFFFF_FFFF_FFFF_FFFC),
+        ] {
+            let narrow = Vn {
+                addr_off,
+                addr_space: VnSpace::CONST,
+                size,
+            };
+            let target = rb
+                .decode_branch_target(narrow, addr_at(0x2000, 6), &lift)
+                .expect("a backward CONST branch must decode");
+            assert_eq!(target, addr_at(0x2000, 2), "size {size}");
+        }
     }
 
     #[test]
