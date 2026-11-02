@@ -126,12 +126,6 @@ impl<N, V> RawStore<N, V> {
         node_id
     }
 
-    /// Every node id in the arena, including unreachable ones.
-    #[inline]
-    pub(crate) fn node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
-        self.nodes.keys()
-    }
-
     #[inline]
     pub fn kind_of(&self, node_id: NodeId) -> &N {
         &self.nodes[node_id].kind
@@ -157,11 +151,6 @@ impl<N, V> RawStore<N, V> {
     }
 
     #[inline]
-    pub(crate) fn node_kind_mut(&mut self, node_id: NodeId) -> &mut N {
-        &mut self.nodes[node_id].kind
-    }
-
-    #[inline]
     pub(crate) fn node_input_uses(&self, node_id: NodeId) -> &[UseId] {
         self.nodes[node_id].inputs.as_slice(&self.input_pool)
     }
@@ -174,11 +163,6 @@ impl<N, V> RawStore<N, V> {
     #[inline]
     pub(crate) fn value_kind(&self, value_id: ValueId) -> &V {
         &self.outputs[value_id].kind
-    }
-
-    #[inline]
-    pub(crate) fn producer(&self, value_id: ValueId) -> NodeId {
-        self.outputs[value_id].source_id
     }
 
     /// Inserts `input_id` at the head of its value's use-list.
@@ -218,11 +202,5 @@ impl<N, V> RawStore<N, V> {
 
         self.inputs[input_id].prev = None.into();
         self.inputs[input_id].next = None.into();
-    }
-}
-
-impl<N, V> Default for RawStore<N, V> {
-    fn default() -> Self {
-        Self::new()
     }
 }
