@@ -6,7 +6,9 @@ use object::{Object, ObjectSymbol, SymbolKind};
 use strider_cfg::{CfgOptions, DecodeEngine};
 use strider_target::SleighArch as Sa;
 
-const ARCHES: &[(&str, fn() -> Sa)] = &[
+type ArchFn = fn() -> Sa;
+
+const ARCHES: &[(&str, ArchFn)] = &[
     ("x86", Sa::x86),
     ("x86_kernel", Sa::x86),
     ("x64", Sa::x86_64),
