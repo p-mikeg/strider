@@ -222,112 +222,77 @@ const REF: Slot = slot(AnyInt, "ref", R::Ref);
 const IN_PHI: Slot = slot(AnyValue, "in", R::In);
 
 pub(crate) fn expected_signature(kind: &NodeKind) -> Signature {
-    macro_rules! sig {
-        (inputs: [$($i:expr),* $(,)?], outputs: [$($o:expr),* $(,)?] $(,)?) => {
-            Signature {
-                inputs: SlotList::fixed(&[$($i),*]),
-                outputs: SlotList::fixed(&[$($o),*]),
-            }
-        };
-        (inputs: [$($i:expr),* $(,)?]; in_tail: $it:expr, outputs: [$($o:expr),* $(,)?] $(,)?) => {
-            Signature {
-                inputs: SlotList::variadic(&[$($i),*], $it),
-                outputs: SlotList::fixed(&[$($o),*]),
-            }
-        };
-        (inputs: [$($i:expr),* $(,)?]; in_opt: $it:expr, outputs: [$($o:expr),* $(,)?] $(,)?) => {
-            Signature {
-                inputs: SlotList::optional(&[$($i),*], $it),
-                outputs: SlotList::fixed(&[$($o),*]),
-            }
-        };
-        (inputs: [$($i:expr),* $(,)?]; in_tail: $it:expr, outputs: [$($o:expr),* $(,)?]; out_tail: $ot:expr $(,)?) => {
-            Signature {
-                inputs: SlotList::variadic(&[$($i),*], $it),
-                outputs: SlotList::variadic(&[$($o),*], $ot),
-            }
-        };
-        (inputs: [$($i:expr),* $(,)?]; in_opt: $it:expr, outputs: [$($o:expr),* $(,)?]; out_tail: $ot:expr $(,)?) => {
-            Signature {
-                inputs: SlotList::optional(&[$($i),*], $it),
-                outputs: SlotList::variadic(&[$($o),*], $ot),
-            }
-        };
-        (inputs: [$($i:expr),* $(,)?], outputs: [$($o:expr),* $(,)?]; out_tail: $ot:expr $(,)?) => {
-            Signature {
-                inputs: SlotList::fixed(&[$($i),*]),
-                outputs: SlotList::variadic(&[$($o),*], $ot),
-            }
-        };
+    const fn sig(inputs: SlotList, outputs: SlotList) -> Signature {
+        Signature { inputs, outputs }
     }
+    use SlotList as L;
 
     match kind {
-        NodeKind::Entry => sig!(inputs: [], outputs: [CTRL]),
-        NodeKind::InitialMemory => sig!(inputs: [], outputs: [MEM]),
-        NodeKind::InitialVar(_) | NodeKind::IntConst(_) => sig!(inputs: [], outputs: [INT_VAL]),
+        NodeKind::Entry => sig(L::fixed(&[]), L::fixed(&[CTRL])),
+        NodeKind::InitialMemory => sig(L::fixed(&[]), L::fixed(&[MEM])),
+        NodeKind::InitialVar(_) | NodeKind::IntConst(_) => sig(L::fixed(&[]), L::fixed(&[INT_VAL])),
 
         // One Control input per predecessor.
-        NodeKind::Region => sig!(inputs: []; in_tail: CTRL, outputs: [CTRL, PHI]),
-        NodeKind::MemPhi => sig!(inputs: [PHI]; in_tail: MEM, outputs: [MEM]),
+        NodeKind::Region => sig(L::variadic(&[], CTRL), L::fixed(&[CTRL, PHI])),
+        NodeKind::MemPhi => sig(L::variadic(&[PHI], MEM), L::fixed(&[MEM])),
         // Tagged and anonymous phis share this shape.
-        NodeKind::Phi => sig!(inputs: [PHI]; in_tail: IN_PHI, outputs: [ANY_VAL]),
+        NodeKind::Phi => sig(L::variadic(&[PHI], IN_PHI), L::fixed(&[ANY_VAL])),
 
-        NodeKind::If => sig!(inputs: [CTRL, COND], outputs: [CTRL, CTRL]),
+        NodeKind::If => sig(L::fixed(&[CTRL, COND]), L::fixed(&[CTRL, CTRL])),
         // One Control output per target region, in target order. No default
         // arm, and the arms need not cover every dispatch value: a site the
         // resolver seated early can hold one arm and widen later.
-        NodeKind::Switch(_) => {
-            sig!(inputs: [CTRL, INT_VAL]; in_opt: ISA_MODE, outputs: [CTRL]; out_tail: CTRL)
-        }
+        NodeKind::Switch(_) => sig(
+            L::optional(&[CTRL, INT_VAL], ISA_MODE),
+            L::variadic(&[CTRL], CTRL),
+        ),
 
         // SP is an input-only anchor; the outputs are the clobbered varnodes.
-        NodeKind::Call { .. } => sig!(
-            inputs: [CTRL, MEM, TARGET, SP]; in_tail: ARG,
-            outputs: [CTRL, MEM]; out_tail: ANY_VAL,
+        NodeKind::Call { .. } => sig(
+            L::variadic(&[CTRL, MEM, TARGET, SP], ARG),
+            L::variadic(&[CTRL, MEM], ANY_VAL),
         ),
-        NodeKind::Return => sig!(inputs: [CTRL, MEM]; in_tail: RET, outputs: []),
+        NodeKind::Return => sig(L::variadic(&[CTRL, MEM], RET), L::fixed(&[])),
         // Placeholder for an unresolved branch. The optional trailing input is
         // the interworking ISA-mode bit (absent for a non-switching branch); it
         // is a real input so the optimizer keeps its cone live for the resolver.
-        NodeKind::IndirectBranch => {
-            sig!(inputs: [CTRL, MEM, TARGET]; in_opt: ISA_MODE, outputs: [])
-        }
+        NodeKind::IndirectBranch => sig(L::optional(&[CTRL, MEM, TARGET], ISA_MODE), L::fixed(&[])),
         // Control sink for a no-return trap. The optional trailing input is the
         // memory chain: control alone anchors no liveness, so an exit-free
         // control cycle would otherwise lose its stores to compaction.
-        NodeKind::Unreachable => sig!(inputs: [CTRL]; in_opt: MEM, outputs: []),
+        NodeKind::Unreachable => sig(L::optional(&[CTRL], MEM), L::fixed(&[])),
 
-        NodeKind::Load(_) => sig!(inputs: [MEM, ADDR], outputs: [INT_VAL]),
-        NodeKind::Store(_) => sig!(inputs: [MEM, ADDR, DATA], outputs: [MEM]),
+        NodeKind::Load(_) => sig(L::fixed(&[MEM, ADDR]), L::fixed(&[INT_VAL])),
+        NodeKind::Store(_) => sig(L::fixed(&[MEM, ADDR, DATA]), L::fixed(&[MEM])),
 
         // `IntConst` shares the input-less arm above.
         NodeKind::IntUnaryOp(_)
         | NodeKind::Truncate
         | NodeKind::Popcount
         | NodeKind::Lzcount
-        | NodeKind::Extend(_) => sig!(inputs: [INT_VAL], outputs: [INT_VAL]),
-        NodeKind::IntBinaryOp(_) => sig!(inputs: [LHS, RHS], outputs: [INT_VAL]),
-        NodeKind::IntCmpOp(_) => sig!(inputs: [LHS, RHS], outputs: [BOOL_VAL]),
+        | NodeKind::Extend(_) => sig(L::fixed(&[INT_VAL]), L::fixed(&[INT_VAL])),
+        NodeKind::IntBinaryOp(_) => sig(L::fixed(&[LHS, RHS]), L::fixed(&[INT_VAL])),
+        NodeKind::IntCmpOp(_) => sig(L::fixed(&[LHS, RHS]), L::fixed(&[BOOL_VAL])),
 
-        NodeKind::FloatConst(_) => sig!(inputs: [], outputs: [FLOAT_VAL]),
-        NodeKind::FloatBinaryOp(_) => sig!(inputs: [FLHS, FRHS], outputs: [FLOAT_VAL]),
+        NodeKind::FloatConst(_) => sig(L::fixed(&[]), L::fixed(&[FLOAT_VAL])),
+        NodeKind::FloatBinaryOp(_) => sig(L::fixed(&[FLHS, FRHS]), L::fixed(&[FLOAT_VAL])),
         NodeKind::FloatUnaryOp(_) | NodeKind::FloatToFloat => {
-            sig!(inputs: [FLOAT_VAL], outputs: [FLOAT_VAL])
+            sig(L::fixed(&[FLOAT_VAL]), L::fixed(&[FLOAT_VAL]))
         }
-        NodeKind::FloatCmpOp(_) => sig!(inputs: [FLHS, FRHS], outputs: [BOOL_VAL]),
+        NodeKind::FloatCmpOp(_) => sig(L::fixed(&[FLHS, FRHS]), L::fixed(&[BOOL_VAL])),
         NodeKind::IntToFloat | NodeKind::IntBitsToFloat => {
-            sig!(inputs: [INT_VAL], outputs: [FLOAT_VAL])
+            sig(L::fixed(&[INT_VAL]), L::fixed(&[FLOAT_VAL]))
         }
         NodeKind::FloatToInt | NodeKind::FloatBitsToInt => {
-            sig!(inputs: [FLOAT_VAL], outputs: [INT_VAL])
+            sig(L::fixed(&[FLOAT_VAL]), L::fixed(&[INT_VAL]))
         }
 
-        NodeKind::CallOther { .. } => sig!(
-            inputs: [CTRL, MEM]; in_tail: ARG,
-            outputs: [CTRL, MEM]; out_tail: ANY_VAL,
+        NodeKind::CallOther { .. } => sig(
+            L::variadic(&[CTRL, MEM], ARG),
+            L::variadic(&[CTRL, MEM], ANY_VAL),
         ),
-        NodeKind::CPoolRef => sig!(inputs: []; in_tail: REF, outputs: [INT_VAL]),
-        NodeKind::New => sig!(inputs: []; in_tail: ARG, outputs: [INT_VAL]),
+        NodeKind::CPoolRef => sig(L::variadic(&[], REF), L::fixed(&[INT_VAL])),
+        NodeKind::New => sig(L::variadic(&[], ARG), L::fixed(&[INT_VAL])),
     }
 }
 

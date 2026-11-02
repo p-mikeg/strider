@@ -1,6 +1,6 @@
 use crate::graph::Graph;
 use crate::node::signature::expected_signature;
-use crate::node::{NodeId, ValueId, ValueKind};
+use crate::node::{NodeId, ValueKind};
 
 use super::ValidationError;
 
@@ -9,14 +9,8 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
     let kind = *graph.node_kind(node);
     let sig = expected_signature(&kind);
 
-    // Most nodes have <= 4 slots; variadic shapes (Call, Return) spill.
-    let actual_inputs: smallvec::SmallVec<[ValueId; 4]> =
-        graph.node_inputs(node).into_iter().collect();
-    let actual_outputs: smallvec::SmallVec<[ValueKind; 4]> = graph
-        .node_outputs(node)
-        .iter()
-        .map(|&oid| graph.value_kind(oid))
-        .collect();
+    let actual_inputs = graph.node_inputs(node);
+    let actual_outputs = graph.node_outputs(node);
 
     // A variadic list with `head_len = 0` (e.g. `Region`) passes at zero
     // inputs; the ">= 1 predecessor" rule lives in graph_invariants.
@@ -36,7 +30,7 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
         });
     }
 
-    for (idx, &input) in actual_inputs.iter().enumerate() {
+    for (idx, input) in actual_inputs.into_iter().enumerate() {
         let Some(slot) = sig.inputs.at(idx) else {
             // Past a fixed head; the arity check above already reported it.
             break;
@@ -52,7 +46,8 @@ pub(super) fn check_local_typing(graph: &Graph, node: NodeId, errs: &mut Vec<Val
         }
     }
 
-    for (idx, &actual) in actual_outputs.iter().enumerate() {
+    for (idx, &out) in actual_outputs.iter().enumerate() {
+        let actual = graph.value_kind(out);
         if let ValueKind::Typed(ty) = actual
             && !ty.is_supported()
         {
