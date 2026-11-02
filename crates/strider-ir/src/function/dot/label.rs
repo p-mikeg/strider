@@ -1,4 +1,4 @@
-use super::{FunctionDotDumper, node_fillcolor};
+use super::{FunctionDotDumper, node_style};
 use crate::IRViewer;
 use crate::node::{NodeId, NodeKind, ValueId, ValueType};
 
@@ -153,7 +153,13 @@ impl FunctionDotDumper<'_> {
             }
 
             NodeKind::Call { .. } => "Call".to_string(),
-            _ => format!("{kind:?}"),
+            NodeKind::Entry
+            | NodeKind::InitialMemory
+            | NodeKind::Region
+            | NodeKind::If
+            | NodeKind::Return
+            | NodeKind::IndirectBranch
+            | NodeKind::Unreachable => format!("{kind:?}"),
         }
     }
 
@@ -173,7 +179,7 @@ impl FunctionDotDumper<'_> {
     }
 
     pub(super) fn emit_const_node(&self, node: NodeId, dot_id: &str, out: &mut ::dot::DotEmitter) {
-        let fc = node_fillcolor(self.function.node_kind(node));
+        let (_, fc) = node_style(self.function.node_kind(node));
         let label = self.pretty_label(node);
         out.node(dot_id, &label, "ellipse", &[("fillcolor", fc)]);
     }
