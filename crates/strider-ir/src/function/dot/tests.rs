@@ -1051,6 +1051,34 @@ fn neighborhood_bfs_bounds_total_node_count() {
     assert!(budgeted.contains(&add), "center is always kept");
 }
 
+/// An `InitialVar` nothing reads still draws, highlighted, when it is the
+/// centre.
+#[test]
+fn neighborhood_centred_on_an_unused_initial_var_draws_it() {
+    let mut f = test_function();
+    let init_var = f.graph_mut().create_node(
+        NodeKind::InitialVar(crate::node::InitialVnId::from_index(0)),
+        [],
+        [ValueKind::Typed(ValueType::int(64))],
+    );
+    let dot = make_dumper(&f)
+        .neighborhood_dot(init_var, 2, 12, 100, false)
+        .unwrap();
+    let decls = node_decls(&dot);
+    assert_eq!(decls.len(), 1, "the centre alone:\n{dot}");
+    assert!(
+        decls[0]
+            .trim_start()
+            .starts_with(&format!("\"{}\" ", init_var.as_u32())),
+        "{dot}"
+    );
+    assert!(decls[0].contains("init"), "{dot}");
+    assert!(
+        decls[0].contains("#ffcc00"),
+        "centre must be highlighted:\n{dot}"
+    );
+}
+
 /// The centred node keeps its navigable `NodeId` even when const, where a
 /// non-centre const would render as a fresh `c*` box per use.
 #[test]
