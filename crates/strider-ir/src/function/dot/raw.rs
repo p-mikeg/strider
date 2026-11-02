@@ -138,33 +138,6 @@ impl<'a> RawFunctionDumper<'a> {
         }
         s
     }
-
-    /// Same BFS + `max_nodes` budget as
-    /// [`super::FunctionDotDumper::neighborhood_dot`], rendered raw.
-    fn neighborhood_dot(
-        self,
-        center: NodeId,
-        depth: usize,
-        hub_cap: usize,
-        max_nodes: usize,
-        count_producers: bool,
-    ) -> anyhow::Result<String> {
-        let consumers = super::neighborhood::build_consumers(self.function);
-        let set = super::neighborhood::neighborhood_nodes(
-            self.function,
-            center,
-            depth,
-            hub_cap,
-            max_nodes,
-            count_producers,
-            &consumers,
-        );
-        let restricted = Self {
-            view: Some(::dot::View::new(set, center)),
-            ..self
-        };
-        GraphDot::new(restricted, DotStyle::dark()).as_dot()
-    }
 }
 
 impl GraphDotDumper for RawFunctionDumper<'_> {
@@ -237,12 +210,18 @@ impl Function {
         max_nodes: usize,
         count_producers: bool,
     ) -> crate::Result<String> {
-        RawFunctionDumper::new(self).neighborhood_dot(
+        let set = super::neighborhood::neighborhood_nodes(
+            self,
             center,
             depth,
             hub_cap,
             max_nodes,
             count_producers,
-        )
+        );
+        let dumper = RawFunctionDumper {
+            view: Some(::dot::View::new(set, center)),
+            ..RawFunctionDumper::new(self)
+        };
+        GraphDot::new(dumper, DotStyle::dark()).as_dot()
     }
 }

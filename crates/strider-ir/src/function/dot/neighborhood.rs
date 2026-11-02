@@ -13,7 +13,7 @@ use crate::{IRViewer, IRWalker};
 
 /// Forward edges among the nodes `f.walk()` reaches, in walk order:
 /// `value_uses` also yields a dead consumer on an uncompacted graph.
-pub(super) fn build_consumers(f: &Function) -> FxHashMap<NodeId, Vec<NodeId>> {
+fn build_consumers(f: &Function) -> FxHashMap<NodeId, Vec<NodeId>> {
     let mut consumers: FxHashMap<NodeId, Vec<NodeId>> = FxHashMap::default();
     for node in f.walk() {
         for value in f.node_inputs(node) {
@@ -44,8 +44,8 @@ pub(super) fn neighborhood_nodes(
     hub_cap: usize,
     max_nodes: usize,
     count_producers: bool,
-    consumers: &FxHashMap<NodeId, Vec<NodeId>>,
 ) -> FxHashSet<NodeId> {
+    let consumers = build_consumers(f);
     let mut seen = FxHashSet::default();
     seen.insert(center);
     let mut queue = VecDeque::from([(center, 0usize)]);
@@ -86,7 +86,6 @@ impl FunctionDotDumper<'_> {
         max_nodes: usize,
         count_producers: bool,
     ) -> io::Result<String> {
-        let consumers = build_consumers(self.function);
         let set = neighborhood_nodes(
             self.function,
             center,
@@ -94,7 +93,6 @@ impl FunctionDotDumper<'_> {
             hub_cap,
             max_nodes,
             count_producers,
-            &consumers,
         );
         let restricted = FunctionDotDumper {
             view: Some(::dot::View::new(set, center)),
