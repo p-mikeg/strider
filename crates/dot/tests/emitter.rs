@@ -147,16 +147,16 @@ fn node_id_backslash_bigram_is_not_a_line_break() {
     assert!(out.contains("label=\"x\\\\ry\""), "unescaped label: {out}");
 }
 
-/// The CFG dumper hand-emits `\l` around its own text; that break must still
-/// reach Graphviz while the surrounding data stays escaped.
+/// Each line is left-justified by a `\l` break that reaches Graphviz, while a
+/// `\l` bigram inside a line, or a newline in the head, stays text.
 #[test]
-fn node_raw_label_keeps_hand_emitted_line_breaks() {
+fn node_left_lines_breaks_between_lines_and_escapes_each() {
     let style = DotStyle::empty();
     let mut e = DotEmitter::new("G", &style);
-    e.node_raw_label("n0", "hdr\\l0x1000: nop\\l", "box", &[]);
+    e.node_left_lines("n0", "hdr\n", ["0x1000: nop", "C:\\lib"], "box", &[]);
     let out = e.finish();
     assert!(
-        out.contains("label=\"hdr\\l0x1000: nop\\l\""),
-        "line break lost: {out}"
+        out.contains("label=\"hdr\\n\\l0x1000: nop\\lC:\\\\lib\\l\""),
+        "unexpected DOT: {out}"
     );
 }
