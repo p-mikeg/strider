@@ -367,7 +367,6 @@ pub trait IRViewer {
             return Ok(ty);
         }
         // `byte_size()` is at most 64.
-        #[allow(clippy::cast_possible_truncation)]
         ValueType::float_from_bytes(ty.byte_size() as u32)
             .map_err(|e| anyhow!("infer_float_type of {ty}: {e}"))
     }
