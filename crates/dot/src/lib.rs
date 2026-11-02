@@ -141,7 +141,7 @@ impl DotStyle {
 /// out of the binary under analysis, so `\l` inside one is two characters of a
 /// name, not DOT's left-justify break: passed through, Graphviz breaks the line
 /// there and the name is silently cut. A caller that means the break emits it
-/// through [`DotEmitter::node_raw_label`]. A literal newline becomes `\n`.
+/// through [`DotEmitter::node_left_lines`]. A literal newline becomes `\n`.
 ///
 /// Every other control character becomes the printable text `\xNN`: a NUL ends
 /// the quoted string mid-label for Graphviz's lexer, and the rest survive into
@@ -150,38 +150,11 @@ impl DotStyle {
 /// tab the one control character passed through, being meaningful whitespace in
 /// disassembly.
 fn escape_dot_label(s: &str) -> String {
-    escape_label_inner(s, false)
-}
-
-/// [`escape_dot_label`] with DOT's own `\n` / `\l` / `\r` line-break escapes
-/// passed through un-doubled. Only for a caller that hand-emits them around
-/// content it has already escaped itself.
-fn escape_dot_label_keep_breaks(s: &str) -> String {
-    escape_label_inner(s, true)
-}
-
-/// The Unicode bidirectional formatting characters: the overrides and
-/// embeddings (U+202A-U+202E), the isolates (U+2066-U+2069), and the marks
-/// (U+200E / U+200F / U+061C).
-fn is_bidi_format(c: char) -> bool {
-    matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
-                | '\u{200e}' | '\u{200f}' | '\u{061c}')
-}
-
-fn escape_label_inner(s: &str, keep_breaks: bool) -> String {
     let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
+    for ch in s.chars() {
         match ch {
             '"' => out.push_str("\\\""),
-            '\\' => match chars.peek() {
-                Some(&c @ ('n' | 'l' | 'r')) if keep_breaks => {
-                    chars.next();
-                    out.push('\\');
-                    out.push(c);
-                }
-                _ => out.push_str("\\\\"),
-            },
+            '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
             '\t' => out.push('\t'),
             // Doubled, so Graphviz renders the four characters rather than
@@ -200,6 +173,14 @@ fn escape_label_inner(s: &str, keep_breaks: bool) -> String {
         }
     }
     out
+}
+
+/// The Unicode bidirectional formatting characters: the overrides and
+/// embeddings (U+202A-U+202E), the isolates (U+2066-U+2069), and the marks
+/// (U+200E / U+200F / U+061C).
+fn is_bidi_format(c: char) -> bool {
+    matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'
+                | '\u{200e}' | '\u{200f}' | '\u{061c}')
 }
 
 /// Wraps `s` in a JSON string literal.
@@ -275,11 +256,23 @@ impl DotEmitter {
         self.out.push_str("];\n");
     }
 
-    /// [`Self::node`] with DOT's `\n` / `\l` / `\r` line-break escapes in
-    /// `label` left intact. The caller owns having escaped whatever it wrapped
-    /// them around.
-    pub fn node_raw_label(&mut self, id: &str, label: &str, shape: &str, extra: &[(&str, &str)]) {
-        self.node_inner(id, &escape_dot_label_keep_breaks(label), shape, extra);
+    /// [`Self::node`] labelled `head`, then each of `lines` after a DOT `\l`
+    /// (left-justified) break, then a closing `\l`; each piece is escaped.
+    pub fn node_left_lines<S: AsRef<str>>(
+        &mut self,
+        id: &str,
+        head: &str,
+        lines: impl IntoIterator<Item = S>,
+        shape: &str,
+        extra: &[(&str, &str)],
+    ) {
+        let mut label = escape_dot_label(head);
+        for line in lines {
+            label.push_str("\\l");
+            label.push_str(&escape_dot_label(line.as_ref()));
+        }
+        label.push_str("\\l");
+        self.node_inner(id, &label, shape, extra);
     }
 
     /// Endpoints and `extra` values are escaped and quoted, as in
@@ -425,7 +418,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
 
 #[cfg(test)]
 mod label_tests {
-    use super::{escape_dot_label, escape_dot_label_keep_breaks, json_quote};
+    use super::{escape_dot_label, json_quote};
 
     /// Every backslash doubles, a DOT line-break bigram included: in a label
     /// it is content, not markup.
@@ -445,20 +438,6 @@ mod label_tests {
             ("C:\\lib\\name", "C:\\\\lib\\\\name"),
         ] {
             assert_eq!(escape_dot_label(input), want, "input {input:?}");
-        }
-    }
-
-    /// The break-preserving path a hand-emitting caller uses.
-    #[test]
-    fn escape_dot_label_keep_breaks_passes_the_break_escapes_through() {
-        for (input, want) in [
-            ("a\\nb", "a\\nb"),
-            ("a\\lb", "a\\lb"),
-            ("a\\rb", "a\\rb"),
-            ("a\\b", "a\\\\b"),
-            ("a\"b", "a\\\"b"),
-        ] {
-            assert_eq!(escape_dot_label_keep_breaks(input), want, "input {input:?}");
         }
     }
 
@@ -489,20 +468,6 @@ mod label_tests {
         ] {
             assert_eq!(escape_dot_label(input), want, "input {input:?}");
         }
-    }
-
-    #[test]
-    fn escape_dot_label_combined_inputs_round_trip() {
-        // A real CFG label: both a DOT escape (\l) and a literal newline.
-        let input = "Instruction(addr=0x401000)\n\\l0x401000: ADD";
-        assert_eq!(
-            escape_dot_label(input),
-            "Instruction(addr=0x401000)\\n\\\\l0x401000: ADD"
-        );
-        assert_eq!(
-            escape_dot_label_keep_breaks(input),
-            "Instruction(addr=0x401000)\\n\\l0x401000: ADD"
-        );
     }
 
     /// `<` is escaped unconditionally, not just `</`: matching only the pair
