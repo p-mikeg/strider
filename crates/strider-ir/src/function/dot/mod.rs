@@ -13,67 +13,40 @@ mod render;
 #[cfg(test)]
 mod tests;
 
-pub(super) fn node_shape(kind: &NodeKind) -> &'static str {
+/// Graphviz shape and dark-theme fill color.
+pub(super) fn node_style(kind: &NodeKind) -> (&'static str, &'static str) {
     match kind {
-        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => "Mdiamond",
-
-        NodeKind::Region => "invhouse",
-        NodeKind::Phi | NodeKind::MemPhi => "house",
-
-        NodeKind::If => "diamond",
-
-        NodeKind::Load(_) | NodeKind::Store(_) => "box3d",
-
-        NodeKind::Call { .. } => "rarrow",
-        NodeKind::CallOther { .. } => "doubleoctagon",
-        NodeKind::CPoolRef => "folder",
-        NodeKind::New => "component",
-
-        NodeKind::Return | NodeKind::IndirectBranch => "doublecircle",
-        // Every other control kind is distinctive, so these two were the only
-        // ones falling to the catch-all and drawing as a plain value box.
-        NodeKind::Switch(_) => "trapezium",
-        NodeKind::Unreachable => "Msquare",
-
-        NodeKind::IntConst(_) | NodeKind::FloatConst(_) => "ellipse",
-
-        _ => "box",
-    }
-}
-
-/// Dark-theme fill color.
-pub(super) fn node_fillcolor(kind: &NodeKind) -> &'static str {
-    match kind {
-        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => "#1a3a5c",
-
-        NodeKind::Region => "#2a1a4a",
-
-        NodeKind::Phi | NodeKind::MemPhi => "#163030",
-
-        NodeKind::If => "#3a2a10",
-
-        NodeKind::Load(_) | NodeKind::Store(_) => "#102030",
-
-        NodeKind::Call { .. } => "#3a1010",
-        NodeKind::CallOther { .. } => "#3a2810", // amber: opaque intrinsic
-        NodeKind::CPoolRef => "#2a1a3a",         // violet: JVM metadata
-        NodeKind::New => "#103a2a",              // dark green: allocation
-
-        NodeKind::Return | NodeKind::IndirectBranch | NodeKind::Switch(_) => "#103a10",
-        NodeKind::Unreachable => "#3a1030", // magenta: a sink control cannot leave
-
-        NodeKind::FloatConst(_)
-        | NodeKind::FloatBinaryOp(_)
-        | NodeKind::FloatUnaryOp(_)
-        | NodeKind::FloatCmpOp(_) => "#1a3020", // dark green
-
+        NodeKind::Entry | NodeKind::InitialMemory | NodeKind::InitialVar(_) => {
+            ("Mdiamond", "#1a3a5c")
+        }
+        NodeKind::Region => ("invhouse", "#2a1a4a"),
+        NodeKind::Phi | NodeKind::MemPhi => ("house", "#163030"),
+        NodeKind::If => ("diamond", "#3a2a10"),
+        NodeKind::Load(_) | NodeKind::Store(_) => ("box3d", "#102030"),
+        NodeKind::Call { .. } => ("rarrow", "#3a1010"),
+        NodeKind::CallOther { .. } => ("doubleoctagon", "#3a2810"), // amber: opaque intrinsic
+        NodeKind::CPoolRef => ("folder", "#2a1a3a"),                // violet: JVM metadata
+        NodeKind::New => ("component", "#103a2a"),                  // dark green: allocation
+        NodeKind::Return | NodeKind::IndirectBranch => ("doublecircle", "#103a10"),
+        NodeKind::Switch(_) => ("trapezium", "#103a10"),
+        NodeKind::Unreachable => ("Msquare", "#3a1030"), // magenta: a sink control cannot leave
+        NodeKind::IntConst(_) => ("ellipse", "#2d2d2d"),
+        NodeKind::FloatConst(_) => ("ellipse", "#1a3020"),
+        NodeKind::IntUnaryOp(_)
+        | NodeKind::IntBinaryOp(_)
+        | NodeKind::IntCmpOp(_)
+        | NodeKind::Truncate
+        | NodeKind::Popcount
+        | NodeKind::Lzcount
+        | NodeKind::Extend(_) => ("box", "#2d2d2d"),
+        NodeKind::FloatBinaryOp(_) | NodeKind::FloatUnaryOp(_) | NodeKind::FloatCmpOp(_) => {
+            ("box", "#1a3020") // dark green
+        }
         NodeKind::IntToFloat
         | NodeKind::FloatToInt
         | NodeKind::FloatToFloat
         | NodeKind::IntBitsToFloat
-        | NodeKind::FloatBitsToInt => "#302018", // dark amber
-
-        _ => "#2d2d2d",
+        | NodeKind::FloatBitsToInt => ("box", "#302018"), // dark amber
     }
 }
 

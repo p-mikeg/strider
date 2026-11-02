@@ -71,7 +71,36 @@ impl<'a> RawFunctionDumper<'a> {
             NodeKind::IntConst(id) => format!("IntConst(#{})", id.as_u32()),
             NodeKind::Switch(_) => "Switch".to_string(),
             NodeKind::Call { .. } => "Call".to_string(),
-            other => format!("{other:?}"),
+            NodeKind::Entry
+            | NodeKind::InitialMemory
+            | NodeKind::Region
+            | NodeKind::MemPhi
+            | NodeKind::Phi
+            | NodeKind::If
+            | NodeKind::Return
+            | NodeKind::IndirectBranch
+            | NodeKind::Unreachable
+            | NodeKind::Load(_)
+            | NodeKind::Store(_)
+            | NodeKind::IntUnaryOp(_)
+            | NodeKind::IntBinaryOp(_)
+            | NodeKind::IntCmpOp(_)
+            | NodeKind::Truncate
+            | NodeKind::Popcount
+            | NodeKind::Lzcount
+            | NodeKind::Extend(_)
+            | NodeKind::FloatConst(_)
+            | NodeKind::FloatBinaryOp(_)
+            | NodeKind::FloatUnaryOp(_)
+            | NodeKind::FloatCmpOp(_)
+            | NodeKind::IntToFloat
+            | NodeKind::FloatToInt
+            | NodeKind::FloatToFloat
+            | NodeKind::IntBitsToFloat
+            | NodeKind::FloatBitsToInt
+            | NodeKind::CallOther { .. }
+            | NodeKind::CPoolRef
+            | NodeKind::New => format!("{kind:?}"),
         };
         let mut s = format!("n{}  {kind_str}", node.as_u32());
 
