@@ -422,8 +422,8 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// `reachable` MUST be backward-input-closed, i.e. every input's producing
     /// node is present, and duplicate-free. Both violations panic; unchecked, a
     /// repeated id would build two input batches for one surviving node, the
-    /// second replacing the first in its input list, and the blanket relink
-    /// would splice the orphaned first batch into its values' use-lists too, so
+    /// second replacing the first in its input list, and the relink would
+    /// splice the orphaned first batch into its values' use-lists too, so
     /// `value_uses` reported consumers no node owns.
     ///
     /// Invalidates every pre-compaction `NodeId` / `ValueId` / `UseId`, and
@@ -452,12 +452,13 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
             out_slots += self.store.nodes[id].outputs.len(&self.store.output_pool);
             in_slots += self.store.nodes[id].inputs.len(&self.store.input_pool);
         }
-        let mut new_nodes: PrimaryMap<NodeId, Node<N>> = PrimaryMap::with_capacity(reachable.len());
-        let mut new_outputs: PrimaryMap<ValueId, ValueData<V>> =
-            PrimaryMap::with_capacity(out_slots);
-        let mut new_inputs: PrimaryMap<UseId, UseData> = PrimaryMap::with_capacity(in_slots);
-        let mut new_output_pool = ListPool::<ValueId>::new();
-        let mut new_input_pool = ListPool::<UseId>::new();
+        let mut new = RawStore {
+            nodes: PrimaryMap::with_capacity(reachable.len()),
+            outputs: PrimaryMap::with_capacity(out_slots),
+            inputs: PrimaryMap::with_capacity(in_slots),
+            output_pool: ListPool::new(),
+            input_pool: ListPool::new(),
+        };
 
         let mut remap =
             NodeIdRemap::with_capacity(self.store.nodes.len(), self.store.outputs.len());
@@ -474,7 +475,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
                  use-lists"
             );
             let new_kind = self.store.nodes[old_node_id].kind.clone();
-            let new_node_id = new_nodes.push(Node::new(new_kind));
+            let new_node_id = new.nodes.push(Node::new(new_kind));
             remap.nodes[old_node_id] = Some(new_node_id);
 
             let old_value_ids: SmallVec<[ValueId; 4]> = self.store.nodes[old_node_id]
@@ -488,12 +489,13 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
                 let kind = old_out.kind.clone();
                 let output_index = old_out.output_index;
                 let new_value_id =
-                    new_outputs.push(ValueData::new(kind, new_node_id, output_index));
+                    new.outputs
+                        .push(ValueData::new(kind, new_node_id, output_index));
                 remap.outputs[old_value_id] = Some(new_value_id);
                 new_value_ids.push(new_value_id);
             }
-            new_nodes[new_node_id].outputs =
-                ValueIdList::from_iter(new_value_ids, &mut new_output_pool);
+            new.nodes[new_node_id].outputs =
+                ValueIdList::from_iter(new_value_ids, &mut new.output_pool);
         }
 
         // Copy inputs, rewriting each value_id through the remap.
@@ -513,23 +515,15 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
                 );
                 let input_index = old_input.input_index;
                 let new_use_id =
-                    new_inputs.push(UseData::new(new_value_id, new_node_id, input_index));
+                    new.inputs
+                        .push(UseData::new(new_value_id, new_node_id, input_index));
+                new.link_use_to_value_list(new_use_id);
                 new_use_ids.push(new_use_id);
             }
-            new_nodes[new_node_id].inputs = UseIdList::from_iter(new_use_ids, &mut new_input_pool);
+            new.nodes[new_node_id].inputs = UseIdList::from_iter(new_use_ids, &mut new.input_pool);
         }
 
-        // Swap the arenas in before rebuilding use-lists.
-        self.store.nodes = new_nodes;
-        self.store.outputs = new_outputs;
-        self.store.inputs = new_inputs;
-        self.store.output_pool = new_output_pool;
-        self.store.input_pool = new_input_pool;
-
-        for i in 0..self.store.inputs.len() {
-            self.store.link_use_to_value_list(UseId::new(i));
-        }
-
+        self.store = new;
         remap
     }
 }
