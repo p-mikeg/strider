@@ -561,39 +561,6 @@ impl<'g> EditFunction<'g> {
         self.remove_node_inputs_batch(node, &indices);
     }
 
-    /// Redirect every use of `old` to `new`.  Does no fingerprint work and no
-    /// orphan enqueue; [`Self::replace_value`] adds both.  Returns `true` iff a
-    /// use moved.
-    fn replace_all_uses(&mut self, old: ValueId, new: ValueId) -> bool {
-        // The raw Graph redirect bypasses `update_input`'s per-edge hook, so
-        // snapshot the consumers BEFORE it to flag them for re-canon after.
-        let consumers: smallvec::SmallVec<[NodeId; 4]> = if old != new {
-            self.function
-                .graph()
-                .value_uses(old)
-                .map(|(consumer, _)| consumer)
-                .collect()
-        } else {
-            smallvec::SmallVec::new()
-        };
-        if old != new && self.value_uses(old).next().is_some() {
-            self.will_attach_value(new);
-        }
-        let changed = self.function.graph_mut().replace_all_uses(old, new);
-        if changed {
-            self.note_edge(old);
-        }
-        #[cfg(any(test, feature = "test-util"))]
-        {
-            self.uses_moved += consumers.len() as u64;
-        }
-        for consumer in consumers {
-            self.enqueue_for_recanon(consumer);
-        }
-        self.generation += u64::from(changed);
-        changed
-    }
-
     pub fn register_arg_value(&mut self, index: u32, value: ValueId) {
         self.function
             .side_tables_mut()
@@ -628,9 +595,32 @@ impl<'g> EditFunction<'g> {
     pub fn replace_value(&mut self, old: ValueId, new: ValueId) -> bool {
         let from = self.function.producer(old);
         self.absorb_fingerprint(new, old);
-        let changed = self.replace_all_uses(old, new);
-        // `replace_all_uses` bypasses `update_input`'s per-edge hook, so the
-        // orphaned producer is enqueued here (side-effect-guarded inside).
+        // The raw Graph redirect bypasses `update_input`'s per-edge hooks, so
+        // snapshot the consumers BEFORE it to flag them for re-canon after, and
+        // enqueue the orphaned producer here (side-effect-guarded inside).
+        let consumers: smallvec::SmallVec<[NodeId; 4]> = if old != new {
+            self.function
+                .graph()
+                .value_uses(old)
+                .map(|(consumer, _)| consumer)
+                .collect()
+        } else {
+            smallvec::SmallVec::new()
+        };
+        let changed = !consumers.is_empty();
+        if changed {
+            self.will_attach_value(new);
+            self.function.graph_mut().replace_all_uses(old, new);
+            self.note_edge(old);
+            self.generation += 1;
+        }
+        #[cfg(any(test, feature = "test-util"))]
+        {
+            self.uses_moved += consumers.len() as u64;
+        }
+        for consumer in consumers {
+            self.enqueue_for_recanon(consumer);
+        }
         self.enqueue_killed_def_node(from);
         changed
     }
@@ -951,7 +941,7 @@ mod tests {
         assert_rebuilds(|ctx, join, _| ctx.remove_region_predecessors(join, &[0]));
     }
 
-    /// Mutation: drop `replace_all_uses`'s `note_edge`.
+    /// Mutation: drop `replace_value`'s `note_edge`.
     #[test]
     fn replacing_a_control_value_rebuilds_the_dominator_tree() {
         assert_rebuilds(|ctx, _, [a, b]| {
@@ -1845,6 +1835,31 @@ mod tests {
             "surviving Phi value inputs keep original order, contiguous, token first"
         );
     }
+    /// A self-replace moves no use, yet still queues the producer: an unused
+    /// value replaced by itself is culled at the next `clean`.
+    #[test]
+    fn replace_value_onto_itself_moves_nothing_but_queues_the_producer() {
+        let mut b = single_region_builder();
+        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        b.build_return(Some(one), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+
+        let mut ctx = EditFunction::new(&mut function);
+        let unused = ctx.build_int_const(9u64, ValueType::int(64)).unwrap();
+        let unused_node = ctx.producer(unused);
+        assert!(!ctx.replace_value(one, one), "a used value onto itself");
+        assert!(
+            !ctx.replace_value(unused, unused),
+            "an unused value onto itself"
+        );
+        assert_eq!(ctx.generation(), 0);
+        assert_eq!(ctx.uses_moved(), 0);
+        ctx.clean();
+        assert!(ctx.is_live(ctx.producer(one)));
+        assert!(!ctx.is_live(unused_node), "the unused producer is culled");
+    }
+
     /// A node killed while still queued, then resurrected, is popped once at
     /// its old position: the queue holds each node at most once.
     #[test]
