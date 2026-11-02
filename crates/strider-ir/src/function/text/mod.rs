@@ -277,7 +277,7 @@ type Names = SecondaryMap<ValueId, Option<u32>>;
 type VnName<'a> = &'a dyn Fn(&rsleigh::Vn) -> String;
 
 fn push_name(out: &mut String, names: &Names, value: ValueId) {
-    let _ = match names.get(value).copied().flatten() {
+    let _ = match names[value] {
         Some(n) => write!(out, "%v{n}"),
         None => write!(out, "%?"),
     };
@@ -388,7 +388,7 @@ fn render_args<'a>(
     for index in indices {
         let mut carriers: Vec<u32> = carriers_of(index)
             .iter()
-            .filter_map(|&value| names.get(value).copied().flatten())
+            .filter_map(|&value| names[value])
             .collect();
         carriers.sort_unstable();
         carriers.dedup();
