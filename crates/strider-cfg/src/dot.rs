@@ -40,7 +40,6 @@ impl CfgDotDumper<'_> {
 
 impl GraphDotDumper for CfgDotDumper<'_> {
     type Node = NodeIndex;
-    type Error = anyhow::Error;
     type State = ();
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {

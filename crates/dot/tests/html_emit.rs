@@ -6,7 +6,6 @@ struct TestDumper {
 
 impl GraphDotDumper for TestDumper {
     type Node = usize;
-    type Error = anyhow::Error;
     type State = ();
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
@@ -47,7 +46,6 @@ struct FailingDumper;
 
 impl GraphDotDumper for FailingDumper {
     type Node = usize;
-    type Error = anyhow::Error;
     type State = ();
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
