@@ -51,12 +51,13 @@ impl OneOf {
         Self(Expr::alt(alts.into_iter().map(|a| a.0).collect(), false))
     }
 
-    /// An ordered choice: at each value it is offered, keep only the matches
-    /// through the first-listed arm that yields one, whatever order the rest of
-    /// the pattern is tried in, and report every binding THAT arm produces. A
-    /// match offered one value at several slots wins there if it took the first
-    /// arm any match took at every slot; when none did, the slots settle in the
-    /// order they are read, each through the first arm that yields a match.
+    /// An ordered choice: at each value it is offered at each read, keep only
+    /// the matches through the first-listed arm that yields one, whatever order
+    /// the rest of the pattern is tried in, and report every binding THAT arm
+    /// produces. A match reaching one `first_of` more than once (`float_is_nan`
+    /// and `float_le` read their operands twice) settles each read on its own,
+    /// in the order the pattern reads them: of the matches still kept that make
+    /// that read, only those through the first arm any of them took there stay.
     /// Several in one match settle in the order they are written, a `one_of`'s
     /// arms as listed, an inner one before the one holding it, each among the
     /// matches the earlier ones kept. An arm a guard above rejects falls
@@ -70,7 +71,7 @@ impl OneOf {
     /// match (`match_at`, or a pattern capturing nothing) and finds one through
     /// the first arm of every `first_of`, walking through no cast, where it
     /// stops. The first to settle skips the arms past one that matched, unless
-    /// one match can pass through it twice; any other runs every arm, as
+    /// more than one edge path leads to it; any other runs every arm, as
     /// [`OneOf::new`] does.
     pub fn first(alts: Vec<BoxedAlt>) -> Self {
         Self(Expr::alt(alts.into_iter().map(|a| a.0).collect(), true))

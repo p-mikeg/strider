@@ -1352,19 +1352,19 @@ pub fn one_of(patterns: Vec<Py<PyAny>>) -> PyPat {
 /// Alternation with a first-match cut (ordered OR): match the first listed
 /// sub-pattern that matches, ignoring the rest. Unlike `one_of` (a union),
 /// overlapping arms do not each fire: at each value it is offered (each output
-/// of a node is its own), the first listed arm that yields any match wins,
-/// whatever order the rest of the pattern is tried in, so a leading
+/// of a node is its own) at each read, the first listed arm that yields any
+/// match wins, whatever order the rest of the pattern is tried in, so a leading
 /// `anything()` arm shadows everything after it. A match reaching one
-/// `first_of` twice at one value (`float_is_nan` and `float_le` read their
-/// operands twice) wins there if it took the first arm any match took at both
-/// reads; when none did, the reads settle in order, each through the first arm
-/// that yields a match. Several `first_of`s in one match settle in pattern
-/// order: operands left to right, a `one_of`'s arms as listed, a builder's own
-/// slots in its fixed order, then its `any_input`s, then its `input`s, a
-/// repeated setter (`arg`, `input`, ...) in call order and the rest whatever
-/// order they were called in, an inner one before the one holding it, each
-/// among the matches the earlier ones kept. Same generality as `one_of`: any
-/// arm, any slot. Match-only. No alternatives matches nothing.
+/// `first_of` more than once (`float_is_nan` and `float_le` read their operands
+/// twice) settles each read on its own, in the order the pattern reads them: of
+/// the matches still kept that make that read, only those through the first arm
+/// any of them took there stay. Several `first_of`s in one match settle in
+/// pattern order: operands left to right, a `one_of`'s arms as listed, a
+/// builder's own slots in its fixed order, then its `any_input`s, then its
+/// `input`s, whatever order the setters were called in, a repeated setter
+/// (`arg`, `input`, ...) keeping its call order, an inner one before the one
+/// holding it, each among the matches the earlier ones kept. Same generality as
+/// `one_of`: any arm, any slot. Match-only. No alternatives matches nothing.
 ///
 /// A query holding one runs every configuration of the pattern before it
 /// answers, unless it captures nothing and finds a match through the first

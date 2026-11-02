@@ -267,7 +267,7 @@ impl PyNode {
         })
     }
 
-    /// A repr must not raise; a stale handle renders as such.
+    /// `Node(#<id> <kind>)`, or `Node(#<id> stale)`.
     fn __repr__(&self, py: Python<'_>) -> String {
         match self.kind(py) {
             Ok(kind) => format!("Node(#{} {})", self.id, kind),

@@ -15,36 +15,42 @@ pub(crate) type PatGraph = Graph<PatNode, PatValue, NeverCacheable>;
 /// thread gets by default.
 pub const MAX_PATTERN_NODES: usize = 256;
 
-/// [`unfolded`] at weight one, saturating, and never below the raw node
-/// count, so a multi-sink graph still reports its size.
-///
-/// Taken over every node rather than from the root, which is not derived yet
-/// and may not exist.
-fn unfolded_nodes(graph: &PatGraph) -> usize {
-    unfolded(graph, |_| 1).max(graph.all_node_ids().count())
-}
-
-/// The most `own` weight one match configuration passes through, every vertex
-/// counted once per consumer slot that reaches it. An alternation's inputs are
-/// alternatives rather than operands, one run per configuration, so it counts
-/// its heaviest arm, not their sum.
-fn unfolded(graph: &PatGraph, own: impl Fn(NodeId) -> usize) -> usize {
+/// Per pat node, the most nodes one match configuration passes through, every
+/// vertex counted once per consumer slot that reaches it, and the reads it
+/// unfolds to (see [`super::walk::Read`]), the first saturating and the second
+/// `None` at 2^64 or more. An alternation's inputs are alternatives rather than
+/// operands, one run per configuration, so the first counts its heaviest arm
+/// and the second every arm.
+fn unfolded(graph: &PatGraph) -> Vec<(usize, Option<u64>)> {
     // Every producer is built before its consumers, so id order is a
     // topological one.
-    let mut size: Vec<usize> = Vec::with_capacity(graph.all_node_ids().count());
+    let mut size: Vec<(usize, Option<u64>)> = Vec::with_capacity(graph.all_node_ids().count());
     for node in graph.all_node_ids() {
         let inputs = graph
             .node_inputs(node)
             .into_iter()
             .map(|value| size[graph.producer(value).as_u32() as usize]);
+        let reads = inputs.clone().try_fold(1, |n: u64, s| n.checked_add(s.1?));
         let below = if graph.node_kind(node).is_alternation() {
-            inputs.max().unwrap_or(0)
+            inputs.map(|s| s.0).max().unwrap_or(0)
         } else {
-            inputs.fold(0, usize::saturating_add)
+            inputs.fold(0, |n, s| s.0.saturating_add(n))
         };
-        size.push(own(node).saturating_add(below));
+        size.push((below.saturating_add(1), reads));
     }
-    size.iter().copied().max().unwrap_or(0)
+    size
+}
+
+/// The most nodes a query recurses through, never below the raw node count,
+/// so a multi-sink graph still reports its size. Taken over every node rather
+/// than from the root, which is not derived yet and may not exist.
+fn unfolded_nodes(size: &[(usize, Option<u64>)]) -> usize {
+    size.iter().map(|s| s.0).max().unwrap_or(0).max(size.len())
+}
+
+/// The pat nodes consuming `node`'s outputs, once per consuming edge.
+fn consumers(graph: &PatGraph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    (graph.node_outputs(node).iter()).flat_map(|&v| graph.value_uses(v).map(|(c, _)| c))
 }
 
 pub struct Pattern {
@@ -56,7 +62,7 @@ pub struct Pattern {
     inputs: Vec<super::walk::NodeInputs>,
     pub(crate) holds_first_of: bool,
     /// The `first_of` that skips the arms past one that matched: the first
-    /// built, when one configuration passes through it at most once.
+    /// built, when one edge path leads to it from the root.
     pub(crate) pruned_first_of: Option<NodeId>,
 }
 
@@ -64,11 +70,10 @@ impl Pattern {
     /// Whether the root vertex's kind spec can admit `kind`.
     ///
     /// A pre-filter for a caller trying MANY patterns at one node, as the fold
-    /// rule table does: `Matcher::new` plus `match_at` allocate per attempt
-    /// and the root check happens inside, so a rule whose root cannot match
-    /// still paid for the attempt. `discriminant` alone does not separate
-    /// them -- every `IntBinaryOp` shares one -- so this compares the spec,
-    /// payload included.
+    /// rule table does: `Matcher::new` plus `match_at` allocate per attempt and
+    /// the root check happens inside, so a rule whose root cannot match still
+    /// paid for the attempt. `discriminant` alone does not separate them (every
+    /// `IntBinaryOp` shares one), so this compares the spec, payload included.
     ///
     /// `true` for a refused pattern and for an alternation root, so the
     /// reject or the arm walk still reaches `match_at`.
@@ -86,7 +91,8 @@ impl Pattern {
     /// preferred over the structural verdict: it names the spelling, while the
     /// verdict describes whatever the refused lowering left built.
     pub(crate) fn from_graph(graph: PatGraph, refusal: Option<String>) -> Self {
-        let count = unfolded_nodes(&graph);
+        let size = unfolded(&graph);
+        let count = unfolded_nodes(&size);
         let root = if let Some(why) = refusal {
             Err(why)
         } else if count > MAX_PATTERN_NODES {
@@ -103,11 +109,26 @@ impl Pattern {
         } else {
             crate::graph_ext::derive_root(&graph).map_err(|e| e.to_string())
         };
-        let inputs = super::walk::collect_node_inputs(&graph, root.is_ok());
+        let inputs = super::walk::collect_node_inputs(&graph, &size, root.is_ok());
+        // A pattern's reads are counted in a `u64`.
+        let root = root.and_then(|r| {
+            if size.iter().any(|s| s.1.is_none()) {
+                return Err(
+                    "pattern unfolds to 2^64 or more reads through its alternations; \
+                     split it or match the parts separately"
+                        .to_string(),
+                );
+            }
+            Ok(r)
+        });
         let first_of = graph
             .all_node_ids()
             .find(|&n| graph.node_kind(n).role == super::Role::FirstOf);
-        let pruned_first_of = first_of.filter(|&p| unfolded(&graph, |n| usize::from(n == p)) == 1);
+        let one_route = |p| {
+            std::iter::successors(Some(p), |&n| consumers(&graph, n).next())
+                .all(|n| consumers(&graph, n).nth(1).is_none())
+        };
+        let pruned_first_of = first_of.filter(|&p| one_route(p));
         Self {
             holds_first_of: first_of.is_some(),
             pruned_first_of,
@@ -121,7 +142,7 @@ impl Pattern {
     /// Nodes a query recurses through.
     #[cfg(test)]
     pub(crate) fn total_nodes(&self) -> usize {
-        unfolded_nodes(&self.graph)
+        unfolded_nodes(&unfolded(&self.graph))
     }
 
     /// The structure is frozen at seal, so a match attempt reads this instead
@@ -303,6 +324,22 @@ mod tests {
                 .mem(call().ctrl(region().any_input(anything())))
                 .into_pattern()
         ));
+    }
+
+    /// Each `one_of` reads its one vertex through both arms, so 63 of them
+    /// unfold to 2^64 - 1 reads, the most a `u64` counts; 64 overflow it.
+    #[test]
+    fn a_pattern_overflowing_the_read_count_is_refused() {
+        let chain = |n| {
+            let mut b = MatcherBuilder::new();
+            let mut v = b.leaf(KindSpec::Any);
+            for _ in 0..n {
+                v = b.one_of(&[v, v]);
+            }
+            b.finish().root().map_err(|e| e.to_string())
+        };
+        assert!(chain(63).is_ok());
+        assert!(chain(64).unwrap_err().contains("2^64 or more reads"));
     }
 
     #[test]
