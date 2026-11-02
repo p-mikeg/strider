@@ -664,11 +664,10 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         let mut reaching: rustc_hash::FxHashSet<NodeIndex> = stack.iter().copied().collect();
         let mut discovered = reaching.clone();
         while let Some(region) = stack.pop() {
-            let preds: Vec<NodeIndex> = self
+            for pred in self
                 .region_graph
                 .neighbors_directed(region, petgraph::Incoming)
-                .collect();
-            for pred in preds {
+            {
                 if !discovered.insert(pred) {
                     continue;
                 }
