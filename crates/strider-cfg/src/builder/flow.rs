@@ -23,7 +23,7 @@
 //! Sleigh never straight-line-flowed to (a strider-resolved indirect target, a
 //! backward edge) still decodes in it. An interworking resolved branch bakes
 //! its own ISA-mode bit into the captured context it hands the target (see
-//! [`FlowVars::with_mode_bit`]).
+//! [`FlowVars::set_var`]).
 
 /// The context vars the sla marks as flowing. Constant per sla, so the
 /// [`DecodeEngine`](crate::DecodeEngine) reads it once.
@@ -139,26 +139,16 @@ impl FlowVars {
         Ok(())
     }
 
-    /// `base` with the flow var named `var` set to `value`, used to carry a
-    /// live committed value onto an edge Sleigh never flowed along. Returns a
-    /// clone of `base` unchanged when `var` is not a flow var of this sla, or
-    /// `base` is not one of our contexts.
-    #[must_use]
-    pub fn with_var(&self, base: &FlowContext, var: &str, value: u32) -> FlowContext {
-        let mut ctx = base.clone();
+    /// Sets the flow var named `var` in `ctx` to `value`, which carries a live
+    /// committed value onto an edge Sleigh never flowed along. A no-op when
+    /// `var` is not a flow var of this sla, or `ctx` is not one of our
+    /// contexts.
+    pub fn set_var(&self, ctx: &mut FlowContext, var: &str, value: u32) {
         if let Some(i) = self.vars.iter().position(|name| name == var)
             && let Some(slot) = ctx.0.get_mut(i)
         {
             *slot = value;
         }
-        ctx
-    }
-
-    /// [`Self::with_var`] for a one-bit var, which bakes a resolved
-    /// interworking target's ISA mode into the context it decodes in.
-    #[must_use]
-    pub fn with_mode_bit(&self, base: &FlowContext, var: &str, bit: bool) -> FlowContext {
-        self.with_var(base, var, u32::from(bit))
     }
 
     /// The vars where `have` disagrees with `want`, as `(name, want value)`.
@@ -234,24 +224,28 @@ mod tests {
     }
 
     #[test]
-    fn with_mode_bit_sets_only_the_named_var() {
+    fn set_var_sets_only_the_named_var() {
         let vars = arm_like();
         let base = FlowContext(vec![0, 5]);
         // TMode -> 1, itmode untouched; an unknown var leaves it unchanged.
-        assert_eq!(
-            vars.with_mode_bit(&base, "TMode", true),
-            FlowContext(vec![1, 5])
-        );
-        assert_eq!(vars.with_mode_bit(&base, "nope", true), base);
+        let mut ctx = base.clone();
+        vars.set_var(&mut ctx, "TMode", 1);
+        assert_eq!(ctx, FlowContext(vec![1, 5]));
+        let mut ctx = base.clone();
+        vars.set_var(&mut ctx, "nope", 1);
+        assert_eq!(ctx, base);
     }
 
-    /// The general setter is not a bit-setter: a flowing committed var wider
-    /// than one bit carries its whole value.
+    /// The setter is not a bit-setter: a flowing committed var wider than one
+    /// bit carries its whole value, and two writes in sequence both land.
     #[test]
-    fn with_var_sets_the_whole_value() {
+    fn set_var_sets_the_whole_value() {
         let vars = arm_like();
-        let base = FlowContext(vec![0, 5]);
-        assert_eq!(vars.with_var(&base, "itmode", 9), FlowContext(vec![0, 9]));
+        let mut ctx = FlowContext(vec![0, 5]);
+        vars.set_var(&mut ctx, "itmode", 9);
+        assert_eq!(ctx, FlowContext(vec![0, 9]));
+        vars.set_var(&mut ctx, "TMode", 1);
+        assert_eq!(ctx, FlowContext(vec![1, 9]));
     }
 
     /// A context built for another `FlowVars` (an empty one, say) must not
@@ -261,7 +255,9 @@ mod tests {
         let vars = arm_like();
         let foreign = FlowContext::default();
         assert_eq!(vars.value_of(&foreign, "TMode"), None);
-        assert_eq!(vars.with_mode_bit(&foreign, "TMode", true), foreign);
+        let mut ctx = foreign.clone();
+        vars.set_var(&mut ctx, "TMode", 1);
+        assert_eq!(ctx, foreign);
     }
 
     /// Counts every memory read the Sleigh issues, so a test can tell a parse
@@ -372,7 +368,8 @@ mod tests {
         let function_mode = flow.snapshot(&sleigh, 0x1000);
 
         // A resolved interworking target switching to ARM (bit 0 clear).
-        let carried = flow.with_mode_bit(&function_mode, "TMode", false);
+        let mut carried = function_mode.clone();
+        flow.set_var(&mut carried, "TMode", 0);
 
         // The target's live context is ARM-default (not yet Thumb-painted): all
         // four bit-(0,0) aliases read 0 there, so pinning the carried context
