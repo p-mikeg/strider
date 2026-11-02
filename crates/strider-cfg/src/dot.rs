@@ -1,5 +1,3 @@
-use std::fmt::Write;
-
 use dot::GraphDotDumper;
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
@@ -68,17 +66,12 @@ impl GraphDotDumper for CfgDotDumper<'_> {
         let first_insn_index = node.start_addr.insn_index;
         let start_addr = node.start_addr.machine_addr.addr;
 
-        let mut label = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
-
-        for insn in &node.insns {
-            let insn_addr = insn.addr.machine_addr.addr;
+        let head = format!("Instruction(addr={start_addr:#x}, idx={first_insn_index})\n");
+        let lines = node.insns.iter().map(|insn| {
             let pretty = crate::insn_text(&insn.insn, &self.cfg.space_ids, self.names);
-            write!(&mut label, "\\l{insn_addr:#x}: {pretty}").map_err(anyhow::Error::from)?;
-        }
-        write!(&mut label, "\\l").map_err(anyhow::Error::from)?;
-
-        // The label carries hand-emitted `\l` breaks per instruction.
-        out.node_raw_label(&dot_id, &label, "box", self.center_attrs(node_id));
+            format!("{:#x}: {pretty}", insn.addr.machine_addr.addr)
+        });
+        out.node_left_lines(&dot_id, &head, lines, "box", self.center_attrs(node_id));
 
         // Edges are unweighted, so label and style come from the SOURCE
         // region's terminator.  A `CondBranch` source defers to `region_if`
