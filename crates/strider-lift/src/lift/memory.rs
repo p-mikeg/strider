@@ -1,7 +1,7 @@
 use strider_ir::{IRBuilderExt, VnTypeExt};
 
 use crate::lift::FunctionLifter;
-use crate::lift::pcode_consts::{opaque_clobber_set, register_slot_of};
+use crate::lift::pcode_consts::opaque_clobber_set;
 use crate::lift::pcode_util::{Result, require_output_vn};
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
@@ -9,10 +9,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// `MemoryState::getValue` returns the offset unread for `IPTR_CONSTANT`.
     /// PowerPC exports its `rlwimi` / `rldimi` rotate masks that way.
     pub(super) fn handle_load(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let space = crate::lift::pcode_util::decode_space_id(insn)?;
+        let space = self.lifter.decode_space_id(insn)?;
         if space == rsleigh::VnSpace::REGISTER {
-            let declared = self.lifter.declared_reg_vns();
-            if let Some(source) = register_slot_of(insn, &self.pcode_consts, declared) {
+            if let Some(source) = self.lifter.register_slot_of(insn, &self.pcode_consts) {
                 let out_vn = *require_output_vn(insn)?;
                 let value = self.read_vn(&source)?;
                 return self.write_vn(&out_vn, value);
@@ -31,10 +30,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     }
 
     pub(super) fn handle_store(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        let space = crate::lift::pcode_util::decode_space_id(insn)?;
+        let space = self.lifter.decode_space_id(insn)?;
         if space == rsleigh::VnSpace::REGISTER {
-            let declared = self.lifter.declared_reg_vns();
-            if let Some(target) = register_slot_of(insn, &self.pcode_consts, declared) {
+            if let Some(target) = self.lifter.register_slot_of(insn, &self.pcode_consts) {
                 let data = self.read_input(insn, 2)?;
                 return self.write_vn(&target, data);
             }
