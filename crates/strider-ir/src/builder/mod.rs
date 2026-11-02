@@ -1,5 +1,4 @@
 use cranelift_entity::PrimaryMap;
-use cranelift_entity::packed_option::ReservedValue;
 
 use crate::error::Result;
 use crate::function::Function;
@@ -85,17 +84,21 @@ impl FunctionBuilder {
                 all_used_variables.push(*v);
             }
         }
-        let mut fb = FunctionBuilder {
-            function: Function::new(cc, byte_order, all_used_variables),
-            entry_memory: ValueId::reserved_value(),
+        let mut function = Function::new(cc, byte_order, all_used_variables);
+        let memory_node =
+            function
+                .graph_mut()
+                .create_node(NodeKind::InitialMemory, [], [ValueKind::Memory]);
+        let entry_memory = function.graph().node_outputs(memory_node)[0];
+        Ok(FunctionBuilder {
+            function,
+            entry_memory,
             regions: PrimaryMap::new(),
             cur_region: None,
             lift_addr: None,
             call_register_values: Vec::new(),
             internal_registers: Vec::new(),
-        };
-        fb.build_initial_memory()?;
-        Ok(fb)
+        })
     }
 
     /// Registers the sla declares for its own semantics, which a call's value
