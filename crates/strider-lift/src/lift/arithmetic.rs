@@ -8,7 +8,11 @@
 //! Logical negation of an `I1` is `Xor(_, IntConst(1))`; bitwise complement is
 //! `Xor(_, all_ones)` everywhere.
 
-use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType, VnTypeExt};
+use strider_ir::node::ValueId;
+use strider_ir::{
+    ExtendOp, FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp, IntCmpOp, IntUnaryOp,
+    ValueType, VnTypeExt,
+};
 
 use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
@@ -76,12 +80,7 @@ enum Coerce {
 }
 
 impl Coerce {
-    fn apply(
-        self,
-        b: &mut strider_ir::FunctionBuilder,
-        v: strider_ir::node::ValueId,
-        ty: ValueType,
-    ) -> Result<strider_ir::node::ValueId> {
+    fn apply(self, b: &mut FunctionBuilder, v: ValueId, ty: ValueType) -> Result<ValueId> {
         match self {
             Self::Convert => b.convert_to_int_if_needed(v, ty),
             Self::SignExtend => b.extend_if_needed(v, ty, ExtendOp::SignExtend),
@@ -167,23 +166,16 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// OR-ing `out_bits` in leaves every one of its bits set, so the result is
     /// `>= out_bits` whatever the truncation kept. That holds for the widths
     /// that are not powers of two (`I24`, `I48`, `I80`, ...) as well.
-    fn saturate_shift_count(
-        &mut self,
-        count: strider_ir::node::ValueId,
-        out_ty: ValueType,
-    ) -> Result<strider_ir::node::ValueId> {
-        let count_ty = strider_ir::IRViewer::value_type(self.builder.function(), count)?;
+    fn saturate_shift_count(&mut self, count: ValueId, out_ty: ValueType) -> Result<ValueId> {
+        let count_ty = self.builder.value_type(count)?;
         if count_ty.bit_width() <= out_ty.bit_width() {
             return Ok(count);
         }
         let out_bits = u128::try_from(out_ty.bit_width()).expect("bit width fits u128");
         let bound = self.builder.build_int_const(out_bits, count_ty)?;
-        let in_range = self.builder.build_int_cmp_operation(
-            count,
-            bound,
-            strider_ir::IntCmpOp::Less,
-            count_ty,
-        )?;
+        let in_range =
+            self.builder
+                .build_int_cmp_operation(count, bound, IntCmpOp::Less, count_ty)?;
         let one = self.builder.build_int_const(1u128, ValueType::I1)?;
         let too_big = self.builder.build_int_binary_operation(
             in_range,
@@ -194,9 +186,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let widened = self
             .builder
             .extend_if_needed(too_big, out_ty, ExtendOp::ZeroExtend)?;
-        let all_ones =
-            self.builder
-                .build_int_unary_operation(widened, strider_ir::IntUnaryOp::Neg, out_ty)?;
+        let all_ones = self
+            .builder
+            .build_int_unary_operation(widened, IntUnaryOp::Neg, out_ty)?;
         let bound_out = self.builder.build_int_const(out_bits, out_ty)?;
         let addend = self.builder.build_int_binary_operation(
             all_ones,
@@ -258,7 +250,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
         let out_vn = require_output_vn(insn)?;
-        let cmp_width = strider_ir::ValueType::int_from_bytes(in0_size.max(in1_size))?;
+        let cmp_width = ValueType::int_from_bytes(in0_size.max(in1_size))?;
         let ext_op = match op {
             IntCmpOp::Sless | IntCmpOp::Scarry | IntCmpOp::Sborrow => ExtendOp::SignExtend,
             IntCmpOp::Equal | IntCmpOp::Less | IntCmpOp::Carry => ExtendOp::ZeroExtend,
@@ -306,13 +298,10 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Canonical logical NOT: `Xor(x, IntConst(1)):I1`, since at `I1` the
     /// all-ones constant of a bitwise complement is `1`.  `x` must already be
     /// `I1`.  Shared by the boolean, integer-cmp and float-cmp lowerings.
-    pub(super) fn build_logical_not(
-        &mut self,
-        x: strider_ir::node::ValueId,
-    ) -> Result<strider_ir::node::ValueId> {
+    pub(super) fn build_logical_not(&mut self, x: ValueId) -> Result<ValueId> {
         let one = self.builder.build_boolean_const(true);
         self.builder
-            .build_int_binary_operation(x, one, IntBinaryOp::Xor, strider_ir::ValueType::I1)
+            .build_int_binary_operation(x, one, IntBinaryOp::Xor, ValueType::I1)
     }
 
     /// Lowers to `Xor(IntEqual(a, b), IntConst(1)):I1`.

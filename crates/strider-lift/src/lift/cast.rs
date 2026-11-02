@@ -1,5 +1,5 @@
-use strider_ir::node::ValueType;
-use strider_ir::{IRBuilderExt, IntBinaryOp, VnTypeExt};
+use strider_ir::node::{ValueId, ValueType};
+use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, VnTypeExt};
 
 use anyhow::bail;
 
@@ -59,11 +59,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         &mut self,
         insn: &rsleigh::Insn,
         enforce_equal_io_width: bool,
-        build: impl FnOnce(
-            &mut strider_ir::FunctionBuilder,
-            strider_ir::node::ValueId,
-            ValueType,
-        ) -> Result<strider_ir::node::ValueId>,
+        build: impl FnOnce(&mut FunctionBuilder, ValueId, ValueType) -> Result<ValueId>,
     ) -> Result<()> {
         let out_vn = require_output_vn(insn)?;
         if enforce_equal_io_width {
