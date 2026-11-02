@@ -479,20 +479,13 @@ impl ConstWith {
     }
 
     pub(crate) fn lower(self, b: &mut TemplateBuilder) -> TmplValueRef {
-        let o = b.dynamic_leaf(self.kind);
         for c in self.caps {
             b.declare_capture(c);
         }
         for c in self.opt_caps {
             b.declare_optional_capture(c);
         }
-        // `InheritRoot` is already the leaf default, so it needs no override.
-        match self.ty {
-            TemplateTy::Fixed(t) => b.set_value_ty(o, t),
-            TemplateTy::InheritBinding(cap) => b.set_value_ty_of_binding(o, cap),
-            TemplateTy::InheritRoot => {}
-        }
-        o
+        b.build(self.kind, &[], self.ty)
     }
 }
 

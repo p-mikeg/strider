@@ -267,8 +267,58 @@ fn phi_input_from_edge_benches(c: &mut Criterion) {
     }
 }
 
+/// Instantiates a template once per `int_add(x, k)` hit of the chain, 334
+/// rewrites per iteration, into a fresh clone (the clone is untimed).
+fn template_benches(c: &mut Criterion) {
+    use strider_ir::EditFunction;
+    use strider_pattern::{
+        CaptureExt, TemplatePat, any_int_const, instantiate, int_const_with, template, var,
+    };
+    let function = build_chain();
+    let (x, k) = (Capture::new(), Capture::new());
+    let lhs = int_add(var(x), any_int_const().capture(k)).into_pattern();
+    let hits: Vec<_> = Matcher::new(&function)
+        .find_all(&lhs)
+        .unwrap()
+        .into_iter()
+        .map(|m| (m.root(), m.bindings().clone(), m.matched_nodes().to_vec()))
+        .collect();
+    assert!(hits.len() >= 334);
+    let ty = ValueType::int(64);
+    let shapes = [
+        (
+            "template_instantiate_ops",
+            TemplatePat::into_template(template::int_sub(
+                template::int_xor(var(x), var(k)),
+                int_const(1u128),
+            )),
+        ),
+        (
+            "template_instantiate_const_with",
+            TemplatePat::into_template(int_const_with!([k: uint] => k + 1u8)),
+        ),
+    ];
+    for (name, rhs) in shapes {
+        c.bench_function(name, |b| {
+            b.iter_batched(
+                || function.clone(),
+                |mut f| {
+                    let mut e = EditFunction::new(&mut f);
+                    for (root, binds, matched) in &hits {
+                        black_box(instantiate(&rhs, &mut e, binds, *root, matched, ty).unwrap());
+                    }
+                    drop(e);
+                    f
+                },
+                criterion::BatchSize::LargeInput,
+            );
+        });
+    }
+}
+
 criterion_group!(
     benches,
+    template_benches,
     matcher_benches,
     join_constraint_benches,
     phi_input_from_edge_benches
