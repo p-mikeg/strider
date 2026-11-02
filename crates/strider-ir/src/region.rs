@@ -71,9 +71,9 @@ impl FunctionBuilder {
 
     pub(crate) fn terminate_cur_region(&mut self) -> Result<TerminatedRegion> {
         let region_id = self.require_cur_region()?;
-        let control = self.regions[region_id].cur_ctrl;
-        let memory = self.regions[region_id].cur_memory;
-        self.regions[region_id].terminated = true;
+        let r = &mut self.regions[region_id];
+        r.terminated = true;
+        let (control, memory) = (r.cur_ctrl, r.cur_memory);
         debug_assert!(self.function().value_kind(control).is_control());
         debug_assert!(self.function().value_kind(memory).is_memory());
         Ok(TerminatedRegion {
