@@ -10,7 +10,7 @@ use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Registers hold float results as integers, so bitcast on the way out.
     pub(super) fn write_float_to_vn(&mut self, vn: &rsleigh::Vn, float_val: ValueId) -> Result<()> {
-        let int_ty: ValueType = vn.int_type()?;
+        let int_ty = vn.int_type()?;
         let int_val = self.builder.build_float_bits_to_int(float_val, int_ty)?;
         self.write_vn(vn, int_val)
     }
@@ -153,10 +153,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let raw_value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
         let float_ty = out_vn.float_type()?;
-        // The input is int-typed (register reads always are), so this coerces
-        // its width. A non-int (float-typed UNIQUE temp) input errors here
-        // rather than being silently reinterpreted.
-        let in_size: ValueType = nth_input_or_err(insn, 0)?.int_type()?;
+        // The input is int-typed (every read is), so this coerces its width.
+        let in_size = nth_input_or_err(insn, 0)?.int_type()?;
         let int_value = self.builder.convert_to_int_if_needed(raw_value, in_size)?;
         let float_result = self.builder.build_int_to_float(int_value, float_ty)?;
         self.write_float_to_vn(out_vn, float_result)
@@ -181,7 +179,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     pub(super) fn handle_float_trunc(&mut self, insn: &rsleigh::Insn) -> Result<()> {
         let raw_value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
-        let int_ty: ValueType = out_vn.int_type()?;
+        let int_ty = out_vn.int_type()?;
         let in_float_ty = nth_input_or_err(insn, 0)?.float_type()?;
         let float_value = self
             .builder
