@@ -176,26 +176,16 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let in_range =
             self.builder
                 .build_int_cmp_operation(count, bound, IntCmpOp::Less, count_ty)?;
-        let one = self.builder.build_int_const(1u128, ValueType::I1)?;
-        let too_big = self.builder.build_int_binary_operation(
-            in_range,
-            one,
-            IntBinaryOp::Xor,
-            ValueType::I1,
-        )?;
+        let too_big = self.build_logical_not(in_range)?;
         let widened = self
             .builder
             .extend_if_needed(too_big, out_ty, ExtendOp::ZeroExtend)?;
         let all_ones = self
             .builder
             .build_int_unary_operation(widened, IntUnaryOp::Neg, out_ty)?;
-        let bound_out = self.builder.build_int_const(out_bits, out_ty)?;
-        let addend = self.builder.build_int_binary_operation(
-            all_ones,
-            bound_out,
-            IntBinaryOp::And,
-            out_ty,
-        )?;
+        let addend =
+            self.builder
+                .build_const_binop(out_bits, all_ones, IntBinaryOp::And, out_ty)?;
         let narrow = self.builder.truncate_if_needed(count, out_ty)?;
         self.builder
             .build_int_binary_operation(narrow, addend, IntBinaryOp::Or, out_ty)
