@@ -4,8 +4,8 @@ use super::FunctionBuilder;
 use crate::IRViewer;
 use crate::builder::IRBuilderExt;
 use crate::builder::checks::{
-    require_bool_value, require_control_kind, require_output_type, require_phi_token_kind,
-    require_slot, require_value_kind, validate_value_inputs,
+    require_bool_value, require_output_type, require_phi_token_kind, require_slot,
+    require_value_kind, validate_value_inputs,
 };
 use crate::error::Result;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
@@ -35,7 +35,6 @@ impl FunctionBuilder {
         ret_inputs.extend_from_slice(ret_values);
 
         let res = self.terminate_cur_region()?;
-        self.require_terminator_kinds(&res)?;
         validate_value_inputs(self.function(), &ret_inputs)?;
 
         self.create_node(
@@ -53,7 +52,6 @@ impl FunctionBuilder {
     /// `UnmergedMemoryEffect`.
     pub fn build_unreachable(&mut self) -> Result<()> {
         let res = self.terminate_cur_region()?;
-        self.require_terminator_kinds(&res)?;
         self.create_node(NodeKind::Unreachable, [res.control], []);
         Ok(())
     }
@@ -78,7 +76,6 @@ impl FunctionBuilder {
         values.extend(isa_mode);
 
         let res = self.terminate_cur_region()?;
-        self.require_terminator_kinds(&res)?;
         validate_value_inputs(self.function(), &values)?;
 
         let node = self.create_node(
@@ -94,7 +91,6 @@ impl FunctionBuilder {
     #[cfg(any(test, feature = "test-util"))]
     pub fn build_branch(&mut self, dest: RegionId) -> Result<()> {
         let res = self.terminate_cur_region()?;
-        self.require_terminator_kinds(&res)?;
         self.link_region(dest, res.control, res.memory, res.region_id)
     }
 
@@ -108,7 +104,6 @@ impl FunctionBuilder {
         let res = self.terminate_cur_region()?;
 
         require_bool_value(self.function(), cond)?;
-        require_control_kind(self.function(), res.control)?;
 
         let brcond = self.create_node(
             NodeKind::If,
@@ -145,7 +140,6 @@ impl FunctionBuilder {
         if let Some(mode) = isa_mode {
             require_value_kind(self.function(), mode)?;
         }
-        require_control_kind(self.function(), res.control)?;
 
         let targets: Vec<u64> = arms.iter().map(|&(_, a)| a).collect();
         let table = self.function_mut().add_switch_table(targets);
