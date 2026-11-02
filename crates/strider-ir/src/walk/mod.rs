@@ -293,11 +293,8 @@ impl graph_algorithms::walk::GraphRef for MemorySuccs<'_> {
 /// e.g. a dead `Store` still consuming the live token.
 pub fn memory_reachable(function: &Function) -> Vec<NodeId> {
     let graph = function.graph();
-    let live = GraphWalkInfo::compute_full(graph, function.entry()).live_nodes;
-    let Some(root) = function
-        .reachable_kind_iter(&live)
-        .find(|(_, k)| matches!(k, NodeKind::InitialMemory))
-        .map(|(n, _)| n)
+    let Some(root) = walk_graph(graph, function.entry())
+        .find(|&n| matches!(graph.node_kind(n), NodeKind::InitialMemory))
     else {
         return Vec::new();
     };
