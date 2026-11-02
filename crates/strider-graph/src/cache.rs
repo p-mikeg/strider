@@ -144,13 +144,9 @@ impl NodeCache {
             "canonicalize: node {node:?} has a stale stored hash \
              (a mutation verb changed its structure without invalidating)"
         );
-        if self.node_hashes[node] == HASH_NONE {
-            self.insert_hashed(node, h);
-        } else if self.node_hashes[node] != h {
-            // Release-only path: the `debug_assert` above names the bug, but
-            // skipping the re-key left the node filed under its OLD hash, so
-            // a lookup under either hash misses it and it stays un-dedupable
-            // until the next `rebuild_cache`. Re-key instead.
+        // A stale hash (release only) is re-keyed rather than left filed
+        // where no lookup finds it; `invalidate` skips an absent node.
+        if self.node_hashes[node] != h {
             self.invalidate(node);
             self.insert_hashed(node, h);
         }
