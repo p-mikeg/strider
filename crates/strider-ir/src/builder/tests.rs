@@ -761,6 +761,32 @@ fn memory_input_of_resolves_token_slot_per_kind() -> Result<()> {
     Ok(())
 }
 
+/// `build_return_node` hands back the `Return` it built, its inputs the
+/// region's control and memory, then `value`, then `ret_values`; a non-value
+/// operand is refused.
+#[test]
+fn build_return_node_returns_its_return() -> Result<()> {
+    let mut b = builder_with_region()?;
+    let (ctrl, mem) = (b.cur_region_control()?, b.cur_region_memory()?);
+    let v = b.build_int_const(1u64, ValueType::int(64))?;
+    let w = b.build_int_const(2u64, ValueType::int(32))?;
+    let ret = b.build_return_node(Some(v), &[w])?;
+    assert!(matches!(b.function().node_kind(ret), NodeKind::Return));
+    let inputs: Vec<ValueId> = b.function().node_inputs(ret).into_iter().collect();
+    assert_eq!(inputs, [ctrl, mem, v, w]);
+
+    let mut b = builder_with_region()?;
+    let mem = b.cur_region_memory()?;
+    let err = b
+        .build_return_node(None, &[mem])
+        .expect_err("a memory operand");
+    assert!(
+        err.to_string().contains("is not a value edge"),
+        "got: {err}"
+    );
+    Ok(())
+}
+
 #[test]
 fn build_call_other_rejects_non_value_arg() -> Result<()> {
     let mut b = builder_with_region()?;
