@@ -2,11 +2,10 @@
 //! rest on.
 
 /// One claim's lattice: the floor, the join, and containment.  The field's
-/// type carries all three, so a set-valued claim is declared in `claims!`
-/// exactly like a `bool` one and no method special-cases it.
-trait Claim {
-    /// The claim not held.
-    fn floor() -> Self;
+/// type carries all three, its `Default` being the floor (the claim not
+/// held), so a set-valued claim is declared in `claims!` exactly like a
+/// `bool` one and no method special-cases it.
+trait Claim: Default {
     /// Adds whatever `other` claims.
     fn join(&mut self, other: &Self);
     /// Whether `self` claims everything `other` does.
@@ -14,10 +13,6 @@ trait Claim {
 }
 
 impl Claim for bool {
-    fn floor() -> Self {
-        false
-    }
-
     fn join(&mut self, other: &Self) {
         *self |= *other;
     }
@@ -32,10 +27,6 @@ impl Claim for bool {
 impl<T: Clone + Eq + std::hash::Hash, S: std::hash::BuildHasher + Default> Claim
     for std::collections::HashSet<T, S>
 {
-    fn floor() -> Self {
-        Self::default()
-    }
-
     fn join(&mut self, other: &Self) {
         self.extend(other.iter().cloned());
     }
@@ -48,16 +39,15 @@ impl<T: Clone + Eq + std::hash::Hash, S: std::hash::BuildHasher + Default> Claim
 /// A claims type from one row per claim: `name: type = default`, with the
 /// row's own doc comment, and the doc the floor constructor is to carry.
 /// Generates the struct, the floor, the join, the claims one set leaves out
-/// of another, containment and the defaults.  The invoking module needs
-/// [`Claim`] in scope; a row's type decides the four behaviours, so a second
-/// set-valued claim is one more row and nothing else.
+/// of another and the defaults.  The invoking module needs [`Claim`] in
+/// scope; a row's type decides the three behaviours, so a second set-valued
+/// claim is one more row and nothing else.
 ///
 /// The list is written once, so no method can be given a claim it then
 /// leaves out, which is what the destructuring `let Self { .. } = other;` in
-/// each hand-written method used to buy.  The floor sets every field to
-/// [`Claim::floor`] rather than filling from `Default`, because a claim
-/// added default-on would survive that and quietly stop the floor being the
-/// sound one.
+/// each hand-written method used to buy.  The floor sets every field to its
+/// TYPE's `Default`, never the struct's, because a claim added default-on
+/// would survive that and quietly stop the floor being the sound one.
 macro_rules! claims {
     (
         $(#[$struct_doc:meta])*
@@ -84,7 +74,7 @@ macro_rules! claims {
             $(#[$floor_doc])*
             #[must_use]
             $vis fn $floor() -> Self {
-                Self { $($claim: Claim::floor()),* }
+                Self { $($claim: Default::default()),* }
             }
 
             /// Adds every claim `other` holds: the claim-by-claim join, each
@@ -107,15 +97,6 @@ macro_rules! claims {
                 .into_iter()
                 .filter_map(|(name, omitted)| omitted.then_some(name))
                 .collect()
-            }
-
-            /// Whether `self` holds every claim `other` holds:
-            /// `other.omitted_by(self)` is empty.
-            #[must_use]
-            $vis fn holds_all(&self, other: &Self) -> bool {
-                [$(Claim::holds(&self.$claim, &other.$claim)),*]
-                    .into_iter()
-                    .all(|held| held)
             }
         }
 
@@ -459,7 +440,7 @@ mod tests {
 
     /// Containment is implication on a flag and inclusion on a set.
     #[test]
-    fn holds_all_implies_on_flags_and_includes_on_sets() {
+    fn omitted_by_implies_on_flags_and_includes_on_sets() {
         let listing = |addrs: &[u64]| Trial {
             listed: addrs.iter().copied().collect(),
             ..Trial::floor()
@@ -468,13 +449,13 @@ mod tests {
             loud: true,
             ..Trial::floor()
         };
-        assert!(loud.holds_all(&Trial::floor()));
-        assert!(!Trial::floor().holds_all(&loud));
-        assert!(loud.holds_all(&loud));
-        assert!(listing(&[1, 2]).holds_all(&listing(&[1])));
-        assert!(!listing(&[1]).holds_all(&listing(&[1, 2])));
-        assert!(!listing(&[1]).holds_all(&listing(&[2])));
-        assert!(!loud.holds_all(&listing(&[1])));
+        assert!(Trial::floor().omitted_by(&loud).is_empty());
+        assert!(!loud.omitted_by(&Trial::floor()).is_empty());
+        assert!(loud.omitted_by(&loud).is_empty());
+        assert!(listing(&[1]).omitted_by(&listing(&[1, 2])).is_empty());
+        assert!(!listing(&[1, 2]).omitted_by(&listing(&[1])).is_empty());
+        assert!(!listing(&[2]).omitted_by(&listing(&[1])).is_empty());
+        assert!(!listing(&[1]).omitted_by(&loud).is_empty());
     }
 
     /// Every field is reportable, under its own name, in declaration order,
@@ -498,31 +479,5 @@ mod tests {
         };
         assert_eq!(all.omitted_by(&one_short), vec!["listed"]);
         assert!(one_short.omitted_by(&all).is_empty());
-    }
-
-    /// The two are one question: `holds_all` is `omitted_by` coming back
-    /// empty, over every pair a three-claim list can make.
-    #[test]
-    fn holds_all_agrees_with_omitted_by_over_every_pair() {
-        let every: Vec<Trial> = (0..8)
-            .map(|bits| Trial {
-                quiet: bits & 1 != 0,
-                listed: if bits & 2 == 0 {
-                    [1].into_iter().collect()
-                } else {
-                    FxHashSet::default()
-                },
-                loud: bits & 4 != 0,
-            })
-            .collect();
-        for left in &every {
-            for right in &every {
-                assert_eq!(
-                    left.holds_all(right),
-                    right.omitted_by(left).is_empty(),
-                    "{left:?} over {right:?}"
-                );
-            }
-        }
     }
 }
