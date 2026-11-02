@@ -1,7 +1,7 @@
 use petgraph::graph::NodeIndex;
 use petgraph::visit::EdgeRef;
 
-use super::{Builder, FlowCommit};
+use super::{Builder, FlowCommit, hold_var};
 use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionInstruction, RegionTerminator};
 use anyhow::{anyhow, bail};
 
@@ -212,9 +212,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         else {
             return Ok(());
         };
-        if self.builder.engine.sleigh.get_context_at(addr, var)? != want {
-            self.builder.engine.sleigh.set_context_at(addr, var, want)?;
-        }
+        hold_var(&mut self.builder.engine.sleigh, addr, var, want)?;
         Ok(())
     }
 
@@ -253,13 +251,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         }
         let mut wrote = false;
         for &(name, default) in defaults {
-            if self.builder.engine.sleigh.get_context_at(addr, name)? != default {
-                self.builder
-                    .engine
-                    .sleigh
-                    .set_context_at(addr, name, default)?;
-                wrote = true;
-            }
+            wrote |= hold_var(&mut self.builder.engine.sleigh, addr, name, default)?;
         }
         if wrote && let Some(prev) = prev {
             self.lift_unheld(prev)?;
@@ -277,18 +269,14 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         if !self.builder.engine.arch.has_delay_slots() {
             return Ok(false);
         }
-        let isa = self.isa_mode.zip(self.builder.engine.arch.isa_mode_var());
+        let isa = self.builder.engine.arch.isa_mode_var().zip(self.isa_mode);
         let defaults = &self.builder.engine.transient_defaults;
         let end = addr.saturating_add(len as u64);
         let mut wrote = false;
         // Every MIPS encoding is a whole number of 16-bit words.
         for at in (addr.saturating_add(2)..end).step_by(2) {
-            let isa_var = isa.map(|(want, var)| (var, want));
-            for (name, want) in isa_var.into_iter().chain(defaults.iter().copied()) {
-                if self.builder.engine.sleigh.get_context_at(at, name)? != want {
-                    self.builder.engine.sleigh.set_context_at(at, name, want)?;
-                    wrote = true;
-                }
+            for (name, want) in isa.into_iter().chain(defaults.iter().copied()) {
+                wrote |= hold_var(&mut self.builder.engine.sleigh, at, name, want)?;
             }
         }
         Ok(wrote)
@@ -320,20 +308,13 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// Re-lifting is cheap: `Sleigh` memoises recently-parsed instructions,
     /// and `oneInstruction` applies a cached parse's commits too.
     fn rederive_flow(&mut self, at: u64, from: u64) -> Result<()> {
-        let vars = &self.builder.engine.flow_commit_defaults;
-        if vars.is_empty() {
-            return Ok(());
-        }
         let mut wrote = false;
-        for &(name, flow, default) in vars {
+        for &(name, flow, default) in &self.builder.engine.flow_commit_defaults {
             let want = match flow {
                 FlowCommit::NoFlow => default,
                 FlowCommit::Flowing => self.builder.engine.sleigh.get_context_at(from, name)?,
             };
-            if self.builder.engine.sleigh.get_context_at(at, name)? != want {
-                self.builder.engine.sleigh.set_context_at(at, name, want)?;
-                wrote = true;
-            }
+            wrote |= hold_var(&mut self.builder.engine.sleigh, at, name, want)?;
         }
         if wrote {
             self.lift_unheld(from)?;
