@@ -136,7 +136,7 @@ pub trait IRViewer {
     ///
     /// The one read: the width-aware forms are
     /// [`Self::int_const_ibig`], [`Self::int_const_u128`],
-    /// [`Self::int_const_i128`] and [`crate::eval::le_bytes`] over the
+    /// [`Self::int_const_i128`] and `eval::le_bytes` (test-util) over the
     /// answer.
     fn int_const(&self, value: ValueId) -> Option<&dashu_int::UBig> {
         if !self.value_kind(value).as_value()?.is_integer() {
