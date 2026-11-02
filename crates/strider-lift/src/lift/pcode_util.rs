@@ -41,33 +41,26 @@ pub(crate) fn ensure_const_space(
     Ok(())
 }
 
-/// P-code puts the target space in a CONST varnode at `inputs[0]` whose offset
-/// is a pointer to a Sleigh `AddrSpace`.  Reading `.addr_space` gives `CONST`,
-/// the ENCODING's space, not the target, hence this decode.
-///
-/// # Safety
-///
-/// `VnSpace::by_id` reinterprets `addr_off` as a raw `AddrSpace` pointer, so
-/// the precondition is that pointer's validity, NOT the CONST tag that
-/// `ensure_const_space` checks.
-///
-/// A `Cfg` carries no lifetime, so nothing in its type ties the pointer to a
-/// live engine.  `Lifter::check_cfg_space_ids` is what does: it runs before
-/// any lift and rejects a `Cfg` holding a space id outside the lifting
-/// engine's own `rsleigh::SpaceIds` table, comparing pointer values without
-/// dereferencing them.  Every in-crate caller is reached only from that lift,
-/// so the pointer names a space of an engine the `Lifter` owns and keeps
-/// alive.  This stays `pub(crate)`: outside that gate the precondition is
-/// unestablished.
-///
-/// Matching by pointer value keeps the dereference sound but does not identify
-/// the space: a foreign id at an address this engine reused resolves to
-/// whichever space this engine has there.
-pub(crate) fn decode_space_id(insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
-    let space_id_vn = *nth_input_or_err(insn, 0)?;
-    ensure_const_space(&space_id_vn, insn.opcode, "input 0")?;
-    // SAFETY: `Lifter::check_cfg_space_ids` has already matched this pointer
-    // against the lifting engine's space table, so it names a live `AddrSpace`
-    // of an engine the `Lifter` owns.
-    Ok(unsafe { rsleigh::VnSpace::by_id(space_id_vn) })
+impl<R: rsleigh::MemReader> super::Lifter<R> {
+    /// P-code puts the target space in a CONST varnode at `inputs[0]` whose
+    /// offset is the decoding engine's id for a Sleigh `AddrSpace`.  Reading
+    /// `.addr_space` gives `CONST`, the ENCODING's space, not the target, hence
+    /// this decode, through this engine's own space table.
+    ///
+    /// `Self::check_cfg_space_ids` rejects a `Cfg` holding an id outside that
+    /// table before any lift, so the error here answers only a hand-built
+    /// `Insn`.  Matching by id does not identify the space: a foreign id at an
+    /// address this engine reused resolves to whichever space this engine has
+    /// there.
+    pub(crate) fn decode_space_id(&self, insn: &rsleigh::Insn) -> Result<rsleigh::VnSpace> {
+        let vn = *nth_input_or_err(insn, 0)?;
+        ensure_const_space(&vn, insn.opcode, "input 0")?;
+        self.engine.space_ids().resolve(vn).ok_or_else(|| {
+            anyhow::anyhow!(
+                "{:?}: space id {:#x} names no space of this engine",
+                insn.opcode,
+                vn.addr_off
+            )
+        })
+    }
 }

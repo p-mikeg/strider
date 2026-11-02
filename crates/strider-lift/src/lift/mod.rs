@@ -208,7 +208,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// The ENCLOSING declared register is seeded, not the resolved slice. A
     /// computed offset need not land on a declared boundary, and seeding a
     /// partially-overlapping slice would break the nesting the tracked set
-    /// relies on; see [`pcode_consts::register_slot`].
+    /// relies on; see [`Self::register_slot_of`].
     fn register_space_vns<'s>(
         &'s self,
         cfg: &'s strider_cfg::Cfg,
@@ -218,7 +218,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
             let mut consts = pcode_consts::PcodeConsts::default();
             region.insns.iter().filter_map(move |wrapped| {
                 consts.observe(wrapped.addr, &wrapped.insn);
-                pcode_consts::register_slot_of(&wrapped.insn, &consts, declared)
+                self.register_slot_of(&wrapped.insn, &consts)
                     .and_then(|s| vn_container::smallest_enclosing(declared, &s))
             })
         })
@@ -294,8 +294,7 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     }
 
     /// Rejects a `Cfg` whose Load / Store space ids were not produced by this
-    /// engine, which is what discharges the safety precondition of
-    /// [`pcode_util::decode_space_id`].
+    /// engine, before [`Self::decode_space_id`] reads any.
     ///
     /// A `Cfg` holds cloned `rsleigh::Insn`s and carries no lifetime, so it
     /// outlives the engine that decoded it; the space id in a Load / Store's
