@@ -554,7 +554,7 @@ mod tests {
         );
     }
 
-    /// A float type has no integer bits, as [`ValueType::wrap_u128`] has it.
+    /// A float type has no integer bits: every value masks to 0.
     #[test]
     fn a_float_type_has_no_integer_bits() {
         for ty in ValueType::SUPPORTED.into_iter().filter(|t| t.is_float()) {
