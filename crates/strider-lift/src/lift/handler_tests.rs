@@ -121,8 +121,15 @@ fn with_test_lifter_arch_cc(
     // Value opcodes never consult the region id or map, so any valid id works.
     let region_id = cfg.entry();
     let cfg_opts = strider_cfg::CfgOptions::default();
-    let mut driver = FunctionLifter::new(&lifter, cc, &cfg, all_vns, per_address_ccs, &cfg_opts)
-        .expect("driver");
+    let mut driver = FunctionLifter::new(
+        &lifter,
+        cc,
+        &cfg,
+        all_vns.into_iter().collect(),
+        per_address_ccs,
+        &cfg_opts,
+    )
+    .expect("driver");
     driver.builder.set_lift_addr(None);
     let region = driver.builder.create_region_all().expect("create_region");
     driver
