@@ -898,9 +898,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         {
             return Err(e);
         }
-        let mut reported = rustc_hash::FxHashSet::default();
-        self.undecodable_seeded
-            .retain(|&(_, bad)| reported.insert(bad));
         // No resolver ran, so every dispatch left without an edge is
         // unresolved and every seated answer unverified.
         for region in self.region_graph.node_weights() {
@@ -922,14 +919,16 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             self.incomplete.insert(addr, Reason::UnverifiedSeed);
         }
 
+        let mut reported = rustc_hash::FxHashSet::default();
         Ok(Cfg {
             region_graph: self.region_graph,
             entry: starting_region,
             index: self.index,
             undecodable_seeded: self
                 .undecodable_seeded
-                .iter()
-                .map(|&(_, bad)| bad)
+                .into_iter()
+                .map(|(_, bad)| bad)
+                .filter(|&bad| reported.insert(bad))
                 .collect(),
             incomplete: self.incomplete,
             link_register_seated: self.link_register_seated,
