@@ -1,6 +1,7 @@
-use strider_ir::node::ValueType;
+use strider_ir::node::{ValueId, ValueType};
 use strider_ir::{
-    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IRBuilderExt, IRViewer, IntBinaryOp, VnTypeExt,
+    FloatBinaryOp, FloatCmpOp, FloatUnaryOp, FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp,
+    VnTypeExt,
 };
 
 use crate::lift::FunctionLifter;
@@ -8,11 +9,7 @@ use crate::lift::pcode_util::{Result, nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Registers hold float results as integers, so bitcast on the way out.
-    pub(super) fn write_float_to_vn(
-        &mut self,
-        vn: &rsleigh::Vn,
-        float_val: strider_ir::node::ValueId,
-    ) -> Result<()> {
+    pub(super) fn write_float_to_vn(&mut self, vn: &rsleigh::Vn, float_val: ValueId) -> Result<()> {
         let int_ty: ValueType = vn.int_type()?;
         let int_val = self.builder.build_float_bits_to_int(float_val, int_ty)?;
         self.write_vn(vn, int_val)
@@ -23,12 +20,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     fn lift_float_binary(
         &mut self,
         insn: &rsleigh::Insn,
-        build: impl FnOnce(
-            &mut strider_ir::FunctionBuilder,
-            strider_ir::node::ValueId,
-            strider_ir::node::ValueId,
-            ValueType,
-        ) -> Result<strider_ir::node::ValueId>,
+        build: impl FnOnce(&mut FunctionBuilder, ValueId, ValueId, ValueType) -> Result<ValueId>,
     ) -> Result<()> {
         let lhs = self.read_input(insn, 0)?;
         let rhs = self.read_input(insn, 1)?;
@@ -43,11 +35,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     fn lift_float_unary(
         &mut self,
         insn: &rsleigh::Insn,
-        build: impl FnOnce(
-            &mut strider_ir::FunctionBuilder,
-            strider_ir::node::ValueId,
-            ValueType,
-        ) -> Result<strider_ir::node::ValueId>,
+        build: impl FnOnce(&mut FunctionBuilder, ValueId, ValueType) -> Result<ValueId>,
     ) -> Result<()> {
         let value = self.read_input(insn, 0)?;
         let out_vn = require_output_vn(insn)?;
@@ -89,9 +77,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// Common float type is inferred from `lhs`.
     fn cast_float_cmp_operands(
         &mut self,
-        lhs: strider_ir::node::ValueId,
-        rhs: strider_ir::node::ValueId,
-    ) -> Result<(strider_ir::node::ValueId, strider_ir::node::ValueId)> {
+        lhs: ValueId,
+        rhs: ValueId,
+    ) -> Result<(ValueId, ValueId)> {
         let float_ty = self.builder.infer_float_type(lhs)?;
         let lhs = self.builder.cast_to_float_if_needed(lhs, float_ty)?;
         let rhs = self.builder.cast_to_float_if_needed(rhs, float_ty)?;
@@ -101,11 +89,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// `Xor(FloatEqual(lhs, rhs), IntConst(1)):I1`, shared by `FloatNan` and
     /// `FloatNotEqual`.  Sound under IEEE 754: `Equal` is false when either
     /// operand is NaN, so the negation is true, matching `NotEqual`/`is_nan`.
-    fn build_float_eq_negated(
-        &mut self,
-        lhs: strider_ir::node::ValueId,
-        rhs: strider_ir::node::ValueId,
-    ) -> Result<strider_ir::node::ValueId> {
+    fn build_float_eq_negated(&mut self, lhs: ValueId, rhs: ValueId) -> Result<ValueId> {
         let (lhs, rhs) = self.cast_float_cmp_operands(lhs, rhs)?;
         let eq = self
             .builder
