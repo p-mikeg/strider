@@ -137,6 +137,29 @@ mod tests {
             .expect("render dot")
     }
 
+    /// A budget that leaves one of a region's predecessors out of the view
+    /// leaves out that predecessor's edge too, or the DOT draws an edge from a
+    /// node it never declares.
+    #[test]
+    fn a_budgeted_neighborhood_draws_no_edge_from_a_region_outside_it() {
+        // `jne +1; nop; ret`: the `ret` region has two predecessors.
+        let arch = SleighArch::x86_64();
+        let reader = BufMemReader::new(vec![0x75, 0x01, 0x90, 0xc3], 0x1000);
+        let mut engine = DecodeEngine::new(arch, reader).expect("decode engine");
+        let cfg = engine
+            .build_cfg(0x1000.into(), &CfgOptions::default())
+            .expect("build_cfg on synthetic bytes");
+        let g = cfg.region_graph();
+        let ret = g
+            .node_indices()
+            .find(|&n| g.neighbors_directed(n, petgraph::Incoming).count() == 2)
+            .expect("a two-predecessor region");
+        let dot = cfg
+            .neighborhood_dot(arch.names(), ret, 1, 2)
+            .expect("neighborhood_dot");
+        assert_eq!(dot.matches(" -> ").count(), 1, "dot:\n{dot}");
+    }
+
     #[test]
     fn degenerate_same_target_cond_branch_labels_one_true_one_false() {
         // `je +0` at 0x1000 puts both arms on 0x1002, giving the CondBranch
