@@ -372,6 +372,43 @@ mod tests {
         );
     }
 
+    /// A caller-built footprint can name any space; only a register or
+    /// unique vn is a tracked variable, so a `ram` one stays out of the set
+    /// (and the call lowering rejects it with its own error).
+    #[test]
+    fn a_call_other_footprint_in_ram_is_not_tracked() {
+        let regs = x86_64_sleigh_regs();
+        let r10 = regs.name_to_vn("R10").expect("R10");
+        let ram = rsleigh::Vn {
+            size: 8,
+            addr_off: 0x2000,
+            addr_space: rsleigh::VnSpace::RAM,
+        };
+        let overrides = strider_target::call_other_abi::CallOtherOverrides::new(vec![(
+            "syscall".to_owned(),
+            strider_target::call_other_abi::CallOtherOverride::Built(
+                strider_target::BuiltCallOtherAbi {
+                    implicit_reads: vec![ram],
+                    implicit_writes: vec![ram, r10],
+                    clobbers_memory: false,
+                    no_return: false,
+                },
+            ),
+        )])
+        .expect("unique override names");
+        // 1000: 0f 05    syscall
+        // 1002: c3       ret
+        let reader = rsleigh::mem_readers::BufMemReader::new(vec![0x0f, 0x05, 0xc3], 0x1000);
+        let mut lifter =
+            crate::lift::Lifter::new(strider_target::SleighArch::x86_64(), reader).expect("lifter");
+        let cfg = lifter
+            .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
+            .expect("cfg");
+        let mut tracked = rustc_hash::FxHashSet::default();
+        lifter.call_other_footprint_vns(&cfg, &overrides, &mut tracked);
+        assert_eq!(tracked, [r10].into_iter().collect());
+    }
+
     /// Lifts `code` at 0x1000 under the PowerPC 32-bit System V convention.
     fn lift_ppc32be(
         code: Vec<u8>,
