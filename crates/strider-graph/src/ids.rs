@@ -1,6 +1,6 @@
 use cranelift_entity::{EntityList, entity_impl};
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct NodeId(u32);
 entity_impl!(NodeId, "node");
 
