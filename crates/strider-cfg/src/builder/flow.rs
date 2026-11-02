@@ -27,6 +27,7 @@
 
 /// The context vars the sla marks as flowing
 /// ([`strider_target::DecodeTables::flow_vars`]).
+#[derive(Clone, Copy)]
 pub(crate) struct FlowVars {
     vars: &'static [String],
 }
@@ -49,10 +50,10 @@ fn get_context_at<R: rsleigh::MemReader>(
 }
 
 impl FlowVars {
-    /// `arch`'s flowing context vars.
-    pub fn of(arch: strider_target::SleighArch) -> Self {
+    /// The flowing context vars of `tables`.
+    pub fn of(tables: &'static strider_target::DecodeTables) -> Self {
         Self {
-            vars: &arch.decode_tables().flow_vars,
+            vars: &tables.flow_vars,
         }
     }
 
@@ -270,7 +271,7 @@ mod tests {
     #[test]
     fn pin_at_over_a_matching_context_does_not_flush_the_parse_cache() {
         let (mut sleigh, reads) = counting_arm_sleigh();
-        let flow = FlowVars::of(strider_target::SleighArch::arm());
+        let flow = FlowVars::of(strider_target::SleighArch::arm().decode_tables());
         let want = flow.snapshot(&sleigh, 0x1000);
 
         sleigh.lift_one(0x1000).expect("decode once");
@@ -324,7 +325,7 @@ mod tests {
         let arch = SleighArch::arm();
         let reader = BufMemReader::new(vec![0u8; 0x100], 0x1000);
         let mut sleigh = arch.sleigh(reader).expect("create Sleigh");
-        let flow = FlowVars::of(arch);
+        let flow = FlowVars::of(arch.decode_tables());
         assert!(
             flow.vars
                 .iter()
