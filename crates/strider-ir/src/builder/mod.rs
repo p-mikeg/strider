@@ -2,7 +2,7 @@ use cranelift_entity::PrimaryMap;
 
 use crate::error::Result;
 use crate::function::Function;
-use crate::node::{IntBinaryOp, IntUnaryOp, NodeId, NodeKind, ValueId, ValueKind};
+use crate::node::{IntBinaryOp, IntUnaryOp, NodeKind, ValueId, ValueKind};
 use crate::region::Region;
 
 mod build_trait;
@@ -59,10 +59,6 @@ impl FunctionBuilder {
 
     pub fn function_mut(&mut self) -> &mut Function {
         &mut self.function
-    }
-
-    pub fn entry(&self) -> NodeId {
-        self.function.entry()
     }
 
     /// The sole constructor. `all_used_variables` is every varnode appearing
