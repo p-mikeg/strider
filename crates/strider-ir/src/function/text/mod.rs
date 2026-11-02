@@ -340,20 +340,17 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool, vn_name: VnName<'_
             out.push('\n');
         }
         let outputs = f.node_outputs(node);
-        for (i, &value) in outputs.iter().enumerate() {
-            if i > 0 {
-                out.push_str(", ");
-            }
-            push_name(&mut out, &names, value);
+        push_sep(&mut out, ", ", outputs, |out, &value| {
+            push_name(out, &names, value);
             out.push(':');
-            push_value_kind(&mut out, f.value_kind(value));
+            push_value_kind(out, f.value_kind(value));
             if let Some(&id) = st.value_vn.get(&value) {
                 let _ = match f.initial_vn_opt(id) {
                     Some(vn) => write!(out, "<{}>", vn_name(&vn)),
                     None => write!(out, "<?>"),
                 };
             }
-        }
+        });
         if !outputs.is_empty() {
             out.push_str(" = ");
         }
@@ -367,12 +364,9 @@ fn render(f: &Function, order: &[NodeId], fingerprints: bool, vn_name: VnName<'_
             let mut addrs: Vec<u64> = st.asm_fingerprint(node).into_iter().collect();
             addrs.sort_unstable();
             out.push_str("  @{");
-            for (i, addr) in addrs.iter().enumerate() {
-                if i > 0 {
-                    out.push_str(", ");
-                }
+            push_sep(&mut out, ", ", &addrs, |out, addr| {
                 let _ = write!(out, "{addr:#x}");
-            }
+            });
             out.push('}');
         }
         out.push('\n');
@@ -402,12 +396,9 @@ fn render_args<'a>(
             continue;
         }
         let _ = write!(out, "{label} {index} [");
-        for (i, n) in carriers.iter().enumerate() {
-            if i > 0 {
-                out.push_str(", ");
-            }
+        push_sep(out, ", ", &carriers, |out, n| {
             let _ = write!(out, "%v{n}");
-        }
+        });
         out.push_str("]\n");
     }
 }
@@ -441,12 +432,9 @@ fn render_payload(
         NodeKind::Switch(id) => match f.switch_table(id) {
             Some(targets) => {
                 out.push('[');
-                for (i, target) in targets.iter().enumerate() {
-                    if i > 0 {
-                        out.push_str(", ");
-                    }
+                push_sep(out, ", ", targets, |out, target| {
                     let _ = write!(out, "{target:#x}");
-                }
+                });
                 out.push(']');
             }
             None => out.push_str("[?]"),
@@ -454,17 +442,11 @@ fn render_payload(
         NodeKind::Call { cc: Some(id) } => match f.cc(id) {
             Some(cc) => {
                 out.push('[');
-                let mut first = true;
-                for ((field, value), (_, default)) in cc_fields(cc, vn_name).iter().zip(default_cc)
-                {
-                    if value != default {
-                        if !first {
-                            out.push(' ');
-                        }
-                        first = false;
-                        let _ = write!(out, "{field}={value}");
-                    }
-                }
+                let fields = cc_fields(cc, vn_name);
+                let overridden = fields.iter().zip(default_cc).filter(|(a, b)| a.1 != b.1);
+                push_sep(out, " ", overridden, |out, ((field, value), _)| {
+                    let _ = write!(out, "{field}={value}");
+                });
                 out.push(']');
             }
             None => out.push_str("[?]"),
@@ -607,6 +589,21 @@ pub(crate) fn vn_str(vn: &rsleigh::Vn) -> String {
         vn.addr_off,
         vn.size
     )
+}
+
+/// `items`, `sep`-separated, each written by `each`.
+fn push_sep<T>(
+    out: &mut String,
+    sep: &str,
+    items: impl IntoIterator<Item = T>,
+    mut each: impl FnMut(&mut String, T),
+) {
+    for (i, item) in items.into_iter().enumerate() {
+        if i > 0 {
+            out.push_str(sep);
+        }
+        each(out, item);
+    }
 }
 
 fn vn_list(vns: &[rsleigh::Vn], vn_name: VnName<'_>) -> String {
