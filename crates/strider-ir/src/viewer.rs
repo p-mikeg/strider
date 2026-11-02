@@ -395,14 +395,6 @@ impl IRViewer for crate::EditFunction<'_> {
 
 /// Control-aware traversals of a function's IR graph.
 pub trait IRWalker: IRViewer {
-    /// `None` seeds from the function entry. The result carries the reachable
-    /// set and input-less roots the post-order family consumes.
-    fn walk_info(&self, seed: Option<NodeId>) -> crate::walk::GraphWalkInfo {
-        let f = self.function();
-        let s = seed.unwrap_or_else(|| f.entry());
-        crate::walk::GraphWalkInfo::compute_full(f.graph(), s)
-    }
-
     /// Pre-order over everything reachable from entry, following control-out
     /// forward and data-in backward.
     fn walk(&self) -> crate::walk::GraphWalk<'_> {
@@ -422,20 +414,16 @@ pub trait IRWalker: IRViewer {
         self.walk().filter(move |&n| pred(self.node_kind(n)))
     }
 
-    /// Every producer before its consumers unless the use closes a
-    /// def-use cycle, a root first, over the reachable set `info` captured.
-    fn reverse_postorder(&self, info: &crate::walk::GraphWalkInfo) -> Vec<NodeId> {
-        info.reverse_postorder(self.function().graph())
-    }
-
-    /// [`Self::reverse_postorder`] from entry, filtered by `pred`. Empty only
-    /// when `pred` matches nothing reachable from entry.
+    /// Every producer reachable from entry before its consumers unless the
+    /// use closes a def-use cycle, a root first, filtered by `pred`. Empty
+    /// only when `pred` matches nothing reachable from entry.
     fn reverse_postorder_filter<'a>(
         &'a self,
         pred: impl Fn(&NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
-        let info = self.walk_info(None);
-        let rpo = self.reverse_postorder(&info);
+        let f = self.function();
+        let rpo = crate::walk::GraphWalkInfo::compute_full(f.graph(), f.entry())
+            .reverse_postorder(f.graph());
         rpo.into_iter().filter(move |&n| pred(self.node_kind(n)))
     }
 }
