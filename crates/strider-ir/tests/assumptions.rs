@@ -174,39 +174,25 @@ fn omitted_by_compares_allocator_sets_by_inclusion() {
 }
 
 /// No claim holds another; each holds itself and the floor, and the floor
-/// holds none: exactly when `omitted_by` comes back empty.
+/// holds none.
 #[test]
-fn holds_all_checks_each_claim() {
+fn omitted_by_checks_each_claim() {
     let floor = AssumptionOptions::none();
     let claims = each_claim();
     for (name, claim) in &claims {
-        assert!(!floor.holds_all(claim), "the floor over {name}");
-        assert!(claim.holds_all(&floor), "{name} over the floor");
+        assert!(
+            !claim.omitted_by(&floor).is_empty(),
+            "the floor over {name}"
+        );
+        assert!(floor.omitted_by(claim).is_empty(), "{name} over the floor");
         for (other_name, other) in &claims {
             assert_eq!(
-                claim.holds_all(other),
-                name == other_name,
-                "{name} over {other_name}"
-            );
-            assert_eq!(
-                claim.holds_all(other),
                 other.omitted_by(claim).is_empty(),
+                name == other_name,
                 "{name} over {other_name}"
             );
         }
     }
-}
-
-/// An allocator set holds another when it lists each of its addresses.
-#[test]
-fn holds_all_compares_allocator_sets_by_inclusion() {
-    let listing = |addrs: &[u64]| AssumptionOptions {
-        noalias_allocators: addrs.iter().copied().collect(),
-        ..AssumptionOptions::none()
-    };
-    assert!(listing(&[1, 2]).holds_all(&listing(&[1])));
-    assert!(!listing(&[1]).holds_all(&listing(&[1, 2])));
-    assert!(!listing(&[1]).holds_all(&listing(&[2])));
 }
 
 /// The union of two claims holds both and nothing else.
@@ -303,6 +289,5 @@ fn default_holds_exactly_the_five_default_claims() {
             "fp_rounding_mode_is_nearest",
         ]
     );
-    assert!(d.holds_all(&AssumptionOptions::none()));
-    assert!(!AssumptionOptions::none().holds_all(&d));
+    assert!(AssumptionOptions::none().omitted_by(&d).is_empty());
 }

@@ -167,7 +167,7 @@ impl Function {
     /// which only the lift reads, are recorded without effect when assumed
     /// after it.
     pub fn assume(&mut self, claims: &crate::AssumptionOptions) {
-        if self.assumptions.holds_all(claims) {
+        if claims.omitted_by(&self.assumptions).is_empty() {
             return;
         }
         self.assumptions.union_with(claims);
