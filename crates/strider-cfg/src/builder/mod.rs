@@ -835,37 +835,35 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 return Ok(());
             }
         }
-        // The bytes themselves, which `UndecodableTarget` cannot name: it
-        // carries the ARM, and an arm that LED to the bytes decodes. Read
-        // off the error rather than from `address`, the failure being able to
-        // sit several instructions into the region this item decoded. A
-        // failure carrying its own address (past the end, unmapped, not code)
-        // is named there; any other names the item itself.
-        if seeded_by.is_some() {
-            let (at, reason) = match decode_failure(&e) {
-                // The unmapped byte IS the one asked for: report the pcode
-                // address, which carries the insn index the gap address cannot.
-                Some(DecodeFailure::Unmapped(gap)) if gap == address.machine_addr.addr => {
-                    (address, Reason::UnmappedTarget)
-                }
-                Some(DecodeFailure::Unmapped(gap)) => {
-                    (PcodeInsnAddr::at_machine_start(gap), Reason::UnmappedTarget)
-                }
-                Some(DecodeFailure::PastEnd(end)) => (end, Reason::PastFunctionEnd),
-                Some(DecodeFailure::NotCode { addr: bad, .. }) => (
-                    PcodeInsnAddr::at_machine_start(bad),
-                    Reason::UndecodableTarget,
-                ),
-                None => (address, Reason::UndecodableTarget),
-            };
-            self.incomplete.insert(at, reason);
-        }
         // Under a seeded arm it is a misclassification, not a broken
         // function: drop the arm and report it against the site that named
         // it, so the caller freezes that site alone.
         let Some(seed) = seeded_by else {
             return Err(e);
         };
+        // The bytes themselves, which `UndecodableTarget` cannot name: it
+        // carries the ARM, and an arm that LED to the bytes decodes. Read
+        // off the error rather than from `address`, the failure being able to
+        // sit several instructions into the region this item decoded. A
+        // failure carrying its own address (past the end, unmapped, not code)
+        // is named there; any other names the item itself.
+        let (at, reason) = match decode_failure(&e) {
+            // The unmapped byte IS the one asked for: report the pcode
+            // address, which carries the insn index the gap address cannot.
+            Some(DecodeFailure::Unmapped(gap)) if gap == address.machine_addr.addr => {
+                (address, Reason::UnmappedTarget)
+            }
+            Some(DecodeFailure::Unmapped(gap)) => {
+                (PcodeInsnAddr::at_machine_start(gap), Reason::UnmappedTarget)
+            }
+            Some(DecodeFailure::PastEnd(end)) => (end, Reason::PastFunctionEnd),
+            Some(DecodeFailure::NotCode { addr: bad, .. }) => (
+                PcodeInsnAddr::at_machine_start(bad),
+                Reason::UndecodableTarget,
+            ),
+            None => (address, Reason::UndecodableTarget),
+        };
+        self.incomplete.insert(at, reason);
         self.undecodable_seeded.push((
             seed.switch,
             crate::UndecodableTarget {
