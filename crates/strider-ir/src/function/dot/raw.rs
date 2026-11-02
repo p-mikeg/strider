@@ -64,8 +64,8 @@ impl<'a> RawFunctionDumper<'a> {
         // `InitialVar` carries an index; resolve it to the varnode.
         let kind_str = match kind {
             NodeKind::InitialVar(id) => match f.initial_vn_opt(*id) {
-                Some(vn) => format!("InitialVar(#{} {})", id.index(), fmt_vn(&vn)),
-                None => format!("InitialVar(#{} ?)", id.index()),
+                Some(vn) => format!("InitialVar(#{} {})", id.as_u32(), fmt_vn(&vn)),
+                None => format!("InitialVar(#{} ?)", id.as_u32()),
             },
             // The value itself goes on the next line.
             NodeKind::IntConst(id) => format!("IntConst(#{})", id.as_u32()),
