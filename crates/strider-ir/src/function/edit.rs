@@ -9,7 +9,7 @@ use cranelift_entity::SecondaryMap;
 use crate::DominatorTree;
 use crate::builder::IRBuilder;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
-use crate::walk::{DefUseSuccs, FnSuccs, PostOrder, def_use_succs};
+use crate::walk::{FnSuccs, PostOrder, def_use_succs, live_def_use_succs};
 use crate::{Function, Graph, IRViewer};
 
 bitflags::bitflags! {
@@ -223,11 +223,9 @@ impl<'g> EditFunction<'g> {
         if memo.as_ref().is_none_or(|&(stamp, _)| stamp != at) {
             #[cfg(test)]
             self.postorder_walks.set(self.postorder_walks.get() + 1);
-            let order: Vec<NodeId> = PostOrder::new(
-                DefUseSuccs::new(self.function.graph(), &self.state.live_nodes),
-                self.state.roots.iter(),
-            )
-            .collect();
+            let (graph, live) = (self.function.graph(), &self.state.live_nodes);
+            let succs = FnSuccs::new(|n| live_def_use_succs(graph, live, n));
+            let order: Vec<NodeId> = PostOrder::new(succs, self.state.roots.iter()).collect();
             *memo = Some((at, order));
         }
         memo.as_ref().expect("filled above").1.clone()
