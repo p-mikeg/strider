@@ -3,7 +3,7 @@
 //! always read and written through the largest containing tracked register,
 //! with shift/mask operations inserted for the slice.
 
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use strider_ir::node::ValueId;
 use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, ValueType, VnTypeExt};
 
@@ -12,11 +12,6 @@ use super::pcode_util::Result;
 
 /// Ghidra's `BUILTIN_VOLATILE_READ`, past any sla's own user-op ids.
 const READ_VOLATILE_USER_OP_ID: u64 = 0x1000_0001;
-
-enum SubRegOutcome {
-    Direct { container_reg: rsleigh::Vn },
-    SubReg(SubRegContext),
-}
 
 struct SubRegContext {
     container_reg: rsleigh::Vn,
@@ -94,7 +89,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         // Stash an ISA-mode commit for `pending_isa_mode`. Full `Vn` equality,
         // not just space+offset: a differently-sized varnode sharing the offset
         // is a different register.
-        if self.lifter.isa_mode_switch_vn.is_some_and(|sw| sw == *vn)
+        if self.lifter.isa_mode_switch_vn == Some(*vn)
             && let Some(addr) = self.builder.lift_addr()
         {
             // FIRST write per machine address wins. MIPS writes ISAModeSwitch
@@ -119,27 +114,10 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         }
     }
 
-    /// Largest tracked varnode in the same space that fully contains `reg`
-    /// (`al` -> `rax`).  Without it a narrow read of a wide unique would
-    /// return an undefined InitialVar.
-    fn find_largest_fitting_register(&self, reg: &rsleigh::Vn) -> Result<rsleigh::Vn> {
-        let space = reg.addr_space;
-        if !vn_container::is_aliasable_space(space) {
-            bail!("unsupported varnode space {space:?}");
-        }
-        // `container_of` returns `reg` unchanged when nothing tracked contains
-        // it, which here means `reg` is its own container: a legitimate
-        // full-width access, not a failure.
-        Ok(self.container_map.container_of(reg))
-    }
-
     /// Reads `reg` by shifting its slice out of the container and truncating.
     pub(crate) fn read_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<ValueId> {
-        let ctx = match self.enter_sub_register(reg, "read_reg_vn")? {
-            SubRegOutcome::Direct { container_reg } => {
-                return self.builder.read_variable(&container_reg);
-            }
-            SubRegOutcome::SubReg(ctx) => ctx,
+        let Some(ctx) = self.enter_sub_register(reg, "read_reg_vn")? else {
+            return self.builder.read_variable(reg);
         };
         let curr_reg_val = self.builder.read_variable(&ctx.container_reg)?;
         self.slice_out(curr_reg_val, reg, &ctx)
@@ -149,10 +127,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// [`Self::read_reg_vn`] it never reads the current region, whose value at
     /// a loop-header entry is the phi.
     pub(crate) fn read_initial_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<Option<ValueId>> {
-        let (container_reg, ctx) = match self.enter_sub_register(reg, "read_initial_reg_vn")? {
-            SubRegOutcome::Direct { container_reg } => (container_reg, None),
-            SubRegOutcome::SubReg(ctx) => (ctx.container_reg, Some(ctx)),
-        };
+        let ctx = self.enter_sub_register(reg, "read_initial_reg_vn")?;
+        let container_reg = ctx.as_ref().map_or(*reg, |ctx| ctx.container_reg);
         let Some(initial) = self.builder.function().initial_var_value(&container_reg) else {
             return Ok(None);
         };
@@ -191,26 +167,18 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// the mask on an upper-half write (AArch64 `FCVT D0,S0` zeroing the upper
     /// 64 bits of V0) and silently zeros the container's lower half.
     pub(crate) fn write_reg_vn(&mut self, reg: &rsleigh::Vn, val: ValueId) -> Result<()> {
-        let ctx = match self.enter_sub_register(reg, "write_reg_vn")? {
-            SubRegOutcome::Direct { container_reg: _ } => {
-                // Register SSA slots hold integers at the register's natural
-                // width, so a 1-bit `I1` flag result is zero-extended up.  A
-                // float is rejected outright: every float producer bitcasts
-                // before it reaches here.  Keeping `I1` out
-                // of register slots is what makes cross-region `Phi`s over a
-                // register type-homogeneous.  The flag-to-`If` flow survives:
-                // `build_branch_condition` tests `!= 0` at the slot's own
-                // width.
-                let reg_ty: ValueType = reg.int_type()?;
-                let coerced = self.builder.convert_to_int_if_needed(val, reg_ty)?;
-                return self.write_variable(reg, coerced);
-            }
-            SubRegOutcome::SubReg(ctx) => ctx,
-        };
-        // Same coercion prelude as the direct-container arm, so both write
-        // paths accept exactly the same operand types.
+        let ctx = self.enter_sub_register(reg, "write_reg_vn")?;
+        // Register SSA slots hold integers at the register's natural width, so
+        // a 1-bit `I1` flag result is zero-extended up.  A float is rejected
+        // outright: every float producer bitcasts before it reaches here.
+        // Keeping `I1` out of register slots is what makes cross-region `Phi`s
+        // over a register type-homogeneous.  The flag-to-`If` flow survives:
+        // `build_branch_condition` tests `!= 0` at the slot's own width.
         let reg_ty: ValueType = reg.int_type()?;
         let val = self.builder.convert_to_int_if_needed(val, reg_ty)?;
+        let Some(ctx) = ctx else {
+            return self.write_variable(reg, val);
+        };
 
         // This write PRESERVES the bits outside `reg`, and that is correct
         // even on ISAs that zero the rest of the vector register on a
@@ -221,20 +189,31 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         //                              tiling the rest of the 32-byte `z0`
         //   x86 VEX  `vmovss`    ->  XMM0_Da = ...; ZMM0 = IntZext(XMM0)
         // Those arrive here as ordinary sub-register writes.
-        let final_container_value = self.build_masked_insert(val, reg, &ctx)?;
-        self.write_reg_vn(&ctx.container_reg, final_container_value)?;
-        Ok(())
+        let merged = self.build_masked_insert(val, reg, &ctx)?;
+        self.write_variable(&ctx.container_reg, merged)
     }
 
-    /// Shared read/write prelude.  `op` prefixes the shift-bound error so it
-    /// names the originating call site.
+    /// Shared read/write prelude: the largest tracked varnode containing
+    /// `reg` (`al` -> `rax`), or `None` when `reg` is its own container.
+    /// `op` prefixes the shift-bound error so it names the originating call
+    /// site.
     ///
     /// A container byte width with no `ValueType::int_from_bytes` mapping
     /// fails here at `int_type`, before any shift or mask is built on it.
-    fn enter_sub_register(&self, reg: &rsleigh::Vn, op: &'static str) -> Result<SubRegOutcome> {
-        let container_reg = self.find_largest_fitting_register(reg)?;
+    fn enter_sub_register(
+        &self,
+        reg: &rsleigh::Vn,
+        op: &'static str,
+    ) -> Result<Option<SubRegContext>> {
+        debug_assert!(
+            vn_container::is_aliasable_space(reg.addr_space),
+            "{op}: {reg:?} has no container"
+        );
+        // `container_of` returns `reg` unchanged when nothing tracked contains
+        // it: a full-width access.
+        let container_reg = self.container_map.container_of(reg);
         if container_reg == *reg {
-            return Ok(SubRegOutcome::Direct { container_reg });
+            return Ok(None);
         }
         let container_ty: ValueType = container_reg.int_type()?;
         // Both guards are unreachable through `container_of` ->
@@ -263,7 +242,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                 container_reg,
             ));
         }
-        Ok(SubRegOutcome::SubReg(SubRegContext {
+        Ok(Some(SubRegContext {
             container_reg,
             container_ty,
             shift_bits,
