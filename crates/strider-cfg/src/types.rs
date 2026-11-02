@@ -197,6 +197,9 @@ pub struct Region {
     /// `insns` is non-empty, where the last instruction bounds the span.
     pub empty_span_len: u32,
     pub terminator: RegionTerminator,
+    /// The ISA mode the region decoded in; `None` on an arch with no ISA-mode
+    /// var, and for a `TailCall` stub, whose bytes are never decoded.
+    pub isa_mode: Option<u32>,
 }
 
 impl Region {
@@ -355,6 +358,7 @@ mod tests {
             start_addr: addr(0x1000, 0),
             insns: Vec::new(),
             empty_span_len: 0,
+            isa_mode: None,
             terminator: RegionTerminator::Unconditional,
         };
         assert!(r.contains_addr(addr(0x1000, 0)));
@@ -370,6 +374,7 @@ mod tests {
             start_addr: addr(0x1000, 0),
             insns: Vec::new(),
             empty_span_len: 4,
+            isa_mode: None,
             terminator: RegionTerminator::Unconditional,
         };
         assert!(r.contains_addr(addr(0x1000, 0)));
