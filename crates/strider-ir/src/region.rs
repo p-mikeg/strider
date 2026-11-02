@@ -14,7 +14,6 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 pub struct RegionId(u32);
 entity_impl!(RegionId);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Region {
     terminated: bool,
     control_node: NodeId,
