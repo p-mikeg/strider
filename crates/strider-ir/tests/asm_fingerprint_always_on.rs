@@ -1,10 +1,4 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::unreachable,
-    clippy::todo
-)]
+#![allow(clippy::todo)]
 
 //! The asm-fingerprint check must fire on a plain `validate()`.
 

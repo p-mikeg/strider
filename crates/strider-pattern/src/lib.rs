@@ -1,13 +1,3 @@
-#![cfg_attr(
-    test,
-    allow(
-        clippy::panic,
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::unreachable
-    )
-)]
-
 pub(crate) mod bindings;
 pub(crate) mod build_graph;
 pub(crate) mod capture;

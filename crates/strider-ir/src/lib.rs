@@ -1,13 +1,4 @@
 #![warn(clippy::wildcard_enum_match_arm)]
-#![cfg_attr(
-    test,
-    allow(
-        clippy::panic,
-        clippy::unwrap_used,
-        clippy::expect_used,
-        clippy::unreachable
-    )
-)]
 
 mod builder;
 mod control_flow_view;
