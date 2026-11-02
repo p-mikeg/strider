@@ -656,9 +656,25 @@ fn popcount_keeps_its_input_width() {
     });
 }
 
-// `VnSpace::by_id` expects inputs[0] to hold a raw pointer to a Sleigh
-// AddrSpace, which a synthetic test cannot construct safely; the per-arch
-// tests cover `Load` against real decoded pcode.
+/// A `Load` whose space id names no space of the engine errs; a real
+/// decoded id is covered by the per-arch tests.
+#[test]
+fn lift_load_from_an_unknown_space_id_fails() {
+    with_test_lifter(|d, rid| {
+        let insn = Insn {
+            opcode: Opcode::Load,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(0x1234, 8), reg(8)].into(),
+        };
+        let err = d
+            .process_insn(rid, &insn, test_addr(), &super::RegionMap::default())
+            .expect_err("an id outside the engine's table");
+        assert!(
+            format!("{err:#}").contains("names no space of this engine"),
+            "{err:#}"
+        );
+    });
+}
 
 /// No SLEIGH production emits `SegmentOp` or `Indirect`; the decompiler mints
 /// both, `SegmentOp` with a host `AddrSpace*` in input 0.
