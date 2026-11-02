@@ -114,7 +114,7 @@ pub(super) fn decode_failure(err: &anyhow::Error) -> Option<DecodeFailure> {
     err.downcast_ref::<DecodeFailure>().copied()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum InsnOutcome {
     RegionClosed,
     Continue,
@@ -124,15 +124,15 @@ pub(crate) enum InsnOutcome {
 pub(super) struct RegionBuilder<'b, 'a: 'b, R: rsleigh::MemReader> {
     /// `'b` is the borrow of the Builder, scoped to one `build()` call; `'a`
     /// is the longer Sleigh borrow the Builder itself holds.
-    pub(super) builder: &'b mut Builder<'a, R>,
-    pub(super) start_addr: PcodeInsnAddr,
-    pub(super) insns: Vec<RegionInstruction>,
+    builder: &'b mut Builder<'a, R>,
+    start_addr: PcodeInsnAddr,
+    insns: Vec<RegionInstruction>,
     /// Bytes consumed by the zero-pcode-op instruction at `start_addr`, set
     /// once decoding leaves it. Read only when the region seals with no
     /// instruction, where nothing else records its span.
     empty_span_len: u32,
     /// `None` only for the function entry region.
-    pub(super) parent_edge: Option<NodeIndex>,
+    parent_edge: Option<NodeIndex>,
     /// The ISA mode this region decodes in, when the arch has one.
     ///
     /// Pinning it once at the region's first address is not enough: Sleigh's
@@ -502,7 +502,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
 
     /// Address-bounds reasoning only: does NOT check that the target lands on
     /// a machine-instruction boundary.
-    pub(super) fn is_branch_tail_call_nocheck(&self, branch_target_addr: PcodeInsnAddr) -> bool {
+    fn is_branch_tail_call_nocheck(&self, branch_target_addr: PcodeInsnAddr) -> bool {
         crate::is_addr_tail_call(
             branch_target_addr.machine_addr.addr,
             self.builder.start_addr,
