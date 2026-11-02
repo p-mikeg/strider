@@ -27,7 +27,7 @@ fn render(function: &Function) -> String {
 fn render_with_state(function: &Function) -> (String, super::FunctionDotDumperState) {
     let dumper = make_dumper(function);
     let mut out = ::dot::DotEmitter::new("G", &::dot::DotStyle::empty());
-    let mut state = dumper.create_initial_state();
+    let mut state = FunctionDotDumperState::default();
     for node in dumper.iter_nodes() {
         dumper
             .dump_as_dot(node, &mut out, &mut state)
@@ -512,7 +512,7 @@ fn if_virtual_nodes_connected_when_consumer_rendered_before_if() {
 
     let style = ::dot::DotStyle::empty();
     let mut emitter = ::dot::DotEmitter::new("test", &style);
-    let mut state = dumper.create_initial_state();
+    let mut state = FunctionDotDumperState::default();
 
     // cs_true *before* if_node is the ordering under test.
     dumper

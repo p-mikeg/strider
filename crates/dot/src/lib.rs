@@ -37,10 +37,9 @@ pub trait GraphDotDumper {
     // Bound is Debug + Display, not `std::error::Error`, so impls can pick
     // `type Error = anyhow::Error`, which does not implement it.
     type Error: Debug + std::fmt::Display + Send + Sync + 'static;
-    type State;
-
-    /// Creates the mutable state threaded through all [`Self::dump_as_dot`] calls.
-    fn create_initial_state(&self) -> Self::State;
+    /// The mutable state threaded through all [`Self::dump_as_dot`] calls,
+    /// starting from its `Default`.
+    type State: Default;
 
     /// Every node of a whole render; a restricted one draws its view's.
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node>;
@@ -372,7 +371,7 @@ impl<G: GraphDotDumper> GraphDot<G> {
     /// Forwards any error from [`GraphDotDumper::dump_as_dot`].
     pub fn as_dot(&self) -> anyhow::Result<String> {
         let mut dot = DotEmitter::new("G", &self.style);
-        let mut state = self.dumper.create_initial_state();
+        let mut state = G::State::default();
         let mut dump = |node| {
             self.dumper
                 .dump_as_dot(node, &mut dot, &mut state)

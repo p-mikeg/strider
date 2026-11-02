@@ -144,6 +144,7 @@ fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<ArgTag>> 
     map
 }
 
+#[derive(Default)]
 pub struct FunctionDotDumperState {
     /// Virtual DOT nodes inserted between a producer output and its consumers,
     /// keyed by the `ValueId` they stand for.
