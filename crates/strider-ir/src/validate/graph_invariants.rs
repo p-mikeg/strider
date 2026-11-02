@@ -7,7 +7,7 @@ use crate::graph::Graph;
 use crate::node::{
     Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType, WidthTie, width_tie,
 };
-use crate::schedule::{ScheduleContext, data_producers, schedule_early};
+use crate::schedule::{ScheduleContext, data_producers, live_arms, schedule_early};
 use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
 
 use super::ValidationError;
@@ -768,18 +768,6 @@ fn ctrl_memory_input(graph: &Graph, node: NodeId) -> Option<ValueId> {
     graph
         .nth_input(node, NodeKind::CTRL_MEM_SLOT)
         .filter(|&v| graph.value_kind(v) == ValueKind::Memory)
-}
-
-/// A phi's value inputs on edges from a node of `tree`.
-fn live_arms<'a>(
-    function: &'a Function,
-    tree: &'a DominatorTree<NodeId>,
-    phi: NodeId,
-) -> impl Iterator<Item = ValueId> + 'a {
-    function
-        .phi_arms(phi)
-        .filter(|&(edge, _)| tree.contains(function.producer(edge)))
-        .map(|(_, arm)| arm)
 }
 
 /// Every data input is available where it is used, judged on an early schedule
