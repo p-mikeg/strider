@@ -30,8 +30,8 @@ fn fmt_vn(vn: &rsleigh::Vn) -> String {
 
 pub(super) struct RawFunctionDumper<'a> {
     function: &'a Function,
-    /// Carrier node -> arg tags.
-    arg_index: FxHashMap<NodeId, Vec<super::ArgTag>>,
+    /// Carrier node -> its arg tags, joined.
+    arg_labels: FxHashMap<NodeId, String>,
     /// A neighbourhood render; `None` dumps the whole walk.
     view: Option<::dot::View<NodeId>>,
 }
@@ -39,7 +39,7 @@ pub(super) struct RawFunctionDumper<'a> {
 impl<'a> RawFunctionDumper<'a> {
     pub(super) fn new(function: &'a Function) -> Self {
         Self {
-            arg_index: super::build_arg_reverse_map(function),
+            arg_labels: super::arg_labels(function),
             function,
             view: None,
         }
@@ -132,9 +132,8 @@ impl<'a> RawFunctionDumper<'a> {
                 .count();
             s.push_str(&format!("\nclobbers={tagged}"));
         }
-        if let Some(tags) = self.arg_index.get(&node) {
-            let joined: Vec<String> = tags.iter().map(ToString::to_string).collect();
-            s.push_str(&format!("\n{}", joined.join(", ")));
+        if let Some(tags) = self.arg_labels.get(&node) {
+            s.push_str(&format!("\n{tags}"));
         }
         s
     }
