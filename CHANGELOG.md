@@ -161,6 +161,7 @@
 
 ### Breaking, Rust
 
+- `strider_ir::SideTables` is `FunctionSideTables`.
 - `TemplatePat` is sealed: no type outside strider-pattern implements it, so
   a hand-written type is no longer a rewrite RHS. `MatchPat` is still open.
   A front end that builds the tree itself reaches a template through the
