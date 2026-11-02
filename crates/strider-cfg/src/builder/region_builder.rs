@@ -727,7 +727,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         // Sampled here, before any other region can repaint this address, and
         // for every site: a placeholder's caller needs the same bit a seated
         // target would have decoded in.
-        self.builder.sample_flowing_isa_bit(addr);
+        let flowing_isa = self.builder.sample_flowing_isa_bit(addr);
         let arms = match self.builder.options.seated(addr) {
             // Unclassified so far: defer to the orchestrator's rebuild loop,
             // which runs the resolver against the optimised IR.  `target_vn`
@@ -820,9 +820,9 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let flowing = self.flowing_commits()?;
         for target in arms.iter().rev() {
             self.builder.enqueue_resolved(
-                Some(region),
+                region,
                 PcodeInsnAddr::at_machine_start(target.addr),
-                target.isa_bit,
+                target.isa_bit.or(flowing_isa),
                 addr,
                 &flowing,
             );
