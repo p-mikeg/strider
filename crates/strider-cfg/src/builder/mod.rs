@@ -595,11 +595,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         carried: FlowContext,
         seeded_by: Option<ArmSeed>,
     ) -> Result<()> {
+        let isa_mode = self.isa_mode_of(&carried);
         if let Some((region_id, region)) = self.find_region_containing_addr(addr) {
             let is_start = region.start_addr == addr;
             let is_boundary = region.contains_insn_at(addr);
-            let want = self.isa_mode_of(&carried);
-            let mode_clash = self.note_isa_mode_clash(addr, region_id, want);
+            let mode_clash = self.note_isa_mode_clash(addr, region_id, isa_mode);
             let parent_region_id = parent_region
                 .ok_or_else(|| anyhow!("non-entry work-queue item has no parent edge"))?;
             if mode_clash && seeded_by.is_some_and(|s| s.is_arm(parent_region, addr)) {
@@ -633,7 +633,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         self.engine
             .flow_vars
             .pin_at(&mut self.engine.sleigh, addr.machine_addr.addr, &carried)?;
-        let isa_mode = self.isa_mode_of(&carried);
         self.descent = seeded_by;
         let built = RegionBuilder::new(self, addr, parent_region, isa_mode).build();
         self.descent = None;
