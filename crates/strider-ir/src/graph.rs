@@ -638,53 +638,8 @@ mod tests {
         assert_eq!(indices, vec![0, 1], "both positional indices must appear");
     }
 
-    /// `replace_current_with` must redirect the current use and advance past
-    /// it, leaving the remaining use untouched.
     #[test]
-    fn output_use_cursor_replace_redirects_first_use() {
-        let mut function = test_function();
-
-        let old_src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::IntConstId::new(1_usize)),
-            [],
-            [ValueKind::Typed(ValueType::int(64))],
-        );
-        let [old_value] = function.node_outputs_exact::<1>(old_src).unwrap();
-
-        let new_src = function.graph_mut().create_node(
-            NodeKind::IntConst(crate::node::IntConstId::new(2_usize)),
-            [],
-            [ValueKind::Typed(ValueType::int(64))],
-        );
-        let [new_value] = function.node_outputs_exact::<1>(new_src).unwrap();
-
-        let ret0 = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(ret0, old_value);
-        let ret1 = function.graph_mut().create_node(NodeKind::Return, [], []);
-        function.graph_mut().add_node_input(ret1, old_value);
-
-        assert_eq!(function.graph().value_uses(old_value).count(), 2);
-        assert_eq!(function.graph().value_uses(new_value).count(), 0);
-
-        {
-            let mut cursor = function.graph_mut().value_use_cursor(old_value);
-            cursor.replace_current_with(new_value);
-        }
-
-        assert_eq!(
-            function.graph().value_uses(old_value).count(),
-            1,
-            "one use must remain on old_value"
-        );
-        assert_eq!(
-            function.graph().value_uses(new_value).count(),
-            1,
-            "one use must move to new_value"
-        );
-    }
-
-    #[test]
-    fn output_use_cursor_replace_all_drains_source() {
+    fn replace_all_uses_drains_source() {
         let mut function = test_function();
 
         let old_src = function.graph_mut().create_node(
@@ -707,10 +662,7 @@ mod tests {
         }
         assert_eq!(function.graph().value_uses(old_value).count(), 3);
 
-        let mut cursor = function.graph_mut().value_use_cursor(old_value);
-        while cursor.current().is_some() {
-            cursor.replace_current_with(new_value);
-        }
+        assert!(function.graph_mut().replace_all_uses(old_value, new_value));
 
         assert_eq!(
             function.graph().value_uses(old_value).count(),
