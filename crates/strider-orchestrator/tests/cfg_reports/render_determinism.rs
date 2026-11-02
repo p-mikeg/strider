@@ -111,3 +111,39 @@ fn x86_add_neighborhood_renders_match_their_snapshots() {
             .expect("raw neighborhood"),
     );
 }
+
+/// A depth-1 CFG neighbourhood centred mid-function, pinned: regions at its
+/// rim have predecessors outside the view, whose edges it must not draw.
+#[test]
+fn aarch64_switch_mid_cfg_neighborhood_matches_its_snapshot() {
+    let (mut strider, cc, addr) =
+        common::fixture_strider(common::Arch::Aarch64, "switch", "dispatch_value");
+    let result = strider
+        .analyze(addr, &cc, &AnalyzeOptions::default(), None)
+        .expect("analyze");
+    let cfg = &result.cfg;
+    let g = cfg.region_graph();
+    let edges: Vec<_> = g
+        .edge_indices()
+        .filter_map(|e| g.edge_endpoints(e))
+        .collect();
+    // The lowest-addressed non-entry region whose depth-1 view some edge
+    // enters from outside.
+    let mut ids: Vec<_> = cfg.region_ids().filter(|&r| r != cfg.entry()).collect();
+    ids.sort_by_key(|&r| g[r].start_addr);
+    let center = ids
+        .into_iter()
+        .find(|&c| {
+            let view: Vec<_> = std::iter::once(c)
+                .chain(g.neighbors_undirected(c))
+                .collect();
+            edges
+                .iter()
+                .any(|(src, dst)| view.contains(dst) && !view.contains(src))
+        })
+        .expect("a mid-function region with an out-of-view predecessor at its rim");
+    expect_test::expect_file!["snapshots/switch_cfg_mid_neighborhood.dot"].assert_eq(
+        &cfg.neighborhood_dot(strider.arch().names(), center, 1, 60)
+            .expect("cfg neighborhood"),
+    );
+}
