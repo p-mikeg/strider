@@ -645,6 +645,11 @@
 - `CfgOptions(call_other_abis=...)` is resolved on first use, rebuilt only
   when the arch changes, and borrowed by every later `analyze` and
   `build_cfg` through it, where each call rebuilt it.
+- `int_const`, `bool_const` and `float_const` check for a `Capture` before
+  trying a number, so `int_const(c)` no longer raises and discards a Python
+  error per call (about 710 to 80 ns; `bool_const(c)` 310 to 80,
+  `float_const(c)` 260 to 80). A literal argument costs about 8 ns more. A
+  wrong-typed argument raises the same error.
 
 ### Added, Python
 

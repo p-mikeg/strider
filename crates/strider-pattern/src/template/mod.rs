@@ -157,7 +157,7 @@ pub fn instantiate_guarded<B: IRBuilder>(
     // multi-output interior node feeds the right slot to each consumer: a
     // `Call`'s memory output and its value outputs must resolve to distinct
     // IR outputs.
-    let mut materialised: FxHashMap<TmplValueId, ValueId> = FxHashMap::default();
+    let mut materialised: Vec<Option<ValueId>> = vec![None; value_tys.by_vertex.len()];
     let mut root_value: Option<ValueId> = None;
 
     // Every step first, so a closure's skip or an unbound capture declines
@@ -178,12 +178,13 @@ pub fn instantiate_guarded<B: IRBuilder>(
             // A capture leaf IS its materialisation: its one output resolves
             // to the LHS binding, reused verbatim as in `int_add(x, 0) -> x`.
             let out_vtx = template.graph.node_outputs(vtx)[0];
-            let TmplValue::ValueCapture(cap) = *template.graph.value_kind_ref(out_vtx) else {
-                unreachable!("a capture leaf's one output is its ValueCapture")
+            let Some(TemplateTy::InheritBinding(cap)) = template.graph.value_kind_ref(out_vtx).ty
+            else {
+                unreachable!("a capture leaf's one output is typed from its binding")
             };
             match bindings.get_value(cap) {
                 Some(value) => {
-                    materialised.insert(out_vtx, value);
+                    materialised[idx(out_vtx)] = Some(value);
                     if vtx == root {
                         root_value = Some(value);
                     }
@@ -279,14 +280,11 @@ pub fn instantiate_guarded<B: IRBuilder>(
         // slot, so multi-output consumers wire the right edge.
         let ir_outputs = builder.function().node_outputs(node);
         for out_vtx in template.graph.node_outputs(vtx).iter().copied() {
-            // A `ValueCapture` never hangs off a `Build` node.
-            let Some(slot) = template.graph.value_kind_ref(out_vtx).built_slot() else {
-                continue;
-            };
+            let slot = template.graph.value_kind_ref(out_vtx).slot;
             let ir_value = *ir_outputs.get(slot).ok_or_else(|| {
                 anyhow!("template output slot {slot} out of range for instantiated node")
             })?;
-            materialised.insert(out_vtx, ir_value);
+            materialised[idx(out_vtx)] = Some(ir_value);
         }
 
         if vtx == root {
@@ -311,9 +309,9 @@ fn raw_int_const() -> anyhow::Error {
     )
 }
 
-/// Every value output's type, keyed on the output vertex.
+/// Every value output's type, indexed by the output vertex.
 struct ValueTys {
-    by_vertex: FxHashMap<TmplValueId, ValueType>,
+    by_vertex: Vec<Option<ValueType>>,
     /// Shift counts whose width is their shift's, inferred: a constant there
     /// that does not fit saturates rather than wraps.
     saturated_counts: FxHashSet<TmplValueId>,
@@ -323,8 +321,13 @@ struct ValueTys {
 impl ValueTys {
     /// Every value-output vertex is resolved, so `vtx` must be one.
     fn of(&self, vtx: TmplValueId) -> ValueType {
-        self.by_vertex[&vtx]
+        self.by_vertex[idx(vtx)].expect("every value-output vertex is resolved")
     }
+}
+
+/// A vertex's position in a table spanning every vertex of the template.
+fn idx(v: TmplValueId) -> usize {
+    v.as_u32() as usize
 }
 
 /// The node's first value-output vertex.
@@ -334,7 +337,7 @@ fn first_value_output_vtx(template: &Template, node_vtx: NodeId) -> Option<TmplV
         .node_outputs(node_vtx)
         .iter()
         .copied()
-        .find(|&v| !matches!(template.graph.value_kind_ref(v), TmplValue::Memory { .. }))
+        .find(|&v| template.graph.value_kind_ref(v).ty.is_some())
 }
 
 /// The build kind a node declares up front. A `Fn` closure picks its kind at
@@ -391,15 +394,10 @@ fn resolve_value_tys(
     root: NodeId,
     root_ty: ValueType,
 ) -> anyhow::Result<ValueTys> {
-    let len = template
-        .graph
-        .all_value_ids()
-        .map(|v| v.as_u32() as usize + 1)
-        .max()
-        .unwrap_or(0);
+    let len = template.graph.all_value_ids().count();
     let mut groups = WidthGroups::new(len);
     // The consumer that ties each vertex to a group, for the error naming it.
-    let mut tied_by: FxHashMap<TmplValueId, (NodeKind, usize)> = FxHashMap::default();
+    let mut tied_by: Vec<Option<(NodeKind, usize)>> = vec![None; len];
     // `(count, shift output)`: a count with no width of its own takes the
     // shift's, as the lifter emits it. Never the other way round.
     let mut counts: Vec<(TmplValueId, TmplValueId)> = Vec::new();
@@ -414,17 +412,17 @@ fn resolve_value_tys(
         for &(slot, producer) in &inputs {
             match groups.tie(&kind, slot, producer, out_vtx, first_operand) {
                 WidthTie::Tied(head) => {
-                    tied_by.entry(producer).or_insert((kind, slot));
-                    tied_by.entry(head).or_insert((kind, slot));
+                    tied_by[idx(producer)].get_or_insert((kind, slot));
+                    tied_by[idx(head)].get_or_insert((kind, slot));
                 }
                 WidthTie::NoHead => {}
                 // A conversion pins its input apart from its output.
                 WidthTie::Conversion(_) => {
-                    tied_by.entry(producer).or_insert((kind, slot));
+                    tied_by[idx(producer)].get_or_insert((kind, slot));
                 }
                 // A free slot pins it to nothing.
                 WidthTie::Free => {
-                    tied_by.entry(producer).or_insert((kind, slot));
+                    tied_by[idx(producer)].get_or_insert((kind, slot));
                     if matches!(kind, NodeKind::IntBinaryOp(op) if op.is_shift())
                         && let Some(out) = out_vtx
                     {
@@ -443,17 +441,10 @@ fn resolve_value_tys(
     // after its consumer, and its id would otherwise decide the anchor.
     for node_vtx in operand_postorder(template, root) {
         for vtx in template.graph.node_outputs(node_vtx).iter().copied() {
-            let ty = match template.graph.value_kind_ref(vtx) {
-                TmplValue::ValueCapture(cap)
-                | TmplValue::Value {
-                    ty: TemplateTy::InheritBinding(cap),
-                    ..
-                } => bindings.get_type(*cap, function),
-                TmplValue::Value {
-                    ty: TemplateTy::Fixed(t),
-                    ..
-                } => Some(*t),
-                TmplValue::Value { .. } | TmplValue::Memory { .. } => None,
+            let ty = match template.graph.value_kind_ref(vtx).ty {
+                Some(TemplateTy::InheritBinding(cap)) => bindings.get_type(cap, function),
+                Some(TemplateTy::Fixed(t)) => Some(t),
+                Some(TemplateTy::InheritRoot) | None => None,
             };
             if let Some(t) = ty {
                 anchor(&mut groups, vtx, t);
@@ -490,10 +481,14 @@ fn resolve_value_tys(
         .filter(|&count| inferred.contains(&groups.find(count)))
         .collect();
 
-    let mut by_vertex: FxHashMap<TmplValueId, ValueType> = FxHashMap::default();
+    let mut by_vertex: Vec<Option<ValueType>> = vec![None; len];
+    // A capture's output is its binding, which `instantiate` reads instead.
     for &node_vtx in order {
+        if let TmplNodeKind::Capture = template.graph.node_kind(node_vtx).kind {
+            continue;
+        }
         for vtx in template.graph.node_outputs(node_vtx).iter().copied() {
-            let &TmplValue::Value { slot, ty } = template.graph.value_kind_ref(vtx) else {
+            let TmplValue { slot, ty: Some(ty) } = *template.graph.value_kind_ref(vtx) else {
                 continue;
             };
             let ty = match ty {
@@ -511,10 +506,10 @@ fn resolve_value_tys(
                 },
                 TemplateTy::InheritRoot => match group_ty.get(&groups.find(vtx)).copied() {
                     Some(t) => t,
-                    None => match tied_by.get(&vtx) {
+                    None => match tied_by[idx(vtx)] {
                         Some((kind, slot))
                             if matches!(
-                                kind.operand_width(*slot),
+                                kind.operand_width(slot),
                                 OperandWidth::Free | OperandWidth::Conversion(_)
                             ) =>
                         {
@@ -540,7 +535,7 @@ fn resolve_value_tys(
                     },
                 },
             };
-            by_vertex.insert(vtx, ty);
+            by_vertex[idx(vtx)] = Some(ty);
         }
     }
     Ok(ValueTys {
@@ -583,11 +578,11 @@ fn intern_fn_int_const<B: IRBuilder>(
 fn collect_inputs(
     template: &Template,
     node_vtx: NodeId,
-    materialised: &FxHashMap<TmplValueId, ValueId>,
+    materialised: &[Option<ValueId>],
 ) -> anyhow::Result<Vec<ValueId>> {
     let mut inputs_by_slot: BTreeMap<usize, ValueId> = BTreeMap::new();
     for (slot, producer_out_vtx) in consumed_inputs(&template.graph, node_vtx) {
-        let producer_value = *materialised.get(&producer_out_vtx).ok_or_else(|| {
+        let producer_value = materialised[idx(producer_out_vtx)].ok_or_else(|| {
             anyhow!("producer output not materialised before consumer (topo order bug)")
         })?;
         if inputs_by_slot.insert(slot, producer_value).is_some() {
@@ -713,11 +708,10 @@ fn output_kinds_for(
 ) -> anyhow::Result<Vec<ValueKind>> {
     let mut by_slot: BTreeMap<usize, ValueKind> = BTreeMap::new();
     for out_vtx in template.graph.node_outputs(node_vtx).iter().copied() {
-        let (slot, kind) = match *template.graph.value_kind_ref(out_vtx) {
-            TmplValue::Value { slot, .. } => (slot, ValueKind::Typed(value_tys.of(out_vtx))),
-            TmplValue::Memory { slot } => (slot, ValueKind::Memory),
-            TmplValue::ValueCapture(_) => continue,
-        };
+        let TmplValue { slot, ty } = *template.graph.value_kind_ref(out_vtx);
+        let kind = ty.map_or(ValueKind::Memory, |_| {
+            ValueKind::Typed(value_tys.of(out_vtx))
+        });
         if by_slot.insert(slot, kind).is_some() {
             anyhow::bail!(
                 "template node declares two outputs at slot {slot} (raw-builder mis-wire)"

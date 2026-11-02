@@ -82,16 +82,30 @@ impl TemplateBuilder {
     /// TemplateBuilder::new().leaf(KindSpec::Any);
     /// ```
     pub fn leaf(&mut self, kind: NodeKind) -> TmplValueRef {
-        let n = self.node(kind);
-        self.value_output(n, 0)
+        self.build(TemplateKind::Exact(kind), &[], TemplateTy::InheritRoot)
     }
 
     /// A leaf whose kind or constant a closure computes at rewrite time, from
     /// [`TemplateKind::Fn`] or [`TemplateKind::FnIntConst`];
     /// `TemplateKind::Exact(k)` builds what [`leaf`](Self::leaf)`(k)` does.
     pub fn dynamic_leaf(&mut self, kind: TemplateKind) -> TmplValueRef {
+        self.build(kind, &[], TemplateTy::InheritRoot)
+    }
+
+    /// One node over `inputs` at slots `0..`, nesting through its value
+    /// output at slot 0, typed `ty`.
+    pub(crate) fn build(
+        &mut self,
+        kind: TemplateKind,
+        inputs: &[TmplValueRef],
+        ty: TemplateTy,
+    ) -> TmplValueRef {
         let n = self.add_node(TmplNodeKind::Build(kind));
-        self.value_output(n, 0)
+        for (slot, &prod) in inputs.iter().enumerate() {
+            self.input(n, slot, prod);
+        }
+        let ty = Some(ty);
+        self.add_value(n, TmplValue { slot: 0, ty })
     }
 
     /// Bare: no inputs or outputs yet.
@@ -102,23 +116,19 @@ impl TemplateBuilder {
     /// `prod` comes from a node built before `node`, or from a
     /// [`capture`](Self::capture), which may be built anywhere.
     pub fn input(&mut self, node: TmplNodeRef, slot: usize, prod: TmplValueRef) {
-        let leaf = matches!(
-            self.core.graph.value_kind_ref(prod.0),
-            TmplValue::ValueCapture(_)
-        );
-        if self.core.add_input(node.0, prod.0, leaf) {
+        if self.core.add_input(node.0, prod.0, self.is_capture(prod)) {
             self.core.graph.node_kind_mut(node.0).input_slots.push(slot);
         }
     }
 
     /// Inherits the rewrite root's type unless one is set.
     pub fn value_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplValueRef {
-        let ty = TemplateTy::InheritRoot;
-        self.add_value(node, TmplValue::Value { slot, ty })
+        let ty = Some(TemplateTy::InheritRoot);
+        self.add_value(node, TmplValue { slot, ty })
     }
 
     pub fn memory_output(&mut self, node: TmplNodeRef, slot: usize) -> TmplValueRef {
-        self.add_value(node, TmplValue::Memory { slot })
+        self.add_value(node, TmplValue { slot, ty: None })
     }
 
     /// Types the materialised node independently of the rewrite root. On a
@@ -133,13 +143,14 @@ impl TemplateBuilder {
         self.set_ty(out, TemplateTy::InheritBinding(cap));
     }
 
-    /// Adds a payload-less `TmplNodeKind::Capture` marker producing a
-    /// `TmplValue::ValueCapture`. At instantiation it resolves to the LHS
-    /// binding for `c`, reused verbatim. Returns only a [`TmplValueRef`], so
-    /// an input can never be wired into a capture node.
+    /// A `TmplNodeKind::Capture` leaf, its output typed from `c`'s binding.
+    /// At instantiation it resolves to the LHS binding for `c`, reused
+    /// verbatim. Returns only a [`TmplValueRef`], so an input can never be
+    /// wired into a capture node.
     pub fn capture(&mut self, c: crate::capture::Capture) -> TmplValueRef {
         let n = self.add_node(TmplNodeKind::Capture);
-        self.add_value(n, TmplValue::ValueCapture(c))
+        let ty = Some(TemplateTy::InheritBinding(c));
+        self.add_value(n, TmplValue { slot: 0, ty })
     }
 
     /// See [`BuildGraph::enter_nesting`]: a template is charged to the stack
@@ -185,16 +196,22 @@ impl TemplateBuilder {
         TmplValueRef(self.core.add_output(node.0, out))
     }
 
+    fn is_capture(&self, v: TmplValueRef) -> bool {
+        let node = self.core.graph.producer(v.0);
+        matches!(self.core.graph.node_kind(node).kind, TmplNodeKind::Capture)
+    }
+
     /// Refused when `out` is a capture; a memory output has no type to set.
     fn set_ty(&mut self, out: TmplValueRef, ty: TemplateTy) {
-        match self.core.graph.value_kind_mut(out.0) {
-            TmplValue::Value { ty: t, .. } => *t = ty,
-            TmplValue::Memory { .. } => {}
-            TmplValue::ValueCapture(_) => self.core.reject(
+        if self.is_capture(out) {
+            return self.core.reject(
                 "a template type setter (capture_typed, set_value_ty) targets a capture, \
                  which keeps the type of the value it bound"
                     .to_string(),
-            ),
+            );
+        }
+        if let Some(t) = &mut self.core.graph.value_kind_mut(out.0).ty {
+            *t = ty;
         }
     }
 }
@@ -239,10 +256,10 @@ mod tests {
     }
 
     #[test]
-    fn capture_is_a_node_marker_with_a_value_capture_output() {
-        // A capture leaf splits across both vertex enums: a payload-less
-        // marker node, and a `ValueCapture(c)` output carrying the id. A
-        // buildable node stays `Build(_)` producing a `Value { .. }`.
+    fn capture_is_a_node_whose_output_inherits_its_binding() {
+        // A capture is a `Capture` node whose one output is typed
+        // `InheritBinding(c)`; a buildable node is `Build(_)` with a typed
+        // output.
         let c = crate::capture::Capture::new();
         let mut b = TemplateBuilder::new();
         let _built = b.dynamic_leaf(TemplateKind::FnIntConst(Box::new(|_| {
@@ -260,18 +277,15 @@ mod tests {
                 TmplNodeKind::Build(_) => {
                     saw_build = true;
                     let out = t.graph.node_outputs(node)[0];
-                    assert!(matches!(
-                        t.graph.value_kind_ref(out),
-                        TmplValue::Value { .. }
-                    ));
+                    assert!(t.graph.value_kind_ref(out).ty.is_some());
                 }
                 TmplNodeKind::Capture => {
                     saw_capture = true;
                     assert_eq!(t.graph.node_inputs(node).into_iter().count(), 0);
                     let out = t.graph.node_outputs(node)[0];
                     assert!(matches!(
-                        t.graph.value_kind_ref(out),
-                        TmplValue::ValueCapture(cc) if *cc == c
+                        t.graph.value_kind_ref(out).ty,
+                        Some(TemplateTy::InheritBinding(cc)) if cc == c
                     ));
                 }
             }

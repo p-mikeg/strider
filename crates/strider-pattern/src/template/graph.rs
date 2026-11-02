@@ -1,7 +1,7 @@
 //! Every template node is either a [`Build`](TmplNodeKind::Build) declaring a
-//! [`TemplateKind`], or a [`Capture`](TmplNodeKind::Capture) leaf marker whose
-//! [`ValueCapture`](TmplValue::ValueCapture) output resolves through the LHS
-//! [`Bindings`](crate::Bindings) at instantiation, so a `Template` is
+//! [`TemplateKind`], or a [`Capture`](TmplNodeKind::Capture) leaf whose one
+//! value output is typed [`TemplateTy::InheritBinding`] and resolves through
+//! the LHS [`Bindings`](crate::Bindings) at instantiation, so a `Template` is
 //! buildable by construction.
 
 use rustc_hash::FxHashSet;
@@ -11,10 +11,6 @@ use crate::capture::Capture;
 use crate::graph_ext::HasInputSlots;
 use crate::template::{TemplateKind, TemplateTy};
 
-/// A capture is split across both vertex enums. The node side is a
-/// payload-less marker saying only "this leaf is a capture, do not synthesise
-/// it"; the capture id and its value resolution live on the produced
-/// [`TmplValue::ValueCapture`].
 pub(crate) struct TmplNode {
     pub(crate) kind: TmplNodeKind,
     /// Parallel to the generic graph's input order; see `graph_ext` for why
@@ -32,33 +28,20 @@ impl HasInputSlots for TmplNode {
 pub(crate) enum TmplNodeKind {
     /// Synthesised as fresh IR from a concrete `NodeKind` or a dynamic `Fn`.
     Build(TemplateKind),
-    /// A leaf resolving through its
-    /// [`ValueCapture`](TmplValue::ValueCapture) output to the LHS-bound
-    /// value, as in `int_add(x, 0) -> x`. Never synthesised, never has inputs.
+    /// A leaf standing for the LHS-bound value, as in `int_add(x, 0) -> x`,
+    /// the capture its output's type names. Never synthesised, never has
+    /// inputs.
     Capture,
 }
 
-/// The value side of the build graph. A built node's output declares its
-/// slot and kind, which is what lets a multi-output interior node, such as a
-/// `Store` or `Call` whose memory token a later node consumes, wire the right
-/// slot.
-pub(crate) enum TmplValue {
-    /// A built node's value output, typed at instantiation.
-    Value { slot: usize, ty: TemplateTy },
-    /// A built node's memory output.
-    Memory { slot: usize },
-    /// Resolves to `bindings.get_value(c)` at instantiation.
-    ValueCapture(Capture),
-}
-
-impl TmplValue {
-    /// `None` for a capture, which no node builds.
-    pub(crate) fn built_slot(&self) -> Option<usize> {
-        match *self {
-            Self::Value { slot, .. } | Self::Memory { slot } => Some(slot),
-            Self::ValueCapture(_) => None,
-        }
-    }
+/// An output at a slot of its node. A built node's output declares its slot,
+/// which is what lets a multi-output interior node, such as a `Store` or
+/// `Call` whose memory token a later node consumes, wire the right slot.
+#[derive(Clone, Copy)]
+pub(crate) struct TmplValue {
+    pub(crate) slot: usize,
+    /// `None` for a memory token.
+    pub(crate) ty: Option<TemplateTy>,
 }
 
 /// Materialised by [`instantiate`](crate::template::instantiate).
@@ -94,17 +77,12 @@ impl Template {
     fn required_captures(&self) -> impl Iterator<Item = Capture> + '_ {
         self.graph
             .all_value_ids()
-            .filter_map(|v| match self.graph.value_kind_ref(v) {
-                // A capture reached only through `capture_typed` lives in the
-                // output's TYPE, not as a value vertex. Unreported, an
-                // unbound one resolves to `root_ty` and the rewrite builds a
-                // node at the wrong width instead of failing the check.
-                TmplValue::ValueCapture(cap)
-                | TmplValue::Value {
-                    ty: TemplateTy::InheritBinding(cap),
-                    ..
-                } => Some(*cap),
-                TmplValue::Value { .. } | TmplValue::Memory { .. } => None,
+            // A capture leaf's output and a `capture_typed` output alike: an
+            // unbound one would resolve to `root_ty` and build a node at the
+            // wrong width instead of failing the check.
+            .filter_map(|v| match self.graph.value_kind_ref(v).ty {
+                Some(TemplateTy::InheritBinding(cap)) => Some(cap),
+                _ => None,
             })
             .chain(self.declared_captures.iter().copied())
     }
