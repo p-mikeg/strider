@@ -203,10 +203,13 @@ impl PyFunction {
             .node_id_from_u32(center)
             .ok_or_else(|| into_strider_err(anyhow::anyhow!("invalid node id {center}")))?;
         match arch {
-            Some(arch) => function
-                .dot_dumper(arch.names())
-                .neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers)
-                .map_err(anyhow::Error::from),
+            Some(arch) => function.dot_dumper(arch.names()).neighborhood_dot(
+                nid,
+                depth,
+                hub_cap,
+                max_nodes,
+                count_producers,
+            ),
             None => function.raw_neighborhood_dot(nid, depth, hub_cap, max_nodes, count_producers),
         }
         .map_err(into_strider_err)
