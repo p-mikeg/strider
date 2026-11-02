@@ -1,10 +1,4 @@
-#![allow(
-    dead_code,
-    clippy::panic,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::unreachable
-)]
+#![allow(dead_code)]
 
 pub mod cases;
 
