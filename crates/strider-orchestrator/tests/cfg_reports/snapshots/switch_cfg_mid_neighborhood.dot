@@ -1,0 +1,32 @@
+digraph "G" {
+  graph [
+    rankdir="TB",
+    bgcolor="#1e1e1e",
+    fontcolor="white",
+  ];
+
+  node [
+    shape="box",
+    style="filled,rounded",
+    fillcolor="#2d2d2d",
+    color="#888888",
+    fontcolor="white",
+    fontname="Courier",
+    margin="0.2",
+  ];
+
+  edge [
+    color="#aaaaaa",
+    fontcolor="white",
+    penwidth="1.2",
+  ];
+
+  "1" [label="Instruction(addr=0x7fc, idx=0)\n\l0x7fc: BoolNeg unique[0x1b00]:1, ZR\l0x7fc: BoolAnd unique[0x1d00]:1, CY, unique[0x1b00]:1\l0x7fc: CondBranch ram[0x830]:8, unique[0x1d00]:1\l", shape="box"];
+  "2" [label="Instruction(addr=0x800, idx=0)\n\l0x800: Copy unique[0x22c00]:4, 0x3:4\l0x800: IntCarry tmpCY, w1, unique[0x22c00]:4\l0x800: IntScarry tmpOV, w1, unique[0x22c00]:4\l0x800: IntAdd unique[0x22e00]:4, w1, unique[0x22c00]:4\l0x800: IntSless tmpNG, unique[0x22e00]:4, 0x0:4\l0x800: IntEqual tmpZR, unique[0x22e00]:4, 0x0:4\l0x800: IntZext x0, unique[0x22e00]:4\l0x804: Copy unique[0x38900]:4, 0x2:4\l0x804: IntLessEqual tmpCY, 0x2:4, w3\l0x804: IntSborrow tmpOV, w3, 0x2:4\l0x804: IntSub unique[0x38b00]:4, w3, unique[0x38900]:4\l0x804: IntSless tmpNG, unique[0x38b00]:4, 0x0:4\l0x804: IntEqual tmpZR, unique[0x38b00]:4, 0x0:4\l0x804: Copy NG, tmpNG\l0x804: Copy ZR, tmpZR\l0x804: Copy CY, tmpCY\l0x804: Copy OV, tmpOV\l0x808: CondBranch ram[0x818]:8, ZR\l", shape="box", color="#ffcc00", penwidth="2.5"];
+  "1" -> "2" [label="if-false", style="dashed"];
+  "3" [label="Instruction(addr=0x80c, idx=0)\n\l0x80c: Copy unique[0x22c00]:4, 0x4:4\l0x80c: IntCarry tmpCY, w1, unique[0x22c00]:4\l0x80c: IntScarry tmpOV, w1, unique[0x22c00]:4\l0x80c: IntAdd unique[0x22e00]:4, w1, unique[0x22c00]:4\l0x80c: IntSless tmpNG, unique[0x22e00]:4, 0x0:4\l0x80c: IntEqual tmpZR, unique[0x22e00]:4, 0x0:4\l0x80c: IntZext x0, unique[0x22e00]:4\l0x810: Copy unique[0x38900]:4, 0x3:4\l0x810: IntLessEqual tmpCY, 0x3:4, w3\l0x810: IntSborrow tmpOV, w3, 0x3:4\l0x810: IntSub unique[0x38b00]:4, w3, unique[0x38900]:4\l0x810: IntSless tmpNG, unique[0x38b00]:4, 0x0:4\l0x810: IntEqual tmpZR, unique[0x38b00]:4, 0x0:4\l0x810: Copy NG, tmpNG\l0x810: Copy ZR, tmpZR\l0x810: Copy CY, tmpCY\l0x810: Copy OV, tmpOV\l0x814: BoolNeg unique[0x1400]:1, ZR\l0x814: CondBranch ram[0x81c]:8, unique[0x1400]:1\l", shape="box"];
+  "2" -> "3" [label="if-false", style="dashed"];
+  "4" [label="Instruction(addr=0x818, idx=0)\n\l0x818: Copy pc, x30\l0x818: Return pc\l", shape="box"];
+  "2" -> "4" [label="if-true", style="dashed"];
+  "3" -> "4" [label="if-false", style="dashed"];
+}
