@@ -561,12 +561,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         }
         // The owner already holds the containing instruction's p-code, one
         // entry per op, all stamped at `start`.
-        let full: Vec<rsleigh::Insn> = region
+        let full = region
             .insns
             .iter()
             .filter(|i| i.addr.machine_addr.addr == start)
-            .map(|i| i.insn.clone())
-            .collect();
+            .map(|i| &i.insn);
         let Ok(tail) = self.engine.sleigh.lift_one(target) else {
             return false;
         };
@@ -575,21 +574,17 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         if (tail.machine_insn_len as u64).checked_add(target) != Some(full_end) {
             return false;
         }
-        self.strip_atomic_markers(&full) == self.strip_atomic_markers(&tail.insns)
+        let core = |op: &&rsleigh::Insn| !self.is_atomic_marker(op);
+        full.filter(core).eq(tail.insns.iter().filter(core))
     }
 
-    /// The p-code ops with the `LOCK` / `UNLOCK` markers an x86 `lock` prefix
-    /// brackets its instruction with removed: they wrap the same core op an
+    /// Whether `op` is a `LOCK` / `UNLOCK` marker an x86 `lock` prefix
+    /// brackets its instruction with: they wrap the same core op an
     /// unprefixed decode emits bare.
-    fn strip_atomic_markers(&self, ops: &[rsleigh::Insn]) -> Vec<rsleigh::Insn> {
-        ops.iter()
-            .filter(|op| {
-                op.opcode != rsleigh::Opcode::CallOther
-                    || !crate::user_op_of(op, &self.engine.user_op_names)
-                        .is_some_and(|(_, name)| name == "LOCK" || name == "UNLOCK")
-            })
-            .cloned()
-            .collect()
+    fn is_atomic_marker(&self, op: &rsleigh::Insn) -> bool {
+        op.opcode == rsleigh::Opcode::CallOther
+            && crate::user_op_of(op, &self.engine.user_op_names)
+                .is_some_and(|(_, name)| name == "LOCK" || name == "UNLOCK")
     }
 
     /// Routes `addr` to the region that owns it, or decodes a new one; a branch
