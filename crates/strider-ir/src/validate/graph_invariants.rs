@@ -86,10 +86,12 @@ pub(super) struct UniqueKinds {
 }
 
 pub(super) fn note_unique_kinds(seen: &mut UniqueKinds, node: NodeId, kind: &NodeKind) {
-    let slot = match kind {
-        NodeKind::Entry => &mut seen.entry,
-        NodeKind::InitialMemory => &mut seen.initial_memory,
-        _ => return,
+    let slot = if *kind == NodeKind::Entry {
+        &mut seen.entry
+    } else if *kind == NodeKind::InitialMemory {
+        &mut seen.initial_memory
+    } else {
+        return;
     };
     if slot.0.is_none() {
         slot.0 = Some(node);
@@ -619,7 +621,36 @@ fn check_memory_order(
         NodeKind::Region => chain_mem_phis(node).next().is_some(),
         NodeKind::Call { .. } => !function.get_cc(node).preserves_memory || on_chain.contains(node),
         NodeKind::CallOther { .. } => on_chain.contains(node),
-        _ => false,
+        NodeKind::InitialMemory
+        | NodeKind::InitialVar(_)
+        | NodeKind::MemPhi
+        | NodeKind::Phi
+        | NodeKind::If
+        | NodeKind::Switch(_)
+        | NodeKind::Return
+        | NodeKind::IndirectBranch
+        | NodeKind::Unreachable
+        | NodeKind::Load(_)
+        | NodeKind::Store(_)
+        | NodeKind::IntConst(_)
+        | NodeKind::IntUnaryOp(_)
+        | NodeKind::IntBinaryOp(_)
+        | NodeKind::IntCmpOp(_)
+        | NodeKind::Truncate
+        | NodeKind::Popcount
+        | NodeKind::Lzcount
+        | NodeKind::Extend(_)
+        | NodeKind::FloatConst(_)
+        | NodeKind::FloatBinaryOp(_)
+        | NodeKind::FloatUnaryOp(_)
+        | NodeKind::FloatCmpOp(_)
+        | NodeKind::IntToFloat
+        | NodeKind::FloatToInt
+        | NodeKind::FloatToFloat
+        | NodeKind::IntBitsToFloat
+        | NodeKind::FloatBitsToInt
+        | NodeKind::CPoolRef
+        | NodeKind::New => false,
     };
 
     // The effect a memory token was last advanced by, memoized per `Store`.
@@ -642,7 +673,37 @@ fn check_memory_order(
                 }
                 NodeKind::MemPhi => break function.phi_region(producer),
                 NodeKind::InitialMemory => break tree.root(),
-                _ => break producer,
+                NodeKind::Entry
+                | NodeKind::InitialVar(_)
+                | NodeKind::Region
+                | NodeKind::Phi
+                | NodeKind::If
+                | NodeKind::Switch(_)
+                | NodeKind::Call { .. }
+                | NodeKind::Return
+                | NodeKind::IndirectBranch
+                | NodeKind::Unreachable
+                | NodeKind::Load(_)
+                | NodeKind::IntConst(_)
+                | NodeKind::IntUnaryOp(_)
+                | NodeKind::IntBinaryOp(_)
+                | NodeKind::IntCmpOp(_)
+                | NodeKind::Truncate
+                | NodeKind::Popcount
+                | NodeKind::Lzcount
+                | NodeKind::Extend(_)
+                | NodeKind::FloatConst(_)
+                | NodeKind::FloatBinaryOp(_)
+                | NodeKind::FloatUnaryOp(_)
+                | NodeKind::FloatCmpOp(_)
+                | NodeKind::IntToFloat
+                | NodeKind::FloatToInt
+                | NodeKind::FloatToFloat
+                | NodeKind::IntBitsToFloat
+                | NodeKind::FloatBitsToInt
+                | NodeKind::CallOther { .. }
+                | NodeKind::CPoolRef
+                | NodeKind::New => break producer,
             }
         };
         for store in stores.drain(..) {
