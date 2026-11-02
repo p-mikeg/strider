@@ -1225,7 +1225,7 @@ fn an_undecodable_arm_is_dropped_only_from_the_site_that_seeded_it() {
     // The failing site wired its arm edge before the decode that errored.
     b.region_graph.add_edge(failed, arm, ());
     b.undecodable_seeded.push((
-        Some(failed),
+        failed,
         crate::UndecodableTarget {
             site: addr(0x1000, 0),
             target: addr(shared, 0),
