@@ -852,8 +852,10 @@
   `SleighArch::decode_tables`, which `Lifter::new`, `Strider::new` and
   `DecodeEngine::new` read: unreadable user-op names or flowing vars, a
   `flow_commit_vars` name the sla does not declare, a `ram` space that is
-  missing, misnamed or not byte-addressed, and an ISA-mode mismatch (a mode
-  var the sla does not flow, an unpaired `ISAModeSwitch`). Before, these
+  missing, misnamed or not byte-addressed, a pspec volatile register the sla
+  does not declare, and an ISA-mode mismatch (a mode var the sla does not
+  flow, an unpaired `ISAModeSwitch`); `SleighArch::names` panics on its own
+  table's mismatches the same way. Before, these
   returned `Err`, or for the ISA mode only a debug build asserted. A preset
   is compiled in, so this is a preset bug, which a test sweeps. The three
   return `Err` only when the sla does not load.
