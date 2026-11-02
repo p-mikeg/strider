@@ -1,4 +1,5 @@
 use alloc::vec::Vec;
+use core::marker::PhantomData;
 
 use cranelift_entity::{EntityRef, SecondaryMap};
 
@@ -26,6 +27,25 @@ impl<G: GraphRef> GraphRef for &'_ G {
 
     fn successors(&self, node: Self::NodeId, f: impl FnMut(Self::NodeId)) {
         (*self).successors(node, f);
+    }
+}
+
+/// The graph whose successors of a node are what `F` returns for it.
+pub struct FnSuccs<N, F>(F, PhantomData<fn(N)>);
+
+impl<N, F> FnSuccs<N, F> {
+    pub fn new(f: F) -> Self {
+        Self(f, PhantomData)
+    }
+}
+
+impl<N: EntityRef, I: IntoIterator<Item = N>, F: Fn(N) -> I> GraphRef for FnSuccs<N, F> {
+    type NodeId = N;
+
+    fn successors(&self, node: N, mut f: impl FnMut(N)) {
+        for succ in (self.0)(node) {
+            f(succ);
+        }
     }
 }
 
