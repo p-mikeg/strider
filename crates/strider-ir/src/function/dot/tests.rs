@@ -15,13 +15,7 @@ fn int_const_node(f: &mut Function, v: u128, ty: ValueType) -> NodeId {
 }
 
 fn make_dumper(function: &Function) -> FunctionDotDumper<'_> {
-    FunctionDotDumper {
-        function,
-        names: strider_target::SleighArch::x86_64().names(),
-        node_to_arg_indices: build_arg_reverse_map(function),
-        nodes: None,
-        center: None,
-    }
+    function.dot_dumper(strider_target::SleighArch::x86_64().names())
 }
 
 fn render(function: &Function) -> String {
