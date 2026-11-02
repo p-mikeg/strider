@@ -1,5 +1,4 @@
 use ::dot::GraphDotDumper as _;
-use rustc_hash::FxHashMap;
 
 use super::{FunctionDotDumper, FunctionDotDumperState, edge_style, node_style};
 use crate::IRViewer;
@@ -19,15 +18,6 @@ impl ::dot::GraphDotDumper for FunctionDotDumper<'_> {
     type Node = crate::node::NodeId;
     type Error = std::io::Error;
     type State = FunctionDotDumperState;
-
-    fn create_initial_state(&self) -> Self::State {
-        Self::State {
-            virtual_nodes: FxHashMap::default(),
-            #[cfg(test)]
-            dot_to_node: FxHashMap::default(),
-            next_unique_id: 0,
-        }
-    }
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
         crate::walk::walk_graph(self.function.graph(), self.function.entry())
