@@ -172,8 +172,6 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
     type Error = anyhow::Error;
     type State = ();
 
-    fn create_initial_state(&self) -> Self::State {}
-
     /// The walk follows backward-data and forward-control edges, so every
     /// rendered node's input producers are rendered too: no dangling edges.
     fn iter_nodes(&self) -> impl IntoIterator<Item = NodeId> {
