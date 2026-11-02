@@ -436,7 +436,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         N: Clone,
         V: Clone,
     {
-        self.generation = self.generation.wrapping_add(1);
+        self.bump_generation();
 
         let reachable: Vec<NodeId> = reachable.into_iter().collect();
 
