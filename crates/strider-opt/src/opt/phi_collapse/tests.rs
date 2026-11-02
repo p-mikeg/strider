@@ -1,13 +1,11 @@
 use super::*;
+use crate::test_support::run_pass;
 use strider_ir::IRBuilderExt;
 use strider_ir::node::{NodeKind, ValueType};
-use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
+use strider_ir_test_utils::{IrWalkerEx, RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
 
 fn find_return(fg: &strider_ir::Function) -> NodeId {
-    fg.graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-        .expect("Return present")
+    fg.first_kind(|k| matches!(k, NodeKind::Return))
 }
 
 fn find_var_phi(fg: &strider_ir::Function, var: rsleigh::Vn) -> NodeId {
@@ -22,31 +20,16 @@ fn find_var_phi(fg: &strider_ir::Function, var: rsleigh::Vn) -> NodeId {
 
 #[test]
 fn single_value_phi_collapses() -> crate::Result<()> {
-    let var = reg_vn(0x1000, 8);
-    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region_all()?;
-    let join = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-
-    b.set_region(entry);
-    b.build_branch(join)?;
-
-    b.set_region(join);
-    let read_back = b.read_variable(&var)?;
-    b.build_return(Some(read_back), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let phi = find_var_phi(&fg, var);
+    let mut fg = build_blocks(&[(None, &[1]), (None, &[])])?;
+    let phi = find_var_phi(&fg, reg_vn(0x1000, 8));
     let phi_inputs = fg.node_inputs(phi);
     assert_eq!(phi_inputs.len(), 2, "token + 1 value");
     let lone_value = phi_inputs[1];
 
-    let changed =
-        crate::pipeline::run_one(&PhiCollapse, &mut fg, &crate::OptCtx::new(None))?.changed();
+    let changed = run_pass(&PhiCollapse, &mut fg)?;
     assert!(changed, "single-value phi must collapse");
 
-    let ret_val = fg.node_inputs(find_return(&fg))[2];
+    let ret_val = fg.returned();
     assert_eq!(
         ret_val, lone_value,
         "Return must rewire to the phi's only value input"
@@ -60,36 +43,15 @@ fn single_value_phi_collapses() -> crate::Result<()> {
 /// `[token, V, V]` shape has to be produced by surgery on a 2-distinct join.
 #[test]
 fn multi_value_all_equal_phi_collapses() -> crate::Result<()> {
-    let var = reg_vn(0x1000, 8);
-    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region_all()?;
-    let a = b.create_region_all()?;
-    let bb = b.create_region_all()?;
-    let join = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-
-    b.set_region(entry);
-    let cond = b.build_boolean_const(true);
-    b.build_if(cond, a, bb)?;
-
-    b.set_region(a);
-    let v_a = b.build_int_const(1u64, ValueType::int(64))?;
-    b.write_variable(&var, v_a)?;
-    b.build_branch(join)?;
-
-    b.set_region(bb);
-    let v_b = b.build_int_const(2u64, ValueType::int(64))?;
-    b.write_variable(&var, v_b)?;
-    b.build_branch(join)?;
-
-    b.set_region(join);
-    let merged = b.read_variable(&var)?;
-    b.build_return(Some(merged), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let mut fg = build_blocks(&[
+        (None, &[1, 2]),
+        (Some(1), &[3]),
+        (Some(2), &[3]),
+        (None, &[]),
+    ])?;
 
     // Anchor on the phi the Return consumes.
-    let phi = fg.producer(fg.node_inputs(find_return(&fg))[2]);
+    let phi = fg.producer(fg.returned());
     assert!(matches!(fg.node_kind(phi), NodeKind::Phi));
     assert_eq!(fg.node_inputs(phi).len(), 3, "token + 2 values");
 
@@ -102,11 +64,10 @@ fn multi_value_all_equal_phi_collapses() -> crate::Result<()> {
         "both values equal"
     );
 
-    let changed =
-        crate::pipeline::run_one(&PhiCollapse, &mut fg, &crate::OptCtx::new(None))?.changed();
+    let changed = run_pass(&PhiCollapse, &mut fg)?;
     assert!(changed, "all-equal phi must collapse");
 
-    let ret_val = fg.node_inputs(find_return(&fg))[2];
+    let ret_val = fg.returned();
     assert_eq!(
         ret_val, first_value,
         "Return must rewire to the shared value"
@@ -119,30 +80,14 @@ fn multi_value_all_equal_phi_collapses() -> crate::Result<()> {
 /// with no `Phi` left on the value path.
 #[test]
 fn chained_single_pred_phis_cascade_to_base_value() -> crate::Result<()> {
-    let var = reg_vn(0x1000, 8);
-    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region_all()?;
-    let mid = b.create_region_all()?;
-    let tail = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-
-    b.set_region(entry);
-    b.build_branch(mid)?;
     // Each read materialises a phi; tail's phi takes mid's phi as its value.
-    b.set_region(mid);
-    let _mid_read = b.read_variable(&var)?;
-    b.build_branch(tail)?;
-    b.set_region(tail);
-    let read_back = b.read_variable(&var)?;
-    b.build_return(Some(read_back), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let mut fg = build_blocks(&[(None, &[1]), (None, &[2]), (None, &[])])?;
+    let var = reg_vn(0x1000, 8);
 
-    let changed =
-        crate::pipeline::run_one(&PhiCollapse, &mut fg, &crate::OptCtx::new(None))?.changed();
+    let changed = run_pass(&PhiCollapse, &mut fg)?;
     assert!(changed, "chained trivial phis must collapse");
 
-    let ret_val = fg.node_inputs(find_return(&fg))[2];
+    let ret_val = fg.returned();
     let producer = fg.producer(ret_val);
     assert!(
         matches!(fg.node_kind(producer), NodeKind::InitialVar(v) if fg.initial_vn(*v) == var),
@@ -155,26 +100,8 @@ fn chained_single_pred_phis_cascade_to_base_value() -> crate::Result<()> {
 /// `[token, x, phi_self]` collapses to `x`; Braun's rule discards the self-ref.
 #[test]
 fn loop_carried_self_ref_phi_collapses() -> crate::Result<()> {
-    let var = reg_vn(0x1000, 8);
-    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region_all()?;
-    let header = b.create_region_all()?;
-    let exit = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-
-    b.set_region(entry);
-    b.build_branch(header)?;
-
     // The back edge leaves `var` unwritten, so the header phi reads itself.
-    b.set_region(header);
-    let cond = b.build_boolean_const(true);
-    b.build_if(cond, header, exit)?;
-
-    b.set_region(exit);
-    let read_back = b.read_variable(&var)?;
-    b.build_return(Some(read_back), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let mut fg = build_blocks(&[(None, &[1]), (None, &[1, 2]), (None, &[])])?;
 
     assert!(
         fg.graph().all_node_ids().any(|n| {
@@ -185,9 +112,9 @@ fn loop_carried_self_ref_phi_collapses() -> crate::Result<()> {
         "the header phi carries [token, initial, self-ref]"
     );
 
-    crate::pipeline::run_one(&PhiCollapse, &mut fg, &crate::OptCtx::new(None))?;
+    run_pass(&PhiCollapse, &mut fg)?;
 
-    let ret_val = fg.node_inputs(find_return(&fg))[2];
+    let ret_val = fg.returned();
     assert!(
         matches!(fg.node_kind(fg.producer(ret_val)), NodeKind::InitialVar(_)),
         "Return must rewire past the self-referential header phi to the entry value, got {:?}",
@@ -198,37 +125,16 @@ fn loop_carried_self_ref_phi_collapses() -> crate::Result<()> {
 
 #[test]
 fn genuine_two_value_phi_unchanged() -> crate::Result<()> {
-    let var = reg_vn(0x1000, 8);
-    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let entry = b.create_region_all()?;
-    let a = b.create_region_all()?;
-    let bb = b.create_region_all()?;
-    let join = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-
-    b.set_region(entry);
-    let cond = b.build_boolean_const(true);
-    b.build_if(cond, a, bb)?;
-
-    b.set_region(a);
-    let v_a = b.build_int_const(1u64, ValueType::int(64))?;
-    b.write_variable(&var, v_a)?;
-    b.build_branch(join)?;
-
-    b.set_region(bb);
-    let v_b = b.build_int_const(2u64, ValueType::int(64))?;
-    b.write_variable(&var, v_b)?;
-    b.build_branch(join)?;
-
-    b.set_region(join);
-    let merged = b.read_variable(&var)?;
-    b.build_return(Some(merged), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let mut fg = build_blocks(&[
+        (None, &[1, 2]),
+        (Some(1), &[3]),
+        (Some(2), &[3]),
+        (None, &[]),
+    ])?;
 
     // The builder may layer phis, so anchor on the value the Return actually
     // consumes rather than on `find_var_phi`.
-    let phi_value = fg.node_inputs(find_return(&fg))[2];
+    let phi_value = fg.returned();
     let phi = fg.producer(phi_value);
     assert!(
         matches!(fg.node_kind(phi), NodeKind::Phi),
@@ -241,9 +147,9 @@ fn genuine_two_value_phi_unchanged() -> crate::Result<()> {
 
     // Not asserting on the pass result: other single-pred phis (entry/branch
     // MemPhis) do collapse, so `Changed` is expected either way.
-    crate::pipeline::run_one(&PhiCollapse, &mut fg, &crate::OptCtx::new(None))?;
+    run_pass(&PhiCollapse, &mut fg)?;
 
-    let ret_val_after = fg.node_inputs(find_return(&fg))[2];
+    let ret_val_after = fg.returned();
     assert_eq!(
         ret_val_after, phi_value,
         "Return must still read the genuine 2-distinct phi output"
@@ -262,21 +168,15 @@ fn single_value_mem_phi_collapses() -> crate::Result<()> {
     let body = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
     b.set_region(body);
     let addr = b.build_int_const(0x1000u64, ValueType::int(64))?;
     let data = b.build_int_const(0x42u64, ValueType::int(64))?;
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     b.build_return(None, &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let store = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Store(_)))
-        .expect("Store present");
+    let store = fg.first_kind(|k| matches!(k, NodeKind::Store(_)));
     // Store inputs: [mem, addr, data]; the memory input is slot 0.
     let store_mem_value_before = fg.node_inputs(store)[0];
     let body_mem_phi = fg.producer(store_mem_value_before);
@@ -290,8 +190,7 @@ fn single_value_mem_phi_collapses() -> crate::Result<()> {
         "token + 1 memory value"
     );
 
-    let changed =
-        crate::pipeline::run_one(&PhiCollapse, &mut fg, &crate::OptCtx::new(None))?.changed();
+    let changed = run_pass(&PhiCollapse, &mut fg)?;
     assert!(changed, "single-value MemPhi must collapse");
 
     // The cascade collapses body's MemPhi and then entry's, so the Store ends
@@ -316,23 +215,14 @@ fn single_value_mem_phi_collapses() -> crate::Result<()> {
 #[test]
 fn a_cascading_sweep_converges_in_one_iteration() -> crate::Result<()> {
     use crate::pipeline::Optimizer;
-    use strider_ir_test_utils::IrWalkerEx;
-    let var = reg_vn(0x1000, 8);
-    let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
-    let regions = (0..6)
-        .map(|_| b.create_region_all())
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    b.set_entry_region_all(regions[0])?;
-    for pair in regions.windows(2) {
-        b.set_region(pair[0]);
-        b.build_branch(pair[1])?;
-        b.set_region(pair[1]);
-        let _ = b.read_variable(&var)?;
-    }
-    let read_back = b.read_variable(&var)?;
-    b.build_return(Some(read_back), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+    let mut fg = build_blocks(&[
+        (None, &[1]),
+        (None, &[2]),
+        (None, &[3]),
+        (None, &[4]),
+        (None, &[5]),
+        (None, &[]),
+    ])?;
     let phis = |fg: &strider_ir::Function| fg.count_kind(|k| matches!(k, NodeKind::Phi));
     assert!(phis(&fg) >= 5, "setup expects a phi per join");
 
@@ -341,7 +231,9 @@ fn a_cascading_sweep_converges_in_one_iteration() -> crate::Result<()> {
     edit.cull_dead();
     let mut sweeps = Vec::new();
     loop {
-        let changed = PhiCollapse.apply(&mut edit, &ctx)?.changed();
+        let generation = edit.generation();
+        PhiCollapse.apply(&mut edit, &ctx)?;
+        let changed = edit.generation() != generation;
         sweeps.push(changed);
         edit.clean();
         if !changed || sweeps.len() > 8 {
@@ -356,11 +248,11 @@ fn a_cascading_sweep_converges_in_one_iteration() -> crate::Result<()> {
 
 /// One block of [`build_blocks`]: an optional constant written to `var`, then
 /// no successor (return `var`), one (branch) or two (`If` on `var == 0`).
-type Block = (Option<u64>, &'static [usize]);
+type Block<'a> = (Option<u64>, &'a [usize]);
 
 /// A function over one tracked `var` whose regions are `blocks`, block 0 the
 /// entry.
-fn build_blocks(blocks: &[Block]) -> crate::Result<strider_ir::Function> {
+fn build_blocks(blocks: &[Block<'_>]) -> crate::Result<strider_ir::Function> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
     let regions = blocks
@@ -391,21 +283,7 @@ fn build_blocks(blocks: &[Block]) -> crate::Result<strider_ir::Function> {
             _ => unreachable!("a block has at most two successors"),
         }
     }
-    b.set_lift_addr(None);
     b.build()
-}
-
-fn count_live(fg: &strider_ir::Function, pred: impl Fn(&NodeKind) -> bool) -> usize {
-    use strider_ir_test_utils::IrWalkerEx;
-    fg.count_kind(pred)
-}
-
-fn run(fg: &mut strider_ir::Function) -> crate::Result<bool> {
-    Ok(crate::pipeline::run_one(&PhiCollapse, fg, &crate::OptCtx::new(None))?.changed())
-}
-
-fn return_value_kind(fg: &strider_ir::Function) -> NodeKind {
-    *fg.node_kind(fg.producer(fg.node_inputs(find_return(fg))[2]))
 }
 
 /// A loop nest resetting `var` to 0 in the inner body:
@@ -420,9 +298,12 @@ fn two_phi_cycle_with_one_outside_value_collapses() -> crate::Result<()> {
         (None, &[1, 5]),
         (None, &[]),
     ])?;
-    assert!(run(&mut fg)?);
-    assert_eq!(count_live(&fg, |k| matches!(k, NodeKind::Phi)), 0);
-    assert!(matches!(return_value_kind(&fg), NodeKind::IntConst(_)));
+    assert!(run_pass(&PhiCollapse, &mut fg)?);
+    assert_eq!(fg.count_kind(|k| matches!(k, NodeKind::Phi)), 0);
+    assert!(matches!(
+        *fg.kind_of_value(fg.returned()),
+        NodeKind::IntConst(_)
+    ));
     Ok(())
 }
 
@@ -440,9 +321,12 @@ fn three_phi_cycle_over_two_loop_headers_collapses() -> crate::Result<()> {
         (None, &[1, 7]),
         (None, &[]),
     ])?;
-    assert!(run(&mut fg)?);
-    assert_eq!(count_live(&fg, |k| matches!(k, NodeKind::Phi)), 0);
-    assert!(matches!(return_value_kind(&fg), NodeKind::IntConst(_)));
+    assert!(run_pass(&PhiCollapse, &mut fg)?);
+    assert_eq!(fg.count_kind(|k| matches!(k, NodeKind::Phi)), 0);
+    assert!(matches!(
+        *fg.kind_of_value(fg.returned()),
+        NodeKind::IntConst(_)
+    ));
     Ok(())
 }
 
@@ -457,10 +341,13 @@ fn cycle_with_two_outside_values_stays() -> crate::Result<()> {
         (None, &[1, 5]),
         (None, &[]),
     ])?;
-    run(&mut fg)?;
-    assert_eq!(count_live(&fg, |k| matches!(k, NodeKind::Phi)), 2);
-    assert!(matches!(return_value_kind(&fg), NodeKind::Phi));
-    assert!(!run(&mut fg)?, "a second run finds nothing to collapse");
+    run_pass(&PhiCollapse, &mut fg)?;
+    assert_eq!(fg.count_kind(|k| matches!(k, NodeKind::Phi)), 2);
+    assert!(matches!(*fg.kind_of_value(fg.returned()), NodeKind::Phi));
+    assert!(
+        !run_pass(&PhiCollapse, &mut fg)?,
+        "a second run finds nothing to collapse"
+    );
     Ok(())
 }
 
@@ -482,9 +369,9 @@ fn inner_scc_of_a_genuine_merge_collapses() -> crate::Result<()> {
         (None, &[1, 10]),
         (None, &[]),
     ])?;
-    assert!(run(&mut fg)?);
-    assert_eq!(count_live(&fg, |k| matches!(k, NodeKind::Phi)), 2);
-    let o = fg.producer(fg.node_inputs(find_return(&fg))[2]);
+    assert!(run_pass(&PhiCollapse, &mut fg)?);
+    assert_eq!(fg.count_kind(|k| matches!(k, NodeKind::Phi)), 2);
+    let o = fg.producer(fg.returned());
     let h1 = fg.producer(fg.node_inputs(o)[1]);
     assert!(matches!(fg.node_kind(h1), NodeKind::Phi));
     assert_eq!(fg.node_inputs(h1)[2], fg.node_outputs(o)[0]);
@@ -502,8 +389,8 @@ fn mem_phi_cycle_with_one_outside_token_collapses() -> crate::Result<()> {
         (None, &[2]),
         (None, &[]),
     ])?;
-    assert!(run(&mut fg)?);
-    assert_eq!(count_live(&fg, |k| matches!(k, NodeKind::MemPhi)), 0);
+    assert!(run_pass(&PhiCollapse, &mut fg)?);
+    assert_eq!(fg.count_kind(|k| matches!(k, NodeKind::MemPhi)), 0);
     let memory = fg.node_inputs(find_return(&fg))[1];
     assert!(matches!(
         fg.node_kind(fg.producer(memory)),
@@ -531,7 +418,7 @@ fn a_phi_on_an_unreachable_region_is_left_alone() -> crate::Result<()> {
 
     b.set_region(detached);
     let p = b.read_variable(&var)?;
-    let two = b.build_int_const(2u64, ValueType::int(32)).unwrap();
+    let two = b.build_int_const(2u64, ValueType::int(32))?;
     let next =
         b.build_int_binary_operation(p, two, strider_ir::IntBinaryOp::Add, ValueType::int(32))?;
     b.write_variable(&var, next)?;
@@ -541,12 +428,71 @@ fn a_phi_on_an_unreachable_region_is_left_alone() -> crate::Result<()> {
     b.set_region(join);
     let read_back = b.read_variable(&var)?;
     b.build_return(None, &[read_back])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
-    strider_ir::validate::validate(&fg).expect("the input validates");
 
     // `run_one` panics on invalid output.
-    run(&mut fg)?;
+    run_pass(&PhiCollapse, &mut fg)?;
+    Ok(())
+}
+
+/// Loop headers `h_0..=h_m`, each entered from the two below it and the one
+/// above, so `a_k = phi(a_(k-1), a_(k-2), a_(k+1))`, with `0` into `a_0` and
+/// `1` into `a_1` from outside, and a self-loop `t = phi(a_m, t)` at the top.
+/// Each inner rerun peels two headers, so reaching `t`, which collapses
+/// alone, costs about `m^2 / 4` visits.
+fn peeling_nest(m: usize) -> crate::Result<strider_ir::Function> {
+    let h = |k: usize| 1 + 2 * k;
+    let x = |k: usize| 2 + 2 * k;
+    let (top, exit, one) = (2 * m + 3, 2 * m + 4, 2 * m + 5);
+    let mut succs: Vec<Vec<usize>> = vec![vec![h(0), one]];
+    for k in 0..=m {
+        succs.push(vec![x(k), if k == 0 { exit } else { h(k - 1) }]);
+        succs.push(match m - k {
+            0 => vec![top],
+            1 => vec![h(m)],
+            _ => vec![h(k + 1), h(k + 2)],
+        });
+    }
+    succs.extend([vec![top, h(m)], vec![], vec![h(1)]]);
+    let blocks: Vec<Block<'_>> = succs
+        .iter()
+        .enumerate()
+        .map(|(i, s)| {
+            let write = match i {
+                0 => Some(0),
+                i if i == one => Some(1),
+                _ => None,
+            };
+            (write, s.as_slice())
+        })
+        .collect();
+    build_blocks(&blocks)
+}
+
+/// Whether `t`, the one two-arm phi reading itself, survives a PhiCollapse
+/// over [`peeling_nest`]`(m)`.
+fn top_survives(m: usize) -> crate::Result<bool> {
+    let mut fg = peeling_nest(m)?;
+    let reads_itself = |fg: &strider_ir::Function| {
+        use strider_ir::IRWalker;
+        fg.walk_kind(|k| matches!(k, NodeKind::Phi)).any(|phi| {
+            let out = fg.node_outputs(phi)[0];
+            let arms: Vec<ValueId> = fg.phi_data_inputs(phi).collect();
+            arms.len() == 2 && arms.contains(&out)
+        })
+    };
+    assert!(reads_itself(&fg));
+    run_pass(&PhiCollapse, &mut fg)?;
+    Ok(reads_itself(&fg))
+}
+
+/// The inner reruns stop once they have visited a few phis per phi, so a
+/// nest that peels two headers per rerun keeps the trivial phi at its top;
+/// a shallow one reaches and collapses it.
+#[test]
+fn inner_reruns_past_their_budget_stop() -> crate::Result<()> {
+    assert!(!top_survives(6)?, "the shallow nest collapses `t`");
+    assert!(top_survives(40)?, "the deep nest stops before `t`");
     Ok(())
 }
 
@@ -578,10 +524,9 @@ fn masked_diamond(a: u64, b: u64) -> crate::Result<(strider_ir::Function, ValueI
     let merged = fb.read_variable(&var)?;
     let masked = fb.build_const_binop(0x1fu32, merged, strider_ir::IntBinaryOp::And, ty)?;
     fb.build_return(Some(masked), &[])?;
-    fb.set_lift_addr(None);
     let mut fg = fb.build()?;
-    run(&mut fg)?;
-    let ret = fg.node_inputs(find_return(&fg))[2];
+    run_pass(&PhiCollapse, &mut fg)?;
+    let ret = fg.returned();
     Ok((fg, ret))
 }
 
@@ -660,10 +605,9 @@ fn mask_loop(
 
     fb.set_region(exit);
     fb.build_return(Some(masked), &[])?;
-    fb.set_lift_addr(None);
     let mut fg = fb.build()?;
-    run(&mut fg)?;
-    let ret = fg.node_inputs(find_return(&fg))[2];
+    run_pass(&PhiCollapse, &mut fg)?;
+    let ret = fg.returned();
     let incoming = fg.initial_var_value(&var).expect("var is read");
     Ok((fg, ret, incoming))
 }
@@ -724,31 +668,45 @@ fn masked_loop(
     Ok((fg, ret, saved.get().expect("entry built")))
 }
 
+/// Each [`mask_loop`] shape, once with nothing the back edge writes
+/// reaching the masked bits, where the mask folds to the value saved before
+/// the loop, and once with something that can, where it stays.
 #[test]
-fn a_loop_carried_mask_folds_to_the_value_saved_before_the_loop() -> crate::Result<()> {
-    let (_, ret, saved) = masked_loop(strider_ir::IntBinaryOp::Or, 0xe0)?;
-    assert_eq!(ret, saved);
-    Ok(())
-}
-
-#[test]
-fn a_loop_carried_mask_the_back_edge_can_change_stays() -> crate::Result<()> {
-    let (fg, ret, _) = masked_loop(strider_ir::IntBinaryOp::Or, 0xf0)?;
-    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
-    Ok(())
-}
-
-#[test]
-fn a_loop_carried_mask_through_an_xor_folds() -> crate::Result<()> {
-    let (_, ret, saved) = masked_loop(strider_ir::IntBinaryOp::Xor, 0xe0)?;
-    assert_eq!(ret, saved);
-    Ok(())
-}
-
-#[test]
-fn a_loop_carried_mask_through_an_xor_the_back_edge_can_change_stays() -> crate::Result<()> {
-    let (fg, ret, _) = masked_loop(strider_ir::IntBinaryOp::Xor, 0xf0)?;
-    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
+fn a_loop_carried_mask_folds_only_past_what_the_back_edge_writes() -> crate::Result<()> {
+    use strider_ir::IntBinaryOp::{Or, Xor};
+    #[rustfmt::skip]
+    let cases = [
+        // The interrupt-mask save, the body's high part joined by `Or` / `Xor`.
+        ("or", masked_loop(Or, 0xe0)?, true),
+        ("or, high part reaching the mask", masked_loop(Or, 0xf0)?, false),
+        ("xor", masked_loop(Xor, 0xe0)?, true),
+        ("xor, high part reaching the mask", masked_loop(Xor, 0xf0)?, false),
+        ("shift clearing the mask", shifted_loop(8)?, true),
+        ("shift keeping some of it", shifted_loop(4)?, false),
+        // p-code shifts past the width to 0.
+        ("shift past the width", shifted_loop(32)?, true),
+        // A right shift vacates its top `shift` bits.
+        ("mask above a right shift", shr_loop(24, 0xffff_0000)?, true),
+        ("mask reaching under it", shr_loop(8, 0xffff_0000)?, false),
+        ("mask above a zero-extended byte", extended_loop(0xffff_ff00)?, true),
+        ("mask reaching into it", extended_loop(0xffff_ff80)?, false),
+        ("or with a constant outside the mask", or_const_loop(0x40)?, true),
+        ("or with a constant inside it", or_const_loop(0x50)?, false),
+        // Both arms already within the mask: equal, then different.
+        ("arms sharing their value", narrower_mask_loop(0x0f)?, true),
+        ("arms that differ", narrower_mask_loop(0x07)?, false),
+    ];
+    for (case, (fg, ret, saved), folds) in cases {
+        if folds {
+            assert_eq!(ret, saved, "{case}");
+        } else {
+            assert!(
+                stays(&fg, ret),
+                "{case}: {:?}",
+                fg.node_kind(fg.producer(ret))
+            );
+        }
+    }
     Ok(())
 }
 
@@ -773,26 +731,97 @@ fn shifted_loop(shift: u128) -> crate::Result<(strider_ir::Function, ValueId, Va
     Ok((fg, ret, saved.get().expect("entry built")))
 }
 
+/// The shift proves the bits the fold drops zero, so the folded value carries
+/// both shifts' addresses.
 #[test]
-fn a_mask_under_a_shift_clearing_its_bits_folds() -> crate::Result<()> {
-    let (_, ret, saved) = shifted_loop(8)?;
-    assert_eq!(ret, saved);
+fn a_fold_through_a_shift_absorbs_the_shift() -> crate::Result<()> {
+    use strider_ir::IntBinaryOp::{And, Or, ShiftLeft};
+    let saved = std::cell::Cell::new(None);
+    let (fg, ret, _) = mask_loop(
+        0xff,
+        Some(Box::new(|fb, [x, y, ..]| {
+            fb.set_lift_addr(Some(0xD1));
+            let high0 = konst(fb, ShiftLeft, 8, x)?;
+            fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+            let low = konst(fb, And, 0xff, y)?;
+            saved.set(Some(low));
+            bin(fb, Or, high0, low)
+        })),
+        Box::new(|fb, ([_, _, z, _], masked)| {
+            fb.set_lift_addr(Some(0xD2));
+            let high = konst(fb, ShiftLeft, 8, z)?;
+            fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+            bin(fb, Or, high, masked)
+        }),
+    )?;
+    assert_eq!(Some(ret), saved.get());
+    let fp = fg.side_tables().asm_fingerprint(fg.producer(ret));
+    assert!(fp.contains(&0xD1) && fp.contains(&0xD2), "{fp:?}");
     Ok(())
 }
 
+/// The high half is itself an `Or` of shifts, so proving it clear under the
+/// mask reads two levels below the peeled `Or`.
 #[test]
-fn a_mask_under_a_shift_keeping_some_of_its_bits_stays() -> crate::Result<()> {
-    let (fg, ret, _) = shifted_loop(4)?;
-    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
+fn a_mask_under_an_or_of_shifts_folds() -> crate::Result<()> {
+    use strider_ir::IntBinaryOp::{And, Or, ShiftLeft};
+    let saved = std::cell::Cell::new(None);
+    let high = |fb: &mut strider_ir::FunctionBuilder, a, b| -> crate::Result<ValueId> {
+        let a = konst(fb, ShiftLeft, 8, a)?;
+        let b = konst(fb, ShiftLeft, 9, b)?;
+        bin(fb, Or, a, b)
+    };
+    let (_, ret, _) = mask_loop(
+        0xff,
+        Some(Box::new(|fb, [x, y, z, _]| {
+            let high0 = high(fb, x, z)?;
+            let low = konst(fb, And, 0xff, y)?;
+            saved.set(Some(low));
+            bin(fb, Or, high0, low)
+        })),
+        Box::new(|fb, ([x, _, z, _], masked)| {
+            let high = high(fb, z, x)?;
+            bin(fb, Or, high, masked)
+        }),
+    )?;
+    assert_eq!(Some(ret), saved.get());
     Ok(())
 }
 
-/// A shift at or past the width yields 0 in p-code, so every bit of the
-/// shifted half is zero and the mask sees only the other one.
+/// The shifts two levels below the peeled `Or` are part of the proof that
+/// its high half is clear, so the folded value carries their addresses.
+/// Mutation: absorb only the dropped operand's producer.
 #[test]
-fn a_mask_under_a_shift_past_the_width_folds() -> crate::Result<()> {
-    let (_, ret, saved) = shifted_loop(32)?;
-    assert_eq!(ret, saved);
+fn a_fold_through_an_or_of_shifts_absorbs_the_shifts() -> crate::Result<()> {
+    use strider_ir::IntBinaryOp::{And, Or, ShiftLeft};
+    let saved = std::cell::Cell::new(None);
+    let high = |fb: &mut strider_ir::FunctionBuilder, a, b, at: [u64; 2]| {
+        fb.set_lift_addr(Some(at[0]));
+        let a = konst(fb, ShiftLeft, 8, a)?;
+        fb.set_lift_addr(Some(at[1]));
+        let b = konst(fb, ShiftLeft, 9, b)?;
+        fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+        bin(fb, Or, a, b)
+    };
+    let (fg, ret, _) = mask_loop(
+        0xff,
+        Some(Box::new(|fb, [x, y, z, _]| {
+            let high0 = high(fb, x, z, [0xD1, 0xD2])?;
+            let low = konst(fb, And, 0xff, y)?;
+            saved.set(Some(low));
+            bin(fb, Or, high0, low)
+        })),
+        Box::new(|fb, ([x, _, z, _], masked)| {
+            let high = high(fb, z, x, [0xD3, 0xD4])?;
+            bin(fb, Or, high, masked)
+        }),
+    )?;
+    assert_eq!(Some(ret), saved.get());
+    let fp = fg.side_tables().asm_fingerprint(fg.producer(ret));
+    assert!(
+        [0xD1, 0xD2, 0xD3, 0xD4].iter().all(|a| fp.contains(a)),
+        "{fp:?}"
+    );
     Ok(())
 }
 
@@ -815,23 +844,6 @@ fn shr_loop(shift: u128, mask: u128) -> crate::Result<(strider_ir::Function, Val
         }),
     )?;
     Ok((fg, ret, saved.get().expect("entry built")))
-}
-
-/// A right shift vacates its top `shift` bits, so a mask inside them sees
-/// only the other half of the `Or`.
-#[test]
-fn a_mask_above_a_right_shift_folds() -> crate::Result<()> {
-    let (_, ret, saved) = shr_loop(24, 0xffff_0000)?;
-    assert_eq!(ret, saved);
-    Ok(())
-}
-
-/// The same mask reaching below the vacated bits does not.
-#[test]
-fn a_mask_reaching_under_a_right_shift_stays() -> crate::Result<()> {
-    let (fg, ret, _) = shr_loop(8, 0xffff_0000)?;
-    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
-    Ok(())
 }
 
 /// The entry writes `zext(x as i8) | (y & mask)`, the body
@@ -859,20 +871,6 @@ fn extended_loop(mask: u128) -> crate::Result<(strider_ir::Function, ValueId, Va
     Ok((fg, ret, saved.get().expect("entry built")))
 }
 
-#[test]
-fn a_mask_above_a_zero_extended_byte_folds() -> crate::Result<()> {
-    let (_, ret, saved) = extended_loop(0xffff_ff00)?;
-    assert_eq!(ret, saved);
-    Ok(())
-}
-
-#[test]
-fn a_mask_reaching_into_a_zero_extended_byte_stays() -> crate::Result<()> {
-    let (fg, ret, _) = extended_loop(0xffff_ff80)?;
-    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
-    Ok(())
-}
-
 /// The entry writes `(x & 0xe0) | (y & 0x1f)`, the body `(var & 0x1f) | k`.
 fn or_const_loop(k: u128) -> crate::Result<(strider_ir::Function, ValueId, ValueId)> {
     use strider_ir::IntBinaryOp::{And, Or};
@@ -888,20 +886,6 @@ fn or_const_loop(k: u128) -> crate::Result<(strider_ir::Function, ValueId, Value
         Box::new(|fb, (_, masked)| konst(fb, Or, k, masked)),
     )?;
     Ok((fg, ret, saved.get().expect("entry built")))
-}
-
-#[test]
-fn a_mask_past_an_or_with_a_constant_outside_it_folds() -> crate::Result<()> {
-    let (_, ret, saved) = or_const_loop(0x40)?;
-    assert_eq!(ret, saved);
-    Ok(())
-}
-
-#[test]
-fn a_mask_past_an_or_with_a_constant_inside_it_stays() -> crate::Result<()> {
-    let (fg, ret, _) = or_const_loop(0x50)?;
-    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
-    Ok(())
 }
 
 /// Both arms are `(high & 0xe0) | low`: the entry's `low` is `y & 0x0f`, the
@@ -925,20 +909,6 @@ fn narrower_mask_loop(body_low: u128) -> crate::Result<(strider_ir::Function, Va
         }),
     )?;
     Ok((fg, ret, saved.get().expect("entry built")))
-}
-
-#[test]
-fn arms_already_within_the_mask_fold_to_their_shared_value() -> crate::Result<()> {
-    let (_, ret, saved) = narrower_mask_loop(0x0f)?;
-    assert_eq!(ret, saved);
-    Ok(())
-}
-
-#[test]
-fn arms_within_the_mask_that_differ_stay() -> crate::Result<()> {
-    let (fg, ret, _) = narrower_mask_loop(0x07)?;
-    assert!(stays(&fg, ret), "{:?}", fg.node_kind(fg.producer(ret)));
-    Ok(())
 }
 
 /// The entry leaves `var`; the body writes `(z & 0xe0) | low`, `low` the
@@ -1040,9 +1010,8 @@ fn masked_join(masks: &[&[u128]]) -> crate::Result<Vec<Vec<Option<u128>>>> {
         }
     }
     fb.build_return(None, &uses)?;
-    fb.set_lift_addr(None);
     let mut fg = fb.build()?;
-    run(&mut fg)?;
+    run_pass(&PhiCollapse, &mut fg)?;
 
     let mut returned = fg.node_inputs(find_return(&fg)).into_iter().skip(2);
     let mut out = Vec::new();

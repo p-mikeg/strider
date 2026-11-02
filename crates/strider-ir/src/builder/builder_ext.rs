@@ -135,7 +135,7 @@ pub trait IRBuilderExt: IRBuilder {
                 "build_int_const called with non-integer type {output_type:?}"
             ));
         }
-        let id = self.function_mut().intern_int_const(val, output_type);
+        let id = self.intern_int_const(val, output_type);
         Ok(self.build_single_output_pure(NodeKind::IntConst(id), [], output_type))
     }
 

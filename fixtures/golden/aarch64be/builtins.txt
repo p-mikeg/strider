@@ -14,9 +14,9 @@ cfg
   0x210170 47 ops return -> []
 tracked [pc, sp, tmpCY, tmpOV, tmpNG, tmpZR, x0, x1, x2, x3, x4, x5, x6, x7, x8, x30, %:0x5000:8, %:0x5008:8, q0, %:0x5020:8, %:0x5028:8, q1, q2, q3, q4, q5, q6, q7, u:0xc000:8, u:0x23400:8, u:0x23600:8, u:0x48d00:4]
 arg 0 [%v5]
-arg 1 [%v92]
-float_arg 2 [%v99]
-float_arg 3 [%v100]
+arg 1 [%v90]
+float_arg 2 [%v97]
+float_arg 3 [%v98]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[sp]
@@ -103,18 +103,16 @@ float_arg 3 [%v100]
 %v87:i128 = int.and %v85, %v86
 %v88:i32 = truncate %v87
 %v89:i64 = extend.zero %v88
-%v90:i64 = iconst[0xffffffff]
-%v91:i64 = int.and %v89, %v90
-%v92:i64 = initial_var[x1]
-%v93:i128 = iconst[0xffffffff00000000]
-%v94:i128 = int.and %v81, %v93
-%v95:i128 = extend.zero %v88
-%v96:i128 = int.or %v94, %v95
-%v97:i128 = iconst[0xffffffff]
-%v98:i128 = int.and %v96, %v97
-%v99:i128 = initial_var[q2]
-%v100:i128 = initial_var[q3]
-return %v83, %v7, %v91, %v92, %v98, %v87, %v99, %v100
+%v90:i64 = initial_var[x1]
+%v91:i128 = iconst[0xffffffff00000000]
+%v92:i128 = int.and %v81, %v91
+%v93:i128 = extend.zero %v88
+%v94:i128 = int.or %v92, %v93
+%v95:i128 = iconst[0xffffffff]
+%v96:i128 = int.and %v94, %v95
+%v97:i128 = initial_var[q2]
+%v98:i128 = initial_var[q3]
+return %v83, %v7, %v89, %v90, %v96, %v87, %v97, %v98
 
 == clz32 @0x2101a0
 cfg

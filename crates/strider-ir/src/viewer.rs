@@ -35,6 +35,24 @@ pub trait IRViewer {
             .filter(move |&v| g.value_kind(v) != crate::node::ValueKind::PhiToken)
     }
 
+    /// The `Region` a `Phi` / `MemPhi` joins at, its token's producer.
+    fn phi_region(&self, phi: NodeId) -> NodeId {
+        self.producer(self.node_inputs(phi)[NodeKind::PHI_TOKEN_SLOT])
+    }
+
+    /// Per input of [`Self::phi_region`], the control edge and the arm value
+    /// `phi` takes on it.
+    fn phi_arms(&self, phi: NodeId) -> impl Iterator<Item = (ValueId, ValueId)> + '_ {
+        let edges = self.node_inputs(self.phi_region(phi));
+        let inputs = self.node_inputs(phi);
+        assert_eq!(
+            edges.len() + 1,
+            inputs.len(),
+            "a phi takes one arm per input of its region"
+        );
+        edges.into_iter().zip(inputs.into_iter().skip(1))
+    }
+
     fn node_outputs(&self, node: NodeId) -> &[ValueId] {
         self.function().graph().node_outputs(node)
     }
@@ -217,6 +235,9 @@ pub trait IRViewer {
 
         /// `Store` input [`NodeKind::STORE_DATA_SLOT`] of `[memory, addr, data]`.
         store_data => 3[NodeKind::STORE_DATA_SLOT] "Store node has [memory, addr, data] inputs";
+
+        /// `Load` input [`NodeKind::ACCESS_MEM_SLOT`] of `[memory, addr]`.
+        load_mem => 2[NodeKind::ACCESS_MEM_SLOT] "Load node has [memory, addr] inputs";
 
         /// `Load` input [`NodeKind::ACCESS_ADDR_SLOT`] of `[memory, addr]`.
         load_addr => 2[NodeKind::ACCESS_ADDR_SLOT] "Load node has [memory, addr] inputs";

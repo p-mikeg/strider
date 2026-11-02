@@ -6,7 +6,7 @@ use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, sp_frame, stack_vn_x86_64};
 use strider_orchestrator::opt::{
-    CfgDetach, ConstantFold, DeadBranchElimination, LoadForward, OptimizerPipeline, PhiCollapse,
+    ConstantFold, DeadBranchElimination, LoadForward, OptimizerPipeline, PhiCollapse,
     RegionCollapse,
 };
 
@@ -23,8 +23,8 @@ where
 }
 
 /// Two nested `if(const)` branches, both constants evaluable at
-/// construction time. `ConstantFold + DeadBranchElimination + PhiCollapse
-/// + CfgDetach` must eliminate all `If` nodes from the reachable graph.
+/// construction time. `ConstantFold + DeadBranchElimination + PhiCollapse`
+/// must eliminate all `If` nodes from the reachable graph.
 #[test]
 fn nested_const_branches_fully_eliminated() -> Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
@@ -60,11 +60,10 @@ fn nested_const_branches_fully_eliminated() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.add(DeadBranchElimination);
-    pipeline.add(CfgDetach);
+    pipeline.add(&ConstantFold);
+    pipeline.add(&PhiCollapse);
+    pipeline.add(&RegionCollapse);
+    pipeline.add(&DeadBranchElimination);
     pipeline.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))?;
 
     let remaining_ifs = count_reachable(&fg, |k| matches!(k, NodeKind::If));
@@ -94,11 +93,10 @@ fn const_fold_then_dbe_then_phi_collapse() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.add(DeadBranchElimination);
-    pipeline.add(CfgDetach);
+    pipeline.add(&ConstantFold);
+    pipeline.add(&PhiCollapse);
+    pipeline.add(&RegionCollapse);
+    pipeline.add(&DeadBranchElimination);
     pipeline.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))?;
 
     let ret = fg
@@ -146,10 +144,10 @@ fn stack_pipeline_full_cooperation() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward);
+    pipeline.add(&ConstantFold);
+    pipeline.add(&PhiCollapse);
+    pipeline.add(&RegionCollapse);
+    pipeline.add(&LoadForward);
     pipeline.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))?;
 
     let ret = fg
@@ -193,8 +191,8 @@ fn if_branch_collapses_after_const_fold() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(DeadBranchElimination);
+    pipeline.add(&ConstantFold);
+    pipeline.add(&DeadBranchElimination);
     pipeline.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))?;
 
     let ifs = count_reachable(&fg, |k| matches!(k, NodeKind::If));
@@ -238,8 +236,8 @@ fn region_with_one_predecessor_collapses() -> Result<()> {
     assert_eq!(regions_before, 2, "fixture must start with 2 regions");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
+    pipeline.add(&PhiCollapse);
+    pipeline.add(&RegionCollapse);
     pipeline.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))?;
 
     let regions_after = count_reachable(&fg, |k| matches!(k, NodeKind::Region));
@@ -280,7 +278,7 @@ fn mem_chain_collapses_through_constant_fold() -> Result<()> {
     assert_eq!(loads_before, 1);
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
+    pipeline.add(&ConstantFold);
     pipeline.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))?;
 
     // ConstantFold alone must NOT remove the Store or Load
@@ -329,11 +327,10 @@ fn multi_pass_idempotent_after_fixed_point() -> Result<()> {
     let mut fg = b.build()?;
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.add(DeadBranchElimination);
-    pipeline.add(CfgDetach);
+    pipeline.add(&ConstantFold);
+    pipeline.add(&PhiCollapse);
+    pipeline.add(&RegionCollapse);
+    pipeline.add(&DeadBranchElimination);
 
     pipeline.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))?;
     let ifs_after_first = count_reachable(&fg, |k| matches!(k, NodeKind::If));

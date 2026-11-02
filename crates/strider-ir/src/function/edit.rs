@@ -6,6 +6,7 @@ use entity_utils::{DenseEntitySet, Worklist};
 
 use cranelift_entity::SecondaryMap;
 
+use crate::DominatorTree;
 use crate::builder::IRBuilder;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
 use crate::walk::{DefUseSuccs, PostOrder, RawDefUseSuccs};
@@ -61,6 +62,15 @@ pub struct EditFunction<'g> {
     live_entries: u64,
     /// [`Self::live_postorder`] and the [`Self::edits`] reading it was walked at.
     order_memo: std::cell::RefCell<Option<(u64, Vec<NodeId>)>>,
+    /// Edits that added or removed a use of a `Control` value, plus every
+    /// [`Self::function_mut`] borrow.
+    control_edits: u64,
+    /// [`Self::control_dominator_tree`] and the [`Self::control_edits`]
+    /// reading it was built at.
+    dom_memo: std::cell::RefCell<Option<(u64, DominatorTree<NodeId>)>>,
+    /// Dominator trees actually built, the unit the memo test counts.
+    #[cfg(any(test, feature = "test-util"))]
+    dom_builds: std::cell::Cell<u64>,
     /// Def-use post-order walks actually performed, the unit the order-memo
     /// test counts.
     #[cfg(test)]
@@ -83,6 +93,10 @@ impl<'g> EditFunction<'g> {
             generation: 0,
             live_entries: 0,
             order_memo: std::cell::RefCell::new(None),
+            control_edits: 0,
+            dom_memo: std::cell::RefCell::new(None),
+            #[cfg(any(test, feature = "test-util"))]
+            dom_builds: std::cell::Cell::new(0),
             #[cfg(test)]
             postorder_walks: std::cell::Cell::new(0),
             #[cfg(test)]
@@ -109,6 +123,44 @@ impl<'g> EditFunction<'g> {
     /// readings bracket no change to the live graph.
     pub fn edits(&self) -> u64 {
         self.generation + self.live_entries
+    }
+
+    /// Two equal readings bracket no change to the control graph: every verb
+    /// below counts an edge it adds or removes on a `Control` value, and
+    /// [`Self::function_mut`] counts itself.
+    pub fn control_edits(&self) -> u64 {
+        self.control_edits
+    }
+
+    /// [`crate::control_dominator_tree`], built once per
+    /// [`Self::control_edits`] reading.
+    pub fn control_dominator_tree(&self) -> std::cell::Ref<'_, DominatorTree<NodeId>> {
+        let at = self.control_edits;
+        if self
+            .dom_memo
+            .borrow()
+            .as_ref()
+            .is_none_or(|&(stamp, _)| stamp != at)
+        {
+            #[cfg(any(test, feature = "test-util"))]
+            self.dom_builds.set(self.dom_builds.get() + 1);
+            let tree = crate::control_dominator_tree(self.function);
+            *self.dom_memo.borrow_mut() = Some((at, tree));
+        }
+        std::cell::Ref::map(self.dom_memo.borrow(), |memo| {
+            &memo.as_ref().expect("filled above").1
+        })
+    }
+
+    /// Dominator trees [`Self::control_dominator_tree`] has built.
+    #[cfg(any(test, feature = "test-util"))]
+    pub fn control_dominator_builds(&self) -> u64 {
+        self.dom_builds.get()
+    }
+
+    /// Counts a use of `value` added or removed, if it is a `Control` edge.
+    fn note_edge(&mut self, value: ValueId) {
+        self.control_edits += u64::from(self.function.value_kind(value).is_control());
     }
 
     /// Kills everything outside `state.live_nodes`, walking the **raw** forward
@@ -148,8 +200,10 @@ impl<'g> EditFunction<'g> {
     /// `reverse_postorder()` / `roots` read STALE; call `resync_live_set`
     /// before relying on one.  Payload edits are safe only when the payload is
     /// outside the dedup key; `NodeKind` is its first component, so rewriting a
-    /// cacheable node's kind needs `graph.rebuild_cache()` after.
+    /// cacheable node's kind needs `graph.rebuild_cache()` after.  Every borrow
+    /// counts as a control edit.
     pub fn function_mut(&mut self) -> &mut Function {
+        self.control_edits += 1;
         self.function
     }
 
@@ -195,16 +249,6 @@ impl<'g> EditFunction<'g> {
         pred: impl Fn(&NodeKind) -> bool + 'a,
     ) -> impl Iterator<Item = NodeId> + 'a {
         self.live_reverse_postorder()
-            .into_iter()
-            .filter(move |&n| pred(self.function.node_kind(n)))
-    }
-
-    /// Post-order counterpart of [`Self::live_reverse_postorder_filter`].
-    pub fn live_postorder_filter<'a>(
-        &'a self,
-        pred: impl Fn(&NodeKind) -> bool + 'a,
-    ) -> impl Iterator<Item = NodeId> + 'a {
-        self.live_postorder()
             .into_iter()
             .filter(move |&n| pred(self.function.node_kind(n)))
     }
@@ -402,6 +446,9 @@ impl<'g> EditFunction<'g> {
     pub fn kill_node(&mut self, node: NodeId) {
         // Snapshot inputs BEFORE detaching (detach clears them).
         let inputs: Vec<ValueId> = self.function.node_inputs(node).into_iter().collect();
+        for &input in &inputs {
+            self.note_edge(input);
+        }
         self.function.graph_mut().detach_node_inputs(node);
         self.mark_node_dead(node);
         self.generation += 1;
@@ -480,6 +527,7 @@ impl<'g> EditFunction<'g> {
         let inputs: smallvec::SmallVec<[ValueId; 4]> = inputs.into_iter().collect();
         for &input in &inputs {
             self.will_attach_value(input);
+            self.note_edge(input);
         }
         let node = self
             .function
@@ -499,6 +547,8 @@ impl<'g> EditFunction<'g> {
         let consumer = self.function.graph().node_of_use(input_id);
         self.will_detach_value(displaced);
         self.will_attach_value(output_id);
+        self.note_edge(displaced);
+        self.note_edge(output_id);
         self.function.graph_mut().update_input(input_id, output_id);
         #[cfg(any(test, feature = "test-util"))]
         {
@@ -512,6 +562,7 @@ impl<'g> EditFunction<'g> {
     pub fn add_node_input(&mut self, node: NodeId, output_id: ValueId) {
         let was_input_less = self.node_inputs(node).is_empty();
         self.will_attach_value(output_id);
+        self.note_edge(output_id);
         self.function.graph_mut().add_node_input(node, output_id);
         if was_input_less {
             self.state.roots.remove(node);
@@ -549,6 +600,9 @@ impl<'g> EditFunction<'g> {
             self.will_attach_value(new);
         }
         let changed = self.function.graph_mut().replace_all_uses(old, new);
+        if changed {
+            self.note_edge(old);
+        }
         #[cfg(any(test, feature = "test-util"))]
         {
             self.uses_moved += consumers.len() as u64;
@@ -666,6 +720,9 @@ impl<'g> EditFunction<'g> {
             .iter()
             .filter_map(|&i| inputs.get(i as usize).copied())
             .collect();
+        for &value in &displaced {
+            self.note_edge(value);
+        }
         self.function
             .graph_mut()
             .remove_node_inputs_batch(node, indices.iter().map(|&i| i as usize));
@@ -679,7 +736,15 @@ impl<'g> EditFunction<'g> {
 
 impl IRBuilder for EditFunction<'_> {
     fn function_mut(&mut self) -> &mut crate::Function {
-        self.function
+        EditFunction::function_mut(self)
+    }
+
+    fn intern_int_const(
+        &mut self,
+        val: impl Into<crate::UBig>,
+        ty: crate::node::ValueType,
+    ) -> crate::node::IntConstId {
+        self.function.intern_int_const(val, ty)
     }
 
     fn create_node_attributed<I, O>(
@@ -799,6 +864,148 @@ mod tests {
 
         ctx.kill_node(ctx.producer(two));
         assert_eq!(ctx.generation(), 2);
+    }
+
+    /// Data edits share one dominator tree; killing the `Return`, which drops
+    /// its control input, and a `function_mut` borrow each rebuild it.
+    #[test]
+    fn the_dominator_tree_is_rebuilt_only_after_a_control_edit() {
+        let mut b = single_region_builder();
+        let one = b.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let two = b.build_int_const(2u64, ValueType::int(64)).unwrap();
+        let sum = b
+            .build_int_binary_operation(one, two, IntBinaryOp::Add, ValueType::int(64))
+            .unwrap();
+        b.build_return(Some(sum), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let add = function.producer(sum);
+        let ret = function.value_uses(sum).next().unwrap().0;
+
+        let mut ctx = EditFunction::new(&mut function);
+        drop(ctx.control_dominator_tree());
+        let three = ctx.build_int_const(3u64, ValueType::int(64)).unwrap();
+        let slot = ctx.function().node_input_id_at(add, 1).unwrap();
+        ctx.update_input(slot, three);
+        ctx.replace_value(sum, one);
+        ctx.clean();
+        assert!(ctx.control_dominator_tree().span(ret).is_some());
+        assert_eq!(ctx.control_dominator_builds(), 1, "no control edge moved");
+
+        let _ = ctx.function_mut();
+        drop(ctx.control_dominator_tree());
+        assert_eq!(ctx.control_dominator_builds(), 2, "an escape-hatch borrow");
+
+        ctx.kill_node(ret);
+        assert!(ctx.control_dominator_tree().span(ret).is_none());
+        assert_eq!(ctx.control_dominator_builds(), 3, "the Return left the CFG");
+    }
+
+    /// `if (true) {} else {}` joining at `J`: the function, `J`'s node and its
+    /// two predecessor edges.
+    fn diamond() -> (
+        crate::Function,
+        crate::node::NodeId,
+        [crate::node::ValueId; 2],
+    ) {
+        use crate::IRWalker;
+        let mut b = single_region_builder();
+        let (t, e, j) = (
+            b.create_region_all().unwrap(),
+            b.create_region_all().unwrap(),
+            b.create_region_all().unwrap(),
+        );
+        let c = b.build_boolean_const(true);
+        b.build_if(c, t, e).unwrap();
+        for arm in [t, e] {
+            b.set_region(arm);
+            b.build_branch(j).unwrap();
+        }
+        b.set_region(j);
+        b.build_return(None, &[]).unwrap();
+        b.set_lift_addr(None);
+        let function = b.build().unwrap();
+        let join = function
+            .walk_kind(|k| matches!(k, NodeKind::Region))
+            .find(|&r| function.node_inputs(r).len() == 2)
+            .expect("the join");
+        let [a, b] = function.node_inputs_exact::<2>(join).unwrap();
+        (function, join, [a, b])
+    }
+
+    /// Builds the tree, runs `edit`, builds it again, and asserts the second
+    /// read rebuilt it.
+    fn assert_rebuilds(
+        edit: impl FnOnce(&mut EditFunction<'_>, crate::node::NodeId, [crate::node::ValueId; 2]),
+    ) {
+        let (mut function, join, preds) = diamond();
+        let mut ctx = EditFunction::new(&mut function);
+        drop(ctx.control_dominator_tree());
+        edit(&mut ctx, join, preds);
+        drop(ctx.control_dominator_tree());
+        assert_eq!(ctx.control_dominator_builds(), 2);
+    }
+
+    /// Mutation: drop either `note_edge` in `update_input`.
+    #[test]
+    fn moving_a_control_edge_rebuilds_the_dominator_tree() {
+        assert_rebuilds(|ctx, join, [_, b]| {
+            let slot = ctx.function().node_input_id_at(join, 0).unwrap();
+            ctx.update_input(slot, b);
+        });
+    }
+
+    /// Mutation: drop `add_node_input`'s `note_edge`.
+    #[test]
+    fn adding_a_control_input_rebuilds_the_dominator_tree() {
+        assert_rebuilds(|ctx, join, [a, _]| ctx.add_node_input(join, a));
+    }
+
+    /// Mutation: drop `create_node_attributed`'s `note_edge`.
+    #[test]
+    fn creating_a_control_consumer_rebuilds_the_dominator_tree() {
+        assert_rebuilds(|ctx, _, [a, _]| {
+            ctx.create_node(
+                NodeKind::Region,
+                [a],
+                [ValueKind::Control, ValueKind::PhiToken],
+            );
+        });
+    }
+
+    /// Mutation: drop `remove_node_inputs_batch`'s `note_edge`.
+    #[test]
+    fn removing_a_predecessor_rebuilds_the_dominator_tree() {
+        assert_rebuilds(|ctx, join, _| ctx.remove_region_predecessors(join, &[0]));
+    }
+
+    /// Mutation: drop `replace_all_uses`'s `note_edge`.
+    #[test]
+    fn replacing_a_control_value_rebuilds_the_dominator_tree() {
+        assert_rebuilds(|ctx, _, [a, b]| {
+            ctx.replace_value(a, b);
+        });
+    }
+
+    /// Mutation: leave the counter alone in the `IRBuilder` borrow.
+    #[test]
+    fn a_builder_borrow_rebuilds_the_dominator_tree() {
+        assert_rebuilds(|ctx, _, _| {
+            let _ = crate::IRBuilder::function_mut(ctx);
+        });
+    }
+
+    /// A constant is interned without the structural escape hatch, so a
+    /// rewrite building one keeps the tree.
+    /// Mutation: intern through `function_mut`.
+    #[test]
+    fn building_a_constant_keeps_the_dominator_tree() {
+        let (mut function, _, _) = diamond();
+        let mut ctx = EditFunction::new(&mut function);
+        drop(ctx.control_dominator_tree());
+        ctx.build_int_const(7u64, ValueType::int(64)).unwrap();
+        drop(ctx.control_dominator_tree());
+        assert_eq!(ctx.control_dominator_builds(), 1);
     }
 
     /// The walk order is shared by every read taken at one `edits()` reading,

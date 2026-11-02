@@ -140,8 +140,9 @@ Strider:
   `indirect_branch_resolve` classifiers (`classify_sites`, which `analyze`
   calls after the pipeline unless `resolve_indirect_branches` is off). Pure
   graph->graph; the classifier reports targets and the orchestrator rebuilds
-  the CFG from them. `classify_target` and what the classifiers read
-  (`value_range`, the known-bits facts) are public only under `test-util`.
+  the CFG from them. `classify_target` and the single-pass runners
+  (`run_one`, `run_one_unvalidated`, `run_post`) are public only under
+  `test-util`.
 - `strider-orchestrator`: `Strider::analyze` and its `AnalyzeOptions`, plus the
   re-exported lift engine (`Lifter` / `LiftOutcome` at the crate root) and
   `strider-opt` re-exported as `opt`.
@@ -402,13 +403,12 @@ when both IR slots hold the same value.
   controls (MXCSR.FTZ/DAZ, FPSCR.NI/OE/UE, FZ, FS) are the IEEE default. It is
   the floor, not the only sound setting: `callee_preserves_stack_args` is inert
   without `escape_analysis` or a listed allocator. Per-field detail is on the
-  struct (`crates/strider-ir/src/function/assumptions.rs`). `LoadForward` is two
-  analyzers: the `alias` one is `MemPurpose::Forward` over `assumptions`, the
-  `narrow` one `MemPurpose::TableWalk`, the same claims less the call
-  relaxations, because the edge `narrow_load_to` rewires is read afterwards by
-  walks that honour no call relaxation (the table walk, and return-target
-  verification with its claim off). `FunctionArgDetect` narrows under the same
-  row.
+  struct (`crates/strider-ir/src/function/assumptions.rs`). `LoadForward` asks
+  two policies: it forwards under `Policy::forward` over `assumptions`, and
+  narrows under `Policy::strict`, the same claims less the call relaxations,
+  because the edge `MemQuery::narrow` rewires is read afterwards by walks that
+  honour no call relaxation (the table walk, and return-target verification
+  with its claim off). `FunctionArgDetect` narrows the same way.
 
 ## strider-py
 

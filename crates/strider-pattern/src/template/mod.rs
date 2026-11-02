@@ -567,9 +567,7 @@ fn intern_fn_int_const<B: IRBuilder>(
     if !value_ty.is_integer() {
         return Err(crate::skip());
     }
-    Ok(NodeKind::IntConst(
-        builder.function_mut().intern_int_const(v, value_ty),
-    ))
+    Ok(NodeKind::IntConst(builder.intern_int_const(v, value_ty)))
 }
 
 /// In slot order, reading each producer's already-materialised IR output from

@@ -337,10 +337,10 @@ cfg
   0x100006d4 30 ops return -> []
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x2f100:4, u:0x2f300:4, u:0x57e00:1, u:0x7c300:1, u:0x7c400:4, u:0x7c500:1, u:0x7c600:4, u:0x7c800:4]
 arg 0 [%v12]
-arg 1 [%v20]
-float_arg 0 [%v21]
-float_arg 1 [%v22]
-float_arg 8 [%v23]
+arg 1 [%v18]
+float_arg 0 [%v19]
+float_arg 1 [%v20]
+float_arg 8 [%v21]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r1]
@@ -358,14 +358,12 @@ float_arg 8 [%v23]
 %v14:i32 = load[r] %v13, %v12
 %v15:i8 = load[r] %v13, %v12
 %v16:i32 = extend.zero %v15
-%v17:i32 = iconst[0xff]
-%v18:i32 = int.and %v16, %v17
-%v19:i32 = int.add %v14, %v18
-%v20:i32 = initial_var[r4]
-%v21:i64 = initial_var[f1]
-%v22:i64 = initial_var[f2]
-%v23:i128 = initial_var[vs34]
-return %v0, %v13, %v19, %v20, %v21, %v22, %v23
+%v17:i32 = int.add %v14, %v16
+%v18:i32 = initial_var[r4]
+%v19:i64 = initial_var[f1]
+%v20:i64 = initial_var[f2]
+%v21:i128 = initial_var[vs34]
+return %v0, %v13, %v17, %v18, %v19, %v20, %v21
 
 == main @0x10000710
 cfg

@@ -1,11 +1,12 @@
 //! Entry-SP geometry: the offsets a stack address can stand at, and whether
 //! an access lies in the function's own frame.
 
-use strider_ir::node::{NodeKind, ValueId};
-use strider_ir::{Function, IRViewer, IntBinaryOp};
+use strider_ir::node::ValueId;
+use strider_ir::{Function, IRViewer};
 
-use super::decompose::alignment_masked_operand;
+use super::decompose::{alignment_masked_operand, decompose};
 use super::ring::wrap_to_addr_width;
+use super::{MemExpr, MemKind};
 
 /// Does the access `[base + offset, base + offset + size)` lie wholly in THIS
 /// function's own frame?
@@ -44,72 +45,36 @@ pub(super) fn in_own_frame(function: &Function, base: ValueId, offset: i128, siz
 /// The lowest and highest offset from the entry SP `value` can stand at, or
 /// `None` when no bound follows from its spine.
 ///
-/// Walks the shapes [`super::decompose::decompose`] does (`Add` of a constant
-/// and an alignment `And`) and, unlike it, on through a `Phi`, whose arms
-/// widen the span rather than end the walk: the join holds one of them, so
-/// their union bounds it. A revisited value (a loop-carried base), an
-/// exhausted budget or any other shape answers `None`, which every caller
-/// reads conservatively.
+/// Climbs the anchors [`decompose`] names: each alignment mask below an
+/// anchor can lower it by at most one alignment less a byte, so the offsets
+/// read down to the entry SP give the top and the masks the slack below it.
+/// A spine `decompose` does not bottom out on (a `Phi`, a heap base, any
+/// other shape) answers `None`, which every caller reads conservatively.
 ///
 /// The offsets are read at the ADDRESS width, so a chain that wraps is judged
 /// on the address it really forms.
 ///
-/// Overflow: `hi` is checked, because under-reading it would call a caller's
-/// frame our own and would cut bytes off the top of an access range. The
-/// alignment slack only ever lowers `lo` and cannot overflow (at most
-/// `MAX_STEPS` masks of at most `MAX_ALIGN_BITS` each), so it saturates;
-/// `lo` itself is checked, since clamping it at the carrier floor would RAISE
-/// it and cut bytes off the bottom.
+/// Overflow: the sum is checked, because under-reading `hi` would call a
+/// caller's frame our own and clamping `lo` would cut bytes off the bottom.
+/// The slack only lowers `lo` and saturates.
 pub(crate) fn entry_sp_span(function: &Function, value: ValueId) -> Option<(i128, i128)> {
-    /// A real SP spine is a handful of links; this only bounds a pathological one.
-    const MAX_STEPS: usize = 256;
-    let (mut lo, mut hi) = (i128::MAX, i128::MIN);
-    // Per pending value: the offset accrued above it, and how far the masks
-    // above it can lower that.
-    let mut work = vec![(value, 0i128, 0i128)];
-    let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
-    let mut steps = 0usize;
-    while let Some((cur, acc, slack)) = work.pop() {
-        steps += 1;
-        if steps > MAX_STEPS {
+    let (mut cur, mut acc, mut slack) = (value, 0i128, 0i128);
+    loop {
+        let MemExpr {
+            base,
+            offset,
+            kind: MemKind::Stack,
+        } = decompose(function, cur)?
+        else {
             return None;
+        };
+        acc = acc.checked_add(offset)?;
+        if function.is_entry_sp(base) {
+            let top = wrap_to_addr_width(function, base, acc);
+            return Some((top.checked_sub(slack)?, top));
         }
-        let node = function.producer(cur);
-        match *function.node_kind(node) {
-            NodeKind::InitialVar(_) if function.is_entry_sp(cur) => {
-                let top = wrap_to_addr_width(function, cur, acc);
-                lo = lo.min(top.checked_sub(slack)?);
-                hi = hi.max(top);
-            }
-            // Masking only clears bits, so it can only move the base DOWN, by
-            // at most one alignment less a byte.
-            NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-                let operand = alignment_masked_operand(function, node)?;
-                let [l, r] = function.node_inputs_exact::<2>(node).ok()?;
-                let mask = function.int_const_u128(if operand == l { r } else { l })?;
-                let align = 1i128 << mask.trailing_zeros();
-                work.push((operand, acc, slack.saturating_add(align - 1)));
-            }
-            NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                let (next, k) = crate::const_eval::const_addend(function, node)?;
-                work.push((next, acc.checked_add(k)?, slack));
-            }
-            NodeKind::Phi => {
-                // A revisited value is a loop-carried base: its displacement is
-                // not a constant, so it bounds nothing.
-                if !seen.insert(cur) {
-                    return None;
-                }
-                let arms = work.len();
-                work.extend(function.value_inputs(node).map(|arm| (arm, acc, slack)));
-                // An arm the walk never reads is a displacement it never bounds.
-                if work.len() == arms {
-                    return None;
-                }
-            }
-            _ => return None,
-        }
+        let (operand, align) = alignment_masked_operand(function, function.producer(base))?;
+        slack = slack.saturating_add(align - 1);
+        cur = operand;
     }
-    debug_assert!(lo <= hi, "the walk ends only on an entry-SP terminal");
-    Some((lo, hi))
 }

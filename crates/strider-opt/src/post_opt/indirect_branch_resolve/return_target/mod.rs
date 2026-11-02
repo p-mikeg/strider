@@ -34,7 +34,7 @@ pub struct ReturnTargets<'f> {
     function: &'f Function,
     /// Every claim a query has decided. Return sites mostly share their
     /// claims, and each is explored once.
-    settled: FxHashMap<(Path, Claim), bool>,
+    settled: FxHashMap<Claim, bool>,
     doms: Option<DominatorTree<CtrlKey>>,
     feasible: FxHashMap<(CtrlKey, NodeId), Option<usize>>,
     guesses: FxHashMap<(Path, ValueId), Option<i128>>,
@@ -49,10 +49,12 @@ type Path = Option<CtrlKey>;
 /// One fact a return target's verification rests on.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Claim {
-    /// The value is the address the function was entered with.
-    Target(ValueId),
-    /// The value is the entry SP plus `offset`.
-    EntrySp { value: ValueId, offset: i128 },
+    /// `value` holds `held` along `path`.
+    Holds {
+        path: Path,
+        value: ValueId,
+        held: Held,
+    },
     /// In memory state `mem`, the `size` bytes at `at` hold `holds`.
     Slot {
         mem: ValueId,
@@ -64,6 +66,7 @@ enum Claim {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Held {
+    /// The address the function was entered with.
     ReturnAddress,
     /// The entry SP plus this offset.
     EntrySp(i128),
@@ -106,8 +109,12 @@ impl<'f> ReturnTargets<'f> {
     /// claims (a loop rewriting a slot with its own value, a phi of itself)
     /// brings in no value of its own. Linear in the claims reached.
     pub fn returns_to_caller(&mut self, ret: NodeId, target: ValueId) -> bool {
-        let root = (Some(CtrlKey::Node(ret)), Claim::Target(target));
-        let mut index: FxHashMap<(Path, Claim), usize> = FxHashMap::default();
+        let root = Claim::Holds {
+            path: Some(CtrlKey::Node(ret)),
+            value: target,
+            held: Held::ReturnAddress,
+        };
+        let mut index: FxHashMap<Claim, usize> = FxHashMap::default();
         index.insert(root, 0);
         let mut claims = vec![root];
         // Per claim, the claims resting on it.
@@ -121,9 +128,9 @@ impl<'f> ReturnTargets<'f> {
         // is, and `settled` carries that `false` to every later query.
         let mut claimed: FxHashMap<(Path, ValueId), i128> = FxHashMap::default();
         let mut next = 0;
-        while let Some(&(path, claim)) = claims.get(next) {
+        while let Some(&claim) = claims.get(next) {
             premises.clear();
-            if !self.premises(path, claim, &mut claimed, &mut premises) {
+            if !self.premises(claim, &mut claimed, &mut premises) {
                 failed.push(next);
             }
             for &premise in &premises {

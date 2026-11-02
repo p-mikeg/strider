@@ -1,13 +1,11 @@
 use super::*;
+use crate::test_support::run_pass;
 use strider_ir::node::{NodeKind, ValueKind, ValueType};
 use strider_ir::{IRBuilderExt, IRWalker};
-use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, make_if_fn, reg_vn};
+use strider_ir_test_utils::{IrWalkerEx, RegisterSet, reg_vn};
 
-use crate::OptCtx;
-
-// Reproduces the post-DBE shape CfgDetach is meant to clean up: redirect the
-// constant `If`'s live successor past it and detach the `If`, leaving the dead
-// Region predecessor in place.
+// Reproduces a fold that left its join's dead predecessor in place: redirect
+// the constant `If`'s live successor past it and detach the `If`.
 fn simulate_dbe_redirect_without_strip(
     fg: &mut strider_ir::Function,
     cond: bool,
@@ -52,6 +50,16 @@ fn simulate_dbe_redirect_without_strip(
     Ok(())
 }
 
+/// [`strip_dead_predecessors`] alone, drained and resynced as a pass run is.
+fn strip(fg: &mut strider_ir::Function) -> bool {
+    let mut edit = crate::EditFunction::new(fg);
+    edit.cull_dead();
+    let stripped = strip_dead_predecessors(&mut edit);
+    edit.resync_live_set();
+    edit.clean();
+    stripped
+}
+
 /// Relies on every fixture below fanning strictly more predecessors into the
 /// join than into any branch or entry Region.
 fn find_join_region(fg: &strider_ir::Function) -> NodeId {
@@ -92,17 +100,19 @@ fn find_mem_phi_of_region(fg: &strider_ir::Function, region: NodeId) -> Option<N
     })
 }
 
-/// Isolates CfgDetach from DBE: graft a ctrl edge from a disconnected node onto
-/// a branch Region and check the pass strips it on its own.
+/// The strip with no fold: graft a ctrl edge from a disconnected node onto a
+/// branch Region of a non-constant `If`.
 #[test]
-fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::Result<()> {
-    let mut fg = make_if_fn(true)?;
+fn strips_an_unreachable_predecessor_slot_without_a_fold() -> crate::Result<()> {
+    let cond_vn = reg_vn(0x1000, 1);
+    let (mut fg, _, ()) = RegisterSet::new()
+        .tracked(cond_vn)
+        .build_if_then_else_returns(|b| {
+            let raw = b.read_variable(&cond_vn)?;
+            Ok((b.convert_to_int_if_needed(raw, ValueType::I1)?, ()))
+        })?;
 
-    let if_node = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::If))
-        .expect("If node must exist");
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     let if_outputs = fg.node_outputs(if_node).to_vec();
     assert_eq!(if_outputs.len(), 2);
     let ctrl_false = if_outputs[1];
@@ -131,15 +141,20 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::Result<(
         "false_region should now have 2 ctrl inputs after surgery"
     );
 
-    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &OptCtx::new(None))?;
+    let result = run_pass(&DeadBranchElimination, &mut fg)?;
     assert!(
-        result.changed(),
-        "CfgDetach must report Changed when it removes an unreachable predecessor"
+        result,
+        "the pass must change the graph when it removes an unreachable predecessor"
     );
     assert_eq!(
         fg.node_inputs(false_region).len(),
         1,
-        "false_region must drop back to 1 ctrl input after CfgDetach"
+        "false_region must drop back to 1 ctrl input"
+    );
+    assert_eq!(
+        fg.count_kind(|k| matches!(k, NodeKind::If)),
+        1,
+        "nothing folds"
     );
 
     Ok(())
@@ -148,7 +163,7 @@ fn cfg_detach_isolated_removes_unreachable_predecessor_slot() -> crate::Result<(
 /// A join carrying BOTH a VarPhi and a MemPhi: the dead control slot and both
 /// matching value slots must go, and the result must still validate.
 #[test]
-fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
+fn strip_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
     let entry = b.create_region_all()?;
@@ -184,7 +199,6 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     b.set_region(join);
     let merged = b.read_variable(&var)?;
     b.build_return(Some(merged), &[])?;
-    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
 
@@ -205,18 +219,17 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     // cond=false, so the true branch is left reachable only via the detached If.
     simulate_dbe_redirect_without_strip(&mut fg, false)?;
 
-    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &OptCtx::new(None))?;
-    assert!(result.changed(), "CfgDetach must report Changed");
+    assert!(strip(&mut fg), "the strip must change the graph");
 
     assert_eq!(
         fg.node_inputs(var_phi).len(),
         2,
-        "VarPhi: token + 1 value after CfgDetach"
+        "VarPhi: token + 1 value after the strip"
     );
     assert_eq!(
         fg.node_inputs(mem_phi).len(),
         2,
-        "MemPhi: token + 1 value after CfgDetach"
+        "MemPhi: token + 1 value after the strip"
     );
 
     let true_r_node = fg
@@ -227,13 +240,13 @@ fn cfg_detach_collapses_var_and_mem_phi_then_validates() -> crate::Result<()> {
     assert_eq!(fg.node_inputs(true_r_node).len(), 0);
 
     strider_ir::validate::validate(&fg)
-        .map_err(|e| anyhow::anyhow!("post-CfgDetach validation failed: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("post-strip validation failed: {e:?}"))?;
     Ok(())
 }
 
 /// A join whose only phi is the MemPhi.
 #[test]
-fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
+fn strip_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     let mut b = strider_ir_test_utils::empty_builder()?;
     let entry = b.create_region_all()?;
     let true_r = b.create_region_all()?;
@@ -242,7 +255,6 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
     b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(false);
     b.build_if(cond, true_r, false_r)?;
 
@@ -262,7 +274,6 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
 
     b.set_region(join);
     b.build_return(None, &[])?;
-    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
 
@@ -276,23 +287,22 @@ fn cfg_detach_collapses_mem_phi_only_then_validates() -> crate::Result<()> {
 
     simulate_dbe_redirect_without_strip(&mut fg, false)?;
 
-    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &OptCtx::new(None))?;
-    assert!(result.changed(), "CfgDetach must report Changed");
+    assert!(strip(&mut fg), "the strip must change the graph");
 
     assert_eq!(
         fg.node_inputs(mem_phi).len(),
         2,
-        "MemPhi: token + 1 value after CfgDetach"
+        "MemPhi: token + 1 value after the strip"
     );
 
     strider_ir::validate::validate(&fg)
-        .map_err(|e| anyhow::anyhow!("post-CfgDetach validation failed: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("post-strip validation failed: {e:?}"))?;
     Ok(())
 }
 
 /// Two dead predecessors on a 3-way join: both slots must go in one run.
 #[test]
-fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()> {
+fn strip_removes_two_dead_predecessors_then_validates() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
     let entry = b.create_region_all()?;
@@ -329,7 +339,6 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
     b.set_region(join);
     let merged = b.read_variable(&var)?;
     b.build_return(Some(merged), &[])?;
-    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
 
@@ -342,8 +351,7 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
     simulate_dbe_redirect_without_strip(&mut fg, false)?; // outer If
     simulate_dbe_redirect_without_strip(&mut fg, true)?; // inner If
 
-    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &OptCtx::new(None))?;
-    assert!(result.changed(), "CfgDetach must report Changed");
+    assert!(strip(&mut fg), "the strip must change the graph");
 
     assert_eq!(
         fg.node_inputs(join_node).len(),
@@ -357,7 +365,7 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
     );
 
     strider_ir::validate::validate(&fg)
-        .map_err(|e| anyhow::anyhow!("post-CfgDetach validation failed: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("post-strip validation failed: {e:?}"))?;
     Ok(())
 }
 
@@ -366,7 +374,7 @@ fn cfg_detach_removes_two_dead_predecessors_then_validates() -> crate::Result<()
 /// goes), so iterating `walk()` rather than the control-only set is what lets
 /// the pass reach it at all.
 #[test]
-fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<()> {
+fn strip_visits_control_dead_but_data_reachable_region() -> crate::Result<()> {
     let var = reg_vn(0x1000, 8);
     let mut b = RegisterSet::new().tracked(var).arg(var).build_fn()?;
     let entry = b.create_region_all()?;
@@ -392,7 +400,6 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<(
     b.set_region(join);
     let merged = b.read_variable(&var)?;
     b.build_return(Some(merged), &[])?;
-    b.set_lift_addr(None);
 
     let mut fg = b.build()?;
 
@@ -421,8 +428,7 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<(
         "dead Region IS in the general graph walk (data-reachable)"
     );
 
-    let result = crate::pipeline::run_one(&CfgDetach, &mut fg, &OptCtx::new(None))?;
-    assert!(result.changed(), "CfgDetach must report Changed");
+    assert!(strip(&mut fg), "the strip must change the graph");
     assert_eq!(
         fg.node_inputs(dead_region).len(),
         0,
@@ -430,6 +436,6 @@ fn cfg_detach_visits_control_dead_but_data_reachable_region() -> crate::Result<(
     );
 
     strider_ir::validate::validate(&fg)
-        .map_err(|e| anyhow::anyhow!("post-CfgDetach validation failed: {e:?}"))?;
+        .map_err(|e| anyhow::anyhow!("post-strip validation failed: {e:?}"))?;
     Ok(())
 }

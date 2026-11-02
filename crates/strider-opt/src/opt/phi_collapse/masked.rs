@@ -13,9 +13,8 @@ use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRBuilderExt, IRViewer, IntBinaryOp};
 
 use crate::Result;
-use crate::const_eval::var_and_const;
-use crate::opt::known_bits::{const_only, node_known_bits};
-use crate::pipeline::OptimizationResult;
+use crate::const_eval::{var_and_const, var_and_const_of};
+use crate::opt::known_bits::{KnownBitsFacts, const_only, node_known_bits};
 
 /// Nodes one arm of a masked phi is peeled through.
 pub(super) const PEEL_STEPS: usize = 8;
@@ -25,11 +24,7 @@ pub(super) const PEEL_STEPS: usize = 8;
 pub(super) const PEEL_VISITS_PER_ARM: usize = 2 * PEEL_STEPS;
 
 /// Folds every masked use of each phi in `phis`.
-pub(super) fn fold_masked_uses(
-    edit: &mut crate::EditFunction<'_>,
-    phis: &[NodeId],
-) -> Result<OptimizationResult> {
-    let mut overall = OptimizationResult::NoChange;
+pub(super) fn fold_masked_uses(edit: &mut crate::EditFunction<'_>, phis: &[NodeId]) -> Result<()> {
     let mut walked = Vec::new();
     for &phi in phis {
         if !edit.is_live(phi) || !matches!(edit.node_kind(phi), NodeKind::Phi) {
@@ -39,14 +34,11 @@ pub(super) fn fold_masked_uses(
         let phi_out = edit.node_outputs(phi)[0];
         let masks: Vec<(ValueId, u128)> = edit
             .value_uses(phi_out)
-            .filter_map(|(user, _)| masked_use(edit, user, phi_out))
+            .filter_map(|(user, _)| masked_use(edit, user))
             .collect();
         for (and_out, mask) in masks {
             if budget == 0 {
                 break;
-            }
-            if !edit.is_live(edit.producer(and_out)) {
-                continue;
             }
             walked.clear();
             let Some(value) = masked_phi_value(edit, phi, and_out, mask, &mut walked, &mut budget)?
@@ -58,31 +50,18 @@ pub(super) fn fold_masked_uses(
                 edit.absorb_node_fingerprint(into, n);
             }
             edit.absorb_node_fingerprint(into, phi);
-            if edit.replace_value(and_out, value) {
-                overall = OptimizationResult::Changed;
-            }
+            edit.replace_value(and_out, value);
         }
     }
-    Ok(overall)
+    Ok(())
 }
 
 /// `user`'s output and mask when it is `And(phi_out, C)`.
-fn masked_use(
-    edit: &crate::EditFunction<'_>,
-    user: NodeId,
-    phi_out: ValueId,
-) -> Option<(ValueId, u128)> {
-    if !matches!(
-        edit.node_kind(user),
-        NodeKind::IntBinaryOp(IntBinaryOp::And)
-    ) {
-        return None;
-    }
+fn masked_use(edit: &crate::EditFunction<'_>, user: NodeId) -> Option<(ValueId, u128)> {
+    let (_, mask) = var_and_const_of(edit, user, NodeKind::IntBinaryOp(IntBinaryOp::And))?;
     let (out, ty) = edit.single_value_output(user).ok()?;
     ty.int_mask_u128()?;
-    let [a, b] = edit.node_inputs_exact::<2>(user).ok()?;
-    let other = if a == phi_out { b } else { a };
-    Some((out, edit.int_const_u128(other)?))
+    Some((out, mask))
 }
 
 /// `And(arm, C)` after peeling.
@@ -187,13 +166,20 @@ fn peel(
                 }
             }
             IntBinaryOp::Or | IntBinaryOp::Xor => {
-                if known_zero(edit, a) & mask == mask {
-                    (b, false)
-                } else if known_zero(edit, b) & mask == mask {
-                    (a, false)
+                // The proof the dropped operand adds nothing under the mask.
+                let mut proof = Vec::new();
+                let other = if known_zero(edit, a, &mut proof) & mask == mask {
+                    b
                 } else {
-                    break;
-                }
+                    proof.clear();
+                    if known_zero(edit, b, &mut proof) & mask == mask {
+                        a
+                    } else {
+                        break;
+                    }
+                };
+                walked.extend(proof);
+                (other, false)
             }
             _ => break,
         };
@@ -204,18 +190,36 @@ fn peel(
     Some((Masked::Of(x), witness))
 }
 
-/// Bits of `v` its producer alone proves zero: the known-bits transfer read
-/// with operand facts from the IR alone, so no map is built for one hop.
-fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId) -> u128 {
-    let function = edit.function();
-    let facts = node_known_bits(function, function.producer(v), &const_only(function));
-    // The transfer errors only where a slot the signature pins to a value does
-    // not hold one, which `validate` rejects; proving nothing is the sound
-    // release answer, not a reason to stop folding.
-    debug_assert!(facts.is_ok(), "known bits of a value off a validated graph");
-    facts
-        .ok()
-        .flatten()
+/// Operand levels [`known_zero`] reads below a value: enough for a flag
+/// pack `Or(ShiftLeft(ZeroExtend(flag), k), ...)` whose redundant mask
+/// KnownBits has dropped.
+const KNOWN_ZERO_DEPTH: u32 = 4;
+
+/// Bits of `v` the known-bits transfer proves zero from at most
+/// [`KNOWN_ZERO_DEPTH`] levels of its operand cone, so no map is built.
+/// Every node it reads is pushed onto `read`.
+fn known_zero(edit: &crate::EditFunction<'_>, v: ValueId, read: &mut Vec<NodeId>) -> u128 {
+    known_bits_near(edit.function(), v, KNOWN_ZERO_DEPTH, read).zeros
+}
+
+fn known_bits_near(
+    function: &strider_ir::Function,
+    v: ValueId,
+    depth: u32,
+    read: &mut Vec<NodeId>,
+) -> KnownBitsFacts {
+    let node = function.producer(v);
+    read.push(node);
+    let mut operand = |u| match depth {
+        0 => {
+            if function.int_const_u128(u).is_some() {
+                read.push(function.producer(u));
+            }
+            const_only(function)(u)
+        }
+        _ => known_bits_near(function, u, depth - 1, read),
+    };
+    node_known_bits(function, node, &mut operand)
         .filter(|&(out, _)| out == v)
-        .map_or(0, |(_, kb)| kb.zeros)
+        .map_or_else(KnownBitsFacts::default, |(_, kb)| kb)
 }

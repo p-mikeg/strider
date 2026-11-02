@@ -1,63 +1,37 @@
-use super::alias::{
-    SizedAddr, alias_verdict, classify_addr, modular_offsets, offset_range_verdict,
-    offsets_comparable, ranges_disjoint,
-};
-use super::arg_window::{ArgWindowGeometry, scan_arg_window};
+use super::alias::{Loc, alias_verdict, classify_addr};
 use super::decompose::{SPINE_STEPS, is_alignment_mask};
 use super::frame::in_own_frame;
 use super::index::StoreIndex;
+use super::query::Calls;
 use super::ring::addr_bit_width;
 use super::walker::MemWalker;
 use super::*;
+use crate::test_support::{STANDARD, run_passes};
+use strider_ir::node::ValueId;
 use strider_ir::node::{NodeId, NodeKind};
-use strider_ir::{Function, IRViewer};
+use strider_ir::{Function, FunctionBuilder, IRViewer};
+use strider_ir_test_utils::IrWalkerEx;
 
 /// The pairwise verdict between two nodes, which production reads off the
-/// climb ([`MemAnalyzer::reaching`]) rather than re-deriving.  Distinct
+/// climb ([`MemQuery::reaching`]) rather than re-deriving.  Distinct
 /// address spaces never alias even at the same numeric offset.
-#[cfg(test)]
-fn verdict(
-    analyzer: &MemAnalyzer,
-    f: &Function,
-    load_node: NodeId,
-    store_node: NodeId,
-) -> AliasVerdict {
-    if let (NodeKind::Load(load_space), NodeKind::Store(store_space)) =
-        (f.node_kind(load_node), f.node_kind(store_node))
-        && load_space != store_space
-    {
-        return AliasVerdict::Disjoint;
-    }
-    let load_addr = f.load_addr(load_node);
-    let (_, ty) = f
-        .single_value_output(load_node)
-        .expect("Load has 1 typed output per node signature");
-    let load = SizedAddr {
-        class: classify_addr(f, load_addr),
-        size: ty.byte_size() as i128,
-        addr_bits: addr_bit_width(f, load_addr),
-    };
+fn verdict(policy: Policy, f: &Function, load_node: NodeId, store_node: NodeId) -> AliasVerdict {
     alias_verdict(
-        load,
-        analyzer.store_sized(f, store_node),
-        analyzer.options(),
+        Loc::read_by(f, load_node),
+        Loc::written_by(f, store_node),
+        policy,
     )
 }
 
 /// The fixtures below build exactly one `Store`.
-#[cfg(test)]
 fn only_store(f: &Function) -> NodeId {
-    f.graph()
-        .all_node_ids()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
-        .expect("one store")
+    f.sole_kind(|k| matches!(k, NodeKind::Store(_)))
 }
 
 /// What `CallStackArgCollect` runs under over `f`, claiming
 /// `stack_global_disjoint` on it when asked.  Adds to `f`'s claims, so call it
 /// before installing a stand-in memo, which a new claim drops.
-#[cfg(test)]
-fn call_blocking(f: &mut Function, stack_global_disjoint: bool) -> MemOptions {
+fn call_blocking(f: &mut Function, stack_global_disjoint: bool) -> Policy {
     debug_assert!(
         stack_global_disjoint || !f.assumptions().stack_global_disjoint,
         "the fixture already claims what this call leaves off"
@@ -66,14 +40,13 @@ fn call_blocking(f: &mut Function, stack_global_disjoint: bool) -> MemOptions {
         stack_global_disjoint,
         ..crate::AssumptionOptions::none()
     });
-    MemOptions::for_purpose(MemPurpose::CallStackArgs, f)
+    Policy::strict(f)
 }
 
 /// What `LoadForward` runs under over `f`, claiming `stack_global_disjoint`
 /// and `escape_analysis` on it, and `callee_preserves_stack_args` when asked.
 /// Adds to `f`'s claims, so call it before installing a stand-in memo.
-#[cfg(test)]
-fn escaping(f: &mut Function, callee_preserves_stack_args: bool) -> MemOptions {
+fn escaping(f: &mut Function, callee_preserves_stack_args: bool) -> Policy {
     debug_assert!(
         callee_preserves_stack_args || !f.assumptions().callee_preserves_stack_args,
         "the fixture already claims what this call leaves off"
@@ -84,11 +57,32 @@ fn escaping(f: &mut Function, callee_preserves_stack_args: bool) -> MemOptions {
         callee_preserves_stack_args,
         ..crate::AssumptionOptions::none()
     });
-    MemOptions::for_purpose(MemPurpose::Forward, f)
+    Policy::forward(f)
+}
+
+/// Returns `loaded`, builds, and collapses the region phis: the function and
+/// the `Load` that produced `loaded`.
+fn finish(mut b: FunctionBuilder, loaded: ValueId) -> crate::Result<(Function, NodeId)> {
+    b.build_return(Some(loaded), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+    collapse_phis(&mut fg);
+    let load = fg.producer(loaded);
+    Ok((fg, load))
+}
+
+/// The nearest clobber of `load` under `policy`, from a fresh query.
+fn nearest(f: &Function, load: NodeId, policy: Policy) -> NodeId {
+    MemQuery::default().reaching(f, load, policy).node()
+}
+
+/// [`nearest`] under [`escaping`].
+fn reload_clobber(f: &mut Function, load: NodeId, callee_preserves_stack_args: bool) -> NodeId {
+    let policy = escaping(f, callee_preserves_stack_args);
+    nearest(f, load, policy)
 }
 
 /// The floor plus `allocators` listed as pure allocators.
-#[cfg(test)]
 fn allocating(allocators: &[u64]) -> crate::AssumptionOptions {
     crate::AssumptionOptions {
         noalias_allocators: allocators.iter().copied().collect(),
@@ -96,50 +90,44 @@ fn allocating(allocators: &[u64]) -> crate::AssumptionOptions {
     }
 }
 
-#[cfg(test)]
 mod decompose_tests {
     use super::*;
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
-    use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, sp_arg_frame, stack_vn_x86 as sp};
+    use strider_ir_test_utils::{sp_arg_frame, stack_vn_x86 as sp};
+
+    /// `body` over a one-region frame of `sp`, its last value returned: the
+    /// collapsed function and the values `body` names.
+    fn sp_fn<const N: usize>(
+        body: impl FnOnce(&mut FunctionBuilder, ValueId) -> crate::Result<[ValueId; N]>,
+    ) -> crate::Result<(Function, [ValueId; N])> {
+        let sp = sp();
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
+        let sp_val = b.read_variable(&sp)?;
+        let values = body(&mut b, sp_val)?;
+        b.build_return(values.last().copied(), &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
+        Ok((fg, values))
+    }
 
     /// The post-`ConstantFold` shape of `x - k`, i.e. `Add(x, IntConst(-k))`.
-    fn sub_off(
-        b: &mut strider_ir::FunctionBuilder,
-        x: ValueId,
-        k: i64,
-        ty: ValueType,
-    ) -> crate::Result<ValueId> {
-        let neg_k = b.build_int_const((-k) as u64, ty)?;
-        b.build_int_binary_operation(x, neg_k, IntBinaryOp::Add, ty)
+    fn sub_off(b: &mut FunctionBuilder, x: ValueId, k: i64) -> crate::Result<ValueId> {
+        crate::test_support::at(b, x, -k, ValueType::int(32))
     }
 
     #[test]
     fn decompose_sp_initial_var() -> crate::Result<()> {
-        let sp = sp();
-        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
-        let sp_val = b.read_variable(&sp)?;
-        b.build_return(Some(sp_val), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-        let live_sp = crate::test_support::return_value(fg.graph())?;
-        let r = decompose(&fg, live_sp);
+        let (fg, _) = sp_fn(|_, sp_val| Ok([sp_val]))?;
+        let r = decompose(&fg, fg.returned());
         assert!(matches!(r, Some(MemExpr { offset: 0, .. })));
-        let _ = sp_val;
         Ok(())
     }
 
     #[test]
     fn decompose_sp_sub_constant() -> crate::Result<()> {
-        let sp = sp();
-        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
-        let sp_val = b.read_variable(&sp)?;
-        let addr = sub_off(&mut b, sp_val, 4, ValueType::int(32))?;
-        b.build_return(Some(addr), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
+        let (fg, [addr]) = sp_fn(|b, sp_val| Ok([sub_off(b, sp_val, 4)?]))?;
         let r = decompose(&fg, addr);
         assert!(matches!(r, Some(MemExpr { offset: -4, .. })));
         Ok(())
@@ -151,18 +139,12 @@ mod decompose_tests {
     /// slot it actually names.
     #[test]
     fn decompose_wraps_the_offset_to_the_address_width() -> crate::Result<()> {
-        let sp = sp();
-        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
-        let sp_val = b.read_variable(&sp)?;
-        let big = b.build_int_const(0x7FFF_FFFFu64, ValueType::int(32))?;
-        let once =
-            b.build_int_binary_operation(sp_val, big, IntBinaryOp::Add, ValueType::int(32))?;
-        let twice =
-            b.build_int_binary_operation(once, big, IntBinaryOp::Add, ValueType::int(32))?;
-        b.build_return(Some(twice), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
+        let (fg, [twice]) = sp_fn(|b, sp_val| {
+            let big = b.build_int_const(0x7FFF_FFFFu64, ValueType::int(32))?;
+            let once =
+                b.build_int_binary_operation(sp_val, big, IntBinaryOp::Add, ValueType::int(32))?;
+            Ok([b.build_int_binary_operation(once, big, IntBinaryOp::Add, ValueType::int(32))?])
+        })?;
         assert_eq!(
             decompose(&fg, twice).map(|e| e.offset),
             Some(-2),
@@ -171,17 +153,29 @@ mod decompose_tests {
         Ok(())
     }
 
+    /// At 128 bits the same wrap is exact on the `i128` carrier: two
+    /// `i128::MAX` bumps land at `sp - 2`.
     #[test]
-    fn decompose_is_idempotent_and_committed_slot_round_trips() -> crate::Result<()> {
-        // Committing a slot is what a run's closing stamp does.
-        let sp = sp();
+    fn decompose_wraps_a_128_bit_offset() -> crate::Result<()> {
+        let sp = strider_ir_test_utils::reg_vn(0x20, 16);
+        let ty = ValueType::int(128);
         let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let addr = sub_off(&mut b, sp_val, 4, ValueType::int(32))?;
-        b.build_return(Some(addr), &[])?;
+        let big = b.build_int_const(i128::MAX as u128, ty)?;
+        let once = b.build_int_binary_operation(sp_val, big, IntBinaryOp::Add, ty)?;
+        let twice = b.build_int_binary_operation(once, big, IntBinaryOp::Add, ty)?;
+        b.build_return(Some(twice), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         collapse_phis(&mut fg);
+        assert_eq!(decompose(&fg, twice).map(|e| e.offset), Some(-2));
+        Ok(())
+    }
+
+    #[test]
+    fn decompose_is_idempotent_and_committed_slot_round_trips() -> crate::Result<()> {
+        // Committing a slot is what a run's closing stamp does.
+        let (fg, [addr]) = sp_fn(|b, sp_val| Ok([sub_off(b, sp_val, 4)?]))?;
         let r1 = decompose(&fg, addr);
         let r2 = decompose(&fg, addr);
         assert!(matches!(
@@ -208,7 +202,6 @@ mod decompose_tests {
         let region = b.create_region_all()?;
         b.set_entry_region_all(region)?;
         b.set_region(region);
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let c = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_return(Some(c), &[])?;
         b.set_lift_addr(None);
@@ -220,16 +213,11 @@ mod decompose_tests {
 
     #[test]
     fn decompose_walks_deep_offset_chain() -> crate::Result<()> {
-        let sp = sp();
-        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
-        let sp_val = b.read_variable(&sp)?;
-        let s1 = sub_off(&mut b, sp_val, 4, ValueType::int(32))?;
-        let s2 = sub_off(&mut b, s1, 8, ValueType::int(32))?;
-        let s3 = sub_off(&mut b, s2, 12, ValueType::int(32))?;
-        b.build_return(Some(s3), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
+        let (fg, [s1, s2, s3]) = sp_fn(|b, sp_val| {
+            let s1 = sub_off(b, sp_val, 4)?;
+            let s2 = sub_off(b, s1, 8)?;
+            Ok([s1, s2, sub_off(b, s2, 12)?])
+        })?;
 
         let off = |v| decompose(&fg, v).map(|e| e.offset);
         assert_eq!(off(s1), Some(-4), "s1 = sp - 4");
@@ -244,64 +232,56 @@ mod decompose_tests {
     #[test]
     fn decompose_sp_cycle_classifies_identically_regardless_of_query_order() -> crate::Result<()> {
         let sp = sp();
-        let mut b = sp_arg_frame(sp).build_fn()?;
-        let entry = b.create_region_all()?;
-        let loop_hdr = b.create_region_all()?;
-        let exit = b.create_region_all()?;
-        b.set_entry_region_all(entry)?;
+        let build = || -> crate::Result<(Function, [ValueId; 3])> {
+            let mut b = sp_arg_frame(sp).build_fn()?;
+            let entry = b.create_region_all()?;
+            let loop_hdr = b.create_region_all()?;
+            let exit = b.create_region_all()?;
+            b.set_entry_region_all(entry)?;
 
-        b.set_region(entry);
-        b.build_branch(loop_hdr)?;
+            b.set_region(entry);
+            b.build_branch(loop_hdr)?;
 
-        // Reading sp here yields a Phi joining the entry value and the
-        // loop-carried decrement, so branching back closes a data cycle.
-        b.set_region(loop_hdr);
-        let sp_phi = b.read_variable(&sp)?;
-        let sp_dec = sub_off(&mut b, sp_phi, 4, ValueType::int(32))?;
-        b.write_variable(&sp, sp_dec)?;
-        let keep_looping = b.build_boolean_const(true);
-        b.build_if(keep_looping, loop_hdr, exit)?;
+            // Reading sp here yields a Phi joining the entry value and the
+            // loop-carried decrement, so branching back closes a data cycle.
+            b.set_region(loop_hdr);
+            let sp_phi = b.read_variable(&sp)?;
+            let sp_dec = sub_off(&mut b, sp_phi, 4)?;
+            b.write_variable(&sp, sp_dec)?;
+            let keep_looping = b.build_boolean_const(true);
+            b.build_if(keep_looping, loop_hdr, exit)?;
 
-        // A genuinely non-SP address in the same cone.
-        b.set_region(exit);
-        let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
-        b.build_return(Some(global), &[])?;
-        b.set_lift_addr(None);
-        let fg = b.build()?;
-        // Do NOT collapse phis: the multi-predecessor loop-header Phi has to
-        // survive or the cone contains no cycle.
+            // A genuinely non-SP address in the same cone.
+            b.set_region(exit);
+            let global = b.build_int_const(0x4000u64, ValueType::int(32))?;
+            b.build_return(Some(global), &[])?;
+            b.set_lift_addr(None);
+            // Do NOT collapse phis: the multi-predecessor loop-header Phi has
+            // to survive or the cone contains no cycle.
+            Ok((b.build()?, [sp_phi, sp_dec, global]))
+        };
 
-        let truth = |v: ValueId| -> Option<MemExpr> { decompose(&fg, v) };
-        let t_phi = truth(sp_phi);
-        let t_dec = truth(sp_dec);
-        let t_global = truth(global);
-
-        assert!(t_phi.is_none(), "loop-header Phi(sp) is not an SP terminal");
+        let (fg, values) = build()?;
+        let truth = values.map(|v| decompose(&fg, v).map(|e| e.offset));
         assert!(
-            t_dec.is_none(),
+            truth[0].is_none(),
+            "loop-header Phi(sp) is not an SP terminal"
+        );
+        assert!(
+            truth[1].is_none(),
             "loop-carried Add over a Phi is not provable"
         );
-        assert!(t_global.is_none(), "global address is not SP-rooted");
+        assert!(truth[2].is_none(), "global address is not SP-rooted");
 
-        // Every order through ONE shared memo must reproduce the ground truth.
-        for order in [
-            [sp_phi, sp_dec, global],
-            [global, sp_dec, sp_phi],
-            [sp_dec, global, sp_phi],
-        ] {
-            for v in order {
-                let got = decompose(&fg, v);
-                let want = if v == sp_phi {
-                    t_phi
-                } else if v == sp_dec {
-                    t_dec
-                } else {
-                    t_global
-                };
+        // Each order starts from a cold memo, so the first query of each walks.
+        for order in [[0, 1, 2], [2, 1, 0], [1, 2, 0]] {
+            let (fg, values) = build()?;
+            for i in order {
                 assert_eq!(
-                    got.map(|e| e.offset),
-                    want.map(|e| e.offset),
-                    "verdict for {v:?} must be query-order-independent"
+                    decompose(&fg, values[i]).map(|e| e.offset),
+                    truth[i],
+                    "verdict for {:?} must be query-order-independent",
+                    values[i]
                 );
             }
         }
@@ -328,7 +308,7 @@ mod decompose_tests {
 
         b.set_region(a);
         let sp_a = b.read_variable(&sp)?;
-        let sp_minus_4 = sub_off(&mut b, sp_a, 4, ValueType::int(32))?;
+        let sp_minus_4 = sub_off(&mut b, sp_a, 4)?;
         b.write_variable(&sp, sp_minus_4)?;
         b.build_branch(c)?;
 
@@ -358,16 +338,14 @@ mod decompose_tests {
     /// anchor at the And's output rather than `InitialVar(sp)`.
     #[test]
     fn decompose_sp_and_with_alignment_mask_yields_opaque_base() -> crate::Result<()> {
-        let sp = sp();
-        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
-        let sp_val = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
-        let aligned =
-            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(32))?;
-        b.build_return(Some(aligned), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
+        let (fg, [aligned]) = sp_fn(|b, sp_val| {
+            Ok([b.build_const_binop(
+                0xFFFF_FFF8u64,
+                sp_val,
+                IntBinaryOp::And,
+                ValueType::int(32),
+            )?])
+        })?;
         let r = decompose(&fg, aligned);
         // Offset 0 because alignment can shift the value by 0..7 bytes: no
         // constant delta to pin, only a stable `ValueId` later decompositions
@@ -392,17 +370,11 @@ mod decompose_tests {
     /// must decompose to the same opaque base with a non-zero offset.
     #[test]
     fn decompose_sp_sub_after_and_chains_offset_through_opaque_base() -> crate::Result<()> {
-        let sp = sp();
-        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
-        let sp_val = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
-        let aligned =
-            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(32))?;
-        let post_sub = sub_off(&mut b, aligned, 0x1D0, ValueType::int(32))?;
-        b.build_return(Some(post_sub), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
+        let (fg, [aligned, post_sub]) = sp_fn(|b, sp_val| {
+            let aligned =
+                b.build_const_binop(0xFFFF_FFF8u64, sp_val, IntBinaryOp::And, ValueType::int(32))?;
+            Ok([aligned, sub_off(b, aligned, 0x1D0)?])
+        })?;
         let aligned_dec = decompose(&fg, aligned).expect("aligned must decompose");
         let post_sub_dec = decompose(&fg, post_sub).expect("post_sub must decompose");
         let MemExpr {
@@ -428,19 +400,19 @@ mod decompose_tests {
     /// overflowing the thread stack.
     #[test]
     fn decompose_sp_deep_and_chain_terminates_without_overflow() -> crate::Result<()> {
-        let sp = sp();
-        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
-        let mut current = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
         const N: usize = 6000;
-        for _ in 0..N {
-            current =
-                b.build_int_binary_operation(current, mask, IntBinaryOp::And, ValueType::int(32))?;
-        }
-        b.build_return(Some(current), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
+        let (fg, [current]) = sp_fn(|b, mut current| {
+            let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
+            for _ in 0..N {
+                current = b.build_int_binary_operation(
+                    current,
+                    mask,
+                    IntBinaryOp::And,
+                    ValueType::int(32),
+                )?;
+            }
+            Ok([current])
+        })?;
         let r = decompose(&fg, current);
         assert!(matches!(r, Some(MemExpr { offset: 0, .. })));
         Ok(())
@@ -448,19 +420,14 @@ mod decompose_tests {
 
     #[test]
     fn decompose_sp_does_not_stack_overflow_on_deep_chain() -> crate::Result<()> {
-        let sp = sp();
-        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
-        let mut current = b.read_variable(&sp)?;
         const N: usize = 5000;
-        for _ in 0..N {
-            let one = b.build_int_const(1u64, ValueType::int(32))?;
-            current =
-                b.build_int_binary_operation(current, one, IntBinaryOp::Add, ValueType::int(32))?;
-        }
-        b.build_return(Some(current), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
+        let (fg, [current]) = sp_fn(|b, mut current| {
+            for _ in 0..N {
+                current =
+                    b.build_const_binop(1u64, current, IntBinaryOp::Add, ValueType::int(32))?;
+            }
+            Ok([current])
+        })?;
         let MemExpr { offset, .. } = decompose(&fg, current)
             .expect("5000-node chain must decompose without stack-overflowing");
         assert_eq!(
@@ -471,82 +438,72 @@ mod decompose_tests {
     }
 }
 
-#[cfg(test)]
 mod alias_tests {
     use super::*;
     use crate::mem_analysis::store_value_byte_size;
-    use strider_ir::node::{NodeKind, ValueType};
+    use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{make_sp_fn, stack_vn_x86};
 
-    /// The canonical entry-SP base `decompose` returns for a clean `sp + k`.
-    fn entry_sp_value(f: &Function, sp: rsleigh::Vn) -> ValueId {
-        let node = f
-            .graph()
-            .all_node_ids()
-            .find(
-                |&n| matches!(*f.node_kind(n), NodeKind::InitialVar(id) if f.initial_vn(id) == sp),
-            )
-            .expect("InitialVar(sp) exists");
-        f.node_outputs_exact::<1>(node)
-            .expect("InitialVar has 1 output")[0]
-    }
-
     use super::only_store;
 
+    /// The verdict of `f`'s store against a 4-byte entry-SP load at
+    /// `load_offset`, under `stack_global_disjoint` and, when asked,
+    /// `distinct_sp_bases_disjoint`.
     fn store_alias_verdict(
         f: &Function,
-        store: NodeId,
-        load_class: AddrClass,
-        load_size: i128,
-        mode: bool,
+        load_offset: i128,
         distinct_sp_bases_disjoint: bool,
     ) -> AliasVerdict {
+        let store = only_store(f);
         let store_size = store_value_byte_size(f, f.store_data(store));
         let mut claimed = f.clone();
         claimed.assume(&crate::AssumptionOptions {
-            stack_global_disjoint: mode,
+            stack_global_disjoint: true,
             distinct_sp_bases_disjoint,
             ..crate::AssumptionOptions::default()
         });
         let f = &claimed;
-        let options = MemOptions::for_purpose(MemPurpose::IncomingArgs, f);
+        let options = Policy::incoming_args(f);
+        let base = f
+            .initial_var_value(&stack_vn_x86())
+            .expect("InitialVar(sp) exists");
         let store_class = classify_addr(f, f.store_addr(store));
         // The real width the store's own address carries, so the wrap guard is
         // exercised at the width the lifter produces.
-        let addr_bits = addr_bit_width(f, f.store_addr(store));
+        let bits = addr_bit_width(f, f.store_addr(store));
+        let at = |class, size| Loc {
+            class,
+            size,
+            bits,
+            space: rsleigh::VnSpace::RAM,
+        };
         alias_verdict(
-            SizedAddr {
-                class: load_class,
-                size: load_size,
-                addr_bits,
-            },
-            SizedAddr {
-                class: store_class,
-                size: store_size,
-                addr_bits,
-            },
-            &options,
+            at(
+                AddrClass::StackRooted {
+                    base,
+                    offset: load_offset,
+                },
+                4,
+            ),
+            at(store_class, store_size),
+            options,
         )
     }
 
-    /// Leaves SP addresses as the bare `InitialVar(sp) + k` terminals the
-    /// decomposer recognises.
     /// `store [base + 8]` plus a load from the same address, so the store and
     /// its SP-rooted address stay reachable.  `align` masks the base to 8
     /// bytes first, giving a base the decomposer cannot offset-compare with
     /// the entry SP.
-    fn store_at_base_plus_eight(sp: rsleigh::Vn, align: bool) -> Function {
-        let mut f = make_sp_fn(sp, |b, sp_val| {
+    fn store_at_base_plus_eight(align: bool) -> Function {
+        let mut f = make_sp_fn(stack_vn_x86(), |b, sp_val| {
             let base = if align {
-                let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
-                b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(32))?
+                b.build_const_binop(0xFFFF_FFF8u64, sp_val, IntBinaryOp::And, ValueType::int(32))?
             } else {
                 sp_val
             };
-            let eight = b.build_int_const(8u64, ValueType::int(32))?;
             let store_addr =
-                b.build_int_binary_operation(base, eight, IntBinaryOp::Add, ValueType::int(32))?;
+                b.build_const_binop(8u64, base, IntBinaryOp::Add, ValueType::int(32))?;
             let data = b.build_int_const(0xAAu64, ValueType::int(32))?;
             b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
             let loaded = b.build_load(store_addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
@@ -560,127 +517,89 @@ mod alias_tests {
 
     /// A `Store` at an alignment-masked base `(sp & mask) + 8` must not be
     /// proven disjoint from an entry-SP query just because the offsets do not
-    /// overlap.  The bases differ by the runtime `sp mod align`, so comparing
-    /// their offsets is meaningless.
+    /// overlap: the bases differ by the runtime `sp mod align`, so comparing
+    /// their offsets is meaningless.  Under `distinct_sp_bases_disjoint` it is
+    /// `Disjoint`: incoming-arg slots above the entry SP are assumed not to
+    /// overlap frame locals at an alignment-masked SP.  On one base the
+    /// offsets decide.
     #[test]
-    fn different_base_terminal_store_may_alias() {
-        let sp = stack_vn_x86();
-        let f = store_at_base_plus_eight(sp, true);
-        let query_base = entry_sp_value(&f, sp);
-        let verdict = store_alias_verdict(
-            &f,
-            only_store(&f),
-            AddrClass::StackRooted {
-                base: query_base,
-                offset: 0,
-            },
-            4,
-            true,
-            false,
-        );
-        assert_eq!(
-            verdict,
-            AliasVerdict::MayAlias,
-            "store at an alignment-masked base must may-alias an entry-SP query \
-             (different bases are not offset-comparable)"
-        );
-    }
-
-    /// Under `distinct_sp_bases_disjoint` the same store is `Disjoint`:
-    /// incoming-arg slots above the entry SP are assumed not to overlap frame
-    /// locals at an alignment-masked SP.
-    #[test]
-    fn different_base_terminal_store_disjoint_when_opted_in() {
-        let sp = stack_vn_x86();
-        let f = store_at_base_plus_eight(sp, true);
-        let query_base = entry_sp_value(&f, sp);
-        let verdict = store_alias_verdict(
-            &f,
-            only_store(&f),
-            AddrClass::StackRooted {
-                base: query_base,
-                offset: 0,
-            },
-            4,
-            true,
-            true,
-        );
-        assert_eq!(
-            verdict,
-            AliasVerdict::Disjoint,
-            "with distinct_sp_bases_disjoint, a different-base store is assumed disjoint"
-        );
-    }
-
-    #[test]
-    fn same_base_disjoint_offsets_is_disjoint() {
-        let sp = stack_vn_x86();
-        let f = store_at_base_plus_eight(sp, false);
-        let query_base = entry_sp_value(&f, sp);
-        let verdict = store_alias_verdict(
-            &f,
-            only_store(&f),
-            AddrClass::StackRooted {
-                base: query_base,
-                offset: 0,
-            },
-            4,
-            true,
-            false,
-        );
-        assert_eq!(verdict, AliasVerdict::Disjoint);
-    }
-
-    #[test]
-    fn same_base_same_offset_is_match() {
-        let sp = stack_vn_x86();
-        let f = store_at_base_plus_eight(sp, false);
-        let query_base = entry_sp_value(&f, sp);
-        let verdict = store_alias_verdict(
-            &f,
-            only_store(&f),
-            AddrClass::StackRooted {
-                base: query_base,
-                offset: 8,
-            },
-            4,
-            true,
-            false,
-        );
-        assert_eq!(verdict, AliasVerdict::Match);
-    }
-}
-
-#[cfg(test)]
-mod ranges_tests {
-    use super::ranges_disjoint;
-
-    #[test]
-    fn ranges_disjoint_returns_true_for_non_overlapping() {
-        // Touching counts as disjoint.
-        assert!(ranges_disjoint(0, 4, 4, 4));
-        assert!(!ranges_disjoint(0, 4, 2, 4));
-        assert!(!ranges_disjoint(0, 4, 0, 4));
-        // Argument order does not matter.
-        assert!(ranges_disjoint(4, 4, 0, 4));
-    }
-
-    #[test]
-    fn ranges_disjoint_max_size_does_not_panic_and_is_conservative() {
-        // With plain `+`, `off + i128::MAX` panics in debug and wraps in
-        // release for any positive `off`.  Real SP-relative offsets are small,
-        // so cover zero and modest magnitudes of both signs, on either side.
-        for (wide, small) in [(0, 100), (-1000, 100), (1_000_000, -1_000_000), (1, 0)] {
-            assert!(!ranges_disjoint(wide, i128::MAX, small, 4), "left {wide}");
-            assert!(!ranges_disjoint(small, 4, wide, i128::MAX), "right {wide}");
+    fn store_alias_verdicts() {
+        for (why, align, load_offset, distinct, want) in [
+            (
+                "a different base may alias",
+                true,
+                0,
+                false,
+                AliasVerdict::MayAlias,
+            ),
+            (
+                "distinct_sp_bases_disjoint",
+                true,
+                0,
+                true,
+                AliasVerdict::Disjoint,
+            ),
+            (
+                "one base, disjoint offsets",
+                false,
+                0,
+                false,
+                AliasVerdict::Disjoint,
+            ),
+            ("one base, one offset", false, 8, false, AliasVerdict::Match),
+        ] {
+            let f = store_at_base_plus_eight(align);
+            assert_eq!(
+                store_alias_verdict(&f, load_offset, distinct),
+                want,
+                "{why}"
+            );
         }
     }
 }
 
-#[cfg(test)]
+/// A store in one space never reaches a load in another, however the two
+/// addresses compare.
+///
+/// Mutation: probe RAM whatever the load's space.
+#[test]
+fn a_ram_store_does_not_reach_a_register_space_probe() -> crate::Result<()> {
+    use strider_ir::node::ValueType;
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
+    let mut load = None;
+    let mut f =
+        strider_ir_test_utils::make_sp_fn(strider_ir_test_utils::stack_vn_x86(), |b, sp| {
+            let slot =
+                b.build_const_binop((-8i64) as u64, sp, IntBinaryOp::Add, ValueType::int(32))?;
+            let data = b.build_int_const(7u64, ValueType::int(32))?;
+            b.build_store(slot, data, rsleigh::VnSpace::RAM)?;
+            let loaded = b.build_load(slot, rsleigh::VnSpace::REGISTER, ValueType::int(32))?;
+            load = Some(loaded);
+            b.build_return(Some(loaded), &[])
+        })?;
+    collapse_phis(&mut f);
+    let load = f.producer(load.expect("built"));
+    let MemExpr { base, offset, .. } = decompose(&f, f.load_addr(load)).expect("sp - 8");
+    let query = MemQuery::default();
+    let clobber = query.nearest_sp_clobber(
+        &f,
+        Policy::strict(&f),
+        f.load_mem(load),
+        base,
+        offset,
+        4,
+        rsleigh::VnSpace::REGISTER,
+    );
+    let hit = query.anchored_store(&f, clobber, base);
+    assert!(
+        hit.is_none(),
+        "the RAM store is not the register-space slot's"
+    );
+    Ok(())
+}
+
 mod cfg_tests {
     use super::*;
-    use crate::{OptCtx, OptimizerPipeline, PhiCollapse, RegionCollapse};
     use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{make_sp_fn, stack_vn_x86};
@@ -709,36 +628,28 @@ mod cfg_tests {
         })
         .expect("build sp fn");
 
-        let mut p = OptimizerPipeline::new();
-        p.add(PhiCollapse);
-        p.add(RegionCollapse);
-        p.run(&mut f, &OptCtx::new(None)).expect("collapse");
+        collapse_phis(&mut f);
 
         let store = super::only_store(&f);
-        let load = f
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(f.node_kind(n), NodeKind::Load(_)))
-            .expect("load node");
+        let load = f.first_kind(|k| matches!(k, NodeKind::Load(_)));
         let entry_sp = f.initial_var_value(&sp).expect("entry sp value");
 
         // Claimed before the stand-in below, which a new claim would drop.
-        let cfg = MemAnalyzer::new(super::call_blocking(&mut f, true));
+        let policy = super::call_blocking(&mut f, true);
         // Stand in for the run's closing stamp: record `[sp+8]` even though the raw
         // address folded to an opaque shape.
         let store_addr = f.store_addr(store);
         f.set_stack_slot(store_addr, entry_sp, 8);
 
         assert_eq!(
-            verdict(&cfg, &f, load, store),
+            verdict(policy, &f, load, store),
             AliasVerdict::Match,
-            "verdict must classify the store via the side-table SSoT (like def_clobbers), \
+            "verdict must classify the store via the side-table SSoT (like the walker), \
              so a non-decomposable store still verifies as an exact match"
         );
     }
 }
 
-#[cfg(test)]
 mod heap_tests {
     use super::*;
     use strider_ir::node::{ValueId, ValueType};
@@ -749,6 +660,7 @@ mod heap_tests {
     fn ret_reg() -> rsleigh::Vn {
         reg_vn(0x00, 8)
     }
+
     /// A second call output register, e.g. a caller-saved reg the allocator
     /// clobbers.
     fn clobber_reg() -> rsleigh::Vn {
@@ -757,15 +669,19 @@ mod heap_tests {
 
     const MALLOC: u64 = 0x1000;
 
-    fn builder() -> crate::Result<FunctionBuilder> {
-        let sp = sp();
+    /// SP as the argument-passing stack pointer and [`ret_reg`] as the return
+    /// register.
+    fn regs() -> RegisterSet {
         RegisterSet::new()
-            .tracked(sp)
+            .tracked(sp())
             .tracked(ret_reg())
-            .arg(sp)
+            .arg(sp())
             .ret(ret_reg())
-            .stack_vn(sp)
-            .build_fn_single_region()
+            .stack_vn(sp())
+    }
+
+    fn builder() -> crate::Result<FunctionBuilder> {
+        regs().build_fn_single_region()
     }
 
     /// The function, claiming `allocators`.
@@ -782,10 +698,7 @@ mod heap_tests {
     fn built_collapsed(mut b: FunctionBuilder, allocators: &[u64]) -> crate::Result<Function> {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut fg, &crate::OptCtx::new(None))?;
+        collapse_phis(&mut fg);
         // The collapse ran at the floor; these queries run under `allocators`.
         fg.assume(&super::allocating(allocators));
         Ok(fg)
@@ -794,9 +707,12 @@ mod heap_tests {
     /// A prologue: drops SP by `bytes`, so a slot at `entry_sp - k` for
     /// `k < bytes` sits in THIS frame and above the SP a callee receives.
     fn lower_sp(b: &mut FunctionBuilder, entry_sp: ValueId, bytes: i64) -> crate::Result<()> {
-        let frame = b.build_int_const((-bytes) as u64, ValueType::int(64))?;
-        let call_sp =
-            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::int(64))?;
+        let call_sp = b.build_const_binop(
+            (-bytes) as u64,
+            entry_sp,
+            IntBinaryOp::Add,
+            ValueType::int(64),
+        )?;
         b.write_variable(&sp(), call_sp)?;
         Ok(())
     }
@@ -811,8 +727,7 @@ mod heap_tests {
     fn decompose_heap_base_from_allocator_call() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let eight = b.build_int_const(8u64, ValueType::int(64))?;
-        let addr = b.build_int_binary_operation(p, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let addr = b.build_const_binop(8u64, p, IntBinaryOp::Add, ValueType::int(64))?;
         b.build_return(Some(addr), &[])?;
         let fg = built(b, &[MALLOC])?;
         let r = decompose(&fg, addr);
@@ -832,13 +747,16 @@ mod heap_tests {
         const UNLISTED: u64 = 0x2000;
         let mut b = builder()?;
         let p = alloc_call(&mut b, UNLISTED)?;
-        let eight = b.build_int_const(8u64, ValueType::int(64))?;
-        let addr = b.build_int_binary_operation(p, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let addr = b.build_const_binop(8u64, p, IntBinaryOp::Add, ValueType::int(64))?;
         let data = b.build_int_const(0x2au64, ValueType::int(64))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         b.build_return(None, &[])?;
         let fg = built(b, &[MALLOC])?;
 
+        assert!(
+            decompose(&fg, p).is_none(),
+            "the call is not in the allocator set, so its return is opaque"
+        );
         assert!(decompose(&fg, addr).is_none());
         assert!(
             matches!(fg.memory_class(addr), strider_ir::MemDecomp::NotMemory),
@@ -863,12 +781,13 @@ mod heap_tests {
     fn decompose_aligned_heap_pointer_is_opaque() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let fifteen = b.build_int_const(15u64, ValueType::int(64))?;
-        let bumped =
-            b.build_int_binary_operation(p, fifteen, IntBinaryOp::Add, ValueType::int(64))?;
-        let mask = b.build_int_const(0xFFFF_FFFF_FFFF_FFF0u64, ValueType::int(64))?;
-        let aligned =
-            b.build_int_binary_operation(bumped, mask, IntBinaryOp::And, ValueType::int(64))?;
+        let bumped = b.build_const_binop(15u64, p, IntBinaryOp::Add, ValueType::int(64))?;
+        let aligned = b.build_const_binop(
+            0xFFFF_FFFF_FFFF_FFF0u64,
+            bumped,
+            IntBinaryOp::And,
+            ValueType::int(64),
+        )?;
         b.build_return(Some(aligned), &[])?;
         let fg = built(b, &[MALLOC])?;
         assert!(
@@ -885,12 +804,13 @@ mod heap_tests {
     fn decompose_aligned_heap_pointer_is_opaque_when_base_memoized() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let fifteen = b.build_int_const(15u64, ValueType::int(64))?;
-        let bumped =
-            b.build_int_binary_operation(p, fifteen, IntBinaryOp::Add, ValueType::int(64))?;
-        let mask = b.build_int_const(0xFFFF_FFFF_FFFF_FFF0u64, ValueType::int(64))?;
-        let aligned =
-            b.build_int_binary_operation(bumped, mask, IntBinaryOp::And, ValueType::int(64))?;
+        let bumped = b.build_const_binop(15u64, p, IntBinaryOp::Add, ValueType::int(64))?;
+        let aligned = b.build_const_binop(
+            0xFFFF_FFFF_FFFF_FFF0u64,
+            bumped,
+            IntBinaryOp::And,
+            ValueType::int(64),
+        )?;
         b.build_return(Some(aligned), &[])?;
         let fg = built(b, &[MALLOC])?;
         // Warm the memo: commit the raw base as a heap slot.
@@ -901,19 +821,6 @@ mod heap_tests {
         assert!(
             decompose(&fg, aligned).is_none(),
             "aligned heap pointer must be opaque even when its base is memoized as Heap"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn non_allocator_call_return_is_opaque() -> crate::Result<()> {
-        let mut b = builder()?;
-        let p = alloc_call(&mut b, 0x2000)?;
-        b.build_return(Some(p), &[])?;
-        let fg = built(b, &[MALLOC])?;
-        assert!(
-            decompose(&fg, p).is_none(),
-            "a call to 0x2000 is not in the allocator set, so its return is opaque"
         );
         Ok(())
     }
@@ -967,11 +874,8 @@ mod heap_tests {
     fn nested_add_accumulates_heap_offset() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let four = b.build_int_const(4u64, ValueType::int(64))?;
-        let inner = b.build_int_binary_operation(p, four, IntBinaryOp::Add, ValueType::int(64))?;
-        let four2 = b.build_int_const(4u64, ValueType::int(64))?;
-        let outer =
-            b.build_int_binary_operation(inner, four2, IntBinaryOp::Add, ValueType::int(64))?;
+        let inner = b.build_const_binop(4u64, p, IntBinaryOp::Add, ValueType::int(64))?;
+        let outer = b.build_const_binop(4u64, inner, IntBinaryOp::Add, ValueType::int(64))?;
         b.build_return(Some(outer), &[])?;
         let fg = built(b, &[MALLOC])?;
         let r = decompose(&fg, outer);
@@ -1004,14 +908,10 @@ mod heap_tests {
         let mut fg = built(b, &[MALLOC])?;
 
         let store = super::only_store(&fg);
-        let load = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-            .expect("load node");
-        let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
+        let load = fg.first_kind(|k| matches!(k, NodeKind::Load(_)));
+        let policy = super::call_blocking(&mut fg, false);
         assert_eq!(
-            verdict(&cfg, &fg, load, store),
+            verdict(policy, &fg, load, store),
             AliasVerdict::Disjoint,
             "two distinct heap allocations never overlap"
         );
@@ -1022,29 +922,21 @@ mod heap_tests {
     fn heap_and_stack_are_disjoint() -> crate::Result<()> {
         let mut b = builder()?;
         let sp_val = b.read_variable(&sp())?;
-        let eight = b.build_int_const(8u64, ValueType::int(64))?;
-        let stack_addr =
-            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let stack_addr = b.build_const_binop(8u64, sp_val, IntBinaryOp::Add, ValueType::int(64))?;
         let x = b.build_int_const(0x11u64, ValueType::int(64))?;
         b.build_store(stack_addr, x, rsleigh::VnSpace::RAM)?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let eight2 = b.build_int_const(8u64, ValueType::int(64))?;
-        let heap_addr =
-            b.build_int_binary_operation(p, eight2, IntBinaryOp::Add, ValueType::int(64))?;
+        let heap_addr = b.build_const_binop(8u64, p, IntBinaryOp::Add, ValueType::int(64))?;
         let loaded = b.build_load(heap_addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         // Collapse the trivial sp Phi so the stack address decomposes.
         let mut fg = built_collapsed(b, &[MALLOC])?;
 
         let store = super::only_store(&fg);
-        let load = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-            .expect("load");
-        let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
+        let load = fg.first_kind(|k| matches!(k, NodeKind::Load(_)));
+        let policy = super::call_blocking(&mut fg, false);
         assert_eq!(
-            verdict(&cfg, &fg, load, store),
+            verdict(policy, &fg, load, store),
             AliasVerdict::Disjoint,
             "a heap object and a stack slot never overlap"
         );
@@ -1057,22 +949,19 @@ mod heap_tests {
     fn same_heap_object_uses_offset_ranges() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let zero = b.build_int_const(0u64, ValueType::int(64))?;
-        let at0 = b.build_int_binary_operation(p, zero, IntBinaryOp::Add, ValueType::int(64))?;
+        let at0 = b.build_const_binop(0u64, p, IntBinaryOp::Add, ValueType::int(64))?;
         let x = b.build_int_const(0x11u64, ValueType::int(64))?;
         b.build_store(at0, x, rsleigh::VnSpace::RAM)?; // [p+0..8)
-        let sixteen = b.build_int_const(16u64, ValueType::int(64))?;
-        let at16 =
-            b.build_int_binary_operation(p, sixteen, IntBinaryOp::Add, ValueType::int(64))?;
+        let at16 = b.build_const_binop(16u64, p, IntBinaryOp::Add, ValueType::int(64))?;
         let loaded = b.build_load(at16, rsleigh::VnSpace::RAM, ValueType::int(64))?; // [p+16..24)
         b.build_return(Some(loaded), &[])?;
         let mut fg = built(b, &[MALLOC])?;
 
         let store = super::only_store(&fg);
         let load = fg.producer(loaded);
-        let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
+        let policy = super::call_blocking(&mut fg, false);
         assert_eq!(
-            verdict(&cfg, &fg, load, store),
+            verdict(policy, &fg, load, store),
             AliasVerdict::Disjoint,
             "[p+16) and [p+0) are disjoint ranges in the same allocation"
         );
@@ -1096,86 +985,11 @@ mod heap_tests {
 
         let store = super::only_store(&fg);
         let load = fg.producer(loaded);
-        let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
+        let policy = super::call_blocking(&mut fg, false);
         assert_eq!(
-            verdict(&cfg, &fg, load, store),
+            verdict(policy, &fg, load, store),
             AliasVerdict::MayAlias,
             "an opaque pointer could be this allocation laundered through memory"
-        );
-        Ok(())
-    }
-
-    /// A pure allocator does not touch this function's private frame, so a
-    /// stack reload steps *through* the allocator call to its store.  The slot
-    /// is BELOW the entry SP: the relaxation covers this frame only, the same
-    /// bound `escape_analysis` forwards under.
-    #[test]
-    fn allocator_call_is_transparent_to_a_stack_slot() -> crate::Result<()> {
-        let mut b = builder()?;
-        let sp_val = b.read_variable(&sp())?;
-        let slot_off = b.build_int_const((-8i64) as u64, ValueType::int(64))?;
-        let store_addr =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::int(64))?;
-        let x = b.build_int_const(0x11u64, ValueType::int(64))?;
-        b.build_store(store_addr, x, rsleigh::VnSpace::RAM)?;
-        lower_sp(&mut b, sp_val, 64)?;
-        let _p = alloc_call(&mut b, MALLOC)?;
-        let load_addr =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::int(64))?;
-        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
-        b.build_return(Some(loaded), &[])?;
-        let mut fg = built_collapsed(b, &[MALLOC])?;
-
-        let store = super::only_store(&fg);
-        let load = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-            .expect("load");
-        let mem = fg.node_inputs(load)[0];
-        let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
-        assert_eq!(
-            cfg.reaching(&fg, load, mem).node(),
-            store,
-            "the allocator call is transparent to the stack slot; the store is the nearest clobber"
-        );
-        Ok(())
-    }
-
-    /// The same shape under the options the jump-table walk runs in: that walk
-    /// decides a CFG edge, so a mis-listed allocator must not be able to open
-    /// the chain there.
-    #[test]
-    fn allocator_call_is_opaque_to_the_table_walk() -> crate::Result<()> {
-        let mut b = builder()?;
-        let sp_val = b.read_variable(&sp())?;
-        let slot_off = b.build_int_const((-8i64) as u64, ValueType::int(64))?;
-        let store_addr =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::int(64))?;
-        let x = b.build_int_const(0x11u64, ValueType::int(64))?;
-        b.build_store(store_addr, x, rsleigh::VnSpace::RAM)?;
-        lower_sp(&mut b, sp_val, 64)?;
-        let _p = alloc_call(&mut b, MALLOC)?;
-        let load_addr =
-            b.build_int_binary_operation(sp_val, slot_off, IntBinaryOp::Add, ValueType::int(64))?;
-        let loaded = b.build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
-        b.build_return(Some(loaded), &[])?;
-        let mut fg = built_collapsed(b, &[MALLOC])?;
-
-        let load = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-            .expect("load");
-        let mem = fg.node_inputs(load)[0];
-        fg.assume(&crate::AssumptionOptions::default());
-        let cfg = MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::TableWalk, &fg));
-        assert!(
-            matches!(
-                fg.node_kind(cfg.reaching(&fg, load, mem).node()),
-                NodeKind::Call { .. }
-            ),
-            "the table walk must stop at a listed allocator, not step through it"
         );
         Ok(())
     }
@@ -1190,16 +1004,12 @@ mod heap_tests {
         b.build_return(Some(loaded), &[])?;
         let mut fg = built(b, &[MALLOC])?;
 
-        let call = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Call { .. }))
-            .expect("call");
+        let call = fg.first_kind(|k| matches!(k, NodeKind::Call { .. }));
         let load = fg.producer(loaded);
-        let mem = fg.node_inputs(load)[0];
-        let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
+        let cfg = MemQuery::default();
+        let policy = super::call_blocking(&mut fg, false);
         assert_eq!(
-            cfg.reaching(&fg, load, mem).node(),
+            cfg.reaching(&fg, load, policy).node(),
             call,
             "a load of the fresh allocation stops at the allocator call, not past it"
         );
@@ -1226,13 +1036,10 @@ mod heap_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
 
-        fg.assume(&crate::AssumptionOptions {
-            noalias_allocators: [MALLOC].into_iter().collect(),
-            ..crate::AssumptionOptions::none()
-        });
-        crate::test_support::standard_test().run(&mut fg, &crate::OptCtx::new(None))?;
+        fg.assume(&super::allocating(&[MALLOC]));
+        run_passes(&mut fg, STANDARD)?;
 
-        let ret = crate::test_support::return_value(fg.graph())?;
+        let ret = fg.returned();
         assert_eq!(
             fg.int_const_u128(ret),
             Some(0x99),
@@ -1256,9 +1063,12 @@ mod heap_tests {
         b.build_store(addr, secret, rsleigh::VnSpace::RAM)?;
         // The escape: the slot's own address enters memory, at a disjoint slot
         // the walk steps through either way.
-        let leak_off = b.build_int_const((-32i64) as u64, ValueType::int(64))?;
-        let leak_slot =
-            b.build_int_binary_operation(sp_val, leak_off, IntBinaryOp::Add, ValueType::int(64))?;
+        let leak_slot = b.build_const_binop(
+            (-32i64) as u64,
+            sp_val,
+            IntBinaryOp::Add,
+            ValueType::int(64),
+        )?;
         b.build_store(leak_slot, addr, rsleigh::VnSpace::RAM)?;
         lower_sp(&mut b, sp_val, 64)?;
         let _p = alloc_call(&mut b, MALLOC)?;
@@ -1269,13 +1079,10 @@ mod heap_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
 
-        fg.assume(&crate::AssumptionOptions {
-            noalias_allocators: [MALLOC].into_iter().collect(),
-            ..crate::AssumptionOptions::none()
-        });
-        crate::test_support::standard_test().run(&mut fg, &crate::OptCtx::new(None))?;
+        fg.assume(&super::allocating(&[MALLOC]));
+        run_passes(&mut fg, STANDARD)?;
 
-        let ret = crate::test_support::return_value(fg.graph())?;
+        let ret = fg.returned();
         assert_eq!(
             fg.int_const_u128(ret),
             None,
@@ -1321,6 +1128,40 @@ mod heap_tests {
         Ok(())
     }
 
+    /// SOUNDNESS: a second return register the function tracks, when the first
+    /// is not, leads the call's outputs.  It is the high half of a pair, not
+    /// the pointer, so it must not become a heap base either.
+    ///
+    /// Mutation: accept any surviving return register.
+    #[test]
+    fn untracked_first_return_register_leaves_the_second_opaque() -> crate::Result<()> {
+        let sp = sp();
+        let mut b = RegisterSet::new()
+            .tracked(sp)
+            .tracked(clobber_reg())
+            .arg(sp)
+            .stack_vn(sp)
+            .build_fn_single_region()?;
+        let target = b.build_int_const(MALLOC, ValueType::int(64))?;
+        let (call, outs) = b.build_call(target, &[], &[clobber_reg()], 0)?;
+        let second = outs[0];
+        b.build_return(Some(second), &[])?;
+        let mut fg = built(b, &[MALLOC])?;
+        let cc = fg.default_cc().clone();
+        fg.set_call_cc(
+            call,
+            strider_target::BuiltCallingConvention {
+                ret_val_regs: vec![ret_reg(), clobber_reg()],
+                ..cc
+            },
+        );
+        assert!(
+            decompose(&fg, second).is_none(),
+            "only the first declared return register carries the pointer"
+        );
+        Ok(())
+    }
+
     /// SOUNDNESS: an allocator is still a callee, and a callee owns the
     /// outgoing stack-argument area the ABI hands it.  The i386 cdecl idiom
     /// `mov [esp], 16 / call malloc` puts the size argument in slot 0; malloc
@@ -1328,18 +1169,11 @@ mod heap_tests {
     #[test]
     fn allocator_does_not_forward_its_own_stack_argument_slot() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .tracked(ret_reg())
-            .arg(sp)
-            .ret(ret_reg())
-            .stack_vn(sp)
+        let mut b = regs()
             .stack_args(stack_args_at(0, 8))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let zero = b.build_int_const(0u64, ValueType::int(64))?;
-        let slot0 =
-            b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::int(64))?;
+        let slot0 = b.build_const_binop(0u64, sp_val, IntBinaryOp::Add, ValueType::int(64))?;
         let size_arg = b.build_int_const(16u64, ValueType::int(64))?;
         b.build_store(slot0, size_arg, rsleigh::VnSpace::RAM)?;
         let _p = alloc_call(&mut b, MALLOC)?;
@@ -1348,9 +1182,8 @@ mod heap_tests {
         let mut fg = built_collapsed(b, &[MALLOC])?;
 
         let load = fg.producer(reload);
-        let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(super::call_blocking(&mut fg, true));
-        let clobber = analyzer.reaching(&fg, load, mem).node();
+        let policy = super::call_blocking(&mut fg, true);
+        let clobber = super::nearest(&fg, load, policy);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the allocator owns its own argument slot, so the walk must stop on it"
@@ -1384,8 +1217,7 @@ mod heap_tests {
     fn empty_allocator_set_leaves_heap_opaque() -> crate::Result<()> {
         let mut b = builder()?;
         let p = alloc_call(&mut b, MALLOC)?;
-        let eight = b.build_int_const(8u64, ValueType::int(64))?;
-        let addr = b.build_int_binary_operation(p, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let addr = b.build_const_binop(8u64, p, IntBinaryOp::Add, ValueType::int(64))?;
         b.build_return(Some(addr), &[])?;
         let fg = built(b, &[])?;
         assert!(
@@ -1420,9 +1252,8 @@ mod heap_tests {
             );
 
             let load = fg.producer(loaded);
-            let mem = fg.node_inputs(load)[0];
-            let analyzer = MemAnalyzer::new(super::call_blocking(&mut fg, true));
-            let clobber = analyzer.reaching(&fg, load, mem).node();
+            let policy = super::call_blocking(&mut fg, true);
+            let clobber = super::nearest(&fg, load, policy);
             Ok(matches!(fg.node_kind(clobber), NodeKind::Store(_)))
         };
 
@@ -1478,9 +1309,8 @@ mod heap_tests {
             let mut fg = built(b, &[])?;
 
             let load = fg.producer(loaded);
-            let mem = fg.node_inputs(load)[0];
-            let analyzer = MemAnalyzer::new(super::call_blocking(&mut fg, true));
-            let clobber = analyzer.reaching(&fg, load, mem).node();
+            let policy = super::call_blocking(&mut fg, true);
+            let clobber = super::nearest(&fg, load, policy);
             Ok(matches!(fg.node_kind(clobber), NodeKind::CallOther { .. }))
         };
 
@@ -1502,20 +1332,13 @@ mod heap_tests {
     #[test]
     fn incoming_stack_arg_does_not_forward_across_a_call() -> crate::Result<()> {
         let sp_vn = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp_vn)
-            .tracked(ret_reg())
-            .arg(sp_vn)
-            .ret(ret_reg())
-            .stack_vn(sp_vn)
+        let mut b = regs()
             .stack_args(stack_args_at(8, 8))
             .build_fn_single_region()?;
         let sp = b.read_variable(&sp_vn)?;
         // +16: the second incoming stack argument, above the entry SP, so in
         // the caller's frame.
-        let off = b.build_int_const(16u64, ValueType::int(64))?;
-        let arg_slot =
-            b.build_int_binary_operation(sp, off, IntBinaryOp::Add, ValueType::int(64))?;
+        let arg_slot = b.build_const_binop(16u64, sp, IntBinaryOp::Add, ValueType::int(64))?;
         let seed = b.build_int_const(7u64, ValueType::int(64))?;
         b.build_store(arg_slot, seed, rsleigh::VnSpace::RAM)?;
         let target = b.build_int_const(0x2000u64, ValueType::int(64))?;
@@ -1525,9 +1348,7 @@ mod heap_tests {
         let mut fg = built_collapsed(b, &[])?;
 
         let load = fg.producer(loaded);
-        let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.reaching(&fg, load, mem).node();
+        let clobber = super::reload_clobber(&mut fg, load, false);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "a slot above the entry SP is the caller's memory, which the \
@@ -1550,13 +1371,7 @@ mod heap_tests {
         store_a: Option<u64>,
     ) -> crate::Result<(FunctionBuilder, ValueId, ValueId, ValueId)> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .tracked(ret_reg())
-            .arg(sp)
-            .ret(ret_reg())
-            .stack_vn(sp)
-            .build_fn()?;
+        let mut b = regs().build_fn()?;
         let entry = b.create_region_all()?;
         let a = b.create_region_all()?;
         let c = b.create_region_all()?;
@@ -1603,22 +1418,16 @@ mod heap_tests {
         let x = b.build_int_const(0x11u64, ValueType::int(64))?;
         b.build_store(phi, x, rsleigh::VnSpace::RAM)?;
         let sp_val = b.read_variable(&sp())?;
-        let eight = b.build_int_const(8u64, ValueType::int(64))?;
-        let slot =
-            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let slot = b.build_const_binop(8u64, sp_val, IntBinaryOp::Add, ValueType::int(64))?;
         let loaded = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         b.build_return(Some(loaded), &[])?;
         let mut fg = built_collapsed(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
 
         let store = super::only_store(&fg);
-        let load = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-            .expect("load");
-        let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
+        let load = fg.first_kind(|k| matches!(k, NodeKind::Load(_)));
+        let policy = super::call_blocking(&mut fg, false);
         assert_eq!(
-            verdict(&cfg, &fg, load, store),
+            verdict(policy, &fg, load, store),
             AliasVerdict::Disjoint,
             "a store through a phi of allocations cannot reach a stack slot"
         );
@@ -1637,9 +1446,9 @@ mod heap_tests {
 
         let store = super::only_store(&fg);
         let load = fg.producer(loaded);
-        let cfg = MemAnalyzer::new(super::call_blocking(&mut fg, false));
+        let policy = super::call_blocking(&mut fg, false);
         assert_eq!(
-            verdict(&cfg, &fg, load, store),
+            verdict(policy, &fg, load, store),
             AliasVerdict::MayAlias,
             "the phi may be exactly the allocation the store wrote"
         );
@@ -1651,13 +1460,7 @@ mod heap_tests {
     #[test]
     fn phi_with_a_stack_arm_is_opaque() -> crate::Result<()> {
         let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .tracked(ret_reg())
-            .arg(sp)
-            .ret(ret_reg())
-            .stack_vn(sp)
-            .build_fn()?;
+        let mut b = regs().build_fn()?;
         let entry = b.create_region_all()?;
         let a = b.create_region_all()?;
         let c = b.create_region_all()?;
@@ -1683,9 +1486,7 @@ mod heap_tests {
 
         b.set_region(c);
         let sp_c = b.read_variable(&sp)?;
-        let eight = b.build_int_const(8u64, ValueType::int(64))?;
-        let slot =
-            b.build_int_binary_operation(sp_c, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let slot = b.build_const_binop(8u64, sp_c, IntBinaryOp::Add, ValueType::int(64))?;
         b.write_variable(&ret_reg(), slot)?;
         b.build_branch(join)?;
 
@@ -1704,14 +1505,7 @@ mod heap_tests {
     /// returned phi is the allocation's walking pointer, one of its own arms'
     /// operands.
     fn walking_pointer() -> crate::Result<(Function, ValueId)> {
-        let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .tracked(ret_reg())
-            .arg(sp)
-            .ret(ret_reg())
-            .stack_vn(sp)
-            .build_fn()?;
+        let mut b = regs().build_fn()?;
         let entry = b.create_region_all()?;
         let header = b.create_region_all()?;
         let body = b.create_region_all()?;
@@ -1732,9 +1526,7 @@ mod heap_tests {
         b.build_if(cond, body, exit)?;
 
         b.set_region(body);
-        let eight = b.build_int_const(8u64, ValueType::int(64))?;
-        let next =
-            b.build_int_binary_operation(phi, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let next = b.build_const_binop(8u64, phi, IntBinaryOp::Add, ValueType::int(64))?;
         b.write_variable(&ret_reg(), next)?;
         b.build_branch(header)?;
 
@@ -1765,14 +1557,7 @@ mod heap_tests {
     /// `levels` nested joins, each merging the previous phi with a fresh
     /// allocation, then one query per phi from the outermost in.
     fn phi_chain_steps(levels: usize) -> crate::Result<u64> {
-        let sp = sp();
-        let mut b = RegisterSet::new()
-            .tracked(sp)
-            .tracked(ret_reg())
-            .arg(sp)
-            .ret(ret_reg())
-            .stack_vn(sp)
-            .build_fn()?;
+        let mut b = regs().build_fn()?;
         let entry = b.create_region_all()?;
         let alts: Vec<_> = (0..levels)
             .map(|_| b.create_region_all())
@@ -1849,11 +1634,14 @@ mod heap_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
         fg.assume(&super::allocating(allocators));
-        let mut pipeline = crate::OptimizerPipeline::new();
-        pipeline.add(crate::PhiCollapse);
-        pipeline.add(crate::RegionCollapse);
-        pipeline.add(crate::LoadForward);
-        pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+        run_passes(
+            &mut fg,
+            &[
+                &crate::PhiCollapse,
+                &crate::RegionCollapse,
+                &crate::LoadForward,
+            ],
+        )?;
         Ok(fg)
     }
 
@@ -1872,11 +1660,7 @@ mod heap_tests {
         b.build_return(Some(loaded), &[])?;
         let fg = run_load_forward(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
 
-        let load = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-            .expect("load");
+        let load = fg.first_kind(|k| matches!(k, NodeKind::Load(_)));
         let clobber = fg.producer(fg.node_inputs(load)[0]);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
@@ -1902,7 +1686,7 @@ mod heap_tests {
         b.build_return(Some(loaded), &[])?;
         let fg = run_load_forward(b, &[MALLOC, KMEM_CACHE_ALLOC])?;
 
-        let ret = crate::test_support::return_value(fg.graph())?;
+        let ret = fg.returned();
         assert_eq!(
             fg.int_const_u128(ret),
             Some(1),
@@ -1936,10 +1720,7 @@ mod heap_tests {
     #[test]
     fn a_rewrite_keeps_the_runs_heap_classes() -> crate::Result<()> {
         let mut fg = one_heap_store()?;
-        fg.assume(&crate::AssumptionOptions {
-            noalias_allocators: [MALLOC].into_iter().collect(),
-            ..crate::AssumptionOptions::none()
-        });
+        fg.assume(&super::allocating(&[MALLOC]));
         crate::default_pipeline().run(&mut fg, &crate::OptCtx::new(None))?;
         assert_eq!(heap_stores(&fg), 1, "the run classifies the store as heap");
         fg.compact()?;
@@ -1959,10 +1740,7 @@ mod heap_tests {
     #[test]
     fn a_later_run_without_the_allocator_keeps_its_heap_classes() -> crate::Result<()> {
         let mut fg = one_heap_store()?;
-        fg.assume(&crate::AssumptionOptions {
-            noalias_allocators: [MALLOC].into_iter().collect(),
-            ..crate::AssumptionOptions::none()
-        });
+        fg.assume(&super::allocating(&[MALLOC]));
         crate::default_pipeline().run(&mut fg, &crate::OptCtx::new(None))?;
         assert_eq!(
             heap_stores(&fg),
@@ -1978,8 +1756,8 @@ mod heap_tests {
         Ok(())
     }
 
-    /// Each purpose honours exactly the claims its row of
-    /// `MemOptions::for_purpose` names, read off six verdicts: a spill
+    /// Each policy honours exactly the claims its constructor names, read off
+    /// six verdicts: a spill
     /// reloaded across an unlisted call and one across a listed allocator,
     /// two allocations, a stack slot against a global, an entry-SP slot
     /// against an alignment-masked one, and, in a second function whose ABI
@@ -1987,7 +1765,6 @@ mod heap_tests {
     #[test]
     fn each_purpose_honours_its_own_claims() -> crate::Result<()> {
         use crate::AssumptionOptions;
-        use MemPurpose::*;
         let sp_slot = |b: &mut FunctionBuilder, sp_val, off: i64| -> crate::Result<ValueId> {
             let off = b.build_int_const(off as u64, ValueType::int(64))?;
             b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(64))
@@ -2012,9 +1789,12 @@ mod heap_tests {
         let from_p = b.build_load(p, rsleigh::VnSpace::RAM, ValueType::int(64))?;
         let global = b.build_int_const(0x9000u64, ValueType::int(64))?;
         let from_global = b.build_load(global, rsleigh::VnSpace::RAM, ValueType::int(64))?;
-        let mask = b.build_int_const((-16i64) as u64, ValueType::int(64))?;
-        let aligned =
-            b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(64))?;
+        let aligned = b.build_const_binop(
+            (-16i64) as u64,
+            sp_val,
+            IntBinaryOp::And,
+            ValueType::int(64),
+        )?;
         let aligned_slot = sp_slot(&mut b, aligned, 8)?;
         let five = b.build_int_const(5u64, ValueType::int(64))?;
         b.build_store(aligned_slot, five, rsleigh::VnSpace::RAM)?;
@@ -2029,12 +1809,7 @@ mod heap_tests {
 
         // An earlier call on the chain would blind the allocator's argument
         // window, so its argument slot gets a function of its own.
-        let mut b = RegisterSet::new()
-            .tracked(sp())
-            .tracked(ret_reg())
-            .arg(sp())
-            .ret(ret_reg())
-            .stack_vn(sp())
+        let mut b = regs()
             .stack_args(stack_args_at(0, 8))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp())?;
@@ -2066,8 +1841,8 @@ mod heap_tests {
         let [reload, local_reload, from_p, from_global, from_incoming] =
             [reload, local_reload, from_p, from_global, from_incoming].map(|v| fg.producer(v));
         let (arg_spill, arg_reload) = (store_of(&fa, 11), fa.producer(arg_reload));
-        let forwards = |fg: &Function, analyzer: &MemAnalyzer, load: NodeId, spill: NodeId| {
-            analyzer.reaching(fg, load, fg.node_inputs(load)[0]).node() == spill
+        let forwards = |fg: &Function, policy: Policy, load: NodeId, spill: NodeId| {
+            MemQuery::default().reaching(fg, load, policy).node() == spill
         };
         let none = AssumptionOptions::none;
         let toggles = [
@@ -2114,47 +1889,53 @@ mod heap_tests {
             for f in [&mut fg, &mut fa] {
                 f.assume(a);
             }
-            for purpose in [Forward, IncomingArgs, CallStackArgs, TableWalk] {
-                let analyzer = MemAnalyzer::new(MemOptions::for_purpose(purpose, &fg));
-                // An analyzer keeps the index of the first graph it reads.
-                let analyzer_a = MemAnalyzer::new(MemOptions::for_purpose(purpose, &fa));
-                let heap = verdict(&analyzer, &fg, from_p, to_q) == AliasVerdict::Disjoint;
-                let global = verdict(&analyzer, &fg, from_global, spill) == AliasVerdict::Disjoint;
+            type PolicyOf = fn(&Function) -> Policy;
+            let policies: [(&str, PolicyOf); 3] = [
+                ("forward", Policy::forward),
+                ("incoming_args", Policy::incoming_args),
+                ("strict", Policy::strict),
+            ];
+            for (purpose, policy_of) in policies {
+                let (policy, policy_a) = (policy_of(&fg), policy_of(&fa));
+                let heap = verdict(policy, &fg, from_p, to_q) == AliasVerdict::Disjoint;
+                let global = verdict(policy, &fg, from_global, spill) == AliasVerdict::Disjoint;
                 let sp_bases =
-                    verdict(&analyzer, &fg, from_incoming, to_aligned) == AliasVerdict::Disjoint;
+                    verdict(policy, &fg, from_incoming, to_aligned) == AliasVerdict::Disjoint;
                 let no_call_blocks =
-                    purpose == IncomingArgs && a.assume_incoming_args_survive_calls;
-                let escapes = purpose == Forward && a.escape_analysis;
-                let allocator = purpose != TableWalk && !a.noalias_allocators.is_empty();
+                    purpose == "incoming_args" && a.assume_incoming_args_survive_calls;
+                let escapes = purpose == "forward" && a.escape_analysis;
+                let allocator = purpose == "forward" && !a.noalias_allocators.is_empty();
                 assert_eq!(
-                    forwards(&fg, &analyzer, reload, spill),
+                    forwards(&fg, policy, reload, spill),
                     escapes || no_call_blocks,
-                    "{purpose:?} forwarding across the call under {a:?}"
+                    "{purpose} forwarding across the call under {a:?}"
                 );
                 assert_eq!(
-                    forwards(&fg, &analyzer, local_reload, local_spill),
+                    forwards(&fg, policy, local_reload, local_spill),
                     allocator || escapes || no_call_blocks,
-                    "{purpose:?} forwarding across the allocator under {a:?}"
+                    "{purpose} forwarding across the allocator under {a:?}"
                 );
                 assert_eq!(
-                    forwards(&fa, &analyzer_a, arg_reload, arg_spill),
-                    (purpose == Forward && a.callee_preserves_stack_args && (allocator || escapes))
+                    forwards(&fa, policy_a, arg_reload, arg_spill),
+                    (purpose == "forward"
+                        && a.callee_preserves_stack_args
+                        && (allocator || escapes))
                         || no_call_blocks,
-                    "{purpose:?} forwarding the allocator's argument slot under {a:?}"
+                    "{purpose} forwarding the allocator's argument slot under {a:?}"
                 );
                 assert_eq!(
                     sp_bases,
-                    purpose == IncomingArgs && a.distinct_sp_bases_disjoint,
-                    "{purpose:?} distinct-SP-base disjointness under {a:?}"
+                    purpose == "incoming_args" && a.distinct_sp_bases_disjoint,
+                    "{purpose} distinct-SP-base disjointness under {a:?}"
                 );
                 assert_eq!(
                     heap,
                     !a.noalias_allocators.is_empty(),
-                    "{purpose:?} heap disjointness under {a:?}"
+                    "{purpose} heap disjointness under {a:?}"
                 );
                 assert_eq!(
                     global, a.stack_global_disjoint,
-                    "{purpose:?} stack-global disjointness under {a:?}"
+                    "{purpose} stack-global disjointness under {a:?}"
                 );
             }
         }
@@ -2164,12 +1945,11 @@ mod heap_tests {
 
 /// The window is placed by adding an ABI-declared offset to a decomposed SP,
 /// neither of which this crate bounds.
-#[cfg(test)]
 mod arg_window_bounds {
     use super::*;
     use strider_ir::node::{NodeKind, ValueType};
-    use strider_ir::{IRBuilderExt, IRWalker, IntBinaryOp};
-    use strider_ir_test_utils::{sp_frame, stack_args_at};
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
+    use strider_ir_test_utils::{IrWalkerEx, sp_frame, stack_args_at};
 
     fn saturating_args() -> Option<strider_target::StackArgs> {
         stack_args_at(i128::MAX, 8)
@@ -2186,9 +1966,7 @@ mod arg_window_bounds {
         let sp_val = b.read_variable(&sp)?;
         // A call SP ABOVE the entry SP, so the declared base offset is added to
         // a positive displacement.
-        let eight = b.build_int_const(8u64, ValueType::int(32))?;
-        let call_sp =
-            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(32))?;
+        let call_sp = b.build_const_binop(8u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
         b.write_variable(&sp, call_sp)?;
         let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
@@ -2197,17 +1975,11 @@ mod arg_window_bounds {
         let mut fg = b.build()?;
         // Collapses `read_variable(sp)` to the bare `InitialVar(sp)` the call's
         // SP has to decompose to for the window to be placed at all.
-        let mut collapse = crate::OptimizerPipeline::new();
-        collapse.add(crate::PhiCollapse);
-        collapse.add(crate::RegionCollapse);
-        collapse.run(&mut fg, &crate::OptCtx::new(None))?;
-        let _ = sp_val;
+        collapse_phis(&mut fg);
 
-        let call = fg
-            .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
-            .next()
-            .expect("the fixture has one call");
-        let analyzer = MemAnalyzer::new(super::call_blocking(&mut fg, false));
+        let call = fg.sole_kind(|k| matches!(k, NodeKind::Call { .. }));
+        let query = MemQuery::default();
+        let policy = super::call_blocking(&mut fg, false);
         let MemExpr {
             base, offset: 8, ..
         } = decompose(&fg, fg.node_inputs(call)[3]).expect("the call's SP is the entry SP plus 8")
@@ -2215,15 +1987,16 @@ mod arg_window_bounds {
             panic!("the call's SP is the entry SP plus 8")
         };
         let walker = MemWalker {
-            analyzer: &analyzer,
-            options: analyzer.options(),
-            load: SizedAddr {
+            query: &query,
+            policy,
+            loc: Loc {
                 class: AddrClass::StackRooted { base, offset: -8 },
                 size: 4,
-                addr_bits: 32,
+                bits: 32,
+                space: rsleigh::VnSpace::RAM,
             },
-            load_space: rsleigh::VnSpace::RAM,
-            private_frame: std::cell::Cell::new(None),
+            stores: None,
+            private_frame: std::cell::OnceCell::new(),
         };
         assert!(
             walker.in_outgoing_arg_area(&fg, call),
@@ -2243,23 +2016,20 @@ mod arg_window_bounds {
         let sp_val = b.read_variable(&sp)?;
         let one = b.build_int_const(1u64, ValueType::int(32))?;
         b.build_store(sp_val, one, rsleigh::VnSpace::RAM)?;
+        let call_sp = b.build_const_binop(8u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
+        b.write_variable(&sp, call_sp)?;
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
+        b.build_call(target, &[], &[], 0)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
 
-        let store = super::only_store(&fg);
-        let geometry = ArgWindowGeometry {
-            mem_start: fg.node_outputs(store)[0],
-            base: sp_val,
-            lo: 0,
-            sp_offset: 8,
-            args: saturating_args().expect("declared above"),
-        };
-        let options = MemOptions::for_purpose(MemPurpose::TableWalk, &fg);
-        let analyzer = MemAnalyzer::new(options.clone());
-        let window = scan_arg_window(&fg, &analyzer, &options, &geometry, i128::MAX);
+        let call = fg.sole_kind(|k| matches!(k, NodeKind::Call { .. }));
+        let prefix = ArgPrefix::scan(&fg, &MemQuery::default(), call)
+            .expect("the call's SP is the entry SP plus 8");
         assert!(
-            !window.covers(-8, -4),
+            !prefix.covers(-8, -4),
             "a window whose first slot saturates owns nothing below it"
         );
         Ok(())
@@ -2269,12 +2039,54 @@ mod arg_window_bounds {
 /// The outgoing-argument window and `CallStackArgCollect` step the same
 /// argument-slot prefix off the same `StackArgs`, which
 /// [`MemWalker::in_outgoing_arg_area`] states but nothing checked.
-#[cfg(test)]
 mod window_matches_collection {
     use super::*;
     use strider_ir::node::ValueType;
-    use strider_ir::{IRBuilderExt, IRWalker, IntBinaryOp};
+    use strider_ir::{IRBuilderExt, IntBinaryOp};
     use strider_ir_test_utils::{sp_frame, stack_args_at};
+
+    /// Two argument pushes behind an earlier call, which hides the slot above
+    /// them: the window keeps both anchored slots and everything from the
+    /// hidden one up.
+    #[test]
+    fn a_blinded_prefix_keeps_the_slots_below_the_blind() -> crate::Result<()> {
+        use strider_ir::IRWalker;
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let args = stack_args_at(0, 4).expect("a declared stack-arg layout");
+        let mut b = sp_frame(sp)
+            .stack_args(Some(args))
+            .build_fn_single_region()?;
+        let sp0 = b.read_variable(&sp)?;
+        let blinder = b.build_int_const(0x2000u64, ValueType::int(32))?;
+        b.build_call(blinder, &[], &[], 0)?;
+        for k in 0..2u64 {
+            let addr = b.build_const_binop(k * 4, sp0, IntBinaryOp::Add, ValueType::int(32))?;
+            let value = b.build_int_const(0x10 + k, ValueType::int(32))?;
+            b.build_store(addr, value, rsleigh::VnSpace::RAM)?;
+        }
+        let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
+        b.build_call(target, &[], &[], 0)?;
+        b.build_return(None, &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
+
+        let call = fg
+            .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
+            .find(|&c| {
+                fg.int_const_u128(fg.node_inputs(c)[NodeKind::CALL_TARGET_SLOT]) == Some(0x1000)
+            })
+            .expect("the probed call");
+        let window =
+            ArgPrefix::scan(&fg, &MemQuery::default(), call).expect("the window is placed");
+        for k in 0..4 {
+            assert!(
+                window.covers(k * 4, k * 4 + 4),
+                "slot {k} is an argument or past the blind, so the callee owns it"
+            );
+        }
+        Ok(())
+    }
 
     /// Two argument pushes and a spill in the slot right above them.  Once
     /// lowered to memory the spill is indistinguishable from a third argument,
@@ -2289,9 +2101,7 @@ mod window_matches_collection {
             .build_fn_single_region()?;
         let sp0 = b.read_variable(&sp)?;
         for k in 0..3u64 {
-            let off = b.build_int_const(k * 4, ValueType::int(32))?;
-            let addr =
-                b.build_int_binary_operation(sp0, off, IntBinaryOp::Add, ValueType::int(32))?;
+            let addr = b.build_const_binop(k * 4, sp0, IntBinaryOp::Add, ValueType::int(32))?;
             let value = b.build_int_const(0x10 + k, ValueType::int(32))?;
             b.build_store(addr, value, rsleigh::VnSpace::RAM)?;
         }
@@ -2301,35 +2111,21 @@ mod window_matches_collection {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
 
-        let mut pipeline = crate::test_support::cf_rp_pipeline();
-        pipeline.add_post_pass(crate::CallStackArgCollect);
+        let mut pipeline = crate::test_support::pipeline(crate::test_support::CF_RP);
+        pipeline.add_post_pass(&crate::CallStackArgCollect);
         pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
 
-        let call = fg
-            .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
-            .next()
-            .expect("the fixture has one call");
+        let call = fg.sole_kind(|k| matches!(k, NodeKind::Call { .. }));
         let collected = fg.node_inputs(call).len() - NodeKind::Call { cc: None }.input_head_len();
         assert_eq!(collected, 3, "the spill is collected as one more argument");
 
         let sp_value = fg.node_inputs(call)[NodeKind::CALL_SP_SLOT];
         let MemExpr {
-            base,
-            offset: sp_offset,
-            ..
+            offset: sp_offset, ..
         } = decompose(&fg, sp_value).expect("the call's SP is the entry SP");
-        let options = MemOptions::for_purpose(MemPurpose::Forward, &fg);
-        let analyzer = MemAnalyzer::new(options.clone());
-        let geometry = ArgWindowGeometry {
-            mem_start: fg.memory_input_of(call).expect("a Call has a memory input"),
-            base,
-            lo: sp_offset + args.base_offset,
-            sp_offset,
-            args,
-        };
         let slot = |k: i128| sp_offset + args.base_offset + k * args.increment;
-        // One slot past the collection, so the window's own end is visible.
-        let window = scan_arg_window(&fg, &analyzer, &options, &geometry, slot(4));
+        let window =
+            ArgPrefix::scan(&fg, &MemQuery::default(), call).expect("the window is placed");
         for k in 0..collected as i128 {
             assert!(
                 window.covers(slot(k), slot(k + 1)),
@@ -2346,7 +2142,6 @@ mod window_matches_collection {
 
 /// The outgoing-argument window is computed from inside a memory-SSA walk, so
 /// it must not start a walk that can re-enter it.
-#[cfg(test)]
 mod arg_window_complexity {
     use super::*;
     use strider_ir::node::ValueType;
@@ -2363,13 +2158,16 @@ mod arg_window_complexity {
             .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let k = b.build_int_const((-8i64) as u64, ValueType::int(32))?;
-        let slot = b.build_int_binary_operation(sp_val, k, IntBinaryOp::Add, ValueType::int(32))?;
+        let slot =
+            b.build_const_binop((-8i64) as u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
         let v = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(slot, v, rsleigh::VnSpace::RAM)?;
-        let frame = b.build_int_const((-64i64) as u64, ValueType::int(32))?;
-        let call_sp =
-            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::int(32))?;
+        let call_sp = b.build_const_binop(
+            (-64i64) as u64,
+            sp_val,
+            IntBinaryOp::Add,
+            ValueType::int(32),
+        )?;
         b.write_variable(&sp, call_sp)?;
         for i in 0..calls {
             let target = b.build_int_const(0x1000 + i as u64 * 0x10, ValueType::int(32))?;
@@ -2379,16 +2177,13 @@ mod arg_window_complexity {
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut fg, &crate::OptCtx::new(None))?;
+        crate::mem_analysis::collapse_phis(&mut fg);
 
         let load = fg.producer(loaded);
-        let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
+        let query = MemQuery::default();
+        let policy = super::escaping(&mut fg, false);
         WALK_STEPS.with(|c| c.set(0));
-        let clobber = analyzer.reaching(&fg, load, mem).node();
+        let clobber = query.reaching(&fg, load, policy).node();
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the window scan cannot see past the call before the nearest one, \
@@ -2400,14 +2195,7 @@ mod arg_window_complexity {
     /// Doubling the call count may only double the work.
     #[test]
     fn window_probe_cost_is_linear_in_call_count() -> crate::Result<()> {
-        let small = walk_steps_for(12)?;
-        let big = walk_steps_for(24)?;
-        assert!(
-            big * 100 <= small * 260,
-            "doubling the call count must not blow up the walk: 12 calls took \
-             {small} steps, 24 calls took {big}"
-        );
-        Ok(())
+        crate::test_support::assert_near_linear("calls", 12, walk_steps_for, 260)
     }
 
     /// `slots` stack-argument stores below a spill, all under a lowered SP, one
@@ -2423,38 +2211,35 @@ mod arg_window_complexity {
         // The frame is one slot deeper than the arguments need, so the spill at
         // `sp - 4` is the window's last slot rather than the caller's memory.
         let frame_bytes = 4 * (slots as i64 + 1);
-        let spill_off = b.build_int_const((-4i64) as u64, ValueType::int(32))?;
         let spill_slot =
-            b.build_int_binary_operation(sp_val, spill_off, IntBinaryOp::Add, ValueType::int(32))?;
+            b.build_const_binop((-4i64) as u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
         let spilled = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(spill_slot, spilled, rsleigh::VnSpace::RAM)?;
         for i in 0..slots {
-            let off = b.build_int_const((4 * i as i64 - frame_bytes) as u64, ValueType::int(32))?;
-            let slot =
-                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(32))?;
+            let slot = b.build_const_binop(
+                (4 * i as i64 - frame_bytes) as u64,
+                sp_val,
+                IntBinaryOp::Add,
+                ValueType::int(32),
+            )?;
             let arg = b.build_int_const(0x100 + i as u64, ValueType::int(32))?;
             b.build_store(slot, arg, rsleigh::VnSpace::RAM)?;
         }
-        let frame = b.build_int_const((-frame_bytes) as u64, ValueType::int(32))?;
-        let call_sp =
-            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::int(32))?;
+        let call_sp = b.build_const_binop(
+            (-frame_bytes) as u64,
+            sp_val,
+            IntBinaryOp::Add,
+            ValueType::int(32),
+        )?;
         b.write_variable(&sp, call_sp)?;
         let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
         let loaded = b.build_load(spill_slot, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-        b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut fg, &crate::OptCtx::new(None))?;
-
-        let load = fg.producer(loaded);
-        let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
+        let (mut fg, load) = finish(b, loaded)?;
+        let query = MemQuery::default();
+        let policy = super::escaping(&mut fg, false);
         WALK_STEPS.with(|c| c.set(0));
-        let clobber = analyzer.reaching(&fg, load, mem).node();
+        let clobber = query.reaching(&fg, load, policy).node();
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the spill sits one slot above the last argument, so the window \
@@ -2467,14 +2252,12 @@ mod arg_window_complexity {
     /// the memory chain answers every slot, rather than one scan per slot.
     #[test]
     fn window_probe_cost_is_linear_in_stack_arg_slots() -> crate::Result<()> {
-        let small = walk_steps_for_arg_slots(100)?;
-        let big = walk_steps_for_arg_slots(200)?;
-        assert!(
-            big * 100 <= small * 260,
-            "doubling the argument-slot count must not square the walk: 100 \
-             slots took {small} steps, 200 slots took {big}"
-        );
-        Ok(())
+        crate::test_support::assert_near_linear(
+            "argument slots",
+            100,
+            walk_steps_for_arg_slots,
+            260,
+        )
     }
 
     /// `slots` argument stores under a lowered SP, a call below them that the
@@ -2494,23 +2277,32 @@ mod arg_window_complexity {
         // The reloads occupy the `loads` slots just above the arguments.
         let frame_bytes = 4 * (slots + loads + 1) as i64;
         for j in 0..slots {
-            let off = b.build_int_const((4 * j as i64 - frame_bytes) as u64, ValueType::int(32))?;
-            let slot =
-                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(32))?;
+            let slot = b.build_const_binop(
+                (4 * j as i64 - frame_bytes) as u64,
+                sp_val,
+                IntBinaryOp::Add,
+                ValueType::int(32),
+            )?;
             let arg = b.build_int_const(0x100 + j as u64, ValueType::int(32))?;
             b.build_store(slot, arg, rsleigh::VnSpace::RAM)?;
         }
-        let frame = b.build_int_const((-frame_bytes) as u64, ValueType::int(32))?;
-        let call_sp =
-            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::int(32))?;
+        let call_sp = b.build_const_binop(
+            (-frame_bytes) as u64,
+            sp_val,
+            IntBinaryOp::Add,
+            ValueType::int(32),
+        )?;
         b.write_variable(&sp, call_sp)?;
         let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
         let mut sum = None;
         for i in 0..loads {
-            let off = b.build_int_const((-4 * (i as i64 + 1)) as u64, ValueType::int(32))?;
-            let addr =
-                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(32))?;
+            let addr = b.build_const_binop(
+                (-4 * (i as i64 + 1)) as u64,
+                sp_val,
+                IntBinaryOp::Add,
+                ValueType::int(32),
+            )?;
             let v = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
             sum = Some(match sum {
                 None => v,
@@ -2522,21 +2314,16 @@ mod arg_window_complexity {
         b.build_return(sum, &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
-        let mut pipe = crate::OptimizerPipeline::new();
-        pipe.add(crate::PhiCollapse);
-        pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &crate::OptCtx::new(None))?;
+        collapse_phis(&mut fg);
 
         fg.assume(&crate::AssumptionOptions {
             escape_analysis: true,
             ..crate::AssumptionOptions::none()
         });
         WALK_STEPS.with(|c| c.set(0));
-        let result =
-            crate::pipeline::run_one(&crate::LoadForward, &mut fg, &crate::OptCtx::new(None))?;
-        assert_eq!(
-            result,
-            crate::OptimizationResult::NoChange,
+        let result = crate::test_support::run_pass(&crate::LoadForward, &mut fg)?;
+        assert!(
+            !result,
             "the window covers every reload, so the call keeps all of them"
         );
         Ok(WALK_STEPS.with(std::cell::Cell::get))
@@ -2544,8 +2331,7 @@ mod arg_window_complexity {
 
     /// `slots` argument stores under a lowered SP, one call, then a reload of
     /// every one of those slots, probed in ascending order through one
-    /// analyzer.  Each probe reaches one slot further than the last, so the
-    /// memoised window never covers it and the prefix is rescanned; the total
+    /// query.  Each probe reaches one slot further than the last; the total
     /// cost of the run is what this measures.
     fn walk_steps_for_ascending_probes(slots: usize) -> crate::Result<u64> {
         let sp = strider_ir_test_utils::stack_vn_x86();
@@ -2556,16 +2342,22 @@ mod arg_window_complexity {
         let frame_bytes = 4 * slots as i64;
         let mut slot_addrs = Vec::with_capacity(slots);
         for i in 0..slots {
-            let off = b.build_int_const((4 * i as i64 - frame_bytes) as u64, ValueType::int(32))?;
-            let slot =
-                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(32))?;
+            let slot = b.build_const_binop(
+                (4 * i as i64 - frame_bytes) as u64,
+                sp_val,
+                IntBinaryOp::Add,
+                ValueType::int(32),
+            )?;
             let arg = b.build_int_const(0x100 + i as u64, ValueType::int(32))?;
             b.build_store(slot, arg, rsleigh::VnSpace::RAM)?;
             slot_addrs.push(slot);
         }
-        let frame = b.build_int_const((-frame_bytes) as u64, ValueType::int(32))?;
-        let call_sp =
-            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::int(32))?;
+        let call_sp = b.build_const_binop(
+            (-frame_bytes) as u64,
+            sp_val,
+            IntBinaryOp::Add,
+            ValueType::int(32),
+        )?;
         b.write_variable(&sp, call_sp)?;
         let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
@@ -2584,17 +2376,14 @@ mod arg_window_complexity {
         b.build_return(sum, &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
-        let mut pipe = crate::OptimizerPipeline::new();
-        pipe.add(crate::PhiCollapse);
-        pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &crate::OptCtx::new(None))?;
+        collapse_phis(&mut fg);
 
-        let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
+        let query = MemQuery::default();
+        let policy = super::escaping(&mut fg, false);
         WALK_STEPS.with(|c| c.set(0));
         for value in reloads {
             let load = fg.producer(value);
-            let mem = fg.node_inputs(load)[0];
-            let clobber = analyzer.reaching(&fg, load, mem).node();
+            let clobber = query.reaching(&fg, load, policy).node();
             assert!(
                 matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
                 "an argument slot is the callee's, so the call keeps it"
@@ -2604,18 +2393,15 @@ mod arg_window_complexity {
     }
 
     /// Doubling the length of an ascending run of probes may only double the
-    /// work: each rescan doubles the window it walks, so the rescans are
-    /// logarithmic in the range and their total is linear in it.
+    /// work: the prefix is scanned once, whatever the probe reaches.
     #[test]
     fn window_probe_cost_is_linear_in_ascending_probes() -> crate::Result<()> {
-        let small = walk_steps_for_ascending_probes(100)?;
-        let big = walk_steps_for_ascending_probes(200)?;
-        assert!(
-            big * 100 <= small * 260,
-            "doubling an ascending run of probes must not square the walk: 100 \
-             probes took {small} steps, 200 took {big}"
-        );
-        Ok(())
+        crate::test_support::assert_near_linear(
+            "ascending probes",
+            100,
+            walk_steps_for_ascending_probes,
+            260,
+        )
     }
 
     /// Ten times the reloads may not cost ten times the work: the window
@@ -2633,9 +2419,65 @@ mod arg_window_complexity {
     }
 }
 
+/// The argument window of a call behind an irreducible memory graph, where no
+/// index skips the stores nearer than a slot's own.
+mod arg_window_irreducible {
+    use super::*;
+
+    fn window_steps(k: usize) -> crate::Result<u64> {
+        let mut fg = crate::test_support::memory_shapes::irreducible_stack_args(k)?;
+        assert!(
+            crate::mem_ssa::MemLayout::build(&fg).positions().is_none(),
+            "the memory graph has no position index"
+        );
+        fg.assume(&crate::AssumptionOptions {
+            escape_analysis: true,
+            ..crate::AssumptionOptions::none()
+        });
+        crate::test_support::steps(&[&WALK_STEPS, &crate::mem_ssa::CLIMB_STEPS], || {
+            let changed = crate::test_support::run_pass(&crate::LoadForward, &mut fg)?;
+            assert!(
+                !changed,
+                "the reload's slot is the callee's, so the call keeps it"
+            );
+            Ok(())
+        })
+    }
+
+    /// Doubling the argument count may only double the work of reading the
+    /// window.
+    #[test]
+    fn window_probe_cost_is_linear_in_the_slot_count() -> crate::Result<()> {
+        crate::test_support::assert_near_linear("arguments", 100, window_steps, 260)
+    }
+
+    /// The same behind a merge whose arms disagree on the reloaded slot, which
+    /// every argument slot below it reads past by its own climb.
+    #[test]
+    fn window_probe_behind_a_merge_is_linear_in_the_slot_count() -> crate::Result<()> {
+        crate::test_support::assert_near_linear(
+            "arguments",
+            100,
+            |k| {
+                let mut fg =
+                    crate::test_support::memory_shapes::irreducible_stack_args_merging(k, Some(k))?;
+                fg.assume(&crate::AssumptionOptions {
+                    escape_analysis: true,
+                    ..crate::AssumptionOptions::none()
+                });
+                crate::test_support::steps(&[&WALK_STEPS, &crate::mem_ssa::CLIMB_STEPS], || {
+                    let changed = crate::test_support::run_pass(&crate::LoadForward, &mut fg)?;
+                    assert!(!changed, "the arms disagree on the reloaded slot");
+                    Ok(())
+                })
+            },
+            260,
+        )
+    }
+}
+
 /// `decompose` walks the whole address spine, so it must commit a verdict for
 /// every node it passes through, not just the query root.
-#[cfg(test)]
 mod spine_memo {
     use super::*;
     use strider_ir::node::ValueType;
@@ -2662,10 +2504,7 @@ mod spine_memo {
         b.build_return(Some(cur), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut fg, &crate::OptCtx::new(None))?;
+        collapse_phis(&mut fg);
         Ok((fg, chain))
     }
 
@@ -2685,6 +2524,43 @@ mod spine_memo {
         Ok(SPINE_STEPS.with(std::cell::Cell::get))
     }
 
+    /// `levels` alignment masks, each over the last one less 4, queried from
+    /// the outermost in: each query's spine runs through every mask below it.
+    fn nested_mask_steps(levels: usize) -> crate::Result<u64> {
+        let sp = strider_ir_test_utils::stack_vn_x86();
+        let mut b = sp_arg_frame(sp).build_fn_single_region()?;
+        let mut cur = b.read_variable(&sp)?;
+        let mut chain = Vec::with_capacity(levels);
+        for _ in 0..levels {
+            let below =
+                b.build_const_binop(0xFFFF_FFFCu64, cur, IntBinaryOp::Add, ValueType::int(32))?;
+            let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::int(32))?;
+            cur =
+                b.build_int_binary_operation(below, mask, IntBinaryOp::And, ValueType::int(32))?;
+            chain.push(cur);
+        }
+        b.build_return(Some(cur), &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        collapse_phis(&mut fg);
+        SPINE_STEPS.with(|c| c.set(0));
+        for v in chain.iter().rev() {
+            assert!(
+                matches!(
+                    decompose(&fg, *v),
+                    Some(MemExpr { base, offset: 0, kind: MemKind::Stack }) if base == *v
+                ),
+                "each mask is its own base"
+            );
+        }
+        Ok(SPINE_STEPS.with(std::cell::Cell::get))
+    }
+
+    #[test]
+    fn decomposing_nested_masks_outermost_first_is_not_quadratic() -> crate::Result<()> {
+        crate::test_support::assert_near_linear("masks", 100, nested_mask_steps, 260)
+    }
+
     #[test]
     fn decomposing_a_chain_consumer_first_is_not_quadratic() -> crate::Result<()> {
         let small = spine_steps(200)?;
@@ -2702,7 +2578,6 @@ mod spine_memo {
 /// relaxations off, so it stops at an earlier call.  A stop the probe cannot
 /// see through must extend the window, not end it, or a load inside the window
 /// forwards across the call.
-#[cfg(test)]
 mod arg_window_visibility {
     use super::*;
     use strider_ir::node::ValueType;
@@ -2724,12 +2599,8 @@ mod arg_window_visibility {
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
 
-        let zero = b.build_int_const(0u64, ValueType::int(32))?;
-        let slot0 =
-            b.build_int_binary_operation(sp_val, zero, IntBinaryOp::Add, ValueType::int(32))?;
-        let four = b.build_int_const(4u64, ValueType::int(32))?;
-        let slot4 =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+        let slot0 = b.build_const_binop(0u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
+        let slot4 = b.build_const_binop(4u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
 
         let p = b.build_int_const(0x11u64, ValueType::int(32))?;
         b.build_store(slot0, p, rsleigh::VnSpace::RAM)?;
@@ -2742,18 +2613,8 @@ mod arg_window_visibility {
         b.build_call(g, &[], &[], 0)?;
 
         let loaded = b.build_load(slot4, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-        b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        let mut pipe = crate::OptimizerPipeline::new();
-        pipe.add(crate::PhiCollapse);
-        pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &crate::OptCtx::new(None))?;
-
-        let load = fg.producer(loaded);
-        let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.reaching(&fg, load, mem).node();
+        let (mut fg, load) = finish(b, loaded)?;
+        let clobber = super::reload_clobber(&mut fg, load, false);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "sp+4 is g's own argument slot, so g clobbers it; got {:?}",
@@ -2797,25 +2658,18 @@ mod arg_window_visibility {
             b.build_store(*addr, data, rsleigh::VnSpace::RAM)?;
         }
         let slot4 = addrs[0];
-        let frame = b.build_int_const((-16i64) as u64, ValueType::int(32))?;
-        let call_sp =
-            b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::int(32))?;
+        let call_sp = b.build_const_binop(
+            (-16i64) as u64,
+            sp_val,
+            IntBinaryOp::Add,
+            ValueType::int(32),
+        )?;
         b.write_variable(&sp, call_sp)?;
         let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(target, &[], &[], 0)?;
         let loaded = b.build_load(slot4, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-        b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        let mut pipe = crate::OptimizerPipeline::new();
-        pipe.add(crate::PhiCollapse);
-        pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &crate::OptCtx::new(None))?;
-
-        let load = fg.producer(loaded);
-        let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.reaching(&fg, load, mem).node();
+        let (mut fg, load) = finish(b, loaded)?;
+        let clobber = super::reload_clobber(&mut fg, load, false);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Store(_)),
             "the window ends below the load, so the reload steps through the \
@@ -2843,17 +2697,16 @@ mod arg_window_visibility {
             .stack_args(stack_args_at(4, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
-        let frame = b.build_int_const((-64i64) as u64, ValueType::int(32))?;
-        let call_sp =
-            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::int(32))?;
+        let call_sp = b.build_const_binop(
+            (-64i64) as u64,
+            entry_sp,
+            IntBinaryOp::Add,
+            ValueType::int(32),
+        )?;
         b.write_variable(&sp, call_sp)?;
 
-        let four = b.build_int_const(4u64, ValueType::int(32))?;
-        let arg0 =
-            b.build_int_binary_operation(call_sp, four, IntBinaryOp::Add, ValueType::int(32))?;
-        let eight = b.build_int_const(8u64, ValueType::int(32))?;
-        let arg1 =
-            b.build_int_binary_operation(call_sp, eight, IntBinaryOp::Add, ValueType::int(32))?;
+        let arg0 = b.build_const_binop(4u64, call_sp, IntBinaryOp::Add, ValueType::int(32))?;
+        let arg1 = b.build_const_binop(8u64, call_sp, IntBinaryOp::Add, ValueType::int(32))?;
 
         let p = b.build_int_const(0x11u64, ValueType::int(32))?;
         b.build_store(arg0, p, rsleigh::VnSpace::RAM)?;
@@ -2866,18 +2719,8 @@ mod arg_window_visibility {
         b.build_call(g, &[], &[], 0)?;
 
         let loaded = b.build_load(arg1, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-        b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        let mut pipe = crate::OptimizerPipeline::new();
-        pipe.add(crate::PhiCollapse);
-        pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &crate::OptCtx::new(None))?;
-
-        let load = fg.producer(loaded);
-        let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.reaching(&fg, load, mem).node();
+        let (mut fg, load) = finish(b, loaded)?;
+        let clobber = super::reload_clobber(&mut fg, load, false);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the earlier call hides slot 0, so the window cannot be shown to \
@@ -2891,16 +2734,9 @@ mod arg_window_visibility {
     /// [`crate::test_support::memory_shapes::stack_top_spill`] has the spill as
     /// its nearest clobber.
     fn spill_at_the_stack_top_forwards(relaxed: bool) -> crate::Result<bool> {
-        let (mut b, loaded) = crate::test_support::memory_shapes::stack_top_spill()?;
-        b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        collapse_phis(&mut fg);
-
-        let load = fg.producer(loaded);
-        let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(super::escaping(&mut fg, relaxed));
-        let clobber = analyzer.reaching(&fg, load, mem).node();
+        let (b, loaded) = crate::test_support::memory_shapes::stack_top_spill()?;
+        let (mut fg, load) = finish(b, loaded)?;
+        let clobber = super::reload_clobber(&mut fg, load, relaxed);
         Ok(matches!(fg.node_kind(clobber), NodeKind::Store(_)))
     }
 
@@ -2929,10 +2765,9 @@ mod arg_window_visibility {
             .stack_args(stack_args_at(4, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
-        let minus_eight = b.build_int_const((-8i64) as u64, ValueType::int(32))?;
-        let local = b.build_int_binary_operation(
+        let local = b.build_const_binop(
+            (-8i64) as u64,
             entry_sp,
-            minus_eight,
             IntBinaryOp::Add,
             ValueType::int(32),
         )?;
@@ -2947,18 +2782,8 @@ mod arg_window_visibility {
         b.build_call(f, &[], &[], 0)?;
 
         let loaded = b.build_load(local, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-        b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        let mut pipe = crate::OptimizerPipeline::new();
-        pipe.add(crate::PhiCollapse);
-        pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &crate::OptCtx::new(None))?;
-
-        let load = fg.producer(loaded);
-        let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.reaching(&fg, load, mem).node();
+        let (mut fg, load) = finish(b, loaded)?;
+        let clobber = super::reload_clobber(&mut fg, load, false);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Store(_)),
             "a private-frame local above the call's SP and below the argument \
@@ -3010,26 +2835,19 @@ mod arg_window_visibility {
         let junk = b.build_int_const(0x99u64, ValueType::int(32))?;
         b.build_store(opaque, junk, rsleigh::VnSpace::RAM)?;
 
-        let frame = b.build_int_const((-16i64) as u64, ValueType::int(32))?;
-        let call_sp =
-            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::int(32))?;
+        let call_sp = b.build_const_binop(
+            (-16i64) as u64,
+            entry_sp,
+            IntBinaryOp::Add,
+            ValueType::int(32),
+        )?;
         b.write_variable(&sp, call_sp)?;
         let f = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call(f, &[], &[], 0)?;
 
         let loaded = b.build_load(slots[2], rsleigh::VnSpace::RAM, ValueType::int(32))?;
-        b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        let mut pipe = crate::OptimizerPipeline::new();
-        pipe.add(crate::PhiCollapse);
-        pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &crate::OptCtx::new(None))?;
-
-        let load = fg.producer(loaded);
-        let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.reaching(&fg, load, mem).node();
+        let (mut fg, load) = finish(b, loaded)?;
+        let clobber = super::reload_clobber(&mut fg, load, false);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "sp-8 is the callee's third outgoing argument slot, which the \
@@ -3057,36 +2875,25 @@ mod arg_window_visibility {
             .stack_args(stack_args_at(8, 8))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
-        let frame = b.build_int_const((-32i64) as u64, ValueType::int(64))?;
-        let call_sp =
-            b.build_int_binary_operation(entry_sp, frame, IntBinaryOp::Add, ValueType::int(64))?;
+        let call_sp = b.build_const_binop(
+            (-32i64) as u64,
+            entry_sp,
+            IntBinaryOp::Add,
+            ValueType::int(64),
+        )?;
         b.write_variable(&sp, call_sp)?;
 
-        let eight = b.build_int_const(8u64, ValueType::int(64))?;
-        let slot0 =
-            b.build_int_binary_operation(call_sp, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let slot0 = b.build_const_binop(8u64, call_sp, IntBinaryOp::Add, ValueType::int(64))?;
         let arg = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(slot0, arg, rsleigh::VnSpace::RAM)?;
 
         let f = b.build_int_const(0x1000u64, ValueType::int(64))?;
         b.build_call(f, &[], &[], 0)?;
 
-        let twelve = b.build_int_const(12u64, ValueType::int(64))?;
-        let tail =
-            b.build_int_binary_operation(call_sp, twelve, IntBinaryOp::Add, ValueType::int(64))?;
+        let tail = b.build_const_binop(12u64, call_sp, IntBinaryOp::Add, ValueType::int(64))?;
         let loaded = b.build_load(tail, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-        b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        let mut pipe = crate::OptimizerPipeline::new();
-        pipe.add(crate::PhiCollapse);
-        pipe.add(crate::RegionCollapse);
-        pipe.run(&mut fg, &crate::OptCtx::new(None))?;
-
-        let load = fg.producer(loaded);
-        let mem = fg.node_inputs(load)[0];
-        let analyzer = MemAnalyzer::new(super::escaping(&mut fg, false));
-        let clobber = analyzer.reaching(&fg, load, mem).node();
+        let (mut fg, load) = finish(b, loaded)?;
+        let clobber = super::reload_clobber(&mut fg, load, false);
         assert!(
             matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
             "the upper 4 bytes of argument slot 0 are the callee's, so the \
@@ -3095,9 +2902,175 @@ mod arg_window_visibility {
         );
         Ok(())
     }
+
+    /// A big-endian argument narrower than its slot is right-justified in it,
+    /// so the caller never writes the slot's first byte.  The slot is still the
+    /// callee's, and so is every slot above it.
+    ///
+    /// ```text
+    /// sp' = sp - 32        ; base_offset 8 / increment 8
+    /// store.4 A -> sp'+12  ; PPC64 `stfs`, right-justified in slot 0
+    /// call f
+    /// load.4  sp'+12
+    /// ```
+    ///
+    /// Mutation: anchor only a store covering the slot's first byte.
+    #[test]
+    fn a_right_justified_sub_slot_argument_owns_its_slot() -> crate::Result<()> {
+        let sp = strider_ir_test_utils::stack_vn_x86_64();
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(8, 8))
+            .byte_order(strider_target::Endianness::Big)
+            .build_fn_single_region()?;
+        let entry_sp = b.read_variable(&sp)?;
+        let call_sp = b.build_const_binop(
+            (-32i64) as u64,
+            entry_sp,
+            IntBinaryOp::Add,
+            ValueType::int(64),
+        )?;
+        b.write_variable(&sp, call_sp)?;
+
+        let arg_at = b.build_const_binop(12u64, call_sp, IntBinaryOp::Add, ValueType::int(64))?;
+        let arg = b.build_int_const(0x42u64, ValueType::int(32))?;
+        b.build_store(arg_at, arg, rsleigh::VnSpace::RAM)?;
+
+        let f = b.build_int_const(0x1000u64, ValueType::int(64))?;
+        b.build_call(f, &[], &[], 0)?;
+
+        let loaded = b.build_load(arg_at, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+        let (mut fg, load) = finish(b, loaded)?;
+        let clobber = super::reload_clobber(&mut fg, load, false);
+        assert!(
+            matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
+            "argument slot 0 is the callee's, so the load must stop at the \
+             call; got {:?}",
+            fg.node_kind(clobber),
+        );
+        Ok(())
+    }
+
+    /// The same right-justified argument behind a merge that only one path
+    /// writes the next slot on: the per-slot probe past the merge finds slot
+    /// 0 unwritten at its first byte and must look at the rest of it.
+    ///
+    /// ```text
+    /// sp' = sp - 32
+    /// store.4 A -> sp'+12  ; slot 0, right-justified
+    /// if (..) store.8 B -> sp'+16   ; slot 1 on one path
+    /// call f
+    /// load.8  sp'+16
+    /// ```
+    ///
+    /// Mutation: probe only the slot's first byte past the merge.
+    #[test]
+    fn a_right_justified_argument_behind_a_merge_owns_its_slot() -> crate::Result<()> {
+        let sp = strider_ir_test_utils::stack_vn_x86_64();
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(8, 8))
+            .byte_order(strider_target::Endianness::Big)
+            .build_fn()?;
+        let (entry, then_r, merge) = (
+            b.create_region_all()?,
+            b.create_region_all()?,
+            b.create_region_all()?,
+        );
+        b.set_entry_region_all(entry)?;
+        b.set_region(entry);
+        let entry_sp = b.read_variable(&sp)?;
+        let call_sp = b.build_const_binop(
+            (-32i64) as u64,
+            entry_sp,
+            IntBinaryOp::Add,
+            ValueType::int(64),
+        )?;
+        b.write_variable(&sp, call_sp)?;
+        let at = |b: &mut strider_ir::FunctionBuilder, off: u64| {
+            let k = b.build_int_const(off, ValueType::int(64))?;
+            b.build_int_binary_operation(call_sp, k, IntBinaryOp::Add, ValueType::int(64))
+        };
+        let slot0_tail = at(&mut b, 12)?;
+        let a = b.build_int_const(0xAu64, ValueType::int(32))?;
+        b.build_store(slot0_tail, a, rsleigh::VnSpace::RAM)?;
+        let slot1 = at(&mut b, 16)?;
+        let cond = b.build_boolean_const(true);
+        b.build_if(cond, then_r, merge)?;
+
+        b.set_region(then_r);
+        let bv = b.build_int_const(0xBu64, ValueType::int(64))?;
+        b.build_store(slot1, bv, rsleigh::VnSpace::RAM)?;
+        b.build_branch(merge)?;
+
+        b.set_region(merge);
+        let f = b.build_int_const(0x1000u64, ValueType::int(64))?;
+        b.build_call(f, &[], &[], 0)?;
+        let loaded = b.build_load(slot1, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        let (mut fg, load) = finish(b, loaded)?;
+        let clobber = super::reload_clobber(&mut fg, load, false);
+        assert!(
+            matches!(fg.node_kind(clobber), NodeKind::Call { .. }),
+            "slot 0 holds an argument, so slot 1 is the callee's too; got {:?}",
+            fg.node_kind(clobber),
+        );
+        Ok(())
+    }
+
+    /// Stores inside a slot whose first byte an earlier call hides still
+    /// leave the window blind from the slot up: one of them reaching into
+    /// the next slot is no argument ending there.
+    ///
+    /// ```text
+    /// sp' = sp - 32        ; base_offset 8 / increment 8
+    /// call g
+    /// store.4 A -> sp'+10  ; inside slot 0
+    /// store.4 B -> sp'+14  ; inside slot 0, into slot 1
+    /// call f
+    /// load.8  sp'+16
+    /// ```
+    ///
+    /// Mutation: read a slot an inside store anchors as anchored whatever
+    /// hides its first byte.
+    #[test]
+    fn inside_stores_past_a_hidden_first_byte_keep_the_window_blind() -> crate::Result<()> {
+        let sp = strider_ir_test_utils::stack_vn_x86_64();
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(8, 8))
+            .build_fn_single_region()?;
+        let entry_sp = b.read_variable(&sp)?;
+        let call_sp = b.build_const_binop(
+            (-32i64) as u64,
+            entry_sp,
+            IntBinaryOp::Add,
+            ValueType::int(64),
+        )?;
+        b.write_variable(&sp, call_sp)?;
+        let at = |b: &mut strider_ir::FunctionBuilder, off: u64| {
+            let k = b.build_int_const(off, ValueType::int(64))?;
+            b.build_int_binary_operation(call_sp, k, IntBinaryOp::Add, ValueType::int(64))
+        };
+        let g = b.build_int_const(0x2000u64, ValueType::int(64))?;
+        b.build_call(g, &[], &[], 0)?;
+        for (off, v) in [(10u64, 0xAu64), (14, 0xB)] {
+            let addr = at(&mut b, off)?;
+            let data = b.build_int_const(v, ValueType::int(32))?;
+            b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        }
+        let f = b.build_int_const(0x1000u64, ValueType::int(64))?;
+        let (call_f, _) = b.build_call(f, &[], &[], 0)?;
+        let slot1 = at(&mut b, 16)?;
+        let loaded = b.build_load(slot1, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        let (mut fg, load) = finish(b, loaded)?;
+        let clobber = super::reload_clobber(&mut fg, load, false);
+        assert_eq!(
+            clobber,
+            call_f,
+            "slot 1 may be the callee's, so the load must stop at the call; got {:?}",
+            fg.node_kind(clobber),
+        );
+        Ok(())
+    }
 }
 
-#[cfg(test)]
 mod own_frame_tests {
     use super::*;
     use strider_ir::node::ValueType;
@@ -3113,16 +3086,19 @@ mod own_frame_tests {
             .stack_args(stack_args_at(0, 4))
             .build_fn_single_region()?;
         let entry_sp = b.read_variable(&sp)?;
-        let align = b.build_int_const(0xFFFF_FFF0u64, ValueType::int(32))?;
-        let aligned =
-            b.build_int_binary_operation(entry_sp, align, IntBinaryOp::And, ValueType::int(32))?;
-        let low_bits = b.build_int_const(0xFu64, ValueType::int(32))?;
+        let aligned = b.build_const_binop(
+            0xFFFF_FFF0u64,
+            entry_sp,
+            IntBinaryOp::And,
+            ValueType::int(32),
+        )?;
         let extracted =
-            b.build_int_binary_operation(entry_sp, low_bits, IntBinaryOp::And, ValueType::int(32))?;
+            b.build_const_binop(0xFu64, entry_sp, IntBinaryOp::And, ValueType::int(32))?;
         b.build_store(aligned, extracted, rsleigh::VnSpace::RAM)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        crate::mem_analysis::collapse_phis(&mut fg);
 
         assert!(
             in_own_frame(&fg, aligned, -8, 4),
@@ -3148,9 +3124,11 @@ mod own_frame_tests {
         let align = b.build_int_const(0xFFFF_FFF0u64, ValueType::int(32))?;
         let entry_sp =
             b.build_int_binary_operation(entry_sp, align, IntBinaryOp::And, ValueType::int(32))?;
+        b.build_store(entry_sp, align, rsleigh::VnSpace::RAM)?;
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        crate::mem_analysis::collapse_phis(&mut fg);
 
         assert!(
             in_own_frame(&fg, entry_sp, -8, 4),
@@ -3175,8 +3153,9 @@ mod own_frame_tests {
         Ok(())
     }
 
-    /// Every unknown in the entry-SP walk answers `false`; a `Phi` the walk
-    /// reads no arm from is one of them.
+    /// Every unknown in the entry-SP walk answers `false`; a `Phi` with no arm
+    /// is one of them.  It names no allocation either: a frontier with no
+    /// definition is not heap memory.
     #[test]
     fn a_phi_with_no_readable_arm_is_not_this_frame() -> crate::Result<()> {
         use strider_ir::IRWalker;
@@ -3195,29 +3174,16 @@ mod own_frame_tests {
         b.set_lift_addr(None);
         let mut fg = b.build()?;
 
-        // A float-armed `Phi`: no arm is an integer, so the walk reads none.
         let region = fg
             .walk_kind(|k| matches!(k, NodeKind::Region))
             .next()
             .expect("the fixture has one region");
         let token = fg.node_outputs(region)[1];
-        let arms: Vec<_> = [0u64, 1u64]
-            .into_iter()
-            .map(|bits| {
-                let n = strider_ir_test_utils::sentinel_node(
-                    &mut fg,
-                    NodeKind::FloatConst(bits),
-                    [],
-                    [ValueKind::Typed(ValueType::float(32))],
-                );
-                fg.node_outputs(n)[0]
-            })
-            .collect();
         let phi = strider_ir_test_utils::sentinel_node(
             &mut fg,
             NodeKind::Phi,
-            [token, arms[0], arms[1]],
-            [ValueKind::Typed(ValueType::float(32))],
+            [token],
+            [ValueKind::Typed(ValueType::int(32))],
         );
         let phi_value = fg.node_outputs(phi)[0];
         let masked = fg.node_input_id_at(fg.producer(anchor), 0)?;
@@ -3227,6 +3193,10 @@ mod own_frame_tests {
             !in_own_frame(&fg, anchor, -8, 4),
             "an anchor over a phi with no readable arm has an unbounded \
              displacement, so it is not this frame's base"
+        );
+        assert!(
+            super::decompose::decompose(&fg, phi_value).is_none(),
+            "a phi with no arm names no allocation"
         );
         Ok(())
     }
@@ -3252,15 +3222,17 @@ mod own_frame_tests {
         let anchor_below =
             b.build_int_binary_operation(sp_below, mask, IntBinaryOp::And, ValueType::int(32))?;
 
-        let above = b.build_int_const(0x1000u64, ValueType::int(32))?;
         let sp_above =
-            b.build_int_binary_operation(entry_sp, above, IntBinaryOp::Add, ValueType::int(32))?;
+            b.build_const_binop(0x1000u64, entry_sp, IntBinaryOp::Add, ValueType::int(32))?;
         let anchor_above =
             b.build_int_binary_operation(sp_above, mask, IntBinaryOp::And, ValueType::int(32))?;
+        b.build_store(anchor_below, mask, rsleigh::VnSpace::RAM)?;
+        b.build_store(anchor_above, mask, rsleigh::VnSpace::RAM)?;
 
         b.build_return(None, &[])?;
         b.set_lift_addr(None);
-        let fg = b.build()?;
+        let mut fg = b.build()?;
+        crate::mem_analysis::collapse_phis(&mut fg);
 
         assert!(
             in_own_frame(&fg, anchor_below, 0, 4),
@@ -3272,130 +3244,19 @@ mod own_frame_tests {
         );
         Ok(())
     }
-
-    /// `(phi(sp + a, sp + c)) & ~0xF`: the frame pointer of a function that
-    /// adjusts SP on two paths and aligns it once at the join.  `loop_back`
-    /// instead carries the phi into itself, so its displacement is no
-    /// constant.
-    fn phi_frame(a: i64, c: i64, loop_back: bool) -> crate::Result<(Function, ValueId)> {
-        let sp = strider_ir_test_utils::stack_vn_x86();
-        let mut b = sp_frame(sp).stack_args(stack_args_at(0, 4)).build_fn()?;
-        let entry = b.create_region_all()?;
-        let arm_a = b.create_region_all()?;
-        let arm_c = b.create_region_all()?;
-        let join = b.create_region_all()?;
-        b.set_entry_region_all(entry)?;
-        b.record_register_arg_carriers();
-
-        let add = |b: &mut strider_ir::FunctionBuilder, v, k: i64| {
-            let c = b.build_int_const(k as u64, ValueType::int(32))?;
-            b.build_int_binary_operation(v, c, IntBinaryOp::Add, ValueType::int(32))
-        };
-
-        b.set_region(entry);
-        let sp_val = b.read_variable(&sp)?;
-        let zero = b.build_int_const(0u64, ValueType::int(32))?;
-        let cond = b.build_int_cmp_operation(
-            sp_val,
-            zero,
-            strider_ir::IntCmpOp::Equal,
-            ValueType::int(32),
-        )?;
-        b.build_if(cond, arm_a, arm_c)?;
-
-        for (region, delta) in [(arm_a, a), (arm_c, c)] {
-            b.set_region(region);
-            let cur = b.read_variable(&sp)?;
-            let next = add(&mut b, cur, delta)?;
-            b.write_variable(&sp, next)?;
-            b.build_branch(join)?;
-        }
-
-        b.set_region(join);
-        let merged = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::int(32))?;
-        let anchor =
-            b.build_int_binary_operation(merged, mask, IntBinaryOp::And, ValueType::int(32))?;
-        // A use, so the anchor survives to be asked about.
-        b.build_store(anchor, mask, rsleigh::VnSpace::RAM)?;
-        if loop_back {
-            let exit = b.create_region_all()?;
-            let next = add(&mut b, merged, -16)?;
-            b.write_variable(&sp, next)?;
-            let again = b.build_boolean_const(true);
-            b.build_if(again, join, exit)?;
-            b.set_region(exit);
-        }
-        b.build_return(None, &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        // The hand-built reads sit behind single-input `VarPhi`s.
-        let mut prep = crate::OptimizerPipeline::new();
-        prep.add(crate::PhiCollapse);
-        prep.add(crate::RegionCollapse);
-        prep.run(&mut fg, &crate::OptCtx::new(None))?;
-        Ok((fg, anchor))
-    }
-
-    /// The entry-SP walk fans out through a `Phi`, so an anchor over one is
-    /// bounded by its WIDEST arm: every arm must sit at or below the entry SP.
-    ///
-    /// `decompose` stops at that same `Phi` instead, so no `MemExpr` ever
-    /// names such an anchor as its base.  Only callers handed a raw base
-    /// reach this shape.
-    #[test]
-    fn a_phi_frame_base_is_bounded_by_every_arm() -> crate::Result<()> {
-        let (fg, anchor) = phi_frame(-32, -64, false)?;
-        assert!(
-            in_own_frame(&fg, anchor, -8, 4),
-            "both arms sit below the entry SP, so the join does too"
-        );
-        assert!(
-            decompose(&fg, anchor).is_none(),
-            "a phi under the anchor is not a spine `decompose` bottoms out"
-        );
-
-        let (fg, anchor) = phi_frame(-32, 0x1000, false)?;
-        assert!(
-            !in_own_frame(&fg, anchor, -8, 4),
-            "one arm inside the caller's frame is enough to lose the bound"
-        );
-
-        let (fg, anchor) = phi_frame(-32, -64, true)?;
-        assert!(
-            !in_own_frame(&fg, anchor, -8, 4),
-            "a loop-carried base has no constant displacement"
-        );
-        Ok(())
-    }
 }
 
-#[cfg(test)]
 mod comparability_tests {
     use super::*;
 
-    fn probe(size: i128) -> SizedAddr {
-        SizedAddr {
-            class: AddrClass::Constant { addr: 0 },
-            size,
-            addr_bits: 32,
-        }
-    }
-
-    /// A probe spanning more than half the address space leaves no distance
-    /// short enough to tell the two ways round apart, so no raw constant pair
-    /// but an equal one compares.
-    #[test]
-    fn a_probe_wider_than_half_the_modulus_compares_nothing() {
-        let wide = probe(3i128 << 30);
-        assert!(
-            !offsets_comparable(wide, probe(4), 0, 1000),
-            "a span past the half-modulus rejects every pair"
-        );
-        assert!(
-            !offsets_comparable(probe(4), wide, 0, 1000),
-            "either operand's span counts"
-        );
+    /// The verdict of two offsets from one base, or two constants.
+    fn offset_range_verdict(load: Loc, store: Loc) -> AliasVerdict {
+        let policy = Policy {
+            stack_global_disjoint: false,
+            distinct_sp_bases_disjoint: false,
+            calls: Calls::Block,
+        };
+        alias_verdict(load, store, policy)
     }
 
     /// Each offset is reduced at its OWN address width, so a 32-bit reduction
@@ -3404,15 +3265,17 @@ mod comparability_tests {
     /// alone lets a range that wraps 2^32 look ~4 GiB clear of the load.
     #[test]
     fn two_offsets_reduced_at_different_widths_compare_nothing() {
-        let narrow = SizedAddr {
+        let narrow = Loc {
             class: AddrClass::Constant { addr: 0 },
             size: 4,
-            addr_bits: 32,
+            bits: 32,
+            space: rsleigh::VnSpace::RAM,
         };
-        let wide = SizedAddr {
+        let wide = Loc {
             class: AddrClass::Constant { addr: -4 },
             size: 8,
-            addr_bits: 64,
+            bits: 64,
+            space: rsleigh::VnSpace::RAM,
         };
         // Adjacent under a single 64-bit bound.
         for (load, store) in [(wide, narrow), (narrow, wide)] {
@@ -3424,28 +3287,60 @@ mod comparability_tests {
         }
     }
 
+    /// Global addresses compare on the ring too: a constant just below 2^32
+    /// and one just above 0 are eight bytes apart.  The integer order a raw
+    /// address once took read them ~4 GiB apart and so refused them as
+    /// incomparable.
+    ///
+    /// Mutation: compare constants in integer order within half the modulus.
     #[test]
-    fn an_ordinary_probe_still_compares_nearby_offsets() {
-        assert!(offsets_comparable(probe(4), probe(4), 0, 1000));
+    fn constants_across_the_wrap_compare_on_the_ring() -> crate::Result<()> {
+        use strider_ir::IRBuilderExt;
+        use strider_ir::node::ValueType;
+        let mut addrs = Vec::new();
+        let f = strider_ir_test_utils::make_empty_fn(|b| {
+            for a in [0xFFFF_FFFCu64, 0x4, 0x0] {
+                addrs.push(b.build_int_const(a, ValueType::int(32))?);
+            }
+            b.build_int_const(0u64, ValueType::int(32))
+        })?;
+        let at = |addr: ValueId| Loc {
+            class: classify_addr(&f, addr),
+            size: 4,
+            bits: 32,
+            space: rsleigh::VnSpace::RAM,
+        };
+        assert_eq!(
+            offset_range_verdict(at(addrs[0]), at(addrs[1])),
+            AliasVerdict::Disjoint,
+            "0xFFFFFFFC and 0x4 are eight bytes apart"
+        );
+        let wide = Loc {
+            size: 8,
+            ..at(addrs[0])
+        };
+        assert_eq!(
+            offset_range_verdict(wide, at(addrs[2])),
+            AliasVerdict::MayAlias,
+            "an 8-byte access at 0xFFFFFFFC wraps onto 0"
+        );
+        Ok(())
     }
 
-    /// A reduced offset takes the ring at every width the carrier holds, a raw
-    /// constant one never does, and past the carrier nothing reduces so the
-    /// exact sums keep integer order.
+    /// An address wider than the `i128` carrier has no reduction, so it is
+    /// an `Anchor` whatever it decomposes to.
     #[test]
-    fn only_reduced_offsets_within_the_carrier_take_the_ring() {
-        let base = ValueId::from_u32(0);
-        for bits in [32u32, 64, 128] {
-            for class in [
-                AddrClass::StackRooted { base, offset: 0 },
-                AddrClass::HeapRooted { base, offset: 0 },
-            ] {
-                assert_eq!(modular_offsets(class, bits), Some(bits), "{class:?}/{bits}");
-            }
-        }
-        let stack = AddrClass::StackRooted { base, offset: 0 };
-        assert_eq!(modular_offsets(stack, 256), None, "past the carrier");
-        assert_eq!(modular_offsets(AddrClass::Constant { addr: 0 }, 32), None);
+    fn an_address_past_the_carrier_is_an_anchor() -> crate::Result<()> {
+        use strider_ir::IRBuilderExt;
+        use strider_ir::node::ValueType;
+        let mut addr = None;
+        let f = strider_ir_test_utils::make_empty_fn(|b| {
+            addr = Some(b.build_int_const(0x1000u64, ValueType::int(256))?);
+            b.build_int_const(0u64, ValueType::int(32))
+        })?;
+        let addr = addr.expect("built");
+        assert_eq!(classify_addr(&f, addr), AddrClass::Anchor { value: addr });
+        Ok(())
     }
 
     /// The ring places a pair the integer bound refuses: six bytes apart mod
@@ -3453,10 +3348,11 @@ mod comparability_tests {
     #[test]
     fn the_ring_separates_a_pair_across_the_wrap() {
         let base = ValueId::from_u32(0);
-        let at = |offset: i128| SizedAddr {
+        let at = |offset: i128| Loc {
             class: AddrClass::StackRooted { base, offset },
             size: 4,
-            addr_bits: 32,
+            bits: 32,
+            space: rsleigh::VnSpace::RAM,
         };
         assert_eq!(
             offset_range_verdict(at(0x7FFF_FFFA), at(-0x7FFF_FFFC)),
@@ -3472,11 +3368,10 @@ mod comparability_tests {
     }
 }
 
-#[cfg(test)]
 mod modular_offset_tests {
     use super::*;
     use strider_ir::node::{NodeKind, ValueType};
-    use strider_ir::{IRBuilderExt, IRViewer, IRWalker, IntBinaryOp};
+    use strider_ir::{IRBuilderExt, IRWalker, IntBinaryOp};
     use strider_ir_test_utils::{sp_arg_frame, stack_vn_x86 as sp};
 
     /// Address arithmetic is mod 2^32 here, so `sp+0x7FFFFFFE` and
@@ -3489,29 +3384,21 @@ mod modular_offset_tests {
         let sp = sp();
         let mut b = sp_arg_frame(sp).build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let k_a = b.build_int_const(0x7FFF_FFFEu64, ValueType::int(32))?;
-        let a = b.build_int_binary_operation(sp_val, k_a, IntBinaryOp::Add, ValueType::int(32))?;
-        let k_b = b.build_int_const(0x8000_0000u64, ValueType::int(32))?;
-        let bb = b.build_int_binary_operation(sp_val, k_b, IntBinaryOp::Add, ValueType::int(32))?;
+        let a =
+            b.build_const_binop(0x7FFF_FFFEu64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
+        let bb =
+            b.build_const_binop(0x8000_0000u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
         let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(bb, data, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(a, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-        b.build_return(Some(loaded), &[])?;
-        b.set_lift_addr(None);
-        let mut fg = b.build()?;
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut fg, &crate::OptCtx::new(None))?;
-
-        let load_node = fg.producer(loaded);
+        let (mut fg, load_node) = finish(b, loaded)?;
         let store_node = fg
             .walk_kind(|k| matches!(k, NodeKind::Store(_)))
             .next()
             .expect("store");
-        let analyzer = MemAnalyzer::new(super::call_blocking(&mut fg, false));
+        let policy = super::call_blocking(&mut fg, false);
         assert_ne!(
-            verdict(&analyzer, &fg, load_node, store_node),
+            verdict(policy, &fg, load_node, store_node),
             AliasVerdict::Disjoint,
             "the accesses are two bytes apart mod 2^32 and overlap",
         );
@@ -3551,7 +3438,6 @@ fn only_a_top_reaching_run_is_an_alignment_mask() {
     }
 }
 
-#[cfg(test)]
 mod store_index {
     use super::*;
     use crate::mem_ssa::{MemLayout, Shape};
@@ -3580,7 +3466,9 @@ mod store_index {
     /// come from `ALLOC`: a `Phi` of two allocations, whose identity is
     /// unknown, and allocations in the run itself. One store in six is in
     /// register space. Two arms add `k` to an SP or heap base plus `2^31 - 4`,
-    /// so their offsets straddle the top of the signed 32-bit range.
+    /// so their offsets straddle the top of the signed 32-bit range. One
+    /// constant arm straddles 0 and `2^32`, and one is an `I64` address, at or
+    /// near 0 or numerically equal to an `I32` one.
     fn random_chain(seed: u64) -> crate::Result<(Function, Vec<ValueId>)> {
         let mut rng = Rng(seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
         let sp = sp();
@@ -3615,9 +3503,12 @@ mod store_index {
         b.build_store(merged, first, rsleigh::VnSpace::RAM)?;
         let mut heaps = vec![merged];
         let sp_value = b.read_variable(&sp)?;
-        let mask = b.build_int_const(0xFFFF_FFF0u64, ValueType::int(32))?;
-        let aligned =
-            b.build_int_binary_operation(sp_value, mask, IntBinaryOp::And, ValueType::int(32))?;
+        let aligned = b.build_const_binop(
+            0xFFFF_FFF0u64,
+            sp_value,
+            IntBinaryOp::And,
+            ValueType::int(32),
+        )?;
         let near_top = b.build_int_const(0x7FFF_FFFCu64, ValueType::int(32))?;
         let sp_top =
             b.build_int_binary_operation(sp_value, near_top, IntBinaryOp::Add, ValueType::int(32))?;
@@ -3626,7 +3517,7 @@ mod store_index {
         let mut addresses = vec![opaque, merged];
         for _ in 0..40 {
             let k = rng.below(24) as i64 - 12;
-            let addr = match rng.below(11) {
+            let addr = match rng.below(13) {
                 0 | 1 => {
                     let k = b.build_int_const(k as u64, ValueType::int(32))?;
                     b.build_int_binary_operation(sp_value, k, IntBinaryOp::Add, ValueType::int(32))?
@@ -3665,6 +3556,11 @@ mod store_index {
                     )?;
                     let k = b.build_int_const(k as u64, ValueType::int(32))?;
                     b.build_int_binary_operation(top, k, IntBinaryOp::Add, ValueType::int(32))?
+                }
+                10 => b.build_int_const(k as u64 & 0xFFFF_FFFF, ValueType::int(32))?,
+                11 => {
+                    let at = if rng.below(2) == 0 { k } else { 0x1000 + k };
+                    b.build_int_const(at as u64, ValueType::int(64))?
                 }
                 _ => {
                     if rng.below(2) == 0 {
@@ -3708,12 +3604,9 @@ mod store_index {
         let mut heap_near_top = 0;
         for seed in 0..60 {
             let (fg, addresses) = random_chain(seed)?;
-            let table_walk = MemOptions::for_purpose(MemPurpose::TableWalk, &fg);
             let layout = MemLayout::build(&fg);
             assert!(layout.positions().is_some(), "the chain is laid out");
-            let configured =
-                MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::CallStackArgs, &fg));
-            let narrow = MemAnalyzer::new(table_walk.clone());
+            let query = MemQuery::default();
             heap_near_top += addresses
                 .iter()
                 .filter(|&&a| {
@@ -3724,23 +3617,22 @@ mod store_index {
                 })
                 .count();
             let stores = StoreIndex::build(&fg, &layout);
-            let mut runs = vec![(&narrow, &stores, table_walk.clone())];
+            let mut runs = vec![Policy::strict(&fg)];
             for sgd in [false, true] {
                 for dsbd in [false, true] {
-                    let blocking = MemOptions {
+                    let relaxed = Policy {
                         stack_global_disjoint: sgd,
                         distinct_sp_bases_disjoint: dsbd,
-                        ..MemOptions::for_purpose(MemPurpose::CallStackArgs, &fg)
+                        ..Policy::strict(&fg)
                     };
-                    let stepping = MemOptions {
-                        calls_block: false,
-                        ..blocking.clone()
-                    };
-                    runs.push((&configured, &stores, blocking));
-                    runs.push((&configured, &stores, stepping));
+                    runs.push(relaxed);
+                    runs.push(Policy {
+                        calls: Calls::Pass,
+                        ..relaxed
+                    });
                 }
             }
-            for &(analyzer, stores, ref options) in &runs {
+            for &policy in &runs {
                 for (i, &addr) in addresses.iter().enumerate() {
                     let space = if i % 4 == 3 {
                         rsleigh::VnSpace::REGISTER
@@ -3748,26 +3640,31 @@ mod store_index {
                         rsleigh::VnSpace::RAM
                     };
                     for size in [1, 4, 8] {
-                        let probe = SizedAddr {
+                        let probe = Loc {
                             class: classify_addr(&fg, addr),
                             size,
-                            addr_bits: addr_bit_width(&fg, addr),
+                            bits: addr_bit_width(&fg, addr),
+                            space,
                         };
                         let mut walker = MemWalker {
-                            analyzer,
-                            options,
-                            load: probe,
-                            load_space: space,
-                            private_frame: std::cell::Cell::new(None),
+                            query: &query,
+                            policy,
+                            loc: probe,
+                            stores: None,
+                            private_frame: std::cell::OnceCell::new(),
                         };
                         let mut highest = None;
                         for pos in 0..layout.len() as u32 {
                             if layout.shape_at(pos) == Shape::Def
-                                && walker.def_clobbers(&fg, layout.node_at(pos))
+                                && crate::mem_ssa::ClobberProbe::clobbers(
+                                    &mut walker,
+                                    &fg,
+                                    layout.node_at(pos),
+                                )
                             {
                                 highest = Some(pos);
                             }
-                            let offered = stores.candidate(&probe, space, options, 0, pos);
+                            let offered = stores.candidate(&probe, policy, 0, pos);
                             assert!(
                                 offered >= highest,
                                 "seed {seed}: {probe:?} in {space:?} up to {pos} offered \
@@ -3776,7 +3673,7 @@ mod store_index {
                             if let Some(h) = highest {
                                 assert!(
                                     stores
-                                        .candidate(&probe, space, options, h, pos)
+                                        .candidate(&probe, policy, h, pos)
                                         .is_some_and(|c| c >= h),
                                     "seed {seed}: {probe:?} in {space:?} in {h}..={pos} \
                                      hid the clobber"
@@ -3791,16 +3688,16 @@ mod store_index {
         Ok(())
     }
 
-    /// A twin inherits its maker's index, and the index is a function of the
-    /// graph alone, so the twin answers what an analyzer with an index of its
+    /// One query serves every policy over one index, which is a function of
+    /// the graph alone, so a policy asked second answers what a query of its
     /// own answers.
     #[test]
-    fn a_twin_answers_what_its_own_index_would() -> crate::Result<()> {
+    fn a_shared_query_answers_what_its_own_would() -> crate::Result<()> {
         let mut probed = 0usize;
         for seed in 0..20 {
             let (fg, addresses) = random_chain(seed)?;
-            let table_walk = MemOptions::for_purpose(MemPurpose::TableWalk, &fg);
-            let alias = MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::CallStackArgs, &fg));
+            let strict = Policy::strict(&fg);
+            let shared = MemQuery::default();
             let ret = fg
                 .walk_kind(|k| matches!(k, NodeKind::Return))
                 .next()
@@ -3813,23 +3710,43 @@ mod store_index {
                     _ => None,
                 })
                 .collect();
-            // The maker queries first, so the twin inherits an index built
-            // before it existed.
+            // Another policy queries first, so the strict one reads an index
+            // built for it.
+            let relaxed = Policy::strict(&fg);
             for &(base, offset) in &stack_probes {
-                alias.nearest_sp_clobber(&fg, alias.options(), mem_start, base, offset, 4);
+                shared.nearest_sp_clobber(
+                    &fg,
+                    relaxed,
+                    mem_start,
+                    base,
+                    offset,
+                    4,
+                    rsleigh::VnSpace::RAM,
+                );
             }
-            let twin = alias.twin(table_walk.clone());
-            assert!(
-                twin.index_built(),
-                "seed {seed}: the twin built an index its maker already had"
-            );
-            let fresh = MemAnalyzer::new(table_walk.clone());
+            let fresh = MemQuery::default();
             for &(base, offset) in &stack_probes {
                 for size in [1, 4, 8] {
                     probed += 1;
                     assert_eq!(
-                        twin.nearest_sp_clobber(&fg, &table_walk, mem_start, base, offset, size),
-                        fresh.nearest_sp_clobber(&fg, &table_walk, mem_start, base, offset, size),
+                        shared.nearest_sp_clobber(
+                            &fg,
+                            strict,
+                            mem_start,
+                            base,
+                            offset,
+                            size,
+                            rsleigh::VnSpace::RAM
+                        ),
+                        fresh.nearest_sp_clobber(
+                            &fg,
+                            strict,
+                            mem_start,
+                            base,
+                            offset,
+                            size,
+                            rsleigh::VnSpace::RAM
+                        ),
                         "seed {seed}: the shared index moved the answer at {offset}"
                     );
                 }
@@ -3840,11 +3757,10 @@ mod store_index {
     }
 }
 
-#[cfg(test)]
 mod refresh_tests {
     use strider_ir::node::{IntBinaryOp, NodeKind, ValueType};
     use strider_ir::{Function, IRBuilderExt, IRViewer, IRWalker, MemDecomp};
-    use strider_ir_test_utils::{RegisterSet, reg_vn, stack_vn_x86_64};
+    use strider_ir_test_utils::{IrWalkerEx, RegisterSet, reg_vn, stack_vn_x86_64};
 
     const MALLOC: u64 = 0x1000;
 
@@ -3866,9 +3782,8 @@ mod refresh_tests {
         let (_call, rets) = b.build_call(target, &[], &[ret], 0)?;
         let one = b.build_int_const(1u64, ValueType::int(64))?;
         b.build_store(rets[0], one, rsleigh::VnSpace::RAM)?;
-        let off = b.build_int_const((-8i64) as u64, ValueType::int(64))?;
         let slot =
-            b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(64))?;
+            b.build_const_binop((-8i64) as u64, sp_val, IntBinaryOp::Add, ValueType::int(64))?;
         let two = b.build_int_const(2u64, ValueType::int(64))?;
         b.build_store(slot, two, rsleigh::VnSpace::RAM)?;
         let reload = b.build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(64))?;
@@ -3877,10 +3792,7 @@ mod refresh_tests {
         b.build_return(Some(reload), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
-        fg.assume(&crate::AssumptionOptions {
-            noalias_allocators: [MALLOC].into_iter().collect(),
-            ..crate::AssumptionOptions::none()
-        });
+        fg.assume(&super::allocating(&[MALLOC]));
         pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
         Ok(fg)
     }
@@ -3925,19 +3837,18 @@ mod refresh_tests {
     fn refresh_rederives_an_edited_address() -> crate::Result<()> {
         let sp = stack_vn_x86_64();
         let mut fg = strider_ir_test_utils::make_sp_fn(sp, |b, sp_val| {
-            let off = b.build_int_const((-16i64) as u64, ValueType::int(64))?;
-            let addr =
-                b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(64))?;
+            let addr = b.build_const_binop(
+                (-16i64) as u64,
+                sp_val,
+                IntBinaryOp::Add,
+                ValueType::int(64),
+            )?;
             let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
             b.build_return(Some(loaded), &[])?;
             Ok(())
         })?;
         crate::default_pipeline().run(&mut fg, &crate::OptCtx::new(None))?;
-        let load = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-            .expect("the load reads the entry stack and survives");
+        let load = fg.first_kind(|k| matches!(k, NodeKind::Load(_)));
         let addr = fg.load_addr(load);
         let minus_16 = fg
             .value_inputs(fg.producer(addr))
@@ -3968,7 +3879,7 @@ mod refresh_tests {
         /// it never ran.
         #[derive(Clone)]
         struct ReadsClasses(Arc<AtomicUsize>);
-        impl crate::PostOptimizer for ReadsClasses {
+        impl crate::Optimizer for ReadsClasses {
             fn apply(
                 &self,
                 edit: &mut crate::EditFunction<'_>,
@@ -3985,7 +3896,8 @@ mod refresh_tests {
         }
         let seen = Arc::new(AtomicUsize::new(0));
         let mut pipeline = crate::default_pipeline();
-        pipeline.add_post_pass(ReadsClasses(Arc::clone(&seen)));
+        // A pass is held `&'static`; the counter leaks one box.
+        pipeline.add_post_pass(Box::leak(Box::new(ReadsClasses(Arc::clone(&seen)))));
         optimized(&pipeline)?;
         assert_eq!(
             seen.load(Ordering::Relaxed),
@@ -4015,17 +3927,15 @@ fn an_unreducible_address_width_may_always_alias() {
     );
 }
 
-/// `LoadForward` keeps the outgoing-argument-window memo across
-/// [`MemAnalyzer::forget_answers`], which drops the per-location answers
-/// alone.  That rests on the direction the staleness runs in: a store address
+/// `LoadForward` keeps the outgoing-argument-window memo across its forwards.
+/// That rests on the direction the staleness runs in: a store address
 /// the window scan could not place was an `Anchor`, which blinds the scan, so
 /// a window scanned before the forward covers at least what one scanned after
 /// it covers.  Covering more only keeps a load from forwarding across the
 /// call.
-#[cfg(test)]
 mod stale_window_is_conservative {
     use super::*;
-    use strider_ir::node::{ValueId, ValueType};
+    use strider_ir::node::ValueType;
     use strider_ir::{IRBuilderExt, IRWalker, IntBinaryOp};
     use strider_ir_test_utils::{sp_frame, stack_args_at};
 
@@ -4040,8 +3950,7 @@ mod stale_window_is_conservative {
             .build_fn_single_region()?;
         let sp0 = b.read_variable(&sp)?;
         let i32_ty = ValueType::int(32);
-        let spill_off = b.build_int_const((-16i64) as u64, i32_ty)?;
-        let spill_addr = b.build_int_binary_operation(sp0, spill_off, IntBinaryOp::Add, i32_ty)?;
+        let spill_addr = b.build_const_binop((-16i64) as u64, sp0, IntBinaryOp::Add, i32_ty)?;
         let zero = b.build_int_const(0u64, i32_ty)?;
         b.build_store(spill_addr, zero, rsleigh::VnSpace::RAM)?;
         let reload = b.build_load(spill_addr, rsleigh::VnSpace::RAM, i32_ty)?;
@@ -4055,14 +3964,11 @@ mod stale_window_is_conservative {
         let mut fg = b.build()?;
         // Collapses `read_variable(sp)` onto the bare `InitialVar`, without
         // which the call's SP does not decompose and no window is placed.
-        let mut collapse = crate::OptimizerPipeline::new();
-        collapse.add(crate::PhiCollapse);
-        collapse.add(crate::RegionCollapse);
-        collapse.run(&mut fg, &crate::OptCtx::new(None))?;
+        collapse_phis(&mut fg);
 
-        let options = super::escaping(&mut fg, false);
+        super::escaping(&mut fg, false);
         let probes: Vec<(i128, i128)> = (0..4).map(|k| (k * 4, k * 4 + 4)).collect();
-        let before = window_answers(&fg, &options, &probes);
+        let before = window_answers(&fg, &probes);
 
         // What the forward does to the argument store's address, which the
         // pipeline's own invalidation then reclassifies.
@@ -4070,7 +3976,7 @@ mod stale_window_is_conservative {
         assert!(edit.replace_value(reload, zero), "the reload forwards");
         edit.clean();
         fg.invalidate_analyses();
-        let after = window_answers(&fg, &options, &probes);
+        let after = window_answers(&fg, &probes);
 
         assert_ne!(
             before, after,
@@ -4087,28 +3993,12 @@ mod stale_window_is_conservative {
 
     /// Whether the call's window covers each probe, scanned fresh off the
     /// graph as it stands.
-    fn window_answers(fg: &Function, options: &MemOptions, probes: &[(i128, i128)]) -> Vec<bool> {
+    fn window_answers(fg: &Function, probes: &[(i128, i128)]) -> Vec<bool> {
         let call = fg
             .walk_kind(|k| matches!(k, NodeKind::Call { .. }))
             .next()
             .expect("the fixture has one call");
-        let sp_value: ValueId = fg.node_inputs(call)[NodeKind::CALL_SP_SLOT];
-        let MemExpr {
-            base,
-            offset: sp_offset,
-            ..
-        } = decompose(fg, sp_value).expect("the call's SP is the entry SP");
-        let args = stack_args_at(0, 4).expect("a declared stack-arg layout");
-        let geometry = ArgWindowGeometry {
-            mem_start: fg.memory_input_of(call).expect("a Call has a memory input"),
-            base,
-            lo: sp_offset + args.base_offset,
-            sp_offset,
-            args,
-        };
-        let analyzer = MemAnalyzer::new(options.clone());
-        let hi = probes.iter().map(|&(_, hi)| hi).max().unwrap_or_default();
-        let window = scan_arg_window(fg, &analyzer, options, &geometry, hi);
+        let window = ArgPrefix::scan(fg, &MemQuery::default(), call).expect("the window is placed");
         probes
             .iter()
             .map(|&(lo, hi)| window.covers(lo, hi))

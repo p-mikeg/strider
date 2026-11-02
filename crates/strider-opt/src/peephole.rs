@@ -7,7 +7,6 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::Result;
-use crate::pipeline::OptimizationResult;
 
 /// The producer node of each input of `node`, in input-slot order. Every
 /// input: a `Load` yields its memory producer, a `Phi` its `Region`.
@@ -16,71 +15,6 @@ pub(crate) fn input_producers_iter<V: IRViewer>(
     node: NodeId,
 ) -> impl Iterator<Item = NodeId> + '_ {
     edit.node_inputs(node).into_iter().map(|v| edit.producer(v))
-}
-
-/// Outcome of one [`PeepholePass::try_rewrite`] attempt.
-pub(crate) enum PeepholeRewrite {
-    NoChange,
-    /// `new_node` is the producer of the value the root was redirected to, to
-    /// re-examine for cascading folds; `None` when there is nothing to revisit.
-    /// [`Self::from_new_value`] reports it for every rule output, fresh or
-    /// already existing.
-    Changed {
-        new_node: Option<NodeId>,
-    },
-}
-
-impl PeepholeRewrite {
-    pub(crate) fn from_new_value(edit: &crate::EditFunction<'_>, v: Option<ValueId>) -> Self {
-        v.map_or(PeepholeRewrite::NoChange, |new_value| {
-            PeepholeRewrite::Changed {
-                new_node: Some(edit.producer(new_value)),
-            }
-        })
-    }
-
-    /// For a rewire to an existing value, creating no fresh node.
-    pub(crate) fn from_changed(changed: bool) -> Self {
-        if changed {
-            PeepholeRewrite::Changed { new_node: None }
-        } else {
-            PeepholeRewrite::NoChange
-        }
-    }
-}
-
-/// The output of the FIRST rule to fire at `root`, or `None` if none does.
-///
-/// Later rules do not run: the first firing rule redirects every use of the
-/// root's output, so a later match sits on a node nothing consumes and its
-/// rewrite would report a value the caller must not re-enqueue.
-///
-/// # Errors
-/// Propagates the first error returned by a rule.
-pub(crate) fn first_matching_rule<R>(
-    rules: &[R],
-    edit: &mut crate::EditFunction<'_>,
-    root: NodeId,
-) -> Result<Option<ValueId>>
-where
-    R: for<'g> Fn(&mut crate::EditFunction<'g>, NodeId) -> Result<Option<ValueId>>,
-{
-    for rule in rules {
-        if let Some(out) = rule(edit, root)? {
-            return Ok(Some(out));
-        }
-    }
-    Ok(None)
-}
-
-/// Worklist seed order.
-pub(crate) enum SeedOrder {
-    /// Operands before consumers. The default; what a value-propagation
-    /// pass wants.
-    ReversePostorder,
-    /// Consumers before operands, so a tree-collapsing canonicalization
-    /// matches the OUTERMOST shape before a sub-rewrite destroys it.
-    Postorder,
 }
 
 pub(crate) trait PeepholePass {
@@ -93,11 +27,9 @@ pub(crate) trait PeepholePass {
 
     fn matches_kind(&self, kind: &NodeKind) -> bool;
 
-    fn seed_order(&self) -> SeedOrder {
-        SeedOrder::ReversePostorder
-    }
-
-    /// `root` always matches [`Self::matches_kind`] and is live.
+    /// `root` always matches [`Self::matches_kind`] and is live. Returns the
+    /// value the root was redirected to, whose producer is re-examined for
+    /// cascading folds; `None` when there is nothing to revisit.
     ///
     /// # Errors
     /// Propagates the first error from the underlying rewrite.
@@ -107,11 +39,20 @@ pub(crate) trait PeepholePass {
         edit: &mut crate::EditFunction<'_>,
         opt_ctx: &crate::pipeline::OptCtx<'_>,
         root: NodeId,
-    ) -> Result<PeepholeRewrite>;
+    ) -> Result<Option<ValueId>>;
+
+    /// Runs once after every sweep; `changed` when it rewrote something.
+    ///
+    /// # Errors
+    /// Propagates the first error of the follow-up.
+    fn after_sweep(&self, _edit: &mut crate::EditFunction<'_>, _changed: bool) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Drives a [`PeepholePass`] over the reachable graph to a local fixpoint,
-/// off what each rewrite reports rather than by scanning new NodeIds.
+/// off what each rewrite reports rather than by scanning new NodeIds. `true`
+/// when some rewrite moved a use or killed a node.
 ///
 /// # Errors
 /// Propagates the first error from `try_rewrite`.
@@ -119,29 +60,22 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     pass: &P,
     edit: &mut crate::EditFunction<'_>,
     opt_ctx: &crate::pipeline::OptCtx<'_>,
-) -> Result<OptimizationResult> {
+) -> Result<bool> {
     let mut sweep = P::Sweep::default();
-    // Seeds iterate in reverse-postorder (or postorder, per `seed_order`), not
-    // discovery/preorder order. Each pass picks the order its rules need:
-    // `FlagCmpCanonicalize` seeds outermost-first because a bottom-up seed
-    // would rewrite an inner sub-pattern and destroy the enclosing flag-tree
-    // match. Confluence is not assumed; the dequeue budget below turns a
-    // non-confluent rule pair into an error rather than a hang.
-    let seed: Vec<NodeId> = match pass.seed_order() {
-        SeedOrder::ReversePostorder => edit
-            .live_reverse_postorder_filter(|k| pass.matches_kind(k))
-            .collect(),
-        SeedOrder::Postorder => edit
-            .live_postorder_filter(|k| pass.matches_kind(k))
-            .collect(),
-    };
+    // Seeds iterate operands first (reverse-postorder), what a
+    // value-propagation pass wants. Confluence is not assumed; the dequeue
+    // budget below turns a non-confluent rule pair into an error rather than
+    // a hang.
+    let seed: Vec<NodeId> = edit
+        .live_reverse_postorder_filter(|k| pass.matches_kind(k))
+        .collect();
     // Fresh nodes get fresh `NodeId`s, which the worklist's dedup cannot
     // collapse, so a non-confluent rule pair spins forever; the budget turns
     // that into an error instead of a hang.
     let dequeue_budget = seed.len().saturating_mul(64).saturating_add(1024);
     let mut dequeued = 0usize;
     let mut work: Worklist<NodeId> = seed.into_iter().collect();
-    let mut overall = OptimizationResult::NoChange;
+    let mut overall = false;
     // Snapshotted before `try_rewrite` runs: a rewrite rewires uses to its
     // replacement, leaving `value_uses(old_out)` empty afterwards.
     // Kind-filtered here, so `try_rewrite` only ever sees a node matching
@@ -169,13 +103,14 @@ pub(crate) fn run_peephole<P: PeepholePass>(
                 }
             }
         }
-        let r = pass.try_rewrite(&mut sweep, edit, opt_ctx, root)?;
-        if let PeepholeRewrite::Changed { new_node } = r {
-            overall = OptimizationResult::Changed;
+        let generation = edit.generation();
+        let new_value = pass.try_rewrite(&mut sweep, edit, opt_ctx, root)?;
+        if edit.generation() != generation {
+            overall = true;
             // A fresh node (a folded constant, a merged AND-mask) the same pass
             // can rewrite again; unqueued, whether that fires in this sweep
             // would depend on seed order.
-            if let Some(n) = new_node
+            if let Some(n) = new_value.map(|v| edit.producer(v))
                 && pass.matches_kind(edit.node_kind(n))
             {
                 work.enqueue(n);
@@ -190,13 +125,14 @@ pub(crate) fn run_peephole<P: PeepholePass>(
     Ok(overall)
 }
 
-impl<P: PeepholePass + Clone + Send + 'static> crate::pipeline::Optimizer for P {
+impl<P: PeepholePass + Sync> crate::pipeline::Optimizer for P {
     fn apply(
         &self,
         edit: &mut crate::EditFunction<'_>,
         opt_ctx: &crate::pipeline::OptCtx<'_>,
-    ) -> Result<OptimizationResult> {
-        run_peephole(self, edit, opt_ctx)
+    ) -> Result<()> {
+        let changed = run_peephole(self, edit, opt_ctx)?;
+        self.after_sweep(edit, changed)
     }
 }
 
@@ -209,7 +145,6 @@ mod tests {
     use strider_ir_test_utils::make_empty_fn;
 
     use crate::Result;
-    use crate::pipeline::OptimizationResult;
 
     /// Records every `try_rewrite` invocation and on match rewires the
     /// root's single value output to a fresh `IntConst(REPLACEMENT_K)`.
@@ -258,48 +193,50 @@ mod tests {
             edit: &mut crate::EditFunction<'_>,
             _opt_ctx: &crate::pipeline::OptCtx<'_>,
             root: NodeId,
-        ) -> Result<PeepholeRewrite> {
+        ) -> Result<Option<ValueId>> {
             use cranelift_entity::EntityRef;
             self.visit_log.borrow_mut().push(root.index() as u32);
             if let Some(victim) = self.kill_first.borrow_mut().take() {
                 edit.kill_node(victim);
-                return Ok(PeepholeRewrite::NoChange);
+                return Ok(None);
             }
             if self.return_error {
                 return Err(anyhow::anyhow!("scripted-pass forced error"));
             }
             if !self.do_rewrite {
-                return Ok(PeepholeRewrite::NoChange);
+                return Ok(None);
             }
             let kind = *edit.node_kind(root);
             if !(self.match_kind)(&kind) {
-                return Ok(PeepholeRewrite::NoChange);
+                return Ok(None);
             }
             let (root_value, ty) = edit.single_value_output(root)?;
             if *self.create_matching_once.borrow() {
                 if !self.cascade_forever {
                     *self.create_matching_once.borrow_mut() = false;
                 }
-                // Distinct cacheable key (the root's first input used twice)
-                // so the dedup cache can't collapse this onto the root node.
+                // Distinct cacheable key (the root's first input used twice,
+                // or beside a constant no earlier visit built) so the dedup
+                // cache can't collapse this onto an existing node.
                 let first = edit.node_inputs(root)[0];
+                let second = if self.cascade_forever {
+                    let visits = self.visit_log.borrow().len() as u64;
+                    edit.build_int_const(REPLACEMENT_K + visits, ty)?
+                } else {
+                    first
+                };
                 let new_node = edit.create_node(
                     kind,
-                    [first, first],
+                    [first, second],
                     [strider_ir::node::ValueKind::Typed(ty)],
                 );
                 let [new_value] = edit.node_outputs_exact::<1>(new_node)?;
                 edit.replace_value(root_value, new_value);
-                return Ok(PeepholeRewrite::Changed {
-                    new_node: Some(new_node),
-                });
+                return Ok(Some(new_value));
             }
             let new_value = edit.build_int_const(REPLACEMENT_K, ty)?;
-            let new_node = edit.producer(new_value);
             edit.replace_value(root_value, new_value);
-            Ok(PeepholeRewrite::Changed {
-                new_node: Some(new_node),
-            })
+            Ok(Some(new_value))
         }
     }
 
@@ -311,6 +248,27 @@ mod tests {
             b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::int(64))
         })
         .unwrap()
+    }
+
+    /// `fn() -> u64 { return Add(Add(1, 2), 3); }`: the outer `Add` consumes
+    /// the inner.
+    fn nested_adds() -> strider_ir::Function {
+        make_empty_fn(|b| {
+            let a = b.build_int_const(1u64, ValueType::int(64))?;
+            let ty = ValueType::int(64);
+            let inner = b.build_const_binop(2u64, a, IntBinaryOp::Add, ty)?;
+            b.build_const_binop(3u64, inner, IntBinaryOp::Add, ty)
+        })
+        .unwrap()
+    }
+
+    /// One [`run_peephole`] sweep of `pass` over `fg`.
+    fn sweep<P: PeepholePass>(pass: &P, fg: &mut strider_ir::Function) -> Result<bool> {
+        run_peephole(
+            pass,
+            &mut crate::EditFunction::new(fg),
+            &crate::OptCtx::new(None),
+        )
     }
 
     fn match_add(k: &NodeKind) -> bool {
@@ -325,10 +283,8 @@ mod tests {
         // The graph has an Add but the kind filter rejects everything.
         let mut fg = add_two_consts();
         let pass = ScriptedPass::<true>::new(match_nothing, true);
-        let mut edit = crate::EditFunction::new(&mut fg);
-        let octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut edit, &octx).unwrap();
-        assert_eq!(r, OptimizationResult::NoChange);
+        let r = sweep(&pass, &mut fg).unwrap();
+        assert!(!r);
         assert!(pass.visit_log.borrow().is_empty());
     }
 
@@ -336,10 +292,8 @@ mod tests {
     fn run_peephole_rewrites_and_reports_changed() {
         let mut fg = add_two_consts();
         let pass = ScriptedPass::<false>::new(match_add, true);
-        let mut edit = crate::EditFunction::new(&mut fg);
-        let octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut edit, &octx).unwrap();
-        assert_eq!(r, OptimizationResult::Changed);
+        let r = sweep(&pass, &mut fg).unwrap();
+        assert!(r);
         assert!(!pass.visit_log.borrow().is_empty());
 
         let value = crate::test_support::return_value(fg.graph()).unwrap();
@@ -354,39 +308,19 @@ mod tests {
     fn run_peephole_with_propagate_false_skips_reenqueue() {
         // `Add(Add(1,2), 3)`: the outer consumes the inner. With
         // propagate=false each Add is visited once, at seed time.
-        let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(1u64, ValueType::int(64))?;
-            let bb = b.build_int_const(2u64, ValueType::int(64))?;
-            let c = b.build_int_const(3u64, ValueType::int(64))?;
-            let inner =
-                b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::int(64))?;
-            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::int(64))
-        })
-        .unwrap();
+        let mut fg = nested_adds();
         let pass = ScriptedPass::<false>::new(match_add, true);
-        let mut edit = crate::EditFunction::new(&mut fg);
-        let octx = crate::pipeline::OptCtx::new(None);
-        let _ = run_peephole(&pass, &mut edit, &octx).unwrap();
+        let _ = sweep(&pass, &mut fg).unwrap();
         let log = pass.visit_log.borrow().clone();
         assert_eq!(log.len(), 2, "exactly two visits, no re-enqueue: {log:?}");
     }
 
     #[test]
     fn run_peephole_with_propagate_true_reenqueues_consumers() {
-        let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(1u64, ValueType::int(64))?;
-            let bb = b.build_int_const(2u64, ValueType::int(64))?;
-            let c = b.build_int_const(3u64, ValueType::int(64))?;
-            let inner =
-                b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::int(64))?;
-            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::int(64))
-        })
-        .unwrap();
+        let mut fg = nested_adds();
         let pass = ScriptedPass::<true>::new(match_add, true);
-        let mut edit = crate::EditFunction::new(&mut fg);
-        let octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut edit, &octx).unwrap();
-        assert_eq!(r, OptimizationResult::Changed);
+        let r = sweep(&pass, &mut fg).unwrap();
+        assert!(r);
         // The exact count depends on worklist dedup policy; only the lower
         // bound of 2 is guaranteed.
         let log_len = pass.visit_log.borrow().len();
@@ -412,7 +346,7 @@ mod tests {
         // The next id to be handed out is the new `Add`'s.
         let new_node_idx = edit.graph_ref().next_node_id().index() as u32;
         let r = run_peephole(&pass, &mut edit, &octx).unwrap();
-        assert_eq!(r, OptimizationResult::Changed);
+        assert!(r);
         let log = pass.visit_log.borrow().clone();
         assert!(
             log.contains(&new_node_idx),
@@ -425,60 +359,20 @@ mod tests {
     #[test]
     fn run_peephole_skips_a_seed_killed_earlier_in_the_sweep() {
         use cranelift_entity::EntityRef;
-        let mut fg = make_empty_fn(|b| {
-            let a = b.build_int_const(1u64, ValueType::int(64))?;
-            let bb = b.build_int_const(2u64, ValueType::int(64))?;
-            let c = b.build_int_const(3u64, ValueType::int(64))?;
-            let inner =
-                b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::int(64))?;
-            b.build_int_binary_operation(inner, c, IntBinaryOp::Add, ValueType::int(64))
-        })
-        .unwrap();
+        let mut fg = nested_adds();
         let outer = fg.producer(crate::test_support::return_value(fg.graph()).unwrap());
         // Seeds run operands first, so the inner Add's visit kills the outer.
         let pass = ScriptedPass {
             kill_first: RefCell::new(Some(outer)),
             ..ScriptedPass::<false>::new(match_add, false)
         };
-        let mut edit = crate::EditFunction::new(&mut fg);
-        let octx = crate::pipeline::OptCtx::new(None);
-        run_peephole(&pass, &mut edit, &octx).unwrap();
+        sweep(&pass, &mut fg).unwrap();
         let log = pass.visit_log.borrow().clone();
         assert_eq!(log.len(), 1, "only the inner Add is visited: {log:?}");
         assert!(
             !log.contains(&(outer.index() as u32)),
             "the killed Add was visited: {log:?}"
         );
-    }
-
-    /// Once a rule fires, the rules after it must not even be tried.
-    #[test]
-    fn first_matching_rule_stops_at_the_first_fire() {
-        use std::cell::Cell;
-        let mut fg = add_two_consts();
-        let add = fg
-            .graph()
-            .all_node_ids()
-            .find(|&n| match_add(fg.node_kind(n)))
-            .unwrap();
-        let winner = crate::test_support::return_value(fg.graph()).unwrap();
-        let later_tries = &Cell::new(0usize);
-
-        type Rule<'a> =
-            Box<dyn Fn(&mut crate::EditFunction<'_>, NodeId) -> Result<Option<ValueId>> + 'a>;
-        let rules: Vec<Rule> = vec![
-            Box::new(move |_edit, _root| Ok(Some(winner))),
-            Box::new(|_edit, _root| Ok(None)),
-            Box::new(move |_edit, _root| {
-                later_tries.set(later_tries.get() + 1);
-                Ok(Some(winner))
-            }),
-        ];
-
-        let mut edit = crate::EditFunction::new(&mut fg);
-        let got = first_matching_rule(&rules, &mut edit, add).unwrap();
-        assert_eq!(got, Some(winner), "the first firing rule's output wins");
-        assert_eq!(later_tries.get(), 0, "no rule may run after the first fire");
     }
 
     #[test]
@@ -488,9 +382,7 @@ mod tests {
             return_error: true,
             ..ScriptedPass::<false>::new(match_add, false)
         };
-        let mut edit = crate::EditFunction::new(&mut fg);
-        let octx = crate::pipeline::OptCtx::new(None);
-        let r = run_peephole(&pass, &mut edit, &octx);
+        let r = sweep(&pass, &mut fg);
         assert!(r.is_err(), "errored pass must surface error");
         let msg = format!("{:?}", r.unwrap_err());
         assert!(
@@ -510,10 +402,7 @@ mod tests {
             cascade_forever: true,
             ..ScriptedPass::<true>::new(match_add, true)
         };
-        let mut edit = crate::EditFunction::new(&mut fg);
-        let octx = crate::pipeline::OptCtx::new(None);
-        let err = run_peephole(&pass, &mut edit, &octx)
-            .expect_err("a non-confluent pass must error, not hang");
+        let err = sweep(&pass, &mut fg).expect_err("a non-confluent pass must error, not hang");
         let msg = format!("{err:#}");
         assert!(msg.contains("did not converge"), "unexpected error: {msg}");
         // The bound is on DEQUEUES, which on a propagating pass outnumber the

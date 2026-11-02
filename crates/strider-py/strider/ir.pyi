@@ -366,6 +366,11 @@ class Function:
         (an `initial_var` or `phi` root), as those nodes would carry no
         address, even a constant equal to one already in the graph.
 
+        A match the replacement cannot stand in for is left alone and not
+        counted: a replacement of another width than the matched value, or,
+        for a `find` that matches through a phi or region, one that would read
+        the matched value or is not available everywhere that value is read.
+
         One walk of the reachable nodes, not a fixed point, so a rule whose
         output its own `find` matches needs the caller to loop.
 
