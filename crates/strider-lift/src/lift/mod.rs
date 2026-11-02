@@ -659,14 +659,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let entry_addr = self.entry_machine_addr();
         for (j, carrier) in float_slots.into_iter().enumerate() {
             let Some(carrier) = carrier else { continue };
-            let value = if self.container_map.container_of(&carrier) == carrier {
-                self.builder.function().initial_var_value(&carrier)
-            } else {
-                // A slice out of a shared container dedups with the function's
-                // own first read of the register while the container still
-                // holds its incoming value.
-                Some(self.with_lift_addr(entry_addr, |s| s.read_reg_vn(&carrier))?)
-            };
+            // A slice out of a shared container dedups with the function's own
+            // first read of the register unless the entry is a loop header.
+            let value = self.with_lift_addr(entry_addr, |s| s.read_initial_reg_vn(&carrier))?;
             if let Some(value) = value {
                 self.builder
                     .function_mut()
