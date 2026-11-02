@@ -142,13 +142,10 @@ impl Function {
         self.call_register_frame_reach
     }
 
-    /// Records a stack address at offset `reach` from the entry SP in a
-    /// register a call clobbers (`i128::MAX` for no constant offset); the
-    /// highest recorded is kept.
+    /// Sets [`Self::call_register_frame_reach`].
     #[inline]
-    pub(crate) fn record_call_register_frame_reach(&mut self, reach: i128) {
-        let held = &mut self.call_register_frame_reach;
-        *held = Some(held.map_or(reach, |r| r.max(reach)));
+    pub(crate) fn set_call_register_frame_reach(&mut self, reach: Option<i128>) {
+        self.call_register_frame_reach = reach;
     }
 
     /// Adds `claims` to the claims in force, withdrawing none, and drops the
@@ -489,7 +486,7 @@ mod compact_tests {
             noalias_allocators: [0x4000].into_iter().collect(),
             ..crate::AssumptionOptions::none()
         };
-        f.record_call_register_frame_reach(-8);
+        f.set_call_register_frame_reach(Some(-8));
         f.assume(&listed);
 
         f.invalidate_analyses();
