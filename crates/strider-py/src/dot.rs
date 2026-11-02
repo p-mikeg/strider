@@ -15,7 +15,7 @@ type StyleCtor = fn() -> dot::DotStyle;
 pub(crate) const DOT_STYLES: [(&str, StyleCtor); 3] = [
     ("dark", dot::DotStyle::dark),
     ("dark_cfg", dot::DotStyle::dark_cfg),
-    ("empty", dot::DotStyle::empty),
+    ("empty", dot::DotStyle::default),
 ];
 
 /// Map a style name onto a [`dot::DotStyle`].  An unknown name is an error,
