@@ -100,12 +100,7 @@ impl GraphDotDumper for CfgDotDumper<'_> {
                 continue;
             }
             let src_id = src.index().to_string();
-            let src_region = self
-                .cfg
-                .region_graph
-                .node_weight(src)
-                .ok_or_else(|| anyhow!("dangling edge source {src:?}"))?;
-            let (label, style) = match &src_region.terminator {
+            let (label, style) = match &self.cfg.region_graph[src].terminator {
                 RegionTerminator::CondBranch { .. } => {
                     let succ = self.cfg.region_if(src)?;
                     if succ.if_true_region == Some(node_id) && cond_true_labelled.insert(src) {
