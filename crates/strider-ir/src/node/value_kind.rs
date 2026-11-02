@@ -51,11 +51,6 @@ impl ValueKind {
     }
 
     #[inline]
-    pub(crate) fn is_phi_token(self) -> bool {
-        self == Self::PhiToken
-    }
-
-    #[inline]
     pub(crate) fn is_memory(self) -> bool {
         self == Self::Memory
     }
