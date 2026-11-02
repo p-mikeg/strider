@@ -32,10 +32,8 @@ pub(super) struct RawFunctionDumper<'a> {
     function: &'a Function,
     /// Carrier node -> arg tags.
     arg_index: FxHashMap<NodeId, Vec<super::ArgTag>>,
-    /// Restricts the dump to these nodes; `None` dumps the whole walk.
-    nodes: Option<rustc_hash::FxHashSet<NodeId>>,
-    /// Rendered with a gold border.
-    center: Option<NodeId>,
+    /// A neighbourhood render; `None` dumps the whole walk.
+    view: Option<::dot::View<NodeId>>,
 }
 
 impl<'a> RawFunctionDumper<'a> {
@@ -43,18 +41,8 @@ impl<'a> RawFunctionDumper<'a> {
         Self {
             arg_index: super::build_arg_reverse_map(function),
             function,
-            nodes: None,
-            center: None,
+            view: None,
         }
-    }
-
-    /// Restricts the dump to `nodes` and highlights `center`, so a
-    /// neighbourhood renders through the same label and edge rules as a whole
-    /// graph rather than a second emitter.
-    fn restricted(mut self, nodes: rustc_hash::FxHashSet<NodeId>, center: NodeId) -> Self {
-        self.nodes = Some(nodes);
-        self.center = Some(center);
-        self
     }
 
     /// id + kind + output kinds + every side-table entry recorded for the node.
@@ -171,7 +159,11 @@ impl<'a> RawFunctionDumper<'a> {
             count_producers,
             &consumers,
         );
-        GraphDot::new(self.restricted(set, center), DotStyle::dark()).as_dot()
+        let restricted = Self {
+            view: Some(::dot::View::new(set, center)),
+            ..self
+        };
+        GraphDot::new(restricted, DotStyle::dark()).as_dot()
     }
 }
 
@@ -182,20 +174,14 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
 
     fn create_initial_state(&self) -> Self::State {}
 
+    /// The walk follows backward-data and forward-control edges, so every
+    /// rendered node's input producers are rendered too: no dangling edges.
     fn iter_nodes(&self) -> impl IntoIterator<Item = NodeId> {
-        match &self.nodes {
-            // NOT the walk filtered to the set: a neighbourhood is BFS'd from
-            // its centre and need not be reachable from `entry`.
-            Some(set) => {
-                let mut v: Vec<NodeId> = set.iter().copied().collect();
-                v.sort_unstable_by_key(|n| n.as_u32());
-                v
-            }
-            // The walk follows backward-data and forward-control edges, so
-            // every rendered node's input producers are rendered too: no
-            // dangling edges.
-            None => self.function.walk().collect::<Vec<_>>(),
-        }
+        self.function.walk()
+    }
+
+    fn view(&self) -> Option<&::dot::View<NodeId>> {
+        self.view.as_ref()
     }
 
     fn dump_as_dot(
@@ -205,17 +191,16 @@ impl GraphDotDumper for RawFunctionDumper<'_> {
         _state: &mut Self::State,
     ) -> anyhow::Result<()> {
         let dot_id = format!("n{}", node.as_u32());
-        let extra: &[(&str, &str)] = if self.center == Some(node) {
-            &[("color", "#ffcc00"), ("penwidth", "2.5")]
-        } else {
-            &[]
-        };
-        out.node(&dot_id, &self.node_label(node), "box", extra);
+        out.node(
+            &dot_id,
+            &self.node_label(node),
+            "box",
+            self.center_attrs(node),
+        );
         // Edge label is producer-output-slot : consumer-input-slot.
         for (in_slot, value) in self.function.node_inputs(node).into_iter().enumerate() {
             let (producer, out_slot) = self.function.value_definition(value);
-            // Restricted render: drop edges whose producer is out of view.
-            if self.nodes.as_ref().is_some_and(|s| !s.contains(&producer)) {
+            if !self.in_view(producer) {
                 continue;
             }
             let from = format!("n{}", producer.as_u32());

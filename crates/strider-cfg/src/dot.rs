@@ -17,8 +17,7 @@ impl Cfg {
         CfgDotDumper {
             cfg: self,
             names,
-            nodes: None,
-            center: None,
+            view: None,
         }
     }
 }
@@ -26,24 +25,18 @@ impl Cfg {
 pub struct CfgDotDumper<'a> {
     cfg: &'a Cfg,
     names: &'a strider_target::ArchNames,
-    /// Restricts the dump to these regions; `None` dumps every region.
-    nodes: Option<&'a rustc_hash::FxHashSet<NodeIndex>>,
-    /// Rendered with a gold border.
-    center: Option<NodeIndex>,
+    /// A neighborhood render; `None` dumps every region.
+    view: Option<dot::View<NodeIndex>>,
 }
 
-impl<'a> CfgDotDumper<'a> {
-    /// Restricts the dump to `nodes` and highlights `center`, so a
-    /// neighborhood renders through the same label and edge rules as a whole
-    /// CFG rather than a second emitter.
-    pub(crate) fn restricted(
-        mut self,
-        nodes: &'a rustc_hash::FxHashSet<NodeIndex>,
-        center: NodeIndex,
-    ) -> Self {
-        self.nodes = Some(nodes);
-        self.center = Some(center);
-        self
+impl CfgDotDumper<'_> {
+    /// Renders only `view`, so a neighborhood goes through the same label and
+    /// edge rules as a whole CFG rather than a second emitter.
+    pub(crate) fn restricted(self, view: dot::View<NodeIndex>) -> Self {
+        Self {
+            view: Some(view),
+            ..self
+        }
     }
 }
 
@@ -55,11 +48,11 @@ impl GraphDotDumper for CfgDotDumper<'_> {
     fn create_initial_state(&self) -> Self::State {}
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
-        self.cfg
-            .region_graph
-            .node_indices()
-            .filter(|n| self.nodes.is_none_or(|keep| keep.contains(n)))
-            .collect::<Vec<_>>()
+        self.cfg.region_graph.node_indices()
+    }
+
+    fn view(&self) -> Option<&dot::View<NodeIndex>> {
+        self.view.as_ref()
     }
 
     fn dump_as_dot(
@@ -86,13 +79,8 @@ impl GraphDotDumper for CfgDotDumper<'_> {
         }
         write!(&mut label, "\\l").map_err(anyhow::Error::from)?;
 
-        let extra: &[(&str, &str)] = if self.center == Some(node_id) {
-            &[("color", "#ffcc00"), ("penwidth", "2.5")]
-        } else {
-            &[]
-        };
         // The label carries hand-emitted `\l` breaks per instruction.
-        out.node_raw_label(&dot_id, &label, "box", extra);
+        out.node_raw_label(&dot_id, &label, "box", self.center_attrs(node_id));
 
         // Edges are unweighted, so label and style come from the SOURCE
         // region's terminator.  A `CondBranch` source defers to `region_if`
@@ -110,7 +98,7 @@ impl GraphDotDumper for CfgDotDumper<'_> {
             .edges_directed(node_id, petgraph::Incoming)
         {
             let src = edge.source();
-            if self.nodes.is_some_and(|keep| !keep.contains(&src)) {
+            if !self.in_view(src) {
                 continue;
             }
             let src_id = src.index().to_string();
