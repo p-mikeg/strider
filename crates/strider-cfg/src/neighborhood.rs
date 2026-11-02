@@ -43,6 +43,9 @@ pub(crate) fn neighborhood_regions(
 impl Cfg {
     /// Pretty render around `center`.  Node ids are region indices; `center`
     /// gets a gold border, and is rendered whatever `max_nodes` is.
+    ///
+    /// # Errors
+    /// `center` is not a region of this CFG, or the render fails.
     pub fn neighborhood_dot(
         &self,
         names: &strider_target::ArchNames,
@@ -50,10 +53,14 @@ impl Cfg {
         depth: usize,
         max_nodes: usize,
     ) -> crate::Result<String> {
+        if self.region_graph.node_weight(center).is_none() {
+            anyhow::bail!("invalid region id {}", center.index());
+        }
         let set = neighborhood_regions(self, center, depth, max_nodes);
         // The full-CFG dumper restricted to `set`: same labels, and the
         // if-true / if-false edge polarity a second emitter here did not carry.
-        let dumper = self.dot_dumper(names).restricted(&set, center);
+        let view = ::dot::View::new(set, center);
+        let dumper = self.dot_dumper(names).restricted(view);
         ::dot::GraphDot::new(dumper, ::dot::DotStyle::dark_cfg()).as_dot()
     }
 }
@@ -134,5 +141,16 @@ mod tests {
             "dot:\n{dot}"
         );
         assert!(dot.contains("#ffcc00"), "dot:\n{dot}");
+    }
+
+    /// A center the CFG lacks is an error, not an empty digraph.
+    #[test]
+    fn neighborhood_dot_rejects_a_region_the_cfg_lacks() {
+        let cfg = two_way_cfg();
+        let missing = crate::RegionId::new(cfg.region_graph().node_count());
+        let err = cfg
+            .neighborhood_dot(SleighArch::x86_64().names(), missing, 1, 999)
+            .expect_err("a missing center must not render");
+        assert!(err.to_string().contains("invalid region id"), "{err}");
     }
 }
