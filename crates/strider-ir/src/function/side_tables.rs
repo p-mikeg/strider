@@ -212,7 +212,7 @@ impl FuncSideTables {
             vn_interner: _,
         } = self;
         let mut consts: EntityInterner<IntConstId, UBig> = EntityInterner::default();
-        let mut const_ids: FxHashMap<IntConstId, IntConstId> = FxHashMap::default();
+        let mut const_ids: SecondaryMap<IntConstId, Option<IntConstId>> = SecondaryMap::new();
         let mut tables: PrimaryMap<SwitchTableId, Vec<u64>> = PrimaryMap::new();
         let mut table_ids: SecondaryMap<SwitchTableId, Option<SwitchTableId>> = SecondaryMap::new();
         let mut ccs: EntityInterner<CcId, strider_target::BuiltCallingConvention> =
@@ -223,9 +223,8 @@ impl FuncSideTables {
             match graph.node_kind_mut(node) {
                 NodeKind::IntConst(id) => {
                     let old = *id;
-                    *id = *const_ids
-                        .entry(old)
-                        .or_insert_with(|| consts.intern(const_interner[old].clone()));
+                    *id = *const_ids[old]
+                        .get_or_insert_with(|| consts.intern(const_interner[old].clone()));
                 }
                 NodeKind::Switch(id) => {
                     let old = *id;
