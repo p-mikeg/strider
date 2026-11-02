@@ -236,23 +236,6 @@ impl Function {
         )
     }
 
-    /// [`Graph::create_node`] plus a union of every contributor's
-    /// asm-fingerprint into the new node.
-    pub fn create_node_attributed(
-        &mut self,
-        kind: crate::node::NodeKind,
-        inputs: impl IntoIterator<Item = crate::node::ValueId>,
-        output_kinds: impl IntoIterator<Item = crate::node::ValueKind>,
-        contributors: &[NodeId],
-    ) -> NodeId {
-        let node_id = self.graph.create_node(kind, inputs, output_kinds);
-        for &src in contributors {
-            self.side_tables_mut()
-                .extend_asm_fingerprint_from(node_id, src);
-        }
-        node_id
-    }
-
     /// Compacts the arena down to the nodes reachable from [`Self::entry`],
     /// returning the old-to-new translation table.  Pre-compaction `NodeId` /
     /// `ValueId` / `UseId` values are invalidated; callers holding one MUST
@@ -327,7 +310,11 @@ impl crate::IRBuilder for Function {
         I: IntoIterator<Item = crate::node::ValueId>,
         O: IntoIterator<Item = crate::node::ValueKind>,
     {
-        Function::create_node_attributed(self, kind, inputs, outputs, contributors)
+        let node_id = self.graph.create_node(kind, inputs, outputs);
+        for &src in contributors {
+            self.side_tables.extend_asm_fingerprint_from(node_id, src);
+        }
+        node_id
     }
 }
 
