@@ -1261,6 +1261,60 @@ fn an_undecodable_arm_is_dropped_only_from_the_site_that_seeded_it() {
     );
 }
 
+/// An address seated in both ISA modes wires two parallel edges to its one
+/// region; refusing the address takes both, and leaves the other arm's.
+#[test]
+fn a_refused_arm_seated_in_both_modes_loses_both_parallel_edges() {
+    let mut engine = make_engine();
+    let mut b = make_builder(0x1000, &mut engine);
+    let target_vn = rsleigh::Vn {
+        addr_space: rsleigh::VnSpace::REGISTER,
+        addr_off: 0x38,
+        size: 8,
+    };
+    let (bad, good) = (0x2000u64, 0x3000u64);
+    let mut dispatcher = make_region(&[(0x1000, 0)]);
+    dispatcher.terminator = RegionTerminator::Switch {
+        target_vn,
+        targets: vec![
+            crate::ResolvedTarget::new(bad, Some(false)),
+            crate::ResolvedTarget::new(bad, Some(true)),
+            crate::ResolvedTarget::new(good, None),
+        ],
+        addr: addr(0x1000, 0),
+    };
+    let site = b.add_region(dispatcher).unwrap();
+    let bad_arm = b.add_region(make_region(&[(bad, 0)])).unwrap();
+    let good_arm = b.add_region(make_region(&[(good, 0)])).unwrap();
+    b.region_graph.add_edge(site, bad_arm, ());
+    b.region_graph.add_edge(site, good_arm, ());
+    b.region_graph.add_edge(site, bad_arm, ());
+    b.undecodable_seeded.push((
+        site,
+        crate::UndecodableTarget {
+            site: addr(0x1000, 0),
+            target: addr(bad, 0),
+        },
+    ));
+
+    b.drop_refused_switch_arms();
+
+    assert!(
+        b.region_graph.find_edge(site, bad_arm).is_none(),
+        "both parallel edges to the refused address go"
+    );
+    let survivors: Vec<_> = b.region_graph.neighbors(site).collect();
+    assert_eq!(survivors, vec![good_arm], "the other arm keeps its edge");
+    assert_eq!(
+        b.region_graph[site].terminator,
+        RegionTerminator::Switch {
+            target_vn,
+            targets: vec![crate::ResolvedTarget::new(good, None)],
+            addr: addr(0x1000, 0),
+        },
+    );
+}
+
 /// Only a `Switch` resolves arms by exact start address; every other
 /// terminator edges to the region that OWNS the interior address.
 #[test]
