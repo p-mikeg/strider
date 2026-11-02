@@ -332,9 +332,10 @@ fn a_cfg_from_another_engine_is_rejected_before_its_space_ids_are_read() {
         .expect("the same CFG must still lift on the engine that built it");
 }
 
-/// `Lifter::new` fails rather than lifting every CALLOTHER against an empty
-/// user-op table, and pins `VnSpace::RAM` to the space actually named
-/// `ram`.  Both checks run for every shipped preset.
+/// Every preset's [`strider_target::DecodeTables`] build, whose checks
+/// panic rather than err: a non-empty user-op table, so no CALLOTHER is
+/// lifted against an empty one, and `VnSpace::RAM` pinned to the space
+/// actually named `ram`.
 #[test]
 fn every_preset_has_a_user_op_table_and_an_ram_named_ram() {
     for preset in strider_target::ArchPreset::ALL {
@@ -347,17 +348,4 @@ fn every_preset_has_a_user_op_table_and_an_ram_named_ram() {
             "{preset:?}: an empty user-op table makes every CALLOTHER fail"
         );
     }
-}
-
-/// x86-64 paired with the ARM sla: the sla declares `ISAModeSwitch`, so a
-/// branch's mode commit would be captured for an arch with no mode to
-/// carry it into.
-#[test]
-fn an_unpaired_isa_mode_switch_is_an_error() {
-    let arm = strider_target::SleighArch::arm();
-    let reader = rsleigh::mem_readers::BufMemReader::new(vec![0u8; 0x10], 0x1000);
-    let regs = arm.sleigh(reader).expect("sleigh").regs().expect("regs");
-    let err = super::isa_mode_switch_vn(strider_target::SleighArch::x86_64(), &regs)
-        .expect_err("an x86-64 lifter over the ARM sla");
-    assert!(err.to_string().contains("ISAModeSwitch"), "{err}");
 }

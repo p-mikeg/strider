@@ -28,21 +28,12 @@ use crate::{Cfg, CfgOptions, MachineInsnAddr, Result};
 pub struct DecodeEngine<R: rsleigh::MemReader> {
     pub(crate) sleigh: rsleigh::Sleigh<R>,
     pub(crate) arch: strider_target::SleighArch,
+    pub(crate) tables: &'static strider_target::DecodeTables,
     /// The sla's flowing context vars.
     pub(crate) flow_vars: FlowVars,
-    /// The flow context of a cold entry on a fresh engine: the pspec defaults,
-    /// read before any decode.
-    entry_defaults: FlowContext,
-    /// The pspec default of each `noflow` var that changes a decode
-    /// ([`strider_target::SleighArch::transient_decode_vars`]). `flow_vars`
-    /// excludes them by definition.
-    pub(crate) transient_defaults: Vec<(&'static str, u32)>,
-    /// Each [`strider_target::SleighArch::flow_commit_vars`] var with its flow
-    /// class and pspec default. A default is committed globally, so any
-    /// address reads the same value.
-    pub(crate) flow_commit_defaults: Vec<(&'static str, FlowCommit, u32)>,
-    /// Indexed by `user_op_id`.
-    pub(crate) user_op_names: Vec<String>,
+    /// [`strider_target::DecodeTables::flow_commit`], per engine so a test can
+    /// lend another.
+    pub(crate) flow_commit: &'static [(&'static str, FlowCommit, u32)],
     /// The entry context each ISA mode last pinned, keyed by the mode value
     /// ([`strider_target::SleighArch::entry_mode_context`]), `None` for an
     /// arch without one.
@@ -54,60 +45,15 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
     ///
     /// # Errors
     ///
-    /// When the sla does not load, its user-op names or flowing context vars
-    /// cannot be read, it does not flow the arch's ISA-mode var, or it does
-    /// not declare a var the arch re-derives.
+    /// When the sla does not load.
     pub fn new(arch: strider_target::SleighArch, reader: R) -> Result<Self> {
-        Self::from_sleigh(arch, arch.sleigh(reader)?)
-    }
-
-    /// [`Self::new`] over a Sleigh built already, which may be another arch's.
-    pub(crate) fn from_sleigh(
-        arch: strider_target::SleighArch,
-        sleigh: rsleigh::Sleigh<R>,
-    ) -> Result<Self> {
-        // Not `unwrap_or_default`: with an empty table the CFG classifies every
-        // `CallOther` as returning, so a no-return one decodes on into whatever
-        // follows it, and the lift rejects every one as an unknown user-op.
-        let user_op_names = sleigh.user_op_names()?;
-        let flow_vars = FlowVars::discover(&sleigh)?;
-        // Every region re-imposes its mode through the flowing set; a mode var
-        // the sla does not flow would make that a silent no-op.
-        if let Some(var) = arch.isa_mode_var()
-            && !flow_vars.contains(var)
-        {
-            anyhow::bail!(
-                "{arch:?}: ISA-mode var {var} is not among the sla's flowing context vars"
-            );
-        }
-        // Read on the still-fresh engine, so this is the pspec default, not a
-        // leak.  The address is immaterial: a flowing var's default is committed
-        // globally, so any address reads the same value.
-        let entry_defaults = flow_vars.snapshot(&sleigh, 0);
-        // A hard error, unlike `transient_defaults` below: a named var the sla
-        // does not declare means this preset's list is wrong, and silently
-        // dropping it would leave the leak it exists to close.
-        let flow_commit_defaults = arch
-            .flow_commit_vars()
-            .iter()
-            .map(|&name| {
-                let class = flow_vars.commit_class(name);
-                Ok((name, class, sleigh.get_context_at(0, name)?))
-            })
-            .collect::<Result<_>>()?;
-        let transient_defaults = arch
-            .transient_decode_vars()
-            .iter()
-            .filter_map(|name| Some((*name, sleigh.get_context_at(0, name).ok()?)))
-            .collect();
+        let tables = arch.decode_tables();
         Ok(Self {
-            sleigh,
+            sleigh: arch.sleigh(reader)?,
             arch,
-            flow_vars,
-            entry_defaults,
-            transient_defaults,
-            flow_commit_defaults,
-            user_op_names,
+            tables,
+            flow_vars: FlowVars::of(arch),
+            flow_commit: &tables.flow_commit,
             entry_contexts: FxHashMap::default(),
         })
     }
@@ -143,10 +89,12 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
         // logged for `Sleigh::clone` to replay and the log is bounded, so
         // re-analysing one entry must cost no commit.
         let mode_key = entry_mode.map(|(_, value)| value);
+        let tables = self.tables;
+        // A cold mode pins the pspec defaults.
         let want = self
             .entry_contexts
-            .get(&mode_key)
-            .unwrap_or(&self.entry_defaults);
+            .entry(mode_key)
+            .or_insert_with(|| FlowContext::from(&tables.entry_defaults[..]));
         self.flow_vars.pin_at(&mut self.sleigh, decode_addr, want)?;
         // The pin's diff can write an alias of the mode bit last, flipping it
         // back.
@@ -170,9 +118,14 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
         self.arch
     }
 
+    #[must_use]
+    pub fn tables(&self) -> &'static strider_target::DecodeTables {
+        self.tables
+    }
+
     /// Indexed by `user_op_id`.
     #[must_use]
     pub fn user_op_names(&self) -> &[String] {
-        &self.user_op_names
+        &self.tables.user_op_names
     }
 }
