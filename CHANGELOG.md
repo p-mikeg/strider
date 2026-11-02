@@ -268,8 +268,8 @@
   `impl Into<UBig>`, so a limb spelling is `UBig::from_words`.
 - `ValueType::get_unsigned_int` is gone; it had no caller.
   `strider_ir::eval::mask` is the unsigned read, at every width.
-  `int_mask_u128`, `wrap_u128` and `get_signed_int` stay: the signed carrier
-  is still an `i128` for the stack-offset and index arithmetic that reads it.
+  `int_mask_u128` and `get_signed_int` stay: the signed carrier is still an
+  `i128` for the stack-offset and index arithmetic that reads it.
 - A call output or return varnode outside register and unique space is
   refused naming it as the IR text spells it, with the space shortcuts
   (``r:0x1000:4, in space `r`, outside register (`%`) and unique (`u`)
@@ -403,9 +403,9 @@
   before; `float_from_bytes`' error no longer lists the valid sizes, and
   `int_from_bytes`' reads `unsupported integer varnode size`.
 - `ValueType::bit_mask_u128` is gone: it saturated to `u128::MAX` past 128
-  bits. `wrap_u128(v)` reduces a value to the width, exactly at every width
-  (a float gives 0); `int_mask_u128()` is the all-ones value, `None` for a
-  float or past 128 bits.
+  bits. `strider_ir::eval::mask` reduces a value to the width, exactly at
+  every width; `int_mask_u128()` is the all-ones value, `None` for a float
+  or past 128 bits.
 - `ValidationError::UnsupportedValueType` is new: `validate` rejects a value
   typed with a width outside `ValueType::SUPPORTED`, which only the `Int` /
   `Float` variants can write.
@@ -420,9 +420,10 @@
   `build_int_cmp_operation`, `build_float_binary_op` and
   `build_float_unary_op` check theirs too: an int op over floats, or a float
   op over ints, returns `Err` where `validate` used to reject it later.
-- `strider_target::FlowCommit` and `SleighArch::commits_flow_context` are
-  gone, and `SleighArch::flow_commit_vars` lists names alone: each var's flow
-  class is the sla's own `noflow` declaration, read off by the decoder.
+- `SleighArch::commits_flow_context` is gone, and
+  `SleighArch::flow_commit_vars` lists names alone: each var's `FlowCommit`
+  class is the sla's own `noflow` declaration, read off into
+  `DecodeTables::flow_commit`.
 - `strider_cfg::{Builder, FlowVars, FlowContext}` are private, and with them
   `Builder::for_arch` and its `with_*` setters. Build a CFG with
   `DecodeEngine::new(arch, reader)?.build_cfg(entry, &opts)`, which pins the
@@ -523,6 +524,36 @@
 - `Cfg::function_isa_bit` is gone: `flowing_isa_bit_at_site` answers every
   indirect site on an arch with an ISA-mode var, already degrading to the
   function's own mode where the branch address carries no readable context.
+- `GraphDotDumper` loses `type Error` and `create_initial_state`:
+  `dump_as_dot` returns `anyhow::Result<()>` and a render starts from
+  `State::default()`. `type Node` is `Copy + Ord`. A restricted render
+  returns its `dot::View` from `view()` rather than filtering `iter_nodes`.
+- `DotStyle::empty()` is `DotStyle::default()`, `dot::viz_standalone_js()`
+  the const `dot::VIZ_STANDALONE_JS`, and `DotEmitter::node_raw_label` is
+  `node_left_lines(id, head, lines, shape, extra)`, which escapes each line
+  and joins them with DOT `\l` breaks, so no caller hand-emits one.
+- `FunctionDotDumper::neighborhood_dot` returns `strider_ir::Result<String>`,
+  not `io::Result<String>`.
+- `strider_graph::InputCursor` and `Graph::value_use_cursor` are gone:
+  `Graph::replace_all_uses(old, new)` moves every use of a value,
+  `update_input` one. `RawStore` no longer implements `Default`, and
+  `Graph: Clone` asks `C: Clone` of the cache policy too (both shipped
+  policies are).
+- `IRBuilder::create_node` and `create_node_attributed` take
+  `impl IntoIterator` inputs and outputs, so a call cannot name them with a
+  turbofish. The inherent `Function::create_node_attributed` is gone: the
+  `IRBuilder` method is the one, with the trait in scope.
+- `FunctionBuilder::entry()` is gone: read `function().entry()`, always
+  node 0. `FunctionBuilder::set_internal_registers` takes `&'static [Vn]`
+  (`DecodeTables::internal_register_vns`), not a `Vec` per function.
+- `IRViewer::reachable_kind_iter`, `IRWalker::walk_info` and
+  `IRWalker::reverse_postorder` are gone: iterate the `NodeIdSet` and read
+  `node_kind`, or call `IRWalker::reverse_postorder_filter`.
+- `InitialVnId::index` is gone: `as_u32`, or `EntityRef::index`.
+- `Cfg::region_predecessors` yields `RegionId`s, not `&Region`s: index
+  `region_graph()` for the region.
+- `strider_cfg::Region` has a crate-private field, the ISA mode it was
+  decoded in, so only strider-cfg builds one.
 
 ### Changed, Python
 
@@ -817,10 +848,12 @@
   op's footprint still comes from `cfg_opts`).
 - A `CALL` whose target operand is not in the code space selects no
   `per_address_ccs` override; the CFG's no-return rule already ignored it.
-- `Lifter::new`, `Strider::new` and `DecodeEngine::new` return `Err` when the
-  arch and sla disagree on the ISA mode: a mode var the sla does not flow, or
-  (not `DecodeEngine::new`) an unpaired `ISAModeSwitch`. Before, only a debug
-  build asserted it.
+- An arch and sla that disagree on the ISA mode (a mode var the sla does not
+  flow, an unpaired `ISAModeSwitch`) panic in `SleighArch::decode_tables`,
+  which `Lifter::new`, `Strider::new` and `DecodeEngine::new` read, in every
+  build; before, only a debug build asserted it. A preset is compiled in, so
+  this is a preset bug, which a test sweeps. The three return `Err` only when
+  the sla does not load.
 - A relocated image no longer fails to load with "patch budget": every
   region shares one patch list, so a site any number of overlapping
   mappings cover is patched in all of them at no extra cost.
@@ -880,6 +913,12 @@
   claims in force that are on, in declaration order, with
   `noalias_allocators=[..]` as sorted hex; a function claiming nothing prints
   as before.
+- strider-lift forbids unsafe code: a `Load` / `Store` space id resolves
+  through the decode engine's `SpaceIds` instead of being dereferenced as an
+  `AddrSpace` pointer, so an id the engine lacks is an `Err`.
+- petgraph is only a dev-dependency of strider-lift.
+- strider-ir warns on `clippy::wildcard_enum_match_arm`: a `match` on an
+  enum names the variants it covers rather than `_`.
 
 ### Fixed
 
@@ -1635,6 +1674,20 @@
   fingerprint is the union of every fold into it, so a comparison can gain
   addresses from outside the flag test. Fingerprints gain addresses and
   lose none.
+- ARM: under hard-float AAPCS, a float argument sliced from a shared
+  container (`d0` / `d1` of `q0`) at an entry that is also a loop header was
+  the loop phi, not the incoming value, so `function_arg(Float, j)` matched
+  the loop-carried value. It slices the container's `InitialVar`, as the
+  integer carriers already did.
+- MIPS (`t9`) and PowerPC64 ELFv2 (`r12`): at an entry that is also a loop
+  header, binding the entry-address register to the entry address
+  overwrote the register's phi, so every iteration read the entry address.
+  The address is now the phi's entry-edge operand.
+- Python: `Function.neighborhood_dot(..., pretty=True)` centred on an
+  `InitialVar` nothing reads draws it, highlighted; it rendered an empty
+  digraph.
+- Rust: `Cfg::neighborhood_dot` with a centre the CFG lacks returns `Err`
+  (`invalid region id`), as Python already raised, not an empty digraph.
 
 ### Added, Rust
 
@@ -1710,9 +1763,10 @@
 - `strider_ir::eval`: integer evaluation at a declared width (`int_binary`,
   `int_cmp`, `int_unary`, `sign_extend`, `popcount`, `lzcount`), total at
   every declared width, `None` only where the result is undefined or the
-  type is a float. Its `mask` / `all_ones` / `complement` / `ones_at` /
-  `le_bytes` hold an unbounded `UBig` to a declared width, and `signed` /
-  `unsigned` read and write that width's two's complement.
+  type is a float. Its `mask` / `all_ones` / `complement` / `ones_at` hold
+  an unbounded `UBig` to a declared width (`le_bytes`, under `test-util`,
+  pads its bytes to it), and `signed` / `unsigned` read and write that
+  width's two's complement.
 - `IntBinaryOp::is_shift`: whether operand 1 is a shift count.
 - `ExpectedValueKind::admits`, the slot-kind check `validate`, the template
   and the builders read.
@@ -1778,9 +1832,8 @@
 - `matcher::KindSpec` implements `PartialEq` and `Eq`.
 - `strider_ir::AssumptionOptions`, still re-exported as
   `strider_opt::AssumptionOptions`: `union_with` adds every claim another
-  set holds, `omitted_by` names the claims another set lacks, `holds_all`
-  answers whether it holds every claim of another, and it derives
-  `PartialEq` / `Eq`.
+  set holds, `omitted_by` names the claims another set lacks (none when the
+  other holds every claim this one does), and it derives `PartialEq` / `Eq`.
 - `Lifter::arch`, the arch the engine decodes with; `Strider::arch` reads
   it.
 - `NodeKind::PHI_TOKEN_SLOT`, a phi's token input, and the output slots
@@ -1792,6 +1845,21 @@
   passes: `float_arg_slots` up to the first untracked one.
 - `Endianness::slice_shift_bits`, a register slice's bit distance from its
   container's LSB.
+- `graph_algorithms::walk::FnSuccs`, re-exported from `strider_ir::walk`:
+  a `GraphRef` whose successors are what a closure returns.
+- `strider_target::DecodeTables` and `SleighArch::decode_tables()`: what
+  the decoder and lifter read off a preset's sla (user ops, flowing context
+  vars and their defaults, the commit and transient tables, the register
+  file, `ISAModeSwitch`, volatile and internal registers), built and
+  checked once per preset per process. `DecodeEngine::tables()` returns the
+  engine's, and `DecodeEngine::space_ids()` the address-space table every
+  `Cfg` it builds carries.
+- `FunctionBuilder::build_return_node`: `build_return` returning the
+  `Return` node.
+- `dot::View`, a restricted render's nodes and centre, and the
+  `GraphDotDumper` defaults `view`, `in_view`, `is_center` and
+  `center_attrs` that read it.
+- `strider_graph::NodeId` implements `PartialOrd` / `Ord`.
 
 ## 0.2.0
 
