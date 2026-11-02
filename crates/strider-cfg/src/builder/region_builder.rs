@@ -198,7 +198,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         };
         self.builder
             .engine
-            .flow_commit_defaults
+            .flow_commit
             .iter()
             .filter(|&&(_, class, _)| class == FlowCommit::Flowing)
             .map(|&(name, ..)| Ok((name, self.builder.engine.sleigh.get_context_at(from, name)?)))
@@ -231,7 +231,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// which is how gcc `-march=armv4t`'s `movne lr,pc; bxne r3` loses its call
     /// (`LRset` is committed at the `bx`).
     fn hold_transients(&mut self, addr: u64) -> Result<()> {
-        let defaults = &self.builder.engine.transient_defaults;
+        let defaults = &self.builder.engine.tables.transient_defaults;
         if defaults.is_empty() {
             return Ok(());
         }
@@ -270,7 +270,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             return Ok(false);
         }
         let isa = self.builder.engine.arch.isa_mode_var().zip(self.isa_mode);
-        let defaults = &self.builder.engine.transient_defaults;
+        let defaults = &self.builder.engine.tables.transient_defaults;
         let end = addr.saturating_add(len as u64);
         let mut wrote = false;
         // Every MIPS encoding is a whole number of 16-bit words.
@@ -309,7 +309,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// and `oneInstruction` applies a cached parse's commits too.
     fn rederive_flow(&mut self, at: u64, from: u64) -> Result<()> {
         let mut wrote = false;
-        for &(name, flow, default) in &self.builder.engine.flow_commit_defaults {
+        for &(name, flow, default) in self.builder.engine.flow_commit {
             let want = match flow {
                 FlowCommit::NoFlow => default,
                 FlowCommit::Flowing => self.builder.engine.sleigh.get_context_at(from, name)?,
@@ -678,8 +678,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// answers, plus the PowerPC traps whose TO mask covers every relation.  An
     /// unexpected input shape falls through to `Continue` rather than erroring.
     fn process_call_other(&mut self, insn: &rsleigh::Insn) -> Result<InsnOutcome> {
-        let name =
-            crate::user_op_of(insn, &self.builder.engine.user_op_names).map(|(_, name)| name);
+        let name = crate::user_op_of(insn, &self.builder.engine.tables.user_op_names)
+            .map(|(_, name)| name);
         let overridden = name.and_then(|n| self.builder.options.call_other_overrides.get(n));
         let terminates = match overridden {
             // A caller override states what this binary's build of the op does,

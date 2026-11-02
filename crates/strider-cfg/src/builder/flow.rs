@@ -25,10 +25,10 @@
 //! its own ISA-mode bit into the captured context it hands the target (see
 //! [`FlowVars::set_var`]).
 
-/// The context vars the sla marks as flowing. Constant per sla, so the
-/// [`DecodeEngine`](crate::DecodeEngine) reads it once.
+/// The context vars the sla marks as flowing
+/// ([`strider_target::DecodeTables::flow_vars`]).
 pub(crate) struct FlowVars {
-    vars: Vec<String>,
+    vars: &'static [String],
 }
 
 #[cfg(test)]
@@ -49,16 +49,16 @@ fn get_context_at<R: rsleigh::MemReader>(
 }
 
 impl FlowVars {
-    /// The sla's flowing context vars.
-    pub fn discover<R: rsleigh::MemReader>(sleigh: &rsleigh::Sleigh<R>) -> crate::Result<Self> {
-        Ok(Self {
-            vars: sleigh.flow_context_vars()?,
-        })
+    /// `arch`'s flowing context vars.
+    pub fn of(arch: strider_target::SleighArch) -> Self {
+        Self {
+            vars: &arch.decode_tables().flow_vars,
+        }
     }
 
     /// The value of every flow var resolved at `addr`.
     ///
-    /// Every name is one the sla declared flowing (via [`Self::discover`]), so
+    /// Every name is one the sla declared flowing (via [`Self::of`]), so
     /// `get_context_at` cannot miss it (Sleigh throws only on an unregistered
     /// name); a read failure is a broken rsleigh invariant, not a runtime case.
     pub fn snapshot<R: rsleigh::MemReader>(
@@ -86,25 +86,6 @@ impl FlowVars {
             .iter()
             .position(|name| name == var)
             .and_then(|i| ctx.0.get(i).copied())
-    }
-
-    /// Whether `name` is one of the sla's flowing context vars.
-    #[must_use]
-    pub fn contains(&self, name: &str) -> bool {
-        self.vars.iter().any(|n| n == name)
-    }
-
-    /// `name`'s class: flowing exactly when the sla declares it so. `name`
-    /// must be a context var the sla declares, or it reads `NoFlow`;
-    /// [`DecodeEngine::new`](crate::DecodeEngine::new) rejects an undeclared
-    /// one by reading its default.
-    #[must_use]
-    pub fn commit_class(&self, name: &str) -> FlowCommit {
-        if self.contains(name) {
-            FlowCommit::Flowing
-        } else {
-            FlowCommit::NoFlow
-        }
     }
 
     /// Commit `want` at `addr`, overwriting whatever flowed or forward-held
@@ -181,14 +162,10 @@ pub(crate) fn hold_var<R: rsleigh::MemReader>(
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
 pub(crate) struct FlowContext(Vec<u32>);
 
-/// Whether the sla declares a committed context var flowing, which decides
-/// what `RegionBuilder::rederive_flow` erases it to.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum FlowCommit {
-    /// Confined to one address, so the pspec default is the erase target.
-    NoFlow,
-    /// Painted forward to persist, so the predecessor's value is.
-    Flowing,
+impl From<&[u32]> for FlowContext {
+    fn from(values: &[u32]) -> Self {
+        Self(values.to_vec())
+    }
 }
 
 #[cfg(test)]
@@ -197,7 +174,7 @@ mod tests {
 
     fn arm_like() -> FlowVars {
         FlowVars {
-            vars: vec!["TMode".into(), "itmode".into()],
+            vars: vec!["TMode".into(), "itmode".into()].leak(),
         }
     }
 
@@ -293,7 +270,7 @@ mod tests {
     #[test]
     fn pin_at_over_a_matching_context_does_not_flush_the_parse_cache() {
         let (mut sleigh, reads) = counting_arm_sleigh();
-        let flow = FlowVars::discover(&sleigh).expect("discover flow vars");
+        let flow = FlowVars::of(strider_target::SleighArch::arm());
         let want = flow.snapshot(&sleigh, 0x1000);
 
         sleigh.lift_one(0x1000).expect("decode once");
@@ -319,9 +296,9 @@ mod tests {
     fn a_diff_touching_two_condit_group_vars_is_applied() {
         let (mut sleigh, _reads) = counting_arm_sleigh();
         let vars = FlowVars {
-            vars: vec!["itmode".into(), "cond_mask".into()],
+            vars: vec!["itmode".into(), "cond_mask".into()].leak(),
         };
-        for name in &vars.vars {
+        for name in vars.vars {
             sleigh.set_context_at(0x1000, name, 0).expect("clear");
         }
         let want = FlowContext(vec![1, 1]);
@@ -347,7 +324,7 @@ mod tests {
         let arch = SleighArch::arm();
         let reader = BufMemReader::new(vec![0u8; 0x100], 0x1000);
         let mut sleigh = arch.sleigh(reader).expect("create Sleigh");
-        let flow = FlowVars::discover(&sleigh).expect("discover flow vars");
+        let flow = FlowVars::of(arch);
         assert!(
             flow.vars
                 .iter()
@@ -384,40 +361,6 @@ mod tests {
             flow.value_of(&carried, "TMode"),
             Some(0),
             "the carried context still names the ARM mode the repair re-imposes",
-        );
-    }
-
-    /// What a re-derive erases a committed var to is the sla's own `noflow`
-    /// declaration: ARM's IT-block `condit` is `noflow` and ThumbEE's `TEEMode`
-    /// flows, on the big-endian sla as on the little-endian one.
-    #[test]
-    fn commit_class_is_the_slas_flow_declaration() {
-        let want = [
-            ("condit", FlowCommit::NoFlow),
-            ("TEEMode", FlowCommit::Flowing),
-        ];
-        let mut checked = 0;
-        for &preset in strider_target::ArchPreset::ALL {
-            let arch = preset.arch();
-            if arch.flow_commit_vars().is_empty() {
-                continue;
-            }
-            let sleigh = arch
-                .sleigh(rsleigh::mem_readers::BufMemReader::new(Vec::<u8>::new(), 0))
-                .expect("create Sleigh");
-            let flow = FlowVars::discover(&sleigh).expect("flow vars");
-            for &name in arch.flow_commit_vars() {
-                let (_, class) = want
-                    .iter()
-                    .find(|(n, _)| *n == name)
-                    .unwrap_or_else(|| panic!("{preset:?}: no expected class for `{name}`"));
-                assert_eq!(flow.commit_class(name), *class, "{preset:?}: `{name}`");
-                checked += 1;
-            }
-        }
-        assert_eq!(
-            checked, 8,
-            "the four ARM32 presets re-derive condit and TEEMode"
         );
     }
 }
