@@ -220,69 +220,53 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.write_vn(out_vn, result)
     }
 
+    pub(super) fn process_int_cmp_op(&mut self, insn: &rsleigh::Insn, op: IntCmpOp) -> Result<()> {
+        self.lift_int_cmp(insn, op, false, false)
+    }
+
     /// Compares at the MAX of the two input widths so neither operand is
     /// truncated, extending the narrower one sign-correctly for the predicate.
-    pub(super) fn process_int_cmp_op(&mut self, insn: &rsleigh::Insn, op: IntCmpOp) -> Result<()> {
-        let in0_size = nth_input_or_err(insn, 0)?.size;
-        let in1_size = nth_input_or_err(insn, 1)?.size;
+    /// `negate` wraps the `I1` result in a logical NOT, the lowering of the
+    /// three negated comparisons; `swap` covers the `a <= b` iff `not(b < a)`
+    /// rewrite.
+    fn lift_int_cmp(
+        &mut self,
+        insn: &rsleigh::Insn,
+        op: IntCmpOp,
+        negate: bool,
+        swap: bool,
+    ) -> Result<()> {
+        let a = nth_input_or_err(insn, 0)?;
+        let b = nth_input_or_err(insn, 1)?;
         // Carry / Scarry / Sborrow are width-RELATIVE: they report overflow of
         // THIS width, so widening their operands makes the flag constant-false
         // (a wider add never carries out of the narrow width).  Sleigh always
-        // emits them equal-width; fail loud if not.  The value comparisons
-        // legitimately take mixed widths, so they are unguarded.
-        if matches!(op, IntCmpOp::Carry | IntCmpOp::Scarry | IntCmpOp::Sborrow) {
-            require_same_size(
-                nth_input_or_err(insn, 0)?,
-                nth_input_or_err(insn, 1)?,
-                "input",
-            )?;
+        // emits them, and the negated comparisons, equal-width; fail loud if
+        // not.  The value comparisons legitimately take mixed widths, so they
+        // are unguarded.
+        if negate || matches!(op, IntCmpOp::Carry | IntCmpOp::Scarry | IntCmpOp::Sborrow) {
+            require_same_size(a, b, "input")?;
         }
-        let lhs = self.read_input(insn, 0)?;
-        let rhs = self.read_input(insn, 1)?;
+        let lhs = self.read_vn(a)?;
+        let rhs = self.read_vn(b)?;
         let out_vn = require_output_vn(insn)?;
-        let cmp_width = ValueType::int_from_bytes(in0_size.max(in1_size))?;
+        let cmp_width = ValueType::int_from_bytes(a.size.max(b.size))?;
         let ext_op = match op {
             IntCmpOp::Sless | IntCmpOp::Scarry | IntCmpOp::Sborrow => ExtendOp::SignExtend,
             IntCmpOp::Equal | IntCmpOp::Less | IntCmpOp::Carry => ExtendOp::ZeroExtend,
         };
         let lhs = self.builder.extend_if_needed(lhs, cmp_width, ext_op)?;
         let rhs = self.builder.extend_if_needed(rhs, cmp_width, ext_op)?;
-        let result = self
-            .builder
-            .build_int_cmp_operation(lhs, rhs, op, cmp_width)?;
-        self.write_vn(out_vn, result)
-    }
-
-    /// Shared lowering for the three negated comparisons.  The comparison runs
-    /// at the INPUT width; the output is a 1-bit `I1`.  `swap_operands` covers
-    /// the `a <= b` iff `not(b < a)` rewrite.
-    fn lower_cmp_negated(
-        &mut self,
-        insn: &rsleigh::Insn,
-        op: IntCmpOp,
-        swap_operands: bool,
-    ) -> Result<()> {
-        require_same_size(
-            nth_input_or_err(insn, 0)?,
-            nth_input_or_err(insn, 1)?,
-            "input",
-        )?;
-        let lhs = self.read_input(insn, 0)?;
-        let rhs = self.read_input(insn, 1)?;
-        let out_vn = require_output_vn(insn)?;
-        let cmp_width = nth_input_or_err(insn, 0)?.int_type()?;
-        let lhs = self.builder.convert_to_int_if_needed(lhs, cmp_width)?;
-        let rhs = self.builder.convert_to_int_if_needed(rhs, cmp_width)?;
-        let (cmp_lhs, cmp_rhs) = if swap_operands {
-            (rhs, lhs)
-        } else {
-            (lhs, rhs)
-        };
+        let (lhs, rhs) = if swap { (rhs, lhs) } else { (lhs, rhs) };
         let cmp = self
             .builder
-            .build_int_cmp_operation(cmp_lhs, cmp_rhs, op, cmp_width)?;
-        let negated = self.build_logical_not(cmp)?;
-        self.write_vn(out_vn, negated)
+            .build_int_cmp_operation(lhs, rhs, op, cmp_width)?;
+        let result = if negate {
+            self.build_logical_not(cmp)?
+        } else {
+            cmp
+        };
+        self.write_vn(out_vn, result)
     }
 
     /// Canonical logical NOT: `Xor(x, IntConst(1)):I1`, since at `I1` the
@@ -296,17 +280,17 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
 
     /// Lowers to `Xor(IntEqual(a, b), IntConst(1)):I1`.
     pub(super) fn handle_int_not_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        self.lower_cmp_negated(insn, IntCmpOp::Equal, false)
+        self.lift_int_cmp(insn, IntCmpOp::Equal, true, false)
     }
 
     /// Lowers to `Xor(IntLess(b, a), IntConst(1)):I1`.
     pub(super) fn handle_int_less_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        self.lower_cmp_negated(insn, IntCmpOp::Less, true)
+        self.lift_int_cmp(insn, IntCmpOp::Less, true, true)
     }
 
     /// Lowers to `Xor(IntSless(b, a), IntConst(1)):I1`.
     pub(super) fn handle_int_sless_equal(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        self.lower_cmp_negated(insn, IntCmpOp::Sless, true)
+        self.lift_int_cmp(insn, IntCmpOp::Sless, true, true)
     }
 
     /// Lowers `IntSub(a, b)` to `Add(a, Neg(b))`, the one canonical shape
