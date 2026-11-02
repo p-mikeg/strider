@@ -1060,11 +1060,7 @@ fn process_insn_no_operand_dispatch_routing() {
     // The empty region map is never consulted: CondBranch errors on its
     // missing condition operand before any lookup.
     let cases: &[(Opcode, bool, &str)] = &[
-        (
-            Opcode::Branch,
-            true,
-            "Branch dispatches to the no-op handle_branch",
-        ),
+        (Opcode::Branch, true, "Branch lifts to nothing"),
         (
             Opcode::CondBranch,
             false,
