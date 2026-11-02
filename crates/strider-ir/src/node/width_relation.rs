@@ -1,10 +1,7 @@
-//! Where an input slot's width comes from, and the equivalence classes that
-//! answer folds into.
+//! Where an input slot's width comes from.
 
-use petgraph::unionfind::UnionFind;
-
+use crate::node::NodeKind;
 use crate::node::signature::{Conversion, OperandWidth};
-use crate::node::{NodeKind, ValueId};
 
 /// Where input slot's width comes from, over whatever a caller uses to stand
 /// for a value: a vertex id, or the type itself.
@@ -32,52 +29,10 @@ pub fn width_tie<T>(kind: &NodeKind, slot: usize, out: Option<T>, first: Option<
     }
 }
 
-/// Union-find over value vertices, grouping the ones a node evaluates at one
-/// width.
-pub struct WidthGroups(UnionFind<u32>);
-
-impl WidthGroups {
-    /// Over vertex ids below `len`.
-    #[must_use]
-    pub fn new(len: usize) -> Self {
-        Self(UnionFind::new(len))
-    }
-
-    pub fn find(&mut self, v: ValueId) -> usize {
-        self.0.find_mut(v.as_u32()) as usize
-    }
-
-    pub fn union(&mut self, a: ValueId, b: ValueId) {
-        self.0.union(a.as_u32(), b.as_u32());
-    }
-
-    /// [`width_tie`] with a `Tied` head joined to `operand`. A head that IS
-    /// the operand ties nothing and reads back as `NoHead`.
-    #[must_use]
-    pub fn tie(
-        &mut self,
-        kind: &NodeKind,
-        slot: usize,
-        operand: ValueId,
-        out: Option<ValueId>,
-        first: Option<ValueId>,
-    ) -> WidthTie<ValueId> {
-        match width_tie(kind, slot, out, first) {
-            WidthTie::Tied(head) if head != operand => {
-                self.union(head, operand);
-                WidthTie::Tied(head)
-            }
-            WidthTie::Tied(_) => WidthTie::NoHead,
-            other => other,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{WidthGroups, WidthTie, width_tie};
-    use crate::node::{Conversion, ExtendOp, NodeKind, ValueId, ValueType};
-    use cranelift_entity::EntityRef;
+    use super::{WidthTie, width_tie};
+    use crate::node::{Conversion, ExtendOp, NodeKind, ValueType};
 
     const OUT: ValueType = ValueType::Int(32);
     const FIRST: ValueType = ValueType::Int(8);
@@ -130,83 +85,5 @@ mod tests {
             width_tie::<ValueType>(&eq, 0, Some(OUT), None),
             WidthTie::NoHead
         );
-    }
-
-    fn v(i: usize) -> ValueId {
-        ValueId::new(i)
-    }
-
-    #[test]
-    fn every_vertex_starts_in_its_own_group() {
-        let mut g = WidthGroups::new(4);
-        let roots: Vec<usize> = (0..4).map(|i| g.find(v(i))).collect();
-        assert_eq!(roots, vec![0, 1, 2, 3]);
-    }
-
-    /// Union is transitive, and a chain built one link at a time still
-    /// resolves: `find` halves the path rather than following it twice.
-    #[test]
-    fn a_union_chain_resolves_to_one_group() {
-        let mut g = WidthGroups::new(64);
-        for i in 1..64 {
-            g.union(v(i - 1), v(i));
-        }
-        let root = g.find(v(63));
-        assert!((0..64).all(|i| g.find(v(i)) == root), "one group");
-        // Path halving leaves every member pointing at or near the root, so a
-        // second pass cannot walk the chain again.
-        assert_eq!(g.find(v(63)), root);
-    }
-
-    #[test]
-    fn unrelated_groups_stay_apart() {
-        let mut g = WidthGroups::new(4);
-        g.union(v(0), v(1));
-        g.union(v(2), v(3));
-        assert_eq!(g.find(v(0)), g.find(v(1)));
-        assert_ne!(g.find(v(0)), g.find(v(2)));
-    }
-
-    /// `tie` joins the head it names, and reports it so a caller can record
-    /// the pairing.
-    #[test]
-    fn tie_joins_the_head_the_rule_names() {
-        let add = NodeKind::IntBinaryOp(crate::IntBinaryOp::Add);
-        let mut g = WidthGroups::new(4);
-        assert_eq!(
-            g.tie(&add, 0, v(1), Some(v(0)), Some(v(1))),
-            WidthTie::Tied(v(0))
-        );
-        assert_eq!(g.find(v(0)), g.find(v(1)));
-        assert_ne!(g.find(v(0)), g.find(v(2)));
-    }
-
-    /// A head that IS the operand ties nothing, and must not read back as an
-    /// agreement a caller would record against itself.
-    #[test]
-    fn tie_to_itself_ties_nothing() {
-        let add = NodeKind::IntBinaryOp(crate::IntBinaryOp::Add);
-        let mut g = WidthGroups::new(4);
-        assert_eq!(
-            g.tie(&add, 0, v(2), Some(v(2)), Some(v(2))),
-            WidthTie::NoHead
-        );
-        assert_eq!(g.find(v(2)), 2, "still its own root");
-        assert_ne!(g.find(v(2)), g.find(v(3)));
-    }
-
-    /// A free slot and a conversion join nothing.
-    #[test]
-    fn tie_leaves_a_free_or_converted_slot_alone() {
-        let shl = NodeKind::IntBinaryOp(crate::IntBinaryOp::ShiftLeft);
-        let mut g = WidthGroups::new(4);
-        assert_eq!(g.tie(&shl, 1, v(1), Some(v(0)), Some(v(1))), WidthTie::Free);
-        assert_ne!(g.find(v(0)), g.find(v(1)));
-
-        assert_eq!(
-            g.tie(&NodeKind::Truncate, 0, v(3), Some(v(2)), Some(v(3))),
-            WidthTie::Conversion(Conversion::Narrow)
-        );
-        assert_ne!(g.find(v(2)), g.find(v(3)));
     }
 }
