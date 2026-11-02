@@ -239,20 +239,6 @@ impl Function {
         self.graph.rebuild_cache();
         Ok(remap)
     }
-
-    /// The pretty renderer, naming registers and spaces through `names`.
-    pub fn dot_dumper<'a>(
-        &'a self,
-        names: &'a strider_target::ArchNames,
-    ) -> crate::function::dot::FunctionDotDumper<'a> {
-        crate::function::dot::FunctionDotDumper {
-            function: self,
-            names,
-            node_to_arg_indices: crate::function::dot::build_arg_reverse_map(self),
-            nodes: None,
-            center: None,
-        }
-    }
 }
 
 impl crate::IRBuilder for Function {
