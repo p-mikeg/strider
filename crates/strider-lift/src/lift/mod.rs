@@ -519,9 +519,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         {
             return Ok(());
         }
-        let Some(addr) = self.entry_machine_addr() else {
-            return Ok(());
-        };
+        let addr = self.entry_machine_addr();
         use strider_ir::{IRBuilderExt as _, VnTypeExt as _};
         let ty = vn.int_type()?;
         self.with_lift_addr(Some(addr), |s| {
@@ -557,7 +555,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         };
         // The entry machine address, so a materialised slice carries a
         // fingerprint like every other non-exempt node.
-        let entry_addr = self.entry_machine_addr();
+        let entry_addr = Some(self.entry_machine_addr());
         for (j, carrier) in float_slots.into_iter().enumerate() {
             let Some(carrier) = carrier else { continue };
             // A slice out of a shared container dedups with the function's own
