@@ -198,6 +198,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         };
         self.builder
             .engine
+            .tables
             .flow_commit
             .iter()
             .filter(|&&(_, class, _)| class == FlowCommit::Flowing)
@@ -309,7 +310,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// and `oneInstruction` applies a cached parse's commits too.
     fn rederive_flow(&mut self, at: u64, from: u64) -> Result<()> {
         let mut wrote = false;
-        for &(name, flow, default) in self.builder.engine.flow_commit {
+        for &(name, flow, default) in &self.builder.engine.tables.flow_commit {
             let want = match flow {
                 FlowCommit::NoFlow => default,
                 FlowCommit::Flowing => self.builder.engine.sleigh.get_context_at(from, name)?,

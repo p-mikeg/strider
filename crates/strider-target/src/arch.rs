@@ -539,7 +539,7 @@ impl SleighArch {
     /// rather than read out of the engine.
     ///
     /// What the erase re-derives FROM depends on whether the sla declares the
-    /// var FLOWING, which the decoder reads off the engine.
+    /// var FLOWING, which [`crate::DecodeTables::flow_commit`] records.
     ///
     /// A `noflow` commit covers one address
     /// (`ParserContext::applyCommits` gives it `setContextRegion(a, a+1)`), so
