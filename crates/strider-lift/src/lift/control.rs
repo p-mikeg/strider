@@ -1,5 +1,6 @@
 use crate::lift::pcode_util::nth_input_or_err;
 use anyhow::{Result, anyhow, bail};
+use strider_ir::node::ValueId;
 use strider_ir::{IRBuilderExt, IRViewer};
 
 use super::FunctionLifter;
@@ -68,10 +69,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// compiler passes an `if` expression through without normalising it to 0/1
     /// (`slghparse.y:375`), so a wider condition must not be narrowed to its low
     /// bit.  An `I1` condition already IS that test.
-    fn build_branch_condition(
-        &mut self,
-        cond_raw: strider_ir::node::ValueId,
-    ) -> Result<strider_ir::node::ValueId> {
+    fn build_branch_condition(&mut self, cond_raw: ValueId) -> Result<ValueId> {
         let ty = self.builder.value_type(cond_raw)?;
         if ty == strider_ir::ValueType::I1 {
             return Ok(cond_raw);
@@ -151,7 +149,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// `stack_pop`, when given, replaces the CC's `ret_stack_pop`.
     fn build_cc_call(
         &mut self,
-        call_address: strider_ir::node::ValueId,
+        call_address: ValueId,
         override_cc: Option<&strider_target::BuiltCallingConvention>,
         stack_pop: Option<i64>,
     ) -> Result<()> {
