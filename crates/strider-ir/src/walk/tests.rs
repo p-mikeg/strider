@@ -445,8 +445,11 @@ fn raw_def_use_postorder_reaches_dead_consumer() {
     );
 
     let empty: DenseEntitySet<NodeId> = DenseEntitySet::new();
-    let filtered: Vec<NodeId> =
-        PostOrder::new(DefUseSuccs::new(&graph, &empty), std::iter::once(k)).collect();
+    let filtered: Vec<NodeId> = PostOrder::new(
+        FnSuccs::new(|n| live_def_use_succs(&graph, &empty, n)),
+        std::iter::once(k),
+    )
+    .collect();
     assert_eq!(filtered, vec![k], "filtered walk stays at the root");
 
     let raw: Vec<NodeId> = PostOrder::new(
