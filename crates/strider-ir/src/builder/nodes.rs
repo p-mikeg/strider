@@ -1,5 +1,3 @@
-use smallvec::SmallVec;
-
 use super::FunctionBuilder;
 use crate::IRViewer;
 use crate::builder::IRBuilderExt;
@@ -25,24 +23,27 @@ impl FunctionBuilder {
         Ok(())
     }
 
+    /// [`Self::build_return_node`], dropping the node.
+    pub fn build_return(&mut self, value: Option<ValueId>, ret_values: &[ValueId]) -> Result<()> {
+        self.build_return_node(value, ret_values).map(drop)
+    }
+
     /// Value slots are `value` when present, then `ret_values` in order.
     /// Terminates the current region; terminating it again is an error.
-    pub fn build_return(&mut self, value: Option<ValueId>, ret_values: &[ValueId]) -> Result<()> {
-        let mut ret_inputs: SmallVec<[ValueId; 4]> = SmallVec::new();
-        if let Some(v) = value {
-            ret_inputs.push(v);
-        }
-        ret_inputs.extend_from_slice(ret_values);
-
+    pub fn build_return_node(
+        &mut self,
+        value: Option<ValueId>,
+        ret_values: &[ValueId],
+    ) -> Result<NodeId> {
         let res = self.terminate_cur_region()?;
-        validate_value_inputs(self.function(), &ret_inputs)?;
-
-        self.create_node(
+        validate_value_inputs(self.function(), value.as_slice())?;
+        validate_value_inputs(self.function(), ret_values)?;
+        let inputs = [res.control, res.memory].into_iter().chain(value);
+        Ok(self.create_node(
             NodeKind::Return,
-            [res.control, res.memory].into_iter().chain(ret_inputs),
+            inputs.chain(ret_values.iter().copied()),
             [],
-        );
-        Ok(())
+        ))
     }
 
     /// Control sink for a no-return direct `Call`, consuming control only:
@@ -71,19 +72,16 @@ impl FunctionBuilder {
         target_value: ValueId,
         isa_mode: Option<ValueId>,
     ) -> Result<NodeId> {
-        let mut values: SmallVec<[ValueId; 2]> = SmallVec::new();
-        values.push(target_value);
-        values.extend(isa_mode);
-
         let res = self.terminate_cur_region()?;
-        validate_value_inputs(self.function(), &values)?;
-
-        let node = self.create_node(
+        require_value_kind(self.function(), target_value)?;
+        validate_value_inputs(self.function(), isa_mode.as_slice())?;
+        Ok(self.create_node(
             NodeKind::IndirectBranch,
-            [res.control, res.memory].into_iter().chain(values),
+            [res.control, res.memory, target_value]
+                .into_iter()
+                .chain(isa_mode),
             [],
-        );
-        Ok(node)
+        ))
     }
 
     /// Test-only: terminates the current region with an unconditional branch
@@ -137,9 +135,7 @@ impl FunctionBuilder {
         debug_assert!(!arms.is_empty(), "build_switch requires at least one arm");
         let res = self.terminate_cur_region()?;
         require_value_kind(self.function(), address)?;
-        if let Some(mode) = isa_mode {
-            require_value_kind(self.function(), mode)?;
-        }
+        validate_value_inputs(self.function(), isa_mode.as_slice())?;
 
         let targets: Vec<u64> = arms.iter().map(|&(_, a)| a).collect();
         let table = self.function_mut().add_switch_table(targets);
