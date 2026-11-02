@@ -549,7 +549,7 @@ mod tests {
             limbed, scalar,
             "a from_words spelling must mask to width like a scalar one"
         );
-        let masked = ValueType::int(80).wrap_u128(value);
+        let masked = value & ValueType::int(80).int_mask_u128().unwrap();
         assert_eq!(u128::try_from(f.const_value(limbed)), Ok(masked));
         assert_eq!(
             f.const_value(limbed),
@@ -699,7 +699,7 @@ mod tests {
         ];
         for (label, ty) in cases {
             let mut f = test_function();
-            let masked = ty.wrap_u128(u128::MAX);
+            let masked = ty.int_mask_u128().unwrap();
             let saturated = f.intern_int_const(u128::MAX, ty);
             let exact = f.intern_int_const(masked, ty);
             let limbed = f.intern_int_const(UBig::from_words(&[u64::MAX; 8]), ty);
