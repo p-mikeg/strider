@@ -666,6 +666,46 @@ mod compact_tests {
         );
     }
 
+    /// Compaction keeps each slot's region: a heap slot stays a heap slot and
+    /// a stack slot a stack slot, both rebased.
+    #[test]
+    fn compact_remaps_surviving_heap_slot() {
+        use crate::MemDecomp;
+        let mut f = test_function();
+        let entry = f.entry();
+        let mem = test_initial_memory(&f);
+        int_const_node(&mut f, 0xdead_u128, crate::node::ValueType::int(64));
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        let value = |f: &mut Function, k: u128| {
+            let node = int_const_node(f, k, crate::node::ValueType::int(64));
+            f.node_outputs(node)[0]
+        };
+        let base = value(&mut f, 0x7000);
+        let heap_key = value(&mut f, 0x8000);
+        let stack_key = value(&mut f, 0x9000);
+        f.graph_mut().create_node(
+            NodeKind::Return,
+            [entry_ctrl, mem_value, base, heap_key, stack_key],
+            [],
+        );
+        f.set_heap_slot(heap_key, base, 24);
+        f.set_stack_slot(stack_key, base, -8);
+
+        let remap = f.compact().expect("compact must succeed");
+
+        let new = |v| remap.value_old_to_new(v).expect("survives");
+        let (heap_class, heap_slot) = f.memory_decomp(new(heap_key));
+        assert!(matches!(heap_class, MemDecomp::Heap(_)), "{heap_class:?}");
+        assert_eq!(heap_slot, Some((new(base), 24)));
+        let (stack_class, stack_slot) = f.memory_decomp(new(stack_key));
+        assert!(
+            matches!(stack_class, MemDecomp::Stack(_)),
+            "{stack_class:?}"
+        );
+        assert_eq!(stack_slot, Some((new(base), -8)));
+    }
+
     /// A node remap must carry the fingerprint through to the new NodeId.
     #[test]
     fn compact_preserves_asm_fingerprint_on_surviving_node() {
