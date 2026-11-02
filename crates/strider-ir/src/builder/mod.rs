@@ -1,6 +1,6 @@
 use cranelift_entity::PrimaryMap;
 
-use crate::error::Result;
+use crate::Result;
 use crate::function::Function;
 use crate::node::{IntBinaryOp, IntUnaryOp, NodeKind, ValueId, ValueKind};
 use crate::region::Region;
