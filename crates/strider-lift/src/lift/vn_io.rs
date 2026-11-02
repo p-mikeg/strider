@@ -141,14 +141,40 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             }
             SubRegOutcome::SubReg(ctx) => ctx,
         };
+        let curr_reg_val = self.builder.read_variable(&ctx.container_reg)?;
+        self.slice_out(curr_reg_val, reg, &ctx)
+    }
+
+    /// `reg`'s incoming value: its container's `InitialVar`, sliced. Unlike
+    /// [`Self::read_reg_vn`] it never reads the current region, whose value at
+    /// a loop-header entry is the phi.
+    pub(crate) fn read_initial_reg_vn(&mut self, reg: &rsleigh::Vn) -> Result<Option<ValueId>> {
+        let (container_reg, ctx) = match self.enter_sub_register(reg, "read_initial_reg_vn")? {
+            SubRegOutcome::Direct { container_reg } => (container_reg, None),
+            SubRegOutcome::SubReg(ctx) => (ctx.container_reg, Some(ctx)),
+        };
+        let Some(initial) = self.builder.function().initial_var_value(&container_reg) else {
+            return Ok(None);
+        };
+        match ctx {
+            None => Ok(Some(initial)),
+            Some(ctx) => self.slice_out(initial, reg, &ctx).map(Some),
+        }
+    }
+
+    fn slice_out(
+        &mut self,
+        container_val: ValueId,
+        reg: &rsleigh::Vn,
+        ctx: &SubRegContext,
+    ) -> Result<ValueId> {
         // The truncate is required even at shift 0: without it the caller gets
         // the full container width, and width-sensitive downstream ops break
         // (bitcasting an I64 read to F32 is ill-defined, so IntBitsToFloat
         // plus the optimizer drop the chain).
         let reg_ty: ValueType = reg.int_type()?;
-        let curr_reg_val = self.builder.read_variable(&ctx.container_reg)?;
         let shifted = self.builder.build_shift_by_const(
-            curr_reg_val,
+            container_val,
             ctx.shift_bits,
             IntBinaryOp::ShiftRight,
             ctx.container_ty,
