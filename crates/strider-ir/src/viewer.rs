@@ -223,7 +223,36 @@ pub trait IRViewer {
             NodeKind::Call { .. } | NodeKind::CallOther { .. } => {
                 inputs.get(NodeKind::CTRL_MEM_SLOT).copied()
             }
-            _ => None,
+            NodeKind::Entry
+            | NodeKind::InitialMemory
+            | NodeKind::InitialVar(_)
+            | NodeKind::Region
+            | NodeKind::MemPhi
+            | NodeKind::Phi
+            | NodeKind::If
+            | NodeKind::Switch(_)
+            | NodeKind::Return
+            | NodeKind::IndirectBranch
+            | NodeKind::Unreachable
+            | NodeKind::IntConst(_)
+            | NodeKind::IntUnaryOp(_)
+            | NodeKind::IntBinaryOp(_)
+            | NodeKind::IntCmpOp(_)
+            | NodeKind::Truncate
+            | NodeKind::Popcount
+            | NodeKind::Lzcount
+            | NodeKind::Extend(_)
+            | NodeKind::FloatConst(_)
+            | NodeKind::FloatBinaryOp(_)
+            | NodeKind::FloatUnaryOp(_)
+            | NodeKind::FloatCmpOp(_)
+            | NodeKind::IntToFloat
+            | NodeKind::FloatToInt
+            | NodeKind::FloatToFloat
+            | NodeKind::IntBitsToFloat
+            | NodeKind::FloatBitsToInt
+            | NodeKind::CPoolRef
+            | NodeKind::New => None,
         }
     }
 
