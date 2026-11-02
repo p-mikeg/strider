@@ -3,7 +3,7 @@ use core::slice;
 
 use crate::cache::NodeCacheable;
 use crate::graph::Graph;
-use crate::ids::{NodeId, UseId, ValueId};
+use crate::ids::{UseId, ValueId};
 
 #[cfg(feature = "edge-read-count")]
 std::thread_local! {
@@ -114,37 +114,5 @@ impl<N, V, C: NodeCacheable<N, V>> Iterator for InputIter<'_, N, V, C> {
     fn nth(&mut self, n: usize) -> Option<Self::Item> {
         count_edge_read();
         Some(self.graph.store.inputs[*self.iter.nth(n)?].value_id)
-    }
-}
-
-/// Walks one value's use-list, able to mutate the edge it points at in place.
-pub struct InputCursor<'a, N, V, C: NodeCacheable<N, V>> {
-    pub(crate) graph: &'a mut Graph<N, V, C>,
-    pub(crate) current: Option<UseId>,
-}
-
-impl<N, V, C: NodeCacheable<N, V>> InputCursor<'_, N, V, C> {
-    /// `None` once the use-list is exhausted.
-    pub fn current(&self) -> Option<(NodeId, u32)> {
-        let current = &self.graph.store.inputs[self.current?];
-        Some((current.node_id, current.input_index))
-    }
-
-    fn move_next(&mut self) {
-        let Some(current) = self.current else {
-            return;
-        };
-        self.current = self.graph.store.inputs[current].next.expand();
-    }
-
-    /// Redirects the current input edge to `new_value` and advances. `false`
-    /// if the cursor was already past the end.
-    pub fn replace_current_with(&mut self, new_value: ValueId) -> bool {
-        let Some(current) = self.current else {
-            return false;
-        };
-        self.move_next();
-        self.graph.update_input(current, new_value);
-        true
     }
 }

@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 
 use crate::cache::{NodeCache, NodeCacheable};
 use crate::ids::{NodeId, UseId, UseIdList, ValueId, ValueIdList};
-use crate::iter::{InputCursor, Inputs};
+use crate::iter::Inputs;
 use crate::storage::{Node, RawStore, UseData, ValueData};
 
 /// Nodes, their input/output slots, the dedup cache, and a generation counter
@@ -286,15 +286,6 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
         self.store.outputs[value].first_use.expand()
     }
 
-    #[inline]
-    pub fn value_use_cursor(&mut self, value_id: ValueId) -> InputCursor<'_, N, V, C> {
-        let first_use = self.store.outputs[value_id].first_use.expand();
-        InputCursor {
-            graph: self,
-            current: first_use,
-        }
-    }
-
     /// Appends an output of `kind` as the node's last.
     pub fn add_node_output(&mut self, node_id: NodeId, kind: V) -> ValueId {
         self.cache.invalidate(node_id);
@@ -429,14 +420,12 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// `false` if `old` had no uses, or if `old == new_val` since a
     /// self-redirect changes nothing.
     pub fn replace_all_uses(&mut self, old: ValueId, new_val: ValueId) -> bool {
-        if old == new_val {
+        if old == new_val || self.store.outputs[old].first_use.is_none() {
             return false;
         }
-        let mut cursor = self.value_use_cursor(old);
-        if cursor.current().is_none() {
-            return false;
+        while let Some(use_id) = self.store.outputs[old].first_use.expand() {
+            self.update_input(use_id, new_val);
         }
-        while cursor.replace_current_with(new_val) {}
         true
     }
 

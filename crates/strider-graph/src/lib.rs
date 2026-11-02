@@ -11,5 +11,5 @@ pub use graph::{Graph, NodeIdRemap};
 pub use ids::{NodeId, UseId, ValueId};
 #[cfg(feature = "edge-read-count")]
 pub use iter::edge_reads;
-pub use iter::{InputCursor, InputIter, Inputs};
+pub use iter::{InputIter, Inputs};
 pub use storage::RawStore;
