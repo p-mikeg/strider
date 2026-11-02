@@ -214,8 +214,8 @@ impl<'g> EditFunction<'g> {
     ///
     /// Entry-global: covers only the entry-rooted graph.  A post-order seeded
     /// at a non-entry node must recompute roots from scratch (e.g.
-    /// [`walk_info(Some(seed))`](crate::IRWalker::walk_info) +
-    /// [`reverse_postorder`](crate::IRWalker::reverse_postorder)).
+    /// [`GraphWalkInfo::compute_full`](crate::walk::GraphWalkInfo::compute_full)
+    /// from the seed).
     ///
     /// Walked once per [`Self::edits`] reading, so the passes of one pipeline
     /// iteration that leave the graph alone share one walk.
