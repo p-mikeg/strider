@@ -288,9 +288,9 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// `inputs[0]` is that engine's raw `AddrSpace` pointer.
     ///
     /// What it establishes is that the id is one of THIS engine's live space
-    /// pointers; it is not proof of origin.  A dropped engine's id whose address this engine's allocator
-    /// handed back names a live space of this engine, so it passes and the
-    /// Load / Store silently takes that space.  Distinguishing the two needs
+    /// pointers; it is not proof of origin.  A dropped engine's id whose
+    /// address this engine's allocator handed back names a live space of this
+    /// engine, so it passes and the Load / Store silently takes that space.  Distinguishing the two needs
     /// an id rsleigh derives from the space rather than from its address.
     fn check_cfg_space_ids(&self, cfg: &strider_cfg::Cfg) -> Result<()> {
         for wrapped in cfg.regions().flat_map(|region| region.insns.iter()) {
