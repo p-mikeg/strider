@@ -23,24 +23,6 @@ enum ArgClass {
     Float,
 }
 
-/// Drains an `FxHashMap` and rebuilds it through a per-entry translation,
-/// keeping only entries `f` maps to `Some((new_key, new_payload))`.
-fn remap_hashmap<K, V, NK, NV>(
-    map: &mut FxHashMap<K, V>,
-    mut f: impl FnMut(K, V) -> Option<(NK, NV)>,
-) -> FxHashMap<NK, NV>
-where
-    NK: std::hash::Hash + Eq,
-{
-    let mut dst = FxHashMap::with_capacity_and_hasher(map.len(), Default::default());
-    for (old_key, old_payload) in map.drain() {
-        if let Some((new_key, new_payload)) = f(old_key, old_payload) {
-            dst.insert(new_key, new_payload);
-        }
-    }
-    dst
-}
-
 /// Every id-keyed payload table of a [`Function`] and nothing else.  None of
 /// it is part of the graph's structural identity.
 ///
@@ -64,7 +46,7 @@ pub struct FuncSideTables {
     /// `InitialVnId` to `InitialVar(id)` node index. Accessors trust it; the
     /// validator re-checks reachable entries against the node's kind
     /// (`StaleInitialVarIndex`).
-    pub(crate) initial_var_index: FxHashMap<crate::node::InitialVnId, NodeId>,
+    pub(crate) initial_var_index: SecondaryMap<crate::node::InitialVnId, Option<NodeId>>,
     /// Every integer-constant value referenced by an `IntConst(id)` node,
     /// deduped by value. Unbounded and unsigned; the declared width is the
     /// node's output type, and `crate::eval::mask` is what holds a stored
@@ -91,7 +73,7 @@ impl FuncSideTables {
             asm_fingerprints: UnionDag::default(),
             value_vn: FxHashMap::default(),
             arg_index_to_values: FxHashMap::default(),
-            initial_var_index: FxHashMap::default(),
+            initial_var_index: SecondaryMap::new(),
             const_interner: EntityInterner::default(),
             switch_tables: PrimaryMap::new(),
             call_ccs: EntityInterner::default(),
@@ -317,21 +299,17 @@ impl FuncSideTables {
         asm_fingerprints.remap(|old| remap.node_old_to_new(old));
         // `InitialVnId`s are stable across compaction, so only the arena-id
         // coordinate of the next two maps needs translating.
-        *value_vn = remap_hashmap(value_vn, |old_value, vn_id| {
-            remap
-                .value_old_to_new(old_value)
-                .map(|new_value| (new_value, vn_id))
-        });
-        *initial_var_index = remap_hashmap(initial_var_index, |vn_id, old_id| {
-            remap.node_old_to_new(old_id).map(|new_id| (vn_id, new_id))
-        });
+        *value_vn = value_vn
+            .drain()
+            .filter_map(|(value, id)| Some((remap.value_old_to_new(value)?, id)))
+            .collect();
+        for node in initial_var_index.values_mut() {
+            *node = node.and_then(|n| remap.node_old_to_new(n));
+        }
         // An index whose carriers all vanish is dropped.
-        *arg_index_to_values = remap_hashmap(arg_index_to_values, |key, old_values| {
-            let mapped: Vec<ValueId> = old_values
-                .into_iter()
-                .filter_map(|old_value| remap.value_old_to_new(old_value))
-                .collect();
-            (!mapped.is_empty()).then_some((key, mapped))
+        arg_index_to_values.retain(|_, values| {
+            values.retain_mut(|v| remap.value_old_to_new(*v).map(|new| *v = new).is_some());
+            !values.is_empty()
         });
     }
 }
@@ -490,14 +468,14 @@ impl crate::Function {
     /// have been culled.
     pub fn initial_sp(&self) -> Option<NodeId> {
         let sp_id = self.vn_id_of(&self.stack_vn())?;
-        self.side_tables().initial_var_index.get(&sp_id).copied()
+        self.side_tables().initial_var_index[sp_id]
     }
 
     /// The entry value of `vn`'s `InitialVar` node.  `None` when `vn` is
     /// untracked.
     pub fn initial_var_value(&self, vn: &rsleigh::Vn) -> Option<ValueId> {
         let id = self.vn_id_of(vn)?;
-        let node = *self.side_tables().initial_var_index.get(&id)?;
+        let node = self.side_tables().initial_var_index[id]?;
         self.graph().node_outputs(node).first().copied()
     }
 }

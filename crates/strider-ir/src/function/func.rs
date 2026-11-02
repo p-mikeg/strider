@@ -1018,6 +1018,48 @@ mod compact_tests {
         assert!(matches!(f.node_kind(node), NodeKind::InitialVar(_)));
     }
 
+    /// A carrier pruned from the middle of an index's list leaves the survivors
+    /// in their registration order.
+    #[test]
+    fn compact_keeps_surviving_carrier_order() {
+        use crate::node::{InitialVnId, ValueType};
+
+        let mut f = test_function();
+        let entry = f.entry();
+        let mem = test_initial_memory(&f);
+        let carrier = |f: &mut Function, id: usize| {
+            let node = f.graph_mut().create_node(
+                NodeKind::InitialVar(InitialVnId::from_index(id)),
+                [],
+                [ValueKind::Typed(ValueType::int(64))],
+            );
+            f.node_outputs(node)[0]
+        };
+        let first = carrier(&mut f, 0);
+        let dropped = carrier(&mut f, 1);
+        let last = carrier(&mut f, 2);
+        let [entry_ctrl] = f.node_outputs_exact::<1>(entry).unwrap();
+        let [mem_value] = f.node_outputs_exact::<1>(mem).unwrap();
+        f.graph_mut()
+            .create_node(NodeKind::Return, [entry_ctrl, mem_value, last, first], []);
+        for value in [first, dropped, last] {
+            f.side_tables_mut().register_arg_value(0, value);
+        }
+
+        f.compact().expect("compact must succeed");
+
+        let ids: Vec<_> = f
+            .side_tables()
+            .arg_index_to_values(0)
+            .iter()
+            .map(|&v| *f.node_kind(f.graph().producer(v)))
+            .collect();
+        assert_eq!(
+            ids,
+            [0, 2].map(|i| NodeKind::InitialVar(InitialVnId::from_index(i)))
+        );
+    }
+
     /// Compaction drops a dead call convention and renumbers the live one in
     /// place, exactly as it does for the constants and the switch tables.
     #[test]
