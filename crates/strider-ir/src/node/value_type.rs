@@ -111,17 +111,6 @@ impl ValueType {
         matches!(self, Self::Float(_))
     }
 
-    /// `v` reduced to this type's width, `v mod 2^width`: exact at every
-    /// integer width, since past 128 bits a `u128` is already below `2^width`.
-    /// A float has no integer bits: 0.
-    #[cfg(test)]
-    pub const fn wrap_u128(self, v: u128) -> u128 {
-        match self {
-            Self::Int(w) => v & crate::eval::mask_below(w as u32),
-            Self::Float(_) => 0,
-        }
-    }
-
     /// This integer type's all-ones value, the modulus less one. `None` for a
     /// float, and past the `u128` carrier, where no `u128` is that value.
     #[inline]
@@ -473,18 +462,6 @@ mod tests {
         assert_eq!(T::int(48).get_signed_int((1u128 << 48) - 1), Some(-1i128));
     }
 
-    /// Exact at every width: past the carrier a `u128` is already below
-    /// `2^width`. A float has no integer bits.
-    #[test]
-    fn wrap_u128_reduces_to_the_width() {
-        assert_eq!(ValueType::I1.wrap_u128(0b11), 1);
-        assert_eq!(ValueType::int(24).wrap_u128(u128::MAX), 0xFF_FFFF);
-        assert_eq!(ValueType::int(80).wrap_u128(u128::MAX), (1u128 << 80) - 1);
-        assert_eq!(ValueType::int(128).wrap_u128(u128::MAX), u128::MAX);
-        assert_eq!(ValueType::int(256).wrap_u128(u128::MAX), u128::MAX);
-        assert_eq!(ValueType::float(32).wrap_u128(0x3F80_0000), 0);
-    }
-
     /// The all-ones value up to the carrier, and nothing for a float or a
     /// wider integer, never the saturated `u128::MAX`.
     #[test]
@@ -496,9 +473,6 @@ mod tests {
                 None
             };
             assert_eq!(ty.int_mask_u128(), want, "{ty:?}");
-            if let Some(mask) = want {
-                assert_eq!(ty.wrap_u128(u128::MAX), mask, "{ty:?}");
-            }
         }
     }
 
