@@ -161,7 +161,7 @@ impl FunctionDotDumper<'_> {
         out: &mut ::dot::DotEmitter,
         state: &mut FunctionDotDumperState,
     ) {
-        let parent_id = self.function.producer(parent_value);
+        let (parent_id, output_index) = self.function.value_definition(parent_value);
         if !self.in_view(parent_id) {
             return;
         }
@@ -169,46 +169,38 @@ impl FunctionDotDumper<'_> {
 
         // Connect from the producing output's virtual node if it has one;
         // clobbered Call outputs (index >= 2) get theirs made on first use.
-        let parent_dot_id = {
-            let maybe_virt = state.virtual_nodes.get(&parent_value).cloned();
-            if let Some(virt_id) = maybe_virt {
+        let parent_dot_id = match state.virtual_nodes.get(&parent_value).cloned() {
+            Some(virt_id) => virt_id,
+            None if matches!(parent_kind, NodeKind::Call { .. }) && output_index >= 2 => {
+                let name = self.clobber_name(parent_value, output_index);
+                let label = format!("Post Call\n{name}");
+                let virt_id = state.alloc_virtual_id();
+                let call_dot_id = self.dot_id(state, parent_id);
+                out.node(
+                    &virt_id,
+                    &label,
+                    "box",
+                    &[("fillcolor", "#28102a"), ("style", "filled,dashed")],
+                );
+                out.edge(
+                    &call_dot_id,
+                    &virt_id,
+                    &[("color", "#888888"), ("style", "dashed")],
+                );
+                state.virtual_nodes.insert(parent_value, virt_id.clone());
                 virt_id
-            } else if matches!(parent_kind, NodeKind::Call { .. }) {
-                let (_, output_index) = self.function.value_definition(parent_value);
-                if output_index >= 2 {
-                    let name = self.call_clobbered_name(parent_value);
-                    let label = format!("Post Call\n{name}");
-                    let virt_id = state.alloc_virtual_id();
-                    let call_dot_id = self.dot_id(state, parent_id);
-                    out.node(
-                        &virt_id,
-                        &label,
-                        "box",
-                        &[("fillcolor", "#28102a"), ("style", "filled,dashed")],
-                    );
-                    out.edge(
-                        &call_dot_id,
-                        &virt_id,
-                        &[("color", "#888888"), ("style", "dashed")],
-                    );
-                    state.virtual_nodes.insert(parent_value, virt_id.clone());
-                    virt_id
-                } else {
-                    self.dot_id(state, parent_id)
-                }
-            } else if parent_kind == NodeKind::If {
-                // The If may not have rendered yet, so make the branch virtual
-                // eagerly rather than landing this edge on the If diamond.
-                let (_, output_index) = self.function.value_definition(parent_value);
+            }
+            // The If may not have rendered yet, so make the branch virtual
+            // eagerly rather than landing this edge on the If diamond.
+            None if parent_kind == NodeKind::If => {
                 let blabel = if output_index == 0 {
                     "if.true"
                 } else {
                     "if.false"
                 };
                 Self::get_or_create_if_branch_virtual(state, parent_value, blabel, out)
-            } else {
-                self.dot_id(state, parent_id)
             }
+            None => self.dot_id(state, parent_id),
         };
 
         let (label, tail_idx, color) = edge_style(self, node, idx);
