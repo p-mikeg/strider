@@ -6,8 +6,8 @@ use anyhow::anyhow;
 
 use crate::error::Result;
 use crate::node::{
-    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeKind,
-    ValueKind, ValueType,
+    ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp, NodeId,
+    NodeKind, ValueKind, ValueType,
 };
 use cranelift_entity::EntityRef;
 use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, reg_vn};
@@ -85,6 +85,20 @@ fn non_const_add(b: &mut FunctionBuilder, ty: ValueType) -> Result<ValueId> {
     let lhs = b.build_int_const(1u64, ty)?;
     let rhs = b.build_int_const(2u64, ty)?;
     b.build_int_binary_operation(lhs, rhs, IntBinaryOp::Add, ty)
+}
+
+/// `new` mints exactly `[Entry, InitialMemory]`, and the entry memory is
+/// the `InitialMemory` output.
+#[test]
+fn new_builds_entry_then_initial_memory() {
+    let b = empty_builder().unwrap();
+    let g = b.function().graph();
+    let ids: Vec<NodeId> = g.all_node_ids().collect();
+    assert_eq!(ids, [NodeId::new(0), NodeId::new(1)]);
+    assert_eq!(*g.node_kind(ids[0]), NodeKind::Entry);
+    assert_eq!(*g.node_kind(ids[1]), NodeKind::InitialMemory);
+    assert_eq!(b.function().entry(), ids[0]);
+    assert_eq!(g.node_outputs(ids[1]), [b.entry_memory]);
 }
 
 #[test]
