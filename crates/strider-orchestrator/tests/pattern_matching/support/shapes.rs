@@ -41,7 +41,7 @@ pub(crate) fn if_cmp_then_return_inverted(c: u64) -> Function {
 }
 
 /// Graph that, after `opt::FunctionArgDetect`, has `reg` registered as the
-/// carrier for arg 0 in `FuncSideTables::arg_index_to_values`. The underlying
+/// carrier for arg 0 in `FunctionSideTables::arg_index_to_values`. The underlying
 /// `InitialVar(reg)` node stays in place.
 pub(crate) fn function_arg_reg() -> (Function, rsleigh::Vn) {
     use strider_orchestrator::opt::FunctionArgDetect;
