@@ -3,7 +3,7 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::builder::{Builder, FlowCommit, FlowContext, FlowVars, hold_var};
+use crate::builder::{Builder, FlowContext, FlowVars, hold_var};
 use crate::{Cfg, CfgOptions, MachineInsnAddr, Result};
 
 /// A Sleigh engine and the decode context it carries across functions, so
@@ -31,9 +31,6 @@ pub struct DecodeEngine<R: rsleigh::MemReader> {
     pub(crate) tables: &'static strider_target::DecodeTables,
     /// The sla's address spaces, fixed for the engine's lifetime.
     space_ids: rsleigh::SpaceIds,
-    /// [`strider_target::DecodeTables::flow_commit`], per engine so a test can
-    /// lend another.
-    pub(crate) flow_commit: &'static [(&'static str, FlowCommit, u32)],
     /// The entry context each ISA mode last pinned, keyed by the mode value
     /// ([`strider_target::SleighArch::entry_mode_context`]), `None` for an
     /// arch without one.
@@ -46,6 +43,11 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
     /// # Errors
     ///
     /// When the sla does not load.
+    ///
+    /// # Panics
+    ///
+    /// When the preset and its sla disagree
+    /// ([`strider_target::SleighArch::decode_tables`]).
     pub fn new(arch: strider_target::SleighArch, reader: R) -> Result<Self> {
         // Before the tables, whose own Sleigh panics where this one errs.
         let sleigh = arch.sleigh(reader)?;
@@ -55,7 +57,6 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
             sleigh,
             arch,
             tables,
-            flow_commit: &tables.flow_commit,
             entry_contexts: FxHashMap::default(),
         })
     }
