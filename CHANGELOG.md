@@ -296,10 +296,10 @@
 - `cranelift-entity` is 0.128 (was 0.112). It is a public dependency through
   `EntityRef`, which `NodeId`, `ValueId` and the other entity ids
   implement, so a caller naming that trait needs the same version.
-- `SideTables::set_frame_address_in_call_register` is
-  `record_call_register_frame_reach`, taking the stack address's offset from
-  the entry SP (`i128::MAX` for none); `call_register_frame_reach` reads the
-  highest recorded.
+- `SideTables::set_frame_address_in_call_register` is gone:
+  `FunctionBuilder::build` records the call register's frame reach, the
+  stack address's offset from the entry SP, which
+  `Function::call_register_frame_reach` reads (`i128::MAX` for none).
 - `BuiltCallingConvention` has a `reg_args_adjoin_stack_args` field (on for
   the ARM AAPCS, MIPS O32 / N64 and PowerPC64 ELF presets), so a struct
   literal names it; `incoming_args_start` is where the incoming arguments'
@@ -513,10 +513,10 @@
 - `RegionIndex::overlapping` is gone; `RegionIndex::covering` remains.
 - `strider_ir::Value`, the second name for `strider_ir::node::ValueId`, is
   gone: use `ValueId`.
+- `FunctionBuilder::build_entry` is gone: a second call minted a second
+  `InitialMemory`, and `FunctionBuilder::new` mints the one.
 - Crate-private now, having no user outside strider-ir:
-  `FunctionBuilder::build_entry` (renamed `build_initial_memory`; a second
-  call minted a second `InitialMemory`; `FunctionBuilder::new` already mints
-  the one), `write_variable_from_id` (use `write_variable` with the varnode),
+  `write_variable_from_id` (use `write_variable` with the varnode),
   `Function::vn_ids` (use `all_vns`, in the same order),
   `GraphWalkInfo::postorder` (use `reverse_postorder`, reversed) and the walk
   types `DefUsePostorder`, `RawDefUseSuccs` and `DefUseSuccs` (no
@@ -848,12 +848,15 @@
   op's footprint still comes from `cfg_opts`).
 - A `CALL` whose target operand is not in the code space selects no
   `per_address_ccs` override; the CFG's no-return rule already ignored it.
-- An arch and sla that disagree on the ISA mode (a mode var the sla does not
-  flow, an unpaired `ISAModeSwitch`) panic in `SleighArch::decode_tables`,
-  which `Lifter::new`, `Strider::new` and `DecodeEngine::new` read, in every
-  build; before, only a debug build asserted it. A preset is compiled in, so
-  this is a preset bug, which a test sweeps. The three return `Err` only when
-  the sla does not load.
+- Any disagreement between a preset and its sla panics in
+  `SleighArch::decode_tables`, which `Lifter::new`, `Strider::new` and
+  `DecodeEngine::new` read: unreadable user-op names or flowing vars, a
+  `flow_commit_vars` name the sla does not declare, a `ram` space that is
+  missing, misnamed or not byte-addressed, and an ISA-mode mismatch (a mode
+  var the sla does not flow, an unpaired `ISAModeSwitch`). Before, these
+  returned `Err`, or for the ISA mode only a debug build asserted. A preset
+  is compiled in, so this is a preset bug, which a test sweeps. The three
+  return `Err` only when the sla does not load.
 - A relocated image no longer fails to load with "patch budget": every
   region shares one patch list, so a site any number of overlapping
   mappings cover is patched in all of them at no extra cost.
@@ -1676,9 +1679,12 @@
   lose none.
 - ARM: under hard-float AAPCS, a float argument sliced from a shared
   container (`d0` / `d1` of `q0`) at an entry that is also a loop header was
-  the loop phi, not the incoming value, so `function_arg(Float, j)` matched
-  the loop-carried value. It slices the container's `InitialVar`, as the
-  integer carriers already did.
+  the loop phi, not the incoming value. It now slices the container's
+  `InitialVar`, as the integer carriers already did, so before compaction
+  `function_arg(Float, j)` matches the incoming value. The body reads the
+  phi's slice, so that carrier is unused and compaction (which `analyze`
+  runs) drops it: after `analyze`, `function_arg(Float, j)` matches nothing
+  there, where it matched the loop-carried value.
 - MIPS (`t9`) and PowerPC64 ELFv2 (`r12`): at an entry that is also a loop
   header, binding the entry-address register to the entry address
   overwrote the register's phi, so every iteration read the entry address.
@@ -1780,7 +1786,7 @@
 - `vn_container::{vn_end, vn_overlaps}`, the exact varnode end and overlap
   `strider-target` and the lifter's p-code folder now share.
 - `strider_cfg::DecodeEngine`: the Sleigh and the decode context it carries
-  across functions; `DecodeEngine::new(arch, sleigh)?.build_cfg(entry, &opts)`
+  across functions; `DecodeEngine::new(arch, reader)?.build_cfg(entry, &opts)`
   builds a CFG as `Lifter::build_cfg` does.
 - `Cfg::region_containing`: the region owning an address, of those containing
   it the one with the greatest start.
