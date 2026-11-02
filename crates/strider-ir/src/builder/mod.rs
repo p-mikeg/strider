@@ -53,17 +53,14 @@ impl FunctionBuilder {
         byte_order: impl Into<strider_target::ByteOrder>,
     ) -> Result<Self> {
         // Callers pass the stack vn in `all_used_variables` themselves.
-        for v in cc
-            .ret_val_regs
-            .iter()
-            .chain(cc.ret_val_regs_float.iter())
-            .chain(cc.arg_passing_regs.iter())
-            .chain(cc.arg_passing_regs_float.iter())
-        {
-            if !all_used_variables.contains(v) {
-                all_used_variables.push(*v);
-            }
-        }
+        // `Function::new` drops the duplicates.
+        all_used_variables.extend(
+            cc.ret_val_regs
+                .iter()
+                .chain(&cc.ret_val_regs_float)
+                .chain(&cc.arg_passing_regs)
+                .chain(&cc.arg_passing_regs_float),
+        );
         let mut function = Function::new(cc, byte_order, all_used_variables);
         let memory_node =
             function
