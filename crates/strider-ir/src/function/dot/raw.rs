@@ -123,7 +123,7 @@ impl<'a> RawFunctionDumper<'a> {
         if let Some(name) = f.call_other_name(node) {
             s.push_str(&format!("\nop={name}"));
         }
-        if matches!(f.node_kind(node), NodeKind::Call { .. }) {
+        if matches!(kind, NodeKind::Call { .. }) {
             // How many outputs past Control/Memory carry a clobber tag.
             let tagged = f
                 .node_outputs(node)
