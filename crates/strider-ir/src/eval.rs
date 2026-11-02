@@ -15,48 +15,34 @@ use dashu_int::{IBig, UBig};
 
 use crate::node::{IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType};
 
-/// Every bit below `bits` set, for `bits <= 128`. Total at both ends: `0`
-/// shifts a `1` out of range and `128` shifts `u128::MAX` out of range, and
-/// the width is only checked by the constructors, not by the type.
-const fn carrier_ones(bits: usize) -> u128 {
-    match bits {
-        0 => 0,
-        128 => u128::MAX,
-        b => (1u128 << b) - 1,
-    }
-}
-
 /// `v` with every bit above `ty`'s width cleared. A float has no integer
 /// bits: 0, as [`ValueType::wrap_u128`] gives.
 #[must_use]
 pub fn mask(v: &UBig, ty: ValueType) -> UBig {
-    if !ty.is_integer() {
-        return UBig::ZERO;
+    match ty {
+        // A width the carrier holds masks without touching the heap: `&` with
+        // a carrier mask reads only the low dword of a wider `v`.
+        ValueType::Int(w) if w <= 128 => match u128::try_from(v) {
+            Ok(n) => UBig::from(n & mask_below(w.into())),
+            Err(_) => v & UBig::from(mask_below(w.into())),
+        },
+        ValueType::Int(w) => {
+            let mut m = v.clone();
+            m.clear_high_bits(w.into());
+            m
+        }
+        ValueType::Float(_) => UBig::ZERO,
     }
-    let bits = ty.bit_width();
-    // A width the carrier holds masks without touching the heap; `split_bits`
-    // allocates both halves to discard one.
-    if bits <= 128
-        && let Ok(n) = u128::try_from(v)
-    {
-        return UBig::from(n & carrier_ones(bits));
-    }
-    v.clone().split_bits(bits).0
 }
 
 /// Every bit of `ty` set, 0 for a float.
 #[must_use]
 pub fn all_ones(ty: ValueType) -> UBig {
-    if !ty.is_integer() {
-        return UBig::ZERO;
+    match ty {
+        ValueType::Int(w) if w <= 128 => UBig::from(mask_below(w.into())),
+        ValueType::Int(w) => (UBig::ONE << usize::from(w)) - UBig::ONE,
+        ValueType::Float(_) => UBig::ZERO,
     }
-    let bits = ty.bit_width();
-    // Every width but the two widest; a shift and a subtraction per call
-    // otherwise, for one of sixteen answers.
-    if bits <= 128 {
-        return UBig::from(carrier_ones(bits));
-    }
-    (UBig::ONE << bits) - UBig::ONE
 }
 
 /// `!v` within `ty`.
@@ -1032,5 +1018,21 @@ mod tests {
         assert_eq!(lzcount(&v, ValueType::int(256)), Some(u(55)));
         assert_eq!(lzcount(&v, ValueType::int(512)), Some(u(311)));
         assert_eq!(lzcount(&UBig::ZERO, ValueType::int(512)), Some(u(512)));
+    }
+
+    #[test]
+    fn mask_is_exact_for_either_dashu_form_at_every_width_class() {
+        let large = (UBig::ONE << 200usize) + u(0xff);
+        for (w, want) in [
+            (8, u(0xff)),
+            (64, u(0xff)),
+            (128, u(0xff)),
+            (256, large.clone()),
+        ] {
+            assert_eq!(mask(&large, ValueType::int(w)), want, "i{w}");
+        }
+        assert_eq!(mask(&u(u128::MAX), ValueType::int(512)), u(u128::MAX));
+        assert_eq!(mask(&u(0x1ff), ValueType::int(8)), u(0xff));
+        assert_eq!(mask(&large, ValueType::float(64)), UBig::ZERO);
     }
 }
