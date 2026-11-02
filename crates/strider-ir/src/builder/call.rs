@@ -140,7 +140,7 @@ impl FunctionBuilder {
                 [outputs[NodeKind::CTRL_OUT_SLOT]],
                 [],
             );
-            self.terminate_cur_region().map(|_| ())?;
+            self.terminate_cur_region()?;
         } else {
             self.advance_cur_region_ctrl(outputs[NodeKind::CTRL_OUT_SLOT])?;
             if advance_memory {
