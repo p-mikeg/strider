@@ -31,8 +31,6 @@ pub struct DecodeEngine<R: rsleigh::MemReader> {
     pub(crate) tables: &'static strider_target::DecodeTables,
     /// The sla's address spaces, fixed for the engine's lifetime.
     space_ids: rsleigh::SpaceIds,
-    /// The sla's flowing context vars.
-    pub(crate) flow_vars: FlowVars,
     /// [`strider_target::DecodeTables::flow_commit`], per engine so a test can
     /// lend another.
     pub(crate) flow_commit: &'static [(&'static str, FlowCommit, u32)],
@@ -57,7 +55,6 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
             sleigh,
             arch,
             tables,
-            flow_vars: FlowVars::of(arch),
             flow_commit: &tables.flow_commit,
             entry_contexts: FxHashMap::default(),
         })
@@ -100,7 +97,7 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
             .entry_contexts
             .entry(mode_key)
             .or_insert_with(|| FlowContext::from(&tables.entry_defaults[..]));
-        self.flow_vars.pin_at(&mut self.sleigh, decode_addr, want)?;
+        FlowVars::of(tables).pin_at(&mut self.sleigh, decode_addr, want)?;
         // The pin's diff can write an alias of the mode bit last, flipping it
         // back.
         if let Some((var, value)) = entry_mode {
@@ -108,7 +105,7 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
         }
         // The function's now-committed ISA mode, the base context the builder
         // decodes a strider-resolved target in.
-        let function_mode = self.flow_vars.snapshot(&self.sleigh, decode_addr);
+        let function_mode = self.flow_vars().snapshot(&self.sleigh, decode_addr);
         self.entry_contexts.insert(mode_key, function_mode.clone());
         Ok(Builder::new(self, decode_addr, function_mode, opts))
     }
@@ -127,6 +124,11 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
     #[must_use]
     pub fn space_ids(&self) -> &rsleigh::SpaceIds {
         &self.space_ids
+    }
+
+    /// The sla's flowing context vars.
+    pub(crate) fn flow_vars(&self) -> FlowVars {
+        FlowVars::of(self.tables)
     }
 
     #[must_use]

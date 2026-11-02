@@ -814,7 +814,7 @@ fn enqueue_reads_no_context_off_a_commit_point() {
     let mut engine = crate::DecodeEngine::new(arch, reader).expect("decode engine");
 
     CONTEXT_READS.with(|n| n.set(0));
-    let _ = engine.flow_vars.snapshot(&engine.sleigh, 0x1000);
+    let _ = engine.flow_vars().snapshot(&engine.sleigh, 0x1000);
     let per_snapshot = CONTEXT_READS.with(std::cell::Cell::get);
     assert!(per_snapshot > 1, "premise: the ARM sla flows several vars");
 
@@ -826,7 +826,7 @@ fn enqueue_reads_no_context_off_a_commit_point() {
     let var = arch.isa_mode_var().expect("ARM has an ISA-mode var");
     assert_eq!(
         b.engine
-            .flow_vars
+            .flow_vars()
             .value_of(&b.work_queue.last().expect("queued").carried, var),
         Some(1),
         "the child carries the parent's mode",
@@ -852,8 +852,8 @@ fn enqueue_ignores_a_context_commit_this_build_did_not_make() {
     );
     assert_ne!(arch.isa_mode_var(), Some(victim));
 
-    let entry = engine.flow_vars.snapshot(&engine.sleigh, 0x1000);
-    let clean = engine.flow_vars.value_of(&entry, victim).expect("read");
+    let entry = engine.flow_vars().snapshot(&engine.sleigh, 0x1000);
+    let clean = engine.flow_vars().value_of(&entry, victim).expect("read");
 
     // A previous function's `globalset`, still held forward at the target.
     let stale = clean ^ 1;
@@ -869,7 +869,7 @@ fn enqueue_ignores_a_context_commit_this_build_did_not_make() {
     b.enqueue(None, addr(0x1040, 0), None, &[]);
     assert_eq!(
         b.engine
-            .flow_vars
+            .flow_vars()
             .value_of(&b.work_queue.last().expect("queued").carried, victim),
         Some(clean),
         "a commit this build never made must not be carried",
@@ -881,7 +881,7 @@ fn enqueue_ignores_a_context_commit_this_build_did_not_make() {
     b.enqueue(None, addr(0x1040, 0), None, &[]);
     assert_eq!(
         b.engine
-            .flow_vars
+            .flow_vars()
             .value_of(&b.work_queue.last().expect("queued").carried, victim),
         Some(stale),
         "this build's own commit IS carried",
@@ -910,8 +910,8 @@ fn enqueue_reads_the_engine_only_where_this_build_re_derives() {
         .next()
         .expect("x86-64 declares flowing vars");
 
-    let entry = engine.flow_vars.snapshot(&engine.sleigh, 0x1000);
-    let clean = engine.flow_vars.value_of(&entry, &victim).expect("read");
+    let entry = engine.flow_vars().snapshot(&engine.sleigh, 0x1000);
+    let clean = engine.flow_vars().value_of(&entry, &victim).expect("read");
     engine
         .sleigh
         .set_context_at(0x1040, &victim, clean ^ 1)
@@ -924,7 +924,7 @@ fn enqueue_reads_the_engine_only_where_this_build_re_derives() {
     b.enqueue(None, addr(0x1040, 0), None, &[]);
     assert_eq!(
         b.engine
-            .flow_vars
+            .flow_vars()
             .value_of(&b.work_queue.last().expect("queued").carried, &victim),
         Some(clean),
         "a snapshot was trusted on an arch that re-derives nothing",

@@ -224,7 +224,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         {
             let snapshot = self
                 .engine
-                .flow_vars
+                .flow_vars()
                 .snapshot(&self.engine.sleigh, addr.machine_addr.addr);
             self.carry(snapshot, &[], bit)
         } else {
@@ -290,7 +290,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         flowing: &[(&'static str, u32)],
         bit: Option<bool>,
     ) -> FlowContext {
-        let vars = &self.engine.flow_vars;
+        let vars = self.engine.flow_vars();
         for &(name, value) in flowing {
             vars.set_var(&mut ctx, name, value);
         }
@@ -369,7 +369,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         self.engine
             .arch
             .isa_mode_var()
-            .and_then(|var| self.engine.flow_vars.value_of(ctx, var))
+            .and_then(|var| self.engine.flow_vars().value_of(ctx, var))
     }
 
     /// Records, and returns, the ISA-mode bit flowing into the indirect branch
@@ -627,9 +627,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // opens with a `lift_one` on this same address, and that repair runs
         // unconditionally where one here would be gated on `pin_at` having
         // written at all.
-        self.engine
-            .flow_vars
-            .pin_at(&mut self.engine.sleigh, addr.machine_addr.addr, &carried)?;
+        self.engine.flow_vars().pin_at(
+            &mut self.engine.sleigh,
+            addr.machine_addr.addr,
+            &carried,
+        )?;
         self.descent = seeded_by;
         let built = RegionBuilder::new(self, addr, parent_region, isa_mode).build();
         self.descent = None;
