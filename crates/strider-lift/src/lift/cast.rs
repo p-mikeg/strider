@@ -1,5 +1,4 @@
-use strider_ir::node::{ValueId, ValueType};
-use strider_ir::{FunctionBuilder, IRBuilderExt, IntBinaryOp, VnTypeExt};
+use strider_ir::{ExtendOp, IRBuilderExt, IntBinaryOp, VnTypeExt};
 
 use anyhow::bail;
 
@@ -7,6 +6,37 @@ use crate::lift::FunctionLifter;
 use crate::lift::pcode_util::{Result, ensure_const_space, nth_input_or_err, require_output_vn};
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
+    /// Sleigh contracts equal input and output sizes (`OpBehaviorCopy::
+    /// evaluateUnary` returns `in1` unchanged), so a mismatch is a malformed
+    /// decode.  Unchecked, `write_vn`'s `convert_to_int_if_needed` would
+    /// truncate a wider operand and zero-extend a narrower one, the second
+    /// being wrong for a signed carrier.
+    pub(super) fn handle_copy(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        let out_vn = require_output_vn(insn)?;
+        super::arithmetic::require_same_size(nth_input_or_err(insn, 0)?, out_vn, "unary op")?;
+        let value = self.read_input(insn, 0)?;
+        self.write_vn(out_vn, value)
+    }
+
+    /// Sleigh contracts `output.size >= input.size`; this check names the
+    /// `.sla` bug when that is violated.
+    pub(super) fn process_extend(&mut self, insn: &rsleigh::Insn, op: ExtendOp) -> Result<()> {
+        let out_vn = require_output_vn(insn)?;
+        let in0_size = nth_input_or_err(insn, 0)?.size;
+        if out_vn.size < in0_size {
+            return Err(anyhow::anyhow!(
+                "p-code extend width mismatch: input={} output={} (output must be >= input)",
+                in0_size,
+                out_vn.size,
+            ));
+        }
+        let value = self.read_input(insn, 0)?;
+        let result = self
+            .builder
+            .extend_if_needed(value, out_vn.int_type()?, op)?;
+        self.write_vn(out_vn, result)
+    }
+
     /// Right-shift by `byte_offset * 8`, then coerce to the output width.
     ///
     /// Sleigh's `truncation` operator keeps the offset inside the input, so an
@@ -44,41 +74,6 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             .builder
             .convert_to_int_if_needed(shifted, out_vn.int_type()?)?;
         self.write_vn(out_vn, result)
-    }
-
-    /// Shared envelope for single-input integer unary ops.
-    ///
-    /// `enforce_equal_io_width` is on for the `Int2Comp` / `IntNeg`-as-xor
-    /// lowerings, which require matching widths, and gates the input coercion
-    /// with it: `popcount` / `lzcount` count over the INPUT's width, so
-    /// widening their operand would shift the result by the width difference.
-    pub(super) fn lift_int_unary(
-        &mut self,
-        insn: &rsleigh::Insn,
-        enforce_equal_io_width: bool,
-        build: impl FnOnce(&mut FunctionBuilder, ValueId, ValueType) -> Result<ValueId>,
-    ) -> Result<()> {
-        let out_vn = require_output_vn(insn)?;
-        if enforce_equal_io_width {
-            super::arithmetic::require_same_size(nth_input_or_err(insn, 0)?, out_vn, "unary op")?;
-        }
-        let value = self.read_input(insn, 0)?;
-        let out_ty = out_vn.int_type()?;
-        let value = if enforce_equal_io_width {
-            self.builder.convert_to_int_if_needed(value, out_ty)?
-        } else {
-            value
-        };
-        let result = build(&mut self.builder, value, out_ty)?;
-        self.write_vn(out_vn, result)
-    }
-
-    pub(super) fn handle_popcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        self.lift_int_unary(insn, false, |b, v, t| b.build_popcount(v, t))
-    }
-
-    pub(super) fn handle_lzcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
-        self.lift_int_unary(insn, false, |b, v, t| b.build_lzcount(v, t))
     }
 
     pub(super) fn handle_piece(&mut self, insn: &rsleigh::Insn) -> Result<()> {
