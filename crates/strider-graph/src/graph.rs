@@ -11,6 +11,7 @@ use crate::storage::{Node, RawStore, UseData, ValueData};
 
 /// Nodes, their input/output slots, the dedup cache, and a generation counter
 /// bumped on every arena-reshuffling operation.
+#[derive(Clone)]
 pub struct Graph<N, V, C: NodeCacheable<N, V>> {
     pub(crate) store: RawStore<N, V>,
     cache: NodeCache,
@@ -21,20 +22,6 @@ pub struct Graph<N, V, C: NodeCacheable<N, V>> {
 impl<N, V, C: NodeCacheable<N, V>> Default for Graph<N, V, C> {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-// Manual `Clone` so the bound is `N: Clone, V: Clone` only: the derive would
-// also demand `C: Clone`, spurious for a `PhantomData` ZST. The clone is deep
-// and independent.
-impl<N: Clone, V: Clone, C: NodeCacheable<N, V>> Clone for Graph<N, V, C> {
-    fn clone(&self) -> Self {
-        Graph {
-            store: self.store.clone(),
-            cache: self.cache.clone(),
-            _policy: PhantomData,
-            generation: self.generation,
-        }
     }
 }
 
