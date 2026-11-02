@@ -569,6 +569,16 @@ fn an_x86_rep_last_reports_its_skip() {
 }
 
 #[test]
+fn an_x86_conditional_branch_last_reports_its_not_taken_side() {
+    // cmp eax, eax; jne 0x1000: the taken side stays in range, the
+    // fall-through leaves the function.
+    assert_eq!(
+        skip_past_end(SleighArch::x86_64(), vec![0x39, 0xc0, 0x75, 0xfc]),
+        [(0x1004, strider_cfg::Reason::PastFunctionEnd)]
+    );
+}
+
+#[test]
 fn probe_x86_nop_lifts_to_zero_pcode_ops() {
     // Precondition for the zero-pcode-prefix test below: x86 `nop` lifts to
     // zero pcode ops here, so a run of them never appends to
