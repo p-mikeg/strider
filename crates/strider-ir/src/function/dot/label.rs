@@ -184,14 +184,9 @@ impl FunctionDotDumper<'_> {
         out.node(dot_id, &label, "ellipse", &[("fillcolor", fc)]);
     }
 
-    /// Label for a Call / CallOther output past `[Control, Memory]`, taken from
-    /// the output's `value_vn` tag.  Falls back to `outN` for the two
-    /// structural slots and for untagged outputs.
-    pub(super) fn call_clobbered_name(&self, value_id: ValueId) -> String {
-        let (_call_id, output_index) = self.function.value_definition(value_id);
-        if output_index < 2 {
-            return format!("out{output_index}");
-        }
+    /// Label for `Call` output `output_index`, past `[Control, Memory]`, taken
+    /// from the output's `value_vn` tag; `outN` when untagged.
+    pub(super) fn clobber_name(&self, value_id: ValueId, output_index: u32) -> String {
         match self.function.get_vn_for_value(value_id) {
             Some(vn) => self.vn_to_name(&vn),
             None => format!("out{output_index}"),
