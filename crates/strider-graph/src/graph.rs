@@ -94,7 +94,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
 
     #[inline]
     pub fn producer(&self, value_id: ValueId) -> NodeId {
-        self.store.producer(value_id)
+        self.store.outputs[value_id].source_id
     }
 
     #[inline]
@@ -249,7 +249,7 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     /// [`rebuild_cache`](Self::rebuild_cache) afterwards.
     #[inline]
     pub fn node_kind_mut(&mut self, node_id: NodeId) -> &mut N {
-        self.store.node_kind_mut(node_id)
+        &mut self.store.nodes[node_id].kind
     }
 
     /// Re-keys the cache after node payloads feeding the cache key were
