@@ -38,6 +38,7 @@ pub(crate) fn make_region(addrs: &[(u64, u64)]) -> Region {
         start_addr: start,
         insns,
         empty_span_len: 0,
+        isa_mode: None,
         terminator: RegionTerminator::Unconditional,
     }
 }

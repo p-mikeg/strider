@@ -838,10 +838,8 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
             empty_span_len: self.empty_span_len,
             insns,
             terminator,
+            isa_mode: self.isa_mode,
         })?;
-        if let Some(mode) = self.isa_mode {
-            self.builder.region_isa_mode.insert(region, mode);
-        }
         if let Some(parent_id) = self.parent_edge {
             self.builder.region_graph.add_edge(parent_id, region, ());
         }
@@ -1207,7 +1205,7 @@ mod tests {
         let existing = b
             .add_region(make_region(&[(0x1000, 3)]))
             .expect("add_region");
-        b.region_isa_mode.insert(existing, 1);
+        b.region_graph[existing].isa_mode = Some(1);
         let mut rb = RegionBuilder::new(&mut b, addr_at(0x1000, 0), None, Some(0));
         let lift = fake_lift_res(4);
 
