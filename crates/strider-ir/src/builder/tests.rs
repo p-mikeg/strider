@@ -1733,7 +1733,7 @@ fn projected_cc_lists_match_built_function_fields() -> Result<()> {
     b.set_lift_addr(None);
     let f = b.build()?;
 
-    let sp_vn = f.stack_vn();
+    let sp_vn = f.default_cc().stack_ptr;
     let mut coc: Vec<_> = f
         .all_vns()
         .iter()
