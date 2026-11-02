@@ -9,7 +9,7 @@ use crate::DominatorTree;
 use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
-use crate::node::{NodeId, NodeKind, ValueKind};
+use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 use crate::walk::{NodeIdSet, PostOrder};
 
 /// A control node or a phi: its position is fixed by the control flow rather
@@ -32,7 +32,7 @@ impl<'a> ScheduleContext<'a> {
     /// Over `reachable`, the nodes a walk from the entry reaches.
     pub(crate) fn new(function: &'a Function, reachable: &NodeIdSet) -> Self {
         let domtree = crate::control_dominator_tree(function);
-        let live = cfg_live(function.graph(), reachable, &domtree);
+        let live = cfg_live(function, reachable, &domtree);
         Self {
             function,
             live,
@@ -69,7 +69,8 @@ fn region_phis(graph: &Graph, cfg_node: NodeId) -> impl Iterator<Item = NodeId> 
 /// [`ScheduleContext::live`]: seeded with every tree node and its reachable
 /// phis, closed over data inputs, a phi's input `i` followed only when its
 /// region's control input `i - 1` comes from a tree node.
-fn cfg_live(graph: &Graph, reachable: &NodeIdSet, tree: &DominatorTree<NodeId>) -> NodeIdSet {
+fn cfg_live(function: &Function, reachable: &NodeIdSet, tree: &DominatorTree<NodeId>) -> NodeIdSet {
+    let graph = function.graph();
     let mut live = NodeIdSet::new();
     let mut stack: Vec<NodeId> = Vec::new();
     for &cfg_node in tree.preorder() {
@@ -80,28 +81,27 @@ fn cfg_live(graph: &Graph, reachable: &NodeIdSet, tree: &DominatorTree<NodeId>) 
         if !live.insert(node) {
             continue;
         }
-        let inputs = graph.node_inputs(node);
-        let region_preds = matches!(graph.node_kind(node), NodeKind::Phi | NodeKind::MemPhi)
-            .then(|| inputs.into_iter().next())
-            .flatten()
-            .map(|token| graph.node_inputs(graph.value_definition(token).0));
-        for (i, value) in inputs.into_iter().enumerate() {
-            if graph.value_kind(value).is_control() {
-                continue;
-            }
-            if let (Some(preds), Some(edge_idx)) = (&region_preds, i.checked_sub(1))
-                && let Some(&edge) = preds.get(edge_idx)
-                && !tree.contains(graph.value_definition(edge).0)
-            {
-                continue;
-            }
-            let producer = graph.value_definition(value).0;
-            if reachable.contains(producer) {
-                stack.push(producer);
-            }
+        if matches!(graph.node_kind(node), NodeKind::Phi | NodeKind::MemPhi) {
+            let token = graph.nth_input(node, NodeKind::PHI_TOKEN_SLOT);
+            stack.extend(token.map(|t| graph.value_definition(t).0));
+            stack.extend(live_arms(function, tree, node).map(|v| graph.value_definition(v).0));
+        } else {
+            stack.extend(data_producers(graph, node));
         }
     }
     live
+}
+
+/// A phi's value inputs on edges from a node of `tree`.
+pub(crate) fn live_arms<'a>(
+    function: &'a Function,
+    tree: &'a DominatorTree<NodeId>,
+    phi: NodeId,
+) -> impl Iterator<Item = ValueId> + 'a {
+    function
+        .phi_arms(phi)
+        .filter(|&(edge, _)| tree.contains(function.producer(edge)))
+        .map(|(_, arm)| arm)
 }
 
 /// The live floating data producers of a node.
