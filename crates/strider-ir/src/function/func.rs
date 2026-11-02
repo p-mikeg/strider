@@ -4,11 +4,6 @@ use crate::function::side_tables::FuncSideTables;
 use crate::graph::{Graph, NodeIdRemap};
 use crate::node::{NodeId, NodeKind, ValueId};
 
-/// Deterministic ordering key for a tracked varnode.
-pub(crate) fn vn_sort_key(vn: &rsleigh::Vn) -> (u8, u64, u32) {
-    (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size)
-}
-
 /// The ret-val + clobber varnode groups a `Call` under `cc` emits, over
 /// `function`'s tracked varnodes.
 #[cfg(any(test, feature = "test-util"))]
@@ -77,9 +72,8 @@ impl Function {
         // Arbitrary order in, so sort: `InitialVnId` assignment is
         // reproducible.
         let mut tracked_vns = vn_container::dedup_overlapping_largest(&tracked_vns);
-        tracked_vns.sort_by_key(vn_sort_key);
-        let mut vn_interner: entity_utils::EntityInterner<crate::node::InitialVnId, rsleigh::Vn> =
-            entity_utils::EntityInterner::default();
+        tracked_vns.sort_by_key(|vn| (vn.addr_space.shortcut_raw(), vn.addr_off, vn.size));
+        let mut vn_interner = entity_utils::EntityInterner::default();
         for vn in tracked_vns {
             vn_interner.intern(vn);
         }
@@ -203,12 +197,6 @@ impl Function {
             .chain(cc.ret_val_regs_float.iter())
             .copied()
             .collect()
-    }
-
-    /// The stack-pointer varnode of this function's convention.
-    #[inline]
-    pub(crate) fn stack_vn(&self) -> rsleigh::Vn {
-        self.default_cc.stack_ptr
     }
 
     /// The `(base, byte offset)` of a Store/Load's address.  `None` when `node`
