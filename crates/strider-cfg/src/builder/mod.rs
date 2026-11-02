@@ -621,22 +621,18 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             self.region_graph.add_edge(parent_region_id, target, ());
             return Ok(());
         }
-        if !self.engine.flow_vars.is_empty() {
-            // Undoes a sibling region's forward-hold clobber of this address.
-            //
-            // Several sla context vars alias the ISA-mode bit (ARM `TMode`,
-            // `T`, `LowBitCodeMode`, `ISA_MODE` all at bit (0,0)), so the diff
-            // can write an alias last and flip the intended mode.  Repairing
-            // that is `RegionBuilder::hold_isa_mode`'s job: the `RegionBuilder`
-            // below opens with a `lift_one` on this same address, and that
-            // repair runs unconditionally where one here would be gated on
-            // `pin_at` having written at all.
-            self.engine.flow_vars.pin_at(
-                &mut self.engine.sleigh,
-                addr.machine_addr.addr,
-                &carried,
-            )?;
-        }
+        // Undoes a sibling region's forward-hold clobber of this address.
+        //
+        // Several sla context vars alias the ISA-mode bit (ARM `TMode`, `T`,
+        // `LowBitCodeMode`, `ISA_MODE` all at bit (0,0)), so the diff can
+        // write an alias last and flip the intended mode.  Repairing that is
+        // `RegionBuilder::hold_isa_mode`'s job: the `RegionBuilder` below
+        // opens with a `lift_one` on this same address, and that repair runs
+        // unconditionally where one here would be gated on `pin_at` having
+        // written at all.
+        self.engine
+            .flow_vars
+            .pin_at(&mut self.engine.sleigh, addr.machine_addr.addr, &carried)?;
         let isa_mode = self.isa_mode_of(&carried);
         self.descent = seeded_by;
         let built = RegionBuilder::new(self, addr, parent_region, isa_mode).build();
