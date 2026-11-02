@@ -6,7 +6,6 @@ use crate::node::{NodeId, NodeKind};
 
 impl ::dot::GraphDotDumper for FunctionDotDumper<'_> {
     type Node = crate::node::NodeId;
-    type Error = std::io::Error;
     type State = FunctionDotDumperState;
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
@@ -22,7 +21,7 @@ impl ::dot::GraphDotDumper for FunctionDotDumper<'_> {
         node: Self::Node,
         out: &mut ::dot::DotEmitter,
         state: &mut Self::State,
-    ) -> core::result::Result<(), Self::Error> {
+    ) -> anyhow::Result<()> {
         let Some(cur_id) = self.try_declare_node(node, out, state) else {
             return Ok(());
         };

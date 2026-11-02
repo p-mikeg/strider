@@ -35,7 +35,6 @@ struct OneNode;
 
 impl GraphDotDumper for OneNode {
     type Node = usize;
-    type Error = anyhow::Error;
     type State = ();
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
