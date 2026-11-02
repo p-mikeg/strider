@@ -84,11 +84,7 @@ pub const fn bit(n: u32) -> u128 {
 #[inline]
 #[must_use]
 pub const fn mask_below(bits: u32) -> u128 {
-    if bits >= 128 {
-        u128::MAX
-    } else {
-        (1u128 << bits) - 1
-    }
+    bit(bits).wrapping_sub(1)
 }
 
 /// The top bit of a `bits`-wide integer: 0 at width 0, and past the carrier,
