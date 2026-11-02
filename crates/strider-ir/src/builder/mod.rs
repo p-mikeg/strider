@@ -33,7 +33,7 @@ pub struct FunctionBuilder {
     /// stack pointer's width.
     call_register_values: Vec<ValueId>,
     /// Registers no callee reads, left out of `call_register_values`.
-    internal_registers: Vec<rsleigh::Vn>,
+    internal_registers: &'static [rsleigh::Vn],
 }
 
 impl FunctionBuilder {
@@ -74,13 +74,13 @@ impl FunctionBuilder {
             cur_region: None,
             lift_addr: None,
             call_register_values: Vec::new(),
-            internal_registers: Vec::new(),
+            internal_registers: &[],
         })
     }
 
     /// Registers the sla declares for its own semantics, which a call's value
     /// in them cannot reach the callee through.
-    pub fn set_internal_registers(&mut self, registers: Vec<rsleigh::Vn>) {
+    pub fn set_internal_registers(&mut self, registers: &'static [rsleigh::Vn]) {
         self.internal_registers = registers;
     }
 

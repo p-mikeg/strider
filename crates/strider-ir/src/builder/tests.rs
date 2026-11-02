@@ -3114,7 +3114,7 @@ fn call_with_register_holding(
     };
     let mut b = FunctionBuilder::new(vec![rax, rbx, sp], cc, strider_target::Endianness::Little)?;
     if internal {
-        b.set_internal_registers(vec![rax]);
+        b.set_internal_registers(vec![rax].leak());
     }
     let region = b.create_region_all()?;
     b.set_entry_region_all(region)?;
