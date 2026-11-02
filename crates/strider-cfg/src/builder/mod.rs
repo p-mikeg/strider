@@ -11,7 +11,6 @@ use std::collections::BTreeMap;
 
 use petgraph::graph::NodeIndex;
 use petgraph::stable_graph::EdgeIndex;
-use petgraph::visit::EdgeRef;
 
 use crate::Cfg;
 use crate::DecodeEngine;
@@ -745,35 +744,22 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// Stripping the LAST arm re-defers the site to an
     /// `UnresolvedIndirectBranch`: a zero-arm `Switch` fails the whole
     /// function's lift, which is the outcome dropping the arm exists to avoid.
-    fn drop_switch_arm(&mut self, site: NodeIndex, target: PcodeInsnAddr) {
-        let Some(region) = self.region_graph.node_weight_mut(site) else {
-            return;
-        };
-        if !region
-            .terminator
-            .drop_switch_arms_at(target.machine_addr.addr, false)
-        {
-            return;
-        }
-        self.remove_arm_edge(site, target);
-    }
-
-    /// Drops the edge `site` wired for the arm at `target`.
     ///
     /// An arm resolves to the region starting exactly at its address. Leaving
     /// the edge behind outlives the arm: a demoted `UnresolvedIndirectBranch`
     /// would carry an outgoing edge its contract forbids, and a `Switch` that
     /// kept its other arms would keep a successor it no longer names.
-    fn remove_arm_edge(&mut self, site: NodeIndex, target: PcodeInsnAddr) {
+    fn drop_switch_arm(&mut self, site: NodeIndex, target: PcodeInsnAddr) {
+        if !self.region_graph[site]
+            .terminator
+            .drop_switch_arms_at(target.machine_addr.addr, false)
+        {
+            return;
+        }
         let Some(arm) = self.index.get(target) else {
             return;
         };
-        let edges: Vec<EdgeIndex> = self
-            .region_graph
-            .edges_connecting(site, arm)
-            .map(|e| e.id())
-            .collect();
-        for edge in edges {
+        while let Some(edge) = self.region_graph.find_edge(site, arm) {
             self.region_graph.remove_edge(edge);
             self.non_boundary_seats.remove(&edge);
         }
