@@ -9,7 +9,7 @@ use cranelift_entity::SecondaryMap;
 use crate::DominatorTree;
 use crate::builder::IRBuilder;
 use crate::node::{NodeId, NodeKind, UseId, ValueId, ValueKind};
-use crate::walk::{DefUseSuccs, PostOrder, RawDefUseSuccs};
+use crate::walk::{DefUseSuccs, FnSuccs, PostOrder, def_use_succs};
 use crate::{Function, Graph, IRViewer};
 
 bitflags::bitflags! {
@@ -167,11 +167,9 @@ impl<'g> EditFunction<'g> {
     /// def->use graph from `roots` so dead consumers of still-live producers are
     /// reached.  Idempotent.
     pub fn cull_dead(&mut self) {
-        let order: Vec<NodeId> = PostOrder::new(
-            RawDefUseSuccs::new(self.function.graph()),
-            self.state.roots.iter(),
-        )
-        .collect();
+        let graph = self.function.graph();
+        let succs = FnSuccs::new(|n| def_use_succs(graph, n));
+        let order: Vec<NodeId> = PostOrder::new(succs, self.state.roots.iter()).collect();
         for node in order {
             if !self.state.live_nodes.contains(node) {
                 self.kill_node(node);

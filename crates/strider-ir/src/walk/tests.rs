@@ -449,8 +449,11 @@ fn raw_def_use_postorder_reaches_dead_consumer() {
         PostOrder::new(DefUseSuccs::new(&graph, &empty), std::iter::once(k)).collect();
     assert_eq!(filtered, vec![k], "filtered walk stays at the root");
 
-    let raw: Vec<NodeId> =
-        PostOrder::new(RawDefUseSuccs::new(&graph), std::iter::once(k)).collect();
+    let raw: Vec<NodeId> = PostOrder::new(
+        FnSuccs::new(|n| def_use_succs(&graph, n)),
+        std::iter::once(k),
+    )
+    .collect();
     assert!(
         raw.contains(&neg),
         "raw walk must reach the dead consumer: {raw:?}"
