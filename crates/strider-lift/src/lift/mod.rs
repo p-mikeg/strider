@@ -489,26 +489,45 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// guarantees it only at a symbol's global entry: a function entered below
     /// that never reads the register before writing it, the prologue that reads
     /// it being above the entry.
+    ///
+    /// An entry that is also a loop header holds the register's phi, and the
+    /// binding is that phi's entry-edge operand: the back edge carries the
+    /// loop's own value.
     fn bind_entry_address_register(&mut self) -> Result<()> {
+        use strider_ir::{IRBuilderExt as _, IRViewer as _, VnTypeExt as _};
         let Some(vn) = self.builder.function().default_cc().entry_address else {
             return Ok(());
         };
+        let container = self.container_map.container_of(&vn);
         // Untracked means the function never names it, so nothing reads it.
-        if self
-            .builder
-            .function()
-            .vn_id_of(&self.container_map.container_of(&vn))
-            .is_none()
-        {
+        if self.builder.function().vn_id_of(&container).is_none() {
             return Ok(());
         }
+        let current = self.builder.read_variable(&container)?;
+        let function = self.builder.function();
+        let phi = function.producer(current);
+        let phi = matches!(function.node_kind(phi), strider_ir::node::NodeKind::Phi).then_some(phi);
+        // Input 0 is the phi token; input 1 the entry edge's `InitialVar`.
+        if let Some(phi) = phi {
+            let initial = function.graph().nth_input(phi, 1).ok_or_else(|| {
+                anyhow::anyhow!("the entry phi of {container:?} has no entry-edge operand")
+            })?;
+            self.builder.write_variable(&container, initial)?;
+        }
         let addr = self.entry_machine_addr();
-        use strider_ir::{IRBuilderExt as _, VnTypeExt as _};
         let ty = vn.int_type()?;
         self.with_lift_addr(Some(addr), |s| {
             let value = s.builder.build_int_const(u128::from(addr), ty)?;
             s.write_vn(&vn, value)
-        })
+        })?;
+        if let Some(phi) = phi {
+            let bound = self.builder.read_variable(&container)?;
+            let graph = self.builder.function_mut().graph_mut();
+            let entry_edge = graph.node_input_id_at(phi, 1)?;
+            graph.update_input(entry_edge, bound);
+            self.builder.write_variable(&container, current)?;
+        }
+        Ok(())
     }
 
     /// Each arg-passing register's largest-container `InitialVar` output is the
