@@ -642,6 +642,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 .or_else(|| {
                     cfg.region_predecessors(cfg_rid)
                         .map(|pred| {
+                            let pred = &cfg.region_graph()[pred];
                             pred.insns
                                 .last()
                                 .map_or(pred.start_addr, |w| w.addr)
