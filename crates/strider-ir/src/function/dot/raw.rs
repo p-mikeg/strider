@@ -141,7 +141,6 @@ impl<'a> RawFunctionDumper<'a> {
 
 impl GraphDotDumper for RawFunctionDumper<'_> {
     type Node = NodeId;
-    type Error = anyhow::Error;
     type State = ();
 
     /// The walk follows backward-data and forward-control edges, so every

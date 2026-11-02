@@ -2,7 +2,6 @@
 //! computed here; the render is the ordinary pretty dumper restricted to it.
 
 use std::collections::VecDeque;
-use std::io;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -77,7 +76,7 @@ impl FunctionDotDumper<'_> {
     /// `center` highlighted.
     ///
     /// # Errors
-    /// Propagates a `pretty_label` IO error.
+    /// Propagates a DOT-emit error from the renderer.
     pub fn neighborhood_dot(
         self,
         center: NodeId,
@@ -85,7 +84,7 @@ impl FunctionDotDumper<'_> {
         hub_cap: usize,
         max_nodes: usize,
         count_producers: bool,
-    ) -> io::Result<String> {
+    ) -> crate::Result<String> {
         let set = neighborhood_nodes(
             self.function,
             center,
@@ -98,8 +97,6 @@ impl FunctionDotDumper<'_> {
             view: Some(::dot::View::new(set, center)),
             ..self
         };
-        ::dot::GraphDot::new(restricted, ::dot::DotStyle::dark())
-            .as_dot()
-            .map_err(|e| io::Error::other(e.to_string()))
+        ::dot::GraphDot::new(restricted, ::dot::DotStyle::dark()).as_dot()
     }
 }
