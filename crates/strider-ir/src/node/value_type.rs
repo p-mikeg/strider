@@ -135,10 +135,7 @@ impl ValueType {
     /// Masks a raw IEEE 754 pattern to this float type's width. Widths at or
     /// past the `u64` carrier pass `bits` through unchanged.
     pub fn mask_float_bits(self, bits: u64) -> u64 {
-        match self.bit_width() {
-            w if w < 64 => bits & ((1u64 << w) - 1),
-            _ => bits,
-        }
+        (u128::from(bits) & crate::eval::mask_below(self.bit_width() as u32)) as u64
     }
 
     /// Sign-extends `val`, read as this type's narrow representation, to a
@@ -381,6 +378,17 @@ mod tests {
         );
         assert_eq!(ValueType::int(8).get_signed_int(0xceu128), Some(-50i128));
         assert_eq!(ValueType::int(32).get_signed_int(50u128), Some(50i128));
+    }
+
+    #[test]
+    fn mask_float_bits_keeps_the_declared_width() {
+        assert_eq!(ValueType::float(16).mask_float_bits(u64::MAX), 0xffff);
+        assert_eq!(ValueType::float(32).mask_float_bits(u64::MAX), 0xffff_ffff);
+        for w in [64, 80, 128] {
+            assert_eq!(ValueType::float(w).mask_float_bits(u64::MAX), u64::MAX);
+        }
+        assert_eq!(ValueType::Float(0).mask_float_bits(u64::MAX), 0);
+        assert_eq!(ValueType::I1.mask_float_bits(u64::MAX), 1);
     }
 
     /// Agrees with `eval::signed` at every width the carrier holds, on
