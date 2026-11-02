@@ -1557,6 +1557,26 @@ fn negated_compare_inputs_must_match_in_width() {
     }
 }
 
+/// `IntSub`'s output is held to its inputs' width.
+#[test]
+fn int_sub_output_width_must_match_the_inputs() {
+    let wide = Vn {
+        size: 8,
+        addr_off: 0x200,
+        addr_space: VnSpace::REGISTER,
+    };
+    with_test_lifter_tracking(vec![wide, reg(0), reg(4)], |d, rid| {
+        let insn = Insn {
+            opcode: Opcode::IntSub,
+            output: Some(wide),
+            inputs: vec![reg(0), reg(4)].into(),
+        };
+        let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
+        let msg = format!("{:#}", res.expect_err("a wider output must error"));
+        assert!(msg.contains("output width mismatch"), "{msg}");
+    });
+}
+
 /// `OpBehaviorCopy::evaluateUnary` returns `in1` unchanged, so Sleigh contracts
 /// equal input and output sizes.  Unguarded, `write_vn` truncates a wider
 /// operand and zero-extends a narrower one, which is wrong for a signed
