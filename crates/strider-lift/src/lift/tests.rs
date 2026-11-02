@@ -235,9 +235,9 @@ fn placed_phis_are_ordered_by_initial_vn_id() {
         strider_ir::node::ValueId,
         Vec<strider_ir::node::InitialVnId>,
     > = rustc_hash::FxHashMap::default();
-    for (node, _) in f
-        .reachable_kind_iter(&reachable)
-        .filter(|(_, k)| matches!(k, NodeKind::Phi))
+    for node in reachable
+        .iter()
+        .filter(|&n| matches!(f.node_kind(n), NodeKind::Phi))
     {
         let token = f.node_inputs(node)[NodeKind::PHI_TOKEN_SLOT];
         let [out] = f.node_outputs_exact::<1>(node).expect("phi output");
