@@ -85,26 +85,6 @@ pub use graph_algorithms::walk::WalkPhase;
 #[derive(Clone, Copy)]
 pub struct GraphWalkSuccs<'a>(&'a Graph);
 
-impl<'a> GraphWalkSuccs<'a> {
-    #[inline]
-    pub(crate) fn new(graph: &'a Graph) -> Self {
-        Self(graph)
-    }
-}
-
-/// Two disjoint sets: every data predecessor (walking value / memory /
-/// dispatch edges BACKWARD, so each def precedes its uses) and every CFG
-/// successor (walking control edges FORWARD).
-///
-/// Dead CFG inputs still show up while they hang off a live node as data.
-pub(crate) fn graph_walk_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-    graph
-        .node_inputs(node)
-        .into_iter()
-        .map(move |value| graph.value_definition(value).0)
-        .chain(cfg_succs(graph, node))
-}
-
 pub fn cfg_outputs(graph: &Graph, node: NodeId) -> impl Iterator<Item = ValueId> + '_ {
     graph
         .node_outputs(node)
@@ -128,11 +108,19 @@ fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + 
         .map(|(succ, _use_idx)| succ)
 }
 
+/// Two disjoint sets: every data predecessor (walking value / memory /
+/// dispatch edges BACKWARD, so each def precedes its uses) and every CFG
+/// successor (walking control edges FORWARD).
+///
+/// Dead CFG inputs still show up while they hang off a live node as data.
 impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     type NodeId = NodeId;
 
     fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
-        for succ in graph_walk_succs(self.0, node) {
+        for value in self.0.node_inputs(node) {
+            f(self.0.value_definition(value).0);
+        }
+        for succ in cfg_succs(self.0, node) {
             f(succ);
         }
     }
@@ -157,7 +145,7 @@ pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 /// Pre-order from `entry`, so `entry` is yielded FIRST. Order is otherwise
 /// unspecified, and "reachable" includes dead CFG inputs.
 pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
-    PreOrder::new(GraphWalkSuccs::new(graph), iter::once(entry))
+    PreOrder::new(GraphWalkSuccs(graph), iter::once(entry))
 }
 
 /// The liveness-unrestricted counterpart of [`DefUseSuccs`]: a post-order
