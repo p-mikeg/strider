@@ -231,6 +231,7 @@ impl Function {
         let reachable: Vec<NodeId> = self.walk().collect();
         let remap = self.graph.retain_reachable_stale_cache(reachable);
         debug_assert_eq!(remap.node_old_to_new(self.entry()), Some(self.entry()));
+        debug_assert!(matches!(self.node_kind(self.entry()), NodeKind::Entry));
         self.side_tables.remap(&remap);
         self.memos.get_mut().remap(&remap);
         // The dedup cache keys on `NodeKind`, which carries the `IntConstId`, so
