@@ -83,8 +83,8 @@ fn cfg_live(function: &Function, reachable: &NodeIdSet, tree: &DominatorTree<Nod
         }
         if matches!(graph.node_kind(node), NodeKind::Phi | NodeKind::MemPhi) {
             let token = graph.nth_input(node, NodeKind::PHI_TOKEN_SLOT);
-            stack.extend(token.map(|t| graph.value_definition(t).0));
-            stack.extend(live_arms(function, tree, node).map(|v| graph.value_definition(v).0));
+            stack.extend(token.map(|t| graph.producer(t)));
+            stack.extend(live_arms(function, tree, node).map(|v| graph.producer(v)));
         } else {
             stack.extend(data_producers(graph, node));
         }
@@ -124,7 +124,7 @@ pub(crate) fn data_producers(graph: &Graph, node: NodeId) -> impl Iterator<Item 
         .node_inputs(node)
         .into_iter()
         .filter(move |&v| !graph.value_kind(v).is_control())
-        .map(move |v| graph.value_definition(v).0)
+        .map(move |v| graph.producer(v))
 }
 
 impl graph_algorithms::walk::GraphRef for UnpinnedDataPreds<'_> {
@@ -172,7 +172,7 @@ pub fn early_position(
         Some(tree.contains(at).then_some(at))
     };
     let mut at: rustc_hash::FxHashMap<NodeId, Option<NodeId>> = Default::default();
-    let mut stack = vec![(graph.value_definition(value).0, false)];
+    let mut stack = vec![(graph.producer(value), false)];
     while let Some((node, expanded)) = stack.pop() {
         if expanded {
             let mut latest = Some(tree.root());
@@ -198,7 +198,7 @@ pub fn early_position(
         stack.push((node, true));
         stack.extend(data_producers(graph, node).map(|p| (p, false)));
     }
-    at[&graph.value_definition(value).0]
+    at[&graph.producer(value)]
 }
 
 #[cfg(test)]
