@@ -533,21 +533,6 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         )
     }
 
-    /// Tail-call vs intra-function, bailing when an out-of-bounds target does
-    /// not land on a machine-instruction boundary.
-    ///
-    /// That bail is defence, not a live case: [`Self::decode_branch_target`]
-    /// yields either a CONST-space target on the currently-decoded machine
-    /// address (in range, so never a tail call) or an `at_machine_start`, whose
-    /// `insn_index` is 0.
-    fn classify_branch_target(&self, branch_target_addr: PcodeInsnAddr) -> Result<bool> {
-        let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
-        if is_tail_call && branch_target_addr.insn_index != 0 {
-            bail!("invalid tail call at opcode {branch_target_addr:?}");
-        }
-        Ok(is_tail_call)
-    }
-
     /// Appends `insn` to the current region, then dispatches on the opcode.
     /// Any opcode without an arm is a non-terminator: decoding continues.
     fn process_new_insn(
@@ -652,7 +637,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     ) -> Result<InsnOutcome> {
         let target_var = branch_target_operand(insn, addr)?;
         let branch_target_addr = self.decode_branch_target(target_var, addr, lift_res)?;
-        let is_tail_call = self.classify_branch_target(branch_target_addr)?;
+        let is_tail_call = self.is_branch_tail_call_nocheck(branch_target_addr);
         let terminator = if is_tail_call {
             // A direct `b <oob>` stays in the current ISA mode; no switch.
             RegionTerminator::TailCall {
@@ -682,7 +667,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         let next_insn_addr = next_pcode_addr(addr, lift_res)?;
 
         // Classify before lifting: an OOB successor is never decoded.
-        let true_oob = self.classify_branch_target(target_addr)?;
+        let true_oob = self.is_branch_tail_call_nocheck(target_addr);
         let false_oob = self.is_branch_tail_call_nocheck(next_insn_addr);
 
         // Edges are unweighted; `region_if` recovers polarity by matching each
@@ -948,6 +933,12 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     pub(super) fn build(mut self) -> Result<()> {
         let mut cur_addr = self.start_addr;
         loop {
+            // So a CONST-space branch target, on this machine address, is
+            // never a tail call.
+            debug_assert!(
+                !self.is_branch_tail_call_nocheck(cur_addr),
+                "decoding {cur_addr:?} outside the function bound"
+            );
             let lift_res = match self.lift_code(cur_addr.machine_addr.addr) {
                 Ok(lift_res) => lift_res,
                 Err(e) if cur_addr.machine_addr != self.start_addr.machine_addr => {
