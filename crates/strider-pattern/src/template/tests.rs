@@ -544,3 +544,59 @@ fn a_closure_skip_wins_over_an_unbound_capture() {
         assert!(crate::is_skip(&err), "capture_first={capture_first}: {err}");
     }
 }
+
+fn vtx(i: u32) -> strider_graph::ValueId {
+    strider_graph::ValueId::from_u32(i)
+}
+
+/// `tie` joins the head it names, and reports it so a caller can record the
+/// pairing.
+#[test]
+fn tie_joins_the_head_the_rule_names() {
+    let add = NodeKind::IntBinaryOp(IntBinaryOp::Add);
+    let mut g = petgraph::unionfind::UnionFind::new(4);
+    assert_eq!(
+        super::tie(&mut g, &add, 0, vtx(1), Some(vtx(0)), Some(vtx(1))),
+        strider_ir::node::WidthTie::Tied(vtx(0))
+    );
+    assert!(g.equiv(0, 1));
+    assert!(!g.equiv(0, 2));
+}
+
+/// A head that IS the operand ties nothing, and must not read back as an
+/// agreement a caller would record against itself.
+#[test]
+fn tie_to_itself_ties_nothing() {
+    let add = NodeKind::IntBinaryOp(IntBinaryOp::Add);
+    let mut g = petgraph::unionfind::UnionFind::new(4);
+    assert_eq!(
+        super::tie(&mut g, &add, 0, vtx(2), Some(vtx(2)), Some(vtx(2))),
+        strider_ir::node::WidthTie::NoHead
+    );
+    assert!((0..4).all(|i| i == 2 || !g.equiv(2, i)));
+}
+
+/// A free slot and a conversion join nothing.
+#[test]
+fn tie_leaves_a_free_or_converted_slot_alone() {
+    use strider_ir::node::{Conversion, WidthTie};
+    let shl = NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft);
+    let mut g = petgraph::unionfind::UnionFind::new(4);
+    assert_eq!(
+        super::tie(&mut g, &shl, 1, vtx(1), Some(vtx(0)), Some(vtx(1))),
+        WidthTie::Free
+    );
+    assert!(!g.equiv(0, 1));
+    assert_eq!(
+        super::tie(
+            &mut g,
+            &NodeKind::Truncate,
+            0,
+            vtx(3),
+            Some(vtx(2)),
+            Some(vtx(3))
+        ),
+        WidthTie::Conversion(Conversion::Narrow)
+    );
+    assert!(!g.equiv(2, 3));
+}

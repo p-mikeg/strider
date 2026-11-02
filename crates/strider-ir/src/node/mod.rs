@@ -16,4 +16,4 @@ pub use signature::{Conversion, ExpectedValueKind, OperandWidth};
 pub use strider_graph::{NodeId, UseId, ValueId};
 pub use value_kind::ValueKind;
 pub use value_type::{ValueType, VnTypeExt};
-pub use width_relation::{WidthGroups, WidthTie, width_tie};
+pub use width_relation::{WidthTie, width_tie};
