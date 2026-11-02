@@ -16,10 +16,10 @@ use crate::Cfg;
 use crate::DecodeEngine;
 use crate::options::CfgOptions;
 use crate::region_index::RegionIndex;
-use crate::types::{PcodeInsnAddr, Region, RegionGraph};
+use crate::types::{PcodeInsnAddr, Region, RegionGraph, RegionTerminator};
 use anyhow::{anyhow, bail};
 
-use crate::Result;
+use crate::{Reason, Result};
 
 /// A pending region to explore off a successor edge.
 pub(super) struct WorkItem {
@@ -185,7 +185,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             (Some(want), Some(&decoded)) if want != decoded
         );
         if clash {
-            self.incomplete.insert(addr, crate::Reason::IsaModeConflict);
+            self.incomplete.insert(addr, Reason::IsaModeConflict);
         }
         clash
     }
@@ -329,8 +329,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         if region.insns.is_empty()
             && !matches!(
                 region.terminator,
-                super::types::RegionTerminator::Unconditional
-                    | super::types::RegionTerminator::TailCall { .. }
+                RegionTerminator::Unconditional | RegionTerminator::TailCall { .. }
             )
         {
             bail!(
@@ -421,7 +420,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 start_addr: addr,
                 insns: Vec::new(),
                 empty_span_len: 0,
-                terminator: super::types::RegionTerminator::TailCall {
+                terminator: RegionTerminator::TailCall {
                     target: addr.machine_addr.addr.into(),
                 },
             })?,
@@ -466,7 +465,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// target, though: for a direct branch into overlapping code the arm is not
     /// the stream the branch jumps to. The address is recorded so a caller is
     /// not left believing the edge is exact; see
-    /// [`Reason::InteriorTarget`](crate::Reason::InteriorTarget).
+    /// [`Reason::InteriorTarget`].
     fn seat_non_boundary_target(
         &mut self,
         parent: NodeIndex,
@@ -474,10 +473,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         addr: PcodeInsnAddr,
     ) -> Result<()> {
         let region = &mut self.region_graph[parent];
-        if !matches!(
-            region.terminator,
-            super::types::RegionTerminator::Switch { .. }
-        ) {
+        if !matches!(region.terminator, RegionTerminator::Switch { .. }) {
             // An x86 branch to an address one prefix into an instruction (a
             // `je` over a `lock`) re-enters the same instruction's decode, and
             // the edge is exact where that instruction is the owner's FIRST:
@@ -487,7 +483,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             let edge = self.region_graph.add_edge(parent, owner, ());
             self.non_boundary_seats.insert(edge, addr);
             if !benign {
-                self.incomplete.insert(addr, crate::Reason::InteriorTarget);
+                self.incomplete.insert(addr, Reason::InteriorTarget);
             }
             return Ok(());
         }
@@ -505,7 +501,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         );
         // Reported whether or not an arm went with it: this path wires no edge,
         // so anything unsaid here leaves the site an arm short in silence.
-        self.incomplete.insert(addr, crate::Reason::InteriorTarget);
+        self.incomplete.insert(addr, Reason::InteriorTarget);
         Ok(())
     }
 
@@ -678,7 +674,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 }
                 if matches!(
                     self.region_graph[pred].terminator,
-                    crate::RegionTerminator::Switch { .. }
+                    RegionTerminator::Switch { .. }
                 ) {
                     continue;
                 }
@@ -687,8 +683,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             }
         }
         for switch in self.region_graph.node_indices() {
-            let crate::RegionTerminator::Switch { addr: site, .. } =
-                self.region_graph[switch].terminator
+            let RegionTerminator::Switch { addr: site, .. } = self.region_graph[switch].terminator
             else {
                 continue;
             };
@@ -714,7 +709,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// the lifter errors on one that does not. A refused target leaves such an
     /// arm behind, so it is stripped here and the site is reported through
     /// [`Cfg::undecodable_seeded_targets`] or
-    /// [`Reason::IsaModeConflict`](crate::Reason::IsaModeConflict) instead.
+    /// [`Reason::IsaModeConflict`] instead.
     ///
     /// Only the site that refused loses the arm. The same address reached from
     /// another site decodes in that site's own context (`enqueue_resolved` pins
@@ -828,9 +823,9 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         if !is_arm && let Some(parent) = parent_region {
             let here = decode_failure(&e).filter(|f| f.addr() == address.machine_addr.addr);
             let reason = match here {
-                Some(DecodeFailure::Unmapped(_)) => Some(crate::Reason::UnmappedTarget),
+                Some(DecodeFailure::Unmapped(_)) => Some(Reason::UnmappedTarget),
                 Some(DecodeFailure::NotCode { .. }) if seeded_by.is_none() => {
-                    Some(crate::Reason::UndecodableTarget)
+                    Some(Reason::UndecodableTarget)
                 }
                 _ => None,
             };
@@ -851,18 +846,17 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 // The unmapped byte IS the one asked for: report the pcode
                 // address, which carries the insn index the gap address cannot.
                 Some(DecodeFailure::Unmapped(gap)) if gap == address.machine_addr.addr => {
-                    (address, crate::Reason::UnmappedTarget)
+                    (address, Reason::UnmappedTarget)
                 }
-                Some(DecodeFailure::Unmapped(gap)) => (
-                    PcodeInsnAddr::at_machine_start(gap),
-                    crate::Reason::UnmappedTarget,
-                ),
-                Some(DecodeFailure::PastEnd(end)) => (end, crate::Reason::PastFunctionEnd),
+                Some(DecodeFailure::Unmapped(gap)) => {
+                    (PcodeInsnAddr::at_machine_start(gap), Reason::UnmappedTarget)
+                }
+                Some(DecodeFailure::PastEnd(end)) => (end, Reason::PastFunctionEnd),
                 Some(DecodeFailure::NotCode { addr: bad, .. }) => (
                     PcodeInsnAddr::at_machine_start(bad),
-                    crate::Reason::UndecodableTarget,
+                    Reason::UndecodableTarget,
                 ),
-                None => (address, crate::Reason::UndecodableTarget),
+                None => (address, Reason::UndecodableTarget),
             };
             self.incomplete.insert(at, reason);
         }
@@ -914,12 +908,11 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         // unresolved and every seated answer unverified.
         for region in self.region_graph.node_weights() {
             match &region.terminator {
-                super::types::RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
-                    self.incomplete
-                        .insert(*addr, crate::Reason::UnresolvedBranch);
+                RegionTerminator::UnresolvedIndirectBranch { addr, .. } => {
+                    self.incomplete.insert(*addr, Reason::UnresolvedBranch);
                 }
-                super::types::RegionTerminator::Switch { addr, .. } => {
-                    self.incomplete.insert(*addr, crate::Reason::UnverifiedSeed);
+                RegionTerminator::Switch { addr, .. } => {
+                    self.incomplete.insert(*addr, Reason::UnverifiedSeed);
                 }
                 _ => {}
             }
@@ -929,7 +922,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             .iter()
             .chain(&self.tail_call_seated)
         {
-            self.incomplete.insert(addr, crate::Reason::UnverifiedSeed);
+            self.incomplete.insert(addr, Reason::UnverifiedSeed);
         }
 
         Ok(Cfg {
