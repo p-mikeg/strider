@@ -6,6 +6,12 @@ use strider_ir::{IRBuilderExt, IRViewer};
 use super::FunctionLifter;
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
+    /// The ISA mode the instruction at `machine_addr` itself committed, if any.
+    fn isa_mode_committed_at(&self, machine_addr: u64) -> Option<ValueId> {
+        self.pending_isa_mode
+            .and_then(|(mode, at)| (at == machine_addr).then_some(mode))
+    }
+
     /// Lowers a resolved jump table to one `Switch` node with a control output
     /// per target.  `region_id` is the dispatch region.
     pub(crate) fn handle_switch(
@@ -29,11 +35,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             // A target's `isa_bit` is the callee's concern, applied when the
             // arm's own region is decoded, not by this node.
             let target = target.addr;
-            let machine_addr = strider_cfg::MachineInsnAddr::from(target);
             let cfg_region = by_start
-                .get(&strider_cfg::PcodeInsnAddr::at_machine_start(
-                    machine_addr.addr,
-                ))
+                .get(&strider_cfg::PcodeInsnAddr::at_machine_start(target))
                 .copied()
                 .ok_or_else(|| {
                     anyhow!("switch target machine address {target:#x} has no successor region")
@@ -44,9 +47,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // The same mode `handle_unresolved_indirect_branch` carries: a table
         // that widens is re-derived through this node, and its new arms need
         // their own modes.
-        let isa_mode = self.pending_isa_mode.and_then(|(mode, mode_addr)| {
-            (mode_addr == switch_addr.machine_addr.addr).then_some(mode)
-        });
+        let isa_mode = self.isa_mode_committed_at(switch_addr.machine_addr.addr);
         // A one-arm table stays a `Switch`, which holds the dispatch selector
         // the resolver re-reads to widen a site that seated early.  A plain
         // branch drops the selector as dead and latches the first answer.
@@ -252,9 +253,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         // Only a mode this very instruction committed is the branch's own; an
         // earlier commit is already the flowing mode and must not be re-read as
         // an interworking switch.
-        let isa_mode = self
-            .pending_isa_mode
-            .and_then(|(mode, mode_addr)| (mode_addr == addr.machine_addr.addr).then_some(mode));
+        let isa_mode = self.isa_mode_committed_at(addr.machine_addr.addr);
         let placeholder = self
             .builder
             .build_indirect_branch_with_mode(target_value, isa_mode)?;
