@@ -71,11 +71,7 @@ pub fn close_over_control_preds(
     }
 }
 
-pub type PreOrder<G> = graph_algorithms::walk::PreOrder<G>;
-
-pub type PostOrder<G> = graph_algorithms::walk::PostOrder<G>;
-
-pub use graph_algorithms::walk::WalkPhase;
+pub use graph_algorithms::walk::{PostOrder, PreOrder, WalkPhase};
 
 /// Successors follow data inputs backward and control edges forward.
 #[derive(Clone, Copy)]
