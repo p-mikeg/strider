@@ -914,11 +914,10 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                     let off_arm = self.builder.descent.is_some();
                     let here =
                         decode_failure(&e).filter(|f| f.addr() == cur_addr.machine_addr.addr);
-                    let unmapped = matches!(here, Some(DecodeFailure::Unmapped(_)));
-                    if unmapped && !off_arm {
-                        return self.seal_and_report(cur_addr, crate::Reason::UnmappedTarget);
-                    }
                     let (marked_data, reason) = match here {
+                        Some(DecodeFailure::Unmapped(_)) if !off_arm => {
+                            return self.seal_and_report(cur_addr, crate::Reason::UnmappedTarget);
+                        }
                         Some(DecodeFailure::Unmapped(_)) => (false, crate::Reason::UnmappedTarget),
                         Some(DecodeFailure::NotCode { marked_data, .. }) => {
                             (marked_data, crate::Reason::UndecodableTarget)
@@ -929,8 +928,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
                         return Ok(());
                     }
                     if marked_data && !off_arm {
-                        self.seal_and_report(cur_addr, crate::Reason::UndecodableTarget)?;
-                        return Ok(());
+                        return self.seal_and_report(cur_addr, reason);
                     }
                     return Err(e);
                 }
