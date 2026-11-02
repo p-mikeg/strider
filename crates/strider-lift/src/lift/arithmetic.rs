@@ -7,6 +7,20 @@
 //!
 //! Logical negation of an `I1` is `Xor(_, IntConst(1))`; bitwise complement is
 //! `Xor(_, all_ones)` everywhere.
+//!
+//! Booleans are the 1-bit integer `I1`, so the boolean ops lower to ordinary
+//! integer ops: and/or/xor at `I1`, and `BoolNeg` to `Xor(x, IntConst(1)):I1`.
+//!
+//! The boolean operands are 1-BYTE varnodes, which read back as `I8`, so the
+//! narrowing to `I1` is load-bearing.  It is exact only under the ASSUMPTION
+//! that a p-code boolean is 0 or 1: `OpBehaviorBoolOr` and friends are the
+//! bitwise ops over the WHOLE varnode (`opbehavior.cc`), so `BOOL_OR(2, 0)` is
+//! TRUE there and FALSE here.  The assumption holds across the vendored specs,
+//! whose every `&&` / `||` / `!` operand is a comparison, `carry()`/`scarry()`,
+//! or a one-bit bitrange the SLEIGH compiler lowers to shift-and-mask
+//! (`ARM.sinc:20-22`, `:278`; `AARCH64instructions.sinc:2031-2032`).  A spec
+//! carrying a wider value in a boolean needs the boolean ops lowered as `!= 0`
+//! at the operand width instead.
 
 use strider_ir::node::ValueId;
 use strider_ir::{
@@ -152,6 +166,41 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         })
     }
 
+    /// Shared envelope for single-input integer unary ops.
+    ///
+    /// `enforce_equal_io_width` is on for the `Int2Comp` / `IntNeg`-as-xor
+    /// lowerings, which require matching widths, and gates the input coercion
+    /// with it: `popcount` / `lzcount` count over the INPUT's width, so
+    /// widening their operand would shift the result by the width difference.
+    pub(super) fn lift_int_unary(
+        &mut self,
+        insn: &rsleigh::Insn,
+        enforce_equal_io_width: bool,
+        build: impl FnOnce(&mut FunctionBuilder, ValueId, ValueType) -> Result<ValueId>,
+    ) -> Result<()> {
+        let out_vn = require_output_vn(insn)?;
+        if enforce_equal_io_width {
+            require_same_size(nth_input_or_err(insn, 0)?, out_vn, "unary op")?;
+        }
+        let value = self.read_input(insn, 0)?;
+        let out_ty = out_vn.int_type()?;
+        let value = if enforce_equal_io_width {
+            self.builder.convert_to_int_if_needed(value, out_ty)?
+        } else {
+            value
+        };
+        let result = build(&mut self.builder, value, out_ty)?;
+        self.write_vn(out_vn, result)
+    }
+
+    pub(super) fn handle_popcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        self.lift_int_unary(insn, false, |b, v, t| b.build_popcount(v, t))
+    }
+
+    pub(super) fn handle_lzcount(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        self.lift_int_unary(insn, false, |b, v, t| b.build_lzcount(v, t))
+    }
+
     /// A shift count wider than the output, clamped so it still reads as
     /// out-of-range after truncation.
     ///
@@ -276,6 +325,33 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         let one = self.builder.build_boolean_const(true);
         self.builder
             .build_int_binary_operation(x, one, IntBinaryOp::Xor, ValueType::I1)
+    }
+
+    pub(super) fn process_bool_binary_op(
+        &mut self,
+        insn: &rsleigh::Insn,
+        op: IntBinaryOp,
+    ) -> Result<()> {
+        let lhs = self.read_input(insn, 0)?;
+        let rhs = self.read_input(insn, 1)?;
+        let out_vn = require_output_vn(insn)?;
+        let lhs = self.builder.convert_to_int_if_needed(lhs, ValueType::I1)?;
+        let rhs = self.builder.convert_to_int_if_needed(rhs, ValueType::I1)?;
+        let result = self
+            .builder
+            .build_int_binary_operation(lhs, rhs, op, ValueType::I1)?;
+        self.write_vn(out_vn, result)
+    }
+
+    /// `BoolNeg`, lowered to `Xor(x, IntConst(1)):I1`.
+    pub(super) fn process_bool_unary_op(&mut self, insn: &rsleigh::Insn) -> Result<()> {
+        let value = self.read_input(insn, 0)?;
+        let out_vn = require_output_vn(insn)?;
+        let value = self
+            .builder
+            .convert_to_int_if_needed(value, ValueType::I1)?;
+        let result = self.build_logical_not(value)?;
+        self.write_vn(out_vn, result)
     }
 
     /// Lowers to `Xor(IntEqual(a, b), IntConst(1)):I1`.
