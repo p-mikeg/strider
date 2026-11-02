@@ -683,17 +683,11 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
         // address this adds two parallel edges to one stub, mirroring the
         // in-range degenerate case: `region_if` reads the second edge as the
         // fall-through side.
-        if true_oob {
-            self.report_skip_past_end(target_addr, addr, lift_res);
-        }
-        // The not-taken path past the end is a fall-through, reported as one.
-        if false_oob {
-            self.builder
-                .incomplete
-                .insert(next_insn_addr, crate::Reason::PastFunctionEnd);
-        }
         for (oob, successor) in [(true_oob, target_addr), (false_oob, next_insn_addr)] {
             if oob {
+                // Either arm at this instruction's own end is a fall-through
+                // out of the function, reported as one.
+                self.report_skip_past_end(successor, addr, lift_res);
                 let stub = self.builder.tail_call_stub(successor)?;
                 self.builder.region_graph.add_edge(region, stub, ());
             } else {
