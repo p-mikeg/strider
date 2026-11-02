@@ -83,3 +83,31 @@ fn x86_64_memory_renders_are_identical_across_engines() {
 fn aarch64_switch_renders_are_identical_across_engines() {
     assert_renders_identical_across_engines(common::Arch::Aarch64, "switch", "dispatch_value");
 }
+
+/// The bytes of each neighbourhood render, pinned: the determinism tests above
+/// only compare two engines.
+#[test]
+fn x86_add_neighborhood_renders_match_their_snapshots() {
+    let (mut strider, cc, addr) = common::fixture_strider(common::Arch::X86, "arithmetic", "add");
+    let result = strider
+        .analyze(addr, &cc, &AnalyzeOptions::default(), None)
+        .expect("analyze");
+    let names = strider.arch().names();
+    let (cfg, function) = (&result.cfg, &result.function);
+    let entry = function.entry();
+    expect_test::expect_file!["snapshots/add_cfg_neighborhood.dot"].assert_eq(
+        &cfg.neighborhood_dot(names, cfg.entry(), 5, 60)
+            .expect("cfg neighborhood"),
+    );
+    expect_test::expect_file!["snapshots/add_function_neighborhood.dot"].assert_eq(
+        &function
+            .dot_dumper(names)
+            .neighborhood_dot(entry, 5, 32, 60, false)
+            .expect("function neighborhood"),
+    );
+    expect_test::expect_file!["snapshots/add_raw_neighborhood.dot"].assert_eq(
+        &function
+            .raw_neighborhood_dot(entry, 5, 32, 60, false)
+            .expect("raw neighborhood"),
+    );
+}
