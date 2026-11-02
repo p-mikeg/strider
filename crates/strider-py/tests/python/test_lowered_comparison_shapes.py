@@ -1,7 +1,7 @@
 """The lowered comparison helpers, matched against real lifted code.
 
 The lowering `a <= b -> Xor(Less(b, a), 1)` is written in the lifter
-(`strider-lift`'s `lower_cmp_negated`), again in `strider-pattern`'s typed
+(`strider-lift`'s `lift_int_cmp`), again in `strider-pattern`'s typed
 builders, and again in the Python `.ordered()` path. Nothing tied the pattern
 side to the lifter side: every other test for these helpers builds the shape by
 hand, so all three copies could agree with each other while disagreeing with

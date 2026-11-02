@@ -1009,6 +1009,38 @@ fn lift_int_sless_equal_lowers_to_boolneg_sless() {
     });
 }
 
+/// The negated compares coerce each operand at its own width, which re-interns
+/// a constant operand and so stamps this instruction's address onto a constant
+/// an earlier instruction built.
+#[test]
+fn a_negated_compare_stamps_its_address_on_an_earlier_constant_operand() {
+    with_test_lifter(|d, rid| {
+        let at = strider_cfg::PcodeInsnAddr::at_machine_start;
+        let copy = Insn {
+            opcode: Opcode::Copy,
+            output: Some(reg(0)),
+            inputs: vec![const_vn(0xFFFF_FFFF, 4)].into(),
+        };
+        d.process_insn(rid, &copy, at(0x1000), &super::RegionMap::default())
+            .unwrap();
+        let sless_equal = Insn {
+            opcode: Opcode::IntSlessEqual,
+            output: Some(reg(8)),
+            inputs: vec![reg(0), reg(4)].into(),
+        };
+        d.process_insn(rid, &sless_equal, at(0x2000), &super::RegionMap::default())
+            .unwrap();
+        let minus_one = find_int_const_node(&d.builder, 0xFFFF_FFFF).expect("the copied constant");
+        assert_eq!(
+            d.builder
+                .function()
+                .side_tables()
+                .asm_fingerprint(minus_one),
+            rustc_hash::FxHashSet::from_iter([0x1000, 0x2000])
+        );
+    });
+}
+
 /// `expect_ok` is false for handlers that read an operand and so error on an
 /// absent one.
 fn assert_process_insn(opcode: Opcode, expect_ok: bool, label: &str) {
