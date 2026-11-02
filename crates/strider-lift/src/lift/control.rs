@@ -68,12 +68,9 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// (`EmulateMemory::executeCbranch`, `emulate.cc:265`) and the SLEIGH
     /// compiler passes an `if` expression through without normalising it to 0/1
     /// (`slghparse.y:375`), so a wider condition must not be narrowed to its low
-    /// bit.  An `I1` condition already IS that test.
+    /// bit.
     fn build_branch_condition(&mut self, cond_raw: ValueId) -> Result<ValueId> {
         let ty = self.builder.value_type(cond_raw)?;
-        if ty == strider_ir::ValueType::I1 {
-            return Ok(cond_raw);
-        }
         let zero = self.builder.build_int_const(0u128, ty)?;
         let is_zero = self.builder.build_int_cmp_operation(
             cond_raw,
