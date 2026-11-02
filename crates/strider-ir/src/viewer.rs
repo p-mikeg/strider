@@ -342,15 +342,6 @@ pub trait IRViewer {
             .expect("Switch has a [control, selector] head")
     }
 
-    /// Ascending-`NodeId` order.
-    fn reachable_kind_iter<'a>(
-        &'a self,
-        reachable: &'a crate::walk::NodeIdSet,
-    ) -> impl Iterator<Item = (NodeId, &'a NodeKind)> + 'a {
-        let g = self.function().graph();
-        reachable.iter().map(move |n| (n, g.node_kind(n)))
-    }
-
     /// Errors on a control, memory, or phi-token edge.
     fn value_type(&self, value_id: ValueId) -> crate::Result<ValueType> {
         let kind = self.function().graph().value_kind(value_id);
