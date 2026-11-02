@@ -105,9 +105,6 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// address decode in different contexts by construction, so a failure at
     /// one site says nothing about the same address reached from another.
     pub(super) undecodable_seeded: Vec<(NodeIndex, crate::UndecodableTarget)>,
-    /// The ISA mode each region was decoded in.  Read by the conflict checks
-    /// in [`Self::note_isa_mode_clash`], and carried across a region split.
-    pub(super) region_isa_mode: BTreeMap<NodeIndex, u32>,
     /// The ISA-mode bit flowing into each indirect-branch site, sampled at the
     /// site's seal; see [`Self::sample_flowing_isa_bit`].
     pub(super) flowing_isa_bits: BTreeMap<PcodeInsnAddr, bool>,
@@ -148,7 +145,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             seeded_queue: Vec::new(),
             clashing_seeded: Vec::new(),
             undecodable_seeded: Vec::new(),
-            region_isa_mode: BTreeMap::new(),
             flowing_isa_bits: BTreeMap::new(),
             incomplete: crate::Incompleteness::default(),
             non_boundary_seats: rustc_hash::FxHashMap::default(),
@@ -181,8 +177,8 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
         want: Option<u32>,
     ) -> bool {
         let clash = matches!(
-            (want, self.region_isa_mode.get(&existing)),
-            (Some(want), Some(&decoded)) if want != decoded
+            (want, self.region_graph[existing].isa_mode),
+            (Some(want), Some(decoded)) if want != decoded
         );
         if clash {
             self.incomplete.insert(addr, Reason::IsaModeConflict);
@@ -420,6 +416,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
                 start_addr: addr,
                 insns: Vec::new(),
                 empty_span_len: 0,
+                isa_mode: None,
                 terminator: RegionTerminator::TailCall {
                     target: addr.machine_addr.addr.into(),
                 },
