@@ -649,7 +649,7 @@ fn a_frame_address_in_a_call_register_prints_in_the_header() {
         (i128::MAX, "frame_address_in_call_register reach=unbounded"),
     ] {
         let mut f = empty();
-        f.record_call_register_frame_reach(reach);
+        f.set_call_register_frame_reach(Some(reach));
         let flagged = f.to_text(false);
         let lines: Vec<&str> = flagged.lines().collect();
         assert!(lines[2].starts_with("default_cc "), "{flagged}");
