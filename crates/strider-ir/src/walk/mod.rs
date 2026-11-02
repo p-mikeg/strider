@@ -18,7 +18,7 @@ pub type NodeIdSet = DenseEntitySet<NodeId>;
 /// control-flow nodes alone.
 pub fn cfg_reachable(graph: &Graph, entry: NodeId) -> DenseEntitySet<NodeId> {
     // The walk's visited set IS the answer, so the yielded items are dropped.
-    let mut walk = PreOrder::new(CfgSuccs(graph), iter::once(entry));
+    let mut walk = PreOrder::new(FnSuccs::new(|n| cfg_succs(graph, n)), iter::once(entry));
     walk.by_ref().for_each(drop);
     walk.into_visited()
 }
@@ -71,7 +71,7 @@ pub fn close_over_control_preds(
     }
 }
 
-pub use graph_algorithms::walk::{PostOrder, PreOrder, WalkPhase};
+pub use graph_algorithms::walk::{FnSuccs, PostOrder, PreOrder, WalkPhase};
 
 /// Successors follow data inputs backward and control edges forward.
 #[derive(Clone, Copy)]
@@ -91,8 +91,9 @@ pub(crate) fn cfg_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = Nod
         .map(|(succ_node, _succ_input_idx)| succ_node)
 }
 
-/// Forward def-use successors, unrestricted by liveness.
-fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+/// Forward def-use successors, unrestricted by liveness: a post-order from
+/// some roots reaches every transitive consumer, dead ones included.
+pub(crate) fn def_use_succs(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     graph
         .node_outputs(node)
         .iter()
@@ -118,48 +119,12 @@ impl graph_algorithms::walk::GraphRef for GraphWalkSuccs<'_> {
     }
 }
 
-/// Forward control edges only.
-#[derive(Clone, Copy)]
-struct CfgSuccs<'a>(&'a Graph);
-
-impl graph_algorithms::walk::GraphRef for CfgSuccs<'_> {
-    type NodeId = NodeId;
-
-    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
-        for succ in cfg_succs(self.0, node) {
-            f(succ);
-        }
-    }
-}
-
 pub type GraphWalk<'a> = PreOrder<GraphWalkSuccs<'a>>;
 
 /// Pre-order from `entry`, so `entry` is yielded FIRST. Order is otherwise
 /// unspecified, and "reachable" includes dead CFG inputs.
 pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs(graph), iter::once(entry))
-}
-
-/// The liveness-unrestricted counterpart of [`DefUseSuccs`]: a post-order
-/// from some roots reaches every transitive consumer, dead ones included.
-#[derive(Clone, Copy)]
-pub(crate) struct RawDefUseSuccs<'a>(&'a Graph);
-
-impl<'a> RawDefUseSuccs<'a> {
-    #[inline]
-    pub(crate) fn new(graph: &'a Graph) -> Self {
-        Self(graph)
-    }
-}
-
-impl graph_algorithms::walk::GraphRef for RawDefUseSuccs<'_> {
-    type NodeId = NodeId;
-
-    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
-        for succ in def_use_succs(self.0, node) {
-            f(succ);
-        }
-    }
 }
 
 /// Forward def-use edges restricted to a precomputed live set.
@@ -247,20 +212,6 @@ fn mem_succs(function: &Function, node: NodeId) -> impl Iterator<Item = NodeId> 
         .filter(|&consumer| is_memory_chain_kind(function.node_kind(consumer)))
 }
 
-/// The forward memory-token chain.
-#[derive(Clone, Copy)]
-struct MemorySuccs<'a>(&'a Function);
-
-impl graph_algorithms::walk::GraphRef for MemorySuccs<'_> {
-    type NodeId = NodeId;
-
-    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
-        for succ in mem_succs(self.0, node) {
-            f(succ);
-        }
-    }
-}
-
 /// The memory-touching nodes reachable forward from `function`'s
 /// `InitialMemory` root, in pre-order, the root included.
 ///
@@ -281,5 +232,5 @@ pub fn memory_reachable(function: &Function) -> Vec<NodeId> {
 
     // The walk's visited tracker dedups and breaks cycles, such as a
     // loop-header `MemPhi` back-edge.
-    PreOrder::new(MemorySuccs(function), iter::once(root)).collect()
+    PreOrder::new(FnSuccs::new(|n| mem_succs(function, n)), iter::once(root)).collect()
 }
