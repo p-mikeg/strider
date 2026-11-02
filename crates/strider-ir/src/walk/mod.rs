@@ -160,8 +160,6 @@ pub(crate) fn walk_graph(graph: &Graph, entry: NodeId) -> GraphWalk<'_> {
     PreOrder::new(GraphWalkSuccs::new(graph), iter::once(entry))
 }
 
-pub(crate) type DefUsePostorder<'a> = PostOrder<DefUseSuccs<'a>>;
-
 /// The liveness-unrestricted counterpart of [`DefUseSuccs`]: a post-order
 /// from some roots reaches every transitive consumer, dead ones included.
 #[derive(Clone, Copy)]
@@ -233,19 +231,11 @@ impl GraphWalkInfo {
         }
     }
 
-    /// Every node is yielded after its consumers, unless the use closes a
-    /// def-use cycle.
-    pub(crate) fn postorder<'a>(&'a self, graph: &'a Graph) -> DefUsePostorder<'a> {
-        PostOrder::new(
-            DefUseSuccs::new(graph, &self.live_nodes),
-            self.roots.iter().copied(),
-        )
-    }
-
     /// Every producer before its consumers unless the use closes a def-use
     /// cycle (a loop's `Region` or phi), a root first.
     pub(crate) fn reverse_postorder(&self, graph: &Graph) -> Vec<NodeId> {
-        let mut rpo: Vec<_> = self.postorder(graph).collect();
+        let succs = DefUseSuccs::new(graph, &self.live_nodes);
+        let mut rpo: Vec<_> = PostOrder::new(succs, self.roots.iter().copied()).collect();
         rpo.reverse();
         rpo
     }
