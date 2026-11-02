@@ -3,8 +3,8 @@ use cranelift_entity::packed_option::PackedOption;
 use cranelift_entity::{SecondaryMap, entity_impl};
 
 use crate::IRViewer;
-use crate::builder::FunctionBuilder;
 use crate::builder::checks::require_memory_kind;
+use crate::builder::{FunctionBuilder, IRBuilder};
 use crate::error::Result;
 use crate::graph::Graph;
 use crate::node::InitialVnId;
