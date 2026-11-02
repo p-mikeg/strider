@@ -2,7 +2,7 @@
 //! loop, a `panic` helper ending in a self-jump.
 //!
 //! Such a cycle reaches no `Return` / `IndirectBranch` / `Unreachable`, so it
-//! roots nothing: `Function::retain_reachable` walks data inputs backward from
+//! roots nothing: `Function::compact` walks data inputs backward from
 //! terminators, and without one the cycle's whole body, stores included, is
 //! dropped. `validate` rejects the shape outright.
 
