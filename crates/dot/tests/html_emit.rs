@@ -9,8 +9,6 @@ impl GraphDotDumper for TestDumper {
     type Error = anyhow::Error;
     type State = ();
 
-    fn create_initial_state(&self) -> Self::State {}
-
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
         0..self.n
     }
@@ -51,8 +49,6 @@ impl GraphDotDumper for FailingDumper {
     type Node = usize;
     type Error = anyhow::Error;
     type State = ();
-
-    fn create_initial_state(&self) -> Self::State {}
 
     fn iter_nodes(&self) -> impl IntoIterator<Item = Self::Node> {
         0..1
