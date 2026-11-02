@@ -19,9 +19,8 @@ bitflags::bitflags! {
     /// queue drains.
     #[derive(Clone, Copy, Default)]
     pub(crate) struct NodeFlags: u8 {
-        const ENQUEUED = 0b01;
-        const OUTPUT_KILLED = 0b10;
-        const NEEDS_RECANON = 0b100;
+        const OUTPUT_KILLED = 0b01;
+        const NEEDS_RECANON = 0b10;
     }
 }
 
@@ -361,10 +360,7 @@ impl<'g> EditFunction<'g> {
     }
 
     fn enqueue(&mut self, node: NodeId) {
-        if self.state.live_nodes.contains(node)
-            && !self.state.flags[node].contains(NodeFlags::ENQUEUED)
-        {
-            self.state.flags[node].insert(NodeFlags::ENQUEUED);
+        if self.state.live_nodes.contains(node) {
             self.state.queue.enqueue(node);
         }
     }
@@ -381,7 +377,6 @@ impl<'g> EditFunction<'g> {
     /// it into that twin; otherwise it re-enters the cache as the canonical
     /// representative.
     fn canonicalize_node(&mut self, node: NodeId) {
-        self.state.flags[node].remove(NodeFlags::NEEDS_RECANON);
         if let Some(twin) = self.function.graph_mut().canonicalize_node(node) {
             // `canonicalize_node` returns `Some` only on a structural dedup,
             // and every cacheable kind has ONE output, which for `Store` /
@@ -405,7 +400,6 @@ impl<'g> EditFunction<'g> {
             {
                 self.queue_pops += 1;
             }
-            self.state.flags[node].remove(NodeFlags::ENQUEUED);
             if self.state.live_nodes.contains(node) {
                 return Some(node);
             }
@@ -446,16 +440,11 @@ impl<'g> EditFunction<'g> {
             self.note_edge(input);
         }
         self.function.graph_mut().detach_node_inputs(node);
-        self.mark_node_dead(node);
-        self.generation += 1;
-        self.enqueue_orphaned_producers(inputs);
-    }
-
-    /// Evict `node` from the live set and `roots`, and clear its flags.
-    fn mark_node_dead(&mut self, node: NodeId) {
         self.state.live_nodes.remove(node);
         self.state.roots.remove(node);
         self.state.flags[node] = NodeFlags::empty();
+        self.generation += 1;
+        self.enqueue_orphaned_producers(inputs);
     }
 
     /// Drain the maybe-dead queue to a fixed point: kill every enqueued node
@@ -467,8 +456,7 @@ impl<'g> EditFunction<'g> {
     /// redirecting two SSA phis to one value) are re-merged here.
     pub fn clean(&mut self) {
         while let Some(node) = self.dequeue() {
-            let flags = self.state.flags[node];
-            self.state.flags[node].remove(NodeFlags::OUTPUT_KILLED);
+            let flags = std::mem::take(&mut self.state.flags[node]);
             // Deadness first: a dead node is killed, not canonicalized.
             if flags.contains(NodeFlags::OUTPUT_KILLED) && self.is_node_dead(node) {
                 self.kill_node(node);
@@ -489,15 +477,6 @@ impl<'g> EditFunction<'g> {
             .live_nodes
             .iter()
             .filter(move |&n| pred(self.function.node_kind(n)))
-    }
-
-    /// Register a fresh node into the cached live/roots state.  Idempotent.
-    fn track_created(&mut self, node: NodeId) {
-        // A dedup onto a live node changes nothing.
-        self.live_entries += u64::from(self.state.live_nodes.insert(node));
-        if self.node_inputs(node).is_empty() {
-            self.state.roots.insert(node);
-        }
     }
 
     pub fn create_node(
@@ -528,7 +507,11 @@ impl<'g> EditFunction<'g> {
         let node = self
             .function
             .create_node_attributed(kind, inputs, output_kinds, contributors);
-        self.track_created(node);
+        // A dedup onto a live node changes nothing.
+        self.live_entries += u64::from(self.state.live_nodes.insert(node));
+        if self.node_inputs(node).is_empty() {
+            self.state.roots.insert(node);
+        }
         node
     }
 
@@ -1861,6 +1844,46 @@ mod tests {
             "surviving Phi value inputs keep original order, contiguous, token first"
         );
     }
+    /// A node killed while still queued, then resurrected, is popped once at
+    /// its old position: the queue holds each node at most once.
+    #[test]
+    fn kill_then_resurrect_of_a_queued_node_pops_it_once() {
+        let mut b = single_region_builder();
+        let k = b.build_int_const(6u64, ValueType::int(64)).unwrap();
+        let neg = b
+            .build_int_unary_operation(k, crate::node::IntUnaryOp::Neg, ValueType::int(64))
+            .unwrap();
+        b.build_return(Some(neg), &[]).unwrap();
+        b.set_lift_addr(None);
+        let mut function = b.build().unwrap();
+        let (k_node, neg_node) = (function.producer(k), function.producer(neg));
+        let ret = function
+            .graph()
+            .all_node_ids()
+            .find(|&n| matches!(function.node_kind(n), NodeKind::Return))
+            .expect("a Return node");
+        let slot_index = function
+            .node_inputs(ret)
+            .iter()
+            .position(|v| v == neg)
+            .expect("Return reads the Neg");
+
+        let mut ctx = EditFunction::new(&mut function);
+        let zero = ctx.build_int_const(0u64, ValueType::int(64)).unwrap();
+        let slot = ctx.function().node_input_id_at(ret, slot_index).unwrap();
+        let before = ctx.queue_pops;
+        // Queues the Neg (last use gone) and the Return (re-canon).
+        ctx.update_input(slot, zero);
+        // Kills the queued Neg and queues its operand.
+        ctx.kill_node(neg_node);
+        // Resurrects the Neg, which is still queued.
+        ctx.add_node_input(ret, neg);
+        ctx.clean();
+        assert_eq!(ctx.queue_pops - before, 3, "Neg, Return, const: once each");
+        assert!(ctx.is_live(neg_node));
+        assert!(!ctx.is_live(k_node), "the orphaned operand is culled");
+    }
+
     /// Orphaning the head of an `n`-long chain kills it top-down, each node's
     /// operand the next one dequeued. Counts queue pops, not time.
     #[test]
