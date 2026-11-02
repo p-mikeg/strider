@@ -2331,14 +2331,16 @@ fn check_data_cycles(wiring: &[(usize, usize)], phis: &[bool]) {
         Err(errs) => errs
             .0
             .iter()
-            .filter_map(|e| match e {
-                ValidationError::DataCycle { node, .. } => Some(
+            .filter_map(|e| {
+                let ValidationError::DataCycle { node, .. } = e else {
+                    return None;
+                };
+                Some(
                     nodes
                         .iter()
                         .position(|n| n == node)
                         .expect("a generated node") as u32,
-                ),
-                _ => None,
+                )
             })
             .collect(),
     };
