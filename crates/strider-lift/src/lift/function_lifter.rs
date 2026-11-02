@@ -206,18 +206,12 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         self.local_entries.get(self.per_address_ccs, target)
     }
 
-    /// A zero-pcode-op entry region carries no instruction, so its start address
-    /// is the fallback: a sink stamped with no address fails the fingerprint
-    /// invariant.
-    pub(crate) fn entry_machine_addr(&self) -> Option<u64> {
-        let region = self.cfg.region_graph().node_weight(self.cfg.entry())?;
-        Some(
-            region
-                .insns
-                .first()
-                .map_or(region.start_addr.machine_addr.addr, |wrapped| {
-                    wrapped.addr.machine_addr.addr
-                }),
-        )
+    /// The entry region's start: a region's first instruction sits at it, and
+    /// a zero-pcode-op entry region has none.
+    pub(crate) fn entry_machine_addr(&self) -> u64 {
+        self.cfg.region_graph()[self.cfg.entry()]
+            .start_addr
+            .machine_addr
+            .addr
     }
 }
