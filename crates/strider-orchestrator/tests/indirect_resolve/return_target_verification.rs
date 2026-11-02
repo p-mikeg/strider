@@ -621,7 +621,7 @@ fn x86_64_a_write_through_a_pointer_loaded_from_a_global_rests_on_a_claim() {
 /// the walk would pass it anyway.
 ///
 /// Mutation: narrow `LoadForward` with `stack_global_disjoint` off and drop
-/// the constant-address arm of `off_stack`.
+/// `ReturnTargets::store_effect`'s constant-address arm.
 #[test]
 fn x86_64_a_global_store_rests_on_stack_global_disjoint() {
     // movl $0x1,0x20000 ; ret
@@ -646,7 +646,7 @@ fn x86_64_a_global_store_rests_on_stack_global_disjoint() {
 /// slot: the `ret`'s memory edge stops at the merge, so the walk meets the
 /// store itself, and `stack_global_disjoint` still keeps it off the slot.
 ///
-/// Mutation: drop the constant-address arm of `off_stack`.
+/// Mutation: drop `ReturnTargets::store_effect`'s constant-address arm.
 #[test]
 fn x86_64_a_global_store_past_a_merge_rests_on_stack_global_disjoint() {
     // test %edi,%edi ; je 1f ; mov (%rsp),%rax ; mov %rax,(%rsp) ; jmp 2f
@@ -833,7 +833,7 @@ fn an_empty_seed_leaves_a_derived_return_verified() {
 /// with the claim cleared, a merge whose other arm rewrites the slot brings
 /// the slot walk to the call itself, and it passes.
 ///
-/// Mutation: drop the `preserves_memory` arm of the slot walk.
+/// Mutation: drop the `preserves_memory` term of the slot walk's call rule.
 #[test]
 fn x86_64_a_memory_preserving_call_past_a_merge_rests_on_no_claim() {
     // test %edi,%edi ; je 1f ; mov (%rsp),%rax ; mov %rax,(%rsp) ; jmp 2f

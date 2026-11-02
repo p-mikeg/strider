@@ -1,4 +1,4 @@
-use strider_ir::node::{NodeId, NodeKind};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRBuilderExt, IRViewer, ReadOnlyMemory};
 
 use crate::Result;
@@ -35,17 +35,16 @@ use crate::pipeline::OptCtx;
 /// }
 ///
 /// let mut pipeline = OptimizerPipeline::new();
-/// pipeline.add(LoadReadOnly);
+/// pipeline.add(&LoadReadOnly);
 /// let rom = MyRom;
 /// let edit = OptCtx::new(Some(&rom));
 /// # let _ = (pipeline, edit);
 /// ```
-#[derive(Clone, Copy)]
 pub struct LoadReadOnly;
 
-// Each Load folds independently against the rom, so the driver's default RPO
-// `seed_order` is left alone, and RPO puts the inner load of a `Load(Load(c))`
-// before the outer one, so no consumer needs re-enqueueing.
+// Each Load folds independently against the rom, and the driver's RPO puts the
+// inner load of a `Load(Load(c))` before the outer one, so no consumer needs
+// re-enqueueing.
 impl crate::peephole::PeepholePass for LoadReadOnly {
     type Sweep = ();
 
@@ -59,13 +58,11 @@ impl crate::peephole::PeepholePass for LoadReadOnly {
         edit: &mut crate::EditFunction<'_>,
         opt_ctx: &OptCtx<'_>,
         root: NodeId,
-    ) -> Result<crate::peephole::PeepholeRewrite> {
-        let Some(rom) = opt_ctx.rom else {
-            return Ok(crate::peephole::PeepholeRewrite::NoChange);
-        };
-        Ok(crate::peephole::PeepholeRewrite::from_changed(
-            try_fold_const_load_at(edit, root, rom)?,
-        ))
+    ) -> Result<Option<ValueId>> {
+        if let Some(rom) = opt_ctx.rom {
+            try_fold_const_load_at(edit, root, rom)?;
+        }
+        Ok(None)
     }
 }
 
@@ -74,20 +71,24 @@ fn try_fold_const_load_at(
     edit: &mut crate::EditFunction<'_>,
     node_id: NodeId,
     rom: &dyn ReadOnlyMemory,
-) -> Result<bool> {
+) -> Result<()> {
     let (data_value, ty) = edit.single_value_output(node_id)?;
-    let resolve = |v| edit.function().int_const(v).cloned();
-    let Some(masked) =
-        crate::const_eval::eval_node_const(edit.function(), data_value, &resolve, Some(rom))
+    let addr_value = edit.load_addr(node_id);
+    let Some(masked) = edit
+        .int_const(addr_value)
+        .and_then(|addr| u64::try_from(addr).ok())
+        .and_then(|addr| {
+            crate::const_eval::read_rom_const(rom, addr, ty, edit.function().endianness())
+        })
     else {
-        return Ok(false);
+        return Ok(());
     };
     let new_value = edit.build_int_const(masked, ty)?;
     // The address cone justifies which byte run was read and is cascade-culled
     // once the Load is replaced, so absorb its fingerprint first.
-    let addr_value = edit.load_addr(node_id);
     edit.absorb_fingerprint(new_value, addr_value);
-    Ok(edit.replace_value(data_value, new_value))
+    edit.replace_value(data_value, new_value);
+    Ok(())
 }
 
 #[cfg(test)]

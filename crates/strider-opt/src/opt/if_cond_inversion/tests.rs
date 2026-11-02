@@ -1,34 +1,11 @@
 use super::IfCondInversion;
 use crate::ConstantFold;
 use crate::Result;
-use crate::test_support::{find_unique_if, run_to_fixed_point};
+use crate::test_support::{bool_not, find_unique_if, is_bool_not, run_pass, run_to_fixed_point};
 use strider_ir::{IRBuilderExt, IRViewer};
 
-use strider_ir::IntBinaryOp;
-use strider_ir::node::{NodeKind, ValueId, ValueType};
+use strider_ir::node::{NodeKind, ValueId};
 use strider_ir_test_utils::RegisterSet;
-
-/// The canonical 1-bit logical NOT shape, `Xor(operand, IntConst(1)):I1`.
-fn build_bool_not(b: &mut strider_ir::FunctionBuilder, operand: ValueId) -> Result<ValueId> {
-    let one = b.build_int_const(u128::MAX, ValueType::I1)?;
-    b.build_int_binary_operation(operand, one, IntBinaryOp::Xor, ValueType::I1)
-}
-
-/// The constant may sit on either side: Xor is commutative in the dedup cache.
-fn is_i1_xor_with_one(fg: &strider_ir::Function, node: strider_ir::node::NodeId) -> bool {
-    use strider_ir::IRViewer;
-    if !matches!(fg.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Xor)) {
-        return false;
-    }
-    let Ok([lhs, rhs]) = fg.node_inputs_exact::<2>(node) else {
-        return false;
-    };
-    let is_one = |value: ValueId| {
-        fg.value_kind(value).as_value().is_some_and(|t| t.is_bool())
-            && fg.int_const_u128(value) == Some(1)
-    };
-    is_one(lhs) || is_one(rhs)
-}
 
 /// `if (!cond) { return 1 } else { return 2 }`, `cond` read from a register.
 fn build_if_with_neg_cond() -> Result<(strider_ir::Function, strider_ir::node::NodeId)> {
@@ -38,53 +15,27 @@ fn build_if_with_neg_cond() -> Result<(strider_ir::Function, strider_ir::node::N
         .build_if_then_else_returns(|b| {
             let raw = b.read_variable(&cond_vn)?;
             let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::ValueType::I1)?;
-            let neg_cond = build_bool_not(b, cond_bool)?;
+            let neg_cond = bool_not(b, cond_bool)?;
             Ok((neg_cond, ()))
         })?;
     Ok((fg, if_node))
 }
 
 #[test]
-fn new_builds_pass_that_inverts() -> Result<()> {
+fn inverts_a_negated_condition_once() -> Result<()> {
     let (mut fg, if_node) = build_if_with_neg_cond()?;
-    let cond_pre = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
-    assert!(is_i1_xor_with_one(&fg, cond_pre));
+    let cond_pre = fg.producer(fg.if_cond(if_node));
+    assert!(is_bool_not(&fg, cond_pre));
 
-    let r = crate::pipeline::run_one(&IfCondInversion::new(), &mut fg, &crate::OptCtx::new(None))?;
-    assert!(r.changed(), "constructed pass should invert the cond");
+    let r = run_pass(&IfCondInversion, &mut fg)?;
+    assert!(r, "the pass should invert the cond");
 
-    let cond_post = fg.producer(fg.graph().node_inputs_exact::<2>(if_node)?[1]);
-    assert!(!is_i1_xor_with_one(&fg, cond_post));
-    Ok(())
-}
-
-/// Pins that the pattern table is per-instance, not shared global state.
-#[test]
-fn two_independent_instances_each_invert() -> Result<()> {
-    let pass_a = IfCondInversion::new();
-    let pass_b = IfCondInversion::new();
-
-    let (mut fg_a, if_a) = build_if_with_neg_cond()?;
-    assert!(crate::pipeline::run_one(&pass_a, &mut fg_a, &crate::OptCtx::new(None))?.changed());
-    let cond_a = fg_a.producer(fg_a.graph().node_inputs_exact::<2>(if_a)?[1]);
-    assert!(!is_i1_xor_with_one(&fg_a, cond_a));
-
-    let (mut fg_b, if_b) = build_if_with_neg_cond()?;
-    assert!(crate::pipeline::run_one(&pass_b, &mut fg_b, &crate::OptCtx::new(None))?.changed());
-    let cond_b = fg_b.producer(fg_b.graph().node_inputs_exact::<2>(if_b)?[1]);
-    assert!(!is_i1_xor_with_one(&fg_b, cond_b));
-    Ok(())
-}
-
-#[test]
-fn idempotent_after_one_application() -> Result<()> {
-    let (mut fg, _if_node) = build_if_with_neg_cond()?;
-    let first =
-        crate::pipeline::run_one(&IfCondInversion::new(), &mut fg, &crate::OptCtx::new(None))?;
-    assert!(first.changed());
-    let second =
-        crate::pipeline::run_one(&IfCondInversion::new(), &mut fg, &crate::OptCtx::new(None))?;
-    assert!(!second.changed(), "second pass must be a no-op");
+    let cond_post = fg.producer(fg.if_cond(if_node));
+    assert!(!is_bool_not(&fg, cond_post));
+    assert!(
+        !run_pass(&IfCondInversion, &mut fg)?,
+        "a second run is a no-op"
+    );
     Ok(())
 }
 
@@ -98,15 +49,15 @@ fn double_neg_collapses_after_constant_fold() -> Result<()> {
         .build_if_then_else_returns(|b| {
             let raw = b.read_variable(&cond_vn)?;
             let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::ValueType::I1)?;
-            let n1 = build_bool_not(b, cond_bool)?;
-            let n2 = build_bool_not(b, n1)?;
+            let n1 = bool_not(b, cond_bool)?;
+            let n2 = bool_not(b, n1)?;
             Ok((n2, ()))
         })?;
 
-    run_to_fixed_point(&ConstantFold::new(), &mut fg)?;
-    let r = crate::pipeline::run_one(&IfCondInversion::new(), &mut fg, &crate::OptCtx::new(None))?;
+    run_to_fixed_point(&ConstantFold, &mut fg)?;
+    let r = run_pass(&IfCondInversion, &mut fg)?;
     assert!(
-        !r.changed(),
+        !r,
         "IfCondInversion must be a no-op after !!x simplification: even parity preserves direct layout"
     );
     Ok(())
@@ -131,7 +82,7 @@ fn swap_consumers_preserves_value_semantics() -> Result<()> {
         "pre-pass consumers must be distinct Region nodes"
     );
 
-    crate::pipeline::run_one(&IfCondInversion::new(), &mut fg, &crate::OptCtx::new(None))?;
+    run_pass(&IfCondInversion, &mut fg)?;
 
     let [value0_post, value1_post] = fg.node_outputs_exact::<2>(if_node)?;
     let post_true_consumer = consumer_of(fg.graph(), value0_post);
@@ -161,7 +112,7 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
             let raw = b.read_variable(&cond_vn)?;
             let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::ValueType::I1)?;
             b.set_lift_addr(Some(0x504));
-            let neg_cond = build_bool_not(b, cond_bool)?;
+            let neg_cond = bool_not(b, cond_bool)?;
             b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
             Ok((neg_cond, ()))
         })?;
@@ -170,11 +121,11 @@ fn bool_neg_fingerprint_absorbed_into_inner_cond() -> Result<()> {
     let bool_neg_node = fg
         .graph()
         .all_node_ids()
-        .find(|&n| is_i1_xor_with_one(&fg, n))
+        .find(|&n| is_bool_not(&fg, n))
         .expect("I1 Xor(_, 1) (logical NOT) present pre-pass");
 
-    let r = crate::pipeline::run_one(&IfCondInversion::new(), &mut fg, &crate::OptCtx::new(None))?;
-    assert!(r.changed());
+    let r = run_pass(&IfCondInversion, &mut fg)?;
+    assert!(r);
 
     let if_node = find_unique_if(fg.graph());
     let [_ctrl, cond_value] = fg.graph().node_inputs_exact::<2>(if_node)?;
@@ -206,7 +157,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
             let raw = b.read_variable(&cond_vn)?;
             let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::ValueType::I1)?;
             b.set_lift_addr(Some(0x804));
-            let neg_cond = build_bool_not(b, cond_bool)?;
+            let neg_cond = bool_not(b, cond_bool)?;
             b.set_lift_addr(Some(0x808));
             Ok((neg_cond, ()))
         })?;
@@ -214,7 +165,7 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
     let bool_neg_node = fg
         .graph()
         .all_node_ids()
-        .find(|&n| is_i1_xor_with_one(&fg, n))
+        .find(|&n| is_bool_not(&fg, n))
         .expect("I1 Xor(_, 1) pre-pass");
     let if_node_pre = find_unique_if(fg.graph());
     // The inner cond is whichever Xor operand is not the I1 `IntConst(1)`.
@@ -245,8 +196,8 @@ fn fingerprint_absorption_targets_inner_cond_producer_only() -> Result<()> {
             .contains(&0x804)
     );
 
-    let r = crate::pipeline::run_one(&IfCondInversion::new(), &mut fg, &crate::OptCtx::new(None))?;
-    assert!(r.changed());
+    let r = run_pass(&IfCondInversion, &mut fg)?;
+    assert!(r);
 
     assert!(
         fg.side_tables()
@@ -284,9 +235,9 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
             let raw = b.read_variable(&cond_vn)?;
             let cond_bool = b.convert_to_int_if_needed(raw, strider_ir::node::ValueType::I1)?;
             b.set_lift_addr(Some(0x904));
-            let neg_cond = build_bool_not(b, cond_bool)?;
+            let neg_cond = bool_not(b, cond_bool)?;
             b.set_lift_addr(Some(0x908));
-            let second_neg = build_bool_not(b, neg_cond)?;
+            let second_neg = bool_not(b, neg_cond)?;
             let second_neg_node = b.function().producer(second_neg);
             // The Store anchors `second_neg` against the initial dead-node cull.
             // Unanchored it is a dead cone, and culling it would leave the first
@@ -301,7 +252,7 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
     let bool_neg_node = fg
         .graph()
         .all_node_ids()
-        .find(|&n| n != second_neg_node && is_i1_xor_with_one(&fg, n))
+        .find(|&n| n != second_neg_node && is_bool_not(&fg, n))
         .expect("first Xor(_, 1) (logical NOT) present pre-pass");
     let [lhs, rhs] = fg.graph().node_inputs_exact::<2>(bool_neg_node)?;
     let inner_producer_pre = {
@@ -326,11 +277,8 @@ fn bool_neg_fingerprint_not_absorbed_when_boolneg_has_other_consumers() -> Resul
             .contains(&0x904)
     );
 
-    let r = crate::pipeline::run_one(&IfCondInversion::new(), &mut fg, &crate::OptCtx::new(None))?;
-    assert!(
-        r.changed(),
-        "pass must still fire: the If's cond is Xor(_, 1)(...)"
-    );
+    let r = run_pass(&IfCondInversion, &mut fg)?;
+    assert!(r, "pass must still fire: the If's cond is Xor(_, 1)(...)");
 
     assert!(
         !fg.side_tables()

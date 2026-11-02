@@ -21,6 +21,11 @@ pub(crate) fn same_width(f: &Function, b: &Bindings, caps: &[Capture]) -> Option
         .then_some(width)
 }
 
+/// Whether every capture in `caps` carries the root type `ty`'s width.
+pub(crate) fn at_root_width(f: &Function, b: &Bindings, ty: ValueType, caps: &[Capture]) -> bool {
+    same_width(f, b, caps) == Some(ty.bit_width())
+}
+
 /// Whether `cap` binds a shift count `1 << count` can be built from at `ty`:
 /// an integer `ty` whose width the count names a bit of.
 ///

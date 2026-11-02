@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use strider_orchestrator::opt::{EditFunction, OptCtx, PostOptimizer, default_pipeline};
+use strider_orchestrator::opt::{EditFunction, OptCtx, Optimizer, default_pipeline};
 
 use crate::common;
 
@@ -33,7 +33,7 @@ fn chain(links: u64) -> Vec<u8> {
 #[derive(Clone)]
 struct CountRounds(Arc<AtomicUsize>);
 
-impl PostOptimizer for CountRounds {
+impl Optimizer for CountRounds {
     fn apply(&self, _edit: &mut EditFunction<'_>, _ctx: &OptCtx<'_>) -> anyhow::Result<()> {
         self.0.fetch_add(1, Ordering::Relaxed);
         Ok(())
@@ -45,7 +45,8 @@ fn analyze(bytes: Vec<u8>) -> (strider_orchestrator::AnalyzeResult, usize) {
     let (mut strider, cc) = common::strider_over_bytes(common::Arch::X64, bytes, BASE, None);
     let rounds = Arc::new(AtomicUsize::new(0));
     let mut pipeline = default_pipeline();
-    pipeline.add_post_pass(CountRounds(Arc::clone(&rounds)));
+    // A pass is held `&'static`; one counter per analysis leaks one box.
+    pipeline.add_post_pass(Box::leak(Box::new(CountRounds(Arc::clone(&rounds)))));
     let result = strider
         .analyze(
             BASE,

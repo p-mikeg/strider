@@ -2,10 +2,10 @@
 //! match arms are exercised in isolation.
 
 use super::*;
-use strider_ir::UBig;
+use crate::test_support::{COLLAPSE, at, run_passes};
 use strider_ir::node::{IntBinaryOp, NodeKind, ValueType};
-use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer};
-use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn as fake_reg_vn};
+use strider_ir::{AssumptionOptions, FunctionBuilder, IRBuilderExt, IRViewer, UBig};
+use strider_ir_test_utils::{IrWalkerEx, RegisterSet, reg_vn as fake_reg_vn, sp_frame};
 
 /// Runs the two value-based recognisers on a dispatch value directly.
 ///
@@ -15,9 +15,26 @@ fn classify_target_bare(
     function: &strider_ir::Function,
     target_value: ValueId,
 ) -> Option<ResolvedTargets> {
-    let mut sc = SiteClassifier::new(function, None).expect("SiteClassifier::new");
+    let mut sc = SiteClassifier::new(function, None);
     sc.single_const_target(target_value, None)
         .or_else(|| sc.link_register_return(function.entry(), target_value))
+}
+
+/// A register-free builder in its sole, entry, region.
+fn bare() -> FunctionBuilder {
+    RegisterSet::new()
+        .build_fn_single_region()
+        .expect("build_fn_single_region")
+}
+
+/// `b` built and brought to the converged shape (no single-input `VarPhi`s)
+/// under `claims`.
+fn finish(mut b: FunctionBuilder, claims: &AssumptionOptions) -> strider_ir::Function {
+    b.set_lift_addr(None);
+    let mut function = b.build().expect("build");
+    function.assume(claims);
+    run_passes(&mut function, COLLAPSE).expect("prep");
+    function
 }
 
 /// An empty region terminated by a Return over the caller-supplied value,
@@ -25,86 +42,68 @@ fn classify_target_bare(
 fn empty_graph_returning(
     target_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
 ) -> (strider_ir::Function, ValueId) {
-    let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
-    let region = builder.create_region_all().expect("create_region");
-    builder
-        .set_entry_region_all(region)
-        .expect("set_entry_region");
-    builder.set_region(region);
-    builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let mut builder = bare();
     let target = target_inputs(&mut builder);
-    // Re-stamp in case the closure cleared the lift_addr.
-    builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     builder
         .build_return(Some(target), &[])
         .expect("build_return");
     builder.set_lift_addr(None);
-    let function = builder.build().expect("build");
     // `build` is a move, but `ValueId` is a stable entity index.
-    (function, target)
+    (builder.build().expect("build"), target)
 }
 
-/// PhiCollapse has not run on these hand-built fixtures, so the tracked
-/// read sits behind single-input `VarPhi`s the classifier arms look past.
-fn skip_trivial_var_phis(function: &strider_ir::Function, mut value: ValueId) -> ValueId {
-    loop {
-        let pid = function.producer(value);
-        let is_var_phi = matches!(function.node_kind(pid), NodeKind::Phi)
-            && function
-                .get_vn_for_value(function.node_outputs(pid)[0])
-                .is_some();
-        if !is_var_phi {
-            return value;
-        }
-        let head = NodeKind::Phi.input_head_len();
-        if function.node_inputs(pid).len() != head + 1 {
-            return value;
-        }
-        let Some(sole) = function.nth_input(pid, head) else {
-            return value;
-        };
-        value = sole;
-    }
+/// An interworking branch carries its ISA-mode bit as slot 3; the resolver
+/// surfaces it, read live off the placeholder. A 3-input branch has no mode,
+/// so it keeps the flowing mode.
+/// MIPS64 `ext i,w,26,6; andi i,i,0xff` on the sign-extended word `w`:
+/// `((sext64(w) << 32) >> 58) & 0xff`.  Shared with the table and range
+/// tests.
+pub(super) fn ext_26_6(b: &mut FunctionBuilder, w: ValueId) -> ValueId {
+    let i64t = ValueType::int(64);
+    let wide = b
+        .extend_if_needed(w, i64t, strider_ir::ExtendOp::SignExtend)
+        .unwrap();
+    let up = b
+        .build_const_binop(32u64, wide, IntBinaryOp::ShiftLeft, i64t)
+        .unwrap();
+    let field = b
+        .build_const_binop(58u64, up, IntBinaryOp::ShiftRight, i64t)
+        .unwrap();
+    b.build_const_binop(0xffu64, field, IntBinaryOp::And, i64t)
+        .unwrap()
+}
+
+/// MIPS64 `srl t,w,lo; sltiu t,t,bound` on the `I32` word `w`:
+/// `sext64(w >> lo) < bound`.  Shared with the table and range tests.
+pub(super) fn srl_sltiu(b: &mut FunctionBuilder, w: ValueId, lo: u64, bound: u64) -> ValueId {
+    let (i32t, i64t) = (ValueType::int(32), ValueType::int(64));
+    let field = b
+        .build_const_binop(lo, w, IntBinaryOp::ShiftRight, i32t)
+        .unwrap();
+    let wide = b
+        .extend_if_needed(field, i64t, strider_ir::ExtendOp::SignExtend)
+        .unwrap();
+    let n = b.build_int_const(bound, i64t).unwrap();
+    b.build_int_cmp_operation(wide, n, strider_ir::IntCmpOp::Less, i64t)
+        .unwrap()
 }
 
 #[test]
 fn indirect_branch_carries_its_mode_input() {
-    // An interworking branch carries its ISA-mode bit as slot 3; the resolver
-    // surfaces it, read live off the placeholder.
-    let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
-    let region = builder.create_region_all().expect("create_region");
-    builder.set_entry_region_all(region).expect("set_entry");
-    builder.set_region(region);
-    builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let mode = builder.build_int_const(1u64, ValueType::int(64)).unwrap();
-    let target = builder
-        .build_int_const(0x8000u64, ValueType::int(64))
-        .unwrap();
-    let branch = builder
-        .build_indirect_branch_with_mode(target, Some(mode))
-        .expect("build_branch");
-    builder.set_lift_addr(None);
-    let function = builder.build().expect("build");
-
-    assert_eq!(function.indirect_branch_isa_mode(branch), Some(mode));
-}
-
-#[test]
-fn non_switching_branch_has_no_mode_input() {
-    // A 3-input branch: no mode, so it keeps the flowing mode.
-    let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
-    let region = builder.create_region_all().expect("create_region");
-    builder.set_entry_region_all(region).expect("set_entry");
-    builder.set_region(region);
-    builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-    let target = builder
-        .build_int_const(0x8000u64, ValueType::int(64))
-        .unwrap();
-    let branch = builder.build_indirect_branch(target).expect("build_branch");
-    builder.set_lift_addr(None);
-    let function = builder.build().expect("build");
-
-    assert_eq!(function.indirect_branch_isa_mode(branch), None);
+    for with_mode in [true, false] {
+        let mut builder = bare();
+        let mode = builder.build_int_const(1u64, ValueType::int(64)).unwrap();
+        let target = builder
+            .build_int_const(0x8000u64, ValueType::int(64))
+            .unwrap();
+        let mode = with_mode.then_some(mode);
+        let branch = builder
+            .build_indirect_branch_with_mode(target, mode)
+            .expect("build_branch");
+        builder.set_lift_addr(None);
+        let function = builder.build().expect("build");
+        assert_eq!(function.indirect_branch_isa_mode(branch), mode);
+    }
 }
 
 #[test]
@@ -113,18 +112,13 @@ fn const_target_with_unfoldable_mode_defers() {
     // must fail closed: the callee's mode is unknown, so defer rather than
     // decode the const target in the flowing mode (the table path already
     // fails closed here via `?`).
-    let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
-    let region = builder.create_region_all().expect("create_region");
-    builder.set_entry_region_all(region).expect("set_entry");
-    builder.set_region(region);
-    builder.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let mut builder = bare();
     let target = builder
         .build_int_const(0x8000u64, ValueType::int(64))
         .unwrap();
     // A symbolic (non-IntConst) mode, as a runtime `entry & 1` would be.
-    let one = builder.build_int_const(1u64, ValueType::int(64)).unwrap();
     let mode = builder
-        .build_int_binary_operation(target, one, IntBinaryOp::And, ValueType::int(64))
+        .build_const_binop(1u64, target, IntBinaryOp::And, ValueType::int(64))
         .unwrap();
     builder
         .build_indirect_branch_with_mode(target, Some(mode))
@@ -132,7 +126,7 @@ fn const_target_with_unfoldable_mode_defers() {
     builder.set_lift_addr(None);
     let function = builder.build().expect("build");
 
-    let sc = SiteClassifier::new(&function, None).expect("SiteClassifier::new");
+    let sc = SiteClassifier::new(&function, None);
     assert_eq!(sc.single_const_target(target, Some(mode)), None);
 }
 
@@ -146,74 +140,52 @@ fn classify_int_const_returns_single() {
     assert_eq!(result, Some(ResolvedTargets::Single(0x1234.into())));
 }
 
+/// The link-register recogniser over a returned register read: only the
+/// declared link register's own entry value answers `LinkRegister`. `lr + 1`
+/// under a declared link register reaches the recogniser's fallback arm, not
+/// the missing-register exit.
+///
+/// Mutation: answer `LinkRegister` from that fallback arm.
 #[test]
-fn classify_initial_var_with_matching_lr_returns_link_register() {
-    let lr_vn = fake_reg_vn(0x4c, 4);
-    // The only tracked variable IS the link register, so reading it gives
-    // an `InitialVar(lr)`.
-    let mut builder = RegisterSet::new()
-        .tracked(lr_vn)
-        .link_register(lr_vn)
-        .build_fn_single_region()
-        .expect("RegisterSet::build_fn_single_region");
-    let target = builder.read_variable(&lr_vn).expect("read_variable(lr)");
-    builder
-        .build_return(Some(target), &[])
-        .expect("build_return");
-    builder.set_lift_addr(None);
-    let function = builder.build().expect("build");
-
-    let producer_value = skip_trivial_var_phis(&function, target);
-
-    let result = classify_target_bare(&function, producer_value);
-    assert_eq!(result, Some(ResolvedTargets::LinkRegister));
-}
-
-#[test]
-fn classify_initial_var_with_non_matching_vn_returns_none() {
-    let lr_vn = fake_reg_vn(0x4c, 4);
-    let other_vn = fake_reg_vn(0x10, 4);
-    // The tracked variable and the declared link register differ, so no
-    // match is possible.
-    let mut builder = RegisterSet::new()
-        .tracked(other_vn)
-        .link_register(lr_vn)
-        .build_fn_single_region()
-        .expect("RegisterSet::build_fn_single_region");
-    let target = builder
-        .read_variable(&other_vn)
-        .expect("read_variable(other)");
-    builder
-        .build_return(Some(target), &[])
-        .expect("build_return");
-    builder.set_lift_addr(None);
-    let function = builder.build().expect("build");
-
-    let producer_value = skip_trivial_var_phis(&function, target);
-
-    let result = classify_target_bare(&function, producer_value);
-    assert_eq!(result, None);
-}
-
-#[test]
-fn classify_initial_var_with_lr_unset_returns_none() {
-    // InitialVar(lr_vn) with `link_register = None`, the x86 case.
-    let lr_vn = fake_reg_vn(0x4c, 4);
-    let mut builder = RegisterSet::new()
-        .tracked(lr_vn)
-        .build_fn_single_region()
-        .expect("RegisterSet::build_fn_single_region");
-    let target = builder.read_variable(&lr_vn).expect("read_variable(lr)");
-    builder
-        .build_return(Some(target), &[])
-        .expect("build_return");
-    builder.set_lift_addr(None);
-    let function = builder.build().expect("build");
-
-    let producer_value = skip_trivial_var_phis(&function, target);
-
-    let result = classify_target_bare(&function, producer_value);
-    assert_eq!(result, None);
+fn classify_initial_var_against_the_link_register() {
+    let lr = fake_reg_vn(0x4c, 4);
+    let other = fake_reg_vn(0x10, 4);
+    let rows = [
+        (
+            "the link register",
+            lr,
+            Some(lr),
+            false,
+            Some(ResolvedTargets::LinkRegister),
+        ),
+        ("another register", other, Some(lr), false, None),
+        ("no link register (x86)", lr, None, false, None),
+        ("lr + 1", lr, Some(lr), true, None),
+    ];
+    for (name, read, declared, plus_one, want) in rows {
+        let mut regs = RegisterSet::new().tracked(read);
+        if let Some(declared) = declared {
+            regs = regs.link_register(declared);
+        }
+        let mut b = regs
+            .build_fn_single_region()
+            .expect("build_fn_single_region");
+        let mut target = b.read_variable(&read).expect("read_variable");
+        if plus_one {
+            target = b
+                .build_const_binop(1u64, target, IntBinaryOp::Add, ValueType::int(32))
+                .expect("lr + 1");
+        }
+        b.build_return(Some(target), &[]).expect("build_return");
+        let function = finish(b, &AssumptionOptions::none());
+        let target = function.returned();
+        assert_eq!(
+            plus_one,
+            matches!(function.kind_of_value(target), NodeKind::IntBinaryOp(_)),
+            "{name}: fixture shape"
+        );
+        assert_eq!(classify_target_bare(&function, target), want, "{name}");
+    }
 }
 
 /// `unresolved` first: there a mutation listing every node
@@ -258,11 +230,7 @@ fn classify_sites_lists_a_site_it_cannot_resolve() {
 /// `unresolved` lists no site.
 #[test]
 fn unresolved_lists_the_sites_classify_sites_resolves() {
-    let mut b = strider_ir_test_utils::empty_builder().expect("empty_builder");
-    let region = b.create_region_all().expect("create_region");
-    b.set_entry_region_all(region).expect("set_entry");
-    b.set_region(region);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
+    let mut b = bare();
     let target = b.build_int_const(0x8000u64, ValueType::int(64)).unwrap();
     let branch = b.build_indirect_branch(target).expect("build_branch");
     b.set_lift_addr(None);
@@ -278,22 +246,21 @@ fn unresolved_lists_the_sites_classify_sites_resolves() {
     assert!(off.resolved.is_empty());
 }
 
-#[test]
-fn classify_unrelated_node_kind_returns_none() {
-    let (function, target) = empty_graph_returning(|fb| {
-        let lhs = fb.build_int_const(1u64, ValueType::int(64)).unwrap();
-        let rhs = fb.build_int_const(2u64, ValueType::int(64)).unwrap();
-        fb.build_int_binary_operation(lhs, rhs, strider_ir::IntBinaryOp::Add, ValueType::int(64))
-            .expect("build_int_binary_operation")
-    });
-    // ConstantFold would turn 1+2 into IntConst(3), but the optimiser does
-    // not run here, so the producer stays an IntBinaryOp.
-    let producer_kind = *function.kind_of_value(target);
-    assert!(
-        matches!(producer_kind, NodeKind::IntBinaryOp(_)),
-        "fixture must produce an IntBinaryOp; got {producer_kind:?}"
-    );
-    assert_eq!(classify_target_bare(&function, target), None);
+/// `sp_frame(sp)` with `lr` tracked as the link register.
+fn lr_frame(sp: rsleigh::Vn, lr: rsleigh::Vn) -> RegisterSet {
+    sp_frame(sp).tracked(lr).link_register(lr)
+}
+
+/// Branches through `slot`'s reload and finishes `b` under `claims`.
+fn return_through(
+    mut b: FunctionBuilder,
+    slot: ValueId,
+    ty: ValueType,
+    claims: &AssumptionOptions,
+) -> (strider_ir::Function, NodeId, ValueId) {
+    let target = b.build_load(slot, rsleigh::VnSpace::RAM, ty).unwrap();
+    let branch = b.build_indirect_branch(target).unwrap();
+    (finish(b, claims), branch, target)
 }
 
 /// A 32-bit link-register function saving `lr` at `sp + 0x8000_0000` (off an
@@ -301,77 +268,52 @@ fn classify_unrelated_node_kind_returns_none() {
 /// given, then branching through the reloaded slot.
 fn lr_saved_across_the_wrap(
     aligned: bool,
-    store: Option<u64>,
+    store: Option<i64>,
 ) -> (strider_ir::Function, NodeId, ValueId) {
     let sp = strider_ir_test_utils::stack_vn_x86();
     let lr = fake_reg_vn(0x4c, 4);
-    let mut b = strider_ir_test_utils::sp_frame(sp)
-        .tracked(lr)
-        .link_register(lr)
-        .build_fn_single_region()
-        .expect("build_fn_single_region");
+    let word = ValueType::int(32);
+    let mut b = lr_frame(sp, lr).build_fn_single_region().unwrap();
     let sp_val = b.read_variable(&sp).unwrap();
     let lr_val = b.read_variable(&lr).unwrap();
     let frame = if aligned {
-        let mask = b
-            .build_int_const(0xFFFF_FFF0u64, ValueType::int(32))
-            .unwrap();
-        b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(32))
+        b.build_const_binop(0xFFFF_FFF0u64, sp_val, IntBinaryOp::And, word)
             .unwrap()
     } else {
         sp_val
     };
-    let at = |b: &mut FunctionBuilder, base: ValueId, off: u64| {
-        let c = b.build_int_const(off, ValueType::int(32)).unwrap();
-        b.build_int_binary_operation(base, c, IntBinaryOp::Add, ValueType::int(32))
-            .unwrap()
-    };
-    let slot = at(&mut b, frame, 0x8000_0000);
+    let slot = at(&mut b, frame, 0x8000_0000, word).unwrap();
     b.build_store(slot, lr_val, rsleigh::VnSpace::RAM).unwrap();
     if let Some(off) = store {
-        let near = at(&mut b, sp_val, off);
-        let junk = b
-            .build_int_const(0xDEAD_BEEFu64, ValueType::int(32))
-            .unwrap();
+        let near = at(&mut b, sp_val, off, word).unwrap();
+        let junk = b.build_int_const(0xDEAD_BEEFu64, word).unwrap();
         b.build_store(near, junk, rsleigh::VnSpace::RAM).unwrap();
     }
-    let target = b
-        .build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(32))
-        .unwrap();
-    let branch = b.build_indirect_branch(target).unwrap();
-    b.set_lift_addr(None);
-    let mut function = b.build().unwrap();
-    // The hand-built reads sit behind single-input `VarPhi`s.
-    let mut prep = crate::OptimizerPipeline::new();
-    prep.add(crate::PhiCollapse);
-    prep.add(crate::RegionCollapse);
-    prep.run(&mut function, &crate::OptCtx::new(None))
-        .expect("prep");
-    (function, branch, target)
+    return_through(b, slot, word, &AssumptionOptions::none())
 }
 
 #[test]
 fn a_store_wrapping_onto_the_saved_return_slot_clobbers_it() {
+    let verified = |aligned, store| {
+        let (f, branch, target) = lr_saved_across_the_wrap(aligned, store);
+        ReturnTargets::new(&f).returns_to_caller(branch, target)
+    };
     for aligned in [false, true] {
-        let (f, branch, target) = lr_saved_across_the_wrap(aligned, None);
         assert!(
-            ReturnTargets::new(&f).returns_to_caller(branch, target),
+            verified(aligned, None),
             "control, aligned={aligned}: the untouched slot holds lr"
         );
-        let (f, branch, target) = lr_saved_across_the_wrap(aligned, Some(0x7FFF_FFFE));
         assert!(
-            !ReturnTargets::new(&f).returns_to_caller(branch, target),
+            !verified(aligned, Some(0x7FFF_FFFE)),
             "aligned={aligned}: sp+0x7FFF_FFFE overwrites the slot's low half mod 2^32"
         );
     }
-    let (f, branch, target) = lr_saved_across_the_wrap(false, Some(0x7FFF_FFFC));
     assert!(
-        ReturnTargets::new(&f).returns_to_caller(branch, target),
+        verified(false, Some(0x7FFF_FFFC)),
         "sp+0x7FFF_FFFC ends where the slot starts"
     );
-    let (f, branch, target) = lr_saved_across_the_wrap(true, Some(0x7FFF_FFFC));
     assert!(
-        !ReturnTargets::new(&f).returns_to_caller(branch, target),
+        !verified(true, Some(0x7FFF_FFFC)),
         "the alignment mask can put the slot up to 15 bytes lower, where \
          that same store reaches it"
     );
@@ -382,42 +324,22 @@ fn a_store_wrapping_onto_the_saved_return_slot_clobbers_it() {
 fn lr_saved_at_the_carrier_limit(junk: bool) -> (strider_ir::Function, NodeId, ValueId) {
     let sp = fake_reg_vn(0x20, 16);
     let lr = fake_reg_vn(0x4c, 16);
-    let mut b = strider_ir_test_utils::sp_frame(sp)
-        .tracked(lr)
-        .link_register(lr)
-        .build_fn_single_region()
-        .expect("build_fn_single_region");
+    let wide = ValueType::int(128);
+    let mut b = lr_frame(sp, lr).build_fn_single_region().unwrap();
     let sp_val = b.read_variable(&sp).unwrap();
     let lr_val = b.read_variable(&lr).unwrap();
-    let mask = b.build_int_const(!0xFu128, ValueType::int(128)).unwrap();
     let frame = b
-        .build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(128))
-        .unwrap();
-    let bottom = b
-        .build_int_const(1u128 << 127, ValueType::int(128))
+        .build_const_binop(!0xFu128, sp_val, IntBinaryOp::And, wide)
         .unwrap();
     let slot = b
-        .build_int_binary_operation(frame, bottom, IntBinaryOp::Add, ValueType::int(128))
+        .build_const_binop(1u128 << 127, frame, IntBinaryOp::Add, wide)
         .unwrap();
     b.build_store(slot, lr_val, rsleigh::VnSpace::RAM).unwrap();
     if junk {
-        let junk = b
-            .build_int_const(0xDEAD_BEEFu64, ValueType::int(128))
-            .unwrap();
+        let junk = b.build_int_const(0xDEAD_BEEFu64, wide).unwrap();
         b.build_store(sp_val, junk, rsleigh::VnSpace::RAM).unwrap();
     }
-    let target = b
-        .build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(128))
-        .unwrap();
-    let branch = b.build_indirect_branch(target).unwrap();
-    b.set_lift_addr(None);
-    let mut function = b.build().unwrap();
-    let mut prep = crate::OptimizerPipeline::new();
-    prep.add(crate::PhiCollapse);
-    prep.add(crate::RegionCollapse);
-    prep.run(&mut function, &crate::OptCtx::new(None))
-        .expect("prep");
-    (function, branch, target)
+    return_through(b, slot, wide, &AssumptionOptions::none())
 }
 
 /// Placing the store at `sp` against the slot's span runs past the
@@ -439,84 +361,65 @@ fn a_slot_at_the_carrier_limit_fails_closed() {
 /// the write itself.
 fn lr_saved_past_an_off_stack_write(
     heap: bool,
-    claims: &strider_ir::AssumptionOptions,
+    claims: &AssumptionOptions,
 ) -> (strider_ir::Function, NodeId, ValueId) {
     const ALLOCATOR: u64 = 0x1000;
     let sp = strider_ir_test_utils::stack_vn_x86();
     let lr = fake_reg_vn(0x4c, 4);
     let r0 = fake_reg_vn(0x00, 4);
-    let mut b = strider_ir_test_utils::sp_frame(sp)
-        .tracked(lr)
-        .link_register(lr)
+    let word = ValueType::int(32);
+    let mut b = lr_frame(sp, lr)
         .tracked(r0)
         .ret(r0)
         .build_fn_single_region()
-        .expect("build_fn_single_region");
+        .unwrap();
     let sp_val = b.read_variable(&sp).unwrap();
     let lr_val = b.read_variable(&lr).unwrap();
-    let callee = b.build_int_const(ALLOCATOR, ValueType::int(32)).unwrap();
+    let callee = b.build_int_const(ALLOCATOR, word).unwrap();
     let (_, rets) = b.build_call(callee, &[], &[r0], 0).unwrap();
-    let four = b
-        .build_int_const((-4i64) as u64, ValueType::int(32))
-        .unwrap();
-    let slot = b
-        .build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))
-        .unwrap();
+    let slot = at(&mut b, sp_val, -4, word).unwrap();
     b.build_store(slot, lr_val, rsleigh::VnSpace::RAM).unwrap();
-    let at = if heap {
+    let to = if heap {
         rets[0]
     } else {
-        b.build_int_const(0x4000u64, ValueType::int(32)).unwrap()
+        b.build_int_const(0x4000u64, word).unwrap()
     };
-    let junk = b
-        .build_int_const(0xDEAD_BEEFu64, ValueType::int(32))
-        .unwrap();
-    b.build_store(at, junk, rsleigh::VnSpace::RAM).unwrap();
-    let target = b
-        .build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(32))
-        .unwrap();
-    let branch = b.build_indirect_branch(target).unwrap();
-    b.set_lift_addr(None);
-    let mut function = b.build().unwrap();
-    function.assume(claims);
-    let mut prep = crate::OptimizerPipeline::new();
-    prep.add(crate::PhiCollapse);
-    prep.add(crate::RegionCollapse);
-    prep.run(&mut function, &crate::OptCtx::new(None))
-        .expect("prep");
-    (function, branch, target)
+    let junk = b.build_int_const(0xDEAD_BEEFu64, word).unwrap();
+    b.build_store(to, junk, rsleigh::VnSpace::RAM).unwrap();
+    return_through(b, slot, word, claims)
 }
 
 /// With `return_slots_survive_untracked_writes` off, a write a held claim
 /// puts off the stack passes the slot without `LoadForward` having
 /// stepped the reload past it; at the floor it clobbers.
 ///
-/// Mutations: drop the constant arm of `off_stack`; drop its heap arm.
+/// Mutations: drop `store_effect`'s constant arm; let its heap spine clobber.
 #[test]
 fn an_off_stack_write_passes_the_slot_under_its_claim() {
-    let none = strider_ir::AssumptionOptions::none();
-    let claimed = |heap| {
-        let claims = if heap {
-            strider_ir::AssumptionOptions {
-                noalias_allocators: [0x1000].into_iter().collect(),
-                ..strider_ir::AssumptionOptions::none()
-            }
-        } else {
-            strider_ir::AssumptionOptions {
-                stack_global_disjoint: true,
-                ..strider_ir::AssumptionOptions::none()
-            }
-        };
-        let (f, branch, target) = lr_saved_past_an_off_stack_write(heap, &claims);
+    let verified = |heap, claims: &AssumptionOptions| {
+        let (f, branch, target) = lr_saved_past_an_off_stack_write(heap, claims);
         ReturnTargets::new(&f).returns_to_caller(branch, target)
     };
     for heap in [false, true] {
-        let (f, branch, target) = lr_saved_past_an_off_stack_write(heap, &none);
+        let claims = if heap {
+            AssumptionOptions {
+                noalias_allocators: [0x1000].into_iter().collect(),
+                ..AssumptionOptions::none()
+            }
+        } else {
+            AssumptionOptions {
+                stack_global_disjoint: true,
+                ..AssumptionOptions::none()
+            }
+        };
         assert!(
-            !ReturnTargets::new(&f).returns_to_caller(branch, target),
+            !verified(heap, &AssumptionOptions::none()),
             "heap={heap}: at the floor the write may land on the slot"
         );
-        assert!(claimed(heap), "heap={heap}: the claim keeps it off");
+        assert!(
+            verified(heap, &claims),
+            "heap={heap}: the claim keeps it off"
+        );
     }
 }
 
@@ -531,45 +434,26 @@ fn lr_saved_off_a_reloaded_sp(
 ) -> (strider_ir::Function, NodeId, ValueId) {
     let sp = fake_reg_vn(0x20, 16);
     let lr = fake_reg_vn(0x4c, 16);
-    let mut b = strider_ir_test_utils::sp_frame(sp)
-        .tracked(lr)
-        .link_register(lr)
-        .build_fn_single_region()
-        .expect("build_fn_single_region");
+    let wide = ValueType::int(128);
+    let mut b = lr_frame(sp, lr).build_fn_single_region().unwrap();
     let sp_val = b.read_variable(&sp).unwrap();
     let lr_val = b.read_variable(&lr).unwrap();
     let add = |b: &mut FunctionBuilder, base: ValueId, off: i128| {
-        let c = b.build_int_const(off as u128, ValueType::int(128)).unwrap();
-        b.build_int_binary_operation(base, c, IntBinaryOp::Add, ValueType::int(128))
+        b.build_const_binop(off as u128, base, IntBinaryOp::Add, wide)
             .unwrap()
     };
     let save = add(&mut b, sp_val, 0x40);
     let saved = add(&mut b, sp_val, saved);
     b.build_store(save, saved, rsleigh::VnSpace::RAM).unwrap();
-    let fp = b
-        .build_load(save, rsleigh::VnSpace::RAM, ValueType::int(128))
-        .unwrap();
+    let fp = b.build_load(save, rsleigh::VnSpace::RAM, wide).unwrap();
     let slot = addends.iter().fold(fp, |at, &off| add(&mut b, at, off));
     b.build_store(slot, lr_val, rsleigh::VnSpace::RAM).unwrap();
     if let Some(off) = junk {
         let near = add(&mut b, fp, off);
-        let junk = b
-            .build_int_const(0xDEAD_BEEFu64, ValueType::int(128))
-            .unwrap();
+        let junk = b.build_int_const(0xDEAD_BEEFu64, wide).unwrap();
         b.build_store(near, junk, rsleigh::VnSpace::RAM).unwrap();
     }
-    let target = b
-        .build_load(slot, rsleigh::VnSpace::RAM, ValueType::int(128))
-        .unwrap();
-    let branch = b.build_indirect_branch(target).unwrap();
-    b.set_lift_addr(None);
-    let mut function = b.build().unwrap();
-    let mut prep = crate::OptimizerPipeline::new();
-    prep.add(crate::PhiCollapse);
-    prep.add(crate::RegionCollapse);
-    prep.run(&mut function, &crate::OptCtx::new(None))
-        .expect("prep");
-    (function, branch, target)
+    return_through(b, slot, wide, &AssumptionOptions::none())
 }
 
 /// Guessing and proving an offset past the `i128` carrier fails closed,
@@ -615,18 +499,14 @@ fn an_offset_guessed_past_the_carrier_fails_closed() {
 /// the exhaustive one locates it and finds `sp + 0x20` there, so the site
 /// does not verify.
 ///
-/// The claims are cleared, which is what makes the spine-less store
-/// address located rather than passed.
+/// Built at the floor, with no claim, which is what makes the spine-less
+/// store address located rather than passed.
 fn two_sites_claiming_one_stack_value()
 -> (strider_ir::Function, (NodeId, ValueId), (NodeId, ValueId)) {
     let sp = strider_ir_test_utils::stack_vn_x86();
     let lr = fake_reg_vn(0x4c, 4);
     let word = ValueType::int(32);
-    let mut b = strider_ir_test_utils::sp_frame(sp)
-        .tracked(lr)
-        .link_register(lr)
-        .build_fn()
-        .expect("build_fn");
+    let mut b = lr_frame(sp, lr).build_fn().expect("build_fn");
     let entry = b.create_region_all().expect("entry");
     let arm_a = b.create_region_all().expect("arm_a");
     let arm_b = b.create_region_all().expect("arm_b");
@@ -635,16 +515,12 @@ fn two_sites_claiming_one_stack_value()
     b.set_region(entry);
     let sp_val = b.read_variable(&sp).expect("read sp");
     let lr_val = b.read_variable(&lr).expect("read lr");
-    let at = |b: &mut FunctionBuilder, off: u64| {
-        let c = b.build_int_const(off, word).unwrap();
-        b.build_int_binary_operation(sp_val, c, IntBinaryOp::Add, word)
-            .unwrap()
-    };
-    let slot_b = at(&mut b, 0x50);
-    let indirect = at(&mut b, 0x70);
-    let other = at(&mut b, 0x18);
-    let shared = at(&mut b, 0x20);
-    let slot_a = at(&mut b, 0x60);
+    let sp_at = |b: &mut FunctionBuilder, off| at(b, sp_val, off, word).unwrap();
+    let slot_b = sp_at(&mut b, 0x50);
+    let indirect = sp_at(&mut b, 0x70);
+    let other = sp_at(&mut b, 0x18);
+    let shared = sp_at(&mut b, 0x20);
+    let slot_a = sp_at(&mut b, 0x60);
     b.build_store(indirect, slot_b, rsleigh::VnSpace::RAM)
         .expect("store the address");
     // `sp + 0x50`, off the address spine: a guess steps past a store
@@ -672,15 +548,7 @@ fn two_sites_claiming_one_stack_value()
     };
     let a = site(&mut b, arm_a, slot_a);
     let bb = site(&mut b, arm_b, slot_b);
-    b.set_lift_addr(None);
-    let mut function = b.build().expect("build");
-    function.assume(&strider_ir::AssumptionOptions::none());
-    let mut prep = crate::OptimizerPipeline::new();
-    prep.add(crate::PhiCollapse);
-    prep.add(crate::RegionCollapse);
-    prep.run(&mut function, &crate::OptCtx::new(None))
-        .expect("prep");
-    (function, a, bb)
+    (finish(b, &AssumptionOptions::none()), a, bb)
 }
 
 /// One verifier answers each return site the same whichever site it was

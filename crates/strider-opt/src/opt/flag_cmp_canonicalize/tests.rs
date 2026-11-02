@@ -1,10 +1,11 @@
 use super::FlagCmpCanonicalize;
 use crate::Result;
+use crate::test_support::{bool_not, is_bool_not, run_pass, run_passes};
 use strider_ir::{IRBuilderExt, IRViewer, UBig};
 
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, Graph, IRWalker, IntBinaryOp, IntCmpOp, IntUnaryOp};
-use strider_ir_test_utils::RegisterSet;
+use strider_ir_test_utils::{IrWalkerEx, RegisterSet};
 
 /// `if cond { return x } else { return x }` over `x`, a `ty` load from a
 /// constant address, with `cond` built from `x` by `make_cond`.
@@ -13,7 +14,6 @@ fn build_if_over_load<T>(
     make_cond: impl FnOnce(&mut FunctionBuilder, ValueId) -> Result<(ValueId, T)>,
 ) -> Result<(strider_ir::Function, ValueId, T)> {
     let mut b = RegisterSet::new().build_fn()?;
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let entry = b.create_region_all()?;
     let dispatch = b.create_region_all()?;
     let exit = b.create_region_all()?;
@@ -27,104 +27,55 @@ fn build_if_over_load<T>(
     b.build_return(Some(x), &[])?;
     b.set_region(exit);
     b.build_return(Some(x), &[])?;
-    b.set_lift_addr(None);
     Ok((b.build()?, x, extra))
 }
 
-/// PowerPC `cmpwi` packs LT/GT/EQ/SO into a CR field; the branch extracts one
-/// bit via `Truncate(ShiftRight(cr_pack, k)):I1`.
+/// `ZeroExtend(cmp) << pos` at `I32`.
+fn cr_term(b: &mut FunctionBuilder, cmp: ValueId, pos: u64) -> Result<ValueId> {
+    let ty = ValueType::int(32);
+    let z = b.extend_if_needed(cmp, ty, strider_ir::node::ExtendOp::ZeroExtend)?;
+    b.build_const_binop(pos, z, IntBinaryOp::ShiftLeft, ty)
+}
+/// PowerPC `cmpwi idx, 8` packs LT/GT/EQ/SO into a CR field and a branch
+/// tests one bit: `Truncate(ShiftRight(cr, k)):I1`, or from a `CBRANCH`
+/// `getCrBit`'s `(cr >> k) & 1` lowered to `Xor(Equal(bit, 0), 1):I1`, since
+/// p-code branches on `cond != 0`. Either is that bit's comparison: bit 3 (LT)
+/// `Less(idx, 8)`, bit 2 (GT) `Less(8, idx)`.
 #[test]
 fn ppc_cr_bit_test_canonicalizes_to_intcmp() -> Result<()> {
     use strider_ir::node::ExtendOp;
     let ty = ValueType::int(32);
-    let (mut fg, idx, eight) = build_if_over_load(ty, |b, idx| {
-        let eight = b.build_int_const(8u64, ty)?;
-        let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
-            let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
-            let p = b.build_int_const(pos, ty)?;
-            b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
-        };
-
-        let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
-        let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
-        let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
-        let lt_s = cr_bit(b, lt, 3)?;
-        let gt_s = cr_bit(b, gt, 2)?;
-        let eq_s = cr_bit(b, eq, 1)?;
-        let so = b.extend_if_needed(eq, ty, ExtendOp::ZeroExtend)?; // bit 0
-        let or1 = b.build_int_binary_operation(lt_s, gt_s, IntBinaryOp::Or, ty)?;
-        let or2 = b.build_int_binary_operation(or1, eq_s, IntBinaryOp::Or, ty)?;
-        let cr = b.build_int_binary_operation(or2, so, IntBinaryOp::Or, ty)?;
-        let three = b.build_int_const(3u64, ty)?;
-        let shr = b.build_int_binary_operation(cr, three, IntBinaryOp::ShiftRight, ty)?;
-        let cond = b.truncate_if_needed(shr, ValueType::I1)?;
-        Ok((cond, eight))
-    })?;
-
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If node");
-    // Bit 3 (LT) of the CR pack is `Less(idx, 8)`.
-    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, idx, eight);
-    Ok(())
-}
-
-/// The same CR-bit extract as it reaches the optimiser from a `CBRANCH`:
-/// `getCrBit` masks the shifted field with 1, and the branch lowers to
-/// `Xor(IntEqual(cr_bit, 0), 1):I1` because p-code branches on `cond != 0`.
-#[test]
-fn ppc_cr_bit_test_canonicalizes_through_a_ne_zero_branch() -> Result<()> {
-    use strider_ir::node::ExtendOp;
-    let ty = ValueType::int(32);
-    let (mut fg, idx, eight) = build_if_over_load(ty, |b, idx| {
-        let eight = b.build_int_const(8u64, ty)?;
-        let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
-            let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
-            let p = b.build_int_const(pos, ty)?;
-            b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
-        };
-
-        let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
-        let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
-        let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
-        let lt_s = cr_bit(b, lt, 3)?;
-        let gt_s = cr_bit(b, gt, 2)?;
-        let eq_s = cr_bit(b, eq, 1)?;
-        let so = b.extend_if_needed(eq, ty, ExtendOp::ZeroExtend)?; // bit 0
-        let or1 = b.build_int_binary_operation(lt_s, gt_s, IntBinaryOp::Or, ty)?;
-        let or2 = b.build_int_binary_operation(or1, eq_s, IntBinaryOp::Or, ty)?;
-        let cr = b.build_int_binary_operation(or2, so, IntBinaryOp::Or, ty)?;
-        let two = b.build_int_const(2u64, ty)?;
-        let shr = b.build_int_binary_operation(cr, two, IntBinaryOp::ShiftRight, ty)?;
-        let one = b.build_int_const(1u64, ty)?;
-        let masked = b.build_int_binary_operation(shr, one, IntBinaryOp::And, ty)?;
-        let zero = b.build_int_const(0u64, ty)?;
-        let is_zero = b.build_int_cmp_operation(masked, zero, IntCmpOp::Equal, ty)?;
-        let true_i1 = b.build_boolean_const(true);
-        let cond =
-            b.build_int_binary_operation(is_zero, true_i1, IntBinaryOp::Xor, ValueType::I1)?;
-        Ok((cond, eight))
-    })?;
-
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If node");
-    // Bit 2 (GT) of the CR pack is `Less(8, idx)`.
-    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, eight, idx);
+    for (k, ne_zero) in [(3u64, false), (2, true), (3, true), (2, false)] {
+        let (mut fg, idx, eight) = build_if_over_load(ty, |b, idx| {
+            let eight = b.build_int_const(8u64, ty)?;
+            let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+            let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
+            let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
+            let terms = [
+                cr_term(b, lt, 3)?,
+                cr_term(b, gt, 2)?,
+                cr_term(b, eq, 1)?,
+                b.extend_if_needed(eq, ty, ExtendOp::ZeroExtend)?,
+            ];
+            let cr = terms[1..].iter().try_fold(terms[0], |acc, &t| {
+                b.build_int_binary_operation(acc, t, IntBinaryOp::Or, ty)
+            })?;
+            let shr = b.build_const_binop(k, cr, IntBinaryOp::ShiftRight, ty)?;
+            let cond = if ne_zero {
+                let masked = b.build_const_binop(1u64, shr, IntBinaryOp::And, ty)?;
+                let zero = b.build_int_const(0u64, ty)?;
+                let is_zero = b.build_int_cmp_operation(masked, zero, IntCmpOp::Equal, ty)?;
+                bool_not(b, is_zero)?
+            } else {
+                b.truncate_if_needed(shr, ValueType::I1)?
+            };
+            Ok((cond, eight))
+        })?;
+        run_pass(&FlagCmpCanonicalize, &mut fg)?;
+        let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
+        let (l, r) = if k == 3 { (idx, eight) } else { (eight, idx) };
+        assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, l, r);
+    }
     Ok(())
 }
 
@@ -136,16 +87,9 @@ fn ppc_cr_bit_test_canonicalizes_through_a_ne_zero_branch() -> Result<()> {
 /// `ZeroExtend`.
 #[test]
 fn a_thumb_true_flag_test_collapses_to_a_non_comparison_flag() -> Result<()> {
-    let mut fg = nonzero_flag_test(build_i1_xor_with_one)?;
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If node");
+    let mut fg = nonzero_flag_test(bool_not)?;
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     let cond = fg.graph().producer(if_cond_output(fg.graph(), if_node));
     assert_eq!(*fg.node_kind(cond), NodeKind::IntBinaryOp(IntBinaryOp::Xor));
     let [lt, _] = fg.node_inputs_exact::<2>(cond).expect("binary");
@@ -191,7 +135,7 @@ fn nonzero_flag_test(
     b.set_lift_addr(Some(ADDR_TRUNC));
     let zero = b.build_int_const(0u64, ty)?;
     let eq = b.build_int_cmp_operation(wide, zero, IntCmpOp::Equal, ty)?;
-    let cond = build_i1_xor_with_one(&mut b, eq)?;
+    let cond = bool_not(&mut b, eq)?;
     b.build_if(cond, taken, fall)?;
 
     b.set_lift_addr(Some(ADDR_PACK));
@@ -199,7 +143,6 @@ fn nonzero_flag_test(
     b.build_return(Some(idx), &[])?;
     b.set_region(fall);
     b.build_return(Some(idx), &[])?;
-    b.set_lift_addr(None);
     b.build()
 }
 
@@ -215,15 +158,8 @@ const ADDR_TRUNC: u64 = 0x3333;
 #[test]
 fn a_nonzero_flag_test_keeps_the_widened_flags_fingerprint() -> Result<()> {
     let mut fg = nonzero_flag_test(|_, lt| Ok(lt))?;
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If node");
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     let cond = fg.graph().producer(if_cond_output(fg.graph(), if_node));
     assert_eq!(*fg.node_kind(cond), NodeKind::IntCmpOp(IntCmpOp::Less));
     let fp = fg.side_tables().asm_fingerprint(cond);
@@ -254,15 +190,14 @@ fn a_truncate_cr_test_folds_to_a_chained_zero_extended_flag() -> Result<()> {
     let idx = b.build_load(dummy, rsleigh::VnSpace::RAM, ty)?;
     let eight = b.build_int_const(8u64, ty)?;
     let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
-    let flag = build_i1_xor_with_one(&mut b, lt)?;
+    let flag = bool_not(&mut b, lt)?;
     let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
     let narrow = b.extend_if_needed(flag, ValueType::int(8), ExtendOp::ZeroExtend)?;
     let wide = b.extend_if_needed(narrow, ty, ExtendOp::ZeroExtend)?;
     let two = b.build_int_const(2u64, ty)?;
     let at2 = b.build_int_binary_operation(wide, two, IntBinaryOp::ShiftLeft, ty)?;
     let eq_w = b.extend_if_needed(eq, ty, ExtendOp::ZeroExtend)?;
-    let one = b.build_int_const(1u64, ty)?;
-    let at1 = b.build_int_binary_operation(eq_w, one, IntBinaryOp::ShiftLeft, ty)?;
+    let at1 = b.build_const_binop(1u64, eq_w, IntBinaryOp::ShiftLeft, ty)?;
     let pack = b.build_int_binary_operation(at2, at1, IntBinaryOp::Or, ty)?;
     let shr = b.build_int_binary_operation(pack, two, IntBinaryOp::ShiftRight, ty)?;
     let cond = b.truncate_if_needed(shr, ValueType::I1)?;
@@ -271,18 +206,10 @@ fn a_truncate_cr_test_folds_to_a_chained_zero_extended_flag() -> Result<()> {
     b.build_return(Some(idx), &[])?;
     b.set_region(fall);
     b.build_return(Some(idx), &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If node");
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     let cond = fg.graph().producer(if_cond_output(fg.graph(), if_node));
     assert_eq!(
         *fg.node_kind(cond),
@@ -298,7 +225,6 @@ fn a_truncate_cr_test_folds_to_a_chained_zero_extended_flag() -> Result<()> {
 /// drops `ADDR_PACK`.
 #[test]
 fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
-    use strider_ir::node::ExtendOp;
     let ty = ValueType::int(32);
     let mut b = RegisterSet::new().build_fn()?;
     let entry = b.create_region_all()?;
@@ -316,18 +242,12 @@ fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
     b.set_lift_addr(Some(ADDR_PACK));
     let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
     let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
-    let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
-        let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
-        let p = b.build_int_const(pos, ty)?;
-        b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
-    };
-    let lt_s = cr_bit(&mut b, lt, 3)?;
-    let gt_s = cr_bit(&mut b, gt, 2)?;
-    let eq_s = cr_bit(&mut b, eq, 1)?;
+    let lt_s = cr_term(&mut b, lt, 3)?;
+    let gt_s = cr_term(&mut b, gt, 2)?;
+    let eq_s = cr_term(&mut b, eq, 1)?;
     let or1 = b.build_int_binary_operation(lt_s, gt_s, IntBinaryOp::Or, ty)?;
     let or2 = b.build_int_binary_operation(or1, eq_s, IntBinaryOp::Or, ty)?;
-    let three = b.build_int_const(3u64, ty)?;
-    let shr = b.build_int_binary_operation(or2, three, IntBinaryOp::ShiftRight, ty)?;
+    let shr = b.build_const_binop(3u64, or2, IntBinaryOp::ShiftRight, ty)?;
 
     b.set_lift_addr(Some(ADDR_TRUNC));
     let cond = b.truncate_if_needed(shr, ValueType::I1)?;
@@ -338,20 +258,12 @@ fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
     b.build_return(Some(idx), &[])?;
     b.set_region(exit);
     b.build_return(Some(idx), &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
 
     // The bit-3 `Less(idx, 8)` is the only reachable `Less` once the pack is culled.
-    let cmp_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::IntCmpOp(IntCmpOp::Less)))
-        .next()
-        .expect("the canonicalized comparison survives");
+    let cmp_node = fg.first_kind(|k| matches!(k, NodeKind::IntCmpOp(IntCmpOp::Less)));
     let fp = fg.side_tables().asm_fingerprint(cmp_node);
     assert!(
         fp.contains(&ADDR_PACK),
@@ -370,58 +282,24 @@ fn ppc_cr_bit_canonicalize_preserves_pack_fingerprints() -> Result<()> {
 /// that term's `ShiftLeft` position, not the highest-set one.
 #[test]
 fn ppc_cr_bit_test_selects_middle_eq_bit() -> Result<()> {
-    use strider_ir::node::ExtendOp;
     let ty = ValueType::int(32);
     let (mut fg, idx, eight) = build_if_over_load(ty, |b, idx| {
         let eight = b.build_int_const(8u64, ty)?;
-        let cr_bit = |b: &mut FunctionBuilder, cmp, pos: u64| -> Result<ValueId> {
-            let z = b.extend_if_needed(cmp, ty, ExtendOp::ZeroExtend)?;
-            let p = b.build_int_const(pos, ty)?;
-            b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)
-        };
         let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
         let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
-        let lt_s = cr_bit(b, lt, 3)?;
-        let eq_s = cr_bit(b, eq, 1)?;
+        let lt_s = cr_term(b, lt, 3)?;
+        let eq_s = cr_term(b, eq, 1)?;
         let cr = b.build_int_binary_operation(lt_s, eq_s, IntBinaryOp::Or, ty)?;
-        let one = b.build_int_const(1u64, ty)?;
-        let shr = b.build_int_binary_operation(cr, one, IntBinaryOp::ShiftRight, ty)?;
+        let shr = b.build_const_binop(1u64, cr, IntBinaryOp::ShiftRight, ty)?;
         let cond = b.truncate_if_needed(shr, ValueType::I1)?;
         Ok((cond, eight))
     })?;
 
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
 
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If node");
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Equal, idx, eight);
     Ok(())
-}
-
-/// The canonical 1-bit logical NOT shape, `Xor(operand, IntConst(1)):I1`.
-fn build_i1_xor_with_one(fb: &mut FunctionBuilder, operand: ValueId) -> Result<ValueId> {
-    let one = fb.build_int_const(u128::MAX, ValueType::I1)?;
-    fb.build_int_binary_operation(operand, one, IntBinaryOp::Xor, ValueType::I1)
-}
-
-/// The constant may sit on either side: Xor is commutative in the dedup cache.
-fn is_i1_xor_with_one(fg: &strider_ir::Function, node: NodeId) -> bool {
-    if !matches!(fg.node_kind(node), NodeKind::IntBinaryOp(IntBinaryOp::Xor)) {
-        return false;
-    }
-    let Ok([lhs, rhs]) = fg.graph().node_inputs_exact::<2>(node) else {
-        return false;
-    };
-    let is_one = |value: ValueId| {
-        fg.value_type_opt(value).is_some_and(|t| t.is_bool()) && fg.int_const_u128(value) == Some(1)
-    };
-    is_one(lhs) || is_one(rhs)
 }
 
 /// The canonical AArch64 `cmp a, b` flag quad `(ZR, NG, CY, OV)`; each test
@@ -440,8 +318,7 @@ fn build_cmp_flags(
     // CY = Xor(IntLess(a, b), IntConst(1)):I1, the lift-time canonicalisation
     // of IntLessEqual(b, a).
     let alt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::int(32))?;
-    let one_i1 = fb.build_int_const(u128::MAX, ValueType::I1)?;
-    let cy = fb.build_int_binary_operation(alt, one_i1, IntBinaryOp::Xor, ValueType::I1)?;
+    let cy = fb.build_const_binop(u128::MAX, alt, IntBinaryOp::Xor, ValueType::I1)?;
     let ov = fb.build_int_cmp_operation(a, b, IntCmpOp::Sborrow, ValueType::int(32))?;
 
     Ok((zr, ng, cy, ov))
@@ -523,7 +400,7 @@ fn assert_if_cond_is_neg_intcmp(
     let cond_value = if_cond_output(function.graph(), if_node);
     let xor_node = function.producer(cond_value);
     assert!(
-        is_i1_xor_with_one(function, xor_node),
+        is_bool_not(function, xor_node),
         "If cond should be the 1-bit Xor-with-1 (logical NOT) shape, got {:?}",
         function.node_kind(xor_node),
     );
@@ -558,197 +435,74 @@ fn assert_if_cond_is_neg_intcmp(
     assert_eq!(rhs, expect_rhs, "rhs of canonicalised cmp");
 }
 
-/// Pins that the rule table is per-instance, not shared global state.
-#[test]
-fn two_independent_instances_each_canonicalize() -> Result<()> {
-    let pass_a = FlagCmpCanonicalize::new();
-    let pass_b = FlagCmpCanonicalize::new();
-
-    let (mut fg_a, if_a, a_a, b_a) = build_if_with_flag_cond(|_fb, zr, _ng, _cy, _ov| Ok(zr))?;
-    assert!(crate::pipeline::run_one(&pass_a, &mut fg_a, &crate::OptCtx::new(None))?.changed());
-    assert_if_cond_is_intcmp(fg_a.graph(), if_a, IntCmpOp::Equal, a_a, b_a);
-
-    let (mut fg_b, if_b, a_b, b_b) = build_if_with_flag_cond(|_fb, zr, _ng, _cy, _ov| Ok(zr))?;
-    assert!(crate::pipeline::run_one(&pass_b, &mut fg_b, &crate::OptCtx::new(None))?.changed());
-    assert_if_cond_is_intcmp(fg_b.graph(), if_b, IntCmpOp::Equal, a_b, b_b);
-    Ok(())
+/// `Equal(NG, OV)` at the flag varnode's 1-byte width, as the real lift
+/// passes it.
+fn ng_eq_ov(fb: &mut FunctionBuilder, ng: ValueId, ov: ValueId) -> Result<ValueId> {
+    let ng = fb.convert_to_int_if_needed(ng, ValueType::int(8))?;
+    let ov = fb.convert_to_int_if_needed(ov, ValueType::int(8))?;
+    fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::int(8))
 }
 
+/// Each AArch64 conditional branch's flag tree over `cmp a, b` is one
+/// comparison of `a` and `b`: `(op, swapped, negated)`. A negated form stops
+/// at `Xor(cmp, 1)`, which `IfCondInversion` strips. LS needs ConstantFold
+/// first to cancel `Xor(Xor(Less(a, b), 1), 1)`; HI is run both ways, since
+/// its two subtrees must still bind one `(a, b)` after ConstantFold.
 #[test]
-fn flag_cmp_ne_rewrites_to_neg_int_equal() -> Result<()> {
-    // AArch64 `b.ne` cond is `Xor(ZR, 1)` = `Xor(Equal(Add(a, Neg(b)), 0), 1)`.
-    let (mut fg, if_node, a, b) =
-        build_if_with_flag_cond(|fb, zr, _ng, _cy, _ov| build_i1_xor_with_one(fb, zr))?;
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed(), "pass should rewrite the NE flag tree");
-
-    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Equal, a, b);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_hi_rewrites_to_int_less_swapped() -> Result<()> {
-    // AArch64 `b.hi` cond is `And(CY, Xor(ZR, 1)):I1`, i.e. unsigned `a > b`.
-    let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
-        let neg_zr = build_i1_xor_with_one(fb, zr)?;
-        fb.build_int_binary_operation(cy, neg_zr, IntBinaryOp::And, ValueType::I1)
-    })?;
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed(), "pass should rewrite the HI flag tree");
-
-    // Operands swap: `a > b` becomes `IntLess(b, a)`.
-    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, b, a);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_hi_rewrites_after_constant_fold_runs_first() -> Result<()> {
-    // The HI rule's LHS reads `a`/`b` across two subtrees (`IntLess(a, b)` and
-    // `Add(a, Neg(b))`), so both bindings must still agree after ConstantFold.
-    // Runs the passes in production order to pin that.
-    let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
-        let neg_zr = build_i1_xor_with_one(fb, zr)?;
-        fb.build_int_binary_operation(cy, neg_zr, IntBinaryOp::And, ValueType::I1)
-    })?;
-
-    crate::pipeline::run_one(
-        &crate::ConstantFold::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(
-        r.changed(),
-        "HI rewrite must survive a prior ConstantFold pass"
-    );
-    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, b, a);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_ls_rewrites_to_neg_int_less_swapped() -> Result<()> {
-    // AArch64 `b.ls` cond is `Or(Xor(CY, 1), ZR):I1`.  ConstantFold cancels the
-    // `Xor(Xor(IntLess(a, b), 1), 1)` chain, leaving
-    // `Or(IntLess(a, b), Equal(Add(a, Neg(b)), 0))`, the raw-NZCV LS shape.
-    let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, _ng, cy, _ov| {
-        let neg_cy = build_i1_xor_with_one(fb, cy)?;
-        fb.build_int_binary_operation(neg_cy, zr, IntBinaryOp::Or, ValueType::I1)
-    })?;
-
-    crate::pipeline::run_one(
-        &crate::ConstantFold::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed(), "pass should rewrite the LS flag tree");
-
-    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_lt_rewrites_to_int_sless() -> Result<()> {
-    // AArch64 `b.lt` cond is `Xor(Equal(NG, OV), 1)`.  The I8 widening mirrors
-    // the real lift, which passes the flag varnode's 1-byte size as the
-    // comparison's operand width.
-    let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, _zr, ng, _cy, ov| {
-        let ng = fb.convert_to_int_if_needed(ng, ValueType::int(8))?;
-        let ov = fb.convert_to_int_if_needed(ov, ValueType::int(8))?;
-        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::int(8))?;
-        build_i1_xor_with_one(fb, eq)
-    })?;
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed(), "pass should rewrite the LT flag tree");
-
-    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Sless, a, b);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_ge_rewrites_to_neg_int_sless() -> Result<()> {
-    // AArch64 `b.ge` cond is `Equal(NG, OV)`.
-    let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, _zr, ng, _cy, ov| {
-        let ng = fb.convert_to_int_if_needed(ng, ValueType::int(8))?;
-        let ov = fb.convert_to_int_if_needed(ov, ValueType::int(8))?;
-        fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::int(8))
-    })?;
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed(), "pass should rewrite the GE flag tree");
-
-    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Sless, a, b);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_gt_rewrites_to_int_sless_swapped() -> Result<()> {
-    // AArch64 `b.gt` cond is `And(Xor(ZR, 1), Equal(NG, OV)):I1`.
-    let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
-        let neg_zr = build_i1_xor_with_one(fb, zr)?;
-        let ng = fb.convert_to_int_if_needed(ng, ValueType::int(8))?;
-        let ov = fb.convert_to_int_if_needed(ov, ValueType::int(8))?;
-        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::int(8))?;
-        fb.build_int_binary_operation(neg_zr, eq, IntBinaryOp::And, ValueType::I1)
-    })?;
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed(), "pass should rewrite the GT flag tree");
-
-    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Sless, b, a);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_le_rewrites_to_neg_int_sless_swapped() -> Result<()> {
-    // AArch64 `b.le` cond is `Or(ZR, Xor(Equal(NG, OV), 1)):I1`.
-    let (mut fg, if_node, a, b) = build_if_with_flag_cond(|fb, zr, ng, _cy, ov| {
-        let ng = fb.convert_to_int_if_needed(ng, ValueType::int(8))?;
-        let ov = fb.convert_to_int_if_needed(ov, ValueType::int(8))?;
-        let eq = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::int(8))?;
-        let neg_eq = build_i1_xor_with_one(fb, eq)?;
-        fb.build_int_binary_operation(zr, neg_eq, IntBinaryOp::Or, ValueType::I1)
-    })?;
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed(), "pass should rewrite the LE flag tree");
-
-    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Sless, b, a);
+fn aarch64_cond_codes_rewrite_to_one_comparison() -> Result<()> {
+    type Cond = fn(&mut FunctionBuilder, ValueId, ValueId, ValueId, ValueId) -> Result<ValueId>;
+    use IntCmpOp::{Equal, Less, Sless};
+    #[rustfmt::skip]
+    let cases: [(&str, Cond, bool, IntCmpOp, bool, bool); 8] = [
+        // `Xor(ZR, 1)`.
+        ("ne", |fb, zr, _, _, _| bool_not(fb, zr), false, Equal, false, true),
+        // `And(CY, Xor(ZR, 1))`, unsigned `a > b`.
+        ("hi", |fb, zr, _, cy, _| {
+            let nz = bool_not(fb, zr)?;
+            fb.build_int_binary_operation(cy, nz, IntBinaryOp::And, ValueType::I1)
+        }, false, Less, true, false),
+        ("hi_after_cf", |fb, zr, _, cy, _| {
+            let nz = bool_not(fb, zr)?;
+            fb.build_int_binary_operation(cy, nz, IntBinaryOp::And, ValueType::I1)
+        }, true, Less, true, false),
+        // `Or(Xor(CY, 1), ZR)`.
+        ("ls", |fb, zr, _, cy, _| {
+            let ncy = bool_not(fb, cy)?;
+            fb.build_int_binary_operation(ncy, zr, IntBinaryOp::Or, ValueType::I1)
+        }, true, Less, true, true),
+        // `Xor(Equal(NG, OV), 1)`.
+        ("lt", |fb, _, ng, _, ov| {
+            let eq = ng_eq_ov(fb, ng, ov)?;
+            bool_not(fb, eq)
+        }, false, Sless, false, false),
+        // `Equal(NG, OV)`.
+        ("ge", |fb, _, ng, _, ov| ng_eq_ov(fb, ng, ov), false, Sless, false, true),
+        // `And(Xor(ZR, 1), Equal(NG, OV))`.
+        ("gt", |fb, zr, ng, _, ov| {
+            let nz = bool_not(fb, zr)?;
+            let eq = ng_eq_ov(fb, ng, ov)?;
+            fb.build_int_binary_operation(nz, eq, IntBinaryOp::And, ValueType::I1)
+        }, false, Sless, true, false),
+        // `Or(ZR, Xor(Equal(NG, OV), 1))`.
+        ("le", |fb, zr, ng, _, ov| {
+            let eq = ng_eq_ov(fb, ng, ov)?;
+            let neq = bool_not(fb, eq)?;
+            fb.build_int_binary_operation(zr, neq, IntBinaryOp::Or, ValueType::I1)
+        }, false, Sless, true, true),
+    ];
+    for (name, cond, cf_first, op, swapped, negated) in cases {
+        let (mut fg, if_node, a, b) = build_if_with_flag_cond(cond)?;
+        if cf_first {
+            run_pass(&crate::ConstantFold, &mut fg)?;
+        }
+        assert!(run_pass(&FlagCmpCanonicalize, &mut fg)?, "{name}");
+        let (l, r) = if swapped { (b, a) } else { (a, b) };
+        if negated {
+            assert_if_cond_is_neg_intcmp(&fg, if_node, op, l, r);
+        } else {
+            assert_if_cond_is_intcmp(fg.graph(), if_node, op, l, r);
+        }
+    }
     Ok(())
 }
 
@@ -758,43 +512,37 @@ fn flag_cmp_cs_is_left_alone_as_bool_neg_int_less() -> Result<()> {
     // `IfCondInversion` handles the outer Xor.
     let (mut fg, if_node, _a, _b) = build_if_with_flag_cond(|_fb, _zr, _ng, cy, _ov| Ok(cy))?;
 
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(!r.changed(), "CS already canonical; pass must not fire");
+    let r = run_pass(&FlagCmpCanonicalize, &mut fg)?;
+    assert!(!r, "CS already canonical; pass must not fire");
 
     let cond_value = if_cond_output(fg.graph(), if_node);
     let cond_node = fg.producer(cond_value);
     assert!(
-        is_i1_xor_with_one(&fg, cond_node),
+        is_bool_not(&fg, cond_node),
         "CY cond should be the I1 Xor-with-1 shape, got {:?}",
         fg.node_kind(cond_node),
     );
     Ok(())
 }
 
+/// MI is bare NG = `Sless(Add(a, Neg(b)), 0)`, not `Sless(a, b)` once the
+/// subtraction overflows; VS is bare OV = `Sborrow(a, b)`, already in
+/// `(a, b)` form. Neither is rewritten.
 #[test]
-fn flag_cmp_mi_is_left_alone_as_int_sless_diff() -> Result<()> {
-    // MI is bare NG = `IntSless(Add(a, Neg(b)), 0)`, which is NOT equivalent to
-    // `IntSless(a, b)` once the subtraction overflows.
-    let (mut fg, if_node, _a, _b) = build_if_with_flag_cond(|_fb, _zr, ng, _cy, _ov| Ok(ng))?;
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(
-        !r.changed(),
-        "MI is not algebraically reducible; pass must not fire"
-    );
-
-    assert_eq!(
-        if_cond_node_kind(fg.graph(), if_node),
-        NodeKind::IntCmpOp(IntCmpOp::Sless),
-    );
+fn flag_cmp_mi_and_vs_are_left_alone() -> Result<()> {
+    type Cond = fn(&mut FunctionBuilder, ValueId, ValueId, ValueId, ValueId) -> Result<ValueId>;
+    let cases: [(Cond, IntCmpOp); 2] = [
+        (|_, _, ng, _, _| Ok(ng), IntCmpOp::Sless),
+        (|_, _, _, _, ov| Ok(ov), IntCmpOp::Sborrow),
+    ];
+    for (cond, op) in cases {
+        let (mut fg, if_node, _a, _b) = build_if_with_flag_cond(cond)?;
+        assert!(!run_pass(&FlagCmpCanonicalize, &mut fg)?, "{op:?}");
+        assert_eq!(
+            if_cond_node_kind(fg.graph(), if_node),
+            NodeKind::IntCmpOp(op)
+        );
+    }
     Ok(())
 }
 
@@ -806,43 +554,16 @@ fn flag_cmp_thumb_beq_reduces_to_int_equal() -> Result<()> {
         let zero = fb.build_int_const(0u64, ValueType::int(8))?;
         let zr = fb.convert_to_int_if_needed(zr, ValueType::int(8))?;
         let eq = fb.build_int_cmp_operation(zr, zero, IntCmpOp::Equal, ValueType::int(8))?;
-        build_i1_xor_with_one(fb, eq)
+        bool_not(fb, eq)
     })?;
 
     // Two iterations: the CR-bit arm strips the outer
     // `Xor(IntEqual(..., 0), 1)`, then the EQ rule simplifies the inner
     // `Equal(diff, 0)`.  A real pipeline gets this from its fixed-point loop.
-    let _ = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    let _ = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
+    let _ = run_pass(&FlagCmpCanonicalize, &mut fg)?;
+    let _ = run_pass(&FlagCmpCanonicalize, &mut fg)?;
 
     assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Equal, a, b);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_vs_is_left_alone_as_sborrow() -> Result<()> {
-    // VS is bare OV = `IntSborrow(a, b)`, already in `(a, b)` form.
-    let (mut fg, if_node, _a, _b) = build_if_with_flag_cond(|_fb, _zr, _ng, _cy, ov| Ok(ov))?;
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(!r.changed(), "VS already canonical; pass must not fire");
-
-    assert_eq!(
-        if_cond_node_kind(fg.graph(), if_node),
-        NodeKind::IntCmpOp(IntCmpOp::Sborrow),
-    );
     Ok(())
 }
 
@@ -870,23 +591,33 @@ where
     Ok((fg, if_node, a, b))
 }
 
+/// The decomposed signed and unsigned GT / LE trees, leaves comparing the
+/// original `(a, b)`: `(a != b) && !(a < b)` is `b < a`, and
+/// `(a == b) || (a < b)` is `!(b < a)`.
 #[test]
-fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
-    // (a != b) && !(a < b)  ==  a > b  ==  b < a  ->  Sless(b, a)
-    let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
-        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::int(32))?;
-        let neq = build_i1_xor_with_one(fb, eq)?;
-        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, ValueType::int(32))?;
-        let nlt = build_i1_xor_with_one(fb, lt)?;
-        fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, ValueType::I1)
-    })?;
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed(), "decomposed GT should canonicalize");
-    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Sless, b, a);
+fn flag_cmp_decomposed_trees_rewrite_swapped() -> Result<()> {
+    for op in [IntCmpOp::Sless, IntCmpOp::Less] {
+        for gt in [true, false] {
+            let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
+                let ty = ValueType::int(32);
+                let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ty)?;
+                let lt = fb.build_int_cmp_operation(a, b, op, ty)?;
+                if gt {
+                    let neq = bool_not(fb, eq)?;
+                    let nlt = bool_not(fb, lt)?;
+                    fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, ValueType::I1)
+                } else {
+                    fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, ValueType::I1)
+                }
+            })?;
+            assert!(run_pass(&FlagCmpCanonicalize, &mut fg)?, "{op:?} gt={gt}");
+            if gt {
+                assert_if_cond_is_intcmp(fg.graph(), if_node, op, b, a);
+            } else {
+                assert_if_cond_is_neg_intcmp(&fg, if_node, op, b, a);
+            }
+        }
+    }
     Ok(())
 }
 
@@ -894,7 +625,6 @@ fn flag_cmp_decomposed_gt_rewrites_to_sless_swapped() -> Result<()> {
 /// so the shared `(a, b)` capture cannot bind.  Nothing may fire.
 #[test]
 fn flag_cmp_incomplete_tree_foreign_leaf_left_alone() -> Result<()> {
-    use strider_ir_test_utils::IrWalkerEx;
     let a_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
     let b_vn = strider_ir_test_utils::reg_vn(0x1008, 4);
     let c_vn = strider_ir_test_utils::reg_vn(0x1010, 4);
@@ -907,23 +637,16 @@ fn flag_cmp_incomplete_tree_foreign_leaf_left_alone() -> Result<()> {
             let b = fb.read_variable(&b_vn)?;
             let c = fb.read_variable(&c_vn)?;
             let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::int(32))?;
-            let neq = build_i1_xor_with_one(fb, eq)?;
+            let neq = bool_not(fb, eq)?;
             let lt = fb.build_int_cmp_operation(a, c, IntCmpOp::Sless, ValueType::int(32))?;
-            let nlt = build_i1_xor_with_one(fb, lt)?;
+            let nlt = bool_not(fb, lt)?;
             let cond = fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, ValueType::I1)?;
             Ok((cond, ()))
         })?;
 
     let cmp_count_before = fg.count_kind(|k| matches!(k, NodeKind::IntCmpOp(_)));
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(
-        !r.changed(),
-        "mismatched-capture flag tree must not canonicalize"
-    );
+    let r = run_pass(&FlagCmpCanonicalize, &mut fg)?;
+    assert!(!r, "mismatched-capture flag tree must not canonicalize");
     assert_eq!(
         if_cond_node_kind(fg.graph(), if_node),
         NodeKind::IntBinaryOp(IntBinaryOp::And),
@@ -937,465 +660,183 @@ fn flag_cmp_incomplete_tree_foreign_leaf_left_alone() -> Result<()> {
     Ok(())
 }
 
-#[test]
-fn flag_cmp_decomposed_le_rewrites_to_neg_sless_swapped() -> Result<()> {
-    // (a == b) || (a < b)  ==  a <= b  ==  !(b < a)  ->  Xor(Sless(b, a), 1)
-    let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
-        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::int(32))?;
-        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Sless, ValueType::int(32))?;
-        fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, ValueType::I1)
-    })?;
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed(), "decomposed LE should canonicalize");
-    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Sless, b, a);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_decomposed_hi_rewrites_to_less_swapped() -> Result<()> {
-    // unsigned: (a != b) && !(a < b)  ->  Less(b, a)
-    let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
-        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::int(32))?;
-        let neq = build_i1_xor_with_one(fb, eq)?;
-        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::int(32))?;
-        let nlt = build_i1_xor_with_one(fb, lt)?;
-        fb.build_int_binary_operation(neq, nlt, IntBinaryOp::And, ValueType::I1)
-    })?;
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed(), "decomposed HI should canonicalize");
-    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, b, a);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_decomposed_ls_rewrites_to_neg_less_swapped() -> Result<()> {
-    // unsigned: (a == b) || (a < b)  ->  Xor(Less(b, a), 1)
-    let (mut fg, if_node, a, b) = build_if_with_ab_cond(|fb, a, b| {
-        let eq = fb.build_int_cmp_operation(a, b, IntCmpOp::Equal, ValueType::int(32))?;
-        let lt = fb.build_int_cmp_operation(a, b, IntCmpOp::Less, ValueType::int(32))?;
-        fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, ValueType::I1)
-    })?;
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(r.changed(), "decomposed LS should canonicalize");
-    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Less, b, a);
-    Ok(())
-}
-
-// `cmp idx, N; ja` lifts the unsigned LS tree `(idx < N) || (idx == N)`, but
-// ConstantFold folds the ZF term's `Neg(IntConst(N))` to `IntConst(-N)`, giving
-// `Equal(Add(idx, IntConst(-N)), 0)`.  Neither the EQ rule nor the plain
-// decomposed-LS rule matches that, hence the dedicated constant-folded rules.
-
-/// Builds `Or(Less(idx, N), Equal(Add(idx, -N), 0))` at `ty` and asserts it
-/// folds to `!Less(N, idx)`.
-fn check_folded_ls_tree(ty: ValueType, n: u64) -> Result<()> {
-    let idx_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
-    let (mut fg, if_node, idx, n_const) = {
-        let (fg, if_node, (idx, n_const)) = RegisterSet::new()
-            .tracked(idx_vn)
-            .build_if_then_else_returns(|fb| {
-                let idx = fb.read_variable(&idx_vn)?;
-                let n_const = fb.build_int_const(u128::from(n), ty)?;
-                let less = fb.build_int_cmp_operation(idx, n_const, IntCmpOp::Less, ty)?;
-                // The constant-folded ZF term.
-                let neg_n = (0u128).wrapping_sub(u128::from(n));
-                let neg_n_const = fb.build_int_const(neg_n, ty)?;
-                let diff = fb.build_int_binary_operation(idx, neg_n_const, IntBinaryOp::Add, ty)?;
-                let zero = fb.build_int_const(0u128, ty)?;
-                let eq = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, ty)?;
-                let cond =
-                    fb.build_int_binary_operation(less, eq, IntBinaryOp::Or, ValueType::I1)?;
-                Ok((cond, (idx, n_const)))
-            })?;
-        (fg, if_node, idx, n_const)
-    };
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(
-        r.changed(),
-        "{ty:?} N={n}: constant-folded LS tree should canonicalize"
-    );
-    // `n_const` (not a fresh node): the rule reuses the captured constant.
-    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Less, n_const, idx);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_constant_folded_ls_tree_i32() -> Result<()> {
-    check_folded_ls_tree(ValueType::int(32), 8)
-}
-
-#[test]
-fn flag_cmp_constant_folded_ls_tree_i64() -> Result<()> {
-    check_folded_ls_tree(ValueType::int(64), 3)
-}
-
-#[test]
-fn flag_cmp_constant_folded_ls_tree_wrapping_neg() -> Result<()> {
-    // N = 1 makes -N all-ones at the width; the guard compares mod width, so
-    // it must still match.
-    check_folded_ls_tree(ValueType::int(32), 1)?;
-    check_folded_ls_tree(ValueType::int(64), 1)
-}
-
-// A switch whose cases start at a nonzero base `K`: gcc emits
-// `sub b, K; cmp (b-K), N; ja`, so the compared value is the offset index
-// `X = Add(b, -K)`, while the ZF term folds to `Equal(Add(b, C2), 0)`.  The
-// `Less` operand and the `Equal` base are therefore distinct nodes, which the
-// non-offset rules cannot bind.
-
-/// Builds `Or(Less(Add(b, C1), N), Equal(Add(b, C1 - N), 0))` and asserts it
-/// folds to `!Less(N, Add(b, C1))` on the offset index.
-fn check_offset_folded_ls_tree(ty: ValueType, c1: u128, n: u64) -> Result<()> {
+/// `cmp x, N; ja` (LS) or Thumb `bhi` (HI) with the ZF term's `Neg(N)`
+/// already folded, which neither the EQ rule nor the plain decomposed rules
+/// match: LS is `Or(Less(x, N), Equal(Add(b, C1 - N + skew), 0))` and HI its
+/// De Morgan dual `And(!Less(x, N), !Equal(..))`. `x` is `b`, or for a switch
+/// whose cases start at a nonzero base (gcc's `sub b, K; cmp b-K, N`) the
+/// offset index `Add(b, C1)`, a node distinct from the `Equal`'s base.
+/// Returns the function, the `If`, `x` and `N`.
+fn folded_tree(
+    hi: bool,
+    ty: ValueType,
+    c1: Option<i64>,
+    n: u64,
+    skew: u128,
+) -> Result<(strider_ir::Function, NodeId, ValueId, ValueId)> {
     let b_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
-    let (mut fg, if_node, x_val, n_const) = {
-        let (fg, if_node, (x_val, n_const)) = RegisterSet::new()
-            .tracked(b_vn)
-            .build_if_then_else_returns(|fb| {
-                let b = fb.read_variable(&b_vn)?;
-                let c1_const = fb.build_int_const(c1, ty)?;
-                let x = fb.build_int_binary_operation(b, c1_const, IntBinaryOp::Add, ty)?;
-                let n_const = fb.build_int_const(u128::from(n), ty)?;
-                let less = fb.build_int_cmp_operation(x, n_const, IntCmpOp::Less, ty)?;
-                // The folded ZF term is based on the SAME `b`, with C2 = C1 - N.
-                let c2 = c1.wrapping_sub(u128::from(n));
-                let c2_const = fb.build_int_const(c2, ty)?;
-                let y = fb.build_int_binary_operation(b, c2_const, IntBinaryOp::Add, ty)?;
-                let zero = fb.build_int_const(0u128, ty)?;
-                let eq = fb.build_int_cmp_operation(y, zero, IntCmpOp::Equal, ty)?;
-                let cond =
-                    fb.build_int_binary_operation(less, eq, IntBinaryOp::Or, ValueType::I1)?;
-                Ok((cond, (x, n_const)))
-            })?;
-        (fg, if_node, x_val, n_const)
-    };
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(
-        r.changed(),
-        "{ty:?} C1={c1} N={n}: offset-base LS tree should canonicalize"
-    );
-    // `x_val` (not a fresh node): the rule reuses the captured offset index.
-    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Less, n_const, x_val);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_offset_folded_ls_tree_i32() -> Result<()> {
-    // Cases 10..=17: index `X = b - 10`, range bound `N = 7`.
-    check_offset_folded_ls_tree(ValueType::int(32), (0u128).wrapping_sub(10), 7)
-}
-
-#[test]
-fn flag_cmp_offset_folded_ls_tree_i64() -> Result<()> {
-    check_offset_folded_ls_tree(ValueType::int(64), (0u128).wrapping_sub(100), 5)
-}
-
-// The De-Morgan dual of the constant-folded LS case: Thumb
-// `cmp idx, N; bhi default` lifts `(idx >= N) AND (idx != N)`.  Neither the raw
-// nor the decomposed HI rule matches once the ZF term is folded, since both
-// expect it as `Equal(a, b)`.
-
-/// Builds `And(!Less(idx, N), !Equal(Add(idx, -N), 0))` and asserts it folds to
-/// `Less(N, idx)`.
-fn check_folded_hi_tree(ty: ValueType, n: u64) -> Result<()> {
-    let idx_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
-    let (mut fg, if_node, idx, n_const) = {
-        let (fg, if_node, (idx, n_const)) = RegisterSet::new()
-            .tracked(idx_vn)
-            .build_if_then_else_returns(|fb| {
-                let idx = fb.read_variable(&idx_vn)?;
-                let n_const = fb.build_int_const(u128::from(n), ty)?;
-                let less = fb.build_int_cmp_operation(idx, n_const, IntCmpOp::Less, ty)?;
-                let neg_less = build_i1_xor_with_one(fb, less)?;
-                // The constant-folded ZF term.
-                let neg_n = (0u128).wrapping_sub(u128::from(n));
-                let neg_n_const = fb.build_int_const(neg_n, ty)?;
-                let diff = fb.build_int_binary_operation(idx, neg_n_const, IntBinaryOp::Add, ty)?;
-                let zero = fb.build_int_const(0u128, ty)?;
-                let eq = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, ty)?;
-                let neg_eq = build_i1_xor_with_one(fb, eq)?;
-                let cond = fb.build_int_binary_operation(
-                    neg_less,
-                    neg_eq,
-                    IntBinaryOp::And,
-                    ValueType::I1,
-                )?;
-                Ok((cond, (idx, n_const)))
-            })?;
-        (fg, if_node, idx, n_const)
-    };
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(
-        r.changed(),
-        "{ty:?} N={n}: constant-folded HI tree should canonicalize"
-    );
-    // `n_const` (not a fresh node): the rule reuses the captured constant.
-    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, n_const, idx);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_constant_folded_hi_tree_i32() -> Result<()> {
-    check_folded_hi_tree(ValueType::int(32), 7)
-}
-
-#[test]
-fn flag_cmp_constant_folded_hi_tree_i64() -> Result<()> {
-    check_folded_hi_tree(ValueType::int(64), 3)
-}
-
-// The offset-base HI case: a masked / offset switch, e.g. Thumb
-// `and r0,#7; subs r0,#1; cmp r0,#N-1; bhi`.
-
-/// Builds `And(!Less(Add(b,C1), N), !Equal(Add(b, C1-N), 0))` and asserts it
-/// folds to `Less(N, Add(b,C1))`.
-fn check_offset_folded_hi_tree(ty: ValueType, c1: u128, n: u64) -> Result<()> {
-    let b_vn = strider_ir_test_utils::reg_vn(0x1000, ty.byte_size() as u32);
-    let (mut fg, if_node, x_val, n_const) = {
-        let (fg, if_node, (x_val, n_const)) = RegisterSet::new()
-            .tracked(b_vn)
-            .build_if_then_else_returns(|fb| {
-                let b = fb.read_variable(&b_vn)?;
-                let c1_const = fb.build_int_const(c1, ty)?;
-                let x = fb.build_int_binary_operation(b, c1_const, IntBinaryOp::Add, ty)?;
-                let n_const = fb.build_int_const(u128::from(n), ty)?;
-                let less = fb.build_int_cmp_operation(x, n_const, IntCmpOp::Less, ty)?;
-                let neg_less = build_i1_xor_with_one(fb, less)?;
-                let c2 = c1.wrapping_sub(u128::from(n));
-                let c2_const = fb.build_int_const(c2, ty)?;
-                let y = fb.build_int_binary_operation(b, c2_const, IntBinaryOp::Add, ty)?;
-                let zero = fb.build_int_const(0u128, ty)?;
-                let eq = fb.build_int_cmp_operation(y, zero, IntCmpOp::Equal, ty)?;
-                let neg_eq = build_i1_xor_with_one(fb, eq)?;
-                let cond = fb.build_int_binary_operation(
-                    neg_less,
-                    neg_eq,
-                    IntBinaryOp::And,
-                    ValueType::I1,
-                )?;
-                Ok((cond, (x, n_const)))
-            })?;
-        (fg, if_node, x_val, n_const)
-    };
-
-    let r = crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    assert!(
-        r.changed(),
-        "{ty:?} C1={c1} N={n}: offset-base HI tree should canonicalize"
-    );
-    assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, n_const, x_val);
-    Ok(())
-}
-
-#[test]
-fn flag_cmp_offset_folded_hi_tree_i32() -> Result<()> {
-    // Index `X = (kind & 7) - 1`, range bound `N = 6`.
-    check_offset_folded_hi_tree(ValueType::int(32), (0u128).wrapping_sub(1), 6)
-}
-
-#[test]
-fn flag_cmp_offset_folded_hi_tree_i64() -> Result<()> {
-    check_offset_folded_hi_tree(ValueType::int(64), (0u128).wrapping_sub(20), 5)
-}
-
-#[test]
-fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
-    // With C2 != C1 - N the Equal does not test `X == N`, so the guard must
-    // reject.
-    let ty = ValueType::int(32);
-    let b_vn = strider_ir_test_utils::reg_vn(0x1000, 4);
-    let c1 = (0u128).wrapping_sub(10);
-    let n = 7u64;
-    let mut fg = RegisterSet::new()
+    let (fg, if_node, (x, n_const)) = RegisterSet::new()
         .tracked(b_vn)
         .build_if_then_else_returns(|fb| {
             let b = fb.read_variable(&b_vn)?;
-            let c1_const = fb.build_int_const(c1, ty)?;
-            let x = fb.build_int_binary_operation(b, c1_const, IntBinaryOp::Add, ty)?;
+            let c1 = c1.map_or(0, |c| i128::from(c) as u128);
+            let x = if c1 == 0 {
+                b
+            } else {
+                fb.build_const_binop(c1, b, IntBinaryOp::Add, ty)?
+            };
             let n_const = fb.build_int_const(u128::from(n), ty)?;
             let less = fb.build_int_cmp_operation(x, n_const, IntCmpOp::Less, ty)?;
-            // C2 is off by one: the fold requires C2 == C1 - N.
-            let c2 = c1.wrapping_sub(u128::from(n)).wrapping_add(1);
-            let c2_const = fb.build_int_const(c2, ty)?;
-            let y = fb.build_int_binary_operation(b, c2_const, IntBinaryOp::Add, ty)?;
+            // The folded ZF term reads the SAME `b`.
+            let c2 = c1.wrapping_sub(u128::from(n)).wrapping_add(skew);
+            let y = fb.build_const_binop(c2, b, IntBinaryOp::Add, ty)?;
             let zero = fb.build_int_const(0u128, ty)?;
             let eq = fb.build_int_cmp_operation(y, zero, IntCmpOp::Equal, ty)?;
-            let cond = fb.build_int_binary_operation(less, eq, IntBinaryOp::Or, ValueType::I1)?;
-            Ok((cond, ()))
-        })
-        .map(|(fg, _, ())| fg)?;
+            let cond = if hi {
+                let neg_less = bool_not(fb, less)?;
+                let neg_eq = bool_not(fb, eq)?;
+                fb.build_int_binary_operation(neg_less, neg_eq, IntBinaryOp::And, ValueType::I1)?
+            } else {
+                fb.build_int_binary_operation(less, eq, IntBinaryOp::Or, ValueType::I1)?
+            };
+            Ok((cond, (x, n_const)))
+        })?;
+    Ok((fg, if_node, x, n_const))
+}
 
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    // Asserts the idiom survived rather than "nothing changed": the inner
-    // `Equal(Add(b,C2),0)` is still reshaped to `Equal(b,-C2)` by the
-    // compare-with-const rule, which is value-preserving and not the LS fold.
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If node");
-    let cond_node = fg.producer(fg.if_cond(if_node));
-    assert!(
-        matches!(
-            fg.node_kind(cond_node),
-            NodeKind::IntBinaryOp(IntBinaryOp::Or)
-        ),
-        "wrong-offset LS tree must NOT fold to a single comparison; got {:?}",
-        fg.node_kind(cond_node)
-    );
+/// A folded LS tree is `!Less(N, x)` and a folded HI tree `Less(N, x)`,
+/// reusing the captured `x` and `N` rather than fresh nodes. `N = 1` makes
+/// `-N` all-ones at the width, which the guard compares modulo the width.
+#[test]
+fn folded_ls_and_hi_trees_canonicalize() -> Result<()> {
+    let (i32, i64) = (ValueType::int(32), ValueType::int(64));
+    #[rustfmt::skip]
+    let cases = [
+        (false, i32, None, 8), (false, i64, None, 3),
+        (false, i32, None, 1), (false, i64, None, 1),
+        // Cases 10..=17: `x = b - 10`, `N = 7`.
+        (false, i32, Some(-10), 7), (false, i64, Some(-100), 5),
+        (true, i32, None, 7), (true, i64, None, 3),
+        // Thumb `and r0,#7; subs r0,#1; cmp r0,#5; bhi`: `x = b - 1`.
+        (true, i32, Some(-1), 6), (true, i64, Some(-20), 5),
+    ];
+    for (hi, ty, c1, n) in cases {
+        let (mut fg, if_node, x, n_const) = folded_tree(hi, ty, c1, n, 0)?;
+        assert!(
+            run_pass(&FlagCmpCanonicalize, &mut fg)?,
+            "hi={hi} {ty:?} C1={c1:?} N={n}"
+        );
+        if hi {
+            assert_if_cond_is_intcmp(fg.graph(), if_node, IntCmpOp::Less, n_const, x);
+        } else {
+            assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Less, n_const, x);
+        }
+    }
     Ok(())
 }
 
-/// `Equal(Add(x, C1), C2) -> Equal(x, C2 - C1)`.  The width assertion is the
-/// point: the fresh const must take the operand width (I32), not the `Equal`
-/// root's `I1` output width.
+/// `cmp a, #N; b.ls` on a zero-extended `a` as lifted, before ConstantFold
+/// has folded `Neg(N)`: run with ConstantFold and KnownBits first, as the
+/// default pipeline does, the tree still collapses to `!Less(N, a)`.
 #[test]
-fn eq_add_const_solves_for_x() -> Result<()> {
-    let ty = ValueType::int(32);
-    let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
-        let c3 = b.build_int_const(3u64, ty)?;
-        let c4 = b.build_int_const(4u64, ty)?;
-        let add = b.build_int_binary_operation(x, c3, IntBinaryOp::Add, ty)?;
-        let eq = b.build_int_cmp_operation(add, c4, IntCmpOp::Equal, ty)?;
-        Ok((eq, ()))
-    })?;
-
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If node");
-    let cond = fg.if_cond(if_node);
-    let cond_node = fg.producer(cond);
-    assert!(
-        matches!(fg.node_kind(cond_node), NodeKind::IntCmpOp(IntCmpOp::Equal)),
-        "cond must stay an Equal, got {:?}",
-        fg.node_kind(cond_node)
-    );
-    let inputs = fg.node_inputs(cond_node);
-    let (l, r) = (inputs[0], inputs[1]);
-    let const_is_one_i32 = |o: ValueId| {
-        matches!(fg.kind_of_value(o), NodeKind::IntConst(_))
-            && fg.int_const_u128(o) == Some(1)
-            && fg.value_type_opt(o) == Some(ValueType::int(32))
+fn a_raw_ls_tree_on_a_zero_extended_operand_collapses_after_constant_fold() -> Result<()> {
+    let ty = ValueType::int(64);
+    let vn = strider_ir_test_utils::reg_vn(0x1000, 4);
+    let (mut fg, if_node, idx) = {
+        let (fg, if_node, idx) =
+            RegisterSet::new()
+                .tracked(vn)
+                .build_if_then_else_returns(|fb| {
+                    let w = fb.read_variable(&vn)?;
+                    let idx = fb.extend_if_needed(w, ty, strider_ir::ExtendOp::ZeroExtend)?;
+                    let n = fb.build_int_const(9u64, ty)?;
+                    let less = fb.build_int_cmp_operation(idx, n, IntCmpOp::Less, ty)?;
+                    let neg_n = fb.build_int_unary_operation(n, IntUnaryOp::Neg, ty)?;
+                    let diff = fb.build_int_binary_operation(idx, neg_n, IntBinaryOp::Add, ty)?;
+                    let zero = fb.build_int_const(0u64, ty)?;
+                    let eq = fb.build_int_cmp_operation(diff, zero, IntCmpOp::Equal, ty)?;
+                    let cond =
+                        fb.build_int_binary_operation(less, eq, IntBinaryOp::Or, ValueType::I1)?;
+                    Ok((cond, idx))
+                })?;
+        (fg, if_node, idx)
     };
-    let ok = (l == x && const_is_one_i32(r)) || (r == x && const_is_one_i32(l));
-    assert!(
-        ok,
-        "expected Equal(x, IntConst(1):I32); got lhs={:?}, rhs={:?}",
-        fg.kind_of_value(l),
-        fg.kind_of_value(r)
-    );
-    strider_ir::validate::validate(&fg)?;
+    run_passes(
+        &mut fg,
+        &[
+            &crate::ConstantFold,
+            &crate::KnownBits,
+            &FlagCmpCanonicalize,
+        ],
+    )?;
+    let n = fg
+        .walk()
+        .flat_map(|node| fg.node_outputs(node).to_vec())
+        .find(|&v| fg.int_const_u128(v) == Some(9) && fg.value_type_opt(v) == Some(ty))
+        .expect("the compared constant survives");
+    assert_if_cond_is_neg_intcmp(&fg, if_node, IntCmpOp::Less, n, idx);
     Ok(())
 }
 
-/// `Equal(Xor(x, C1), C2) -> Equal(x, C1 ^ C2)`: `xor(x,3) == 5` gives `x == 6`.
+/// With `C2 != C1 - N` the `Equal` does not test `x == N`, so the guard must
+/// reject. The inner `Equal(Add(b, C2), 0)` is still reshaped to
+/// `Equal(b, -C2)` by the compare-with-const rule, so this asserts the idiom
+/// survived rather than that nothing changed.
 #[test]
-fn eq_xor_const_solves_for_x() -> Result<()> {
-    let ty = ValueType::int(32);
-    let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
-        let c3 = b.build_int_const(3u64, ty)?;
-        let c5 = b.build_int_const(5u64, ty)?;
-        let xored = b.build_int_binary_operation(x, c3, IntBinaryOp::Xor, ty)?;
-        let eq = b.build_int_cmp_operation(xored, c5, IntCmpOp::Equal, ty)?;
-        Ok((eq, ()))
-    })?;
-
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If");
+fn flag_cmp_offset_folded_ls_tree_rejects_wrong_offset() -> Result<()> {
+    let (mut fg, if_node, _, _) = folded_tree(false, ValueType::int(32), Some(-10), 7, 1)?;
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
     let cond_node = fg.producer(fg.if_cond(if_node));
-    assert!(matches!(
+    assert_eq!(
         fg.node_kind(cond_node),
-        NodeKind::IntCmpOp(IntCmpOp::Equal)
-    ));
-    let inputs: Vec<_> = fg.node_inputs(cond_node).into_iter().collect();
-    assert!(inputs.contains(&x), "operand must be x (xor stripped)");
-    assert!(
-        inputs.iter().any(|&o| fg.int_const_u128(o) == Some(6)),
-        "const must be 3 ^ 5 = 6"
+        &NodeKind::IntBinaryOp(IntBinaryOp::Or),
+        "wrong-offset LS tree must NOT fold to a single comparison"
     );
-    strider_ir::validate::validate(&fg)?;
     Ok(())
 }
 
-/// `Equal(Neg(x), C) -> Equal(x, -C)`: `-x == 5` gives `x == -5`, masked to I32.
+/// An `Equal` against a constant solves for `x`, the fresh constant at the
+/// operand width (`I32`), not the root's `I1`: `x + 3 == 4` is `x == 1`,
+/// `x ^ 3 == 5` is `x == 6`, and `-x == 5` is `x == -5`.
 #[test]
-fn eq_neg_solves_for_x() -> Result<()> {
+fn eq_const_solves_for_x() -> Result<()> {
     let ty = ValueType::int(32);
-    let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
-        let c5 = b.build_int_const(5u64, ty)?;
-        let negated = b.build_int_unary_operation(x, IntUnaryOp::Neg, ty)?;
-        let eq = b.build_int_cmp_operation(negated, c5, IntCmpOp::Equal, ty)?;
-        Ok((eq, ()))
-    })?;
-
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If");
-    let cond_node = fg.producer(fg.if_cond(if_node));
-    let inputs: Vec<_> = fg.node_inputs(cond_node).into_iter().collect();
-    assert!(inputs.contains(&x), "operand must be x (neg stripped)");
-    assert!(
-        inputs
-            .iter()
-            .any(|&o| fg.int_const_u128(o) == Some(0xFFFF_FFFB)),
-        "const must be -5 masked to I32 = 0xFFFF_FFFB"
-    );
-    strider_ir::validate::validate(&fg)?;
+    for (op, want) in [
+        (Some(IntBinaryOp::Add), 1u128),
+        (Some(IntBinaryOp::Xor), 6),
+        (None, 0xFFFF_FFFB),
+    ] {
+        let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
+            let lhs = match op {
+                Some(op) => b.build_const_binop(3u64, x, op, ty)?,
+                None => b.build_int_unary_operation(x, IntUnaryOp::Neg, ty)?,
+            };
+            let k = b.build_int_const(
+                if op == Some(IntBinaryOp::Add) {
+                    4u64
+                } else {
+                    5
+                },
+                ty,
+            )?;
+            Ok((b.build_int_cmp_operation(lhs, k, IntCmpOp::Equal, ty)?, ()))
+        })?;
+        run_pass(&FlagCmpCanonicalize, &mut fg)?;
+        let cond_node = fg.producer(fg.if_cond(fg.first_kind(|k| matches!(k, NodeKind::If))));
+        assert_eq!(
+            fg.node_kind(cond_node),
+            &NodeKind::IntCmpOp(IntCmpOp::Equal),
+            "{op:?}"
+        );
+        let [l, r] = fg.node_inputs_exact::<2>(cond_node)?;
+        let k = if l == x { r } else { l };
+        assert!(l == x || r == x, "{op:?}: the operand is x");
+        assert_eq!(
+            (fg.int_const_u128(k), fg.value_type_opt(k)),
+            (Some(want), Some(ty)),
+            "{op:?}"
+        );
+    }
     Ok(())
 }
 
@@ -1405,23 +846,15 @@ fn eq_neg_solves_for_x() -> Result<()> {
 fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
     let ty = ValueType::int(32);
     let (mut fg, x, ()) = build_if_over_load(ty, |b, x| {
-        let c3 = b.build_int_const(3u64, ty)?;
-        let shl = b.build_int_binary_operation(x, c3, IntBinaryOp::ShiftLeft, ty)?;
+        let shl = b.build_const_binop(3u64, x, IntBinaryOp::ShiftLeft, ty)?;
         let zero = b.build_int_const(0u64, ty)?;
         let sless = b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ty)?;
         Ok((sless, ()))
     })?;
 
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
 
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If");
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     let xor = fg.producer(fg.if_cond(if_node));
     assert!(
         matches!(fg.node_kind(xor), NodeKind::IntBinaryOp(IntBinaryOp::Xor)),
@@ -1460,7 +893,6 @@ fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
             .any(|&o| fg.int_const_u128(o) == Some(0x1000_0000)),
         "mask must be 1<<(31-3) = 0x1000_0000"
     );
-    strider_ir::validate::validate(&fg)?;
     Ok(())
 }
 
@@ -1470,22 +902,14 @@ fn sless_of_left_shift_is_a_sign_bit_test() -> Result<()> {
 fn sless_of_oversized_left_shift_is_not_a_sign_bit_test() -> Result<()> {
     let ty = ValueType::int(32);
     let (mut fg, _, ()) = build_if_over_load(ty, |b, x| {
-        let c40 = b.build_int_const(40u64, ty)?;
-        let shl = b.build_int_binary_operation(x, c40, IntBinaryOp::ShiftLeft, ty)?;
+        let shl = b.build_const_binop(40u64, x, IntBinaryOp::ShiftLeft, ty)?;
         let zero = b.build_int_const(0u64, ty)?;
         let sless = b.build_int_cmp_operation(shl, zero, IntCmpOp::Sless, ty)?;
         Ok((sless, ()))
     })?;
 
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If");
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     assert!(
         matches!(
             fg.node_kind(fg.producer(fg.if_cond(if_node))),
@@ -1547,12 +971,8 @@ fn wide_const_rewrites_reach_past_128_bits() -> Result<()> {
             Ok((cond, cond))
         })?;
         let _ = cond;
-        let outcome = crate::pipeline::run_one(
-            &FlagCmpCanonicalize::new(),
-            &mut fg,
-            &crate::OptCtx::new(None),
-        )?;
-        assert!(outcome.changed(), "shape {i}: I256 compare must rewrite");
+        let outcome = run_pass(&FlagCmpCanonicalize, &mut fg)?;
+        assert!(outcome, "shape {i}: I256 compare must rewrite");
         let minted: Vec<UBig> = fg
             .walk()
             .filter(|&n| matches!(fg.node_kind(n), NodeKind::IntConst(_)))
@@ -1564,41 +984,6 @@ fn wide_const_rewrites_reach_past_128_bits() -> Result<()> {
         );
     }
     Ok(())
-}
-
-/// Every rule root is an `IntCmpOp`, an `And`/`Or`/`Xor`, or the CR-bit
-/// `Truncate`; seeding anything else runs ~20 rooted pattern matches per node
-/// for nothing.
-#[test]
-fn seed_filter_admits_rule_roots_only() {
-    use crate::peephole::PeepholePass;
-    use strider_ir::node::ExtendOp;
-    let pass = FlagCmpCanonicalize::new();
-    for kind in [
-        NodeKind::IntCmpOp(IntCmpOp::Equal),
-        NodeKind::IntCmpOp(IntCmpOp::Less),
-        NodeKind::IntCmpOp(IntCmpOp::Sless),
-        NodeKind::IntCmpOp(IntCmpOp::Sborrow),
-        NodeKind::IntBinaryOp(IntBinaryOp::And),
-        NodeKind::IntBinaryOp(IntBinaryOp::Or),
-        NodeKind::IntBinaryOp(IntBinaryOp::Xor),
-        NodeKind::Truncate,
-    ] {
-        assert!(pass.matches_kind(&kind), "{kind:?} roots a rule");
-    }
-    for kind in [
-        NodeKind::IntBinaryOp(IntBinaryOp::Add),
-        NodeKind::IntBinaryOp(IntBinaryOp::Mul),
-        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft),
-        NodeKind::IntUnaryOp(IntUnaryOp::Neg),
-        NodeKind::Extend(ExtendOp::ZeroExtend),
-        NodeKind::Load(rsleigh::VnSpace::RAM),
-        NodeKind::Phi,
-        NodeKind::Region,
-        NodeKind::Return,
-    ] {
-        assert!(!pass.matches_kind(&kind), "{kind:?} roots no rule");
-    }
 }
 
 /// A shift amount at or past the operand width yields 0 under p-code
@@ -1614,29 +999,66 @@ fn cr_bit_test_declines_a_shift_past_the_width() -> Result<()> {
         let eight = b.build_int_const(8u64, ty)?;
         let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
         let z = b.extend_if_needed(lt, ty, ExtendOp::ZeroExtend)?;
-        let p = b.build_int_const(35u64, ty)?;
-        let pack = b.build_int_binary_operation(z, p, IntBinaryOp::ShiftLeft, ty)?;
+        let pack = b.build_const_binop(35u64, z, IntBinaryOp::ShiftLeft, ty)?;
         let k = b.build_int_const(35u64, ty)?;
         let shr = b.build_int_binary_operation(pack, k, IntBinaryOp::ShiftRight, ty)?;
         let cond = b.truncate_if_needed(shr, ValueType::I1)?;
         Ok((cond, ()))
     })?;
 
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
 
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If node");
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     let kind = *fg.node_kind(fg.producer(fg.if_cond(if_node)));
     assert!(
         !matches!(kind, NodeKind::IntCmpOp(_)),
         "the packed bit is a hard 0, so the condition must not become the comparison; got {kind:?}",
     );
+    Ok(())
+}
+
+/// A count past the width zeroes every bit, the tested one included even
+/// where the count's low 32 bits are 0: `Truncate(zext(lt):I64 << 2^32)` is
+/// 0, not `lt`.
+#[test]
+fn cr_bit_test_declines_a_count_past_the_width_with_zero_low_bits() -> Result<()> {
+    use strider_ir::node::ExtendOp;
+    let ty = ValueType::int(64);
+    let (mut fg, _, ()) = build_if_over_load(ty, |b, idx| {
+        let eight = b.build_int_const(8u64, ty)?;
+        let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+        let z = b.extend_if_needed(lt, ty, ExtendOp::ZeroExtend)?;
+        let shl = b.build_const_binop(1u64 << 32, z, IntBinaryOp::ShiftLeft, ty)?;
+        Ok((b.truncate_if_needed(shl, ValueType::I1)?, ()))
+    })?;
+
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
+
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
+    let kind = *fg.node_kind(fg.producer(fg.if_cond(if_node)));
+    assert_eq!(kind, NodeKind::Truncate, "the shifted bit is a hard 0");
+    Ok(())
+}
+
+/// `Equal(zext(x), 0)` is `!x` only for an `I1` `x`: over an `I8` it stays.
+#[test]
+fn an_i8_false_flag_test_is_not_a_complement() -> Result<()> {
+    use strider_ir::node::ExtendOp;
+    let ty = ValueType::int(32);
+    let (mut fg, _, ()) = build_if_over_load(ValueType::int(8), |b, x| {
+        let wide = b.extend_if_needed(x, ty, ExtendOp::ZeroExtend)?;
+        let zero = b.build_int_const(0u64, ty)?;
+        Ok((
+            b.build_int_cmp_operation(wide, zero, IntCmpOp::Equal, ty)?,
+            (),
+        ))
+    })?;
+
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
+
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
+    let kind = *fg.node_kind(fg.producer(fg.if_cond(if_node)));
+    assert_eq!(kind, NodeKind::IntCmpOp(IntCmpOp::Equal));
     Ok(())
 }
 
@@ -1664,22 +1086,105 @@ fn cr_bit_test_declines_a_ne_zero_pack_carrying_a_higher_term() -> Result<()> {
         Ok((cond, ()))
     })?;
 
-    crate::pipeline::run_one(
-        &FlagCmpCanonicalize::new(),
-        &mut fg,
-        &crate::OptCtx::new(None),
-    )?;
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
 
-    let if_node = fg
-        .walk_kind(|k| matches!(k, NodeKind::If))
-        .next()
-        .expect("If node");
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
     let kind = *fg.node_kind(fg.producer(fg.if_cond(if_node)));
     assert!(
         !matches!(kind, NodeKind::IntCmpOp(_)),
         "`pack != 0` also observes the term at bit 3, so the condition must not \
          become the bit-0 comparison; got {kind:?}",
     );
+    Ok(())
+}
+
+/// `Truncate(ShiftRight(pack, k)):I1` over `idx`, with `pack` built from the
+/// comparisons `lt`, `gt` and `eq` of `idx` against 8 and the opaque `cr`,
+/// after FlagCmpCanonicalize: the If's condition and the three comparisons.
+fn cr_test(
+    k: u64,
+    pack: impl FnOnce(&mut FunctionBuilder, [ValueId; 4]) -> Result<ValueId>,
+) -> Result<(strider_ir::Function, ValueId, [ValueId; 3])> {
+    let ty = ValueType::int(32);
+    let (mut fg, _, cmps) = build_if_over_load(ty, |b, idx| {
+        let eight = b.build_int_const(8u64, ty)?;
+        let lt = b.build_int_cmp_operation(idx, eight, IntCmpOp::Less, ty)?;
+        let gt = b.build_int_cmp_operation(eight, idx, IntCmpOp::Less, ty)?;
+        let eq = b.build_int_cmp_operation(idx, eight, IntCmpOp::Equal, ty)?;
+        b.set_lift_addr(Some(ADDR_OPAQUE));
+        let at = b.build_int_const(0xBEEFu64, ValueType::int(64))?;
+        let cr = b.build_load(at, rsleigh::VnSpace::RAM, ty)?;
+        b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+        let packed = pack(b, [lt, gt, eq, cr])?;
+        let k = b.build_int_const(k, ty)?;
+        let shr = b.build_int_binary_operation(packed, k, IntBinaryOp::ShiftRight, ty)?;
+        Ok((b.truncate_if_needed(shr, ValueType::I1)?, [lt, gt, eq]))
+    })?;
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
+    let cond = fg.if_cond(if_node);
+    Ok((fg, cond, cmps))
+}
+
+const ADDR_OPAQUE: u64 = 0x0BAD_0BAD;
+
+/// A record form updates one CR bit in place, `(cr & ~(1 << p)) | (b << p)`:
+/// bit `p` is `b` whatever the old field held.
+#[test]
+fn a_record_form_cr_bit_update_canonicalizes() -> Result<()> {
+    let (fg, cond, [_, gt, _]) = cr_test(2, |b, [_, gt, _, cr]| {
+        let ty = ValueType::int(32);
+        let kept = b.build_const_binop(!(1u64 << 2) & 0xFFFF_FFFF, cr, IntBinaryOp::And, ty)?;
+        let bit = cr_term(b, gt, 2)?;
+        b.build_int_binary_operation(kept, bit, IntBinaryOp::Or, ty)
+    })?;
+    assert_eq!(cond, gt);
+    // The kept field's bits were never read, so its load's address stays out.
+    let fp = fg.side_tables().asm_fingerprint(fg.producer(gt));
+    assert!(!fp.contains(&ADDR_OPAQUE), "{fp:?}");
+    Ok(())
+}
+
+/// Terms that overlap below the tested bit say nothing about it.
+#[test]
+fn cr_bit_test_reads_past_terms_overlapping_at_another_bit() -> Result<()> {
+    let (_, cond, [lt, _, _]) = cr_test(3, |b, [lt, gt, eq, _]| {
+        let ty = ValueType::int(32);
+        let lt = cr_term(b, lt, 3)?;
+        let low = [cr_term(b, gt, 0)?, cr_term(b, eq, 0)?];
+        let low = b.build_int_binary_operation(low[0], low[1], IntBinaryOp::Or, ty)?;
+        b.build_int_binary_operation(lt, low, IntBinaryOp::Or, ty)
+    })?;
+    assert_eq!(cond, lt);
+    Ok(())
+}
+
+/// Two comparisons at the tested bit: the bit is their OR, not either one.
+#[test]
+fn cr_bit_test_declines_two_terms_at_the_tested_bit() -> Result<()> {
+    let (_, cond, [lt, gt, _]) = cr_test(3, |b, [lt, gt, _, _]| {
+        let ty = ValueType::int(32);
+        let terms = [cr_term(b, lt, 3)?, cr_term(b, gt, 3)?];
+        b.build_int_binary_operation(terms[0], terms[1], IntBinaryOp::Or, ty)
+    })?;
+    assert!(cond != lt && cond != gt);
+    Ok(())
+}
+
+/// A pack deeper than the trace budget is left alone, so one test costs at
+/// most the budget.
+#[test]
+fn cr_bit_test_past_its_budget_declines() -> Result<()> {
+    let (_, cond, [lt, _, _]) = cr_test(3, |b, [lt, _, eq, _]| {
+        let ty = ValueType::int(32);
+        let mut acc = cr_term(b, lt, 3)?;
+        for _ in 0..super::MAX_BIT_VISITS {
+            let term = cr_term(b, eq, 1)?;
+            acc = b.build_int_binary_operation(term, acc, IntBinaryOp::Or, ty)?;
+        }
+        Ok(acc)
+    })?;
+    assert_ne!(cond, lt);
     Ok(())
 }
 
@@ -1696,11 +1201,10 @@ fn flag_test_chain(n: usize) -> Result<strider_ir::Function> {
     for _ in 0..n {
         let zero = b.build_int_const(0u64, ValueType::int(64))?;
         let eq = b.build_int_cmp_operation(acc, zero, IntCmpOp::Equal, ValueType::int(64))?;
-        let not = build_i1_xor_with_one(&mut b, eq)?;
+        let not = bool_not(&mut b, eq)?;
         acc = b.extend_if_needed(not, ValueType::int(64), ExtendOp::ZeroExtend)?;
     }
     b.build_return(Some(acc), &[])?;
-    b.set_lift_addr(None);
     b.build()
 }
 
@@ -1713,11 +1217,7 @@ fn a_chain_of_flag_tests_collapses_in_linear_use_moves() -> Result<()> {
         let mut fg = flag_test_chain(n)?;
         let mut edit = crate::EditFunction::new(&mut fg);
         edit.cull_dead();
-        crate::peephole::run_peephole(
-            &FlagCmpCanonicalize::new(),
-            &mut edit,
-            &crate::OptCtx::new(None),
-        )?;
+        crate::peephole::run_peephole(&FlagCmpCanonicalize, &mut edit, &crate::OptCtx::new(None))?;
         edit.clean();
         let moved = edit.uses_moved();
         drop(edit);
@@ -1771,14 +1271,10 @@ fn build_signed_imm_tree(
         .build_if_then_else_returns(|fb| {
             let a = fb.read_variable(&a_vn)?;
             let x = match offset {
-                Some(c1) => {
-                    let c1 = fb.build_int_const(c1, ty)?;
-                    fb.build_int_binary_operation(a, c1, IntBinaryOp::Add, ty)?
-                }
+                Some(c1) => fb.build_const_binop(c1, a, IntBinaryOp::Add, ty)?,
                 None => a,
             };
-            let c = fb.build_int_const(add_c, ty)?;
-            let sum = fb.build_int_binary_operation(a, c, IntBinaryOp::Add, ty)?;
+            let sum = fb.build_const_binop(add_c, a, IntBinaryOp::Add, ty)?;
             let zero = fb.build_int_const(0u128, ty)?;
             let ng = fb.build_int_cmp_operation(sum, zero, IntCmpOp::Sless, ty)?;
             let n_const = fb.build_int_const(n, ty)?;
@@ -1790,11 +1286,7 @@ fn build_signed_imm_tree(
             let ng = fb.convert_to_int_if_needed(ng, ValueType::int(8))?;
             let ov = fb.convert_to_int_if_needed(ov, ValueType::int(8))?;
             let ge = fb.build_int_cmp_operation(ng, ov, IntCmpOp::Equal, ValueType::int(8))?;
-            let cond = if lt {
-                build_i1_xor_with_one(fb, ge)?
-            } else {
-                ge
-            };
+            let cond = if lt { bool_not(fb, ge)? } else { ge };
             Ok((cond, x))
         })?;
     Ok((fg, if_node, x))
@@ -1806,12 +1298,12 @@ fn run_to_sless(
     fg: &mut strider_ir::Function,
     if_node: NodeId,
 ) -> Result<Option<(bool, ValueId, ValueId)>> {
-    let r = crate::pipeline::run_one(&FlagCmpCanonicalize::new(), fg, &crate::OptCtx::new(None))?;
-    if !r.changed() {
+    let r = crate::pipeline::run_one(&FlagCmpCanonicalize, fg, &crate::OptCtx::new(None))?;
+    if !r {
         return Ok(None);
     }
     let mut cmp = fg.producer(if_cond_output(fg.graph(), if_node));
-    let negated = is_i1_xor_with_one(fg, cmp);
+    let negated = is_bool_not(fg, cmp);
     if negated {
         let [l, r] = fg.graph().node_inputs_exact::<2>(cmp).expect("Xor");
         cmp = fg.producer(if fg.int_const_u128(r) == Some(1) {
@@ -1993,8 +1485,8 @@ fn offset_le_gt_rewrites_agree_at_8_bits() -> Result<()> {
                 let n = fb.build_int_const(n, ty)?;
                 let lt = fb.build_int_cmp_operation(x, n, IntCmpOp::Sless, ty)?;
                 let cond = if gt {
-                    let ne = build_i1_xor_with_one(fb, eq)?;
-                    let ge = build_i1_xor_with_one(fb, lt)?;
+                    let ne = bool_not(fb, eq)?;
+                    let ge = bool_not(fb, lt)?;
                     fb.build_int_binary_operation(ne, ge, IntBinaryOp::And, ValueType::I1)?
                 } else {
                     fb.build_int_binary_operation(eq, lt, IntBinaryOp::Or, ValueType::I1)?
@@ -2030,4 +1522,63 @@ fn offset_le_gt_rewrites_agree_at_8_bits() -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The pass seeds exactly the kinds some rule roots at: an `Equal` / `Sless`,
+/// an `And`/`Or`/`Xor`, or the CR-bit `Truncate`. No rule roots at an
+/// unsigned or overflow compare.
+#[test]
+fn seeds_the_kinds_its_rules_root_at() {
+    for kind in crate::test_support::sample_kinds() {
+        let rooted = matches!(
+            kind,
+            NodeKind::IntCmpOp(IntCmpOp::Equal | IntCmpOp::Sless)
+                | NodeKind::Truncate
+                | NodeKind::IntBinaryOp(IntBinaryOp::And | IntBinaryOp::Or | IntBinaryOp::Xor)
+        );
+        assert_eq!(super::RULES.with(|r| r.admits(&kind)), rooted, "{kind:?}");
+    }
+}
+
+/// Runs FlagCmp over an `If` on `make_cond(x)`, `x` an `I256` load, and
+/// asserts the condition is untouched.
+fn assert_wide_cr_test_left_alone(
+    make_cond: impl FnOnce(&mut FunctionBuilder, ValueId) -> Result<ValueId>,
+) -> Result<()> {
+    let (mut fg, _, cond) =
+        build_if_over_load(ValueType::int(256), |b, x| make_cond(b, x).map(|c| (c, c)))?;
+    run_pass(&FlagCmpCanonicalize, &mut fg)?;
+    let if_node = fg.first_kind(|k| matches!(k, NodeKind::If));
+    assert_eq!(if_cond_output(fg.graph(), if_node), cond);
+    Ok(())
+}
+
+/// A small constant traced at a bit past 127 is zero there.
+///
+/// Mutation: shift the constant by `k` unchecked.
+#[test]
+fn a_cr_test_reading_a_constant_past_bit_127_does_not_fold() -> Result<()> {
+    let ty = ValueType::int(256);
+    assert_wide_cr_test_left_alone(|b, x| {
+        let mask = b.build_int_const(0xFFu64, ty)?;
+        let m = b.build_int_binary_operation(x, mask, IntBinaryOp::And, ty)?;
+        let s = b.build_const_binop(200u64, m, IntBinaryOp::ShiftRight, ty)?;
+        b.truncate_if_needed(s, ValueType::I1)
+    })?;
+    // `(x << 128) & 0xFF != 0`: bits 0..128 trace to zero, then bit 128
+    // reads the mask.
+    assert_wide_cr_test_left_alone(|b, x| {
+        let s = b.build_const_binop(128u64, x, IntBinaryOp::ShiftLeft, ty)?;
+        let m = b.build_const_binop(0xFFu64, s, IntBinaryOp::And, ty)?;
+        let zero = b.build_int_const(0u64, ty)?;
+        let eq = b.build_int_cmp_operation(m, zero, IntCmpOp::Equal, ty)?;
+        bool_not(b, eq)
+    })?;
+    // Bit 0 already decides `x | 1 != 0` is no single flag.
+    assert_wide_cr_test_left_alone(|b, x| {
+        let o = b.build_const_binop(1u64, x, IntBinaryOp::Or, ty)?;
+        let zero = b.build_int_const(0u64, ty)?;
+        let eq = b.build_int_cmp_operation(o, zero, IntCmpOp::Equal, ty)?;
+        bool_not(b, eq)
+    })
 }

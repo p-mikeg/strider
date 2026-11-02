@@ -162,15 +162,15 @@ pub(crate) fn build_pop_pc_via_stack_load_forward_scenario()
     // the production pipeline (`default_pipeline()` includes PhiCollapse)
     // produces in real-binary integration tests.
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(strider_orchestrator::opt::PhiCollapse);
-    pipeline.add(strider_orchestrator::opt::RegionCollapse);
-    pipeline.add(LoadForward);
+    pipeline.add(&ConstantFold);
+    pipeline.add(&strider_orchestrator::opt::PhiCollapse);
+    pipeline.add(&strider_orchestrator::opt::RegionCollapse);
+    pipeline.add(&LoadForward);
     // PhiCollapse again post-LoadForward to collapse any
     // single-input VarPhi the forward inserts (e.g. wrapping
     // the loaded InitialVar(lr) in a phi at the merge region).
-    pipeline.add(strider_orchestrator::opt::PhiCollapse);
-    pipeline.add(strider_orchestrator::opt::RegionCollapse);
+    pipeline.add(&strider_orchestrator::opt::PhiCollapse);
+    pipeline.add(&strider_orchestrator::opt::RegionCollapse);
     pipeline
         .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
@@ -249,8 +249,8 @@ pub(crate) fn build_push_target_pop_pc_scenario(
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(LoadForward);
+    pipeline.add(&ConstantFold);
+    pipeline.add(&LoadForward);
     pipeline
         .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
@@ -340,7 +340,7 @@ pub(crate) fn build_jump_table_known_bits_scenario(
     // orchestrator iteration hands the jump-table classifier, so the
     // fixture's shape matches production.
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
+    pipeline.add(&ConstantFold);
     pipeline
         .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
@@ -425,9 +425,9 @@ pub(crate) fn build_jump_table_predecessor_if_scenario(
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
+    pipeline.add(&ConstantFold);
+    pipeline.add(&PhiCollapse);
+    pipeline.add(&RegionCollapse);
     pipeline
         .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
@@ -477,7 +477,7 @@ pub(crate) fn build_jump_table_unbounded_scenario(
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
+    pipeline.add(&ConstantFold);
     pipeline
         .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
@@ -510,7 +510,7 @@ pub(crate) fn build_non_jump_table_load_scenario() -> (Function, strider_ir::nod
     let mut fg = b.build().expect("build");
 
     let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
+    pipeline.add(&ConstantFold);
     pipeline
         .run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");
@@ -658,10 +658,10 @@ pub(crate) fn build_stack_array_dispatch_scenario(
     let mut fg = b.build().expect("build");
 
     let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
-    p.add(KnownBits);
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
+    p.add(&ConstantFold);
+    p.add(&KnownBits);
+    p.add(&PhiCollapse);
+    p.add(&RegionCollapse);
     // LoadForward stays out of this pipeline; see the doc comment above.
     p.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("opt pipeline");

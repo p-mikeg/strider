@@ -21,40 +21,25 @@
 //! forwards.  A stack address decomposes only once `PhiCollapse` has folded the
 //! region phis over SP.
 
-use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use strider_ir::{IRBuilderExt, IRViewer};
-use strider_target::Endianness;
 
 use crate::Result;
-use crate::mem_analysis::{AliasVerdict, MemAnalyzer, MemOptions, MemPurpose, ReachingDef};
-use crate::pipeline::OptimizationResult;
+use crate::const_eval::LoadSlice;
+use crate::mem_analysis::{MemQuery, Policy, ReachingDef};
 
-#[derive(Clone, Copy, Default)]
 pub struct LoadForward;
-
-/// One sweep's analyzers, shared by every root for the memory index the two
-/// of them share, their answers and their outgoing-argument-window memo.
-///
-/// The pass only rewires `Load` memory edges and redirects `Load` outputs, so
-/// every memory def keeps its inputs and the index stands.  A store address a
-/// forward can still change was an `Anchor`, which the index offers every
-/// location, and a forward that reaches an address drops the answers.  A
-/// forwarded value only makes an address the window scan could not place
-/// placeable, which ends a prefix sooner than the memo says.
-///
-/// `alias` carries the function's claims and decides whether to forward;
-/// `narrow` carries them less the call relaxations, and is the only one a
-/// permanent rewire may name.
-pub(crate) struct Analyzers {
-    alias: MemAnalyzer,
-    narrow: MemAnalyzer,
-}
 
 // Not `PROPAGATE`: a fresh forward reaches a consumer only through an address
 // edge, which the next pipeline iteration picks up; re-enqueueing every
 // consumer to catch it costs more than the deferral.
+//
+// One query per sweep: the pass only rewires `Load` memory edges and
+// redirects `Load` outputs, so every memory def keeps its inputs and the
+// index stands; `try_forward_load` drops the answers when a redirect moves a
+// store's address.
 impl crate::peephole::PeepholePass for LoadForward {
-    type Sweep = Option<Analyzers>;
+    type Sweep = MemQuery;
 
     fn matches_kind(&self, kind: &NodeKind) -> bool {
         matches!(kind, NodeKind::Load(_))
@@ -62,148 +47,107 @@ impl crate::peephole::PeepholePass for LoadForward {
 
     fn try_rewrite(
         &self,
-        analyzers: &mut Option<Analyzers>,
+        query: &mut MemQuery,
         edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &crate::pipeline::OptCtx<'_>,
         root: NodeId,
-    ) -> Result<crate::peephole::PeepholeRewrite> {
-        let cfgs = analyzers.get_or_insert_with(|| {
-            let function = edit.function();
-            let alias = MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::Forward, function));
-            Analyzers {
-                // `narrow_load_to` rewires for good, and the walks that read
-                // the edge afterwards honour no call relaxation (the jump-table
-                // walk, return-target verification with its claim off), so the
-                // narrowing honours every claim but those.
-                narrow: alias.twin(MemOptions::for_purpose(MemPurpose::TableWalk, function)),
-                alias,
-            }
-        });
-        Ok(crate::peephole::PeepholeRewrite::from_changed(
-            try_forward_load(edit, root, &cfgs.alias, &cfgs.narrow)?.changed(),
-        ))
+    ) -> Result<Option<ValueId>> {
+        try_forward_load(edit, root, query)?;
+        Ok(None)
     }
 }
 
 /// Two nearest-clobber queries per load, each a climb of the memory dominator
-/// tree over the analyzers' index, one dominator at a time where the memory
-/// graph is irreducible and the index carries no position order.  `narrow_load_to` moves the load's edge onto the
-/// structural clobber, which later sweeps start from.
+/// tree over the query's index, one dominator at a time where the memory
+/// graph is irreducible and the index carries no position order.
+/// [`MemQuery::reach_and_narrow`] moves the load's edge onto the structural clobber,
+/// which later sweeps start from.
 fn try_forward_load(
     edit: &mut crate::EditFunction<'_>,
     load: NodeId,
-    alias_cfg: &MemAnalyzer,
-    narrow_cfg: &MemAnalyzer,
-) -> Result<OptimizationResult> {
-    let mem = edit
-        .memory_input_of(load)
-        .expect("a Load has a memory input (slot 0)");
+    query: &MemQuery,
+) -> Result<()> {
     let (load_value, load_ty) = edit.single_value_output(load)?;
 
-    let reaching = alias_cfg.reaching(edit.function(), load, mem);
-    // Shorten the load's memory edge onto the clobber `narrow_cfg` proves so
-    // future walks skip the proven-disjoint run.  Never `alias_cfg`'s: the
-    // stricter walks that read the edge afterwards would inherit a relaxation
-    // they do not honour.
-    let sound_clobber = narrow_cfg.reaching(edit.function(), load, mem).node();
-    // A moved edge is a change: the load may now be a structural twin of
-    // another, and the fixed point must not exit before that merge is seen.
-    let narrowed = crate::mem_ssa::narrow_load_to(edit, load, sound_clobber);
-    let unforwarded = OptimizationResult::from_changed(narrowed);
+    // Shortens the load's memory edge so future walks skip the proven-disjoint
+    // run.  A moved edge is a change: the load may now be a structural twin
+    // of another, and the fixed point must not exit before that merge is seen.
+    let reaching = query.reach_and_narrow(edit, load, Policy::forward(edit.function()));
 
     // Exact match: same location, stored bytes covering the load's range.
-    // Read before the rewire above, which moves no address.
-    let ReachingDef::Store(clobber_node, AliasVerdict::Match) = reaching else {
-        return Ok(unforwarded);
+    let ReachingDef::Match(clobber_node) = reaching else {
+        return Ok(());
     };
 
     let store_data = edit.store_data(clobber_node);
     let store_data_ty = edit
         .value_type_opt(store_data)
         .expect("Store data input is a value");
-    let forwarded = if store_data_ty == load_ty {
-        store_data
-    } else if store_data_ty.is_integer()
-        && load_ty.is_integer()
-        && load_ty.byte_size() < store_data_ty.byte_size()
-        // The BE reshape mints a shift const via `build_int_const`, which only
-        // materialises up to I128.  Bail on wider stores rather than fail; a
-        // wide-store-to-narrow-load forward is exotic.
-        && store_data_ty.byte_size() <= 16
-    {
-        narrow(edit, store_data, load)?
-    } else {
-        return Ok(unforwarded);
-    };
-
-    // A forwarded address can turn an `Anchor` store into a located one,
-    // which moves verdicts the analyzers memoised.
-    if feeds_an_address(edit.function(), load_value) {
-        alias_cfg.forget_answers();
-        narrow_cfg.forget_answers();
-    }
-    // Redirecting the sole output leaves the Load dead; the automatic cull
-    // removes it and its address cone.
-    let changed = edit.replace_value(load_value, forwarded);
-    Ok(OptimizationResult::from_changed(changed || narrowed))
-}
-
-/// Whether `value` reaches a store's address or a call's SP through `Add` and
-/// `And` steps, the shapes `decompose` follows.
-fn feeds_an_address(function: &strider_ir::Function, value: ValueId) -> bool {
-    let mut work = vec![value];
-    let mut seen = rustc_hash::FxHashSet::default();
-    while let Some(v) = work.pop() {
-        for (user, slot) in function.graph().value_uses(v) {
-            match function.node_kind(user) {
-                NodeKind::Store(_) if slot as usize == NodeKind::ACCESS_ADDR_SLOT => return true,
-                NodeKind::Call { .. } if slot as usize == NodeKind::CALL_SP_SLOT => return true,
-                NodeKind::IntBinaryOp(
-                    strider_ir::IntBinaryOp::Add | strider_ir::IntBinaryOp::And,
-                ) if seen.insert(user) => {
-                    work.extend(function.node_outputs(user).iter().copied());
-                }
-                _ => {}
-            }
-        }
-    }
-    false
-}
-
-/// Reshapes a wider store's value down to the load width, in the load's space's
-/// byte order.  On BE the load's bytes are the high ones, so a
-/// `(store_size - load_size) * 8` shift precedes the truncate.
-fn narrow(
-    edit: &mut crate::EditFunction<'_>,
-    store_data: ValueId,
-    load: NodeId,
-) -> Result<ValueId> {
-    let store_data_ty = edit.value_type(store_data)?;
-    let (_, load_ty) = edit.single_value_output(load)?;
     let NodeKind::Load(space) = *edit.node_kind(load) else {
-        unreachable!("narrow reshapes a load");
+        unreachable!("LoadForward rewrites a load");
     };
     let order = edit.function().byte_order();
-    let shifted = match order.of(space) {
-        Endianness::Little => store_data,
-        Endianness::Big => {
-            let shift_bits =
-                crate::const_eval::slice_shift_bits(order, space, store_data_ty, load_ty)
-                    .expect("a narrowed load is no wider than its store");
-            let shift_const = edit.build_int_const(u128::from(shift_bits), store_data_ty)?;
-            // `build_int_const` carries no contributor stamp, so attribute the
-            // const by hand; every reachable node needs a fingerprint.
-            let shift_const_node = edit.producer(shift_const);
-            edit.absorb_node_fingerprint(shift_const_node, load);
-            let shr = edit.create_node_attributed(
-                NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::ShiftRight),
-                [store_data, shift_const],
-                [ValueKind::Typed(store_data_ty)],
-                &[load],
-            );
-            let [value] = edit.node_outputs_exact::<1>(shr)?;
-            value
+    let forwarded = match crate::const_eval::load_slice(order, space, store_data_ty, load_ty) {
+        Some(LoadSlice::Same) => store_data,
+        Some(LoadSlice::Narrow(shift)) => {
+            slice_to_load(edit, store_data, store_data_ty, load, load_ty, shift)?
         }
+        None => return Ok(()),
+    };
+
+    // A redirected address slot reads its new value's class, which no
+    // memoised answer has seen.  Through any other use the classes hold: a
+    // value the redirect feeds keeps its own, already read, class.
+    if edit
+        .function()
+        .graph()
+        .value_uses(load_value)
+        .any(|(user, slot)| {
+            matches!(edit.node_kind(user), NodeKind::Store(_))
+                && slot as usize == NodeKind::ACCESS_ADDR_SLOT
+        })
+    {
+        query.forget_answers();
+    }
+    // The store and the load's address are the forward's proof, and the
+    // automatic cull takes the Load once the redirect leaves it dead, so the
+    // replacement absorbs the store and the address's producer first. The
+    // nodes below that producer keep their addresses only where they survive.
+    let forwarded_node = edit.producer(forwarded);
+    edit.absorb_node_fingerprint(forwarded_node, clobber_node);
+    let addr = edit.load_addr(load);
+    edit.absorb_fingerprint(forwarded, addr);
+    edit.replace_value(load_value, forwarded);
+    Ok(())
+}
+
+/// Reshapes a wider store's value down to the load width: shifted right
+/// `shift` bits, the slice [`crate::const_eval::load_slice`] names, then
+/// truncated.
+fn slice_to_load(
+    edit: &mut crate::EditFunction<'_>,
+    store_data: ValueId,
+    store_data_ty: ValueType,
+    load: NodeId,
+    load_ty: ValueType,
+    shift: u32,
+) -> Result<ValueId> {
+    let shifted = if shift == 0 {
+        store_data
+    } else {
+        let shift_const = edit.build_int_const(u128::from(shift), store_data_ty)?;
+        // `build_int_const` carries no contributor stamp, so attribute the
+        // const by hand; every reachable node needs a fingerprint.
+        let shift_const_node = edit.producer(shift_const);
+        edit.absorb_node_fingerprint(shift_const_node, load);
+        let shr = edit.create_node_attributed(
+            NodeKind::IntBinaryOp(strider_ir::IntBinaryOp::ShiftRight),
+            [store_data, shift_const],
+            [ValueKind::Typed(store_data_ty)],
+            &[load],
+        );
+        let [value] = edit.node_outputs_exact::<1>(shr)?;
+        value
     };
     let trunc = edit.create_node_attributed(
         NodeKind::Truncate,

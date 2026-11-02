@@ -355,6 +355,11 @@ impl PyFunction {
     /// a capture bound by the LHS. A `.when()` predicate on the LHS is
     /// rejected: the function is held for mutation while the rule fires.
     ///
+    /// A match the replacement cannot stand in for is left alone and not
+    /// counted: a replacement of another width than the matched value, or, for
+    /// a `find` that matches through a phi or region, one that would read the
+    /// matched value or is not available everywhere that value is read.
+    ///
     /// Every outstanding `Node` handle goes stale, a return of 0 included: the
     /// graph generation moves before the rule runs, since a rule erroring
     /// part-way leaves the graph rewritten.

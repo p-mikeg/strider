@@ -36,17 +36,15 @@ arg 0 [%v5]
 %v19:i32 = int.add %v18, %v17
 %v20:i32 = iconst[0xf0f0f0f]
 %v21:i32 = int.and %v19, %v20
-%v22:i64 = extend.sign %v21
-%v23:i64 = iconst[0x1010101]
-%v24:i64 = int.mul %v22, %v23
-%v25:i32 = truncate %v24
-%v26:i32 = iconst[0x18]
-%v27:i32 = int.shift_right %v25, %v26
-%v28:i32 = initial_var[EDX]
-%v29:i80 = initial_var[ST0]
-%v30:i80 = initial_var[ST1]
-%v31:i128 = initial_var[XMM0]
-return %v0, %v1, %v27, %v28, %v29, %v30, %v31
+%v22:i32 = iconst[0x1010101]
+%v23:i32 = int.mul %v21, %v22
+%v24:i32 = iconst[0x18]
+%v25:i32 = int.shift_right %v23, %v24
+%v26:i32 = initial_var[EDX]
+%v27:i80 = initial_var[ST0]
+%v28:i80 = initial_var[ST1]
+%v29:i128 = initial_var[XMM0]
+return %v0, %v1, %v25, %v26, %v27, %v28, %v29
 
 == clz32 @0x401130
 cfg
@@ -130,7 +128,7 @@ cfg
   0x401150 408 ops return -> []
 tracked [EAX, ECX, EDX, ESP, CF, PF, ZF, SF, OF, EIP, ST0, ST1, XMM0, u:0x7600:4, u:0x17200:4, u:0x49800:4, u:0x49900:1, u:0x49a00:1, u:0x49d00:1, u:0x49f00:1, u:0x4a000:1, u:0x4a100:1, u:0x4a200:1, u:0x4a500:1, u:0x4a600:1, u:0x4a700:1, u:0x4a800:1, u:0x4aa00:4, u:0x4ab00:1, u:0x4ac00:1, u:0x4ae00:1, u:0x4af00:1, u:0x4b000:1, u:0x4b100:1, u:0x4b700:8, u:0x50200:1, u:0x50300:4, u:0x50400:4, u:0x50500:4, u:0x50700:1, u:0x50800:1, u:0x50900:1, u:0x50a00:1, u:0x50d00:1, u:0x50f00:1, u:0x51000:1, u:0x51100:1, u:0x51200:1, u:0x7f800:8, u:0x7f900:8, u:0x7fb00:8, u:0x7fe00:4, u:0xb7400:4, u:0xb7c00:4, u:0xb7d00:4]
 arg 0 [%v5]
-arg 1 [%v30]
+arg 1 [%v28]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[ESP]
@@ -153,35 +151,31 @@ arg 1 [%v30]
 %v19:i32 = int.add %v18, %v17
 %v20:i32 = iconst[0xf0f0f0f]
 %v21:i32 = int.and %v19, %v20
-%v22:i64 = extend.sign %v21
-%v23:i64 = iconst[0x1010101]
-%v24:i64 = int.mul %v22, %v23
-%v25:i32 = truncate %v24
-%v26:i32 = iconst[0x18]
-%v27:i32 = int.shift_right %v25, %v26
-%v28:i32 = iconst[0x8]
-%v29:i32 = int.add %v2, %v28
-%v30:i32 = load[r] %v1, %v29
-%v31:i32 = int.shift_right %v30, %v6
-%v32:i32 = int.and %v31, %v8
-%v33:i32 = int.neg %v32
-%v34:i32 = int.add %v30, %v33
-%v35:i32 = int.shift_right %v34, %v12
-%v36:i32 = int.and %v35, %v14
-%v37:i32 = int.and %v34, %v14
-%v38:i32 = int.add %v36, %v37
-%v39:i32 = int.shift_right %v38, %v3
-%v40:i32 = int.add %v39, %v38
-%v41:i32 = int.and %v40, %v20
-%v42:i64 = extend.sign %v41
-%v43:i64 = int.mul %v42, %v23
-%v44:i32 = truncate %v43
-%v45:i32 = int.shift_right %v44, %v26
-%v46:i32 = int.add %v27, %v45
-%v47:i80 = initial_var[ST0]
-%v48:i80 = initial_var[ST1]
-%v49:i128 = initial_var[XMM0]
-return %v0, %v1, %v46, %v21, %v47, %v48, %v49
+%v22:i32 = iconst[0x1010101]
+%v23:i32 = int.mul %v21, %v22
+%v24:i32 = iconst[0x18]
+%v25:i32 = int.shift_right %v23, %v24
+%v26:i32 = iconst[0x8]
+%v27:i32 = int.add %v2, %v26
+%v28:i32 = load[r] %v1, %v27
+%v29:i32 = int.shift_right %v28, %v6
+%v30:i32 = int.and %v29, %v8
+%v31:i32 = int.neg %v30
+%v32:i32 = int.add %v28, %v31
+%v33:i32 = int.shift_right %v32, %v12
+%v34:i32 = int.and %v33, %v14
+%v35:i32 = int.and %v32, %v14
+%v36:i32 = int.add %v34, %v35
+%v37:i32 = int.shift_right %v36, %v3
+%v38:i32 = int.add %v37, %v36
+%v39:i32 = int.and %v38, %v20
+%v40:i32 = int.mul %v39, %v22
+%v41:i32 = int.shift_right %v40, %v24
+%v42:i32 = int.add %v25, %v41
+%v43:i80 = initial_var[ST0]
+%v44:i80 = initial_var[ST1]
+%v45:i128 = initial_var[XMM0]
+return %v0, %v1, %v42, %v21, %v43, %v44, %v45
 
 == clz64 @0x4011d0
 cfg

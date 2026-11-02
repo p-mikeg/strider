@@ -3,152 +3,144 @@
 
 use std::collections::BTreeMap;
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
 use strider_ir::{Function, IRViewer};
 
-use super::analyzer::{MemAnalyzer, MemOptions, ReachingSpStore};
+use super::query::{MemQuery, Policy, ReachingSpStore};
 use super::ring::{wrap_to_addr_width, wrapped_ranges};
 
-/// The callee-owned region of one call's outgoing-argument window, in the
-/// call's SP base coordinates.  Read off the call alone, so one walk of the
-/// argument prefix answers every probe against that call.
-pub(super) struct ArgWindow {
-    /// `[start, end)` of each anchored argument slot, ascending and
-    /// non-overlapping.  Whole ABI slots, not store extents: a store narrower
-    /// than the slot still hands the callee the rest of it.
-    ranges: Vec<(i128, i128)>,
-    end: WindowEnd,
+/// One call's outgoing-argument prefix: the contiguous argument slots from the
+/// first upward, each with the store anchoring it, read off one
+/// [`ArgStoreScan`] under [`Policy::strict`] to the open top.  A property of
+/// the call alone, so one scan serves every reader of its arguments.
+pub(crate) struct ArgPrefix {
+    /// Ascending and non-overlapping.
+    slots: Vec<ArgSlot>,
+    /// The slots before the first whose first byte the scan could not see.
+    window_len: usize,
+    /// The slot from which the callee keeps everything above: one whose first
+    /// byte, or whose reaching def, the scan could not see past.  `None` when
+    /// the prefix ends at a visible non-argument.
+    blind_from: Option<i128>,
 }
 
-/// Why the prefix walk stopped, which is what decides a probe above the last
-/// range.
-enum WindowEnd {
-    /// A slot no argument store reaches: the argument list ends below it and
-    /// nothing above it is the callee's.
-    Ends,
-    /// A slot the walk could not see past, from which the callee keeps
-    /// everything above ([`SlotReach::Blinded`]).
-    BlindFrom(i128),
-    /// The requested reach, short of either answer.  A probe above it is
-    /// outside what the walk decided and needs a wider one.
-    ScannedTo(i128),
+/// One anchored argument slot of an [`ArgPrefix`].
+pub(crate) struct ArgSlot {
+    /// `[start, end)` in whole ABI slots, not the store's extent: a store
+    /// narrower than the slot still hands the callee the rest of it.
+    start: i128,
+    end: i128,
+    pub(crate) store: ReachingSpStore,
+    /// False when a nearer store overwrote part of the anchor: the caller
+    /// still wrote the range, but the anchor's data is not what it holds.
+    pub(crate) whole: bool,
+    /// From the slot's start to the store's end.
+    pub(crate) span: i128,
 }
 
-impl ArgWindow {
-    /// Does `[offset, hi)` meet the owned region?  Mirrors the prefix walk:
-    /// the first range ending above `offset` decides, and a range at or above
-    /// `hi` is one the probe never reaches.
-    pub(super) fn covers(&self, offset: i128, hi: i128) -> bool {
-        match self
-            .ranges
-            .get(self.ranges.partition_point(|&(_, end)| end <= offset))
-        {
-            Some(&(start, _)) => start < hi,
-            None => matches!(self.end, WindowEnd::BlindFrom(slot) if slot < hi),
-        }
-    }
-
-    /// Whether the walk looked far enough to answer a probe reaching `hi`.
-    pub(super) fn answers_up_to(&self, hi: i128) -> bool {
-        match self.end {
-            WindowEnd::ScannedTo(to) => hi <= to,
-            WindowEnd::Ends | WindowEnd::BlindFrom(_) => true,
-        }
-    }
-
-    /// How far a short walk looked, `None` when it reached an answer instead.
-    pub(super) fn scanned_to(&self) -> Option<i128> {
-        match self.end {
-            WindowEnd::ScannedTo(to) => Some(to),
-            WindowEnd::Ends | WindowEnd::BlindFrom(_) => None,
-        }
-    }
-}
-
-/// Where a call's argument window sits, all of it read off the call.
-pub(super) struct ArgWindowGeometry {
-    /// The call's memory input, the chain the prefix is scanned along.
-    pub(super) mem_start: ValueId,
-    pub(super) base: ValueId,
-    /// First argument slot.
-    pub(super) lo: i128,
-    /// SP at the call, the origin [`strider_target::StackArgs`] measures from.
-    pub(super) sp_offset: i128,
-    pub(super) args: strider_target::StackArgs,
-}
-
-/// Walks the contiguous prefix of argument slots up to `hi`, the reach the
-/// probing load needs.  For every slot below a narrower `hi`, a wider scan
-/// reaches the same verdict: a same-base store is anchored and the scan goes
-/// on, any other def decides by its class alone, and a `MemPhi` opaque to the
-/// wider window falls back per slot.  So a window scanned for one probe
-/// answers a shallower one.
-pub(super) fn scan_arg_window(
-    function: &Function,
-    analyzer: &MemAnalyzer,
-    options: &MemOptions,
-    geometry: &ArgWindowGeometry,
-    hi: i128,
-) -> ArgWindow {
-    let mut scan = ArgStoreScan::new(
-        function,
-        analyzer,
-        options.without_call_relaxations(),
-        geometry.mem_start,
-        geometry.base,
-        geometry.lo,
-        hi,
-    );
-    let mut ranges = Vec::new();
-    let mut cursor = 0usize;
-    loop {
-        let slot_off = geometry.args.slot_offset(geometry.sp_offset, cursor);
-        if slot_off >= hi {
-            return ArgWindow {
-                ranges,
-                end: WindowEnd::ScannedTo(hi),
-            };
-        }
-        let store = match scan.reach_at(function, slot_off) {
-            // A partly overwritten anchor still marks bytes the caller wrote,
-            // which is all the window asks.
-            SlotReach::Anchored { store, .. } => store,
-            // Nothing the caller wrote as an argument reaches the slot, so the
-            // argument list ends below it.
-            //
-            // KNOWN LIMIT: an argument slot the caller leaves unwritten (the
-            // hole an argument aligned past the slot stride leaves, or an
-            // argument it never stores) still belongs to the callee, and this
-            // reads it as the end. Continuing past it would blind the window
-            // from the hole up, which is indistinguishable from a spill sitting
-            // above the arguments and would stop forwarding for every one of
-            // those. Only the callee's arity separates the two, and the IR does
-            // not have it. Reachable only under `escape_analysis` or a
-            // non-empty `noalias_allocators`, both off by default.
-            SlotReach::NotAnArgument => {
-                return ArgWindow {
-                    ranges,
-                    end: WindowEnd::Ends,
-                };
-            }
-            // The window cannot be shown to end here, so the callee keeps
-            // ownership all the way up.
-            SlotReach::Blinded => {
-                return ArgWindow {
-                    ranges,
-                    end: WindowEnd::BlindFrom(slot_off),
-                };
-            }
+impl ArgPrefix {
+    /// `call`'s prefix, `None` when its convention declares no stack
+    /// arguments or its SP decomposes to no stack base.
+    pub(crate) fn scan(function: &Function, query: &MemQuery, call: NodeId) -> Option<Self> {
+        let args = function.get_cc(call).stack_args?;
+        let (base, sp_offset) = super::decompose::call_sp(function, call)?;
+        let mem = function
+            .memory_input_of(call)
+            .expect("a Call has a memory input");
+        // The arity is unknown, so the window is `[first slot, inf)`.  No store
+        // on the same base is disjoint from it, so the scan anchors each one,
+        // a push below the window included: a cost in work and precision only.
+        let mut scan = ArgStoreScan::new(
+            function,
+            query,
+            mem,
+            base,
+            args.slot_offset(sp_offset, 0),
+            i128::MAX,
+        );
+        let mut prefix = Self {
+            slots: Vec::new(),
+            window_len: 0,
+            blind_from: None,
         };
-        // The callee owns the whole ABI slot, not only the bytes the store
-        // wrote: a sub-slot argument (`mov [rsp+8], eax` for a 4-byte 7th
-        // integer arg on SysV x86-64) leaves the slot's tail callee-writable,
-        // and a range stopping at the store width would answer `false` for a
-        // probe there.
-        cursor += geometry.args.slots_spanned(store.size(function));
-        let slot_end = geometry.args.slot_offset(geometry.sp_offset, cursor);
-        ranges.push((slot_off, slot_end));
+        let mut cursor = 0usize;
+        let mut previous = None;
+        loop {
+            // Open above, so a slot offset that stops advancing (a saturated
+            // step past the carrier) is what ends it.
+            let start = args.slot_offset(sp_offset, cursor);
+            if previous == Some(start) {
+                break;
+            }
+            previous = Some(start);
+            match scan.reach_at(function, start, args.increment) {
+                SlotReach::Anchored {
+                    store,
+                    whole,
+                    span,
+                    hidden_head,
+                } => {
+                    // Past a hidden first byte a store inside the slot may be
+                    // one reaching in from below, not an argument, so the
+                    // window keeps everything from here up.
+                    if hidden_head && prefix.blind_from.is_none() {
+                        prefix.window_len = prefix.slots.len();
+                        prefix.blind_from = Some(start);
+                    }
+                    // The callee owns the whole ABI slot, not only the bytes
+                    // the store wrote.
+                    cursor += args.slots_spanned(span);
+                    prefix.slots.push(ArgSlot {
+                        start,
+                        end: args.slot_offset(sp_offset, cursor),
+                        store,
+                        whole,
+                        span,
+                    });
+                }
+                // KNOWN LIMIT: an argument slot the caller leaves unwritten
+                // (the hole an argument aligned past the slot stride leaves,
+                // or an argument it never stores) still belongs to the callee,
+                // and this reads it as the end.  Continuing past it would blind
+                // the window from the hole up, which is indistinguishable from
+                // a spill sitting above the arguments and would stop forwarding
+                // for every one of those.  Only the callee's arity separates
+                // the two, and the IR does not have it.  Reachable only under
+                // `escape_analysis` or a non-empty `noalias_allocators`, both
+                // off by default.
+                SlotReach::NotAnArgument => break,
+                // The window cannot be shown to end here, so the callee keeps
+                // ownership all the way up.
+                SlotReach::Blinded => {
+                    if prefix.blind_from.is_none() {
+                        prefix.window_len = prefix.slots.len();
+                        prefix.blind_from = Some(start);
+                    }
+                    break;
+                }
+            }
+        }
+        if prefix.blind_from.is_none() {
+            prefix.window_len = prefix.slots.len();
+        }
+        Some(prefix)
+    }
+
+    /// Every anchored slot, ascending.
+    pub(crate) fn slots(&self) -> &[ArgSlot] {
+        &self.slots
+    }
+
+    /// Does `[offset, hi)` meet the callee-owned region?  The first window
+    /// slot ending above `offset` decides, and a slot at or above `hi` is one
+    /// the probe never reaches.
+    pub(super) fn covers(&self, offset: i128, hi: i128) -> bool {
+        let window = &self.slots[..self.window_len];
+        match window.get(window.partition_point(|slot| slot.end <= offset)) {
+            Some(slot) => slot.start < hi,
+            None => self.blind_from.is_some_and(|slot| slot < hi),
+        }
     }
 }
 
@@ -165,10 +157,10 @@ pub(super) fn scan_arg_window(
 /// window probe skips no slot probe would stop at.  `MemPhi` transparency does
 /// depend on the probed slot, so a slot left uncovered when the scan stops at
 /// one falls back to its own probe.
-pub(crate) struct ArgStoreScan<'a> {
-    /// Answers the probes under `options`, from its index.
-    analyzer: &'a MemAnalyzer,
-    options: MemOptions,
+struct ArgStoreScan<'a> {
+    /// Answers the probes under `policy`, from its index.
+    query: &'a MemQuery,
+    policy: Policy,
     /// Chain start, for the `MemPhi` fallback probe.
     mem_start: ValueId,
     base: ValueId,
@@ -178,61 +170,92 @@ pub(crate) struct ArgStoreScan<'a> {
     /// The window `[lo, lo + size)` as one probe.
     lo: i128,
     size: i128,
-    /// Where the next resume starts, `None` once the scan has stopped.
-    cursor: Option<ValueId>,
+    at: ScanAt,
     /// Merged byte ranges of the stores scanned so far.
     covered: BTreeMap<i128, i128>,
     /// Anchor offset -> the store anchored there, for the anchors no nearer
     /// store already covers.
-    anchored: FxHashMap<i128, ReachingSpStore>,
+    anchored: BTreeMap<i128, ReachingSpStore>,
     /// Anchored offsets a nearer store overwrote in part: the range is still
     /// written, the anchor's data is no longer its value.
     overwritten: FxHashSet<i128>,
     /// A loop back-edge can put an already-scanned store back on the chain
     /// below itself, which would make the resume loop forever.
     seen: FxHashSet<NodeId>,
+    /// Slots read by their own probe past a `MemPhi`, each a climb from the
+    /// chain start.
+    fallbacks: u32,
+}
+
+/// Slots a scan reads by their own probe before it reads the rest as
+/// [`SlotReach::Blinded`]: past a `MemPhi` each costs a climb of the chain.
+const MAX_FALLBACKS: u32 = 64;
+
+/// Where an [`ArgStoreScan`] stands.
+#[derive(Clone, Copy)]
+enum ScanAt {
+    /// The memory value the next resume starts from.
+    Resume(ValueId),
     /// The def that ended the scan: the one reaching every slot the scan left
     /// uncovered, and so the reason the prefix ends where it does.
-    stopped_at: Option<NodeId>,
+    Stopped(NodeId),
 }
 
 impl<'a> ArgStoreScan<'a> {
-    pub(crate) fn new(
+    fn new(
         function: &Function,
-        analyzer: &'a MemAnalyzer,
-        options: MemOptions,
+        query: &'a MemQuery,
         mem_start: ValueId,
         base: ValueId,
         lo: i128,
         hi: i128,
     ) -> Self {
         Self {
-            analyzer,
-            options,
+            query,
+            policy: Policy::strict(function),
             mem_start,
             base,
             addr_ty: function.value_type(base).ok(),
             lo,
             size: hi.saturating_sub(lo),
-            cursor: Some(mem_start),
+            at: ScanAt::Resume(mem_start),
             covered: BTreeMap::new(),
-            anchored: FxHashMap::default(),
+            anchored: BTreeMap::new(),
             overwritten: FxHashSet::default(),
             seen: FxHashSet::default(),
-            stopped_at: None,
+            fallbacks: 0,
         }
     }
 
-    /// What reaches `slot_off` on the call's memory chain.  Scans further along
-    /// it only while what is scanned leaves `slot_off` uncovered.
-    pub(crate) fn reach_at(&mut self, function: &Function, slot_off: i128) -> SlotReach {
+    /// What reaches the `size`-byte slot at `slot_off` on the call's memory
+    /// chain.  Scans further along it only while what is scanned leaves
+    /// `slot_off` uncovered.
+    ///
+    /// A store anchored past the slot's first byte but inside the slot (a
+    /// big-endian argument right-justified in it) writes the slot too, and is
+    /// read as its anchor when nothing covers the first byte.
+    fn reach_at(&mut self, function: &Function, slot_off: i128, size: i128) -> SlotReach {
         let slot_off = wrap_to_addr_width(function, self.base, slot_off);
+        let slot_end = slot_off.saturating_add(size);
         while !range_covers(&self.covered, slot_off) {
             if self.advance(function) {
                 continue;
             }
-            let Some(def) = self.stopped_at else {
-                return SlotReach::Blinded;
+            let inside = slot_off.saturating_add(1)..slot_end;
+            if !inside.is_empty()
+                && let Some((&at, &hit)) = self.anchored.range(inside).next()
+            {
+                return SlotReach::Anchored {
+                    store: hit,
+                    whole: !self.overwritten.contains(&at),
+                    span: hit.end(function) - slot_off,
+                    hidden_head: self.head_def(function, slot_off).is_none_or(|def| {
+                        !matches!(function.node_kind(def), NodeKind::InitialMemory)
+                    }),
+                };
+            }
+            let ScanAt::Stopped(def) = self.at else {
+                unreachable!("a scan that cannot advance has stopped");
             };
             if !matches!(function.node_kind(def), NodeKind::MemPhi) {
                 return classify_reaching_def(function, def);
@@ -240,41 +263,23 @@ impl<'a> ArgStoreScan<'a> {
             // A `MemPhi` clobbers the probe that met it, not necessarily this
             // slot: its arms can still agree on this one, which only the slot's
             // own probe can say.
-            let def = self.analyzer.nearest_sp_clobber(
-                function,
-                &self.options,
-                self.mem_start,
-                self.base,
-                slot_off,
-                1,
-            );
-            return match self.analyzer.anchored_store(function, def, self.base) {
-                Some(hit) if hit.store_offset == slot_off => {
-                    let size = hit.size(function);
-                    let end = slot_off.saturating_add(size);
-                    // The probe saw one byte: a path patching the rest of the
-                    // store shows only to a probe of its full width.
-                    let whole = !self.overlaps_covered(slot_off, end)
-                        && self.analyzer.nearest_sp_clobber(
-                            function,
-                            &self.options,
-                            self.mem_start,
-                            self.base,
-                            slot_off,
-                            size,
-                        ) == def;
-                    SlotReach::Anchored { store: hit, whole }
-                }
-                // Anchored below the slot: it covers the slot without the
-                // caller ever having written the slot itself.
-                Some(_) => SlotReach::NotAnArgument,
-                None => classify_reaching_def(function, def),
+            let Some(def) = self.fallback(function, slot_off) else {
+                return SlotReach::Blinded;
             };
+            if !matches!(function.node_kind(def), NodeKind::InitialMemory) {
+                return self.probed(function, def, slot_off, slot_end);
+            }
+            // Nothing writes the first byte; the rest of the slot may still
+            // hold a store.
+            let def = self.nearest(function, slot_off, size);
+            return self.probed(function, def, slot_off, slot_end);
         }
         match self.anchored.get(&slot_off) {
             Some(hit) => SlotReach::Anchored {
                 store: *hit,
                 whole: !self.overwritten.contains(&slot_off),
+                span: hit.size(function),
+                hidden_head: false,
             },
             // A store anchored below covers the slot, so the slot was not
             // written as a slot.
@@ -282,28 +287,95 @@ impl<'a> ArgStoreScan<'a> {
         }
     }
 
+    /// What reaches `slot_off`'s first byte, which no scanned store covers,
+    /// once the scan has stopped; `None` past [`MAX_FALLBACKS`].
+    fn head_def(&mut self, function: &Function, slot_off: i128) -> Option<NodeId> {
+        let ScanAt::Stopped(def) = self.at else {
+            unreachable!("a scan that cannot advance has stopped");
+        };
+        if matches!(function.node_kind(def), NodeKind::MemPhi) {
+            self.fallback(function, slot_off)
+        } else {
+            Some(def)
+        }
+    }
+
+    /// What reaches `slot_off`'s first byte by the slot's own probe, `None`
+    /// once the scan has read [`MAX_FALLBACKS`] slots that way.
+    fn fallback(&mut self, function: &Function, slot_off: i128) -> Option<NodeId> {
+        if self.fallbacks == MAX_FALLBACKS {
+            return None;
+        }
+        self.fallbacks += 1;
+        Some(self.nearest(function, slot_off, 1))
+    }
+
+    fn nearest(&self, function: &Function, offset: i128, size: i128) -> NodeId {
+        self.query.nearest_sp_clobber(
+            function,
+            self.policy,
+            self.mem_start,
+            self.base,
+            offset,
+            size,
+            rsleigh::VnSpace::RAM,
+        )
+    }
+
+    /// `def`, the nearest clobber of a probe of the slot `[slot_off,
+    /// slot_end)` from the chain start, read as what reaches the slot.
+    fn probed(
+        &self,
+        function: &Function,
+        def: NodeId,
+        slot_off: i128,
+        slot_end: i128,
+    ) -> SlotReach {
+        match self.query.anchored_store(function, def, self.base) {
+            Some(hit) if (slot_off..slot_end).contains(&hit.store_offset) => {
+                let size = hit.size(function);
+                // The probe may have seen only part of the store: a path
+                // patching the rest shows only to a probe of its full width.
+                let whole = !self.overlaps_covered(hit.store_offset, hit.end(function))
+                    && self.nearest(function, hit.store_offset, size) == def;
+                SlotReach::Anchored {
+                    store: hit,
+                    whole,
+                    span: hit.end(function) - slot_off,
+                    hidden_head: false,
+                }
+            }
+            // Anchored below the slot: it covers the slot without the caller
+            // ever having written the slot itself.
+            Some(_) => SlotReach::NotAnArgument,
+            None => classify_reaching_def(function, def),
+        }
+    }
+
     /// Resumes the scan at the next store, `false` once it stops.
     fn advance(&mut self, function: &Function) -> bool {
-        let Some(cur) = self.cursor.take() else {
+        let ScanAt::Resume(cur) = self.at else {
             return false;
         };
-        let def = self.analyzer.nearest_sp_clobber(
+        let def = self.query.nearest_sp_clobber(
             function,
-            &self.options,
+            self.policy,
             cur,
             self.base,
             self.lo,
             self.size,
+            rsleigh::VnSpace::RAM,
         );
-        if !self.seen.insert(def) {
-            self.stopped_at = Some(def);
-            return false;
-        }
-        let Some(hit) = self.analyzer.anchored_store(function, def, self.base) else {
-            self.stopped_at = Some(def);
+        let hit = self
+            .seen
+            .insert(def)
+            .then(|| self.query.anchored_store(function, def, self.base))
+            .flatten();
+        let Some(hit) = hit else {
+            self.at = ScanAt::Stopped(def);
             return false;
         };
-        let end = hit.store_offset.saturating_add(hit.size(function));
+        let end = hit.end(function);
         // A store an already-scanned one covers is not the nearest reaching
         // def of its own anchor, so it must not claim that anchor.  One
         // overlapped past its start keeps the anchor, since the range is still
@@ -315,7 +387,11 @@ impl<'a> ArgStoreScan<'a> {
             }
         }
         self.cover(hit.store_offset, end);
-        self.cursor = function.memory_input_of(def);
+        self.at = ScanAt::Resume(
+            function
+                .memory_input_of(def)
+                .expect("a Store has a memory input"),
+        );
         true
     }
 
@@ -334,11 +410,19 @@ impl<'a> ArgStoreScan<'a> {
 }
 
 /// What reaches one argument slot on a call's memory chain.
-pub(crate) enum SlotReach {
+enum SlotReach {
     /// A store anchored exactly at the slot.  `whole` is false when a nearer
     /// store overwrote part of it: the caller still wrote the range, but the
     /// anchor's data is not what the slot holds.
-    Anchored { store: ReachingSpStore, whole: bool },
+    /// `span` runs from the slot's start to the store's end. `hidden_head`:
+    /// the store sits inside the slot and the scan cannot see what reaches
+    /// the slot's first byte.
+    Anchored {
+        store: ReachingSpStore,
+        whole: bool,
+        span: i128,
+        hidden_head: bool,
+    },
     /// A visible def that is not a store anchored at the slot, so the caller
     /// did not write it as an argument.
     NotAnArgument,

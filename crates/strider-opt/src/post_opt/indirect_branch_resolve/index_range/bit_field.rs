@@ -4,12 +4,13 @@
 use cranelift_entity::SecondaryMap;
 
 use strider_ir::eval::{bit, mask_below};
-use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId};
+use strider_ir::node::{NodeId, NodeKind, ValueId};
 use strider_ir::{IRViewer, IntBinaryOp};
 
 use crate::opt::known_bits::KnownBitsMap;
 
 use super::interval::Interval;
+use super::{Step, operand_step};
 
 /// The operands of the `And`s with a constant mask.
 #[derive(Default)]
@@ -31,18 +32,16 @@ impl MaskOperands {
         node: NodeId,
         known: &KnownBitsMap,
     ) -> Option<()> {
-        if !matches!(
-            function.node_kind(node),
-            NodeKind::IntBinaryOp(IntBinaryOp::And)
-        ) {
-            return None;
-        }
+        let (operand, mask) = crate::const_eval::var_and_const_of(
+            function,
+            node,
+            NodeKind::IntBinaryOp(IntBinaryOp::And),
+        )?;
         let &[value] = function.node_outputs(node) else {
             return None;
         };
-        let (operand, mask) = crate::const_eval::var_and_const(function, node)?;
         let type_mask = function.value_type_opt(value)?.int_mask_u128()?;
-        let may_set = |v: ValueId| !known[v].zeros & type_mask;
+        let may_set = |v: ValueId| known[v].max_value(type_mask);
         if may_set(operand) & !mask == 0 {
             self.identity[value] = Some(operand);
         }
@@ -86,6 +85,15 @@ impl BitField {
                 || (self.lo < other.lo + other.width && other.lo < self.lo + self.width))
     }
 
+    /// This field of a value at most `hi`: the run's bits that can still be
+    /// set, `None` when none can.
+    pub(super) fn below(self, hi: u128) -> Option<BitField> {
+        let width = self
+            .width
+            .min((128 - hi.leading_zeros()).saturating_sub(self.shift));
+        (width > 0).then_some(BitField { width, ..self })
+    }
+
     /// Whether `inner` is exact and its run lies inside this one's, which is
     /// what lets [`Self::project`] bound it.
     pub(super) fn encloses(self, inner: BitField) -> bool {
@@ -115,21 +123,17 @@ impl BitField {
         if !self.encloses(inner) || inner.shift + inner.width > 128 {
             return None;
         }
-        let digits = |v: u128| {
-            v.checked_shr(self.shift)
-                .and_then(|run| run.checked_shr(inner.lo - self.lo))
-                .unwrap_or(0)
-        };
+        let digits = |v: u128| v.checked_shr(self.shift)?.checked_shr(inner.lo - self.lo);
         let at_top = self.exact && inner.lo + inner.width == self.lo + self.width;
         let lo = match iv.lo {
             0 => 0,
-            lo if at_top => digits(lo),
+            lo if at_top => digits(lo)?,
             _ => return None,
         };
         let width_max = mask_below(inner.width);
         Some(Interval::new(
             lo << inner.shift,
-            digits(iv.hi).min(width_max) << inner.shift,
+            digits(iv.hi)?.min(width_max) << inner.shift,
             bit(inner.shift),
         ))
     }
@@ -163,14 +167,7 @@ impl FieldOp {
                 exact: f.exact && f.shift + f.width < w_in,
                 ..f
             },
-            FieldOp::Truncate => {
-                let room = w.checked_sub(f.shift).filter(|&r| r > 0)?;
-                BitField {
-                    width: f.width.min(room),
-                    exact: f.exact || f.width >= room,
-                    ..f
-                }
-            }
+            FieldOp::Truncate => return FieldOp::LowMask(w).apply(f, w, w_in),
             FieldOp::ShiftLeft(k) => {
                 let shift = f.shift.checked_add(k).filter(|&s| s < w)?;
                 BitField {
@@ -217,56 +214,32 @@ fn field_step(
     masks: &MaskOperands,
     value: ValueId,
 ) -> Option<(ValueId, FieldOp)> {
-    let f = function;
-    let shift_by = || -> Option<(ValueId, u32)> {
-        let [x, k] = f.producer_inputs_exact::<2>(value).ok()?;
-        Some((x, u32::try_from(f.int_const_u128(k)?).ok()?))
-    };
-    match *f.node_kind(f.producer(value)) {
-        NodeKind::Extend(ExtendOp::ZeroExtend) => {
-            Some((f.int_inputs(value).next()?, FieldOp::Same))
-        }
-        NodeKind::Extend(ExtendOp::SignExtend) => {
-            Some((f.int_inputs(value).next()?, FieldOp::SignExtend))
-        }
-        NodeKind::Truncate => Some((f.int_inputs(value).next()?, FieldOp::Truncate)),
-        NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => {
-            shift_by().map(|(x, k)| (x, FieldOp::ShiftLeft(k)))
-        }
-        NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight) => {
-            shift_by().map(|(x, k)| (x, FieldOp::ShiftRight(k)))
-        }
-        NodeKind::IntBinaryOp(IntBinaryOp::Mul) => {
-            let (x, c) = crate::const_eval::var_and_const(f, f.producer(value))?;
-            c.is_power_of_two()
-                .then(|| (x, FieldOp::ShiftLeft(c.trailing_zeros())))
-        }
-        NodeKind::IntBinaryOp(IntBinaryOp::And) => {
-            if let Some(x) = masks.identity[value] {
-                return Some((x, FieldOp::Same));
+    let (x, step) = operand_step(function, value)?;
+    Some(match step {
+        Step::ZeroExtend => (x, FieldOp::Same),
+        Step::SignExtend => (x, FieldOp::SignExtend),
+        Step::Truncate => (x, FieldOp::Truncate),
+        Step::ShiftLeft(k) => (x, FieldOp::ShiftLeft(k)),
+        Step::ShiftRight(k) => (x, FieldOp::ShiftRight(k)),
+        Step::Mul(c) if c.is_power_of_two() => (x, FieldOp::ShiftLeft(c.trailing_zeros())),
+        Step::And(c) => {
+            if let Some(same) = masks.identity[value] {
+                return Some((same, FieldOp::Same));
             }
-            let (x, c) = crate::const_eval::var_and_const(f, f.producer(value))?;
-            let x = masks.through_or[value].unwrap_or(x);
             if c == 0 {
                 return None;
             }
+            let x = masks.through_or[value].unwrap_or(x);
             let shift = c.trailing_zeros();
             let run = c >> shift;
             if run & run.wrapping_add(1) != 0 {
                 return None;
             }
             let width = 128 - run.leading_zeros();
-            Some((
-                x,
-                if shift == 0 {
-                    FieldOp::LowMask(width)
-                } else {
-                    FieldOp::RunMask { shift, width }
-                },
-            ))
+            (x, FieldOp::RunMask { shift, width })
         }
-        _ => None,
-    }
+        Step::Mul(_) | Step::Div(_) => return None,
+    })
 }
 
 /// `value` as a [`BitField`] of the deepest value the shifts, masks and casts
@@ -309,4 +282,32 @@ pub(super) fn bit_field(
         }
     }
     Some(field)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BitField, Interval};
+
+    /// A run whose digits shift out of the `u128` carrier bounds nothing,
+    /// rather than reading as zero.
+    /// Mutation: read an out-of-carrier shift as zero digits.
+    #[test]
+    fn a_shift_past_the_carrier_projects_no_bound() {
+        let root = cranelift_entity::EntityRef::new(0);
+        let of = BitField {
+            root,
+            lo: 0,
+            width: 8,
+            shift: 128,
+            exact: true,
+        };
+        let inner = BitField {
+            root,
+            lo: 0,
+            width: 4,
+            shift: 0,
+            exact: true,
+        };
+        assert_eq!(of.project(inner, Interval::dense(0, 0xff)), None);
+    }
 }

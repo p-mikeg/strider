@@ -21,19 +21,17 @@ impl<'f> ReturnTargets<'f> {
         phi: NodeId,
     ) -> impl Iterator<Item = (Path, ValueId)> + 'f {
         let function = self.function;
-        let region = function.producer(function.node_inputs(phi)[NodeKind::PHI_TOKEN_SLOT]);
-        let feasible = path.and_then(|point| self.feasible_arm(point, region));
+        let feasible = path.and_then(|point| self.feasible_arm(point, function.phi_region(phi)));
         function
-            .phi_data_inputs(phi)
-            .zip(function.node_inputs(region))
+            .phi_arms(phi)
             .enumerate()
             .filter(move |&(arm, _)| feasible.is_none_or(|only| only == arm))
-            .map(|(_, (value, edge))| (Some(CtrlKey::Edge(edge)), value))
+            .map(|(_, (edge, value))| (Some(CtrlKey::Edge(edge)), value))
     }
 
     /// The one input of `region` control can have arrived through when it
     /// passes `point`, `None` when that is not shown.
-    pub(super) fn feasible_arm(&mut self, point: CtrlKey, region: NodeId) -> Option<usize> {
+    fn feasible_arm(&mut self, point: CtrlKey, region: NodeId) -> Option<usize> {
         if let Some(&arm) = self.feasible.get(&(point, region)) {
             return arm;
         }
@@ -42,7 +40,7 @@ impl<'f> ReturnTargets<'f> {
         arm
     }
 
-    pub(super) fn decide_arm(&mut self, point: CtrlKey, region: NodeId) -> Option<usize> {
+    fn decide_arm(&mut self, point: CtrlKey, region: NodeId) -> Option<usize> {
         let function = self.function;
         let [a, b] = function.node_inputs_exact::<2>(region).ok()?;
         let branch = function.producer(a);

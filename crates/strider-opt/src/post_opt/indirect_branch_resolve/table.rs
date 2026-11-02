@@ -36,19 +36,13 @@
 //! not taken: the guard may size the table, and the field then reaches the
 //! next one.
 
-use super::index_range::Interval;
+use super::index_range::{Interval, MAX_WALK, ScaleOp, Step, scale_of, strip_to_cell, width_mask};
 use super::{MAX_TABLE_ENTRIES, SiteClassifier};
 use strider_cfg::{ResolvedTarget, ResolvedTargets};
 use strider_ir::IRViewer;
 use strider_ir::IntBinaryOp;
 use strider_ir::eval;
 use strider_ir::node::{ExtendOp, NodeId, NodeKind, ValueId, ValueType};
-
-/// The value the enumeration pins, and the values to pin it to.
-struct Domain {
-    pinned: ValueId,
-    values: Vec<u128>,
-}
 
 /// The value the enumeration pins, the values to pin it to, and the constant
 /// those carry: the index takes `x - rebase` for each `x` in `range`.
@@ -83,13 +77,13 @@ impl SiteClassifier<'_> {
     ) -> Option<ResolvedTargets> {
         let function = self.function();
         // A `Load[reg]` function pointer has no bounded dominator and defers here.
-        let Domain { pinned, values } = self.dispatch_domain(target_value, site)?;
+        let (pinned, values) = self.dispatch_domain(target_value, site)?;
 
         let ev = &mut self.eval;
         let pruned = super::eval::cone_order_pruned(function, target_value, pinned);
         // The branch's committed ISA mode (an interworking `bx`/`jr`-dispatch),
         // `(entry & 1)`, evaluated per index so each arm carries its own mode.
-        let mode_pruned = mode_value.map(|mv| super::eval::cone_order_pruned(function, mv, pinned));
+        let mode = mode_value.map(|mv| (mv, super::eval::cone_order_pruned(function, mv, pinned)));
         // `collect::<Option<_>>` bails the moment a value fails to fold, which
         // fails closed.
         let targets: Vec<ResolvedTarget> = values
@@ -100,14 +94,14 @@ impl SiteClassifier<'_> {
                 // `word` folds once.
                 ev.begin_index(pinned, x);
                 let addr = ev.eval_root(&pruned, target_value)?;
-                let isa_bit = match (mode_value, &mode_pruned) {
+                let isa_bit = match &mode {
                     // The branch commits an ISA mode per target; that mode MUST fold.
                     // If it does not, fail closed (`?` defers the whole branch),
                     // rather than decode the target in a guessed mode.
-                    (Some(mv), Some(order)) => Some(ev.eval_root(order, mv)? != 0),
+                    Some((mv, order)) => Some(ev.eval_root(order, *mv)? != 0),
                     // No mode switch bound to this branch: an in-mode jump table
                     // that inherits the mode flowing into the branch.
-                    _ => None,
+                    None => None,
                 };
                 Some(ResolvedTarget::new(addr, isa_bit))
             })
@@ -124,8 +118,9 @@ impl SiteClassifier<'_> {
         (!arms.is_empty() && arms.windows(2).all(|w| w[0].addr != w[1].addr)).then_some(seated)
     }
 
-    /// What to enumerate for `target`: a bounded index across its range, or the
-    /// phi every input of the dispatch cone passes through across its constants.
+    /// What to enumerate for `target`, the value pinned and the values to pin
+    /// it to: a bounded index across its range, or the phi every input of the
+    /// dispatch cone passes through across its constants.
     ///
     /// The phi's constants are the values it really takes, where its range is
     /// their hull: an index in `{0, 3, 5}` ranges over `0..=5`.  One outside the
@@ -135,7 +130,7 @@ impl SiteClassifier<'_> {
     /// the index range excludes is dropped, since both bound the same runtime
     /// value; where the index does not fold under some constant, the range is
     /// enumerated as it is without them.
-    fn dispatch_domain(&mut self, target: ValueId, site: NodeId) -> Option<Domain> {
+    fn dispatch_domain(&mut self, target: ValueId, site: NodeId) -> Option<(ValueId, Vec<u128>)> {
         let function = self.function();
         let chain = dominator_chain(function, target)?;
         let source = chain.last().copied().unwrap_or(target);
@@ -148,57 +143,57 @@ impl SiteClassifier<'_> {
         )
         .map(|mut constants| {
             let site_range = self.ranges.range_of(source, site);
-            let ruled_out = self.ranges.ruled_out(source, site);
-            constants.retain(|k| site_range.contains(*k) && !ruled_out.contains(k));
+            constants.retain(|&k| site_range.contains(k) && !self.ranges.excludes(source, k, site));
             constants
         });
-        let hit = self.decompose_index(&chain, site);
-        let (hit, constants) = match (hit, constants) {
-            (None, None) => return None,
-            (None, Some(values)) => {
-                return Some(Domain {
-                    pinned: source,
-                    values,
-                });
-            }
-            (Some(hit), constants) => (hit, constants),
+        let Some(hit) = self.decompose_index(&chain, site) else {
+            return constants.map(|values| (source, values));
         };
-        if let Some(constants) = constants {
-            let order = super::eval::cone_order_pruned(function, hit.index, source);
-            let ev = &mut self.eval;
-            let values: Option<Vec<u128>> = constants
-                .into_iter()
-                .filter_map(|k| {
-                    ev.begin_index(source, k);
-                    match ev.eval_root(&order, hit.index) {
-                        Some(index) => hit
-                            .range
-                            .contains(u128::from(index).wrapping_add(hit.rebase) & hit.mask)
-                            .then_some(Some(k)),
-                        None => Some(None),
-                    }
-                })
-                .collect();
-            if let Some(values) = values {
-                return Some(Domain {
-                    pinned: source,
-                    values,
-                });
-            }
+        if let Some(values) = constants.and_then(|k| self.constants_in_range(k, hit, source)) {
+            return Some((source, values));
         }
         // `stride` is a KnownBits MUST-divisor of the value spacing, so stepping by
         // it visits exactly the reachable indices.  A stride wider than `usize` (a
         // scaled wide-type range) defers rather than silently stepping by 1 and
         // enumerating the full dense span.
         let step = usize::try_from(hit.range.stride()).ok()?;
+        // A known bit the interval cannot carry, or an equality on the way,
+        // still excludes values inside it.
+        let scales = self.ranges.index_scales(hit.index);
         let values = (hit.range.lo()..=hit.range.hi())
             .step_by(step)
             .map(|x| x.wrapping_sub(hit.rebase) & hit.mask)
+            .filter(|&x| {
+                self.ranges.admits_known_bits(hit.index, x)
+                    && !scales.iter().any(|&(v, factor)| {
+                        x.is_multiple_of(factor) && self.ranges.excludes(v, x / factor, site)
+                    })
+            })
             .collect();
-        Some(Domain {
-            pinned: hit.index,
-            values,
-        })
+        Some((hit.index, values))
+    }
+
+    /// The `constants` `source` takes whose index `hit`'s range keeps, `None`
+    /// when the index does not fold under one of them.
+    fn constants_in_range(
+        &mut self,
+        constants: Vec<u128>,
+        hit: PinnedIndex,
+        source: ValueId,
+    ) -> Option<Vec<u128>> {
+        let order = super::eval::cone_order_pruned(self.function(), hit.index, source);
+        let mut kept = Vec::new();
+        for k in constants {
+            self.eval.begin_index(source, k);
+            let index = self.eval.eval_root(&order, hit.index)?;
+            if hit
+                .range
+                .contains(u128::from(index).wrapping_add(hit.rebase) & hit.mask)
+            {
+                kept.push(k);
+            }
+        }
+        Some(kept)
     }
 
     /// The shallowest genuinely-bounded, non-width-only, non-constant value of
@@ -236,10 +231,19 @@ impl SiteClassifier<'_> {
 
     /// Is `iv`, the range of `value` at `site`, one a table index can be
     /// enumerated over?  `mask` is the index type's mask.
+    ///
+    /// The trust checks weigh what `iv` leaves against tests the range does
+    /// not read, and a range `narrowed` past its KnownBits bound by a read
+    /// guard leaves only the bits below its top.
     fn enumerable(&mut self, site: NodeId, mask: u128, value: ValueId, iv: Interval) -> bool {
-        index_bound_ok(mask, iv)
-            && !self.is_width_only(site, value, iv)
-            && !self.ranges.guard_left_unconnected(value, site, iv)
+        if !index_bound_ok(mask, iv) {
+            return false;
+        }
+        let narrowed = iv != self.ranges.kb_bound(value);
+        !self.is_width_only(site, value, iv, narrowed)
+            && !self
+                .ranges
+                .guard_left_unconnected(value, site, iv, narrowed)
     }
 
     /// A genuinely-bounded non-constant integer whose bound is a real narrowing,
@@ -274,21 +278,25 @@ impl SiteClassifier<'_> {
                 mask,
             });
         }
-        let siblings: Vec<(ValueId, u128)> = function
-            .value_uses(v)
-            .filter(|&(user, _)| {
-                matches!(
-                    function.node_kind(user),
-                    NodeKind::IntBinaryOp(IntBinaryOp::Add)
-                )
-            })
-            .filter_map(|(user, _)| {
-                let sum = function.first_value_output_of(user)?;
-                let (operand, addend) = strip_commutative_const_scale(function, sum)?;
-                (operand == v && function.value_type_opt(sum) == Some(ty)).then_some((sum, addend))
-            })
-            .collect();
-        siblings
+        let ranges = &self.ranges;
+        let sums = self.sums.entry(v).or_insert_with(|| {
+            function
+                .value_uses(v)
+                .filter_map(|(user, _)| {
+                    let (operand, addend) = crate::const_eval::var_and_const_of(
+                        function,
+                        user,
+                        NodeKind::IntBinaryOp(IntBinaryOp::Add),
+                    )?;
+                    let sum = function.first_value_output_of(user)?;
+                    (operand == v
+                        && function.value_type_opt(sum) == Some(ty)
+                        && ranges.may_bound_sum(sum))
+                    .then_some((sum, addend))
+                })
+                .collect()
+        });
+        sums.clone()
             .into_iter()
             .filter_map(|(sum, addend)| {
                 let iv = self.ranges.range_of(sum, site);
@@ -302,7 +310,7 @@ impl SiteClassifier<'_> {
             .min_by_key(|hit| hit.range.count())
     }
 
-    /// Is `v`'s range merely its type width rather than a real narrowing?  A raw
+    /// Is `v`'s range no narrower than its type width allows?  A raw
     /// byte load fills its cell width exactly, making it table DATA, not an index,
     /// unless it is a field read through a pointer ([`Self::loads_a_field`]) that no
     /// dominating test bounds unread
@@ -321,59 +329,66 @@ impl SiteClassifier<'_> {
     /// ([`wrap`]): `zext(i8) << 25` at `I32` has 128 distinct values, not 256,
     /// and `trunc8(i32)` has 256.  A scale past the `u128` carrier, a floor over
     /// an unrelated spacing, a wrap that leaves no progression, and a strip
-    /// longer than [`MAX_SCALE_STRIP`] all answer "width-only", which defers the
+    /// longer than [`MAX_WALK`] all answer "width-only", which defers the
     /// site rather than enumerating a cell.
     /// An unrecognised producer is not a failure: the strip ends there and the
     /// count is taken at that value's own width.  `w < 128` keeps the shift
     /// well-defined.
-    fn is_width_only(&mut self, site: NodeId, v: ValueId, iv: Interval) -> bool {
+    fn is_width_only(&mut self, site: NodeId, v: ValueId, iv: Interval, narrowed: bool) -> bool {
         let function = self.function();
-        let Some((base, chain)) =
-            strip_to_cell(function, v, |and| self.ranges.identity_mask_operand(and))
+        let Some(strip) = strip_to_cell(function, v, |and| {
+            self.ranges.identity_mask_operand(and).is_some()
+        }) else {
+            return true;
+        };
+        let base = strip.cell;
+        if self.loads_a_field(site, base) {
+            return self
+                .ranges
+                .cell_test_left_unread(v, &strip, site, iv, narrowed);
+        }
+        // Defer, as every other bail here does: with no width there is no cell
+        // count to compare the range against, so nothing disproves table DATA;
+        // past the carrier there is no count.
+        let Some(w) = function
+            .value_type_opt(base)
+            .map(|t| t.bit_width())
+            .filter(|&w| w < 128)
         else {
             return true;
         };
-        if self.loads_a_field(site, base) {
-            return self.ranges.cell_test_left_unread(v, base, site, iv);
-        }
-        // Defer, as every other bail here does: with no width there is no cell
-        // count to compare the range against, so nothing disproves table DATA.
-        let Some(w) = function.value_type_opt(base).map(|t| t.bit_width()) else {
-            return true;
-        };
-        if w >= 128 {
-            return true;
-        }
         let mut count: u128 = eval::bit(w as u32);
         let mut spacing: u128 = 1;
-        for scale in chain.iter().rev() {
-            match *scale {
-                Scale::Widen(m) => match spacing.checked_mul(m) {
+        for &(value, step) in strip.steps.iter().rev() {
+            if let Step::Truncate = step {
+                match wrap(count, spacing, width_mask(function, value)) {
+                    Some(wrapped) => (count, spacing) = wrapped,
+                    None => return true,
+                }
+                continue;
+            }
+            match scale_of(step) {
+                Some(ScaleOp::Mul(m)) => match spacing.checked_mul(m) {
                     Some(s) => spacing = s,
                     None => return true,
                 },
-                Scale::Narrow(c) if spacing.is_multiple_of(c) => spacing /= c,
-                Scale::Narrow(c) if c.is_multiple_of(spacing) => {
+                Some(ScaleOp::Udiv(c)) if spacing.is_multiple_of(c) => spacing /= c,
+                Some(ScaleOp::Udiv(c)) if c.is_multiple_of(spacing) => {
                     count = count.div_ceil(c / spacing);
                     spacing = 1;
                 }
                 // Floor over a spacing that neither divides nor is divided leaves
                 // no arithmetic progression to count.
-                Scale::Narrow(_) => return true,
-                Scale::Wrap(bits) => match wrap(count, spacing, bits) {
-                    Some(wrapped) => (count, spacing) = wrapped,
-                    None => return true,
-                },
+                Some(ScaleOp::Udiv(_)) => return true,
+                // A zero-extend or an identity mask keeps the set.
+                None => {}
             }
         }
         // A widening scale is modular at the output width too.
-        if let Some(out_w) = function.value_type_opt(v).map(|t| t.bit_width()) {
-            match wrap(count, spacing, out_w) {
-                Some((wrapped, _)) => count = wrapped,
-                None => return true,
-            }
+        match wrap(count, spacing, width_mask(function, v)) {
+            Some((wrapped, _)) => iv.count() >= wrapped,
+            None => true,
         }
-        iv.count() == count
     }
 
     /// Whether `v` is a load through a pointer: its address is no constant, and
@@ -383,7 +398,7 @@ impl SiteClassifier<'_> {
     /// an unbounded register or phi plus an offset.
     fn loads_a_field(&mut self, site: NodeId, v: ValueId) -> bool {
         let function = self.function();
-        if !matches!(function.node_kind(function.producer(v)), NodeKind::Load(_)) {
+        if !matches!(function.kind_of_value(v), NodeKind::Load(_)) {
             return false;
         }
         let Some(addr) = function.int_inputs(v).next() else {
@@ -393,17 +408,15 @@ impl SiteClassifier<'_> {
             return false;
         }
         let mut stack = vec![addr];
-        let mut steps = MAX_SCALE_STRIP;
-        while let Some(term) = stack.pop() {
-            let Some(left) = steps.checked_sub(1) else {
-                return false;
+        for _ in 0..MAX_WALK {
+            let Some(term) = stack.pop() else {
+                return true;
             };
-            steps = left;
             if function.int_const_u128(term).is_some() {
                 continue;
             }
             if matches!(
-                function.node_kind(function.producer(term)),
+                function.kind_of_value(term),
                 NodeKind::IntBinaryOp(IntBinaryOp::Add)
             ) {
                 stack.extend(function.int_inputs(term));
@@ -411,7 +424,7 @@ impl SiteClassifier<'_> {
                 return false;
             }
         }
-        true
+        stack.is_empty()
     }
 }
 
@@ -423,33 +436,18 @@ impl SiteClassifier<'_> {
 /// ENTRY feeds every root, so the deepest value of the chain, where it is a
 /// root, is the only one.
 fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<Vec<ValueId>> {
-    // Vertex 0 is the virtual ENTRY; `value[i]` is vertex `i`'s cone value,
-    // `None` for the ENTRY.
-    const ENTRY: u32 = 0;
-    let mut succs: Vec<Vec<u32>> = vec![Vec::new()];
-    let mut value: Vec<Option<ValueId>> = vec![None];
-    let mut nidx: rustc_hash::FxHashMap<ValueId, u32> = rustc_hash::FxHashMap::default();
-    let node_of = |succs: &mut Vec<Vec<u32>>,
-                   value: &mut Vec<Option<ValueId>>,
-                   nidx: &mut rustc_hash::FxHashMap<ValueId, u32>,
-                   v: ValueId| {
-        *nidx.entry(v).or_insert_with(|| {
-            succs.push(Vec::new());
-            value.push(Some(v));
-            u32::try_from(value.len() - 1).expect("cone vertex count fits u32")
-        })
-    };
-
+    // `None` is the virtual ENTRY.
+    let mut succs: rustc_hash::FxHashMap<Option<ValueId>, Vec<Option<ValueId>>> =
+        rustc_hash::FxHashMap::default();
     let mut seen: rustc_hash::FxHashSet<ValueId> = rustc_hash::FxHashSet::default();
     let mut stack = vec![target];
     while let Some(v) = stack.pop() {
         if function.int_const_u128(v).is_some() || !seen.insert(v) {
             continue;
         }
-        let vi = node_of(&mut succs, &mut value, &mut nidx, v);
         // The addressing arithmetic, a foldable load's address, or nothing for
         // an opaque source.
-        let inputs: Vec<ValueId> = match function.node_kind(function.producer(v)) {
+        let inputs: Vec<ValueId> = match function.kind_of_value(v) {
             NodeKind::Load(_) => foldable_load_address(function, v).into_iter().collect(),
             NodeKind::InitialVar(_)
             | NodeKind::Phi
@@ -470,29 +468,26 @@ fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<V
                 continue;
             }
             has_var_input = true;
-            let pi = node_of(&mut succs, &mut value, &mut nidx, p);
-            succs[pi as usize].push(vi);
+            succs.entry(Some(p)).or_default().push(Some(v));
             stack.push(p);
         }
         if !has_var_input {
-            succs[ENTRY as usize].push(vi); // a cone root
+            succs.entry(None).or_default().push(Some(v)); // a cone root
         }
     }
-
-    let target_idx = *nidx.get(&target)?;
+    if !seen.contains(&target) {
+        return None;
+    }
     // Each vertex is asked for its successors once, as it is discovered.
     let doms =
-        graph_algorithms::dominance::dominators(ENTRY, |v| std::mem::take(&mut succs[v as usize]));
+        graph_algorithms::dominance::dominators(None, |v| succs.remove(&v).unwrap_or_default());
 
     // The idom chain above the target is the target-rooted shallow-to-deep
-    // order, so the first bounded hit IS the shallowest; the ENTRY carries no
-    // cone value and drops out.
+    // order, so the first bounded hit IS the shallowest; it ends at the ENTRY.
     let mut chain: Vec<ValueId> = Vec::new();
-    let mut at = target_idx;
-    while let Some(up) = doms.immediate_dominator(at) {
-        if let Some(v) = value[up as usize] {
-            chain.push(v);
-        }
+    let mut at = target;
+    while let Some(Some(up)) = doms.immediate_dominator(Some(at)) {
+        chain.push(up);
         at = up;
     }
     Some(chain)
@@ -502,58 +497,10 @@ fn dominator_chain(function: &strider_ir::Function, target: ValueId) -> Option<V
 /// scalings between a load and the address arithmetic, when that is a load of
 /// a table the evaluator can fold.
 fn foldable_cell_load(function: &strider_ir::Function, v: ValueId) -> Option<ValueId> {
-    let (cell, _) = strip_to_cell(function, v, |and| {
-        strip_commutative_const_scale(function, and).map(|(next, _)| next)
-    })?;
-    (matches!(
-        function.node_kind(function.producer(cell)),
-        NodeKind::Load(_)
-    ) && foldable_load_address(function, cell).is_some())
+    let cell = strip_to_cell(function, v, |_| true)?.cell;
+    (matches!(function.kind_of_value(cell), NodeKind::Load(_))
+        && foldable_load_address(function, cell).is_some())
     .then_some(cell)
-}
-
-/// What `v` reduces to through zero-extends, truncates, the constant masks
-/// `through_mask` strips and constant scalings, with the steps that change
-/// the value set, outermost first. `None` past [`MAX_SCALE_STRIP`] steps.
-fn strip_to_cell(
-    function: &strider_ir::Function,
-    v: ValueId,
-    mut through_mask: impl FnMut(ValueId) -> Option<ValueId>,
-) -> Option<(ValueId, Vec<Scale>)> {
-    let mut base = v;
-    let mut chain: Vec<Scale> = Vec::new();
-    for _ in 0..MAX_SCALE_STRIP {
-        let inner = match *function.node_kind(function.producer(base)) {
-            NodeKind::Extend(ExtendOp::ZeroExtend) => {
-                function.int_inputs(base).next().map(|next| (next, None))
-            }
-            NodeKind::Truncate => function
-                .int_inputs(base)
-                .next()
-                .zip(function.value_type_opt(base))
-                .map(|(next, ty)| (next, Some(Scale::Wrap(ty.bit_width())))),
-            NodeKind::IntBinaryOp(IntBinaryOp::And) => through_mask(base).map(|next| (next, None)),
-            NodeKind::IntBinaryOp(IntBinaryOp::ShiftLeft) => strip_const_scale(function, base)
-                .and_then(|(next, k)| Some((next, Some(Scale::Widen(pow2(k)?))))),
-            NodeKind::IntBinaryOp(IntBinaryOp::ShiftRight) => strip_const_scale(function, base)
-                .and_then(|(next, k)| Some((next, Some(Scale::Narrow(pow2(k)?))))),
-            NodeKind::IntBinaryOp(IntBinaryOp::Div) => strip_const_scale(function, base)
-                .and_then(|(next, c)| (c != 0).then_some((next, Some(Scale::Narrow(c))))),
-            NodeKind::IntBinaryOp(IntBinaryOp::Mul) => {
-                strip_commutative_const_scale(function, base)
-                    .and_then(|(next, c)| (c != 0).then_some((next, Some(Scale::Widen(c)))))
-            }
-            _ => None,
-        };
-        match inner {
-            Some((next, scale)) => {
-                base = next;
-                chain.extend(scale);
-            }
-            None => return Some((base, chain)),
-        }
-    }
-    None
 }
 
 /// Whether the constant offsets applied to `index` on its way to the address
@@ -576,14 +523,8 @@ fn offsets_keep_range(
             NodeKind::Extend(ExtendOp::ZeroExtend)
                 if function.int_inputs(value).next() == Some(below) => {}
             NodeKind::IntBinaryOp(IntBinaryOp::Add) => {
-                let Ok([a, b]) = function.producer_inputs_exact::<2>(value) else {
-                    return true;
-                };
-                let offset = match (a == below, b == below) {
-                    (true, false) => function.int_const_u128(b),
-                    (false, true) => function.int_const_u128(a),
-                    _ => None,
-                };
+                let offset = crate::const_eval::var_and_const(function, producer)
+                    .and_then(|(x, offset)| (x == below).then_some(offset));
                 let (Some(offset), Some(mask)) = (
                     offset,
                     function
@@ -594,7 +535,8 @@ fn offsets_keep_range(
                 };
                 let lo = range.lo().wrapping_add(offset) & mask;
                 let hi = range.hi().wrapping_add(offset) & mask;
-                if lo > hi || hi - lo != range.hi() - range.lo() {
+                // Each end moves by `offset`, so they part only by a wrap.
+                if lo > hi {
                     return false;
                 }
                 range = Interval::new(lo, hi, range.stride());
@@ -640,63 +582,21 @@ fn index_bound_ok(mask: u128, iv: Interval) -> bool {
     !iv.is_empty() && iv.hi() < mask && iv.count() <= u128::from(MAX_TABLE_ENTRIES)
 }
 
-/// The variable operand and the constant of a non-commutative binop whose RHS
-/// is constant.
-fn strip_const_scale(function: &strider_ir::Function, v: ValueId) -> Option<(ValueId, u128)> {
-    let [lhs, rhs] = function.producer_inputs_exact::<2>(v).ok()?;
-    function.int_const_u128(rhs).map(|c| (lhs, c))
-}
-
-/// As [`strip_const_scale`], for a commutative binop: the constant may sit on
-/// either side, and two constants are not a scaling of anything.
-fn strip_commutative_const_scale(
-    function: &strider_ir::Function,
-    v: ValueId,
-) -> Option<(ValueId, u128)> {
-    crate::const_eval::var_and_const(function, function.producer(v))
-}
-
-/// One step on the way from a cell to `v` that changes its value set.
-enum Scale {
-    /// `* m`: spreads the value set out, so a later divide collapses less.
-    Widen(u128),
-    /// `/ c`: collapses the value set once it outruns the spacing.
-    Narrow(u128),
-    /// A truncate to this many bits: the set taken modulo `2^bits`.
-    Wrap(usize),
-}
-
-/// Producer steps [`strip_to_cell`] may take, matching the caps its sibling
-/// walks carry.  Exhausting it answers "width-only", the same conservative
-/// bail as an uncountable scale.
-const MAX_SCALE_STRIP: u32 = 64;
-
-/// `count` values `spacing` apart from 0, taken modulo `2^bits`: their count
+/// `count` values `spacing` apart from 0, taken modulo `mask + 1`: their count
 /// and spacing, or `None` where that is no arithmetic progression.  Past the
 /// `u128` carrier nothing wraps.
-fn wrap(count: u128, spacing: u128, bits: usize) -> Option<(u128, u128)> {
-    let Some((bits, modulus)) = u32::try_from(bits)
-        .ok()
-        .and_then(|bits| Some((bits, 1u128.checked_shl(bits)?)))
-    else {
-        return Some((count, spacing));
-    };
-    if (count - 1)
-        .checked_mul(spacing)
-        .is_some_and(|top| top < modulus)
+fn wrap(count: u128, spacing: u128, mask: u128) -> Option<(u128, u128)> {
+    if mask == u128::MAX
+        || (count - 1)
+            .checked_mul(spacing)
+            .is_some_and(|top| top <= mask)
     {
         return Some((count, spacing));
     }
     // `spacing * i` covers every multiple of the power of two shared with the
     // modulus, once `i` runs over that many consecutive values.
-    let shared = eval::bit(spacing.trailing_zeros().min(bits));
-    let full = modulus / shared;
-    (count >= full).then_some((full, shared))
-}
-
-/// `1 << k`, or `None` past the `u128` carrier.
-fn pow2(k: u128) -> Option<u128> {
-    1u128.checked_shl(u32::try_from(k).ok()?)
+    let shift = spacing.trailing_zeros().min(mask.count_ones());
+    (count > mask >> shift).then_some(((mask >> shift) + 1, eval::bit(shift)))
 }
 
 #[cfg(test)]

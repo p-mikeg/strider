@@ -47,9 +47,9 @@ cfg
   0x10010124 23 ops return -> []
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, r31, LR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x2f100:4, u:0x2f300:4, u:0x8ae00:4]
 arg 0 [%v12]
-float_arg 0 [%v24]
-float_arg 1 [%v25]
-float_arg 8 [%v26]
+float_arg 0 [%v20]
+float_arg 1 [%v21]
+float_arg 8 [%v22]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r1]
@@ -64,20 +64,16 @@ float_arg 8 [%v26]
 %v11:i32 = int.add %v2, %v10
 %v12:i32 = initial_var[r3]
 %v13:mem = store[r] %v9, %v11, %v12
-%v14:i32 = iconst[0xef]
+%v14:i32 = iconst[0xad00ef]
 %v15:i32 = int.xor %v12, %v14
-%v16:i32 = iconst[0xad0000]
-%v17:i32 = int.xor %v15, %v16
-%v18:i32 = iconst[0xff00ff]
-%v19:i32 = int.and %v17, %v18
-%v20:i32 = iconst[0xbabe]
-%v21:i32 = int.xor %v19, %v20
-%v22:i32 = iconst[0xcafe0000]
-%v23:i32 = int.xor %v21, %v22
-%v24:i64 = initial_var[f1]
-%v25:i64 = initial_var[f2]
-%v26:i128 = initial_var[vs34]
-return %v0, %v13, %v23, %v18, %v24, %v25, %v26
+%v16:i32 = iconst[0xff00ff]
+%v17:i32 = int.and %v15, %v16
+%v18:i32 = iconst[0xcafebabe]
+%v19:i32 = int.xor %v17, %v18
+%v20:i64 = initial_var[f1]
+%v21:i64 = initial_var[f2]
+%v22:i128 = initial_var[vs34]
+return %v0, %v13, %v19, %v16, %v20, %v21, %v22
 
 == if_returns_const @0x10010160
 cfg

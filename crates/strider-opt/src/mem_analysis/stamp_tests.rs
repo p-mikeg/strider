@@ -1,7 +1,8 @@
-use strider_ir::node::{NodeKind, ValueType};
-use strider_ir::{Function, IRBuilderExt, IRViewer, IntBinaryOp};
-use strider_ir_test_utils::IrBuilderEx;
-use strider_ir_test_utils::{SENTINEL_LIFT_ADDR, make_sp_fn, stack_vn_x86};
+use crate::test_support::{CF_RP, run_passes};
+use strider_ir::node::{NodeId, NodeKind, ValueId, ValueType};
+use strider_ir::{Function, FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
+use strider_ir_test_utils::{IrBuilderEx, IrWalkerEx};
+use strider_ir_test_utils::{make_sp_fn, stack_vn_x86};
 
 fn stamped_count(function: &Function) -> usize {
     function
@@ -15,66 +16,56 @@ fn run(function: &mut Function) {
     // ConstantFold folds the lowered `Add(_, Neg(K))` to `Add(_, IntConst(-K))`
     // and PhiCollapse drops the read_variable(sp) phi, giving the production
     // shape the post-pass sees.
-    crate::test_support::cf_rp_pipeline()
-        .run(function, &crate::OptCtx::new(None))
-        .expect("canonicalize must not error");
+    run_passes(function, CF_RP).expect("canonicalize must not error");
     super::stamp_all(&mut crate::EditFunction::new(function));
 }
 
 /// Builds `store [sp-4] = 0x42; load [sp-4]; return loaded`.
-fn stack_store_load_return(sp: rsleigh::Vn) -> Function {
-    make_sp_fn(sp, |b, sp_v| {
+fn stack_store_load_return() -> Function {
+    make_sp_fn(stack_vn_x86(), |b, sp_v| {
         let four = b.build_int_const(4u64, ValueType::int(32))?;
         let addr = b.build_sub_as_add_neg(sp_v, four, ValueType::int(32))?;
         let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
         let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         b.build_return(Some(loaded), &[])?;
         Ok(())
     })
     .unwrap()
 }
 
-#[test]
-fn sp_relative_store_and_load_get_offset_stamped() {
-    let sp = stack_vn_x86();
-    let mut f = stack_store_load_return(sp);
+type Addr = fn(&mut FunctionBuilder, ValueId) -> crate::Result<ValueId>;
 
-    run(&mut f);
-
-    let store_offsets: Vec<i128> = f
-        .graph()
-        .all_node_ids()
-        .filter(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
-        .filter_map(|n| f.stack_offset(n).map(|(_, off)| off))
-        .collect();
-    let load_offsets: Vec<i128> = f
-        .graph()
-        .all_node_ids()
-        .filter(|&n| matches!(f.node_kind(n), NodeKind::Load(_)))
-        .filter_map(|n| f.stack_offset(n).map(|(_, off)| off))
-        .collect();
-
-    assert_eq!(store_offsets, vec![-4]);
-    assert_eq!(load_offsets, vec![-4]);
-}
-
-#[test]
-fn non_sp_relative_store_leaves_side_table_untouched() {
-    let sp = stack_vn_x86();
-    let mut f = make_sp_fn(sp, |b, _sp_v| {
-        let addr = b.build_int_const(0x1000u64, ValueType::int(32))?;
+/// `store [addr(sp)] = 0x42; return 0`, run: the function and its store.
+fn store_at(addr: Addr) -> (Function, NodeId) {
+    let mut f = make_sp_fn(stack_vn_x86(), |b, sp_v| {
+        let addr = addr(b, sp_v)?;
         let data = b.build_int_const(0x42u64, ValueType::int(32))?;
         b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
         let zero = b.build_int_const(0u64, ValueType::int(32))?;
         b.build_return(Some(zero), &[])?;
         Ok(())
     })
     .unwrap();
-
     run(&mut f);
+    let store = f.sole_kind(|k| matches!(k, NodeKind::Store(_)));
+    (f, store)
+}
+
+#[test]
+fn sp_relative_store_and_load_get_offset_stamped() {
+    let mut f = stack_store_load_return();
+    run(&mut f);
+    let store = f.sole_kind(|k| matches!(k, NodeKind::Store(_)));
+    let load = f.sole_kind(|k| matches!(k, NodeKind::Load(_)));
+    for node in [store, load] {
+        assert_eq!(f.stack_offset(node).map(|(_, off)| off), Some(-4));
+    }
+}
+
+#[test]
+fn non_sp_relative_store_leaves_side_table_untouched() {
+    let (f, _) = store_at(|b, _| b.build_int_const(0x1000u64, ValueType::int(32)));
     assert_eq!(stamped_count(&f), 0);
 }
 
@@ -82,114 +73,61 @@ fn non_sp_relative_store_leaves_side_table_untouched() {
 /// from entry-SP, so its offset must not be conflated with an entry-SP one.
 #[test]
 fn alignment_masked_base_store_is_stamped_with_aligned_base() {
-    let sp = stack_vn_x86();
-    let mut f = make_sp_fn(sp, |b, sp_v| {
-        // `and $0xfffffff8, %esp`, then a store at that aligned base.
-        let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
-        let aligned =
-            b.build_int_binary_operation(sp_v, mask, IntBinaryOp::And, ValueType::int(32))?;
-        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
-        b.build_store(aligned, data, rsleigh::VnSpace::RAM)?;
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let zero = b.build_int_const(0u64, ValueType::int(32))?;
-        b.build_return(Some(zero), &[])?;
-        Ok(())
-    })
-    .unwrap();
-
-    run(&mut f);
-    let store = f
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
-        .expect("store node");
+    // `and $0xfffffff8, %esp`, then a store at that aligned base.
+    let (f, store) = store_at(|b, sp| {
+        b.build_const_binop(0xFFFF_FFF8u64, sp, IntBinaryOp::And, ValueType::int(32))
+    });
     let (base, offset) = f
         .stack_offset(store)
         .expect("aligned store must be stamped");
     assert_eq!(offset, 0, "store at the aligned base directly => offset 0");
-    let base_node = f.producer(base);
     assert!(
         matches!(
-            f.node_kind(base_node),
+            f.node_kind(f.producer(base)),
             NodeKind::IntBinaryOp(IntBinaryOp::And)
         ),
         "recorded base must be the alignment `And` node, not InitialVar(sp)"
     );
 }
 
-/// The decomposition walks the whole chain, not just the outermost Add, so
-/// `((sp + 8) + 16) - 4` stamps the summed `+20`.
+/// The decomposition walks the whole chain, not just the outermost Add, and
+/// sums signed: `((sp + 8) + 16) - 4` stamps `+20`, `(sp + 8) - 12` stamps -4.
 #[test]
-fn nested_add_chain_stamps_summed_offset() {
-    let sp = stack_vn_x86();
-    let mut f = make_sp_fn(sp, |b, sp_v| {
-        let eight = b.build_int_const(8u64, ValueType::int(32))?;
-        let sixteen = b.build_int_const(16u64, ValueType::int(32))?;
-        let four = b.build_int_const(4u64, ValueType::int(32))?;
-        let a1 = b.build_int_binary_operation(sp_v, eight, IntBinaryOp::Add, ValueType::int(32))?;
-        let a2 = b.build_int_binary_operation(a1, sixteen, IntBinaryOp::Add, ValueType::int(32))?;
-        let addr = b.build_sub_as_add_neg(a2, four, ValueType::int(32))?;
-        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let zero = b.build_int_const(0u64, ValueType::int(32))?;
-        b.build_return(Some(zero), &[])?;
-        Ok(())
-    })
-    .unwrap();
-
-    run(&mut f);
-    let store = f
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
-        .expect("store node");
-    let (_base, offset) = f.stack_offset(store).expect("nested chain must be stamped");
-    assert_eq!(offset, 20, "8 + 16 - 4 = 20");
-}
-
-/// The summation is signed, so a net-negative chain `(sp + 8) - 12` stamps -4.
-#[test]
-fn nested_chain_with_negative_net_offset_stamps_negative() {
-    let sp = stack_vn_x86();
-    let mut f = make_sp_fn(sp, |b, sp_v| {
-        let eight = b.build_int_const(8u64, ValueType::int(32))?;
-        let twelve = b.build_int_const(12u64, ValueType::int(32))?;
-        let a1 = b.build_int_binary_operation(sp_v, eight, IntBinaryOp::Add, ValueType::int(32))?;
-        let addr = b.build_sub_as_add_neg(a1, twelve, ValueType::int(32))?;
-        let data = b.build_int_const(0x42u64, ValueType::int(32))?;
-        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-        b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
-        let zero = b.build_int_const(0u64, ValueType::int(32))?;
-        b.build_return(Some(zero), &[])?;
-        Ok(())
-    })
-    .unwrap();
-
-    run(&mut f);
-    let store = f
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::Store(_)))
-        .expect("store node");
-    let (_base, offset) = f
-        .stack_offset(store)
-        .expect("net-negative chain must be stamped");
-    assert_eq!(offset, -4, "8 - 12 = -4");
+fn a_nested_chain_stamps_its_summed_offset() {
+    let rows: [(Addr, i128); 2] = [
+        (
+            |b, sp| {
+                let a1 = b.build_const_binop(8u64, sp, IntBinaryOp::Add, ValueType::int(32))?;
+                let a2 = b.build_const_binop(16u64, a1, IntBinaryOp::Add, ValueType::int(32))?;
+                let four = b.build_int_const(4u64, ValueType::int(32))?;
+                b.build_sub_as_add_neg(a2, four, ValueType::int(32))
+            },
+            20,
+        ),
+        (
+            |b, sp| {
+                let a1 = b.build_const_binop(8u64, sp, IntBinaryOp::Add, ValueType::int(32))?;
+                let twelve = b.build_int_const(12u64, ValueType::int(32))?;
+                b.build_sub_as_add_neg(a1, twelve, ValueType::int(32))
+            },
+            -4,
+        ),
+    ];
+    for (addr, want) in rows {
+        let (f, store) = store_at(addr);
+        assert_eq!(f.stack_offset(store).map(|(_, off)| off), Some(want));
+    }
 }
 
 #[test]
 fn rerun_after_first_pass_is_idempotent() {
-    let sp = stack_vn_x86();
-    let mut f = stack_store_load_return(sp);
-
+    let mut f = stack_store_load_return();
     run(&mut f);
     let after_first = stamped_count(&f);
     assert!(
         after_first > 0,
         "first run must stamp the SP-relative accesses"
     );
-    // Already-known offsets are skipped, so the stamped set is stable.
     run(&mut f);
     assert_eq!(
         stamped_count(&f),
@@ -200,8 +138,7 @@ fn rerun_after_first_pass_is_idempotent() {
 
 #[test]
 fn post_pass_function_validates() {
-    let sp = stack_vn_x86();
-    let mut f = stack_store_load_return(sp);
+    let mut f = stack_store_load_return();
     run(&mut f);
     strider_ir::validate::validate(&f).expect("IR must validate");
 }
@@ -212,11 +149,8 @@ fn post_pass_function_validates() {
 /// every region filter silently matches nothing.
 #[test]
 fn a_pipeline_without_post_passes_still_stamps_the_decomposition() {
-    let sp = stack_vn_x86();
-    let mut function = stack_store_load_return(sp);
-    crate::test_support::cf_rp_pipeline()
-        .run(&mut function, &crate::OptCtx::new(None))
-        .expect("must not error");
+    let mut function = stack_store_load_return();
+    run_passes(&mut function, CF_RP).expect("must not error");
     assert!(
         stamped_count(&function) > 0,
         "no address was stamped, so every stack_only() query would come back empty"

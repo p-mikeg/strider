@@ -21,7 +21,6 @@ MainOptimizerPass = Union[
     "PhiCollapse",
     "RegionCollapse",
     "DeadBranchElimination",
-    "CfgDetach",
     "LoadForward",
     "LoadReadOnly",
 ]
@@ -121,15 +120,9 @@ class RegionCollapse:
 class DeadBranchElimination:
     """Folds a branch with a constant selector (an `If` on a constant `I1`, a
     `Switch` on a constant dispatch address), wiring the live successor
-    past it and killing the branch node, and strips the dead arm's
-    predecessor slots from the joins."""
-    def __init__(self) -> None:
-        """Build the pass."""
-        ...
-
-class CfgDetach:
-    """Removes a `Region` predecessor slot whose control producer entry can no
-    longer reach, along with the matching `Phi` / `MemPhi` value slots."""
+    past it and killing the branch node. Every run then strips each
+    `Region` predecessor slot entry can no longer reach, with the matching
+    `Phi` / `MemPhi` value slots."""
     def __init__(self) -> None:
         """Build the pass."""
         ...

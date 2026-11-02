@@ -81,8 +81,8 @@ fn graph_fn_arg_stack() -> strider_ir::Function {
     // load is a bare `InitialVar(sp) + 4` terminal (the production shape
     // after PhiCollapse) before the SP-aware post-pass runs.
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
-    pre.add(strider_orchestrator::opt::PhiCollapse);
-    pre.add(strider_orchestrator::opt::RegionCollapse);
+    pre.add(&strider_orchestrator::opt::PhiCollapse);
+    pre.add(&strider_orchestrator::opt::RegionCollapse);
     pre.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("phi collapse");
 
@@ -214,8 +214,8 @@ fn phi_input_from_edge_ties_value_to_its_branch() {
     // become the merge region's direct predecessors, the shape the
     // direct-edge constraint keys on.
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
-    pre.add(strider_orchestrator::opt::PhiCollapse);
-    pre.add(strider_orchestrator::opt::RegionCollapse);
+    pre.add(&strider_orchestrator::opt::PhiCollapse);
+    pre.add(&strider_orchestrator::opt::RegionCollapse);
     pre.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("collapse");
 
@@ -404,8 +404,8 @@ fn graph_memphi_diamond() -> strider_ir::Function {
 fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
     let mut function = graph_memphi_diamond();
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
-    pre.add(strider_orchestrator::opt::PhiCollapse);
-    pre.add(strider_orchestrator::opt::RegionCollapse);
+    pre.add(&strider_orchestrator::opt::PhiCollapse);
+    pre.add(&strider_orchestrator::opt::RegionCollapse);
     pre.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("collapse");
 
@@ -458,8 +458,8 @@ fn phi_input_from_edge_ties_memphi_memory_to_its_branch() {
 fn collapsed_phi_diamond() -> strider_ir::Function {
     let (mut function, _reg) = graph_phi_for_reg();
     let mut pre = strider_orchestrator::opt::OptimizerPipeline::new();
-    pre.add(strider_orchestrator::opt::PhiCollapse);
-    pre.add(strider_orchestrator::opt::RegionCollapse);
+    pre.add(&strider_orchestrator::opt::PhiCollapse);
+    pre.add(&strider_orchestrator::opt::RegionCollapse);
     pre.run(&mut function, &strider_orchestrator::opt::OptCtx::new(None))
         .expect("collapse");
     function

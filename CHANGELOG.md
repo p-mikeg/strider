@@ -36,6 +36,9 @@
   `fn.find_all([if_else().capture_true(t), region().any_input(t)])`, and a
   `call` / `ret` consumer takes it as `.ctrl(t)`. Each row is one `Match`
   whose `roots` are the `If` and the consumer.
+- `strider.opt.CfgDetach` is gone: `DeadBranchElimination` strips every
+  dead `Region` predecessor slot on each run, not only the ones its own folds
+  leave. `OptimizerPipeline.default()` runs the same passes as before.
 - `Node.wide_const_bytes()` is gone. `Node.uint()` reads a constant at any
   declared width, a Python `int` being arbitrary-precision, so the bytes
   escape hatch had nothing left to carry.
@@ -275,9 +278,24 @@
   `Strider::new(arch, reader, rom)` take the `MemReader` and build the arch's
   Sleigh themselves, through the new `SleighArch::sleigh(reader)`; none takes
   a `Sleigh`, so the error for one built from another sla or pspec is gone.
-- `Optimizer::apply`, `PostOptimizer::apply`, `OptimizerPipeline::run`,
-  `run_one`, `run_one_unvalidated` and `run_post` take `&OptCtx`, not
-  `&mut OptCtx`: nothing writes it.
+- `Optimizer::apply`, `OptimizerPipeline::run`, `run_one`,
+  `run_one_unvalidated` and `run_post` take `&OptCtx`, not `&mut OptCtx`:
+  nothing writes it.
+- `PostOptimizer` is gone: a post-pass implements `Optimizer` and is
+  registered with `add_post_pass`. A pipeline holds its passes as
+  `&'static dyn Optimizer` (`p.add(&ConstantFold)`), so `OptimizerClone`,
+  `PostOptimizerClone`, `add_boxed` and `add_post_boxed` are gone, and
+  `Optimizer` requires `Sync`. `OptimizerPipeline::add` panics on a pass
+  whose `Optimizer::is_post_pass` is set, `FunctionArgDetect` and
+  `CallStackArgCollect`.
+- `rewrite_rule`, `rewrite_rule_runtime` and `apply_rules_count` decline a
+  site (`Ok(None)`, uncounted) whose replacement has another width than the
+  root, or, for a match through a join, reads the root or is not available
+  where it is read; each returned `Err` and stopped the walk. A rule of the
+  built-in ConstantFold and FlagCmp tables still fails a debug build there.
+- `cranelift-entity` is 0.128 (was 0.112). It is a public dependency through
+  `EntityRef`, which `NodeId`, `ValueId` and the other entity ids
+  implement, so a caller naming that trait needs the same version.
 - `SideTables::set_frame_address_in_call_register` is
   `record_call_register_frame_reach`, taking the stack address's offset from
   the entry SP (`i128::MAX` for none); `call_register_frame_reach` reads the
@@ -331,8 +349,8 @@
   the resolve loop's per-round clone no longer copies it; a literal naming
   every field passes `&strider_target::call_other_abi::NO_OVERRIDES` for none.
 - `IndirectBranchClassify`, `OptCtx::indirect_resolutions` and
-  `OptimizerPipeline::has_post_pass` are gone, and `PostOptimizer` no longer
-  requires `Any`: `analyze` classifies every round after its pipeline,
+  `OptimizerPipeline::has_post_pass` are gone: `analyze` classifies every
+  round after its pipeline,
   whatever the pipeline, with `strider_opt::classify_sites(&function, rom)`,
   which returns a `ClassifiedSites` and reads the claims off `function`.
   With `resolve_indirect_branches` off it calls no classifier and lists the
@@ -354,9 +372,18 @@
 - `StackOffsetDetect` is gone: a converged run stamps the memory classes
   after its post-passes, and a post-pass that reads them before that calls
   `refresh_memory_classes`.
-- `value_range::Interval`'s fields are private (`Interval::new`, `lo()`,
-  `hi()`, `stride()`, `is_empty()`); `compute_value_ranges(f, &doms, &known)`
-  is `RangeMap::new(f)`, which builds both itself and returns `Result`.
+- `classify_target` (`test-util`) cannot fail and returns its
+  `Option<ResolvedTargets>`, not a `Result`: the known-bits analysis it runs
+  had no error on a valid graph. `classify_sites` keeps its `Result`, the
+  orchestrator's classifier hook's shape.
+- `CfgDetach` is gone: `DeadBranchElimination` strips every dead `Region`
+  predecessor slot on each run, not only the ones its own folds leave, so a
+  pipeline that ran it without `CfgDetach` now also strips the slots the lift
+  or another pass left dead.
+- The optimizer passes are bare unit structs: `ConstantFold::new()`,
+  `FlagCmpCanonicalize::new()`, `IfCondInversion::new()` and every pass's
+  `Default`, `Clone` and `Copy` are gone. Name the pass itself
+  (`p.add(&ConstantFold)`).
 - `EditFunction::replace_all_uses` is private: it left the old producer live
   and dropped its asm-fingerprint. `replace_value` does the same rewire and
   handles both.
@@ -437,9 +464,10 @@
   `GraphRef` adapter of your own (`Graph` implements none) whose `successors`
   lists a node's input producers or its outputs' consumers.
 - `strider_opt::{value_range, indirect_branch_resolve, KnownBitsFacts,
-  KnownBitsMap, analyze_known_bits, classify_target}` exist only with the
-  `test-util` feature: only tests read them. `classify_sites`,
-  `ClassifiedSites`, `ReturnTargets` and the `KnownBits` pass stay public.
+  KnownBitsMap, analyze_known_bits}` are gone, with `compute_value_ranges`,
+  `Interval` and the site classifier behind them; `classify_target` exists
+  only with the `test-util` feature. `classify_sites`, `ClassifiedSites`,
+  `ReturnTargets` and the `KnownBits` pass stay public.
 - `KindSpec::VariantWith` is gone. `load().space(s)`, `store().space(s)` and
   `call_other().user_op_id(v)` pin `KindSpec::Exact`, the same test on
   kinds whose payload is that one field, so two such operands of a
@@ -531,6 +559,12 @@
   `find` given something that is no pattern raises a `TypeError` reading
   `expected a pattern (...)`; `find_all` raises one carrying that text inside
   pyo3's `PatQuery` extraction message.
+- `Function.rewrite` / `rewrite_all` leave a match alone, uncounted, where
+  the replacement has another width than the matched value, or, for a `find`
+  matching through a phi or region, would read the matched value or is not
+  available where it is read. Each raised `StriderError` part-way through the
+  walk. A replacement that reads its own match root at every site still
+  raises.
 - Under `stack_global_disjoint`, `LoadForward` moves a stack load's memory
   edge past a constant-address store, and a constant-address (GOT) load's
   past a stack store. It moves a load's edge past a store through another
@@ -737,14 +771,29 @@
   `Template` with no root, whether the builder refused it or it is rootless
   or multi-sink, as both already did on such an LHS. The rule was built and
   then errored on every firing.
+- `LoadForward` forwards a slice of a store wider than 16 bytes.
+- `ConstantFold` narrows a truncate of an add, multiply, and, or or xor over
+  extends from the truncate's width (or an extend and a constant) to that
+  operation at the narrow width; composes chained constant shifts; merges
+  chained constant xors; and folds a sign extend of a widening zero extend
+  to that zero extend. `KnownBits` drops a mask over every bit its operand
+  may set. A pattern written against the source shape no longer matches
+  these.
+- `FlagCmpCanonicalize` rewrites flag terms bottom-up, then the decomposed
+  trees, and traces a CR-bit test one bit at a time, so a record form's
+  in-place CR update and a pack with overlapping terms fold, and the ARM
+  and Thumb `switch_masked_loop` jump tables (`subs; cmp #4`, then the
+  dispatch) resolve to their five arms.
+- `DeadBranchElimination` folds an `If` whose dead arm is an `Unreachable`,
+  and folds no branch whose surviving arm reaches a terminator only through
+  another constant branch's dead arm: such a loop never exits, and a branch
+  into it, or inside it, now stays.
 - Integer constants are stored as `dashu-int`'s `UBig` and evaluated at
   their declared width, so constant folding no longer stops at 128 bits: an
   `I256` or `I512` constant folds where it stayed an unfolded node, through
   arithmetic, the comparison and overflow arms, `Truncate` / `Extend` and
   `Popcount` / `Lzcount`. `Sdiv` / `Srem` still decline `INT_MIN / -1` and
   division by zero, and every operation still declines a float type.
-- The known-bits lattice records facts for `I256` / `I512` values, so they
-  fold and their known-zero bits reach the masked-phi collapse.
 - `DecodeEngine::build_cfg`, and so `Strider::analyze`, no longer fail when
   decoding falls through past a `FunctionBound::Size` end: the region
   tail-calls the address there, reported as `Reason::PastFunctionEnd`, as are
@@ -760,6 +809,8 @@
   not in the order listed.
 - `LoadForward` is a unit struct again (`Copy`); `LoadForward::default()`
   still builds one.
+- `IRBuilderExt::build_int_const_limbs` takes any integer type (it refused
+  one of 64 bits or fewer).
 - `Lifter::build_ir_with` ends a `CallOther` exactly where the `Cfg` ended
   its region instead of re-deciding under the `cfg_opts` it is handed, so a
   CFG built under other `call_other_overrides` lifts as it was built (the
@@ -815,8 +866,8 @@
 - A raw `.input(usize::MAX, p)` (`MatcherBuilder::input` and the builders'
   `input`) names slot `usize::MAX`, so it matches nothing; it meant
   `any_input`.
-- A `PostOptimizer` that changes the graph, under `OptimizerPipeline::run`
-  or `run_post`, drops the memory classes, which the stamp after the
+- A post-pass that changes the graph, under `OptimizerPipeline::run` or
+  `run_post`, drops the memory classes, which the stamp after the
   post-passes re-derives; one that changes nothing keeps them. Every
   post-pass still drops the frame-escape verdict. `run_one` drops the
   classes after a changing pass too.
@@ -915,6 +966,38 @@
 - Rust: `TemplateBuilder::finish` on a graph the raw verbs wired into a cycle
   refuses the template through `Template::root`, as `MatcherBuilder::finish`
   refuses a cyclic pattern. It panicked.
+- `FunctionArgDetect` keeps a slot's clean carriers when another load of it
+  reads past a def that may have written it: a parameter the function
+  reassigns after reading it kept no carrier, and every later argument lost
+  its own. A wide reload so skipped may read the function's own store, so
+  past the argument it starts in no later argument is indexed.
+- `CallStackArgCollect` collects a big-endian argument right-justified in its
+  slot (PPC64 `stfs` at slot + 4), and the outgoing-argument window counts a
+  store inside a slot as writing it, so a load of a slot the callee owns is
+  no longer forwarded past the call under `escape_analysis`. Behind a call
+  that hides the slot's first byte the window stays blind from that slot up.
+- Address offsets compare on the address ring for constant addresses too, so
+  two globals across the 0 / 2^w wrap, or more than half the address space
+  apart, are told apart; an address wider than 128 bits is an opaque anchor.
+- A jump-table enumeration drops the values the index's known bits exclude
+  (`(x & 3) | 4` seats slots 4..7, not 0..7), and the value an equality on
+  the way rules out, on the index or on a zero-extend of it (`movzbl; cmp
+  $3,%eax; je`, then the dispatch, no longer seats cell 3).
+- `LoadForward` under `escape_analysis` without `stack_global_disjoint` no
+  longer skips a store whose address is still opaque when probing a
+  private-frame slot: a later forward could fold that address to the slot's
+  global, and loads already forwarded past it read the stale value.
+- `CallStackArgCollect` steps through no call to a listed allocator, as the
+  `noalias_allocators` doc says: behind a merge it collected argument stores
+  past one.
+- Quadratic paths removed: the argument-slot scan past a merge on an
+  irreducible graph, address decomposition under nested alignment masks, and
+  the jump-table classifier's sibling-index and equality scans over many
+  dispatches on one field. The unread-cell-test veto weighs only the tests
+  of its own cell, which is still quadratic when every dispatch tests one.
+- A seated switch whose selector folds to a constant jumps there, and the
+  table derives again: x64 `main` seeded with its own dispatch keeps every
+  derived arm and no longer reports `"unverified_seed"`.
 - Rust: a capture one `*_const_with!` closure reads as an `Option` no longer
   relaxes the rewrite coverage check for every OTHER use of it in the same
   RHS. A value vertex (`var(c)`), an output type inheriting the binding's
@@ -1075,9 +1158,9 @@
   count a site once. A match whose only consumer an earlier fire of the same
   walk had replaced was still rewritten and counted, and its fingerprints
   absorbed into the surviving value.
-- Python: `Function.rewrite` / `rewrite_all`, and Rust `rewrite_rule`, refuse
-  a match through a `Phi`, `MemPhi` or `Region` whose replacement reads the
-  value it replaces with no phi between them, or is not available wherever
+- Python: `Function.rewrite` / `rewrite_all`, and Rust `rewrite_rule`, leave
+  alone a match through a `Phi`, `MemPhi` or `Region` whose replacement reads
+  the value it replaces with no phi between them, or is not available wherever
   that value is. `phi(a, b) -> b` on a loop left a non-phi data cycle, and on
   a merge a value defined on one arm only, both reported as a successful
   rewrite.
@@ -1421,8 +1504,6 @@
   a store whose bytes wrap onto it around the address width.
 - A one-arm jump-table answer stays an arm through a merge, and a merge
   answers `Single` only for a `Single`'s own target.
-- `DeadBranchElimination` without `CfgDetach` strips the dead predecessors it
-  leaves; such a pipeline failed validation.
 - `R_PPC64_REL32` past +-2 GiB, and any word relocation that does not fit its
   field, is a hole rather than a truncated word.
 - A mips64el `SHT_REL` hole names its relocation type, not the symbol index.
@@ -1559,6 +1640,16 @@
 
 - `strider_graph::Graph::add_node_output`, which adds an output to an
   existing node, and `Graph::value_kind_mut`.
+- `IRViewer::phi_region`, the `Region` a phi joins at, `phi_arms`, its
+  `(control edge, arm value)` pairs, and `load_mem`, a load's memory input.
+- `EditFunction::control_edits`, a count that two equal readings of
+  bracket no control-graph edit, and `control_dominator_tree`, built once
+  per reading of it; `control_dominator_builds` (`test-util`) counts the
+  builds. Every `function_mut` borrow counts as a control edit.
+- `IRBuilder::intern_int_const`, which interns a constant without the
+  structural `function_mut` borrow.
+- `Optimizer::is_post_pass`, set by a pass that runs only once on a
+  converged graph.
 - `IRViewer::int_const_ibig`: a constant read as two's complement at any
   declared width, where `int_const_i128` answers `None` past 128 bits.
   `strider_ir` re-exports `IBig` beside `UBig`.
@@ -1605,8 +1696,7 @@
   variants in declaration order.
 - `Graph::NODE_RECORD_SIZE` / `VALUE_RECORD_SIZE`: the arena's bytes per node
   and per node output.
-- `OptimizerPipeline` is `Clone`, and `add_boxed` / `add_post_boxed` take a
-  pass already boxed.
+- `OptimizerPipeline` is `Clone`, copying its pass references.
 - `Function::assumptions` / `assume` and `SideTables::assumptions`: the
   claims in force, which every pass reads, and the one verb that adds to
   them, dropping the memos a new claim can change.

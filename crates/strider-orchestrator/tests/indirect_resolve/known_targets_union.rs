@@ -106,35 +106,34 @@ fn a_seed_the_cfg_declines_is_reported_unresolved_not_partially_seated() {
     );
 }
 
-/// Seating a seed changes the CFG the classifier reads, so a stale or wrong
-/// seed can stop the selector deriving and take the site's real arms with it.
-/// The site is not "unresolved" (the caller asserted the answer), but
-/// nothing verified it, so it must be named `UnverifiedSeed`.
-/// Without that reason the loss is completely silent.
+/// Seating a seed changes the CFG the classifier reads. x64 `main`'s
+/// dispatch seeded with only itself leaves its selector folded to the one
+/// table entry the entry path reaches; that constant is seated as the site's
+/// one target, the loop through the arms re-forms, and the table re-derives,
+/// so the site keeps the seed and every real arm, and nothing is reported.
+/// Mutation: re-derive a seated switch through the table arm alone, which
+/// drops every real arm and leaves only the seed, named `UnverifiedSeed`.
 #[test]
-fn a_site_seated_only_from_a_seed_is_named_as_unverified() {
-    // x64 `main`'s dispatch, seeded with only itself. Seating that seed
-    // changes the CFG the classifier reads: the selector stops deriving, the
-    // site converges holding just the seed, and every real arm is gone.
+fn a_seed_that_folds_the_selector_keeps_the_derived_arms() {
     const X64_MAIN_DISPATCH: u64 = 0x401042;
     let (arms, unresolved, unverified) = x64_main_with_seed(vec![X64_MAIN_DISPATCH]);
     assert_eq!(
         arms,
-        vec![X64_MAIN_DISPATCH],
-        "the site must hold exactly the seed and nothing the classifier derived",
+        vec![
+            X64_MAIN_DISPATCH,
+            0x401050,
+            0x401070,
+            0x401078,
+            0x401090,
+            0x401098,
+            0x4010a0,
+            0x4010a8,
+            0x4010ad,
+        ],
+        "the seed and every arm the classifier derives",
     );
-    assert!(
-        unresolved.is_empty(),
-        "the caller asserted the answer, so the site is not unresolved",
-    );
-    assert_eq!(
-        unverified
-            .iter()
-            .map(|a| a.machine_addr.addr)
-            .collect::<Vec<_>>(),
-        vec![X64_MAIN_DISPATCH],
-        "the report must name the site whose arms the seed cost",
-    );
+    assert!(unresolved.is_empty(), "{unresolved:?}");
+    assert!(unverified.is_empty(), "{unverified:?}");
 }
 
 /// `analyze` of x64 `main` with `known_targets` seeded at `seed[0]`'s site,

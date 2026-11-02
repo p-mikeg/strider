@@ -1455,8 +1455,8 @@ float_arg 19 [%v124]
 %v794:i128<vs45> = phi %v767, %v722, %v765
 %v795:mem = store[r] %v768, %v800, %v6
 
-%v796:ctrl, %v797:token = region %v766, %v827
-%v798:mem = memphi %v797, %v795, %v831
+%v796:ctrl, %v797:token = region %v766, %v825
+%v798:mem = memphi %v797, %v795, %v829
 %v799:i32 = iconst[0xffffff74]
 %v800:i32 = int.add %v11, %v799
 %v801:i32 = load[r] %v798, %v800
@@ -1479,58 +1479,56 @@ float_arg 19 [%v124]
 %v820:i32 = int.xor %v814, %v819
 %v821:mem = store[r] %v798, %v39, %v820
 %v822:i8 = load[r] %v798, %v75
-%v823:i32 = extend.zero %v822
-%v824:i32 = int.add %v823, %v4
-%v825:i8 = truncate %v824
-%v826:mem = store[r] %v821, %v75, %v825
+%v823:i8 = int.add %v822, %v164
+%v824:mem = store[r] %v821, %v75, %v823
 
-%v827:ctrl, %v828:token = region %v812, %v813
-%v829:mem = memphi %v828, %v821, %v826
-%v830:i32 = int.add %v801, %v4
-%v831:mem = store[r] %v829, %v800, %v830
-%v832:i32 = iconst[0x65]
-%v833:i1 = icmp.sless %v814, %v832
-%v834:ctrl, %v835:ctrl = if %v806, %v833
-%v836:i32 = load[r] %v768, %v24
-%v837:i32 = int.add %v836, %v98
-%v838:i32 = load[r] %v798, %v837
-%v839:ctrl, %v840:mem, %v841:i32<r3>, %v842:i32<r4>, %v843:i64<f1>, %v844:i64<f2>, %v845:i128<vs34>, %v846:i32<r0>, %v847:i32<r5>, %v848:i32<r6>, %v849:i32<r7>, %v850:i32<r8>, %v851:i32<r9>, %v852:i32<r10>, %v853:i8<xer_so>, %v854:i8<cr0>, %v855:i32<r2Save>, %v856:i64<f3>, %v857:i64<f4>, %v858:i64<f5>, %v859:i64<f6>, %v860:i64<f7>, %v861:i64<f8>, %v862:i128<vs35>, %v863:i128<vs36>, %v864:i128<vs37>, %v865:i128<vs38>, %v866:i128<vs39>, %v867:i128<vs40>, %v868:i128<vs41>, %v869:i128<vs42>, %v870:i128<vs43>, %v871:i128<vs44>, %v872:i128<vs45> = call %v835, %v798, %v290, %v17, %v838, %v803, %v769, %v770, %v771, %v772, %v773, %v774, %v775, %v776, %v777, %v778, %v779, %v780, %v781, %v782, %v783, %v784, %v785, %v786, %v787, %v788, %v789, %v790, %v791, %v792, %v793, %v794
-%v873:i32 = load[r] %v840, %v39
-%v874:i16 = load[r] %v840, %v79
-%v875:i32 = extend.sign %v874
-%v876:i8 = load[r] %v840, %v75
-%v877:i32 = extend.zero %v876
-%v878:ctrl, %v879:mem, %v880:i32<r3>, %v881:i32<r4>, %v882:i64<f1>, %v883:i64<f2>, %v884:i128<vs34>, %v885:i32<r0>, %v886:i32<r5>, %v887:i32<r6>, %v888:i32<r7>, %v889:i32<r8>, %v890:i32<r9>, %v891:i32<r10>, %v892:i8<xer_so>, %v893:i8<cr0>, %v894:i32<r2Save>, %v895:i64<f3>, %v896:i64<f4>, %v897:i64<f5>, %v898:i64<f6>, %v899:i64<f7>, %v900:i64<f8>, %v901:i128<vs35>, %v902:i128<vs36>, %v903:i128<vs37>, %v904:i128<vs38>, %v905:i128<vs39>, %v906:i128<vs40>, %v907:i128<vs41>, %v908:i128<vs42>, %v909:i128<vs43>, %v910:i128<vs44>, %v911:i128<vs45> = call %v839, %v840, %v653, %v17, %v873, %v875, %v877, %v848, %v849, %v850, %v851, %v852, %v843, %v844, %v856, %v857, %v858, %v859, %v860, %v861, %v845, %v862, %v863, %v864, %v865, %v866, %v867, %v868, %v869, %v870, %v871, %v872
+%v825:ctrl, %v826:token = region %v812, %v813
+%v827:mem = memphi %v826, %v821, %v824
+%v828:i32 = int.add %v801, %v4
+%v829:mem = store[r] %v827, %v800, %v828
+%v830:i32 = iconst[0x65]
+%v831:i1 = icmp.sless %v814, %v830
+%v832:ctrl, %v833:ctrl = if %v806, %v831
+%v834:i32 = load[r] %v768, %v24
+%v835:i32 = int.add %v834, %v98
+%v836:i32 = load[r] %v798, %v835
+%v837:ctrl, %v838:mem, %v839:i32<r3>, %v840:i32<r4>, %v841:i64<f1>, %v842:i64<f2>, %v843:i128<vs34>, %v844:i32<r0>, %v845:i32<r5>, %v846:i32<r6>, %v847:i32<r7>, %v848:i32<r8>, %v849:i32<r9>, %v850:i32<r10>, %v851:i8<xer_so>, %v852:i8<cr0>, %v853:i32<r2Save>, %v854:i64<f3>, %v855:i64<f4>, %v856:i64<f5>, %v857:i64<f6>, %v858:i64<f7>, %v859:i64<f8>, %v860:i128<vs35>, %v861:i128<vs36>, %v862:i128<vs37>, %v863:i128<vs38>, %v864:i128<vs39>, %v865:i128<vs40>, %v866:i128<vs41>, %v867:i128<vs42>, %v868:i128<vs43>, %v869:i128<vs44>, %v870:i128<vs45> = call %v833, %v798, %v290, %v17, %v836, %v803, %v769, %v770, %v771, %v772, %v773, %v774, %v775, %v776, %v777, %v778, %v779, %v780, %v781, %v782, %v783, %v784, %v785, %v786, %v787, %v788, %v789, %v790, %v791, %v792, %v793, %v794
+%v871:i32 = load[r] %v838, %v39
+%v872:i16 = load[r] %v838, %v79
+%v873:i32 = extend.sign %v872
+%v874:i8 = load[r] %v838, %v75
+%v875:i32 = extend.zero %v874
+%v876:ctrl, %v877:mem, %v878:i32<r3>, %v879:i32<r4>, %v880:i64<f1>, %v881:i64<f2>, %v882:i128<vs34>, %v883:i32<r0>, %v884:i32<r5>, %v885:i32<r6>, %v886:i32<r7>, %v887:i32<r8>, %v888:i32<r9>, %v889:i32<r10>, %v890:i8<xer_so>, %v891:i8<cr0>, %v892:i32<r2Save>, %v893:i64<f3>, %v894:i64<f4>, %v895:i64<f5>, %v896:i64<f6>, %v897:i64<f7>, %v898:i64<f8>, %v899:i128<vs35>, %v900:i128<vs36>, %v901:i128<vs37>, %v902:i128<vs38>, %v903:i128<vs39>, %v904:i128<vs40>, %v905:i128<vs41>, %v906:i128<vs42>, %v907:i128<vs43>, %v908:i128<vs44>, %v909:i128<vs45> = call %v837, %v838, %v653, %v17, %v871, %v873, %v875, %v846, %v847, %v848, %v849, %v850, %v841, %v842, %v854, %v855, %v856, %v857, %v858, %v859, %v843, %v860, %v861, %v862, %v863, %v864, %v865, %v866, %v867, %v868, %v869, %v870
 
-%v912:ctrl, %v913:token = region %v834, %v878
-%v914:mem = memphi %v913, %v798, %v879
-%v915:i64<f1> = phi %v913, %v775, %v882
-%v916:i64<f2> = phi %v913, %v776, %v883
-%v917:i128<vs34> = phi %v913, %v783, %v884
-%v918:i32 = load[r] %v914, %v83
-%v919:i1 = icmp.equal %v918, %v6
-%v920:ctrl, %v921:ctrl = if %v912, %v919
-%v922:i32 = load[r] %v914, %v39
-%v923:i32 = load[r] %v914, %v91
-%v924:i32 = int.xor %v922, %v923
-%v925:mem = store[r] %v914, %v39, %v924
-%v926:i32 = load[r] %v914, %v87
-%v927:i32 = int.xor %v924, %v926
-%v928:mem = store[r] %v925, %v39, %v927
+%v910:ctrl, %v911:token = region %v832, %v876
+%v912:mem = memphi %v911, %v798, %v877
+%v913:i64<f1> = phi %v911, %v775, %v880
+%v914:i64<f2> = phi %v911, %v776, %v881
+%v915:i128<vs34> = phi %v911, %v783, %v882
+%v916:i32 = load[r] %v912, %v83
+%v917:i1 = icmp.equal %v916, %v6
+%v918:ctrl, %v919:ctrl = if %v910, %v917
+%v920:i32 = load[r] %v912, %v39
+%v921:i32 = load[r] %v912, %v91
+%v922:i32 = int.xor %v920, %v921
+%v923:mem = store[r] %v912, %v39, %v922
+%v924:i32 = load[r] %v912, %v87
+%v925:i32 = int.xor %v922, %v924
+%v926:mem = store[r] %v923, %v39, %v925
 
-%v929:ctrl, %v930:token = region %v920, %v921
-%v931:mem = memphi %v930, %v914, %v928
-%v932:i32 = load[r] %v914, %v35
-%v933:i32 = load[r] %v931, %v39
-%v934:i8 = load[r] %v914, %v75
-%v935:i32 = extend.zero %v934
-%v936:i32 = int.add %v933, %v935
-%v937:i16 = load[r] %v914, %v79
-%v938:i32 = extend.sign %v937
-%v939:i32 = int.add %v936, %v938
-%v940:mem = store[r] %v931, %v932, %v939
-%v941:i32 = load[r] %v940, %v39
-return %v929, %v940, %v941, %v932, %v915, %v916, %v917
+%v927:ctrl, %v928:token = region %v918, %v919
+%v929:mem = memphi %v928, %v912, %v926
+%v930:i32 = load[r] %v912, %v35
+%v931:i32 = load[r] %v929, %v39
+%v932:i8 = load[r] %v912, %v75
+%v933:i32 = extend.zero %v932
+%v934:i32 = int.add %v931, %v933
+%v935:i16 = load[r] %v912, %v79
+%v936:i32 = extend.sign %v935
+%v937:i32 = int.add %v934, %v936
+%v938:mem = store[r] %v929, %v930, %v937
+%v939:i32 = load[r] %v938, %v39
+return %v927, %v938, %v939, %v930, %v913, %v914, %v915
 
 == call_uses_call_return @0x100109a8
 cfg

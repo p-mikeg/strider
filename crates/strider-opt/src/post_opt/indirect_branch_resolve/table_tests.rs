@@ -1,17 +1,21 @@
+use super::super::tests::{ext_26_6, srl_sltiu};
 use super::*;
-use crate::ReadOnlyMemory;
-use crate::{ConstantFold, KnownBits, LoadForward, OptimizerPipeline, PhiCollapse, RegionCollapse};
+use crate::test_support::{COLLAPSE, STANDARD, at, pipeline, run_passes};
+use crate::{ConstantFold, KnownBits, Optimizer, PhiCollapse, ReadOnlyMemory, RegionCollapse};
 use rsleigh::VnSpace;
 use std::sync::Mutex;
 use strider_ir::node::ValueType;
 use strider_ir::{
     ExtendOp, Function, FunctionBuilder, IRBuilderExt, IRViewer, IRWalker, IntBinaryOp, IntCmpOp,
 };
-use strider_ir_test_utils::IrBuilderEx;
-use strider_ir_test_utils::IrWalkerEx;
 use strider_ir_test_utils::{
-    MockRom, RegisterSet, sp_frame, stack_vn_aarch64 as sp64, stack_vn_x86 as sp32_vn,
+    IrBuilderEx, IrWalkerEx, MockRom, RegisterSet, reg_vn, sp_frame, stack_vn_aarch64 as sp64,
+    stack_vn_x86 as sp32_vn,
 };
+
+/// The folding a stack-table fixture gets before classification: no
+/// `LoadForward`, so the dispatch load survives.
+const FOLD: &[&dyn Optimizer] = &[&ConstantFold, &KnownBits, &PhiCollapse, &RegionCollapse];
 
 pub(super) struct RecordingRom {
     inner: MockRom,
@@ -30,26 +34,67 @@ impl ReadOnlyMemory for RecordingRom {
 fn build_with_target(
     target_inputs: impl FnOnce(&mut FunctionBuilder) -> ValueId,
 ) -> (Function, ValueId) {
-    let mut builder = strider_ir_test_utils::empty_builder().expect("empty_builder");
-    let region = builder.create_region_all().expect("create_region");
-    builder
-        .set_entry_region_all(region)
-        .expect("set_entry_region");
-    builder.set_region(region);
-    builder.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let mut builder = RegisterSet::new()
+        .build_fn_single_region()
+        .expect("build_fn_single_region");
     let target = target_inputs(&mut builder);
     builder
         .build_indirect_branch(target)
         .expect("build_indirect_branch");
     builder.set_lift_addr(None);
-    let function = builder.build().expect("build");
-    (function, target)
+    (builder.build().expect("build"), target)
+}
+
+/// `regs`' function guarded by `if (cond)`, where `guard` builds `cond` and a
+/// carry-over in the entry and `dispatch` the branch target in the region
+/// the edge `taken` names; the other edge returns.  Run through `passes`.
+fn guarded<T>(
+    regs: RegisterSet,
+    guard: impl FnOnce(&mut FunctionBuilder) -> (ValueId, T),
+    taken: bool,
+    dispatch: impl FnOnce(&mut FunctionBuilder, T) -> ValueId,
+    passes: &[&'static dyn Optimizer],
+) -> Function {
+    let mut b = regs.build_fn().unwrap();
+    let [entry, at, exit] = std::array::from_fn(|_| b.create_region_all().unwrap());
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    let (cond, carried) = guard(&mut b);
+    let (t, e) = if taken { (at, exit) } else { (exit, at) };
+    b.build_if(cond, t, e).unwrap();
+    b.set_region(at);
+    let target = dispatch(&mut b, carried);
+    b.build_indirect_branch(target).unwrap();
+    b.set_region(exit);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut function = b.build().unwrap();
+    run_passes(&mut function, passes).unwrap();
+    function
+}
+
+/// `x < k` at `x`'s type.
+fn below(b: &mut FunctionBuilder, x: ValueId, k: u64) -> ValueId {
+    let ty = b.value_type_opt(x).unwrap();
+    let k = b.build_int_const(k, ty).unwrap();
+    b.build_int_cmp_operation(x, k, IntCmpOp::Less, ty).unwrap()
+}
+
+/// The ISA mode and target of an interworking `word`: `word & 1` and
+/// `word & ~1`, at `I32`.
+fn split_mode(b: &mut FunctionBuilder, word: ValueId) -> (ValueId, ValueId) {
+    let i32t = ValueType::int(32);
+    let mode = b
+        .build_const_binop(1u64, word, IntBinaryOp::And, i32t)
+        .unwrap();
+    let target = b
+        .build_const_binop(0xFFFF_FFFEu64, word, IntBinaryOp::And, i32t)
+        .unwrap();
+    (target, mode)
 }
 
 fn sole_indirect_branch(f: &Function) -> NodeId {
-    f.walk()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::IndirectBranch))
-        .expect("placeholder IndirectBranch")
+    f.sole_kind(|k| matches!(k, NodeKind::IndirectBranch))
 }
 
 /// A load the optimiser cannot fold away, so the dispatch genuinely depends
@@ -62,15 +107,14 @@ fn build_non_const_idx(fb: &mut FunctionBuilder) -> ValueId {
 
 /// `Load(base + idx * stride):I32`, the tail every table dispatch ends in.
 fn table_target(fb: &mut FunctionBuilder, idx: ValueId, stride: u64, base: u64) -> ValueId {
-    let stride_c = fb.build_int_const(stride, ValueType::int(32)).unwrap();
+    let i32t = ValueType::int(32);
     let mul = fb
-        .build_int_binary_operation(idx, stride_c, IntBinaryOp::Mul, ValueType::int(32))
+        .build_const_binop(stride, idx, IntBinaryOp::Mul, i32t)
         .expect("mul");
-    let base_c = fb.build_int_const(base, ValueType::int(32)).unwrap();
     let addr = fb
-        .build_int_binary_operation(base_c, mul, IntBinaryOp::Add, ValueType::int(32))
+        .build_const_binop(base, mul, IntBinaryOp::Add, i32t)
         .expect("add");
-    fb.build_load(addr, VnSpace::RAM, ValueType::int(32))
+    fb.build_load(addr, VnSpace::RAM, i32t)
         .expect("dispatch load")
 }
 
@@ -82,9 +126,8 @@ fn masked_table_target(
     stride: u64,
     base: u64,
 ) -> ValueId {
-    let mask_c = fb.build_int_const(mask, ValueType::int(32)).unwrap();
     let masked = fb
-        .build_int_binary_operation(idx, mask_c, IntBinaryOp::And, ValueType::int(32))
+        .build_const_binop(mask, idx, IntBinaryOp::And, ValueType::int(32))
         .expect("and");
     table_target(fb, masked, stride, base)
 }
@@ -101,9 +144,7 @@ fn classify_with(
     f.assume(assumptions);
     let branch = sole_indirect_branch(&f);
     let target = f.indirect_branch_target(branch);
-    SiteClassifier::new(&f, rom)
-        .unwrap()
-        .classify_dispatch_value(branch, target, mode_value)
+    SiteClassifier::new(&f, rom).classify_dispatch_value(branch, target, mode_value)
 }
 
 /// [`classify_with`] adding no claim, with no ISA mode: at the sound floor, so
@@ -113,13 +154,20 @@ fn classify(f: &Function, rom: Option<&dyn ReadOnlyMemory>) -> Option<ResolvedTa
     classify_with(f, rom, &crate::AssumptionOptions::none(), None)
 }
 
+/// A table's arm addresses, `None` for a deferral.
+#[track_caller]
+fn arms(r: Option<ResolvedTargets>) -> Option<Vec<u64>> {
+    match r? {
+        ResolvedTargets::Multiple(ts) => Some(ts.iter().map(|t| t.addr).collect()),
+        other => panic!("expected a table, got {other:?}"),
+    }
+}
+
 #[test]
 fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
     // KnownBits bounds the `& 0x7` index to 8 entries.
     let (g, _target) = build_with_target(|fb| {
-        let raw = fb
-            .build_int_const(0xffff_ffffu64, ValueType::int(32))
-            .unwrap();
+        let raw = build_non_const_idx(fb);
         masked_table_target(fb, raw, 0x7u64, 4u64, 0x4000u64)
     });
     let rom = MockRom::strided(
@@ -129,37 +177,25 @@ fn classify_table_dispatch_with_known_bits_bound_returns_multiple() {
         4,
     );
     let result = classify(&g, Some(&rom));
-    match result {
-        Some(ResolvedTargets::Multiple(ts)) => {
-            assert_eq!(
-                ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-                vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80]
-            );
-        }
-        other => panic!("expected Multiple([0x10..0x80]); got {other:?}"),
-    }
+    assert_eq!(
+        arms(result),
+        Some(vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80])
+    );
 }
 
 #[test]
 fn classify_table_dispatch_duplicate_targets_are_deduped() {
     let (g, _target) = build_with_target(|fb| {
-        let raw = fb
-            .build_int_const(0xffff_ffffu64, ValueType::int(32))
-            .unwrap();
+        let raw = build_non_const_idx(fb);
         masked_table_target(fb, raw, 0x3u64, 4u64, 0x4000u64)
     });
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x10, 0x20], 4);
     let result = classify(&g, Some(&rom));
-    match result {
-        Some(ResolvedTargets::Multiple(ts)) => {
-            assert_eq!(
-                ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-                vec![0x10, 0x20],
-                "four indices producing [0x10,0x20,0x10,0x20] dedup to two targets"
-            );
-        }
-        other => panic!("expected Multiple([0x10, 0x20]); got {other:?}"),
-    }
+    assert_eq!(
+        arms(result),
+        Some(vec![0x10, 0x20]),
+        "four indices producing [0x10,0x20,0x10,0x20] dedup to two targets"
+    );
 }
 
 #[test]
@@ -171,106 +207,129 @@ fn classify_table_dispatch_single_entry_bound_returns_multiple_of_one() {
     });
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
     let result = classify(&g, Some(&rom));
-    match result {
-        Some(ResolvedTargets::Multiple(ts)) => {
-            assert_eq!(
-                ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-                vec![0x10],
-                "bound 1 reads exactly the first entry"
-            );
-        }
-        other => panic!("expected Multiple([0x10]); got {other:?}"),
+    assert_eq!(
+        arms(result),
+        Some(vec![0x10]),
+        "bound 1 reads exactly the first entry"
+    );
+}
+
+/// The deferrals of a masked table: past the entry cap
+/// (`MAX_TABLE_ENTRIES` is 4096) under a ROM that serves every entry, with
+/// no ROM, and with no mask; the cap itself still resolves.
+/// Mutation: drop the cap clause of `index_bound_ok`.
+#[test]
+fn classify_table_dispatch_defers_over_cap_resolves_under_cap() {
+    let entries: Vec<u64> = (0..8192).map(|i| 0x10_0000 + 4 * i).collect();
+    let rom = MockRom::strided(0x4000, 4, entries.clone(), 4);
+    let rows: [(&str, Option<u64>, bool, Option<usize>); 5] = [
+        ("under the cap", Some(0x3), true, Some(4)),
+        ("at the cap", Some(0xFFF), true, Some(4096)),
+        ("over the cap", Some(0x1FFF), true, None),
+        ("no rom", Some(0x3), false, None),
+        ("unbounded index", None, true, None),
+    ];
+    for (name, mask, with_rom, want) in rows {
+        let (g, _) = build_with_target(|fb| {
+            let idx = build_non_const_idx(fb);
+            match mask {
+                Some(m) => masked_table_target(fb, idx, m, 4, 0x4000),
+                None => table_target(fb, idx, 4, 0x4000),
+            }
+        });
+        let rom: Option<&dyn ReadOnlyMemory> = if with_rom { Some(&rom) } else { None };
+        let got: Option<Vec<u64>> = match classify(&g, rom) {
+            Some(ResolvedTargets::Multiple(ts)) => Some(ts.iter().map(|t| t.addr).collect()),
+            None => None,
+            other => panic!("{name}: {other:?}"),
+        };
+        assert!(
+            got.as_deref() == want.map(|n| &entries[..n]),
+            "{name}: {:?} entries",
+            got.map(|ts| ts.len())
+        );
     }
 }
 
-#[test]
-fn classify_table_dispatch_no_rom_returns_none() {
-    // A bounded shape, but with no rom the entries cannot be read.
-    let (g, _target) = build_with_target(|fb| {
-        let raw = fb
-            .build_int_const(0xffff_ffffu64, ValueType::int(32))
-            .unwrap();
-        masked_table_target(fb, raw, 0x3u64, 4u64, 0x4000u64)
-    });
-    let result = classify(&g, None);
-    assert_eq!(result, None);
+/// `zext32(load(0x9000):ty)`, a table cell read as the dispatch would.
+fn cell(fb: &mut FunctionBuilder, ty: ValueType) -> ValueId {
+    let addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
+    let cell = fb.build_load(addr, VnSpace::RAM, ty).expect("cell load");
+    fb.extend_if_needed(cell, ValueType::int(32), ExtendOp::ZeroExtend)
+        .expect("zero-extend the cell to I32")
 }
 
+/// A table ENTRY, scaled or narrowed in ways that keep every value of the
+/// cell, is table DATA, not the index: each row defers under a ROM serving
+/// every address the enumeration would touch, so the deferral can only come
+/// from the width-only exclusion, not a fold failure.
+///
+/// - ARM `tbb`: a byte zero-extended to `I32` with no mask and no guard;
+///   `[0,255]` passes the `hi < type_mask` check against `I32`.
+/// - PowerPC `slwi`, `And(entry << 2, ~3)`: the mask clears only bits the
+///   shift zeroed.
+/// - x86-64 `movzbl %al` after a 32-bit load, `zext(trunc8(load32))`.
+///   Mutation: leave the set unchanged at a truncate in `is_width_only`.
+/// - `entry >> 2`: a right shift is still a scaling of the raw cell.
+/// - `(entry << 2) >> 1`, `entry * 2`: the widening runs BELOW the lossy
+///   shift, so counting only the lossy factor expects 128 values.
 #[test]
-fn classify_table_dispatch_unbounded_idx_returns_none() {
-    // Table-shaped, but `idx` is a raw load with no mask and no dominating
-    // guard, so it must defer.
-    let (g, _target) = build_with_target(|fb| {
-        let some_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
-        let idx = fb
-            .build_load(some_addr, VnSpace::RAM, ValueType::int(32))
-            .expect("load idx");
-        table_target(fb, idx, 4u64, 0x4000u64)
-    });
-    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
-    let result = classify(&g, Some(&rom));
-    assert_eq!(result, None);
-}
-
-/// The entry-count cap: the SAME masked shape resolves at 4 entries and defers
-/// at 8192 (`MAX_TABLE_ENTRIES` is 4096).  Both masked indices pass the
-/// `hi < type_mask` filter, so the cap is the only variable.
-#[test]
-fn classify_table_dispatch_defers_over_cap_resolves_under_cap() {
-    let build = |mask: u64| {
-        build_with_target(move |fb| {
-            let idx_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
-            let idx_raw = fb
-                .build_load(idx_addr, VnSpace::RAM, ValueType::int(32))
-                .expect("load idx");
-            masked_table_target(fb, idx_raw, mask, 4u64, 0x4000u64)
-        })
-    };
-    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
-
-    // Under the cap: 4 entries.
-    let (g, _) = build(0x3);
-    let under = classify(&g, Some(&rom));
-    assert!(
-        matches!(under, Some(ResolvedTargets::Multiple(_))),
-        "a 4-entry table resolves, got {under:?}",
-    );
-
-    // Over the cap: 8192 entries.
-    let (g2, _) = build(0x1FFF);
-    let over = classify(&g2, Some(&rom));
-    assert_eq!(
-        over, None,
-        "an 8192-entry table exceeds MAX_TABLE_ENTRIES and must defer",
-    );
-}
-
-#[test]
-fn classify_table_dispatch_excludes_width_bounded_table_entry_as_index() {
-    // ARM `tbb`: the "index" is itself a table ENTRY, a byte load zero-extended
-    // to I32 with no mask and no guard, so its only bound is width-derived.
-    // [0,255] passes the `hi < type_mask` check against I32, so only the
-    // width-only filter rejects it.  Enumerating it would read 256 cells of
-    // table DATA and emit them as targets.
-    let (g, _target) = build_with_target(|fb| {
-        let byte_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
-        let byte = fb
-            .build_load(byte_addr, VnSpace::RAM, ValueType::int(8))
-            .expect("byte load (table entry)");
-        let idx = fb
-            .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
-            .expect("zero-extend the byte to I32");
-        table_target(fb, idx, 4u64, 0x4000u64)
-    });
-    // Large enough that all 256 sequential reads WOULD fold if the entry were
-    // wrongly taken as the index, so a `None` here can only come from the
-    // width-only exclusion, not a fold failure.
-    let rom = MockRom::strided(0x4000, 4, vec![0x10; 256], 4);
-    let result = classify(&g, Some(&rom));
-    assert_eq!(
-        result, None,
-        "a width-bounded load-derived table entry must be excluded as the index"
-    );
+fn classify_table_dispatch_excludes_a_table_entry_as_the_index() {
+    type Idx = fn(&mut FunctionBuilder) -> ValueId;
+    let rows: [(&str, Idx, u64); 5] = [
+        ("tbb", |fb| cell(fb, ValueType::int(8)), 4),
+        (
+            "identity mask",
+            |fb| {
+                let wide = cell(fb, ValueType::int(8));
+                let up = fb
+                    .build_const_binop(2u64, wide, IntBinaryOp::ShiftLeft, ValueType::int(32))
+                    .unwrap();
+                fb.build_const_binop(0xffff_fffcu64, up, IntBinaryOp::And, ValueType::int(32))
+                    .unwrap()
+            },
+            1,
+        ),
+        (
+            "low byte of a word",
+            |fb| {
+                let word = cell(fb, ValueType::int(32));
+                let byte = fb.truncate_if_needed(word, ValueType::int(8)).unwrap();
+                fb.extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
+                    .unwrap()
+            },
+            4,
+        ),
+        (
+            "right shift",
+            |fb| {
+                let wide = cell(fb, ValueType::int(8));
+                fb.build_const_binop(2u64, wide, IntBinaryOp::ShiftRight, ValueType::int(32))
+                    .unwrap()
+            },
+            4,
+        ),
+        (
+            "widened then shifted",
+            |fb| {
+                let wide = cell(fb, ValueType::int(8));
+                let up = fb
+                    .build_const_binop(2u64, wide, IntBinaryOp::ShiftLeft, ValueType::int(32))
+                    .unwrap();
+                fb.build_const_binop(1u64, up, IntBinaryOp::ShiftRight, ValueType::int(32))
+                    .unwrap()
+            },
+            4,
+        ),
+    ];
+    let rom = MockRom::strided(0x4000, 4, (0..512).map(|i| 0x5000 + i).collect(), 4);
+    for (name, idx, stride) in rows {
+        let (g, _) = build_with_target(|fb| {
+            let idx = idx(fb);
+            table_target(fb, idx, stride, 0x4000)
+        });
+        assert_eq!(classify(&g, Some(&rom)), None, "{name}");
+    }
 }
 
 /// `0x5000 + 4 * zext(load8(base + offset))`, a jump computed from a byte as
@@ -323,45 +382,7 @@ fn a_width_bounded_byte_of_a_table_is_excluded_as_the_index() {
 fn a_width_bounded_byte_through_a_pointer_is_the_index() {
     let (g, _) = build_with_target(|fb| byte_at(fb, false, 0xcb));
     let want: Vec<u64> = (0..256).map(|i| 0x5000 + 4 * i).collect();
-    match classify(&g, None) {
-        Some(ResolvedTargets::Multiple(ts)) => {
-            assert_eq!(ts.iter().map(|t| t.addr).collect::<Vec<_>>(), want);
-        }
-        other => panic!("a field index must resolve; got {other:?}"),
-    }
-}
-
-/// The same table ENTRY scaled the way PowerPC `slwi` lifts, `And(entry << 2,
-/// ~3)`: the mask clears only bits the shift zeroed, so it is still the cell's
-/// 256 values and still defers.
-#[test]
-fn classify_table_dispatch_excludes_width_bounded_entry_under_identity_mask() {
-    let (g, _target) = build_with_target(|fb| {
-        let byte_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
-        let byte = fb
-            .build_load(byte_addr, VnSpace::RAM, ValueType::int(8))
-            .expect("byte load (table entry)");
-        let wide = fb
-            .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
-            .expect("zero-extend the byte to I32");
-        let two = fb.build_int_const(2u64, ValueType::int(32)).unwrap();
-        let shifted = fb
-            .build_int_binary_operation(wide, two, IntBinaryOp::ShiftLeft, ValueType::int(32))
-            .expect("shl");
-        let mask = fb
-            .build_int_const(0xffff_fffcu64, ValueType::int(32))
-            .unwrap();
-        let masked = fb
-            .build_int_binary_operation(shifted, mask, IntBinaryOp::And, ValueType::int(32))
-            .expect("and");
-        table_target(fb, masked, 1u64, 0x4000u64)
-    });
-    let rom = MockRom::strided(0x4000, 4, vec![0x10; 256], 4);
-    assert_eq!(
-        classify(&g, Some(&rom)),
-        None,
-        "a width-bounded entry behind an identity mask must be excluded as the index"
-    );
+    assert_eq!(arms(classify(&g, None)), Some(want));
 }
 
 #[test]
@@ -370,64 +391,29 @@ fn classify_table_dispatch_resolves_guarded_shift_narrowed_loaded_index() {
     // `if (field < 6)`.  The shift alone is a scaling of the raw cell; the GUARD
     // is what narrows it below the cell's 8-value image and makes it a real
     // index.
-    use strider_ir::IntCmpOp;
-    let mut b = strider_ir_test_utils::empty_builder().expect("empty_builder");
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-
-    b.set_region(entry);
-    let byte_addr = b.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
-    let byte = b
-        .build_load(byte_addr, VnSpace::RAM, ValueType::int(8))
-        .expect("byte load");
-    let bwide = b
-        .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
-        .expect("zext byte");
-    let five = b.build_int_const(5u64, ValueType::int(32)).unwrap();
-    let idx = b
-        .build_int_binary_operation(bwide, five, IntBinaryOp::ShiftRight, ValueType::int(32))
-        .expect("byte >> 5 -> [0,7]");
-    let bound_c = b.build_int_const(6u64, ValueType::int(32)).unwrap();
-    let cond = b
-        .build_int_cmp_operation(idx, bound_c, IntCmpOp::Less, ValueType::int(32))
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-
-    b.set_region(dispatch);
-    let loaded = table_target(&mut b, idx, 4u64, 0x4000u64);
-    b.build_indirect_branch(loaded).unwrap();
-
-    b.set_region(exit);
-    b.build_return(None, &[]).unwrap();
-    b.set_lift_addr(None);
-    let mut g = b.build().unwrap();
-    // `index_range` assumes converged IR.
-    {
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut g, &crate::OptCtx::new(None)).unwrap();
-    }
-
+    let g = guarded(
+        RegisterSet::new(),
+        |b| {
+            let byte = cell(b, ValueType::int(8));
+            let idx = b
+                .build_const_binop(5u64, byte, IntBinaryOp::ShiftRight, ValueType::int(32))
+                .expect("byte >> 5 -> [0,7]");
+            (below(b, idx, 6), idx)
+        },
+        true,
+        |b, idx| table_target(b, idx, 4, 0x4000),
+        COLLAPSE,
+    );
     let rom = MockRom::strided(
         0x4000,
         4,
         vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80],
         4,
     );
-    let result = classify(&g, Some(&rom));
-    match result {
-        Some(ResolvedTargets::Multiple(ts)) => {
-            assert_eq!(
-                ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-                vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60]
-            );
-        }
-        other => panic!("a guarded shift-narrowed index must resolve; got {other:?}"),
-    }
+    assert_eq!(
+        arms(classify(&g, Some(&rom))),
+        Some(vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60])
+    );
 }
 
 #[test]
@@ -442,12 +428,7 @@ fn classify_table_dispatch_masked_full_byte_i32_resolves() {
     let entries: Vec<u64> = (0..256).map(|i| 0x5000 + i).collect();
     let rom = MockRom::strided(0x4000, 4, entries.clone(), 4);
     let result = classify(&g, Some(&rom));
-    match result {
-        Some(ResolvedTargets::Multiple(ts)) => {
-            assert_eq!(ts.iter().map(|t| t.addr).collect::<Vec<_>>(), entries)
-        }
-        other => panic!("a masked full-byte I32 index must resolve; got {other:?}"),
-    }
+    assert_eq!(arms(result), Some(entries));
 }
 
 #[test]
@@ -466,10 +447,7 @@ fn decompose_index_picks_shallowest_narrowed_index() {
     let branch = sole_indirect_branch(&g);
     let target_value = g.indirect_branch_target(branch);
     let chain = dominator_chain(&g, target_value).expect("a dispatch cone");
-    match SiteClassifier::new(&g, None)
-        .unwrap()
-        .decompose_index(&chain, branch)
-    {
+    match SiteClassifier::new(&g, None).decompose_index(&chain, branch) {
         Some(hit) => assert_eq!(
             (hit.range.lo(), hit.range.hi(), hit.rebase),
             (0, 7, 0),
@@ -485,16 +463,11 @@ fn classify_table_dispatch_defers_nonloaded_full_byte_index_conservatively() {
     // fills the byte width and is indistinguishable by range from a loaded byte
     // entry, so it defers.  Real byte indices arrive
     // through a load/mask/shift that narrows below the width.
-    let bl = rsleigh::Vn {
-        addr_off: 0x0,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 1,
-    };
-    let mut b = RegisterSet::new().tracked(bl).build_fn().unwrap();
-    let region = b.create_region_all().unwrap();
-    b.set_entry_region_all(region).unwrap();
-    b.set_region(region);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
+    let bl = reg_vn(0x0, 1);
+    let mut b = RegisterSet::new()
+        .tracked(bl)
+        .build_fn_single_region()
+        .unwrap();
     let byte = b.read_variable(&bl).unwrap();
     let idx = b
         .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
@@ -504,30 +477,20 @@ fn classify_table_dispatch_defers_nonloaded_full_byte_index_conservatively() {
     b.set_lift_addr(None);
     let function = b.build().unwrap();
 
-    let entries: Vec<u64> = (0..256).map(|i| 0x5000 + i).collect();
-    let rom = MockRom::strided(0x4000, 4, entries.clone(), 4);
-    let result = classify(&function, Some(&rom));
-    let _ = entries;
+    let rom = MockRom::strided(0x4000, 4, (0..256).map(|i| 0x5000 + i).collect(), 4);
     assert_eq!(
-        result, None,
+        classify(&function, Some(&rom)),
+        None,
         "a width-filling byte index is conservatively deferred (indistinguishable from an entry by range)"
     );
 }
 
-/// A bounded operand under a constant offset enumerates only while the offset
-/// keeps its range one unsigned interval: `(x & 7) + 1` names slots 1..8, while
-/// `(x & 7) - 2` reaches below the table, where only guards the classifier
-/// could not read would stop it, so it defers.
 /// `(tbl[i] & m) + base`: the mask puts the CELL's range below its load width,
 /// so the cell reads as a narrowed index. Enumerating it seats one arm per
 /// masked value where the runtime has one per `i`.
 #[test]
 fn classify_table_dispatch_masked_cell_prefers_the_index_in_its_address() {
-    let idx_var = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
+    let idx_var = reg_vn(0x10, 4);
     let mut b = RegisterSet::new()
         .tracked(idx_var)
         .build_fn_single_region()
@@ -574,24 +537,17 @@ fn classify_table_dispatch_masked_cell_prefers_the_index_in_its_address() {
     let function = b.build().unwrap();
 
     let rom = MockRom::strided(0x4000, 2, vec![0, 6, 12, 18], 2);
-    match classify(&function, Some(&rom)) {
-        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
-            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-            vec![0x5000, 0x5006, 0x500c, 0x5012]
-        ),
-        other => panic!("the cell's address holds the index; got {other:?}"),
-    }
+    assert_eq!(
+        arms(classify(&function, Some(&rom))),
+        Some(vec![0x5000, 0x5006, 0x500c, 0x5012])
+    );
 }
 
 /// The same narrowing mask over a cell the evaluator CANNOT fold: nothing
 /// deeper is an index, so the masked value is the one to enumerate.
 #[test]
 fn classify_table_dispatch_masked_opaque_cell_stays_the_index() {
-    let ptr_var = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
+    let ptr_var = reg_vn(0x10, 8);
     let mut b = RegisterSet::new()
         .tracked(ptr_var)
         .build_fn_single_region()
@@ -611,13 +567,10 @@ fn classify_table_dispatch_masked_opaque_cell_stays_the_index() {
     let function = b.build().unwrap();
 
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
-    match classify(&function, Some(&rom)) {
-        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
-            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-            vec![0x10, 0x20, 0x30, 0x40]
-        ),
-        other => panic!("a masked opaque cell is the index; got {other:?}"),
-    }
+    assert_eq!(
+        arms(classify(&function, Some(&rom))),
+        Some(vec![0x10, 0x20, 0x30, 0x40])
+    );
 }
 
 /// `switch (x)` over a negative case base: gcc and clang guard `x + k` and
@@ -625,60 +578,35 @@ fn classify_table_dispatch_masked_opaque_cell_stays_the_index() {
 /// nowhere in the dispatch cone and only the sibling carries the bound.
 #[test]
 fn classify_table_dispatch_resolves_a_bound_held_by_a_guarded_sibling() {
-    use strider_ir::IntCmpOp;
-    let idx_var = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-
-    b.set_region(entry);
-    let idx_at_entry = b.read_variable(&idx_var).unwrap();
-    let two = b.build_int_const(2u64, ValueType::int(32)).unwrap();
-    // `idx + 2 < 4`, so idx is one of -2, -1, 0, 1.
-    let shifted = b
-        .build_int_binary_operation(idx_at_entry, two, IntBinaryOp::Add, ValueType::int(32))
-        .unwrap();
-    let bound_c = b.build_int_const(4u64, ValueType::int(32)).unwrap();
-    let cond = b
-        .build_int_cmp_operation(shifted, bound_c, IntCmpOp::Less, ValueType::int(32))
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-
-    b.set_region(dispatch);
-    let idx_in_dispatch = b.read_variable(&idx_var).unwrap();
-    // The base carries the +2 the guard sits on: 0x4008 + 4*idx walks
-    // 0x4000..0x400c over those four values.
-    let loaded = table_target(&mut b, idx_in_dispatch, 4u64, 0x4008u64);
-    b.build_indirect_branch(loaded).unwrap();
-
-    b.set_region(exit);
-    b.build_return(None, &[]).unwrap();
-    b.set_lift_addr(None);
-
-    let mut function = b.build().unwrap();
-    {
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut function, &crate::OptCtx::new(None)).unwrap();
-    }
-
+    let idx_var = reg_vn(0x10, 4);
+    let function = guarded(
+        RegisterSet::new().tracked(idx_var),
+        |b| {
+            let idx = b.read_variable(&idx_var).unwrap();
+            // `idx + 2 < 4`, so idx is one of -2, -1, 0, 1.
+            let shifted = at(b, idx, 2, ValueType::int(32)).unwrap();
+            (below(b, shifted, 4), ())
+        },
+        true,
+        |b, ()| {
+            let idx = b.read_variable(&idx_var).unwrap();
+            // The base carries the +2 the guard sits on: 0x4008 + 4*idx walks
+            // 0x4000..0x400c over those four values.
+            table_target(b, idx, 4, 0x4008)
+        },
+        COLLAPSE,
+    );
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
-    match classify(&function, Some(&rom)) {
-        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
-            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-            vec![0x10, 0x20, 0x30, 0x40]
-        ),
-        other => panic!("a guarded sibling must bound the index; got {other:?}"),
-    }
+    assert_eq!(
+        arms(classify(&function, Some(&rom))),
+        Some(vec![0x10, 0x20, 0x30, 0x40])
+    );
 }
 
+/// A bounded operand under a constant offset enumerates only while the offset
+/// keeps its range one unsigned interval: `(x & 7) + 1` names slots 1..8, while
+/// `(x & 7) - 2` reaches below the table, where only guards the classifier
+/// could not read would stop it, so it defers.
 #[test]
 fn classify_table_dispatch_defers_an_offset_that_wraps_the_bounded_operand() {
     let build = |offset: u64| {
@@ -698,13 +626,10 @@ fn classify_table_dispatch_defers_an_offset_that_wraps_the_bounded_operand() {
     let rom = MockRom::strided(0x3ff8, 4, (0..16).map(|i| 0x100 + i).collect(), 4);
 
     let (g, _) = build(1);
-    match classify(&g, Some(&rom)) {
-        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
-            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-            (3..11).map(|i| 0x100 + i).collect::<Vec<_>>()
-        ),
-        other => panic!("an offset that keeps the range resolves; got {other:?}"),
-    }
+    assert_eq!(
+        arms(classify(&g, Some(&rom))),
+        Some((3..11).map(|i| 0x100 + i).collect::<Vec<_>>())
+    );
 
     let (g, _) = build(0xffff_fffe);
     assert_eq!(classify(&g, Some(&rom)), None);
@@ -713,157 +638,38 @@ fn classify_table_dispatch_defers_an_offset_that_wraps_the_bounded_operand() {
 #[test]
 fn classify_table_dispatch_with_if_guard_bound_returns_multiple() {
     // The guard path: idx is an unmasked register read bounded only by a
-    // dominating `if (idx < 4)`.
-    use strider_ir::IntCmpOp;
-    let idx_var = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-
-    b.set_region(entry);
-    let idx_at_entry = b.read_variable(&idx_var).unwrap();
-    let bound_c = b.build_int_const(4u64, ValueType::int(32)).unwrap();
-    let cond = b
-        .build_int_cmp_operation(idx_at_entry, bound_c, IntCmpOp::Less, ValueType::int(32))
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-
-    b.set_region(dispatch);
-    let idx_in_dispatch = b.read_variable(&idx_var).unwrap();
-    let loaded = table_target(&mut b, idx_in_dispatch, 4u64, 0x4000u64);
-    b.build_indirect_branch(loaded).unwrap();
-
-    b.set_region(exit);
-    b.build_return(None, &[]).unwrap();
-    b.set_lift_addr(None);
-
-    let mut function = b.build().unwrap();
-    // `index_range` assumes converged IR, so collapse this fixture's
-    // single-predecessor dispatch region and trivial phis first; otherwise the
-    // `idx < 4` guard never reaches the dispatch index.
-    {
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut function, &crate::OptCtx::new(None)).unwrap();
-    }
-
+    // dominating `if (idx < 4)`.  `index_range` assumes converged IR, so the
+    // single-predecessor dispatch region and trivial phis collapse first;
+    // otherwise the guard never reaches the dispatch index.
+    let idx_var = reg_vn(0x10, 4);
+    let function = guarded(
+        RegisterSet::new().tracked(idx_var),
+        |b| {
+            let idx = b.read_variable(&idx_var).unwrap();
+            (below(b, idx, 4), ())
+        },
+        true,
+        |b, ()| {
+            let idx = b.read_variable(&idx_var).unwrap();
+            table_target(b, idx, 4, 0x4000)
+        },
+        COLLAPSE,
+    );
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
-    let result = classify(&function, Some(&rom));
-    match result {
-        Some(ResolvedTargets::Multiple(ts)) => {
-            assert_eq!(
-                ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-                vec![0x10, 0x20, 0x30, 0x40]
-            );
-        }
-        other => panic!("expected Multiple([0x10..0x40]); got {other:?}"),
-    }
+    assert_eq!(
+        arms(classify(&function, Some(&rom))),
+        Some(vec![0x10, 0x20, 0x30, 0x40])
+    );
 }
 
-#[test]
-fn classify_table_dispatch_diamond_both_paths_guarded_resolves() {
-    // Both paths guard `idx < 4` and both true edges feed the SAME 2-pred
-    // merge, so no single guard node dominates the dispatch.  The bound is
-    // still proven: each edge carries it for the arm arriving on it.
-    //
-    //   entry  -> if (dummy)   -> path_a, path_b
-    //   path_a -> if (idx < 4) -> dispatch, exit_a
-    //   path_b -> if (idx < 4) -> dispatch, exit_b
-    use strider_ir::IntCmpOp;
-    let idx_var = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
+/// `idx` read from a register, dispatched through a four-entry table in a
+/// region both arms of `if (idx == 0)` reach: `path_a` under `if (idx < 4)`,
+/// `path_b` under the same guard when `guard_b`, unconditionally otherwise.
+fn diamond(guard_b: bool) -> Function {
+    let idx_var = reg_vn(0x10, 4);
     let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
-    let entry = b.create_region_all().unwrap();
-    let path_a = b.create_region_all().unwrap();
-    let path_b = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit_a = b.create_region_all().unwrap();
-    let exit_b = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-
-    b.set_region(entry);
-    let idx_e = b.read_variable(&idx_var).unwrap();
-    let zero = b.build_int_const(0u64, ValueType::int(32)).unwrap();
-    let dummy = b
-        .build_int_cmp_operation(idx_e, zero, IntCmpOp::Equal, ValueType::int(32))
-        .unwrap();
-    b.build_if(dummy, path_a, path_b).unwrap();
-
-    b.set_region(path_a);
-    let idx_a = b.read_variable(&idx_var).unwrap();
-    let four_a = b.build_int_const(4u64, ValueType::int(32)).unwrap();
-    let cond_a = b
-        .build_int_cmp_operation(idx_a, four_a, IntCmpOp::Less, ValueType::int(32))
-        .unwrap();
-    b.build_if(cond_a, dispatch, exit_a).unwrap();
-
-    b.set_region(path_b);
-    let idx_b = b.read_variable(&idx_var).unwrap();
-    let four_b = b.build_int_const(4u64, ValueType::int(32)).unwrap();
-    let cond_b = b
-        .build_int_cmp_operation(idx_b, four_b, IntCmpOp::Less, ValueType::int(32))
-        .unwrap();
-    b.build_if(cond_b, dispatch, exit_b).unwrap();
-
-    b.set_region(dispatch);
-    let idx_d = b.read_variable(&idx_var).unwrap();
-    let loaded = table_target(&mut b, idx_d, 4u64, 0x4000u64);
-    b.build_indirect_branch(loaded).unwrap();
-
-    b.set_region(exit_a);
-    b.build_return(None, &[]).unwrap();
-    b.set_region(exit_b);
-    b.build_return(None, &[]).unwrap();
-    b.set_lift_addr(None);
-
-    let function = b.build().unwrap();
-
-    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
-    match classify(&function, Some(&rom)) {
-        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
-            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-            vec![0x10, 0x20, 0x30, 0x40],
-            "exactly the four table entries, not a fifth read past them",
-        ),
-        other => panic!("both edges bound the index, so the site resolves; got {other:?}"),
-    }
-}
-
-#[test]
-fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
-    // Only ONE incoming path guards `idx < 4`; the other is unconditional.  The
-    // index can exceed 4 there, so reading 4 entries would be out of bounds and
-    // the dispatch must defer.
-    //
-    //   entry  -> If(flag)     -> path_a, path_b
-    //   path_a -> If(idx < 4)  -> dispatch, exit_a   [guarded]
-    //   path_b -> dispatch                           [idx UNCONSTRAINED]
-    //
-    // The guard's true successor IS `dispatch`, so relying on reflexive
-    // dominance there makes both phi arms look bounded and yields an
-    // out-of-bounds `Multiple`.
-    use strider_ir::IntCmpOp;
-    let idx_var = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let mut b = RegisterSet::new().tracked(idx_var).build_fn().unwrap();
-    let entry = b.create_region_all().unwrap();
-    let path_a = b.create_region_all().unwrap();
-    let path_b = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit_a = b.create_region_all().unwrap();
+    let [entry, path_a, path_b, dispatch, exit_a, exit_b] =
+        std::array::from_fn(|_| b.create_region_all().unwrap());
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
@@ -874,35 +680,57 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
         .unwrap();
     b.build_if(flag, path_a, path_b).unwrap();
 
+    let guard = |b: &mut FunctionBuilder, exit| {
+        let idx = b.read_variable(&idx_var).unwrap();
+        let cond = below(b, idx, 4);
+        b.build_if(cond, dispatch, exit).unwrap();
+    };
     b.set_region(path_a);
-    let idx_a = b.read_variable(&idx_var).unwrap();
-    let four_a = b.build_int_const(4u64, ValueType::int(32)).unwrap();
-    let cond_a = b
-        .build_int_cmp_operation(idx_a, four_a, IntCmpOp::Less, ValueType::int(32))
-        .unwrap();
-    b.build_if(cond_a, dispatch, exit_a).unwrap();
-
+    guard(&mut b, exit_a);
     b.set_region(path_b);
-    b.build_branch(dispatch).unwrap();
+    if guard_b {
+        guard(&mut b, exit_b);
+    } else {
+        b.build_branch(dispatch).unwrap();
+    }
 
-    // The load indexes through the phi of idx from both paths.
     b.set_region(dispatch);
     let idx_d = b.read_variable(&idx_var).unwrap();
-    let loaded = table_target(&mut b, idx_d, 4u64, 0x4000u64);
+    let loaded = table_target(&mut b, idx_d, 4, 0x4000);
     b.build_indirect_branch(loaded).unwrap();
 
     b.set_region(exit_a);
     b.build_return(None, &[]).unwrap();
+    if guard_b {
+        b.set_region(exit_b);
+        b.build_return(None, &[]).unwrap();
+    }
     b.set_lift_addr(None);
+    b.build().unwrap()
+}
 
-    let function = b.build().unwrap();
-
+#[test]
+fn classify_table_dispatch_diamond_both_paths_guarded_resolves() {
+    // Both paths guard `idx < 4` and both true edges feed the SAME 2-pred
+    // merge, so no single guard node dominates the dispatch.  The bound is
+    // still proven: each edge carries it for the arm arriving on it.
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
-    let result = classify(&function, Some(&rom));
-    assert!(
-        result.is_none(),
-        "one-path-unguarded dispatch must NOT resolve (would be OOB); got {result:?}"
+    assert_eq!(
+        arms(classify(&diamond(true), Some(&rom))),
+        Some(vec![0x10, 0x20, 0x30, 0x40]),
+        "exactly the four table entries, not a fifth read past them"
     );
+}
+
+#[test]
+fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
+    // Only ONE incoming path guards `idx < 4`; the other is unconditional.  The
+    // index can exceed 4 there, so reading 4 entries would be out of bounds and
+    // the dispatch must defer.  The guard's true successor IS `dispatch`, so
+    // relying on reflexive dominance there makes both phi arms look bounded
+    // and yields an out-of-bounds `Multiple`.
+    let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
+    assert_eq!(classify(&diamond(false), Some(&rom)), None);
 }
 
 /// A loaded value fed DIRECTLY to the branch, with no address arithmetic, but
@@ -915,45 +743,22 @@ fn classify_table_dispatch_one_path_unguarded_does_not_resolve() {
 /// safety margin holds.
 #[test]
 fn classify_table_dispatch_guarded_direct_load_target() {
-    use strider_ir::IntCmpOp;
-    let mut b = strider_ir_test_utils::empty_builder().unwrap();
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-
-    b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-    let load_addr = b.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
-    let loaded = b
-        .build_load(load_addr, VnSpace::RAM, ValueType::int(32))
-        .unwrap();
-    let four = b.build_int_const(4u64, ValueType::int(32)).unwrap();
-    let cond = b
-        .build_int_cmp_operation(loaded, four, IntCmpOp::Less, ValueType::int(32))
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-
-    // The SAME loaded value goes straight to the branch.
-    b.set_region(dispatch);
-    b.build_indirect_branch(loaded).unwrap();
-
-    b.set_region(exit);
-    b.build_return(None, &[]).unwrap();
-    b.set_lift_addr(None);
-
-    let mut function = b.build().unwrap();
-    {
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut function, &crate::OptCtx::new(None)).unwrap();
-    }
-    let result = classify(&function, None);
+    let function = guarded(
+        RegisterSet::new(),
+        |b| {
+            let loaded = build_non_const_idx(b);
+            (below(b, loaded, 4), loaded)
+        },
+        true,
+        // The SAME loaded value goes straight to the branch.
+        |_, loaded| loaded,
+        COLLAPSE,
+    );
     assert_eq!(
-        result, None,
+        classify(&function, None),
+        None,
         "a guarded direct-load target must not enumerate its index values as \
-         branch targets (got {result:?})"
+         branch targets"
     );
 }
 
@@ -965,85 +770,51 @@ fn classify_table_dispatch_guarded_direct_load_target() {
 /// least one value and is rejected.
 #[test]
 fn classify_table_dispatch_decoy_offpath_value_not_enumerated() {
-    use strider_ir::IntCmpOp;
-    let idx_var = rsleigh::Vn {
-        addr_off: 0x10,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let decoy_var = rsleigh::Vn {
-        addr_off: 0x20,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 4,
-    };
-    let mut b = RegisterSet::new()
-        .tracked(idx_var)
-        .tracked(decoy_var)
-        .build_fn()
-        .unwrap();
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-
+    let idx_var = reg_vn(0x10, 4);
+    let decoy_var = reg_vn(0x20, 4);
     // Guard the DECOY, not the real index.
-    b.set_region(entry);
-    let decoy = b.read_variable(&decoy_var).unwrap();
-    let four = b.build_int_const(4u64, ValueType::int(32)).unwrap();
-    let cond = b
-        .build_int_cmp_operation(decoy, four, IntCmpOp::Less, ValueType::int(32))
-        .unwrap();
-    b.build_if(cond, dispatch, exit).unwrap();
-
-    b.set_region(dispatch);
-    let idx = b.read_variable(&idx_var).unwrap();
-    let loaded = masked_table_target(&mut b, idx, 0x3u64, 4u64, 0x4000u64);
-    b.build_indirect_branch(loaded).unwrap();
-
-    b.set_region(exit);
-    b.build_return(None, &[]).unwrap();
-    b.set_lift_addr(None);
-
-    let mut function = b.build().unwrap();
-    {
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::ConstantFold::new());
-        p.add(crate::KnownBits);
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut function, &crate::OptCtx::new(None)).unwrap();
-    }
+    let function = guarded(
+        RegisterSet::new().tracked(idx_var).tracked(decoy_var),
+        |b| {
+            let decoy = b.read_variable(&decoy_var).unwrap();
+            (below(b, decoy, 4), ())
+        },
+        true,
+        |b, ()| {
+            let idx = b.read_variable(&idx_var).unwrap();
+            masked_table_target(b, idx, 0x3, 4, 0x4000)
+        },
+        FOLD,
+    );
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
-    let result = classify(&function, Some(&rom));
-    // Substituting the decoy cannot change the dispatch, so either outcome is
-    // sound as long as no decoy-derived target escapes.
-    match result {
-        None => { /* fail-closed defer is sound */ }
-        Some(ResolvedTargets::Multiple(ts)) => {
-            assert_eq!(
-                ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-                vec![0x10, 0x20, 0x30, 0x40],
-                "only the real table targets may be emitted; no decoy-derived edges"
-            );
-        }
-        other => panic!("unexpected: {other:?}"),
-    }
+    // Substituting the decoy cannot change the dispatch: the real index
+    // resolves, and no decoy-derived target escapes.
+    assert_eq!(
+        arms(classify(&function, Some(&rom))),
+        Some(vec![0x10, 0x20, 0x30, 0x40])
+    );
 }
 
 fn finish_stack_array(mut fg: strider_ir::Function) -> (strider_ir::Function, ValueId) {
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
-    p.add(KnownBits);
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    p.run(&mut fg, &crate::OptCtx::new(None)).unwrap();
-    let load = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Load(_)))
-        .expect("Load survives; LoadForward is out of this pipeline");
+    run_passes(&mut fg, FOLD).unwrap();
+    let load = fg.first_kind(|k| matches!(k, NodeKind::Load(_)));
     let load_value = fg.node_outputs_exact::<1>(load).unwrap()[0];
     (fg, load_value)
+}
+
+/// The argument register a stack-array fixture indexes by.
+fn stack_arg() -> rsleigh::Vn {
+    reg_vn(0x38, 8)
+}
+
+/// A single-region 64-bit stack frame tracking [`stack_arg`], and its SP.
+fn stack_frame() -> (FunctionBuilder, ValueId) {
+    let b = sp_frame(sp64())
+        .tracked(stack_arg())
+        .build_fn_single_region()
+        .unwrap();
+    let sp_val = b.read_variable(&sp64()).unwrap();
+    (b, sp_val)
 }
 
 /// `frame_base` is the SP-derived base for every store and the load address:
@@ -1072,10 +843,7 @@ fn wire_stack_stores(
 ) {
     for (i, &target_addr) in targets.iter().enumerate() {
         let off = base_offset + (i as i64) * (stride as i64);
-        let off_const = b.build_int_const(off as u64, ValueType::int(64)).unwrap();
-        let addr = b
-            .build_int_binary_operation(frame_base, off_const, IntBinaryOp::Add, ValueType::int(64))
-            .unwrap();
+        let addr = at(b, frame_base, off, ValueType::int(64)).unwrap();
         let target = b.build_int_const(target_addr, ValueType::int(64)).unwrap();
         b.build_store(addr, target, rsleigh::VnSpace::RAM).unwrap();
     }
@@ -1091,52 +859,34 @@ fn wire_stack_dispatch(
     b: &mut strider_ir::FunctionBuilder,
     arg_vn: rsleigh::Vn,
 ) {
+    let (i32t, i64t) = (ValueType::int(32), ValueType::int(64));
     let arg_val = b.read_variable(&arg_vn).unwrap();
     let arg_u32 = strider_ir_test_utils::sentinel_node(
         b.function_mut(),
         NodeKind::Truncate,
         [arg_val],
-        [strider_ir::node::ValueKind::Typed(ValueType::int(32))],
+        [strider_ir::node::ValueKind::Typed(i32t)],
     );
     let arg_u32_value = b.function().node_outputs_exact::<1>(arg_u32).unwrap()[0];
-    let mask = b
-        .build_int_const(entries as u64 - 1, ValueType::int(32))
-        .unwrap();
     let masked = b
-        .build_int_binary_operation(arg_u32_value, mask, IntBinaryOp::And, ValueType::int(32))
+        .build_const_binop(entries as u64 - 1, arg_u32_value, IntBinaryOp::And, i32t)
         .unwrap();
     let idx_u64 = strider_ir_test_utils::sentinel_node(
         b.function_mut(),
         NodeKind::Extend(ExtendOp::ZeroExtend),
         [masked],
-        [strider_ir::node::ValueKind::Typed(ValueType::int(64))],
+        [strider_ir::node::ValueKind::Typed(i64t)],
     );
     let idx_u64_value = b.function().node_outputs_exact::<1>(idx_u64).unwrap()[0];
-    let stride_const = b.build_int_const(stride, ValueType::int(64)).unwrap();
     let idx_scaled = b
-        .build_int_binary_operation(
-            idx_u64_value,
-            stride_const,
-            IntBinaryOp::Mul,
-            ValueType::int(64),
-        )
+        .build_const_binop(stride, idx_u64_value, IntBinaryOp::Mul, i64t)
         .unwrap();
-    let base_const = b
-        .build_int_const(base_offset as u64, ValueType::int(64))
-        .unwrap();
-    let sp_plus_base = b
-        .build_int_binary_operation(frame_base, base_const, IntBinaryOp::Add, ValueType::int(64))
-        .unwrap();
+    let sp_plus_base = at(b, frame_base, base_offset, i64t).unwrap();
     let load_addr = b
-        .build_int_binary_operation(
-            sp_plus_base,
-            idx_scaled,
-            IntBinaryOp::Add,
-            ValueType::int(64),
-        )
+        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, i64t)
         .unwrap();
     let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(64))
+        .build_load(load_addr, rsleigh::VnSpace::RAM, i64t)
         .unwrap();
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
@@ -1147,20 +897,9 @@ fn build_stack_array(
     base_offset: i64,
     stride: u64,
 ) -> (strider_ir::Function, ValueId) {
-    let sp = sp64();
-    let arg_vn = rsleigh::Vn {
-        addr_off: 0x38,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let mut b = sp_frame(sp)
-        .tracked(arg_vn)
-        .build_fn_single_region()
-        .unwrap();
-    let sp_val = b.read_variable(&sp).unwrap();
-    wire_stack_array(targets, base_offset, stride, sp_val, &mut b, arg_vn);
-    let fg = b.build().unwrap();
-    finish_stack_array(fg)
+    let (mut b, sp_val) = stack_frame();
+    wire_stack_array(targets, base_offset, stride, sp_val, &mut b, stack_arg());
+    finish_stack_array(b.build().unwrap())
 }
 
 /// Like `build_stack_array` but with an alignment-masked frame base, which
@@ -1170,41 +909,45 @@ fn build_stack_array_aligned(
     base_offset: i64,
     stride: u64,
 ) -> (strider_ir::Function, ValueId) {
-    let sp = sp64();
-    let arg_vn = rsleigh::Vn {
-        addr_off: 0x38,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let mut b = sp_frame(sp)
-        .tracked(arg_vn)
-        .build_fn_single_region()
-        .unwrap();
-    let sp_val = b.read_variable(&sp).unwrap();
-    let align_mask = b
-        .build_int_const(0xFFFF_FFFF_FFFF_FFF0u64, ValueType::int(64))
-        .unwrap();
+    let (mut b, sp_val) = stack_frame();
     let frame_base = b
-        .build_int_binary_operation(sp_val, align_mask, IntBinaryOp::And, ValueType::int(64))
+        .build_const_binop(!0xFu64, sp_val, IntBinaryOp::And, ValueType::int(64))
         .unwrap();
-    wire_stack_array(targets, base_offset, stride, frame_base, &mut b, arg_vn);
-    let fg = b.build().unwrap();
-    finish_stack_array(fg)
+    wire_stack_array(
+        targets,
+        base_offset,
+        stride,
+        frame_base,
+        &mut b,
+        stack_arg(),
+    );
+    finish_stack_array(b.build().unwrap())
 }
 
+/// A two-entry stack label array resolves to its labels: off the bare SP,
+/// off an `And`-aligned one (the evaluator must take the masked base as an
+/// SP terminal so the store probe matches the prologue stores), and with
+/// the dispatch load below a `MemPhi` (the set must not move when the map
+/// crosses the join).
 #[test]
 fn classify_table_dispatch_two_stack_targets_resolves() {
+    type Build = fn(&[u64], i64, u64) -> (Function, ValueId);
     let targets = [0x401190u64, 0x401180u64];
-    let (fg, _load_value) = build_stack_array(&targets, -24, 8);
-    let result = classify(&fg, None);
-    let mut expected = targets.to_vec();
-    expected.sort_unstable();
-    assert_eq!(
-        result,
-        Some(ResolvedTargets::table(
-            expected.into_iter().map(strider_cfg::ResolvedTarget::from)
-        ))
-    );
+    let rows: [(&str, Build); 3] = [
+        ("bare", build_stack_array),
+        ("aligned", build_stack_array_aligned),
+        ("across a MemPhi", build_stack_array_across_mem_phi),
+    ];
+    for (name, build) in rows {
+        let (fg, _load_value) = build(&targets, -24, 8);
+        assert_eq!(
+            classify(&fg, None),
+            Some(ResolvedTargets::table(
+                targets.map(strider_cfg::ResolvedTarget::from)
+            )),
+            "{name}"
+        );
+    }
 }
 
 /// A stack label array whose dispatch load sits below a `MemPhi`: at a join the
@@ -1215,17 +958,10 @@ fn build_stack_array_across_mem_phi(
     base_offset: i64,
     stride: u64,
 ) -> (strider_ir::Function, ValueId) {
-    use strider_ir::IntCmpOp;
     let sp = sp64();
-    let arg_vn = rsleigh::Vn {
-        addr_off: 0x38,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
+    let arg_vn = stack_arg();
     let mut b = sp_frame(sp).tracked(arg_vn).build_fn().unwrap();
-    let entry = b.create_region_all().unwrap();
-    let arm = b.create_region_all().unwrap();
-    let join = b.create_region_all().unwrap();
+    let [entry, arm, join] = std::array::from_fn(|_| b.create_region_all().unwrap());
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
@@ -1242,12 +978,7 @@ fn build_stack_array_across_mem_phi(
     // the `MemPhi` survives while both still reach the label stores.
     b.set_region(arm);
     let sp_arm = b.read_variable(&sp).unwrap();
-    let spill_off = b
-        .build_int_const((base_offset - 8) as u64, ValueType::int(64))
-        .unwrap();
-    let spill_addr = b
-        .build_int_binary_operation(sp_arm, spill_off, IntBinaryOp::Add, ValueType::int(64))
-        .unwrap();
+    let spill_addr = at(&mut b, sp_arm, base_offset - 8, ValueType::int(64)).unwrap();
     let junk = b.build_int_const(0xDEADu64, ValueType::int(64)).unwrap();
     b.build_store(spill_addr, junk, rsleigh::VnSpace::RAM)
         .unwrap();
@@ -1256,7 +987,6 @@ fn build_stack_array_across_mem_phi(
     b.set_region(join);
     let sp_join = b.read_variable(&sp).unwrap();
     wire_stack_dispatch(targets.len(), base_offset, stride, sp_join, &mut b, arg_vn);
-    b.set_lift_addr(None);
 
     let (fg, load_value) = finish_stack_array(b.build().unwrap());
     assert!(
@@ -1264,22 +994,6 @@ fn build_stack_array_across_mem_phi(
         "the dispatch load must sit below a MemPhi for this to test the fallback"
     );
     (fg, load_value)
-}
-
-/// The resolved set must not move when the map has to cross the join.
-#[test]
-fn classify_table_dispatch_across_mem_phi_resolves() {
-    let targets = [0x401190u64, 0x401180u64];
-    let (fg, _load_value) = build_stack_array_across_mem_phi(&targets, -24, 8);
-    let result = classify(&fg, None);
-    let mut expected = targets.to_vec();
-    expected.sort_unstable();
-    assert_eq!(
-        result,
-        Some(ResolvedTargets::table(
-            expected.into_iter().map(strider_cfg::ResolvedTarget::from)
-        ))
-    );
 }
 
 fn mem_chain_crosses_phi(fg: &Function, load: NodeId) -> bool {
@@ -1295,24 +1009,6 @@ fn mem_chain_crosses_phi(fg: &Function, load: NodeId) -> bool {
     false
 }
 
-#[test]
-fn classify_table_dispatch_aligned_stack_resolves() {
-    // The evaluator must recognise the And-masked base as an SP terminal, so
-    // the load address resolves to SP-relative and `reaching_store` can match
-    // the prologue stores.
-    let targets = [0x401190u64, 0x401180u64];
-    let (fg, _load_value) = build_stack_array_aligned(&targets, -24, 8);
-    let result = classify(&fg, None);
-    let mut expected = targets.to_vec();
-    expected.sort_unstable();
-    assert_eq!(
-        result,
-        Some(ResolvedTargets::table(
-            expected.into_iter().map(strider_cfg::ResolvedTarget::from)
-        ))
-    );
-}
-
 /// A global store between the prologue stores and the dispatch load is exactly
 /// what [`AssumptionOptions::stack_global_disjoint`](crate::AssumptionOptions)
 /// governs: set, it proves the store disjoint from the SP-rooted array and
@@ -1321,21 +1017,9 @@ fn classify_table_dispatch_aligned_stack_resolves() {
 /// Both assertions run on copies of the SAME graph.
 #[test]
 fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
-    let sp = sp64();
-    let arg_vn = rsleigh::Vn {
-        addr_off: 0x38,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let mut b = sp_frame(sp)
-        .tracked(arg_vn)
-        .build_fn_single_region()
-        .unwrap();
-    let sp_val = b.read_variable(&sp).unwrap();
+    let (mut b, sp_val) = stack_frame();
     let targets = [0x401190u64, 0x401180u64];
-    let base_offset: i64 = -24;
-    let stride: u64 = 8;
-    wire_stack_stores(&targets, base_offset, stride, sp_val, &mut b);
+    wire_stack_stores(&targets, -24, 8, sp_val, &mut b);
     // A constant absolute address, unrelated to the stack pointer.
     let global_addr = b
         .build_int_const(0x0060_0000u64, ValueType::int(64))
@@ -1345,7 +1029,7 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
         .unwrap();
     b.build_store(global_addr, global_val, rsleigh::VnSpace::RAM)
         .unwrap();
-    wire_stack_dispatch(targets.len(), base_offset, stride, sp_val, &mut b, arg_vn);
+    wire_stack_dispatch(targets.len(), -24, 8, sp_val, &mut b, stack_arg());
     let (fg, _load_value) = finish_stack_array(b.build().unwrap());
 
     // Claimed, the global store is proven disjoint.
@@ -1353,12 +1037,10 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
         stack_global_disjoint: true,
         ..crate::AssumptionOptions::none()
     };
-    let mut expected = targets.to_vec();
-    expected.sort_unstable();
     assert_eq!(
         classify_with(&fg, None, &claimed, None),
         Some(ResolvedTargets::table(
-            expected.into_iter().map(strider_cfg::ResolvedTarget::from)
+            targets.map(strider_cfg::ResolvedTarget::from)
         )),
         "StackGlobalDisjoint proves the global store disjoint from the \
          SP-rooted array; the table must resolve",
@@ -1366,7 +1048,7 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
 
     // Cleared, it cannot, so the store surfaces as a clobber.
     assert_eq!(
-        classify_with(&fg, None, &crate::AssumptionOptions::none(), None),
+        classify(&fg, None),
         None,
         "cleared, it cannot prove the global store disjoint from the SP-rooted \
          array; the intervening store is a clobber and the branch must defer",
@@ -1378,36 +1060,17 @@ fn classify_table_dispatch_global_store_between_resolves_only_under_disjoint() {
 /// classifier must defer.
 #[test]
 fn classify_table_dispatch_returns_none_when_call_clobbers_between_stores_and_load() {
-    let sp = sp64();
-    let arg_vn = rsleigh::Vn {
-        addr_off: 0x38,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let mut b = sp_frame(sp)
-        .tracked(arg_vn)
-        .build_fn_single_region()
-        .unwrap();
-    let sp_val = b.read_variable(&sp).unwrap();
+    let (mut b, sp_val) = stack_frame();
     let targets = [0x401190u64, 0x401180u64];
-    let base_offset: i64 = -24;
-    let stride: u64 = 8;
-    wire_stack_stores(&targets, base_offset, stride, sp_val, &mut b);
+    wire_stack_stores(&targets, -24, 8, sp_val, &mut b);
     // Clobbers memory, including the slots the callee can reach through SP.
     let call_target_const = b
         .build_int_const(0x0040_1000u64, ValueType::int(64))
         .unwrap();
     b.build_call_cc(call_target_const, None).unwrap();
     // Re-read sp: the call may have advanced the stack.
-    let sp_val_after = b.read_variable(&sp).unwrap();
-    wire_stack_dispatch(
-        targets.len(),
-        base_offset,
-        stride,
-        sp_val_after,
-        &mut b,
-        arg_vn,
-    );
+    let sp_val_after = b.read_variable(&sp64()).unwrap();
+    wire_stack_dispatch(targets.len(), -24, 8, sp_val_after, &mut b, stack_arg());
     let (fg, _load_value) = finish_stack_array(b.build().unwrap());
     assert_eq!(
         classify(&fg, None),
@@ -1443,44 +1106,21 @@ fn classify_table_dispatch_returns_none_on_non_indexed_load() {
 
 #[test]
 fn classify_table_dispatch_returns_none_on_unbounded_stack_idx() {
-    let sp = sp64();
-    let arg_vn = rsleigh::Vn {
-        addr_off: 0x38,
-        addr_space: rsleigh::VnSpace::REGISTER,
-        size: 8,
-    };
-    let mut b = sp_frame(sp)
-        .tracked(arg_vn)
-        .build_fn_single_region()
-        .unwrap();
-    let sp_val = b.read_variable(&sp).unwrap();
-    let off24 = b.build_int_const(24u64, ValueType::int(64)).unwrap();
-    let addr_24 = b
-        .build_sub_as_add_neg(sp_val, off24, ValueType::int(64))
-        .unwrap();
-    let v = b.build_int_const(0x1234u64, ValueType::int(64)).unwrap();
+    let i64t = ValueType::int(64);
+    let (mut b, sp_val) = stack_frame();
+    let addr_24 = at(&mut b, sp_val, -24, i64t).unwrap();
+    let v = b.build_int_const(0x1234u64, i64t).unwrap();
     b.build_store(addr_24, v, rsleigh::VnSpace::RAM).unwrap();
-    let arg_val = b.read_variable(&arg_vn).unwrap();
-    let stride = b.build_int_const(8u64, ValueType::int(64)).unwrap();
+    let arg_val = b.read_variable(&stack_arg()).unwrap();
     let idx_scaled = b
-        .build_int_binary_operation(arg_val, stride, IntBinaryOp::Mul, ValueType::int(64))
+        .build_const_binop(8u64, arg_val, IntBinaryOp::Mul, i64t)
         .unwrap();
-    let base = b
-        .build_int_const((-24i64) as u64, ValueType::int(64))
-        .unwrap();
-    let sp_plus_base = b
-        .build_int_binary_operation(sp_val, base, IntBinaryOp::Add, ValueType::int(64))
-        .unwrap();
+    let sp_plus_base = at(&mut b, sp_val, -24, i64t).unwrap();
     let load_addr = b
-        .build_int_binary_operation(
-            sp_plus_base,
-            idx_scaled,
-            IntBinaryOp::Add,
-            ValueType::int(64),
-        )
+        .build_int_binary_operation(sp_plus_base, idx_scaled, IntBinaryOp::Add, i64t)
         .unwrap();
     let loaded = b
-        .build_load(load_addr, rsleigh::VnSpace::RAM, ValueType::int(64))
+        .build_load(load_addr, rsleigh::VnSpace::RAM, i64t)
         .unwrap();
     b.build_indirect_branch(loaded).unwrap();
     b.set_lift_addr(None);
@@ -1488,156 +1128,121 @@ fn classify_table_dispatch_returns_none_on_unbounded_stack_idx() {
     assert_eq!(classify(&fg, None), None);
 }
 
+/// A one-element stack array: ConstantFold folds `arg & 0` away, leaving a
+/// load at a fixed slot with no index to enumerate, so the table path defers
+/// (LoadForward is what forwards that slot).
+/// Mutation: enumerate an index-free cone once at `0`.
 #[test]
-fn classify_table_dispatch_one_stack_target_resolves() {
-    // A degenerate one-element stack array.  Masking idx with 0 makes it
-    // always 0, so the bound is 1.
-    let targets = [0x401200u64];
-    let (fg, _load_value) = build_stack_array(&targets, -8, 8);
-    let result = classify(&fg, None);
-    // A 1-element table may defer; a resolution must name the single target.
-    match result {
-        None => { /* defer-via-unresolved is sound */ }
-        Some(ResolvedTargets::Multiple(v)) => {
-            assert_eq!(
-                v.iter().map(|t| t.addr).collect::<Vec<_>>(),
-                vec![0x401200u64],
-                "single-element resolves to one target"
-            );
-        }
-        other => panic!("unexpected classifier result: {other:?}"),
-    }
+fn classify_table_dispatch_one_stack_target_defers() {
+    let (fg, _load_value) = build_stack_array(&[0x401200], -8, 8);
+    assert_eq!(classify(&fg, None), None);
 }
 
-/// A 32-bit two-entry stack table at `sp + table`, then, for `newer` of
-/// `(off, ty)`, a newer `ty` store at `sp + off`.
-fn build_stack_table_across_the_wrap(table: u64, newer: Option<(u64, ValueType)>) -> Function {
+/// `branch *(table + (arg & 1) * 4)` at `I32`, `arg` read from `arg_vn`.
+fn two_entry_dispatch(b: &mut FunctionBuilder, arg_vn: rsleigh::Vn, table: ValueId) {
+    let i32t = ValueType::int(32);
+    let arg = b.read_variable(&arg_vn).unwrap();
+    let idx = b
+        .build_const_binop(1u64, arg, IntBinaryOp::And, i32t)
+        .unwrap();
+    let scaled = b
+        .build_const_binop(4u64, idx, IntBinaryOp::Mul, i32t)
+        .unwrap();
+    let addr = b
+        .build_int_binary_operation(table, scaled, IntBinaryOp::Add, i32t)
+        .unwrap();
+    let loaded = b.build_load(addr, VnSpace::RAM, i32t).unwrap();
+    b.build_indirect_branch(loaded).unwrap();
+    b.set_lift_addr(None);
+}
+
+/// A single-region 32-bit stack frame tracking the argument `reg_vn(0x8, 4)`,
+/// its SP and the stores of the labels `0x401190`, `0x401180` at `sp + off`
+/// for each of `offs`.
+fn stack_frame32(offs: [i64; 2]) -> (FunctionBuilder, ValueId, rsleigh::Vn) {
     let sp = sp32_vn();
-    let arg_vn = strider_ir_test_utils::reg_vn(0x8, 4);
+    let arg_vn = reg_vn(0x8, 4);
     let mut b = sp_frame(sp)
         .tracked(arg_vn)
         .build_fn_single_region()
         .unwrap();
     let sp_val = b.read_variable(&sp).unwrap();
-    let at = |b: &mut FunctionBuilder, off: u64| {
-        let c = b.build_int_const(off, ValueType::int(32)).unwrap();
-        b.build_int_binary_operation(sp_val, c, IntBinaryOp::Add, ValueType::int(32))
-            .unwrap()
-    };
-    for (off, target) in [(table, 0x401190u64), (table + 4, 0x401180)] {
-        let addr = at(&mut b, off);
+    for (off, target) in offs.into_iter().zip([0x401190u64, 0x401180]) {
+        let addr = at(&mut b, sp_val, off, ValueType::int(32)).unwrap();
         let data = b.build_int_const(target, ValueType::int(32)).unwrap();
         b.build_store(addr, data, VnSpace::RAM).unwrap();
     }
+    (b, sp_val, arg_vn)
+}
+
+/// The two labels [`stack_frame32`] stores, as a table.
+fn two_labels() -> Option<ResolvedTargets> {
+    Some(ResolvedTargets::table([
+        0x401180u64.into(),
+        0x401190u64.into(),
+    ]))
+}
+
+/// A 32-bit two-entry stack table at `sp + table`, then, for `newer` of
+/// `(off, ty)`, a newer `ty` store at `sp + off`.
+fn build_stack_table_across_the_wrap(table: i64, newer: Option<(i64, ValueType)>) -> Function {
+    let (mut b, sp_val, arg_vn) = stack_frame32([table, table + 4]);
     if let Some((off, ty)) = newer {
-        let addr = at(&mut b, off);
+        let addr = at(&mut b, sp_val, off, ValueType::int(32)).unwrap();
         let data = b.build_int_const(0xDEAD_BEEFu64, ty).unwrap();
         b.build_store(addr, data, VnSpace::RAM).unwrap();
     }
-    let arg = b.read_variable(&arg_vn).unwrap();
-    let one = b.build_int_const(1u64, ValueType::int(32)).unwrap();
-    let idx = b
-        .build_int_binary_operation(arg, one, IntBinaryOp::And, ValueType::int(32))
-        .unwrap();
-    let four = b.build_int_const(4u64, ValueType::int(32)).unwrap();
-    let scaled = b
-        .build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::int(32))
-        .unwrap();
-    let table = at(&mut b, table);
-    let addr = b
-        .build_int_binary_operation(table, scaled, IntBinaryOp::Add, ValueType::int(32))
-        .unwrap();
-    let loaded = b
-        .build_load(addr, VnSpace::RAM, ValueType::int(32))
-        .unwrap();
-    b.build_indirect_branch(loaded).unwrap();
-    b.set_lift_addr(None);
+    let table = at(&mut b, sp_val, table, ValueType::int(32)).unwrap();
+    two_entry_dispatch(&mut b, arg_vn, table);
     finish_stack_array(b.build().unwrap()).0
 }
 
-/// The table is probed at `sp + 0x8000_0000`, which the evaluator holds at
-/// `-2^31`.  The newer store's bytes past `2^31` are entry 0's bytes mod 2^32,
-/// so entry 0 no longer holds its target and the site defers.
+/// A two-entry stack table across the 32-bit wrap, under a newer store.
+///
+/// - At `sp + 0x8000_0000`, which the evaluator holds at `-2^31`, a store at
+///   `sp + 0x7FFF_FFFE` has bytes past `2^31` that are entry 0's mod 2^32.
+/// - At `sp + 0x7FFF_FFFA`, entry 1 runs across the wrap, and a 2-byte store
+///   at `sp + 0x8000_0000` overwrites its top half mod 2^32.
+/// - A store six bytes above the last entry is disjoint from both, which only
+///   a modular offset comparison places correctly.
 #[test]
 fn classify_table_dispatch_sees_a_store_wrapping_onto_a_slot() {
-    assert_eq!(
-        classify(&build_stack_table_across_the_wrap(0x8000_0000, None), None),
-        Some(ResolvedTargets::table(vec![
-            0x401180u64.into(),
-            0x401190u64.into(),
-        ])),
-        "control: both entries fold across the signed wrap"
-    );
-    assert_eq!(
-        classify(
-            &build_stack_table_across_the_wrap(
-                0x8000_0000,
-                Some((0x7FFF_FFFE, ValueType::int(32)))
-            ),
-            None
+    let i32t = ValueType::int(32);
+    let rows = [
+        ("control across the signed wrap", 0x8000_0000, None, true),
+        (
+            "onto entry 0",
+            0x8000_0000,
+            Some((0x7FFF_FFFE, i32t)),
+            false,
         ),
-        None,
-        "entry 0 is partly the newer store's, so no stale target may fold"
-    );
+        ("control straddling the wrap", 0x7FFF_FFFA, None, true),
+        (
+            "onto entry 1",
+            0x7FFF_FFFA,
+            Some((0x8000_0000, ValueType::int(16))),
+            false,
+        ),
+        ("disjoint", 0x7FFF_FFFA, Some((0x8000_0004, i32t)), true),
+    ];
+    for (name, table, newer, resolves) in rows {
+        assert_eq!(
+            classify(&build_stack_table_across_the_wrap(table, newer), None),
+            if resolves { two_labels() } else { None },
+            "{name}"
+        );
+    }
 }
 
-/// Entry 1 at `sp + 0x7FFF_FFFE` runs across the wrap, and a newer 2-byte store
-/// at `sp + 0x8000_0000` overwrites its top half mod 2^32.
-#[test]
-fn classify_table_dispatch_sees_a_store_past_the_wrap_onto_a_slot() {
-    assert_eq!(
-        classify(&build_stack_table_across_the_wrap(0x7FFF_FFFA, None), None),
-        Some(ResolvedTargets::table(vec![
-            0x401180u64.into(),
-            0x401190u64.into(),
-        ])),
-        "control"
-    );
-    assert_eq!(
-        classify(
-            &build_stack_table_across_the_wrap(
-                0x7FFF_FFFA,
-                Some((0x8000_0000, ValueType::int(16)))
-            ),
-            None
-        ),
-        None,
-        "entry 1 is partly the newer store's"
-    );
-}
-
-/// Both entries straddle the wrap and a newer store sits six bytes above the
-/// last of them, disjoint from either.  The probe must read each entry past
-/// that store, which only a modular offset comparison places correctly.
-#[test]
-fn a_disjoint_newer_store_across_the_wrap_leaves_both_entries() {
-    assert_eq!(
-        classify(
-            &build_stack_table_across_the_wrap(
-                0x7FFF_FFFA,
-                Some((0x8000_0004, ValueType::int(32)))
-            ),
-            None
-        ),
-        Some(ResolvedTargets::table(vec![
-            0x401180u64.into(),
-            0x401190u64.into(),
-        ])),
-    );
-}
-
-/// The same shape at the probe level: `reaching_store` reaches each table
+/// The same shape at the probe level: the store probe reaches each table
 /// store through the newer one, which `offset_order` places on the ring six
 /// bytes above the last entry instead of 2^32 - 6 below it.
 #[test]
 fn the_shared_climb_reaches_past_a_disjoint_store_across_the_wrap() {
-    use crate::mem_analysis::{MemAnalyzer, MemOptions, MemPurpose, decompose};
+    use crate::mem_analysis::{MemQuery, Policy, decompose};
 
     let f = build_stack_table_across_the_wrap(0x7FFF_FFFA, Some((0x8000_0004, ValueType::int(32))));
-    let load = f
-        .walk()
-        .find(|&n| matches!(f.node_kind(n), NodeKind::Load(_)))
-        .expect("the dispatch load");
+    let load = f.sole_kind(|k| matches!(k, NodeKind::Load(_)));
     let mem = f.node_inputs(load)[NodeKind::ACCESS_MEM_SLOT];
     let newest = f
         .walk_kind(|k| matches!(k, NodeKind::Store(_)))
@@ -1646,11 +1251,13 @@ fn the_shared_climb_reaches_past_a_disjoint_store_across_the_wrap() {
     let base = decompose(&f, f.store_addr(newest))
         .expect("an SP-rooted store")
         .base;
-    let analyzer = MemAnalyzer::new(MemOptions::for_purpose(MemPurpose::TableWalk, &f));
+    let query = MemQuery::default();
     // The two entries, reduced: `sp + 0x7FFF_FFFA` and `sp + 0x7FFF_FFFE`.
     for (offset, target) in [(0x7FFF_FFFAi128, 0x401190u128), (0x7FFF_FFFE, 0x401180)] {
-        let hit = analyzer
-            .reaching_store(&f, mem, base, offset, 4)
+        let clobber =
+            query.nearest_sp_clobber(&f, Policy::strict(&f), mem, base, offset, 4, VnSpace::RAM);
+        let hit = query
+            .anchored_store(&f, clobber, base)
             .expect("the entry's own store");
         assert_eq!(hit.store_offset, offset, "anchored at the probed entry");
         assert_eq!(
@@ -1665,48 +1272,12 @@ fn the_shared_climb_reaches_past_a_disjoint_store_across_the_wrap() {
 /// carrying the probe past `2^31`, stored through one constant each.  No
 /// `ConstantFold`, which would merge the two hops into one constant.
 fn stack_table_built_in_two_hops() -> Function {
-    let sp = sp32_vn();
-    let arg_vn = strider_ir_test_utils::reg_vn(0x8, 4);
-    let mut b = sp_frame(sp)
-        .tracked(arg_vn)
-        .build_fn_single_region()
-        .unwrap();
-    let sp_val = b.read_variable(&sp).unwrap();
-    let add = |b: &mut FunctionBuilder, base: ValueId, off: u64| {
-        let c = b.build_int_const(off, ValueType::int(32)).unwrap();
-        b.build_int_binary_operation(base, c, IntBinaryOp::Add, ValueType::int(32))
-            .unwrap()
-    };
-    for (off, target) in [(0x8000_0010u64, 0x401190u64), (0x8000_0014, 0x401180)] {
-        let addr = add(&mut b, sp_val, off);
-        let data = b.build_int_const(target, ValueType::int(32)).unwrap();
-        b.build_store(addr, data, VnSpace::RAM).unwrap();
-    }
-    let near_top = add(&mut b, sp_val, 0x7FFF_FFF0);
-    let table = add(&mut b, near_top, 0x20);
-    let arg = b.read_variable(&arg_vn).unwrap();
-    let one = b.build_int_const(1u64, ValueType::int(32)).unwrap();
-    let idx = b
-        .build_int_binary_operation(arg, one, IntBinaryOp::And, ValueType::int(32))
-        .unwrap();
-    let four = b.build_int_const(4u64, ValueType::int(32)).unwrap();
-    let scaled = b
-        .build_int_binary_operation(idx, four, IntBinaryOp::Mul, ValueType::int(32))
-        .unwrap();
-    let addr = b
-        .build_int_binary_operation(table, scaled, IntBinaryOp::Add, ValueType::int(32))
-        .unwrap();
-    let loaded = b
-        .build_load(addr, VnSpace::RAM, ValueType::int(32))
-        .unwrap();
-    b.build_indirect_branch(loaded).unwrap();
-    b.set_lift_addr(None);
+    let (mut b, sp_val, arg_vn) = stack_frame32([0x8000_0010, 0x8000_0014]);
+    let near_top = at(&mut b, sp_val, 0x7FFF_FFF0, ValueType::int(32)).unwrap();
+    let table = at(&mut b, near_top, 0x20, ValueType::int(32)).unwrap();
+    two_entry_dispatch(&mut b, arg_vn, table);
     let mut fg = b.build().unwrap();
-    let mut p = OptimizerPipeline::new();
-    p.add(KnownBits);
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    p.run(&mut fg, &crate::OptCtx::new(None)).unwrap();
+    run_passes(&mut fg, &[&KnownBits, &PhiCollapse, &RegionCollapse]).unwrap();
     fg
 }
 
@@ -1716,10 +1287,7 @@ fn stack_table_built_in_two_hops() -> Function {
 fn classify_table_dispatch_reduces_a_probe_built_in_two_hops() {
     assert_eq!(
         classify(&stack_table_built_in_two_hops(), None),
-        Some(ResolvedTargets::table(vec![
-            0x401180u64.into(),
-            0x401190u64.into(),
-        ])),
+        two_labels()
     );
 }
 
@@ -1744,13 +1312,7 @@ fn lock_barrier_prevents_stack_load_forwarding() -> crate::Result<()> {
         Ok(())
     })?;
 
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.add(LoadForward);
-
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    run_passes(&mut fg, STANDARD)?;
 
     let reachable_loads = fg.count_kind(|k| matches!(k, NodeKind::Load(_)));
     assert_eq!(
@@ -1774,107 +1336,43 @@ fn an_index_bound_needs_a_type_inside_the_u128_carrier() {
     assert_eq!(mask(512), None);
 }
 
-/// A table cell read as the low byte of a wider load, `zext(trunc8(load32))`
-/// as x86-64's `movzbl %al` after a 32-bit load: still the 256 values of
-/// table DATA.
-/// Mutation: leave the set unchanged at a truncate in `is_width_only`.
-#[test]
-fn classify_table_dispatch_excludes_truncated_table_entry_as_index() {
-    let (g, _target) = build_with_target(|fb| {
-        let cell_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
-        let cell = fb
-            .build_load(cell_addr, VnSpace::RAM, ValueType::int(32))
-            .expect("word load (table entry)");
-        let byte = fb
-            .truncate_if_needed(cell, ValueType::int(8))
-            .expect("its low byte");
-        let idx = fb
-            .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
-            .expect("zero-extend the byte to I32");
-        table_target(fb, idx, 4u64, 0x4000u64)
-    });
-    let rom = MockRom::strided(0x4000, 4, vec![0x10; 256], 4);
-    assert_eq!(classify(&g, Some(&rom)), None);
-}
-
 /// Values `spacing` apart taken modulo `2^bits`.
 /// Mutation: keep `spacing` as the shared power of two.
 #[test]
 fn wrap_counts_a_progression_modulo_its_width() {
-    assert_eq!(wrap(4, 3, 8), Some((4, 3)), "fits");
-    assert_eq!(wrap(1 << 32, 1, 8), Some((256, 1)), "a truncate");
-    assert_eq!(wrap(256, 4, 8), Some((64, 4)), "a widening shift");
+    assert_eq!(wrap(4, 3, 0xff), Some((4, 3)), "fits");
+    assert_eq!(wrap(1 << 32, 1, 0xff), Some((256, 1)), "a truncate");
+    assert_eq!(wrap(256, 4, 0xff), Some((64, 4)), "a widening shift");
     assert_eq!(
-        wrap(256, 3, 8),
+        wrap(256, 3, 0xff),
         Some((256, 1)),
         "odd steps cover every value"
     );
-    assert_eq!(wrap(256, 6, 8), Some((128, 2)));
-    assert_eq!(wrap(100, 3, 8), None, "wraps before covering the cycle");
-    assert_eq!(wrap(256, 1, 128), Some((256, 1)), "past the carrier");
+    assert_eq!(wrap(256, 6, 0xff), Some((128, 2)));
+    assert_eq!(wrap(100, 3, 0xff), None, "wraps before covering the cycle");
+    assert_eq!(wrap(256, 1, u128::MAX), Some((256, 1)), "past the carrier");
 }
 
+/// `entry / 3` holds 86 values; a guard `entry / 3 < 200` leaves it a range
+/// of 200, looser than the cell's own value count, which is no narrowing.
+/// Mutation: count only a range exactly as wide as the cell.
 #[test]
-fn classify_table_dispatch_excludes_right_shifted_table_entry_as_index() {
-    // As the `tbb` case above, with the entry scaled by `>> 2` before the `* 4`
-    // address arithmetic.  A right shift is still a scaling of the raw cell, so
-    // [0,63] is the whole cell's image, not a narrowing: table DATA.
-    let (g, _target) = build_with_target(|fb| {
-        let byte_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
-        let byte = fb
-            .build_load(byte_addr, VnSpace::RAM, ValueType::int(8))
-            .expect("byte load (table entry)");
-        let wide = fb
-            .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
-            .expect("zero-extend the byte to I32");
-        let two = fb.build_int_const(2u64, ValueType::int(32)).unwrap();
-        let shifted = fb
-            .build_int_binary_operation(wide, two, IntBinaryOp::ShiftRight, ValueType::int(32))
-            .expect("entry >> 2");
-        table_target(fb, shifted, 4u64, 0x4000u64)
-    });
-    // Every one of the 64 reads folds to a DISTINCT address, so a `None` can
-    // only come from the width-only exclusion.
-    let rom = MockRom::strided(0x4000, 4, (0..64).map(|i| 0x5000 + i).collect(), 4);
-    let result = classify(&g, Some(&rom));
-    assert_eq!(
-        result, None,
-        "a right-shifted table entry must be excluded as the index"
+fn classify_table_dispatch_excludes_a_table_entry_under_a_looser_guard() {
+    let function = guarded(
+        RegisterSet::new(),
+        |b| {
+            let wide = cell(b, ValueType::int(8));
+            let third = b
+                .build_const_binop(3u64, wide, IntBinaryOp::Div, ValueType::int(32))
+                .unwrap();
+            (below(b, third, 200), third)
+        },
+        true,
+        |b, third| table_target(b, third, 4, 0x4000),
+        COLLAPSE,
     );
-}
-
-#[test]
-fn classify_table_dispatch_excludes_widened_then_shifted_table_entry_as_index() {
-    // `(entry << 2) >> 1` is `entry * 2`: the widening runs BELOW the lossy
-    // shift, so the shift collapses nothing and all 256 cell values survive.
-    // Counting only the lossy factor expects 128 and reads the mismatch as a
-    // narrowing, enumerating table DATA as the index.
-    let (g, _target) = build_with_target(|fb| {
-        let byte_addr = fb.build_int_const(0x9000u64, ValueType::int(32)).unwrap();
-        let byte = fb
-            .build_load(byte_addr, VnSpace::RAM, ValueType::int(8))
-            .expect("byte load (table entry)");
-        let wide = fb
-            .extend_if_needed(byte, ValueType::int(32), ExtendOp::ZeroExtend)
-            .expect("zero-extend the byte to I32");
-        let two = fb.build_int_const(2u64, ValueType::int(32)).unwrap();
-        let up = fb
-            .build_int_binary_operation(wide, two, IntBinaryOp::ShiftLeft, ValueType::int(32))
-            .expect("entry << 2");
-        let one = fb.build_int_const(1u64, ValueType::int(32)).unwrap();
-        let shifted = fb
-            .build_int_binary_operation(up, one, IntBinaryOp::ShiftRight, ValueType::int(32))
-            .expect("(entry << 2) >> 1");
-        table_target(fb, shifted, 4u64, 0x4000u64)
-    });
-    // Covers every address the enumeration would touch, so a `None` can only
-    // come from the width-only exclusion, not a fold failure.
-    let rom = MockRom::strided(0x4000, 4, (0..512).map(|i| 0x5000 + i).collect(), 4);
-    let result = classify(&g, Some(&rom));
-    assert_eq!(
-        result, None,
-        "a widened-then-shifted table entry must be excluded as the index"
-    );
+    let rom = MockRom::strided(0x4000, 4, (0..256).map(|i| 0x5000 + i).collect(), 4);
+    assert_eq!(classify(&function, Some(&rom)), None);
 }
 
 #[test]
@@ -1882,46 +1380,28 @@ fn classify_table_dispatch_resolves_a_bitfield_index_under_its_guard() {
     // ARM `ubfx r3, r0, #27, #2; cmp r3, #3; ldrls pc, [pc, r3, lsl #2]`
     // (linux 6.1 `arch_bp_generic_fields`): the index lifts as
     // `(r0 << 3) >> 30`, four values of a register, not a table cell.
-    use strider_ir::IntCmpOp;
-    let r0 = strider_ir_test_utils::reg_vn(0x20, 4);
-    let mut b = RegisterSet::new().tracked(r0).arg(r0).build_fn().unwrap();
-    let entry = b.create_region_all().unwrap();
-    let dispatch = b.create_region_all().unwrap();
-    let exit = b.create_region_all().unwrap();
-    b.set_entry_region_all(entry).unwrap();
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
-
-    b.set_region(entry);
-    let arg = b.read_variable(&r0).unwrap();
-    let three = b.build_int_const(3u64, ValueType::int(32)).unwrap();
-    let up = b
-        .build_int_binary_operation(arg, three, IntBinaryOp::ShiftLeft, ValueType::int(32))
-        .unwrap();
-    let thirty = b.build_int_const(30u64, ValueType::int(32)).unwrap();
-    let idx = b
-        .build_int_binary_operation(up, thirty, IntBinaryOp::ShiftRight, ValueType::int(32))
-        .unwrap();
-    let cond = b
-        .build_int_cmp_operation(three, idx, IntCmpOp::Less, ValueType::int(32))
-        .unwrap();
-    b.build_if(cond, exit, dispatch).unwrap();
-
-    b.set_region(dispatch);
-    let loaded = table_target(&mut b, idx, 4u64, 0x4000u64);
-    b.build_indirect_branch(loaded).unwrap();
-
-    b.set_region(exit);
-    b.build_return(None, &[]).unwrap();
-    b.set_lift_addr(None);
-    let mut g = b.build().unwrap();
-    // `index_range` assumes converged IR.
-    {
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut g, &crate::OptCtx::new(None)).unwrap();
-    }
-
+    let r0 = reg_vn(0x20, 4);
+    let i32t = ValueType::int(32);
+    let g = guarded(
+        RegisterSet::new().tracked(r0).arg(r0),
+        |b| {
+            let arg = b.read_variable(&r0).unwrap();
+            let up = b
+                .build_const_binop(3u64, arg, IntBinaryOp::ShiftLeft, i32t)
+                .unwrap();
+            let idx = b
+                .build_const_binop(30u64, up, IntBinaryOp::ShiftRight, i32t)
+                .unwrap();
+            let three = b.build_int_const(3u64, i32t).unwrap();
+            let cond = b
+                .build_int_cmp_operation(three, idx, IntCmpOp::Less, i32t)
+                .unwrap();
+            (cond, idx)
+        },
+        false,
+        |b, idx| table_target(b, idx, 4, 0x4000),
+        COLLAPSE,
+    );
     let rom = MockRom::strided(0x4000, 4, (0..32).map(|i| 0x5000 + 0x10 * i).collect(), 4);
     assert_eq!(
         classify(&g, Some(&rom)),
@@ -1942,12 +1422,11 @@ fn classify_guarded_dispatch(
     index: fn(&mut FunctionBuilder, ValueId) -> ValueId,
 ) -> Option<ResolvedTargets> {
     let i64t = ValueType::int(64);
-    let w = strider_ir_test_utils::reg_vn(0x20, 4);
+    let w = reg_vn(0x20, 4);
     let mut b = RegisterSet::new().tracked(w).arg(w).build_fn().unwrap();
     let entry = b.create_region_all().unwrap();
     let exit = b.create_region_all().unwrap();
     b.set_entry_region_all(entry).unwrap();
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
 
     b.set_region(entry);
     let word = b.read_variable(&w).unwrap();
@@ -1958,12 +1437,12 @@ fn classify_guarded_dispatch(
         b.set_region(next);
     }
     let idx = index(&mut b, word);
-    let op = |b: &mut FunctionBuilder, x: ValueId, c: u64, op: IntBinaryOp| {
-        let c = b.build_int_const(c, i64t).unwrap();
-        b.build_int_binary_operation(x, c, op, i64t).unwrap()
-    };
-    let scaled = op(&mut b, idx, 3, IntBinaryOp::ShiftLeft);
-    let addr = op(&mut b, scaled, 0x4000, IntBinaryOp::Add);
+    let scaled = b
+        .build_const_binop(3u64, idx, IntBinaryOp::ShiftLeft, i64t)
+        .unwrap();
+    let addr = b
+        .build_const_binop(0x4000u64, scaled, IntBinaryOp::Add, i64t)
+        .unwrap();
     let loaded = b.build_load(addr, VnSpace::RAM, i64t).unwrap();
     b.build_indirect_branch(loaded).unwrap();
 
@@ -1972,42 +1451,9 @@ fn classify_guarded_dispatch(
     b.set_lift_addr(None);
     let mut g = b.build().unwrap();
     // `index_range` assumes converged IR.
-    {
-        let mut p = crate::OptimizerPipeline::new();
-        p.add(crate::PhiCollapse);
-        p.add(crate::RegionCollapse);
-        p.run(&mut g, &crate::OptCtx::new(None)).unwrap();
-    }
+    run_passes(&mut g, COLLAPSE).unwrap();
     let rom = MockRom::strided(0x4000, 8, (0..64).map(|i| 0x5000 + 0x10 * i).collect(), 8);
     classify(&g, Some(&rom))
-}
-
-/// MIPS64 `srl t,w,lo; sltiu t,t,bound`: `sext64(w >> lo) < bound`.
-fn srl_sltiu(b: &mut FunctionBuilder, w: ValueId, lo: u64, bound: u64) -> ValueId {
-    use strider_ir::IntCmpOp;
-    let (i32t, i64t) = (ValueType::int(32), ValueType::int(64));
-    let k = b.build_int_const(lo, i32t).unwrap();
-    let srl = b
-        .build_int_binary_operation(w, k, IntBinaryOp::ShiftRight, i32t)
-        .unwrap();
-    let srl = b.extend_if_needed(srl, i64t, ExtendOp::SignExtend).unwrap();
-    let n = b.build_int_const(bound, i64t).unwrap();
-    b.build_int_cmp_operation(srl, n, IntCmpOp::Less, i64t)
-        .unwrap()
-}
-
-/// MIPS64 `ext i,w,26,6; andi i,i,0xff` on the sign-extended word:
-/// `((sext64(w) << 32) >> 58) & 0xff`.
-fn ext_26_6(b: &mut FunctionBuilder, w: ValueId) -> ValueId {
-    let i64t = ValueType::int(64);
-    let op = |b: &mut FunctionBuilder, x: ValueId, c: u64, op: IntBinaryOp| {
-        let c = b.build_int_const(c, i64t).unwrap();
-        b.build_int_binary_operation(x, c, op, i64t).unwrap()
-    };
-    let wide = b.extend_if_needed(w, i64t, ExtendOp::SignExtend).unwrap();
-    let up = op(b, wide, 32, IntBinaryOp::ShiftLeft);
-    let field = op(b, up, 58, IntBinaryOp::ShiftRight);
-    op(b, field, 0xff, IntBinaryOp::And)
 }
 
 /// [`classify_guarded_dispatch`] of the `ext` index under one `srl` guard.
@@ -2015,34 +1461,27 @@ fn classify_bit_field_dispatch(lo: u64, bound: u64) -> Option<ResolvedTargets> {
     classify_guarded_dispatch(&[&|b, w| srl_sltiu(b, w, lo, bound)], ext_26_6)
 }
 
-/// `zext64((w >> 4) & 7)`, a field of three bits.
-fn bits_4_to_7(b: &mut FunctionBuilder, w: ValueId) -> ValueId {
+/// `zext64((w >> lo) & 7)`, a field of three bits.
+fn bits_of(b: &mut FunctionBuilder, w: ValueId, lo: u64) -> ValueId {
     let i32t = ValueType::int(32);
-    let four = b.build_int_const(4u64, i32t).unwrap();
     let up = b
-        .build_int_binary_operation(w, four, IntBinaryOp::ShiftRight, i32t)
+        .build_const_binop(lo, w, IntBinaryOp::ShiftRight, i32t)
         .unwrap();
-    let seven = b.build_int_const(7u64, i32t).unwrap();
     let field = b
-        .build_int_binary_operation(up, seven, IntBinaryOp::And, i32t)
+        .build_const_binop(7u64, up, IntBinaryOp::And, i32t)
         .unwrap();
     b.extend_if_needed(field, ValueType::int(64), ExtendOp::ZeroExtend)
         .unwrap()
 }
 
-/// `w < bound` at `I32`.
-fn word_below(b: &mut FunctionBuilder, w: ValueId, bound: u64) -> ValueId {
-    let i32t = ValueType::int(32);
-    let n = b.build_int_const(bound, i32t).unwrap();
-    b.build_int_cmp_operation(w, n, strider_ir::IntCmpOp::Less, i32t)
-        .unwrap()
+/// [`bits_of`] at 4.
+fn bits_4_to_7(b: &mut FunctionBuilder, w: ValueId) -> ValueId {
+    bits_of(b, w, 4)
 }
 
 /// The arms of slots `0..n` of [`classify_guarded_dispatch`]'s table.
 fn first_slots(n: u64) -> Option<ResolvedTargets> {
-    Some(ResolvedTargets::table((0..n).map(|i| {
-        strider_cfg::ResolvedTarget::from(0x5000 + 0x10 * i)
-    })))
+    slots(&(0..n).collect::<Vec<_>>())
 }
 
 /// `if (w < 100000) switch ((w >> 4) & 7)`: the guard on the whole word
@@ -2052,7 +1491,7 @@ fn first_slots(n: u64) -> Option<ResolvedTargets> {
 #[test]
 fn classify_table_dispatch_reads_a_field_under_a_looser_word_guard() {
     assert_eq!(
-        classify_guarded_dispatch(&[&|b, w| word_below(b, w, 100_000)], bits_4_to_7),
+        classify_guarded_dispatch(&[&|b, w| below(b, w, 100_000)], bits_4_to_7),
         first_slots(8),
     );
 }
@@ -2062,7 +1501,7 @@ fn classify_table_dispatch_reads_a_field_under_a_looser_word_guard() {
 #[test]
 fn classify_table_dispatch_projects_a_word_guard_onto_its_field() {
     assert_eq!(
-        classify_guarded_dispatch(&[&|b, w| word_below(b, w, 20)], bits_4_to_7),
+        classify_guarded_dispatch(&[&|b, w| below(b, w, 20)], bits_4_to_7),
         first_slots(2),
     );
 }
@@ -2070,39 +1509,20 @@ fn classify_table_dispatch_projects_a_word_guard_onto_its_field() {
 /// `x - lo < span` at the type of `x`: `x` in `[lo, lo + span)`.
 fn in_span(b: &mut FunctionBuilder, x: ValueId, lo: u64, span: u64) -> ValueId {
     let ty = b.value_type_opt(x).unwrap();
-    let minus = b
-        .build_int_const(lo.wrapping_neg() & ty.int_mask_u128().unwrap() as u64, ty)
-        .unwrap();
-    let sum = b
-        .build_int_binary_operation(x, minus, IntBinaryOp::Add, ty)
-        .unwrap();
-    let n = b.build_int_const(span, ty).unwrap();
-    b.build_int_cmp_operation(sum, n, strider_ir::IntCmpOp::Less, ty)
-        .unwrap()
+    let sum = at(b, x, -(lo as i64), ty).unwrap();
+    below(b, sum, span)
 }
 
-/// `zext64((w >> 1) & 7)`.
+/// [`bits_of`] at 1.
 fn bits_1_to_3(b: &mut FunctionBuilder, w: ValueId) -> ValueId {
-    let i32t = ValueType::int(32);
-    let one = b.build_int_const(1u64, i32t).unwrap();
-    let up = b
-        .build_int_binary_operation(w, one, IntBinaryOp::ShiftRight, i32t)
-        .unwrap();
-    let seven = b.build_int_const(7u64, i32t).unwrap();
-    let field = b
-        .build_int_binary_operation(up, seven, IntBinaryOp::And, i32t)
-        .unwrap();
-    b.extend_if_needed(field, ValueType::int(64), ExtendOp::ZeroExtend)
-        .unwrap()
+    bits_of(b, w, 1)
 }
 
 /// [`classify_guarded_dispatch`]'s arms for these slots.
 fn slots(of: &[u64]) -> Option<ResolvedTargets> {
-    let mut arms: Vec<u64> = of.iter().map(|i| 0x5000 + 0x10 * i).collect();
-    arms.sort_unstable();
-    Some(ResolvedTargets::table(
-        arms.into_iter().map(strider_cfg::ResolvedTarget::from),
-    ))
+    Some(ResolvedTargets::table(of.iter().map(|i| {
+        strider_cfg::ResolvedTarget::from(0x5000 + 0x10 * i)
+    })))
 }
 
 /// `w` in `[10, 17]` puts `(w >> 1) & 7` in `{5, 6, 7, 0}`: the guard's low
@@ -2133,20 +1553,15 @@ fn classify_table_dispatch_defers_a_field_under_a_guard_low_end_it_cannot_carry(
 #[test]
 fn classify_table_dispatch_carries_a_guard_low_end_to_the_top_of_its_bits() {
     let nibble = |b: &mut FunctionBuilder, w: ValueId| {
-        let i32t = ValueType::int(32);
-        let m = b.build_int_const(15u64, i32t).unwrap();
-        b.build_int_binary_operation(w, m, IntBinaryOp::And, i32t)
+        b.build_const_binop(15u64, w, IntBinaryOp::And, ValueType::int(32))
             .unwrap()
     };
     let top_two = |b: &mut FunctionBuilder, w: ValueId| {
-        let i32t = ValueType::int(32);
-        let m = b.build_int_const(15u64, i32t).unwrap();
         let low = b
-            .build_int_binary_operation(w, m, IntBinaryOp::And, i32t)
+            .build_const_binop(15u64, w, IntBinaryOp::And, ValueType::int(32))
             .unwrap();
-        let two = b.build_int_const(2u64, i32t).unwrap();
         let top = b
-            .build_int_binary_operation(low, two, IntBinaryOp::ShiftRight, i32t)
+            .build_const_binop(2u64, low, IntBinaryOp::ShiftRight, ValueType::int(32))
             .unwrap();
         b.extend_if_needed(top, ValueType::int(64), ExtendOp::ZeroExtend)
             .unwrap()
@@ -2196,6 +1611,54 @@ fn classify_table_dispatch_defers_beside_an_unconnected_guard_under_a_loose_one(
     );
 }
 
+/// A read guard on the index's own field, `w >> 26 < 63`, narrows it below
+/// its 64-value bound but not to what the unconnected guard on bits 27..,
+/// `w >> 27 < 30`, allows: slots 60 to 62 are never read, so the site
+/// defers rather than seat them.
+/// Mutation: consult an unconnected guard only beside a KnownBits bound.
+#[test]
+fn classify_table_dispatch_defers_beside_an_unconnected_guard_under_a_read_one() {
+    assert_eq!(
+        classify_guarded_dispatch(
+            &[&|b, w| srl_sltiu(b, w, 26, 63), &|b, w| srl_sltiu(
+                b, w, 27, 30
+            ),],
+            ext_26_6,
+        ),
+        None,
+    );
+}
+
+/// `w >> 26 < 4` leaves the index only bits 26 and 27 to vary, which the
+/// unconnected guard on bits 29.., `w >> 29 < 5`, does not touch.
+/// Mutation: weigh an unconnected guard against the whole field.
+#[test]
+fn classify_table_dispatch_seats_beside_a_guard_on_bits_a_read_one_clears() {
+    assert_eq!(
+        classify_guarded_dispatch(
+            &[&|b, w| srl_sltiu(b, w, 26, 4), &|b, w| srl_sltiu(
+                b, w, 29, 5
+            ),],
+            ext_26_6,
+        ),
+        first_slots(4),
+    );
+}
+
+/// `t[idx & mask]` over interworking words at 0x4000: the masked target and
+/// the mode the branch commits.
+fn interworking_table(mask: u64) -> (Function, Option<ValueId>) {
+    let mut mode = None;
+    let (g, _) = build_with_target(|fb| {
+        let raw = build_non_const_idx(fb);
+        let word = masked_table_target(fb, raw, mask, 4, 0x4000);
+        let (target, m) = split_mode(fb, word);
+        mode = Some(m);
+        target
+    });
+    (g, mode)
+}
+
 #[test]
 fn classify_table_dispatch_conflicting_isa_modes_on_one_addr_defers() {
     // An interworking table whose two words are `X` and `X | 1`: the target is
@@ -2203,30 +1666,16 @@ fn classify_table_dispatch_conflicting_isa_modes_on_one_addr_defers() {
     // opposite committed modes.  Keeping either would decode the arm in a mode
     // half the table contradicts, and no mode at all is the FLOWING mode, which
     // a mode-switching branch contradicts by construction.
-    let mut mode_value = None;
-    let (g, _target) = build_with_target(|fb| {
-        let raw = build_non_const_idx(fb);
-        let word = masked_table_target(fb, raw, 1u64, 4u64, 0x4000u64);
-        let mode_mask = fb.build_int_const(1u64, ValueType::int(32)).unwrap();
-        mode_value = Some(
-            fb.build_int_binary_operation(word, mode_mask, IntBinaryOp::And, ValueType::int(32))
-                .expect("word & 1"),
-        );
-        let addr_mask = fb
-            .build_int_const(0xFFFF_FFFEu64, ValueType::int(32))
-            .unwrap();
-        fb.build_int_binary_operation(word, addr_mask, IntBinaryOp::And, ValueType::int(32))
-            .expect("word & ~1")
-    });
+    let (g, mode_value) = interworking_table(1);
     let rom = MockRom::strided(0x4000, 4, vec![0x1000, 0x1001], 4);
-    let result = classify_with(
-        &g,
-        Some(&rom),
-        &crate::AssumptionOptions::default(),
-        mode_value,
-    );
     assert_eq!(
-        result, None,
+        classify_with(
+            &g,
+            Some(&rom),
+            &crate::AssumptionOptions::default(),
+            mode_value
+        ),
+        None,
         "conflicting modes on one address must defer the whole site"
     );
 }
@@ -2240,8 +1689,8 @@ fn phi_of_constants_dispatch(
     guard: Option<(IntCmpOp, u64, bool)>,
     dispatch: impl FnOnce(&mut FunctionBuilder, ValueId) -> (ValueId, Option<ValueId>),
 ) -> Function {
-    let s_vn = strider_ir_test_utils::reg_vn(0x10, 4);
-    let arg_vn = strider_ir_test_utils::reg_vn(0x20, 4);
+    let s_vn = reg_vn(0x10, 4);
+    let arg_vn = reg_vn(0x20, 4);
     let i32t = ValueType::int(32);
     let mut b = RegisterSet::new()
         .tracked(s_vn)
@@ -2249,7 +1698,6 @@ fn phi_of_constants_dispatch(
         .arg(arg_vn)
         .build_fn()
         .unwrap();
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let [entry, mid, a, arm_b, arm_c, join, at, exit] =
         std::array::from_fn(|_| b.create_region_all().unwrap());
     b.set_entry_region_all(entry).unwrap();
@@ -2290,24 +1738,18 @@ fn phi_of_constants_dispatch(
     b.build_return(None, &[]).unwrap();
     b.set_lift_addr(None);
     let mut f = b.build().unwrap();
-    let mut p = crate::OptimizerPipeline::new();
-    p.add(crate::PhiCollapse);
-    p.add(crate::RegionCollapse);
-    p.run(&mut f, &crate::OptCtx::new(None)).unwrap();
+    run_passes(&mut f, COLLAPSE).unwrap();
     f
 }
 
 /// The arms of a `t[s]` dispatch over a six-entry table at `0x4000`.
-fn phi_index_arms(bound: Option<u64>) -> Vec<u64> {
+fn phi_index_arms(bound: Option<u64>) -> Option<Vec<u64>> {
     let guard = bound.map(|c| (IntCmpOp::Less, c, true));
     let f = phi_of_constants_dispatch([0, 3, 5], guard, |b, s| {
         (table_target(b, s, 4, 0x4000), None)
     });
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40, 0x50, 0x60], 4);
-    match classify(&f, Some(&rom)) {
-        Some(ResolvedTargets::Multiple(ts)) => ts.iter().map(|t| t.addr).collect(),
-        other => panic!("expected a table; got {other:?}\n{}", f.to_text(false)),
-    }
+    arms(classify(&f, Some(&rom)))
 }
 
 /// `s` in {0, 3, 5}: `t[0]`, `t[3]` and `t[5]`, not the six slots of the
@@ -2315,14 +1757,14 @@ fn phi_index_arms(bound: Option<u64>) -> Vec<u64> {
 /// known.
 #[test]
 fn classify_table_dispatch_reads_only_the_slots_a_phi_of_constants_names() {
-    assert_eq!(phi_index_arms(None), vec![0x10, 0x40, 0x60]);
+    assert_eq!(phi_index_arms(None), Some(vec![0x10, 0x40, 0x60]));
 }
 
 /// Under `if (s < 4)` the range is 0..=3, which drops the phi's `5`; the
 /// slots between its constants stay unread.  Mutation: skip the range filter.
 #[test]
 fn classify_table_dispatch_drops_a_phi_constant_its_guard_excludes() {
-    assert_eq!(phi_index_arms(Some(4)), vec![0x10, 0x40]);
+    assert_eq!(phi_index_arms(Some(4)), Some(vec![0x10, 0x40]));
 }
 
 /// `t[cell & 3]` with `cell` read from one of three words no ROM serves: the
@@ -2339,16 +1781,10 @@ fn classify_table_dispatch_falls_back_to_the_range_where_the_phi_does_not_fold()
         (masked_table_target(b, cell, 3, 4, 0x4000), None)
     });
     let rom = MockRom::strided(0x4000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
-    match classify(&f, Some(&rom)) {
-        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
-            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-            vec![0x10, 0x20, 0x30, 0x40]
-        ),
-        other => panic!(
-            "expected the range's four slots; got {other:?}\n{}",
-            f.to_text(false)
-        ),
-    }
+    assert_eq!(
+        arms(classify(&f, Some(&rom))),
+        Some(vec![0x10, 0x20, 0x30, 0x40])
+    );
 }
 
 /// `s` in {0, 1, 5000} under `if (s < 4100)`: the guarded range holds more
@@ -2361,18 +1797,7 @@ fn classify_table_dispatch_drops_a_phi_constant_a_wide_guard_excludes() {
         (table_target(b, s, 4, 0x4000), None)
     });
     let rom = MockRom::strided(0x4000, 4, (0..=5000).map(|i| 0x10 + i).collect(), 4);
-    match classify(&f, Some(&rom)) {
-        Some(ResolvedTargets::Multiple(ts)) => {
-            assert_eq!(
-                ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-                vec![0x10, 0x11]
-            );
-        }
-        other => panic!(
-            "expected t[0] and t[1]; got {other:?}\n{}",
-            f.to_text(false)
-        ),
-    }
+    assert_eq!(arms(classify(&f, Some(&rom))), Some(vec![0x10, 0x11]));
 }
 
 /// `p = arg == 1 ? L1 : (arg == 2 ? L2 : 0); if (p) goto *p`: the branch
@@ -2385,18 +1810,7 @@ fn classify_table_dispatch_drops_a_phi_constant_an_equality_guard_excludes() {
         Some((IntCmpOp::Equal, 0, false)),
         |_, p| (p, None),
     );
-    match classify(&f, None) {
-        Some(ResolvedTargets::Multiple(ts)) => {
-            assert_eq!(
-                ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-                vec![0x1000, 0x2000]
-            );
-        }
-        other => panic!(
-            "expected the two labels; got {other:?}\n{}",
-            f.to_text(false)
-        ),
-    }
+    assert_eq!(arms(classify(&f, None)), Some(vec![0x1000, 0x2000]));
 }
 
 /// `t[s]` over interworking words with `s` in {0, 1, 3}: a bounded index
@@ -2406,16 +1820,8 @@ fn classify_table_dispatch_drops_a_phi_constant_an_equality_guard_excludes() {
 #[test]
 fn classify_table_dispatch_folds_each_mode_of_a_phi_indexed_table() {
     let f = phi_of_constants_dispatch([0, 1, 3], None, |b, s| {
-        let i32t = ValueType::int(32);
         let word = table_target(b, s, 4, 0x4000);
-        let one = b.build_int_const(1u64, i32t).unwrap();
-        let mode = b
-            .build_int_binary_operation(word, one, IntBinaryOp::And, i32t)
-            .unwrap();
-        let even = b.build_int_const(0xFFFF_FFFEu64, i32t).unwrap();
-        let target = b
-            .build_int_binary_operation(word, even, IntBinaryOp::And, i32t)
-            .unwrap();
+        let (target, mode) = split_mode(b, word);
         (target, Some(mode))
     });
     let mode = f.indirect_branch_isa_mode(sole_indirect_branch(&f));
@@ -2441,15 +1847,7 @@ fn classify_table_dispatch_folds_each_mode_of_a_phi_indexed_table() {
 #[test]
 fn classify_table_dispatch_seats_a_phi_of_words_with_their_modes() {
     let f = phi_of_constants_dispatch([0x1000, 0x1010, 0x2001], None, |b, word| {
-        let i32t = ValueType::int(32);
-        let one = b.build_int_const(1u64, i32t).unwrap();
-        let mode = b
-            .build_int_binary_operation(word, one, IntBinaryOp::And, i32t)
-            .unwrap();
-        let even = b.build_int_const(0xFFFF_FFFEu64, i32t).unwrap();
-        let target = b
-            .build_int_binary_operation(word, even, IntBinaryOp::And, i32t)
-            .unwrap();
+        let (target, mode) = split_mode(b, word);
         (target, Some(mode))
     });
     let mode = f.indirect_branch_isa_mode(sole_indirect_branch(&f));
@@ -2473,48 +1871,30 @@ fn classify_table_dispatch_carries_each_arms_own_isa_mode() {
     // An interworking table over words `X` and `Y | 1`: the mode is folded per
     // INDEX off that index's own word, so the two arms land on distinct
     // addresses carrying opposite modes.
-    let mut mode_value = None;
-    let (g, _target) = build_with_target(|fb| {
-        let raw = build_non_const_idx(fb);
-        let word = masked_table_target(fb, raw, 1u64, 4u64, 0x4000u64);
-        let mode_mask = fb.build_int_const(1u64, ValueType::int(32)).unwrap();
-        mode_value = Some(
-            fb.build_int_binary_operation(word, mode_mask, IntBinaryOp::And, ValueType::int(32))
-                .expect("word & 1"),
-        );
-        let addr_mask = fb
-            .build_int_const(0xFFFF_FFFEu64, ValueType::int(32))
-            .unwrap();
-        fb.build_int_binary_operation(word, addr_mask, IntBinaryOp::And, ValueType::int(32))
-            .expect("word & ~1")
-    });
+    let (g, mode_value) = interworking_table(1);
     let rom = MockRom::strided(0x4000, 4, vec![0x1000, 0x2001], 4);
-    let result = classify_with(
-        &g,
-        Some(&rom),
-        &crate::AssumptionOptions::default(),
-        mode_value,
-    );
-    match result {
-        Some(ResolvedTargets::Multiple(ts)) => assert_eq!(
-            ts.iter().map(|t| (t.addr, t.isa_bit)).collect::<Vec<_>>(),
-            vec![(0x1000, Some(false)), (0x2000, Some(true))],
+    assert_eq!(
+        classify_with(
+            &g,
+            Some(&rom),
+            &crate::AssumptionOptions::default(),
+            mode_value
         ),
-        other => panic!("expected two arms with their own modes; got {other:?}"),
-    }
+        Some(ResolvedTargets::table([
+            strider_cfg::ResolvedTarget::new(0x1000, Some(false)),
+            strider_cfg::ResolvedTarget::new(0x2000, Some(true)),
+        ])),
+    );
 }
 
 /// A seated `Switch` is re-derived from its retained selector, reporting no
 /// per-arm ISA mode: the node carries no mode input to fold.
 #[test]
 fn classify_sites_rederives_a_seated_switch_from_its_selector() {
-    let mut b = strider_ir_test_utils::empty_builder().expect("empty_builder");
-    let entry = b.create_region_all().unwrap();
-    let a0 = b.create_region_all().unwrap();
-    let a1 = b.create_region_all().unwrap();
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    let [entry, a0, a1] = std::array::from_fn(|_| b.create_region_all().unwrap());
     b.set_entry_region_all(entry).unwrap();
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let raw = build_non_const_idx(&mut b);
     let selector = masked_table_target(&mut b, raw, 1u64, 4u64, 0x4000u64);
     // Seated on only ONE of the two table slots, as a site resolved before the
@@ -2532,11 +1912,34 @@ fn classify_sites_rederives_a_seated_switch_from_its_selector() {
 
     assert_eq!(
         found.resolved.get(&switch),
-        Some(&ResolvedTargets::table(vec![
-            strider_cfg::ResolvedTarget::new(0x1000, None),
-            strider_cfg::ResolvedTarget::new(0x2000, None),
+        Some(&ResolvedTargets::table([
+            0x1000u64.into(),
+            0x2000u64.into()
         ])),
         "the seated switch widens to both slots, with no ISA mode"
+    );
+}
+
+/// A seated `Switch` whose selector folds to a constant no arm lists jumps
+/// there alone: the constant is its one target, as for a placeholder.
+/// Mutation: re-derive a seated switch through the table arm alone.
+#[test]
+fn classify_sites_seats_a_switch_selector_folded_to_a_constant() {
+    let mut b = RegisterSet::new().build_fn().unwrap();
+    let [entry, a0] = std::array::from_fn(|_| b.create_region_all().unwrap());
+    b.set_entry_region_all(entry).unwrap();
+    b.set_region(entry);
+    let selector = b.build_int_const(0x5000u64, ValueType::int(32)).unwrap();
+    let switch = b.build_switch(selector, &[(a0, 0x1000)]).unwrap();
+    b.set_region(a0);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    let g = b.build().unwrap();
+
+    let found = super::super::classify_sites(&g, None).expect("classify");
+    assert_eq!(
+        found.resolved.get(&switch),
+        Some(&ResolvedTargets::Single(0x5000.into())),
     );
 }
 
@@ -2546,21 +1949,7 @@ fn classify_table_dispatch_evaluates_each_dispatch_load_once_per_index() {
     // every node below `word`.  One memo per INDEX evaluates the dispatch load
     // once; one per ROOT re-walks it, doubling the folding work (and, on a
     // stack table, the store walk behind it).
-    let mut mode_value = None;
-    let (g, _target) = build_with_target(|fb| {
-        let raw = build_non_const_idx(fb);
-        let word = masked_table_target(fb, raw, 3u64, 4u64, 0x4000u64);
-        let mode_mask = fb.build_int_const(1u64, ValueType::int(32)).unwrap();
-        mode_value = Some(
-            fb.build_int_binary_operation(word, mode_mask, IntBinaryOp::And, ValueType::int(32))
-                .expect("word & 1"),
-        );
-        let addr_mask = fb
-            .build_int_const(0xFFFF_FFFEu64, ValueType::int(32))
-            .unwrap();
-        fb.build_int_binary_operation(word, addr_mask, IntBinaryOp::And, ValueType::int(32))
-            .expect("word & ~1")
-    });
+    let (g, mode_value) = interworking_table(3);
     let rom = RecordingRom {
         inner: MockRom::strided(0x4000, 4, vec![0x1000, 0x1004, 0x1008, 0x100C], 4),
         log: Mutex::new(Vec::new()),
@@ -2583,103 +1972,73 @@ fn classify_table_dispatch_evaluates_each_dispatch_load_once_per_index() {
 /// per-index memory walk costs O(entries^2).
 mod stack_table_cost {
     use super::*;
+    use crate::mem_analysis::WALK_STEPS;
+    use crate::test_support::{assert_near_linear, steps};
 
-    /// Targets and the memory-chain steps [`classify_dispatch_value`] spends on
-    /// an `entries`-slot stack array from `build`.  Asserts the resolved set,
-    /// so the cost measurement can never be met by resolving less.
+    /// The memory-chain steps [`classify_dispatch_value`] spends on `fg`'s
+    /// sole dispatch, asserting it resolves to `targets`, so the cost
+    /// measurement can never be met by resolving less.
+    fn resolve_steps(mut fg: Function, targets: &[u64]) -> crate::Result<u64> {
+        fg.assume(&crate::AssumptionOptions::default());
+        let mut sc = SiteClassifier::new(&fg, None);
+        let branch = sole_indirect_branch(&fg);
+        let target = fg.indirect_branch_target(branch);
+        steps(&[&WALK_STEPS], || {
+            let result = sc.classify_dispatch_value(branch, target, None);
+            assert_eq!(
+                arms(result).as_deref(),
+                Some(targets),
+                "every slot resolves to its own label"
+            );
+            Ok(())
+        })
+    }
+
+    /// The steps for an `entries`-slot stack array from `build`.
     fn resolve(
         entries: usize,
         build: fn(&[u64], i64, u64) -> (strider_ir::Function, ValueId),
-    ) -> (Vec<u64>, u64) {
+    ) -> crate::Result<u64> {
         let targets: Vec<u64> = (0..entries as u64).map(|i| 0x401000 + i * 0x10).collect();
-        let (mut fg, _load) = build(&targets, -8 * entries as i64, 8);
-        fg.assume(&crate::AssumptionOptions::default());
-        let mut sc = SiteClassifier::new(&fg, None).unwrap();
-        crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
-        let branch = sole_indirect_branch(&fg);
-        let target = fg.indirect_branch_target(branch);
-        let result = sc.classify_dispatch_value(branch, target, None);
-        let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get);
-        let Some(ResolvedTargets::Multiple(ts)) = result else {
-            panic!("an {entries}-entry stack array must resolve, got {result:?}");
-        };
-        let resolved: Vec<u64> = ts.iter().map(|t| t.addr).collect();
-        assert_eq!(resolved, targets, "every slot resolves to its own label");
-        (resolved, steps)
+        let (fg, _load) = build(&targets, -8 * entries as i64, 8);
+        resolve_steps(fg, &targets)
     }
 
     /// A 4097-def chain between the table's stores and the dispatch, far
     /// longer than the table.  The shared index answers each probe without
     /// walking it, so the site resolves at a cost the chain does not set.
     #[test]
-    fn a_long_chain_above_the_dispatch_still_resolves() {
+    fn a_long_chain_above_the_dispatch_still_resolves() -> crate::Result<()> {
         let filler = 4097usize;
         let targets: Vec<u64> = (0..4u64).map(|i| 0x401000 + i * 0x10).collect();
-        let sp = sp64();
-        let arg_vn = rsleigh::Vn {
-            addr_off: 0x38,
-            addr_space: rsleigh::VnSpace::REGISTER,
-            size: 8,
-        };
-        let mut b = sp_frame(sp)
-            .tracked(arg_vn)
-            .build_fn_single_region()
-            .unwrap();
-        let sp_val = b.read_variable(&sp).unwrap();
+        let (mut b, sp_val) = stack_frame();
         wire_stack_stores(&targets, -32, 8, sp_val, &mut b);
         // Nearer the load than the table, so every probe reaches past it.
         wire_stack_stores(&vec![0u64; filler], -0x10000, 8, sp_val, &mut b);
-        wire_stack_dispatch(targets.len(), -32, 8, sp_val, &mut b, arg_vn);
-        let (mut fg, _load) = finish_stack_array(b.build().unwrap());
-        fg.assume(&crate::AssumptionOptions::default());
-        let mut sc = SiteClassifier::new(&fg, None).unwrap();
-        crate::mem_analysis::WALK_STEPS.with(|c| c.set(0));
-        let branch = sole_indirect_branch(&fg);
-        let target = fg.indirect_branch_target(branch);
-        let result = sc.classify_dispatch_value(branch, target, None);
-        let steps = crate::mem_analysis::WALK_STEPS.with(std::cell::Cell::get);
-        let Some(ResolvedTargets::Multiple(ts)) = result else {
-            panic!("the table must resolve past the chain, got {result:?}");
-        };
-        assert_eq!(
-            ts.iter().map(|t| t.addr).collect::<Vec<_>>(),
-            targets,
-            "every slot resolves to its own label"
-        );
+        wire_stack_dispatch(targets.len(), -32, 8, sp_val, &mut b, stack_arg());
+        let (fg, _load) = finish_stack_array(b.build().unwrap());
+        let steps = resolve_steps(fg, &targets)?;
         assert!(
             steps < filler as u64,
             "the probes must not walk the chain: {steps} steps over a \
              {filler}-def chain"
         );
+        Ok(())
     }
 
+    /// Doubling the entry count must not quadruple the memory walk, off the
+    /// bare SP and across a `MemPhi`, whose empty straight-line segment
+    /// makes every probe fall off it: without a memo behind the phi that is
+    /// one full chain walk per entry.
     #[test]
-    fn is_not_quadratic_in_entries() {
-        let (small_targets, small) = resolve(64, build_stack_array);
-        let (big_targets, big) = resolve(128, build_stack_array);
-        assert_eq!(small_targets.len(), 64);
-        assert_eq!(big_targets.len(), 128);
-        assert!(
-            big <= small * 3,
-            "doubling the entry count must not quadruple the memory walk: \
-             64 entries took {small} steps, 128 took {big}"
-        );
-    }
-
-    /// A `MemPhi` above the probe empties the straight-line segment, so every
-    /// probe falls off it. Without a memo behind the phi that is one full chain
-    /// walk per entry.
-    #[test]
-    fn is_not_quadratic_across_a_mem_phi() {
-        let (small_targets, small) = resolve(64, build_stack_array_across_mem_phi);
-        let (big_targets, big) = resolve(128, build_stack_array_across_mem_phi);
-        assert_eq!(small_targets.len(), 64);
-        assert_eq!(big_targets.len(), 128);
-        assert!(
-            big <= small * 3,
-            "doubling the entry count must not quadruple the memory walk: \
-             64 entries took {small} steps, 128 took {big}"
-        );
+    fn is_not_quadratic_in_entries() -> crate::Result<()> {
+        assert_near_linear("bare", 64, |n| resolve(n, build_stack_array), 300)?;
+        assert_near_linear(
+            "across a MemPhi",
+            64,
+            |n| resolve(n, build_stack_array_across_mem_phi),
+            300,
+        )
     }
 }
 
@@ -2687,9 +2046,8 @@ mod stack_table_cost {
 /// `Call` on one arm.  With `clobber`, the callee's clobber of that register
 /// reaches the dispatch, so the base is a merge of the literal and an unknown.
 fn seated_switch_over_merged_base(clobber: bool) -> (Function, NodeId) {
-    use strider_ir::IntCmpOp;
     let sp = sp32_vn();
-    let base_vn = strider_ir_test_utils::reg_vn(0x20, 4);
+    let base_vn = reg_vn(0x20, 4);
     let mut b = sp_frame(sp).tracked(base_vn).build_fn().unwrap();
     let entry = b.create_region_all().unwrap();
     let side = b.create_region_all().unwrap();
@@ -2698,7 +2056,6 @@ fn seated_switch_over_merged_base(clobber: bool) -> (Function, NodeId) {
     b.set_entry_region_all(entry).unwrap();
 
     b.set_region(entry);
-    b.set_lift_addr(Some(strider_ir_test_utils::SENTINEL_LIFT_ADDR));
     let base_c = b.build_int_const(0x4000u64, ValueType::int(32)).unwrap();
     b.write_variable(&base_vn, base_c).unwrap();
     let raw = build_non_const_idx(&mut b);
@@ -2743,11 +2100,8 @@ fn seated_switch_over_merged_base(clobber: bool) -> (Function, NodeId) {
 
 fn rederive_seated_switch(mut g: Function, switch: NodeId) -> Option<ResolvedTargets> {
     let rom = MockRom::strided(0x4000, 4, vec![0x1000, 0x2000], 4);
-    let mut prep = OptimizerPipeline::new();
-    prep.add(PhiCollapse);
-    prep.add(ConstantFold::new());
-    prep.add(RegionCollapse);
-    prep.run(&mut g, &crate::OptCtx::new(Some(&rom)))
+    pipeline(&[&PhiCollapse, &ConstantFold, &RegionCollapse])
+        .run(&mut g, &crate::OptCtx::new(Some(&rom)))
         .expect("prep");
     let found = super::super::classify_sites(&g, Some(&rom)).expect("classify");
     assert!(
@@ -2764,10 +2118,7 @@ fn seated_switch_rederives_when_the_table_base_survives_the_merge() {
     let (g, switch) = seated_switch_over_merged_base(false);
     assert_eq!(
         rederive_seated_switch(g, switch),
-        Some(ResolvedTargets::table(vec![
-            strider_cfg::ResolvedTarget::new(0x1000, None),
-            strider_cfg::ResolvedTarget::new(0x2000, None),
-        ])),
+        Some(ResolvedTargets::table([0x1000u64.into(), 0x2000u64.into()])),
     );
 }
 
@@ -2788,30 +2139,20 @@ fn seated_switch_defers_when_a_call_clobbers_the_table_base() {
 /// A stack label array with a store through a fresh allocation between the
 /// labels and the dispatch.
 fn stack_array_behind_a_heap_store(allocator: u64, targets: &[u64]) -> Function {
-    let sp = sp64();
-    let ret = rsleigh::Vn {
-        addr_off: 0x00,
-        addr_space: VnSpace::REGISTER,
-        size: 8,
-    };
-    let arg_vn = rsleigh::Vn {
-        addr_off: 0x38,
-        addr_space: VnSpace::REGISTER,
-        size: 8,
-    };
-    let mut b = sp_frame(sp)
+    let ret = reg_vn(0x00, 8);
+    let mut b = sp_frame(sp64())
         .tracked(ret)
         .ret(ret)
-        .tracked(arg_vn)
+        .tracked(stack_arg())
         .build_fn_single_region()
         .unwrap();
     let target = b.build_int_const(allocator, ValueType::int(64)).unwrap();
     let (_call, rets) = b.build_call(target, &[], &[ret], 0).unwrap();
-    let sp_val = b.read_variable(&sp).unwrap();
+    let sp_val = b.read_variable(&sp64()).unwrap();
     wire_stack_stores(targets, -24, 8, sp_val, &mut b);
     let junk = b.build_int_const(0x55u64, ValueType::int(64)).unwrap();
     b.build_store(rets[0], junk, VnSpace::RAM).unwrap();
-    wire_stack_dispatch(targets.len(), -24, 8, sp_val, &mut b, arg_vn);
+    wire_stack_dispatch(targets.len(), -24, 8, sp_val, &mut b, stack_arg());
     b.build().unwrap()
 }
 
@@ -2822,28 +2163,22 @@ fn stack_array_behind_a_heap_store(allocator: u64, targets: &[u64]) -> Function 
 fn a_heap_verdict_opens_the_table_only_under_its_claim() {
     const MALLOC: u64 = 0x1000;
     let targets = [0x401190u64, 0x401180u64];
-    let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
-    p.add(KnownBits);
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
     let resolve = |fg: &mut Function, allocators: &[u64]| {
         let site = sole_indirect_branch(fg);
         fg.assume(&crate::AssumptionOptions {
             noalias_allocators: allocators.iter().copied().collect(),
             ..crate::AssumptionOptions::none()
         });
-        p.run(fg, &crate::OptCtx::new(None)).unwrap();
+        run_passes(fg, FOLD).unwrap();
         super::super::classify_sites(fg, None)
             .unwrap()
             .resolved
             .get(&site)
             .cloned()
     };
-    let table = Some(ResolvedTargets::table(vec![
-        0x401180u64.into(),
-        0x401190u64.into(),
-    ]));
+    let table = Some(ResolvedTargets::table(
+        targets.map(strider_cfg::ResolvedTarget::from),
+    ));
     assert_eq!(
         resolve(&mut stack_array_behind_a_heap_store(MALLOC, &targets), &[]),
         None,
@@ -2860,4 +2195,294 @@ fn a_heap_verdict_opens_the_table_only_under_its_claim() {
         table,
         "a later run without the claim keeps it"
     );
+}
+
+/// `c = *p:I8 ; i = zext64(trunc8(zext32(c) * 3)) ; if (i < 64 &&
+/// (c & 0x80) != 0) goto table[i]`: the guard bounds the product's top
+/// bits, which a carry ties to the tested bit of `c`, so only slots 1 mod 3
+/// are feasible.
+#[test]
+#[ignore = "known limit: a read guard looser than an unread test is trusted, so infeasible cells are seated"]
+fn classify_table_dispatch_heeds_a_test_a_carry_reaches() {
+    let (i8t, i32t, i64t) = (ValueType::int(8), ValueType::int(32), ValueType::int(64));
+    let p = reg_vn(0x20, 8);
+    let mut b = RegisterSet::new().tracked(p).arg(p).build_fn().unwrap();
+    let [entry, tested, dispatch, exit] = std::array::from_fn(|_| b.create_region_all().unwrap());
+    b.set_entry_region_all(entry).unwrap();
+
+    b.set_region(entry);
+    let ptr = b.read_variable(&p).unwrap();
+    let c = b.build_load(ptr, VnSpace::RAM, i8t).unwrap();
+    let wide = b.extend_if_needed(c, i32t, ExtendOp::ZeroExtend).unwrap();
+    let m = b
+        .build_const_binop(3u64, wide, IntBinaryOp::Mul, i32t)
+        .unwrap();
+    let low = b.truncate_if_needed(m, i8t).unwrap();
+    let idx = b.extend_if_needed(low, i64t, ExtendOp::ZeroExtend).unwrap();
+    let n = b.build_int_const(64u64, i64t).unwrap();
+    let below = b
+        .build_int_cmp_operation(idx, n, IntCmpOp::Less, i64t)
+        .unwrap();
+    b.build_if(below, tested, exit).unwrap();
+
+    b.set_region(tested);
+    let top = b
+        .build_const_binop(0x80u64, c, IntBinaryOp::And, i8t)
+        .unwrap();
+    let zero = b.build_int_const(0u64, i8t).unwrap();
+    let clear = b
+        .build_int_cmp_operation(top, zero, IntCmpOp::Equal, i8t)
+        .unwrap();
+    b.build_if(clear, exit, dispatch).unwrap();
+
+    b.set_region(dispatch);
+    let scaled = b
+        .build_const_binop(3u64, idx, IntBinaryOp::ShiftLeft, i64t)
+        .unwrap();
+    let addr = b
+        .build_const_binop(0x4000u64, scaled, IntBinaryOp::Add, i64t)
+        .unwrap();
+    let loaded = b.build_load(addr, VnSpace::RAM, i64t).unwrap();
+    b.build_indirect_branch(loaded).unwrap();
+
+    b.set_region(exit);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut g = b.build().unwrap();
+    run_passes(&mut g, COLLAPSE).unwrap();
+    let rom = MockRom::strided(0x4000, 8, (0..256).map(|i| 0x5000 + 0x10 * i).collect(), 8);
+    if let Some(ResolvedTargets::Multiple(ts)) = classify(&g, Some(&rom)) {
+        for t in ts.iter() {
+            let slot = (t.addr - 0x5000) / 0x10;
+            assert_eq!(slot % 3, 1, "slot {slot} is infeasible");
+        }
+    }
+}
+
+/// `idx = (load & 3) | 4 ; goto *[0x4000 + (idx << 2)]`: KnownBits proves
+/// bit 2 set, so only slots 4 to 7 are read, though the range is `[0, 7]`.
+/// Mutation: drop the known-bits filter from the enumeration.
+#[test]
+fn classify_table_dispatch_reads_only_slots_with_the_known_one_bits() {
+    let i32t = ValueType::int(32);
+    let (g, _) = build_with_target(|fb| {
+        let ld = build_non_const_idx(fb);
+        let low = fb
+            .build_const_binop(3u64, ld, IntBinaryOp::And, i32t)
+            .unwrap();
+        let idx = fb
+            .build_const_binop(4u64, low, IntBinaryOp::Or, i32t)
+            .unwrap();
+        let scaled = fb
+            .build_const_binop(2u64, idx, IntBinaryOp::ShiftLeft, i32t)
+            .unwrap();
+        let addr = fb
+            .build_const_binop(0x4000u64, scaled, IntBinaryOp::Add, i32t)
+            .unwrap();
+        fb.build_load(addr, VnSpace::RAM, i32t).unwrap()
+    });
+    let rom = RecordingRom {
+        inner: MockRom::strided(0x4000, 4, (0..8).map(|i| 0x100 * (i + 1)).collect(), 4),
+        log: Mutex::new(Vec::new()),
+    };
+    assert_eq!(
+        arms(classify(&g, Some(&rom))),
+        Some(vec![0x500, 0x600, 0x700, 0x800])
+    );
+    assert!(
+        rom.log.lock().unwrap().iter().all(|&(a, _)| a >= 0x4010),
+        "a slot without bit 2 was read"
+    );
+}
+
+/// `goto *[0x1000 | ((x & 3) << 2)]`: the address itself is the index, and
+/// only the four words at 0x1000 are ones it takes.
+/// Mutation: drop the known-bits filter from the enumeration.
+#[test]
+fn classify_table_dispatch_reads_only_addresses_with_the_known_one_bits() {
+    let i32t = ValueType::int(32);
+    let (g, _) = build_with_target(|fb| {
+        let ld = build_non_const_idx(fb);
+        let low = fb
+            .build_const_binop(3u64, ld, IntBinaryOp::And, i32t)
+            .unwrap();
+        let scaled = fb
+            .build_const_binop(2u64, low, IntBinaryOp::ShiftLeft, i32t)
+            .unwrap();
+        let addr = fb
+            .build_const_binop(0x1000u64, scaled, IntBinaryOp::Or, i32t)
+            .unwrap();
+        fb.build_load(addr, VnSpace::RAM, i32t).unwrap()
+    });
+    let rom = MockRom::strided(0x1000, 4, vec![0x10, 0x20, 0x30, 0x40], 4);
+    assert_eq!(
+        arms(classify(&g, Some(&rom))),
+        Some(vec![0x10, 0x20, 0x30, 0x40])
+    );
+}
+
+/// `n` switches in sequence, the `i`th on the byte at `p + i`: `if (b !=
+/// 0x55) goto table[b]`, else on to the next. Each index is the whole byte,
+/// its KnownBits bound, so every dispatch weighs the tests of its cell.
+fn sequential_field_switches(n: usize) -> Function {
+    let (i8t, i32t, i64t) = (ValueType::int(8), ValueType::int(32), ValueType::int(64));
+    let p = reg_vn(0x20, 8);
+    let mut b = RegisterSet::new().tracked(p).arg(p).build_fn().unwrap();
+    let tests: Vec<_> = (0..=n).map(|_| b.create_region_all().unwrap()).collect();
+    b.set_entry_region_all(tests[0]).unwrap();
+    b.set_region(tests[0]);
+    let ptr = b.read_variable(&p).unwrap();
+    for i in 0..n {
+        let dispatch = b.create_region_all().unwrap();
+        b.set_region(tests[i]);
+        let addr = at(&mut b, ptr, i as i64, i64t).unwrap();
+        let byte = b.build_load(addr, VnSpace::RAM, i8t).unwrap();
+        let idx = b
+            .extend_if_needed(byte, i32t, ExtendOp::ZeroExtend)
+            .unwrap();
+        let skip = b.build_int_const(0x55u64, i32t).unwrap();
+        let cond = b
+            .build_int_cmp_operation(idx, skip, IntCmpOp::Equal, i32t)
+            .unwrap();
+        b.build_if(cond, tests[i + 1], dispatch).unwrap();
+        b.set_region(dispatch);
+        let target = table_target(&mut b, idx, 4, 0x4000);
+        b.build_indirect_branch(target).unwrap();
+    }
+    b.set_region(tests[n]);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    run_passes(&mut f, COLLAPSE).unwrap();
+    f
+}
+
+/// Each of `n` switches on fields of one pointer looks at the pointer's
+/// other offsets only where one may be bounded, so the guard scans stay
+/// linear in `n`.
+/// Mutation: range every `Add(v, k)` sibling of a chain value at each site.
+#[test]
+fn sequential_field_switches_scan_guards_linearly() -> crate::Result<()> {
+    let rom = MockRom::strided(0x4000, 4, (0..256).map(|i| 0x10 * (i + 1)).collect(), 4);
+    crate::test_support::assert_near_linear(
+        "sequential field switches",
+        64,
+        |n| {
+            let f = sequential_field_switches(n);
+            crate::test_support::steps(&[&super::super::index_range::GUARD_SCANS], || {
+                let sites = super::super::classify_sites(&f, Some(&rom))?;
+                assert_eq!(sites.resolved.len(), n, "every switch is seated");
+                Ok(())
+            })
+        },
+        250,
+    )
+}
+
+/// The same switches weigh only the tests of their own field.
+/// Mutation: weigh every `If` dominating the site.
+#[test]
+fn sequential_field_switches_weigh_tests_linearly() -> crate::Result<()> {
+    let rom = MockRom::strided(0x4000, 4, (0..256).map(|i| 0x10 * (i + 1)).collect(), 4);
+    crate::test_support::assert_near_linear(
+        "sequential field switches",
+        64,
+        |n| {
+            let f = sequential_field_switches(n);
+            crate::test_support::steps(&[&super::super::index_range::CELL_TEST_SCANS], || {
+                let sites = super::super::classify_sites(&f, Some(&rom))?;
+                assert_eq!(sites.resolved.len(), n, "every switch is seated");
+                Ok(())
+            })
+        },
+        250,
+    )
+}
+
+/// `n` switches on one field byte `x`, the `i`th behind `if (x == k_i)
+/// return` and a test of an unrelated word: every equality on `x`
+/// dominates every later switch.
+fn sequential_equalities_on_one_index(n: usize) -> Function {
+    let (i8t, i32t) = (ValueType::int(8), ValueType::int(32));
+    let p = reg_vn(0x20, 4);
+    let mut b = RegisterSet::new().tracked(p).arg(p).build_fn().unwrap();
+    let tests: Vec<_> = (0..=n).map(|_| b.create_region_all().unwrap()).collect();
+    b.set_entry_region_all(tests[0]).unwrap();
+    b.set_region(tests[0]);
+    let ptr = b.read_variable(&p).unwrap();
+    let addr = at(&mut b, ptr, 0x10, i32t).unwrap();
+    let byte = b.build_load(addr, VnSpace::RAM, i8t).unwrap();
+    let x = b
+        .extend_if_needed(byte, i32t, ExtendOp::ZeroExtend)
+        .unwrap();
+    for i in 0..n {
+        let [next, dispatch, exit] = std::array::from_fn(|_| b.create_region_all().unwrap());
+        b.set_region(tests[i]);
+        let k = b.build_int_const((i % 250) as u64, i32t).unwrap();
+        let eq = b
+            .build_int_cmp_operation(x, k, IntCmpOp::Equal, i32t)
+            .unwrap();
+        b.build_if(eq, exit, next).unwrap();
+        b.set_region(exit);
+        b.build_return(None, &[]).unwrap();
+        b.set_region(next);
+        let word = b.build_int_const(0xa000u64 + i as u64, i32t).unwrap();
+        let word = b.build_load(word, VnSpace::RAM, i32t).unwrap();
+        let zero = b.build_int_const(0u64, i32t).unwrap();
+        let clear = b
+            .build_int_cmp_operation(word, zero, IntCmpOp::Equal, i32t)
+            .unwrap();
+        b.build_if(clear, dispatch, tests[i + 1]).unwrap();
+        b.set_region(dispatch);
+        let target = table_target(&mut b, x, 4, 0x4000);
+        b.build_indirect_branch(target).unwrap();
+    }
+    b.set_region(tests[n]);
+    b.build_return(None, &[]).unwrap();
+    b.set_lift_addr(None);
+    let mut f = b.build().unwrap();
+    run_passes(&mut f, COLLAPSE).unwrap();
+    f
+}
+
+/// The tests of the shared field are weighed once per index, not once per
+/// switch, so the cell-test scans stay linear in `n`.
+/// Mutation: weigh every `If` reading the cell at each site.
+#[test]
+fn equalities_on_a_shared_index_weigh_tests_linearly() -> crate::Result<()> {
+    let rom = MockRom::strided(0x4000, 4, (0..256).map(|i| 0x10 * (i + 1)).collect(), 4);
+    crate::test_support::assert_near_linear(
+        "cell tests on a shared index",
+        128,
+        |n| {
+            let f = sequential_equalities_on_one_index(n);
+            crate::test_support::steps(&[&super::super::index_range::CELL_TEST_SCANS], || {
+                let sites = super::super::classify_sites(&f, Some(&rom))?;
+                assert_eq!(sites.resolved.len(), n, "every switch is seated");
+                Ok(())
+            })
+        },
+        250,
+    )
+}
+
+/// Each switch weighs only the equalities its own values could be, so the
+/// equality scans stay linear in `n`.
+/// Mutation: weigh every equality on each index value at each site.
+#[test]
+fn equalities_on_a_shared_index_scan_linearly() -> crate::Result<()> {
+    let rom = MockRom::strided(0x4000, 4, (0..256).map(|i| 0x10 * (i + 1)).collect(), 4);
+    crate::test_support::assert_near_linear(
+        "equalities on a shared index",
+        128,
+        |n| {
+            let f = sequential_equalities_on_one_index(n);
+            crate::test_support::steps(&[&super::super::index_range::EQUALITY_SCANS], || {
+                let sites = super::super::classify_sites(&f, Some(&rom))?;
+                assert_eq!(sites.resolved.len(), n, "every switch is seated");
+                Ok(())
+            })
+        },
+        250,
+    )
 }

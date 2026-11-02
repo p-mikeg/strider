@@ -908,6 +908,11 @@ A `strider.pattern.Pat` is never a right-hand side: `replace=` raises
 `TypeError` for one, and one nested in a `Template` operand raises
 `StriderError` naming the constructor to respell.
 
+A match the replacement cannot stand in for is left alone and not counted: a
+replacement of another width than the matched value, or, for a `find` that
+matches through a phi or region, one that would read the matched value or is
+not available everywhere that value is read.
+
 `rewrite_all` makes one walk; at each node the first rule that fires wins.
 Neither is a fixed point, so a rule whose output its own `find` matches needs a
 second call. Both stale every outstanding `Node` handle, a return of 0
@@ -932,11 +937,11 @@ function.optimize(pipeline=pipe)                 # runs in place, against the li
 
 Main passes, which `add` takes: `ConstantFold`, `LoadReadOnly`, `KnownBits`,
 `FlagCmpCanonicalize`, `IfCondInversion`, `PhiCollapse`, `RegionCollapse`,
-`DeadBranchElimination`, `CfgDetach`, `LoadForward`. Post-passes, which only
-`add_post` takes: `CallStackArgCollect`, `FunctionArgDetect`. `add_post` also
-takes a main pass, which then runs once. `FunctionArgDetect` moves an argument
-load's memory edge as `LoadForward` does: past a store `stack_global_disjoint`
-or `noalias_allocators` puts off the slot, never through a call a claim makes
+`DeadBranchElimination`, `LoadForward`. Post-passes, which only `add_post`
+takes: `CallStackArgCollect`, `FunctionArgDetect`. `add_post` also takes a main
+pass, which then runs once. `FunctionArgDetect` moves an argument load's memory
+edge as `LoadForward` does: past a store `stack_global_disjoint` or
+`noalias_allocators` puts off the slot, never through a call a claim makes
 transparent. The `MainOptimizerPass`, `PostOptimizerPass` and `OptimizerPass`
 type aliases name those groups. [optimizations.md](optimizations.md) says what
 each pass does.

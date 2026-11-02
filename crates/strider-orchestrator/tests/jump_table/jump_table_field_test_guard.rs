@@ -277,6 +277,68 @@ fn an_equality_the_dispatch_sits_under_bounds_the_field() {
     );
 }
 
+/// `cmp $2,%al ; je L ; cmp $3,%al ; jne dflt ; L:`: both equalities' true
+/// edges merge above the dispatch, so only cells 2 and 3 are feasible though
+/// neither edge alone reaches it.
+/// Mutation: ask whether the true edge, not its sink, dominates the dispatch.
+#[test]
+fn two_equalities_merging_above_the_dispatch_bound_the_field() {
+    let head = [
+        0x0f, 0xb6, 0x47, 0x10, 0x3c, 0x02, 0x74, 0x04, 0x3c, 0x03, 0x75, 0x1f,
+    ];
+    assert_only([head.as_slice(), &JMP_RAX].concat(), &[2, 3]);
+}
+
+/// `cmp $0x40,%al ; jae dflt ; L: dec %esi ; jne L ; testb $0xfc,%al ;
+/// jne dflt`: the read guard's edge enters a loop header it dominates, and
+/// is looser than the unread mask test that sizes the table. A guard read
+/// there would narrow the index past its KnownBits bound and so skip the
+/// unread-test veto, which keys on that bound.
+/// Mutation: hold a guard wherever its edge dominates.
+#[test]
+fn a_loose_guard_into_a_loop_header_leaves_the_mask_test_unread() {
+    let head = [
+        0x0f, 0xb6, 0x47, 0x10, 0x3c, 0x40, 0x73, 0x27, 0xff, 0xce, 0x75, 0xfc, 0xa8, 0xfc, 0x75,
+        0x1f,
+    ];
+    assert_only([head.as_slice(), &JMP_RAX].concat(), &[0, 1, 2, 3]);
+}
+
+/// `cmp $0x40,%al ; jae dflt ; testb $0xfc,%al ; jne dflt`: the same without
+/// the loop. A read guard narrowing the index is trusted as the table bound,
+/// so the tighter mask test it does not read is never consulted.
+#[test]
+#[ignore = "known limit: a read guard looser than an unread test is trusted, so infeasible cells are seated"]
+fn a_loose_read_guard_over_an_unread_mask_test_bounds_the_field() {
+    let head = [
+        0x0f, 0xb6, 0x47, 0x10, 0x3c, 0x40, 0x73, 0x23, 0xa8, 0xfc, 0x75, 0x1f,
+    ];
+    assert_only([head.as_slice(), &JMP_RAX].concat(), &[0, 1, 2, 3]);
+}
+
+/// `cmpb $3,%al ; ja dflt ; testb %al,%al ; js dflt`: the sign test reads
+/// only a bit the read guard already clears, so the four arms are seated.
+/// Mutation: weigh unread cell tests under a narrowed range.
+#[test]
+fn a_test_of_bits_above_a_read_guard_bounds_nothing() {
+    let guard = guarded(&[0x3c, 0x03, 0x77, 0x23, 0x84, 0xc0, 0x78, 0x1f]);
+    let arms = dispatch(&guard).expect("seated");
+    assert_eq!(arms, labels(guard.len() + JMP_RAX.len())[..4]);
+}
+
+/// `cmpb $3,%al ; ja dflt ; testb $1,%al ; je A ; inc %esi ; jmp L ;
+/// A: dec %esi ; L:`: both edges of the bit test meet again above the
+/// dispatch, so it bounds nothing there.
+/// Mutation: weigh unread cell tests under a narrowed range.
+#[test]
+fn a_test_whose_edges_merge_above_the_dispatch_bounds_nothing() {
+    let guard = guarded(&[
+        0x3c, 0x03, 0x77, 0x25, 0xa8, 0x01, 0x74, 0x04, 0xff, 0xc6, 0xeb, 0x02, 0xff, 0xce,
+    ]);
+    let arms = dispatch(&guard).expect("seated");
+    assert_eq!(arms, labels(guard.len() + JMP_RAX.len())[..4]);
+}
+
 /// `movzwl 0x10(%rdi),%eax ; testb $0xfc,0x11(%rdi) ; jne dflt ; shr $8,%eax`:
 /// the test loads the index's byte at its own address.
 /// Mutation: count only a load at the cell's own address.
@@ -292,7 +354,7 @@ fn a_test_of_an_overlapping_load_bounds_the_field() {
 /// ja dflt ; movzbl %al,%eax`: the cell is in [0xfe, 0x101], so the byte is
 /// 0xfe, 0xff, 0 or 1, and the recorded guards are lost at the truncate.
 #[test]
-#[ignore = "known limit: a guard lost at the truncate is trusted"]
+#[ignore = "known limit: a guard lost at the truncate is trusted, so infeasible cells are seated"]
 fn a_recorded_guard_lost_at_a_truncate_still_bounds_the_field() {
     let head = [
         0x0f, 0xb7, 0x47, 0x10, 0x3d, 0xfe, 0x00, 0x00, 0x00, 0x72, 0x29, 0x3d, 0x01, 0x01, 0x00,
@@ -319,4 +381,152 @@ fn a_test_through_a_phi_bounds_the_field() {
         0xff, 0xff, 0x03, 0x77, 0x1f,
     ];
     assert_only([guarded(&shl), JMP_RAX.to_vec()].concat(), &[0, 1, 2, 3]);
+}
+
+/// `cmp $3,%al ; ja dflt ; L: dec %esi ; jne L`: the guard's edge enters a
+/// loop header, so no guard is read at the dispatch, yet the field is
+/// bounded to four cells.
+/// Mutation: exempt every recorded guard on the index chain.
+#[test]
+fn a_guard_into_a_loop_header_bounds_the_field() {
+    let head = [
+        0x0f, 0xb6, 0x47, 0x10, 0x3c, 0x03, 0x77, 0x23, 0xff, 0xce, 0x75, 0xfc,
+    ];
+    assert_only([head.as_slice(), &JMP_RAX].concat(), &[0, 1, 2, 3]);
+}
+
+/// `mov 0x10(%rdi),%eax ; cmp $11,%eax ; ja dflt ; mov $0xaaaaaaab,%ecx ;
+/// imul %rcx,%rax ; shr $33,%rax ; movzbl %al,%eax`: the index is the
+/// guarded field divided by three, a shape the range analysis does not
+/// carry the guard through.
+/// Mutation: exempt a guard on the index chain however loose it reads there.
+#[test]
+fn a_guard_below_a_magic_divide_bounds_the_field() {
+    let head = [
+        0x8b, 0x47, 0x10, 0x83, 0xf8, 0x0b, 0x77, 0x2f, 0xb9, 0xab, 0xaa, 0xaa, 0xaa, 0x48, 0x0f,
+        0xaf, 0xc1, 0x48, 0xc1, 0xe8, 0x21, 0x0f, 0xb6, 0xc0,
+    ];
+    assert_only([head.as_slice(), &JMP_RAX].concat(), &[0, 1, 2, 3]);
+}
+
+/// `mov 0x10(%rdi),%eax ; cmp $0xfffffffb,%eax ; jbe dflt ; movzbl %al,%eax`:
+/// the dispatch sits under `eax > 0xfffffffb`, so only cells 0xfc to 0xff
+/// are feasible. The guard recorded is the one on the edge to `dflt`, loose
+/// enough to admit the whole byte, and never holds at the dispatch.
+/// Mutation: exempt a recorded guard whichever edge reaches the dispatch.
+#[test]
+fn a_guard_on_the_edge_away_from_the_dispatch_bounds_nothing() {
+    let head = [
+        0x8b, 0x47, 0x10, 0x83, 0xf8, 0xfb, 0x76, 0x22, 0x0f, 0xb6, 0xc0,
+    ];
+    assert_only([head.as_slice(), &JMP_RAX].concat(), &[4, 5]);
+}
+
+/// `L: dec %esi ; je dflt ; testb $0xfc,%al ; jne L ; cmp $0x40,%al ;
+/// jae dflt`: the mask test's true edge is a back edge into a header that
+/// dominates it, so only its false edge reaches the dispatch, and the
+/// read guard is looser than the test.
+#[test]
+#[ignore = "known limit: a read guard looser than an unread test is trusted, so infeasible cells are seated"]
+fn a_mask_test_looping_back_bounds_the_field() {
+    let head = [
+        0x0f, 0xb6, 0x47, 0x10, 0xff, 0xce, 0x74, 0x27, 0xa8, 0xfc, 0x75, 0xf8, 0x3c, 0x40, 0x73,
+        0x1f,
+    ];
+    assert_only([head.as_slice(), &JMP_RAX].concat(), &[0, 1, 2, 3]);
+    // `L: testb $0xfc,%al ; jne L`: the test spins on itself.
+    let spin = [
+        0x0f, 0xb6, 0x47, 0x10, 0xa8, 0xfc, 0x75, 0xfc, 0x3c, 0x40, 0x73, 0x1f,
+    ];
+    assert_only([spin.as_slice(), &JMP_RAX].concat(), &[0, 1, 2, 3]);
+}
+
+/// `imul $3,%rax,%rax ; movzbl %al,%eax ; cmp $0x3f,%eax ; ja dflt ;
+/// testb $0x80,0x10(%rdi) ; je dflt`: the guard bounds bits of the product
+/// a carry ties to the tested bit, so only cells 1 mod 3 are feasible.
+#[test]
+#[ignore = "known limit: a read guard looser than an unread test is trusted, so infeasible cells are seated"]
+fn a_test_of_a_bit_a_carry_reaches_bounds_the_field() {
+    let head = [
+        0x0f, 0xb6, 0x47, 0x10, 0x48, 0x6b, 0xc0, 0x03, 0x0f, 0xb6, 0xc0, 0x83, 0xf8, 0x3f, 0x77,
+        0x25, 0xf6, 0x47, 0x10, 0x80, 0x74, 0x1f,
+    ];
+    assert_only([head.as_slice(), &JMP_RAX].concat(), &[1, 4, 5]);
+}
+
+/// `cmp $0x3f,%al ; ja dflt ; testb $0xfc,%al ; je L ; cmp $3,%al ; ja dflt ;
+/// jmp M ; L: dec %esi ; jne L ; M:`: both outcomes of the mask test reach
+/// the dispatch, the false one only through a guard that does not dominate
+/// it, so the test still bounds the field there.
+#[test]
+#[ignore = "known limit: a read guard looser than an unread test is trusted, so infeasible cells are seated"]
+fn a_test_whose_other_edge_passes_a_further_guard_bounds_the_field() {
+    let head = [
+        0x0f, 0xb6, 0x47, 0x10, 0x3c, 0x3f, 0x77, 0x2d, 0xa8, 0xfc, 0x74, 0x06, 0x3c, 0x03, 0x77,
+        0x25, 0xeb, 0x04, 0xff, 0xce, 0x75, 0xfc,
+    ];
+    assert_only([head.as_slice(), &JMP_RAX].concat(), &[0, 1, 2, 3]);
+}
+
+/// `mov %edi,%eax ; cmp $4,%eax ; ja dflt ; cmp $4,%eax ; je dflt`: the
+/// guard admits 0 to 4 and the equality then excludes 4, the cell past the
+/// table.
+/// Mutation: drop the excluded constants from the range enumeration.
+#[test]
+fn an_equality_excluding_the_guards_top_value_drops_its_cell() {
+    let head = [
+        0x89, 0xf8, 0x83, 0xf8, 0x04, 0x77, 0x24, 0x83, 0xf8, 0x04, 0x74, 0x1f,
+    ];
+    let arms = dispatch(&head).expect("seated");
+    assert_eq!(arms, labels(head.len() + JMP_RAX.len())[..4]);
+}
+
+/// Linux x86-64 `arp_process`: `movzwl 0x10(%rdi),%eax ; cmp $3,%eax ;
+/// ja dflt ; mov %eax,%ecx ; jmp *0x2000(,%rcx,8)`. The guard is on the
+/// 32-bit copy of the field and the index on its 64-bit extension.
+/// Mutation: weigh unread cell tests under a narrowed range too.
+#[test]
+fn a_bounds_check_on_a_widened_field_seats_its_table() {
+    let head = [
+        0x0f, 0xb7, 0x47, 0x10, 0x83, 0xf8, 0x03, 0x77, 0x21, 0x89, 0xc1, 0xff, 0x24, 0xcd, 0x00,
+        0x20, 0x00, 0x00,
+    ];
+    let len = head.len();
+    assert_eq!(
+        dispatch_through(head.to_vec()),
+        Some(labels(len)[..4].to_vec())
+    );
+}
+
+/// Linux x86-64 `iov_iter_revert`'s shape: `movzbl (%rdi),%eax ; cmp $6,%eax ;
+/// je dflt ; cmp $3,%eax ; ja dflt ; mov %eax,%eax`.
+/// Mutation: weigh unread cell tests under a narrowed range too.
+#[test]
+fn an_equality_above_the_bounds_check_seats_the_table() {
+    let head = [
+        0x0f, 0xb6, 0x07, 0x83, 0xf8, 0x06, 0x74, 0x26, 0x83, 0xf8, 0x03, 0x77, 0x21, 0x89, 0xc0,
+    ];
+    let arms = dispatch(&head).expect("seated");
+    assert_eq!(arms, labels(head.len() + JMP_RAX.len())[..4]);
+}
+
+/// `cmpb $3,%al ; ja dflt ; testb %al,%al ; je dflt`: zero takes the
+/// default, so cells 1 to 3 are seated.
+/// Mutation: drop the excluded constants from the range enumeration.
+#[test]
+fn an_equality_with_zero_drops_its_cell() {
+    let guard = guarded(&[0x3c, 0x03, 0x77, 0x23, 0x84, 0xc0, 0x74, 0x1f]);
+    let arms = dispatch(&guard).expect("seated");
+    assert_eq!(arms, labels(guard.len() + JMP_RAX.len())[1..4]);
+}
+
+/// `cmp $3,%eax ; je dflt` on the zero-extended field the index also
+/// extends: 3 takes the default, so its cell is not seated.
+/// Mutation: read an equality only on the index's own chain.
+#[test]
+fn an_equality_on_a_sibling_extend_of_the_cell_drops_its_cell() {
+    let guard = guarded(&[0x83, 0xf8, 0x03, 0x74, 0x1f]);
+    let arms = dispatch(&guard).expect("seated");
+    let names = labels(guard.len() + JMP_RAX.len());
+    assert_eq!(arms, [0, 1, 2, 4, 5].map(|i| names[i]));
 }

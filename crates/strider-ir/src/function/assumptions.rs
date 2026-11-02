@@ -254,14 +254,21 @@ claims! {
         /// [`escape_analysis`](Self::escape_analysis) documents, without that knob
         /// being set, and is likewise inert on a frame that stores its entry SP.
         ///
-        /// The narrowing of `LoadForward` and incoming-argument detection reads the
-        /// distinct allocation but steps through no listed call, and return-target
-        /// verification passes a store to a listed allocation over the return slot.
+        /// The narrowing of `LoadForward`, incoming-argument detection and
+        /// `CallStackArgCollect` read the distinct allocation, but none of them
+        /// steps through a listed call on its account: incoming-argument
+        /// detection passes one only under
+        /// [`assume_incoming_args_survive_calls`](Self::assume_incoming_args_survive_calls),
+        /// as it passes any call.  Return-target verification passes a store to a
+        /// listed allocation over the return slot.
         pub noalias_allocators: rustc_hash::FxHashSet<u64> = rustc_hash::FxHashSet::default(),
         /// When the function's frame is provably private (no stack address escapes
-        /// to any callee), forward a spill `Load` across a `Call` and step it past
-        /// an opaque (`Anchor`) store. Both rest on the same axiom: nothing outside
+        /// to any callee), forward a spill `Load` across a `Call` and, under
+        /// [`stack_global_disjoint`](Self::stack_global_disjoint), step it past an
+        /// opaque (`Anchor`) store. Both rest on the same axiom: nothing outside
         /// the frame can name a private slot, barring a fabricated pointer.
+        /// Without that claim the opaque pointer may be a global the stack
+        /// overlaps.
         ///
         /// A stack address escapes through a call argument, a stored value, a
         /// return, or a register a call clobbers holding it at the call, which

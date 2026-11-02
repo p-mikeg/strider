@@ -1,6 +1,6 @@
 use super::*;
 use crate::Result;
-use crate::test_support::cf_rp_pipeline;
+use crate::test_support::{CF_RP, run_passes};
 use strider_ir::node::{NodeKind, ValueId, ValueType};
 use strider_ir::{FunctionBuilder, IRBuilderExt, IRViewer, IntBinaryOp};
 use strider_ir_test_utils::IrBuilderEx;
@@ -9,6 +9,13 @@ use strider_ir_test_utils::{
     RegisterSet, SENTINEL_LIFT_ADDR, reg_vn, sp_frame, stack_args_at, stack_vn_aarch64,
     stack_vn_x86 as sp32_vn, stack_vn_x86_64 as stack_vn,
 };
+
+/// [`CF_RP`] with `FunctionArgDetect` as its post pass.
+fn detect(fg: &mut strider_ir::Function) -> Result<()> {
+    let mut p = crate::test_support::pipeline(CF_RP);
+    p.add_post_pass(&FunctionArgDetect);
+    p.run(fg, &crate::OptCtx::new(None))
+}
 
 fn rdi_like_vn() -> rsleigh::Vn {
     // Stands in for x86_64 RDI.
@@ -107,21 +114,15 @@ fn reads_stack_arg_0_on_x86_cdecl() -> Result<()> {
     let mut b = sp_frame(sp)
         .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
-    let sp_val = b.read_variable(&sp)?;
     {
-        let four = b.build_int_const(4u64, ValueType::int(32))?;
-        let addr =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+        let loaded = build_sp_load(&mut b, &sp, 4)?;
         b.build_return(Some(loaded), &[])?;
     }
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     // ConstantFold normalises the address before detection runs.
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(!arg0_nodes.is_empty(), "arg 0 should be registered (stack)");
@@ -148,19 +149,15 @@ fn aligned_sp_load_is_not_a_stack_arg() -> Result<()> {
         .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    let mask = b.build_int_const(0xFFFF_FFF8u64, ValueType::int(32))?;
     let aligned =
-        b.build_int_binary_operation(sp_val, mask, IntBinaryOp::And, ValueType::int(32))?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr = b.build_int_binary_operation(aligned, four, IntBinaryOp::Add, ValueType::int(32))?;
+        b.build_const_binop(0xFFFF_FFF8u64, sp_val, IntBinaryOp::And, ValueType::int(32))?;
+    let addr = b.build_const_binop(4u64, aligned, IntBinaryOp::Add, ValueType::int(32))?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     assert!(
         fg.side_tables().arg_index_to_values(0).is_empty(),
@@ -176,9 +173,7 @@ fn build_sp_load(
     offset: u32,
 ) -> Result<strider_ir::node::ValueId> {
     let sp_val = b.read_variable(sp)?;
-    let off_const = b.build_int_const(offset as u64, ValueType::int(32))?;
-    let addr =
-        b.build_int_binary_operation(sp_val, off_const, IntBinaryOp::Add, ValueType::int(32))?;
+    let addr = b.build_const_binop(offset as u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     Ok(loaded)
 }
@@ -191,7 +186,6 @@ fn detects_ten_contiguous_stack_args() -> Result<()> {
     let mut b = sp_frame(sp)
         .stack_args(stack_args_at(0, 8))
         .build_fn_single_region()?;
-    let _sp_val = b.read_variable(&sp)?;
     // No intervening stores, so each load reads InitialMemory.
     let mut acc = None;
     for i in 0..N {
@@ -207,9 +201,7 @@ fn detects_ten_contiguous_stack_args() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     for i in 0..N {
         assert!(
@@ -229,7 +221,6 @@ fn stack_arg_gap_truncates() -> Result<()> {
     let mut b = sp_frame(sp)
         .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
-    let _sp_val = b.read_variable(&sp)?;
     let a = build_sp_load(&mut b, &sp, 4)?;
     let c = build_sp_load(&mut b, &sp, 12)?;
     // Combined so neither load is dead.
@@ -238,9 +229,7 @@ fn stack_arg_gap_truncates() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(!arg0_nodes.is_empty(), "arg 0 (sp+4) should be registered");
@@ -276,21 +265,16 @@ fn stack_arg_load_chain_is_narrowed_without_changing_detection() -> Result<()> {
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     for off in [8u64, 12u64] {
-        let o = b.build_int_const(off, ValueType::int(32))?;
-        let addr = b.build_int_binary_operation(sp_val, o, IntBinaryOp::Add, ValueType::int(32))?;
+        let addr = b.build_const_binop(off, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
         let v = b.build_int_const(off, ValueType::int(32))?;
         b.build_store(addr, v, rsleigh::VnSpace::RAM)?;
     }
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    let loaded = build_sp_load(&mut b, &sp, 4)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     let arg0 = fg.side_tables().arg_index_to_values(0).to_vec();
     assert_eq!(arg0.len(), 1, "Load[sp+4] registered as arg 0");
@@ -305,57 +289,56 @@ fn stack_arg_load_chain_is_narrowed_without_changing_detection() -> Result<()> {
     Ok(())
 }
 
-/// One branch stores at +4 and the other does nothing, so a later
-/// `Load[sp+4]` from their `MemPhi` join must be disqualified: every
-/// predecessor of a phi has to be clean.
-#[test]
-fn memphi_shadow_disqualifies() -> Result<()> {
+/// `Load[sp+4]` below a `MemPhi` whose arms each store 4 bytes at their
+/// offset (`None`: no store), detected as stack arg 0 or not.
+fn memphi_arms_detect(arms: [Option<u64>; 2]) -> Result<bool> {
     let sp = sp32_vn();
     let mut b = sp_frame(sp).stack_args(stack_args_at(4, 8)).build_fn()?;
     let entry = b.create_region_all()?;
-    let true_br = b.create_region_all()?;
-    let false_br = b.create_region_all()?;
+    let arm_regions = [b.create_region_all()?, b.create_region_all()?];
     let join = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
 
     // A boolean const keeps the MemPhi at two predecessors, and
-    // `cf_rp_pipeline` leaves that branch standing; DeadBranchElimination
+    // `CF_RP` leaves that branch standing; DeadBranchElimination
     // would collapse it.
     b.set_region(entry);
     let cond = b.build_boolean_const(true);
-    b.build_if(cond, true_br, false_br)?;
+    b.build_if(cond, arm_regions[0], arm_regions[1])?;
 
-    b.set_region(true_br);
-    let sp_t = b.read_variable(&sp)?;
-    let four_t = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr_t =
-        b.build_int_binary_operation(sp_t, four_t, IntBinaryOp::Add, ValueType::int(32))?;
-    let data = b.build_int_const(0x22u64, ValueType::int(32))?;
-    b.build_store(addr_t, data, rsleigh::VnSpace::RAM)?;
-    b.build_branch(join)?;
-
-    b.set_region(false_br);
-    b.build_branch(join)?;
+    for (region, offset) in arm_regions.into_iter().zip(arms) {
+        b.set_region(region);
+        if let Some(offset) = offset {
+            let sp_a = b.read_variable(&sp)?;
+            let addr = b.build_const_binop(offset, sp_a, IntBinaryOp::Add, ValueType::int(32))?;
+            let data = b.build_int_const(0x22u64, ValueType::int(32))?;
+            b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        }
+        b.build_branch(join)?;
+    }
 
     b.set_region(join);
-    let sp_j = b.read_variable(&sp)?;
-    let four_j = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr_j =
-        b.build_int_binary_operation(sp_j, four_j, IntBinaryOp::Add, ValueType::int(32))?;
-    let loaded = b.build_load(addr_j, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    let loaded = build_sp_load(&mut b, &sp, 4)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
+    Ok(!fg.side_tables().arg_index_to_values(0).is_empty())
+}
 
-    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
-    assert!(
-        arg0_nodes.is_empty(),
-        "Load[sp+4] reaches a MemPhi with a shadowing branch, so it must not be registered"
-    );
+/// Every predecessor of a `MemPhi` has to be clean: one arm storing at the
+/// load's slot, or overlapping its range, disqualifies the load.
+#[test]
+fn memphi_shadow_disqualifies() -> Result<()> {
+    for (arms, detected, why) in [
+        ([Some(4), None], false, "one arm stores the slot"),
+        // [2,6) overlaps [4,8); [8,12) does not.
+        ([Some(2), Some(8)], false, "one arm overlaps the slot"),
+        ([Some(8), Some(12)], true, "both arms are clean"),
+    ] {
+        assert_eq!(memphi_arms_detect(arms)?, detected, "{why}");
+    }
     Ok(())
 }
 
@@ -379,9 +362,7 @@ fn narrower_load_at_arg_slot_uses_truncate() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert_eq!(
@@ -414,24 +395,17 @@ fn wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // The 8-byte `double`, spanning slots 0 and 1.
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr_a =
-        b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let addr_a = b.build_const_binop(4u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
     let a = b.build_load(addr_a, rsleigh::VnSpace::RAM, ValueType::int(64))?;
     // The `int`, at slot 2.
-    let twelve = b.build_int_const(12u64, ValueType::int(32))?;
-    let addr_b =
-        b.build_int_binary_operation(sp_val, twelve, IntBinaryOp::Add, ValueType::int(32))?;
-    let bv = b.build_load(addr_b, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    let bv = build_sp_load(&mut b, &sp, 12)?;
     let b_ext = b.extend_if_needed(bv, ValueType::int(64), strider_ir::ExtendOp::ZeroExtend)?;
     let sum = b.build_int_binary_operation(a, b_ext, IntBinaryOp::Add, ValueType::int(64))?;
     b.build_return(Some(sum), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     let arg0 = fg.side_tables().arg_index_to_values(0);
     assert_eq!(arg0.len(), 1, "wide arg (double) at sp+4 is ordinal 0");
@@ -467,10 +441,7 @@ fn span_four_wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
     // 16 bytes, spanning slots 0..3.
     let a = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::int(128))?;
     // Slot 4.
-    let sixteen = b.build_int_const(16u64, ValueType::int(32))?;
-    let addr_b =
-        b.build_int_binary_operation(sp_val, sixteen, IntBinaryOp::Add, ValueType::int(32))?;
-    let bv = b.build_load(addr_b, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    let bv = build_sp_load(&mut b, &sp, 16)?;
     // Truncate the I128 to I32 so the sum is well-typed and neither load dies.
     let a_trunc = {
         let trunc = strider_ir_test_utils::sentinel_node(
@@ -486,9 +457,7 @@ fn span_four_wide_arg_then_narrow_arg_indexed_by_ordinal() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     let arg0 = fg.side_tables().arg_index_to_values(0);
     assert_eq!(
@@ -614,8 +583,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     let a = b.read_variable(&rdi)?;
     let bb = b.read_variable(&rsi)?;
     let sp_val = b.read_variable(&sp)?;
-    let eight = b.build_int_const(8u64, ValueType::int(64))?;
-    let addr = b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(64))?;
+    let addr = b.build_const_binop(8u64, sp_val, IntBinaryOp::Add, ValueType::int(64))?;
     let c = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
     let ab = b.build_int_binary_operation(a, bb, IntBinaryOp::Add, ValueType::int(64))?;
     let abc = b.build_int_binary_operation(ab, c, IntBinaryOp::Add, ValueType::int(64))?;
@@ -623,9 +591,7 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     let arg0 = fg.side_tables().arg_index_to_values(0);
     assert!(!arg0.is_empty(), "arg 0 (rdi) should be registered");
@@ -650,130 +616,54 @@ fn x86_64_mixed_reg_and_stack() -> Result<()> {
     Ok(())
 }
 
-/// A store at a DIFFERENT offset whose byte range still overlaps the load's
-/// must shadow it.  Here the store covers [0,8) and the load [4,12).
+/// A store before `Load[sp+4]` shadows it exactly when their byte ranges
+/// overlap, whatever the store's own offset.
 #[test]
-fn overlapping_stackstore_at_different_offset_shadows() -> Result<()> {
-    let sp = stack_vn_aarch64();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(4, 8))
-        .build_fn_single_region()?;
-    let sp_val = b.read_variable(&sp)?;
-    let wide_data = b.build_int_const(0xDEAD_BEEF_CAFE_BABEu64, ValueType::int(64))?;
-    b.build_store(sp_val, wide_data, rsleigh::VnSpace::RAM)?;
-
-    let four = b.build_int_const(4u64, ValueType::int(64))?;
-    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(64))?;
-    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::int(64))?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
-
-    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
-    assert!(
-        arg0_nodes.is_empty(),
-        "Load[sp+4] overlaps with Store(sp+0, size=8), so it must not be registered"
-    );
-    Ok(())
-}
-
-/// The dual of the overlap case: a nearby store whose range is DISJOINT must
-/// not shadow.  Store covers [0,4), load covers [4,8), so sp+4 is still arg 0.
-#[test]
-fn disjoint_stackstore_at_nearby_offset_is_not_shadow() -> Result<()> {
-    let sp = sp32_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(4, 8))
-        .build_fn_single_region()?;
-    let sp_val = b.read_variable(&sp)?;
-    // Covers [0,4).
-    let a = b.build_int_const(0x11u64, ValueType::int(32))?;
-    b.build_store(sp_val, a, rsleigh::VnSpace::RAM)?;
-
-    // Covers [4,8), disjoint from the store.
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
-    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
-
-    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
-    assert!(
-        !arg0_nodes.is_empty(),
-        "disjoint Store(sp+0, size=4) must not shadow Load[sp+4]: arg 0 should be registered"
-    );
-    assert!(
-        matches!(fg.node_kind(fg.producer(arg0_nodes[0])), NodeKind::Load(_)),
-        "carrier for arg 0 must be a Load node"
-    );
-    Ok(())
-}
-
-/// Overlap through a `MemPhi`: one arm overlaps the load's range and the other
-/// is disjoint.  Any overlapping predecessor is a shadow, so the load is
-/// disqualified.  The arms cover [2,6) and [8,12) against a load at [4,8).
-#[test]
-fn memphi_partial_overlap_shadows() -> Result<()> {
-    let sp = sp32_vn();
-    let mut b = sp_frame(sp).stack_args(stack_args_at(4, 8)).build_fn()?;
-    let entry = b.create_region_all()?;
-    let then_r = b.create_region_all()?;
-    let else_r = b.create_region_all()?;
-    let merge = b.create_region_all()?;
-    b.set_entry_region_all(entry)?;
-
-    b.set_region(entry);
-    let cond = b.build_boolean_const(true);
-    b.build_if(cond, then_r, else_r)?;
-
-    // Covers [2,6).
-    b.set_region(then_r);
-    let sp_t = b.read_variable(&sp)?;
-    let two_t = b.build_int_const(2u64, ValueType::int(32))?;
-    let addr_t = b.build_int_binary_operation(sp_t, two_t, IntBinaryOp::Add, ValueType::int(32))?;
-    let data_t = b.build_int_const(0x11u64, ValueType::int(32))?;
-    b.build_store(addr_t, data_t, rsleigh::VnSpace::RAM)?;
-    b.build_branch(merge)?;
-
-    // Covers [8,12).
-    b.set_region(else_r);
-    let sp_e = b.read_variable(&sp)?;
-    let eight_e = b.build_int_const(8u64, ValueType::int(32))?;
-    let addr_e =
-        b.build_int_binary_operation(sp_e, eight_e, IntBinaryOp::Add, ValueType::int(32))?;
-    let data_e = b.build_int_const(0x22u64, ValueType::int(32))?;
-    b.build_store(addr_e, data_e, rsleigh::VnSpace::RAM)?;
-    b.build_branch(merge)?;
-
-    // Covers [4,8).
-    b.set_region(merge);
-    let sp_m = b.read_variable(&sp)?;
-    let four_m = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr_m =
-        b.build_int_binary_operation(sp_m, four_m, IntBinaryOp::Add, ValueType::int(32))?;
-    let loaded = b.build_load(addr_m, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
-
-    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
-    assert!(
-        arg0_nodes.is_empty(),
-        "MemPhi with an overlapping-range Store predecessor must disqualify Load[sp+4]"
-    );
+fn a_store_shadows_the_slot_only_where_its_bytes_overlap() -> Result<()> {
+    let (i32_ty, i64_ty) = (ValueType::int(32), ValueType::int(64));
+    for (why, sp, store_off, store_ty, load_ty, detected) in [
+        (
+            "[0,8) overlaps [4,12)",
+            stack_vn_aarch64(),
+            0,
+            i64_ty,
+            i64_ty,
+            false,
+        ),
+        (
+            "[0,4) is disjoint from [4,8)",
+            sp32_vn(),
+            0,
+            i32_ty,
+            i32_ty,
+            true,
+        ),
+        (
+            "[4,8) is the load's own range",
+            sp32_vn(),
+            4,
+            i32_ty,
+            i32_ty,
+            false,
+        ),
+    ] {
+        let addr_ty = ValueType::int(u16::try_from(sp.size * 8)?);
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(4, 8))
+            .build_fn_single_region()?;
+        let sp_val = b.read_variable(&sp)?;
+        let store_addr = crate::test_support::at(&mut b, sp_val, store_off, addr_ty)?;
+        let data = b.build_int_const(0x11u64, store_ty)?;
+        b.build_store(store_addr, data, rsleigh::VnSpace::RAM)?;
+        let addr4 = crate::test_support::at(&mut b, sp_val, 4, addr_ty)?;
+        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, load_ty)?;
+        b.build_return(Some(loaded), &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        detect(&mut fg)?;
+        let want = if detected { vec![loaded] } else { vec![] };
+        assert_eq!(fg.side_tables().arg_index_to_values(0), want, "{why}");
+    }
     Ok(())
 }
 
@@ -785,15 +675,12 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
     let mut b = sp_frame(sp)
         .stack_args(stack_args_at(4, 4))
         .build_fn_single_region()?;
-    let _sp_val = b.read_variable(&sp)?;
     let v = build_sp_load(&mut b, &sp, 12)?;
     b.build_return(Some(v), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     assert_eq!(
         fg.side_tables().iter_arg_indices().count(),
@@ -808,8 +695,6 @@ fn isolated_high_offset_load_dropped() -> Result<()> {
 /// resulting `Load` must still be a candidate for offset +4.
 #[test]
 fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
-    use crate::{ConstantFold, OptimizerPipeline, PhiCollapse, RegionCollapse};
-
     let sp = stack_vn();
     let mut b = sp_frame(sp)
         .stack_args(stack_args_at(4, 8))
@@ -825,12 +710,7 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
 
     // ConstantFold folds `Add(_, Neg(K))` to `Add(_, IntConst(-K))`, the shape
     // decomposition sees in production; it does not peel the `Neg` itself.
-    let mut pipeline = OptimizerPipeline::new();
-    pipeline.add(ConstantFold::new());
-    pipeline.add(PhiCollapse);
-    pipeline.add(RegionCollapse);
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -844,74 +724,152 @@ fn load_via_sub_negative_unsigned_recognised_as_stack_arg() -> Result<()> {
     Ok(())
 }
 
-/// An SP-rooted store whose range matches the load's must mark the chain dirty.
+/// A reload after the function writes its incoming slot is no carrier, but
+/// the load before the write still is, and the slots after it stand.
+///
+/// Mutation: drop every load of a slot one of whose loads is dirty.
 #[test]
-fn mem_chain_is_dirty_terminates_at_overlapping_store_to_sp_rel_addr() -> Result<()> {
+fn a_dirty_reload_leaves_the_clean_carrier_of_its_slot() -> Result<()> {
     let sp = sp32_vn();
     let mut b = sp_frame(sp)
         .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    // Covers [4,8).
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let clean = build_sp_load(&mut b, &sp, 4)?;
+    let addr = b.build_const_binop(4u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
     let data = b.build_int_const(0x11u64, ValueType::int(32))?;
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
-
-    // Same range, so it must shadow.
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-    b.build_return(Some(loaded), &[])?;
+    let dirty = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    let next = build_sp_load(&mut b, &sp, 12)?;
+    let sum = b.build_int_binary_operation(clean, dirty, IntBinaryOp::Add, ValueType::int(32))?;
+    let sum = b.build_int_binary_operation(sum, next, IntBinaryOp::Add, ValueType::int(32))?;
+    b.build_return(Some(sum), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
-    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
-    assert!(
-        arg0_nodes.is_empty(),
-        "plain Store(sp+4, I32) overlaps Load[sp+4], so the chain must be dirty and no arg registered"
-    );
+    assert_eq!(fg.side_tables().arg_index_to_values(0), [clean]);
+    assert_eq!(fg.side_tables().arg_index_to_values(1), [next]);
+    Ok(())
+}
+
+/// A dirty reload spanning two slots may read the function's own wide store,
+/// so it says nothing of where the arguments lie: the slot it reaches past
+/// its own slot's clean loads ends the prefix, and nothing is merged.
+///
+/// Mutation: join a dirty load's span into its slot's reach.
+#[test]
+fn a_dirty_wide_reload_ends_the_prefix_at_its_slot() -> Result<()> {
+    for (store_ty, with_at12) in [(ValueType::int(32), true), (ValueType::int(64), false)] {
+        let sp = sp32_vn();
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(4, 4))
+            .build_fn_single_region()?;
+        let sp_val = b.read_variable(&sp)?;
+        let at4 = build_sp_load(&mut b, &sp, 4)?;
+        let at8 = build_sp_load(&mut b, &sp, 8)?;
+        let at12 = if with_at12 {
+            Some(build_sp_load(&mut b, &sp, 12)?)
+        } else {
+            None
+        };
+        let addr = b.build_const_binop(4u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
+        let data = b.build_int_const(0x11u64, store_ty)?;
+        b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+        let dirty = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+        let low = b.truncate_if_needed(dirty, ValueType::int(32))?;
+        let mut sum = low;
+        for v in [Some(at4), Some(at8), at12].into_iter().flatten() {
+            sum = b.build_int_binary_operation(sum, v, IntBinaryOp::Add, ValueType::int(32))?;
+        }
+        b.build_return(Some(sum), &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+
+        detect(&mut fg)?;
+
+        assert_eq!(fg.side_tables().arg_index_to_values(0), [at4], "{store_ty}");
+        assert!(
+            fg.side_tables().arg_index_to_values(1).is_empty(),
+            "{store_ty}"
+        );
+        assert!(
+            fg.side_tables().arg_index_to_values(2).is_empty(),
+            "{store_ty}"
+        );
+    }
+    Ok(())
+}
+
+/// A dirty load starting inside a wide argument and reaching past it ends
+/// the prefix after that argument too.
+///
+/// Mutation: test only a dirty load at the argument's first slot.
+#[test]
+fn a_dirty_reload_from_inside_a_wide_argument_ends_the_prefix() -> Result<()> {
+    let sp = sp32_vn();
+    let mut b = sp_frame(sp)
+        .stack_args(stack_args_at(4, 4))
+        .build_fn_single_region()?;
+    let sp_val = b.read_variable(&sp)?;
+    let at4_addr = b.build_const_binop(4u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
+    let wide = b.build_load(at4_addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+    let at12 = build_sp_load(&mut b, &sp, 12)?;
+    let addr = b.build_const_binop(8u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
+    let data = b.build_int_const(0x11u64, ValueType::int(32))?;
+    b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
+    let dirty = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(64))?;
+    let mut sum = at12;
+    for v in [wide, dirty] {
+        let low = b.truncate_if_needed(v, ValueType::int(32))?;
+        sum = b.build_int_binary_operation(sum, low, IntBinaryOp::Add, ValueType::int(32))?;
+    }
+    b.build_return(Some(sum), &[])?;
+    b.set_lift_addr(None);
+    let mut fg = b.build()?;
+
+    detect(&mut fg)?;
+
+    assert_eq!(fg.side_tables().arg_index_to_values(0), [wide]);
+    assert!(fg.side_tables().arg_index_to_values(1).is_empty());
     Ok(())
 }
 
 /// Soundness floor: a cross-class store (a const-encoded global) cannot be
 /// proven disjoint from an SP-rooted load, so with `stack_global_disjoint`
 /// cleared it marks the chain dirty.  Registering the load anyway would
-/// substitute a pre-entry value and mask the global's write.
+/// substitute a pre-entry value and mask the global's write.  Claimed, the
+/// global write is assumed disjoint and the load is promoted.
 #[test]
 fn mem_chain_is_dirty_on_non_sp_intervening_store() -> Result<()> {
-    let sp = sp32_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(4, 8))
-        .build_fn_single_region()?;
-    let sp_val = b.read_variable(&sp)?;
-    // A global write to a fixed `.data` address.
-    let global_addr = b.build_int_const(0xDEAD_BEEFu64, ValueType::int(32))?;
-    let global_data = b.build_int_const(0x1234u64, ValueType::int(32))?;
-    b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
+    for claimed in [false, true] {
+        let sp = sp32_vn();
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(4, 8))
+            .build_fn_single_region()?;
+        // A global write to a fixed `.data` address.
+        let global_addr = b.build_int_const(0xDEAD_BEEFu64, ValueType::int(32))?;
+        let global_data = b.build_int_const(0x1234u64, ValueType::int(32))?;
+        b.build_store(global_addr, global_data, rsleigh::VnSpace::RAM)?;
+        // The load's memory predecessor IS the global store above.
+        let loaded = build_sp_load(&mut b, &sp, 4)?;
+        b.build_return(Some(loaded), &[])?;
+        b.set_lift_addr(None);
+        let mut fg = b.build()?;
+        fg.assume(&crate::AssumptionOptions {
+            stack_global_disjoint: claimed,
+            ..crate::AssumptionOptions::none()
+        });
 
-    // The load's memory predecessor IS the global store above.
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
-    let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
+        detect(&mut fg)?;
 
-    let mut pipeline = cf_rp_pipeline();
-    // At the floor `stack_global_disjoint` is off; at its default the global
-    // write is assumed disjoint and the Load would be promoted.
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
-
-    let arg0_nodes = fg.side_tables().arg_index_to_values(0);
-    assert!(
-        arg0_nodes.is_empty(),
-        "Strict mode: the cross-class intervening Store must mark the chain \
-         dirty so the Load is NOT promoted to an incoming arg"
-    );
+        assert_eq!(
+            fg.side_tables().arg_index_to_values(0),
+            if claimed { vec![loaded] } else { vec![] },
+            "claimed {claimed}: the global store shadows the slot only at the floor"
+        );
+    }
     Ok(())
 }
 
@@ -957,17 +915,13 @@ fn mem_chain_is_dirty_terminates_at_overlapping_phi_of_sp() -> Result<()> {
     let trash = b.build_int_const(0xAAu64, ValueType::int(32))?;
     b.build_store(phi_sp, trash, rsleigh::VnSpace::RAM)?;
 
-    let four_j = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr_j =
-        b.build_int_binary_operation(sp_orig, four_j, IntBinaryOp::Add, ValueType::int(32))?;
+    let addr_j = b.build_const_binop(4u64, sp_orig, IntBinaryOp::Add, ValueType::int(32))?;
     let loaded = b.build_load(addr_j, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -988,23 +942,22 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
     let sp_val = b.read_variable(&sp)?;
     // Disjoint stack stores at offsets 16, 20, 24, ...
     for i in 0..CHAIN_LEN {
-        let off = b.build_int_const(((i * 4) as u64) + 16, ValueType::int(32))?;
-        let addr =
-            b.build_int_binary_operation(sp_val, off, IntBinaryOp::Add, ValueType::int(32))?;
+        let addr = b.build_const_binop(
+            ((i * 4) as u64) + 16,
+            sp_val,
+            IntBinaryOp::Add,
+            ValueType::int(32),
+        )?;
         let val = b.build_int_const(i as u64, ValueType::int(32))?;
         b.build_store(addr, val, rsleigh::VnSpace::RAM)?;
     }
     // Disjoint from every store above, so the walker passes through all of them.
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr4 = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
-    let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+    let loaded = build_sp_load(&mut b, &sp, 4)?;
     b.build_return(Some(loaded), &[])?;
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     let arg0_nodes = fg.side_tables().arg_index_to_values(0);
     assert!(
@@ -1017,16 +970,21 @@ fn mem_chain_is_dirty_handles_10k_disjoint_store_chain() -> Result<()> {
 /// A `CallOther` reaches the memory chain only when its ABI says it clobbers
 /// memory, and once there it blocks under either setting of
 /// `assume_incoming_args_survive_calls`: the callee is opaque, so nothing can
-/// be inferred from its arguments.
+/// be inferred from its arguments.  The claim granted is the load-bearing
+/// leg: that relaxation speaks for a conforming callee's frame discipline,
+/// and a syscall handed a pointer into the incoming-argument area has none;
+/// at the floor the `CallOther` arm answers as a plain `Call` does.
 #[test]
 fn call_other_on_the_chain_blocks_under_either_survival_setting() -> Result<()> {
-    let sp = sp32_vn();
-    let build = |b: &mut strider_ir::FunctionBuilder| -> Result<()> {
-        // Slot 0's address is sp itself.
+    for claimed in [true, false] {
+        let sp = sp32_vn();
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(0, 8))
+            .build_fn_single_region()?;
+        // Slot 0's address is sp itself, the user-op's sole value-arg.
         let sp_val = b.read_variable(&sp)?;
-        // Its sole value-arg is &arg0.
         let (call_node, _outputs) = strider_ir_test_utils::Tb::named_call_other(
-            b,
+            &mut b,
             42,
             "escape_helper",
             &[sp_val],
@@ -1039,107 +997,50 @@ fn call_other_on_the_chain_blocks_under_either_survival_setting() -> Result<()> 
         let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::int(32))?;
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
-        Ok(())
-    };
-
-    let new_fn = || -> Result<strider_ir::Function> {
-        let mut b = sp_frame(sp)
-            .stack_args(stack_args_at(0, 8))
-            .build_fn_single_region()?;
-        build(&mut b)?;
-        b.build()
-    };
-
-    let mut fg_default = new_fn()?;
-    let mut p_default = cf_rp_pipeline();
-    p_default.add_post_pass(FunctionArgDetect);
-    // The claim GRANTED is the only leg that proves anything: the `CallOther`
-    // arm of `def_clobbers` is unconditional, so at the floor it answers the
-    // same as a plain `Call` and the assertion rides `calls_block` instead.
-    fg_default.assume(&crate::AssumptionOptions {
-        assume_incoming_args_survive_calls: true,
-        ..crate::AssumptionOptions::none()
-    });
-    p_default.run(&mut fg_default, &crate::OptCtx::new(None))?;
-    assert!(
-        fg_default.side_tables().arg_index_to_values(0).is_empty(),
-        "survival claimed: a CallOther on the chain still marks the slot dirty",
-    );
-
-    let mut fg_conservative = new_fn()?;
-    let mut p_conservative = cf_rp_pipeline();
-    p_conservative.add_post_pass(FunctionArgDetect);
-    p_conservative.run(&mut fg_conservative, &crate::OptCtx::new(None))?;
-    assert!(
-        fg_conservative
-            .side_tables()
-            .arg_index_to_values(0)
-            .is_empty(),
-        "survival off: the CallOther on the chain marks the slot dirty",
-    );
+        let mut fg = b.build()?;
+        fg.assume(&crate::AssumptionOptions {
+            assume_incoming_args_survive_calls: claimed,
+            ..crate::AssumptionOptions::none()
+        });
+        detect(&mut fg)?;
+        assert!(
+            fg.side_tables().arg_index_to_values(0).is_empty(),
+            "survival claimed {claimed}: a CallOther on the chain marks the slot dirty",
+        );
+    }
     Ok(())
 }
 
-/// The clobber toggle for a plain `Call`: by default a call does not on its own
-/// shadow a stack-arg slot, so the load is registered; with survival off any
-/// call on the chain marks it dirty.
+/// The clobber toggle for a plain `Call`: under the survival claim a call does
+/// not on its own shadow a stack-arg slot, so the load is registered; with it
+/// off any call on the chain marks the slot dirty.
 #[test]
 fn incoming_args_survive_calls_toggle_gates_arg_across_call() -> Result<()> {
-    let sp = sp32_vn();
-    // The Call's only value input is its constant target, which is not
-    // SP-rooted, so the toggle alone governs the verdict.
-    let build = |b: &mut FunctionBuilder, sp_val: ValueId| -> Result<()> {
+    for claimed in [true, false] {
+        let sp = sp32_vn();
+        let mut b = sp_frame(sp)
+            .stack_args(stack_args_at(4, 8))
+            .build_fn_single_region()?;
+        // The Call's only value input is its constant target, which is not
+        // SP-rooted, so the toggle alone governs the verdict.
         let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
         b.build_call_cc(target, None)?;
-        let four = b.build_int_const(4u64, ValueType::int(32))?;
-        let addr4 =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
-        let loaded = b.build_load(addr4, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+        let loaded = build_sp_load(&mut b, &sp, 4)?;
         b.build_return(Some(loaded), &[])?;
-        Ok(())
-    };
-
-    let mut fg_default = {
-        let mut b = sp_frame(sp)
-            .stack_args(stack_args_at(4, 8))
-            .build_fn_single_region()?;
-        let sp_val = b.read_variable(&sp)?;
-        build(&mut b, sp_val)?;
         b.set_lift_addr(None);
-        b.build()?
-    };
-    let mut p_default = cf_rp_pipeline();
-    p_default.add_post_pass(FunctionArgDetect);
-    fg_default.assume(&crate::AssumptionOptions {
-        assume_incoming_args_survive_calls: true,
-        ..crate::AssumptionOptions::none()
-    });
-    p_default.run(&mut fg_default, &crate::OptCtx::new(None))?;
-    assert!(
-        !fg_default.side_tables().arg_index_to_values(0).is_empty(),
-        "survival claimed: Load[sp+4] across a plain Call is detected as arg 0",
-    );
-
-    let mut fg_conservative = {
-        let mut b = sp_frame(sp)
-            .stack_args(stack_args_at(4, 8))
-            .build_fn_single_region()?;
-        let sp_val = b.read_variable(&sp)?;
-        build(&mut b, sp_val)?;
-        b.set_lift_addr(None);
-        b.build()?
-    };
-    let mut p_conservative = cf_rp_pipeline();
-    p_conservative.add_post_pass(FunctionArgDetect);
-    p_conservative.run(&mut fg_conservative, &crate::OptCtx::new(None))?;
-    assert!(
-        fg_conservative
-            .side_tables()
-            .arg_index_to_values(0)
-            .is_empty(),
-        "survival off: the Call on the chain marks the slot dirty, \
-         so Load[sp+4] is NOT registered as an arg",
-    );
+        let mut fg = b.build()?;
+        fg.assume(&crate::AssumptionOptions {
+            assume_incoming_args_survive_calls: claimed,
+            ..crate::AssumptionOptions::none()
+        });
+        detect(&mut fg)?;
+        let want = if claimed { vec![loaded] } else { vec![] };
+        assert_eq!(
+            fg.side_tables().arg_index_to_values(0),
+            want,
+            "survival claimed {claimed}: Load[sp+4] across a plain Call"
+        );
+    }
     Ok(())
 }
 
@@ -1154,8 +1055,7 @@ fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
         .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    let addr = b.build_const_binop(4u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
     let data = b.build_int_const(0x42u64, ValueType::int(32))?;
     b.build_store(addr, data, rsleigh::VnSpace::RAM)?;
     let target = b.build_int_const(0x1000u64, ValueType::int(32))?;
@@ -1165,67 +1065,19 @@ fn arg_detection_does_not_narrow_a_load_past_a_call() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    // Granted, so `alias_cfg` steps the `Call` and only `narrow_cfg` honouring
-    // no call relaxation keeps the edge where it is.
+    // Granted, so detection's policy steps the `Call` and only the narrowing,
+    // honouring no call relaxation, keeps the edge where it is.
     fg.assume(&crate::AssumptionOptions {
         assume_incoming_args_survive_calls: true,
         ..crate::AssumptionOptions::none()
     });
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     let mem_in = fg.node_inputs(fg.producer(loaded))[0];
     let kind = fg.node_kind(fg.producer(mem_in));
     assert!(
         matches!(kind, NodeKind::Call { .. }),
         "the load's memory predecessor must still be the Call, got {kind:?}"
-    );
-    Ok(())
-}
-
-/// A user-op whose ABI declares it clobbers memory blocks the chain under the
-/// survival claim, which is the load-bearing direction: that relaxation
-/// speaks for a conforming callee's frame discipline, and a syscall handed a
-/// pointer into the incoming-argument area has none. With the claim cleared
-/// any `Call` blocks anyway, which
-/// `call_other_on_the_chain_blocks_under_either_survival_setting` covers.
-#[test]
-fn memory_clobbering_call_other_blocks_under_the_survival_claim() -> Result<()> {
-    let sp = sp32_vn();
-    let mut b = sp_frame(sp)
-        .stack_args(stack_args_at(0, 8))
-        .build_fn_single_region()?;
-    let sp_val = b.read_variable(&sp)?;
-    let (call_node, _outputs) = strider_ir_test_utils::Tb::named_call_other(
-        &mut b,
-        42,
-        "syscall_like",
-        &[sp_val],
-        &[],
-        true,
-        false,
-    )?;
-    let call_mem_value = b.function().memory_output_of(call_node)?;
-    b.advance_cur_region_memory(call_mem_value)?;
-    let loaded = b.build_load(sp_val, rsleigh::VnSpace::RAM, ValueType::int(32))?;
-    b.build_return(Some(loaded), &[])?;
-    b.set_lift_addr(None);
-    let mut fg = b.build()?;
-
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
-    // Granted: the flag cleared is the setting under which this holds for the
-    // wrong reason.
-    fg.assume(&crate::AssumptionOptions {
-        assume_incoming_args_survive_calls: true,
-        ..crate::AssumptionOptions::none()
-    });
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
-
-    assert!(
-        fg.side_tables().arg_index_to_values(0).is_empty(),
-        "a memory-clobbering user-op must dirty the chain"
     );
     Ok(())
 }
@@ -1239,12 +1091,8 @@ fn rerunning_the_default_pipeline_keeps_one_carrier_per_stack_arg() -> Result<()
     let mut b = sp_frame(sp)
         .stack_args(stack_args_at(4, 8))
         .build_fn_single_region()?;
-    let sp_val = b.read_variable(&sp)?;
     {
-        let four = b.build_int_const(4u64, ValueType::int(32))?;
-        let addr =
-            b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
-        let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
+        let loaded = build_sp_load(&mut b, &sp, 4)?;
         b.build_return(Some(loaded), &[])?;
     }
     b.set_lift_addr(None);
@@ -1282,9 +1130,7 @@ fn narrowing_honours_stack_global_disjoint() -> Result<()> {
             .stack_args(stack_args_at(8, 8))
             .build_fn_single_region()?;
         let sp_val = b.read_variable(&sp)?;
-        let eight = b.build_int_const(8u64, ValueType::int(64))?;
-        let slot =
-            b.build_int_binary_operation(sp_val, eight, IntBinaryOp::Add, ValueType::int(64))?;
+        let slot = b.build_const_binop(8u64, sp_val, IntBinaryOp::Add, ValueType::int(64))?;
         let global = b.build_int_const(0x4000u64, ValueType::int(64))?;
         let val = b.build_int_const(7u64, ValueType::int(64))?;
         b.build_store(global, val, rsleigh::VnSpace::RAM)?;
@@ -1292,7 +1138,7 @@ fn narrowing_honours_stack_global_disjoint() -> Result<()> {
         b.build_return(Some(loaded), &[])?;
         b.set_lift_addr(None);
         let mut fg = b.build()?;
-        cf_rp_pipeline().run(&mut fg, &crate::OptCtx::new(None))?;
+        run_passes(&mut fg, CF_RP)?;
 
         fg.assume(&crate::AssumptionOptions {
             stack_global_disjoint: claimed,
@@ -1343,7 +1189,7 @@ fn detecting_across_call_diamonds_costs_near_linear_work() -> Result<()> {
 /// `assume_incoming_args_survive_calls`.
 ///
 /// Mutations: leave the edge where it is; narrow under
-/// `MemPurpose::IncomingArgs`.
+/// `Policy::incoming_args`.
 #[test]
 fn arg_detection_narrows_past_a_heap_store_to_its_allocator() -> Result<()> {
     const ALLOCATOR: u64 = 0x1000;
@@ -1357,16 +1203,19 @@ fn arg_detection_narrows_past_a_heap_store_to_its_allocator() -> Result<()> {
         .build_fn_single_region()?;
     let sp_val = b.read_variable(&sp)?;
     // A frame below the arguments, so the call's own window misses them.
-    let frame = b.build_int_const((-32i64) as u64, ValueType::int(32))?;
-    let call_sp =
-        b.build_int_binary_operation(sp_val, frame, IntBinaryOp::Add, ValueType::int(32))?;
+    let call_sp = b.build_const_binop(
+        (-32i64) as u64,
+        sp_val,
+        IntBinaryOp::Add,
+        ValueType::int(32),
+    )?;
     b.write_variable(&sp, call_sp)?;
     let target = b.build_int_const(ALLOCATOR, ValueType::int(32))?;
     let (_, rets) = b.build_call(target, &[], &[ret_reg], 0)?;
     let value = b.build_int_const(0x22u64, ValueType::int(32))?;
     b.build_store(rets[0], value, rsleigh::VnSpace::RAM)?;
-    let four = b.build_int_const(4u64, ValueType::int(32))?;
-    let addr = b.build_int_binary_operation(sp_val, four, IntBinaryOp::Add, ValueType::int(32))?;
+    // Off the entry SP, which `sp` no longer reads back.
+    let addr = b.build_const_binop(4u64, sp_val, IntBinaryOp::Add, ValueType::int(32))?;
     let loaded = b.build_load(addr, rsleigh::VnSpace::RAM, ValueType::int(32))?;
     // Keeps the allocator's pointer live.
     let sum =
@@ -1375,14 +1224,12 @@ fn arg_detection_narrows_past_a_heap_store_to_its_allocator() -> Result<()> {
     b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut pipeline = cf_rp_pipeline();
-    pipeline.add_post_pass(FunctionArgDetect);
     fg.assume(&crate::AssumptionOptions {
         noalias_allocators: [ALLOCATOR].into_iter().collect(),
         assume_incoming_args_survive_calls: true,
         ..crate::AssumptionOptions::none()
     });
-    pipeline.run(&mut fg, &crate::OptCtx::new(None))?;
+    detect(&mut fg)?;
 
     assert_eq!(fg.side_tables().arg_index_to_values(0), [loaded]);
     let mem_in = fg.node_inputs(fg.producer(loaded))[0];

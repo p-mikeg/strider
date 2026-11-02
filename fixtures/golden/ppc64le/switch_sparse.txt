@@ -288,7 +288,7 @@ float_arg 24 [%v58]
 %v58:i128 = initial_var[vs45]
 
 %v59:ctrl, %v60:token = region %v0, %v116
-%v61:mem = memphi %v60, %v29, %v165
+%v61:mem = memphi %v60, %v29, %v163
 %v62:i64<r4> = phi %v60, %v30, %v119
 %v63:i64<f1> = phi %v60, %v31, %v120
 %v64:i64<f2> = phi %v60, %v32, %v121
@@ -350,8 +350,6 @@ return %v99, %v61, %v102, %v62, %v63, %v64, %v65, %v66, %v67, %v68, %v69, %v70, 
 %v158:i32 = truncate %v157
 %v159:mem = store[r] %v117, %v14, %v158
 %v160:i32 = load[r] %v117, %v95
-%v161:i64 = extend.zero %v160
-%v162:i64 = iconst[0x1]
-%v163:i64 = int.add %v161, %v162
-%v164:i32 = truncate %v163
-%v165:mem = store[r] %v159, %v95, %v164
+%v161:i32 = iconst[0x1]
+%v162:i32 = int.add %v160, %v161
+%v163:mem = store[r] %v159, %v95, %v162
