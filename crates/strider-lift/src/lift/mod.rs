@@ -70,39 +70,8 @@ pub struct Lifter<R: rsleigh::MemReader> {
     /// The Sleigh and the decode context it carries across functions: `&mut`
     /// to build a CFG, `&` to lift one.
     engine: strider_cfg::DecodeEngine<R>,
-    /// The declared register file as a slice, for the per-op containment
-    /// queries in [`pcode_consts`]. `SleighRegs` only hands out an iterator.
-    declared_reg_vns: Vec<rsleigh::Vn>,
     /// This engine's address spaces, for [`Self::check_cfg_space_ids`].
     space_ids: rsleigh::SpaceIds,
-    /// The register a branch commits its target's ISA mode to (ARM's
-    /// `setISAMode` reads it, MIPS's `JXWritePC` writes it), `None` exactly
-    /// where the arch has no ISA-mode var.
-    isa_mode_switch_vn: Option<rsleigh::Vn>,
-    /// [`strider_target::SleighArch::volatile_register_ranges`].
-    volatile_ranges: Vec<core::ops::Range<u64>>,
-    /// [`strider_target::SleighArch::internal_registers`] resolved against
-    /// this engine's registers, dropping any name the sla does not declare.
-    /// Arch and sleigh are fixed for the engine's lifetime, so the answer is
-    /// too; resolving it per function lift just rebuilt the same list.
-    internal_register_vns: Vec<rsleigh::Vn>,
-}
-
-/// The `ISAModeSwitch` register of `regs`, `None` exactly where `arch` has no
-/// ISA-mode var.
-fn isa_mode_switch_vn(
-    arch: strider_target::SleighArch,
-    regs: &rsleigh::SleighRegs,
-) -> Result<Option<rsleigh::Vn>> {
-    let vn = regs.name_to_vn("ISAModeSwitch");
-    if vn.is_some() != arch.isa_mode_var().is_some() {
-        return Err(anyhow!(
-            "{arch:?}: ISAModeSwitch resolved={}, isa_mode_var={:?}",
-            vn.is_some(),
-            arch.isa_mode_var(),
-        ));
-    }
-    Ok(vn)
 }
 
 impl<R: rsleigh::MemReader> Lifter<R> {
@@ -110,58 +79,11 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     ///
     /// # Errors
     ///
-    /// When [`strider_cfg::DecodeEngine::new`] fails, the sla's `ram` space
-    /// is missing or not byte-addressed, or it and `arch` disagree on the ISA
-    /// mode.
+    /// When [`strider_cfg::DecodeEngine::new`] fails.
     pub fn new(arch: strider_target::SleighArch, reader: R) -> Result<Self> {
         let engine = strider_cfg::DecodeEngine::new(arch, reader)?;
-        let sleigh = engine.sleigh();
-        // `VnSpace::RAM` is the shortcut byte `b'r'`, which Sleigh derives from
-        // the first character of a space's name, bumping on collision.  A
-        // second processor space named with an `r` would take a bumped
-        // shortcut and leave `RAM` naming whichever of the two was declared
-        // first, silently retargeting every Load / Store the lift emits.
-        let ram = sleigh.space_info(rsleigh::VnSpace::RAM).ok_or_else(|| {
-            anyhow!("{arch:?}: sleigh declares no address space with shortcut 'r'")
-        })?;
-        let ram_name = ram.name()?;
-        if ram_name != "ram" {
-            return Err(anyhow!(
-                "{arch:?}: the address space with shortcut 'r' is named {ram_name:?}, not \"ram\""
-            ));
-        }
-        // GHIDRA scales a LOAD/STORE offset by the space's word size
-        // (`AddrSpace::addressToByte`, `emulate.cc:243`); the lift uses the
-        // offset as a byte address directly, so a word-addressed space would
-        // read the wrong bytes with no diagnostic.
-        let ram_word_size = ram.word_size();
-        if ram_word_size != 1 {
-            return Err(anyhow!(
-                "{arch:?}: \"ram\" has word size {ram_word_size}, and the lift indexes it in bytes"
-            ));
-        }
-        // After the ram checks: `names` panics on the sla they refuse.
-        let sleigh_regs = arch.names().regs();
-        let declared_reg_vns = sleigh_regs.vns().collect();
-        let space_ids = sleigh.space_ids();
-        // Capture and carry are paired BOTH ways: `name_to_vn` answers `None`
-        // for a misspelling rather than erroring, so a one-directional check
-        // would pass vacuously while the mode bit is never captured.
-        let isa_mode_switch_vn = isa_mode_switch_vn(arch, sleigh_regs)?;
-        let volatile_ranges = arch.volatile_register_ranges()?;
-        let internal_register_vns = arch
-            .internal_registers()
-            .iter()
-            .filter_map(|name| sleigh_regs.name_to_vn(name))
-            .collect();
-        Ok(Self {
-            engine,
-            declared_reg_vns,
-            space_ids,
-            isa_mode_switch_vn,
-            volatile_ranges,
-            internal_register_vns,
-        })
+        let space_ids = engine.sleigh().space_ids();
+        Ok(Self { engine, space_ids })
     }
 
     /// Indexed by `user_op_id`, which for `read_volatile` is past the table.
@@ -235,8 +157,13 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     }
 
     /// This engine's resolved [`strider_target::SleighArch::internal_registers`].
-    pub(crate) fn internal_register_vns(&self) -> &[rsleigh::Vn] {
-        &self.internal_register_vns
+    pub(crate) fn internal_register_vns(&self) -> &'static [rsleigh::Vn] {
+        &self.engine.tables().internal_register_vns
+    }
+
+    /// See [`strider_target::DecodeTables::isa_mode_switch_vn`].
+    pub(crate) fn isa_mode_switch_vn(&self) -> Option<rsleigh::Vn> {
+        self.engine.tables().isa_mode_switch_vn
     }
 
     /// Whether `vn` shares a byte with a volatile register.
@@ -244,6 +171,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         let (start, end) = (vn.addr_off, vn.addr_off + u64::from(vn.size));
         vn.addr_space == rsleigh::VnSpace::REGISTER
             && self
+                .engine
+                .tables()
                 .volatile_ranges
                 .iter()
                 .any(|r| r.start < end && start < r.end)
@@ -252,8 +181,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// The declared register file, for containment queries against a computed
     /// REGISTER-space address.
     #[must_use]
-    pub(crate) fn declared_reg_vns(&self) -> &[rsleigh::Vn] {
-        &self.declared_reg_vns
+    pub(crate) fn declared_reg_vns(&self) -> &'static [rsleigh::Vn] {
+        &self.engine.tables().declared_reg_vns
     }
 
     /// The CFG of the function at `entry`; see
