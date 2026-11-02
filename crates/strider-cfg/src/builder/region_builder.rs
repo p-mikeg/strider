@@ -401,7 +401,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     /// [`crate::CfgOptions::data_ranges`] marks as data, except the one at the
     /// function start: the caller named it as code.
     fn lift_code(&mut self, addr: u64) -> Result<rsleigh::LiftRes> {
-        if addr == self.builder.start_addr.addr {
+        if addr == self.builder.start_addr {
             return self.lift_one(addr);
         }
         let data = || DecodeFailure::NotCode {
@@ -509,7 +509,7 @@ impl<'b, 'a: 'b, R: rsleigh::MemReader> RegionBuilder<'b, 'a, R> {
     pub(super) fn is_branch_tail_call_nocheck(&self, branch_target_addr: PcodeInsnAddr) -> bool {
         crate::is_addr_tail_call(
             branch_target_addr.machine_addr.addr,
-            self.builder.start_addr.addr,
+            self.builder.start_addr,
             self.builder.options.bound,
         )
     }

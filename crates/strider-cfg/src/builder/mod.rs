@@ -17,7 +17,7 @@ use crate::Cfg;
 use crate::DecodeEngine;
 use crate::options::CfgOptions;
 use crate::region_index::RegionIndex;
-use crate::types::{MachineInsnAddr, PcodeInsnAddr, Region, RegionGraph};
+use crate::types::{PcodeInsnAddr, Region, RegionGraph};
 use anyhow::{anyhow, bail};
 
 use crate::Result;
@@ -66,7 +66,7 @@ pub(crate) struct Builder<'a, R: rsleigh::MemReader> {
     /// The engine this build decodes on: its Sleigh, its arch, its flowing
     /// context vars and its per-preset default tables, each documented there.
     pub(super) engine: &'a mut DecodeEngine<R>,
-    pub(super) start_addr: MachineInsnAddr,
+    pub(super) start_addr: u64,
     pub(super) options: &'a CfgOptions<'a>,
     pub(super) region_graph: RegionGraph,
     /// Which region owns an address.
@@ -141,7 +141,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     ) -> Self {
         Self {
             engine,
-            start_addr: start_addr.into(),
+            start_addr,
             options,
             region_graph: RegionGraph::new(),
             index: RegionIndex::default(),
@@ -593,13 +593,6 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             .collect()
     }
 
-    fn start_pcode_addr(&self) -> PcodeInsnAddr {
-        PcodeInsnAddr {
-            machine_addr: self.start_addr,
-            insn_index: 0,
-        }
-    }
-
     /// Routes `addr` to the region that owns it, or decodes a new one; a branch
     /// into an existing region's interior splits it. Before decoding a fresh
     /// region the `carried` context this edge captured is pinned, so a
@@ -809,7 +802,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     /// decoded off an arm whose successor would not decode, each with that
     /// failure.
     fn drain(&mut self) -> Result<Vec<(NodeIndex, anyhow::Error)>> {
-        let entry = self.start_pcode_addr();
+        let entry = PcodeInsnAddr::at_machine_start(self.start_addr);
         let mode = self.isa_mode_of(&self.function_mode);
         self.enqueue(None, entry, mode, &[]);
         let mut lost_successor = Vec::new();
@@ -918,7 +911,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
     fn finish(mut self, lost_successor: Vec<(NodeIndex, anyhow::Error)>) -> Result<Cfg> {
         self.refuse_arms_reaching(lost_successor.iter().map(|(region, _)| *region));
         self.drop_refused_switch_arms();
-        let start_addr = self.start_pcode_addr();
+        let start_addr = PcodeInsnAddr::at_machine_start(self.start_addr);
         let (starting_region, _) = self.find_region_containing_addr(start_addr).ok_or_else(
             || {
                 anyhow!(
