@@ -349,3 +349,33 @@ fn every_preset_has_a_user_op_table_and_an_ram_named_ram() {
         );
     }
 }
+
+/// `test edi,edi ; je 0x100a ; mov eax,1 ; ret ; xor eax,eax ; ret`. The
+/// builder creates the two arms in queue order, and petgraph lists a
+/// region's out-edges newest first, so the depth-first discovery reaches
+/// the arm with the higher `RegionId` first. The SSA walk, whose order
+/// the body nodes' NodeIds follow, takes siblings by `RegionId`.
+#[test]
+fn the_ssa_walk_takes_sibling_regions_by_region_id() {
+    let arch = strider_target::SleighArch::x86_64();
+    let code = vec![
+        0x85, 0xff, 0x74, 0x06, 0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3, 0x31, 0xc0, 0xc3,
+    ];
+    let reader = rsleigh::mem_readers::BufMemReader::new(code, 0x1000);
+    let mut lifter = super::Lifter::new(arch, reader).expect("lifter");
+    let cfg = lifter
+        .build_cfg(0x1000u64.into(), &strider_cfg::CfgOptions::default())
+        .expect("cfg");
+    let entry = cfg.entry();
+    let mut arms: Vec<strider_cfg::RegionId> = cfg.region_ids().filter(|&r| r != entry).collect();
+    arms.sort_unstable();
+    assert_eq!(arms.len(), 2, "premise: an entry and two arms");
+    let graph = cfg.region_graph();
+    let doms = graph_algorithms::dominance::dominators(entry, |r| graph.neighbors(r));
+    assert_eq!(
+        doms.vertices(),
+        [entry, arms[1], arms[0]],
+        "premise: discovery reaches the later arm first"
+    );
+    assert_eq!(doms.tree_preorder(), [entry, arms[0], arms[1]]);
+}
