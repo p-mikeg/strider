@@ -2,7 +2,7 @@ use cranelift_entity::PrimaryMap;
 
 use crate::error::Result;
 use crate::function::Function;
-use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind};
+use crate::node::{IntBinaryOp, IntUnaryOp, NodeId, NodeKind, ValueId, ValueKind};
 use crate::region::Region;
 
 mod build_trait;
@@ -186,7 +186,6 @@ enum AddrStep {
 }
 
 fn address_step(kind: &NodeKind) -> Option<AddrStep> {
-    use crate::node::IntUnaryOp;
     match kind {
         NodeKind::Phi => Some(AddrStep::Phi),
         NodeKind::IntBinaryOp(IntBinaryOp::Add) => Some(AddrStep::Add),
