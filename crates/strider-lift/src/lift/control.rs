@@ -210,8 +210,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             "call target space",
         )?;
         let override_cc = self.call_override(insn);
-        self.build_cc_call(call_address, override_cc, None)?;
-        Ok(())
+        self.build_cc_call(call_address, override_cc, None)
     }
 
     /// A direct branch out of the function range is semantically a tail call,
@@ -239,8 +238,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 .is_some_and(|name| name == "swi"),
             _ => false,
         };
-        self.build_cc_call(call_address, None, trap_vector.then_some(0))?;
-        Ok(())
+        self.build_cc_call(call_address, None, trap_vector.then_some(0))
     }
 
     /// Emits an `IndirectBranch [ctrl, mem, target]` placeholder anchoring
