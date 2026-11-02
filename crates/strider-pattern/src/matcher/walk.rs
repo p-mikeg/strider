@@ -73,9 +73,14 @@ pub(crate) enum Choice {
 /// A pat node and the IR node and value it was offered.
 pub(crate) type Offer = (PatNodeId, NodeId, Option<ValueId>);
 
+/// Which read of a pat node a visit is: its rank in preorder in the pattern
+/// unfolded through every slot and every arm, so reads compare in the order
+/// the pattern reads them. See [`InputEdge::step`].
+pub(crate) type Read = u64;
+
 /// The choice, where it was offered (an operand's outermost level for a
-/// cast), and the root output the attempt anchored on.
-pub(crate) type ArmKey = (Choice, Offer, Option<ValueId>);
+/// cast), the root output the attempt anchored on, and the read.
+pub(crate) type ArmKey = (Choice, Offer, Option<ValueId>, Read);
 
 /// An [`ArmKey`] and the arm taken there.
 pub(crate) type ArmTaken = (ArmKey, usize);
@@ -136,6 +141,7 @@ pub(crate) fn anchor(
             ir_node: node,
             root_value,
             out_vertex,
+            read: 0,
         };
         try_match_at(&ctx, site, bindings, &mut counted)
     };
@@ -268,6 +274,7 @@ struct Site {
     ir_node: NodeId,
     root_value: Option<ValueId>,
     out_vertex: Option<PatValueId>,
+    read: Read,
 }
 
 /// Recursive worker, continuation-passing so a guard failure anywhere above can
@@ -289,6 +296,7 @@ fn try_match_at(
         ir_node,
         root_value,
         out_vertex,
+        ..
     } = site;
     let nd = ctx.pat.graph.node_kind(pat_node);
     if !nd.kind.matches(ctx.function().node_kind(ir_node)) {
@@ -357,6 +365,7 @@ fn try_match_at(
         edges: inputs,
         fixed: n_fixed,
         commutative,
+        read: site.read,
     };
 
     let mark = bindings.mark();
@@ -402,12 +411,12 @@ fn try_alternation(
         return false;
     }
     let trail = ctx.trail.filter(|_| nd.role == Role::FirstOf);
-    // The caller keeps, per `first_of` and value offered, the matches through
-    // the lowest arm taken there, settling the `first_of`s in build order. At
-    // the first one settled, reached once per configuration, a match through
-    // an arm past one that matched is dropped before it can give a later one
-    // its lowest arm, so skipping that arm is exact. Anywhere else such a
-    // match may be the one an earlier `first_of` keeps.
+    // The caller keeps, per `first_of`, value offered and read, the matches
+    // through the lowest arm taken there, settling the `first_of`s in build
+    // order. At the first one settled, reached through one edge path, a match
+    // through an arm past one that matched is dropped before it can give a
+    // later one its lowest arm, so skipping that arm is exact. Anywhere else
+    // such a match may be the one an earlier `first_of` keeps.
     let prunes = ctx.pat.pruned_first_of == Some(pat_node);
     let offer = (pat_node, ir_node, site.root_value);
     let cut = prunes
@@ -421,12 +430,12 @@ fn try_alternation(
         let arm_site = Site {
             pat_node: alt.producer,
             out_vertex: Some(alt.out_vertex),
+            read: site.read + alt.step,
             ..site
         };
         if let Some(t) = trail {
-            t.arms
-                .borrow_mut()
-                .push(((Choice::FirstOf, offer, t.anchor.get()), arm));
+            let key = (Choice::FirstOf, offer, t.anchor.get(), site.read);
+            t.arms.borrow_mut().push((key, arm));
         }
         // The arm's own `try_match_at` restores on every `false` return, so a
         // rejected configuration needs no cleanup here.
@@ -538,9 +547,9 @@ fn bind_sibling_outputs(
     false
 }
 
-/// Try `edge`'s sub-pattern against the operand `value`, then, if the cast mask
-/// permits and `value` is a registered cast, against the unwrapped value. `k`
-/// continues the enclosing match. The candidate sets share this and differ
+/// Try `edge`'s sub-pattern against the operand `value`, then, if the cast
+/// mask permits and `value` is a registered cast, against the unwrapped value.
+/// `k` continues the enclosing match. The candidate sets share this and differ
 /// only in their reaction to `false`: a singleton fails its pinned slot, a
 /// multi-candidate set tries the next.
 ///
@@ -557,20 +566,20 @@ fn bind_sibling_outputs(
 fn try_operand(
     ctx: &Ctx,
     edge: &InputEdge,
+    up: Read,
     value: ValueId,
     bindings: &mut Bindings,
     k: &mut dyn FnMut(&mut Bindings) -> bool,
 ) -> bool {
     let mark = bindings.mark();
+    let read = up + edge.step;
     // A cast mask always comes with a trail; only a cast has a level to choose.
     let choice = ctx
         .trail
         .filter(|_| cast_below(ctx.function(), value, ctx.pat.cast_mask).is_some())
         .map(|t| {
-            (
-                t,
-                (edge.producer, ctx.function().producer(value), Some(value)),
-            )
+            let offer = (edge.producer, ctx.function().producer(value), Some(value));
+            (t, (Choice::Cast, offer, t.anchor.get(), read))
         });
     let mut level = value;
     for depth in 0.. {
@@ -579,11 +588,10 @@ fn try_operand(
             ir_node: ctx.function().producer(level),
             root_value: Some(level),
             out_vertex: Some(edge.out_vertex),
+            read,
         };
-        if let Some((t, offer)) = choice {
-            t.arms
-                .borrow_mut()
-                .push(((Choice::Cast, offer, t.anchor.get()), depth));
+        if let Some((t, key)) = choice {
+            t.arms.borrow_mut().push((key, depth));
         }
         let accepted = try_match_at(ctx, site, bindings, k);
         if let Some((t, _)) = choice {
@@ -627,6 +635,9 @@ pub(crate) struct InputEdge {
     consumer_slot: InputSlot,
     out_vertex: PatValueId,
     producer: PatNodeId,
+    /// The producer's [`Read`] less its consumer's: one more than the nodes
+    /// the consumer's earlier inputs unfold to.
+    step: Read,
 }
 
 /// A pat node's consumed inputs, with the existential (`any_input`) ones sorted
@@ -639,12 +650,14 @@ pub(crate) struct NodeInputs {
     pub(crate) interchangeable: bool,
 }
 
-/// One entry per pat node, indexed by [`PatNodeId::as_u32`].
+/// One entry per pat node, indexed by [`PatNodeId::as_u32`], its edges in
+/// [`Read`] order, each stepped by the reads `size` gives its earlier siblings.
 ///
 /// `compare_operands` is off for a pattern already refused, whose cone may be
 /// deeper than [`interchangeable`] can recurse through.
 pub(crate) fn collect_node_inputs(
     graph: &crate::matcher::graph::PatGraph,
+    size: &[(usize, Option<Read>)],
     compare_operands: bool,
 ) -> Vec<NodeInputs> {
     let mut memo = FxHashMap::default();
@@ -657,10 +670,17 @@ pub(crate) fn collect_node_inputs(
                     consumer_slot: slot,
                     out_vertex,
                     producer: graph.producer(out_vertex),
+                    step: 0,
                 })
                 .collect();
             // Stable, so each group keeps its relative order.
             edges.sort_by_key(|e| e.consumer_slot == InputSlot::Any);
+            let mut below: Read = 1;
+            for e in &mut edges {
+                e.step = below;
+                below =
+                    below.saturating_add(size[e.producer.as_u32() as usize].1.unwrap_or(Read::MAX));
+            }
             let fixed = edges
                 .iter()
                 .filter(|e| e.consumer_slot != InputSlot::Any)
@@ -777,6 +797,8 @@ struct Assignment<'a> {
     edges: &'a [InputEdge],
     fixed: usize,
     commutative: bool,
+    /// The node's [`Read`].
+    read: Read,
 }
 
 impl Assignment<'_> {
@@ -856,7 +878,7 @@ fn match_assignments(
             let Some(value) = ctx.function().nth_input(ir_node, slot) else {
                 return false;
             };
-            return try_operand(ctx, edge, value, bindings, &mut |b| {
+            return try_operand(ctx, edge, assignment.read, value, bindings, &mut |b| {
                 match_assignments(ctx, assignment, i + 1, ir_node, claimed, b, done)
             });
         }
@@ -877,7 +899,7 @@ fn match_assignments(
             slot,
             prev: claimed,
         };
-        if try_operand(ctx, edge, value, bindings, &mut |b| {
+        if try_operand(ctx, edge, assignment.read, value, bindings, &mut |b| {
             match_assignments(ctx, assignment, i + 1, ir_node, Some(&next), b, done)
         }) {
             return true;

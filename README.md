@@ -148,15 +148,14 @@ call that meets one of them raises rather than waiting.
 ## Upgrading from 0.1.0
 
 The query API was renamed, so the 0.1.0 quickstart's pattern lines no longer
-run: `add` is `int_add`, a bare string is no longer a capture operand
-(`Capture` is), and `hit.const_uint(c)` is `hit.uint(c)`. A `Node` was renamed
-the same way (`const_uint` / `const_int` / `const_bool` are `uint` / `sint` /
-`boolean`), and `wide_const_bytes()` is gone, `uint()` reading every width.
-`hit[c]` returns a `BoundCapture`, so
-`hit[c] is None` is always false; test `c in hit`. `prog.symbol(name)` returns a
-`Symbol` (`name`, `address`, `size`, `end`, `is_function`, `region`,
-`is_thumb`) where 0.1.0 returned a bare address, so arithmetic on one needs
-`.address`, and `symbol_size` is gone.
+run: `add` is `int_add`, a bare string is no longer a capture operand (`Capture`
+is), and `hit.const_uint(c)` is `hit.uint(c)`. A `Node` was renamed the same way
+(`const_uint` / `const_int` / `const_bool` are `uint` / `sint` / `boolean`), and
+`wide_const_bytes()` is gone, `uint()` reading every width. `hit[c]` returns a
+`BoundCapture`, so `hit[c] is None` is always false; test `c in hit`.
+`prog.symbol(name)` returns a `Symbol` (`name`, `address`, `size`, `end`,
+`is_function`, `region`, `is_thumb`) where 0.1.0 returned a bare address, so
+arithmetic on one needs `.address`, and `symbol_size` is gone.
 
 `LifterOptions(alias_mode=, calls_clobber=, assume_distinct_sp_bases_disjoint=)`
 raise `TypeError`: those claims moved into
