@@ -1,11 +1,11 @@
 use super::FunctionBuilder;
 use crate::IRViewer;
+use crate::Result;
 use crate::builder::checks::{
     require_bool_value, require_output_type, require_slot, require_value_kind,
     validate_value_inputs,
 };
 use crate::builder::{IRBuilder, IRBuilderExt};
-use crate::error::Result;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind, ValueType};
 use crate::region::RegionId;
 

@@ -7,7 +7,7 @@
 //! `FunctionBuilder` is a different type from the unit tests'.
 
 use super::FunctionBuilder;
-use crate::error::Result;
+use crate::Result;
 use crate::region::RegionId;
 
 impl FunctionBuilder {

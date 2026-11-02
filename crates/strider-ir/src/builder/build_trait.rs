@@ -78,7 +78,7 @@ mod tests {
     use cranelift_entity::EntityRef;
 
     /// No tracked variables, no stamped lift address.
-    fn empty_builder() -> crate::error::Result<FunctionBuilder> {
+    fn empty_builder() -> crate::Result<FunctionBuilder> {
         FunctionBuilder::new(
             vec![],
             strider_target::BuiltCallingConvention::default(),
