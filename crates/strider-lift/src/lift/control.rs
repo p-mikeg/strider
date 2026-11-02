@@ -130,31 +130,21 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     /// node's values come from the convention instead.
     pub(super) fn handle_sleigh_return(
         &mut self,
-        region_id: strider_cfg::RegionId,
         insn: &rsleigh::Insn,
         addr: strider_cfg::PcodeInsnAddr,
-        region_map: &super::RegionMap,
     ) -> Result<()> {
         let target = self.read_vn(nth_input_or_err(insn, 0)?)?;
-        let ir_region = region_map[&region_id];
-        self.build_cc_return()?;
-        let control = self.builder.region_cur_ctrl(ir_region);
-        let function = self.builder.function();
-        let ret = function
-            .value_uses(control)
-            .map(|(node, _)| node)
-            .find(|&node| matches!(function.node_kind(node), strider_ir::node::NodeKind::Return))
-            .ok_or_else(|| anyhow!("the Return at {addr:?} consumes no region control"))?;
+        let ret = self.build_cc_return()?;
         self.return_sites.push((addr, ret, target));
         Ok(())
     }
 
     /// Reads each CC return register through the aliasing-aware `read_vn`, so a
     /// sub-register ret reg is sliced out of its container.
-    fn build_cc_return(&mut self) -> Result<()> {
+    fn build_cc_return(&mut self) -> Result<strider_ir::node::NodeId> {
         let ret_vns = self.builder.function().ret_val_regs();
         let ret_values = self.read_vns(&ret_vns)?;
-        self.builder.build_return(None, &ret_values)
+        self.builder.build_return_node(None, &ret_values)
     }
 
     /// Resolves the call's CC register lists and emits the `Call` node.
@@ -238,7 +228,8 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
             self.build_addr_const(default_code_space, target, "default code space")?;
         let override_cc = self.override_at(target);
         self.build_cc_call(call_address, override_cc, None)?;
-        self.build_cc_return()
+        self.build_cc_return()?;
+        Ok(())
     }
 
     /// A call through a vector the `swi` intrinsic produced (x86 `int imm8`,
