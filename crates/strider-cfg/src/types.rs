@@ -199,7 +199,7 @@ pub struct Region {
     pub terminator: RegionTerminator,
     /// The ISA mode the region decoded in; `None` on an arch with no ISA-mode
     /// var, and for a `TailCall` stub, whose bytes are never decoded.
-    pub isa_mode: Option<u32>,
+    pub(crate) isa_mode: Option<u32>,
 }
 
 impl Region {
