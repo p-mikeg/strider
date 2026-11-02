@@ -1,4 +1,4 @@
-mod kind;
+pub(crate) mod kind;
 mod ops;
 pub(crate) mod signature;
 mod value_kind;
