@@ -49,8 +49,9 @@ impl<R: rsleigh::MemReader> DecodeEngine<R> {
     ///
     /// When the sla does not load.
     pub fn new(arch: strider_target::SleighArch, reader: R) -> Result<Self> {
-        let tables = arch.decode_tables();
+        // Before the tables, whose own Sleigh panics where this one errs.
         let sleigh = arch.sleigh(reader)?;
+        let tables = arch.decode_tables();
         Ok(Self {
             space_ids: sleigh.space_ids(),
             sleigh,
