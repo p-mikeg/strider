@@ -7,7 +7,7 @@ use strider_ir::eval;
 
 /// Decodes `ty` bytes at `addr` into an integer masked to `ty`. `None` for an
 /// unmapped read or a non-integer `ty`.
-fn read_rom_const(
+pub(crate) fn read_rom_const(
     rom: &dyn ReadOnlyMemory,
     addr: u64,
     ty: ValueType,
@@ -26,16 +26,35 @@ fn read_rom_const(
     Some(eval::mask(&UBig::from_le_bytes(&bytes), ty))
 }
 
-/// Right-shift in bits that brings the `load_ty`-width slice a load in
-/// `space` reads at the start of a wider `store_ty` value into the low end,
-/// in that space's byte order: [`strider_target::Endianness::slice_shift_bits`]
-/// at offset 0. `None` for a load wider than the store.
-pub(crate) fn slice_shift_bits(
+/// How a `load_ty` load in `space` reads a `store_ty` value stored at its
+/// address.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoadSlice {
+    /// The stored value itself.
+    Same,
+    /// The stored integer shifted right this many bits, then truncated: the
+    /// slice at offset 0 in `space`'s byte order
+    /// ([`strider_target::Endianness::slice_shift_bits`]).
+    Narrow(u32),
+}
+
+/// The [`LoadSlice`] a store-to-load forward takes. `None` for a load wider
+/// than the store, a same-size type mismatch, and any non-integer pair.
+pub(crate) fn load_slice(
     order: strider_target::ByteOrder,
     space: rsleigh::VnSpace,
     store_ty: ValueType,
     load_ty: ValueType,
-) -> Option<u32> {
+) -> Option<LoadSlice> {
+    if store_ty == load_ty {
+        return Some(LoadSlice::Same);
+    }
+    if !(store_ty.is_integer()
+        && load_ty.is_integer()
+        && load_ty.byte_size() < store_ty.byte_size())
+    {
+        return None;
+    }
     let at = |ty: ValueType| rsleigh::Vn {
         addr_space: space,
         addr_off: 0,
@@ -44,7 +63,7 @@ pub(crate) fn slice_shift_bits(
     let bits = order
         .of(space)
         .slice_shift_bits(&at(load_ty), &at(store_ty))?;
-    u32::try_from(bits).ok()
+    u32::try_from(bits).ok().map(LoadSlice::Narrow)
 }
 
 /// Whether every operand carries the width [`NodeKind::operand_width`] says
@@ -103,9 +122,7 @@ pub(crate) fn eval_node_const(
             eval::int_unary(op, &resolve(v)?, ty)
         }
         NodeKind::Truncate | NodeKind::Extend(ExtendOp::ZeroExtend) => {
-            // `eval::mask` answers 0 for a float, so the refusal is explicit.
-            let ty = out_ty.filter(|t| t.is_integer())?;
-            Some(eval::mask(&resolve(ins.get(0).copied()?)?, ty))
+            Some(eval::mask(&resolve(ins.get(0).copied()?)?, out_ty?))
         }
         NodeKind::Extend(ExtendOp::SignExtend) => {
             let in_ty = function.value_type_opt(ins.get(0).copied()?)?;
@@ -151,7 +168,10 @@ pub(crate) fn eval_node_const(
 /// carrier: a shift count is free to be narrower than its value
 /// ([`strider_ir::node::NodeKind::operand_width`]), so reading both through
 /// `int_const_u128` would name a constant too wide to read as the variable.
-pub(crate) fn var_and_const(function: &Function, node: NodeId) -> Option<(ValueId, u128)> {
+pub(crate) fn var_and_const(
+    function: &(impl IRViewer + ?Sized),
+    node: NodeId,
+) -> Option<(ValueId, u128)> {
     let [a, b] = function.node_inputs_exact::<2>(node).ok()?;
     let (x, c) = match (function.int_const(a), function.int_const(b)) {
         (None, Some(c)) => (a, c),
@@ -159,6 +179,15 @@ pub(crate) fn var_and_const(function: &Function, node: NodeId) -> Option<(ValueI
         _ => return None,
     };
     Some((x, u128::try_from(c).ok()?))
+}
+
+/// [`var_and_const`] of a `kind` node, `None` for any other.
+pub(crate) fn var_and_const_of(
+    function: &(impl IRViewer + ?Sized),
+    node: NodeId,
+    kind: NodeKind,
+) -> Option<(ValueId, u128)> {
+    (*function.node_kind(node) == kind).then(|| var_and_const(function, node))?
 }
 
 /// `(x, c)` for `Add(x, c)` with `c` a constant, read signed at `x`'s width.

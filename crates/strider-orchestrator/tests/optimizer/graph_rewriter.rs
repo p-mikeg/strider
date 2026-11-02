@@ -208,60 +208,102 @@ fn re_optimize_without_changes_is_no_op() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// `phi(a, b) -> arm` tried at every phi of a lifted function, carrying on
-/// past a refusal. The function stays valid. Returns the refusals' messages.
-fn collapse_phis_to_arm(arch: common::Arch, case: &str, name: &str, arm: usize) -> Vec<String> {
-    let mut function = common::analyze(arch, case, name);
+/// `phi(a, b) -> arm` tried at each read phi of a lifted function, one site
+/// per copy of it, each copy staying valid. Returns, per site that declined
+/// a replacement other than the phi itself, whether the arm reads the phi
+/// with no phi between them, the cycle the rewrite refuses before asking
+/// whether the arm is available.
+fn phis_declining_their_arm(arch: common::Arch, case: &str, name: &str, arm: usize) -> Vec<bool> {
+    let function = common::analyze(arch, case, name);
     let (a, b) = (Capture::new(), Capture::new());
-    let lhs = strider_pattern::phi()
-        .phi_input(0, var(a))
-        .phi_input(1, var(b));
-    let rule = rewrite_rule(lhs, var([a, b][arm]));
-    let phis: Vec<_> = function
-        .walk()
-        .filter(|&n| matches!(function.node_kind(n), NodeKind::Phi))
-        .collect();
-    let mut refusals = Vec::new();
-    {
-        let mut ctx = EditFunction::new(&mut function);
-        for phi in phis {
-            if let Err(e) = rule(&mut ctx, phi) {
-                refusals.push(e.to_string());
+    let lhs = || {
+        strider_pattern::phi()
+            .phi_input(0, var(a))
+            .phi_input(1, var(b))
+    };
+    let sites: Vec<_> = {
+        let m = strider_pattern::Matcher::new(&function);
+        let lhs = strider_pattern::MatchPat::into_pattern(lhs());
+        function
+            .walk()
+            .filter(|&n| m.match_at(n, &lhs).unwrap().is_some())
+            .filter(|&n| {
+                let out = function.node_outputs(n)[0];
+                function.value_uses(out).next().is_some() && function.node_inputs(n)[arm + 1] != out
+            })
+            .collect()
+    };
+    let rule = rewrite_rule(lhs(), var([a, b][arm]));
+    let mut declined = Vec::new();
+    for phi in sites {
+        let mut copy = function.clone();
+        {
+            let mut ctx = EditFunction::new(&mut copy);
+            if rule(&mut ctx, phi).unwrap().is_none() {
+                let phi_out = function.node_outputs(phi)[0];
+                let arm_value = function.node_inputs(phi)[arm + 1];
+                declined.push(reads_without_a_phi(&function, arm_value, phi_out));
             }
+            ctx.clean();
         }
-        ctx.clean();
+        if let Err(e) = strider_ir::validate::validate(&copy) {
+            panic!("{case}::{name} arm {arm}: invalid after the rewrite: {e}");
+        }
     }
-    if let Err(e) = strider_ir::validate::validate(&function) {
-        panic!("{case}::{name} arm {arm}: invalid after the rewrite ({refusals:?}): {e}");
+    declined
+}
+
+/// Whether `from`'s data cone reaches `target` without passing a phi.
+fn reads_without_a_phi(
+    function: &Function,
+    from: strider_ir::node::ValueId,
+    target: strider_ir::node::ValueId,
+) -> bool {
+    let mut seen = std::collections::HashSet::new();
+    let mut stack = vec![from];
+    while let Some(v) = stack.pop() {
+        if v == target {
+            return true;
+        }
+        let producer = function.producer(v);
+        if !seen.insert(v) || matches!(function.node_kind(producer), NodeKind::Phi) {
+            continue;
+        }
+        stack.extend(
+            function
+                .node_inputs(producer)
+                .into_iter()
+                .filter(|&i| !function.value_kind(i).is_control()),
+        );
     }
-    refusals
+    false
 }
 
 /// A loop phi collapsed to its back-edge value would read itself through a
 /// path with no phi on it.
+/// Mutation: decline only an unavailable arm.
 #[test]
-fn collapsing_a_loop_phi_to_its_back_edge_is_refused() {
+fn collapsing_a_loop_phi_to_its_back_edge_is_declined() {
     for (arch, case, name) in [
         (common::Arch::X86, "memory", "array_sum"),
         (common::Arch::X64, "control", "sum_to_n"),
     ] {
-        let refusals: Vec<_> = (0..2)
-            .flat_map(|arm| collapse_phis_to_arm(arch, case, name, arm))
+        let declined: Vec<bool> = (0..2)
+            .flat_map(|arm| phis_declining_their_arm(arch, case, name, arm))
             .collect();
         assert!(
-            refusals.iter().any(|e| e.contains("data cycle")),
-            "{case}::{name}: no phi refused as a cycle: {refusals:?}"
+            declined.contains(&true),
+            "{case}::{name}: no phi declined over a cycle: {declined:?}"
         );
     }
 }
 
 /// A merge phi collapsed to one arm's value would be read where that arm's
-/// definition does not dominate.
+/// definition does not dominate. The arm does not read the phi, so it is
+/// the availability check that declines.
+/// Mutation: drop the availability check.
 #[test]
-fn collapsing_a_merge_phi_to_one_arm_is_refused() {
-    let refusals = collapse_phis_to_arm(common::Arch::X64, "control", "_init", 1);
-    assert!(
-        refusals.iter().any(|e| e.contains("not available")),
-        "{refusals:?}"
-    );
+fn collapsing_a_merge_phi_to_one_arm_is_declined() {
+    let declined = phis_declining_their_arm(common::Arch::X64, "control", "_init", 1);
+    assert!(declined.contains(&false), "{declined:?}");
 }

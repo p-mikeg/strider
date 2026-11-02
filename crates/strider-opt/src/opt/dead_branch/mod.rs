@@ -4,59 +4,40 @@
 //! successor is wired past it, then the branch node is killed unconditionally
 //! (it is side-effecting, so the automatic dead-cone cull never reaches it).
 //!
-//! The fold is DECLINED where dropping the dead arm would strand memory: an
-//! `Unreachable` consuming the dead control output, which only an `If`
-//! tests, or a live side reaching no terminator, which both test.
+//! A branch folds only when its live arm reaches a terminator without taking
+//! the dead arm of any constant branch. So no branch folds whose live arm
+//! enters a loop that only a dead arm leaves, the loop's own branches and
+//! one before it alike.
 //!
 //! A dead subgraph can still escape to live data (a dead `Call`'s `mem_value`
 //! flowing into a live `MemPhi`), leaving it transiently reachable backward
 //! through data.  Validation runs only once the destructive pipeline converges,
 //! so that transient shape is never observed.
 //!
-//! Dead predecessor slots of the joins are stripped in the same pass.
+//! Every run then strips each join's dead predecessor slots, whichever pass
+//! or lift left them dead.
 
 use smallvec::SmallVec;
 use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
+use strider_ir::walk::cfg_reachable;
 
 use crate::Result;
-use crate::opt::cfg_detach::strip_dead_predecessors;
-use crate::peephole::{PeepholePass, PeepholeRewrite, run_peephole};
-use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
+use crate::peephole::PeepholePass;
 
 mod escape;
 #[cfg(test)]
+mod strip_tests;
+#[cfg(test)]
 mod tests;
 
-use escape::EscapeOracle;
 #[cfg(test)]
-use escape::{FULL_WALKS, WALKED_NODES};
+use escape::ESCAPE_SETS;
+use escape::EscapeOracle;
 
-#[derive(Clone, Copy)]
 pub struct DeadBranchElimination;
 
-impl Optimizer for DeadBranchElimination {
-    fn apply(
-        &self,
-        edit: &mut crate::EditFunction<'_>,
-        ctx: &OptCtx<'_>,
-    ) -> Result<OptimizationResult> {
-        let folded = run_peephole(&DbeFold, edit, ctx)?;
-        if folded.changed() {
-            // The pipeline drains between passes; do the same before the strip.
-            edit.clean();
-            strip_dead_predecessors(edit)?;
-        }
-        Ok(folded)
-    }
-}
-
-/// The branch fold itself. The blanket `Optimizer` impl over `PeepholePass`
-/// forbids implementing both on [`DeadBranchElimination`].
-#[derive(Clone, Copy)]
-struct DbeFold;
-
-impl PeepholePass for DbeFold {
+impl PeepholePass for DeadBranchElimination {
     type Sweep = EscapeOracle;
 
     fn matches_kind(&self, kind: &NodeKind) -> bool {
@@ -69,50 +50,81 @@ impl PeepholePass for DbeFold {
         edit: &mut crate::EditFunction<'_>,
         _opt_ctx: &crate::pipeline::OptCtx<'_>,
         root: NodeId,
-    ) -> Result<PeepholeRewrite> {
+    ) -> Result<Option<ValueId>> {
         let Some(selection) = constant_selection(edit, root) else {
-            return Ok(PeepholeRewrite::NoChange);
+            return Ok(None);
         };
-        let root_is_if = matches!(edit.node_kind(root), NodeKind::If);
-        // An `Unreachable` on the dead arm anchors the memory of an exit-free
-        // control cycle the fold would orphan.  Coarser than
-        // `live_side_escapes` below: a dead arm that is a bare `Unreachable`
-        // declines too, though folding it is sound.  The asymmetry is the
-        // point: declining costs one unfolded branch, folding wrongly costs a
-        // store.  `if (const) .. else abort();` still folds, its dead arm
-        // reaching the `Unreachable` through the `Call`.
-        if root_is_if
-            && selection.dead.iter().any(|&dead| {
-                edit.value_uses(dead)
-                    .any(|(node, _)| matches!(edit.node_kind(node), NodeKind::Unreachable))
-            })
-        {
-            return Ok(PeepholeRewrite::NoChange);
-        }
-        if !escapes.live_side_escapes(edit, root, selection.live) {
-            return Ok(PeepholeRewrite::NoChange);
+        if !escapes.live_side_escapes(edit, selection.live) {
+            return Ok(None);
         }
         // The constant selector is the proof for taking this arm, so its
         // fingerprint must survive `kill_node` cascade-culling its cone.
-        let selector_slot = if root_is_if {
-            NodeKind::IF_COND_SLOT
-        } else {
-            NodeKind::SWITCH_SELECTOR_SLOT
-        };
-        let (ctrl_value, selector) = {
-            let inputs = edit.node_inputs(root);
-            (inputs[NodeKind::CTRL_SLOT], inputs[selector_slot])
-        };
-        edit.absorb_fingerprint(ctrl_value, selector);
+        let ctrl_value = edit.node_inputs(root)[NodeKind::CTRL_SLOT];
+        edit.absorb_fingerprint(ctrl_value, selection.selector);
         edit.replace_value(selection.live, ctrl_value);
         edit.kill_node(root);
-        Ok(PeepholeRewrite::Changed { new_node: None })
+        Ok(None)
     }
+
+    fn after_sweep(&self, edit: &mut crate::EditFunction<'_>, changed: bool) -> Result<()> {
+        // The pipeline drains between passes; do the same before the strip.
+        // A fold detaches its dead arm from control, which the incremental
+        // bookkeeping does not track, so resync even when nothing is stripped.
+        if changed {
+            edit.clean();
+        }
+        if strip_dead_predecessors(edit) || changed {
+            edit.resync_live_set();
+        }
+        Ok(())
+    }
+}
+
+/// Strips every `Region` predecessor slot whose control producer entry no
+/// longer reaches, with the matching `Phi` / `MemPhi` slots; `true` if it
+/// stripped one.
+///
+/// The incremental live-set bookkeeping tracks data orphaning only, so the
+/// caller resyncs after a strip: a severed slot can detach a whole subgraph,
+/// and a `MemPhi` left cached-live with zero arms trips the memory-SSA walk.
+fn strip_dead_predecessors(edit: &mut crate::EditFunction<'_>) -> bool {
+    let entry = edit.entry();
+    // Two different reachability notions here. A predecessor edge is dead
+    // iff its control producer is control-unreachable from entry, but the
+    // set we ITERATE is the general graph walk: a join that is only
+    // data-reachable (an escaping dead branch whose value still feeds a live
+    // phi) is still validator-visible and can carry a dead control slot.
+    let reachable = cfg_reachable(edit.function().graph(), entry);
+
+    // The cached live set covers the same nodes as a fresh walk, so reuse
+    // its RPO rather than re-walking.
+    let regions: Vec<NodeId> = edit
+        .live_reverse_postorder_filter(|k| matches!(k, NodeKind::Region))
+        .collect();
+    let mut stripped = false;
+    for region in regions {
+        let dead: Vec<u32> = edit
+            .node_inputs(region)
+            .into_iter()
+            .enumerate()
+            .filter(|&(_, input)| !reachable.contains(edit.producer(input)))
+            .map(|(idx, _)| idx as u32)
+            .collect();
+        // Each region's dead indices go at once: batch removal is set-based,
+        // and a strip touches only its own region, so the order commutes.
+        if !dead.is_empty() {
+            edit.remove_region_predecessors(region, &dead);
+            stripped = true;
+        }
+    }
+    stripped
 }
 
 /// The control output a constant-selector branch takes, and the ones it
 /// never takes.
 struct Selection {
+    /// The constant the branch tests.
+    selector: ValueId,
     live: ValueId,
     dead: SmallVec<[ValueId; 2]>,
 }
@@ -123,24 +135,28 @@ struct Selection {
 /// early holding one arm.  The fold and [`EscapeOracle`] both read this, so
 /// they agree on which arms are dead.
 fn constant_selection(edit: &crate::EditFunction<'_>, node: NodeId) -> Option<Selection> {
-    let live = match edit.node_kind(node) {
+    let (selector, live) = match edit.node_kind(node) {
         NodeKind::If => {
             // Outputs are [true, false].
-            let cond = edit.bool_const_val(edit.if_cond(node))?;
-            usize::from(!cond)
+            let cond = edit.if_cond(node);
+            (cond, usize::from(!edit.bool_const_val(cond)?))
         }
         NodeKind::Switch(_) => {
             // Output i is cases[i].
-            let k = edit.int_const_u128(edit.switch_selector(node))?;
-            edit.function()
+            let selector = edit.switch_selector(node);
+            let k = edit.int_const_u128(selector)?;
+            let live = edit
+                .function()
                 .switch_targets(node)
                 .iter()
-                .position(|&t| u128::from(t) == k)?
+                .position(|&t| u128::from(t) == k)?;
+            (selector, live)
         }
         _ => return None,
     };
     let outputs = edit.node_outputs(node);
     Some(Selection {
+        selector,
         live: outputs[live],
         dead: outputs
             .iter()

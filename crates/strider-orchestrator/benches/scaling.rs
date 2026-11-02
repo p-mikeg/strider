@@ -212,9 +212,9 @@ mod synthetic {
         b.build_return(Some(acc), &[]).unwrap();
         let mut fg = b.build().unwrap();
         let mut p = OptimizerPipeline::new();
-        p.add(ConstantFold::new());
-        p.add(PhiCollapse);
-        p.add(RegionCollapse);
+        p.add(&ConstantFold);
+        p.add(&PhiCollapse);
+        p.add(&RegionCollapse);
         fg.assume(&strider_orchestrator::opt::AssumptionOptions::default());
         p.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();
@@ -274,9 +274,9 @@ mod synthetic {
         // Measures build + pipeline together: build dominates, but this
         // also pins the validator's per-region cost.
         let mut p = OptimizerPipeline::new();
-        p.add(ConstantFold::new());
-        p.add(PhiCollapse);
-        p.add(RegionCollapse);
+        p.add(&ConstantFold);
+        p.add(&PhiCollapse);
+        p.add(&RegionCollapse);
         fg.assume(&strider_orchestrator::opt::AssumptionOptions::default());
         p.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();
@@ -361,7 +361,7 @@ mod synthetic {
         b.build_return(Some(loaded), &[]).unwrap();
         let mut fg = b.build().unwrap();
         let mut p = OptimizerPipeline::new();
-        p.add(ConstantFold::new());
+        p.add(&ConstantFold);
         fg.assume(&strider_orchestrator::opt::AssumptionOptions::default());
         p.run(&mut fg, &strider_orchestrator::opt::OptCtx::new(None))
             .unwrap();

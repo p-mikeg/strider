@@ -4,8 +4,19 @@ use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 pub trait IRBuilder: crate::IRViewer {
     /// A structural escape hatch: mutating graph structure through this
     /// bypasses [`crate::EditFunction`]'s cached live/roots bookkeeping, so
-    /// use it only for side-table-local work such as interning a const.
+    /// use it only for side-table-local work. On an `EditFunction` every
+    /// borrow counts as one of its
+    /// [`control_edits`](crate::EditFunction::control_edits).
     fn function_mut(&mut self) -> &mut crate::Function;
+
+    /// Interns an integer constant, masked to `ty`; no structural edit.
+    fn intern_int_const(
+        &mut self,
+        val: impl Into<crate::UBig>,
+        ty: crate::node::ValueType,
+    ) -> crate::node::IntConstId {
+        self.function_mut().intern_int_const(val, ty)
+    }
 
     /// Creates or dedups to a node, unioning each contributor's
     /// asm-fingerprint into the result.

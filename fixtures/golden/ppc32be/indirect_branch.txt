@@ -31,10 +31,10 @@ cfg
   0x10000514 6 ops return -> []
 tracked [r0, r1, r3, r4, r5, r6, r7, r8, r9, r10, r11, r31, LR, CTR, f1, f2, f3, f4, f5, f6, f7, f8, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x2f100:4, u:0x2f300:4, u:0x7c300:1, u:0x7c400:4, u:0x7c500:1, u:0x7c600:4, u:0x7c800:4]
 arg 0 [%v12]
-arg 1 [%v35]
-float_arg 0 [%v36]
-float_arg 1 [%v37]
-float_arg 8 [%v38]
+arg 1 [%v34]
+float_arg 0 [%v35]
+float_arg 1 [%v36]
+float_arg 8 [%v37]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i32 = initial_var[r1]
@@ -61,19 +61,18 @@ float_arg 8 [%v38]
 %v23:i32 = int.and %v12, %v22
 %v24:i32 = iconst[0x2]
 %v25:i32 = int.shift_left %v23, %v24
-%v26:i32 = int.and %v25, %v6
-%v27:i32 = int.add %v15, %v26
-%v28:i32 = load[r] %v21, %v27
-%v29:ctrl, %v30:ctrl = switch[0x10000508, 0x10000510] %v0, %v28
-%v31:i32 = iconst[0x0]
+%v26:i32 = int.add %v15, %v25
+%v27:i32 = load[r] %v21, %v26
+%v28:ctrl, %v29:ctrl = switch[0x10000508, 0x10000510] %v0, %v27
+%v30:i32 = iconst[0x0]
 
-%v32:ctrl, %v33:token = region %v29, %v30
-%v34:i32<r9> = phi %v33, %v31, %v22
-%v35:i32 = initial_var[r4]
-%v36:i64 = initial_var[f1]
-%v37:i64 = initial_var[f2]
-%v38:i128 = initial_var[vs34]
-return %v32, %v21, %v34, %v35, %v36, %v37, %v38
+%v31:ctrl, %v32:token = region %v28, %v29
+%v33:i32<r9> = phi %v32, %v30, %v22
+%v34:i32 = initial_var[r4]
+%v35:i64 = initial_var[f1]
+%v36:i64 = initial_var[f2]
+%v37:i128 = initial_var[vs34]
+return %v31, %v21, %v33, %v34, %v35, %v36, %v37
 
 == main @0x10000528
 cfg

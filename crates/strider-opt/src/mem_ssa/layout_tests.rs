@@ -124,12 +124,17 @@ fn check(succs: &[Vec<u32>], tally: &mut Tally) {
             assert_eq!(dfs.is_ancestor(a, b), above, "{a} above {b} in {succs:?}");
         }
     }
-    if !graph_oracle::is_reducible(succs, 0) {
+    let forest = LoopForest::new(&s_preds, &dfs);
+    assert_eq!(
+        forest.is_some(),
+        graph_oracle::is_reducible(succs, 0),
+        "{succs:?}"
+    );
+    let Some(forest) = forest else {
         tally.irreducible += 1;
         return;
-    }
+    };
     let dom = graph_oracle::dom_matrix(succs, 0);
-    let forest = LoopForest::new(&s_preds, &dfs);
     let bodies: Vec<Option<Vec<bool>>> = (0..n as u32)
         .map(|h| graph_oracle::natural_loop(succs, &dom, h))
         .collect();
@@ -153,9 +158,7 @@ fn check(succs: &[Vec<u32>], tally: &mut Tally) {
             "loop of {x} in {succs:?}"
         );
     }
-    let (order, block_end) = forest
-        .nested_order(&s_preds, &dfs, 0)
-        .expect("a reducible graph has a nested order");
+    let (order, block_end) = forest.nested_order(&s_preds, &dfs);
     let mut pos = vec![NONE; n];
     for (p, &v) in order.iter().enumerate() {
         assert_eq!(pos[v as usize], NONE, "{v} placed twice in {order:?}");

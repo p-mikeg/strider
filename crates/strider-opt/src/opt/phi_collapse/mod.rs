@@ -10,7 +10,6 @@
 //! test runs again over the components of its phis that take no outside value.
 //! Zero outside values (a fully self-referential cycle) is left alone.
 //!
-//! A phi takes part only when its `Region` and every input producer are live.
 //! Every value input counts, dead predecessor edge or not.
 //!
 //! Braun's argument needs each arm's definition to dominate the phi, which
@@ -23,7 +22,7 @@ use strider_ir::IRViewer;
 use strider_ir::node::{NodeId, NodeKind, ValueId};
 
 use crate::Result;
-use crate::pipeline::{OptCtx, OptimizationResult, Optimizer};
+use crate::pipeline::{OptCtx, Optimizer};
 
 mod masked;
 
@@ -34,31 +33,18 @@ mod tests;
 /// reruns stay linear in the phi count.
 const INNER_VISITS_PER_PHI: usize = 4;
 
-#[derive(Clone, Copy)]
 pub struct PhiCollapse;
 
 impl Optimizer for PhiCollapse {
-    fn apply(
-        &self,
-        edit: &mut crate::EditFunction<'_>,
-        _opt: &OptCtx<'_>,
-    ) -> Result<OptimizationResult> {
+    fn apply(&self, edit: &mut crate::EditFunction<'_>, _opt: &OptCtx<'_>) -> Result<()> {
         let reachable = strider_ir::walk::cfg_reachable(edit.function().graph(), edit.entry());
         let phis: Vec<NodeId> = edit
             .live_reverse_postorder_filter(|k| matches!(k, NodeKind::Phi | NodeKind::MemPhi))
-            .filter(|&phi| {
-                edit.nth_input(phi, NodeKind::PHI_TOKEN_SLOT)
-                    .is_some_and(|token| reachable.contains(edit.producer(token)))
-                    && edit
-                        .node_inputs(phi)
-                        .into_iter()
-                        .all(|v| edit.is_live(edit.producer(v)))
-            })
+            .filter(|&phi| reachable.contains(edit.phi_region(phi)))
             .collect();
         let mut sccs = PhiSccs::default();
         let mut frames = vec![sccs.run(edit, &phis)];
         let mut inner_budget = phis.len().saturating_mul(INNER_VISITS_PER_PHI);
-        let mut overall = OptimizationResult::NoChange;
         while let Some(frame) = frames.last_mut() {
             let Some(range) = frame.next_component() else {
                 frames.pop();
@@ -66,10 +52,7 @@ impl Optimizer for PhiCollapse {
             };
             let scc = &frame.nodes[range];
             match sccs.outside_values(edit, scc) {
-                Outside::One(value) => {
-                    collapse(edit, scc, value)?;
-                    overall = OptimizationResult::Changed;
-                }
+                Outside::One(value) => collapse(edit, scc, value),
                 Outside::Many(inner) if !inner.is_empty() && inner.len() <= inner_budget => {
                     inner_budget -= inner.len();
                     frames.push(sccs.run(edit, &inner));
@@ -77,10 +60,7 @@ impl Optimizer for PhiCollapse {
                 Outside::Many(_) | Outside::None => {}
             }
         }
-        let folded = masked::fold_masked_uses(edit, &phis)?;
-        Ok(OptimizationResult::from_changed(
-            overall.changed() || folded.changed(),
-        ))
+        masked::fold_masked_uses(edit, &phis)
     }
 }
 
@@ -89,15 +69,16 @@ impl Optimizer for PhiCollapse {
 /// Killed here rather than by the end-of-iteration cull, so a dead phi stops
 /// counting as a live consumer of its Region's phi-token and `RegionCollapse`
 /// can detach that Region in the same iteration.
-fn collapse(edit: &mut crate::EditFunction<'_>, scc: &[NodeId], value: ValueId) -> Result<()> {
+fn collapse(edit: &mut crate::EditFunction<'_>, scc: &[NodeId], value: ValueId) {
     for &phi in scc {
-        let [out] = edit.node_outputs_exact::<1>(phi)?;
+        let [out] = edit
+            .node_outputs_exact::<1>(phi)
+            .expect("a phi has one output");
         edit.replace_value(out, value);
     }
     for &phi in scc {
         edit.kill_node(phi);
     }
-    Ok(())
 }
 
 enum Outside {

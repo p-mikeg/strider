@@ -1,9 +1,8 @@
 use super::*;
+use crate::test_support::{COLLAPSE, run_pass, run_passes};
 use strider_ir::node::{NodeKind, ValueType};
 use strider_ir::{IRBuilderExt, IRWalker};
-use strider_ir_test_utils::{RegisterSet, SENTINEL_LIFT_ADDR, reg_vn};
-
-use crate::{OptimizerPipeline, PhiCollapse};
+use strider_ir_test_utils::{IrWalkerEx, RegisterSet, reg_vn};
 
 #[test]
 fn single_input_region_collapses() -> crate::Result<()> {
@@ -12,29 +11,18 @@ fn single_input_region_collapses() -> crate::Result<()> {
     let body = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
     b.set_region(body);
     b.build_return(None, &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     // Both Regions are single-predecessor, so the Return ends up on `Entry`'s
     // control directly.
-    let entry_node = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Entry))
-        .expect("Entry node");
+    let entry_node = fg.first_kind(|k| matches!(k, NodeKind::Entry));
     let entry_ctrl = fg.node_outputs(entry_node)[0];
-    let ret = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-        .expect("Return node");
+    let ret = fg.first_kind(|k| matches!(k, NodeKind::Return));
 
-    let changed =
-        crate::pipeline::run_one(&RegionCollapse, &mut fg, &crate::OptCtx::new(None))?.changed();
+    let changed = run_pass(&RegionCollapse, &mut fg)?;
     assert!(changed, "single-input Region must collapse");
 
     assert_eq!(
@@ -56,18 +44,12 @@ fn empty_entry_region_collapses_through_entry_node() -> crate::Result<()> {
     let body = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
     b.set_region(body);
     b.build_return(None, &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let entry_node = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Entry))
-        .expect("Entry node");
+    let entry_node = fg.first_kind(|k| matches!(k, NodeKind::Entry));
     let entry_ctrl = fg.node_outputs(entry_node)[0];
     let entry_region = fg
         .graph()
@@ -120,7 +102,6 @@ fn empty_entry_region_with_nontrivial_phi_survives() -> crate::Result<()> {
     // argument with the value written on the back-edge.  A data-dependent
     // condition (not a const) keeps both edges live so the phi stays needed.
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cur = b.read_variable(&var)?;
     let zero = b.build_int_const(0u64, strider_ir::node::ValueType::int(64))?;
     let cond = b.build_int_cmp_operation(
@@ -145,14 +126,9 @@ fn empty_entry_region_with_nontrivial_phi_survives() -> crate::Result<()> {
     b.set_region(exit);
     let out = b.read_variable(&var)?;
     b.build_return(Some(out), &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let entry_node = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Entry))
-        .expect("Entry node");
+    let entry_node = fg.first_kind(|k| matches!(k, NodeKind::Entry));
     let entry_region = fg
         .graph()
         .value_uses(fg.node_outputs(entry_node)[0])
@@ -189,7 +165,6 @@ fn multi_input_region_unchanged() -> crate::Result<()> {
     let join = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let cond = b.build_boolean_const(true);
     b.build_if(cond, true_r, false_r)?;
     b.set_region(true_r);
@@ -198,7 +173,6 @@ fn multi_input_region_unchanged() -> crate::Result<()> {
     b.build_branch(join)?;
     b.set_region(join);
     b.build_return(None, &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let join_node = fg
@@ -218,7 +192,7 @@ fn multi_input_region_unchanged() -> crate::Result<()> {
 
     // Not asserting on the pass result: the entry/branch single-input Regions
     // do collapse, so `Changed` is expected regardless of the join.
-    crate::pipeline::run_one(&RegionCollapse, &mut fg, &crate::OptCtx::new(None))?;
+    run_pass(&RegionCollapse, &mut fg)?;
 
     let consumer_after = fg
         .graph()
@@ -246,11 +220,9 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
     let body = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(body)?;
     b.set_region(body);
     b.build_return(None, &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let body_region = fg
@@ -281,10 +253,7 @@ fn orphan_phi_consumer_does_not_block_detach() -> crate::Result<()> {
     // PhiCollapse takes out the body Region's reachable single-pred MemPhi,
     // leaving the orphan Phi as the sole remaining phi-token consumer, which is
     // the case RegionCollapse must not be blocked by.
-    let mut p = OptimizerPipeline::new();
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    p.run(&mut fg, &crate::OptCtx::new(None))?;
+    run_passes(&mut fg, COLLAPSE)?;
 
     assert!(
         !fg.walk().any(|n| n == orphan_phi),
@@ -310,14 +279,10 @@ fn collapse_with_phi_collapse_validates() -> crate::Result<()> {
     b.set_region(join);
     let read_back = b.read_variable(&var)?;
     b.build_return(Some(read_back), &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
-    let mut p = OptimizerPipeline::new();
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    // `run` validates at the end, so reaching here is the assertion.
-    p.run(&mut fg, &crate::OptCtx::new(None))?;
+    // The pipeline validates at the end, so reaching here is the assertion.
+    run_passes(&mut fg, COLLAPSE)?;
     Ok(())
 }
 
@@ -339,7 +304,6 @@ fn chained_phis_over_one_region_do_not_dangle() -> crate::Result<()> {
     b.set_entry_region_all(entry)?;
 
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(join)?;
 
     b.set_region(join);
@@ -352,7 +316,6 @@ fn chained_phis_over_one_region_do_not_dangle() -> crate::Result<()> {
         ValueType::int(64),
     )?;
     b.build_return(Some(sum), &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     // Chain the phis: the builder cannot emit this shape, since a phi's inputs
@@ -392,22 +355,16 @@ fn phi_collapse_without_a_control_rewire_reports_changed() -> crate::Result<()> 
     let join = b.create_region_all()?;
     b.set_entry_region_all(entry)?;
     b.set_region(entry);
-    b.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     b.build_branch(join)?;
     b.set_region(join);
     let read = b.read_variable(&var)?;
     b.build_return(Some(read), &[])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
 
     let phi = fg.producer(read);
     let join_node = fg.producer(fg.node_inputs(phi)[0]);
     assert!(matches!(fg.node_kind(join_node), NodeKind::Region));
-    let ret = fg
-        .graph()
-        .all_node_ids()
-        .find(|&n| matches!(fg.node_kind(n), NodeKind::Return))
-        .expect("Return");
+    let ret = fg.first_kind(|k| matches!(k, NodeKind::Return));
     // Hang the Return off the join's own predecessor control, leaving the
     // join's control output unconsumed while its phi stays live.
     let pred_ctrl = fg.node_inputs(join_node)[0];
@@ -415,10 +372,12 @@ fn phi_collapse_without_a_control_rewire_reports_changed() -> crate::Result<()> 
     fg.graph_mut().update_input(ret_ctrl_slot, pred_ctrl);
 
     let mut edit = crate::EditFunction::new(&mut fg);
-    let result = RegionCollapse.try_collapse(&mut edit, join_node)?;
+    let generation = edit.generation();
+    super::try_collapse(&mut edit, join_node);
     assert!(!edit.is_live(phi), "the phi was collapsed and killed");
-    assert!(
-        result.changed(),
+    assert_ne!(
+        edit.generation(),
+        generation,
         "the phi collapse and the kill are mutations"
     );
     Ok(())
@@ -443,13 +402,13 @@ fn an_unreachable_self_loop_region_is_left_alone() -> crate::Result<()> {
 
     b.set_region(detached);
     let p = b.read_variable(&var)?;
-    let two = b.build_int_const(2u64, ValueType::int(32)).unwrap();
+    let two = b.build_int_const(2u64, ValueType::int(32))?;
     let next =
         b.build_int_binary_operation(p, two, strider_ir::IntBinaryOp::Add, ValueType::int(32))?;
     b.write_variable(&var, next)?;
     // Without a store the region's MemPhi is its own sole input, which the
     // pass already refuses to collapse.
-    let addr = b.build_int_const(0x4000u64, ValueType::int(64)).unwrap();
+    let addr = b.build_int_const(0x4000u64, ValueType::int(64))?;
     b.build_store(addr, next, rsleigh::VnSpace::RAM)?;
     let cond = b.build_boolean_const(true);
     b.build_if(cond, join, detached)?;
@@ -457,11 +416,9 @@ fn an_unreachable_self_loop_region_is_left_alone() -> crate::Result<()> {
     b.set_region(join);
     let read_back = b.read_variable(&var)?;
     b.build_return(None, &[read_back])?;
-    b.set_lift_addr(None);
     let mut fg = b.build()?;
-    strider_ir::validate::validate(&fg).expect("the input validates");
 
     // `run_one` panics on invalid output.
-    crate::pipeline::run_one(&RegionCollapse, &mut fg, &crate::OptCtx::new(None))?;
+    run_pass(&RegionCollapse, &mut fg)?;
     Ok(())
 }

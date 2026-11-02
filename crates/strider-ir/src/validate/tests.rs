@@ -2411,3 +2411,24 @@ fn a_hundred_thousand_add_chain_closes_one_reported_cycle() {
         .count();
     assert_eq!(cycles, 1);
 }
+
+/// A phi whose arms outnumber its region's inputs pairs nothing.
+#[test]
+#[should_panic(expected = "a phi takes one arm per input of its region")]
+fn phi_arms_refuses_an_arity_mismatch() {
+    let mut s = spine();
+    let cs = s.f.graph_mut().create_node(
+        NodeKind::Region,
+        [s.entry_ctrl],
+        [ValueKind::Control, ValueKind::PhiToken],
+    );
+    let token = s.f.node_outputs(cs)[1];
+    let (_, one) = int_const(&mut s.f, 1, ValueType::int(64));
+    let (_, two) = int_const(&mut s.f, 2, ValueType::int(64));
+    let phi = s.f.graph_mut().create_node(
+        NodeKind::Phi,
+        [token, one, two],
+        [ValueKind::Typed(ValueType::int(64))],
+    );
+    let _ = s.f.phi_arms(phi).count();
+}

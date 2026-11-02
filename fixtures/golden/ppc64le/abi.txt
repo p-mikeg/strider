@@ -227,22 +227,22 @@ cfg
   0x10010340 11 ops return -> []
 tracked [r1, r3, r4, r5, r6, r7, r8, r9, r10, LR, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13, vs34, vs35, vs36, vs37, vs38, vs39, vs40, vs41, vs42, vs43, vs44, vs45, u:0x31200:8, u:0x31a00:8, u:0x63900:4]
 arg 0 [%v5]
-float_arg 0 [%v16]
-float_arg 1 [%v17]
-float_arg 2 [%v18]
-float_arg 3 [%v19]
-float_arg 4 [%v20]
-float_arg 5 [%v21]
-float_arg 6 [%v22]
-float_arg 7 [%v23]
-float_arg 13 [%v24]
-float_arg 14 [%v25]
-float_arg 15 [%v26]
-float_arg 16 [%v27]
-float_arg 17 [%v28]
-float_arg 18 [%v29]
-float_arg 19 [%v30]
-float_arg 20 [%v31]
+float_arg 0 [%v14]
+float_arg 1 [%v15]
+float_arg 2 [%v16]
+float_arg 3 [%v17]
+float_arg 4 [%v18]
+float_arg 5 [%v19]
+float_arg 6 [%v20]
+float_arg 7 [%v21]
+float_arg 13 [%v22]
+float_arg 14 [%v23]
+float_arg 15 [%v24]
+float_arg 16 [%v25]
+float_arg 17 [%v26]
+float_arg 18 [%v27]
+float_arg 19 [%v28]
+float_arg 20 [%v29]
 %v0:ctrl = entry
 %v1:mem = initial_memory
 %v2:i64 = initial_var[r1]
@@ -251,31 +251,29 @@ float_arg 20 [%v31]
 %v5:i64 = initial_var[r3]
 %v6:mem = store[r] %v1, %v4, %v5
 %v7:i32 = truncate %v5
-%v8:i64 = extend.zero %v7
-%v9:i64 = iconst[0xfffffffffffffff4]
-%v10:i64 = int.add %v2, %v9
-%v11:i32 = load[r] %v6, %v10
-%v12:i64 = extend.zero %v11
-%v13:i64 = int.add %v8, %v12
-%v14:i32 = truncate %v13
-%v15:i64 = extend.sign %v14
-%v16:i64 = initial_var[f1]
-%v17:i64 = initial_var[f2]
-%v18:i64 = initial_var[f3]
-%v19:i64 = initial_var[f4]
-%v20:i64 = initial_var[f5]
-%v21:i64 = initial_var[f6]
-%v22:i64 = initial_var[f7]
-%v23:i64 = initial_var[f8]
-%v24:i128 = initial_var[vs34]
-%v25:i128 = initial_var[vs35]
-%v26:i128 = initial_var[vs36]
-%v27:i128 = initial_var[vs37]
-%v28:i128 = initial_var[vs38]
-%v29:i128 = initial_var[vs39]
-%v30:i128 = initial_var[vs40]
-%v31:i128 = initial_var[vs41]
-return %v0, %v6, %v15, %v12, %v16, %v17, %v18, %v19, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29, %v30, %v31
+%v8:i64 = iconst[0xfffffffffffffff4]
+%v9:i64 = int.add %v2, %v8
+%v10:i32 = load[r] %v6, %v9
+%v11:i32 = int.add %v7, %v10
+%v12:i64 = extend.sign %v11
+%v13:i64 = extend.zero %v10
+%v14:i64 = initial_var[f1]
+%v15:i64 = initial_var[f2]
+%v16:i64 = initial_var[f3]
+%v17:i64 = initial_var[f4]
+%v18:i64 = initial_var[f5]
+%v19:i64 = initial_var[f6]
+%v20:i64 = initial_var[f7]
+%v21:i64 = initial_var[f8]
+%v22:i128 = initial_var[vs34]
+%v23:i128 = initial_var[vs35]
+%v24:i128 = initial_var[vs36]
+%v25:i128 = initial_var[vs37]
+%v26:i128 = initial_var[vs38]
+%v27:i128 = initial_var[vs39]
+%v28:i128 = initial_var[vs40]
+%v29:i128 = initial_var[vs41]
+return %v0, %v6, %v12, %v13, %v14, %v15, %v16, %v17, %v18, %v19, %v20, %v21, %v22, %v23, %v24, %v25, %v26, %v27, %v28, %v29
 
 == make_pair @0x10010370
 cfg

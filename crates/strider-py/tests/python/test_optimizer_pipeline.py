@@ -15,7 +15,7 @@ def test_default_pipeline_pass_names():
     p = strider.opt.OptimizerPipeline.default()
     names = p.passes
     assert isinstance(names, list) and all(isinstance(n, str) for n in names)
-    assert len(names) == 10
+    assert len(names) == 9
     assert "ConstantFold" in names
     assert p.post_passes == ["CallStackArgCollect", "FunctionArgDetect"]
 

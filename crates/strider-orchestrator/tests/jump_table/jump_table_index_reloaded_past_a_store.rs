@@ -122,7 +122,7 @@ fn a_reload_past_a_global_store_is_the_bounded_index() {
 /// `escape_analysis` lets forwarding step through the call, but the narrowing
 /// honours no call relaxation, so it stops there.
 ///
-/// Mutation: narrow under `MemPurpose::Forward`.
+/// Mutation: narrow under `Policy::forward`.
 #[test]
 fn a_reload_past_a_call_stays_unbounded() {
     const ARMS: [u64; 4] = [0x40_101d, 0x40_1024, 0x40_102b, 0x40_1032];
@@ -143,21 +143,20 @@ fn a_reload_past_a_call_stays_unbounded() {
 fn default_less(load_forward: bool, arg_detection: bool) -> OptimizerPipeline {
     use strider_orchestrator::opt::*;
     let mut p = OptimizerPipeline::new();
-    p.add(ConstantFold::new());
-    p.add(LoadReadOnly);
-    p.add(KnownBits);
-    p.add(FlagCmpCanonicalize::new());
-    p.add(IfCondInversion::new());
-    p.add(PhiCollapse);
-    p.add(RegionCollapse);
-    p.add(DeadBranchElimination);
-    p.add(CfgDetach);
+    p.add(&ConstantFold);
+    p.add(&LoadReadOnly);
+    p.add(&KnownBits);
+    p.add(&FlagCmpCanonicalize);
+    p.add(&IfCondInversion);
+    p.add(&PhiCollapse);
+    p.add(&RegionCollapse);
+    p.add(&DeadBranchElimination);
     if load_forward {
-        p.add(LoadForward);
+        p.add(&LoadForward);
     }
-    p.add_post_pass(CallStackArgCollect);
+    p.add_post_pass(&CallStackArgCollect);
     if arg_detection {
-        p.add_post_pass(FunctionArgDetect);
+        p.add_post_pass(&FunctionArgDetect);
     }
     p
 }
@@ -185,7 +184,8 @@ fn arg_detection_narrows_a_reload_past_a_global_store() {
 }
 
 /// At the floor the write may be the slot, so neither the detection nor the
-/// narrowing steps past it.
+/// narrowing steps past it: the first read is the argument's one carrier,
+/// the reload none.
 ///
 /// Mutation: honour `stack_global_disjoint` in every purpose whatever the
 /// function claims.
@@ -199,7 +199,7 @@ fn arg_detection_at_the_floor_keeps_the_reload_unbounded() {
     );
     assert_eq!(unresolved, [0x40_1018]);
     assert!(switches.is_empty(), "{switches:#x?}");
-    assert_eq!(carriers, 0);
+    assert_eq!(carriers, 1);
 }
 
 /// The bytes of [`a_reload_past_a_call_stays_unbounded`], reading the first
@@ -207,7 +207,7 @@ fn arg_detection_at_the_floor_keeps_the_reload_unbounded() {
 /// call under `assume_incoming_args_survive_calls`, so both reads are the
 /// argument, but the narrowing stops at the call.
 ///
-/// Mutation: narrow `FunctionArgDetect` under `MemPurpose::IncomingArgs`.
+/// Mutation: narrow `FunctionArgDetect` under `Policy::incoming_args`.
 #[test]
 fn arg_detection_does_not_narrow_a_reload_past_a_call() {
     const ARMS: [u64; 4] = [0x40_101d, 0x40_1024, 0x40_102b, 0x40_1032];

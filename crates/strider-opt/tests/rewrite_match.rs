@@ -159,7 +159,6 @@ fn sub_x_x_to_zero_rule() {
 /// rewire the wrong slot.
 #[test]
 fn rewrite_rule_on_call_root_returns_err() {
-    use strider_ir_test_utils::SENTINEL_LIFT_ADDR;
     // `build_call` reads the stack pointer through the variable table and
     // errors if it is absent, so track one.
     let sp = strider_ir_test_utils::reg_vn(0x7000, 8);
@@ -168,11 +167,9 @@ fn rewrite_rule_on_call_root_returns_err() {
         .stack_vn(sp)
         .build_fn_single_region()
         .unwrap();
-    fb.set_lift_addr(Some(SENTINEL_LIFT_ADDR));
     let tgt = fb.build_int_const(0x1234u64, ValueType::int(64)).unwrap();
     fb.build_call_cc(tgt, None).unwrap();
     fb.build_return(None, &[]).unwrap();
-    fb.set_lift_addr(None);
     let mut function = fb.build().unwrap();
 
     let rule = rewrite_rule_runtime(call().build(), int_const(0u128).into_template()).unwrap();

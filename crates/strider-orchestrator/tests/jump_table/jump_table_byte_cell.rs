@@ -74,7 +74,7 @@ fn classify(rom: &dyn ReadOnlyMemory) -> Option<ResolvedTargets> {
         .walk()
         .find(|&n| matches!(function.node_kind(n), NodeKind::IndirectBranch))
         .expect("the dispatch");
-    classify_target(&function, branch, Some(rom)).expect("classify")
+    classify_target(&function, branch, Some(rom))
 }
 
 /// The arms of `targets`, sorted.
