@@ -174,6 +174,22 @@ impl FlowVars {
     }
 }
 
+/// Writes `want` to the context var `name` at `addr` unless it already reads
+/// so, returning whether it wrote: a `set_context_at` flushes Sleigh's whole
+/// parse cache.
+pub(crate) fn hold_var<R: rsleigh::MemReader>(
+    sleigh: &mut rsleigh::Sleigh<R>,
+    addr: u64,
+    name: &str,
+    want: u32,
+) -> crate::Result<bool> {
+    if sleigh.get_context_at(addr, name)? == want {
+        return Ok(false);
+    }
+    sleigh.set_context_at(addr, name, want)?;
+    Ok(true)
+}
+
 /// The value of each flow var at a program point, positionally aligned with the
 /// [`FlowVars`] that produced it.
 #[derive(Clone, Default, PartialEq, Eq, Debug)]
