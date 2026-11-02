@@ -80,8 +80,7 @@ impl GraphDotDumper for CfgDotDumper<'_> {
         // edge.  In the degenerate `if (c) goto L else goto L` case a source
         // has two parallel edges here and `region_if` names the same region
         // for both arms; without the guard both would render "if-true".
-        let mut cond_true_labelled: std::collections::HashSet<NodeIndex> =
-            std::collections::HashSet::new();
+        let mut cond_true_labelled = rustc_hash::FxHashSet::default();
         for edge in self
             .cfg
             .region_graph
