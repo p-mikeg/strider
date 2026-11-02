@@ -1,4 +1,4 @@
-pub(crate) mod kind;
+mod kind;
 mod ops;
 pub(crate) mod signature;
 mod value_kind;
@@ -8,6 +8,7 @@ mod width_relation;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use kind::KindFlags;
 pub use kind::{CcId, FunctionArgSource, InitialVnId, IntConstId, NodeKind, SwitchTableId};
 pub use ops::{
     ExtendOp, FloatBinaryOp, FloatCmpOp, FloatUnaryOp, IntBinaryOp, IntCmpOp, IntUnaryOp,
