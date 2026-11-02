@@ -926,7 +926,7 @@ impl<'a, R: rsleigh::MemReader> Builder<'a, R> {
             link_register_seated: self.link_register_seated,
             tail_call_seated: self.tail_call_seated,
             flowing_isa_bits: self.flowing_isa_bits,
-            space_ids: self.engine.sleigh.space_ids(),
+            space_ids: self.engine.space_ids().clone(),
         })
     }
 }

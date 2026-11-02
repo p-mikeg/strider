@@ -1494,3 +1494,15 @@ fn re_deriving_committed_context_bars_the_reentry_probe() {
          reentry falls back to being reported as interior",
     );
 }
+
+/// The engine reads its space table once: a build adds no address space, so
+/// the table it hands every `Cfg` is the Sleigh's own.
+#[test]
+fn the_engine_space_table_is_the_sleighs_after_a_build() {
+    let mut engine = crate::test_support::make_engine_over(vec![0x8b, 0x07, 0xc3], 0x1000);
+    let cfg = engine
+        .build_cfg(0x1000u64.into(), &crate::CfgOptions::default())
+        .expect("build");
+    assert_eq!(engine.space_ids(), &engine.sleigh().space_ids());
+    assert_eq!(cfg.space_ids(), engine.space_ids());
+}
