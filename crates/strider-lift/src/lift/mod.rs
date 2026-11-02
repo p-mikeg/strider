@@ -93,22 +93,13 @@ impl<R: rsleigh::MemReader> Lifter<R> {
     /// [`strider_target::BuiltCallingConvention::check_addr_size`] against
     /// this engine's `ram`: the intra-convention half of what every
     /// convention reaching the lift is checked by, default
-    /// ([`Self::check_default_cc`]) or per-address override
+    /// ([`Self::build_ir_with`]) or per-address override
     /// ([`Self::check_override_cc`]). A preset or Python `custom` is
     /// validated already; a Rust struct literal is not.
     pub(crate) fn check_cc(&self, cc: &strider_target::BuiltCallingConvention) -> Result<()> {
         cc.validate()
             .and_then(|()| cc.check_addr_size(self.arch().names().ram_addr_size()))
             .map_err(|e| anyhow!("{:?}: {e}", self.arch().preset()))
-    }
-
-    /// [`Self::check_cc`], naming the function's own convention in the error.
-    pub(crate) fn check_default_cc(
-        &self,
-        cc: &strider_target::BuiltCallingConvention,
-    ) -> Result<()> {
-        self.check_cc(cc)
-            .map_err(|e| anyhow!("default convention: {e}"))
     }
 
     /// [`Self::check_cc`] plus the one CROSS-convention rule: a per-address
@@ -381,7 +372,8 @@ impl<R: rsleigh::MemReader> Lifter<R> {
         claims: &strider_ir::AssumptionOptions,
     ) -> Result<LiftOutcome> {
         self.check_cfg_space_ids(cfg)?;
-        self.check_default_cc(&cc)?;
+        self.check_cc(&cc)
+            .map_err(|e| anyhow!("default convention: {e}"))?;
         // The CFG is rebuilt from scratch each lift, so the tracked set is
         // always scanned fresh.  `FunctionLifter::new` adds the stack vn; the
         // lifter is the SSoT for that.
