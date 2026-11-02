@@ -228,7 +228,8 @@ classifying `match`; a single-variant test (let-else, `==`, a one-variant
 not see a tuple scrutinee, a guarded `_ if` arm or `matches!`; the remaining
 multi-variant `matches!` sites (the phi family, `graph_invariants.rs`'s
 phi-or-call producer test, `walk/mod.rs`'s memory-chain kinds, `render.rs`'s
-`Return` guard, `viewer.rs`'s `Load | Store`) are accepted as they are.
+`Region | Phi | MemPhi` label guard, `viewer.rs`'s `Load | Store`) are
+accepted as they are.
 
 Op sub-enums (`node/ops.rs`): `IntUnaryOp{Neg}`;
 `IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,ShiftRight,
