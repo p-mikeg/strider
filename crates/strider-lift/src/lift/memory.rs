@@ -12,9 +12,9 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
         let space = self.lifter.decode_space_id(insn)?;
         if space == rsleigh::VnSpace::REGISTER {
             if let Some(source) = self.lifter.register_slot_of(insn, &self.pcode_consts) {
-                let out_vn = *require_output_vn(insn)?;
+                let out_vn = require_output_vn(insn)?;
                 let value = self.read_vn(&source)?;
-                return self.write_vn(&out_vn, value);
+                return self.write_vn(out_vn, value);
             }
             return self.opaque_register_load(insn);
         }
