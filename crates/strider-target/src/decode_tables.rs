@@ -19,7 +19,7 @@ pub enum FlowCommit {
 }
 
 /// One arch's decode and lift tables, read off a fresh Sleigh.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 #[non_exhaustive]
 pub struct DecodeTables {
     /// Indexed by `user_op_id`.
