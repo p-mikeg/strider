@@ -10,7 +10,7 @@ use crate::IRViewer;
 use crate::function::Function;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
-use crate::walk::{NodeIdSet, PostOrder};
+use crate::walk::{FnSuccs, NodeIdSet, PostOrder};
 
 /// A control node or a phi: its position is fixed by the control flow rather
 /// than chosen from its inputs.
@@ -104,20 +104,6 @@ pub(crate) fn live_arms<'a>(
         .map(|(_, arm)| arm)
 }
 
-/// The live floating data producers of a node.
-#[derive(Clone, Copy)]
-struct UnpinnedDataPreds<'a> {
-    graph: &'a Graph,
-    live: &'a NodeIdSet,
-}
-
-impl UnpinnedDataPreds<'_> {
-    fn of(self, node: NodeId) -> impl Iterator<Item = NodeId> {
-        data_producers(self.graph, node)
-            .filter(move |&n| self.live.contains(n) && !is_pinned(self.graph, n))
-    }
-}
-
 /// The producer of each non-`Control` input, in slot order.
 pub(crate) fn data_producers(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
     graph
@@ -127,24 +113,15 @@ pub(crate) fn data_producers(graph: &Graph, node: NodeId) -> impl Iterator<Item 
         .map(move |v| graph.producer(v))
 }
 
-impl graph_algorithms::walk::GraphRef for UnpinnedDataPreds<'_> {
-    type NodeId = NodeId;
-
-    fn successors(&self, node: NodeId, mut f: impl FnMut(NodeId)) {
-        for succ in self.of(node) {
-            f(succ);
-        }
-    }
-}
-
 /// Calls `schedule` once for every floating node that feeds a pinned node,
 /// after every floating producer of it that is not on a data cycle with it.
 pub(crate) fn schedule_early(ctx: &ScheduleContext<'_>, mut schedule: impl FnMut(NodeId)) {
-    let preds = UnpinnedDataPreds {
-        graph: ctx.function.graph(),
-        live: &ctx.live,
+    let (graph, live) = (ctx.function.graph(), &ctx.live);
+    // The live floating data producers of a node.
+    let preds = move |node| {
+        data_producers(graph, node).filter(move |&n| live.contains(n) && !is_pinned(graph, n))
     };
-    for node in PostOrder::new(preds, ctx.pinned_nodes().flat_map(|p| preds.of(p))) {
+    for node in PostOrder::new(FnSuccs::new(preds), ctx.pinned_nodes().flat_map(preds)) {
         schedule(node);
     }
 }

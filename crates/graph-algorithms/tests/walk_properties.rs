@@ -12,7 +12,9 @@ mod common;
 use common::cases::{self, Case};
 use common::{Graph, NodeId};
 use graph_algorithms::oracle;
-use graph_algorithms::walk::{PostOrder, PreOrder, WalkPhase, acyclic_postorder};
+use graph_algorithms::walk::{
+    FnSuccs, GraphRef, PostOrder, PreOrder, WalkPhase, acyclic_postorder,
+};
 use proptest::prelude::*;
 
 const CASES: u32 = if cfg!(debug_assertions) { 256 } else { 8192 };
@@ -302,6 +304,30 @@ fn deep_case(n: u32, seed: u64, back: bool) -> Case {
     }
 }
 
+/// A closure over the successor lists walks exactly as the hand-written
+/// `GraphRef` does: the same Pre / Post events and the same pre-order.
+fn check_fn_succs(c: &Case) {
+    let g = Graph::from_edges(c.n, &c.edges);
+    let succs = c.succs();
+    let f = FnSuccs::new(|n: NodeId| {
+        succs[n.as_u32() as usize]
+            .iter()
+            .map(|&s| NodeId::from_u32(s))
+    });
+    fn events(mut walk: PostOrder<impl GraphRef<NodeId = NodeId>>) -> Vec<(WalkPhase, NodeId)> {
+        std::iter::from_fn(|| walk.next_event()).collect()
+    }
+    assert_eq!(
+        events(PostOrder::new(&f, ids(&c.roots))),
+        events(PostOrder::new(&g, ids(&c.roots))),
+        "post-order events, {c:?}"
+    );
+    assert!(
+        PreOrder::new(&f, ids(&c.roots)).eq(PreOrder::new(&g, ids(&c.roots))),
+        "pre-order, {c:?}"
+    );
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(CASES))]
 
@@ -310,6 +336,7 @@ proptest! {
         check_postorder(&c);
         check_preorder(&c);
         check_acyclic_postorder(&c);
+        check_fn_succs(&c);
     }
 }
 
@@ -320,6 +347,7 @@ fn walks_match_their_definitions_on_every_named_shape() {
         check_postorder(&c);
         check_preorder(&c);
         check_acyclic_postorder(&c);
+        check_fn_succs(&c);
     }
 }
 
