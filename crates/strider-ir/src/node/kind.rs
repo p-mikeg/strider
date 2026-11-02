@@ -1,7 +1,8 @@
 use std::ops::RangeInclusive;
 
 use crate::node::signature::{Conversion, ExpectedValueKind, OperandWidth};
-use crate::node::{FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+use crate::node::{ExtendOp, FloatBinaryOp, FloatCmpOp, IntBinaryOp, IntCmpOp};
+use crate::walk::CastMask;
 use cranelift_entity::entity_impl;
 
 /// Where a function argument is passed.
@@ -167,7 +168,7 @@ pub enum NodeKind {
 bitflags::bitflags! {
     /// What a [`NodeKind`] is, as one row per variant in `NodeKind::flags`.
     #[derive(Clone, Copy, PartialEq, Eq)]
-    struct KindFlags: u8 {
+    pub(crate) struct KindFlags: u64 {
         /// The graph may dedup nodes of this kind.
         const CACHEABLE = 1 << 0;
         /// Synthesised without a contributing machine instruction.
@@ -180,7 +181,18 @@ bitflags::bitflags! {
         const COMMUTATIVE = 1 << 4;
         /// Consumes control and produces none.
         const TERMINATOR = 1 << 5;
+        // A cast kind's `CastMask`, shifted up by `CAST_SHIFT`.
+        const ZERO_EXTEND = (CastMask::ZERO_EXTEND.bits() as u64) << Self::CAST_SHIFT;
+        const SIGN_EXTEND = (CastMask::SIGN_EXTEND.bits() as u64) << Self::CAST_SHIFT;
+        const TRUNCATE = (CastMask::TRUNCATE.bits() as u64) << Self::CAST_SHIFT;
+        const INT_BITS_TO_FLOAT = (CastMask::INT_BITS_TO_FLOAT.bits() as u64) << Self::CAST_SHIFT;
+        const FLOAT_BITS_TO_INT = (CastMask::FLOAT_BITS_TO_INT.bits() as u64) << Self::CAST_SHIFT;
     }
+}
+
+impl KindFlags {
+    /// Where the cast bits start.
+    pub(crate) const CAST_SHIFT: u32 = 32;
 }
 
 impl NodeKind {
@@ -364,7 +376,7 @@ impl NodeKind {
 
     /// The one row per variant the flag predicates on `NodeKind` read.
     #[inline]
-    const fn flags(&self) -> KindFlags {
+    pub(crate) const fn flags(&self) -> KindFlags {
         use KindFlags as F;
         match self {
             Self::Entry => F::CACHEABLE.union(F::FINGERPRINT_EXEMPT).union(F::CONTROL),
@@ -396,19 +408,20 @@ impl NodeKind {
             | Self::IntUnaryOp(..)
             | Self::IntBinaryOp(..)
             | Self::IntCmpOp(..)
-            | Self::Truncate
             | Self::Popcount
             | Self::Lzcount
-            | Self::Extend(..)
             | Self::FloatConst(..)
             | Self::FloatBinaryOp(..)
             | Self::FloatUnaryOp(..)
             | Self::FloatCmpOp(..)
             | Self::IntToFloat
             | Self::FloatToInt
-            | Self::FloatToFloat
-            | Self::IntBitsToFloat
-            | Self::FloatBitsToInt => F::CACHEABLE,
+            | Self::FloatToFloat => F::CACHEABLE,
+            Self::Extend(ExtendOp::ZeroExtend) => F::CACHEABLE.union(F::ZERO_EXTEND),
+            Self::Extend(ExtendOp::SignExtend) => F::CACHEABLE.union(F::SIGN_EXTEND),
+            Self::Truncate => F::CACHEABLE.union(F::TRUNCATE),
+            Self::IntBitsToFloat => F::CACHEABLE.union(F::INT_BITS_TO_FLOAT),
+            Self::FloatBitsToInt => F::CACHEABLE.union(F::FLOAT_BITS_TO_INT),
         }
     }
 
