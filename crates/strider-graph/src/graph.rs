@@ -109,14 +109,11 @@ impl<N, V, C: NodeCacheable<N, V>> Graph<N, V, C> {
     ///
     /// If `idx` is past the node's current input count.
     pub fn node_input_id_at(&self, node: NodeId, idx: usize) -> crate::Result<UseId> {
-        self.store
-            .node_input_uses(node)
-            .get(idx)
-            .copied()
-            .ok_or_else(|| {
-                let len = self.node_inputs(node).len();
-                anyhow!("input index {idx} out of bounds for node {node:?} (len={len})")
-            })
+        let uses = self.store.node_input_uses(node);
+        uses.get(idx).copied().ok_or_else(|| {
+            let len = uses.len();
+            anyhow!("input index {idx} out of bounds for node {node:?} (len={len})")
+        })
     }
 
     /// # Errors
