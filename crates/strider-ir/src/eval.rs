@@ -112,13 +112,18 @@ pub const fn sign_bit(bits: u32) -> u128 {
     bit(bits.wrapping_sub(1))
 }
 
+/// `ty`'s width; `None` for a float, which has no integer bits.
+fn int_bits(ty: ValueType) -> Option<usize> {
+    match ty {
+        ValueType::Int(w) => Some(w.into()),
+        ValueType::Float(_) => None,
+    }
+}
+
 /// `v` read as two's complement at `ty`'s width; `None` for a float.
 #[must_use]
 pub fn signed(v: &UBig, ty: ValueType) -> Option<IBig> {
-    if !ty.is_integer() {
-        return None;
-    }
-    let bits = ty.bit_width();
+    let bits = int_bits(ty)?;
     debug_assert!(bits > 0, "a supported integer width is at least 1");
     let m = mask(v, ty);
     // `m` is below `2^bits`, so the sign bit is set exactly when `m` reaches
@@ -176,9 +181,7 @@ pub fn shift_out_of_range(amount: u128, ty: ValueType) -> bool {
 /// right answer on a caller that passed raw bits.
 #[inline]
 pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<UBig> {
-    if !ty.is_integer() {
-        return None;
-    }
+    int_bits(ty)?;
     // The shift count, `None` once at or past the width: a count no `usize`
     // holds is past every supported width.
     let shift = u128::try_from(r)
@@ -254,9 +257,7 @@ pub fn int_binary(op: IntBinaryOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<
 /// `None` for a float.
 #[inline]
 pub fn int_cmp(op: IntCmpOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<bool> {
-    if !ty.is_integer() {
-        return None;
-    }
+    int_bits(ty)?;
     // A narrow IntConst carrying high bits beyond the type width would compare
     // wrong unmasked. The signed arms re-mask via `signed`, so the double-mask
     // is idempotent there.
@@ -284,9 +285,7 @@ pub fn int_cmp(op: IntCmpOp, l: &UBig, r: &UBig, ty: ValueType) -> Option<bool> 
 /// `op` applied to `v` at `ty`'s width; `None` for a float.
 #[inline]
 pub fn int_unary(op: IntUnaryOp, v: &UBig, ty: ValueType) -> Option<UBig> {
-    if !ty.is_integer() {
-        return None;
-    }
+    int_bits(ty)?;
     Some(match op {
         IntUnaryOp::Neg => unsigned(-IBig::from(mask(v, ty)), ty),
     })
@@ -296,18 +295,14 @@ pub fn int_unary(op: IntUnaryOp, v: &UBig, ty: ValueType) -> Option<UBig> {
 #[inline]
 pub fn sign_extend(v: &UBig, in_ty: ValueType, out_ty: ValueType) -> Option<UBig> {
     let s = signed(v, in_ty)?;
-    if !out_ty.is_integer() {
-        return None;
-    }
+    int_bits(out_ty)?;
     Some(unsigned(s, out_ty))
 }
 
 /// The set bits of `v` within `in_ty`'s width; `None` for a float.
 #[inline]
 pub fn popcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
-    if !in_ty.is_integer() {
-        return None;
-    }
+    int_bits(in_ty)?;
     Some(UBig::from(mask(v, in_ty).count_ones()))
 }
 
@@ -319,9 +314,7 @@ pub fn popcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
 /// separates that from `bit_width`.
 #[inline]
 pub fn lzcount(v: &UBig, in_ty: ValueType) -> Option<UBig> {
-    if !in_ty.is_integer() {
-        return None;
-    }
+    int_bits(in_ty)?;
     let masked = mask(v, in_ty);
     // `as_words` trims the high zero limbs, so the top live limb carries the
     // significant-bit count.
