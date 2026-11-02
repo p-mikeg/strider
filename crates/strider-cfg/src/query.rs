@@ -99,9 +99,7 @@ impl Cfg {
             .edges_directed(region_id, petgraph::Outgoing)
         {
             let target = edge.target();
-            let successor = self.region_graph.node_weight(target).ok_or_else(|| {
-                anyhow!("dangling edge target {target:?} from region {region_id:?}")
-            })?;
+            let successor = &self.region_graph[target];
             // Each bucket takes at most one edge, so the degenerate
             // both-arms-same-region case stays sane: the second edge falls
             // through to a later bucket instead of overwriting the taken side.
@@ -158,11 +156,7 @@ impl Cfg {
     ) -> rustc_hash::FxHashMap<super::types::PcodeInsnAddr, RegionId> {
         self.region_graph
             .neighbors(switch_region)
-            .filter_map(|s| {
-                self.region_graph
-                    .node_weight(s)
-                    .map(|region| (region.start_addr, s))
-            })
+            .map(|s| (self.region_graph[s].start_addr, s))
             .collect()
     }
 }
