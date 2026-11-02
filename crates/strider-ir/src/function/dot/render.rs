@@ -57,22 +57,16 @@ impl FunctionDotDumper<'_> {
 
         // Arg carrier nodes get an "[arg N]" prefix and a double border.
         let base_label = self.pretty_label(node);
-        let label = if let Some(tags) = self.node_to_arg_indices.get(&node) {
-            let tag: String = tags
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{tag}\n{base_label}")
-        } else {
-            base_label
+        let tags = self.arg_labels.get(&node);
+        let label = match tags {
+            Some(tags) => format!("{tags}\n{base_label}"),
+            None => base_label,
         };
 
         let (shape, fillcolor) = node_style(&kind);
 
-        let is_arg_node = self.node_to_arg_indices.contains_key(&node);
         let mut extra: Vec<(&str, &str)> = vec![("fillcolor", fillcolor)];
-        if is_arg_node {
+        if tags.is_some() {
             extra.push(("peripheries", "2"));
         }
         extra.extend_from_slice(self.center_attrs(node));
