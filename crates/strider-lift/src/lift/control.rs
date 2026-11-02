@@ -45,8 +45,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                 .ok_or_else(|| {
                     anyhow!("switch target machine address {target:#x} has no successor region")
                 })?;
-            let ir_region = super::ir_region_of(region_map, cfg_region)?;
-            arms.push((ir_region, target));
+            arms.push((region_map[&cfg_region], target));
         }
         let idx = self.read_vn(target_vn)?;
         // The same mode `handle_unresolved_indirect_branch` carries: a table
@@ -114,9 +113,11 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
                  taken target of {terminator:?}"
             )
         })?;
-        let true_block = super::ir_region_of(region_map, if_true_region)?;
-        let false_block = super::ir_region_of(region_map, if_false_region)?;
-        self.builder.build_if(cond, true_block, false_block)?;
+        self.builder.build_if(
+            cond,
+            region_map[&if_true_region],
+            region_map[&if_false_region],
+        )?;
         Ok(())
     }
 
@@ -135,7 +136,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
         region_map: &super::RegionMap,
     ) -> Result<()> {
         let target = self.read_vn(nth_input_or_err(insn, 0)?)?;
-        let ir_region = super::ir_region_of(region_map, region_id)?;
+        let ir_region = region_map[&region_id];
         self.build_cc_return()?;
         let control = self.builder.region_cur_ctrl(ir_region);
         let function = self.builder.function();
