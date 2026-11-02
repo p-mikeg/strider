@@ -430,17 +430,9 @@ fn render_payload(
             let _ = write!(out, "[{}]", space_str(space));
         }
         NodeKind::IntConst(id) => {
-            // The interner probe first: `int_const_u128` panics on a dangling id.
             let _ = match f.side_tables().const_interner.get(id) {
                 None => write!(out, "[?]"),
-                Some(stored) => match f
-                    .node_outputs(node)
-                    .first()
-                    .and_then(|&value| f.int_const_u128(value))
-                {
-                    Some(bits) => write!(out, "[{bits:#x}]"),
-                    None => write!(out, "[{}]", const_str(stored)),
-                },
+                Some(stored) => write!(out, "[{}]", const_str(stored)),
             };
         }
         NodeKind::FloatConst(bits) => {
