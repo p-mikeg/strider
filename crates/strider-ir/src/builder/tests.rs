@@ -3121,6 +3121,30 @@ fn a_held_stack_address_with_a_scaled_index_is_unplaced() -> Result<()> {
     Ok(())
 }
 
+/// `sp ^ 0xf`: followed, but with no constant offset.
+#[test]
+fn a_held_stack_address_through_xor_is_unplaced() -> Result<()> {
+    let f = call_with_register_holding(true, false, |b, sp| {
+        let ty = ValueType::int(64);
+        let k = b.build_int_const(0xfu64, ty)?;
+        b.build_int_binary_operation(sp, k, IntBinaryOp::Xor, ty)
+    })?;
+    assert_eq!(f.call_register_frame_reach(), Some(i128::MAX));
+    Ok(())
+}
+
+/// `sp * 2`: a product is not address arithmetic, so it is not followed.
+#[test]
+fn a_held_product_of_the_stack_pointer_is_not_recorded() -> Result<()> {
+    let f = call_with_register_holding(true, false, |b, sp| {
+        let ty = ValueType::int(64);
+        let two = b.build_int_const(2u64, ty)?;
+        b.build_int_binary_operation(sp, two, IntBinaryOp::Mul, ty)
+    })?;
+    assert_eq!(f.call_register_frame_reach(), None);
+    Ok(())
+}
+
 /// `sp - 24 + 8`, the way the lifter spells `sub rsp, 24; lea rax, [rsp+8]`.
 #[test]
 fn a_held_stack_address_records_its_offset_from_the_entry_sp() -> Result<()> {
