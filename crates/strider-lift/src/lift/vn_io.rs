@@ -73,14 +73,13 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
     /// `read_volatile` user-op. A write stays a plain register write: no read
     /// observes it.
     fn read_volatile(&mut self, vn: &rsleigh::Vn) -> Result<ValueId> {
-        let (_, outputs) =
+        let (node, outputs) =
             self.builder
                 .build_call_other(READ_VOLATILE_USER_OP_ID, &[], &[*vn], false, false)?;
-        if !self.read_volatile_named {
+        if self.builder.function().call_other_name(node).is_none() {
             self.builder
                 .function_mut()
                 .set_call_other_name(READ_VOLATILE_USER_OP_ID, "read_volatile");
-            self.read_volatile_named = true;
         }
         Ok(outputs[0])
     }
