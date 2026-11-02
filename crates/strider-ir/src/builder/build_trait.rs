@@ -56,12 +56,15 @@ impl IRBuilder for FunctionBuilder {
         I: IntoIterator<Item = ValueId>,
         O: IntoIterator<Item = ValueKind>,
     {
-        // Go through the inherent path so the `lift_addr` stamp is applied.
-        let node = FunctionBuilder::create_node(self, kind, inputs, outputs);
-        for &c in contributors {
-            self.function_mut()
+        // Also stamps the current lift address; on a dedup-cache hit it is
+        // unioned into the existing entry.
+        let node = self
+            .function
+            .create_node_attributed(kind, inputs, outputs, contributors);
+        if let Some(addr) = self.lift_addr {
+            self.function
                 .side_tables_mut()
-                .extend_asm_fingerprint_from(node, c);
+                .extend_asm_fingerprint(node, &[addr]);
         }
         node
     }
