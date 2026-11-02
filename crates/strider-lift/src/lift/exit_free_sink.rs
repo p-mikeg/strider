@@ -28,7 +28,7 @@ struct BackEdge {
     /// Memory live on this edge, which the sink anchors.
     memory: ValueId,
     /// The branch closing the cycle, which the sink is fingerprinted to.
-    addr: Option<u64>,
+    addr: u64,
 }
 
 impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
@@ -52,7 +52,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
             }
             let cycle = walk_to_cycle(self.builder.function().graph(), &stranded, seed);
             let edge = self.exit_free_back_edge(&cycle)?;
-            self.with_lift_addr(edge.addr, |s| s.seat_sink(&edge))?;
+            self.with_lift_addr(Some(edge.addr), |s| s.seat_sink(&edge))?;
             drop_escaped(self.builder.function().graph(), &mut stranded, &cycle);
         }
         Ok(())
@@ -102,8 +102,8 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
 
     /// The machine address of the branch producing `control`: the region it
     /// leaves when that producer is a `Region`, otherwise the producer's own
-    /// asm fingerprint.
-    fn back_branch_addr(&self, producer: NodeId, seat: NodeId) -> Option<u64> {
+    /// asm fingerprint, else the region `seat`, a `Region`, leaves.
+    fn back_branch_addr(&self, producer: NodeId, seat: NodeId) -> u64 {
         self.region_last_addrs
             .get(&producer)
             .copied()
@@ -115,8 +115,7 @@ impl<R: rsleigh::MemReader> FunctionLifter<'_, R> {
                     .into_iter()
                     .max()
             })
-            .or_else(|| self.region_last_addrs.get(&seat).copied())
-            .or_else(|| self.entry_machine_addr())
+            .unwrap_or_else(|| self.region_last_addrs[&seat])
     }
 }
 
