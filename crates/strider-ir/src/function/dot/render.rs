@@ -1,6 +1,6 @@
 use rustc_hash::FxHashMap;
 
-use super::{FunctionDotDumper, FunctionDotDumperState, edge_style, node_fillcolor, node_shape};
+use super::{FunctionDotDumper, FunctionDotDumperState, edge_style, node_style};
 use crate::IRViewer;
 use crate::graph::Graph;
 use crate::node::{NodeId, NodeKind};
@@ -100,7 +100,7 @@ impl FunctionDotDumper<'_> {
             base_label
         };
 
-        let fillcolor = node_fillcolor(&kind);
+        let (shape, fillcolor) = node_style(&kind);
 
         let is_arg_node = self.node_to_arg_indices.contains_key(&node);
         let mut extra: Vec<(&str, &str)> = vec![("fillcolor", fillcolor)];
@@ -112,7 +112,7 @@ impl FunctionDotDumper<'_> {
             extra.push(("penwidth", "2.5"));
         }
 
-        out.node(&cur_id, &label, node_shape(&kind), &extra);
+        out.node(&cur_id, &label, shape, &extra);
         Some(cur_id)
     }
 
