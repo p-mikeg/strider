@@ -357,7 +357,7 @@ fn shared_container_float_carrier_is_the_incoming_value_at_a_loop_header_entry()
         0xfb, 0xff, 0xff, 0x1a, // bne 0x1000
         0x1e, 0xff, 0x2f, 0xe1, // bx lr
     ];
-    let f = super::handler_tests::lift_bytes(
+    let mut f = super::handler_tests::lift_bytes(
         strider_target::SleighArch::arm(),
         strider_target::CallingConvention::arm_aapcs(),
         bytes,
@@ -414,4 +414,20 @@ fn shared_container_float_carrier_is_the_incoming_value_at_a_loop_header_entry()
             "float param {j} (d{j}) must bottom out at InitialVar(q0); cone = {kinds:?}"
         );
     }
+
+    // The body reads the phi's slice, so the incoming-value slice is unused
+    // and compaction drops it: the float params then have no carrier, while
+    // r0's carrier, the phi's own operand, survives.
+    f.compact().expect("compaction succeeds");
+    for j in 0..2 {
+        assert!(
+            f.side_tables().float_arg_index_to_values(j).is_empty(),
+            "float param {j} has no carrier after compaction"
+        );
+    }
+    assert_eq!(
+        f.side_tables().arg_index_to_values(0).len(),
+        1,
+        "r0 keeps its carrier after compaction"
+    );
 }
