@@ -7,7 +7,7 @@ use crate::graph::Graph;
 use crate::node::{
     Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType, WidthTie, width_tie,
 };
-use crate::schedule::{ScheduleContext, schedule_early};
+use crate::schedule::{ScheduleContext, data_producers, schedule_early};
 use crate::walk::{NodeIdSet, PostOrder, WalkPhase};
 
 use super::ValidationError;
@@ -24,11 +24,9 @@ impl DataProducers<'_> {
     fn of(self, node: NodeId) -> impl Iterator<Item = NodeId> {
         let phi = matches!(self.graph.node_kind(node), NodeKind::Phi | NodeKind::MemPhi);
         (!phi)
-            .then(|| self.graph.node_inputs(node))
+            .then(|| data_producers(self.graph, node))
             .into_iter()
             .flatten()
-            .filter(move |&value| !self.graph.value_kind(value).is_control())
-            .map(move |value| self.graph.producer(value))
             .filter(move |&producer| self.universe.contains(producer))
     }
 }
