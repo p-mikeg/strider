@@ -114,7 +114,7 @@ impl ValueType {
     /// `v` reduced to this type's width, `v mod 2^width`: exact at every
     /// integer width, since past 128 bits a `u128` is already below `2^width`.
     /// A float has no integer bits: 0.
-    #[inline]
+    #[cfg(test)]
     pub const fn wrap_u128(self, v: u128) -> u128 {
         match self {
             Self::Int(w) => v & crate::eval::mask_below(w as u32),

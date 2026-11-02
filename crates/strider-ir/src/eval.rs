@@ -16,7 +16,7 @@ use dashu_int::{IBig, UBig};
 use crate::node::{IntBinaryOp, IntCmpOp, IntUnaryOp, ValueType};
 
 /// `v` with every bit above `ty`'s width cleared. A float has no integer
-/// bits: 0, as [`ValueType::wrap_u128`] gives.
+/// bits: 0.
 #[must_use]
 pub fn mask(v: &UBig, ty: ValueType) -> UBig {
     match ty {
