@@ -391,13 +391,7 @@ pub trait IRBuilderExt: IRBuilder {
             require_slot(self.function(), &kind, slot, value)?;
         }
         require_output_type(&kind, output_type)?;
-        let node = self.create_node(
-            kind,
-            inputs.iter().copied(),
-            [ValueKind::Typed(output_type)],
-        );
-        let [value] = self.function().node_outputs_exact(node)?;
-        Ok(value)
+        Ok(self.build_single_output_pure(kind, inputs.iter().copied(), output_type))
     }
 
     fn build_cpool_ref(&mut self, refs: &[ValueId], output_type: ValueType) -> Result<ValueId> {
