@@ -10,7 +10,7 @@ mod function;
 #[cfg(any(test, feature = "test-util"))]
 pub use function::cc_ret_and_clobber_vns;
 pub use function::{
-    AssumptionOptions, EditFunction, FuncSideTables, Function, MemDecomp, MemoryId,
+    AssumptionOptions, EditFunction, Function, FunctionSideTables, MemDecomp, MemoryId,
 };
 pub mod graph;
 pub use graph::{Graph, Inputs};
