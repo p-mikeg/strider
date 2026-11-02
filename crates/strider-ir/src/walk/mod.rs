@@ -44,11 +44,7 @@ pub fn stranded_nodes(graph: &Graph, entry: NodeId) -> NodeIdSet {
     }
     close_over_control_preds(graph, &mut escapes, work, |_| false, Some(&cfg));
 
-    let mut stranded = NodeIdSet::new();
-    for node in cfg.iter().filter(|&node| !escapes.contains(node)) {
-        stranded.insert(node);
-    }
-    stranded
+    cfg.iter().filter(|&node| !escapes.contains(node)).collect()
 }
 
 /// Grows `reached` backward over control inputs from `work`.
