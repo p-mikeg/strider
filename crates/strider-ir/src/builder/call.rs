@@ -8,7 +8,21 @@ use crate::builder::{IRBuilder, IRBuilderExt};
 use crate::error::Result;
 use crate::node::{IntBinaryOp, NodeId, NodeKind, ValueId, ValueKind, VnTypeExt};
 
-use super::require_reg_or_unique;
+/// Errors unless `vn` is in REGISTER or UNIQUE space.
+fn require_reg_or_unique(vn: &rsleigh::Vn) -> Result<()> {
+    match vn.addr_space {
+        rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE => Ok(()),
+        space => Err(anyhow!(
+            "a call-class read or write names the varnode {}, in space `{}`, \
+             outside register (`{}`) and unique (`{}`) space, the only ones \
+             that can carry one",
+            crate::function::vn_str(vn),
+            crate::function::space_str(space),
+            crate::function::space_str(rsleigh::VnSpace::REGISTER),
+            crate::function::space_str(rsleigh::VnSpace::UNIQUE),
+        )),
+    }
+}
 
 impl FunctionBuilder {
     /// Outputs are `[Control, Memory]` then one `Typed` slot per output vn,

@@ -18,22 +18,6 @@ mod test_support;
 mod tests;
 mod vars;
 
-/// Errors unless `vn` is in REGISTER or UNIQUE space.
-pub(super) fn require_reg_or_unique(vn: &rsleigh::Vn) -> crate::error::Result<()> {
-    match vn.addr_space {
-        rsleigh::VnSpace::REGISTER | rsleigh::VnSpace::UNIQUE => Ok(()),
-        space => Err(anyhow::anyhow!(
-            "a call-class read or write names the varnode {}, in space `{}`, \
-             outside register (`{}`) and unique (`{}`) space, the only ones \
-             that can carry one",
-            crate::function::vn_str(vn),
-            crate::function::space_str(space),
-            crate::function::space_str(rsleigh::VnSpace::REGISTER),
-            crate::function::space_str(rsleigh::VnSpace::UNIQUE),
-        )),
-    }
-}
-
 /// Tracks SSA-style per-region variable state: each variable has exactly one
 /// current `ValueId` inside the active region, and every read and write goes
 /// through that mapping.
