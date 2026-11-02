@@ -184,7 +184,7 @@ impl NodeCache {
         // `clear` preserves the `HASH_NONE` default: every slot reverts to
         // "absent" until re-inserted below.
         self.node_hashes.clear();
-        for node in store.node_ids() {
+        for node in store.nodes.keys() {
             let kind = store.kind_of(node);
             if !C::should_cache(kind) {
                 continue;
