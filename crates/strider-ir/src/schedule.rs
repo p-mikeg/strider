@@ -113,13 +113,18 @@ struct UnpinnedDataPreds<'a> {
 
 impl UnpinnedDataPreds<'_> {
     fn of(self, node: NodeId) -> impl Iterator<Item = NodeId> {
-        self.graph
-            .node_inputs(node)
-            .into_iter()
-            .filter(move |&v| !self.graph.value_kind(v).is_control())
-            .map(move |v| self.graph.value_definition(v).0)
+        data_producers(self.graph, node)
             .filter(move |&n| self.live.contains(n) && !is_pinned(self.graph, n))
     }
+}
+
+/// The producer of each non-`Control` input, in slot order.
+pub(crate) fn data_producers(graph: &Graph, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
+    graph
+        .node_inputs(node)
+        .into_iter()
+        .filter(move |&v| !graph.value_kind(v).is_control())
+        .map(move |v| graph.value_definition(v).0)
 }
 
 impl graph_algorithms::walk::GraphRef for UnpinnedDataPreds<'_> {
@@ -167,19 +172,12 @@ pub fn early_position(
         };
         Some(tree.contains(at).then_some(at))
     };
-    let data_preds = |node: NodeId| {
-        graph
-            .node_inputs(node)
-            .into_iter()
-            .filter(|&v| !graph.value_kind(v).is_control())
-            .map(|v| graph.value_definition(v).0)
-    };
     let mut at: rustc_hash::FxHashMap<NodeId, Option<NodeId>> = Default::default();
     let mut stack = vec![(graph.value_definition(value).0, false)];
     while let Some((node, expanded)) = stack.pop() {
         if expanded {
             let mut latest = Some(tree.root());
-            for pred in data_preds(node) {
+            for pred in data_producers(graph, node) {
                 latest = match (latest, at.get(&pred).copied().flatten()) {
                     (Some(cur), Some(pos)) if tree.dominates(cur, pos) => Some(pos),
                     (Some(cur), Some(pos)) if tree.dominates(pos, cur) => Some(cur),
@@ -199,7 +197,7 @@ pub fn early_position(
         // In progress: a data cycle back to it reads no position.
         at.insert(node, None);
         stack.push((node, true));
-        stack.extend(data_preds(node).map(|p| (p, false)));
+        stack.extend(data_producers(graph, node).map(|p| (p, false)));
     }
     at[&graph.value_definition(value).0]
 }
