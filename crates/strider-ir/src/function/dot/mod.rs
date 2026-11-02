@@ -81,23 +81,36 @@ pub(super) fn edge_style(
     }
 }
 
+impl Function {
+    /// The pretty renderer, naming registers and spaces through `names`.
+    pub fn dot_dumper<'a>(&'a self, names: &'a strider_target::ArchNames) -> FunctionDotDumper<'a> {
+        FunctionDotDumper {
+            function: self,
+            names,
+            node_to_arg_indices: build_arg_reverse_map(self),
+            nodes: None,
+            center: None,
+        }
+    }
+}
+
 pub struct FunctionDotDumper<'a> {
-    pub(crate) function: &'a Function,
+    function: &'a Function,
     /// The arch's register and space names, all a label reads.
-    pub(crate) names: &'a strider_target::ArchNames,
+    names: &'a strider_target::ArchNames,
     /// Carrier node -> arg tags.
-    pub(crate) node_to_arg_indices: FxHashMap<NodeId, Vec<ArgTag>>,
+    node_to_arg_indices: FxHashMap<NodeId, Vec<ArgTag>>,
     /// Restrict the render to the induced subgraph over these nodes; `None`
     /// renders everything reachable from the function's entry.
-    pub(crate) nodes: Option<FxHashSet<NodeId>>,
+    nodes: Option<FxHashSet<NodeId>>,
     /// Focus of a neighbourhood render, drawn with a highlight border.
-    pub(crate) center: Option<NodeId>,
+    center: Option<NodeId>,
 }
 
 /// A carrier's argument annotation. The integer and float index spaces are
 /// separate, so the class is part of the label.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum ArgTag {
+enum ArgTag {
     Int(u32),
     Float(u32),
 }
@@ -111,7 +124,7 @@ impl std::fmt::Display for ArgTag {
     }
 }
 
-pub(crate) fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<ArgTag>> {
+fn build_arg_reverse_map(function: &Function) -> FxHashMap<NodeId, Vec<ArgTag>> {
     let mut map: FxHashMap<NodeId, Vec<ArgTag>> = FxHashMap::default();
     let side = function.side_tables();
     let tags = side
