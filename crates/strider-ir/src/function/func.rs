@@ -30,9 +30,6 @@ pub fn cc_ret_and_clobber_vns(
 #[derive(Clone)]
 pub struct Function {
     graph: Graph,
-    /// The root of [`Self::graph`]; [`Self::compact`] rewrites it with the
-    /// arena, so it is an id, not a fact.
-    entry: NodeId,
 
     // The facts.  None is keyed by an arena id, so [`Self::compact`] leaves
     // them alone, and none is derived from the graph, so
@@ -72,7 +69,7 @@ impl Function {
         tracked_vns: Vec<rsleigh::Vn>,
     ) -> Self {
         let mut graph = Graph::default();
-        let entry = graph.create_node(
+        graph.create_node(
             crate::node::NodeKind::Entry,
             [],
             [crate::node::ValueKind::Control],
@@ -88,7 +85,6 @@ impl Function {
         }
         Self {
             graph,
-            entry,
             default_cc,
             byte_order: byte_order.into(),
             // A function claims nothing until `assume` adds some.
@@ -174,9 +170,12 @@ impl Function {
         self.invalidate_analyses();
     }
 
+    /// The root of [`Self::graph`]: the arena's first node.  [`Self::new`]
+    /// mints it first and [`Self::compact`] keeps the walk's order, which
+    /// yields it first.
     #[inline]
     pub fn entry(&self) -> NodeId {
-        self.entry
+        NodeId::from_u32(0)
     }
 
     #[inline]
@@ -236,46 +235,23 @@ impl Function {
         )
     }
 
-    /// Compacts the arena down to the nodes reachable from [`Self::entry`],
-    /// returning the old-to-new translation table.  Pre-compaction `NodeId` /
-    /// `ValueId` / `UseId` values are invalidated; callers holding one MUST
-    /// rewrite it through the returned [`NodeIdRemap`].
-    ///
-    /// Leaves the side-tables AND the dedup cache stale, so only
-    /// [`Self::compact`], which settles both, may call it.
-    fn retain_reachable(&mut self) -> NodeIdRemap {
-        // Collect into a `Vec` first to end the immutable borrow before
-        // `graph_mut()`.
-        let reachable: Vec<NodeId> = self.walk().collect();
-        self.graph_mut().retain_reachable_stale_cache(reachable)
-    }
-
-    /// Retains only nodes reachable from [`Self::entry`], updating the stored
-    /// entry and remapping every overlay table through the same translation.
-    /// Entries whose node did not survive are dropped.
-    ///
-    /// # Errors
-    ///
-    /// Errors if the remap does not include the entry (invariant violation).
+    /// Retains only nodes reachable from [`Self::entry`], remapping every
+    /// overlay table through the same translation and returning it.
+    /// Pre-compaction `NodeId` / `ValueId` / `UseId` values are invalidated;
+    /// callers holding one MUST rewrite it through the returned
+    /// [`NodeIdRemap`].  Entries whose node did not survive are dropped.
+    /// Never returns `Err`.
     pub fn compact(&mut self) -> crate::Result<NodeIdRemap> {
-        let entry = self.entry;
-        let remap = self.retain_reachable();
-        // Settled before the entry check, not after: `retain_reachable` leaves
-        // the cache keyed on PRE-compaction ids, and a `?` out of here would
-        // hand a caller a `Function` whose next deduping create probes the new
-        // arena with an old `NodeId`.
-        let new_entry = remap.node_old_to_new(entry);
+        // The pre-order yields the entry first, so it stays node 0.
+        let reachable: Vec<NodeId> = self.walk().collect();
+        let remap = self.graph.retain_reachable_stale_cache(reachable);
+        debug_assert_eq!(remap.node_old_to_new(self.entry()), Some(self.entry()));
         self.side_tables.remap(&remap);
         self.memos.get_mut().remap(&remap);
         // The dedup cache keys on `NodeKind`, which carries the `IntConstId`, so
         // the id rewrite MUST precede the cache rebuild.
         self.side_tables.gc_payload_tables(&mut self.graph);
         self.graph.rebuild_cache();
-        self.entry = new_entry.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Function::compact: entry {entry:?} missing from remap (invariant violation)"
-            )
-        })?;
         Ok(remap)
     }
 
@@ -521,7 +497,6 @@ mod compact_tests {
 
         let Function {
             graph: _,
-            entry: _,
             default_cc,
             byte_order,
             assumptions,
@@ -545,15 +520,16 @@ mod compact_tests {
 
         let post_count = f.graph().all_node_ids().count();
         assert!(post_count < pre_count, "compact must shrink the graph");
-        // The remapped entry id still carries the Control output.
+        // Node 0 is still the Entry, carrying its Control output.
         let entry_id = f.entry();
+        assert!(matches!(f.node_kind(entry_id), NodeKind::Entry));
         let outs: Vec<_> = f.node_outputs(entry_id).to_vec();
         assert_eq!(outs.len(), 1);
         assert!(f.value_kind(outs[0]).is_control());
     }
 
-    /// `retain_reachable` leaves the dedup cache keyed on PRE-compaction ids,
-    /// so `compact` has to rebuild it on every exit.  An `IntBinaryOp` shows it
+    /// `retain_reachable_stale_cache` leaves the dedup cache keyed on
+    /// PRE-compaction ids, so `compact` has to rebuild it.  An `IntBinaryOp` shows it
     /// where a bare const cannot: the cache key hashes the input `ValueId`s,
     /// which compaction renumbers, so a stale table misses the survivor and the
     /// next create allocates a structural duplicate of it.
@@ -707,7 +683,7 @@ mod compact_tests {
 
     /// A node remap must carry the fingerprint through to the new NodeId.
     #[test]
-    fn retain_reachable_preserves_asm_fingerprint_on_surviving_node() {
+    fn compact_preserves_asm_fingerprint_on_surviving_node() {
         let mut f = test_function();
         let entry = f.entry();
         let mem = test_initial_memory(&f);
@@ -741,7 +717,7 @@ mod compact_tests {
     /// Guards against compaction skipping detached-but-still-arena-present
     /// nodes.
     #[test]
-    fn retain_reachable_drops_zombie_node() {
+    fn compact_drops_zombie_node() {
         use crate::graph::NodeIdRemap;
 
         let mut f = test_function();
@@ -783,7 +759,7 @@ mod compact_tests {
     /// `value_vn` and `memory_offsets` must hold no entries pointing at dropped
     /// nodes after compaction.
     #[test]
-    fn retain_reachable_drops_side_table_entry_for_dropped_node() {
+    fn compact_drops_side_table_entry_for_dropped_node() {
         use crate::node::ValueType;
 
         let dead_vn = rsleigh::Vn {
