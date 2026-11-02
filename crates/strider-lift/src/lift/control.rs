@@ -6,14 +6,6 @@ use strider_ir::{IRBuilderExt, IRViewer};
 use super::FunctionLifter;
 
 impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
-    pub(super) fn handle_branch(&mut self) -> Result<()> {
-        // Every unconditional successor, branch or fall-through alike, is
-        // wired uniformly by `link_region_edges`.  Emitting an IR branch here
-        // too would double-link the successor and its `Phi` predecessor
-        // inputs.
-        Ok(())
-    }
-
     /// Lowers a resolved jump table to one `Switch` node with a control output
     /// per target.  `region_id` is the dispatch region.
     pub(crate) fn handle_switch(
