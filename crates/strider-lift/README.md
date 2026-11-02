@@ -158,4 +158,4 @@ name outside the arch's table: each fails the whole function's lift rather
 than producing an approximation.
 
 Depends on `strider-cfg`, `strider-ir`, `strider-target`, `graph-algorithms`,
-`vn-container`, `rsleigh`, `anyhow`, `petgraph` and `rustc-hash`.
+`vn-container`, `rsleigh`, `anyhow` and `rustc-hash`.
