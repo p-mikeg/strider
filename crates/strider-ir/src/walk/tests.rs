@@ -627,7 +627,8 @@ fn postorder_on_control_diamond_visits_each_node_once() {
     graph.add_node_input(merge, right_ctrl);
 
     let info = GraphWalkInfo::compute_full(&graph, entry);
-    let order: Vec<NodeId> = info.postorder(&graph).collect();
+    let mut order = info.reverse_postorder(&graph);
+    order.reverse();
     assert_eq!(
         order.len(),
         4,
