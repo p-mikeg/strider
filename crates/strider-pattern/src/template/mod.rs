@@ -21,11 +21,11 @@ pub use crate::typed::value_ops::ops::*;
 use std::collections::BTreeMap;
 
 use anyhow::anyhow;
+use petgraph::unionfind::UnionFind;
 use rustc_hash::{FxHashMap, FxHashSet};
 use strider_graph::ValueId as TmplValueId;
 use strider_ir::node::{
-    Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType, WidthGroups,
-    WidthTie, width_tie,
+    Conversion, NodeId, NodeKind, OperandWidth, ValueId, ValueKind, ValueType, WidthTie, width_tie,
 };
 use strider_ir::{Function, IRBuilder, IRViewer};
 
@@ -371,6 +371,27 @@ fn operand_postorder(template: &Template, root: NodeId) -> Vec<NodeId> {
     order
 }
 
+/// [`width_tie`] with a `Tied` head joined to `operand` in `groups`, the value
+/// vertices a node evaluates at one width. A head that IS the operand ties
+/// nothing and reads back as `NoHead`.
+fn tie(
+    groups: &mut UnionFind<u32>,
+    kind: &NodeKind,
+    slot: usize,
+    operand: TmplValueId,
+    out: Option<TmplValueId>,
+    first: Option<TmplValueId>,
+) -> WidthTie<TmplValueId> {
+    match width_tie(kind, slot, out, first) {
+        WidthTie::Tied(head) if head != operand => {
+            groups.union(head.as_u32(), operand.as_u32());
+            WidthTie::Tied(head)
+        }
+        WidthTie::Tied(_) => WidthTie::NoHead,
+        other @ (WidthTie::NoHead | WidthTie::Conversion(_) | WidthTie::Free) => other,
+    }
+}
+
 /// Each value output's type. A node built with no declared type
 /// ([`TemplateTy::InheritRoot`]) takes the width of the group it is evaluated
 /// in, so a fresh constant in a comparison operand gets the OPERAND width and
@@ -395,7 +416,7 @@ fn resolve_value_tys(
     root_ty: ValueType,
 ) -> anyhow::Result<ValueTys> {
     let len = template.graph.all_value_ids().count();
-    let mut groups = WidthGroups::new(len);
+    let mut groups = UnionFind::new(len);
     // The consumer that ties each vertex to a group, for the error naming it.
     let mut tied_by: Vec<Option<(NodeKind, usize)>> = vec![None; len];
     // `(count, shift output)`: a count with no width of its own takes the
@@ -410,7 +431,7 @@ fn resolve_value_tys(
         let first_operand = inputs.iter().find(|&&(slot, _)| slot == 0).map(|&(_, v)| v);
         let out_vtx = first_value_output_vtx(template, node_vtx);
         for &(slot, producer) in &inputs {
-            match groups.tie(&kind, slot, producer, out_vtx, first_operand) {
+            match tie(&mut groups, &kind, slot, producer, out_vtx, first_operand) {
                 WidthTie::Tied(head) => {
                     tied_by[idx(producer)].get_or_insert((kind, slot));
                     tied_by[idx(head)].get_or_insert((kind, slot));
@@ -433,9 +454,9 @@ fn resolve_value_tys(
         }
     }
 
-    let mut group_ty: FxHashMap<usize, ValueType> = FxHashMap::default();
-    let mut anchor = |groups: &mut WidthGroups, vtx: TmplValueId, ty: ValueType| {
-        group_ty.entry(groups.find(vtx)).or_insert(ty);
+    let mut group_ty: FxHashMap<u32, ValueType> = FxHashMap::default();
+    let mut anchor = |groups: &mut UnionFind<u32>, vtx: TmplValueId, ty: ValueType| {
+        group_ty.entry(groups.find_mut(vtx.as_u32())).or_insert(ty);
     };
     // First wins, so the order is the graph's own: a capture can be built
     // after its consumer, and its id would otherwise decide the anchor.
@@ -454,21 +475,21 @@ fn resolve_value_tys(
     // Overrides whatever else the root's group holds, so a template that
     // already types its nodes builds exactly what it built before.
     if let Some(vtx) = first_value_output_vtx(template, root) {
-        let g = groups.find(vtx);
+        let g = groups.find_mut(vtx.as_u32());
         group_ty.insert(g, root_ty);
     }
     // To a fixpoint: a count can be the output of another shift whose own
     // width comes from a count.
-    let mut inferred: FxHashSet<usize> = FxHashSet::default();
+    let mut inferred: FxHashSet<u32> = FxHashSet::default();
     let mut changed = true;
     while changed {
         changed = false;
         for &(count, out) in &counts {
-            let g = groups.find(count);
+            let g = groups.find_mut(count.as_u32());
             if group_ty.contains_key(&g) {
                 continue;
             }
-            if let Some(&t) = group_ty.get(&groups.find(out)) {
+            if let Some(&t) = group_ty.get(&groups.find_mut(out.as_u32())) {
                 group_ty.insert(g, t);
                 inferred.insert(g);
                 changed = true;
@@ -478,7 +499,7 @@ fn resolve_value_tys(
     let saturated_counts: FxHashSet<TmplValueId> = counts
         .iter()
         .map(|&(count, _)| count)
-        .filter(|&count| inferred.contains(&groups.find(count)))
+        .filter(|&count| inferred.contains(&groups.find_mut(count.as_u32())))
         .collect();
 
     let mut by_vertex: Vec<Option<ValueType>> = vec![None; len];
@@ -491,6 +512,7 @@ fn resolve_value_tys(
             let TmplValue { slot, ty: Some(ty) } = *template.graph.value_kind_ref(vtx) else {
                 continue;
             };
+            let g = groups.find_mut(vtx.as_u32());
             let ty = match ty {
                 TemplateTy::Fixed(t) => t,
                 TemplateTy::InheritBinding(cap) => match bindings.get_type(cap, function) {
@@ -504,7 +526,7 @@ fn resolve_value_tys(
                         cap.id()
                     ),
                 },
-                TemplateTy::InheritRoot => match group_ty.get(&groups.find(vtx)).copied() {
+                TemplateTy::InheritRoot => match group_ty.get(&g).copied() {
                     Some(t) => t,
                     None => match tied_by[idx(vtx)] {
                         Some((kind, slot))
