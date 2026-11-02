@@ -224,7 +224,11 @@ strider-ir warns on `_` / `other` arms over any enum
 (`clippy::wildcard_enum_match_arm` in its `lib.rs`, an error under CI's
 `-D warnings`), so a new `NodeKind` variant forces a decision at every
 classifying `match`; a single-variant test (let-else, `==`, a one-variant
-`matches!`) and the `Phi | MemPhi` family count as compliant.
+`matches!`) and the `Phi | MemPhi` family count as compliant. The lint does
+not see a tuple scrutinee, a guarded `_ if` arm or `matches!`; the remaining
+multi-variant `matches!` sites (the phi family, `graph_invariants.rs`'s
+phi-or-call producer test, `walk/mod.rs`'s memory-chain kinds, `render.rs`'s
+`Return` guard, `viewer.rs`'s `Load | Store`) are accepted as they are.
 
 Op sub-enums (`node/ops.rs`): `IntUnaryOp{Neg}`;
 `IntBinaryOp{Add,And,Or,Xor,Div,Sdiv,Rem,Srem,ShiftRight,
