@@ -1525,6 +1525,38 @@ fn div_rem_with_wider_rhs_does_not_silently_truncate() {
     }
 }
 
+/// Sleigh emits the three negated comparisons equal-width, so a mixed-width
+/// one errors rather than extending and comparing.
+#[test]
+fn negated_compare_inputs_must_match_in_width() {
+    let wide = Vn {
+        size: 8,
+        addr_off: 0x200,
+        addr_space: VnSpace::REGISTER,
+    };
+    let flag = Vn {
+        size: 1,
+        addr_off: 0x300,
+        addr_space: VnSpace::REGISTER,
+    };
+    for opcode in [
+        Opcode::IntNotEqual,
+        Opcode::IntLessEqual,
+        Opcode::IntSlessEqual,
+    ] {
+        with_test_lifter_tracking(vec![wide, reg(0), flag], |d, rid| {
+            let insn = Insn {
+                opcode,
+                output: Some(flag),
+                inputs: vec![reg(0), wide].into(),
+            };
+            let res = d.process_insn(rid, &insn, test_addr(), &super::RegionMap::default());
+            let msg = format!("{:#}", res.expect_err("mixed widths must error"));
+            assert!(msg.contains("width mismatch"), "{opcode:?}: {msg}");
+        });
+    }
+}
+
 /// `OpBehaviorCopy::evaluateUnary` returns `in1` unchanged, so Sleigh contracts
 /// equal input and output sizes.  Unguarded, `write_vn` truncates a wider
 /// operand and zero-extends a narrower one, which is wrong for a signed
