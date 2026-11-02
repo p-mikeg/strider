@@ -798,6 +798,35 @@ fn replace_all_uses_moves_uses() {
 }
 
 #[test]
+fn replace_all_uses_moves_uses_in_list_order() {
+    // Each moved use is head-inserted into `b`'s list in `a`'s list order
+    // (newest first), so `b` lists `a`'s consumers oldest first, ahead of
+    // its own.
+    let mut g = TestGraph::new();
+    let a = const_node(&mut g, 1);
+    let b = const_node(&mut g, 2);
+    let own = region_node(&mut g);
+    g.add_node_input(own, b);
+    let moved: Vec<NodeId> = (0..3)
+        .map(|_| {
+            let r = region_node(&mut g);
+            g.add_node_input(r, a);
+            g.add_node_input(r, a);
+            r
+        })
+        .collect();
+
+    assert!(g.replace_all_uses(a, b));
+    let mut expected: Vec<(NodeId, u32)> = Vec::new();
+    for &r in &moved {
+        expected.extend([(r, 0), (r, 1)]);
+    }
+    expected.push((own, 0));
+    assert_eq!(g.value_uses(b).collect::<Vec<_>>(), expected);
+    assert_use_list_consistent(&g);
+}
+
+#[test]
 fn replace_all_uses_self_is_noop_returns_false() {
     // A self-redirect replaces nothing and reports `false`, even with live uses.
     let mut g = TestGraph::new();
