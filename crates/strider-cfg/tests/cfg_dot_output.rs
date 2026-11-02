@@ -143,3 +143,44 @@ fn insn_text_spells_load_store_space_without_a_host_address() {
         "{foreign_ctx}"
     );
 }
+
+/// Every operand of a STORE, a LOAD and their neighbours in both spellings,
+/// byte for byte.
+#[test]
+fn insn_text_and_insn_plain_text_spell_every_operand() {
+    let (cfg, _) = build_from_bytes(LOAD_STORE.to_vec(), 0x1000);
+    let insns: Vec<_> = cfg.regions().flat_map(|r| &r.insns).collect();
+    let names = SleighArch::x86_64().names();
+    let ctx: Vec<String> = insns
+        .iter()
+        .map(|ri| strider_cfg::insn_text(&ri.insn, cfg.space_ids(), names).to_string())
+        .collect();
+    let plain: Vec<String> = insns
+        .iter()
+        .map(|ri| strider_cfg::insn_plain_text(&ri.insn, cfg.space_ids()).to_string())
+        .collect();
+    assert_eq!(
+        ctx,
+        [
+            "Copy unique[0xd500]:8, RAX",
+            "Store ram, RSP, unique[0xd500]:8",
+            "Load unique[0x24000]:8, ram, RSP",
+            "Copy RBX, unique[0x24000]:8",
+            "Load RIP, ram, RSP",
+            "IntAdd RSP, RSP, 0x8:8",
+            "Return RIP",
+        ]
+    );
+    assert_eq!(
+        plain,
+        [
+            "Copy u[0xd500]:8, %[0x0]:8",
+            "Store r, %[0x20]:8, u[0xd500]:8",
+            "Load u[0x24000]:8, r, %[0x20]:8",
+            "Copy %[0x18]:8, u[0x24000]:8",
+            "Load %[0x288]:8, r, %[0x20]:8",
+            "IntAdd %[0x20]:8, %[0x20]:8, 0x8:8",
+            "Return %[0x288]:8",
+        ]
+    );
+}
