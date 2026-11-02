@@ -17,8 +17,12 @@ layer names the same ABI types.
   microMIPS image decodes its odd-addressed functions against MIPS16e tables.
 - `ArchNames`: an arch's register and space names, default code space and
   `ram` address width, all a render reads. `SleighArch::names()` builds it
-  once per preset per process off a Sleigh over an empty image, so this
-  crate does construct a decoder, one per preset used.
+  once per preset per process off a Sleigh over an empty image.
+- `DecodeTables`: what an arch's sla says about decoding and lifting (user-op
+  names, flowing and committed context vars with their pspec defaults, the
+  declared, volatile and internal registers). `SleighArch::decode_tables()`
+  builds it once per preset per process off a Sleigh of its own, so this
+  crate does construct decoders, two per preset used.
 - `CallingConvention`: a register-name description of how arguments are passed
   and results returned, with a preset per userland ABI plus four
   kernel-internal ones: `x86_linux_kernel` and the three PowerPC
