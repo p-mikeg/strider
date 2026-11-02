@@ -1,7 +1,7 @@
 use bitflags::bitflags;
 
+use crate::node::KindFlags;
 use crate::node::NodeKind;
-use crate::node::kind::KindFlags;
 
 bitflags! {
     #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
