@@ -21,10 +21,7 @@ impl<R: rsleigh::MemReader> Builder<'_, R> {
         region_id: NodeIndex,
         addr: PcodeInsnAddr,
     ) -> Result<NodeIndex> {
-        let second_region = self
-            .region_graph
-            .node_weight_mut(region_id)
-            .ok_or_else(|| anyhow!("invalid region index {region_id:?}"))?;
+        let second_region = &mut self.region_graph[region_id];
         // Caller-guaranteed: `Builder::explore` routes a target off every
         // instruction boundary elsewhere, since no split can express it.
         let split_index = second_region
