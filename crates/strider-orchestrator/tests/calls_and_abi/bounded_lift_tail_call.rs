@@ -2,7 +2,7 @@
 //! target lies outside `[start, start+size)` as
 //! `RegionTerminator::TailCall { target }` (no successor edge), which the IR
 //! layer lowers as `Call(IntConst(target)) + Return`.  Routing the trailing
-//! `Opcode::Branch` through the generic `handle_branch` path instead errors
+//! `Opcode::Branch` through the generic per-instruction path instead errors
 //! with "invalid region index N": a TailCall region has no Unconditional edge.
 //!
 //! Synthetic x86_64 function:

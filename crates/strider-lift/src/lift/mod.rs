@@ -662,7 +662,7 @@ impl<'a, R: rsleigh::MemReader> FunctionLifter<'a, R> {
     }
 
     /// Wires the region successors no terminator handler wired: only
-    /// `Unconditional` regions, whose `handle_branch` is a no-op.  `CondBranch`
+    /// `Unconditional` regions, whose `Branch` lifts to nothing.  `CondBranch`
     /// and `Switch` are already wired by their handlers.
     fn link_region_edges(&mut self, region_map: &RegionMap) -> Result<()> {
         let graph = self.cfg.region_graph();
