@@ -675,26 +675,26 @@ node with the same bindings are one match: at the root of a pattern that
 captures nothing, `one_of([load(), anything()])` answers exactly what
 `anything()` does, and the arms need a capture to tell them apart. `first_of` is
 the **ordered** variant: at each value it is offered (each output of a node is
-its own), the first listed arm that yields any match wins, whatever order the
-rest of the pattern is tried in, so a permissive leading arm shadows the rest;
-list most-specific first. A match reaching one `first_of` twice at one value
-(`float_is_nan` and `float_le` read their operands twice) wins there if it took
-the first arm any match took at both reads; when none did, the reads settle in
-order, each through the first arm that yields a match. Several `first_of`s in
-one match settle in pattern order: operands left to right, a `one_of`'s arms as
-listed, a builder's own slots in its fixed order, then its `any_input`s, then
-its `input`s, a repeated setter in call order and the rest whatever order they
-were called in, an inner one before the one holding it, each among the matches
-the earlier ones kept. The fixed orders: `load` addr, mem; `store` addr, data,
-mem; `call` target, ctrl, args, mem; `call_other` ctrl, mem, args; `ret` ctrl,
-return values; `indirect_branch` target, ctrl, mem; `unreachable` ctrl; `switch`
-selector, ctrl; `if_else` cond, ctrl; `phi` / `mem_phi` inputs, phi_token.
-Repeated setters (`arg`, `ret_val`, `phi_input`, `any_input`, `input`) keep
-their call order. A query holding a `first_of` runs every configuration of the
-pattern before it answers, unless it captures nothing and finds a match through
-the first arm of every `first_of`, walking through no cast, where it stops. Any
-pattern kind is a valid arm, including the node-rooted control builders (`ret` /
-`if_else` / `switch` / `indirect_branch` / `unreachable`).
+its own) at each read, the first listed arm that yields any match wins, whatever
+order the rest of the pattern is tried in, so a permissive leading arm shadows
+the rest; list most-specific first. A match reaching one `first_of` more than
+once (`float_is_nan` and `float_le` read their operands twice) settles each read
+on its own, in the order the pattern reads them: of the matches still kept that
+make that read, only those through the first arm any of them took there stay.
+Several `first_of`s in one match settle in pattern order: operands left to
+right, a `one_of`'s arms as listed, a builder's own slots in its fixed order,
+then its `any_input`s, then its `input`s, an inner one before the one holding
+it, each among the matches the earlier ones kept. The fixed orders: `load` addr,
+mem; `store` addr, data, mem; `call` target, ctrl, args, mem; `call_other` ctrl,
+mem, args; `ret` ctrl, return values; `indirect_branch` target, ctrl, mem;
+`unreachable` ctrl; `switch` selector, ctrl; `if_else` cond, ctrl; `phi` /
+`mem_phi` inputs, phi_token. Repeated setters (`arg`, `ret_val`, `phi_input`,
+`any_input`, `input`) keep their call order. A query holding a `first_of` runs
+every configuration of the pattern before it answers, unless it captures nothing
+and finds a match through the first arm of every `first_of`, walking through no
+cast, where it stops. Any pattern kind is a valid arm, including the node-rooted
+control builders (`ret` / `if_else` / `switch` / `indirect_branch` /
+`unreachable`).
 
 ### `field` / `code_ptr`, the two canonical-form alternations
 

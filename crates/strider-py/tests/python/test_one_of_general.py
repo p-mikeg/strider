@@ -131,3 +131,31 @@ def test_a_shared_first_of_takes_the_first_matching_arm_at_each_read():
 
     hits = fn.find_all(p.float_is_nan(p.first_of([bits(x), bits(y), p.var(z)])))
     assert hits and all(x in m and z in m and y not in m for m in hits)
+
+
+def test_a_read_a_union_routes_away_settles_on_its_own():
+    """The union arm binds `t` at the first read of `float_is_nan` and skips
+    the `first_of`, whose arm 0 needs the `y` only arm 1 binds. Arm 1 then arm
+    0 (`{y}`) beats the match taking arm 1 at the second read (`{t, y}`)."""
+    y, t = p.Capture("y"), p.Capture("t")
+
+    def has_y():
+        return p.anything().when(lambda m: y in m)
+
+    def no_y():
+        return p.anything().when(lambda m: y not in m)
+
+    def nan(alt):
+        arms = [has_y(), p.int_bits_to_float(no_y()).capture(y)]
+        return p.float_is_nan(p.one_of([alt(arms), no_y().capture(t)]))
+
+    for arch in ("x64", "aarch64", "arm"):
+        for sym in ("f32_compare", "f64_compare"):
+            fn = _lift(str(fixture_path(arch, "floats")), sym)
+
+            def rows(pat):
+                return {(m.root, y in m, t in m) for m in fn.find_all(pat)}
+
+            union = rows(nan(p.one_of))
+            assert any(r[1] and r[2] for r in union), (arch, sym)
+            assert rows(nan(p.first_of)) == {r for r in union if not (r[1] and r[2])}

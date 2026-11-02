@@ -16,8 +16,8 @@ pub(crate) enum CcImpl {
 /// `CallingConvention.x86_64_systemv()`) or `CallingConvention.custom(...)`
 /// for a binary whose ABI matches no built-in preset.
 ///
-/// Equal when the same constructor calls built both: a `custom` never equals
-/// a preset, nor one resolved against another preset, as for `CallOtherAbi`.
+/// Equal when the same constructor calls built both: a `custom` never equals a
+/// preset, nor one resolved against another arch.
 #[pyclass(
     name = "CallingConvention",
     module = "strider.sleigh",
