@@ -6,6 +6,7 @@ use crate::IRViewer;
 use crate::builder::FunctionBuilder;
 use crate::builder::checks::require_memory_kind;
 use crate::error::Result;
+use crate::graph::Graph;
 use crate::node::InitialVnId;
 use crate::node::{NodeId, NodeKind, ValueId, ValueKind};
 
@@ -98,56 +99,9 @@ impl FunctionBuilder {
         region: RegionId,
         variables: &SecondaryMap<InitialVnId, ValueId>,
     ) -> Result<()> {
-        let operands: Vec<ValueId> = self.regions[region]
-            .phis
-            .iter()
-            .map(|&(var_id, _)| variables[var_id])
-            .collect();
-        self.append_phi_operands(region, &operands)
-    }
-
-    /// One operand per `region` phi, read out of `source`'s current values.
-    ///
-    /// Errors on a variable `source` has no value for, which is a region the
-    /// rename walk never reached: `translate_regions` walks the dominator
-    /// pre-order, which excludes the regions unreachable from the entry, while
-    /// `link_region_edges` walks every CFG edge.
-    fn reaching_phi_operands(&self, region: RegionId, source: RegionId) -> Result<Vec<ValueId>> {
-        self.regions[region]
-            .phis
-            .iter()
-            .map(|&(var_id, _)| {
-                self.regions[source].variables[var_id]
-                    .expand()
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "no definition of variable {var_id:?} reaches region {} on its edge \
-                             into region {}",
-                            source.as_u32(),
-                            region.as_u32()
-                        )
-                    })
-            })
-            .collect()
-    }
-
-    fn append_phi_operands(&mut self, region: RegionId, operands: &[ValueId]) -> Result<()> {
-        let phis = self.regions[region].phis.len();
-        if operands.len() != phis {
-            return Err(anyhow!(
-                "region {} carries {phis} phis but the incoming edge supplies {} operands",
-                region.as_u32(),
-                operands.len()
-            ));
-        }
-        for (i, &operand) in operands.iter().enumerate() {
-            let phi_value = self.regions[region].phis[i].1;
-            let phi_node = self.function().producer(phi_value);
-            self.function_mut()
-                .graph_mut()
-                .add_node_input(phi_node, operand);
-        }
-        Ok(())
+        append_phi_operands(self.function.graph_mut(), &self.regions[region].phis, |v| {
+            Ok(variables[v])
+        })
     }
 
     /// Mints a `Region` / `MemPhi` pair plus one `Phi` per `phi_vars` entry,
@@ -266,9 +220,23 @@ impl FunctionBuilder {
         self.link_edges(region, control, memory);
         // `cur_region`'s current variable map, so a self-loop (`cur_region ==
         // region`, an entry that is its own loop header) takes the values
-        // reaching the back edge.
-        let operands = self.reaching_phi_operands(region, cur_region)?;
-        self.append_phi_operands(region, &operands)
+        // reaching the back edge. An unset variable means `cur_region` is one
+        // the dominator pre-order rename walk never reached.
+        let reaching = &self.regions[cur_region].variables;
+        append_phi_operands(
+            self.function.graph_mut(),
+            &self.regions[region].phis,
+            |var_id| {
+                reaching[var_id].expand().ok_or_else(|| {
+                    anyhow!(
+                        "no definition of variable {var_id:?} reaches region {} on its edge \
+                         into region {}",
+                        cur_region.as_u32(),
+                        region.as_u32()
+                    )
+                })
+            },
+        )
     }
 
     /// Links `child_region` as the fallthrough successor of `parent_region`.
@@ -284,4 +252,19 @@ impl FunctionBuilder {
     pub fn region_cur_ctrl(&self, region: RegionId) -> ValueId {
         self.regions[region].cur_ctrl
     }
+}
+
+/// Appends `operand(var)` to each of `phis` in order, stopping at the first
+/// error.
+fn append_phi_operands(
+    graph: &mut Graph,
+    phis: &[(InitialVnId, ValueId)],
+    mut operand: impl FnMut(InitialVnId) -> Result<ValueId>,
+) -> Result<()> {
+    for &(var_id, phi_value) in phis {
+        let value = operand(var_id)?;
+        let phi_node = graph.producer(phi_value);
+        graph.add_node_input(phi_node, value);
+    }
+    Ok(())
 }
